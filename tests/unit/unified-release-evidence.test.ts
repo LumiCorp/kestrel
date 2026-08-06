@@ -21,6 +21,7 @@ const flyRoles = [
   "preview-edge",
   "turn-worker",
   "runpod-worker",
+  "control-worker",
 ];
 
 test("accepts a complete immutable candidate evidence bundle", () => {

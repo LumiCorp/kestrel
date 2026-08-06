@@ -41,17 +41,23 @@ import { recordWorkspaceReconciliationStatus } from "./reconciliation-status";
 
 export async function reconcileHostedEnvironments() {
   const now = new Date();
+  const { reconcilePlatformRuntimeDeployments } =
+    await import("@/lib/runtime-deployments/reconcile");
+  const platformRuntime = await reconcilePlatformRuntimeDeployments();
   const repairedExecutionCount = await reconcileTerminalTurnExecutions();
-  const recoverableOperations =
+  const recoverableCandidates =
     await knowledgeDb.query.environmentOperations.findMany({
       where: (table, { and, inArray }) =>
         and(
           inArray(table.status, ["queued", "running"]),
           inArray(table.type, PROVISIONER_OPERATION_TYPES),
         ),
-      columns: { id: true },
+      columns: { id: true, result: true },
       limit: 100,
     });
+  const recoverableOperations = recoverableCandidates.filter((operation) =>
+    environmentOperationRetryIsDue(operation.result, now),
+  );
   let operationFailureCount = 0;
   for (const operation of recoverableOperations) {
     try {
@@ -108,7 +114,18 @@ export async function reconcileHostedEnvironments() {
     volumeBackupPolicyFailureCount,
     finalizedPreviewCount,
     backupLifecycle,
+    platformRuntime,
   };
+}
+
+function environmentOperationRetryIsDue(result: unknown, now: Date) {
+  if (!(result && typeof result === "object")) return true;
+  const retryState = (result as Record<string, unknown>).retryState;
+  if (!(retryState && typeof retryState === "object")) return true;
+  const nextAttemptAt = (retryState as Record<string, unknown>).nextAttemptAt;
+  if (typeof nextAttemptAt !== "string") return true;
+  const timestamp = Date.parse(nextAttemptAt);
+  return !Number.isFinite(timestamp) || timestamp <= now.getTime();
 }
 
 export async function reconcileTerminalTurnExecutions() {
@@ -476,7 +493,10 @@ async function reconcileEnvironmentGateways(
     where: (table, { and, eq, inArray }) =>
       and(
         eq(table.organizationId, organizationId),
-        eq(table.type, "environment.update"),
+        inArray(table.type, [
+          "environment.update",
+          "environment.gateway.update",
+        ]),
         inArray(table.status, ["queued", "running"]),
       ),
     columns: { environmentId: true },

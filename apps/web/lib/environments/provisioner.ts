@@ -49,10 +49,15 @@ export interface EnvironmentProvisioningRepository {
     flyGatewayMachineId: string | null;
     routerImage: string | null;
     runtimeImage: string | null;
+    targetRouterImage?: string | null;
+    targetRuntimeImage?: string | null;
+    targetSourceRevision?: string | null;
+    targetGeneration?: number | null;
     idleTimeoutMinutes: number;
   } | null>;
   getWorkspace(workspaceId: string): Promise<{
     id: string;
+    createdByUserId?: string;
     organizationId: string;
     environmentId: string;
     status: string;
@@ -73,6 +78,7 @@ export interface EnvironmentProvisioningRepository {
       runtimeImage: string | null;
     }>
   >;
+  countActiveEnvironmentExecutions?(environmentId: string): Promise<number>;
   beginEnvironmentProvisioning(input: {
     environmentId: string;
     operationId: string;
@@ -115,6 +121,11 @@ export interface EnvironmentProvisioningRepository {
   }): Promise<"failed" | "superseded">;
   degradeEnvironment(input: {
     environmentId: string;
+    code: string;
+    message: string;
+  }): Promise<void>;
+  degradeWorkspace?(input: {
+    workspaceId: string;
     code: string;
     message: string;
   }): Promise<void>;
@@ -193,6 +204,18 @@ export interface EnvironmentProvisioningRepository {
           authoritativeState?: unknown;
         }
       | undefined;
+  }): Promise<void>;
+  prepareSafetyRollback?(input: {
+    operationId: string;
+    imageField: "routerImage" | "runtimeImage";
+    priorImage: string;
+    rejectedImage: string;
+  }): Promise<void>;
+  rejectPlatformGeneration?(input: {
+    environmentId: string;
+    targetGeneration: number;
+    code: string;
+    message: string;
   }): Promise<void>;
 }
 
@@ -299,6 +322,8 @@ export class EnvironmentProvisioner {
         await this.provisionEnvironment(operation);
       } else if (operation.type === "environment.update") {
         await this.updateEnvironment(operation);
+      } else if (operation.type === "environment.gateway.update") {
+        await this.updateEnvironmentGateway(operation);
       } else if (operation.type === "workspace.provision") {
         await this.provisionWorkspace(operation);
       } else if (operation.type === "workspace.start") {
@@ -333,7 +358,26 @@ export class EnvironmentProvisioner {
         return "deferred";
       }
       const failure = safeFailure(error);
+      if (failure.code === "ENVIRONMENT_DRAINING") {
+        await this.repository.deferOperation({
+          operationId: operation.id,
+          attempt: operation.attempt,
+          stage: "platform.gateway.draining",
+          code: failure.code,
+          message: failure.message,
+        });
+        return "deferred";
+      }
       if (failure.code === "ENVIRONMENT_NOT_READY") {
+        if (readInputNumber(operation.input, "targetGeneration") !== null) {
+          await this.repository.failOperation({
+            operationId: operation.id,
+            stage: "platform.resource.blocked",
+            code: failure.code,
+            message: failure.message,
+          });
+          return "processed";
+        }
         await this.repository.deferOperation({
           operationId: operation.id,
           attempt: operation.attempt,
@@ -354,20 +398,42 @@ export class EnvironmentProvisioner {
           new Date().toISOString();
         const retryAttempt =
           Number(asRecord(previousRetry)?.attempt ?? 0) + 1;
-        const nextAttemptAt = releaseRetryNextAttemptAt(
+        const budgetNextAttemptAt = releaseRetryNextAttemptAt(
           firstFailureAt,
           retryAttempt,
         );
-        if (releaseTargetId && !nextAttemptAt) {
+        const targetGeneration = readInputNumber(
+          operation.input,
+          "targetGeneration",
+        );
+        const retryDeadline = readInputString(
+          operation.input,
+          "retryDeadline",
+        );
+        const safetyRollback = operation.input?.safetyRollback === true;
+        const resourceDeadlineExhausted =
+          targetGeneration !== null &&
+          retryDeadline !== null &&
+          Date.now() >= Date.parse(retryDeadline);
+        if (
+          !safetyRollback &&
+          ((releaseTargetId && !budgetNextAttemptAt) || resourceDeadlineExhausted)
+        ) {
           await this.repository.failOperation({
             operationId: operation.id,
             stage: "environment.provider.retry_exhausted",
             code: "ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
             message: `Automatic provider retries were exhausted after one hour. Last response: ${failure.message}`,
           });
-          if (operation.workspaceId) {
-            await this.repository.failWorkspace({
+          if (operation.workspaceId && targetGeneration !== null) {
+            await this.repository.degradeWorkspace?.({
               workspaceId: operation.workspaceId,
+              code: "ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
+              message: failure.message,
+            });
+          } else if (targetGeneration !== null) {
+            await this.repository.degradeEnvironment({
+              environmentId: operation.environmentId,
               code: "ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
               message: failure.message,
             });
@@ -385,10 +451,11 @@ export class EnvironmentProvisioner {
             firstFailureAt,
             lastError: { code: failure.code, message: failure.message },
             nextAttemptAt:
-              nextAttemptAt ??
-              new Date(
-                Date.now() + releaseRetryDelaySeconds(retryAttempt) * 1000,
-              ).toISOString(),
+              boundedRetryTime({
+                attempt: retryAttempt,
+                retryDeadline: safetyRollback ? null : retryDeadline,
+                budgetNextAttemptAt,
+              }),
             authoritativeState: readAuthoritativeState(error),
           },
         });
@@ -415,12 +482,24 @@ export class EnvironmentProvisioner {
         });
         return "processed";
       }
-      if (operation.workspaceId) {
+      const targetGeneration = readInputNumber(
+        operation.input,
+        "targetGeneration",
+      );
+      if (operation.workspaceId && targetGeneration !== null) {
+        await this.repository.degradeWorkspace?.({
+          workspaceId: operation.workspaceId,
+          ...failure,
+        });
+      } else if (operation.workspaceId) {
         await this.repository.failWorkspace({
           workspaceId: operation.workspaceId,
           ...failure,
         });
-      } else if (operation.type === "environment.update") {
+      } else if (
+        operation.type === "environment.update" ||
+        operation.type === "environment.gateway.update"
+      ) {
         await this.repository.degradeEnvironment({
           environmentId: operation.environmentId,
           ...failure,
@@ -552,6 +631,150 @@ export class EnvironmentProvisioner {
     } catch (error) {
       throw new EnvironmentProvisioningPersistenceError(error);
     }
+  }
+
+  private async updateEnvironmentGateway(operation: ProvisioningOperation) {
+    const environment = await this.repository.getEnvironment(
+      operation.environmentId,
+    );
+    if (
+      !environment?.flyAppName ||
+      !environment.flyGatewayMachineId ||
+      !["ready", "degraded"].includes(environment.status)
+    ) {
+      throw operationError(
+        "ENVIRONMENT_NOT_READY",
+        "Environment gateway update target is unavailable.",
+      );
+    }
+    const targetGeneration = readRequiredGeneration(operation.input);
+    if (environment.targetGeneration !== targetGeneration) {
+      await this.completeSupersededOperation(operation);
+      return;
+    }
+    const activeExecutionCount =
+      await this.repository.countActiveEnvironmentExecutions?.(environment.id);
+    if ((activeExecutionCount ?? 0) > 0) {
+      throw operationError(
+        "ENVIRONMENT_DRAINING",
+        `Waiting for ${activeExecutionCount} active Environment execution(s) to finish.`,
+      );
+    }
+    const routerImage = readImmutableImage(
+      operation.input?.routerImage,
+      "Environment router image",
+    );
+    const priorImage = readOptionalImmutableImage(
+      operation.input?.priorImage,
+      "Prior Environment router image",
+    );
+    const safetyRollback = operation.input?.safetyRollback === true;
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: safetyRollback
+        ? "platform.gateway.safety_rollback"
+        : "platform.gateway.applying",
+    });
+    try {
+      const gateway = await this.provider.updateMachineImage({
+        appName: environment.flyAppName,
+        machineId: environment.flyGatewayMachineId,
+        runtimeImage: routerImage,
+      });
+      if (gateway.state === "stopped") {
+        await this.provider.startMachine({
+          appName: environment.flyAppName,
+          machineId: environment.flyGatewayMachineId,
+        });
+      }
+      if (gateway.state !== "started") {
+        await this.provider.waitForMachine({
+          appName: environment.flyAppName,
+          machineId: environment.flyGatewayMachineId,
+          state: "started",
+          timeoutSeconds: 90,
+        });
+      }
+      await this.repository.updateOperationStage({
+        operationId: operation.id,
+        stage: safetyRollback
+          ? "platform.gateway.safety_rollback_verifying"
+          : "platform.gateway.verifying",
+      });
+      await this.provider.waitForMachineHealth({
+        appName: environment.flyAppName,
+        machineId: environment.flyGatewayMachineId,
+        checkName: "gateway",
+        timeoutSeconds: 90,
+      });
+    } catch (error) {
+      if (
+        !safetyRollback &&
+        hasErrorCode(error, "FLY_MACHINE_UNHEALTHY") &&
+        priorImage &&
+        priorImage !== routerImage
+      ) {
+        if (!this.repository.prepareSafetyRollback) {
+          throw operationError(
+            "PLATFORM_RUNTIME_ROLLBACK_UNAVAILABLE",
+            "Safety rollback persistence is unavailable.",
+          );
+        }
+        await this.repository.prepareSafetyRollback({
+          operationId: operation.id,
+          imageField: "routerImage",
+          priorImage,
+          rejectedImage: routerImage,
+        });
+        throw new EnvironmentProviderError(
+          "FLY_PROVIDER_UNAVAILABLE",
+          "The desired gateway image failed health verification; safety rollback is pending.",
+        );
+      }
+      throw error;
+    }
+    const current = await this.repository.getEnvironment(environment.id);
+    if (current?.targetGeneration !== targetGeneration) {
+      await this.completeSupersededOperation(operation);
+      return;
+    }
+    await this.repository.completeEnvironmentGatewayUpdate({
+      environmentId: environment.id,
+      routerImage,
+    });
+    if (safetyRollback) {
+      const rejectedImage = readInputString(operation.input, "rejectedImage");
+      const message = `Gateway image ${rejectedImage ?? "unknown"} failed health verification and was rolled back.`;
+      await this.repository.rejectPlatformGeneration?.({
+        environmentId: environment.id,
+        targetGeneration,
+        code: "PLATFORM_RUNTIME_GATEWAY_HEALTH_REJECTED",
+        message,
+      });
+      await this.repository.failOperation({
+        operationId: operation.id,
+        stage: "platform.gateway.rolled_back",
+        code: "PLATFORM_RUNTIME_GATEWAY_HEALTH_REJECTED",
+        message,
+      });
+      return;
+    }
+    await this.repository.completeOperation({
+      operationId: operation.id,
+      stage: "platform.gateway.ready",
+      result: { targetGeneration, routerImage },
+    });
+  }
+
+  private async completeSupersededOperation(operation: ProvisioningOperation) {
+    await this.repository.completeOperation({
+      operationId: operation.id,
+      stage: "platform.resource.superseded",
+      result: {
+        targetGeneration: readInputNumber(operation.input, "targetGeneration"),
+        superseded: true,
+      },
+    });
   }
 
   private async updateEnvironment(operation: ProvisioningOperation) {
@@ -992,7 +1215,10 @@ export class EnvironmentProvisioner {
         workspaceId: workspace.id,
         volumeId: volume.id,
         region: environment.region,
-        runtimeImage: environment.runtimeImage ?? this.runtimeImage,
+        runtimeImage:
+          environment.targetRuntimeImage ??
+          environment.runtimeImage ??
+          this.runtimeImage,
         ticketPublicKey: this.ticketPublicKey,
         controlPlaneUrl: this.controlPlaneUrl,
         serviceToken: workspaceServiceToken,
@@ -1046,7 +1272,10 @@ export class EnvironmentProvisioner {
         workspaceId: workspace.id,
         volumeId: volume.id,
         machineId: machine.id,
-        runtimeImage: environment.runtimeImage ?? this.runtimeImage,
+        runtimeImage:
+          environment.targetRuntimeImage ??
+          environment.runtimeImage ??
+          this.runtimeImage,
         serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
       });
       await this.repository.completeOperation({
@@ -1097,7 +1326,10 @@ export class EnvironmentProvisioner {
       workspaceStatusSchema.parse(workspace.status),
       "starting",
     );
-    const desiredRuntimeImage = environment.runtimeImage ?? this.runtimeImage;
+    const desiredRuntimeImage =
+      environment.targetRuntimeImage ??
+      environment.runtimeImage ??
+      this.runtimeImage;
     if (workspace.runtimeImage !== desiredRuntimeImage) {
       await this.configureStoppedWorkspaceRuntime({
         appName: environment.flyAppName,
@@ -1132,10 +1364,14 @@ export class EnvironmentProvisioner {
       timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
     });
     await this.repository.completeWorkspaceStart(workspace.id);
-    await this.repository.markWorkspaceReleaseVerified?.({
-      workspaceId: workspace.id,
-      runtimeImage: desiredRuntimeImage,
-    });
+    if (
+      process.env.KESTREL_PLATFORM_RUNTIME_RECONCILIATION_MODE !== "active"
+    ) {
+      await this.repository.markWorkspaceReleaseVerified?.({
+        workspaceId: workspace.id,
+        runtimeImage: desiredRuntimeImage,
+      });
+    }
     await this.repository.completeOperation({
       operationId: operation.id,
       stage: "environment.activation.ready",
@@ -1289,8 +1525,16 @@ export class EnvironmentProvisioner {
       this.repository.getEnvironment(operation.environmentId),
       this.repository.getWorkspace(operation.workspaceId),
     ]);
+    const targetGeneration = readInputNumber(operation.input, "targetGeneration");
+    const runtimeImage =
+      targetGeneration === null
+        ? environment?.runtimeImage
+        : readImmutableImage(
+            operation.input?.runtimeImage,
+            "Workspace runtime image",
+          );
     if (
-      !(environment?.flyAppName && environment.runtimeImage) ||
+      !(environment?.flyAppName && runtimeImage) ||
       environment.organizationId !== operation.organizationId ||
       !workspace?.flyMachineId ||
       workspace.organizationId !== operation.organizationId ||
@@ -1301,6 +1545,65 @@ export class EnvironmentProvisioner {
         "Workspace rebuild target is unavailable.",
       );
     }
+    if (
+      targetGeneration !== null &&
+      environment.targetGeneration !== targetGeneration
+    ) {
+      await this.completeSupersededOperation(operation);
+      return;
+    }
+    const priorImage = readOptionalImmutableImage(
+      operation.input?.priorImage,
+      "Prior Workspace runtime image",
+    );
+    const safetyRollback = operation.input?.safetyRollback === true;
+    const workspaceDataMigrationRevision = readInputString(
+      operation.input,
+      "workspaceDataMigrationRevision",
+    );
+    const migrationBackupCompleted =
+      asRecord(operation.result)?.migrationBackupCompleted === true;
+    if (
+      targetGeneration !== null &&
+      workspaceDataMigrationRevision &&
+      !migrationBackupCompleted
+    ) {
+      if (!workspace.flyVolumeId) {
+        throw operationError(
+          "WORKSPACE_VOLUME_MISSING",
+          "Workspace data migration requires a recoverable volume.",
+        );
+      }
+      if (!workspace.createdByUserId) {
+        throw operationError(
+          "WORKSPACE_BACKUP_ACTOR_MISSING",
+          "Workspace data migration requires a durable backup actor.",
+        );
+      }
+      await this.repository.updateOperationStage({
+        operationId: operation.id,
+        stage: "platform.workspace.backing_up",
+      });
+      await this.backupWorkspace({
+        organizationId: operation.organizationId,
+        environmentId: operation.environmentId,
+        workspaceId: workspace.id,
+        actorUserId: workspace.createdByUserId,
+        reason: "pre_destructive",
+        idempotencyKey:
+          `platform-runtime:${targetGeneration}:migration:` +
+          `${workspaceDataMigrationRevision}:${workspace.id}`,
+        parentLifecycleOperationId: operation.id,
+      });
+      await this.repository.updateOperationStage({
+        operationId: operation.id,
+        stage: "platform.workspace.backup_ready",
+        result: {
+          ...(operation.result ?? {}),
+          migrationBackupCompleted: true,
+        },
+      });
+    }
     assertWorkspaceOperationTransition(
       workspaceStatusSchema.parse(workspace.status),
       "starting",
@@ -1308,42 +1611,105 @@ export class EnvironmentProvisioner {
     await this.repository.setWorkspaceStarting(workspace.id);
     await this.repository.updateOperationStage({
       operationId: operation.id,
-      stage: "environment.machine.starting",
+      stage: safetyRollback
+        ? "platform.workspace.safety_rollback"
+        : "platform.workspace.applying",
     });
-    const machine = await this.provider.updateMachineImage({
-      appName: environment.flyAppName,
-      machineId: workspace.flyMachineId,
-      runtimeImage: environment.runtimeImage,
-      stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
-    });
-    if (machine.state !== "started") {
-      await this.provider.waitForMachine({
+    try {
+      const machine = await this.provider.updateMachineImage({
         appName: environment.flyAppName,
         machineId: workspace.flyMachineId,
-        state: "started",
+        runtimeImage,
+        stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
+      });
+      if (machine.state !== "started") {
+        await this.provider.waitForMachine({
+          appName: environment.flyAppName,
+          machineId: workspace.flyMachineId,
+          state: "started",
+          timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+        });
+      }
+      await this.repository.updateOperationStage({
+        operationId: operation.id,
+        stage: safetyRollback
+          ? "platform.workspace.safety_rollback_verifying"
+          : "platform.workspace.verifying",
+      });
+      await this.provider.waitForMachineHealth({
+        appName: environment.flyAppName,
+        machineId: workspace.flyMachineId,
+        checkName: "workspace",
         timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
       });
+    } catch (error) {
+      if (
+        targetGeneration !== null &&
+        !safetyRollback &&
+        hasErrorCode(error, "FLY_MACHINE_UNHEALTHY") &&
+        priorImage &&
+        priorImage !== runtimeImage
+      ) {
+        if (!this.repository.prepareSafetyRollback) {
+          throw operationError(
+            "PLATFORM_RUNTIME_ROLLBACK_UNAVAILABLE",
+            "Safety rollback persistence is unavailable.",
+          );
+        }
+        await this.repository.prepareSafetyRollback({
+          operationId: operation.id,
+          imageField: "runtimeImage",
+          priorImage,
+          rejectedImage: runtimeImage,
+        });
+        throw new EnvironmentProviderError(
+          "FLY_PROVIDER_UNAVAILABLE",
+          "The desired Workspace image failed health verification; safety rollback is pending.",
+        );
+      }
+      throw error;
     }
-    await this.repository.updateOperationStage({
-      operationId: operation.id,
-      stage: "environment.health.checking",
-    });
-    await this.provider.waitForMachineHealth({
-      appName: environment.flyAppName,
-      machineId: workspace.flyMachineId,
-      checkName: "workspace",
-      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
-    });
+    const currentEnvironment = await this.repository.getEnvironment(
+      environment.id,
+    );
+    if (
+      targetGeneration !== null &&
+      currentEnvironment?.targetGeneration !== targetGeneration
+    ) {
+      await this.completeSupersededOperation(operation);
+      return;
+    }
     await this.repository.completeWorkspaceRebuild({
       workspaceId: workspace.id,
-      runtimeImage: environment.runtimeImage,
+      runtimeImage,
     });
+    if (safetyRollback && targetGeneration !== null) {
+      const rejectedImage = readInputString(operation.input, "rejectedImage");
+      const message = `Workspace image ${rejectedImage ?? "unknown"} failed health verification and was rolled back.`;
+      await this.repository.rejectPlatformGeneration?.({
+        environmentId: environment.id,
+        targetGeneration,
+        code: "PLATFORM_RUNTIME_WORKSPACE_HEALTH_REJECTED",
+        message,
+      });
+      await this.repository.failOperation({
+        operationId: operation.id,
+        stage: "platform.workspace.rolled_back",
+        code: "PLATFORM_RUNTIME_WORKSPACE_HEALTH_REJECTED",
+        message,
+      });
+      return;
+    }
     await this.repository.completeOperation({
       operationId: operation.id,
-      stage: "environment.activation.ready",
+      stage:
+        targetGeneration === null
+          ? "environment.activation.ready"
+          : "platform.workspace.ready",
       result: {
         machineId: workspace.flyMachineId,
-        runtimeImage: environment.runtimeImage,
+        runtimeImage,
+        ...(targetGeneration === null ? {} : { targetGeneration }),
       },
     });
   }
@@ -1401,6 +1767,10 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             flyGatewayMachineId: true,
             routerImage: true,
             runtimeImage: true,
+            targetRouterImage: true,
+            targetRuntimeImage: true,
+            targetSourceRevision: true,
+            targetGeneration: true,
             idleTimeoutMinutes: true,
           },
         })
@@ -1412,6 +1782,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           where: (table, { eq }) => eq(table.id, workspaceId),
           columns: {
             id: true,
+            createdByUserId: true,
             organizationId: true,
             environmentId: true,
             status: true,
@@ -1433,6 +1804,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           }
           return {
             id: value.id,
+            createdByUserId: value.createdByUserId,
             organizationId: value.organizationId,
             environmentId: value.environmentId,
             status: value.status,
@@ -1458,6 +1830,21 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           runtimeImage: true,
         },
       });
+    },
+    async countActiveEnvironmentExecutions(environmentId) {
+      const rows = await knowledgeDb
+        .select({ count: sql<number>`count(*)::int` })
+        .from(schema.environmentRunExecutions)
+        .where(
+          and(
+            eq(schema.environmentRunExecutions.environmentId, environmentId),
+            inArray(schema.environmentRunExecutions.status, [
+              "routed",
+              "running",
+            ]),
+          ),
+        );
+      return rows[0]?.count ?? 0;
     },
     async beginEnvironmentProvisioning(input) {
       const now = new Date();
@@ -1755,6 +2142,17 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           updatedAt: new Date(),
         })
         .where(eq(schema.environments.id, input.environmentId));
+    },
+    async degradeWorkspace(input) {
+      await knowledgeDb
+        .update(schema.environmentWorkspaces)
+        .set({
+          status: "degraded",
+          failureCode: input.code,
+          failureMessage: input.message,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
     },
     async completeEnvironmentGatewayUpdate(input) {
       await knowledgeDb
@@ -2077,6 +2475,52 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         }
       });
     },
+    async prepareSafetyRollback(input) {
+      const operation =
+        await knowledgeDb.query.environmentOperations.findFirst({
+          where: (table, { eq }) => eq(table.id, input.operationId),
+          columns: { input: true },
+        });
+      await knowledgeDb
+        .update(schema.environmentOperations)
+        .set({
+          input: {
+            ...(operation?.input ?? {}),
+            [input.imageField]: input.priorImage,
+            rejectedImage: input.rejectedImage,
+            safetyRollback: true,
+          },
+          stage: "platform.resource.safety_rollback_pending",
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.environmentOperations.id, input.operationId));
+    },
+    async rejectPlatformGeneration(input) {
+      const now = new Date();
+      const settings =
+        await knowledgeDb.query.platformRuntimeSettings.findFirst({
+          where: eq(schema.platformRuntimeSettings.id, "platform"),
+          columns: { canaryEnvironmentId: true },
+        });
+      await knowledgeDb
+        .update(schema.platformRuntimeSettings)
+        .set({
+          status:
+            settings?.canaryEnvironmentId === input.environmentId
+              ? "rejected"
+              : "degraded",
+          lastFailureCode: input.code,
+          lastFailureMessage: input.message,
+          lastFailureAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.platformRuntimeSettings.id, "platform"),
+            eq(schema.platformRuntimeSettings.generation, input.targetGeneration),
+          ),
+        );
+    },
   };
 
 function operationError(code: string, message: string) {
@@ -2209,6 +2653,45 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function readInputString(value: unknown, key: string) {
   const candidate = asRecord(value)?.[key];
   return typeof candidate === "string" ? candidate : null;
+}
+
+function readInputNumber(value: unknown, key: string) {
+  const candidate = asRecord(value)?.[key];
+  return typeof candidate === "number" && Number.isSafeInteger(candidate)
+    ? candidate
+    : null;
+}
+
+function readRequiredGeneration(value: unknown) {
+  const generation = readInputNumber(value, "targetGeneration");
+  if (generation === null || generation < 1) {
+    throw operationError(
+      "PLATFORM_RUNTIME_GENERATION_INVALID",
+      "Platform runtime operation requires a positive target generation.",
+    );
+  }
+  return generation;
+}
+
+function readOptionalImmutableImage(value: unknown, label: string) {
+  if (value === undefined || value === null) return null;
+  return readImmutableImage(value, label);
+}
+
+function boundedRetryTime(input: {
+  attempt: number;
+  retryDeadline: string | null;
+  budgetNextAttemptAt: string | null;
+}) {
+  const scheduled =
+    input.budgetNextAttemptAt ??
+    new Date(
+      Date.now() + releaseRetryDelaySeconds(input.attempt) * 1000,
+    ).toISOString();
+  if (!input.retryDeadline) return scheduled;
+  return new Date(
+    Math.min(Date.parse(scheduled), Date.parse(input.retryDeadline)),
+  ).toISOString();
 }
 
 type EnvironmentUpdateCheckpoint = {

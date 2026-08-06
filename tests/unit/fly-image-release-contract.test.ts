@@ -22,6 +22,7 @@ const catalog = {
     image("preview-edge", ["apps/preview-edge/**"]),
     image("turn-worker", ["apps/web/**"]),
     image("runpod-worker", ["apps/web/**"]),
+    image("control-worker", ["apps/web/**"]),
   ],
 } satisfies FlyImageCatalog;
 
@@ -41,11 +42,11 @@ test("impact detection selects every image whose declared inputs changed", () =>
       changedPaths: ["apps/web/lib/releases/store.ts"],
       forceAll: false,
     }).map((entry) => entry.role),
-    ["turn-worker", "runpod-worker"],
+    ["turn-worker", "runpod-worker", "control-worker"],
   );
   assert.equal(
     impactedFlyImages({ catalog, changedPaths: [], forceAll: true }).length,
-    5,
+    6,
   );
 });
 
@@ -64,7 +65,7 @@ test("catalog changes rebuild every managed image", () => {
     changedPaths: ["deploy/fly/image-catalog.json"],
     forceAll: false,
   });
-  assert.equal(impacted.length, 5);
+  assert.equal(impacted.length, 6);
 });
 
 test("Docker build-context changes rebuild every managed image", () => {
@@ -80,7 +81,7 @@ test("Docker build-context changes rebuild every managed image", () => {
     changedPaths: [".dockerignore"],
     forceAll: false,
   });
-  assert.equal(impacted.length, 5);
+  assert.equal(impacted.length, 6);
 });
 
 test("workspace-runtime image builds and carries the shared memory package", async () => {

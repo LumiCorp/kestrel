@@ -8,6 +8,7 @@ type EnvironmentOperationPresentationInput = {
 const OPERATION_LABELS: Record<string, string> = {
   "environment.provision": "Environment provisioning",
   "environment.update": "Environment update",
+  "environment.gateway.update": "Environment gateway update",
   "environment.delete": "Environment deletion",
   "workspace.provision": "Workspace provisioning",
   "workspace.start": "Workspace wake",
@@ -56,6 +57,28 @@ const STAGE_DETAILS: Record<string, string> = {
   "environment.update.recovery_required":
     "Environment updated; one or more Workspaces require provisioning retry.",
   "environment.deleted": "Environment deleted.",
+  "platform.gateway.queued": "Waiting to update the Environment gateway…",
+  "platform.gateway.draining":
+    "Waiting for active work in this Environment to finish…",
+  "platform.gateway.applying": "Updating the Environment gateway image…",
+  "platform.gateway.verifying": "Verifying Environment gateway health…",
+  "platform.gateway.ready": "Environment gateway image verified.",
+  "platform.gateway.safety_rollback": "Restoring the prior gateway image…",
+  "platform.gateway.safety_rollback_verifying":
+    "Verifying the restored gateway image…",
+  "platform.workspace.queued": "Waiting to update this Workspace…",
+  "platform.workspace.backing_up":
+    "Protecting this Workspace before its declared data migration…",
+  "platform.workspace.applying": "Updating this Workspace runtime image…",
+  "platform.workspace.verifying": "Verifying this Workspace runtime…",
+  "platform.workspace.ready": "Workspace runtime image verified.",
+  "platform.workspace.safety_rollback":
+    "Restoring the prior Workspace image…",
+  "platform.workspace.safety_rollback_verifying":
+    "Verifying the restored Workspace image…",
+  "platform.resource.superseded":
+    "A newer platform generation superseded this operation.",
+  "platform.resource.manual_retry": "Retrying this resource…",
   "workspace.deleted": "Workspace deleted.",
   "workspace.backup.queued": "Waiting to start the Workspace backup…",
   "workspace.backup.waiting_for_execution":

@@ -81,6 +81,10 @@ function fixture(
           type === "environment.provision" ? null : "gateway-machine-id",
         routerImage: "registry.example/router@sha256:def",
         runtimeImage: "registry.example/runtime@sha256:abc",
+        targetRouterImage: null,
+        targetRuntimeImage: null,
+        targetSourceRevision: null,
+        targetGeneration: null,
         idleTimeoutMinutes: 15,
       };
     },
@@ -88,6 +92,7 @@ function fixture(
       return workspaceId
         ? {
             id: workspaceId,
+            createdByUserId: "user-id",
             organizationId: "organization-id",
             environmentId: "environment-id",
             status: "requested",
@@ -130,6 +135,9 @@ function fixture(
     },
     async degradeEnvironment(input) {
       calls.push(`environment:degraded:${input.code}`);
+    },
+    async degradeWorkspace(input) {
+      calls.push(`workspace:degraded:${input.code}`);
     },
     async completeEnvironmentGatewayUpdate() {
       calls.push("environment:gateway-updated");
@@ -181,6 +189,12 @@ function fixture(
     },
     async deferOperation(input) {
       calls.push(`operation:deferred:${input.message}`);
+    },
+    async prepareSafetyRollback() {
+      calls.push("operation:safety-rollback-persisted");
+    },
+    async rejectPlatformGeneration(input) {
+      calls.push(`platform:rejected:${input.code}`);
     },
   };
   const provider: EnvironmentInfrastructureProvider = {
@@ -297,6 +311,111 @@ test("Environment provisioning durably follows requested through ready", async (
     "operation:completed",
   ]);
   assert.equal(await provisioner.process("operation-id"), "not_claimed");
+});
+
+test("a superseded gateway generation exits before touching Fly", async () => {
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture(
+    "environment.gateway.update",
+    null,
+    {
+      targetGeneration: 2,
+      sourceRevision: "a".repeat(40),
+      routerImage,
+      retryDeadline: new Date(Date.now() + 60_000).toISOString(),
+    },
+  );
+  const getEnvironment = repository.getEnvironment;
+  repository.getEnvironment = async (environmentId) => ({
+    ...(await getEnvironment(environmentId))!,
+    targetGeneration: 3,
+  });
+  provider.updateMachineImage = async () => {
+    calls.push("provider:image-update");
+    return { id: "gateway-machine-id", state: "started", region: "iad" };
+  };
+
+  assert.equal(
+    await createProvisioner(repository, provider).process("operation-id"),
+    "processed",
+  );
+  assert.equal(calls.includes("provider:image-update"), false);
+  assert.deepEqual(calls, ["operation:completed"]);
+});
+
+test("gateway desired state verifies one immutable image without rotating credentials", async () => {
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const priorImage = `registry.fly.io/kestrel-one-runner@sha256:${"c".repeat(64)}`;
+  const { repository, provider, calls } = fixture(
+    "environment.gateway.update",
+    null,
+    {
+      targetGeneration: 2,
+      sourceRevision: "a".repeat(40),
+      routerImage,
+      priorImage,
+      retryDeadline: new Date(Date.now() + 60_000).toISOString(),
+    },
+  );
+  const getEnvironment = repository.getEnvironment;
+  repository.getEnvironment = async (environmentId) => ({
+    ...(await getEnvironment(environmentId))!,
+    routerImage: priorImage,
+    targetRouterImage: routerImage,
+    targetGeneration: 2,
+  });
+  provider.updateMachineImage = async (input) => {
+    calls.push(`provider:image-update:${input.runtimeImage}`);
+    assert.equal(input.envPatch, undefined);
+    return { id: "gateway-machine-id", state: "started", region: "iad" };
+  };
+
+  assert.equal(
+    await createProvisioner(repository, provider).process("operation-id"),
+    "processed",
+  );
+  assert.ok(calls.includes(`provider:image-update:${routerImage}`));
+  assert.ok(calls.includes("provider:health"));
+  assert.ok(calls.includes("environment:gateway-updated"));
+  assert.ok(calls.includes("operation:completed"));
+});
+
+test("failed gateway health persists safety rollback before retry", async () => {
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const priorImage = `registry.fly.io/kestrel-one-runner@sha256:${"c".repeat(64)}`;
+  const { repository, provider, calls } = fixture(
+    "environment.gateway.update",
+    null,
+    {
+      targetGeneration: 2,
+      sourceRevision: "a".repeat(40),
+      routerImage,
+      priorImage,
+      retryDeadline: new Date(Date.now() + 60_000).toISOString(),
+    },
+  );
+  const getEnvironment = repository.getEnvironment;
+  repository.getEnvironment = async (environmentId) => ({
+    ...(await getEnvironment(environmentId))!,
+    routerImage: priorImage,
+    targetRouterImage: routerImage,
+    targetGeneration: 2,
+  });
+  provider.waitForMachineHealth = async () => {
+    throw new EnvironmentProviderError(
+      "FLY_MACHINE_UNHEALTHY",
+      "health failed",
+    );
+  };
+
+  assert.equal(
+    await createProvisioner(repository, provider).process("operation-id"),
+    "deferred",
+  );
+  assert.ok(calls.includes("operation:safety-rollback-persisted"));
+  assert.ok(
+    calls.some((call) => call.includes("safety rollback is pending")),
+  );
 });
 
 test("Environment updates preserve Workspaces, update ingress, and verify runtimes", async () => {

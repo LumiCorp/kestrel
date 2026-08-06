@@ -41,6 +41,10 @@ export type EnvironmentActivationProgress = {
   status: "pending" | "ready" | "failed";
 };
 
+function platformRuntimeAutomationIsActive() {
+  return process.env.KESTREL_PLATFORM_RUNTIME_RECONCILIATION_MODE === "active";
+}
+
 export class EnvironmentActivationError extends Error {
   readonly code = "ENVIRONMENT_ACTIVATION_TIMEOUT";
 
@@ -421,7 +425,9 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
         workspaceId: input.workspaceId,
         excludedOperationIds: input.owningLifecycleOperationIds,
       }),
-      transaction.query.flyImageReleaseTargets.findFirst({
+      platformRuntimeAutomationIsActive()
+        ? Promise.resolve(null)
+        : transaction.query.flyImageReleaseTargets.findFirst({
         where: (table, { and, eq, inArray }) =>
           and(
             eq(table.environmentId, input.environmentId),
@@ -431,7 +437,7 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
               : []),
           ),
         columns: { id: true },
-      }),
+          }),
     ]);
     if (
       !(
@@ -627,7 +633,9 @@ async function waitForExecutionResources(input: {
         workspaceId: input.workspaceId,
         excludedOperationIds: input.owningLifecycleOperationIds,
       }),
-      knowledgeDb.query.flyImageReleaseTargets.findFirst({
+      platformRuntimeAutomationIsActive()
+        ? Promise.resolve(null)
+        : knowledgeDb.query.flyImageReleaseTargets.findFirst({
         where: (table, { and, eq, inArray }) =>
           and(
             eq(table.environmentId, input.environmentId),
@@ -641,7 +649,7 @@ async function waitForExecutionResources(input: {
               : []),
           ),
         columns: { id: true },
-      }),
+          }),
     ]);
     if (!(environment && workspace)) {
       throw new Error("Environment execution binding is unavailable.");

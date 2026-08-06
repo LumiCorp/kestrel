@@ -20,11 +20,22 @@ export async function processEnvironmentOperation(
 ) {
   const operation = await knowledgeDb.query.environmentOperations.findFirst({
     where: eq(schema.environmentOperations.id, operationId),
-    columns: { organizationId: true, environmentId: true, type: true },
+    columns: {
+      organizationId: true,
+      environmentId: true,
+      workspaceId: true,
+      type: true,
+      input: true,
+    },
   });
   if (!operation) throw new Error("Environment operation was not found.");
   const locked = await withEnvironmentOperationLock({
-    environmentId: operation.environmentId,
+    environmentId:
+      operation.type === "workspace.rebuild" &&
+      typeof operation.input?.targetGeneration === "number" &&
+      operation.workspaceId
+        ? `workspace:${operation.workspaceId}`
+        : operation.environmentId,
     run: async () => {
       if (operation.type === "workspace.backup") {
         const { processQueuedWorkspaceBackup } = await import("./backups");
@@ -41,15 +52,22 @@ export async function processEnvironmentOperation(
       }
       const { getStableFlyEnvironmentImages } =
         await import("@/lib/releases/store");
-      const stableImages = await getStableFlyEnvironmentImages();
+      const { getActivePlatformEnvironmentImages } =
+        await import("@/lib/runtime-deployments/store");
+      const [platformImages, stableImages] = await Promise.all([
+        getActivePlatformEnvironmentImages(),
+        getStableFlyEnvironmentImages(),
+      ]);
       const provisioner = new EnvironmentProvisioner({
         repository: databaseEnvironmentProvisioningRepository,
         provider: await createFlyProviderClient(operation.organizationId),
         runtimeImage:
+          platformImages?.runtimeImage ??
           stableImages?.runtimeImage ??
           process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE?.trim() ??
           "",
         routerImage:
+          platformImages?.routerImage ??
           stableImages?.routerImage ??
           process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE?.trim() ??
           "",

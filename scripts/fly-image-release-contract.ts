@@ -40,6 +40,7 @@ export const flyImageCatalogSchema = z.object({
           "preview-edge",
           "turn-worker",
           "runpod-worker",
+          "control-worker",
         ]),
         app: z.string().trim().min(1),
         config: z.string().trim().min(1),
@@ -49,7 +50,7 @@ export const flyImageCatalogSchema = z.object({
         inputs: z.array(z.string().trim().min(1)).min(1),
       }),
     )
-    .length(5),
+    .length(6),
 });
 
 export type FlyImageCatalog = z.infer<typeof flyImageCatalogSchema>;

@@ -3,11 +3,9 @@ import { z } from "zod";
 import {
   fingerprintImageInputs,
   flyImageCatalogSchema,
-  flyImagePublicationStateSchema,
-  flyMigrationChanged,
   impactedFlyImages,
-  selectFlyImageDiffBase,
 } from "./fly-image-release-contract.js";
+import { runtimeRolloutContractSchema } from "../apps/web/lib/runtime-deployments/contracts.js";
 
 export const FLY_REGISTRY_PULL_ATTEMPTS = 13;
 export const FLY_REGISTRY_PULL_RETRY_DELAY_MS = 5_000;
@@ -42,19 +40,24 @@ export async function publishFlyImages(
   const revision = await git(dependencies, ["rev-parse", "HEAD"]);
   const requestedForceAll =
     trigger === "scheduled" || env.KESTREL_RELEASE_FORCE_ALL === "true";
-  const publishUrl = requireEnvironment(env, "KESTREL_RELEASE_PUBLISH_URL");
+  const publishUrl =
+    env.KESTREL_PLATFORM_IMAGE_URL?.trim() ||
+    requireEnvironment(env, "KESTREL_RELEASE_PUBLISH_URL");
   const preflightToken = await requestGithubOidcToken(dependencies);
-  const publicationState = await getReleasePublicationState(
+  const publicationState = await getPlatformPublicationState(
     dependencies,
     publishUrl,
     preflightToken,
     revision,
   );
-  const forceAll = requestedForceAll || publicationState.requiresFullBundle;
+  const forceAll = requestedForceAll;
   const catalog = flyImageCatalogSchema.parse(
     JSON.parse(await readFile(`${root}/deploy/fly/image-catalog.json`, "utf8")),
   );
-  const diffBase = selectFlyImageDiffBase(publicationState);
+  const diffBase =
+    env.KESTREL_RELEASE_DIFF_BASE?.trim() ||
+    publicationState.platform.activeSourceRevision ||
+    undefined;
   const changedPaths = diffBase
     ? await listChangedPaths(dependencies, diffBase, revision)
     : [];
@@ -122,20 +125,87 @@ export async function publishFlyImages(
       },
     });
   }
+  const globalComponents = components.filter((component) => {
+    const catalogEntry = catalog.images.find(
+      (candidate) => candidate.role === component.role,
+    );
+    return catalogEntry?.rollout === "global-app";
+  });
+  for (const component of globalComponents) {
+    const image = catalog.images.find(
+      (candidate) => candidate.role === component.role,
+    );
+    if (!image) throw new Error(`Catalog entry ${component.role} disappeared.`);
+    await dependencies.run("flyctl", [
+      "deploy",
+      ".",
+      "--app",
+      image.app,
+      "--config",
+      image.config,
+      "--image",
+      component.image,
+      "--strategy",
+      "rolling",
+      "--wait-timeout",
+      "300",
+    ]);
+    dependencies.write(
+      `Deployed ${component.role} at ${component.sourceRevision}.\n`,
+    );
+  }
 
-  const validationCommands = parseValidationCommands(env);
-  const manifest = {
-    version: 1 as const,
-    controllerContractRevision: 1,
-    bundleRevision: revision,
-    trigger,
-    migrationChanged: flyMigrationChanged(changedPaths),
-    validation: {
-      status: "passed" as const,
-      commands: validationCommands,
-      completedAt: dependencies.now().toISOString(),
+  const environmentComponents = components.filter((component) =>
+    ["environment-router", "workspace-runtime"].includes(component.role),
+  );
+  if (environmentComponents.length === 0) {
+    return { published: false as const, components, globalComponents };
+  }
+  const rollout = runtimeRolloutContractSchema.parse(
+    JSON.parse(await readFile(`${root}/deploy/fly/runtime-rollout.json`, "utf8")),
+  );
+  const maintenanceDispatch =
+    rollout.mode === "maintenance" && env.GITHUB_EVENT_NAME === "workflow_dispatch";
+  if (rollout.mode === "maintenance" && !maintenanceDispatch) {
+    dependencies.write(
+      "Built and smoked maintenance images; exact-SHA workflow dispatch is required for activation.\n",
+    );
+    return {
+      published: false as const,
+      maintenancePending: true as const,
+      components,
+      globalComponents,
+    };
+  }
+  const router = environmentComponents.find(
+    (component) => component.role === "environment-router",
+  );
+  const runtime = environmentComponents.find(
+    (component) => component.role === "workspace-runtime",
+  );
+  const routerImage =
+    router?.image ??
+    publicationState.platform.desiredRouterImage ??
+    publicationState.platform.activeRouterImage;
+  const runtimeImage =
+    runtime?.image ??
+    publicationState.platform.desiredRuntimeImage ??
+    publicationState.platform.activeRuntimeImage;
+  if (!(routerImage && runtimeImage)) {
+    throw new Error(
+      "Platform image publication requires both immutable router and Workspace Runtime images.",
+    );
+  }
+  const publication = {
+    sourceRevision: revision,
+    routerImage,
+    runtimeImage,
+    rollout,
+    smoke: {
+      ...(router ? { router: router.smoke } : {}),
+      ...(runtime ? { runtime: runtime.smoke } : {}),
     },
-    components,
+    activateMaintenance: maintenanceDispatch,
   };
   // GitHub Actions OIDC tokens are deliberately short-lived. Image builds and
   // smoke tests can take much longer than one token lifetime, so publication
@@ -147,18 +217,36 @@ export async function publishFlyImages(
       authorization: `Bearer ${publicationToken}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify(manifest),
+    body: JSON.stringify(publication),
   });
   if (!response.ok) {
     throw new Error(
-      `Release candidate publication failed (${response.status}${await responseErrorSuffix(response)}).`,
+      `Platform image publication failed (${response.status}${await responseErrorSuffix(response)}).`,
     );
   }
-  const result = (await response.json()) as { release?: { id?: unknown } };
+  let result = platformPublicationStateSchema.parse(await response.json());
+  for (let attempt = 0; ["canary", "maintenance"].includes(result.platform.status); attempt += 1) {
+    if (attempt >= 120) {
+      throw new Error("Platform canary did not finish within 20 minutes.");
+    }
+    await dependencies.wait(10_000);
+    const pollToken = await requestGithubOidcToken(dependencies);
+    result = await getPlatformPublicationState(
+      dependencies,
+      publishUrl,
+      pollToken,
+      revision,
+    );
+  }
+  if (["blocked", "rejected"].includes(result.platform.status)) {
+    throw new Error(
+      `Platform canary ended ${result.platform.status}: ${result.platform.lastFailureCode ?? "unknown"}.`,
+    );
+  }
   dependencies.write(
-    `Published Fly image release candidate ${String(result.release?.id ?? "unknown")}.\n`,
+    `Published platform generation ${result.platform.generation}; fanout status is ${result.platform.status}.\n`,
   );
-  return { published: true as const, components, manifest };
+  return { published: true as const, components, publication, result };
 }
 
 export async function tryPullExistingImage(
@@ -233,23 +321,45 @@ async function requestGithubOidcToken(
   return payload.value;
 }
 
-async function getReleasePublicationState(
+const platformPublicationStateSchema = z.object({
+  platform: z.object({
+    generation: z.number().int().nonnegative(),
+    status: z.enum([
+      "ready",
+      "canary",
+      "fanout",
+      "degraded",
+      "blocked",
+      "rejected",
+      "maintenance_pending",
+      "maintenance",
+    ]),
+    activeSourceRevision: z.string().nullable(),
+    desiredRouterImage: z.string().nullable(),
+    activeRouterImage: z.string().nullable(),
+    desiredRuntimeImage: z.string().nullable(),
+    activeRuntimeImage: z.string().nullable(),
+    lastFailureCode: z.string().nullable(),
+  }).passthrough(),
+}).passthrough();
+
+async function getPlatformPublicationState(
   dependencies: FlyImagePublisherDependencies,
   publishUrl: string,
   oidcToken: string,
   revision: string,
 ) {
   const url = new URL(publishUrl);
-  url.searchParams.set("revision", revision);
+  url.searchParams.set("sourceRevision", revision);
   const response = await dependencies.fetchImpl(url, {
     headers: { authorization: `Bearer ${oidcToken}` },
   });
   if (!response.ok) {
     throw new Error(
-      `Release publication preflight failed (${response.status}${await responseErrorSuffix(response)}).`,
+      `Platform publication preflight failed (${response.status}${await responseErrorSuffix(response)}).`,
     );
   }
-  return flyImagePublicationStateSchema.parse(await response.json());
+  return platformPublicationStateSchema.parse(await response.json());
 }
 
 async function resolveLocalImageDigest(
@@ -280,12 +390,6 @@ async function resolveLocalImageDigest(
     );
   }
   return matches[0]!;
-}
-
-function parseValidationCommands(env: NodeJS.ProcessEnv) {
-  const raw = env.KESTREL_RELEASE_VALIDATION_COMMANDS;
-  if (!raw) return ["pnpm validate"];
-  return z.array(z.string().trim().min(1)).parse(JSON.parse(raw));
 }
 
 function requireEnvironment(env: NodeJS.ProcessEnv, name: string) {

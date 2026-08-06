@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "environmentRouter": {
+    "current": 2,
+    "supported": [1, 2]
+  },
+  "workspaceRuntime": {
+    "current": 3,
+    "supported": [2, 3]
+  }
+}
