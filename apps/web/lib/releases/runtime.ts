@@ -1,9 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { FlyMachinesClient } from "@/lib/environments/providers/fly-machines";
 import { EnvironmentProviderError } from "@/lib/environments/providers/contracts";
-import {
-  releaseRetryNextAttemptAt,
-} from "@/lib/environments/provisioner";
+import { releaseRetryNextAttemptAt } from "@/lib/environments/provisioner";
 import { environmentLifecycleLockKey } from "@/lib/environments/lifecycle-lock";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
@@ -77,6 +75,25 @@ export async function processFlyImageRelease(
   const nextAttemptAt = readResultString(target.result, "nextAttemptAt");
   if (nextAttemptAt && Date.parse(nextAttemptAt) > Date.now())
     return "deferred";
+
+  if (target.targetKind === "environment" && !target.environmentId) {
+    await knowledgeDb
+      .update(schema.flyImageReleaseTargets)
+      .set({
+        status: "completed",
+        stage: "environment.removed_before_deploy",
+        result: {
+          ...(target.result ?? {}),
+          skippedReason: "environment_removed",
+        },
+        failureCode: null,
+        failureMessage: null,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.flyImageReleaseTargets.id, target.id));
+    return "deferred";
+  }
 
   try {
     if (target.targetKind === "global_app" && target.componentRole) {
