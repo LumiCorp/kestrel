@@ -127,23 +127,36 @@ export function selectControlWorkerSecrets(source: Record<string, string>) {
   return selected;
 }
 
+export function hasSingleRunningMachine(inventory: unknown) {
+  if (!Array.isArray(inventory)) return false;
+  return (
+    inventory.filter((machine) => {
+      if (!(machine && typeof machine === "object")) return false;
+      const record = machine as Record<string, unknown>;
+      return (record.state ?? record.State) === "started";
+    }).length === 1
+  );
+}
+
 function verifySingleRunningMachine() {
-  const parsed = JSON.parse(
+  const parsed: unknown = JSON.parse(
     run("fly", ["machine", "list", "--app", app, "--json"], {
       quiet: true,
     }),
-  ) as unknown;
+  );
   if (!Array.isArray(parsed)) {
     throw new Error("Fly did not return the control worker Machine inventory.");
   }
-  const running = parsed.filter((machine) => {
-    if (!(machine && typeof machine === "object")) return false;
-    const record = machine as Record<string, unknown>;
-    return (record.state ?? record.State) === "started";
-  });
-  if (parsed.length !== 1 || running.length !== 1) {
+  if (!hasSingleRunningMachine(parsed)) {
+    const runningCount = parsed.filter(
+      (machine) =>
+        machine &&
+        typeof machine === "object" &&
+        ((machine as Record<string, unknown>).state ??
+          (machine as Record<string, unknown>).State) === "started",
+    ).length;
     throw new Error(
-      `Control worker requires exactly one running Machine; found ${running.length} running of ${parsed.length}.`,
+      `Control worker requires exactly one running Machine; found ${runningCount} running of ${parsed.length}.`,
     );
   }
 }

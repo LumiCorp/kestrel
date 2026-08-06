@@ -7,6 +7,7 @@ import {
 } from "./controller-contract";
 import {
   CONTROL_WORKER_SECRET_ALLOWLIST,
+  hasSingleRunningMachine,
   selectControlWorkerSecrets,
 } from "../../scripts/release-control-worker";
 
@@ -48,12 +49,30 @@ test("control worker secrets are explicitly allowlisted and fail closed", () => 
   );
 });
 
+test("control worker ownership permits stopped standby Machines only", () => {
+  assert.equal(
+    hasSingleRunningMachine([
+      { state: "started" },
+      { state: "stopped", role: "standby" },
+    ]),
+    true,
+  );
+  assert.equal(
+    hasSingleRunningMachine([{ state: "started" }, { State: "started" }]),
+    false,
+  );
+  assert.equal(hasSingleRunningMachine([{ state: "stopped" }]), false);
+  assert.equal(hasSingleRunningMachine({ state: "started" }), false);
+});
+
 test("runtime workflow waits for exact production identity before desired-state publication", async () => {
   const workflow = await readFile(
     new URL(".github/workflows/fly-image-release.yml", root),
     "utf8",
   );
-  const wait = workflow.indexOf("Wait for the exact Kestrel One production revision");
+  const wait = workflow.indexOf(
+    "Wait for the exact Kestrel One production revision",
+  );
   const publish = workflow.indexOf(
     "Build, smoke, deploy global apps, and publish desired platform images",
   );
