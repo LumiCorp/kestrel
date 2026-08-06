@@ -457,6 +457,124 @@ test("Environment updates recover an incompatible stopped runtime from a pre-des
   ]);
 });
 
+test("Environment updates repair failed Workspaces before routed backup", async () => {
+  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture("environment.update", null, {
+    runtimeImage,
+    routerImage,
+  });
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "failed-workspace-id",
+      status: "failed",
+      flyMachineId: "failed-workspace-machine-id",
+      flyVolumeId: "failed-workspace-volume-id",
+      runtimeImage,
+    },
+  ];
+  provider.createVolumeSnapshot = async (input) => {
+    calls.push(`provider:snapshot:${input.volumeId}`);
+    return { id: "pre-repair-snapshot", state: "created" };
+  };
+  provider.updateMachineImage = async (input) => {
+    calls.push(`provider:image:${input.machineId}`);
+    return { id: input.machineId, state: "replacing", region: "iad" };
+  };
+  provider.startMachine = async () => {
+    calls.push("provider:start");
+  };
+  const backupInputs: Array<{
+    preDestructiveSnapshot?: { id: string; state: string } | undefined;
+  }> = [];
+  const provisioner = createProvisioner(
+    repository,
+    provider,
+    async (input) => {
+      backupInputs.push(input);
+      calls.push(`backup:${input.workspaceId}`);
+    },
+  );
+
+  assert.equal(await provisioner.process("operation-id"), "processed");
+  assert.deepEqual(backupInputs, [
+    {
+      organizationId: "organization-id",
+      environmentId: "environment-id",
+      workspaceId: "failed-workspace-id",
+      actorUserId: "user-id",
+      reason: "pre_destructive",
+      idempotencyKey:
+        "environment.update:operation-id:backup:failed-workspace-id",
+      parentLifecycleOperationId: "operation-id",
+      parentReleaseTargetId: undefined,
+      preDestructiveSnapshot: {
+        id: "pre-repair-snapshot",
+        state: "created",
+      },
+    },
+  ]);
+  assert.deepEqual(calls.slice(6, 14), [
+    "operation:stage:environment.update.backing_up",
+    "provider:snapshot:failed-workspace-volume-id",
+    "workspace:starting",
+    "provider:image:failed-workspace-machine-id",
+    "provider:wait",
+    "provider:start",
+    "provider:wait",
+    "provider:health",
+  ]);
+  assert.ok(calls.includes("workspace:rebuilt"));
+  assert.ok(calls.includes("backup:failed-workspace-id"));
+});
+
+test("failed Workspace repair keeps Fly 408s inside the release retry budget", async () => {
+  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture("environment.update", null, {
+    runtimeImage,
+    routerImage,
+    releaseTargetId: "release-target-id",
+  });
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "failed-workspace-id",
+      status: "failed",
+      flyMachineId: "failed-workspace-machine-id",
+      flyVolumeId: "failed-workspace-volume-id",
+      runtimeImage,
+    },
+  ];
+  provider.createVolumeSnapshot = async () => {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_REJECTED",
+      "Fly Machines API rejected the request (408).",
+      408,
+    );
+  };
+  let backupCount = 0;
+
+  const outcome = await createProvisioner(
+    repository,
+    provider,
+    async () => {
+      backupCount += 1;
+    },
+  ).process("operation-id");
+
+  assert.equal(outcome, "deferred");
+  assert.equal(backupCount, 0);
+  assert.ok(
+    calls.includes(
+      "operation:deferred:Fly Machines API rejected the request (408).",
+    ),
+  );
+  assert.equal(
+    calls.some((entry) => entry.startsWith("workspace:failed:")),
+    false,
+  );
+});
+
 test("operator-authorized maintenance updates can skip Workspace retention", async () => {
   const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
   const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
