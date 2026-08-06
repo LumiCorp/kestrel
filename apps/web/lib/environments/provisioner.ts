@@ -23,6 +23,7 @@ import {
   createEnvironmentServiceToken,
   hashEnvironmentServiceToken,
 } from "./service-tokens";
+import { createAuxiliaryVolumeSnapshot } from "./backup-snapshot";
 
 export type ProvisioningOperation = {
   id: string;
@@ -685,10 +686,6 @@ export class EnvironmentProvisioner {
       for (const workspace of workspaces) {
         if (!(workspace.flyMachineId && workspace.flyVolumeId)) continue;
         if (preserveStoppedWorkspaces && workspace.status === "stopped") {
-          await this.provider.createVolumeSnapshot({
-            appName: environment.flyAppName,
-            volumeId: workspace.flyVolumeId,
-          });
           continue;
         }
         const backupInput = {
@@ -706,7 +703,7 @@ export class EnvironmentProvisioner {
         } as const;
         if (workspace.status === "failed") {
           const preDestructiveSnapshot =
-            await this.provider.createVolumeSnapshot({
+            await this.createPreDestructiveSnapshot({
               appName: environment.flyAppName,
               volumeId: workspace.flyVolumeId,
             });
@@ -730,7 +727,7 @@ export class EnvironmentProvisioner {
             throw error;
           }
           const preDestructiveSnapshot =
-            await this.provider.createVolumeSnapshot({
+            await this.createPreDestructiveSnapshot({
               appName: environment.flyAppName,
               volumeId: workspace.flyVolumeId,
             });
@@ -846,6 +843,20 @@ export class EnvironmentProvisioner {
       runtimeImage: input.runtimeImage,
       serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
     });
+  }
+
+  private async createPreDestructiveSnapshot(input: {
+    appName: string;
+    volumeId: string;
+  }) {
+    const snapshot = await createAuxiliaryVolumeSnapshot({
+      ...input,
+      createSnapshot: (snapshotInput) =>
+        this.provider.createVolumeSnapshot(snapshotInput),
+    });
+    return snapshot.id
+      ? { id: snapshot.id, state: snapshot.state }
+      : undefined;
   }
 
   private async updateWorkspaceRuntime(input: {

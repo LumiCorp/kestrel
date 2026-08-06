@@ -57,11 +57,7 @@ export async function processEnvironmentOperation(
           process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
         controlPlaneUrl: process.env.KESTREL_ONE_APP_URL ?? "",
       });
-      const result = await provisioner.process(operationId);
-      if (result === "deferred") {
-        throw new Error("Environment operation is waiting for a prerequisite.");
-      }
-      return result;
+      return provisioner.process(operationId);
     },
   });
   return locked.acquired ? locked.result : "not_claimed";
