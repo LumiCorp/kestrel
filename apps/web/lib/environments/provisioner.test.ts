@@ -542,7 +542,7 @@ test("Environment updates repair failed Workspaces before routed backup", async 
   );
 });
 
-test("failed Workspace repair keeps Fly 408s inside the release retry budget", async () => {
+test("an auxiliary pre-repair snapshot 408 does not pause a release", async () => {
   const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
   const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
@@ -576,13 +576,10 @@ test("failed Workspace repair keeps Fly 408s inside the release retry budget", a
     },
   ).process("operation-id");
 
-  assert.equal(outcome, "deferred");
-  assert.equal(backupCount, 0);
-  assert.ok(
-    calls.includes(
-      "operation:deferred:Fly Machines API rejected the request (408).",
-    ),
-  );
+  assert.equal(outcome, "processed");
+  assert.equal(backupCount, 1);
+  assert.ok(calls.includes("workspace:rebuilt"));
+  assert.ok(calls.includes("operation:completed"));
   assert.equal(
     calls.some((entry) => entry.startsWith("workspace:failed:")),
     false,
@@ -663,9 +660,8 @@ test("managed releases reconfigure stopped Workspaces without launching them", a
   repository.completeOperation = async (input) => {
     completion = input.result;
   };
-  provider.createVolumeSnapshot = async (input) => {
-    calls.push(`provider:snapshot:${input.volumeId}`);
-    return { id: "snapshot-id", state: "created" };
+  provider.createVolumeSnapshot = async () => {
+    throw new Error("config-only stopped updates must not snapshot volumes");
   };
   provider.updateMachineImage = async (input) => ({
     id: input.machineId,
@@ -683,7 +679,10 @@ test("managed releases reconfigure stopped Workspaces without launching them", a
 
   assert.equal(backupCount, 0);
   assert.equal(calls.includes("provider:start"), false);
-  assert.ok(calls.includes("provider:snapshot:workspace-volume-id"));
+  assert.equal(
+    calls.some((entry) => entry.startsWith("provider:snapshot:")),
+    false,
+  );
   assert.equal(configured?.workspaceId, "workspace-id");
   assert.equal(configured?.runtimeImage, runtimeImage);
   assert.deepEqual(completion?.configuredUnverifiedWorkspaceIds, [

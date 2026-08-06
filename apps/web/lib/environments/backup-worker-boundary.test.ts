@@ -5,10 +5,12 @@ import { readFile } from "node:fs/promises";
 test(
   "daily backup retries remain attached to one durable Environment operation",
   async () => {
-    const [backupSource, queueSource, reconcileSource] = await Promise.all([
+    const [backupSource, queueSource, reconcileSource, processSource] =
+      await Promise.all([
       readFile(new URL("./backups.ts", import.meta.url), "utf8"),
       readFile(new URL("../knowledge/queue.ts", import.meta.url), "utf8"),
       readFile(new URL("./reconcile.ts", import.meta.url), "utf8"),
+      readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
     ]);
 
     assert.match(queueSource, /id:\s*operationId/u);
@@ -19,6 +21,11 @@ test(
     assert.match(queueSource, /failExhaustedWorkspaceBackup/u);
     assert.match(queueSource, /deferEnvironmentOperation/u);
     assert.match(queueSource, /startAfter/u);
+    assert.doesNotMatch(
+      processSource,
+      /Environment operation is waiting for a prerequisite/u,
+    );
+    assert.match(processSource, /return provisioner\.process\(operationId\)/u);
     assert.match(backupSource, /workspace\.backup\.retrying/u);
     assert.match(backupSource, /workspace\.backup\.waiting_for_execution/u);
     assert.match(
