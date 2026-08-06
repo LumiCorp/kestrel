@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createPublicKey, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { WORKSPACE_READINESS_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
 import {
@@ -246,6 +246,9 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     controlPlaneUrl: string;
     serviceToken?: string | undefined;
   }): Promise<EnvironmentProviderGateway> {
+    const ticketPublicKey = canonicalEnvironmentTicketPublicKey(
+      input.ticketPublicKey
+    );
     const sharedIp = await this.ensureEnvironmentSharedIp(input.appName);
     const listed = parseResponse(
       z.array(machineSchema),
@@ -263,13 +266,14 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       input.serviceToken ??
       existing?.config?.env?.KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN ??
       randomBytes(32).toString("base64url");
-    const gatewayConfigInput = { ...input, serviceToken };
+    const gatewayConfigInput = { ...input, serviceToken, ticketPublicKey };
     if (
       existing &&
       (existing.config?.image !== input.runtimeImage ||
         existing.config.env?.KESTREL_ENVIRONMENT_APP_NAME !== input.appName ||
-        existing.config.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY !==
-          input.ticketPublicKey ||
+        canonicalExistingEnvironmentTicketPublicKey(
+          existing.config.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY
+        ) !== ticketPublicKey ||
         !existing.config.services?.length)
     ) {
       throw new EnvironmentProviderError(
@@ -1278,6 +1282,30 @@ function workspaceMachineName(workspaceId: string): string {
 
 function environmentGatewayMachineName(environmentId: string): string {
   return `gateway-${compactId(environmentId, 20)}`;
+}
+
+function canonicalEnvironmentTicketPublicKey(value: string) {
+  try {
+    const key = createPublicKey(value);
+    if (key.asymmetricKeyType !== "ed25519") throw new Error("not ed25519");
+    return key.export({ type: "spki", format: "pem" }).toString();
+  } catch {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_REJECTED",
+      "Environment ticket public key must be a valid Ed25519 public key."
+    );
+  }
+}
+
+function canonicalExistingEnvironmentTicketPublicKey(
+  value: string | undefined
+) {
+  if (!value) return null;
+  try {
+    return canonicalEnvironmentTicketPublicKey(value);
+  } catch {
+    return null;
+  }
 }
 
 function replacementWorkspaceVolumeName(

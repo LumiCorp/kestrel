@@ -1,7 +1,31 @@
-import type {
-  EnvironmentProviderInventory,
-  EnvironmentProviderMachine,
+import {
+  EnvironmentProviderError,
+  type EnvironmentProviderInventory,
+  type EnvironmentProviderMachine,
 } from "./providers/contracts";
+
+export type EnvironmentGatewayReconcileFailure = {
+  code: string;
+  message: string;
+  status: number | null;
+};
+
+export function describeEnvironmentGatewayReconcileFailure(
+  error: unknown
+): EnvironmentGatewayReconcileFailure {
+  if (error instanceof EnvironmentProviderError) {
+    return {
+      code: error.code,
+      message: error.message,
+      status: error.status ?? null,
+    };
+  }
+  return {
+    code: "ENVIRONMENT_GATEWAY_RECONCILE_FAILED",
+    message: "Environment gateway reconciliation failed.",
+    status: null,
+  };
+}
 
 export const WORKSPACE_VOLUME_MOUNT_PATH = "/workspace";
 
