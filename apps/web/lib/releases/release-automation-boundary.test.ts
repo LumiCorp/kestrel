@@ -112,6 +112,8 @@ test("promotion drains sequentially and preserves stopped Workspaces", async () 
   assert.match(runtime, /completeFlyImageReleaseIfReady/u);
   assert.match(runtime, /environment\.awaiting_provisioning/u);
   assert.match(runtime, /environment\.skipped_unavailable/u);
+  assert.match(runtime, /environment\.removed_before_deploy/u);
+  assert.match(runtime, /skippedReason: "environment_removed"/u);
   assert.match(runtime, /isFlyImageReleaseMachineVerified/u);
   assert.match(releaseStore, /FLY_IMAGE_RELEASE_LOCK_KEY/u);
   assert.match(
