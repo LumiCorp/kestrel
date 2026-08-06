@@ -4,6 +4,7 @@ import {
 } from "@/lib/knowledge/queue";
 import { rm, writeFile } from "node:fs/promises";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { assertHostedEnvironmentConfiguration } from "@/lib/environments/config";
 import { RELEASE_CONTROLLER_CONTRACT_REVISION } from "@/lib/releases/controller-contract";
 
 const readyFile = process.env.KESTREL_CONTROL_WORKER_READY_FILE;
@@ -45,6 +46,7 @@ async function clearReady() {
 }
 
 async function main() {
+  assertHostedEnvironmentConfiguration();
   await startEnvironmentLifecycleWorker();
   await heartbeat();
   heartbeatTimer = setInterval(() => {

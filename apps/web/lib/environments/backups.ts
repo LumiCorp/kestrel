@@ -1987,8 +1987,11 @@ async function prepareBackupExport(
     | WorkspaceBackupPreparationResponse
     | { error?: { code?: string; message?: string } }
     | null;
+  const failure = result && "error" in result ? result.error : null;
+  if (shouldFallbackToLegacyBackupExport(response.status, failure?.code)) {
+    return null;
+  }
   if (!response.ok) {
-    const failure = result && "error" in result ? result.error : null;
     throw Object.assign(
       new Error(failure?.message ?? "Workspace backup preparation failed."),
       { code: failure?.code ?? "WORKSPACE_BACKUP_PREPARATION_FAILED" },
@@ -2005,6 +2008,16 @@ async function prepareBackupExport(
     throw new Error("Workspace backup preparation response is invalid.");
   }
   return result;
+}
+
+export function shouldFallbackToLegacyBackupExport(
+  status: number,
+  code: string | undefined,
+) {
+  return (
+    status === 404 ||
+    (status === 403 && code === "ENVIRONMENT_CAPABILITY_DENIED")
+  );
 }
 
 async function fetchPreparedBackupArchive(
