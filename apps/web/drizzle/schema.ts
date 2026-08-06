@@ -1341,10 +1341,14 @@ export const environments = pgTable(
     gatewayServiceTokenHash: text("gateway_service_token_hash"),
     routerUrl: text("router_url"),
     routerImage: text("router_image"),
+    targetRouterImage: text("target_router_image"),
     runtimeTemplate: text("runtime_template")
       .notNull()
       .default("kestrel-standard-v1"),
     runtimeImage: text("runtime_image"),
+    targetRuntimeImage: text("target_runtime_image"),
+    targetSourceRevision: text("target_source_revision"),
+    targetGeneration: integer("target_generation"),
     idleTimeoutMinutes: integer("idle_timeout_minutes").notNull().default(15),
     reasoningRequestMode: text("reasoning_request_mode", {
       enum: ["off", "summary", "provider_visible"],
@@ -1993,6 +1997,65 @@ export const flyImageReleaseSettings = pgTable(
   ],
 );
 
+export const platformRuntimeSettings = pgTable(
+  "platform_runtime_settings",
+  {
+    id: text("id").primaryKey().notNull().default("platform"),
+    generation: integer("generation").notNull().default(0),
+    desiredSourceRevision: text("desired_source_revision"),
+    activeSourceRevision: text("active_source_revision"),
+    priorSourceRevision: text("prior_source_revision"),
+    desiredRouterImage: text("desired_router_image"),
+    activeRouterImage: text("active_router_image"),
+    priorRouterImage: text("prior_router_image"),
+    desiredRuntimeImage: text("desired_runtime_image"),
+    activeRuntimeImage: text("active_runtime_image"),
+    priorRuntimeImage: text("prior_runtime_image"),
+    canaryEnvironmentId: text("canary_environment_id").references(
+      () => environments.id,
+      { onDelete: "set null" },
+    ),
+    mode: text("mode", { enum: ["rolling", "maintenance"] })
+      .notNull()
+      .default("rolling"),
+    status: text("status", {
+      enum: [
+        "ready",
+        "canary",
+        "fanout",
+        "degraded",
+        "blocked",
+        "rejected",
+        "maintenance_pending",
+        "maintenance",
+      ],
+    })
+      .notNull()
+      .default("ready"),
+    workspaceDataMigrationRevision: text(
+      "workspace_data_migration_revision",
+    ),
+    lastFailureCode: text("last_failure_code"),
+    lastFailureMessage: text("last_failure_message"),
+    lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check("platform_runtime_settings_singleton_check", sql`${table.id} = 'platform'`),
+    check("platform_runtime_settings_generation_check", sql`${table.generation} >= 0`),
+    check(
+      "platform_runtime_settings_migration_mode_check",
+      sql`${table.workspaceDataMigrationRevision} is null or ${table.mode} = 'maintenance'`,
+    ),
+  ],
+);
+
 export const projectEnvironmentBindings = pgTable(
   "project_environment_bindings",
   {
@@ -2338,6 +2401,7 @@ export const environmentOperations = pgTable(
       enum: [
         "environment.provision",
         "environment.update",
+        "environment.gateway.update",
         "environment.delete",
         "workspace.provision",
         "workspace.start",

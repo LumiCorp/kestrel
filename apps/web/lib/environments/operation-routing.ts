@@ -3,6 +3,7 @@ import type { EnvironmentOperationType } from "./contracts";
 export const PROVISIONER_OPERATION_TYPES = [
   "environment.provision",
   "environment.update",
+  "environment.gateway.update",
   "environment.delete",
   "workspace.provision",
   "workspace.start",
@@ -14,6 +15,7 @@ export const PROVISIONER_OPERATION_TYPES = [
 export const RESOURCE_MUTATING_OPERATION_TYPES = [
   "environment.provision",
   "environment.update",
+  "environment.gateway.update",
   "environment.delete",
   "workspace.provision",
   "workspace.rebuild",

@@ -46,6 +46,7 @@ export type EnvironmentActivationStage = z.infer<
 export const environmentOperationTypeSchema = z.enum([
   "environment.provision",
   "environment.update",
+  "environment.gateway.update",
   "environment.delete",
   "workspace.provision",
   "workspace.start",

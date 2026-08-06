@@ -419,7 +419,7 @@ async function applyEnvironmentTarget(input: {
         runtimeImage,
         routerImage,
         preserveStoppedWorkspaces: true,
-        automaticRollback: false,
+        automaticRollback: true,
       },
     });
     await transaction

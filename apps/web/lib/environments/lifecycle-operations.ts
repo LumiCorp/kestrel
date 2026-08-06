@@ -5,6 +5,9 @@ export const ENVIRONMENT_WIDE_WORKSPACE_LIFECYCLE_TYPES = [
   "environment.update",
   "environment.delete",
 ] as const;
+const RUNNING_ENVIRONMENT_WIDE_WORKSPACE_LIFECYCLE_TYPES = [
+  "environment.gateway.update",
+] as const;
 
 // A queued backup has not started touching the Workspace. It must not reserve
 // execution for however long the queue is delayed. Once running, it still owns
@@ -44,9 +47,17 @@ export async function findActiveWorkspaceLifecycleOperation(
           eq(table.workspaceId, input.workspaceId),
           and(
             isNull(table.workspaceId),
-            inArray(table.type, [
-              ...ENVIRONMENT_WIDE_WORKSPACE_LIFECYCLE_TYPES,
-            ]),
+            or(
+              inArray(table.type, [
+                ...ENVIRONMENT_WIDE_WORKSPACE_LIFECYCLE_TYPES,
+              ]),
+              and(
+                eq(table.status, "running"),
+                inArray(table.type, [
+                  ...RUNNING_ENVIRONMENT_WIDE_WORKSPACE_LIFECYCLE_TYPES,
+                ]),
+              ),
+            ),
           ),
         ),
       ),

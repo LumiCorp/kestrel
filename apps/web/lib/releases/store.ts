@@ -276,6 +276,11 @@ export async function attachActiveFlyImageReleaseTarget(
   transaction: KnowledgeTransaction,
   environmentId: string,
 ) {
+  if (
+    process.env.KESTREL_PLATFORM_RUNTIME_RECONCILIATION_MODE === "active"
+  ) {
+    return false;
+  }
   await lockFlyImageReleases(transaction);
   const settings = await transaction.query.flyImageReleaseSettings.findFirst({
     where: eq(schema.flyImageReleaseSettings.id, "platform"),

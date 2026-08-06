@@ -1500,9 +1500,9 @@ export async function restoreWorkspaceBackup(input: {
   }
   const snapshotId =
     recoverySource.kind === "snapshot" ? recoverySource.snapshotId : null;
-  const runtimeImage = snapshotId
-    ? requireImmutableWorkspaceRuntimeImage()
-    : environment.runtimeImage;
+  const runtimeImage = requireImmutableWorkspaceRuntimeImage(
+    environment.targetRuntimeImage ?? environment.runtimeImage,
+  );
   let archive: NodeJS.ReadableStream | null = null;
   let checksum: string | null = null;
   if (recoverySource.kind === "archive") {
@@ -1953,8 +1953,11 @@ async function readStoredSessionDescription(input: {
   }
 }
 
-function requireImmutableWorkspaceRuntimeImage() {
-  const image = process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE?.trim() ?? "";
+function requireImmutableWorkspaceRuntimeImage(candidate?: string | null) {
+  const image =
+    candidate?.trim() ??
+    process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE?.trim() ??
+    "";
   if (!/@sha256:[a-f0-9]{64}$/u.test(image)) {
     throw new Error(
       "KESTREL_WORKSPACE_RUNTIME_IMAGE must identify an immutable image digest for snapshot recovery.",

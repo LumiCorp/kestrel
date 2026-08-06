@@ -27,6 +27,7 @@ const jwtClaimsSchema = z.object({
   repository: z.literal(GITHUB_REPOSITORY),
   ref: z.literal(GITHUB_REF),
   workflow_ref: z.literal(GITHUB_WORKFLOW_REF),
+  event_name: z.string().trim().min(1).optional(),
   sha: z.string().regex(/^[a-f0-9]{40}$/u),
   sub: z.string().trim().min(1),
 });

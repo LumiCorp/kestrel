@@ -712,6 +712,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer",
   ),
   api(
+    "app/api/runtime/platform-images/route.ts",
+    "/api/runtime/platform-images",
+    "environments",
+    "service-boundary",
+    "service-bearer",
+  ),
+  api(
     "app/api/runtime/github/action/route.ts",
     "/api/runtime/github/action",
     "credential-boundary",
@@ -1120,6 +1127,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/admin/releases/route.ts",
     "/api/admin/releases",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/admin/runtime-deployment/route.ts",
+    "/api/admin/runtime-deployment",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized,
