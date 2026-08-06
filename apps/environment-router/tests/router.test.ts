@@ -366,6 +366,35 @@ test("router authorizes the exact tenant and Thread into a signed Fly App", () =
   }
 });
 
+test("router authorizes execution profile resolution with profile read", () => {
+  const command = {
+    type: "execution-profile.resolve",
+    metadata: { tenantId: "org-1" },
+    payload: {
+      environmentPresetId: "workspace_hosted",
+      managedConfiguration: {},
+    },
+  };
+  assert.equal(
+    authorizeEnvironmentRequest({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      now: 1100,
+      body: command,
+    }).status,
+    200
+  );
+  assert.equal(
+    authorizeEnvironmentRequest({
+      authorization: `Bearer ${terminalToken}`,
+      publicKey,
+      now: 1100,
+      body: command,
+    }).status,
+    403
+  );
+});
+
 test("router rejects a ticket issued for another Environment gateway", () => {
   assert.equal(
     authorizeEnvironmentHttpRequest({
