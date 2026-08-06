@@ -703,6 +703,25 @@ export class EnvironmentProvisioner {
               ? operation.input.releaseTargetId
               : undefined,
         } as const;
+        if (workspace.status === "failed") {
+          const preDestructiveSnapshot =
+            await this.provider.createVolumeSnapshot({
+              appName: environment.flyAppName,
+              volumeId: workspace.flyVolumeId,
+            });
+          await this.updateWorkspaceRuntime({
+            appName: environment.flyAppName,
+            workspaceId: workspace.id,
+            machineId: workspace.flyMachineId,
+            runtimeImage,
+            forceStart: true,
+          });
+          await this.backupWorkspace({
+            ...backupInput,
+            preDestructiveSnapshot,
+          });
+          continue;
+        }
         try {
           await this.backupWorkspace(backupInput);
         } catch (error) {
