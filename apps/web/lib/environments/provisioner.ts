@@ -121,7 +121,7 @@ export interface EnvironmentProvisioningRepository {
   completeEnvironmentGatewayUpdate(input: {
     environmentId: string;
     routerImage: string;
-    gatewayServiceTokenHash: string;
+    gatewayServiceTokenHash?: string | undefined;
   }): Promise<void>;
   completeEnvironmentRuntimeUpdate(input: {
     environmentId: string;
@@ -150,12 +150,12 @@ export interface EnvironmentProvisioningRepository {
   completeWorkspaceRebuild(input: {
     workspaceId: string;
     runtimeImage: string;
-    serviceTokenHash: string;
+    serviceTokenHash?: string | undefined;
   }): Promise<void>;
   configureStoppedWorkspace?(input: {
     workspaceId: string;
     runtimeImage: string;
-    serviceTokenHash: string;
+    serviceTokenHash?: string | undefined;
   }): Promise<void>;
   markWorkspaceReleaseVerified?(input: {
     workspaceId: string;
@@ -196,7 +196,7 @@ export interface EnvironmentProvisioningRepository {
   }): Promise<void>;
 }
 
-export const RELEASE_RETRY_BUDGET_MS = 15 * 60 * 1000;
+export const RELEASE_RETRY_BUDGET_MS = 60 * 60 * 1000;
 
 export function releaseRetryDelaySeconds(attempt: number) {
   return [5, 10, 20, 40, 80][attempt - 1] ?? 120;
@@ -363,7 +363,7 @@ export class EnvironmentProvisioner {
             operationId: operation.id,
             stage: "environment.provider.retry_exhausted",
             code: "ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
-            message: `Automatic provider retries were exhausted after 15 minutes. Last response: ${failure.message}`,
+            message: `Automatic provider retries were exhausted after one hour. Last response: ${failure.message}`,
           });
           if (operation.workspaceId) {
             await this.repository.failWorkspace({
@@ -579,122 +579,125 @@ export class EnvironmentProvisioner {
       operation.input?.routerImage,
       "Environment router image",
     );
-    const skipWorkspaceBackups = operation.input?.skipWorkspaceBackups === true;
+    const workspaceDataMigrationRevision = readInputString(
+      operation.input,
+      "workspaceDataMigrationRevision",
+    );
+    const skipWorkspaceBackups =
+      operation.input?.skipWorkspaceBackups === true ||
+      !workspaceDataMigrationRevision;
     const preserveStoppedWorkspaces =
       operation.input?.preserveStoppedWorkspaces === true;
     const automaticRollback = operation.input?.automaticRollback !== false;
     const workspaces = await this.repository.listEnvironmentWorkspaces(
       environment.id,
     );
-    await this.repository.updateOperationStage({
-      operationId: operation.id,
-      stage: "environment.update.gateway",
-    });
-    const gatewayServiceToken = createEnvironmentServiceToken();
-    try {
-      const gateway = await this.provider.updateMachineImage({
-        appName: environment.flyAppName,
-        machineId: environment.flyGatewayMachineId,
-        runtimeImage: routerImage,
-        envPatch: {
-          KESTREL_ENVIRONMENT_ID: environment.id,
-          KESTREL_CONTROL_PLANE_URL: this.controlPlaneUrl,
-          KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN: gatewayServiceToken,
+    const checkpoint = readEnvironmentUpdateCheckpoint(operation.result);
+    const persistCheckpoint = async (stage: string) => {
+      await this.repository.updateOperationStage({
+        operationId: operation.id,
+        stage,
+        result: {
+          ...asRecord(operation.result),
+          environmentUpdateCheckpoint: checkpoint,
         },
       });
-      await this.repository.stageEnvironmentGatewayIdentity({
-        environmentId: environment.id,
-        appName: environment.flyAppName,
-        gatewayServiceTokenHash:
-          hashEnvironmentServiceToken(gatewayServiceToken),
-      });
-      if (gateway.state === "stopped") {
-        await this.provider.startMachine({
+    };
+    if (!checkpoint.gatewayVerified) {
+      await persistCheckpoint("environment.update.gateway");
+      try {
+        const gateway = await this.provider.updateMachineImage({
           appName: environment.flyAppName,
           machineId: environment.flyGatewayMachineId,
+          runtimeImage: routerImage,
         });
-      }
-      if (gateway.state !== "started") {
-        await this.provider.waitForMachine({
-          appName: environment.flyAppName,
-          machineId: environment.flyGatewayMachineId,
-          state: "started",
-          timeoutSeconds: 90,
-        });
-      }
-      await this.provider.waitForMachineHealth({
-        appName: environment.flyAppName,
-        machineId: environment.flyGatewayMachineId,
-        checkName: "gateway",
-        timeoutSeconds: 90,
-      });
-    } catch (error) {
-      if (
-        automaticRollback &&
-        environment.routerImage &&
-        environment.routerImage !== routerImage
-      ) {
-        await this.provider
-          .updateMachineImage({
+        if (gateway.state === "stopped") {
+          await this.provider.startMachine({
             appName: environment.flyAppName,
             machineId: environment.flyGatewayMachineId,
-            runtimeImage: environment.routerImage,
-          })
-          .then(async (gateway) => {
-            if (gateway.state === "stopped") {
-              await this.provider.startMachine({
+          });
+        }
+        if (gateway.state !== "started") {
+          await this.provider.waitForMachine({
+            appName: environment.flyAppName,
+            machineId: environment.flyGatewayMachineId,
+            state: "started",
+            timeoutSeconds: 90,
+          });
+        }
+        await this.provider.waitForMachineHealth({
+          appName: environment.flyAppName,
+          machineId: environment.flyGatewayMachineId,
+          checkName: "gateway",
+          timeoutSeconds: 90,
+        });
+      } catch (error) {
+        if (
+          automaticRollback &&
+          environment.routerImage &&
+          environment.routerImage !== routerImage
+        ) {
+          await this.provider
+            .updateMachineImage({
+              appName: environment.flyAppName,
+              machineId: environment.flyGatewayMachineId,
+              runtimeImage: environment.routerImage,
+            })
+            .then(async (gateway) => {
+              if (gateway.state === "stopped") {
+                await this.provider.startMachine({
+                  appName: environment.flyAppName!,
+                  machineId: environment.flyGatewayMachineId!,
+                });
+              }
+              if (gateway.state !== "started") {
+                await this.provider.waitForMachine({
+                  appName: environment.flyAppName!,
+                  machineId: environment.flyGatewayMachineId!,
+                  state: "started",
+                  timeoutSeconds: 90,
+                });
+              }
+              await this.provider.waitForMachineHealth({
                 appName: environment.flyAppName!,
                 machineId: environment.flyGatewayMachineId!,
-              });
-            }
-            if (gateway.state !== "started") {
-              await this.provider.waitForMachine({
-                appName: environment.flyAppName!,
-                machineId: environment.flyGatewayMachineId!,
-                state: "started",
+                checkName: "gateway",
                 timeoutSeconds: 90,
               });
-            }
-            await this.provider.waitForMachineHealth({
-              appName: environment.flyAppName!,
-              machineId: environment.flyGatewayMachineId!,
-              checkName: "gateway",
-              timeoutSeconds: 90,
-            });
-          })
-          .catch(() => {});
+            })
+            .catch(() => {});
+        }
+        throw error;
       }
-      throw error;
+      await this.repository.completeEnvironmentGatewayUpdate({
+        environmentId: environment.id,
+        routerImage,
+      });
+      checkpoint.gatewayVerified = true;
+      await persistCheckpoint("environment.update.gateway_verified");
     }
-    await this.repository.completeEnvironmentGatewayUpdate({
-      environmentId: environment.id,
-      routerImage,
-      gatewayServiceTokenHash: hashEnvironmentServiceToken(gatewayServiceToken),
-    });
-    const alreadyUpdatedWorkspaceIds = new Set<string>();
+    const alreadyUpdatedWorkspaceIds = new Set(
+      checkpoint.verifiedWorkspaceIds,
+    );
     if (skipWorkspaceBackups) {
-      await this.repository.updateOperationStage({
-        operationId: operation.id,
-        stage: "environment.update.backups_skipped",
-        result: { workspaceBackupsSkipped: true },
-      });
+      await persistCheckpoint("environment.update.backups_skipped");
     } else {
-      await this.repository.updateOperationStage({
-        operationId: operation.id,
-        stage: "environment.update.backing_up",
-      });
+      await persistCheckpoint("environment.update.backing_up");
       for (const workspace of workspaces) {
         if (!(workspace.flyMachineId && workspace.flyVolumeId)) continue;
         if (preserveStoppedWorkspaces && workspace.status === "stopped") {
           continue;
         }
+        if (checkpoint.backedUpWorkspaceIds.includes(workspace.id)) continue;
         const backupInput = {
           organizationId: operation.organizationId,
           environmentId: environment.id,
           workspaceId: workspace.id,
           actorUserId: operation.requestedByUserId,
           reason: "pre_destructive",
-          idempotencyKey: `environment.update:${operation.id}:backup:${workspace.id}`,
+          idempotencyKey:
+            `environment.update:${operation.id}:backup:` +
+            `${workspaceDataMigrationRevision}:${workspace.id}`,
           parentLifecycleOperationId: operation.id,
           parentReleaseTargetId:
             typeof operation.input?.releaseTargetId === "string"
@@ -718,6 +721,13 @@ export class EnvironmentProvisioner {
             preDestructiveSnapshot,
           });
           alreadyUpdatedWorkspaceIds.add(workspace.id);
+          checkpoint.verifiedWorkspaceIds = [
+            ...new Set([...checkpoint.verifiedWorkspaceIds, workspace.id]),
+          ];
+          checkpoint.backedUpWorkspaceIds = [
+            ...new Set([...checkpoint.backedUpWorkspaceIds, workspace.id]),
+          ];
+          await persistCheckpoint("environment.update.backing_up");
           continue;
         }
         try {
@@ -743,12 +753,18 @@ export class EnvironmentProvisioner {
           });
           alreadyUpdatedWorkspaceIds.add(workspace.id);
         }
+        checkpoint.backedUpWorkspaceIds = [
+          ...new Set([...checkpoint.backedUpWorkspaceIds, workspace.id]),
+        ];
+        if (alreadyUpdatedWorkspaceIds.has(workspace.id)) {
+          checkpoint.verifiedWorkspaceIds = [
+            ...new Set([...checkpoint.verifiedWorkspaceIds, workspace.id]),
+          ];
+        }
+        await persistCheckpoint("environment.update.backing_up");
       }
     }
-    await this.repository.updateOperationStage({
-      operationId: operation.id,
-      stage: "environment.update.workspaces",
-    });
+    await persistCheckpoint("environment.update.workspaces");
     const skippedWorkspaceIds: string[] = [];
     const configuredUnverifiedWorkspaceIds: string[] = [];
     let updatedWorkspaceCount = 0;
@@ -762,6 +778,11 @@ export class EnvironmentProvisioner {
         continue;
       }
       if (preserveStoppedWorkspaces && workspace.status === "stopped") {
+        if (checkpoint.configuredStoppedWorkspaceIds.includes(workspace.id)) {
+          configuredUnverifiedWorkspaceIds.push(workspace.id);
+          updatedWorkspaceCount += 1;
+          continue;
+        }
         await this.configureStoppedWorkspaceRuntime({
           appName: environment.flyAppName,
           workspaceId: workspace.id,
@@ -769,7 +790,11 @@ export class EnvironmentProvisioner {
           runtimeImage,
         });
         configuredUnverifiedWorkspaceIds.push(workspace.id);
+        checkpoint.configuredStoppedWorkspaceIds = [
+          ...new Set([...checkpoint.configuredStoppedWorkspaceIds, workspace.id]),
+        ];
         updatedWorkspaceCount += 1;
+        await persistCheckpoint("environment.update.workspaces");
         continue;
       }
       await this.updateWorkspaceRuntime({
@@ -778,12 +803,13 @@ export class EnvironmentProvisioner {
         machineId: workspace.flyMachineId,
         runtimeImage,
       });
+      checkpoint.verifiedWorkspaceIds = [
+        ...new Set([...checkpoint.verifiedWorkspaceIds, workspace.id]),
+      ];
       updatedWorkspaceCount += 1;
+      await persistCheckpoint("environment.update.workspaces");
     }
-    await this.repository.updateOperationStage({
-      operationId: operation.id,
-      stage: "environment.update.verifying",
-    });
+    await persistCheckpoint("environment.update.verifying");
     await this.repository.completeEnvironmentRuntimeUpdate({
       environmentId: environment.id,
       runtimeImage,
@@ -805,6 +831,7 @@ export class EnvironmentProvisioner {
           ? { configuredUnverifiedWorkspaceIds }
           : {}),
         ...(skipWorkspaceBackups ? { workspaceBackupsSkipped: true } : {}),
+        environmentUpdateCheckpoint: checkpoint,
       },
     });
   }
@@ -821,15 +848,10 @@ export class EnvironmentProvisioner {
         "Stopped Workspace image persistence is unavailable.",
       );
     }
-    const workspaceServiceToken = createEnvironmentServiceToken();
     const machine = await this.provider.updateMachineImage({
       appName: input.appName,
       machineId: input.machineId,
       runtimeImage: input.runtimeImage,
-      envPatch: workspaceRuntimeIdentityPatch({
-        appName: input.appName,
-        serviceToken: workspaceServiceToken,
-      }),
       stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
     });
     if (machine.state !== "stopped") {
@@ -843,7 +865,6 @@ export class EnvironmentProvisioner {
     await this.repository.configureStoppedWorkspace({
       workspaceId: input.workspaceId,
       runtimeImage: input.runtimeImage,
-      serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
     });
   }
 
@@ -868,16 +889,11 @@ export class EnvironmentProvisioner {
     runtimeImage: string;
   }) {
     await this.repository.setWorkspaceStarting(input.workspaceId);
-    const workspaceServiceToken = createEnvironmentServiceToken();
     try {
       const machine = await this.provider.updateMachineImage({
         appName: input.appName,
         machineId: input.machineId,
         runtimeImage: input.runtimeImage,
-        envPatch: workspaceRuntimeIdentityPatch({
-          appName: input.appName,
-          serviceToken: workspaceServiceToken,
-        }),
         stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
       });
       if (machine.state === "stopped") {
@@ -903,7 +919,6 @@ export class EnvironmentProvisioner {
       await this.repository.completeWorkspaceRebuild({
         workspaceId: input.workspaceId,
         runtimeImage: input.runtimeImage,
-        serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
       });
     } catch (error) {
       const failure = safeFailure(error);
@@ -1295,15 +1310,10 @@ export class EnvironmentProvisioner {
       operationId: operation.id,
       stage: "environment.machine.starting",
     });
-    const workspaceServiceToken = createEnvironmentServiceToken();
     const machine = await this.provider.updateMachineImage({
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,
       runtimeImage: environment.runtimeImage,
-      envPatch: workspaceRuntimeIdentityPatch({
-        appName: environment.flyAppName,
-        serviceToken: workspaceServiceToken,
-      }),
       stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
     });
     if (machine.state !== "started") {
@@ -1327,7 +1337,6 @@ export class EnvironmentProvisioner {
     await this.repository.completeWorkspaceRebuild({
       workspaceId: workspace.id,
       runtimeImage: environment.runtimeImage,
-      serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
     });
     await this.repository.completeOperation({
       operationId: operation.id,
@@ -1753,7 +1762,9 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .set({
           status: "ready",
           routerImage: input.routerImage,
-          gatewayServiceTokenHash: input.gatewayServiceTokenHash,
+          ...(input.gatewayServiceTokenHash
+            ? { gatewayServiceTokenHash: input.gatewayServiceTokenHash }
+            : {}),
           lastHealthAt: new Date(),
           failureCode: null,
           failureMessage: null,
@@ -1928,7 +1939,9 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .set({
           status: "ready",
           runtimeImage: input.runtimeImage,
-          serviceTokenHash: input.serviceTokenHash,
+          ...(input.serviceTokenHash
+            ? { serviceTokenHash: input.serviceTokenHash }
+            : {}),
           lastActivityAt: now,
           lastHealthAt: now,
           updatedAt: now,
@@ -1941,7 +1954,9 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .set({
           status: "stopped",
           runtimeImage: input.runtimeImage,
-          serviceTokenHash: input.serviceTokenHash,
+          ...(input.serviceTokenHash
+            ? { serviceTokenHash: input.serviceTokenHash }
+            : {}),
           failureCode: null,
           failureMessage: null,
           updatedAt: new Date(),
@@ -2000,6 +2015,12 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
     },
     async deferOperation(input) {
       await knowledgeDb.transaction(async (transaction) => {
+        const current = input.retryState
+          ? await transaction.query.environmentOperations.findFirst({
+              where: (table, { eq }) => eq(table.id, input.operationId),
+              columns: { result: true },
+            })
+          : null;
         const [operation] = await transaction
           .update(schema.environmentOperations)
           .set({
@@ -2008,7 +2029,12 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             errorCode: input.code ?? null,
             errorMessage: input.message,
             ...(input.retryState
-              ? { result: { retryState: input.retryState } }
+              ? {
+                  result: {
+                    ...(current?.result ?? {}),
+                    retryState: input.retryState,
+                  },
+                }
               : {}),
             updatedAt: new Date(),
           })
@@ -2107,17 +2133,6 @@ async function cleanupFailedWorkspaceProvisioning(input: {
   }
 }
 
-function workspaceRuntimeIdentityPatch(input: {
-  appName: string;
-  serviceToken: string;
-}) {
-  return {
-    KESTREL_ENVIRONMENT_GATEWAY_URL: `https://${input.appName}.fly.dev`,
-    KESTREL_WORKSPACE_SERVICE_TOKEN: input.serviceToken,
-    KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: undefined,
-  };
-}
-
 function readImmutableImage(value: unknown, label: string) {
   if (
     typeof value !== "string" ||
@@ -2194,6 +2209,37 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function readInputString(value: unknown, key: string) {
   const candidate = asRecord(value)?.[key];
   return typeof candidate === "string" ? candidate : null;
+}
+
+type EnvironmentUpdateCheckpoint = {
+  gatewayVerified: boolean;
+  backedUpWorkspaceIds: string[];
+  verifiedWorkspaceIds: string[];
+  configuredStoppedWorkspaceIds: string[];
+};
+
+function readEnvironmentUpdateCheckpoint(
+  result: unknown,
+): EnvironmentUpdateCheckpoint {
+  const checkpoint = asRecord(asRecord(result)?.environmentUpdateCheckpoint);
+  return {
+    gatewayVerified: checkpoint?.gatewayVerified === true,
+    backedUpWorkspaceIds: readStringArray(
+      checkpoint?.backedUpWorkspaceIds,
+    ),
+    verifiedWorkspaceIds: readStringArray(checkpoint?.verifiedWorkspaceIds),
+    configuredStoppedWorkspaceIds: readStringArray(
+      checkpoint?.configuredStoppedWorkspaceIds,
+    ),
+  };
+}
+
+function readStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((candidate): candidate is string =>
+        typeof candidate === "string",
+      )
+    : [];
 }
 
 function readAuthoritativeState(error: unknown) {

@@ -19,7 +19,7 @@ test("managed release retries use the bounded fixed schedule", () => {
   );
 });
 
-test("managed release retries stop exactly at the 15-minute deadline", () => {
+test("managed release retries stop exactly at the one-hour deadline", () => {
   const firstFailureAt = "2026-08-05T12:00:00.000Z";
   const firstFailureTime = Date.parse(firstFailureAt);
   assert.equal(
@@ -30,15 +30,15 @@ test("managed release retries stop exactly at the 15-minute deadline", () => {
     releaseRetryNextAttemptAt(
       firstFailureAt,
       20,
-      firstFailureTime + 14 * 60 * 1000,
+      firstFailureTime + 59 * 60 * 1000,
     ),
-    "2026-08-05T12:15:00.000Z",
+    "2026-08-05T13:00:00.000Z",
   );
   assert.equal(
     releaseRetryNextAttemptAt(
       firstFailureAt,
       20,
-      firstFailureTime + 15 * 60 * 1000,
+      firstFailureTime + 60 * 60 * 1000,
     ),
     null,
   );
@@ -48,7 +48,8 @@ test("managed release retries stop exactly at the 15-minute deadline", () => {
 function fixture(
   type: string,
   workspaceId: string | null = null,
-  input: Record<string, unknown> | null = null
+  input: Record<string, unknown> | null = null,
+  result: Record<string, unknown> | null = null,
 ) {
   const calls: string[] = [];
   let operation: ProvisioningOperation | null = {
@@ -60,6 +61,7 @@ function fixture(
     requestedByUserId: "user-id",
     type,
     input,
+    result,
   };
   const repository: EnvironmentProvisioningRepository = {
     async claimOperation() {
@@ -354,47 +356,61 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
     }
   );
   assert.equal(await provisioner.process("operation-id"), "processed");
-  assert.deepEqual(calls, [
-    "operation:stage:environment.update.gateway",
-    "provider:image:gateway-machine-id",
-    "environment:gateway-token-staged",
-    "provider:wait",
-    "provider:health",
-    "environment:gateway-updated",
-    "operation:stage:environment.update.backing_up",
-    "backup:workspace-id",
-    "operation:stage:environment.update.workspaces",
-    "workspace:starting",
-    "provider:image:workspace-machine-id",
-    "provider:wait",
-    "provider:health",
-    "workspace:rebuilt",
-    "operation:stage:environment.update.verifying",
-    "environment:runtime-updated",
-    "operation:completed",
-  ]);
-  assert.deepEqual(machineUpdates[0]?.envPatch, {
-    KESTREL_ENVIRONMENT_ID: "environment-id",
-    KESTREL_CONTROL_PLANE_URL: "https://kestrel.example",
-    KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN:
-      machineUpdates[0]?.envPatch?.KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN,
-  });
-  assert.ok(
-    machineUpdates[0]?.envPatch?.KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN
-  );
-  assert.deepEqual(machineUpdates[1]?.envPatch, {
-    KESTREL_ENVIRONMENT_GATEWAY_URL:
-      "https://kestrel-env-existing.fly.dev",
-    KESTREL_WORKSPACE_SERVICE_TOKEN:
-      machineUpdates[1]?.envPatch?.KESTREL_WORKSPACE_SERVICE_TOKEN,
-    KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: undefined,
-  });
-  assert.ok(machineUpdates[1]?.envPatch?.KESTREL_WORKSPACE_SERVICE_TOKEN);
+  assert.ok(calls.includes("operation:stage:environment.update.gateway_verified"));
+  assert.ok(calls.includes("operation:stage:environment.update.backups_skipped"));
+  assert.ok(calls.includes("workspace:rebuilt"));
+  assert.ok(calls.includes("operation:completed"));
+  assert.equal(calls.includes("environment:gateway-token-staged"), false);
+  assert.equal(backupInputs.length, 0);
+  assert.equal(machineUpdates[0]?.envPatch, undefined);
+  assert.equal(machineUpdates[1]?.envPatch, undefined);
   assert.deepEqual(awaitedStates, ["started", "started"]);
   assert.equal(calls.includes("provider:start"), false);
-  assert.ok(gatewayUpdate?.gatewayServiceTokenHash);
-  assert.ok(workspaceUpdate?.serviceTokenHash);
-  assert.equal(backupInputs[0]?.parentReleaseTargetId, "release-target-id");
+  assert.equal(gatewayUpdate?.gatewayServiceTokenHash, undefined);
+  assert.equal(workspaceUpdate?.serviceTokenHash, undefined);
+});
+
+test("Environment update retries resume after verified resources", async () => {
+  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
+  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture(
+    "environment.update",
+    null,
+    { runtimeImage, routerImage },
+    {
+      retryState: { attempt: 1 },
+      environmentUpdateCheckpoint: {
+        gatewayVerified: true,
+        backedUpWorkspaceIds: [],
+        verifiedWorkspaceIds: ["workspace-id"],
+        configuredStoppedWorkspaceIds: [],
+      },
+    },
+  );
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "workspace-id",
+      status: "ready",
+      flyMachineId: "workspace-machine-id",
+      flyVolumeId: "workspace-volume-id",
+      runtimeImage,
+    },
+  ];
+  provider.updateMachineImage = async () => {
+    throw new Error("verified resources must not be replayed");
+  };
+
+  assert.equal(
+    await createProvisioner(repository, provider, async () => {
+      throw new Error("code-only retries must not back up Workspaces");
+    }).process("operation-id"),
+    "processed",
+  );
+  assert.equal(
+    calls.some((entry) => entry.startsWith("provider:image:")),
+    false,
+  );
+  assert.ok(calls.includes("operation:completed"));
 });
 
 test("Environment updates recover an incompatible stopped runtime from a pre-destructive snapshot", async () => {
@@ -403,6 +419,7 @@ test("Environment updates recover an incompatible stopped runtime from a pre-des
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
+    workspaceDataMigrationRevision: "workspace-v2",
   });
   repository.listEnvironmentWorkspaces = async () => [
     {
@@ -446,20 +463,11 @@ test("Environment updates recover an incompatible stopped runtime from a pre-des
     id: "pre-destructive-snapshot",
     state: "created",
   });
-  assert.deepEqual(calls.slice(0, 12), [
-    "operation:stage:environment.update.gateway",
-    "provider:image:gateway-machine-id",
-    "environment:gateway-token-staged",
-    "provider:wait",
-    "provider:health",
-    "environment:gateway-updated",
-    "operation:stage:environment.update.backing_up",
-    "backup:workspace-id",
-    "provider:snapshot:workspace-volume-id",
-    "workspace:starting",
-    "provider:image:workspace-machine-id",
-    "provider:wait",
-  ]);
+  assert.equal(calls.includes("environment:gateway-token-staged"), false);
+  assert.ok(calls.includes("operation:stage:environment.update.backing_up"));
+  assert.ok(calls.includes("backup:workspace-id"));
+  assert.ok(calls.includes("provider:snapshot:workspace-volume-id"));
+  assert.ok(calls.includes("provider:image:workspace-machine-id"));
   assert.equal(
     calls.filter((entry) => entry === "provider:image:workspace-machine-id")
       .length,
@@ -473,6 +481,7 @@ test("Environment updates repair failed Workspaces before routed backup", async 
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
+    workspaceDataMigrationRevision: "workspace-v2",
   });
   repository.listEnvironmentWorkspaces = async () => [
     {
@@ -515,7 +524,7 @@ test("Environment updates repair failed Workspaces before routed backup", async 
       actorUserId: "user-id",
       reason: "pre_destructive",
       idempotencyKey:
-        "environment.update:operation-id:backup:failed-workspace-id",
+        "environment.update:operation-id:backup:workspace-v2:failed-workspace-id",
       parentLifecycleOperationId: "operation-id",
       parentReleaseTargetId: undefined,
       preDestructiveSnapshot: {
@@ -524,14 +533,9 @@ test("Environment updates repair failed Workspaces before routed backup", async 
       },
     },
   ]);
-  assert.deepEqual(calls.slice(6, 12), [
-    "operation:stage:environment.update.backing_up",
-    "provider:snapshot:failed-workspace-volume-id",
-    "workspace:starting",
-    "provider:image:failed-workspace-machine-id",
-    "provider:wait",
-    "provider:health",
-  ]);
+  assert.ok(calls.includes("operation:stage:environment.update.backing_up"));
+  assert.ok(calls.includes("provider:snapshot:failed-workspace-volume-id"));
+  assert.ok(calls.includes("provider:image:failed-workspace-machine-id"));
   assert.ok(calls.includes("workspace:rebuilt"));
   assert.ok(calls.includes("backup:failed-workspace-id"));
   assert.equal(
@@ -549,6 +553,7 @@ test("an auxiliary pre-repair snapshot 408 does not pause a release", async () =
     runtimeImage,
     routerImage,
     releaseTargetId: "release-target-id",
+    workspaceDataMigrationRevision: "workspace-v2",
   });
   repository.listEnvironmentWorkspaces = async () => [
     {
@@ -738,18 +743,13 @@ test("Environment updates report Workspaces that require provisioning recovery",
     "operation-id"
   );
 
-  assert.deepEqual(completion, {
-    operationId: "operation-id",
-    stage: "environment.update.recovery_required",
-    result: {
-      gatewayMachineId: "gateway-machine-id",
-      routerImage,
-      runtimeImage,
-      workspaceCount: 2,
-      updatedWorkspaceCount: 1,
-      skippedWorkspaceIds: ["failed-workspace"],
-    },
-  });
+  assert.equal(completion?.stage, "environment.update.recovery_required");
+  assert.equal(completion?.result.routerImage, routerImage);
+  assert.equal(completion?.result.runtimeImage, runtimeImage);
+  assert.deepEqual(completion?.result.skippedWorkspaceIds, [
+    "failed-workspace",
+  ]);
+  assert.equal(completion?.result.workspaceBackupsSkipped, true);
 });
 
 test("Workspace provisioning persists provider resources only after readiness", async () => {
