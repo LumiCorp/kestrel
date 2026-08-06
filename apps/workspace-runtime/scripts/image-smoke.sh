@@ -33,7 +33,7 @@ done
 health="$(curl --fail --silent "http://127.0.0.1:${port}/health")"
 node -e '
   const health = JSON.parse(process.argv[1]);
-  if (health.ok !== true || health.runtimeContractRevision !== 2) {
+  if (health.ok !== true || health.runtimeContractRevision !== 3) {
     throw new Error("Workspace Runtime health contract failed");
   }
 ' "$health"

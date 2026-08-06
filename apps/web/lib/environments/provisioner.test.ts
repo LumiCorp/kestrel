@@ -666,9 +666,12 @@ test("managed releases reconfigure stopped Workspaces without launching them", a
   provider.updateMachineImage = async (input) => ({
     id: input.machineId,
     state:
-      input.machineId === "workspace-machine-id" ? "stopped" : "started",
+      input.machineId === "workspace-machine-id" ? "replacing" : "started",
     region: "iad",
   });
+  provider.waitForMachine = async (input) => {
+    calls.push(`provider:wait:${input.machineId}:${input.state}`);
+  };
   provider.startMachine = async () => {
     calls.push("provider:start");
   };
@@ -679,6 +682,9 @@ test("managed releases reconfigure stopped Workspaces without launching them", a
 
   assert.equal(backupCount, 0);
   assert.equal(calls.includes("provider:start"), false);
+  assert.ok(
+    calls.includes("provider:wait:workspace-machine-id:stopped"),
+  );
   assert.equal(
     calls.some((entry) => entry.startsWith("provider:snapshot:")),
     false,

@@ -833,10 +833,12 @@ export class EnvironmentProvisioner {
       stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
     });
     if (machine.state !== "stopped") {
-      throw operationError(
-        "ENVIRONMENT_UNAVAILABLE",
-        "Stopped Workspace unexpectedly launched while applying its release image.",
-      );
+      await this.provider.waitForMachine({
+        appName: input.appName,
+        machineId: input.machineId,
+        state: "stopped",
+        timeoutSeconds: 90,
+      });
     }
     await this.repository.configureStoppedWorkspace({
       workspaceId: input.workspaceId,
