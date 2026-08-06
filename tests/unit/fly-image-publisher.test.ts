@@ -7,7 +7,7 @@ import {
   pullPublishedImage,
   type FlyImagePublisherDependencies,
 } from "../../scripts/fly-image-publisher.js";
-import { flyImageReleaseManifestV1Schema } from "../../apps/web/lib/releases/contracts.js";
+import { platformImagePublicationSchema } from "../../apps/web/lib/runtime-deployments/contracts.js";
 
 const revision = "a".repeat(40);
 const roles = [
@@ -16,6 +16,7 @@ const roles = [
   "preview-edge",
   "turn-worker",
   "runpod-worker",
+  "control-worker",
 ] as const;
 
 test("publisher exercises every image and survives Fly registry propagation", async () => {
@@ -28,6 +29,7 @@ test("publisher exercises every image and survives Fly registry propagation", as
     roles,
   );
   assert.equal(harness.flyBuilds.length, roles.length);
+  assert.equal(harness.flyDeploys.length, 4);
   assert.equal(harness.smokes.length, roles.length);
   assert.deepEqual(
     harness.waits,
@@ -36,15 +38,10 @@ test("publisher exercises every image and survives Fly registry propagation", as
   assert.equal(harness.oidcRequests, 2);
   assert.equal(harness.preflightAuthorization, "Bearer oidc-token-1");
   assert.equal(harness.publicationAuthorization, "Bearer oidc-token-2");
-  assert.deepEqual(
-    harness.publishedManifest?.components.map(
-      (component: { role: string }) => component.role,
-    ),
-    roles,
-  );
+  assert.equal(harness.publishedManifest?.sourceRevision, revision);
   assert.match(
     harness.output.join(""),
-    /Published Fly image release candidate release-test/u,
+    /Published platform generation 1; fanout status is ready/u,
   );
 });
 
@@ -54,6 +51,7 @@ test("publisher reuses revision tags and still smokes every image", async () => 
 
   assert.equal(result.published, true);
   assert.equal(harness.flyBuilds.length, 0);
+  assert.equal(harness.flyDeploys.length, 4);
   assert.equal(harness.smokes.length, roles.length);
   assert.equal(harness.waits.length, 0);
   assert.equal(
@@ -64,7 +62,7 @@ test("publisher reuses revision tags and still smokes every image", async () => 
   );
 });
 
-test("publisher reports the candidate API error code", async () => {
+test("publisher reports the platform API error code", async () => {
   const harness = publisherHarness({
     reusePublishedImages: true,
     publicationFailureCode: "RELEASE_INCOMPLETE",
@@ -123,15 +121,16 @@ function publisherHarness(input: {
   const builtImages = new Set<string>();
   const postBuildPulls = new Map<string, number>();
   const flyBuilds: string[][] = [];
+  const flyDeploys: string[][] = [];
   const smokes: string[][] = [];
   const waits: number[] = [];
   const output: string[] = [];
   let oidcRequests = 0;
   let preflightAuthorization: string | null = null;
   let publicationAuthorization: string | null = null;
-  let publishedManifest: {
-    components: Array<{ role: string }>;
-  } | null = null;
+  let publishedManifest: ReturnType<
+    typeof platformImagePublicationSchema.parse
+  > | null = null;
 
   const dependencies: FlyImagePublisherDependencies = {
     root: process.cwd(),
@@ -139,7 +138,7 @@ function publisherHarness(input: {
       ACTIONS_ID_TOKEN_REQUEST_URL: "https://oidc.test/token",
       ACTIONS_ID_TOKEN_REQUEST_TOKEN: "request-token",
       KESTREL_RELEASE_FORCE_ALL: "true",
-      KESTREL_RELEASE_PUBLISH_URL: "https://publisher.test/candidates",
+      KESTREL_PLATFORM_IMAGE_URL: "https://publisher.test/platform-images",
       KESTREL_RELEASE_TRIGGER: "manual",
       KESTREL_RELEASE_VALIDATION_COMMANDS: '["pnpm validate"]',
     },
@@ -157,7 +156,7 @@ function publisherHarness(input: {
       const authorization = new Headers(init?.headers).get("authorization");
       if (init?.method === "POST") {
         publicationAuthorization = authorization;
-        publishedManifest = flyImageReleaseManifestV1Schema.parse(
+        publishedManifest = platformImagePublicationSchema.parse(
           JSON.parse(String(init.body)),
         );
         if (input.publicationFailureCode) {
@@ -167,14 +166,19 @@ function publisherHarness(input: {
           );
         }
         return Response.json(
-          { release: { id: "release-test", status: "candidate" } },
+          {
+            platform: platformState({
+              generation: 1,
+              status: "ready",
+              activeSourceRevision: revision,
+            }),
+          },
           { status: 202 },
         );
       }
       preflightAuthorization = authorization;
       return Response.json({
-        requiresFullBundle: true,
-        stableBundleRevision: null,
+        platform: platformState(),
       });
     },
     now: () => new Date("2026-08-04T12:00:00.000Z"),
@@ -201,6 +205,10 @@ function publisherHarness(input: {
     },
     run: async (command, args) => {
       if (command === "flyctl") {
+        if (!args.includes("--build-only")) {
+          flyDeploys.push(args);
+          return;
+        }
         flyBuilds.push(args);
         const app = args[args.indexOf("--app") + 1]!;
         const label = args[args.indexOf("--image-label") + 1]!;
@@ -230,6 +238,7 @@ function publisherHarness(input: {
   return {
     dependencies,
     flyBuilds,
+    flyDeploys,
     smokes,
     waits,
     output,
@@ -245,6 +254,25 @@ function publisherHarness(input: {
     get publishedManifest() {
       return publishedManifest;
     },
+  };
+}
+
+function platformState(
+  overrides: Partial<{
+    generation: number;
+    status: "ready" | "canary";
+    activeSourceRevision: string | null;
+  }> = {},
+) {
+  return {
+    generation: overrides.generation ?? 0,
+    status: overrides.status ?? "ready",
+    activeSourceRevision: overrides.activeSourceRevision ?? null,
+    desiredRouterImage: `registry.fly.io/kestrel-one-runner@sha256:${"7".repeat(64)}`,
+    activeRouterImage: `registry.fly.io/kestrel-one-runner@sha256:${"7".repeat(64)}`,
+    desiredRuntimeImage: `registry.fly.io/kestrel-one-runner@sha256:${"8".repeat(64)}`,
+    activeRuntimeImage: `registry.fly.io/kestrel-one-runner@sha256:${"8".repeat(64)}`,
+    lastFailureCode: null,
   };
 }
 

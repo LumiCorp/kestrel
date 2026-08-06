@@ -1,4 +1,4 @@
-name: Fly image release
+name: Runtime deployment
 
 on:
   push:
@@ -21,14 +21,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish-candidate:
+  deploy-runtime:
     environment: Production
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      KESTREL_RELEASE_PUBLISH_URL: ${{ vars.KESTREL_RELEASE_PUBLISH_URL }}
+      KESTREL_PLATFORM_IMAGE_URL: ${{ vars.KESTREL_PLATFORM_IMAGE_URL }}
       KESTREL_RELEASE_TRIGGER: ${{ github.event_name == 'push' && 'main' || github.event_name == 'schedule' && 'scheduled' || 'manual' }}
       KESTREL_RELEASE_FORCE_ALL: ${{ github.event_name == 'schedule' || inputs.force_all == true }}
+      KESTREL_RELEASE_DIFF_BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
       KESTREL_RELEASE_VALIDATION_COMMANDS: '["pnpm validate"]'
     steps:
       - uses: actions/checkout@v4
@@ -38,21 +39,19 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - name: Validate the release revision
         run: pnpm validate
+      - name: Verify the checked-in rollout contract
+        run: pnpm tsx scripts/validate-runtime-rollout-contract.ts
       - name: Authenticate Docker to the Fly registry
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl auth docker
-      - name: Deploy the release controller
+      - name: Wait for the exact Kestrel One production revision
+        run: pnpm tsx scripts/wait-for-kestrel-production-revision.ts ${{ github.sha }}
+      - name: Build, smoke, deploy global apps, and publish desired platform images
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: >-
-          flyctl deploy .
-          --app kestrel-one-control-worker
-          --config deploy/fly/kestrel-one-control-worker/fly.toml
-          --dockerfile deploy/fly/kestrel-one-control-worker/Dockerfile
-          --remote-only
-          --build-arg KESTREL_GIT_SHA=${{ github.sha }}
-      - name: Verify the release controller contract
+        run: pnpm release:fly-images
+      - name: Verify the control worker is ready
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
@@ -65,11 +64,5 @@ jobs:
             fi
             sleep 2
           done
-          echo "Release controller did not become ready within 90 seconds." >&2
+          echo "Control worker did not become ready within 90 seconds." >&2
           exit 1
-      - name: Wait for the exact Kestrel One production revision
-        run: pnpm tsx scripts/wait-for-kestrel-production-revision.ts ${{ github.sha }}
-      - name: Build, smoke, and publish candidate images
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: pnpm release:fly-images

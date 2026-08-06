@@ -22,6 +22,7 @@ const FLY_ROLES = [
   "preview-edge",
   "turn-worker",
   "runpod-worker",
+  "control-worker",
 ] as const;
 
 interface ReleaseEvidence {

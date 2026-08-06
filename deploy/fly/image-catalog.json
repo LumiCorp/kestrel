@@ -106,6 +106,28 @@
         "packages/environment-auth/**",
         "deploy/fly/kestrel-one-runpod-worker/**"
       ]
+    },
+    {
+      "role": "control-worker",
+      "app": "kestrel-one-control-worker",
+      "config": "deploy/fly/kestrel-one-control-worker/fly.toml",
+      "dockerfile": "deploy/fly/kestrel-one-control-worker/Dockerfile",
+      "smoke": "deploy/fly/kestrel-one-control-worker/smoke.sh",
+      "rollout": "global-app",
+      "inputs": [
+        "deploy/fly/image-catalog.json",
+        ".dockerignore",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.json",
+        "apps/web/**",
+        "packages/environment-auth/**",
+        "packages/mcp-security/**",
+        "packages/protocol/**",
+        "packages/sdk/**",
+        "deploy/fly/kestrel-one-control-worker/**"
+      ]
     }
   ]
 }

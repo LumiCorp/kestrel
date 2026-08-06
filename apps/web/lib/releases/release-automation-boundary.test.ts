@@ -28,6 +28,7 @@ test("Fly image release automation covers every managed image and authenticates 
     "preview-edge",
     "turn-worker",
     "runpod-worker",
+    "control-worker",
   ]) {
     assert.match(catalog, new RegExp(`"role": "${role}"`, "u"));
   }
@@ -42,7 +43,7 @@ test("Fly image release automation covers every managed image and authenticates 
   );
   assert.match(workflow, /cron: "0 14 \* \* 1"/u);
   assert.match(workflow, /id-token: write/u);
-  assert.match(workflow, /publish-candidate:\n\s+environment: Production/u);
+  assert.match(workflow, /deploy-runtime:\n\s+environment: Production/u);
   assert.match(workflow, /pnpm validate/u);
   assert.match(workflow, /run: flyctl auth docker/u);
   assert.doesNotMatch(workflow, /run: fly auth docker/u);
@@ -67,7 +68,7 @@ test("Fly image release automation covers every managed image and authenticates 
   assert.doesNotMatch(jobEnvironment, /FLY_API_TOKEN/u);
   assert.match(workflow, /FLY_API_TOKEN: \$\{\{ secrets\.FLY_API_TOKEN \}\}/u);
   assert.doesNotMatch(workflow, /setup-flyctl@master/u);
-  assert.match(publisherRuntime, /selectFlyImageDiffBase/u);
+  assert.match(publisherRuntime, /activeSourceRevision/u);
   assert.match(publisherRuntime, /const changedPaths = diffBase/u);
   assert.match(
     publisherRuntime,
@@ -79,6 +80,21 @@ test("Fly image release automation covers every managed image and authenticates 
     runPodSmoke,
     /\.\/apps\/web\/scripts\/managed-runpod-worker\.ts/u,
   );
+});
+
+test("runtime automation deploys global apps directly and publishes platform desired state", async () => {
+  const [workflow, publisher, route] = await Promise.all([
+    read(".github/workflows/fly-image-release.yml"),
+    read("scripts/fly-image-publisher.ts"),
+    read("apps/web/app/api/runtime/platform-images/route.ts"),
+  ]);
+  assert.doesNotMatch(workflow, /publish-candidate/u);
+  assert.match(workflow, /KESTREL_PLATFORM_IMAGE_URL/u);
+  assert.match(publisher, /globalComponents/u);
+  assert.match(publisher, /"--image"/u);
+  assert.match(publisher, /Published platform generation/u);
+  assert.match(route, /publishPlatformImages/u);
+  assert.match(route, /workflow_dispatch/u);
 });
 
 test("promotion drains sequentially and preserves stopped Workspaces", async () => {
@@ -101,7 +117,7 @@ test("promotion drains sequentially and preserves stopped Workspaces", async () 
   assert.match(runtime, /"routed",\s*"running"/u);
   assert.match(runtime, /canaryEnvironmentId/u);
   assert.match(runtime, /status: "paused"/u);
-  assert.match(runtime, /automaticRollback: false/u);
+  assert.match(runtime, /automaticRollback: true/u);
   assert.match(provisioner, /preserveStoppedWorkspaces/u);
   assert.match(provisioner, /createVolumeSnapshot/u);
   assert.match(provisioner, /configureStoppedWorkspaceRuntime/u);

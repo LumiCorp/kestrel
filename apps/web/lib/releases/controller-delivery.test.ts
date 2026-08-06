@@ -48,13 +48,15 @@ test("control worker secrets are explicitly allowlisted and fail closed", () => 
   );
 });
 
-test("release workflow waits for exact production identity before publication", async () => {
+test("runtime workflow waits for exact production identity before desired-state publication", async () => {
   const workflow = await readFile(
     new URL(".github/workflows/fly-image-release.yml", root),
     "utf8",
   );
   const wait = workflow.indexOf("Wait for the exact Kestrel One production revision");
-  const publish = workflow.indexOf("Build, smoke, and publish candidate images");
+  const publish = workflow.indexOf(
+    "Build, smoke, deploy global apps, and publish desired platform images",
+  );
   assert.ok(wait >= 0);
   assert.ok(publish > wait);
   assert.match(
