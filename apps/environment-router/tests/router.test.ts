@@ -87,6 +87,26 @@ const promotionToken = signEnvironmentExecutionTicket({
     nonce: "nonce-3",
   },
 });
+const backupToken = signEnvironmentExecutionTicket({
+  privateKey,
+  ticket: {
+    version: 1,
+    audience: ENVIRONMENT_ROUTER_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    workspaceId: "workspace-1",
+    threadId: "thread-1",
+    runId: "run-backup",
+    actorId: "user-1",
+    agentId: "kestrel-control-plane",
+    flyAppName: "kestrel-env-1",
+    flyMachineId: "machine-1",
+    capabilities: ["workspace.backups.export"],
+    issuedAt: 1000,
+    expiresAt: 1300,
+    nonce: "nonce-backup",
+  },
+});
 const reasoningReadToken = signEnvironmentExecutionTicket({
   privateKey,
   ticket: {
@@ -237,6 +257,34 @@ test("router authorizes Workspace HTTP APIs by exact method and path", () => {
     method: "POST",
     pathname: "/v1/terminal/exec",
   }).status, 403);
+});
+
+test("router authorizes backup preparation and export with the backup capability", () => {
+  for (const [method, pathname] of [
+    ["POST", "/v1/backups/prepare"],
+    ["GET", "/v1/backups/export"],
+  ] as const) {
+    assert.equal(
+      authorizeEnvironmentHttpRequest({
+        authorization: `Bearer ${backupToken}`,
+        publicKey,
+        now: 1100,
+        method,
+        pathname,
+      }).status,
+      200,
+    );
+  }
+  assert.equal(
+    authorizeEnvironmentHttpRequest({
+      authorization: `Bearer ${backupToken}`,
+      publicKey,
+      now: 1100,
+      method: "POST",
+      pathname: "/v1/backups/export",
+    }).status,
+    403,
+  );
 });
 
 test("router authorizes interactive PTY session operations exactly", () => {

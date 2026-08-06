@@ -55,10 +55,18 @@ jobs:
       - name: Verify the release controller contract
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: >-
-          flyctl ssh console
-          --app kestrel-one-control-worker
-          --command "grep -q release-controller-v1 /tmp/kestrel-control-worker-ready"
+        run: |
+          for attempt in $(seq 1 45); do
+            if flyctl ssh console \
+              --app kestrel-one-control-worker \
+              --command "grep -q release-controller-v1 /tmp/kestrel-control-worker-ready"
+            then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Release controller did not become ready within 90 seconds." >&2
+          exit 1
       - name: Wait for the exact Kestrel One production revision
         run: pnpm tsx scripts/wait-for-kestrel-production-revision.ts ${{ github.sha }}
       - name: Build, smoke, and publish candidate images

@@ -34,6 +34,10 @@ test("control worker secrets are explicitly allowlisted and fail closed", () => 
   assert.equal(selected.has("UNRELATED_SECRET"), false);
   assert.deepEqual([...selected.keys()], [...CONTROL_WORKER_SECRET_ALLOWLIST]);
   assert.throws(
+    () => selectControlWorkerSecrets({ ...source, CRON_SECRET: "" }),
+    /missing control worker secrets: CRON_SECRET/u,
+  );
+  assert.throws(
     () =>
       selectControlWorkerSecrets({
         ...source,
@@ -57,4 +61,17 @@ test("release workflow waits for exact production identity before publication", 
     workflow,
     /wait-for-kestrel-production-revision\.ts \$\{\{ github\.sha \}\}/u,
   );
+});
+
+test("release workflow bounds controller readiness polling", async () => {
+  const workflow = await readFile(
+    new URL(".github/workflows/fly-image-release.yml", root),
+    "utf8",
+  );
+  assert.match(workflow, /for attempt in \$\(seq 1 45\); do/u);
+  assert.match(
+    workflow,
+    /grep -q release-controller-v1 \/tmp\/kestrel-control-worker-ready/u,
+  );
+  assert.match(workflow, /did not become ready within 90 seconds/u);
 });

@@ -9,6 +9,7 @@ import {
   encryptWorkspaceBackup,
 } from "./backup-crypto";
 import { createAuxiliaryVolumeSnapshot } from "./backup-snapshot";
+import { shouldFallbackToLegacyBackupExport } from "./backups";
 
 
 test("Workspace object backups are authenticated and decryptable", () => {
@@ -62,6 +63,22 @@ test("an accepted asynchronous Fly snapshot remains auxiliary", async () => {
     state: "prepare",
     errorMessage: null,
   });
+});
+
+test("backup preparation falls back only for legacy router responses", () => {
+  assert.equal(shouldFallbackToLegacyBackupExport(404, undefined), true);
+  assert.equal(
+    shouldFallbackToLegacyBackupExport(403, "ENVIRONMENT_CAPABILITY_DENIED"),
+    true,
+  );
+  assert.equal(
+    shouldFallbackToLegacyBackupExport(403, "ENVIRONMENT_TENANT_MISMATCH"),
+    false,
+  );
+  assert.equal(
+    shouldFallbackToLegacyBackupExport(500, "ENVIRONMENT_CAPABILITY_DENIED"),
+    false,
+  );
 });
 
 test("a rejected Fly snapshot does not reject the canonical archive backup", async () => {
