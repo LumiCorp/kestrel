@@ -48,7 +48,7 @@ task instead of reading the repository as one long manual.
 - [Security](../SECURITY.md)
 - [Quality gates](../apps/docs/content/operations/quality-gates.mdx)
 - [Deployment troubleshooting](../apps/docs/content/deploy/deployment-troubleshooting.mdx)
-- [Fly image releases](fly-image-releases.md)
+- [Runtime deployments](fly-image-releases.md)
 - [Evaluations with Ruhroh](../apps/docs/content/operations/evaluations.mdx)
 
 ### Change the Repository

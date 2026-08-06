@@ -1,31 +1,24 @@
-# Kestrel One release controller
+# Kestrel One control worker
 
-This private, non-HTTP Fly process owns coordinated releases, hosted Environment
-operations, lifecycle reconciliation and deletion, and Workspace backups. It is
-outside the managed five-image release bundle, so deploying a bundle never
-depends on first upgrading one of its own targets.
+This private, non-HTTP Fly process owns hosted Environment lifecycle operations,
+resource reconciliation, deletion, and Workspace backups. It never processes
+durable user turns.
 
-The controller consumes only revision-fenced queues declared in
-`apps/web/lib/releases/controller-contract.ts`. Candidate registration requires
-a fresh database heartbeat at the manifest's controller contract revision.
-Legacy turn workers remain isolated on the unversioned queue names until they
-are upgraded to the turn-only process.
+The worker treats queues as wake-up mechanisms. Scheduled reconciliation can
+reconstruct platform work from desired generation, Environment targets,
+verified resource images, operation evidence, and authoritative Fly state.
+Retrying or restarting the worker therefore does not restart a global release
+or repeat completed resource mutations.
 
-## Production release gate
+During the migration proof window it also consumes the version-fenced legacy
+release queue and writes the legacy heartbeat. Those compatibility surfaces are
+removed only after two desired-state production rollouts and a rollback drill.
 
-After additive migrations are verified, release a clean committed revision with:
+Set `KESTREL_PLATFORM_RUNTIME_RECONCILIATION_MODE=observe` for migration and
+shadow comparison. Set it to `active` only after migration 0061 is verified.
+In active mode the persistent canary is automatic, fanout is per Environment,
+and failures are resource-local.
 
-```bash
-pnpm --dir apps/web release:control-worker
-```
-
-The command pulls production configuration from the canonical
-`lumi-kestrel/one` Vercel project, rejects missing required values, and imports
-only the explicit allowlist through standard input. It requires all legacy
-lifecycle queues to be idle before creating or updating
-`kestrel-one-control-worker`, then verifies its readiness file and a heartbeat
-newer than 90 seconds.
-
-The main-branch image release workflow redeploys this worker at the exact commit
-being published. It waits until Kestrel One production reports that same commit
-before registering a candidate.
+The main-branch runtime workflow builds this worker only when its declared
+catalog inputs change, smokes the immutable image, deploys that exact digest,
+and checks its readiness file.
