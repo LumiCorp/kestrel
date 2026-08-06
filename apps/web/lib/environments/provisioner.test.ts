@@ -315,6 +315,7 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
     },
   ];
   const machineUpdates: Parameters<typeof provider.updateMachineImage>[0][] = [];
+  const awaitedStates: string[] = [];
   const backupInputs: Array<{
     parentReleaseTargetId?: string | undefined;
   }> = [];
@@ -340,6 +341,10 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
   provider.startMachine = async () => {
     calls.push("provider:start");
   };
+  provider.waitForMachine = async (input) => {
+    awaitedStates.push(input.state);
+    calls.push("provider:wait");
+  };
   const provisioner = createProvisioner(
     repository,
     provider,
@@ -361,8 +366,6 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
     "operation:stage:environment.update.workspaces",
     "workspace:starting",
     "provider:image:workspace-machine-id",
-    "provider:wait",
-    "provider:start",
     "provider:wait",
     "provider:health",
     "workspace:rebuilt",
@@ -387,6 +390,8 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
     KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: undefined,
   });
   assert.ok(machineUpdates[1]?.envPatch?.KESTREL_WORKSPACE_SERVICE_TOKEN);
+  assert.deepEqual(awaitedStates, ["started", "started"]);
+  assert.equal(calls.includes("provider:start"), false);
   assert.ok(gatewayUpdate?.gatewayServiceTokenHash);
   assert.ok(workspaceUpdate?.serviceTokenHash);
   assert.equal(backupInputs[0]?.parentReleaseTargetId, "release-target-id");
@@ -455,6 +460,11 @@ test("Environment updates recover an incompatible stopped runtime from a pre-des
     "provider:image:workspace-machine-id",
     "provider:wait",
   ]);
+  assert.equal(
+    calls.filter((entry) => entry === "provider:image:workspace-machine-id")
+      .length,
+    1,
+  );
 });
 
 test("Environment updates repair failed Workspaces before routed backup", async () => {
@@ -514,18 +524,22 @@ test("Environment updates repair failed Workspaces before routed backup", async 
       },
     },
   ]);
-  assert.deepEqual(calls.slice(6, 14), [
+  assert.deepEqual(calls.slice(6, 12), [
     "operation:stage:environment.update.backing_up",
     "provider:snapshot:failed-workspace-volume-id",
     "workspace:starting",
     "provider:image:failed-workspace-machine-id",
     "provider:wait",
-    "provider:start",
-    "provider:wait",
     "provider:health",
   ]);
   assert.ok(calls.includes("workspace:rebuilt"));
   assert.ok(calls.includes("backup:failed-workspace-id"));
+  assert.equal(
+    calls.filter(
+      (entry) => entry === "provider:image:failed-workspace-machine-id",
+    ).length,
+    1,
+  );
 });
 
 test("failed Workspace repair keeps Fly 408s inside the release retry budget", async () => {
