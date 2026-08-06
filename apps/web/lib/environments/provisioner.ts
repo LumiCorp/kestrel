@@ -670,6 +670,7 @@ export class EnvironmentProvisioner {
       routerImage,
       gatewayServiceTokenHash: hashEnvironmentServiceToken(gatewayServiceToken),
     });
+    const alreadyUpdatedWorkspaceIds = new Set<string>();
     if (skipWorkspaceBackups) {
       await this.repository.updateOperationStage({
         operationId: operation.id,
@@ -714,12 +715,12 @@ export class EnvironmentProvisioner {
             workspaceId: workspace.id,
             machineId: workspace.flyMachineId,
             runtimeImage,
-            forceStart: true,
           });
           await this.backupWorkspace({
             ...backupInput,
             preDestructiveSnapshot,
           });
+          alreadyUpdatedWorkspaceIds.add(workspace.id);
           continue;
         }
         try {
@@ -738,12 +739,12 @@ export class EnvironmentProvisioner {
             workspaceId: workspace.id,
             machineId: workspace.flyMachineId,
             runtimeImage,
-            forceStart: true,
           });
           await this.backupWorkspace({
             ...backupInput,
             preDestructiveSnapshot,
           });
+          alreadyUpdatedWorkspaceIds.add(workspace.id);
         }
       }
     }
@@ -755,6 +756,10 @@ export class EnvironmentProvisioner {
     const configuredUnverifiedWorkspaceIds: string[] = [];
     let updatedWorkspaceCount = 0;
     for (const workspace of workspaces) {
+      if (alreadyUpdatedWorkspaceIds.has(workspace.id)) {
+        updatedWorkspaceCount += 1;
+        continue;
+      }
       if (!workspace.flyMachineId) {
         skippedWorkspaceIds.push(workspace.id);
         continue;
@@ -775,7 +780,6 @@ export class EnvironmentProvisioner {
         workspaceId: workspace.id,
         machineId: workspace.flyMachineId,
         runtimeImage,
-        forceStart: true,
       });
       updatedWorkspaceCount += 1;
     }
@@ -849,7 +853,6 @@ export class EnvironmentProvisioner {
     workspaceId: string;
     machineId: string;
     runtimeImage: string;
-    forceStart?: boolean | undefined;
   }) {
     await this.repository.setWorkspaceStarting(input.workspaceId);
     const workspaceServiceToken = createEnvironmentServiceToken();
@@ -864,21 +867,13 @@ export class EnvironmentProvisioner {
         }),
         stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
       });
-      if (input.forceStart && machine.state !== "stopped") {
-        await this.provider.waitForMachine({
-          appName: input.appName,
-          machineId: input.machineId,
-          state: "stopped",
-          timeoutSeconds: 90,
-        });
-      }
-      if (input.forceStart || machine.state === "stopped") {
+      if (machine.state === "stopped") {
         await this.provider.startMachine({
           appName: input.appName,
           machineId: input.machineId,
         });
       }
-      if (input.forceStart || machine.state !== "started") {
+      if (machine.state !== "started") {
         await this.provider.waitForMachine({
           appName: input.appName,
           machineId: input.machineId,
