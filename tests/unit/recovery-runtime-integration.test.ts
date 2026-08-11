@@ -347,7 +347,46 @@ test("external-effect recovery waits for a fresh exact approval before committin
   assert.equal(events.includes("recovery.action.completed"), true);
 });
 
-test("managed recovery review waits durably and exact decline settles RECOVERY_DECLINED", async () => {
+test("not-applicable recovery preserves the triggering failure and is not recorded as completed", async () => {
+  const harness = createWorkflowOutcomeHarness({
+    status: "not_applicable",
+    reason: "NO_CONTINUATION_AVAILABLE",
+  });
+  const output = await harness.kestrel.run({
+    id: "event-recovery-not-applicable",
+    type: "user.message",
+    sessionId: "session-recovery-not-applicable",
+    stepAgent: "recovery.loop",
+    payload: { message: "loop", metadata: { threadId: "thread-recovery-not-applicable" } },
+  });
+
+  assert.equal(output.status, "FAILED");
+  assert.equal(output.errors.some((error) => error.code === "MAX_STEPS_EXCEEDED"), true);
+  assert.equal(output.errors.some((error) => error.code === "RECOVERY_EXHAUSTED"), false);
+  assert.equal(harness.events.includes("recovery.action.not_applicable"), true);
+  assert.equal(harness.events.includes("recovery.action.completed"), false);
+});
+
+test("RECOVERY_EXHAUSTED is emitted only after an applicable workflow fails", async () => {
+  const harness = createWorkflowOutcomeHarness({
+    status: "failed",
+    failureCode: "CONTINUATION_REPAIR_FAILED",
+  });
+  const output = await harness.kestrel.run({
+    id: "event-recovery-applicable-failed",
+    type: "user.message",
+    sessionId: "session-recovery-applicable-failed",
+    stepAgent: "recovery.loop",
+    payload: { message: "loop", metadata: { threadId: "thread-recovery-applicable-failed" } },
+  });
+
+  assert.equal(output.status, "FAILED");
+  assert.equal(output.errors.some((error) => error.code === "RECOVERY_EXHAUSTED"), true);
+  assert.equal(harness.events.includes("recovery.action.failed"), true);
+  assert.equal(harness.events.includes("recovery.action.completed"), false);
+});
+
+test("generic recovery review is not created and the original failure remains terminal", async () => {
   const primary = modelCandidate("primary", "openai", "primary-model");
   const policy = createRecoveryPolicyV1({
     policyId: "recovery:review-integration",
@@ -417,42 +456,12 @@ test("managed recovery review waits durably and exact decline settles RECOVERY_D
       },
     },
   });
-  assert.equal(waiting.status, "WAITING");
-  assert.equal(waiting.waitFor?.kind, "user");
-  const waitMetadata = waiting.waitFor?.metadata as Record<string, unknown>;
-  const failureSummary = waitMetadata.triggeringFailureSummary;
-  assert.equal(typeof failureSummary, "string");
-  assert.match(String(failureSummary), /https:\/\/\[redacted\]@provider\.example\/path/u);
-  assert.doesNotMatch(String(failureSummary), /alice:secret/u);
-  assert.doesNotMatch(String(failureSummary), /recovery-review-secret/u);
-  assert.match(String(failureSummary), /\[REDACTED\]/u);
-  assert.equal(String(failureSummary).length, 512);
-  assert.match(String(failureSummary), /…$/u);
-  const prompt = String(waitMetadata.prompt);
-  assert.match(prompt, /^Kestrel couldn't continue\. Automatic recovery could not resolve this error\./u);
-  assert.match(prompt, /Technical details:\n/u);
-  assert.ok(prompt.indexOf("Choose exactly one allowed recovery option.") < prompt.indexOf("Technical details:"));
-  assert.ok(prompt.indexOf("Technical details:") < prompt.indexOf(String(failureSummary)));
+  assert.equal(waiting.status, "FAILED");
+  assert.equal(waiting.waitFor, undefined);
+  assert.equal(waiting.errors.some((error) => error.code === "UNRECOVERABLE_TEST"), true);
   const waitingSession = await store.getSession("session-recovery-review");
-  const review = ((waitingSession?.state.agent as Record<string, unknown>)?.recovery as Record<string, unknown>)?.review as Record<string, unknown>;
-  const binding = review.binding as Record<string, unknown>;
-  assert.equal(binding.expiresAt, undefined);
-  assert.equal(review.triggeringFailureSummary, failureSummary);
-
-  const declined = await kestrel.run({
-    id: "event-recovery-review-decline",
-    type: "user.reply",
-    sessionId: "session-recovery-review",
-    payload: {
-      recoveryOptionId: "terminal.fail",
-      metadata: {
-        threadId: "thread-review",
-        actor: { actorId: "operator-1", actorType: "operator", tenantId: "tenant-1" },
-      },
-    },
-  });
-  assert.equal(declined.status, "FAILED");
-  assert.equal(declined.errors.some((error) => error.code === "RECOVERY_DECLINED"), true);
+  const review = ((waitingSession?.state.agent as Record<string, unknown>)?.recovery as Record<string, unknown> | undefined)?.review;
+  assert.equal(review, undefined);
 });
 
 function modelCandidate(
@@ -471,4 +480,61 @@ function modelCandidate(
       reasoningModes: ["off", "summary"],
     },
   };
+}
+
+function createWorkflowOutcomeHarness(outcome:
+  | { status: "not_applicable"; reason: string }
+  | { status: "failed"; failureCode: string }
+) {
+  const primary = modelCandidate("primary", "openai", "primary-model");
+  const policy = createRecoveryPolicyV1({
+    policyId: `recovery:workflow-outcome:${outcome.status}`,
+    primaryModel: primary,
+    stages: [
+      {
+        stageId: "run.continuation",
+        scope: "run",
+        failureCodes: ["MAX_STEPS_EXCEEDED"],
+        action: "deterministic_workflow",
+        handlerIds: ["run.continuation"],
+      },
+      {
+        stageId: "run.terminal",
+        scope: "run",
+        failureCodes: ["RECOVERY_EXHAUSTED"],
+        action: "terminal_failure",
+        terminalCode: "RECOVERY_EXHAUSTED",
+      },
+    ],
+  });
+  const gateway: ModelGateway = { call: async <T>() => ({}) as T };
+  const modelRegistry = new RecoveryModelRegistry();
+  modelRegistry.register({ candidate: primary, policyRevision: policy.revision, gateway });
+  const workflowHandlerRegistry = new RecoveryWorkflowHandlerRegistry();
+  workflowHandlerRegistry.register("run.continuation", async () => outcome);
+  const store = new InMemorySessionStore();
+  const events: string[] = [];
+  const kestrel = new Kestrel({
+    store,
+    modelGateway: gateway,
+    toolGateway: createTestToolGateway({}),
+    guardrails: { maxStepsPerRun: 3 },
+    runEventListener: (event) => {
+      events.push(event.type);
+    },
+    recoveryRuntime: {
+      policy,
+      executionProfileFingerprint: "e".repeat(64),
+      modelRegistry,
+      toolAdapterRegistry: new RecoveryToolAdapterRegistry(),
+      toolResultNormalizerRegistry: createDefaultRecoveryToolResultNormalizers(),
+      workflowHandlerRegistry,
+    },
+  });
+  kestrel.registerStep("recovery.loop", async () => ({
+    status: "RUNNING",
+    nextStepAgent: "recovery.loop",
+    statePatch: { progress: "unchanged" },
+  }));
+  return { kestrel, events };
 }

@@ -3185,7 +3185,7 @@ test("legacy execution sessions are normalized to react.exec.* steps at run star
   assert.equal(output.finalStep, "agent.exec.finalize");
 });
 
-test("repeated non-blocked wait tokens trip LOOP_GUARD_TRIGGERED before max steps", async () => {
+test("repeated non-blocked wait tokens preserve the existing wait idempotently", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store);
 
@@ -3230,9 +3230,16 @@ test("repeated non-blocked wait tokens trip LOOP_GUARD_TRIGGERED before max step
     },
   });
 
-  assert.equal(second.status, "FAILED");
-  assert.equal(second.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(second.errors[0]?.details?.guardType, "REPEATED_WAIT_LOOP");
+  assert.equal(second.status, "WAITING");
+  assert.equal(second.errors.length, 0);
+  assert.equal((second.waitFor?.metadata as Record<string, unknown> | undefined)?.reason, "extractor_clarification");
+  const preservedWait = store.getRunEvents().find((event) =>
+    event.type === "loop.guard_triggered" &&
+    event.metadata?.guardType === "REPEATED_WAIT_LOOP" &&
+    event.metadata?.disposition === "wait_preserved"
+  );
+  assert.notEqual(preservedWait, undefined);
+  assert.equal(typeof preservedWait?.metadata?.actionSignatureHash, "string");
 });
 
 test("repeated mode-blocked waits stay waiting instead of tripping the loop guard", async () => {

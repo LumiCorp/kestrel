@@ -31,6 +31,7 @@ export const RECOVERY_LIFECYCLE_EVENT_TYPES = Object.freeze([
   "recovery.decision.persisted",
   "recovery.action.started",
   "recovery.action.completed",
+  "recovery.action.not_applicable",
   "recovery.action.failed",
   "recovery.waiting",
   "recovery.exhausted",
@@ -367,6 +368,10 @@ export class RecoveryCoordinator {
     await this.appendActionEvent("recovery.action.completed", "INFO", decision);
   }
 
+  async markActionNotApplicable(decision: RecoveryDecisionV1, reason: string): Promise<void> {
+    await this.appendActionEvent("recovery.action.not_applicable", "INFO", decision, { reason });
+  }
+
   async markActionFailed(decision: RecoveryDecisionV1, failureCode: string): Promise<void> {
     await this.appendActionEvent("recovery.action.failed", "ERROR", decision, { failureCode });
   }
@@ -433,7 +438,11 @@ export class RecoveryCoordinator {
   }
 
   private async appendActionEvent(
-    type: "recovery.action.started" | "recovery.action.completed" | "recovery.action.failed",
+    type:
+      | "recovery.action.started"
+      | "recovery.action.completed"
+      | "recovery.action.not_applicable"
+      | "recovery.action.failed",
     level: "INFO" | "ERROR",
     decision: RecoveryDecisionV1,
     metadata: Record<string, unknown> = {},

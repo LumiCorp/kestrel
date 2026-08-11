@@ -17,6 +17,9 @@ import type {
   normalizeRetrievalGuardInput,
   normalizeRetrievalGuardOutput,
 } from "./retrievalLoopGuard.js";
+import { normalizeAgentFeedbackForLoopGuard } from "./loopProgress.js";
+
+export { normalizeAgentFeedbackForLoopGuard } from "./loopProgress.js";
 
 const DELIBERATOR_EXTERNAL_DEADLINE_CLOSEOUT_RESERVE_MS = 15_000;
 
@@ -509,21 +512,6 @@ export function readCapabilityClassesFromFeedback(reactState: Record<string, unk
     add(asPlainRecord(item)?.capabilityClasses);
   }
   return [...capabilities].sort((left, right) => left.localeCompare(right));
-}
-
-export function normalizeAgentFeedbackForLoopGuard(reactState: Record<string, unknown>): Record<string, unknown> {
-  const lastActionResult = asPlainRecord(reactState.lastActionResult);
-  return {
-    capabilities: readCapabilityClassesFromFeedback(reactState),
-    lastActionResultKind: typeof lastActionResult?.kind === "string" ? lastActionResult.kind : "",
-    lastActionResultStatus: typeof lastActionResult?.status === "string" ? lastActionResult.status : "",
-    lastActionTool:
-      typeof lastActionResult?.toolName === "string"
-        ? lastActionResult.toolName
-        : typeof lastActionResult?.name === "string"
-          ? lastActionResult.name
-          : "",
-  };
 }
 
 export function readLatestEvidenceLedgerEntry(value: unknown): unknown {

@@ -139,6 +139,20 @@ export interface RecoveryWorkflowContext {
   execute?: (() => Promise<unknown>) | undefined;
 }
 
+export type RecoveryWorkflowResult<T = unknown> =
+  | { status: "handled"; value: T }
+  | { status: "not_applicable"; reason: string }
+  | { status: "failed"; failureCode: string; error?: unknown | undefined };
+
+export function normalizeRecoveryWorkflowResult<T>(
+  value: RecoveryWorkflowResult<T> | T | undefined,
+): RecoveryWorkflowResult<T> {
+  if (isRecoveryWorkflowResult<T>(value)) return value;
+  return value === undefined
+    ? { status: "not_applicable", reason: "WORKFLOW_RETURNED_NO_RESULT" }
+    : { status: "handled", value };
+}
+
 export function registerDefaultRecoveryWorkflowHandlers(
   registry: RecoveryWorkflowHandlerRegistry,
 ): void {
@@ -151,16 +165,27 @@ export function registerDefaultRecoveryWorkflowHandlers(
     if (registry.resolve(handlerId) !== undefined) continue;
     registry.register(handlerId, async (context) => {
       if (context.execute === undefined) {
-        throw new Error(`Recovery workflow '${handlerId}' requires an execution callback.`);
+        return {
+          status: "failed",
+          failureCode: "RECOVERY_EXECUTION_CALLBACK_REQUIRED",
+        } satisfies RecoveryWorkflowResult;
       }
-      return context.execute();
+      try {
+        return normalizeRecoveryWorkflowResult(await context.execute());
+      } catch (error) {
+        return {
+          status: "failed",
+          failureCode: readFailureCode(error),
+          error,
+        } satisfies RecoveryWorkflowResult;
+      }
     });
   }
 }
 
 export type RecoveryWorkflowHandler<T = unknown> = (
   context: RecoveryWorkflowContext,
-) => Promise<T>;
+) => Promise<RecoveryWorkflowResult<T> | T>;
 
 export class RecoveryWorkflowHandlerRegistry {
   private readonly handlers = new Map<string, RecoveryWorkflowHandler>();
@@ -179,6 +204,20 @@ export class RecoveryWorkflowHandlerRegistry {
   listHandlerIds(): string[] {
     return [...this.handlers.keys()];
   }
+}
+
+function isRecoveryWorkflowResult<T>(value: unknown): value is RecoveryWorkflowResult<T> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const status = (value as Record<string, unknown>).status;
+  return status === "handled" || status === "not_applicable" || status === "failed";
+}
+
+function readFailureCode(error: unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" && code.trim().length > 0) return code;
+  }
+  return "RECOVERY_WORKFLOW_FAILED";
 }
 
 export function createDefaultRecoveryToolResultNormalizers(): RecoveryToolResultNormalizerRegistry {

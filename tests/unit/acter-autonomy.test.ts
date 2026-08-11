@@ -1441,6 +1441,13 @@ test("ask_user resume does not carry stale agent goal when transcript lacks a ta
         kind: "user",
         eventType: "user.reply",
       },
+      loopGuard: {
+        epoch: 4,
+        interventionEpoch: 2,
+        history: [{ stepName: "agent.loop", progressHash: "stale" }],
+        blockedActionSignature: "stale-action",
+        lastIntervention: { guardType: "NO_PROGRESS_REASONING_LOOP" },
+      },
     },
     activeRegion: undefined,
     currentStepAgent: "agent.exec.dispatch",
@@ -1464,6 +1471,13 @@ test("ask_user resume does not carry stale agent goal when transcript lacks a ta
   assert.equal(lastActionResult.resumeGoal, undefined);
   assert.equal(visibleTodos.items[0]?.id, "verify-answer");
   assert.equal(visibleTodos.items[0]?.status, "pending");
+  assert.deepEqual(react.loopGuard, {
+    epoch: 5,
+    interventionEpoch: 2,
+    history: [],
+    blockedActionSignature: undefined,
+    lastIntervention: undefined,
+  });
 });
 
 test("exec.dispatch records processor-owned ask_user waits", async () => {

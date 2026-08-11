@@ -72,7 +72,6 @@ export function resolveRecoveryPolicyForProfile(
         stageId: "run.deterministic_workflows",
         scope: "run",
         failureCodes: [
-          "LOOP_GUARD_TRIGGERED",
           "MAX_MODEL_CALLS_EXCEEDED",
           "MAX_STEPS_EXCEEDED",
           "NO_PROGRESS_REASONING_LOOP",
@@ -86,13 +85,6 @@ export function resolveRecoveryPolicyForProfile(
           "run.continuation",
           "run.loop_recovery",
         ],
-      },
-      {
-        stageId: "operator.recovery_review",
-        scope: "run",
-        failureCodes: ["RECOVERY_EXHAUSTED"],
-        action: "human_review",
-        optionIds: ["retry.primary", "terminal.fail"],
       },
     );
   }

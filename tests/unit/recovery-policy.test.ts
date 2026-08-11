@@ -171,7 +171,6 @@ test("managed and custom profiles receive deterministic owned recovery ladders",
       "alternate_model",
       "alternate_tool",
       "deterministic_workflow",
-      "human_review",
       "terminal_failure",
     ],
   );
