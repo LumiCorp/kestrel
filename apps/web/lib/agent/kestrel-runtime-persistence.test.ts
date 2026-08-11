@@ -29,7 +29,7 @@ test("live failure visibility cannot waive canonical durable failure text", () =
     { type: "text", text: "Runner failed." },
     {
       type: "text",
-      text: "The previous response failed before completion. Reason: Runner failed. You can retry the request.",
+      text: "The previous response failed before completion. Reason: Runner failed. Send a new message to continue.",
     },
   ]);
 });

@@ -7,6 +7,7 @@ import {
   CheckIcon,
   FilmIcon,
   ImagePlusIcon,
+  RotateCcwIcon,
   Volume2Icon,
   VolumeXIcon,
 } from "lucide-react";
@@ -93,7 +94,13 @@ function ComposerStatusEdge({
     <>
       <span
         aria-live="polite"
-        className="sr-only"
+        className={cn(
+          presentation.tone === "attention" || presentation.tone === "error"
+            ? "flex px-2 pt-1 font-medium text-xs"
+            : "sr-only",
+          presentation.tone === "attention" && "text-primary",
+          presentation.tone === "error" && "text-destructive"
+        )}
         data-queue-version={queueVersion}
         data-testid="composer-state"
         role="status"
@@ -1412,8 +1419,10 @@ function PureComposerActionButton({
       type="button"
       variant={isStopAction ? "outline" : "default"}
     >
-      {isStopAction || isResetAction ? (
+      {isStopAction ? (
         <StopIcon size={14} />
+      ) : isResetAction ? (
+        <RotateCcwIcon size={16} />
       ) : (
         <ArrowUpIcon size={16} />
       )}
