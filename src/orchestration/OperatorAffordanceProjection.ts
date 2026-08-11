@@ -10,6 +10,7 @@ import {
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
   normalizeInteractionMode,
+  parseExecutionPolicyOverride,
   resolveAllowedToolClasses,
 } from "../mode/contracts.js";
 import type { ModelProviderId } from "../profile/runtimeProfile.js";
@@ -134,7 +135,7 @@ export function buildRuntimeOperatorAffordance(input: {
     defaultActSubmode: DEFAULT_ACT_SUBMODE,
   });
   const executionPolicy =
-    readExecutionPolicy(reactState?.executionPolicy) ?? input.turn.executionPolicy;
+    parseExecutionPolicyOverride(reactState?.executionPolicy) ?? input.turn.executionPolicy;
   const waitFor = input.output.waitFor ?? readWaitFor(readActiveWaitState(reactState));
   const blockReason = deriveOperatorBlockReason(waitFor);
   const context = readOperatorContextSummary(asRecord(asRecord(reactState?.contextCache)?.contextTelemetry));
@@ -507,13 +508,6 @@ export function readOperatorWaitDetail(
   waitFor: Exclude<NormalizedOutput["waitFor"], undefined>,
 ): string | undefined {
   return extractWaitDetail(waitFor);
-}
-
-function readExecutionPolicy(value: unknown): ExecutionPolicyOverride | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return ;
-  }
-  return value as ExecutionPolicyOverride;
 }
 
 function readWaitFor(value: unknown): Exclude<NormalizedOutput["waitFor"], undefined> | undefined {

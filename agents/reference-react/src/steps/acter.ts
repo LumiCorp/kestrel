@@ -21,6 +21,7 @@ import {
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
   normalizeInteractionMode,
+  parseExecutionPolicyOverride,
   toCanonicalInteractionMode,
 } from "../../../../src/mode/contracts.js";
 import type { InteractionMode } from "../../../../src/mode/contracts.js";
@@ -151,7 +152,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       defaultInteractionMode: DEFAULT_INTERACTION_MODE,
       defaultActSubmode: DEFAULT_ACT_SUBMODE,
     });
-    const executionPolicy = readExecutionPolicy(
+    const executionPolicy = parseExecutionPolicyOverride(
       ctx.event.payload.executionPolicy ?? reactState.executionPolicy,
     );
     const modeSystemV2Enabled =
@@ -2452,92 +2453,6 @@ function readMissingCapabilities(reactState: Record<string, unknown>): string[] 
   return asArray(asRecord(reactState.decisionVerification)?.missingCapabilities)
     .map((item) => asString(item))
     .filter((item): item is string => item !== undefined);
-}
-
-function readExecutionPolicy(
-  value: unknown,
-):
-  | {
-      toolClassPolicy?: Partial<Record<"read_only" | "planning_write" | "sandboxed_only" | "external_side_effect", boolean>> | undefined;
-      capabilityPolicy?: Record<string, boolean> | undefined;
-      approvalPolicy?: {
-        strictApprovalPerCall?: boolean | undefined;
-      } | undefined;
-    }
-  | undefined {
-  const record = asRecord(value);
-  if (record === undefined) {
-    return ;
-  }
-
-  const toolClassPolicyRaw = asRecord(record.toolClassPolicy);
-  const toolClassPolicy = toolClassPolicyRaw === undefined
-    ? undefined
-    : {
-        ...(typeof toolClassPolicyRaw.read_only === "boolean"
-          ? { read_only: toolClassPolicyRaw.read_only }
-          : {}),
-        ...(typeof toolClassPolicyRaw.planning_write === "boolean"
-          ? { planning_write: toolClassPolicyRaw.planning_write }
-          : {}),
-        ...(typeof toolClassPolicyRaw.sandboxed_only === "boolean"
-          ? { sandboxed_only: toolClassPolicyRaw.sandboxed_only }
-          : {}),
-        ...(typeof toolClassPolicyRaw.external_side_effect === "boolean"
-          ? { external_side_effect: toolClassPolicyRaw.external_side_effect }
-          : {}),
-      };
-  const capabilityPolicyRaw = asRecord(record.capabilityPolicy);
-  const capabilityPolicy = capabilityPolicyRaw === undefined
-    ? undefined
-    : {
-        ...(typeof capabilityPolicyRaw["workspace.read"] === "boolean"
-          ? { "workspace.read": capabilityPolicyRaw["workspace.read"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["workspace.write"] === "boolean"
-          ? { "workspace.write": capabilityPolicyRaw["workspace.write"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["shell.exec"] === "boolean"
-          ? { "shell.exec": capabilityPolicyRaw["shell.exec"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["mission_control.work_item.write"] === "boolean"
-          ? { "mission_control.work_item.write": capabilityPolicyRaw["mission_control.work_item.write"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["network.call"] === "boolean"
-          ? { "network.call": capabilityPolicyRaw["network.call"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["code.execute"] === "boolean"
-          ? { "code.execute": capabilityPolicyRaw["code.execute"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["mcp.invoke"] === "boolean"
-          ? { "mcp.invoke": capabilityPolicyRaw["mcp.invoke"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["delegation.control"] === "boolean"
-          ? { "delegation.control": capabilityPolicyRaw["delegation.control"] }
-          : {}),
-      };
-  const approvalPolicyRaw = asRecord(record.approvalPolicy);
-  const approvalPolicy = approvalPolicyRaw === undefined
-    ? undefined
-    : {
-        ...(typeof approvalPolicyRaw.strictApprovalPerCall === "boolean"
-          ? { strictApprovalPerCall: approvalPolicyRaw.strictApprovalPerCall }
-          : {}),
-      };
-
-  if (
-    toolClassPolicy === undefined &&
-    capabilityPolicy === undefined &&
-    approvalPolicy === undefined
-  ) {
-    return ;
-  }
-
-  return {
-    ...(toolClassPolicy !== undefined ? { toolClassPolicy } : {}),
-    ...(capabilityPolicy !== undefined ? { capabilityPolicy } : {}),
-    ...(approvalPolicy !== undefined ? { approvalPolicy } : {}),
-  };
 }
 
 function readBoolean(value: unknown): boolean | undefined {
