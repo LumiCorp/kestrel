@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { memo, useMemo } from "react";
 import {
   type ChatSuggestion,
@@ -25,6 +25,7 @@ function PureSuggestedActions({
   onSuggestionSelect,
   videoEnabled,
 }: SuggestedActionsProps) {
+  const shouldReduceMotion = useReducedMotion();
   const suggestedActions = useMemo(
     () =>
       selectChatSuggestions({
@@ -44,10 +45,12 @@ function PureSuggestedActions({
       {suggestedActions.map((suggestedAction, index) => (
         <motion.div
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 20 }}
-          initial={{ opacity: 0, y: 20 }}
+          exit={shouldReduceMotion ? undefined : { opacity: 0, y: 20 }}
+          initial={shouldReduceMotion ? false : { opacity: 0, y: 20 }}
           key={suggestedAction.id}
-          transition={{ delay: 0.05 * index }}
+          transition={
+            shouldReduceMotion ? { duration: 0 } : { delay: 0.05 * index }
+          }
         >
           <Suggestion
             className="h-auto min-h-9 w-full justify-start whitespace-normal px-3 py-2 text-left font-normal text-muted-foreground text-xs leading-4 hover:text-foreground"

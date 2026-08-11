@@ -107,12 +107,12 @@ function normalizeAssistantFailureReason(errorMessage: string) {
 
 export function createAssistantFailureText(errorMessage?: string | null) {
   if (!errorMessage?.trim()) {
-    return `${ASSISTANT_FAILURE_PREFIX} You can retry the request.`;
+    return `${ASSISTANT_FAILURE_PREFIX} Send a new message to continue.`;
   }
 
-  return `${ASSISTANT_FAILURE_PREFIX} Reason: ${normalizeAssistantFailureReason(
-    errorMessage
-  )} You can retry the request.`;
+  const reason = normalizeAssistantFailureReason(errorMessage);
+  const separator = /[.!?]$/u.test(reason) ? "" : ".";
+  return `${ASSISTANT_FAILURE_PREFIX} Reason: ${reason}${separator} Send a new message to continue.`;
 }
 
 export function isAssistantFailureText(text: string) {

@@ -31,6 +31,23 @@ export type ProjectedConversation = {
   issues: ConversationProjectionIssue[];
 };
 
+function clearProcessedDeliveryState(
+  message: ChatMessage,
+  turn: ThreadTurnView | undefined
+) {
+  if (
+    !turn ||
+    turn.status === "queued" ||
+    turn.inputMessageId !== message.id ||
+    message.metadata?.deliveryState === undefined
+  ) {
+    return message;
+  }
+
+  const { deliveryState: _deliveryState, ...metadata } = message.metadata;
+  return { ...message, metadata };
+}
+
 export function collectDurableTurnPresentationParts(messages: ChatMessage[]) {
   const seen = new Set<string>();
   return messages.flatMap((message) => {
@@ -111,7 +128,7 @@ export function projectThreadConversation(input: {
     const turnId = turnIdByMessageId.get(message.id);
     if (!turnId) continue;
     const current = messagesByTurnId.get(turnId) ?? [];
-    current.push(message);
+    current.push(clearProcessedDeliveryState(message, turnsById.get(turnId)));
     messagesByTurnId.set(turnId, current);
     if (
       !turnsById.has(turnId) &&

@@ -186,13 +186,45 @@ test("approval blocks the composer with an attention state", () => {
 });
 
 test("transport errors expose reset and ready recovery restores send", () => {
-  assert.deepEqual(presentation({ transportStatus: "error" }).action, {
+  const failedTransport = presentation({ transportStatus: "error" });
+  assert.deepEqual(failedTransport.action, {
     disabled: false,
     kind: "reset",
   });
-  assert.equal(presentation({ transportStatus: "error" }).tone, "error");
+  assert.equal(failedTransport.tone, "error");
+  assert.equal(
+    failedTransport.label,
+    "Connection error · reset to continue"
+  );
   assert.deepEqual(presentation({ transportStatus: "ready" }).action, {
     disabled: true,
     kind: "send",
   });
+});
+
+test("terminal queue pauses tell the user how to continue", () => {
+  const failed = presentation({
+    conversationState: {
+      ...baseState,
+      queue: { ...baseState.queue, state: "paused", pauseReason: "turn_failed" },
+    },
+  });
+  const cancelled = presentation({
+    conversationState: {
+      ...baseState,
+      queue: {
+        ...baseState.queue,
+        state: "paused",
+        pauseReason: "turn_cancelled",
+      },
+    },
+  });
+
+  assert.equal(failed.label, "Agent failed · send a new message to continue");
+  assert.equal(failed.tone, "error");
+  assert.equal(
+    cancelled.label,
+    "Turn interrupted · send a new message to continue"
+  );
+  assert.equal(cancelled.tone, "attention");
 });

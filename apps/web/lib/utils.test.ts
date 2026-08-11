@@ -10,6 +10,13 @@ import {
 } from "./utils";
 import { ChatbotError } from "./errors";
 
+test("assistant failure copy explains the durable continuation action", () => {
+  assert.equal(
+    createAssistantFailureText("Temporary provider outage"),
+    "The previous response failed before completion. Reason: Temporary provider outage. Send a new message to continue."
+  );
+});
+
 test("response errors preserve the current API error message", async () => {
   const error = await getErrorFromResponse(
     Response.json(

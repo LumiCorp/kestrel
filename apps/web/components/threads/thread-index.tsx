@@ -23,23 +23,43 @@ export function ThreadIndex({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<ThreadSort>("recent");
+  const [pendingThreadIds, setPendingThreadIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const visibleThreads = useMemo(
     () => filterAndSortThreads(threads, query, sort),
     [query, sort, threads]
   );
 
   async function setArchived(threadId: string, nextArchived: boolean) {
-    const response = await fetch(`/api/threads/${threadId}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ archived: nextArchived }),
-    });
-    if (!response.ok) {
-      toast.error(`Thread could not be ${nextArchived ? "archived" : "restored"}`);
-      return;
+    if (pendingThreadIds.has(threadId)) return;
+    setPendingThreadIds((current) => new Set(current).add(threadId));
+    try {
+      const response = await fetch(`/api/threads/${threadId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ archived: nextArchived }),
+      });
+      if (!response.ok) {
+        throw new Error(
+          `Thread could not be ${nextArchived ? "archived" : "restored"}`
+        );
+      }
+      toast.success(nextArchived ? "Thread archived" : "Thread restored");
+      router.refresh();
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : `Thread could not be ${nextArchived ? "archived" : "restored"}`
+      );
+    } finally {
+      setPendingThreadIds((current) => {
+        const next = new Set(current);
+        next.delete(threadId);
+        return next;
+      });
     }
-    toast.success(nextArchived ? "Thread archived" : "Thread restored");
-    router.refresh();
   }
 
   return (
@@ -88,18 +108,29 @@ export function ThreadIndex({
                   {thread.unreadCount} unread
                 </span>
               ) : null}
-              <time className="hidden shrink-0 text-muted-foreground text-xs sm:block">
+              <time
+                className="hidden shrink-0 text-muted-foreground text-xs sm:block"
+                dateTime={new Date(thread.updatedAt).toISOString()}
+              >
                 {new Date(thread.updatedAt).toLocaleString()}
               </time>
             </Link>
             <Button
               aria-label={`${archived ? "Restore" : "Archive"} ${thread.title}`}
+              aria-busy={pendingThreadIds.has(thread.id)}
+              disabled={pendingThreadIds.has(thread.id)}
               onClick={() => void setArchived(thread.id, !archived)}
               size="sm"
               variant="ghost"
             >
               <Archive className="size-4" />
-              {archived ? "Restore" : "Archive"}
+              {pendingThreadIds.has(thread.id)
+                ? archived
+                  ? "Restoring…"
+                  : "Archiving…"
+                : archived
+                  ? "Restore"
+                  : "Archive"}
             </Button>
           </div>
         ))}

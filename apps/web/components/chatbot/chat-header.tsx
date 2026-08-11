@@ -4,6 +4,7 @@ import {
   Archive,
   FolderCode,
   FolderInput,
+  MoreHorizontal,
   Pencil,
   RotateCcw,
   Trash2,
@@ -25,6 +26,13 @@ import {
   AlertDialogTitle,
 } from "@/components/chatbot/ui/alert-dialog";
 import { Button } from "@/components/chatbot/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/chatbot/ui/dropdown-menu";
 import { Input } from "@/components/chatbot/ui/input";
 import {
   Select,
@@ -39,8 +47,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/chatbot/ui/tooltip";
-import { PlusIcon } from "./icons";
-import { VisibilitySelector, type VisibilityType } from "./visibility-selector";
+import { useChatVisibility } from "@/hooks/use-chat-visibility";
+import {
+  VisibilityMenuSub,
+  VisibilitySelector,
+  type VisibilityType,
+} from "./visibility-selector";
 
 function PureChatHeader({
   archived,
@@ -63,6 +75,10 @@ function PureChatHeader({
 }) {
   const router = useRouter();
   const { mutate } = useSWRConfig();
+  const { visibilityType, setVisibilityType } = useChatVisibility({
+    threadId,
+    initialVisibilityType: selectedVisibilityType,
+  });
   const initialTitle = threadTitle || "New Thread";
   const [displayTitle, setDisplayTitle] = useState(initialTitle);
   const [draftTitle, setDraftTitle] = useState(initialTitle);
@@ -287,7 +303,7 @@ function PureChatHeader({
               <TooltipTrigger asChild>
                 <Button
                   aria-label="Rename Thread"
-                  className="size-8 shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/title:opacity-100 sm:group-focus-within/title:opacity-100"
+                  className="hidden size-8 shrink-0 opacity-0 transition-opacity md:inline-flex md:group-hover/title:opacity-100 md:group-focus-within/title:opacity-100"
                   disabled={isRenaming}
                   onClick={() => {
                     cancelTitleSaveRef.current = false;
@@ -308,7 +324,7 @@ function PureChatHeader({
               <TooltipTrigger asChild>
                 <span
                   aria-label={`Shared Project: ${project.name}`}
-                  className="hidden size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground sm:flex"
+                  className="hidden size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground md:flex"
                 >
                   <Users className="size-4" />
                 </span>
@@ -318,29 +334,104 @@ function PureChatHeader({
           ) : null}
         </div>
 
-        <div className="ml-auto flex shrink-0 items-center gap-2">
-          <Button
-            className="h-8 px-2 md:hidden"
-            onClick={() => {
-              router.push(
-                project
-                  ? `/projects/${project.id}/threads/new`
-                  : "/threads/new"
-              );
-            }}
-            variant="outline"
-          >
-            <PlusIcon />
-            <span className="sr-only">New Thread</span>
-          </Button>
+        <div className="ml-auto flex shrink-0 items-center md:hidden">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                aria-label="Thread actions"
+                className="size-11 p-0"
+                size="icon"
+                variant="outline"
+              >
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-56">
+              {canManage && !archived ? (
+                <DropdownMenuItem
+                  className="min-h-11"
+                  disabled={isRenaming}
+                  onSelect={() => {
+                    cancelTitleSaveRef.current = false;
+                    setDraftTitle(displayTitle);
+                    setIsEditingTitle(true);
+                  }}
+                >
+                  <Pencil className="size-4" /> Rename Thread
+                </DropdownMenuItem>
+              ) : null}
+              {isReadonly ? null : (
+                <DropdownMenuItem
+                  className="min-h-11"
+                  onSelect={() => router.push(`/threads/${threadId}/workspace`)}
+                >
+                  <FolderCode className="size-4" /> Workspace
+                </DropdownMenuItem>
+              )}
+              {isReadonly ? null : (
+                <VisibilityMenuSub
+                  onVisibilityTypeChange={(nextVisibilityType) =>
+                    void setVisibilityType(nextVisibilityType)
+                  }
+                  visibilityType={visibilityType ?? selectedVisibilityType}
+                />
+              )}
+              {canManage && !project && !archived && projects.length > 0 ? (
+                <DropdownMenuItem
+                  className="min-h-11"
+                  onSelect={() => {
+                    setProjectId("");
+                    setAssignmentDialogOpen(true);
+                  }}
+                >
+                  <FolderInput className="size-4" /> Move Thread to Project
+                </DropdownMenuItem>
+              ) : null}
+              {canManage ? <DropdownMenuSeparator /> : null}
+              {canManage && archived ? (
+                <>
+                  <DropdownMenuItem
+                    className="min-h-11"
+                    disabled={isRestoring || isDeleting}
+                    onSelect={() => void setArchived(false)}
+                  >
+                    <RotateCcw className="size-4" />
+                    {isRestoring ? "Restoring…" : "Restore Thread"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="min-h-11 text-destructive focus:text-destructive"
+                    disabled={isRestoring || isDeleting}
+                    onSelect={() => setDeleteDialogOpen(true)}
+                  >
+                    <Trash2 className="size-4" /> Delete permanently
+                  </DropdownMenuItem>
+                </>
+              ) : canManage ? (
+                <DropdownMenuItem
+                  className="min-h-11"
+                  disabled={isArchiving}
+                  onSelect={() => void setArchived(true)}
+                >
+                  <Archive className="size-4" />
+                  {isArchiving ? "Archiving…" : "Archive Thread"}
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <div className="ml-auto hidden shrink-0 items-center gap-2 md:flex">
           {!isReadonly && (
             <VisibilitySelector
-              selectedVisibilityType={selectedVisibilityType}
-              threadId={threadId}
+              onVisibilityTypeChange={(nextVisibilityType) =>
+                void setVisibilityType(nextVisibilityType)
+              }
+              visibilityType={visibilityType ?? selectedVisibilityType}
             />
           )}
           {!isReadonly && (
             <Button
+              aria-label="Open Thread workspace"
               className="h-8 px-2"
               onClick={() => router.push(`/threads/${threadId}/workspace`)}
               variant="outline"

@@ -22,7 +22,8 @@ export function SidebarToggle({
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
-          className={cn("h-8 px-2 md:h-fit md:px-2", className)}
+          aria-label="Toggle navigation"
+          className={cn("size-11 p-0 md:size-8", className)}
           data-testid="sidebar-toggle-button"
           onClick={toggleSidebar}
           variant="outline"
