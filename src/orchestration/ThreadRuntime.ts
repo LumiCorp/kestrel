@@ -71,10 +71,12 @@ import type {
   AssemblyBundleRecord,
   DelegationRequest,
   EnqueueFollowUpInput,
+  ConversationMessageRouteResult,
   FanInDispositionSummary,
   ReplyToRequestInput,
   ResumeBlockedTurnInput,
   SubmitTurnInput,
+  SubmitConversationMessageInput,
   SubmitTurnResult,
   SteerThreadResult,
   SupervisionChildSummary,
@@ -124,6 +126,8 @@ export class ThreadRuntime implements ThreadRuntimePort {
   private readonly pendingSteerProcessors = new Set<string>();
   private readonly followUpProcessors = new Set<string>();
   private readonly followUpMutations = new Map<string, Promise<void>>();
+  private readonly messageRoutingMutations = new Map<string, Promise<void>>();
+  private readonly conversationMessageSubmissions = new Map<string, Promise<ConversationMessageRouteResult>>();
   private readonly activeThreadSubmissions = new Set<string>();
   private readonly resolveAttachments?: ThreadRuntimeOptions["resolveAttachments"];
   private readonly onDetachedTurnEvent?: ThreadRuntimeOptions["onDetachedTurnEvent"];
@@ -360,6 +364,202 @@ export class ThreadRuntime implements ThreadRuntimePort {
     } finally {
       input.signal?.removeEventListener("abort", cancelDialogs);
       this.activeThreadSubmissions.delete(input.threadId);
+      void this.processFollowUps(input.threadId);
+    }
+  }
+
+  async submitConversationMessage(
+    input: SubmitConversationMessageInput,
+  ): Promise<ConversationMessageRouteResult> {
+    const submissionKey = `${input.threadId}\u0000${input.messageId.trim()}`;
+    const inFlight = this.conversationMessageSubmissions.get(submissionKey);
+    if (inFlight !== undefined) return inFlight;
+    const submission = this.submitConversationMessageOwned(input);
+    this.conversationMessageSubmissions.set(submissionKey, submission);
+    try {
+      return await submission;
+    } finally {
+      if (this.conversationMessageSubmissions.get(submissionKey) === submission) {
+        this.conversationMessageSubmissions.delete(submissionKey);
+      }
+    }
+  }
+
+  private async submitConversationMessageOwned(
+    input: SubmitConversationMessageInput,
+  ): Promise<ConversationMessageRouteResult> {
+    const messageId = input.messageId.trim();
+    const message = input.message.trim();
+    if (messageId.length === 0) {
+      throw createRuntimeFailure("CONVERSATION_MESSAGE_ID_INVALID", "Conversation message ID cannot be empty.");
+    }
+    if (message.length === 0) {
+      throw createRuntimeFailure("CONVERSATION_MESSAGE_INVALID", "Conversation message cannot be empty.");
+    }
+    if (await this.store.getThread(input.threadId) === null) {
+      const sessionId = input.runtimeTurn?.sessionId?.trim();
+      if (sessionId === undefined || sessionId.length === 0) {
+        throw threadNotFoundFailure(input.threadId);
+      }
+      await this.startThread({
+        threadId: input.threadId,
+        sessionId,
+        title: message.slice(0, 80),
+        metadata: { mainThread: true },
+      });
+    }
+
+    const route = await this.withMessageRoutingMutation(input.threadId, async (thread) => {
+      const existing = readConversationMessageRoute(thread, messageId);
+      if (existing !== undefined) return { ...existing, reserved: false as const };
+
+      const request = thread.currentRequestId === undefined
+        ? undefined
+        : await this.store.getInteractionRequest(thread.currentRequestId) ?? undefined;
+      const ordinaryRequest = request !== undefined &&
+        request.status === "PENDING" &&
+        request.threadId === thread.threadId &&
+        request.kind === "user_input" &&
+        request.metadata?.reason !== "recovery_review" &&
+        request.metadata?.reason !== "evaluation_review";
+      const mustQueue =
+        this.activeThreadSubmissions.has(thread.threadId) ||
+        thread.status === "RUNNING" ||
+        (thread.status === "WAITING" && ordinaryRequest === false) ||
+        (request !== undefined && ordinaryRequest === false);
+      const disposition = mustQueue
+        ? "queued" as const
+        : ordinaryRequest
+          ? "replied" as const
+          : "started" as const;
+      const followUpId = disposition === "queued" ? `follow-up:${messageId}` : undefined;
+      const routeRecord: ConversationMessageRouteRecord = {
+        messageId,
+        disposition,
+        ...(request !== undefined && disposition === "replied"
+          ? { requestId: request.requestId }
+          : {}),
+        ...(followUpId !== undefined ? { followUpId } : {}),
+        createdAt: new Date().toISOString(),
+      };
+      let updated = writeConversationMessageRoute(thread, routeRecord);
+      if (followUpId !== undefined) {
+        updated = enqueueFollowUpRecord(updated, {
+          followUpId,
+          message,
+          attachmentIds: [],
+          ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+          ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+          ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
+          createdAt: routeRecord.createdAt,
+          state: "queued",
+          source: "human",
+          sourceMessageId: messageId,
+        });
+        if (updated.status === "WAITING" || updated.currentRequestId !== undefined) {
+          updated = pauseFollowUpQueue(updated, "waiting");
+        }
+      } else {
+        this.activeThreadSubmissions.add(thread.threadId);
+      }
+      await this.store.upsertThread(updated);
+      return { ...routeRecord, reserved: disposition !== "queued" };
+    });
+
+    if (route.disposition === "queued") {
+      this.emit("thread.follow_up_queued", input.threadId, {
+        followUpId: route.followUpId,
+        sourceMessageId: messageId,
+      });
+      return {
+        threadId: input.threadId,
+        sessionId: (await this.requireThread(input.threadId)).sessionId,
+        messageId,
+        disposition: "queued",
+        ...(route.followUpId !== undefined ? { followUpId: route.followUpId } : {}),
+        view: await this.requireOperatorThreadView(input.threadId),
+      };
+    }
+
+    if (route.reserved === false) {
+      return {
+        threadId: input.threadId,
+        sessionId: (await this.requireThread(input.threadId)).sessionId,
+        messageId,
+        disposition: route.disposition,
+        ...(route.runId !== undefined ? { runId: route.runId } : {}),
+        ...(route.requestId !== undefined ? { requestId: route.requestId } : {}),
+        view: await this.requireOperatorThreadView(input.threadId),
+      };
+    }
+
+    try {
+      const actor = input.actor ?? localOperatorActor();
+      const result = route.disposition === "replied"
+        ? await this.replyToRequestAccepted({
+            threadId: input.threadId,
+            requestId: route.requestId!,
+            message,
+            ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+            ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+            ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
+            ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
+            ...(input.signal !== undefined ? { signal: input.signal } : {}),
+            actor,
+            ...(input.runtimeTurn !== undefined ? {
+              runtimeTurn: {
+                ...input.runtimeTurn,
+                sessionId: (await this.requireThread(input.threadId)).sessionId,
+                message,
+                eventType: "user.reply",
+              },
+            } : {}),
+          })
+        : await this.submitAcceptedTurn({
+            threadId: input.threadId,
+            message,
+            eventType: "user.message",
+            ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
+            ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+            ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
+            ...(input.executionPolicy !== undefined ? { executionPolicy: input.executionPolicy } : {}),
+            ...(input.signal !== undefined ? { signal: input.signal } : {}),
+            ...(input.manualCompaction !== undefined ? { manualCompaction: input.manualCompaction } : {}),
+            ...(input.autoCompaction !== undefined ? { autoCompaction: input.autoCompaction } : {}),
+            metadata: {
+              ...(input.metadata ?? {}),
+              sourceMessageId: messageId,
+              conversationMessageDisposition: "started",
+            },
+            actor,
+            ...(input.runtimeTurn !== undefined ? {
+              runtimeTurn: {
+                ...input.runtimeTurn,
+                sessionId: (await this.requireThread(input.threadId)).sessionId,
+                message,
+                eventType: "user.message",
+              },
+            } : {}),
+          });
+      await this.withMessageRoutingMutation(input.threadId, async (thread) => {
+        await this.store.upsertThread(writeConversationMessageRoute(thread, {
+          ...route,
+          runId: result.output.runId,
+        }));
+      });
+      return {
+        threadId: input.threadId,
+        sessionId: result.output.sessionId,
+        messageId,
+        disposition: route.disposition,
+        runId: result.output.runId,
+        ...(route.requestId !== undefined ? { requestId: route.requestId } : {}),
+        view: await this.requireOperatorThreadView(input.threadId),
+        result,
+      };
+    } finally {
+      this.activeThreadSubmissions.delete(input.threadId);
+      void this.processFollowUps(input.threadId);
     }
   }
 
@@ -738,7 +938,6 @@ export class ThreadRuntime implements ThreadRuntimePort {
       });
     }
     void this.processPendingSteers(activeThread.threadId);
-    if (result.output.status === "COMPLETED") void this.processFollowUps(activeThread.threadId);
     return {
       ...result,
       thread: threadWithIdentity,
@@ -768,12 +967,19 @@ export class ThreadRuntime implements ThreadRuntimePort {
       ...(input.sourceMessageId !== undefined ? { sourceMessageId: input.sourceMessageId } : {}),
     };
     const thread = await this.withFollowUpMutation(input.threadId, async (current) => {
-      const updated = enqueueFollowUpRecord(current, entry);
+      let updated = enqueueFollowUpRecord(current, entry);
+      if (updated.status === "WAITING" || updated.currentRequestId !== undefined) {
+        updated = pauseFollowUpQueue(updated, "waiting");
+      }
       await this.store.upsertThread(updated);
       return updated;
     });
     this.emit("thread.follow_up_queued", input.threadId, { followUpId: input.followUpId });
-    if (thread.status !== "RUNNING") void this.processFollowUps(input.threadId);
+    if (
+      thread.status !== "RUNNING" &&
+      thread.status !== "WAITING" &&
+      thread.currentRequestId === undefined
+    ) void this.processFollowUps(input.threadId);
     return this.requireOperatorThreadView(input.threadId);
   }
 
@@ -829,6 +1035,23 @@ export class ThreadRuntime implements ThreadRuntimePort {
   }
 
   async replyToRequest(input: ReplyToRequestInput): Promise<SubmitTurnResult> {
+    if (this.activeThreadSubmissions.has(input.threadId)) {
+      throw createRuntimeFailure(
+        "THREAD_RUN_ALREADY_ACTIVE",
+        `Thread '${input.threadId}' already has an active run.`,
+        { threadId: input.threadId },
+      );
+    }
+    this.activeThreadSubmissions.add(input.threadId);
+    try {
+      return await this.replyToRequestAccepted(input);
+    } finally {
+      this.activeThreadSubmissions.delete(input.threadId);
+      void this.processFollowUps(input.threadId);
+    }
+  }
+
+  private async replyToRequestAccepted(input: ReplyToRequestInput): Promise<SubmitTurnResult> {
     const effectiveInput: ReplyToRequestInput = {
       ...input,
       actor: input.actor ?? localOperatorActor(),
@@ -948,7 +1171,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
         },
       });
     }
-    const result = await this.submitTurn({
+    const result = await this.submitAcceptedTurn({
       threadId: input.threadId,
       message: input.message,
       eventType: resolved.request.eventType,
@@ -986,7 +1209,6 @@ export class ThreadRuntime implements ThreadRuntimePort {
       await this.withFollowUpMutation(input.threadId, async (latest) => {
         await this.store.upsertThread(resumeFollowUps(latest));
       });
-      void this.processFollowUps(input.threadId);
     }
     await this.interactionManager.expireTurnScopedGrants(input.threadId);
     return result;
@@ -1139,10 +1361,11 @@ export class ThreadRuntime implements ThreadRuntimePort {
   }
 
   async getThreadStatus(threadId: string): Promise<ThreadStatusSnapshot | null> {
-    const thread = await this.store.getThread(threadId);
+    let thread = await this.store.getThread(threadId);
     if (thread === null) {
       return null;
     }
+    thread = await this.reconcileRetiredRecoveryReview(thread);
     const [
       openRequests,
       activeGrants,
@@ -1468,6 +1691,58 @@ export class ThreadRuntime implements ThreadRuntimePort {
     return thread;
   }
 
+  private async reconcileRetiredRecoveryReview(thread: ThreadRecord): Promise<ThreadRecord> {
+    return this.withMessageRoutingMutation(
+      thread.threadId,
+      (latest) => this.reconcileRetiredRecoveryReviewOwned(latest),
+    );
+  }
+
+  private async reconcileRetiredRecoveryReviewOwned(thread: ThreadRecord): Promise<ThreadRecord> {
+    if (thread.currentRequestId === undefined) return thread;
+    const request = await this.store.getInteractionRequest(thread.currentRequestId);
+    if (
+      request === null ||
+      request.status !== "PENDING" ||
+      request.threadId !== thread.threadId ||
+      request.metadata?.reason !== "recovery_review"
+    ) return thread;
+
+    const resolvedAt = new Date().toISOString();
+    const failure = asRuntimeError(createRuntimeFailure(
+      "RECOVERY_REVIEW_RETIRED",
+      "This generic recovery review is no longer executable. Retry the failed run from the operator controls.",
+      {
+        threadId: thread.threadId,
+        requestId: request.requestId,
+        ...(thread.activeRunId !== undefined ? { runId: thread.activeRunId } : {}),
+      },
+    ));
+    await this.store.upsertInteractionRequest({
+      ...request,
+      status: "CANCELLED",
+      response: { validationErrorCode: failure.code },
+      resolvedAt,
+    });
+
+    if (thread.activeRunId !== undefined) {
+      await this.store.completeRun(thread.activeRunId, "FAILED", failure);
+    }
+    const latest = await this.store.getThread(thread.threadId) ?? thread;
+    const reconciled = resumeFollowUps({
+      ...latest,
+      status: "FAILED",
+      activeRunId: undefined,
+      currentRequestId: undefined,
+      waitFor: undefined,
+      lastRunStatus: "FAILED",
+      updatedAt: resolvedAt,
+    });
+    await this.store.upsertThread(reconciled);
+    void Promise.resolve().then(() => this.processFollowUps(thread.threadId));
+    return reconciled;
+  }
+
   private async resolveSubmitGateCheckpoints(thread: ThreadRecord): Promise<void> {
     const pending = (await this.store.listContextCheckpoints({
       threadId: thread.threadId,
@@ -1645,7 +1920,13 @@ export class ThreadRuntime implements ThreadRuntimePort {
     try {
       while (true) {
         const status = await this.getThreadStatus(threadId);
-        if (status === null || status.thread.status === "RUNNING") return;
+        if (
+          status === null ||
+          status.thread.status === "RUNNING" ||
+          status.thread.status === "WAITING" ||
+          status.thread.currentRequestId !== undefined ||
+          this.activeThreadSubmissions.has(threadId)
+        ) return;
         const queue = readFollowUpQueue(status.thread);
         if (queue.state === "paused") return;
         const next = queue.items[0];
@@ -1654,9 +1935,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
           await this.store.upsertThread(markFollowUpStarting(thread, next.followUpId));
         });
         try {
-          const attachments = next.attachmentIds.length === 0
+          const attachments = next.attachments ?? (next.attachmentIds.length === 0
             ? undefined
-            : await this.resolveQueuedAttachments(threadId, next.attachmentIds);
+            : await this.resolveQueuedAttachments(threadId, next.attachmentIds));
           const result = await this.executeDetachedTurn({
             threadId,
             message: next.message,
@@ -1739,6 +2020,26 @@ export class ThreadRuntime implements ThreadRuntimePort {
     } finally {
       release();
       if (this.followUpMutations.get(threadId) === chain) this.followUpMutations.delete(threadId);
+    }
+  }
+
+  private async withMessageRoutingMutation<T>(
+    threadId: string,
+    operation: (thread: ThreadRecord) => Promise<T>,
+  ): Promise<T> {
+    const previous = this.messageRoutingMutations.get(threadId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const chain = previous.then(() => current);
+    this.messageRoutingMutations.set(threadId, chain);
+    await previous;
+    try {
+      return await operation(await this.requireThread(threadId));
+    } finally {
+      release();
+      if (this.messageRoutingMutations.get(threadId) === chain) {
+        this.messageRoutingMutations.delete(threadId);
+      }
     }
   }
 
@@ -2399,6 +2700,62 @@ function readTerminalEnvelope(value: unknown): ConversationTurnTerminalEnvelopeV
     return undefined;
   }
   return value as ConversationTurnTerminalEnvelopeV1;
+}
+
+interface ConversationMessageRouteRecord {
+  messageId: string;
+  disposition: "started" | "replied" | "queued";
+  requestId?: string | undefined;
+  followUpId?: string | undefined;
+  runId?: string | undefined;
+  createdAt: string;
+}
+
+function readConversationMessageRoute(
+  thread: ThreadRecord,
+  messageId: string,
+): ConversationMessageRouteRecord | undefined {
+  const routes = asRecord(thread.metadata?.conversationMessageRoutes);
+  const route = asRecord(routes?.[messageId]);
+  if (
+    route === undefined ||
+    route.messageId !== messageId ||
+    (route.disposition !== "started" &&
+      route.disposition !== "replied" &&
+      route.disposition !== "queued") ||
+    readNonEmptyString(route.createdAt) === undefined
+  ) return undefined;
+  return {
+    messageId,
+    disposition: route.disposition,
+    createdAt: route.createdAt as string,
+    ...(readNonEmptyString(route.requestId) !== undefined
+      ? { requestId: route.requestId as string }
+      : {}),
+    ...(readNonEmptyString(route.followUpId) !== undefined
+      ? { followUpId: route.followUpId as string }
+      : {}),
+    ...(readNonEmptyString(route.runId) !== undefined
+      ? { runId: route.runId as string }
+      : {}),
+  };
+}
+
+function writeConversationMessageRoute(
+  thread: ThreadRecord,
+  route: ConversationMessageRouteRecord,
+): ThreadRecord {
+  return {
+    ...thread,
+    metadata: {
+      ...(thread.metadata ?? {}),
+      conversationMessageRoutes: {
+        ...(asRecord(thread.metadata?.conversationMessageRoutes) ?? {}),
+        [route.messageId]: structuredClone(route),
+      },
+    },
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

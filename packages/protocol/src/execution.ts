@@ -58,6 +58,7 @@ export const RUNNER_COMMAND_TYPES = [
   "session.state",
   "operator.inbox",
   "operator.thread",
+  "conversation.message.submit",
   "conversation.messages.list",
   "operator.runs",
   "operator.run",
@@ -195,6 +196,7 @@ export const RUNNER_EVENT_TYPES = [
   "session.state",
   "operator.inbox",
   "operator.thread",
+  "conversation.message.routed",
   "conversation.messages",
   "operator.runs",
   "operator.run",
@@ -753,6 +755,23 @@ export type RunStartCommandPayload = RunnerProfileReference & {
   turn: RunnerTurnInput;
 };
 
+export type OrdinaryConversationTurn = Omit<
+  RunnerTurnInput,
+  | "runId"
+  | "eventId"
+  | "eventType"
+  | "resumeBlockedRun"
+  | "resumeRequestId"
+  | "recoveryOptionId"
+  | "stepAgent"
+>;
+
+export type ConversationMessageSubmitCommandPayload = RunnerProfileReference & {
+  threadId: string;
+  messageId: string;
+  turn: OrdinaryConversationTurn;
+};
+
 export interface RunCancelCommandPayload {
   sessionId: string;
   runId?: string | undefined;
@@ -1094,6 +1113,7 @@ export interface RunnerCommandPayloadByType {
   "session.state": SessionStateCommandPayload;
   "operator.inbox": OperatorInboxCommandPayload;
   "operator.thread": OperatorThreadCommandPayload;
+  "conversation.message.submit": ConversationMessageSubmitCommandPayload;
   "conversation.messages.list": ConversationMessagesListCommandPayload;
   "operator.runs": OperatorRunsCommandPayload;
   "operator.run": OperatorRunCommandPayload;
@@ -1436,6 +1456,17 @@ export interface OperatorThreadEventPayload {
   view: RunnerOperatorThreadView;
 }
 
+export interface ConversationMessageRoutedEventPayload {
+  threadId: string;
+  sessionId: string;
+  messageId: string;
+  disposition: "started" | "replied" | "queued";
+  runId?: string | undefined;
+  requestId?: string | undefined;
+  followUpId?: string | undefined;
+  view: RunnerOperatorThreadView;
+}
+
 export interface OperatorRunsEventPayload {
   view: RunnerOperatorRunIndexView;
 }
@@ -1619,6 +1650,7 @@ export interface RunnerEventPayloadByType {
   "session.state": SessionStateEventPayload;
   "operator.inbox": OperatorInboxEventPayload;
   "operator.thread": OperatorThreadEventPayload;
+  "conversation.message.routed": ConversationMessageRoutedEventPayload;
   "conversation.messages": ConversationMessagesEventPayload;
   "operator.runs": OperatorRunsEventPayload;
   "operator.run": OperatorRunEventPayload;
@@ -1677,6 +1709,7 @@ export interface RunnerResponseByCommandType {
   "session.state": RunnerEventEnvelope<"session.state">;
   "operator.inbox": RunnerEventEnvelope<"operator.inbox">;
   "operator.thread": RunnerEventEnvelope<"operator.thread">;
+  "conversation.message.submit": RunnerEventEnvelope<"conversation.message.routed">;
   "conversation.messages.list": RunnerEventEnvelope<"conversation.messages">;
   "operator.runs": RunnerEventEnvelope<"operator.runs">;
   "operator.run": RunnerEventEnvelope<"operator.run">;
@@ -1742,6 +1775,7 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "session.state": ["session.state"],
   "operator.inbox": ["operator.inbox"],
   "operator.thread": ["operator.thread"],
+  "conversation.message.submit": ["conversation.message.routed"],
   "conversation.messages.list": ["conversation.messages"],
   "operator.runs": ["operator.runs"],
   "operator.run": ["operator.run"],
@@ -2058,6 +2092,28 @@ function parseRunnerCommandPayloadV2(
     case "run.start": {
       validateRequiredProfileReference(payload, label);
       validateRunTurn(payload.turn, `${label}.turn`);
+      break;
+    }
+    case "conversation.message.submit": {
+      validateRequiredProfileReference(payload, label);
+      rejectUnknownFields(payload, label, ["profile", "profileId", "threadId", "messageId", "turn"]);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      requireNonEmptyString(payload.messageId, `${label}.messageId`);
+      const turn = requireRecord(payload.turn, `${label}.turn`);
+      for (const forbidden of [
+        "runId",
+        "eventId",
+        "eventType",
+        "resumeBlockedRun",
+        "resumeRequestId",
+        "recoveryOptionId",
+        "stepAgent",
+      ]) {
+        if (Object.hasOwn(turn, forbidden)) {
+          throw new RunnerProtocolContractError(`${label}.turn.${forbidden} is runtime-owned`);
+        }
+      }
+      validateRunTurn({ ...turn, eventType: "user.message" }, `${label}.turn`);
       break;
     }
     case "run.cancel":
@@ -2576,6 +2632,16 @@ function parseRunnerEventPayloadV2(
     case "operator.thread":
     case "operator.runs":
     case "operator.run":
+      requireRecord(payload.view, `${label}.view`);
+      break;
+    case "conversation.message.routed":
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.messageId, `${label}.messageId`);
+      validateEnum(payload.disposition, `${label}.disposition`, ["started", "replied", "queued"]);
+      validateOptionalNonEmptyString(payload.runId, `${label}.runId`);
+      validateOptionalNonEmptyString(payload.requestId, `${label}.requestId`);
+      validateOptionalNonEmptyString(payload.followUpId, `${label}.followUpId`);
       requireRecord(payload.view, `${label}.view`);
       break;
     case "conversation.messages": {

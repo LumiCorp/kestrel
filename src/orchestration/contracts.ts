@@ -202,6 +202,43 @@ export interface SubmitTurnResult {
   compactionAction?: ContextPolicyAction | undefined;
 }
 
+export interface SubmitConversationMessageInput {
+  threadId: string;
+  messageId: string;
+  message: string;
+  attachments?: RunTurnAttachment[] | undefined;
+  interactionMode?: InteractionMode | undefined;
+  actSubmode?: ActSubmode | undefined;
+  executionPolicy?: ExecutionPolicyOverride | undefined;
+  signal?: AbortSignal | undefined;
+  actor?: RuntimeTurnActor | undefined;
+  manualCompaction?: boolean | undefined;
+  autoCompaction?: SubmitTurnInput["autoCompaction"];
+  metadata?: Record<string, unknown> | undefined;
+  runtimeTurn?: Omit<
+    RuntimeTurnInput,
+    | "runId"
+    | "eventId"
+    | "eventType"
+    | "resumeBlockedRun"
+    | "resumeRequestId"
+    | "recoveryOptionId"
+    | "stepAgent"
+  > | undefined;
+}
+
+export interface ConversationMessageRouteResult {
+  threadId: string;
+  sessionId: string;
+  messageId: string;
+  disposition: "started" | "replied" | "queued";
+  runId?: string | undefined;
+  requestId?: string | undefined;
+  followUpId?: string | undefined;
+  view: OperatorThreadView;
+  result?: SubmitTurnResult | undefined;
+}
+
 export interface ReplyToRequestInput {
   threadId: string;
   requestId: string;
@@ -665,6 +702,7 @@ export interface FollowUpQueueEntry {
   followUpId: string;
   message: string;
   attachmentIds: string[];
+  attachments?: RunTurnAttachment[] | undefined;
   interactionMode?: InteractionMode | undefined;
   actSubmode?: ActSubmode | undefined;
   createdAt: string;
@@ -785,6 +823,9 @@ export interface ThreadRuntimePort {
     title?: string | undefined;
   }): Promise<ThreadRecord>;
   submitTurn(input: SubmitTurnInput): Promise<SubmitTurnResult>;
+  submitConversationMessage(
+    input: SubmitConversationMessageInput,
+  ): Promise<ConversationMessageRouteResult>;
   resumeBlockedTurn(input: ResumeBlockedTurnInput): Promise<SubmitTurnResult>;
   replyToRequest(input: ReplyToRequestInput): Promise<SubmitTurnResult>;
   spawnDelegation(input: DelegationRequest): Promise<DelegationHandle>;
