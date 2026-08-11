@@ -231,6 +231,14 @@ export interface DesktopRunTurnRequest {
   executionSelection: DesktopExecutionSelection;
 }
 
+export type DesktopConversationMessageRequest = Omit<
+  DesktopRunTurnRequest,
+  "eventType" | "resumeFromWait" | "resumeBlockedRun" | "threadId"
+> & {
+  threadId: string;
+  messageId: string;
+};
+
 export interface DesktopAttachmentMetadata {
   attachmentId: string;
   threadId: string;
@@ -337,6 +345,17 @@ export interface DesktopOperatorControlResult {
   result?: DesktopTerminalResult | undefined;
   disposition?: "accepted" | "completed" | undefined;
   runId?: string | undefined;
+}
+
+export interface DesktopConversationMessageResult {
+  threadId: string;
+  sessionId: string;
+  messageId: string;
+  disposition: "started" | "replied" | "queued";
+  runId?: string | undefined;
+  requestId?: string | undefined;
+  followUpId?: string | undefined;
+  view: DesktopRuntimeThreadInspection;
 }
 
 export interface DesktopConversationMessagePage {
@@ -911,6 +930,37 @@ export function parseDesktopRunTurnRequest(
     executionSelection: parseDesktopExecutionSelection(
       input.executionSelection,
     ),
+  };
+}
+
+export function parseDesktopConversationMessageRequest(
+  value: unknown,
+): DesktopConversationMessageRequest {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Desktop conversation message request must be an object.");
+  }
+  const input = value as Record<string, unknown>;
+  for (const forbidden of ["eventType", "resumeFromWait", "resumeBlockedRun"]) {
+    if (Object.hasOwn(input, forbidden)) {
+      throw new Error(`Desktop conversation message field '${forbidden}' is runtime-owned.`);
+    }
+  }
+  const parsed = parseDesktopRunTurnRequest({
+    ...input,
+    eventType: "user.message",
+  });
+  const threadId = parseRequiredDesktopString(input.threadId, "threadId");
+  const messageId = parseRequiredDesktopString(input.messageId, "messageId");
+  const {
+    eventType: _eventType,
+    resumeFromWait: _resumeFromWait,
+    resumeBlockedRun: _resumeBlockedRun,
+    ...ordinary
+  } = parsed;
+  return {
+    ...ordinary,
+    threadId,
+    messageId,
   };
 }
 

@@ -754,6 +754,203 @@ test("ThreadRuntime persists operator-facing user input requests from waits", as
   assert.equal(status?.openRequests[0]?.runId, result.output.runId);
 });
 
+test("ThreadRuntime routes ordinary messages to idle work idempotently", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [{
+    output: buildOutput({ runId: "ignored", status: "COMPLETED" }),
+  }]);
+  const runtime = new ThreadRuntime({ sessionStore, executor, profile: buildProfile() });
+  await runtime.startThread({ threadId: "thread-message-start", title: "Message start" });
+
+  const first = await runtime.submitConversationMessage({
+    threadId: "thread-message-start",
+    messageId: "message-start-1",
+    message: "Start this task",
+  });
+  const replayed = await runtime.submitConversationMessage({
+    threadId: "thread-message-start",
+    messageId: "message-start-1",
+    message: "Start this task",
+  });
+
+  assert.equal(first.disposition, "started");
+  assert.equal(replayed.disposition, "started");
+  assert.equal(replayed.runId, first.runId);
+  assert.equal(executor.inputs.length, 1);
+  assert.equal(executor.inputs[0]?.eventType, "user.message");
+});
+
+test("ThreadRuntime routes ordinary messages to the authoritative ordinary wait", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "ignored-wait",
+        status: "WAITING",
+        waitFor: {
+          kind: "user",
+          eventType: "user.reply",
+          metadata: { prompt: "What should I write?" },
+        },
+      }),
+    },
+    { output: buildOutput({ runId: "ignored-reply", status: "COMPLETED" }) },
+  ]);
+  const runtime = new ThreadRuntime({ sessionStore, executor, profile: buildProfile() });
+  await runtime.startThread({ threadId: "thread-message-reply", title: "Message reply" });
+  const waiting = await runtime.submitTurn({
+    threadId: "thread-message-reply",
+    message: "Let's write something fun",
+    eventType: "user.message",
+  });
+
+  const routed = await runtime.submitConversationMessage({
+    threadId: "thread-message-reply",
+    messageId: "message-reply-1",
+    message: "Make it a space comedy",
+  });
+
+  assert.equal(routed.disposition, "replied");
+  assert.equal(routed.requestId, waiting.wait?.request?.requestId);
+  assert.equal(executor.inputs.length, 2);
+  assert.equal(executor.inputs[1]?.eventType, "user.reply");
+  assert.equal(executor.inputs[1]?.message, "Make it a space comedy");
+  assert.equal((await sessionStore.getInteractionRequest(routed.requestId!))?.status, "RESOLVED");
+});
+
+test("ThreadRuntime queues free text during an exact decision and drains it once after the exact reply", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    {
+      output: buildOutput({
+        runId: "ignored-exact-wait",
+        status: "WAITING",
+        waitFor: {
+          kind: "user",
+          eventType: "user.reply",
+          metadata: { prompt: "Choose an exact evaluation outcome." },
+        },
+      }),
+    },
+    { output: buildOutput({ runId: "ignored-decision", status: "COMPLETED" }) },
+    { output: buildOutput({ runId: "ignored-follow-up", status: "COMPLETED" }) },
+  ]);
+  const runtime = new ThreadRuntime({ sessionStore, executor, profile: buildProfile() });
+  await runtime.startThread({ threadId: "thread-message-exact", title: "Exact decision" });
+  const waiting = await runtime.submitTurn({
+    threadId: "thread-message-exact",
+    message: "Evaluate this",
+    eventType: "user.message",
+  });
+  const request = waiting.wait?.request;
+  assert.ok(request);
+  await sessionStore.upsertInteractionRequest({
+    ...request,
+    metadata: {
+      ...(request.metadata ?? {}),
+      reason: "evaluation_review",
+      recoveryReviewBinding: {
+        version: "recovery_review_binding_v1",
+        bindingId: request.requestId,
+        decisionId: "evaluation-decision-1",
+        threadId: request.threadId,
+        runId: waiting.output.runId,
+        executionProfileFingerprint: "a".repeat(64),
+        policyRevision: `sha256:${"b".repeat(64)}`,
+        allowedOptionIds: ["evaluation.accept"],
+        requestedAt: new Date().toISOString(),
+      },
+    },
+  });
+
+  const queued = await runtime.submitConversationMessage({
+    threadId: "thread-message-exact",
+    messageId: "message-exact-queued-1",
+    message: "What happened?",
+  });
+  const replayed = await runtime.submitConversationMessage({
+    threadId: "thread-message-exact",
+    messageId: "message-exact-queued-1",
+    message: "What happened?",
+  });
+  assert.equal(queued.disposition, "queued");
+  assert.equal(replayed.followUpId, queued.followUpId);
+  assert.equal(executor.inputs.length, 1);
+  assert.equal((await sessionStore.getInteractionRequest(request.requestId))?.status, "PENDING");
+
+  await runtime.replyToRequest({
+    threadId: "thread-message-exact",
+    requestId: request.requestId,
+    message: "Accept",
+    recoveryOptionId: "evaluation.accept",
+    actor: { actorType: "end_user", actorId: "user-1" },
+  });
+  for (let attempt = 0; attempt < 10 && executor.inputs.length < 3; attempt += 1) await tick();
+
+  assert.equal(executor.inputs.length, 3);
+  assert.equal(executor.inputs[2]?.eventType, "user.follow_up");
+  assert.equal(executor.inputs[2]?.message, "What happened?");
+  assert.equal((await runtime.getThreadStatus("thread-message-exact"))?.thread.currentRequestId, undefined);
+});
+
+test("ThreadRuntime retires persisted generic recovery waits and releases queued messages", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    { output: buildOutput({ runId: "ignored-retired-follow-up", status: "COMPLETED" }) },
+  ]);
+  const runtime = new ThreadRuntime({ sessionStore, executor, profile: buildProfile() });
+  const thread = await runtime.startThread({
+    threadId: "thread-retired-recovery",
+    title: "Retired recovery",
+  });
+  const createdAt = new Date().toISOString();
+  await sessionStore.upsertInteractionRequest({
+    requestId: "request-retired-recovery",
+    threadId: thread.threadId,
+    kind: "user_input",
+    status: "PENDING",
+    eventType: "user.reply",
+    metadata: { reason: "recovery_review" },
+    createdAt,
+  });
+  await sessionStore.upsertThread({
+    ...thread,
+    status: "WAITING",
+    currentRequestId: "request-retired-recovery",
+    metadata: {
+      ...(thread.metadata ?? {}),
+      operatorControl: {
+        followUpQueue: {
+          state: "paused",
+          pauseReason: "waiting",
+          items: [{
+            followUpId: "follow-up:message-after-retired-recovery",
+            message: "What happened?",
+            attachmentIds: [],
+            createdAt,
+            state: "queued",
+            source: "human",
+            sourceMessageId: "message-after-retired-recovery",
+          }],
+        },
+      },
+    },
+    updatedAt: createdAt,
+  });
+
+  const reconciled = await runtime.getThreadStatus(thread.threadId);
+  assert.equal(reconciled?.thread.status, "FAILED");
+  assert.equal(reconciled?.thread.currentRequestId, undefined);
+  assert.equal(
+    (await sessionStore.getInteractionRequest("request-retired-recovery"))?.response?.validationErrorCode,
+    "RECOVERY_REVIEW_RETIRED",
+  );
+  for (let attempt = 0; attempt < 10 && executor.inputs.length < 1; attempt += 1) await tick();
+  assert.equal(executor.inputs.length, 1);
+  assert.equal(executor.inputs[0]?.eventType, "user.follow_up");
+  assert.equal(executor.inputs[0]?.message, "What happened?");
+});
+
 test("ThreadRuntime supersedes stale waits when a new continuation wait replaces them", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [

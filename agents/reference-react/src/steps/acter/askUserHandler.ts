@@ -48,6 +48,11 @@ export function handleAskUserAction(input: {
       ...(resumeGoal !== undefined ? { resumeGoal } : {}),
       ts: new Date().toISOString(),
     };
+    const priorLoopGuard = asRecord(input.reactState.loopGuard);
+    const priorEpoch = typeof priorLoopGuard?.epoch === "number" &&
+        Number.isSafeInteger(priorLoopGuard.epoch) && priorLoopGuard.epoch >= 0
+      ? priorLoopGuard.epoch
+      : 0;
     return createReferenceReactEffectCollectCheckpoint({
       reactState: input.reactState,
       currentStepAgent: input.currentStepAgent ?? input.config.acterStepId,
@@ -57,6 +62,13 @@ export function handleAskUserAction(input: {
       phase: "THINK",
       reactPatch: {
         ...createReferenceReactLastActionResultPatch(lastActionResult),
+        loopGuard: {
+          ...(priorLoopGuard ?? {}),
+          epoch: priorEpoch + 1,
+          history: [],
+          blockedActionSignature: undefined,
+          lastIntervention: undefined,
+        },
         observations: appendAgentObservation(input.reactState, lastActionResult),
         decisionTrace: [
           {

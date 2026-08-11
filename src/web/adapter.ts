@@ -13,6 +13,7 @@ import type {
   RunnerCommandType,
   RunnerCommandPayloadByType,
   RunnerEvent,
+  OrdinaryConversationTurn,
 } from "../../cli/protocol/contracts.js";
 import {
   ProtocolClient,
@@ -65,6 +66,10 @@ type WebControlTerminalEvent = Extract<
       | "project.review";
   }
 >;
+type WebConversationMessageRoutedEvent = Extract<
+  RunnerEvent,
+  { type: "conversation.message.routed" }
+>;
 
 function requireUserTerminalResponse(response: RunnerEvent): Extract<RunnerEvent, { type: "user.terminal" }> {
   if (response.type !== "user.terminal") {
@@ -116,6 +121,10 @@ export interface WebRunnerAdapter {
     options: { onEvent: (event: WebRunnerEvent) => void; signal?: AbortSignal | undefined },
   ): Promise<void>;
   sendControl(command: WebControlCommand, context?: WebRunnerRequestContext): Promise<WebControlTerminalEvent>;
+  submitConversationMessage(
+    request: { threadId: string; messageId: string; turn: OrdinaryConversationTurn },
+    context?: WebRunnerRequestContext,
+  ): Promise<WebConversationMessageRoutedEvent>;
   close(): Promise<void>;
 }
 
@@ -435,6 +444,48 @@ export function createWebRunnerAdapter(options: CreateWebRunnerAdapterOptions = 
           }
         }, 100);
       });
+    },
+
+    async submitConversationMessage(request, context) {
+      const activeClient = ensureClient();
+      const requestProfileSelection = resolveRequestProfileSelection(profileSelection, context);
+      const requestProfile = requestProfileSelection.resolvedProfile;
+      const metadata = toRunnerCommandMetadata(
+        requestProfileSelection,
+        context,
+        protocolClientOptions?.defaultMetadata,
+      );
+      const resolvedMode = normalizeInteractionMode({
+        interactionMode: request.turn.interactionMode,
+        actSubmode: request.turn.actSubmode,
+        defaultInteractionMode: requestProfile.defaultInteractionMode ?? DEFAULT_INTERACTION_MODE,
+        defaultActSubmode: requestProfile.defaultActSubmode ?? DEFAULT_ACT_SUBMODE,
+      });
+      const response = await sendCommand(
+        activeClient,
+        "conversation.message.submit",
+        {
+          ...toRunnerProfileReference(requestProfileSelection),
+          threadId: request.threadId,
+          messageId: request.messageId,
+          turn: {
+            ...request.turn,
+            modeSystemV2Enabled: requestProfile.modeSystemV2Enabled === true,
+            interactionMode: resolvedMode.interactionMode,
+            ...(resolvedMode.actSubmode !== undefined ? { actSubmode: resolvedMode.actSubmode } : {}),
+            clientCapabilities: request.turn.clientCapabilities ?? createWebClientCapabilities(),
+            history: normalizeSubmittedHistory(request.turn.history),
+          },
+        },
+        metadata,
+      );
+      if (response.type !== "conversation.message.routed") {
+        throw createRuntimeFailure(
+          "WEB_ADAPTER_UNEXPECTED_CONVERSATION_ROUTE_RESPONSE",
+          `Unexpected conversation route response '${response.type}'.`,
+        );
+      }
+      return response;
     },
 
     async sendControl(command, context) {

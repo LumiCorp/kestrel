@@ -124,7 +124,11 @@ import {
   type SharedToolContext,
 } from "../../tools/index.js";
 import { registerAgent } from "./AgentFactory.js";
-import type { DelegationTaskUpdate, DetachedTurnLifecycleEvent } from "../../src/orchestration/index.js";
+import type {
+  DelegationTaskUpdate,
+  DetachedTurnLifecycleEvent,
+  SubmitConversationMessageInput,
+} from "../../src/orchestration/index.js";
 import { buildExecutionPolicyFromPack } from "./approvalPolicyPacks.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { InProcessMissionControlRunnerClient } from "./MissionControlRunnerClient.js";
@@ -757,6 +761,16 @@ export class KestrelChatRuntime {
 
   async getOperatorThreadView(threadId: string) {
     return this.threadRuntime?.getOperatorThreadView(threadId) ?? null;
+  }
+
+  async submitConversationMessage(input: SubmitConversationMessageInput) {
+    if (this.threadRuntime === undefined) {
+      throw createRuntimeFailure(
+        "CONVERSATION_ROUTING_UNAVAILABLE",
+        "Conversation message routing is unavailable for this runtime.",
+      );
+    }
+    return this.threadRuntime.submitConversationMessage(input);
   }
 
   async listCompletedConversationMessages(input: {

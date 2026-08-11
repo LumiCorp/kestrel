@@ -3749,9 +3749,11 @@ test("natural-language mode switches are forwarded for runtime intent classifica
     updatedAt: new Date().toISOString(),
   });
 
+  let capturedCommandType: string | undefined;
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (_type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
         type: "run.completed",
@@ -3786,7 +3788,8 @@ test("natural-language mode switches are forwarded for runtime intent classifica
 
   await (appState.handleLine as (line: string) => Promise<void>)("switch to build");
 
-  assert.equal(capturedTurn?.eventType, "user.reply");
+  assert.equal(capturedCommandType, "conversation.message.submit");
+  assert.equal(capturedTurn?.eventType, undefined);
   assert.equal(capturedTurn?.message, "switch to build");
   assert.equal(capturedTurn?.resumeBlockedRun, undefined);
 
@@ -3817,9 +3820,11 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
     updatedAt: new Date().toISOString(),
   });
 
+  let capturedCommandType: string | undefined;
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (_type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
         type: "run.completed",
@@ -3858,10 +3863,11 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
     args: ["build"],
   });
 
-  assert.equal(capturedTurn?.eventType, "user.reply");
+  assert.equal(capturedCommandType, "conversation.message.submit");
+  assert.equal(capturedTurn?.eventType, undefined);
   assert.equal(capturedTurn?.message, "/mode build");
-  assert.equal(capturedTurn?.resumeBlockedRun, true);
-  assert.equal(capturedTurn?.resumeRequestId, "request-mode-command");
+  assert.equal(capturedTurn?.resumeBlockedRun, undefined);
+  assert.equal(capturedTurn?.resumeRequestId, undefined);
 
   const rawHistory = await readFile(historyPath, "utf8");
   assert.match(rawHistory, /Mode set to Build\. Resuming blocked run\./u);
@@ -4225,9 +4231,11 @@ test("continuation replies are forwarded for runtime intent classification", asy
     updatedAt: new Date().toISOString(),
   });
 
+  let capturedCommandType: string | undefined;
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (_type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
         type: "run.completed",
@@ -4271,12 +4279,13 @@ test("continuation replies are forwarded for runtime intent classification", asy
 
   await (appState.handleLine as (line: string) => Promise<void>)("resume");
 
-  assert.equal(capturedTurn?.eventType, "user.reply");
+  assert.equal(capturedCommandType, "conversation.message.submit");
+  assert.equal(capturedTurn?.eventType, undefined);
   assert.equal(capturedTurn?.message, "resume");
   assert.equal(capturedTurn?.resumeBlockedRun, undefined);
 });
 
-test("non-continuation replies during pending waits start a fresh user turn", async () => {
+test("non-continuation text during an ordinary wait leaves routing to the runtime", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -4292,9 +4301,11 @@ test("non-continuation replies during pending waits start a fresh user turn", as
     updatedAt: new Date().toISOString(),
   });
 
+  let capturedCommandType: string | undefined;
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (_type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
         type: "run.completed",
@@ -4329,12 +4340,13 @@ test("non-continuation replies during pending waits start a fresh user turn", as
 
   await (appState.handleLine as (line: string) => Promise<void>)("stop copy edits and inspect the browser");
 
-  assert.equal(capturedTurn?.eventType, "user.message");
+  assert.equal(capturedCommandType, "conversation.message.submit");
+  assert.equal(capturedTurn?.eventType, undefined);
   assert.equal(capturedTurn?.message, "stop copy edits and inspect the browser");
   assert.equal(capturedTurn?.resumeBlockedRun, undefined);
 });
 
-test("exact continuation replies during pending waits resume the blocked run", async () => {
+test("exact continuation text during ordinary waits is routed by the runtime", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -4357,9 +4369,11 @@ test("exact continuation replies during pending waits resume the blocked run", a
     updatedAt: new Date().toISOString(),
   });
 
+  let capturedCommandType: string | undefined;
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (_type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
         type: "run.completed",
@@ -4394,13 +4408,14 @@ test("exact continuation replies during pending waits resume the blocked run", a
 
   await (appState.handleLine as (line: string) => Promise<void>)("continue");
 
-  assert.equal(capturedTurn?.eventType, "user.reply");
+  assert.equal(capturedCommandType, "conversation.message.submit");
+  assert.equal(capturedTurn?.eventType, undefined);
   assert.equal(capturedTurn?.message, "continue");
-  assert.equal(capturedTurn?.resumeBlockedRun, true);
-  assert.equal(capturedTurn?.resumeRequestId, "request-continuation");
+  assert.equal(capturedTurn?.resumeBlockedRun, undefined);
+  assert.equal(capturedTurn?.resumeRequestId, undefined);
 });
 
-test("approval replies during pending waits resume the blocked run", async () => {
+test("ordinary approval text does not forge an exact approval reply", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -4423,9 +4438,11 @@ test("approval replies during pending waits resume the blocked run", async () =>
     updatedAt: new Date().toISOString(),
   });
 
+  let capturedCommandType: string | undefined;
   let capturedTurn: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (_type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+      capturedCommandType = type;
       capturedTurn = payload.turn;
       return {
         type: "run.completed",
@@ -4460,10 +4477,11 @@ test("approval replies during pending waits resume the blocked run", async () =>
 
   await (appState.handleLine as (line: string) => Promise<void>)("approve");
 
-  assert.equal(capturedTurn?.eventType, "user.approval");
+  assert.equal(capturedCommandType, "conversation.message.submit");
+  assert.equal(capturedTurn?.eventType, undefined);
   assert.equal(capturedTurn?.message, "approve");
-  assert.equal(capturedTurn?.resumeBlockedRun, true);
-  assert.equal(capturedTurn?.resumeRequestId, "request-approval");
+  assert.equal(capturedTurn?.resumeBlockedRun, undefined);
+  assert.equal(capturedTurn?.resumeRequestId, undefined);
 });
 
 test("continuation replies apply manual compaction when adaptation already recommends compact", async () => {

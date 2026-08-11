@@ -519,7 +519,7 @@ test("ExecutionEngine continues unattended concrete repair instead of user clari
   assert.equal(continuationEvent?.metadata?.targetPath, "/app/maze_controller.py");
 });
 
-test("ExecutionEngine finalizes best-effort after repeated redundant retrieval pivots", async () => {
+test("ExecutionEngine intervenes on repeated redundant retrieval pivots until continuation waiting", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -658,32 +658,14 @@ test("ExecutionEngine finalizes best-effort after repeated redundant retrieval p
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "COMPLETED");
+  assert.equal(output.status, "WAITING");
   assert.equal(output.errors.length, 0);
+  assert.equal(output.waitFor?.metadata?.reason, "max_steps_continuation");
 
   const session = await store.getSession("session-retrieval-loop-guard");
   const react = (session?.state.agent ?? {}) as Record<string, unknown>;
   const terminal = (react.terminal ?? {}) as Record<string, unknown>;
-  const finalOutput = (react.finalOutput ?? {}) as Record<string, unknown>;
-  const finalData = (finalOutput.data ?? {}) as Record<string, unknown>;
-
-  assert.equal(terminal.reasonCode, "goal_satisfied");
-  assert.notEqual(finalData.researchStalled, true);
-  assert.equal(
-    finalData.retrievalToolFamily,
-    "internet.search_like",
-  );
-  assert.equal(finalData.lowSignalState, "none");
-  assert.equal(finalData.objective, "Find FC Cincinnati exact record and next 3 games from today");
-  assert.equal(finalData.stallKind, "redundant_retrieval");
-  assert.equal(finalData.guardType, "REPEATED_REDUNDANT_RETRIEVAL_PIVOT");
-  assert.match(String(finalData.guardToolName ?? ""), /^internet\./u);
-  assert.equal(finalData.guardRepeats, 3);
-  assert.equal(finalData.guardThreshold, 3);
-  assert.equal(finalData.verifiedEvidenceAvailable, true);
-  assert.doesNotMatch(String(finalOutput.message ?? ""), /low-yield|Next if you want me to continue/u);
-  assert.match(String(finalOutput.message ?? ""), /FC Cincinnati/u);
-  assert.match(String(finalOutput.message ?? ""), /fccincinnati\.com\/schedule/u);
+  assert.equal(terminal.reasonCode, "max_steps_continuation");
   assert.equal(
     store.getRunEvents().some((event) =>
       event.type === "loop.guard_triggered" &&
@@ -693,7 +675,7 @@ test("ExecutionEngine finalizes best-effort after repeated redundant retrieval p
   );
 });
 
-test("ExecutionEngine resumes coding work after verified redundant retrieval instead of synthesizing completion", async () => {
+test("ExecutionEngine resumes coding work after verified redundant retrieval without synthesizing completion", async () => {
   const store = new InMemorySessionStore();
   let modelCalls = 0;
   let dispatchCalls = 0;
@@ -883,20 +865,25 @@ test("ExecutionEngine resumes coding work after verified redundant retrieval ins
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "COMPLETED");
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assert.equal(output.waitFor?.metadata?.reason, "max_steps_continuation");
   assert.ok(modelCalls >= 0);
   assert.ok(dispatchCalls >= 1);
   assert.ok(loopCalls >= 2);
 
-  const continuationEvent = store.getRunEvents().find((event) =>
-    event.type === "loop.stall_resumed" &&
-    (event.metadata as Record<string, unknown> | undefined)?.reason === "verified_retrieval_continuation"
+  const interventionEvent = store.getRunEvents().find((event) =>
+    event.type === "loop.guard_triggered" &&
+    (event.metadata as Record<string, unknown> | undefined)?.disposition === "intervened"
   );
-  assert.notEqual(continuationEvent, undefined);
-  assert.equal((continuationEvent?.metadata as Record<string, unknown> | undefined)?.guardToolName !== undefined, true);
+  assert.notEqual(interventionEvent, undefined);
+  assert.equal(
+    typeof (interventionEvent?.metadata as Record<string, unknown> | undefined)?.actionSignatureHash,
+    "string",
+  );
 });
 
-test("ExecutionEngine resumes build-mode workspace work after verified redundant retrieval even without a work plan", async () => {
+test("ExecutionEngine resumes build-mode workspace work after verified redundant retrieval until continuation waiting", async () => {
   const store = new InMemorySessionStore();
   let loopCalls = 0;
   let dispatchCalls = 0;
@@ -1074,15 +1061,17 @@ test("ExecutionEngine resumes build-mode workspace work after verified redundant
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "COMPLETED");
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assert.equal(output.waitFor?.metadata?.reason, "max_steps_continuation");
   assert.ok(dispatchCalls >= 1);
   assert.ok(loopCalls >= 2);
 
-  const continuationEvent = store.getRunEvents().find((event) =>
-    event.type === "loop.stall_resumed" &&
-    (event.metadata as Record<string, unknown> | undefined)?.reason === "verified_retrieval_continuation"
+  const interventionEvent = store.getRunEvents().find((event) =>
+    event.type === "loop.guard_triggered" &&
+    (event.metadata as Record<string, unknown> | undefined)?.disposition === "intervened"
   );
-  assert.notEqual(continuationEvent, undefined);
+  assert.notEqual(interventionEvent, undefined);
 
   const session = await store.getSession("session-build-mode-verified-retrieval-continuation");
   const finalOutput = ((session?.state.agent as Record<string, unknown> | undefined)?.finalOutput ?? {}) as Record<
@@ -1639,7 +1628,7 @@ test("ExecutionEngine reports missing compacted tool artifacts without synthesiz
   assert.equal(terminal.reasonCode, "artifact_evidence_unavailable");
 });
 
-test("ExecutionEngine loop-guards repeated filesystem retrieval pivots", async () => {
+test("ExecutionEngine intervenes on repeated filesystem retrieval pivots", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1740,9 +1729,9 @@ test("ExecutionEngine loop-guards repeated filesystem retrieval pivots", async (
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(output.waitFor, undefined);
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assert.equal(output.waitFor?.metadata?.reason, "max_steps_continuation");
   assert.equal(store.getRunEvents().some((event) => event.type === "loop.guard_triggered"), true);
 });
 
@@ -1902,7 +1891,7 @@ test("ExecutionEngine allows fs.list inventory to progress into a grounded fs.re
   assert.equal(terminal.reasonCode, "completed");
 });
 
-test("ExecutionEngine loop-guards redundant fs.read_text pivots", async () => {
+test("ExecutionEngine intervenes on redundant fs.read_text pivots", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2011,9 +2000,9 @@ test("ExecutionEngine loop-guards redundant fs.read_text pivots", async () => {
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(output.waitFor, undefined);
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assert.equal(output.waitFor?.metadata?.reason, "max_model_calls_continuation");
   assert.equal(store.getRunEvents().some((event) => event.type === "loop.guard_triggered"), true);
   assert.equal(
     store.getRunEvents().filter((event) => event.type === "economics.model_call.requested").length,
@@ -2028,7 +2017,7 @@ test("ExecutionEngine loop-guards redundant fs.read_text pivots", async () => {
   assert.ok(Number(session?.state.reads ?? 0) >= 1);
 });
 
-test("ExecutionEngine loop-guards coding filesystem repeats without clarification wait", async () => {
+test("ExecutionEngine intervenes on coding filesystem repeats until continuation waiting", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2141,13 +2130,13 @@ test("ExecutionEngine loop-guards coding filesystem repeats without clarificatio
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(output.waitFor, undefined);
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assert.equal(output.waitFor?.metadata?.reason, "max_steps_continuation");
   assert.equal(store.getRunEvents().some((event) => event.type === "loop.guard_triggered"), true);
 
   const session = await store.getSession("session-retrieval-loop-guard-coding-filesystem");
   assert.ok(Number(session?.state.reads ?? 0) >= 1);
   const react = (session?.state.agent ?? {}) as Record<string, unknown>;
-  assert.equal(react.waitingFor, undefined);
+  assert.equal((react.waitingFor as Record<string, unknown> | undefined)?.reason, "max_steps_continuation");
 });

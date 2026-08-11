@@ -103,6 +103,10 @@ import {
 import { RuntimeIO } from "./RuntimeIO.js";
 import { RecoveryCoordinator, normalizeRecoveryFailureCode } from "./recovery/RecoveryCoordinator.js";
 import {
+  normalizeRecoveryWorkflowResult,
+  type RecoveryWorkflowResult,
+} from "./recovery/RecoveryRegistries.js";
+import {
   RuntimeEvaluationCoordinator,
   type RuntimeEvaluationEvidenceInputV1,
   type RuntimeEvaluationHookResultV1,
@@ -322,6 +326,10 @@ export class ExecutionEngine {
   private readonly stepFrameBufferEnabled: boolean;
   private readonly progressPersistGranularity: ProgressPersistGranularity;
   private readonly loggedHeapPressureKeys = new Set<string>();
+  private readonly recoveryWorkflowFailures = new Map<string, Array<{
+    handlerId: string;
+    failureCode: string;
+  }>>();
   private readonly recoveryCoordinator: RecoveryCoordinator | undefined;
   private readonly evaluationCoordinator: RuntimeEvaluationCoordinator | undefined;
   private readonly executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
@@ -574,8 +582,8 @@ export class ExecutionEngine {
       recordConcreteRepairContinuation: (input) => this.recordConcreteRepairContinuation(input),
       maybeBuildVerifiedRetrievalContinuation: (input) => this.maybeBuildVerifiedRetrievalContinuation(input),
       recordVerifiedRetrievalContinuation: (input) => this.recordVerifiedRetrievalContinuation(input),
-      applyRuntimeStateGuards: (stepName, sessionState, statePatch, transition) =>
-        this.applyRuntimeStateGuards(stepName, sessionState, statePatch, transition),
+      applyRuntimeStateGuards: (runId, sessionId, stepIndex, stepName, sessionState, statePatch, transition) =>
+        this.applyRuntimeStateGuards(runId, sessionId, stepIndex, stepName, sessionState, statePatch, transition),
       mergeStatePatchWithRegionLaneCursor: (sessionState, statePatch, laneCursor) =>
         this.mergeStatePatchWithRegionLaneCursor(sessionState, statePatch, laneCursor),
       resolveEffects: (
@@ -661,6 +669,7 @@ export class ExecutionEngine {
     let stepRunnerState: StepRunnerState | undefined;
     let runStarted = false;
     const runLifecycleFrame = this.createRunLifecycleObservabilityFrame(runId, event.sessionId);
+    this.recoveryWorkflowFailures.delete(runId);
 
     return this.runLifecycleFrameStore.run(runLifecycleFrame, async () => {
       try {
@@ -1145,28 +1154,22 @@ export class ExecutionEngine {
             }
           }
         }
-        if (session !== undefined && lastStepAgent !== undefined) {
-          const recoveryReview = await this.maybeEnterRecoveryReview({
-            runId,
-            event,
-            session,
-            currentStep: lastStepAgent,
-            stepIndex: guardrails.telemetry().stepsExecuted,
-            guardrails,
-            progressSeq,
-            triggeringFailureCode: normalizeRecoveryFailureCode(runtimeError.code),
-            triggeringFailureSummary: summarizeRecoveryFailureMessage(
-              this.executionBoundaryRuntime.sensitiveValues.redactString(runtimeError.message).value,
-            ),
-          });
-          if (recoveryReview !== undefined) {
-            return recoveryReview;
-          }
-        }
+        const recoveryFailures = this.recoveryWorkflowFailures.get(runId) ?? [];
+        const terminalRuntimeError = recoveryFailures.length === 0
+          ? runtimeError
+          : {
+              code: "RECOVERY_EXHAUSTED",
+              message: "Every applicable bounded recovery workflow failed.",
+              details: {
+                triggeringFailureCode: runtimeError.code,
+                attempts: structuredClone(recoveryFailures),
+              },
+            } satisfies RuntimeError;
+        if (terminalRuntimeError !== runtimeError) errors.push(terminalRuntimeError);
         return await this.runLifecycleController.failRun({
           runId,
           event,
-          runtimeError,
+          runtimeError: terminalRuntimeError,
           errors,
           guardrails,
           progressSeq,
@@ -1218,6 +1221,7 @@ export class ExecutionEngine {
           await this.flushRunLifecycleObservabilityFrame(runLifecycleFrame);
         }
         this.clearHeapPressureLogKeys(runId);
+        this.recoveryWorkflowFailures.delete(runId);
       }
     });
   }
@@ -1705,7 +1709,7 @@ export class ExecutionEngine {
         sessionId: input.session.sessionId,
         failureCode: "EVALUATION_REJECTED",
         stepIndex: input.stepIndex,
-        execute: async () => undefined,
+        execute: async () => ({ revisionAuthorized: true }),
       });
       await this.recoveryCoordinator.markActionCompleted(recovery.decision);
     } catch (error) {
@@ -3736,23 +3740,45 @@ export class ExecutionEngine {
     const handler = recoveryRuntime.workflowHandlerRegistry.resolve(input.handlerId);
     if (handler === undefined) {
       await coordinator.markActionFailed(selection.decision, "RECOVERY_HANDLER_UNREGISTERED");
+      this.recordRecoveryWorkflowFailure(input.runId, input.handlerId, "RECOVERY_HANDLER_UNREGISTERED");
       return;
     }
     await coordinator.markActionStarted(selection.decision);
     try {
-      const result = await handler({
+      const outcome = normalizeRecoveryWorkflowResult<T>((await handler({
         runId: input.runId,
         sessionId: input.sessionId,
         failureCode: input.failureCode,
         ...(input.stepIndex !== undefined ? { stepIndex: input.stepIndex } : {}),
         execute: input.execute,
-      }) as T;
+      })) as T | RecoveryWorkflowResult<T> | undefined);
+      if (outcome.status === "not_applicable") {
+        await coordinator.markActionNotApplicable(selection.decision, outcome.reason);
+        return;
+      }
+      if (outcome.status === "failed") {
+        await coordinator.markActionFailed(selection.decision, outcome.failureCode);
+        this.recordRecoveryWorkflowFailure(input.runId, input.handlerId, outcome.failureCode);
+        return;
+      }
       await coordinator.markActionCompleted(selection.decision);
-      return result;
+      return outcome.value;
     } catch (error) {
-      await coordinator.markActionFailed(selection.decision, this.mapError(error).code);
+      const failureCode = this.mapError(error).code;
+      await coordinator.markActionFailed(selection.decision, failureCode);
+      this.recordRecoveryWorkflowFailure(input.runId, input.handlerId, failureCode);
       throw error;
     }
+  }
+
+  private recordRecoveryWorkflowFailure(
+    runId: string,
+    handlerId: string,
+    failureCode: string,
+  ): void {
+    const failures = this.recoveryWorkflowFailures.get(runId) ?? [];
+    failures.push({ handlerId, failureCode });
+    this.recoveryWorkflowFailures.set(runId, failures);
   }
 
   private async maybeEnterRecoveryReview(input: {
@@ -4117,7 +4143,7 @@ export class ExecutionEngine {
         runId: input.runId,
         sessionId: input.session.sessionId,
         failureCode: "EVALUATION_REJECTED",
-        execute: async () => undefined,
+        execute: async () => ({ revisionAuthorized: true }),
       });
       await recoveryCoordinator.markActionCompleted(recoveryDecision);
     } catch (error) {
@@ -5098,14 +5124,20 @@ export class ExecutionEngine {
     };
   }
 
-  private applyRuntimeStateGuards(
+  private async applyRuntimeStateGuards(
+    runId: string,
+    sessionId: string,
+    stepIndex: number,
     stepName: string,
     sessionState: Record<string, unknown>,
     statePatch: Record<string, unknown> | undefined,
     transition: Transition,
-  ): Record<string, unknown> | undefined {
+  ): Promise<Record<string, unknown> | undefined> {
     const rebasedStatePatch = this.rebaseHeapCompactedModelTranscript(sessionState, statePatch);
     return this.loopGuardCoordinator.applyRuntimeStateGuards({
+      runId,
+      sessionId,
+      stepIndex,
       stepName,
       sessionState,
       statePatch: rebasedStatePatch,

@@ -63,6 +63,7 @@ import type {
   McpRefreshCommandPayload,
   McpStatusCommandPayload,
   OperatorControlCommandPayload,
+  ConversationMessageSubmitCommandPayload,
   ConversationMessagesListCommandPayload,
   OperatorInboxCommandPayload,
   OperatorRunCommandPayload,
@@ -254,6 +255,9 @@ export interface RunnerRuntime {
     completedAt: string;
     result: { assistantText: string; output: RunTurnResult["output"] };
   }>>) | undefined;
+  submitConversationMessage?: ((input: import("../../src/orchestration/contracts.js").SubmitConversationMessageInput) => Promise<
+    import("../../src/orchestration/contracts.js").ConversationMessageRouteResult
+  >) | undefined;
   getOperatorRunView?:
     | ((
         runId: string
@@ -1575,6 +1579,59 @@ export class RunnerHost {
       code: "RUNNER_RUNTIME_ERROR",
       message: "Conversation message recovery is unavailable.",
     }, { commandId, threadId: payload.threadId });
+  }
+
+  async conversationMessageSubmit(
+    commandId: string,
+    payload: ConversationMessageSubmitCommandPayload,
+    metadata?: RunnerCommandMetadata,
+  ): Promise<void> {
+    const profile = await this.resolveProfileOrThrow(payload, "conversation.message.submit");
+    this.assertAcceptingExecutions();
+    const runtime = this.getRuntime(profile);
+    if (runtime.submitConversationMessage === undefined) {
+      throw createRuntimeFailure(
+        "CONVERSATION_ROUTING_UNAVAILABLE",
+        "Conversation message routing is unavailable for this runtime.",
+      );
+    }
+    const actor = metadata?.actor === undefined
+      ? undefined
+      : {
+          ...metadata.actor,
+          ...(metadata.actor.tenantId === undefined && metadata.tenantId !== undefined
+            ? { tenantId: metadata.tenantId }
+            : {}),
+        };
+    const routed = await runtime.submitConversationMessage({
+      threadId: payload.threadId,
+      messageId: payload.messageId,
+      message: payload.turn.message,
+      ...(payload.turn.attachments !== undefined ? { attachments: payload.turn.attachments } : {}),
+      ...(payload.turn.interactionMode !== undefined ? { interactionMode: payload.turn.interactionMode } : {}),
+      ...(payload.turn.actSubmode !== undefined ? { actSubmode: payload.turn.actSubmode } : {}),
+      ...(payload.turn.executionPolicy !== undefined ? { executionPolicy: payload.turn.executionPolicy } : {}),
+      ...(payload.turn.manualCompaction !== undefined ? { manualCompaction: payload.turn.manualCompaction } : {}),
+      ...(payload.turn.autoCompaction !== undefined ? { autoCompaction: payload.turn.autoCompaction } : {}),
+      ...(payload.turn.metadata !== undefined ? { metadata: payload.turn.metadata } : {}),
+      ...(actor !== undefined ? { actor } : {}),
+      runtimeTurn: payload.turn,
+    });
+    this.writer.emit("conversation.message.routed", {
+      threadId: routed.threadId,
+      sessionId: routed.sessionId,
+      messageId: routed.messageId,
+      disposition: routed.disposition,
+      ...(routed.runId !== undefined ? { runId: routed.runId } : {}),
+      ...(routed.requestId !== undefined ? { requestId: routed.requestId } : {}),
+      ...(routed.followUpId !== undefined ? { followUpId: routed.followUpId } : {}),
+      view: routed.view,
+    }, {
+      commandId,
+      threadId: routed.threadId,
+      sessionId: routed.sessionId,
+      ...(routed.runId !== undefined ? { runId: routed.runId } : {}),
+    });
   }
 
   async operatorRuns(

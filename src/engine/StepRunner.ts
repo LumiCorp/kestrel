@@ -231,11 +231,14 @@ interface StepRunnerDependencies {
     guardToolName?: string | undefined;
   }) => Promise<void>;
   applyRuntimeStateGuards: (
+    runId: string,
+    sessionId: string,
+    stepIndex: number,
     stepName: string,
     sessionState: Record<string, unknown>,
     statePatch: Record<string, unknown> | undefined,
     transition: StepTransition,
-  ) => Record<string, unknown> | undefined;
+  ) => Promise<Record<string, unknown> | undefined>;
   mergeStatePatchWithRegionLaneCursor: (
     sessionState: Record<string, unknown>,
     statePatch: Record<string, unknown> | undefined,
@@ -791,7 +794,10 @@ export class StepRunner {
     let transition = stepExecutionResult.transition;
     let statePatch: Record<string, unknown> | undefined;
     try {
-      statePatch = this.deps.applyRuntimeStateGuards(
+      statePatch = await this.deps.applyRuntimeStateGuards(
+        input.runId,
+        input.state.session.sessionId,
+        input.state.stepIndex,
         stepName,
         previousSessionState,
         this.deps.mergeStatePatchWithRegionLaneCursor(

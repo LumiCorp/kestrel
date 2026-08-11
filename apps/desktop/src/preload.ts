@@ -23,6 +23,8 @@ import type {
   DesktopRunCancellationResult,
   DesktopRunnerEvent,
   DesktopRunTurnRequest,
+  DesktopConversationMessageRequest,
+  DesktopConversationMessageResult,
   DesktopRuntimeHealth,
   DesktopRestartKestrelInput,
   DesktopRestartKestrelResult,
@@ -173,6 +175,11 @@ const desktopBridge: DesktopBridge = {
   },
   runTurn(request: DesktopRunTurnRequest): Promise<DesktopRunnerEvent> {
     return ipcRenderer.invoke("desktop:run-turn", request);
+  },
+  submitConversationMessage(
+    request: DesktopConversationMessageRequest,
+  ): Promise<DesktopConversationMessageResult> {
+    return ipcRenderer.invoke("desktop:conversation-message-submit", request);
   },
   selectAttachments(threadId) {
     return ipcRenderer.invoke("desktop:select-attachments", threadId);

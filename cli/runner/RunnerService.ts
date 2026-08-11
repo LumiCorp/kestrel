@@ -69,6 +69,7 @@ const TERMINAL_EVENT_TYPES = new Set<RunnerEvent["type"]>([
   "session.state",
   "operator.inbox",
   "operator.thread",
+  "conversation.message.routed",
   "conversation.messages",
   "operator.runs",
   "operator.run",

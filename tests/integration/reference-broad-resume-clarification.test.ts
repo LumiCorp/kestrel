@@ -226,3 +226,109 @@ test("reference harness asks for a narrower slice instead of thrashing on a broa
   assert.equal(toolNames.every((name) => name === "fs.read_text"), true);
   assert.equal(toolNames.length >= 1, true);
 });
+
+test("ordinary reply resets loop history and permits a novel action before the next genuine wait", async () => {
+  const store = new InMemorySessionStore();
+  const toolCalls: Array<{ name: string; input: unknown }> = [];
+  let actionCalls = 0;
+  const prompt = "Which file should I inspect?";
+  const nextPrompt = "Should I inspect another file?";
+  const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
+    async call<T>(name: string, input: unknown): Promise<T> {
+      toolCalls.push({ name, input });
+      if (name !== "fs.read_text") throw new Error(`Unexpected tool call '${name}'`);
+      return buildAgentToolSuccessResult({
+        toolName: name,
+        input,
+        output: { path: "src/target.ts", content: "export const repaired = true;\n" },
+      }) as T;
+    },
+    async preRun(): Promise<void> {
+      // no-op
+    },
+  });
+  const modelGateway = new RetryingModelGateway(async <T>(request: ModelRequest) => {
+    const schemaName = request.providerOptions?.openrouter?.responseSchemaName;
+    if (schemaName !== "kestrel_agent_action" && request.tools === undefined) {
+      throw new Error(`Unexpected model schema '${schemaName ?? "unknown"}'`);
+    }
+    actionCalls += 1;
+    if (actionCalls === 1) {
+      return modelResponse({
+        nextAction: {
+          kind: "ask_user",
+          prompt,
+          waitFor: { kind: "user", eventType: "user.reply", metadata: { prompt, reason: "clarification" } },
+        },
+        reason: "The exact file is required before inspection.",
+      }) as T;
+    }
+    if (actionCalls === 2) {
+      return modelResponse({
+        nextAction: { kind: "tool", name: "fs.read_text", input: { path: "src/target.ts" } },
+        reason: "The consumed reply supplied a concrete novel action.",
+      }) as T;
+    }
+    return modelResponse({
+      nextAction: {
+        kind: "ask_user",
+        prompt: nextPrompt,
+        waitFor: { kind: "user", eventType: "user.reply", metadata: { prompt: nextPrompt, reason: "clarification" } },
+      },
+      reason: "The requested inspection is complete and further scope needs user input.",
+    }) as T;
+  });
+  const kestrel = new Kestrel({ store, toolGateway, modelGateway });
+  const registration = registerAgentReferenceRuntime(kestrel, {
+    thinkerToolsProvider: () => [{
+      name: "fs.read_text",
+      description: "Read text",
+      inputSchema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+        additionalProperties: false,
+      },
+    }],
+    capabilityManifestProvider: () => [{
+      name: "fs.read_text",
+      descriptorRef: createLegacyTestToolDescriptorRef("fs.read_text"),
+      description: "Read text",
+      freshnessClass: "static",
+      latencyClass: "low",
+      costClass: "free",
+      executionClass: "read_only",
+      capabilityClasses: ["filesystem.read"],
+    }],
+  });
+  const first = await kestrel.run({
+    id: "evt-loop-reply-initial",
+    type: "user.message",
+    sessionId: "session-loop-reply-integration",
+    payload: {
+      message: "Inspect the relevant file.",
+      modeSystemV2Enabled: true,
+      interactionMode: "build",
+      actSubmode: "safe",
+      history: [],
+    },
+    stepAgent: registration.entryStepAgent,
+  });
+  assert.equal(first.status, "WAITING", JSON.stringify(first.errors));
+  assert.equal(first.waitFor?.eventType, "user.reply");
+
+  const second = await kestrel.run({
+    id: "evt-loop-reply-consumed",
+    type: "user.reply",
+    sessionId: "session-loop-reply-integration",
+    payload: { message: "src/target.ts" },
+  });
+  assert.equal(second.status, "WAITING", JSON.stringify(second.errors));
+  assert.match(String((second.waitFor?.metadata as Record<string, unknown>)?.prompt ?? ""), /another file/i);
+  assert.deepEqual(toolCalls, [{ name: "fs.read_text", input: { path: "src/target.ts" } }]);
+  assert.equal(
+    store.getRunEvents().some((event) => event.type === "loop.guard_triggered"),
+    false,
+  );
+  assert.notEqual((second.waitFor?.metadata as Record<string, unknown>)?.reason, "recovery_review");
+});

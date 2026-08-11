@@ -21,6 +21,11 @@ import {
   readRetrievalToolFamily,
 } from "./retrievalLoopGuard.js";
 import { type Guardrails, GuardrailViolationError } from "./Guardrails.js";
+import {
+  normalizeAgentFeedbackForLoopGuard,
+  projectLoopProgress,
+  stableLoopProgressHash,
+} from "./loopProgress.js";
 import type { WaitResumeCoordinator } from "./WaitResumeCoordinator.js";
 
 type RunEventLevel = "INFO" | "WARN" | "ERROR";
@@ -56,6 +61,21 @@ interface ResearchStallSummary {
   webExtraction?: Record<string, unknown> | undefined;
   lowYieldClusters?: Array<Record<string, unknown>> | undefined;
 }
+
+interface LoopGuardInput {
+  runId: string;
+  sessionId: string;
+  stepIndex: number;
+  stepName: string;
+  sessionState: Record<string, unknown>;
+  statePatch: Record<string, unknown> | undefined;
+  transition: Transition;
+}
+
+export type LoopGuardDecision =
+  | { disposition: "allow"; statePatch: Record<string, unknown> | undefined }
+  | { disposition: "intervene"; statePatch: Record<string, unknown> }
+  | { disposition: "preserve_wait"; statePatch: Record<string, unknown> };
 
 type ReturnTerminal = (
   runId: string,
@@ -130,12 +150,11 @@ export class LoopGuardCoordinator {
     this.isBuildModeRun = deps.isBuildModeRun;
   }
 
-  applyRuntimeStateGuards(input: {
-    stepName: string;
-    sessionState: Record<string, unknown>;
-    statePatch: Record<string, unknown> | undefined;
-    transition: Transition;
-  }): Record<string, unknown> | undefined {
+  async applyRuntimeStateGuards(input: LoopGuardInput): Promise<Record<string, unknown> | undefined> {
+    return (await this.decideRuntimeStateGuard(input)).statePatch;
+  }
+
+  private async decideRuntimeStateGuard(input: LoopGuardInput): Promise<LoopGuardDecision> {
     const statePatch = input.statePatch ?? (
       input.transition.status === "WAITING" ||
       input.transition.status === "COMPLETED" ||
@@ -144,12 +163,12 @@ export class LoopGuardCoordinator {
         : undefined
     );
     if (statePatch === undefined) {
-      return ;
+      return { disposition: "allow", statePatch: undefined };
     }
 
     const reactPatch = asRecord(statePatch.agent);
     if (reactPatch === undefined) {
-      return statePatch;
+      return { disposition: "allow", statePatch };
     }
 
     const priorReact = asRecord(input.sessionState.agent) ?? {};
@@ -186,6 +205,21 @@ export class LoopGuardCoordinator {
       input.transition.nextStepAgent,
     );
     const pendingExecutionHash = stableHash(readPendingExecutionSnapshot(reactPatch));
+    const loopProgress = projectLoopProgress({
+      reactState: {
+        ...loopGuardReactPatch,
+        evidenceLedger:
+          statePatch.evidenceLedger ??
+          loopGuardReactPatch.evidenceLedger ??
+          input.sessionState.evidenceLedger,
+      },
+      actionSignature,
+      nextStepAgent: input.transition.nextStepAgent,
+      waitToken,
+      pendingExecution: readPendingExecutionSnapshot(loopGuardReactPatch),
+    });
+    const progressHash = stableLoopProgressHash(loopProgress);
+    const epoch = loopProgress.epoch;
     const cycleKind = readCycleKind(input.stepName);
     const toolCycleMarker = readToolCycleMarker(loopGuardNextAction);
     const retrievalCycleMarker = readRetrievalCycleMarker(priorReact, reactPatch);
@@ -207,6 +241,8 @@ export class LoopGuardCoordinator {
         waitToken,
         pendingExecutionHash,
         actionSignature,
+        progressHash,
+        epoch,
         cycleKind,
         toolActionName: toolCycleMarker?.toolName ?? "",
         toolActionInputHash: toolCycleMarker?.inputHash ?? "",
@@ -230,88 +266,16 @@ export class LoopGuardCoordinator {
         entry.pendingExecutionHash === pendingExecutionHash,
     ).length;
     if (repeatableModeBlockedWait === false && input.stepName !== "agent.loop" && repeats >= 3) {
-      throw new GuardrailViolationError(
-        "LOOP_GUARD_TRIGGERED",
-        `Loop guard triggered for step '${input.stepName}' after repeated identical control states.`,
-        {
-          guardType: "IDENTICAL_CONTROL_STATE",
-          ...attemptedActionDiagnostics,
-        },
-      );
-    }
-
-    if (cycleKind === "reasoning") {
-      const reasoningRepeats = nextHistory.filter(
-        (entry) =>
-          entry.stepName === "agent.loop" &&
-          entry.cycleKind === "reasoning" &&
-          entry.evidenceHash === evidenceHash &&
-          entry.observationMarker === observationMarker &&
-          entry.pendingExecutionHash === pendingExecutionHash,
-      ).length;
-      const reasoningLoopThreshold = 3;
-      if (
-        input.stepName === "agent.loop" &&
-        input.transition.status === "RUNNING" &&
-        reasoningRepeats >= reasoningLoopThreshold
-      ) {
-        const priorCloseoutLatch = readCloseoutLatch(priorReact.closeoutLatch);
-        if (
-          priorCloseoutLatch?.closeoutRequiredForEvidenceHash !== evidenceHash ||
-          priorCloseoutLatch.closeoutAttempted !== true
-        ) {
-          input.transition.status = "RUNNING";
-          input.transition.nextStepAgent = "agent.loop";
-          input.transition.waitFor = undefined;
-          const normalizedReactPatch = this.normalizeReactRuntimePatch(
-            input.stepName,
-            {
-              ...reactPatch,
-              nextAction: undefined,
-              commandBatch: undefined,
-              retryContext: {
-                failure: asRecord(reactPatch.retryContext)?.failure ?? {
-                  code: "NO_PROGRESS_REASONING_LOOP",
-                  message:
-                    "No new semantic evidence was produced across three reasoning cycles. Use one mode-valid closeout control now.",
-                  details: {
-                    ...buildNoProgressReasoningLoopDetails(loopGuardReactPatch, reasoningLoopThreshold),
-                    ...attemptedActionDiagnostics,
-                  },
-                },
-                requiredCorrection: {
-                  action: "select_mode_valid_closeout_control",
-                  evidenceHash,
-                },
-              },
-              closeoutLatch: {
-                version: "v1",
-                closeoutRequiredForEvidenceHash: evidenceHash,
-                closeoutAttempted: true,
-                active: true,
-              },
-            },
-            input.transition,
-          );
-          return {
-            ...statePatch,
-            agent: {
-              ...normalizedReactPatch,
-              loopGuard: {
-                history: nextHistory,
-              },
-            },
-          };
-        }
-        throw new GuardrailViolationError(
-          "LOOP_GUARD_TRIGGERED",
-          `Loop guard triggered for step '${input.stepName}' after repeated no-progress reasoning cycles.`,
-          {
-            ...buildNoProgressReasoningLoopDetails(loopGuardReactPatch, reasoningLoopThreshold),
-            ...attemptedActionDiagnostics,
-          },
-        );
-      }
+      return { disposition: "intervene", statePatch: await this.applyLoopIntervention({
+        ...input,
+        statePatch,
+        reactPatch,
+        nextHistory,
+        actionSignature,
+        guardType: "IDENTICAL_CONTROL_STATE",
+        message: `Repeated identical control state at '${input.stepName}'.`,
+        details: attemptedActionDiagnostics,
+      }) };
     }
 
     if (
@@ -347,10 +311,15 @@ export class LoopGuardCoordinator {
         }).length;
         const redundantRetrievalPivotThreshold = 3;
         if (repeatedRetrievalPivots >= redundantRetrievalPivotThreshold) {
-          throw new GuardrailViolationError(
-            "LOOP_GUARD_TRIGGERED",
-            `Loop guard triggered for step '${input.stepName}' after repeated redundant retrieval pivots for '${retrievalCycleMarker.toolName}'.`,
-            {
+          return { disposition: "intervene", statePatch: await this.applyLoopIntervention({
+            ...input,
+            statePatch,
+            reactPatch,
+            nextHistory,
+            actionSignature,
+            guardType: "REPEATED_REDUNDANT_RETRIEVAL_PIVOT",
+            message: `Repeated redundant retrieval pivot for '${retrievalCycleMarker.toolName}'.`,
+            details: {
               guardType: "REPEATED_REDUNDANT_RETRIEVAL_PIVOT",
               toolName: retrievalCycleMarker.toolName,
               retrievalFamily: readRetrievalToolFamily(retrievalCycleMarker.toolName),
@@ -358,14 +327,19 @@ export class LoopGuardCoordinator {
               threshold: redundantRetrievalPivotThreshold,
               ...attemptedActionDiagnostics,
             },
-          );
+          }) };
         }
       }
       if (repeatedToolCycles >= repeatedSameToolCycleThreshold) {
-        throw new GuardrailViolationError(
-          "LOOP_GUARD_TRIGGERED",
-          `Loop guard triggered for step '${input.stepName}' after repeated same-tool cycles for '${toolCycleMarker.toolName}'.`,
-          {
+        return { disposition: "intervene", statePatch: await this.applyLoopIntervention({
+          ...input,
+          statePatch,
+          reactPatch,
+          nextHistory,
+          actionSignature,
+          guardType: "REPEATED_SAME_TOOL_CYCLE",
+          message: `Repeated identical tool action '${toolCycleMarker.toolName}'.`,
+          details: {
             guardType: "REPEATED_SAME_TOOL_CYCLE",
             toolName: toolCycleMarker.toolName,
             toolInputHash: toolCycleMarker.inputHash,
@@ -373,7 +347,38 @@ export class LoopGuardCoordinator {
             threshold: repeatedSameToolCycleThreshold,
             ...attemptedActionDiagnostics,
           },
-        );
+        }) };
+      }
+    }
+
+    if (cycleKind === "reasoning") {
+      const reasoningRepeats = nextHistory.filter(
+        (entry) =>
+          entry.stepName === "agent.loop" &&
+          entry.cycleKind === "reasoning" &&
+          entry.epoch === epoch &&
+          entry.progressHash === progressHash &&
+          entry.actionSignature === actionSignature,
+      ).length;
+      const reasoningLoopThreshold = 3;
+      if (
+        input.stepName === "agent.loop" &&
+        input.transition.status === "RUNNING" &&
+        reasoningRepeats >= reasoningLoopThreshold
+      ) {
+        return { disposition: "intervene", statePatch: await this.applyLoopIntervention({
+          ...input,
+          statePatch,
+          reactPatch,
+          nextHistory,
+          actionSignature,
+          guardType: "NO_PROGRESS_REASONING_LOOP",
+          message: `Repeated no-progress reasoning at '${input.stepName}'.`,
+          details: {
+            ...buildNoProgressReasoningLoopDetails(loopGuardReactPatch, reasoningLoopThreshold),
+            ...attemptedActionDiagnostics,
+          },
+        }) };
       }
     }
 
@@ -384,13 +389,14 @@ export class LoopGuardCoordinator {
         priorWait.resumeToken === waitToken &&
         priorPendingExecutionHash === pendingExecutionHash
       ) {
-        throw new GuardrailViolationError(
-          "LOOP_GUARD_TRIGGERED",
-          `Loop guard triggered for step '${input.stepName}' after repeated wait state '${waitToken}'.`,
-          {
-            guardType: "REPEATED_WAIT_LOOP",
-          },
-        );
+        return { disposition: "preserve_wait", statePatch: await this.preserveRepeatedWait({
+          ...input,
+          statePatch,
+          reactPatch,
+          nextHistory,
+          actionSignature,
+          waitToken,
+        }) };
       }
       const waitRepeats = nextHistory.filter(
         (entry) =>
@@ -398,13 +404,14 @@ export class LoopGuardCoordinator {
           entry.pendingExecutionHash === pendingExecutionHash,
       ).length;
       if (waitRepeats >= 2) {
-        throw new GuardrailViolationError(
-          "LOOP_GUARD_TRIGGERED",
-          `Loop guard triggered for step '${input.stepName}' after repeated wait state '${waitToken}'.`,
-          {
-            guardType: "REPEATED_WAIT_LOOP",
-          },
-        );
+        return { disposition: "preserve_wait", statePatch: await this.preserveRepeatedWait({
+          ...input,
+          statePatch,
+          reactPatch,
+          nextHistory,
+          actionSignature,
+          waitToken,
+        }) };
       }
     }
 
@@ -415,14 +422,173 @@ export class LoopGuardCoordinator {
     );
 
     return {
-      ...statePatch,
-      agent: {
-        ...normalizedReactPatch,
-        loopGuard: {
-          history: nextHistory,
+      disposition: "allow",
+      statePatch: {
+        ...statePatch,
+        agent: {
+          ...normalizedReactPatch,
+          loopGuard: {
+            history: nextHistory,
+          },
         },
       },
     };
+  }
+
+  private async applyLoopIntervention(input: {
+    runId: string;
+    sessionId: string;
+    stepIndex: number;
+    stepName: string;
+    statePatch: Record<string, unknown>;
+    reactPatch: Record<string, unknown>;
+    transition: Transition;
+    nextHistory: ReturnType<typeof readLoopHistory>;
+    actionSignature: string;
+    guardType: string;
+    message: string;
+    details: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    const priorLoopGuard = asRecord(input.reactPatch.loopGuard);
+    const interventionEpoch = readNonNegativeInteger(priorLoopGuard?.interventionEpoch) + 1;
+    input.transition.status = "RUNNING";
+    input.transition.nextStepAgent = "agent.loop";
+    input.transition.waitFor = undefined;
+    const diagnostic = {
+      guardType: input.guardType,
+      blockedActionSignature: input.actionSignature,
+      interventionEpoch,
+      ...input.details,
+    };
+    const normalizedReactPatch = this.normalizeReactRuntimePatch(
+      input.stepName,
+      {
+        ...input.reactPatch,
+        nextAction: undefined,
+        commandBatch: undefined,
+        retryContext: {
+          failure: {
+            code: input.guardType,
+            message: input.message,
+            details: diagnostic,
+          },
+          requiredCorrection: {
+            action: "choose_materially_different_action",
+            blockedActionSignature: input.actionSignature,
+            interventionEpoch,
+          },
+        },
+        loopGuard: {
+          ...(priorLoopGuard ?? {}),
+          history: [],
+          interventionEpoch,
+          blockedActionSignature: input.actionSignature,
+          lastIntervention: diagnostic,
+        },
+      },
+      input.transition,
+    );
+    await this.recordLoopIntervention({
+      runId: input.runId,
+      sessionId: input.sessionId,
+      stepIndex: input.stepIndex,
+      guardType: input.guardType,
+      actionSignature: input.actionSignature,
+      interventionEpoch,
+      disposition: "intervened",
+      message: input.message,
+      details: diagnostic,
+    });
+    return {
+      ...input.statePatch,
+      agent: normalizedReactPatch,
+    };
+  }
+
+  private async preserveRepeatedWait(input: {
+    runId: string;
+    sessionId: string;
+    stepIndex: number;
+    stepName: string;
+    statePatch: Record<string, unknown>;
+    reactPatch: Record<string, unknown>;
+    transition: Transition;
+    nextHistory: ReturnType<typeof readLoopHistory>;
+    actionSignature: string;
+    waitToken: string;
+  }): Promise<Record<string, unknown>> {
+    const priorLoopGuard = asRecord(input.reactPatch.loopGuard);
+    const interventionEpoch = readNonNegativeInteger(priorLoopGuard?.interventionEpoch);
+    await this.recordLoopIntervention({
+      runId: input.runId,
+      sessionId: input.sessionId,
+      stepIndex: input.stepIndex,
+      guardType: "REPEATED_WAIT_LOOP",
+      actionSignature: input.actionSignature,
+      interventionEpoch,
+      disposition: "wait_preserved",
+      message: `Preserved existing wait '${input.waitToken}'.`,
+    });
+    const normalizedReactPatch = this.normalizeReactRuntimePatch(
+      input.stepName,
+      input.reactPatch,
+      input.transition,
+    );
+    return {
+      ...input.statePatch,
+      agent: {
+        ...normalizedReactPatch,
+        loopGuard: {
+          ...(priorLoopGuard ?? {}),
+          history: input.nextHistory,
+        },
+      },
+    };
+  }
+
+  private async recordLoopIntervention(input: {
+    runId: string;
+    sessionId: string;
+    stepIndex: number;
+    guardType: string;
+    actionSignature: string;
+    interventionEpoch: number;
+    disposition: "intervened" | "wait_preserved";
+    message: string;
+    details?: Record<string, unknown> | undefined;
+  }): Promise<void> {
+    const metadata = {
+      guardType: input.guardType,
+      actionSignatureHash: stableHash(input.actionSignature),
+      interventionEpoch: input.interventionEpoch,
+      disposition: input.disposition,
+      message: input.message,
+      ...(input.details !== undefined ? { details: input.details } : {}),
+    };
+    await this.appendRunEvent(
+      input.runId,
+      input.sessionId,
+      "loop.guard_triggered",
+      "WARN",
+      metadata,
+      input.stepIndex,
+    );
+    await this.appendRunEvent(
+      input.runId,
+      input.sessionId,
+      "progress.stage",
+      "INFO",
+      {
+        ...metadata,
+        code: "LOOP_INTERVENTION_APPLIED",
+        phase: "agent",
+        message: input.disposition === "intervened"
+          ? "Trying another approach"
+          : "Waiting for your input",
+        persist: true,
+      },
+      input.stepIndex,
+    );
   }
 
   async maybeHandleLoopVisitStallReply(input: {
@@ -1610,120 +1776,6 @@ function latestObservationSummary(value: unknown): string {
   return typeof summary === "string" ? summary : "";
 }
 
-function normalizeAgentFeedbackForLoopGuard(reactState: Record<string, unknown>): Record<string, unknown> {
-  const ledgerEvidence = asArray(reactState.evidenceLedger)
-    .map((value) => asRecord(value))
-    .filter((entry): entry is Record<string, unknown> => entry !== undefined)
-    .map((entry) => {
-      const target = asRecord(entry.target);
-      const claimImpact = asRecord(entry.claimImpact);
-      const facts = asRecord(entry.facts);
-      return {
-        resultIdentity: asString(entry.resultIdentity) ?? "",
-        kind: asString(entry.kind) ?? "",
-        status: asString(entry.status) ?? "",
-        target: {
-          type: asString(target?.type) ?? "",
-          value: asString(target?.normalizedValue) ?? asString(target?.value) ?? "",
-        },
-        revision:
-          asString(facts?.revision) ??
-          asString(facts?.contentRevision) ??
-          asString(facts?.expectedRevision) ??
-          "",
-        claimImpact: {
-          success: asString(claimImpact?.success) ?? "",
-          scope: asString(claimImpact?.scope) ?? "",
-          target: asString(claimImpact?.target) ?? "",
-          requirementIds: asArray(claimImpact?.requirementIds)
-            .map((value) => asString(value))
-            .filter((value): value is string => value !== undefined)
-            .sort(),
-        },
-      };
-    });
-  const identityHistory = asArray(reactState.evidenceIdentityHistory)
-    .map((value) => asRecord(value))
-    .filter((entry): entry is Record<string, unknown> => entry !== undefined)
-    .map((entry) => {
-      const target = asRecord(entry.target);
-      const claimImpact = asRecord(entry.claimImpact);
-      return {
-        resultIdentity: asString(entry.resultIdentity) ?? "",
-        kind: asString(entry.kind) ?? "",
-        status: asString(entry.status) ?? "",
-        target: {
-          type: asString(target?.type) ?? "",
-          value: asString(target?.value) ?? "",
-        },
-        revision: asString(entry.revision) ?? "",
-        claimImpact: {
-          success: asString(claimImpact?.success) ?? "",
-          scope: asString(claimImpact?.scope) ?? "",
-          target: asString(claimImpact?.target) ?? "",
-          requirementIds: asArray(claimImpact?.requirementIds)
-            .map((value) => asString(value))
-            .filter((value): value is string => value !== undefined)
-            .sort(),
-        },
-      };
-    })
-    .filter((entry) => entry.resultIdentity.length > 0);
-  const unidentifiedLedgerEvidence = ledgerEvidence
-    .filter((entry) => entry.resultIdentity.length === 0);
-  const evidenceBySemanticHash = new Map<string, Record<string, unknown>>();
-  for (const entry of identityHistory.length > 0
-    ? [...identityHistory, ...unidentifiedLedgerEvidence]
-    : ledgerEvidence) {
-    evidenceBySemanticHash.set(stableHash(entry), entry);
-  }
-  const evidence = [...evidenceBySemanticHash.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([, entry]) => entry);
-  const visibleTodos = normalizeVisibleTodoState(reactState.visibleTodos);
-  return {
-    evidence,
-    visibleTodos: visibleTodos?.items.map((item) => ({
-      id: item.id,
-      status: item.status,
-    })),
-    blockers: asArray(reactState.blockers)
-      .map((value) => asRecord(value))
-      .filter((value): value is Record<string, unknown> => value !== undefined)
-      .map((value) => ({
-        code: asString(value.code) ?? "",
-        target: asString(value.target) ?? "",
-        requirementId: asString(value.requirementId) ?? "",
-      })),
-  };
-}
-
-interface CloseoutLatchV1 {
-  version: "v1";
-  closeoutRequiredForEvidenceHash: string;
-  closeoutAttempted: true;
-  active?: boolean | undefined;
-}
-
-function readCloseoutLatch(value: unknown): CloseoutLatchV1 | undefined {
-  const record = asRecord(value);
-  const evidenceHash = asString(record?.closeoutRequiredForEvidenceHash)?.trim();
-  if (
-    record?.version !== "v1" ||
-    record.closeoutAttempted !== true ||
-    evidenceHash === undefined ||
-    evidenceHash.length === 0
-  ) {
-    return ;
-  }
-  return {
-    version: "v1",
-    closeoutRequiredForEvidenceHash: evidenceHash,
-    closeoutAttempted: true,
-    ...(typeof record.active === "boolean" ? { active: record.active } : {}),
-  };
-}
-
 function buildNoProgressReasoningLoopDetails(
   reactState: Record<string, unknown>,
   threshold: number,
@@ -1979,6 +2031,8 @@ function readLoopHistory(
   waitToken: string;
   pendingExecutionHash: string;
   actionSignature: string;
+  progressHash: string;
+  epoch: number;
   cycleKind: string;
   toolActionName: string;
   toolActionInputHash: string;
@@ -2010,6 +2064,8 @@ function readLoopHistory(
       pendingExecutionHash:
         typeof record.pendingExecutionHash === "string" ? record.pendingExecutionHash : "",
       actionSignature: typeof record.actionSignature === "string" ? record.actionSignature : "",
+      progressHash: typeof record.progressHash === "string" ? record.progressHash : "",
+      epoch: readNonNegativeInteger(record.epoch),
       cycleKind: typeof record.cycleKind === "string" ? record.cycleKind : "",
       toolActionName: typeof record.toolActionName === "string" ? record.toolActionName : "",
       toolActionInputHash:
@@ -2643,6 +2699,12 @@ function readStringArray(value: unknown): string[] {
 
 function stableHash(value: unknown): string {
   return hashUnknown(sortValue(value));
+}
+
+function readNonNegativeInteger(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : 0;
 }
 
 function hashUnknown(value: unknown): string {

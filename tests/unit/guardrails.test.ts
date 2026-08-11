@@ -113,7 +113,7 @@ test("Guardrails count maintenance model calls separately from action calls", ()
   );
 });
 
-test("Guardrails enforce step visit limits", () => {
+test("Guardrails leave repeated-step intervention to the loop coordinator", () => {
   const guardrails = new Guardrails({
     maxStepsPerRun: 10,
     maxToolCallsPerRun: 10,
@@ -127,7 +127,8 @@ test("Guardrails enforce step visit limits", () => {
   });
 
   guardrails.onStep("repeat");
-  assert.throws(() => guardrails.onStep("repeat"), GuardrailViolationError);
+  guardrails.onStep("repeat");
+  assert.equal(guardrails.telemetry().stepsExecuted, 2);
 });
 
 test("Guardrails report finite remaining time from an external deadline", () => {

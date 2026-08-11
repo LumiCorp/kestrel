@@ -70,12 +70,6 @@ export class Guardrails {
     if (this.config.maxStepVisits !== undefined) {
       const visits = (this.stepVisits.get(stepName) ?? 0) + 1;
       this.stepVisits.set(stepName, visits);
-      if (visits > this.config.maxStepVisits) {
-        throw new GuardrailViolationError(
-          "MAX_STEP_VISITS_EXCEEDED",
-          `Step ${stepName} visited ${visits} times`,
-        );
-      }
     }
 
   }

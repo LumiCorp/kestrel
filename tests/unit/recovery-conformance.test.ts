@@ -90,12 +90,15 @@ test("registered recovery models, tools, normalizers, and workflows pass one con
   for (const handlerId of workflows.listHandlerIds()) {
     const handler = workflows.resolve(handlerId);
     assert.ok(handler, handlerId);
-    assert.equal(await handler({
+    assert.deepEqual(await handler({
       runId: "run-conformance",
       sessionId: "session-conformance",
       failureCode: "CONFORMANCE_PROBE",
       execute: async () => handlerId,
-    }), handlerId);
+    }), {
+      status: "handled",
+      value: handlerId,
+    });
   }
   assert.deepEqual(workflows.listHandlerIds(), [
     "context.compaction",

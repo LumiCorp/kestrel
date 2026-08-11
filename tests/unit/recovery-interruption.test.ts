@@ -127,7 +127,7 @@ test("model failure capture is coordinator-visible and streaming output forbids 
   assert.equal(failure?.willRetry, false);
 });
 
-test("durable recovery review remains waiting across restart and resumes the exact operator option", async () => {
+test("generic recovery review is not created after a terminal run failure", async () => {
   const primary = candidate("primary", "openai", "gpt-primary");
   const policy = createRecoveryPolicyV1({
     policyId: "recovery:restart-review",
@@ -174,7 +174,7 @@ test("durable recovery review remains waiting across restart and resumes the exa
     return runtime;
   };
 
-  const waiting = await createRuntime().run({
+  const failed = await createRuntime().run({
     id: "event-recovery-restart",
     type: "user.message",
     sessionId: "session-recovery-restart",
@@ -187,29 +187,13 @@ test("durable recovery review remains waiting across restart and resumes the exa
       },
     },
   });
-  assert.equal(waiting.status, "WAITING");
-  assert.equal((await store.getRun(waiting.runId))?.status, "WAITING");
-
-  const resumed = await createRuntime().run({
-    id: "event-recovery-resume",
-    type: "user.reply",
-    sessionId: "session-recovery-restart",
-    payload: {
-      recoveryOptionId: "retry.primary",
-      metadata: {
-        threadId: "thread-recovery-restart",
-        actor: { actorId: "operator-1", actorType: "operator", tenantId: "tenant-1" },
-      },
-    },
-  });
-  assert.equal(resumed.status, "COMPLETED", JSON.stringify(resumed));
-  assert.equal(stepCalls, 2);
-  assert.equal((await store.getRun(resumed.runId))?.status, "COMPLETED");
+  assert.equal(failed.status, "FAILED");
+  assert.equal(failed.errors.some((error) => error.code === "INJECTED_TERMINAL_FAILURE"), true);
+  assert.equal(stepCalls, 1);
+  assert.equal((await store.getRun(failed.runId))?.status, "FAILED");
   const eventTypes = store.getRunEvents().map((event) => event.type);
-  assert.equal(eventTypes.includes("recovery.waiting"), true);
-  assert.equal(eventTypes.includes("interaction.resolved"), true);
-  assert.equal(eventTypes.includes("run.resumed"), true);
-  assert.equal(eventTypes.includes("run.completed"), true);
+  assert.equal(eventTypes.includes("recovery.waiting"), false);
+  assert.equal(eventTypes.includes("run.failed"), true);
 });
 
 test("recorded recovery tool result replay never repeats the consumed external effect", async () => {

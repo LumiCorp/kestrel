@@ -162,16 +162,15 @@ function createRunHarness(input: {
           });
         }
         return makeRunnerEvent({
-          type: "run.completed",
+          type: "conversation.message.routed",
           commandId: "command-1",
           payload: {
-            result: {
-              assistantText: "done",
-              output: makeCompletedOutput(activeSession.sessionId, "run-start-1"),
-              finalizedPayload: {
-                message: "done",
-              },
-            },
+            threadId: activeSession.focusedThreadId ?? `thread-main:${activeSession.sessionId}`,
+            sessionId: activeSession.sessionId,
+            messageId: String(payload.messageId ?? "message-1"),
+            disposition: "replied",
+            requestId: "request-resume-1",
+            view: {} as never,
           },
         });
       }),
@@ -309,7 +308,7 @@ function createRunHarness(input: {
   };
 }
 
-test("TuiRunController startActiveTurn forwards blocked-run resume and terminal diagnostics", async () => {
+test("TuiRunController routes blocked-run replies through the conversation command", async () => {
   const harness = createRunHarness({
     pendingWaitFor: {
       kind: "user",
@@ -329,7 +328,7 @@ test("TuiRunController startActiveTurn forwards blocked-run resume and terminal 
     resumeBlockedRun: true,
   });
 
-  assert.equal(harness.commands[0]?.type, "run.start");
+  assert.equal(harness.commands[0]?.type, "conversation.message.submit");
   const turn = harness.commands[0]?.payload.turn as Record<string, unknown>;
   assert.equal(
     harness.commands[0]?.payload.profileId,
@@ -338,18 +337,16 @@ test("TuiRunController startActiveTurn forwards blocked-run resume and terminal 
   assert.equal("profile" in harness.commands[0]!.payload, false);
   assert.equal(turn.sessionId, "session-1");
   assert.equal(turn.message, "continue");
-  assert.equal(turn.eventType, "user.reply");
-  assert.equal(turn.resumeBlockedRun, true);
-  assert.equal(turn.resumeRequestId, "request-resume-1");
+  assert.equal(turn.eventType, undefined);
+  assert.equal(turn.resumeBlockedRun, undefined);
+  assert.equal(turn.resumeRequestId, undefined);
   assert.equal(turn.manualCompaction, true);
   assert.deepEqual(
     (turn.history as Array<{ role: string; text: string }>).map((line) => line.role),
     ["user"],
   );
-  assert.equal(harness.history.at(-1)?.text, "done");
-  assert.ok(harness.history.at(-1)?.output);
-  assert.ok(harness.diagnostics.some((entry) => entry.scope === "terminal_handoff.tui_response_received"));
-  assert.ok(harness.diagnostics.some((entry) => entry.scope === "terminal_handoff.persist_completed"));
+  assert.match(String(harness.commands[0]?.payload.messageId), /^tui:/u);
+  assert.equal(harness.history.at(-1)?.text, undefined);
   assert.equal(harness.uiStore.getState().running, false);
 });
 
@@ -387,9 +384,10 @@ test("TuiRunController forwards an exact evaluation review option", async () => 
     resumeBlockedRun: true,
   });
 
-  const turn = harness.commands[0]?.payload.turn as Record<string, unknown>;
-  assert.equal(turn.resumeRequestId, "evaluation-review-1");
-  assert.equal(turn.recoveryOptionId, "evaluation.accept_once");
+  assert.equal(harness.commands[0]?.type, "operator.control");
+  assert.equal(harness.commands[0]?.payload.action, "reply");
+  assert.equal(harness.commands[0]?.payload.requestId, "evaluation-review-1");
+  assert.equal(harness.commands[0]?.payload.recoveryOptionId, "evaluation.accept_once");
 });
 
 test("TuiRunController preserves a blocked wait when its request identity is missing", async () => {
@@ -418,6 +416,17 @@ test("TuiRunController emits an explicit terminal marker for scripted completion
   const harness = createRunHarness({ scripted: true });
 
   await harness.controller.startActiveTurn({ submittedMessage: "complete the task" });
+  harness.controller.onRunnerEvent(makeRunnerEvent({
+    type: "run.completed",
+    commandId: "command-scripted",
+    payload: {
+      result: {
+        assistantText: "done",
+        output: makeCompletedOutput("session-1", "run-scripted"),
+      },
+    },
+  }));
+  await new Promise<void>((resolve) => setImmediate(resolve));
 
   assert.deepEqual(
     harness.history.slice(-2).map((line) => [line.role, line.text]),
@@ -591,9 +600,9 @@ test("TuiRunController forceFreshTurn sends user.message and clears pending wait
     forceFreshTurn: true,
   });
 
-  assert.equal(harness.commands[0]?.type, "run.start");
+  assert.equal(harness.commands[0]?.type, "conversation.message.submit");
   const turn = harness.commands[0]?.payload.turn as Record<string, unknown>;
-  assert.equal(turn.eventType, "user.message");
+  assert.equal(turn.eventType, undefined);
   assert.equal(turn.message, "stop editing copy and inspect the rendered app");
   assert.equal(turn.resumeBlockedRun, undefined);
   assert.equal(turn.manualCompaction, undefined);
@@ -696,7 +705,7 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
           },
         });
       }
-      if (commands.filter((command) => command.type === "run.start").length === 1) {
+      if (commands.filter((command) => command.type === "conversation.message.submit").length === 1) {
         return makeRunnerEvent({
           type: "run.failed",
           commandId: "command-checkpoint",
@@ -735,8 +744,8 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
     resumeBlockedRun: true,
   });
 
-  assert.equal(commands[0]?.type, "run.start");
-  assert.equal((commands[0]?.payload.turn as Record<string, unknown>).eventType, "user.approval");
+  assert.equal(commands[0]?.type, "conversation.message.submit");
+  assert.equal((commands[0]?.payload.turn as Record<string, unknown>).eventType, undefined);
   assert.equal(commands[1]?.type, "operator.control");
   assert.deepEqual(commands[1]?.payload, {
     action: "resolve_context_checkpoint",
@@ -745,9 +754,9 @@ test("TuiRunController recovers compact context checkpoints and retries the subm
     actionValue: "compact",
   });
   assert.equal((commands[1]?.metadata?.profile as { id?: string } | undefined)?.id, "kestrel");
-  assert.equal(commands[2]?.type, "run.start");
-  assert.equal((commands[2]?.payload.turn as Record<string, unknown>).eventType, "user.approval");
-  assert.equal((commands[2]?.payload.turn as Record<string, unknown>).resumeBlockedRun, true);
+  assert.equal(commands[2]?.type, "conversation.message.submit");
+  assert.equal((commands[2]?.payload.turn as Record<string, unknown>).eventType, undefined);
+  assert.equal((commands[2]?.payload.turn as Record<string, unknown>).resumeBlockedRun, undefined);
   assert.equal(harness.uiStore.getState().errorOverlay, undefined);
   assert.match(harness.history.find((line) => line.role === "system")?.text ?? "", /Compacted context and continued/u);
 });
@@ -817,7 +826,7 @@ test("TuiRunController attempts context checkpoint recovery only once", async ()
   });
 
   assert.equal(commands.filter((command) => command.type === "operator.control").length, 1);
-  assert.equal(commands.filter((command) => command.type === "run.start").length, 2);
+  assert.equal(commands.filter((command) => command.type === "conversation.message.submit").length, 2);
   assert.equal(harness.uiStore.getState().errorOverlay?.code, "CONTEXT_CHECKPOINT_PENDING");
 });
 

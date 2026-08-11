@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Kestrel } from "../../src/kestrel/Kestrel.js";
 import type { RuntimeError, TransitionStatus } from "../../src/kestrel/contracts/base.js";
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
+import type { StepAgent } from "../../src/kestrel/contracts/execution.js";
 import type { RunLifecycleSettlement } from "../../src/kestrel/contracts/store.js";
 
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
@@ -38,6 +39,36 @@ class WaitSettlementCapturingStore extends InMemorySessionStore {
     this.lastSettlement = settlement;
     await super.completeRun(runId, status, error, settlement);
   }
+}
+
+function findLoopIntervention(
+  store: InMemorySessionStore,
+  guardType: string,
+) {
+  return store.getRunEvents().find((event) =>
+    event.type === "loop.guard_triggered" &&
+    event.metadata?.guardType === guardType &&
+    event.metadata?.disposition === "intervened"
+  );
+}
+
+function assertLoopIntervention(
+  store: InMemorySessionStore,
+  guardType: string,
+): void {
+  const event = findLoopIntervention(store, guardType);
+  assert.ok(event, `expected a ${guardType} intervention event`);
+  assert.equal(typeof event.metadata?.actionSignatureHash, "string");
+  assert.equal(typeof event.metadata?.interventionEpoch, "number");
+  assert.equal(event.metadata?.disposition, "intervened");
+  assert.equal(
+    store.getRunEvents().some((candidate) =>
+      candidate.type === "progress.stage" &&
+      candidate.metadata?.code === "LOOP_INTERVENTION_APPLIED" &&
+      candidate.metadata?.guardType === guardType
+    ),
+    true,
+  );
 }
 
 function buildReactActionFlowTable(events: Array<Record<string, unknown>>): ReactActionFlowRow[] {
@@ -384,7 +415,7 @@ test("ExecutionEngine logs compact React state handoff for every committed step"
   }
 });
 
-test("ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated identical react state", async () => {
+test("ExecutionEngine intervenes before max-steps on repeated identical react state", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -421,6 +452,14 @@ test("ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated id
       },
     },
   }));
+  kestrel.registerStep("agent.loop", async () => ({
+    status: "WAITING",
+    waitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      metadata: { prompt: "Choose another approach." },
+    },
+  }));
 
   const output = await kestrel.run({
     id: "evt-loop-guard",
@@ -430,8 +469,9 @@ test("ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated id
     stepAgent: "react.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assertLoopIntervention(store, "IDENTICAL_CONTROL_STATE");
   assert.equal(output.telemetry.stepsExecuted < 20, true);
 });
 
@@ -485,27 +525,18 @@ test("ExecutionEngine keeps repeated validation feedback loop details mechanical
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(output.errors[0]?.details?.guardType, "NO_PROGRESS_REASONING_LOOP");
-  assert.equal(output.errors[0]?.details?.threshold, 3);
-  assert.equal(output.errors[0]?.details?.loopClassification, undefined);
-  assert.equal(output.errors[0]?.details?.lastRejection, undefined);
-  assert.equal(output.errors[0]?.details?.recommendedOperatorAction, undefined);
-  assert.equal(output.errors[0]?.details?.step, "agent.loop");
-  assert.equal(typeof output.errors[0]?.details?.actionSignatureHash, "string");
-  assert.equal(typeof output.errors[0]?.details?.latestEvidenceHash, "string");
-  const persisted = await store.getSession("session-loop-guard-rejection-details");
-  const closeoutLatch = (
-    persisted?.state.agent as Record<string, unknown> | undefined
-  )?.closeoutLatch as Record<string, unknown> | undefined;
-  assert.equal(closeoutLatch?.version, "v1");
-  assert.equal(closeoutLatch?.closeoutAttempted, true);
-  assert.equal(closeoutLatch?.active, true);
-  assert.equal(typeof closeoutLatch?.closeoutRequiredForEvidenceHash, "string");
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assertLoopIntervention(store, "NO_PROGRESS_REASONING_LOOP");
+  const diagnostic = findLoopIntervention(store, "NO_PROGRESS_REASONING_LOOP")?.metadata?.details as
+    | Record<string, unknown>
+    | undefined;
+  assert.equal(diagnostic?.threshold, 3);
+  assert.equal(diagnostic?.loopClassification, undefined);
+  assert.equal(typeof diagnostic?.blockedActionSignature, "string");
 });
 
-test("ExecutionEngine treats appended duplicate audit rows as unchanged semantic evidence", async () => {
+test("ExecutionEngine permits novel actions when duplicate audit evidence is appended", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -568,13 +599,13 @@ test("ExecutionEngine treats appended duplicate audit rows as unchanged semantic
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(output.errors[0]?.details?.guardType, "NO_PROGRESS_REASONING_LOOP");
-  assert.equal(visits < 10, true);
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assert.equal(findLoopIntervention(store, "NO_PROGRESS_REASONING_LOOP"), undefined);
+  assert.equal(visits > 3, true);
 });
 
-test("ExecutionEngine completes visible-todo finalize loops with documented residual gap", async () => {
+test("ExecutionEngine intervenes on repeated visible-todo finalize attempts without completing the task", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -681,20 +712,15 @@ test("ExecutionEngine completes visible-todo finalize loops with documented resi
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "COMPLETED");
+  assert.equal(output.status, "WAITING");
   assert.equal(output.errors.length, 0);
+  assertLoopIntervention(store, "NO_PROGRESS_REASONING_LOOP");
 
   const session = await store.getSession("session-visible-todo-residual-gap-loop");
   const react = (session?.state.agent ?? {}) as Record<string, unknown>;
-  const terminal = react.terminal as Record<string, unknown>;
-  const finalOutput = react.finalOutput as Record<string, unknown>;
-  const finalData = finalOutput.data as Record<string, unknown>;
   const visibleTodos = react.visibleTodos as Record<string, unknown>;
   const items = visibleTodos.items as Record<string, unknown>[];
 
-  assert.equal(terminal.reasonCode, "goal_satisfied");
-  assert.equal(finalData.documentedResidualGapFinalized, true);
-  assert.deepEqual(finalData.residualTodoIds, ["browser-e2e"]);
   assert.equal(items[1]?.status, "blocked");
 });
 
@@ -789,7 +815,7 @@ test("ExecutionEngine does not complete residual-gap finalize loops on partial p
   assert.notEqual(finalData?.documentedResidualGapFinalized, true);
 });
 
-test("ExecutionEngine pauses and asks for operator guidance on missing filesystem path loops", async () => {
+test("ExecutionEngine intervenes on missing filesystem path loops and reaches continuation waiting", async () => {
   const store = new WaitSettlementCapturingStore();
   const kestrel = new Kestrel({
     store,
@@ -845,18 +871,19 @@ test("ExecutionEngine pauses and asks for operator guidance on missing filesyste
 
   assert.equal(output.status, "WAITING");
   assert.equal(output.waitFor?.eventType, "user.reply");
-  assert.equal((output.waitFor?.metadata as Record<string, unknown>)?.reason, "tool_input_invalid");
+  assert.equal((output.waitFor?.metadata as Record<string, unknown>)?.reason, "max_steps_continuation");
+  assertLoopIntervention(store, "REPEATED_SAME_TOOL_CYCLE");
 
   const session = await store.getSession("session-loop-guard-missing-path");
   const terminal = (session?.state?.agent as Record<string, unknown> | undefined) as Record<string, unknown>;
   const runState = (terminal?.terminal ?? {}) as Record<string, unknown>;
   assert.equal(runState.status, "WAITING");
-  assert.equal(runState.reasonCode, "tool_input_invalid");
-  assert.equal((terminal.waitingFor as Record<string, unknown> | undefined)?.reason, "tool_input_invalid");
+  assert.equal(runState.reasonCode, "max_steps_continuation");
+  assert.equal((terminal.waitingFor as Record<string, unknown> | undefined)?.reason, "max_steps_continuation");
   assert.equal(readActiveWaitState(terminal)?.source, "waitingFor");
   assert.equal(
     store.lastSettlement?.wait?.resumeInstruction,
-    "Reply with how to handle fs.read_text path ./ghost-file.txt.",
+    "Reply with a continuation instruction to resume.",
   );
 });
 
@@ -1045,7 +1072,7 @@ test("ExecutionEngine requires explicit loop-stall continuation wording", async 
   assert.equal(readActiveWaitState(react)?.source, "waitingFor");
 });
 
-test("ExecutionEngine loop-guards repeated validation loops when a concrete target exists", async () => {
+test("ExecutionEngine intervenes on repeated exact filesystem validation actions without fabricating a target", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1099,11 +1126,12 @@ test("ExecutionEngine loop-guards repeated validation loops when a concrete targ
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assertLoopIntervention(store, "REPEATED_SAME_TOOL_CYCLE");
 });
 
-test("ExecutionEngine checkpoints repeated no-progress dispatch control states", async () => {
+test("ExecutionEngine intervenes on repeated no-progress dispatch control states", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -1195,34 +1223,19 @@ test("ExecutionEngine checkpoints repeated no-progress dispatch control states",
 
   assert.equal(output.status, "WAITING");
   assert.equal(output.errors.length, 0);
-  assert.equal((output.waitFor?.metadata as Record<string, unknown>)?.reason, "loop_visit_stall");
-  assert.equal((output.waitFor?.metadata as Record<string, unknown>)?.resolution, "checkpoint_wait");
-  const diagnostic = (output.waitFor?.metadata as Record<string, unknown>)?.diagnostic as
-    | Record<string, unknown>
-    | undefined;
-  assert.equal(diagnostic?.guardType, "IDENTICAL_CONTROL_STATE");
-  assert.equal(diagnostic?.stepAgent, "agent.exec.dispatch");
-  assert.equal(diagnostic?.toolName, "fs.read_text");
+  assert.equal((output.waitFor?.metadata as Record<string, unknown>)?.reason, "max_steps_continuation");
+  assertLoopIntervention(store, "IDENTICAL_CONTROL_STATE");
 
   const session = await store.getSession("session-identical-dispatch-loop");
   const agent = session?.state.agent as Record<string, unknown> | undefined;
-  const loopStall = agent?.loopStall as Record<string, unknown> | undefined;
-  assert.equal(loopStall?.reason, "loop_visit_stall");
   assert.equal(readActiveWaitState(agent)?.resumeStepAgent, "agent.loop");
-  assert.equal((loopStall?.diagnostic as Record<string, unknown> | undefined)?.guardType, "IDENTICAL_CONTROL_STATE");
-  assert.equal(loopStall?.resumeInstruction, (output.waitFor?.metadata as Record<string, unknown>)?.question);
-  assert.equal((loopStall?.blockedAction as Record<string, unknown> | undefined)?.name, "fs.read_text");
-  assert.deepEqual(
-    ((readActiveWaitState(agent)?.blockedAction as Record<string, unknown> | undefined)?.input),
-    {
-      path: "docs/runbook.md",
-    },
-  );
   assert.ok(
     store.getRunEvents().some((event) =>
       event.runId === output.runId &&
       event.type === "loop.guard_triggered" &&
-      (event.metadata as Record<string, unknown> | undefined)?.details !== undefined
+      event.metadata?.guardType === "IDENTICAL_CONTROL_STATE" &&
+      event.metadata?.disposition === "intervened" &&
+      typeof event.metadata?.actionSignatureHash === "string"
     ),
   );
 });
@@ -2105,11 +2118,12 @@ test("ExecutionEngine canonicalizes active dev.process.write process identity fo
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(output.errors[0]?.details?.guardType, "REPEATED_SAME_TOOL_CYCLE");
+  assert.equal(output.status, "WAITING");
+  assertLoopIntervention(store, "REPEATED_SAME_TOOL_CYCLE");
+  const intervention = findLoopIntervention(store, "REPEATED_SAME_TOOL_CYCLE");
   assert.equal(
-    output.errors[0]?.details?.toolInputHash,
-    "{\"input\":\"move N\\n\",\"processId\":\"proc-maze\"}",
+    typeof intervention?.metadata?.actionSignatureHash,
+    "string",
   );
 });
 
@@ -2326,7 +2340,7 @@ test("ExecutionEngine does not persist or replay decisionTrace after emission", 
   assert.equal("decisionTrace" in reactState, false);
 });
 
-test("ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated same-tool loop cycles", async () => {
+test("ExecutionEngine intervenes before max-steps on repeated same-tool loop cycles", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -2383,15 +2397,9 @@ test("ExecutionEngine trips LOOP_GUARD_TRIGGERED before max-steps on repeated sa
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(output.errors[0]?.details?.guardType, "REPEATED_SAME_TOOL_CYCLE");
-  assert.equal(output.errors[0]?.details?.step, "agent.loop");
-  assert.equal(output.errors[0]?.details?.toolName, "internet.news");
-  assert.equal(typeof output.errors[0]?.details?.toolInputHash, "string");
-  assert.equal(typeof output.errors[0]?.details?.actionSignatureHash, "string");
-  assert.equal(typeof output.errors[0]?.details?.latestEvidenceHash, "string");
-  assert.equal(output.telemetry.stepsExecuted < 20, true);
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assertLoopIntervention(store, "REPEATED_SAME_TOOL_CYCLE");
 });
 
 const repeatedFilesystemInspectionCases = [
@@ -2444,12 +2452,9 @@ const assertRepeatedFilesystemInspectionLoopGuard = async (
       stepAgent: "agent.loop",
     });
 
-    assert.equal(output.status, "FAILED");
-    assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-    assert.equal(
-      store.getRunEvents().some((event) => event.type === "loop.guard_triggered"),
-      true,
-    );
+    assert.equal(output.status, "WAITING");
+    assert.equal(output.errors.length, 0);
+    assertLoopIntervention(store, "REPEATED_SAME_TOOL_CYCLE");
 };
 
 test("ExecutionEngine loop-guards repeated filesystem inspection for fs.read_text", () =>
@@ -2517,11 +2522,9 @@ test("ExecutionEngine ignores volatile capability evidence metadata when enforci
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(output.errors[0]?.details?.guardType, "REPEATED_SAME_TOOL_CYCLE");
-  assert.equal((output.errors[0]?.details?.repeats as number | undefined) ?? 0, 3);
-  assert.equal(output.telemetry.stepsExecuted < 20, true);
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assertLoopIntervention(store, "REPEATED_SAME_TOOL_CYCLE");
 });
 
 test("ExecutionEngine counts only loop decisions for repeated same-tool loop guard", async () => {
@@ -2591,10 +2594,9 @@ test("ExecutionEngine counts only loop decisions for repeated same-tool loop gua
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(output.errors[0]?.details?.guardType, "REPEATED_SAME_TOOL_CYCLE");
-  assert.equal((output.errors[0]?.details?.repeats as number | undefined) ?? 0, 3);
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assertLoopIntervention(store, "REPEATED_SAME_TOOL_CYCLE");
   assert.equal(output.telemetry.stepsExecuted >= 5, true);
 });
 
@@ -2779,10 +2781,9 @@ test("ExecutionEngine retains the generic exact-action guard for repeated identi
     stepAgent: "agent.loop",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "LOOP_GUARD_TRIGGERED");
-  assert.equal(output.errors[0]?.details?.guardType, "REPEATED_SAME_TOOL_CYCLE");
-  assert.equal(output.telemetry.stepsExecuted < 20, true);
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assertLoopIntervention(store, "REPEATED_SAME_TOOL_CYCLE");
 });
 
 test("ExecutionEngine leaves varied extraction inputs to decision-policy admission", async () => {
@@ -3391,7 +3392,7 @@ test("ExecutionEngine preserves dispatch stall failures when research stall thre
   assert.equal(output.errors[0]?.code, "REACT_DISPATCH_STALL_DETECTED");
 });
 
-test("ExecutionEngine converts qualifying MAX_STEP_VISITS_EXCEEDED research loops into research_stalled_partial completion", async () => {
+test("ExecutionEngine reaches ordinary continuation waiting after repeated research interventions", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -3518,7 +3519,7 @@ test("ExecutionEngine converts qualifying MAX_STEP_VISITS_EXCEEDED research loop
     stepIndex: 0,
   });
 
-  kestrel.registerStep("agent.exec.dispatch", async (ctx) => ({
+  const stalledResearchStep: StepAgent = async (ctx) => ({
     status: "RUNNING",
     nextStepAgent: "agent.exec.dispatch",
     statePatch: {
@@ -3526,7 +3527,9 @@ test("ExecutionEngine converts qualifying MAX_STEP_VISITS_EXCEEDED research loop
         ...((ctx.session.state.agent as Record<string, unknown> | undefined) ?? {}),
       },
     },
-  }));
+  });
+  kestrel.registerStep("agent.exec.dispatch", stalledResearchStep);
+  kestrel.registerStep("agent.loop", stalledResearchStep);
 
   const output = await kestrel.run({
     id: "evt-max-step-visits-research-stall",
@@ -3538,35 +3541,20 @@ test("ExecutionEngine converts qualifying MAX_STEP_VISITS_EXCEEDED research loop
     stepAgent: "agent.exec.dispatch",
   });
 
-  assert.equal(output.status, "COMPLETED");
+  assert.equal(output.status, "WAITING");
   assert.equal(output.errors.length, 0);
+  assert.equal(output.waitFor?.metadata?.reason, "max_steps_continuation");
+  assertLoopIntervention(store, "IDENTICAL_CONTROL_STATE");
 
   const session = await store.getSession("session-max-step-visits-research-stall");
   const react = (session?.state.agent ?? {}) as Record<string, unknown>;
-  const terminal = (react.terminal ?? {}) as Record<string, unknown>;
-  const finalOutput = (react.finalOutput ?? {}) as Record<string, unknown>;
-  assert.equal(terminal.reasonCode, "research_stalled_partial");
-  assert.equal((finalOutput.data as Record<string, unknown> | undefined)?.researchStalled, true);
-  assert.equal(
-    (finalOutput.data as Record<string, unknown> | undefined)?.retrievalToolFamily,
-    "internet.search_like",
-  );
-  assert.equal((finalOutput.data as Record<string, unknown> | undefined)?.lowSignalState, "exhausted");
-  assert.equal(
-    (finalOutput.data as Record<string, unknown> | undefined)?.objective,
-    "Find top US news headlines with sources",
-  );
+  assert.equal((react.terminal as Record<string, unknown> | undefined)?.reasonCode, "max_steps_continuation");
 
   const events = store.getRunEvents();
-  const detected = events.find((event) => event.type === "loop.stall_detected");
-  const converted = events.find((event) => event.type === "loop.stall_converted");
-  assert.equal(detected?.metadata?.guardType, "MAX_STEP_VISITS_EXCEEDED");
-  assert.equal(detected?.metadata?.stepAgent, "agent.exec.dispatch");
-  assert.equal(detected?.metadata?.toolName, "internet.news");
-  assert.equal(converted?.metadata?.resolution, "research_stalled_partial");
+  assert.equal(events.some((event) => event.type === "loop.guard_triggered"), true);
 });
 
-test("ExecutionEngine checkpoints repeated filesystem loop visit stalls with a concrete target", async () => {
+test("ExecutionEngine intervenes on repeated filesystem loop visits with a concrete target", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -3685,16 +3673,14 @@ test("ExecutionEngine checkpoints repeated filesystem loop visit stalls with a c
 
   assert.equal(output.status, "WAITING");
   assert.equal(output.errors.length, 0);
-  assert.equal(output.waitFor?.metadata?.resolution, "checkpoint_wait");
-  assert.equal((output.waitFor?.metadata?.target as Record<string, unknown> | undefined)?.field, "path");
+  assert.equal(output.waitFor?.metadata?.reason, "max_steps_continuation");
+  assertLoopIntervention(store, "NO_PROGRESS_REASONING_LOOP");
 
   const events = store.getRunEvents();
-  const converted = events.find((event) => event.type === "loop.stall_converted");
-  assert.equal(converted?.metadata?.resolution, "checkpoint_wait");
-  assert.equal(converted?.metadata?.toolName, "fs.read_text");
+  assert.equal(events.some((event) => event.type === "loop.guard_triggered"), true);
 });
 
-test("ExecutionEngine asks for narrowing on broad repeated loop visit stalls", async () => {
+test("ExecutionEngine reaches ordinary continuation waiting on broad repeated loop visits", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -3806,11 +3792,11 @@ test("ExecutionEngine asks for narrowing on broad repeated loop visit stalls", a
 
   assert.equal(output.status, "WAITING");
   assert.equal(output.errors.length, 0);
-  assert.equal(output.waitFor?.metadata?.resolution, "clarification_wait");
-  assert.match(String(output.waitFor?.metadata?.question ?? ""), /narrower slice/u);
+  assert.equal(output.waitFor?.metadata?.reason, "max_steps_continuation");
+  assertLoopIntervention(store, "NO_PROGRESS_REASONING_LOOP");
 });
 
-test("ExecutionEngine preserves MAX_STEP_VISITS_EXCEEDED failures for non-research loops", async () => {
+test("ExecutionEngine uses the step budget instead of a step-visit failure for non-research loops", async () => {
   const store = new InMemorySessionStore();
   const kestrel = new Kestrel({
     store,
@@ -3824,7 +3810,7 @@ test("ExecutionEngine preserves MAX_STEP_VISITS_EXCEEDED failures for non-resear
     },
   });
 
-  kestrel.registerStep("agent.exec.dispatch", async () => ({
+  const nonResearchLoopStep: StepAgent = async () => ({
     status: "RUNNING",
     nextStepAgent: "agent.exec.dispatch",
     statePatch: {
@@ -3845,7 +3831,9 @@ test("ExecutionEngine preserves MAX_STEP_VISITS_EXCEEDED failures for non-resear
         ],
       },
     },
-  }));
+  });
+  kestrel.registerStep("agent.exec.dispatch", nonResearchLoopStep);
+  kestrel.registerStep("agent.loop", nonResearchLoopStep);
 
   const output = await kestrel.run({
     id: "evt-max-step-visits-non-research",
@@ -3857,6 +3845,8 @@ test("ExecutionEngine preserves MAX_STEP_VISITS_EXCEEDED failures for non-resear
     stepAgent: "agent.exec.dispatch",
   });
 
-  assert.equal(output.status, "FAILED");
-  assert.equal(output.errors[0]?.code, "MAX_STEP_VISITS_EXCEEDED");
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.errors.length, 0);
+  assert.equal(output.waitFor?.metadata?.reason, "max_steps_continuation");
+  assertLoopIntervention(store, "IDENTICAL_CONTROL_STATE");
 });

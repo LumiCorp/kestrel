@@ -33,6 +33,7 @@ import {
   parseDesktopRendererSettingsUpdate,
   parseDesktopRunCancelRequest,
   parseDesktopRunTurnRequest,
+  parseDesktopConversationMessageRequest,
   parseDesktopOperatorControlRequest,
 } from "../../../src/desktopShell/contracts.js";
 import {
@@ -126,6 +127,8 @@ import type {
   DesktopReadinessView,
   DesktopRunCancelRequest,
   DesktopRunTurnRequest,
+  DesktopConversationMessageRequest,
+  DesktopConversationMessageResult,
   DesktopAttachmentMetadata,
   DesktopOperatorControlRequest,
   DesktopSettings,
@@ -227,6 +230,7 @@ import {
   getDesktopOperatorThread,
   listDesktopOperatorRuns,
   listDesktopConversationMessages,
+  parseDesktopRuntimeThreadInspection,
   runDesktopOperatorControl,
 } from "./missionControl.js";
 import {
@@ -1975,6 +1979,126 @@ function registerIpcHandlers(
     await acknowledgePersistedDesktopOnboardingHandoff(result.state.entries);
     return result;
   });
+  ipcMain.handle("desktop:conversation-message-submit", async (_event, input: unknown): Promise<DesktopConversationMessageResult> => {
+    let request: DesktopConversationMessageRequest;
+    try {
+      request = parseDesktopConversationMessageRequest(input);
+    } catch (error) {
+      throw createDesktopError({
+        code: "desktop.invalid_conversation_message",
+        message: "Desktop conversation message request is invalid.",
+        details: error instanceof Error ? error.message : String(error),
+      });
+    }
+    const {
+      projectPath,
+      workspaceMode,
+      workspaceBaseRef,
+      workspaceSetup,
+      threadId,
+      messageId,
+      attachmentIds,
+      executionSelection,
+      ...turnRequest
+    } = request;
+    const canonicalThreadId = `thread-main:${request.sessionId}`;
+    if (threadId !== canonicalThreadId) {
+      throw createDesktopError({
+        code: "desktop.invalid_run_thread",
+        message: "Desktop conversation thread does not match its Local Core session.",
+      });
+    }
+    const globalExecutionSelection = {
+      ...executionSelection,
+      apps: getEffectiveDesktopEnabledAppIds(desktopSettings).flatMap((id) => {
+        const definition = getDesktopAppDefinition(id, undefined, desktopSettings.mcpServers);
+        return definition === undefined
+          ? []
+          : [{ id: definition.id, contractVersion: definition.contractVersion }];
+      }),
+    };
+    const executionProfile = await requireLocalCoreConnectionManager().executeIdempotent(
+      async (client) => await client.resolveExecutionProfile({
+        client: "desktop",
+        selection: globalExecutionSelection,
+      }),
+    );
+    const runProfile = executionProfile.resolvedProfile;
+    const workflows = resolveDesktopWorkflowSelections(
+      globalExecutionSelection,
+      desktopSettings.mcpServers,
+    );
+    const unavailableWorkflow = workflows.find((workflow) => !workflow.ready);
+    if (unavailableWorkflow !== undefined) {
+      const missingRoles = unavailableWorkflow.dependencies
+        .filter((dependency) => dependency.missing)
+        .map((dependency) => dependency.role);
+      throw createDesktopError({
+        code: "desktop.workflow_dependencies_unavailable",
+        message: `${unavailableWorkflow.name} needs selected, connected Apps for: ${missingRoles.join(", ")}.`,
+      });
+    }
+    const workflowInstructions = formatDesktopWorkflowInstructions(workflows);
+    if (attachmentIds !== undefined) {
+      const listed = await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.listDesktopAttachments(canonicalThreadId),
+      );
+      const selected = attachmentIds.map((attachmentId) =>
+        listed.find((entry) => entry.attachmentId === attachmentId),
+      );
+      if (selected.some((entry) => entry === undefined)) {
+        throw createDesktopError({
+          code: "desktop.attachment_unavailable",
+          message: "One or more attachments are unavailable for this thread.",
+        });
+      }
+      if (
+        selected.some((entry) => entry?.kind === "image") &&
+        runProfile.modelCapabilities?.visionInputEnabled !== true
+      ) {
+        throw createDesktopError({
+          code: "desktop.model_vision_unavailable",
+          message: "The selected model does not accept image attachments.",
+        });
+      }
+    }
+    const attachments = attachmentIds === undefined
+      ? undefined
+      : await requireLocalCoreConnectionManager().executeIdempotent(
+          async (client) => await client.resolveDesktopAttachments(canonicalThreadId, attachmentIds),
+        );
+    const workspace = resolveDesktopThreadWorkspace({
+      ...(projectPath !== undefined ? { projectPath } : {}),
+      projects: desktopSettings.projects,
+      defaultKestrelRoot: requireLocalCoreStatus().home.productRootPath,
+      ...(workspaceMode !== undefined ? { workspaceMode } : {}),
+      ...(workspaceBaseRef !== undefined ? { workspaceBaseRef } : {}),
+      ...(workspaceSetup !== undefined ? { workspaceSetup } : {}),
+    });
+    assertDesktopAdmissionOpen("a conversation message");
+    const event = await requireDesktopRunnerAdapter(
+      runnerTransport,
+      executionProfile.profileId,
+      runProfile,
+    ).submitConversationMessage({
+      threadId,
+      messageId,
+      turn: {
+        ...turnRequest,
+        ...(attachments !== undefined ? { attachments } : {}),
+        ...(workflowInstructions !== undefined
+          ? { systemInstructions: [workflowInstructions] }
+          : {}),
+        workspace,
+        metadata: { desktopExecutionSelection: globalExecutionSelection },
+      },
+    }, DESKTOP_RUNNER_REQUEST_CONTEXT);
+    return {
+      ...event.payload,
+      view: parseDesktopRuntimeThreadInspection(event.payload.view),
+    };
+  });
+
   ipcMain.handle("desktop:run-turn", async (_event, input: unknown) => {
     let request: DesktopRunTurnRequest;
     try {

@@ -21,6 +21,7 @@ export type RunEventType =
   | "recovery.decision.persisted"
   | "recovery.action.started"
   | "recovery.action.completed"
+  | "recovery.action.not_applicable"
   | "recovery.action.failed"
   | "recovery.waiting"
   | "recovery.exhausted"

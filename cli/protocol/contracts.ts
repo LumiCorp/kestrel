@@ -136,6 +136,23 @@ export type RunStartCommandPayload = TuiProfileReference & {
   turn: RunTurnInput;
 };
 
+export type OrdinaryConversationTurn = Omit<
+  RunTurnInput,
+  | "runId"
+  | "eventId"
+  | "eventType"
+  | "resumeBlockedRun"
+  | "resumeRequestId"
+  | "recoveryOptionId"
+  | "stepAgent"
+>;
+
+export type ConversationMessageSubmitCommandPayload = TuiProfileReference & {
+  threadId: string;
+  messageId: string;
+  turn: OrdinaryConversationTurn;
+};
+
 export type JobRunCommandPayload =
   | (TuiProfileReference & {
       input: JobInputWithoutProfileReference;
@@ -479,6 +496,7 @@ export interface RunnerCommandPayloadByType {
   "session.state": SessionStateCommandPayload;
   "operator.inbox": OperatorInboxCommandPayload;
   "operator.thread": OperatorThreadCommandPayload;
+  "conversation.message.submit": ConversationMessageSubmitCommandPayload;
   "conversation.messages.list": ConversationMessagesListCommandPayload;
   "operator.runs": OperatorRunsCommandPayload;
   "operator.run": OperatorRunCommandPayload;
@@ -731,6 +749,17 @@ export interface OperatorThreadEventPayload {
   view: OperatorThreadView;
 }
 
+export interface ConversationMessageRoutedEventPayload {
+  threadId: string;
+  sessionId: string;
+  messageId: string;
+  disposition: "started" | "replied" | "queued";
+  runId?: string | undefined;
+  requestId?: string | undefined;
+  followUpId?: string | undefined;
+  view: OperatorThreadView;
+}
+
 export interface ConversationMessagesEventPayload {
   threadId: string;
   messages: Array<{
@@ -933,6 +962,7 @@ export interface RunnerEventPayloadByType {
   "session.state": SessionStateEventPayload;
   "operator.inbox": OperatorInboxEventPayload;
   "operator.thread": OperatorThreadEventPayload;
+  "conversation.message.routed": ConversationMessageRoutedEventPayload;
   "conversation.messages": ConversationMessagesEventPayload;
   "operator.runs": OperatorRunsEventPayload;
   "operator.run": OperatorRunEventPayload;

@@ -1,4 +1,4 @@
-import type { ThreadRecord } from "../kestrel/contracts/orchestration.js";
+import type { RunTurnAttachment, ThreadRecord } from "../kestrel/contracts/orchestration.js";
 import type { FollowUpQueueEntry, FollowUpQueuePauseReason, FollowUpQueueView } from "./contracts.js";
 
 const OPERATOR_CONTROL_KEY = "operatorControl";
@@ -93,11 +93,16 @@ function normalizeEntry(value: unknown): FollowUpQueueEntry[] {
   const attachmentIds = Array.isArray(entry?.attachmentIds)
     ? entry.attachmentIds.flatMap((id) => typeof id === "string" && id.trim().length > 0 ? [id.trim()] : [])
     : [];
+  const attachments = Array.isArray(entry?.attachments)
+    ? entry.attachments.filter((attachment): attachment is RunTurnAttachment =>
+        typeof attachment === "object" && attachment !== null && Array.isArray(attachment) === false)
+    : undefined;
   const interactionMode = entry?.interactionMode === "chat" || entry?.interactionMode === "plan" || entry?.interactionMode === "build"
     ? entry.interactionMode : undefined;
   const actSubmode = entry?.actSubmode === "strict" || entry?.actSubmode === "safe" || entry?.actSubmode === "full_auto"
     ? entry.actSubmode : undefined;
   return [{ followUpId, message, attachmentIds,
+    ...(attachments !== undefined ? { attachments } : {}),
     ...(interactionMode !== undefined ? { interactionMode } : {}),
     ...(actSubmode !== undefined ? { actSubmode } : {}),
     ...(entry?.source === "dialog" ? { source: "dialog" as const } : entry?.source === "human" ? { source: "human" as const } : {}),

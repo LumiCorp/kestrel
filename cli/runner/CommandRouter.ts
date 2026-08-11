@@ -214,6 +214,15 @@ export class CommandRouter {
         return;
       }
 
+      if (command.type === "conversation.message.submit") {
+        await this.host.conversationMessageSubmit(
+          command.id,
+          command.payload,
+          command.metadata,
+        );
+        return;
+      }
+
       if (command.type === "operator.runs") {
         const payload = validateOperatorRunsPayload(command.payload);
         await this.host.operatorRuns(command.id, payload, command.metadata);

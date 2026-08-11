@@ -251,6 +251,11 @@ export function DesktopApp(props: {
   const activeThreadFeedback = activeThread === undefined
     ? { activity: "Ready" }
     : threadFeedback[activeThread.id] ?? { activity: "Ready" };
+  const activeLifecycleActivity = composerPolicy.mode === "select_recovery_option"
+    ? "Waiting for your decision"
+    : composerPolicy.mode === "reply_to_request"
+      ? "Waiting for your input"
+      : activeThreadFeedback.activity;
   const conversationTimeline = activeThread === undefined
     ? []
     : projectDesktopConversationTimeline(activeThread.transcript, activeRunStream);
@@ -796,7 +801,7 @@ export function DesktopApp(props: {
     } else if (result.output.status === "WAITING") {
       setThreadActivity(
         rendererThreadId,
-        pendingWaitEventType === undefined ? "Waiting for input" : `Waiting for ${pendingWaitEventType}`,
+        "Waiting for your input",
       );
     }
   }
@@ -827,105 +832,20 @@ export function DesktopApp(props: {
     const submittedPendingWaitEventType = activeThread.pendingWaitEventType;
     const workspaceSetup = buildManagedWorkspaceSetup(activeThread);
     clearThreadError(threadId);
-    if (composerPolicy.mode === "reply_to_request") {
-      const { item } = composerPolicy;
-      pendingTurnSubmissionsRef.current[activeThread.sessionId] = { threadId, message, submittedAt, projectPath };
-      setOperatorActionPending((current) => ({ ...current, [item.itemId]: true }));
-      setThreadActivity(threadId, "Sending reply");
-      try {
-        const controlResult = await window.kestrelDesktop.submitOperatorControl({
-          action: "reply",
-          threadId: localCoreThreadId(activeThread.sessionId),
-          completionMode: "accepted",
-          requestId: item.requestId,
-          message,
-          attachmentIds: activeThread.draftAttachmentIds,
-          interactionMode: activeThread.mode,
-          ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
-        });
-        const view = controlResult.view;
-        setThreadViews((current) => ({ ...current, [threadId]: view }));
-        setActiveRuns((current) => {
-          const next = { ...current };
-          if (view.activeRun?.status === "RUNNING") {
-            next[threadId] = {
-              threadId,
-              sessionId: activeThread.sessionId,
-              runId: view.activeRun.runId,
-            };
-          } else {
-            delete next[threadId];
-          }
-          return next;
-        });
-        if (pendingTurnSubmissionsRef.current[activeThread.sessionId] !== undefined) {
-          delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
-          setState((current) => {
-            if (current === undefined) return current;
-            const accepted = acceptRendererPrompt(current, threadId, message);
-            const withReply = appendRendererTranscript(accepted, threadId, {
-              role: "user",
-              text: message,
-              timestamp: submittedAt,
-            });
-            return updateRendererThread(withReply, threadId, (thread) => ({
-              ...thread,
-              pendingWaitEventType: undefined,
-            }));
-          });
-        }
-        projectOperatorControlResult(threadId, controlResult);
-        setHistoryNavigation((current) => { const next = { ...current }; delete next[threadId]; return next; });
-        setThreadActivity(threadId, view.activeRun?.status === "RUNNING" ? "Reply sent; run resumed" : "Reply sent");
-      } catch (cause) {
-        delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
-        setThreadFailure(threadId, "Reply not sent", errorMessage(cause));
-      } finally {
-        acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
-        setOperatorActionPending((current) => ({ ...current, [item.itemId]: false }));
-      }
-      return;
-    }
-    if (composerPolicy.mode === "queue_follow_up") {
-      setThreadActivity(threadId, "Queueing follow-up");
-      try {
-        const controlResult = await window.kestrelDesktop.submitOperatorControl({
-          action: "enqueue_follow_up",
-          threadId: localCoreThreadId(activeThread.sessionId),
-          followUpId: `follow-up-${crypto.randomUUID()}`,
-          message,
-          attachmentIds: activeThread.draftAttachmentIds,
-          interactionMode: activeThread.mode,
-          ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
-        });
-        const view = controlResult.view;
-        setThreadViews((current) => ({ ...current, [threadId]: view }));
-        setState((current) => current === undefined ? current : acceptRendererPrompt(current, threadId, message));
-        projectOperatorControlResult(threadId, controlResult);
-        setHistoryNavigation((current) => { const next = { ...current }; delete next[threadId]; return next; });
-        setThreadActivity(threadId, "Follow-up queued");
-      } catch (cause) {
-        setThreadFailure(threadId, "Follow-up not queued", errorMessage(cause));
-      }
-      return;
-    }
-
-    setThreadActivity(threadId, "Starting run");
-    pendingTurnSubmissionsRef.current[activeThread.sessionId] = { threadId, message, submittedAt, projectPath };
-    setActiveRuns((current) => ({ ...current, [threadId]: { threadId, sessionId: activeThread.sessionId } }));
-
+    const messageId = crypto.randomUUID();
+    pendingTurnSubmissionsRef.current[activeThread.sessionId] = {
+      threadId,
+      message,
+      submittedAt,
+      projectPath,
+    };
+    setThreadActivity(threadId, "Routing message");
     try {
-      const terminal = await window.kestrelDesktop.runTurn({
+      const routed = await window.kestrelDesktop.submitConversationMessage({
         sessionId: activeThread.sessionId,
         threadId: localCoreThreadId(activeThread.sessionId),
+        messageId,
         message,
-        eventType: continuation.eventType,
-        ...(continuation.resumeFromWait === true
-          ? { resumeFromWait: true }
-          : {}),
-        ...(continuation.resumeBlockedRun === true
-          ? { resumeBlockedRun: true }
-          : {}),
         history,
         interactionMode: activeThread.mode,
         workspaceMode: activeThread.workspaceMode,
@@ -933,11 +853,8 @@ export function DesktopApp(props: {
           ? { workspaceBaseRef: activeThread.workspaceBaseRef }
           : {}),
         attachmentIds: activeThread.draftAttachmentIds,
-        ...(projectPath !== undefined
-          ? { projectPath }
-          : {}),
-        ...(activeThread.workspaceMode === "managed" &&
-        workspaceSetup !== undefined
+        ...(projectPath !== undefined ? { projectPath } : {}),
+        ...(activeThread.workspaceMode === "managed" && workspaceSetup !== undefined
           ? { workspaceSetup }
           : {}),
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
@@ -947,95 +864,69 @@ export function DesktopApp(props: {
           settings.defaultEnabledAppIds,
         ),
       });
-      const assistantText = extractTerminalMessage(terminal);
-      const rawTerminalOutcome = extractDesktopTerminalOutcome(terminal);
-      const terminalOutcome =
-        rawTerminalOutcome?.terminalEvent === "run.completed" &&
-        rawTerminalOutcome.resultStatus === "COMPLETED" &&
-        projectPath !== undefined
-          ? withDesktopOutcomeWorkspaceChanges(
-              rawTerminalOutcome,
-              await window.kestrelDesktop
-                .getWorkspaceLifecycle(localCoreThreadId(activeThread.sessionId))
-                .catch(() => ({ checkpoints: [] })),
-            )
-          : rawTerminalOutcome;
-      const terminalFailure = extractTerminalFailure(terminal, settings?.selectedProvider);
-      const terminalError = terminalFailure?.message;
-      const pendingWaitEventType = getTerminalWaitEventType(terminal);
-      const deliveryError = terminal.type === "run.completed" && terminalOutcome !== undefined
-        ? getDesktopTerminalDeliveryError({
-            assistantText: assistantText ?? null,
-            status: terminalOutcome.resultStatus,
-          })
-        : undefined;
+      setThreadViews((current) => ({ ...current, [threadId]: routed.view }));
       const acceptedFromEvent = acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
       setState((current) => {
         if (current === undefined) return current;
-        let projected = acceptedFromEvent
+        const accepted = acceptedFromEvent
           ? current
           : appendRendererTranscript(
               acceptRendererPrompt(current, threadId, message),
               threadId,
               { role: "user", text: message, timestamp: submittedAt },
             );
-        if (terminal.type === "run.completed" && terminalOutcome !== undefined) {
-          projected = projectDesktopTerminalMessage(projected, {
-            threadId,
-            runId: terminalOutcome.runId,
-            assistantText: assistantText ?? null,
-            status: terminalOutcome.resultStatus,
-            timestamp: terminal.ts,
-            pendingWaitEventType,
-            waitingPrompt: getTerminalWaitingPrompt(terminal)?.text,
-            data: terminalOutcome,
-          }).state;
-        }
-        return updateRendererThread(projected, threadId, (thread) => ({
+        return updateRendererThread(accepted, threadId, (thread) => ({
           ...thread,
           ...(projectPath !== undefined ? { projectPath } : {}),
-          pendingWaitEventType,
+          ...(routed.disposition === "replied" ? { pendingWaitEventType: undefined } : {}),
         }));
       });
-      setHistoryNavigation((current) => { const next = { ...current }; delete next[threadId]; return next; });
-      if (deliveryError !== undefined) {
-        setThreadFailure(threadId, "Final response unavailable", deliveryError);
-      } else if (terminalError !== undefined) {
-        setThreadFailure(threadId, "Run failed", terminalError, terminalFailure?.capabilityId);
-      }
-      if (deliveryError === undefined) {
-        setThreadActivity(
-          threadId,
-          terminal.type === "run.failed"
-            ? "Run failed"
-            : pendingWaitEventType !== undefined
-              ? `Waiting for ${pendingWaitEventType}`
-              : terminal.type === "run.cancelled"
-                ? "Cancelled"
-                : "Ready",
-        );
-      }
+      setActiveRuns((current) => {
+        const next = { ...current };
+        if (routed.view.activeRun?.status === "RUNNING") {
+          next[threadId] = {
+            threadId,
+            sessionId: activeThread.sessionId,
+            runId: routed.view.activeRun.runId,
+          };
+        } else {
+          delete next[threadId];
+        }
+        return next;
+      });
+      setHistoryNavigation((current) => {
+        const next = { ...current };
+        delete next[threadId];
+        return next;
+      });
+      setThreadActivity(
+        threadId,
+        routed.disposition === "queued"
+          ? "Queued behind current work"
+          : routed.view.activeRun?.status === "WAITING"
+            ? "Waiting for your input"
+            : routed.disposition === "replied"
+              ? "Reply sent"
+              : "Message sent",
+      );
     } catch (cause) {
       if (submittedPendingWaitEventType !== undefined) {
-        setState((current) =>
-          current === undefined
-            ? current
-            : updateRendererThread(current, threadId, (thread) => ({
-                ...thread,
-                pendingWaitEventType: submittedPendingWaitEventType,
-              })),
-        );
+        setState((current) => current === undefined
+          ? current
+          : updateRendererThread(current, threadId, (thread) => ({
+              ...thread,
+              pendingWaitEventType: submittedPendingWaitEventType,
+            })));
       }
-      delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
-      acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
-      setThreadFailure(threadId, "Run failed", errorMessage(cause));
+      setThreadFailure(threadId, "Message not sent", errorMessage(cause));
     } finally {
       delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
-      setActiveRuns((current) => { const next = { ...current }; delete next[threadId]; return next; });
       void refreshThreadAuthority(activeThread).catch((cause) => {
         setThreadFailure(activeThread.id, "Thread status unavailable", errorMessage(cause));
       });
     }
+    return;
+
   }
 
   async function submitRecoveryOption(optionId: string): Promise<void> {
@@ -1047,16 +938,9 @@ export function DesktopApp(props: {
       return;
     }
     const { item } = composerPolicy;
-    const message = `Selected recovery option: ${optionId}`;
-    const submittedAt = new Date().toISOString();
+    const message = optionId;
     const threadId = activeThread.id;
     clearThreadError(threadId);
-    pendingTurnSubmissionsRef.current[activeThread.sessionId] = {
-      threadId,
-      message,
-      submittedAt,
-      projectPath: activeThread.projectPath,
-    };
     setOperatorActionPending((current) => ({ ...current, [item.itemId]: true }));
     setThreadActivity(threadId, "Submitting recovery choice");
     try {
@@ -1074,25 +958,15 @@ export function DesktopApp(props: {
         ...current,
         [threadId]: controlResult.view,
       }));
-      if (pendingTurnSubmissionsRef.current[activeThread.sessionId] !== undefined) {
-        delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
-        setState((current) => {
-          if (current === undefined) return current;
-          return updateRendererThread(
-            appendRendererTranscript(current, threadId, {
-              role: "user",
-              text: message,
-              timestamp: submittedAt,
-            }),
-            threadId,
-            (thread) => ({ ...thread, pendingWaitEventType: undefined }),
-          );
-        });
-      }
+      setState((current) => current === undefined
+        ? current
+        : updateRendererThread(current, threadId, (thread) => ({
+            ...thread,
+            pendingWaitEventType: undefined,
+          })));
       projectOperatorControlResult(threadId, controlResult);
       setThreadActivity(threadId, "Recovery choice submitted");
     } catch (cause) {
-      delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
       setThreadFailure(threadId, "Recovery choice not submitted", errorMessage(cause));
       void refreshThreadAuthority(activeThread).catch(() => {
         // Preserve the recovery submission error; the next authority refresh can retry.
@@ -1799,7 +1673,8 @@ export function DesktopApp(props: {
           <ConversationTimeline
             items={conversationTimeline}
             active={activeRun !== undefined}
-            activity={activeThreadFeedback.activity}
+            waiting={threadViews[activeThread.id]?.activeRun?.status === "WAITING"}
+            activity={activeLifecycleActivity}
             error={activeThreadFeedback.error}
             systemError={systemError}
             errorAction={activeThreadFeedback.errorCapability !== undefined ? (
@@ -1886,8 +1761,10 @@ export function DesktopApp(props: {
             )}
           />
 
-          {archivedThreadSelected ? null : composerPolicy.mode === "select_recovery_option" ? (
-            <section className="composer recovery-option-composer" aria-label="Recovery options">
+          {archivedThreadSelected ? null : (
+            <>
+            {composerPolicy.mode === "select_recovery_option" ? (
+            <section className="composer recovery-option-composer" aria-label={composerPolicy.reviewKind === "evaluation" ? "Evaluation options" : "Recovery options"}>
               <div className="recovery-option-copy">
                 <strong>{composerPolicy.reviewKind === "evaluation"
                   ? "Result requires review"
@@ -1932,7 +1809,8 @@ export function DesktopApp(props: {
                 ))}
               </div>
             </section>
-          ) : <form
+            ) : null}
+            <form
             className={`composer ${composerFocused || activeThread.draft.trim().length > 0 || activeThread.draftAttachmentIds.length > 0 ? "composer-expanded" : ""}`}
             onBlur={(event) => {
               if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
@@ -2067,7 +1945,9 @@ export function DesktopApp(props: {
                 )}
               </div>
             </div>
-            </form>}
+            </form>
+            </>
+          )}
           </main>
         ) : (
           <div className="surface-host" inert={workNavigatorOpen ? true : undefined}>
