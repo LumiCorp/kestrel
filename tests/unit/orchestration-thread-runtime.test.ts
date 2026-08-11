@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { serializeCanonicalApprovalPayload } from "@kestrel-agents/protocol";
+import {
+  createRunnerStructuredReviewInteractionV1,
+  serializeCanonicalApprovalPayload,
+} from "@kestrel-agents/protocol";
 
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
 import type { PersistedRunRecord, SessionRecord } from "../../src/kestrel/contracts/store.js";
@@ -846,6 +849,17 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
   assert.ok(request);
   await sessionStore.upsertInteractionRequest({
     ...request,
+    interaction: createRunnerStructuredReviewInteractionV1({
+      reason: "evaluation_review",
+      requestId: request.requestId,
+      prompt: "Choose an exact evaluation outcome.",
+      allowedOptionIds: ["evaluation.accept_once"],
+      evaluationTechnicalDisclosure: {
+        candidate: "Evaluation candidate",
+        assertions: [],
+        evidenceReferences: [],
+      },
+    }),
     metadata: {
       ...(request.metadata ?? {}),
       reason: "evaluation_review",
@@ -857,7 +871,7 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
         runId: waiting.output.runId,
         executionProfileFingerprint: "a".repeat(64),
         policyRevision: `sha256:${"b".repeat(64)}`,
-        allowedOptionIds: ["evaluation.accept"],
+        allowedOptionIds: ["evaluation.accept_once"],
         requestedAt: new Date().toISOString(),
       },
     },
@@ -882,7 +896,7 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
     threadId: "thread-message-exact",
     requestId: request.requestId,
     message: "Accept",
-    recoveryOptionId: "evaluation.accept",
+    recoveryOptionId: "evaluation.accept_once",
     actor: { actorType: "end_user", actorId: "user-1" },
   });
   for (let attempt = 0; attempt < 10 && executor.inputs.length < 3; attempt += 1) await tick();

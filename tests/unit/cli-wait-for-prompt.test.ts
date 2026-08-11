@@ -10,6 +10,10 @@ import {
   resolveBlockedWaitModeReply,
 } from "../../cli/app/waitForPrompt.js";
 import { extractWaitPrompt as extractSharedWaitPrompt } from "../../src/runtime/waitForPrompt.js";
+import {
+  evaluationReviewInteractionFixture,
+  recoveryReviewInteractionFixture,
+} from "../fixtures/structured-review-contract.js";
 
 
 test("extractWaitPrompt returns prompt from wait metadata", () => {
@@ -75,27 +79,12 @@ test("evaluation review exposes and resolves only exact authored options", () =>
       prompt: "Result requires review.",
       allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
     },
-    interaction: {
-      version: "v1" as const,
-      requestId: "evaluation-review-1",
-      kind: "user_input" as const,
-      eventType: "user.reply",
-      prompt: "Result requires review.",
-      inputSchema: {
-        type: "object",
-        required: ["recoveryOptionId"],
-        properties: {
-          recoveryOptionId: {
-            type: "string",
-            enum: ["evaluation.accept_once", "terminal.fail"],
-          },
-        },
-      },
-    },
+    interaction: structuredClone(evaluationReviewInteractionFixture),
   };
 
   assert.deepEqual(readExactReviewOptionIds(waitFor), [
     "evaluation.accept_once",
+    "evaluation.revise",
     "terminal.fail",
   ]);
   assert.equal(
@@ -103,9 +92,45 @@ test("evaluation review exposes and resolves only exact authored options", () =>
     "evaluation.accept_once",
   );
   assert.equal(resolveExactReviewOptionId(waitFor, "accept"), undefined);
+  assert.equal(resolveExactReviewOptionId(waitFor, "2"), "evaluation.revise");
   assert.equal(
     formatExactReviewPrompt(waitFor, "Result requires review."),
-    "Result requires review. Options: evaluation.accept_once, terminal.fail",
+    [
+      "Result requires review.",
+      "1. Accept once",
+      "2. Revise result",
+      "3. Fail run",
+      "Enter a number or the exact option ID. Use /stop to end the waiting run.",
+    ].join("\n"),
+  );
+});
+
+test("recovery review uses shared labels and submits hidden canonical IDs", () => {
+  const waitFor = {
+    kind: "user" as const,
+    eventType: "user.reply",
+    metadata: { reason: "recovery_review" },
+    interaction: structuredClone(recoveryReviewInteractionFixture),
+  };
+
+  assert.equal(resolveExactReviewOptionId(waitFor, "1"), "retry.primary");
+  assert.equal(resolveExactReviewOptionId(waitFor, "Try again"), undefined);
+  assert.match(formatExactReviewPrompt(waitFor, undefined) ?? "", /1\. Try again/u);
+  assert.match(formatExactReviewPrompt(waitFor, undefined) ?? "", /2\. End this run/u);
+});
+
+test("legacy structured review wait is blocked and directs the operator to stop", () => {
+  const waitFor = {
+    kind: "user" as const,
+    eventType: "user.reply",
+    metadata: { reason: "recovery_review" },
+  };
+
+  assert.deepEqual(readExactReviewOptionIds(waitFor), []);
+  assert.equal(resolveExactReviewOptionId(waitFor, "retry.primary"), undefined);
+  assert.equal(
+    formatExactReviewPrompt(waitFor, undefined),
+    "This request cannot be answered safely because its interaction contract is missing. Use /stop to end the waiting run.",
   );
 });
 

@@ -18,12 +18,15 @@ import {
   isRunnerStreamingCommandType,
   isRunnerTerminalResponseEvent,
   encodeConversationMessageCursor,
+  parseRunnerStructuredReviewInteractionV1,
+  createRunnerStructuredReviewInteractionV1,
   parseConversationMessageCursor,
   parseRunnerCommandV2,
   parseRunnerEventV2,
   type RunnerCommandType,
   type RunnerEventType,
 } from "../src/index.js";
+import { recoveryReviewInteractionFixture } from "../../../tests/fixtures/structured-review-contract.js";
 
 
 const profile = {
@@ -67,6 +70,87 @@ const terminalResult = {
     errors: [],
   },
 };
+
+test("structured review contract is canonical across first-party clients", () => {
+  const interaction = createRunnerStructuredReviewInteractionV1({
+    reason: "recovery_review",
+    requestId: recoveryReviewInteractionFixture.requestId,
+    prompt: recoveryReviewInteractionFixture.prompt,
+    allowedOptionIds: ["retry.primary", "terminal.fail"],
+    triggeringFailureCode: "MODEL_AUTH_ERROR",
+    triggeringFailureSummary: "Provider authentication failed after refresh.",
+  });
+
+  assert.deepEqual(interaction, recoveryReviewInteractionFixture);
+  assert.deepEqual(parseRunnerStructuredReviewInteractionV1(interaction), {
+    kind: "structured_review",
+    reason: "recovery_review",
+    requestId: "recovery-review-fixture",
+    eventType: "user.reply",
+    prompt: "Kestrel could not continue. Choose one recovery option.",
+    allowedOptionIds: ["retry.primary", "terminal.fail"],
+    triggeringFailureCode: "MODEL_AUTH_ERROR",
+    triggeringFailureSummary: "Provider authentication failed after refresh.",
+  });
+  assert.deepEqual(interaction.inputSchema, {
+    type: "object",
+    additionalProperties: false,
+    required: ["recoveryOptionId"],
+    properties: {
+      recoveryOptionId: {
+        type: "string",
+        enum: ["retry.primary", "terminal.fail"],
+      },
+    },
+  });
+});
+
+test("structured review contract rejects metadata and schema drift", () => {
+  const interaction = createRunnerStructuredReviewInteractionV1({
+    reason: "evaluation_review",
+    requestId: "evaluation-review-1",
+    prompt: "Result requires review.",
+    allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
+    evaluationTechnicalDisclosure: {
+      candidate: "Withheld result.",
+      assertions: [],
+      evidenceReferences: [],
+    },
+  });
+  const inputSchema = structuredClone(interaction.inputSchema) as Record<string, unknown>;
+  const properties = inputSchema.properties as Record<string, Record<string, unknown>>;
+  properties.recoveryOptionId!.enum = ["terminal.fail"];
+
+  assert.deepEqual(
+    parseRunnerStructuredReviewInteractionV1({ ...interaction, inputSchema }),
+    {
+      kind: "invalid_review",
+      reason: "evaluation_review",
+      error: "Structured review schema options must exactly match metadata.allowedOptionIds.",
+    },
+  );
+  assert.throws(
+    () => createRunnerStructuredReviewInteractionV1({
+      reason: "recovery_review",
+      requestId: "recovery-review-unknown",
+      prompt: "Choose one option.",
+      allowedOptionIds: ["retry.unknown"],
+    }),
+    /unsupported option/u,
+  );
+  const missingRequestId = structuredClone(recoveryReviewInteractionFixture) as Record<string, unknown>;
+  delete missingRequestId.requestId;
+  assert.equal(
+    parseRunnerStructuredReviewInteractionV1(missingRequestId).kind,
+    "invalid_review",
+  );
+  const missingSchema = structuredClone(recoveryReviewInteractionFixture) as Record<string, unknown>;
+  delete missingSchema.inputSchema;
+  assert.equal(
+    parseRunnerStructuredReviewInteractionV1(missingSchema).kind,
+    "invalid_review",
+  );
+});
 
 const jobOutput = {
   version: "job_run_result_v1",
@@ -1351,6 +1435,30 @@ test("waiting outcomes require one canonical assistant prompt and durable reques
       /assistantText|interaction prompt/u,
     );
   }
+
+  const malformedReview = structuredClone(recoveryReviewInteractionFixture) as Record<string, unknown>;
+  delete malformedReview.inputSchema;
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event-waiting-malformed-review",
+      type: "run.completed",
+      ts: "2026-07-15T12:00:00.000Z",
+      payload: {
+        result: {
+          assistantText: recoveryReviewInteractionFixture.prompt,
+          output: {
+            ...waiting,
+            waitFor: {
+              kind: "user",
+              eventType: "user.reply",
+              interaction: malformedReview,
+            },
+          },
+        },
+      },
+    }),
+    /invalid structured review/u,
+  );
 });
 
 test("canonical terminal parsing rejects malformed concrete run outputs", () => {

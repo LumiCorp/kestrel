@@ -25,7 +25,10 @@ export async function POST(
         turn: {
           id: turn.id,
           status: turn.status,
-          interruptMode: "safe_boundary",
+          interruptMode:
+            turn.status === "cancelled"
+              ? "immediate"
+              : "safe_boundary_deadline",
           requestedAt: turn.cancelRequestedAt,
         },
       },

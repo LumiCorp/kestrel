@@ -81,6 +81,7 @@ export interface DesktopOperatorInboxItem {
     childThreadId?: string | undefined;
     recommendedAction?: string | undefined;
     detail?: string | undefined;
+    interaction?: unknown;
     metadata?: Record<string, unknown> | undefined;
 }
 export interface DesktopFollowUpQueueEntry {

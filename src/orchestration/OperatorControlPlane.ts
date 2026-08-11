@@ -1319,6 +1319,9 @@ function toRequestInboxItem(thread: ThreadRecord, request: InteractionRequestRec
     ...(request.delegationId !== undefined ? { delegationId: request.delegationId } : {}),
     recommendedAction: request.kind === "approval" ? "approve" : "reply",
     detail: request.eventType,
+    ...(request.interaction !== undefined
+      ? { interaction: structuredClone(request.interaction) }
+      : {}),
     ...(request.metadata !== undefined ? { metadata: request.metadata } : {}),
   };
 }

@@ -1,8 +1,6 @@
 import type { ThreadInteractionView } from "../../lib/turns/client-contract";
-import {
-  readRecoveryReviewEnvelope,
-  recoveryOptionLabel,
-} from "../../lib/turns/recovery-review";
+import { runnerStructuredReviewOptionLabel } from "@kestrel-agents/protocol";
+import { readThreadStructuredReview } from "../../lib/turns/structured-review";
 
 export type EvaluationReview = {
   allowedOptionIds: string[];
@@ -30,13 +28,12 @@ export type RecoveryReview = {
 export function readEvaluationReview(
   interaction: ThreadInteractionView
 ): EvaluationReview | null {
-  const review = readRecoveryReviewEnvelope(interaction.requestEnvelope);
-  if (review?.reason !== "evaluation_review") return null;
-  const metadata = review.metadata;
-  const disclosure = readRecord(metadata.evaluationTechnicalDisclosure);
+  const review = readThreadStructuredReview(interaction);
+  if (review.kind !== "structured_review" || review.reason !== "evaluation_review") {
+    return null;
+  }
+  const disclosure = readRecord(review.evaluationTechnicalDisclosure);
   if (disclosure === null || typeof disclosure.candidate !== "string") return null;
-  const allowedOptionIds = review.allowedOptionIds;
-  if (allowedOptionIds.length === 0) return null;
   const assertions = Array.isArray(disclosure.assertions)
     ? disclosure.assertions.flatMap((value) => {
         const assertion = readRecord(value);
@@ -54,7 +51,7 @@ export function readEvaluationReview(
       })
     : [];
   return {
-    allowedOptionIds,
+    allowedOptionIds: [...review.allowedOptionIds],
     candidate: disclosure.candidate,
     ...(typeof disclosure.score === "number" ? { score: disclosure.score } : {}),
     ...(typeof disclosure.confidence === "number"
@@ -73,7 +70,12 @@ export function readEvaluationReview(
 }
 
 export function evaluationOptionLabel(optionId: string): string {
-  return recoveryOptionLabel(optionId);
+  if (
+    optionId !== "evaluation.accept_once" &&
+    optionId !== "evaluation.revise" &&
+    optionId !== "terminal.fail"
+  ) return optionId;
+  return runnerStructuredReviewOptionLabel("evaluation_review", optionId);
 }
 
 export function readRecoveryReview(

@@ -1,16 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  runnerStructuredReviewOptionLabel,
+  type RunnerStructuredReviewOptionId,
+} from "@kestrel-agents/protocol";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { parseUrlElicitation } from "@/lib/mcp/interaction-protocol";
 import type { ThreadInteractionView } from "@/lib/turns/client-contract";
-import {
-  evaluationOptionLabel,
-  readEvaluationReview,
-  readRecoveryReview,
-} from "./evaluation-review";
+import { readEvaluationReview } from "./evaluation-review";
+import { readThreadStructuredReview } from "@/lib/turns/structured-review";
 
 export type RuntimeInteractionResponse = {
   requestId: string;
@@ -48,12 +49,14 @@ export function InteractionPanel({
     decision?: boolean,
     recoveryOptionId?: string
   ) {
-    const recoveryReview = readRecoveryReview(interaction);
     const answer = content[interaction.requestId]?.trim();
+    const structuredReview = readThreadStructuredReview(interaction);
     const message =
-      recoveryOptionId !== undefined
-        ? recoveryReview?.options.find((option) => option.id === recoveryOptionId)?.label ??
-          evaluationOptionLabel(recoveryOptionId)
+      recoveryOptionId !== undefined && structuredReview.kind === "structured_review"
+        ? runnerStructuredReviewOptionLabel(
+            structuredReview.reason,
+            recoveryOptionId as RunnerStructuredReviewOptionId
+          )
         : interaction.kind === "approval"
         ? decision
           ? "Approved"
@@ -79,6 +82,36 @@ export function InteractionPanel({
         caught instanceof Error
           ? caught.message
           : "The response could not be sent."
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function cancelRuntimeWait(interaction: ThreadInteractionView) {
+    if (!interaction.turnId) {
+      setError("The waiting turn could not be identified.");
+      return;
+    }
+    setBusy(interaction.requestId);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/threads/${threadId}/turns/${interaction.turnId}/interrupt`,
+        { method: "POST" }
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "The waiting turn could not be ended.");
+      }
+      await onResolved();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The waiting turn could not be ended."
       );
     } finally {
       setBusy(null);
@@ -140,8 +173,7 @@ export function InteractionPanel({
       !(
         interaction.source === "runtime" &&
         interaction.kind === "user_input" &&
-        readEvaluationReview(interaction) === null &&
-        readRecoveryReview(interaction) === null
+        readThreadStructuredReview(interaction).kind === "ordinary"
       )
   );
 
@@ -160,8 +192,8 @@ export function InteractionPanel({
         Agent requests that need your response
       </h2>
       {visibleInteractions.map((interaction, index) => {
+        const structuredReview = readThreadStructuredReview(interaction);
         const evaluationReview = readEvaluationReview(interaction);
-        const recoveryReview = readRecoveryReview(interaction);
         const urlElicitation =
           interaction.kind === "mcp_elicitation"
             ? parseUrlElicitation(interaction.requestEnvelope)
@@ -169,16 +201,18 @@ export function InteractionPanel({
         const isRuntimeQuestion =
           interaction.source === "runtime" &&
           interaction.kind === "user_input" &&
-          evaluationReview === null &&
-          recoveryReview === null;
+          structuredReview.kind === "ordinary";
         return (
           <Card key={interaction.requestId}>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">
-                {evaluationReview !== null
+                {structuredReview.kind === "invalid_review"
+                  ? "This request cannot be answered safely"
+                  : structuredReview.kind === "structured_review" &&
+                      structuredReview.reason === "recovery_review"
+                     ? "Recovery decision required"
+                     : evaluationReview !== null
                   ? "Result requires review"
-                  : recoveryReview !== null
-                  ? "Recovery choice required"
                   : interaction.kind === "approval" ||
                 interaction.kind === "mcp_sampling"
                   ? "Approval required"
@@ -187,6 +221,30 @@ export function InteractionPanel({
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm">{interaction.prompt}</p>
+              {structuredReview.kind === "invalid_review" ? (
+                <p className="text-muted-foreground text-sm" role="alert">
+                  The saved interaction does not satisfy the structured-review
+                  contract. End the waiting turn before continuing.
+                </p>
+              ) : null}
+              {structuredReview.kind === "structured_review" &&
+              structuredReview.reason === "recovery_review" &&
+              (structuredReview.triggeringFailureSummary !== undefined ||
+                structuredReview.triggeringFailureCode !== undefined) ? (
+                <details className="rounded-md border p-3 text-sm">
+                  <summary className="cursor-pointer font-medium">
+                    Technical details
+                  </summary>
+                  <div className="mt-3 space-y-2">
+                    {structuredReview.triggeringFailureSummary !== undefined ? (
+                      <p>{structuredReview.triggeringFailureSummary}</p>
+                    ) : null}
+                    {structuredReview.triggeringFailureCode !== undefined ? (
+                      <p>Code: {structuredReview.triggeringFailureCode}</p>
+                    ) : null}
+                  </div>
+                </details>
+              ) : null}
               {evaluationReview !== null ? (
                 <details className="rounded-md border p-3 text-sm">
                   <summary className="cursor-pointer font-medium">
@@ -281,8 +339,8 @@ export function InteractionPanel({
               ) : null}
               <div className="flex justify-end gap-2">
                 {interaction.source === "runtime" ? (
-                  evaluationReview !== null ? (
-                    evaluationReview.allowedOptionIds.map((optionId) => (
+                  structuredReview.kind === "structured_review" ? (
+                    structuredReview.allowedOptionIds.map((optionId) => (
                       <Button
                         disabled={busy !== null}
                         key={optionId}
@@ -292,24 +350,21 @@ export function InteractionPanel({
                         size="sm"
                         variant={optionId === "terminal.fail" ? "outline" : "default"}
                       >
-                        {evaluationOptionLabel(optionId)}
+                        {runnerStructuredReviewOptionLabel(
+                          structuredReview.reason,
+                          optionId
+                        )}
                       </Button>
                     ))
-                  ) : recoveryReview !== null ? (
-                    recoveryReview.options.map((option) => (
-                      <Button
-                        disabled={busy !== null}
-                        key={option.id}
-                        onClick={() =>
-                          void resolveRuntime(interaction, undefined, option.id)
-                        }
-                        size="sm"
-                        title={option.description}
-                        variant={option.kind === "terminal" ? "outline" : "default"}
-                      >
-                        {option.label}
-                      </Button>
-                    ))
+                  ) : structuredReview.kind === "invalid_review" ? (
+                    <Button
+                      disabled={busy !== null}
+                      onClick={() => void cancelRuntimeWait(interaction)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      End waiting turn
+                    </Button>
                   ) : interaction.kind === "approval" ? (
                     <>
                       <Button

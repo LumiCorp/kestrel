@@ -900,6 +900,19 @@ function PureMultimodalInput({
             value={input}
           />
         </div>
+        {composerRuntimeQuestion && onInterrupt ? (
+          <div className="flex justify-end px-2">
+            <Button
+              disabled={status === "submitted" || status === "streaming"}
+              onClick={() => void onInterrupt()}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              End waiting turn
+            </Button>
+          </div>
+        ) : null}
         <ComposerToolbar
           activeEnvironmentName={activeEnvironmentName}
           capabilityControls={

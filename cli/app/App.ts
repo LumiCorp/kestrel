@@ -143,6 +143,7 @@ import {
   buildWaitingSystemText,
   extractWaitPrompt,
   isModeBlockedWait,
+  readExactReview,
   readExactReviewOptionIds,
   resolveExactReviewOptionId,
   resolveBlockedWaitModeReply,
@@ -2362,6 +2363,16 @@ export class App {
     this.uiStore.patch({ chatDraft: "" });
 
     const initialState = this.uiStore.getState();
+    const exactReview = readExactReview(
+      initialState.activeSession.pendingWaitFor,
+    );
+    if (exactReview.kind === "invalid_review") {
+      await this.appendHistoryLine(
+        "system",
+        `${exactReview.error} Use /stop to end the waiting run.`,
+      );
+      return;
+    }
     const exactReviewOptionId = resolveExactReviewOptionId(
       initialState.activeSession.pendingWaitFor,
       rawLine,

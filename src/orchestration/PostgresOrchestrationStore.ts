@@ -274,11 +274,12 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
     await this.ensureSchema();
     await this.db.query(
       `INSERT INTO orchestration_interaction_requests
-        (request_id, thread_id, kind, status, event_type, delegation_id, wait_kind, prompt, metadata_json, response_json, created_at, resolved_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::timestamptz, $12::timestamptz)
+        (request_id, thread_id, kind, status, event_type, delegation_id, wait_kind, prompt, interaction_json, metadata_json, response_json, created_at, resolved_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12::timestamptz, $13::timestamptz)
        ON CONFLICT (request_id) DO UPDATE
          SET status = EXCLUDED.status,
              prompt = EXCLUDED.prompt,
+             interaction_json = EXCLUDED.interaction_json,
              metadata_json = EXCLUDED.metadata_json,
              response_json = EXCLUDED.response_json,
              resolved_at = EXCLUDED.resolved_at`,
@@ -291,6 +292,7 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
         record.delegationId ?? null,
         record.waitKind ?? null,
         record.prompt ?? null,
+        stringifySanitizedJson(record.interaction ?? null),
         stringifySanitizedJson(record.metadata ?? null),
         stringifySanitizedJson(record.response ?? null),
         normalizeTimestampString(record.createdAt),
@@ -302,7 +304,7 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
   async getInteractionRequest(requestId: string): Promise<InteractionRequestRecord | null> {
     await this.ensureSchema();
     const result = await this.db.query<Record<string, unknown>>(
-      `SELECT request_id, thread_id, kind, status, event_type, delegation_id, wait_kind, prompt, metadata_json, response_json, created_at, resolved_at
+      `SELECT request_id, thread_id, kind, status, event_type, delegation_id, wait_kind, prompt, interaction_json, metadata_json, response_json, created_at, resolved_at
          FROM orchestration_interaction_requests
         WHERE request_id = $1`,
       [requestId],
@@ -333,7 +335,7 @@ export class PostgresOrchestrationStore implements OrchestrationStore {
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const result = await this.db.query<Record<string, unknown>>(
-      `SELECT request_id, thread_id, kind, status, event_type, delegation_id, wait_kind, prompt, metadata_json, response_json, created_at, resolved_at
+      `SELECT request_id, thread_id, kind, status, event_type, delegation_id, wait_kind, prompt, interaction_json, metadata_json, response_json, created_at, resolved_at
          FROM orchestration_interaction_requests
          ${where}
         ORDER BY created_at DESC`,
@@ -1089,6 +1091,9 @@ function mapInteractionRequestRow(row: Record<string, unknown>): InteractionRequ
   }
   if (typeof row.prompt === "string") {
     request.prompt = row.prompt;
+  }
+  if (isRecord(row.interaction_json)) {
+    request.interaction = row.interaction_json as InteractionRequestRecord["interaction"];
   }
   if (isRecord(row.metadata_json)) {
     request.metadata = row.metadata_json;

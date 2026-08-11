@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  createRunnerStructuredReviewInteractionV1,
   RUNNER_EXTERNAL_APPROVAL_BINDING_VERSION,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
@@ -279,6 +280,10 @@ test("InteractionManager validates exact recovery choices before consuming the r
     actorId: "operator-1",
     tenantId: "tenant-1",
   };
+  const reviewBinding = buildRecoveryReviewBinding({
+    threadId: "thread-recovery",
+    runId: "run-recovery",
+  });
   const request = await manager.syncWaitState({
     threadId: "thread-recovery",
     runId: "run-recovery",
@@ -288,23 +293,17 @@ test("InteractionManager validates exact recovery choices before consuming the r
       eventType: "user.reply",
       metadata: {
         reason: "recovery_review",
-        recoveryReviewBinding: {
-          version: RECOVERY_REVIEW_BINDING_VERSION,
-          bindingId: "binding-recovery",
-          decisionId: "decision-recovery",
-          threadId: "thread-recovery",
-          runId: "run-recovery",
-          executionProfileFingerprint: "a".repeat(64),
-          policyRevision: `sha256:${"b".repeat(64)}`,
-          allowedOptionIds: ["retry.primary", "terminal.fail"],
-          requestedAt: new Date(Date.now() - 1_000).toISOString(),
-          expiresAt: new Date(Date.now() + 60_000).toISOString(),
-        },
+        recoveryReviewBinding: reviewBinding,
         allowedOptionIds: ["retry.primary", "terminal.fail"],
       },
+      interaction: recoveryReviewInteraction(reviewBinding.bindingId),
     },
   });
   assert.ok(request);
+  assert.deepEqual(
+    request.interaction,
+    recoveryReviewInteraction(reviewBinding.bindingId),
+  );
 
   await assert.rejects(
     () => manager.resolveRequest({
@@ -340,9 +339,51 @@ test("InteractionManager validates exact recovery choices before consuming the r
   assert.equal(resolved.request.response?.recoveryOptionId, "retry.primary");
 });
 
+test("InteractionManager refuses to guess a legacy structured review from metadata", async () => {
+  const store = new InMemorySessionStore();
+  const manager = new InteractionManager(store);
+  const binding = buildRecoveryReviewBinding({
+    threadId: "thread-legacy-review",
+    runId: "run-legacy-review",
+  });
+  const request = await manager.syncWaitState({
+    threadId: "thread-legacy-review",
+    runId: "run-legacy-review",
+    actor: { actorType: "operator", actorId: "operator-1", tenantId: "tenant-1" },
+    waitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      metadata: {
+        reason: "recovery_review",
+        recoveryReviewBinding: binding,
+        allowedOptionIds: binding.allowedOptionIds,
+      },
+    },
+  });
+  assert.ok(request);
+
+  await assert.rejects(
+    () => manager.resolveRequest({
+      threadId: "thread-legacy-review",
+      requestId: request.requestId,
+      message: "Try again",
+      recoveryOptionId: "retry.primary",
+      actor: { actorType: "operator", actorId: "operator-1", tenantId: "tenant-1" },
+    }),
+    { code: "RECOVERY_REVIEW_INVALID" },
+  );
+  assert.equal((await store.getInteractionRequest(request.requestId))?.status, "PENDING");
+});
+
 test("InteractionManager invalidates expired recovery reviews but preserves actor failures", async () => {
   const expiredStore = new InMemorySessionStore();
   const expiredManager = new InteractionManager(expiredStore);
+  const expiredBinding = buildRecoveryReviewBinding({
+    threadId: "thread-expired-recovery",
+    runId: "run-expired-recovery",
+    requestedAt: new Date(Date.now() - 120_000),
+    expiresAt: new Date(Date.now() - 60_000),
+  });
   const expiredRequest = await expiredManager.syncWaitState({
     threadId: "thread-expired-recovery",
     runId: "run-expired-recovery",
@@ -352,13 +393,9 @@ test("InteractionManager invalidates expired recovery reviews but preserves acto
       eventType: "user.reply",
       metadata: {
         reason: "recovery_review",
-        recoveryReviewBinding: buildRecoveryReviewBinding({
-          threadId: "thread-expired-recovery",
-          runId: "run-expired-recovery",
-          requestedAt: new Date(Date.now() - 120_000),
-          expiresAt: new Date(Date.now() - 60_000),
-        }),
+        recoveryReviewBinding: expiredBinding,
       },
+      interaction: recoveryReviewInteraction(expiredBinding.bindingId),
     },
   });
   assert.ok(expiredRequest);
@@ -379,6 +416,10 @@ test("InteractionManager invalidates expired recovery reviews but preserves acto
 
   const actorStore = new InMemorySessionStore();
   const actorManager = new InteractionManager(actorStore);
+  const actorBinding = buildRecoveryReviewBinding({
+    threadId: "thread-actor-recovery",
+    runId: "run-actor-recovery",
+  });
   const actorRequest = await actorManager.syncWaitState({
     threadId: "thread-actor-recovery",
     runId: "run-actor-recovery",
@@ -388,11 +429,9 @@ test("InteractionManager invalidates expired recovery reviews but preserves acto
       eventType: "user.reply",
       metadata: {
         reason: "recovery_review",
-        recoveryReviewBinding: buildRecoveryReviewBinding({
-          threadId: "thread-actor-recovery",
-          runId: "run-actor-recovery",
-        }),
+        recoveryReviewBinding: actorBinding,
       },
+      interaction: recoveryReviewInteraction(actorBinding.bindingId),
     },
   });
   assert.ok(actorRequest);
@@ -461,6 +500,15 @@ function buildRecoveryReviewBinding(input: {
     requestedAt: requestedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
   };
+}
+
+function recoveryReviewInteraction(requestId: string) {
+  return createRunnerStructuredReviewInteractionV1({
+    reason: "recovery_review",
+    requestId,
+    prompt: "Choose a recovery option.",
+    allowedOptionIds: ["retry.primary", "terminal.fail"],
+  });
 }
 
 test("ThreadRuntime emits normalized thread and supervisor failures", async () => {

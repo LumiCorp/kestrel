@@ -20,6 +20,7 @@ import {
 import type { SessionRecord } from "../kestrel/contracts/store.js";
 import { replaceAgentToolResultOutput } from "../../tools/toolResult.js";
 import {
+  createRunnerStructuredReviewInteractionV1,
   parseRunnerExternalApprovalBindingV1,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
@@ -1892,11 +1893,12 @@ export class ExecutionEngine {
         allowedOptionIds: [...recovery.reviewBinding.allowedOptionIds],
         evaluationTechnicalDisclosure: technicalDisclosure,
       },
-      interaction: buildRecoveryReviewInteractionV1({
-        binding: recovery.reviewBinding,
+      interaction: createRunnerStructuredReviewInteractionV1({
         reason: "evaluation_review",
+        requestId: recovery.reviewBinding.bindingId,
         prompt: "Result requires review.",
-        metadata: { evaluationTechnicalDisclosure: technicalDisclosure },
+        allowedOptionIds: recovery.reviewBinding.allowedOptionIds,
+        evaluationTechnicalDisclosure: technicalDisclosure,
       }),
     };
     const pendingEvaluation = {
@@ -3908,19 +3910,15 @@ export class ExecutionEngine {
           ? { triggeringFailureSummary: input.triggeringFailureSummary }
           : {}),
       },
-      interaction: buildRecoveryReviewInteractionV1({
-        binding: selection.reviewBinding,
+      interaction: createRunnerStructuredReviewInteractionV1({
         reason: "recovery_review",
+        requestId: selection.reviewBinding.bindingId,
         prompt,
-        metadata: {
-          triggeringFailureCode: input.triggeringFailureCode,
-          ...(input.triggeringFailureSummary !== undefined
-            ? { triggeringFailureSummary: input.triggeringFailureSummary }
-            : {}),
-          recoveryOptions: selection.reviewBinding.allowedOptionIds.map(
-            (id) => recoveryReviewOptionDescriptor(id),
-          ),
-        },
+        allowedOptionIds: selection.reviewBinding.allowedOptionIds,
+        triggeringFailureCode: input.triggeringFailureCode,
+        ...(input.triggeringFailureSummary !== undefined
+          ? { triggeringFailureSummary: input.triggeringFailureSummary }
+          : {}),
       }),
     };
     await this.deps.store.commitStep({

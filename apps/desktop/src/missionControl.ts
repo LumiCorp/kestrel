@@ -667,6 +667,9 @@ function parseInboxItem(value: unknown, index: number): DesktopRuntimeThreadInsp
     ...optionalField(item.childThreadId, "childThreadId", "childThreadId"),
     ...optionalField(item.recommendedAction, "recommendedAction", "recommendedAction"),
     ...optionalField(item.detail, "detail", "detail"),
+    ...(item.interaction !== undefined
+      ? { interaction: structuredClone(item.interaction) }
+      : {}),
     ...(typeof item.metadata === "object" && item.metadata !== null && Array.isArray(item.metadata) === false ? { metadata: item.metadata as Record<string, unknown> } : {}),
   };
 }

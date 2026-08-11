@@ -1,5 +1,10 @@
 import type { NormalizedOutput } from "../../src/index.js";
 import {
+  parseRunnerStructuredReviewInteractionV1,
+  runnerStructuredReviewOptionLabel,
+  type RunnerStructuredReviewClassificationV1,
+} from "@kestrel-agents/protocol";
+import {
   buildWaitingText as buildSharedWaitingText,
   extractWaitPrompt as extractSharedWaitPrompt,
   type WaitForLike,
@@ -35,22 +40,24 @@ export function isModeBlockedWait(waitFor: PendingWaitFor): boolean {
 export function readExactReviewOptionIds(
   waitFor: PendingWaitFor,
 ): string[] {
+  const review = readExactReview(waitFor);
+  return review.kind === "structured_review" ? [...review.allowedOptionIds] : [];
+}
+
+export function readExactReview(
+  waitFor: PendingWaitFor,
+): RunnerStructuredReviewClassificationV1 {
+  const review = parseRunnerStructuredReviewInteractionV1(waitFor?.interaction);
+  if (review.kind !== "ordinary") return review;
   const reason = waitFor?.metadata?.reason;
-  if (reason !== "recovery_review" && reason !== "evaluation_review") return [];
-  const inputSchema = asRecord(waitFor?.interaction?.inputSchema);
-  const properties = asRecord(inputSchema?.properties);
-  const optionSchema = asRecord(properties?.recoveryOptionId);
-  const schemaOptions = Array.isArray(optionSchema?.enum)
-    ? optionSchema.enum.filter(
-        (value): value is string => typeof value === "string" && value.length > 0,
-      )
-    : [];
-  const metadataOptions = Array.isArray(waitFor?.metadata?.allowedOptionIds)
-    ? waitFor.metadata.allowedOptionIds.filter(
-        (value): value is string => typeof value === "string" && value.length > 0,
-      )
-    : [];
-  return schemaOptions.filter((optionId) => metadataOptions.includes(optionId));
+  if (reason === "recovery_review" || reason === "evaluation_review") {
+    return {
+      kind: "invalid_review",
+      reason,
+      error: "This request cannot be answered safely because its interaction contract is missing.",
+    };
+  }
+  return review;
 }
 
 export function resolveExactReviewOptionId(
@@ -59,22 +66,36 @@ export function resolveExactReviewOptionId(
 ): string | undefined {
   if (typeof reply !== "string") return;
   const exactReply = reply.trim();
-  return readExactReviewOptionIds(waitFor).find(
-    (optionId) => optionId === exactReply,
-  );
+  const optionIds = readExactReviewOptionIds(waitFor);
+  const numericSelection = Number(exactReply);
+  if (
+    Number.isSafeInteger(numericSelection) &&
+    numericSelection >= 1 &&
+    numericSelection <= optionIds.length
+  ) {
+    return optionIds[numericSelection - 1];
+  }
+  return optionIds.find((optionId) => optionId === exactReply);
 }
 
 export function formatExactReviewPrompt(
   waitFor: PendingWaitFor,
   prompt: string | undefined,
 ): string | undefined {
+  const classification = readExactReview(waitFor);
+  if (classification.kind === "invalid_review") {
+    return `${classification.error} Use /stop to end the waiting run.`;
+  }
   const optionIds = readExactReviewOptionIds(waitFor);
   if (optionIds.length === 0) return prompt;
-  return `${prompt ?? "Choose one exact option."} Options: ${optionIds.join(", ")}`;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
+  if (classification.kind !== "structured_review") return prompt;
+  const options = classification.allowedOptionIds.map(
+    (optionId, index) =>
+      `${index + 1}. ${runnerStructuredReviewOptionLabel(classification.reason, optionId)}`,
+  );
+  return [
+    prompt ?? "Choose one option.",
+    ...options,
+    "Enter a number or the exact option ID. Use /stop to end the waiting run.",
+  ].join("\n");
 }

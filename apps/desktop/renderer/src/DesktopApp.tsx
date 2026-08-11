@@ -28,6 +28,10 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  runnerStructuredReviewOptionLabel,
+  type RunnerStructuredReviewOptionId,
+} from "@kestrel-agents/protocol";
 
 import type {
   DesktopCapabilityId,
@@ -228,7 +232,9 @@ export function DesktopApp(props: {
   }, [workNavigatorOpen]);
   const activeRun = activeThread === undefined
     ? undefined
-    : activeRuns[activeThread.id] ?? (threadViews[activeThread.id]?.activeRun?.status === "RUNNING"
+    : activeRuns[activeThread.id] ?? (
+      threadViews[activeThread.id]?.activeRun?.status === "RUNNING" ||
+      threadViews[activeThread.id]?.activeRun?.status === "WAITING"
       ? {
           threadId: activeThread.id,
           sessionId: activeThread.sessionId,
@@ -929,7 +935,7 @@ export function DesktopApp(props: {
 
   }
 
-  async function submitRecoveryOption(optionId: string): Promise<void> {
+  async function submitRecoveryOption(optionId: RunnerStructuredReviewOptionId): Promise<void> {
     if (
       state === undefined ||
       activeThread === undefined ||
@@ -1804,12 +1810,29 @@ export function DesktopApp(props: {
                     disabled={operatorActionPending[composerPolicy.item.itemId] === true}
                     onClick={() => void submitRecoveryOption(optionId)}
                   >
-                    {recoveryOptionLabel(optionId)}
+                    {runnerStructuredReviewOptionLabel(
+                      composerPolicy.reviewKind === "evaluation"
+                        ? "evaluation_review"
+                        : "recovery_review",
+                      optionId,
+                    )}
                   </button>
                 ))}
               </div>
             </section>
-            ) : null}
+            ) : composerPolicy.mode === "invalid_review" ? (
+              <section className="composer recovery-option-composer" aria-label="Invalid review request">
+                <div className="recovery-option-copy">
+                  <strong>This request cannot be answered safely</strong>
+                  <span>{composerPolicy.error}</span>
+                </div>
+                <div className="recovery-option-actions">
+                  <button className="primary-button" type="button" onClick={() => void cancelActiveRun()}>
+                    End waiting turn
+                  </button>
+                </div>
+              </section>
+            ) : (
             <form
             className={`composer ${composerFocused || activeThread.draft.trim().length > 0 || activeThread.draftAttachmentIds.length > 0 ? "composer-expanded" : ""}`}
             onBlur={(event) => {
@@ -1946,6 +1969,7 @@ export function DesktopApp(props: {
               </div>
             </div>
             </form>
+            )}
             </>
           )}
           </main>
@@ -2181,14 +2205,6 @@ export function DesktopApp(props: {
 
     </div>
   );
-}
-
-function recoveryOptionLabel(optionId: string): string {
-  if (optionId === "retry.primary") return "Retry";
-  if (optionId === "evaluation.accept_once") return "Accept once";
-  if (optionId === "evaluation.revise") return "Revise result";
-  if (optionId === "terminal.fail") return "End run";
-  return optionId;
 }
 
 function EvaluationTechnicalDisclosure({ value }: { value: Record<string, unknown> }) {

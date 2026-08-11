@@ -1016,7 +1016,10 @@ export function Chat({
     }
     toast({
       type: "success",
-      description: "The agent will stop at the next safe boundary.",
+      description:
+        payload.turn?.interruptMode === "immediate"
+          ? "The waiting turn ended."
+          : "The agent will stop at the next safe boundary.",
     });
     await refreshConversationState();
   }, [conversationState.queue.activeTurnId, id, refreshConversationState]);

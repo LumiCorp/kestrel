@@ -10,6 +10,7 @@ import {
   getDesktopOperatorThread,
   listDesktopOperatorRuns,
 } from "../src/missionControl.js";
+import { recoveryReviewInteractionFixture } from "../../../tests/fixtures/structured-review-contract.js";
 
 
 const context: WebRunnerRequestContext = {
@@ -309,6 +310,10 @@ test("Desktop Mission Control projects runtime thread inspection through the run
               title: "Choose the verification target.",
               actionable: true,
               requestId: "request-1",
+              interaction: {
+                ...structuredClone(recoveryReviewInteractionFixture),
+                requestId: "request-1",
+              },
               createdAt: "2026-07-10T12:00:00.000Z",
             }],
           },
@@ -346,6 +351,10 @@ test("Desktop Mission Control projects runtime thread inspection through the run
   assert.equal(response.followUpQueue.pauseReason, "operator");
   assert.equal(response.followUpQueue.items[0]?.attachmentIds[0], "attachment-1");
   assert.equal(response.inboxItems[0]?.requestId, "request-1");
+  assert.equal(
+    response.inboxItems[0]?.interaction?.metadata?.reason,
+    "recovery_review",
+  );
   assert.deepEqual(response.childThreads.map((thread) => thread.threadId), ["thread-child:session-1"]);
   assert.deepEqual(calls, [{
     command: { type: "operator.thread", threadId: "thread-main:session-1" },

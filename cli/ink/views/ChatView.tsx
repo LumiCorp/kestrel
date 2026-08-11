@@ -1,5 +1,7 @@
 import type React from "react";
-import { Box, Text } from "ink";
+import { useEffect, useState } from "react";
+import { Box, Text, useInput } from "ink";
+import { runnerStructuredReviewOptionLabel } from "@kestrel-agents/protocol";
 
 import type {
   AgentRunLogLine,
@@ -14,6 +16,7 @@ import { ThemedTextInput } from "../components/ThemedTextInput.js";
 import {
   extractWaitPrompt,
   formatExactReviewPrompt,
+  readExactReview,
 } from "../../app/waitForPrompt.js";
 import { buildChatVisualRows, buildChatWindow, type ChatVisualRow } from "./chatRows.js";
 import { resolveChatComposerInputRows, resolveChatLayoutBudget } from "./chatLayout.js";
@@ -50,6 +53,7 @@ interface MessageCard {
 
 export function ChatView(props: ChatViewProps): React.JSX.Element {
   const pendingWait = props.session.pendingWaitFor;
+  const exactReview = readExactReview(pendingWait);
   const waitPrompt = formatExactReviewPrompt(
     pendingWait,
     extractWaitPrompt(pendingWait),
@@ -61,12 +65,14 @@ export function ChatView(props: ChatViewProps): React.JSX.Element {
     detailDrawerOpen: false,
   });
   const composerInputWidth = Math.max(1, provisionalLayout.conversationWidth - 2);
-  const composerInputRows = resolveChatComposerInputRows({
-    draft: props.draft,
-    inputWidth: composerInputWidth,
-    viewportRows: props.viewportRows,
-    detailDrawerOpen: false,
-  });
+  const composerInputRows = exactReview.kind === "structured_review"
+    ? Math.max(2, exactReview.allowedOptionIds.length)
+    : resolveChatComposerInputRows({
+        draft: props.draft,
+        inputWidth: composerInputWidth,
+        viewportRows: props.viewportRows,
+        detailDrawerOpen: false,
+      });
   const { conversationWidth, bubbleWidth, wrappedBodyWidth, transcriptRows } = resolveChatLayoutBudget({
     viewportColumns: props.viewportColumns,
     viewportRows: props.viewportRows,
@@ -141,22 +147,82 @@ export function ChatView(props: ChatViewProps): React.JSX.Element {
           <Text color={composerStatusColor}>{composerStatus ?? " "}</Text>
         </Box>
         <Box height={composerInputRows} overflow="hidden" width={conversationWidth}>
-          <Box width={2}>
-            <Text color={theme.brand}>&gt;</Text>
-            <Text color={theme.text}> </Text>
-          </Box>
-          <Box height={composerInputRows} overflow="hidden" width={composerInputWidth}>
-            <ThemedTextInput
-              value={props.draft}
-              onChange={props.onDraftChange}
-              onSubmit={props.onSubmit}
+          {exactReview.kind === "structured_review" ? (
+            <StructuredReviewPicker
               focus={props.composerFocused}
-              width={composerInputWidth}
-              maxRows={composerInputRows}
+              onSubmit={props.onSubmit}
+              review={exactReview}
+              width={conversationWidth}
             />
-          </Box>
+          ) : (
+            <>
+              <Box width={2}>
+                <Text color={theme.brand}>&gt;</Text>
+                <Text color={theme.text}> </Text>
+              </Box>
+              <Box height={composerInputRows} overflow="hidden" width={composerInputWidth}>
+                <ThemedTextInput
+                  value={props.draft}
+                  onChange={props.onDraftChange}
+                  onSubmit={props.onSubmit}
+                  focus={props.composerFocused}
+                  width={composerInputWidth}
+                  maxRows={composerInputRows}
+                />
+              </Box>
+            </>
+          )}
         </Box>
       </Box>
+    </Box>
+  );
+}
+
+function StructuredReviewPicker(input: {
+  focus: boolean;
+  onSubmit: (line: string) => void;
+  review: Extract<ReturnType<typeof readExactReview>, { kind: "structured_review" }>;
+  width: number;
+}): React.JSX.Element {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  useEffect(() => setSelectedIndex(0), [input.review.requestId]);
+  useInput((rawInput, key) => {
+    if (!input.focus) return;
+    if (key.upArrow) {
+      setSelectedIndex((current) =>
+        (current - 1 + input.review.allowedOptionIds.length) %
+        input.review.allowedOptionIds.length,
+      );
+      return;
+    }
+    if (key.downArrow) {
+      setSelectedIndex((current) =>
+        (current + 1) % input.review.allowedOptionIds.length,
+      );
+      return;
+    }
+    const numericSelection = Number(rawInput);
+    if (
+      Number.isSafeInteger(numericSelection) &&
+      numericSelection >= 1 &&
+      numericSelection <= input.review.allowedOptionIds.length
+    ) {
+      setSelectedIndex(numericSelection - 1);
+      return;
+    }
+    if (key.return) {
+      const optionId = input.review.allowedOptionIds[selectedIndex];
+      if (optionId !== undefined) input.onSubmit(optionId);
+    }
+  });
+  return (
+    <Box flexDirection="column" width={input.width}>
+      {input.review.allowedOptionIds.map((optionId, index) => (
+        <Text color={index === selectedIndex ? theme.brand : theme.text} key={optionId}>
+          {index === selectedIndex ? "›" : " "} {index + 1}.{" "}
+          {runnerStructuredReviewOptionLabel(input.review.reason, optionId)}
+        </Text>
+      ))}
     </Box>
   );
 }

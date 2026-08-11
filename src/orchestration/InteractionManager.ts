@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import {
+  parseRunnerStructuredReviewInteractionV1,
   parseRunnerExternalApprovalBindingV1,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
@@ -36,10 +37,18 @@ export class InteractionManager {
       eventType?: string | undefined;
       metadata?: Record<string, unknown> | undefined;
       interaction?: {
+        version?: string | undefined;
         requestId?: string | undefined;
         kind?: string | undefined;
         eventType?: string | undefined;
         prompt?: string | undefined;
+        inputSchema?: Record<string, unknown> | undefined;
+        metadata?: Record<string, unknown> | undefined;
+        approval?: {
+          toolCallId: string;
+          toolName: string;
+          input: unknown;
+        } | undefined;
       } | undefined;
     } | undefined;
   }): Promise<InteractionRequestRecord | undefined> {
@@ -74,13 +83,12 @@ export class InteractionManager {
 
     const metadata = waitFor.metadata ?? {};
     const interaction = waitFor.interaction;
+    const requestId =
+      readNonEmptyString(interaction?.requestId)?.trim() ??
+      readNonEmptyString(metadata.requestId)?.trim() ??
+      `request-${randomUUID()}`;
     const request: InteractionRequestRecord = {
-      requestId:
-        typeof interaction?.requestId === "string" && interaction.requestId.length > 0
-          ? interaction.requestId
-          : typeof metadata.requestId === "string" && metadata.requestId.length > 0
-            ? metadata.requestId
-          : `request-${randomUUID()}`,
+      requestId,
       threadId: input.threadId,
       ...(input.runId !== undefined ? { runId: input.runId } : {}),
       kind: requestKind,
@@ -93,6 +101,17 @@ export class InteractionManager {
         : typeof metadata.prompt === "string"
           ? { prompt: metadata.prompt }
           : {}),
+      ...(interaction !== undefined &&
+        interaction.version === "v1" &&
+        typeof interaction.requestId === "string" &&
+        interaction.requestId.trim().length > 0 &&
+        interaction.kind === requestKind &&
+        interaction.eventType === eventType &&
+        typeof interaction.prompt === "string"
+        ? {
+            interaction: structuredClone(interaction) as InteractionRequestRecord["interaction"],
+          }
+        : {}),
       metadata: {
         ...metadata,
         ...(input.actor !== undefined
@@ -253,10 +272,19 @@ function validateRecoveryReviewReply(input: {
   input: ReplyToRequestInput;
   actor: RuntimeTurnActor | undefined;
 }): void {
-  const isRecoveryReview =
-    input.request.metadata?.reason === "recovery_review" ||
-    input.request.metadata?.reason === "evaluation_review";
-  if (!isRecoveryReview) {
+  const review = parseRunnerStructuredReviewInteractionV1(
+    input.request.interaction,
+  );
+  const outerReason = input.request.metadata?.reason;
+  const outerClaimsReview =
+    outerReason === "recovery_review" || outerReason === "evaluation_review";
+  if (review.kind === "invalid_review" || (outerClaimsReview && review.kind === "ordinary")) {
+    throw createRuntimeFailure(
+      "RECOVERY_REVIEW_INVALID",
+      "This structured review cannot be answered safely. End the waiting run.",
+    );
+  }
+  if (review.kind === "ordinary") {
     if (input.input.recoveryOptionId !== undefined) {
       throw createRuntimeFailure(
         "RECOVERY_OPTION_UNEXPECTED",
@@ -303,7 +331,10 @@ function validateRecoveryReviewReply(input: {
       "Recovery review binding no longer matches the pending request.",
     );
   }
-  if (binding.allowedOptionIds.includes(optionId) === false) {
+  if (
+    review.allowedOptionIds.some((allowedOptionId) => allowedOptionId === optionId) === false ||
+    binding.allowedOptionIds.includes(optionId) === false
+  ) {
     throw createRuntimeFailure(
       "RECOVERY_OPTION_NOT_ALLOWED",
       `Recovery option '${optionId}' is not allowed for this review.`,
