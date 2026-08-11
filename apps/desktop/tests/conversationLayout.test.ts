@@ -204,7 +204,11 @@ test("user-input requests are composer-owned without a duplicate timeline card",
   assert.match(app, /composerPolicy\.mode === "reply_to_request"/u);
   assert.match(app, /composerPolicy\.mode === "select_recovery_option"/u);
   assert.match(app, /recoveryOptionId:\s*optionId/u);
-  assert.match(app, /Selected recovery option: \$\{optionId\}/u);
+  assert.doesNotMatch(app, /Selected recovery option:/u);
+  assert.match(app, /submitConversationMessage/u);
+  assert.match(app, /Waiting for your decision/u);
+  assert.match(app, /Waiting for your input/u);
+  assert.match(app, /Queued behind current work/u);
   assert.match(app, /triggeringFailureCode/u);
   assert.match(
     app,

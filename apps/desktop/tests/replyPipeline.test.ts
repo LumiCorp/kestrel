@@ -15,7 +15,7 @@ test("Desktop replies request accepted completion in the selected interaction mo
   assert.match(source, /interactionMode:\s*activeThread\.mode/u);
   assert.match(source, /activeThread\.mode === "build" \? \{ actSubmode: "safe" \}/u);
   assert.doesNotMatch(source, /setDraft\(/u);
-  assert.match(source, /setThreadFailure\(threadId, "Reply not sent"/u);
+  assert.match(source, /setThreadFailure\(threadId, "Message not sent"/u);
 });
 
 test("Desktop forwards runner events from one centralized transport observer", async () => {

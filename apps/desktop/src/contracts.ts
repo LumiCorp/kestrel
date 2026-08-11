@@ -46,6 +46,8 @@ import type {
   DesktopRunCancelRequest,
   DesktopRunnerEvent,
   DesktopRunTurnRequest,
+  DesktopConversationMessageRequest,
+  DesktopConversationMessageResult,
   DesktopRuntimeHealth,
   DesktopRuntimeRunIndex,
   DesktopRuntimeRunIndexQuery,
@@ -208,6 +210,8 @@ export type {
   DesktopRunCancelRequest,
   DesktopRunnerEvent,
   DesktopRunTurnRequest,
+  DesktopConversationMessageRequest,
+  DesktopConversationMessageResult,
   DesktopRuntimeHealth,
   DesktopRuntimeRunIndex,
   DesktopRuntimeRunIndexEntry,
@@ -463,6 +467,9 @@ export interface DesktopBridge {
     entries: DesktopLegacyUiStateEntries,
   ): Promise<DesktopUiStateSyncResult>;
   runTurn(request: DesktopRunTurnRequest): Promise<DesktopRunnerEvent>;
+  submitConversationMessage(
+    request: DesktopConversationMessageRequest,
+  ): Promise<DesktopConversationMessageResult>;
   selectAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
   importAttachment(
     input: DesktopAttachmentImportInput,

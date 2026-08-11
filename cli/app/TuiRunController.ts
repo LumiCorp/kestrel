@@ -7,6 +7,7 @@ import type {
   TuiSessionMeta,
 } from "../contracts.js";
 import type { RunnerEvent } from "../protocol/contracts.js";
+import { randomUUID } from "node:crypto";
 import {
   buildWaitingSystemText,
   extractWaitPrompt,
@@ -102,7 +103,6 @@ export class TuiRunController {
       );
     }
     const eventType = pendingWait?.eventType ?? "user.message";
-    const stepAgent = pendingWait !== undefined ? undefined : getEntryStepAgent(state.activeProfile);
     const effectiveProfile = state.activeProfile;
     const core = this.context.prepareLocalCoreClient !== undefined
       ? await this.context.prepareLocalCoreClient()
@@ -139,7 +139,12 @@ export class TuiRunController {
         pendingWait !== undefined &&
         this.context.shouldApplyCompactionOnContinuationResume(state.activeSession)
       );
-    if (submittedPendingWait !== undefined) {
+    const exactDecisionWait = submittedPendingWait?.metadata?.reason === "recovery_review" ||
+      submittedPendingWait?.metadata?.reason === "evaluation_review";
+    if (
+      submittedPendingWait !== undefined &&
+      (exactDecisionWait === false || recoveryOptionId !== undefined)
+    ) {
       await this.context.setActiveSessionState({
         pendingWaitFor: undefined,
         updatedAt: new Date().toISOString(),
@@ -163,34 +168,73 @@ export class TuiRunController {
     let requestAccepted = false;
 
     try {
-      const response = await this.context.client.sendCommand("run.start", {
-        profileId: executionProfile.profileId,
-        turn: {
-          sessionId: state.activeSession.sessionId,
-          message: input.submittedMessage,
-          eventType,
-          ...(input.resumeBlockedRun === true ? { resumeBlockedRun: true } : {}),
-          ...(resumeRequestId !== undefined ? { resumeRequestId } : {}),
-          ...(recoveryOptionId !== undefined ? { recoveryOptionId } : {}),
-          modeSystemV2Enabled: state.activeProfile.modeSystemV2Enabled === true,
-          interactionMode: modeResolution.interactionMode,
-          ...(modeResolution.actSubmode !== undefined ? { actSubmode: modeResolution.actSubmode } : {}),
-          ...(state.activeSession.executionPolicy !== undefined
-            ? { executionPolicy: state.activeSession.executionPolicy }
-            : {}),
-          clientCapabilities: createTuiClientCapabilities(),
-          history: buildModelHistoryWindow(historySource),
-          ...(manualCompaction ? { manualCompaction: true } : {}),
-          autoCompaction: {
-            enabled: state.activeSession.autoCompactionEnabled === true,
-            state: state.activeSession.operatorState?.context?.compactionState ?? "idle",
-            suppressOnce: state.activeSession.suppressAutoCompactionOnce === true,
-          },
-          ...(workspace !== undefined ? { workspace: workspace.runtimeContext } : {}),
-          ...(stepAgent !== undefined ? { stepAgent } : {}),
-        },
-      });
+      const response: RunnerEvent = recoveryOptionId !== undefined
+        ? await this.context.client.sendCommand("operator.control", {
+            action: "reply",
+            threadId: state.activeSession.focusedThreadId ?? `thread-main:${state.activeSession.sessionId}`,
+            requestId: resumeRequestId,
+            message: input.submittedMessage,
+            recoveryOptionId,
+          }, this.context.getActiveRunnerMetadata())
+        : await this.context.client.sendCommand("conversation.message.submit", {
+            profileId: executionProfile.profileId,
+            threadId: state.activeSession.focusedThreadId ?? `thread-main:${state.activeSession.sessionId}`,
+            messageId: `tui:${randomUUID()}`,
+            turn: {
+              sessionId: state.activeSession.sessionId,
+              message: input.submittedMessage,
+              modeSystemV2Enabled: state.activeProfile.modeSystemV2Enabled === true,
+              interactionMode: modeResolution.interactionMode,
+              ...(modeResolution.actSubmode !== undefined ? { actSubmode: modeResolution.actSubmode } : {}),
+              ...(state.activeSession.executionPolicy !== undefined
+                ? { executionPolicy: state.activeSession.executionPolicy }
+                : {}),
+              clientCapabilities: createTuiClientCapabilities(),
+              history: buildModelHistoryWindow(historySource),
+              ...(manualCompaction ? { manualCompaction: true } : {}),
+              autoCompaction: {
+                enabled: state.activeSession.autoCompactionEnabled === true,
+                state: state.activeSession.operatorState?.context?.compactionState ?? "idle",
+                suppressOnce: state.activeSession.suppressAutoCompactionOnce === true,
+              },
+              ...(workspace !== undefined ? { workspace: workspace.runtimeContext } : {}),
+            },
+          }, this.context.getActiveRunnerMetadata());
       requestAccepted = true;
+
+      if (response.type === "conversation.message.routed") {
+        const disposition = response.payload.disposition;
+        await this.context.setActiveSessionState({
+          started: true,
+          updatedAt: new Date().toISOString(),
+          focusedThreadId: response.payload.threadId,
+          pendingManualCompaction: false,
+          suppressAutoCompactionOnce: false,
+        });
+        this.context.uiStore.patch({
+          running: false,
+          statusLine: this.context.withMcpSummary(
+            disposition === "queued" ? "queued behind current work" : "ready",
+          ),
+          activeProgressByRun: {},
+          latestProgressForSession: undefined,
+          latestReasoningForSession: undefined,
+        });
+        await this.context.persistSessionAndUi();
+        return;
+      }
+
+      if (response.type === "operator.controlled") {
+        this.context.uiStore.patch({
+          running: false,
+          statusLine: this.context.withMcpSummary("ready"),
+          activeProgressByRun: {},
+          latestProgressForSession: undefined,
+          latestReasoningForSession: undefined,
+        });
+        await this.context.persistSessionAndUi();
+        return;
+      }
 
       if (response.type !== "run.completed" && response.type !== "run.failed") {
         throw new Error(`Unexpected run response type '${response.type}'`);
@@ -568,9 +612,13 @@ export class TuiRunController {
         event.payload.result.finalizedPayload,
         event.payload.result.operatorAffordance,
       );
-      if (event.commandId === undefined) {
-        void this.context.applyTerminalResult(output.sessionId, event.payload.result);
-      }
+      void (async () => {
+        await this.context.applyTerminalResult(output.sessionId, event.payload.result);
+        if (this.context.options.scripted === true && output.status === "COMPLETED") {
+          await this.context.appendHistoryLine("system", "Run Completed");
+        }
+        await this.context.persistSessionAndUi();
+      })();
       this.context.clearProgressForRun(output.runId);
       this.context.pushRunLog({
         timestamp: new Date().toISOString(),

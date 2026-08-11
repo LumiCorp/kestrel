@@ -24,6 +24,7 @@ import type {
 export function ConversationTimeline(props: {
   items: readonly DesktopConversationTimelineItem[];
   active: boolean;
+  waiting?: boolean | undefined;
   activity: string;
   error?: string | undefined;
   systemError?: string | undefined;
@@ -76,6 +77,7 @@ export function ConversationTimeline(props: {
   const terminalTransition = transitionLabel({
     items: props.items,
     active: props.active,
+    waiting: props.waiting === true,
     activity: props.activity,
     error: props.error,
   });
@@ -396,17 +398,18 @@ export function TimelineMarker({
 function transitionLabel(input: {
   items: readonly DesktopConversationTimelineItem[];
   active: boolean;
+  waiting: boolean;
   activity: string;
   error?: string | undefined;
 }): string | undefined {
-  if (input.active || input.items.every((entry) => entry.type !== "run_stream")) {
+  if (input.active || input.waiting || input.items.every((entry) => entry.type !== "run_stream")) {
     return undefined;
   }
   if (input.error !== undefined || input.activity === "Run failed") {
     return "Run failed";
   }
   if (input.activity === "Cancelled") return "Run stopped";
-  return "Work completed";
+  return "Completed";
 }
 
 function formatMessageTime(value: string): string {
