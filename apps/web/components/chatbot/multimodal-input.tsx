@@ -7,6 +7,7 @@ import {
   CheckIcon,
   FilmIcon,
   ImagePlusIcon,
+  RotateCcwIcon,
   Volume2Icon,
   VolumeXIcon,
 } from "lucide-react";
@@ -1418,8 +1419,10 @@ function PureComposerActionButton({
       type="button"
       variant={isStopAction ? "outline" : "default"}
     >
-      {isStopAction || isResetAction ? (
+      {isStopAction ? (
         <StopIcon size={14} />
+      ) : isResetAction ? (
+        <RotateCcwIcon size={16} />
       ) : (
         <ArrowUpIcon size={16} />
       )}
