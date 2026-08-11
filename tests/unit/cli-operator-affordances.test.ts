@@ -128,6 +128,32 @@ test("buildRuntimeOperatorAffordance treats acter-blocked waits as mode switches
   assert.match(String(affordance.recommendedAction?.summary), /Reply naturally to approve the switch/u);
 });
 
+test("buildRuntimeOperatorAffordance ignores malformed persisted execution policy values", () => {
+  const affordance = buildRuntimeOperatorAffordance({
+    reactState: {
+      interactionMode: "build",
+      executionPolicy: {
+        toolClassPolicy: {
+          read_only: "false",
+          sandboxed_only: 0,
+          external_side_effect: "false",
+          unknown_tool_class: false,
+        },
+        capabilityPolicy: ["external.confirm"],
+      },
+    },
+    turn: {
+      interactionMode: "build",
+    },
+    output: createOutput(),
+  });
+
+  assert.deepEqual(
+    affordance.allowedToolClasses,
+    ["read_only", "sandboxed_only", "external_side_effect"],
+  );
+});
+
 test("decorateOperatorAffordance enriches provider and manual compaction state", () => {
   const decorated = decorateOperatorAffordance({
     base: {

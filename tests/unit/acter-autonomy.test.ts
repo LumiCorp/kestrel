@@ -908,6 +908,15 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     modeSystemV2Enabled: true,
     interactionMode: "build",
     actSubmode: "full_auto",
+    executionPolicy: {
+      toolClassPolicy: {
+        external_side_effect: true,
+      },
+      capabilityPolicy: {
+        "network.call": true,
+        "external.confirm": true,
+      },
+    },
   };
   let inlineToolCalls = 0;
 

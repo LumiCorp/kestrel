@@ -47,6 +47,67 @@ export const APPROVAL_CAPABILITY_CLASSES: ApprovalCapabilityClass[] = [
   "external.confirm",
 ];
 
+/**
+ * Parse execution policy carried through runtime state and event payloads.
+ * Recognized policy objects remain present even when none of their values are
+ * valid so capability checks preserve their existing fail-closed semantics.
+ */
+export function parseExecutionPolicyOverride(value: unknown): ExecutionPolicyOverride | undefined {
+  const record = asObjectRecord(value);
+  if (record === undefined) {
+    return ;
+  }
+
+  const toolClassPolicy = parseBooleanPolicy(record.toolClassPolicy, TOOL_EXECUTION_CLASSES);
+  const capabilityPolicy = parseBooleanPolicy(
+    record.capabilityPolicy,
+    APPROVAL_CAPABILITY_CLASSES,
+  );
+  const approvalPolicyRaw = asObjectRecord(record.approvalPolicy);
+  const approvalPolicy = approvalPolicyRaw === undefined
+    ? undefined
+    : {
+        ...(Object.hasOwn(approvalPolicyRaw, "strictApprovalPerCall") &&
+            typeof approvalPolicyRaw.strictApprovalPerCall === "boolean"
+          ? { strictApprovalPerCall: approvalPolicyRaw.strictApprovalPerCall }
+          : {}),
+      };
+
+  if (toolClassPolicy === undefined && capabilityPolicy === undefined && approvalPolicy === undefined) {
+    return ;
+  }
+
+  return {
+    ...(toolClassPolicy !== undefined ? { toolClassPolicy } : {}),
+    ...(capabilityPolicy !== undefined ? { capabilityPolicy } : {}),
+    ...(approvalPolicy !== undefined ? { approvalPolicy } : {}),
+  };
+}
+
+function parseBooleanPolicy<Key extends string>(
+  value: unknown,
+  keys: readonly Key[],
+): Partial<Record<Key, boolean>> | undefined {
+  const record = asObjectRecord(value);
+  if (record === undefined) {
+    return ;
+  }
+  const policy: Partial<Record<Key, boolean>> = {};
+  for (const key of keys) {
+    const candidate = record[key];
+    if (Object.hasOwn(record, key) && typeof candidate === "boolean") {
+      policy[key] = candidate;
+    }
+  }
+  return policy;
+}
+
+function asObjectRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
 export function isInteractionMode(value: unknown): value is InteractionMode {
   return value === "chat" || value === "plan" || value === "build";
 }

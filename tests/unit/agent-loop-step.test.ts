@@ -36,6 +36,7 @@ import {
   buildAgentToolSuccessResult,
   replaceAgentToolResultOutput,
 } from "../../tools/toolResult.js";
+import { kestrelOneEmailSendTool } from "../../tools/kestrelOne/email.js";
 
 
 const READ_TEXT_TOOL: ModelToolSpec = {
@@ -2290,6 +2291,103 @@ test("agent loop disables parallel tool calls when a surfaced action requires in
   assert.equal(capturedRequest?.providerOptions?.openrouter?.parallelToolCalls, false);
   assert.equal(capturedRequest?.providerOptions?.openai?.parallelToolCalls, false);
   assert.equal(capturedRequest?.providerOptions?.anthropic?.parallelToolCalls, false);
+});
+
+test("agent loop surfaces Email when external confirmation is allowed by execution policy", async () => {
+  const definition = kestrelOneEmailSendTool.definition;
+  const emailTool: ModelToolSpec = {
+    name: definition.name,
+    description: definition.description,
+    inputSchema: definition.inputSchema,
+  };
+  const capabilityManifest = [{
+    name: definition.name,
+    description: definition.description,
+    capabilityClasses: [...definition.capability.capabilityClasses],
+    approvalCapabilities: [...(definition.capability.approvalCapabilities ?? [])],
+    executionClass: definition.capability.executionClass,
+    allowedInteractionModes: [...(definition.capability.allowedInteractionModes ?? [])],
+  }];
+  const buildContext = context();
+  const executionPolicy = {
+    toolClassPolicy: { external_side_effect: true },
+    capabilityPolicy: {
+      "network.call": true,
+      "external.confirm": true,
+    },
+  };
+  buildContext.event.payload = {
+    ...buildContext.event.payload,
+    interactionMode: "build",
+    executionPolicy,
+  };
+  buildContext.session.state.agent = {
+    interactionMode: "build",
+    executionPolicy,
+  };
+  let capturedRequest: ModelRequest | undefined;
+
+  await buildStep({
+    tools: [emailTool],
+    capabilityManifest,
+  })(buildContext, {
+    useModel: async (request) => {
+      capturedRequest = request;
+      return modelResponse({
+        version: "v1",
+        reason: "Wait for an explicit request before sending email.",
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "No email was sent.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(capturedRequest?.tools?.some((tool) => tool.name === "kestrel_one_email_send"), true);
+  assert.equal(capturedRequest?.providerOptions?.openrouter?.parallelToolCalls, false);
+  assert.equal(capturedRequest?.providerOptions?.openai?.parallelToolCalls, false);
+  assert.equal(capturedRequest?.providerOptions?.anthropic?.parallelToolCalls, false);
+
+  const blockedContext = context();
+  const blockedExecutionPolicy = {
+    ...executionPolicy,
+    capabilityPolicy: {
+      ...executionPolicy.capabilityPolicy,
+      "external.confirm": false,
+    },
+  };
+  blockedContext.event.payload = {
+    ...blockedContext.event.payload,
+    interactionMode: "build",
+    executionPolicy: blockedExecutionPolicy,
+  };
+  blockedContext.session.state.agent = {
+    interactionMode: "build",
+    executionPolicy: blockedExecutionPolicy,
+  };
+  let blockedRequest: ModelRequest | undefined;
+
+  await buildStep({
+    tools: [emailTool],
+    capabilityManifest,
+  })(blockedContext, {
+    useModel: async (request) => {
+      blockedRequest = request;
+      return modelResponse({
+        version: "v1",
+        reason: "Email is unavailable under the current policy.",
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "No email was sent.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(blockedRequest?.tools?.some((tool) => tool.name === "kestrel_one_email_send"), false);
 });
 
 test("agent loop disables parallel tool calls under strict per-call approval policy", async () => {

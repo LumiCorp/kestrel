@@ -2,12 +2,76 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  APPROVAL_CAPABILITY_CLASSES,
   alignExecutionPolicyWithMode,
   isToolEligibleForInteractionMode,
   isToolClassAllowed,
   normalizeInteractionMode,
+  parseExecutionPolicyOverride,
+  readBlockedApprovalCapability,
   resolveAllowedToolClasses,
 } from "../../src/mode/contracts.js";
+
+test("parseExecutionPolicyOverride preserves every canonical boolean policy field", () => {
+  const capabilityPolicy = Object.fromEntries(
+    APPROVAL_CAPABILITY_CLASSES.map((capability, index) => [capability, index % 2 === 0]),
+  );
+
+  assert.deepEqual(
+    parseExecutionPolicyOverride({
+      toolClassPolicy: {
+        read_only: true,
+        planning_write: false,
+        sandboxed_only: true,
+        external_side_effect: false,
+        unknown_tool_class: true,
+      },
+      capabilityPolicy: {
+        ...capabilityPolicy,
+        "unknown.capability": true,
+      },
+      approvalPolicy: {
+        strictApprovalPerCall: false,
+        unknownApprovalField: true,
+      },
+      unknownTopLevelField: true,
+    }),
+    {
+      toolClassPolicy: {
+        read_only: true,
+        planning_write: false,
+        sandboxed_only: true,
+        external_side_effect: false,
+      },
+      capabilityPolicy,
+      approvalPolicy: {
+        strictApprovalPerCall: false,
+      },
+    },
+  );
+});
+
+test("parseExecutionPolicyOverride rejects invalid roots and preserves fail-closed empty policies", () => {
+  assert.equal(parseExecutionPolicyOverride(undefined), undefined);
+  assert.equal(parseExecutionPolicyOverride(null), undefined);
+  assert.equal(parseExecutionPolicyOverride([]), undefined);
+  assert.equal(parseExecutionPolicyOverride({ capabilityPolicy: [] }), undefined);
+
+  const executionPolicy = parseExecutionPolicyOverride({
+    capabilityPolicy: {
+      "external.confirm": "true",
+      "unknown.capability": true,
+    },
+  });
+  assert.deepEqual(executionPolicy, { capabilityPolicy: {} });
+  assert.equal(
+    readBlockedApprovalCapability({
+      executionPolicy,
+      requiredCapabilities: ["external.confirm"],
+    }),
+    "external.confirm",
+  );
+});
 
 
 test("normalizeInteractionMode preserves explicit build submodes", () => {

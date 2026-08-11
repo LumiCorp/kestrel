@@ -22,6 +22,7 @@ import {
   isToolEligibleForInteractionMode,
   needsPerCallApproval,
   normalizeInteractionMode,
+  parseExecutionPolicyOverride,
   readBlockedApprovalCapability,
   type ActSubmode,
   type ExecutionPolicyOverride,
@@ -334,7 +335,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       defaultInteractionMode: DEFAULT_INTERACTION_MODE,
       defaultActSubmode: DEFAULT_ACT_SUBMODE,
     });
-    const executionPolicy = readExecutionPolicy(
+    const executionPolicy = parseExecutionPolicyOverride(
       eventPayload.executionPolicy ?? reactState.executionPolicy,
     );
     reactState = normalizeLegacyContinuationRuntimeState(reactState);
@@ -3721,75 +3722,6 @@ function describeBlockedActionKind(kind: string): string {
 
 function formatModeLabel(mode: InteractionMode, actSubmode: ActSubmode | undefined): string {
   return formatUserFacingModeLabel({ interactionMode: mode, actSubmode });
-}
-
-function readExecutionPolicy(value: unknown): ExecutionPolicyOverride | undefined {
-  const record = asRecord(value);
-  if (record === undefined) {
-    return ;
-  }
-  const toolClassPolicyRaw = asRecord(record.toolClassPolicy);
-  const toolClassPolicy = toolClassPolicyRaw === undefined
-    ? undefined
-    : {
-        ...(typeof toolClassPolicyRaw.read_only === "boolean"
-          ? { read_only: toolClassPolicyRaw.read_only }
-          : {}),
-        ...(typeof toolClassPolicyRaw.planning_write === "boolean"
-          ? { planning_write: toolClassPolicyRaw.planning_write }
-          : {}),
-        ...(typeof toolClassPolicyRaw.sandboxed_only === "boolean"
-          ? { sandboxed_only: toolClassPolicyRaw.sandboxed_only }
-          : {}),
-        ...(typeof toolClassPolicyRaw.external_side_effect === "boolean"
-          ? { external_side_effect: toolClassPolicyRaw.external_side_effect }
-          : {}),
-      };
-  const capabilityPolicyRaw = asRecord(record.capabilityPolicy);
-  const capabilityPolicy = capabilityPolicyRaw === undefined
-    ? undefined
-    : {
-        ...(typeof capabilityPolicyRaw["workspace.read"] === "boolean"
-          ? { "workspace.read": capabilityPolicyRaw["workspace.read"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["workspace.write"] === "boolean"
-          ? { "workspace.write": capabilityPolicyRaw["workspace.write"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["shell.exec"] === "boolean"
-          ? { "shell.exec": capabilityPolicyRaw["shell.exec"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["mission_control.work_item.write"] === "boolean"
-          ? { "mission_control.work_item.write": capabilityPolicyRaw["mission_control.work_item.write"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["network.call"] === "boolean"
-          ? { "network.call": capabilityPolicyRaw["network.call"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["code.execute"] === "boolean"
-          ? { "code.execute": capabilityPolicyRaw["code.execute"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["mcp.invoke"] === "boolean"
-          ? { "mcp.invoke": capabilityPolicyRaw["mcp.invoke"] }
-          : {}),
-        ...(typeof capabilityPolicyRaw["delegation.control"] === "boolean"
-          ? { "delegation.control": capabilityPolicyRaw["delegation.control"] }
-          : {}),
-      };
-  const approvalPolicyRaw = asRecord(record.approvalPolicy);
-  const approvalPolicy = approvalPolicyRaw === undefined
-    ? undefined
-    : {
-        ...(typeof approvalPolicyRaw.strictApprovalPerCall === "boolean"
-          ? { strictApprovalPerCall: approvalPolicyRaw.strictApprovalPerCall }
-          : {}),
-      };
-  if (toolClassPolicy === undefined && capabilityPolicy === undefined && approvalPolicy === undefined) {
-    return ;
-  }
-  return {
-    ...(toolClassPolicy !== undefined ? { toolClassPolicy } : {}),
-    ...(capabilityPolicy !== undefined ? { capabilityPolicy } : {}),
-    ...(approvalPolicy !== undefined ? { approvalPolicy } : {}),
-  };
 }
 
 function cloneActionSnapshot<T>(action: T): T {
