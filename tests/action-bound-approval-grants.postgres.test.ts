@@ -6,7 +6,7 @@ import { Pool } from "pg";
 import type { RunnerInteractionRequestV1 } from "@kestrel-agents/protocol";
 import { PostgresOrchestrationStore } from "../src/orchestration/PostgresOrchestrationStore.js";
 import type { SqlExecutor } from "../src/store/PostgresSessionStore.js";
-import { recoveryReviewInteractionFixture } from "./fixtures/structured-review-contract.js";
+import { legacyRecoveryReviewInteractionFixture } from "./fixtures/structured-review-contract.js";
 
 const databaseUrl = process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL?.trim();
 
@@ -76,7 +76,7 @@ test("Local Core PostgreSQL persists and reloads the canonical interaction envel
   const threadId = `review-thread-${suffix}`;
   const requestId = `review-request-${suffix}`;
   const interaction = {
-    ...(structuredClone(recoveryReviewInteractionFixture) as unknown as RunnerInteractionRequestV1),
+    ...(structuredClone(legacyRecoveryReviewInteractionFixture) as unknown as RunnerInteractionRequestV1),
     requestId,
   };
   try {

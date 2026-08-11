@@ -11,7 +11,6 @@ import type { ToolActivationRefV1 } from "../kestrel/contracts/tool-contract.js"
 import type { GuardrailConfig, RuntimeDependencies } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelGatewayStreamEvent, ModelRequest, ModelResponse, ModelUsage, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
 import { hashCanonical } from "../kestrel/contracts/tool-contract.js";
-import type { RecoveryDecisionV1, RecoveryModelCandidateV1, RecoveryPolicyV1 } from "../kestrel/contracts/recovery.js";
 import type { ProviderReasoningRetentionPolicy } from "../runtime/ProviderReasoningVault.js";
 import {
   attributeModelCallPrice,
@@ -49,13 +48,6 @@ import {
   emitDevShellConsoleStatus,
 } from "./ExecutionEngineConsoleBridge.js";
 import { RunCancelledError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
-import {
-  RecoveryCoordinator,
-  RecoveryToolTransitionRequired,
-  createRecoveryExternalApprovalBinding,
-  normalizeRecoveryFailureCode,
-  type RecoveryRuntimeConfiguration,
-} from "./recovery/RecoveryCoordinator.js";
 import type { RuntimeEvaluationCoordinator } from "../evaluation/RuntimeEvaluationCoordinator.js";
 import {
   DeterministicStreamingRedactor,
@@ -194,8 +186,6 @@ interface RuntimeIOOptions {
     sessionState: Record<string, unknown>;
   }) => Promise<void>;
   isRetryableToolError: (error: unknown) => boolean;
-  recoveryCoordinator?: RecoveryCoordinator | undefined;
-  recoveryRuntime?: RecoveryRuntimeConfiguration | undefined;
   evaluationCoordinator?: RuntimeEvaluationCoordinator | undefined;
   executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
 }
@@ -718,186 +708,18 @@ export class RuntimeIO {
     requestedProvider: string | undefined;
     requestedModel: string | undefined;
   }): Promise<T> {
-    const coordinator = this.options.recoveryCoordinator;
-    const recoveryRuntime = this.options.recoveryRuntime;
-    if (coordinator === undefined || recoveryRuntime === undefined) {
-      return this.options.deps.modelGateway.call<T>(input.request, {
-        ...(this.options.progress.signal !== undefined ? { signal: this.options.progress.signal } : {}),
-        onEvent: async (event) => {
-          await this.emitModelGatewayEvent(event, {
-            callId: input.callId,
-            provider: input.requestedProvider,
-            model: input.requestedModel,
-          });
-        },
-      });
-    }
-
-    let candidate = coordinator.policy.primaryModel;
-    let gateway = this.options.deps.modelGateway;
-    let pendingAction: RecoveryDecisionV1 | undefined;
-    let visibleOutputStarted = false;
-    for (;;) {
-      try {
-        const result = await gateway.call<T>(
-          {
-            ...input.request,
-            model: candidate.model,
-            metadata: {
-              ...(input.request.metadata ?? {}),
-              provider: candidate.provider,
-              recoveryCandidateId: candidate.candidateId,
-              recoveryPolicyRevision: coordinator.policy.revision,
-            },
-          },
-          {
-            ...(this.options.progress.signal !== undefined ? { signal: this.options.progress.signal } : {}),
-            onEvent: async (event) => {
-              if (event.type === "attempt.completed" && pendingAction !== undefined) {
-                await coordinator.markActionCompleted(pendingAction);
-                pendingAction = undefined;
-              }
-              if (
-                event.type === "reasoning.started" ||
-                event.type === "reasoning.delta" ||
-                event.type === "output.delta"
-              ) {
-                visibleOutputStarted = true;
-              }
-              await this.emitModelGatewayEvent(event, {
-                callId: input.callId,
-                provider: candidate.provider,
-                model: candidate.model,
-              });
-            },
-            authorizeRetry: async (attempt) => {
-              if (pendingAction !== undefined) {
-                await coordinator.markActionFailed(
-                  pendingAction,
-                  normalizeRecoveryFailureCode(
-                    attempt.failureCode ?? "MODEL_PROVIDER_TRANSIENT",
-                  ),
-                );
-                pendingAction = undefined;
-              }
-              const selection = await coordinator.decide(this.buildRecoveryTrigger({
-                scope: "model_call",
-                failureCode: normalizeRecoveryFailureCode(
-                  attempt.failureCode ?? "MODEL_PROVIDER_TRANSIENT",
-                ),
-                callId: input.callId,
-                attempt: attempt.attempt,
-                currentModelCandidateId: candidate.candidateId,
-                visibleOutputStarted: attempt.visibleOutputStarted || visibleOutputStarted,
-                requirements: modelRequestRequirements(input.request, candidate),
-              }));
-              if (
-                selection.decision.outcome.status !== "selected" ||
-                selection.decision.outcome.action !== "retry_same_route"
-              ) {
-                return false;
-              }
-              pendingAction = selection.decision;
-              await coordinator.markActionStarted(selection.decision);
-              return true;
-            },
-          },
-        );
-        if (pendingAction !== undefined) {
-          await coordinator.markActionCompleted(pendingAction);
-        }
-        return result;
-      } catch (error) {
-        const mapped = this.options.mapError(error);
-        const failureCode = normalizeRecoveryFailureCode(mapped.code);
-        if (pendingAction !== undefined) {
-          await coordinator.markActionFailed(pendingAction, failureCode);
-          pendingAction = undefined;
-        }
-        const selection = await coordinator.decide(this.buildRecoveryTrigger({
-          scope: "model_call",
-          failureCode,
+    return this.options.deps.modelGateway.call<T>(input.request, {
+      ...(this.options.progress.signal !== undefined
+        ? { signal: this.options.progress.signal }
+        : {}),
+      onEvent: async (event) => {
+        await this.emitModelGatewayEvent(event, {
           callId: input.callId,
-          attempt: readGatewayAttemptsMade(error),
-          currentModelCandidateId: candidate.candidateId,
-          visibleOutputStarted,
-          requirements: modelRequestRequirements(input.request, candidate),
-          automaticRecoveryBlocked: isAutomaticModelRecoveryBlocked(mapped.code),
-          blockedReasonCode: mapped.code,
-        }));
-        if (
-          selection.decision.outcome.status !== "selected" ||
-          selection.decision.outcome.action !== "alternate_model"
-        ) {
-          throw error;
-        }
-        const selectedCandidate = findRecoveryModelCandidate(
-          coordinator.policy,
-          selection.decision.outcome.candidateId,
-        );
-        const registered = selectedCandidate === undefined
-          ? undefined
-          : recoveryRuntime.modelRegistry.resolve({
-              candidate: selectedCandidate,
-              policyRevision: coordinator.policy.revision,
-            });
-        if (registered === undefined) {
-          await coordinator.markActionFailed(selection.decision, "RECOVERY_MODEL_UNREGISTERED");
-          throw error;
-        }
-        await coordinator.markActionStarted(selection.decision);
-        pendingAction = selection.decision;
-        candidate = registered.candidate;
-        gateway = registered.gateway;
-        visibleOutputStarted = false;
-      }
-    }
-  }
-
-  private buildRecoveryTrigger(input: {
-    scope: "model_call" | "tool_call" | "run";
-    failureCode: string;
-    visibleOutputStarted: boolean;
-    callId?: string | undefined;
-    attempt?: number | undefined;
-    currentModelCandidateId?: string | undefined;
-    sourceToolId?: string | undefined;
-    requirements?: ReturnType<typeof modelRequestRequirements> | undefined;
-    automaticRecoveryBlocked?: boolean | undefined;
-    blockedReasonCode?: string | undefined;
-    requestedWorkflowHandlerId?: string | undefined;
-  }) {
-    const telemetry = this.options.guardrails.telemetry();
-    const budget = this.options.guardrails.budgetSnapshot();
-    return {
-      runId: this.options.progress.runId,
-      sessionId: this.options.progress.sessionId,
-      threadId: readNonEmptyString(this.options.runtimeMetadata?.threadId) ?? this.options.progress.sessionId,
-      scope: input.scope,
-      failureCode: input.failureCode,
-      visibleOutputStarted: input.visibleOutputStarted,
-      budget: {
-        remainingMs: Math.max(0, budget.remainingMs),
-        tokensUsed: Math.max(0, telemetry.totalTokens ?? 0),
-        toolCallsUsed: Math.max(0, telemetry.toolCalls),
+          provider: input.requestedProvider,
+          model: input.requestedModel,
+        });
       },
-      ...(input.callId !== undefined ? { callId: input.callId } : {}),
-      stepIndex: this.options.progress.stepIndex,
-      ...(input.attempt !== undefined ? { attempt: input.attempt } : {}),
-      ...(input.currentModelCandidateId !== undefined
-        ? { currentModelCandidateId: input.currentModelCandidateId }
-        : {}),
-      ...(input.sourceToolId !== undefined ? { sourceToolId: input.sourceToolId } : {}),
-      ...(input.requirements !== undefined ? { requirements: input.requirements } : {}),
-      expectedPolicyRevision: this.options.recoveryCoordinator?.policy.revision,
-      ...(input.automaticRecoveryBlocked !== undefined
-        ? { automaticRecoveryBlocked: input.automaticRecoveryBlocked }
-        : {}),
-      ...(input.blockedReasonCode !== undefined ? { blockedReasonCode: input.blockedReasonCode } : {}),
-      ...(input.requestedWorkflowHandlerId !== undefined
-        ? { requestedWorkflowHandlerId: input.requestedWorkflowHandlerId }
-        : {}),
-    };
+    });
   }
 
   private async appendEconomicsEvent(
@@ -1468,22 +1290,6 @@ export class RuntimeIO {
         latencyMs: Date.now() - startedAt,
         resultManifest: buildToolResultEconomicsManifest(result),
       });
-      const normalizedRecoveryResult = this.options.recoveryRuntime?.toolResultNormalizerRegistry
-        .normalize(name, result);
-      if (
-        normalizedRecoveryResult?.status === "failure" &&
-        normalizedRecoveryResult.failureCode !== undefined &&
-        this.options.recoveryCoordinator !== undefined &&
-        this.options.recoveryRuntime !== undefined
-      ) {
-        const transition = await this.buildAlternateToolRecoveryTransition({
-          sourceToolId: name,
-          sourceInput: effectiveToolInput,
-          sourceCallId: toolCallId,
-          failureCode: normalizeRecoveryFailureCode(normalizedRecoveryResult.failureCode),
-        });
-        if (transition !== undefined) throw transition;
-      }
       const resultRecord = asPlainRecord(result);
       const auditRecord = asPlainRecord(resultRecord?.auditRecord);
       const toolOutput = asPlainRecord(auditRecord?.output ?? result);
@@ -1585,14 +1391,6 @@ export class RuntimeIO {
       });
       const mappedError = failureBoundary.value.error;
       const safeFailureInput = failureBoundary.value.input;
-      const recoveryTransition = error instanceof RecoveryToolTransitionRequired
-        ? error
-        : await this.buildAlternateToolRecoveryTransition({
-            sourceToolId: name,
-            sourceInput: recoverySourceInput,
-            sourceCallId: toolCallId,
-            failureCode: normalizeRecoveryFailureCode(mappedError.code),
-          });
       if (error instanceof ToolQueueOverflowError) {
         queueDepthRun = readNumeric(error.details, "queueDepthRun");
         queueDepthGlobal = readNumeric(error.details, "queueDepthGlobal");
@@ -1678,71 +1476,7 @@ export class RuntimeIO {
             mappedError.details,
           )
         : error;
-      throw recoveryTransition ?? safeError;
-    }
-  }
-
-  private async buildAlternateToolRecoveryTransition(input: {
-    sourceToolId: string;
-    sourceInput: unknown;
-    sourceCallId: string;
-    failureCode: string;
-  }): Promise<RecoveryToolTransitionRequired | undefined> {
-    const coordinator = this.options.recoveryCoordinator;
-    const recoveryRuntime = this.options.recoveryRuntime;
-    if (coordinator === undefined || recoveryRuntime === undefined) return;
-    const selection = await coordinator.decide(this.buildRecoveryTrigger({
-      scope: "tool_call",
-      failureCode: input.failureCode,
-      callId: input.sourceCallId,
-      sourceToolId: input.sourceToolId,
-      visibleOutputStarted: false,
-      automaticRecoveryBlocked: isAutomaticToolRecoveryBlocked(input.failureCode),
-      blockedReasonCode: input.failureCode,
-    }));
-    if (
-      selection.decision.outcome.status !== "selected" ||
-      selection.decision.outcome.action !== "alternate_tool"
-    ) {
-      return;
-    }
-    const adapterDeclaration = findRecoveryToolAdapter(
-      coordinator.policy,
-      selection.decision.outcome.candidateId,
-    );
-    const adapter = adapterDeclaration === undefined
-      ? undefined
-      : recoveryRuntime.toolAdapterRegistry.resolve(adapterDeclaration);
-    if (adapter === undefined) {
-      await coordinator.markActionFailed(selection.decision, "RECOVERY_ADAPTER_UNREGISTERED");
-      return;
-    }
-    const adapterContext = {
-      runId: this.options.progress.runId,
-      sessionId: this.options.progress.sessionId,
-      sourceToolId: input.sourceToolId,
-      targetToolId: adapter.targetToolId,
-      sourceCallId: input.sourceCallId,
-    };
-    try {
-      adapter.validateSource(input.sourceInput, adapterContext);
-      const targetInput = adapter.transformInput(input.sourceInput, adapterContext);
-      const threadId = readNonEmptyString(this.options.runtimeMetadata?.threadId) ?? this.options.progress.sessionId;
-      return new RecoveryToolTransitionRequired({
-        decision: selection.decision,
-        adapter,
-        sourceInput: input.sourceInput,
-        targetInput,
-        externalApprovalBinding: createRecoveryExternalApprovalBinding({
-          decision: selection.decision,
-          adapter,
-          threadId,
-          targetInput,
-        }),
-      });
-    } catch {
-      await coordinator.markActionFailed(selection.decision, "RECOVERY_ADAPTER_REJECTED");
-      return;
+      throw safeError;
     }
   }
 
@@ -2117,81 +1851,6 @@ function readToolProvider(toolName: string): string {
     return "kestrel-one";
   }
   return "kestrel";
-}
-
-function modelRequestRequirements(
-  request: ModelRequest,
-  _candidate: RecoveryModelCandidateV1,
-) {
-  const messages = request.messages ?? [];
-  const visionInput = messages.some((message) =>
-    Array.isArray(message.content) && message.content.some((part) => part.type === "image"));
-  const structuredOutput = request.responseSchema !== undefined || request.responseFormat === "json";
-  return {
-    visionInput,
-    toolCalling: (request.tools?.length ?? 0) > 0,
-    structuredOutput,
-    reasoningMode: request.reasoning?.mode ?? "off",
-    ...(readNonEmptyString(request.metadata?.promptVariant) !== undefined
-      ? { promptVariant: readNonEmptyString(request.metadata?.promptVariant)! }
-      : {}),
-  };
-}
-
-function readGatewayAttemptsMade(error: unknown): number {
-  const record = asPlainRecord(error);
-  const details = asPlainRecord(record?.details);
-  const attempts = readNumeric(details ?? {}, "gatewayAttempts");
-  return attempts === undefined ? 1 : Math.max(1, Math.floor(attempts));
-}
-
-function isAutomaticModelRecoveryBlocked(code: string): boolean {
-  return new Set([
-    "RUN_CANCELLED",
-    "MODEL_AUTH_ERROR",
-    "MODEL_PROVIDER_SCHEMA",
-    "POLICY_DENIED",
-    "APPROVAL_DENIED",
-    "AUTHORITY_MISMATCH",
-    "RUNTIME_BUDGET_EXCEEDED",
-  ]).has(code.toUpperCase());
-}
-
-function findRecoveryModelCandidate(
-  policy: RecoveryPolicyV1,
-  candidateId: string,
-): RecoveryModelCandidateV1 | undefined {
-  if (policy.primaryModel.candidateId === candidateId) return policy.primaryModel;
-  for (const stage of policy.stages) {
-    if (stage.action !== "alternate_model") continue;
-    const candidate = stage.candidates.find((item) => item.candidateId === candidateId);
-    if (candidate !== undefined) return candidate;
-  }
-  return;
-}
-
-function findRecoveryToolAdapter(
-  policy: RecoveryPolicyV1,
-  adapterId: string,
-): { adapterId: string; sourceToolId: string; targetToolId: string } | undefined {
-  for (const stage of policy.stages) {
-    if (stage.action !== "alternate_tool") continue;
-    const adapter = stage.adapters.find((item) => item.adapterId === adapterId);
-    if (adapter !== undefined) return adapter;
-  }
-  return;
-}
-
-function isAutomaticToolRecoveryBlocked(code: string): boolean {
-  return new Set([
-    "RUN_CANCELLED",
-    "POLICY_DENIED",
-    "APPROVAL_DENIED",
-    "AUTHORITY_MISMATCH",
-    "RUNTIME_BUDGET_EXCEEDED",
-    "TOOL_RESULT_CONTRACT_INVALID",
-    "EXECUTION_BOUNDARY_QUARANTINED",
-  ]).has(code.toUpperCase());
 }
 
 function formatToolDisplayName(toolName: string): string {

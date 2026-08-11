@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { PgBoss } from "pg-boss";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
-import { recoveryReviewInteractionFixture } from "../../../../tests/fixtures/structured-review-contract";
+import { evaluationReviewInteractionFixture } from "../../../../tests/fixtures/structured-review-contract";
 
 
 const databaseUrl = process.env.KESTREL_TURN_DB_TEST_URL?.trim();
@@ -517,7 +517,7 @@ test(
     assert.ok(await store.claimDurableThreadTurn(reviewTurn.turn.id));
     const reviewRequestId = `structured-review-${suffix}`;
     const reviewEnvelope = {
-      ...structuredClone(recoveryReviewInteractionFixture),
+      ...structuredClone(evaluationReviewInteractionFixture),
       requestId: reviewRequestId,
       source: "runtime" as const,
       status: "pending" as const,
@@ -563,7 +563,7 @@ test(
       requestId: reviewRequestId,
       eventType: "user.reply",
       message: "Try again",
-      recoveryOptionId: "retry.primary",
+      recoveryOptionId: "evaluation.accept_once",
       messageId: `review-option-${suffix}`,
       source: "mobile",
     });

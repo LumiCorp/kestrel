@@ -10,7 +10,7 @@ import {
   getDesktopOperatorThread,
   listDesktopOperatorRuns,
 } from "../src/missionControl.js";
-import { recoveryReviewInteractionFixture } from "../../../tests/fixtures/structured-review-contract.js";
+import { legacyRecoveryReviewInteractionFixture } from "../../../tests/fixtures/structured-review-contract.js";
 
 
 const context: WebRunnerRequestContext = {
@@ -311,7 +311,7 @@ test("Desktop Mission Control projects runtime thread inspection through the run
               actionable: true,
               requestId: "request-1",
               interaction: {
-                ...structuredClone(recoveryReviewInteractionFixture),
+                ...structuredClone(legacyRecoveryReviewInteractionFixture),
                 requestId: "request-1",
               },
               createdAt: "2026-07-10T12:00:00.000Z",

@@ -7,7 +7,7 @@ import type {
 } from "../../src/kestrel/contracts/execution.js";
 import { enforceRuntimeAssistantResponseBoundary, finalizeRuntimeAssistantResponse } from "../../src/runtime/assistantResponseContract.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
-import { recoveryReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
+import { evaluationReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
 
 test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stale assistant text", () => {
   const result = finalizeRuntimeAssistantResponse({
@@ -98,15 +98,15 @@ test("assistant response boundary rejects a structured review without its canoni
   );
 });
 
-test("assistant response boundary preserves a valid structured review envelope", () => {
-  const interaction = structuredClone(recoveryReviewInteractionFixture);
+test("assistant response boundary preserves a valid evaluation review envelope", () => {
+  const interaction = structuredClone(evaluationReviewInteractionFixture);
   const result = finalizeRuntimeAssistantResponse({
     output: output("WAITING", {
       waitFor: {
         kind: "user",
         eventType: "user.reply",
         metadata: {
-          reason: "recovery_review",
+          reason: "evaluation_review",
           prompt: interaction.prompt,
         },
         interaction,
@@ -120,7 +120,7 @@ test("assistant response boundary preserves a valid structured review envelope",
 
 test("assistant response boundary does not repair a structured review missing its request ID", () => {
   const interaction = structuredClone(
-    recoveryReviewInteractionFixture,
+    evaluationReviewInteractionFixture,
   ) as unknown as Record<string, unknown>;
   delete interaction.requestId;
 
@@ -131,13 +131,13 @@ test("assistant response boundary does not repair a structured review missing it
           kind: "user",
           eventType: "user.reply",
           metadata: {
-            reason: "recovery_review",
-            prompt: recoveryReviewInteractionFixture.prompt,
+            reason: "evaluation_review",
+            prompt: evaluationReviewInteractionFixture.prompt,
           },
           interaction: interaction as RuntimeInteractionRequestV1,
         },
       }),
-      assistantText: recoveryReviewInteractionFixture.prompt,
+      assistantText: evaluationReviewInteractionFixture.prompt,
     }),
     /non-empty requestId/u,
   );

@@ -10,7 +10,7 @@ import {
 import { readThreadStructuredReview } from "../../lib/turns/structured-review";
 import {
   evaluationReviewInteractionFixture,
-  recoveryReviewInteractionFixture,
+  legacyRecoveryReviewInteractionFixture,
 } from "../../../../tests/fixtures/structured-review-contract";
 
 test("Web evaluation review reads only exact durable options and bounded disclosure", () => {
@@ -50,17 +50,17 @@ test("Web evaluation review reads only exact durable options and bounded disclos
   assert.equal(evaluationOptionLabel("terminal.fail"), "Fail run");
 });
 
-test("Web reads recovery authority from the canonical request envelope", () => {
+test("Web blocks persisted recovery envelopes as legacy waits", () => {
   const interaction = {
     id: "interaction-recovery",
-    requestId: recoveryReviewInteractionFixture.requestId,
+    requestId: legacyRecoveryReviewInteractionFixture.requestId,
     source: "runtime",
     sourceCheckpointId: null,
     kind: "user_input",
     eventType: "user.reply",
-    prompt: recoveryReviewInteractionFixture.prompt,
+    prompt: legacyRecoveryReviewInteractionFixture.prompt,
     status: "pending",
-    requestEnvelope: structuredClone(recoveryReviewInteractionFixture),
+    requestEnvelope: structuredClone(legacyRecoveryReviewInteractionFixture),
     responseEnvelope: null,
     responseMessageId: null,
     turnId: "turn-recovery",
@@ -70,14 +70,9 @@ test("Web reads recovery authority from the canonical request envelope", () => {
   } satisfies ThreadInteractionView;
 
   assert.deepEqual(readThreadStructuredReview(interaction), {
-    kind: "structured_review",
+    kind: "invalid_review",
     reason: "recovery_review",
-    requestId: "recovery-review-fixture",
-    eventType: "user.reply",
-    prompt: "Kestrel could not continue. Choose one recovery option.",
-    allowedOptionIds: ["retry.primary", "terminal.fail"],
-    triggeringFailureCode: "MODEL_AUTH_ERROR",
-    triggeringFailureSummary: "Provider authentication failed after refresh.",
+    error: "This recovery request can no longer be resumed safely. End the waiting turn and retry explicitly.",
   });
 });
 

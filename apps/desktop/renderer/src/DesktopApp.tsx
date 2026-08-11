@@ -257,7 +257,7 @@ export function DesktopApp(props: {
   const activeThreadFeedback = activeThread === undefined
     ? { activity: "Ready" }
     : threadFeedback[activeThread.id] ?? { activity: "Ready" };
-  const activeLifecycleActivity = composerPolicy.mode === "select_recovery_option"
+  const activeLifecycleActivity = composerPolicy.mode === "select_evaluation_option"
     ? "Waiting for your decision"
     : composerPolicy.mode === "reply_to_request"
       ? "Waiting for your input"
@@ -935,11 +935,11 @@ export function DesktopApp(props: {
 
   }
 
-  async function submitRecoveryOption(optionId: RunnerStructuredReviewOptionId): Promise<void> {
+  async function submitEvaluationOption(optionId: RunnerStructuredReviewOptionId): Promise<void> {
     if (
       state === undefined ||
       activeThread === undefined ||
-      composerPolicy.mode !== "select_recovery_option"
+      composerPolicy.mode !== "select_evaluation_option"
     ) {
       return;
     }
@@ -1769,32 +1769,12 @@ export function DesktopApp(props: {
 
           {archivedThreadSelected ? null : (
             <>
-            {composerPolicy.mode === "select_recovery_option" ? (
-            <section className="composer recovery-option-composer" aria-label={composerPolicy.reviewKind === "evaluation" ? "Evaluation options" : "Recovery options"}>
+            {composerPolicy.mode === "select_evaluation_option" ? (
+            <section className="composer recovery-option-composer" aria-label="Evaluation options">
               <div className="recovery-option-copy">
-                <strong>{composerPolicy.reviewKind === "evaluation"
-                  ? "Result requires review"
-                  : composerPolicy.triggeringFailureSummary !== undefined
-                    ? "Kestrel couldn't continue"
-                    : "Recovery is exhausted"}</strong>
-                <span>{composerPolicy.reviewKind === "evaluation"
-                  ? "Choose how to handle the withheld result."
-                  : composerPolicy.triggeringFailureSummary !== undefined
-                    ? "Automatic recovery could not resolve this error. Choose one allowed recovery option."
-                    : "Choose one allowed recovery option."}</span>
-                {composerPolicy.triggeringFailureCode !== undefined && composerPolicy.triggeringFailureSummary === undefined ? (
-                  <code>{composerPolicy.triggeringFailureCode}</code>
-                ) : null}
-                {composerPolicy.reviewKind === "recovery" && composerPolicy.triggeringFailureSummary !== undefined ? (
-                  <details>
-                    <summary>Technical details</summary>
-                    <span>{composerPolicy.triggeringFailureSummary}</span>
-                    {composerPolicy.triggeringFailureCode !== undefined ? (
-                      <code>{composerPolicy.triggeringFailureCode}</code>
-                    ) : null}
-                  </details>
-                ) : null}
-                {composerPolicy.reviewKind === "evaluation" && composerPolicy.evaluationTechnicalDisclosure !== undefined ? (
+                <strong>Result requires review</strong>
+                <span>Choose how to handle the withheld result.</span>
+                {composerPolicy.evaluationTechnicalDisclosure !== undefined ? (
                   <details>
                     <summary>Technical details</summary>
                     <EvaluationTechnicalDisclosure value={composerPolicy.evaluationTechnicalDisclosure} />
@@ -1808,14 +1788,9 @@ export function DesktopApp(props: {
                     key={optionId}
                     type="button"
                     disabled={operatorActionPending[composerPolicy.item.itemId] === true}
-                    onClick={() => void submitRecoveryOption(optionId)}
+                    onClick={() => void submitEvaluationOption(optionId)}
                   >
-                    {runnerStructuredReviewOptionLabel(
-                      composerPolicy.reviewKind === "evaluation"
-                        ? "evaluation_review"
-                        : "recovery_review",
-                      optionId,
-                    )}
+                    {runnerStructuredReviewOptionLabel("evaluation_review", optionId)}
                   </button>
                 ))}
               </div>

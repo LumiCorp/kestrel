@@ -649,6 +649,11 @@ export function runnerStructuredReviewOptionLabel(
 export function createRunnerStructuredReviewInteractionV1(
   input: CreateRunnerStructuredReviewInteractionV1Input,
 ): RunnerInteractionRequestV1 {
+  if (input.reason === "recovery_review") {
+    throw new RunnerProtocolContractError(
+      "Generic recovery reviews are retired and cannot be created.",
+    );
+  }
   const requestId = requireNonEmptyString(input.requestId, "structured review.requestId");
   const prompt = requireNonEmptyString(input.prompt, "structured review.prompt");
   const allowedOptionIds = validateStructuredReviewOptionIds(
@@ -676,30 +681,10 @@ export function createRunnerStructuredReviewInteractionV1(
     metadata: {
       reason: input.reason,
       allowedOptionIds: [...allowedOptionIds],
-      ...(input.reason === "recovery_review" && input.triggeringFailureCode !== undefined
-        ? {
-            triggeringFailureCode: requireNonEmptyString(
-              input.triggeringFailureCode,
-              "structured review.triggeringFailureCode",
-            ),
-          }
-        : {}),
-      ...(input.reason === "recovery_review" && input.triggeringFailureSummary !== undefined
-        ? {
-            triggeringFailureSummary: requireNonEmptyString(
-              input.triggeringFailureSummary,
-              "structured review.triggeringFailureSummary",
-            ),
-          }
-        : {}),
-      ...(input.reason === "evaluation_review"
-        ? {
-            evaluationTechnicalDisclosure: validateEvaluationTechnicalDisclosure(
-              input.evaluationTechnicalDisclosure,
-              "structured review.evaluationTechnicalDisclosure",
-            ),
-          }
-        : {}),
+      evaluationTechnicalDisclosure: validateEvaluationTechnicalDisclosure(
+        input.evaluationTechnicalDisclosure,
+        "structured review.evaluationTechnicalDisclosure",
+      ),
     },
   };
   const classification = parseRunnerStructuredReviewInteractionV1(interaction);
@@ -728,6 +713,11 @@ export function parseRunnerStructuredReviewInteractionV1(
     reason,
     error,
   });
+  if (reason === "recovery_review") {
+    return invalid(
+      "This recovery request can no longer be resumed safely. End the waiting turn and retry explicitly.",
+    );
+  }
   if (value.version !== "v1" || value.kind !== "user_input") {
     return invalid("Structured reviews must be v1 user_input interactions.");
   }
@@ -741,9 +731,7 @@ export function parseRunnerStructuredReviewInteractionV1(
     return invalid("Structured reviews require a non-empty prompt.");
   }
   const metadataKeys = Object.keys(reviewMetadata).sort();
-  const allowedMetadataKeys = reason === "recovery_review"
-    ? ["allowedOptionIds", "reason", "triggeringFailureCode", "triggeringFailureSummary"]
-    : ["allowedOptionIds", "evaluationTechnicalDisclosure", "reason"];
+  const allowedMetadataKeys = ["allowedOptionIds", "evaluationTechnicalDisclosure", "reason"];
   if (metadataKeys.some((key) => allowedMetadataKeys.includes(key) === false)) {
     return invalid("Structured review metadata contains unsupported fields.");
   }
@@ -784,30 +772,14 @@ export function parseRunnerStructuredReviewInteractionV1(
   ) {
     return invalid("Structured review schema options must exactly match metadata.allowedOptionIds.");
   }
-  if (reason === "recovery_review") {
-    if (
-      reviewMetadata.triggeringFailureCode !== undefined &&
-      (typeof reviewMetadata.triggeringFailureCode !== "string" || reviewMetadata.triggeringFailureCode.trim().length === 0)
-    ) {
-      return invalid("Structured review triggeringFailureCode must be a non-empty string.");
-    }
-    if (
-      reviewMetadata.triggeringFailureSummary !== undefined &&
-      (typeof reviewMetadata.triggeringFailureSummary !== "string" || reviewMetadata.triggeringFailureSummary.trim().length === 0)
-    ) {
-      return invalid("Structured review triggeringFailureSummary must be a non-empty string.");
-    }
-  }
   let evaluationTechnicalDisclosure: Record<string, unknown> | undefined;
-  if (reason === "evaluation_review") {
-    try {
-      evaluationTechnicalDisclosure = validateEvaluationTechnicalDisclosure(
-        reviewMetadata.evaluationTechnicalDisclosure,
-        "structured review metadata.evaluationTechnicalDisclosure",
-      );
-    } catch (error) {
-      return invalid(error instanceof Error ? error.message : "Evaluation review disclosure is invalid.");
-    }
+  try {
+    evaluationTechnicalDisclosure = validateEvaluationTechnicalDisclosure(
+      reviewMetadata.evaluationTechnicalDisclosure,
+      "structured review metadata.evaluationTechnicalDisclosure",
+    );
+  } catch (error) {
+    return invalid(error instanceof Error ? error.message : "Evaluation review disclosure is invalid.");
   }
   return {
     kind: "structured_review",
@@ -3540,11 +3512,11 @@ function validateRunnerWaitFor(value: unknown, label: string): void {
   validateOptionalRecord(waitFor.metadata, `${label}.metadata`);
   const waitMetadata = isRecord(waitFor.metadata) ? waitFor.metadata : undefined;
   const reviewReason = waitMetadata?.reason;
-  if (reviewReason === "recovery_review" || reviewReason === "evaluation_review") {
+  if (reviewReason === "evaluation_review") {
     const review = parseRunnerStructuredReviewInteractionV1(waitFor.interaction);
-    if (review.kind !== "structured_review" || review.reason !== reviewReason) {
+    if (review.kind !== "structured_review" || review.reason !== "evaluation_review") {
       throw new RunnerProtocolContractError(
-        `${label}.interaction must contain the canonical ${reviewReason} contract`,
+        `${label}.interaction must contain the canonical evaluation_review contract`,
       );
     }
   }

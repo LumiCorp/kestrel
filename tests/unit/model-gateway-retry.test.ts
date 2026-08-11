@@ -100,7 +100,7 @@ test("RetryingModelGateway uses slower backoff for rate limits without retry-aft
   }
 });
 
-test("RetryingModelGateway retries OpenRouter provider-wrapper bad responses", async () => {
+test("RetryingModelGateway does not retry OpenRouter provider-wrapper bad responses", async () => {
   const originalRandom = Math.random;
   Math.random = () => 0;
   let attempts = 0;
@@ -123,14 +123,12 @@ test("RetryingModelGateway retries OpenRouter provider-wrapper bad responses", a
   });
 
   try {
-    const result = await gateway.call<{ ok: true }>({
-      input: { task: "retry-provider-wrapper-bad-response" },
+    await assert.rejects(() => gateway.call({
+      input: { task: "provider-wrapper-bad-response" },
       messages: [],
       responseFormat: "json",
-    });
-
-    assert.deepEqual(result, { ok: true });
-    assert.equal(attempts, 2);
+    }));
+    assert.equal(attempts, 1);
   } finally {
     Math.random = originalRandom;
   }

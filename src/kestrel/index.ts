@@ -204,8 +204,6 @@ export {
   RECOVERY_DECISION_VERSION,
   RECOVERY_POLICY_VERSION,
   RECOVERY_REVIEW_BINDING_VERSION,
-  createRecoveryPolicyV1,
-  fingerprintRecoveryPolicyV1,
   parseRecoveryDecisionV1,
   parseRecoveryModelCandidateV1,
   parseRecoveryModelCredentialReferenceV1,

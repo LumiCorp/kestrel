@@ -343,21 +343,7 @@ export function parseRecoveryModelCredentialReferenceV1(
   return parseCredentialReference(value, "Recovery model credential reference");
 }
 
-export function createRecoveryPolicyV1(
-  input: Omit<RecoveryPolicyV1, "version" | "revision">,
-): RecoveryPolicyV1 {
-  const draft = {
-    version: RECOVERY_POLICY_VERSION,
-    policyId: input.policyId,
-    revision: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-    primaryModel: structuredClone(input.primaryModel),
-    stages: structuredClone(input.stages),
-  } satisfies RecoveryPolicyV1;
-  draft.revision = fingerprintRecoveryPolicyV1(draft);
-  return parseRecoveryPolicyV1(draft);
-}
-
-export function fingerprintRecoveryPolicyV1(
+function fingerprintRecoveryPolicyV1(
   policy: RecoveryPolicyV1,
 ): string {
   const canonical = canonicalize({

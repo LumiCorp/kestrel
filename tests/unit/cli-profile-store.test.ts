@@ -11,7 +11,6 @@ import {
   ProfileStore,
 } from "../../cli/config/ProfileStore.js";
 import { MODEL_POLICY_FILE_NAME } from "../../src/profile/modelPolicy.js";
-import { resolveRecoveryPolicyForProfile } from "../../src/profile/recoveryPolicy.js";
 import { FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
 
 
@@ -184,7 +183,7 @@ test("ProfileStore omits V7 custom profile authority during the V10 cutover", as
   assert.deepEqual(report.omittedProfileIds, ["custom-v7"]);
 });
 
-test("ProfileStore omits V8 custom recovery and sandbox authority during the V10 cutover", async () => {
+test("ProfileStore omits V8 custom sandbox authority during the V10 cutover", async () => {
   const tempDir = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-profile-store-v9-evaluation-"),
   );
@@ -195,14 +194,6 @@ test("ProfileStore omits V8 custom recovery and sandbox authority during the V10
     tmpSizeMb: 64,
     tmpInodes: 8_000,
   };
-  const recoveryPolicy = resolveRecoveryPolicyForProfile({
-    id: "custom-v8",
-    label: "Custom V8",
-    agent: "reference-react",
-    sessionPrefix: "custom-v8",
-    modelProvider: "openrouter",
-    model: "z-ai/glm-5.2",
-  });
   await writeFile(
     filePath,
     `${JSON.stringify({
@@ -216,7 +207,6 @@ test("ProfileStore omits V8 custom recovery and sandbox authority during the V10
           modelProvider: "openrouter",
           model: "z-ai/glm-5.2",
           codeMode: { enabled: true, sandbox: sandboxQuotas },
-          recoveryPolicy,
         },
       ],
       managedProfileOverlays: {},

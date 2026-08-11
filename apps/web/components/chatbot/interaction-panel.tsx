@@ -208,10 +208,7 @@ export function InteractionPanel({
               <CardTitle className="text-sm">
                 {structuredReview.kind === "invalid_review"
                   ? "This request cannot be answered safely"
-                  : structuredReview.kind === "structured_review" &&
-                      structuredReview.reason === "recovery_review"
-                     ? "Recovery decision required"
-                     : evaluationReview !== null
+                  : evaluationReview !== null
                   ? "Result requires review"
                   : interaction.kind === "approval" ||
                 interaction.kind === "mcp_sampling"
@@ -226,24 +223,6 @@ export function InteractionPanel({
                   The saved interaction does not satisfy the structured-review
                   contract. End the waiting turn before continuing.
                 </p>
-              ) : null}
-              {structuredReview.kind === "structured_review" &&
-              structuredReview.reason === "recovery_review" &&
-              (structuredReview.triggeringFailureSummary !== undefined ||
-                structuredReview.triggeringFailureCode !== undefined) ? (
-                <details className="rounded-md border p-3 text-sm">
-                  <summary className="cursor-pointer font-medium">
-                    Technical details
-                  </summary>
-                  <div className="mt-3 space-y-2">
-                    {structuredReview.triggeringFailureSummary !== undefined ? (
-                      <p>{structuredReview.triggeringFailureSummary}</p>
-                    ) : null}
-                    {structuredReview.triggeringFailureCode !== undefined ? (
-                      <p>Code: {structuredReview.triggeringFailureCode}</p>
-                    ) : null}
-                  </div>
-                </details>
               ) : null}
               {evaluationReview !== null ? (
                 <details className="rounded-md border p-3 text-sm">

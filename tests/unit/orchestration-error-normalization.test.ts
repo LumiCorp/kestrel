@@ -22,7 +22,7 @@ import {
   type TurnExecutor,
 } from "../../src/orchestration/index.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
-import { RECOVERY_REVIEW_BINDING_VERSION } from "../../src/kestrel/contracts/recovery.js";
+import { createEvaluationReviewBindingV1 } from "../../src/kestrel/contracts/evaluation.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 
 
@@ -272,7 +272,7 @@ test("InteractionManager rejects changed, expired, or unbound executable authori
   assert.equal(decision.grant, undefined);
 });
 
-test("InteractionManager validates exact recovery choices before consuming the request", async () => {
+test("InteractionManager validates exact evaluation choices before consuming the request", async () => {
   const store = new InMemorySessionStore();
   const manager = new InteractionManager(store);
   const actor = {
@@ -280,7 +280,7 @@ test("InteractionManager validates exact recovery choices before consuming the r
     actorId: "operator-1",
     tenantId: "tenant-1",
   };
-  const reviewBinding = buildRecoveryReviewBinding({
+  const reviewBinding = buildEvaluationReviewBinding({
     threadId: "thread-recovery",
     runId: "run-recovery",
   });
@@ -292,17 +292,18 @@ test("InteractionManager validates exact recovery choices before consuming the r
       kind: "user",
       eventType: "user.reply",
       metadata: {
-        reason: "recovery_review",
-        recoveryReviewBinding: reviewBinding,
-        allowedOptionIds: ["retry.primary", "terminal.fail"],
+        reason: "evaluation_review",
+        evaluationReviewBinding: reviewBinding,
+        decisionId: reviewBinding.evaluationDecisionId,
+        allowedOptionIds: reviewBinding.allowedOptionIds,
       },
-      interaction: recoveryReviewInteraction(reviewBinding.bindingId),
+      interaction: evaluationReviewInteraction(reviewBinding.requestId),
     },
   });
   assert.ok(request);
   assert.deepEqual(
     request.interaction,
-    recoveryReviewInteraction(reviewBinding.bindingId),
+    evaluationReviewInteraction(reviewBinding.requestId),
   );
 
   await assert.rejects(
@@ -312,7 +313,7 @@ test("InteractionManager validates exact recovery choices before consuming the r
       message: "retry",
       actor,
     }),
-    { code: "RECOVERY_RESUME_INVALID" },
+    { code: "EVALUATION_REVIEW_RESUME_INVALID" },
   );
   assert.equal((await store.getInteractionRequest(request.requestId))?.status, "PENDING");
 
@@ -321,31 +322,30 @@ test("InteractionManager validates exact recovery choices before consuming the r
       threadId: "thread-recovery",
       requestId: request.requestId,
       message: "invalid",
-      recoveryOptionId: "retry.unknown",
+      recoveryOptionId: "evaluation.unknown",
       actor,
     }),
-    { code: "RECOVERY_OPTION_NOT_ALLOWED" },
+    { code: "EVALUATION_OPTION_NOT_ALLOWED" },
   );
   assert.equal((await store.getInteractionRequest(request.requestId))?.status, "PENDING");
 
   const resolved = await manager.resolveRequest({
     threadId: "thread-recovery",
     requestId: request.requestId,
-    message: "Selected recovery option: retry.primary",
-    recoveryOptionId: "retry.primary",
+    message: "Accept once",
+    recoveryOptionId: "evaluation.accept_once",
     actor,
   });
   assert.equal(resolved.request.status, "RESOLVED");
-  assert.equal(resolved.request.response?.recoveryOptionId, "retry.primary");
+  assert.equal(
+    resolved.request.response?.recoveryOptionId,
+    "evaluation.accept_once",
+  );
 });
 
 test("InteractionManager refuses to guess a legacy structured review from metadata", async () => {
   const store = new InMemorySessionStore();
   const manager = new InteractionManager(store);
-  const binding = buildRecoveryReviewBinding({
-    threadId: "thread-legacy-review",
-    runId: "run-legacy-review",
-  });
   const request = await manager.syncWaitState({
     threadId: "thread-legacy-review",
     runId: "run-legacy-review",
@@ -355,8 +355,7 @@ test("InteractionManager refuses to guess a legacy structured review from metada
       eventType: "user.reply",
       metadata: {
         reason: "recovery_review",
-        recoveryReviewBinding: binding,
-        allowedOptionIds: binding.allowedOptionIds,
+        allowedOptionIds: ["retry.primary", "terminal.fail"],
       },
     },
   });
@@ -370,15 +369,15 @@ test("InteractionManager refuses to guess a legacy structured review from metada
       recoveryOptionId: "retry.primary",
       actor: { actorType: "operator", actorId: "operator-1", tenantId: "tenant-1" },
     }),
-    { code: "RECOVERY_REVIEW_INVALID" },
+    { code: "STRUCTURED_REVIEW_INVALID" },
   );
   assert.equal((await store.getInteractionRequest(request.requestId))?.status, "PENDING");
 });
 
-test("InteractionManager invalidates expired recovery reviews but preserves actor failures", async () => {
+test("InteractionManager rejects expired evaluation reviews and preserves actor failures", async () => {
   const expiredStore = new InMemorySessionStore();
   const expiredManager = new InteractionManager(expiredStore);
-  const expiredBinding = buildRecoveryReviewBinding({
+  const expiredBinding = buildEvaluationReviewBinding({
     threadId: "thread-expired-recovery",
     runId: "run-expired-recovery",
     requestedAt: new Date(Date.now() - 120_000),
@@ -392,10 +391,11 @@ test("InteractionManager invalidates expired recovery reviews but preserves acto
       kind: "user",
       eventType: "user.reply",
       metadata: {
-        reason: "recovery_review",
-        recoveryReviewBinding: expiredBinding,
+        reason: "evaluation_review",
+        evaluationReviewBinding: expiredBinding,
+        decisionId: expiredBinding.evaluationDecisionId,
       },
-      interaction: recoveryReviewInteraction(expiredBinding.bindingId),
+      interaction: evaluationReviewInteraction(expiredBinding.requestId),
     },
   });
   assert.ok(expiredRequest);
@@ -403,20 +403,20 @@ test("InteractionManager invalidates expired recovery reviews but preserves acto
     () => expiredManager.resolveRequest({
       threadId: "thread-expired-recovery",
       requestId: expiredRequest.requestId,
-      message: "Selected recovery option: retry.primary",
-      recoveryOptionId: "retry.primary",
+      message: "Accept once",
+      recoveryOptionId: "evaluation.accept_once",
       actor: { actorType: "operator", actorId: "operator-1", tenantId: "tenant-1" },
     }),
-    { code: "RECOVERY_WAIT_EXPIRED" },
+    { code: "EVALUATION_WAIT_EXPIRED" },
   );
   assert.equal(
     (await expiredStore.getInteractionRequest(expiredRequest.requestId))?.status,
-    "CANCELLED",
+    "PENDING",
   );
 
   const actorStore = new InMemorySessionStore();
   const actorManager = new InteractionManager(actorStore);
-  const actorBinding = buildRecoveryReviewBinding({
+  const actorBinding = buildEvaluationReviewBinding({
     threadId: "thread-actor-recovery",
     runId: "run-actor-recovery",
   });
@@ -428,10 +428,11 @@ test("InteractionManager invalidates expired recovery reviews but preserves acto
       kind: "user",
       eventType: "user.reply",
       metadata: {
-        reason: "recovery_review",
-        recoveryReviewBinding: actorBinding,
+        reason: "evaluation_review",
+        evaluationReviewBinding: actorBinding,
+        decisionId: actorBinding.evaluationDecisionId,
       },
-      interaction: recoveryReviewInteraction(actorBinding.bindingId),
+      interaction: evaluationReviewInteraction(actorBinding.requestId),
     },
   });
   assert.ok(actorRequest);
@@ -439,11 +440,11 @@ test("InteractionManager invalidates expired recovery reviews but preserves acto
     () => actorManager.resolveRequest({
       threadId: "thread-actor-recovery",
       requestId: actorRequest.requestId,
-      message: "Selected recovery option: retry.primary",
-      recoveryOptionId: "retry.primary",
+      message: "Accept once",
+      recoveryOptionId: "evaluation.accept_once",
       actor: { actorType: "service", actorId: "service-1", tenantId: "tenant-1" },
     }),
-    { code: "RECOVERY_ACTOR_INVALID" },
+    { code: "EVALUATION_REVIEW_ACTOR_INVALID" },
   );
   assert.equal(
     (await actorStore.getInteractionRequest(actorRequest.requestId))?.status,
@@ -480,7 +481,7 @@ function buildApprovalBinding(input: {
   };
 }
 
-function buildRecoveryReviewBinding(input: {
+function buildEvaluationReviewBinding(input: {
   threadId: string;
   runId: string;
   requestedAt?: Date;
@@ -488,26 +489,39 @@ function buildRecoveryReviewBinding(input: {
 }) {
   const requestedAt = input.requestedAt ?? new Date(Date.now() - 1_000);
   const expiresAt = input.expiresAt ?? new Date(Date.now() + 60_000);
-  return {
-    version: RECOVERY_REVIEW_BINDING_VERSION,
-    bindingId: `binding-${input.runId}`,
-    decisionId: `decision-${input.runId}`,
+  return createEvaluationReviewBindingV1({
+    requestId: `binding-${input.runId}`,
+    evaluationDecisionId: `decision-${input.runId}`,
     threadId: input.threadId,
     runId: input.runId,
-    executionProfileFingerprint: "a".repeat(64),
+    profileFingerprint: "a".repeat(64),
     policyRevision: `sha256:${"b".repeat(64)}`,
-    allowedOptionIds: ["retry.primary", "terminal.fail"],
-    requestedAt: requestedAt.toISOString(),
+    allowedOptionIds: [
+      "evaluation.accept_once",
+      "evaluation.revise",
+      "terminal.fail",
+    ],
+    issuedAt: requestedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
-  };
+    tenantId: "tenant-1",
+  });
 }
 
-function recoveryReviewInteraction(requestId: string) {
+function evaluationReviewInteraction(requestId: string) {
   return createRunnerStructuredReviewInteractionV1({
-    reason: "recovery_review",
+    reason: "evaluation_review",
     requestId,
-    prompt: "Choose a recovery option.",
-    allowedOptionIds: ["retry.primary", "terminal.fail"],
+    prompt: "Choose an evaluation option.",
+    allowedOptionIds: [
+      "evaluation.accept_once",
+      "evaluation.revise",
+      "terminal.fail",
+    ],
+    evaluationTechnicalDisclosure: {
+      candidate: "Candidate",
+      assertions: [],
+      evidenceReferences: [],
+    },
   });
 }
 

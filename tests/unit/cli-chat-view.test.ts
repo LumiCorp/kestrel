@@ -5,7 +5,7 @@ import React from "react";
 import { renderToString } from "ink";
 
 import { ChatView } from "../../cli/ink/views/ChatView.js";
-import { recoveryReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
+import { evaluationReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
 
 
 test("ChatView renders transcript and compose shell", () => {
@@ -167,7 +167,7 @@ test("ChatView keeps the composer interactive while waiting for user input", () 
   assert.doesNotMatch(text, /Run in progress/);
 });
 
-test("ChatView replaces free text with the structured review picker", () => {
+test("ChatView replaces free text with the evaluation review picker", () => {
   const now = new Date().toISOString();
   const text = renderToString(
     React.createElement(ChatView, {
@@ -181,8 +181,8 @@ test("ChatView replaces free text with the structured review picker", () => {
         pendingWaitFor: {
           kind: "user",
           eventType: "user.reply",
-          metadata: { reason: "recovery_review" },
-          interaction: structuredClone(recoveryReviewInteractionFixture),
+          metadata: { reason: "evaluation_review" },
+          interaction: structuredClone(evaluationReviewInteractionFixture),
         },
       },
       transcript: [],
@@ -200,8 +200,9 @@ test("ChatView replaces free text with the structured review picker", () => {
     }),
   );
 
-  assert.match(text, /1\. Try again/u);
-  assert.match(text, /2\. End this run/u);
+  assert.match(text, /1\. Accept once/u);
+  assert.match(text, /2\. Revise result/u);
+  assert.match(text, /3\. Fail run/u);
   assert.doesNotMatch(text, /free text must not render/u);
 });
 

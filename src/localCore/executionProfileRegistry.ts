@@ -4,9 +4,7 @@ import path from "node:path";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import { parseResolvedOciMcpEgressBinding } from "../../packages/mcp-security/src/index.js";
-import { parseRecoveryPolicyV1 } from "../kestrel/contracts/recovery.js";
 import { parseRuntimeEvaluationPolicyV1 } from "../kestrel/contracts/evaluation.js";
-import { assertRecoveryPrimaryProjection } from "../profile/recoveryPolicy.js";
 import { assertEvaluationPrimaryProjection } from "../profile/evaluationPolicy.js";
 import {
   fingerprintResolvedProfile,
@@ -70,26 +68,27 @@ export class LocalCoreExecutionProfileRegistry {
     revisionProvenance?: ExecutionProfileRevisionProvenance | undefined,
   ): Promise<RegisteredExecutionProfile> {
     assertSecretFreeProfile(inputProfile);
-    assertValidRecoveryPolicy(inputProfile);
-    assertValidEvaluationPolicy(inputProfile);
+    const activeProfile = structuredClone(inputProfile);
+    delete activeProfile.recoveryPolicy;
+    assertValidEvaluationPolicy(activeProfile);
     const fingerprintSeed = {
-      ...structuredClone(inputProfile),
+      ...structuredClone(activeProfile),
       id:
-        inputProfile.agentProfileId === KESTREL_ONE_POLICY_ID
+        activeProfile.agentProfileId === KESTREL_ONE_POLICY_ID
           ? KESTREL_ONE_POLICY_ID
-          : inputProfile.id,
+          : activeProfile.id,
     };
     const fingerprint = fingerprintResolvedProfile(
       fingerprintSeed,
       revisionProvenance,
     );
     const prefix =
-      inputProfile.agentProfileId === KESTREL_ONE_POLICY_ID
+      activeProfile.agentProfileId === KESTREL_ONE_POLICY_ID
         ? KESTREL_ONE_POLICY_ID
-        : `custom:${sanitizeId(inputProfile.id)}`;
+        : `custom:${sanitizeId(activeProfile.id)}`;
     const profileId = `${prefix}:${environmentPresetId}:${fingerprint}`;
     const profile: TuiProfile = {
-      ...structuredClone(inputProfile),
+      ...activeProfile,
       id: profileId,
     };
     return await withRegistryWriteLock(this.filePath, async () => {
@@ -207,22 +206,17 @@ function parseStoredProfile(value: unknown, index: number): TuiProfile {
     );
   }
   assertSecretFreeProfile(profile as TuiProfile);
-  assertValidRecoveryPolicy(profile as TuiProfile);
   assertValidEvaluationPolicy(profile as TuiProfile);
   assertValidOciMcpEgressBindings(profile as TuiProfile);
-  return structuredClone(profile as TuiProfile);
+  const parsed = structuredClone(profile as TuiProfile);
+  delete parsed.recoveryPolicy;
+  return parsed;
 }
 
 function assertValidOciMcpEgressBindings(profile: TuiProfile): void {
   for (const binding of profile.ociMcpEgressBindings ?? []) {
     parseResolvedOciMcpEgressBinding(binding);
   }
-}
-
-function assertValidRecoveryPolicy(profile: TuiProfile): void {
-  if (profile.recoveryPolicy === undefined) return;
-  const recoveryPolicy = parseRecoveryPolicyV1(profile.recoveryPolicy);
-  assertRecoveryPrimaryProjection(profile, recoveryPolicy);
 }
 
 function assertValidEvaluationPolicy(profile: TuiProfile): void {

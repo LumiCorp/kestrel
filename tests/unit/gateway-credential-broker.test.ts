@@ -313,7 +313,7 @@ test(
 );
 
 test(
-  "brokered model gateway refreshes once after provider authentication failure",
+  "brokered model gateway preserves provider authentication failure without hidden refresh",
   async () => {
     let loads = 0;
     let providerCalls = 0;
@@ -353,25 +353,20 @@ test(
         }) satisfies ModelGateway,
     });
 
-    const result = await gateway.call<{ text: string }>({
-      input: "hello",
-      model: "z-ai/glm-5.2",
-    });
-
-    assert.equal(result.text, "selected model answered");
-    assert.equal(loads, 2);
-    assert.equal(providerCalls, 2);
-    assert.deepEqual(requestedModels, [
-      reference.rawModelId,
-      reference.rawModelId,
-    ]);
-    assert.deepEqual(registeredLeases, ["lease-1", "lease-2"]);
-    assert.deepEqual(releasedLeases, ["lease-1"]);
+    await assert.rejects(
+      gateway.call({ input: "hello", model: "z-ai/glm-5.2" }),
+      (error: unknown) => (error as { code?: unknown }).code === "MODEL_AUTH_ERROR",
+    );
+    assert.equal(loads, 1);
+    assert.equal(providerCalls, 1);
+    assert.deepEqual(requestedModels, [reference.rawModelId]);
+    assert.deepEqual(registeredLeases, ["lease-1"]);
+    assert.deepEqual(releasedLeases, []);
   },
 );
 
 test(
-  "brokered model gateway refreshes once after provider authorization failure",
+  "brokered model gateway preserves provider authorization failure without hidden refresh",
   async () => {
     let loads = 0;
     let providerCalls = 0;
@@ -399,11 +394,12 @@ test(
       }),
     });
 
-    const result = await gateway.call<{ text: string }>({ input: "hello" });
-
-    assert.equal(result.text, "selected model answered");
-    assert.equal(loads, 2);
-    assert.equal(providerCalls, 2);
+    await assert.rejects(
+      gateway.call({ input: "hello" }),
+      (error: unknown) => (error as { status?: unknown }).status === 403,
+    );
+    assert.equal(loads, 1);
+    assert.equal(providerCalls, 1);
   },
 );
 
@@ -440,13 +436,12 @@ test(
 
     await assert.rejects(gateway.call({ input: "hello" }), (error: unknown) => {
       assert.equal(String(error).includes("leased-provider-secret-1"), false);
-      assert.equal(String(error).includes("leased-provider-secret-2"), false);
       assert.equal((error as { code?: unknown }).code, "MODEL_AUTH_ERROR");
       assert.equal((error as { status?: unknown }).status, 401);
       assert.equal("details" in (error as object), false);
       return true;
     });
-    assert.equal(loads, 2);
+    assert.equal(loads, 1);
   },
 );
 

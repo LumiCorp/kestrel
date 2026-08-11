@@ -1361,11 +1361,10 @@ export class ThreadRuntime implements ThreadRuntimePort {
   }
 
   async getThreadStatus(threadId: string): Promise<ThreadStatusSnapshot | null> {
-    let thread = await this.store.getThread(threadId);
+    const thread = await this.store.getThread(threadId);
     if (thread === null) {
       return null;
     }
-    thread = await this.reconcileRetiredRecoveryReview(thread);
     const [
       openRequests,
       activeGrants,
@@ -1689,58 +1688,6 @@ export class ThreadRuntime implements ThreadRuntimePort {
       throw threadNotFoundFailure(threadId);
     }
     return thread;
-  }
-
-  private async reconcileRetiredRecoveryReview(thread: ThreadRecord): Promise<ThreadRecord> {
-    return this.withMessageRoutingMutation(
-      thread.threadId,
-      (latest) => this.reconcileRetiredRecoveryReviewOwned(latest),
-    );
-  }
-
-  private async reconcileRetiredRecoveryReviewOwned(thread: ThreadRecord): Promise<ThreadRecord> {
-    if (thread.currentRequestId === undefined) return thread;
-    const request = await this.store.getInteractionRequest(thread.currentRequestId);
-    if (
-      request === null ||
-      request.status !== "PENDING" ||
-      request.threadId !== thread.threadId ||
-      request.metadata?.reason !== "recovery_review"
-    ) return thread;
-
-    const resolvedAt = new Date().toISOString();
-    const failure = asRuntimeError(createRuntimeFailure(
-      "RECOVERY_REVIEW_RETIRED",
-      "This generic recovery review is no longer executable. Retry the failed run from the operator controls.",
-      {
-        threadId: thread.threadId,
-        requestId: request.requestId,
-        ...(thread.activeRunId !== undefined ? { runId: thread.activeRunId } : {}),
-      },
-    ));
-    await this.store.upsertInteractionRequest({
-      ...request,
-      status: "CANCELLED",
-      response: { validationErrorCode: failure.code },
-      resolvedAt,
-    });
-
-    if (thread.activeRunId !== undefined) {
-      await this.store.completeRun(thread.activeRunId, "FAILED", failure);
-    }
-    const latest = await this.store.getThread(thread.threadId) ?? thread;
-    const reconciled = resumeFollowUps({
-      ...latest,
-      status: "FAILED",
-      activeRunId: undefined,
-      currentRequestId: undefined,
-      waitFor: undefined,
-      lastRunStatus: "FAILED",
-      updatedAt: resolvedAt,
-    });
-    await this.store.upsertThread(reconciled);
-    void Promise.resolve().then(() => this.processFollowUps(thread.threadId));
-    return reconciled;
   }
 
   private async resolveSubmitGateCheckpoints(thread: ThreadRecord): Promise<void> {

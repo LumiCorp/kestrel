@@ -9,11 +9,6 @@ import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOut
 import type { AgentToolResult, ModelRequest, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
 import type { AgentToolResultV2 } from "../kestrel/contracts/tool-invocation.js";
 import {
-  buildRecoveryReviewInteractionV1,
-  parseRecoveryDecisionV1,
-  parseRecoveryReviewBindingV1,
-} from "../kestrel/contracts/recovery.js";
-import {
   hashCanonical,
   parseToolSurfaceSnapshotV1,
 } from "../kestrel/contracts/tool-contract.js";
@@ -106,20 +101,18 @@ import {
   summarizeUnknown,
 } from "./ExecutionEngineSupport.js";
 import { RuntimeIO } from "./RuntimeIO.js";
-import { RecoveryCoordinator, normalizeRecoveryFailureCode } from "./recovery/RecoveryCoordinator.js";
-import {
-  normalizeRecoveryWorkflowResult,
-  type RecoveryWorkflowResult,
-} from "./recovery/RecoveryRegistries.js";
 import {
   RuntimeEvaluationCoordinator,
   type RuntimeEvaluationEvidenceInputV1,
   type RuntimeEvaluationHookResultV1,
 } from "../evaluation/RuntimeEvaluationCoordinator.js";
 import {
+  createEvaluationReviewBindingV1,
+  parseEvaluationReviewBindingV1,
   parseRuntimeEvaluationDecisionV1,
   parseRuntimeEvaluationRequestV1,
   parseRuntimeEvaluationVerdictV1,
+  type EvaluationReviewBindingV1,
 } from "../kestrel/contracts/evaluation.js";
 import {
   digestCanonicalValue as digestBoundaryValue,
@@ -361,11 +354,6 @@ export class ExecutionEngine {
   private readonly stepFrameBufferEnabled: boolean;
   private readonly progressPersistGranularity: ProgressPersistGranularity;
   private readonly loggedHeapPressureKeys = new Set<string>();
-  private readonly recoveryWorkflowFailures = new Map<string, Array<{
-    handlerId: string;
-    failureCode: string;
-  }>>();
-  private readonly recoveryCoordinator: RecoveryCoordinator | undefined;
   private readonly evaluationCoordinator: RuntimeEvaluationCoordinator | undefined;
   private readonly executionBoundaryRuntime: ExecutionBoundaryPolicyRuntime;
 
@@ -378,29 +366,6 @@ export class ExecutionEngine {
       ...guardrailConfig,
     };
     this.toolQueueEnabled = this.resolveToolQueueEnabled();
-    const recoveryRuntime = this.deps.recoveryRuntime;
-    this.recoveryCoordinator = recoveryRuntime === undefined
-      ? undefined
-      : new RecoveryCoordinator({
-          policy: recoveryRuntime.policy,
-          executionProfileFingerprint: recoveryRuntime.executionProfileFingerprint,
-          modelRegistry: recoveryRuntime.modelRegistry,
-          toolAdapterRegistry: recoveryRuntime.toolAdapterRegistry,
-          workflowHandlerRegistry: recoveryRuntime.workflowHandlerRegistry,
-          appendLifecycleEvent: (event) =>
-            this.appendRunEvent(
-              event.runId,
-              event.sessionId,
-              event.type,
-              event.level,
-              event.metadata,
-              event.stepIndex,
-              { bypassBuffer: true },
-            ),
-          ...(recoveryRuntime.validateCredential !== undefined
-            ? { validateCredential: recoveryRuntime.validateCredential }
-            : {}),
-        });
     const evaluationRuntime = this.deps.evaluationRuntime;
     this.evaluationCoordinator = evaluationRuntime === undefined
       ? undefined
@@ -704,7 +669,6 @@ export class ExecutionEngine {
     let stepRunnerState: StepRunnerState | undefined;
     let runStarted = false;
     const runLifecycleFrame = this.createRunLifecycleObservabilityFrame(runId, event.sessionId);
-    this.recoveryWorkflowFailures.delete(runId);
 
     return this.runLifecycleFrameStore.run(runLifecycleFrame, async () => {
       try {
@@ -738,20 +702,6 @@ export class ExecutionEngine {
         }
         if (evaluationReviewResume?.session !== undefined) {
           session = evaluationReviewResume.session;
-        }
-
-        const recoveryReviewResume = await this.maybeHandleRecoveryReviewResume({
-          runId,
-          event,
-          session,
-          guardrails,
-          progressSeq,
-        });
-        if (recoveryReviewResume?.output !== undefined) {
-          return recoveryReviewResume.output;
-        }
-        if (recoveryReviewResume?.session !== undefined) {
-          session = recoveryReviewResume.session;
         }
 
         await this.validateResumedRuntimeState({
@@ -963,18 +913,8 @@ export class ExecutionEngine {
             runtimeError.code === "AGENT_DISPATCH_STALL_DETECTED" ||
             isRecoverableDispatchLoopGuard(runtimeError, lastStepAgent)
           ) {
-            const loopRecoveryContext = {
-              handlerId: "run.loop_recovery" as const,
-              failureCode: runtimeError.code,
-              runId,
-              sessionId: session.sessionId,
-              threadId: this.asString(event.payload.threadId) ?? session.sessionId,
-              stepIndex: guardrails.telemetry().stepsExecuted,
-              guardrails,
-            };
-            const stalledOutput = await this.runRecoveryWorkflow({
-              ...loopRecoveryContext,
-              execute: () => this.loopGuardCoordinator.maybeCompleteResearchStall({
+            const stalledOutput =
+              await this.loopGuardCoordinator.maybeCompleteResearchStall({
               runId,
               session: session!,
               currentStep: lastStepAgent!,
@@ -982,14 +922,12 @@ export class ExecutionEngine {
               guardrails,
               progressSeq,
               runtimeError,
-              }),
-            });
+              });
             if (stalledOutput !== undefined) {
               return stalledOutput;
             }
-            const documentedFinalizeGapOutput = await this.runRecoveryWorkflow({
-              ...loopRecoveryContext,
-              execute: () => this.loopGuardCoordinator.maybeCompleteDocumentedFinalizeGap({
+            const documentedFinalizeGapOutput =
+              await this.loopGuardCoordinator.maybeCompleteDocumentedFinalizeGap({
               runId,
               session: session!,
               currentStep: lastStepAgent!,
@@ -997,14 +935,12 @@ export class ExecutionEngine {
               runtimeError,
               guardrails,
               progressSeq,
-              }),
-            });
+              });
             if (documentedFinalizeGapOutput !== undefined) {
               return documentedFinalizeGapOutput;
             }
-            const loopStallOutput = await this.runRecoveryWorkflow({
-              ...loopRecoveryContext,
-              execute: () => this.loopGuardCoordinator.maybeResolveLoopVisitStall({
+            const loopStallOutput =
+              await this.loopGuardCoordinator.maybeResolveLoopVisitStall({
               runId,
               session: session!,
               currentStep: lastStepAgent!,
@@ -1012,8 +948,7 @@ export class ExecutionEngine {
               runtimeError,
               guardrails,
               progressSeq,
-              }),
-            });
+              });
             if (loopStallOutput !== undefined) {
               return loopStallOutput;
             }
@@ -1022,15 +957,8 @@ export class ExecutionEngine {
             runtimeError.code === "MAX_STEPS_EXCEEDED" ||
             runtimeError.code === "MAX_MODEL_CALLS_EXCEEDED"
           ) {
-            const stalledOutput = await this.runRecoveryWorkflow({
-              handlerId: "run.loop_recovery",
-              failureCode: runtimeError.code,
-              runId,
-              sessionId: session.sessionId,
-              threadId: this.asString(event.payload.threadId) ?? session.sessionId,
-              stepIndex: guardrails.telemetry().stepsExecuted,
-              guardrails,
-              execute: () => this.loopGuardCoordinator.maybeCompleteResearchStall({
+            const stalledOutput =
+              await this.loopGuardCoordinator.maybeCompleteResearchStall({
               runId,
               session: session!,
               currentStep: lastStepAgent!,
@@ -1038,8 +966,7 @@ export class ExecutionEngine {
               guardrails,
               progressSeq,
               runtimeError,
-              }),
-            });
+              });
             if (stalledOutput !== undefined) {
               return stalledOutput;
             }
@@ -1083,18 +1010,8 @@ export class ExecutionEngine {
           session !== undefined &&
           lastStepAgent !== undefined
         ) {
-          const loopRecoveryContext = {
-            handlerId: "run.loop_recovery" as const,
-            failureCode: runtimeError.code,
-            runId,
-            sessionId: session.sessionId,
-            threadId: this.asString(event.payload.threadId) ?? session.sessionId,
-            stepIndex: guardrails.telemetry().stepsExecuted,
-            guardrails,
-          };
-          const loopResolutionOutput = await this.runRecoveryWorkflow({
-            ...loopRecoveryContext,
-            execute: () => this.maybeRequestToolInputInvalidLoopResolution({
+          const loopResolutionOutput =
+            await this.maybeRequestToolInputInvalidLoopResolution({
             runId,
             session: session!,
             currentStep: lastStepAgent!,
@@ -1102,15 +1019,13 @@ export class ExecutionEngine {
             runtimeError,
             guardrails,
             progressSeq,
-            }),
-          });
+            });
           if (loopResolutionOutput !== undefined) {
             return loopResolutionOutput;
           }
 
-          const documentedFinalizeGapOutput = await this.runRecoveryWorkflow({
-            ...loopRecoveryContext,
-            execute: () => this.loopGuardCoordinator.maybeCompleteDocumentedFinalizeGap({
+          const documentedFinalizeGapOutput =
+            await this.loopGuardCoordinator.maybeCompleteDocumentedFinalizeGap({
             runId,
             session: session!,
             currentStep: lastStepAgent!,
@@ -1118,8 +1033,7 @@ export class ExecutionEngine {
             runtimeError,
             guardrails,
             progressSeq,
-            }),
-          });
+            });
           if (documentedFinalizeGapOutput !== undefined) {
             return documentedFinalizeGapOutput;
           }
@@ -1153,9 +1067,8 @@ export class ExecutionEngine {
                 session = updated;
               },
             );
-            const synthesizedOutput = await this.runRecoveryWorkflow({
-              ...loopRecoveryContext,
-              execute: () => this.loopGuardCoordinator.maybeCompleteVerifiedRetrievalSynthesis({
+            const synthesizedOutput =
+              await this.loopGuardCoordinator.maybeCompleteVerifiedRetrievalSynthesis({
               runId,
               event,
               session: session!,
@@ -1167,14 +1080,12 @@ export class ExecutionEngine {
               runtimeError,
               signal: options.signal,
               useModel: recoveryIO.useModel,
-              }),
-            });
+              });
             if (synthesizedOutput !== undefined) {
               return synthesizedOutput;
             }
-            const stalledOutput = await this.runRecoveryWorkflow({
-              ...loopRecoveryContext,
-              execute: () => this.loopGuardCoordinator.maybeCompleteResearchStall({
+            const stalledOutput =
+              await this.loopGuardCoordinator.maybeCompleteResearchStall({
               runId,
               session: session!,
               currentStep: lastStepAgent!,
@@ -1182,47 +1093,16 @@ export class ExecutionEngine {
               guardrails,
               progressSeq,
               runtimeError,
-              }),
-            });
+              });
             if (stalledOutput !== undefined) {
               return stalledOutput;
             }
           }
         }
-        const recoveryFailures = this.recoveryWorkflowFailures.get(runId) ?? [];
-        const terminalRuntimeError = recoveryFailures.length === 0
-          ? runtimeError
-          : {
-              code: "RECOVERY_EXHAUSTED",
-              message: "Every applicable bounded recovery workflow failed.",
-              details: {
-                triggeringFailureCode: runtimeError.code,
-                attempts: structuredClone(recoveryFailures),
-              },
-            } satisfies RuntimeError;
-        if (terminalRuntimeError !== runtimeError) errors.push(terminalRuntimeError);
-        if (
-          terminalRuntimeError.code === "RECOVERY_EXHAUSTED" &&
-          session !== undefined &&
-          lastStepAgent !== undefined
-        ) {
-          const review = await this.maybeEnterRecoveryReview({
-            runId,
-            event,
-            session,
-            currentStep: lastStepAgent,
-            stepIndex: guardrails.telemetry().stepsExecuted,
-            guardrails,
-            progressSeq,
-            triggeringFailureCode: runtimeError.code,
-            triggeringFailureSummary: runtimeError.message,
-          });
-          if (review !== undefined) return review;
-        }
         return await this.runLifecycleController.failRun({
           runId,
           event,
-          runtimeError: terminalRuntimeError,
+          runtimeError,
           errors,
           guardrails,
           progressSeq,
@@ -1274,7 +1154,6 @@ export class ExecutionEngine {
           await this.flushRunLifecycleObservabilityFrame(runLifecycleFrame);
         }
         this.clearHeapPressureLogKeys(runId);
-        this.recoveryWorkflowFailures.delete(runId);
       }
     });
   }
@@ -1722,56 +1601,7 @@ export class ExecutionEngine {
     statePatch: Record<string, unknown>;
     disposition: "revise";
   }> {
-    const recovery = await this.selectEvaluationRecovery({
-      runId: input.runId,
-      sessionId: input.session.sessionId,
-      threadId: input.threadId,
-      stepIndex: input.stepIndex,
-      guardrails: input.guardrails,
-      failureCode: "EVALUATION_REJECTED",
-      requestedWorkflowHandlerId: "evaluation.revise",
-    });
-    if (
-      recovery.decision.outcome.status !== "selected" ||
-      recovery.decision.outcome.action !== "deterministic_workflow" ||
-      recovery.decision.outcome.candidateId !== "evaluation.revise"
-    ) {
-      throw createRuntimeFailure(
-        "EVALUATION_REVISION_UNAVAILABLE",
-        "The exact evaluation revision workflow was not authorized.",
-      );
-    }
-    const evaluationDecision = await this.evaluationCoordinator!.bindRecoveryDecision({
-      decision: input.result.decision,
-      recoveryDecisionId: recovery.decision.decisionId,
-      stepIndex: input.stepIndex,
-    });
-    const handler = this.deps.recoveryRuntime?.workflowHandlerRegistry.resolve(
-      "evaluation.revise",
-    );
-    if (handler === undefined || this.recoveryCoordinator === undefined) {
-      throw createRuntimeFailure(
-        "EVALUATION_REVISION_UNAVAILABLE",
-        "The exact evaluation revision workflow is not registered.",
-      );
-    }
-    await this.recoveryCoordinator.markActionStarted(recovery.decision);
-    try {
-      await handler({
-        runId: input.runId,
-        sessionId: input.session.sessionId,
-        failureCode: "EVALUATION_REJECTED",
-        stepIndex: input.stepIndex,
-        execute: async () => ({ revisionAuthorized: true }),
-      });
-      await this.recoveryCoordinator.markActionCompleted(recovery.decision);
-    } catch (error) {
-      await this.recoveryCoordinator.markActionFailed(
-        recovery.decision,
-        this.mapError(error).code,
-      );
-      throw error;
-    }
+    const evaluationDecision = input.result.decision;
     return {
       transition: {
         ...input.transition,
@@ -1797,7 +1627,6 @@ export class ExecutionEngine {
               status: "revising",
               finalRevisionsUsed: input.finalRevisionsUsed + 1,
               evaluationDecision: structuredClone(evaluationDecision),
-              recoveryDecision: structuredClone(recovery.decision),
             },
           },
         },
@@ -1827,42 +1656,33 @@ export class ExecutionEngine {
     statePatch: Record<string, unknown>;
     disposition: "review" | "quarantine";
   }> {
-    const failureCode = evaluationRecoveryFailureCode(input.result.decision);
-    const allowedOptionIds = [
-      "evaluation.accept_once",
-      ...(input.finalRevisionsUsed < this.evaluationCoordinator!.policy.budget.maxFinalRevisions
-        ? ["evaluation.revise"]
-        : []),
-      "terminal.fail",
-    ];
-    const recovery = await this.selectEvaluationRecovery({
-      runId: input.runId,
-      sessionId: input.session.sessionId,
-      threadId: input.threadId,
-      stepIndex: input.stepIndex,
-      guardrails: input.guardrails,
-      failureCode,
-      allowedReviewOptionIds: allowedOptionIds,
-    });
+    const allowedOptionIds: EvaluationReviewBindingV1["allowedOptionIds"] =
+      ["evaluation.accept_once"];
     if (
-      recovery.decision.outcome.status !== "waiting" ||
-      recovery.reviewBinding === undefined
+      input.finalRevisionsUsed <
+      this.evaluationCoordinator!.policy.budget.maxFinalRevisions
     ) {
-      throw createRuntimeFailure(
-        "EVALUATION_REVIEW_UNAVAILABLE",
-        "The exact evaluation review action was not authorized.",
-      );
+      allowedOptionIds.push("evaluation.revise");
     }
-    const evaluationDecision = await this.evaluationCoordinator!.bindRecoveryDecision({
-      decision: input.result.decision,
-      recoveryDecisionId: recovery.decision.decisionId,
-      stepIndex: input.stepIndex,
-    });
+    allowedOptionIds.push("terminal.fail");
+    const evaluationDecision = input.result.decision;
+    const reviewRequestId = `evaluation-review:${evaluationDecision.decisionId}`;
     const actor = this.asRecord(
       this.asRecord(input.event.payload.metadata)?.actor ??
         input.event.payload.actor,
     );
     const tenantId = this.asString(actor?.tenantId);
+    const evaluationReviewBinding = createEvaluationReviewBindingV1({
+      requestId: reviewRequestId,
+      threadId: input.threadId,
+      runId: input.runId,
+      evaluationDecisionId: evaluationDecision.decisionId,
+      policyRevision: this.evaluationCoordinator!.policy.revision,
+      profileFingerprint: this.evaluationCoordinator!.executionProfileFingerprint,
+      allowedOptionIds,
+      issuedAt: new Date().toISOString(),
+      ...(tenantId !== undefined ? { tenantId } : {}),
+    });
     const technicalDisclosure = {
       candidate: input.sanitizedCandidate,
       ...(input.result.verdict !== undefined
@@ -1888,16 +1708,15 @@ export class ExecutionEngine {
         reason: "evaluation_review",
         prompt: "Result requires review.",
         decisionId: evaluationDecision.decisionId,
-        recoveryDecisionId: recovery.decision.decisionId,
-        recoveryReviewBinding: structuredClone(recovery.reviewBinding),
-        allowedOptionIds: [...recovery.reviewBinding.allowedOptionIds],
+        allowedOptionIds: [...allowedOptionIds],
+        evaluationReviewBinding: structuredClone(evaluationReviewBinding),
         evaluationTechnicalDisclosure: technicalDisclosure,
       },
       interaction: createRunnerStructuredReviewInteractionV1({
         reason: "evaluation_review",
-        requestId: recovery.reviewBinding.bindingId,
+        requestId: reviewRequestId,
         prompt: "Result requires review.",
-        allowedOptionIds: recovery.reviewBinding.allowedOptionIds,
+        allowedOptionIds,
         evaluationTechnicalDisclosure: technicalDisclosure,
       }),
     };
@@ -1913,12 +1732,12 @@ export class ExecutionEngine {
         ? { verdict: structuredClone(input.result.verdict) }
         : {}),
       request: structuredClone(input.result.request),
-      recoveryDecision: structuredClone(recovery.decision),
-      recoveryReviewBinding: structuredClone(recovery.reviewBinding),
+      reviewRequestId,
       threadId: input.threadId,
       policyRevision: this.evaluationCoordinator!.policy.revision,
       profileFingerprint: this.evaluationCoordinator!.executionProfileFingerprint,
-      allowedOptionIds: [...recovery.reviewBinding.allowedOptionIds],
+      allowedOptionIds: [...allowedOptionIds],
+      evaluationReviewBinding: structuredClone(evaluationReviewBinding),
       finalRevisionsUsed: input.finalRevisionsUsed,
       ...(tenantId !== undefined ? { tenantId } : {}),
       ...(input.result.assistantOutputBoundaryDecision !== undefined
@@ -1960,48 +1779,6 @@ export class ExecutionEngine {
           ? "quarantine"
           : "review",
     };
-  }
-
-  private async selectEvaluationRecovery(input: {
-    runId: string;
-    sessionId: string;
-    threadId: string;
-    stepIndex: number;
-    guardrails: Guardrails;
-    failureCode: string;
-    requestedWorkflowHandlerId?: string | undefined;
-    allowedReviewOptionIds?: string[] | undefined;
-  }) {
-    const coordinator = this.recoveryCoordinator;
-    if (coordinator === undefined) {
-      throw createRuntimeFailure(
-        "EVALUATION_RECOVERY_UNAVAILABLE",
-        "Runtime evaluation requires the recovery coordinator.",
-      );
-    }
-    const telemetry = input.guardrails.telemetry();
-    const budget = input.guardrails.budgetSnapshot();
-    return coordinator.decide({
-      runId: input.runId,
-      sessionId: input.sessionId,
-      threadId: input.threadId,
-      scope: "run",
-      failureCode: input.failureCode,
-      visibleOutputStarted: false,
-      budget: {
-        remainingMs: Math.max(0, budget.remainingMs),
-        tokensUsed: Math.max(0, telemetry.totalTokens ?? 0),
-        toolCallsUsed: Math.max(0, telemetry.toolCalls),
-      },
-      stepIndex: input.stepIndex,
-      expectedPolicyRevision: coordinator.policy.revision,
-      ...(input.requestedWorkflowHandlerId !== undefined
-        ? { requestedWorkflowHandlerId: input.requestedWorkflowHandlerId }
-        : {}),
-      ...(input.allowedReviewOptionIds !== undefined
-        ? { allowedReviewOptionIds: input.allowedReviewOptionIds }
-        : {}),
-    });
   }
 
   private createStepIO(
@@ -2061,12 +1838,6 @@ export class ExecutionEngine {
         }),
       afterToolResult: (input) => this.maybeAttachManagedWorktreeProcess(input),
       isRetryableToolError: (error) => this.isRetryableToolError(error),
-      ...(this.recoveryCoordinator !== undefined
-        ? { recoveryCoordinator: this.recoveryCoordinator }
-        : {}),
-      ...(this.deps.recoveryRuntime !== undefined
-        ? { recoveryRuntime: this.deps.recoveryRuntime }
-        : {}),
       ...(this.evaluationCoordinator !== undefined
         ? { evaluationCoordinator: this.evaluationCoordinator }
         : {}),
@@ -2171,16 +1942,10 @@ export class ExecutionEngine {
 
     if (sample.guardMode === "compact") {
       const pressureSample = sample;
-      const compacted = await this.runRecoveryWorkflow({
-        handlerId: "context.compaction",
-        failureCode: "RUNTIME_HEAP_PRESSURE",
-        runId: input.runId,
-        sessionId: input.sessionId,
-        threadId: input.sessionId,
-        stepIndex: input.stepIndex,
-        guardrails: input.guardrails,
-        execute: () => this.compactSessionForHeapPressure(input.session, pressureSample),
-      });
+      const compacted = await this.compactSessionForHeapPressure(
+        input.session,
+        pressureSample,
+      );
       if (compacted !== undefined) {
         input.onSessionUpdated(compacted);
       }
@@ -3184,14 +2949,11 @@ export class ExecutionEngine {
           { recoverable: false, toolName },
         );
       }
-      const recoveryAdapterId = this.asString(payload.recoveryAdapterId);
       const origin = resolvedIntent === undefined
         ? {
             kind: "trusted_runtime" as const,
-            producerId: recoveryAdapterId === undefined
-              ? "runtime.step-transition:v1"
-              : "runtime.recovery-coordinator:v1",
-            adapterId: recoveryAdapterId ?? "runtime.effect-tool:v1",
+            producerId: "runtime.step-transition:v1",
+            adapterId: "runtime.effect-tool:v1",
           }
         : {
             kind: "model" as const,
@@ -3215,7 +2977,6 @@ export class ExecutionEngine {
         ...(bindingAuthorityRevision === undefined
           ? { authority: "automatic" }
           : { authority: bindingAuthorityRevision }),
-        ...(recoveryAdapterId === undefined ? {} : { recoveryAdapterId }),
       });
       if (approvalId !== undefined) {
         let exactBinding;
@@ -3232,11 +2993,7 @@ export class ExecutionEngine {
             },
           );
         }
-        const preparedPayloadHash = digestExternalApprovalPayload(
-          recoveryAdapterId === undefined
-            ? rawInput
-            : { toolName, toolInput: rawInput },
-        );
+        const preparedPayloadHash = digestExternalApprovalPayload(rawInput);
         if (
           exactBinding.actionKey !== toolName ||
           exactBinding.payloadHash !== preparedPayloadHash ||
@@ -3270,9 +3027,6 @@ export class ExecutionEngine {
         : {
             authorityRevision: bindingAuthorityRevision!,
             approvalId,
-            ...(recoveryAdapterId === undefined
-              ? {}
-              : { recoveryAdapterId }),
           };
       const preparedToolCall = await this.deps.toolGateway.prepareToolCall(
         {
@@ -3295,6 +3049,9 @@ export class ExecutionEngine {
         toolInput: _toolInput,
         toolSurfaceSnapshot: _toolSurfaceSnapshot,
         modelToolCallId: _modelToolCallId,
+        recoveryDecision: _recoveryDecision,
+        recoveryAdapterId: _recoveryAdapterId,
+        recoverySourceToolId: _recoverySourceToolId,
         ...remainingPayload
       } = payload;
       return {
@@ -3748,229 +3505,7 @@ export class ExecutionEngine {
     progressSeq: number;
     reason: ContinuationWaitReason;
   }): Promise<NormalizedOutput | undefined> {
-    return this.runRecoveryWorkflow({
-      handlerId: "run.continuation",
-      failureCode: input.reason === "max_model_calls_continuation"
-        ? "MAX_MODEL_CALLS_EXCEEDED"
-        : "MAX_STEPS_EXCEEDED",
-      runId: input.runId,
-      sessionId: input.session.sessionId,
-      threadId: this.asString(input.event.payload.threadId) ?? input.session.sessionId,
-      stepIndex: input.stepIndex,
-      guardrails: input.guardrails,
-      execute: () => this.continuationCoordinator.maybeRequestContinuation(input),
-    });
-  }
-
-  private async runRecoveryWorkflow<T>(input: {
-    handlerId: "context.compaction" | "run.continuation" | "run.loop_recovery";
-    failureCode: string;
-    runId: string;
-    sessionId: string;
-    threadId: string;
-    stepIndex?: number | undefined;
-    guardrails: Guardrails;
-    execute: () => Promise<T>;
-  }): Promise<T | undefined> {
-    const coordinator = this.recoveryCoordinator;
-    const recoveryRuntime = this.deps.recoveryRuntime;
-    if (coordinator === undefined || recoveryRuntime === undefined) {
-      return input.execute();
-    }
-    const telemetry = input.guardrails.telemetry();
-    const budget = input.guardrails.budgetSnapshot();
-    const selection = await coordinator.decide({
-      runId: input.runId,
-      sessionId: input.sessionId,
-      threadId: input.threadId,
-      scope: "run",
-      failureCode: normalizeRecoveryFailureCode(input.failureCode),
-      visibleOutputStarted: false,
-      budget: {
-        remainingMs: Math.max(0, budget.remainingMs),
-        tokensUsed: Math.max(0, telemetry.totalTokens ?? 0),
-        toolCallsUsed: Math.max(0, telemetry.toolCalls),
-      },
-      ...(input.stepIndex !== undefined ? { stepIndex: input.stepIndex } : {}),
-      expectedPolicyRevision: coordinator.policy.revision,
-      requestedWorkflowHandlerId: input.handlerId,
-    });
-    if (
-      selection.decision.outcome.status !== "selected" ||
-      selection.decision.outcome.action !== "deterministic_workflow" ||
-      selection.decision.outcome.candidateId !== input.handlerId
-    ) {
-      return;
-    }
-    const handler = recoveryRuntime.workflowHandlerRegistry.resolve(input.handlerId);
-    if (handler === undefined) {
-      await coordinator.markActionFailed(selection.decision, "RECOVERY_HANDLER_UNREGISTERED");
-      this.recordRecoveryWorkflowFailure(input.runId, input.handlerId, "RECOVERY_HANDLER_UNREGISTERED");
-      return;
-    }
-    await coordinator.markActionStarted(selection.decision);
-    try {
-      const outcome = normalizeRecoveryWorkflowResult<T>((await handler({
-        runId: input.runId,
-        sessionId: input.sessionId,
-        failureCode: input.failureCode,
-        ...(input.stepIndex !== undefined ? { stepIndex: input.stepIndex } : {}),
-        execute: input.execute,
-      })) as T | RecoveryWorkflowResult<T> | undefined);
-      if (outcome.status === "not_applicable") {
-        await coordinator.markActionNotApplicable(selection.decision, outcome.reason);
-        return;
-      }
-      if (outcome.status === "failed") {
-        await coordinator.markActionFailed(selection.decision, outcome.failureCode);
-        this.recordRecoveryWorkflowFailure(input.runId, input.handlerId, outcome.failureCode);
-        return;
-      }
-      await coordinator.markActionCompleted(selection.decision);
-      return outcome.value;
-    } catch (error) {
-      const failureCode = this.mapError(error).code;
-      await coordinator.markActionFailed(selection.decision, failureCode);
-      this.recordRecoveryWorkflowFailure(input.runId, input.handlerId, failureCode);
-      throw error;
-    }
-  }
-
-  private recordRecoveryWorkflowFailure(
-    runId: string,
-    handlerId: string,
-    failureCode: string,
-  ): void {
-    const failures = this.recoveryWorkflowFailures.get(runId) ?? [];
-    failures.push({ handlerId, failureCode });
-    this.recoveryWorkflowFailures.set(runId, failures);
-  }
-
-  private async maybeEnterRecoveryReview(input: {
-    runId: string;
-    event: RuntimeEvent;
-    session: SessionRecord;
-    currentStep: string;
-    stepIndex: number;
-    guardrails: Guardrails;
-    progressSeq: number;
-    triggeringFailureCode: string;
-    triggeringFailureSummary?: string | undefined;
-  }): Promise<NormalizedOutput | undefined> {
-    const coordinator = this.recoveryCoordinator;
-    if (coordinator === undefined) return;
-    const telemetry = input.guardrails.telemetry();
-    const budget = input.guardrails.budgetSnapshot();
-    const eventMetadata = this.asRecord(input.event.payload.metadata);
-    const actor = this.asRecord(eventMetadata?.actor ?? input.event.payload.actor);
-    const threadId = this.asString(eventMetadata?.threadId ?? input.event.payload.threadId) ?? input.session.sessionId;
-    const selection = await coordinator.decide({
-      runId: input.runId,
-      sessionId: input.session.sessionId,
-      threadId,
-      scope: "run",
-      failureCode: "RECOVERY_EXHAUSTED",
-      visibleOutputStarted: false,
-      budget: {
-        remainingMs: Math.max(0, budget.remainingMs),
-        tokensUsed: Math.max(0, telemetry.totalTokens ?? 0),
-        toolCallsUsed: Math.max(0, telemetry.toolCalls),
-      },
-      stepIndex: input.stepIndex,
-      expectedPolicyRevision: coordinator.policy.revision,
-    });
-    if (
-      selection.decision.outcome.status !== "waiting" ||
-      selection.reviewBinding === undefined
-    ) {
-      return;
-    }
-    const agent = this.asRecord(input.session.state.agent) ?? {};
-    const prompt = input.triggeringFailureSummary === undefined
-      ? "Recovery is exhausted. Choose exactly one allowed recovery option."
-      : [
-          "Kestrel couldn't continue. Automatic recovery could not resolve this error.",
-          "Choose exactly one allowed recovery option.",
-          "",
-          "Technical details:",
-          input.triggeringFailureSummary,
-          `Code: ${input.triggeringFailureCode}`,
-        ].join("\n");
-    const waitFor = {
-      kind: "user" as const,
-      eventType: "user.reply",
-      metadata: {
-        reason: "recovery_review",
-        prompt,
-        decisionId: selection.decision.decisionId,
-        recoveryReviewBinding: structuredClone(selection.reviewBinding),
-        allowedOptionIds: [...selection.reviewBinding.allowedOptionIds],
-        triggeringFailureCode: input.triggeringFailureCode,
-        ...(input.triggeringFailureSummary !== undefined
-          ? { triggeringFailureSummary: input.triggeringFailureSummary }
-          : {}),
-      },
-      interaction: createRunnerStructuredReviewInteractionV1({
-        reason: "recovery_review",
-        requestId: selection.reviewBinding.bindingId,
-        prompt,
-        allowedOptionIds: selection.reviewBinding.allowedOptionIds,
-        triggeringFailureCode: input.triggeringFailureCode,
-        ...(input.triggeringFailureSummary !== undefined
-          ? { triggeringFailureSummary: input.triggeringFailureSummary }
-          : {}),
-      }),
-    };
-    await this.deps.store.commitStep({
-      runId: input.runId,
-      event: input.event,
-      sessionId: input.session.sessionId,
-      expectedVersion: input.session.version,
-      stepAgent: input.currentStep,
-      nextStepAgent: input.currentStep,
-      statePatch: {
-        agent: {
-          ...agent,
-          waitingFor: this.waitResumeCoordinator.buildWaitingFor({
-            waitFor,
-            resumeStepAgent: input.currentStep,
-            reason: "recovery_review",
-            resumeInstruction: "Reply with one exact recovery option.",
-          }),
-          recovery: {
-            review: {
-              decision: structuredClone(selection.decision),
-              binding: structuredClone(selection.reviewBinding),
-              threadId,
-              triggeringFailureCode: input.triggeringFailureCode,
-              ...(input.triggeringFailureSummary !== undefined
-                ? { triggeringFailureSummary: input.triggeringFailureSummary }
-                : {}),
-              ...(this.asString(actor?.tenantId) !== undefined
-                ? { tenantId: this.asString(actor?.tenantId) }
-                : {}),
-            },
-          },
-        },
-      },
-      effects: [],
-      emitEvents: [],
-      stepIndex: input.stepIndex,
-    });
-    return this.runLifecycleController.returnTerminal({
-      runId: input.runId,
-      sessionId: input.session.sessionId,
-      currentStep: input.currentStep,
-      transition: {
-        status: "WAITING",
-        nextStepAgent: input.currentStep,
-        waitFor,
-      },
-      errors: [],
-      guardrails: input.guardrails,
-      progressSeq: input.progressSeq,
-      stepIndex: input.stepIndex,
-    });
+    return this.continuationCoordinator.maybeRequestContinuation(input);
   }
 
   private async maybeHandleEvaluationReviewResume(input: {
@@ -3984,10 +3519,8 @@ export class ExecutionEngine {
     output?: NormalizedOutput | undefined;
   } | undefined> {
     const evaluationCoordinator = this.evaluationCoordinator;
-    const recoveryCoordinator = this.recoveryCoordinator;
     if (
       evaluationCoordinator === undefined ||
-      recoveryCoordinator === undefined ||
       input.event.type !== "user.reply"
     ) {
       return;
@@ -4000,9 +3533,8 @@ export class ExecutionEngine {
     const evaluationDecision = parseRuntimeEvaluationDecisionV1(
       pending.evaluationDecision,
     );
-    const recoveryDecision = parseRecoveryDecisionV1(pending.recoveryDecision);
-    const binding = parseRecoveryReviewBindingV1(
-      pending.recoveryReviewBinding,
+    const evaluationReviewBinding = parseEvaluationReviewBindingV1(
+      pending.evaluationReviewBinding,
     );
     const request = parseRuntimeEvaluationRequestV1(pending.request);
     const verdict = pending.verdict === undefined
@@ -4013,6 +3545,12 @@ export class ExecutionEngine {
     const actorId = this.asString(actor?.actorId);
     const actorType = this.asString(actor?.actorType);
     const optionId = this.asString(input.event.payload.recoveryOptionId);
+    const reviewRequestId = this.asString(pending.reviewRequestId);
+    const allowedOptionIds = Array.isArray(pending.allowedOptionIds)
+      ? pending.allowedOptionIds.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : [];
     const threadId =
       this.asString(metadata?.threadId ?? input.event.payload.threadId) ??
       input.session.sessionId;
@@ -4024,6 +3562,7 @@ export class ExecutionEngine {
       actorId === undefined ||
       (actorType !== "end_user" && actorType !== "operator") ||
       optionId === undefined ||
+      reviewRequestId === undefined ||
       candidate === undefined
     ) {
       throw createRuntimeFailure(
@@ -4040,44 +3579,40 @@ export class ExecutionEngine {
         evaluationCoordinator.policy.revision ||
       evaluationDecision.profileFingerprint !==
         evaluationCoordinator.executionProfileFingerprint ||
+      reviewRequestId !== `evaluation-review:${evaluationDecision.decisionId}` ||
+      evaluationReviewBinding.requestId !== reviewRequestId ||
+      evaluationReviewBinding.threadId !== threadId ||
+      evaluationReviewBinding.runId !== evaluationDecision.runId ||
+      evaluationReviewBinding.evaluationDecisionId !== evaluationDecision.decisionId ||
+      evaluationReviewBinding.policyRevision !== evaluationCoordinator.policy.revision ||
+      evaluationReviewBinding.profileFingerprint !==
+        evaluationCoordinator.executionProfileFingerprint ||
+      evaluationReviewBinding.allowedOptionIds.length !== allowedOptionIds.length ||
+      evaluationReviewBinding.allowedOptionIds.some(
+        (allowedOptionId, index) => allowedOptionId !== allowedOptionIds[index],
+      ) ||
+      (evaluationReviewBinding.expiresAt !== undefined &&
+        Date.parse(evaluationReviewBinding.expiresAt) <= Date.now()) ||
       request.requestId !== evaluationDecision.requestId ||
       pending.candidateDigest !== digestEvaluationCandidate(candidate) ||
       boundaryDecision.policyRevision !==
         this.executionBoundaryRuntime.policy.revision ||
       boundaryDecision.outputDigest !==
-        digestBoundaryValue({ assistantText: candidate })
+        digestBoundaryValue({ assistantText: candidate }) ||
+      allowedOptionIds.length === 0 ||
+      allowedOptionIds.includes(optionId) === false ||
+      evaluationCoordinator.policy.actions.reviewOptionIds.includes(
+        optionId as "evaluation.accept_once" | "evaluation.revise" | "terminal.fail",
+      ) === false ||
+      (this.asString(pending.tenantId) !== undefined &&
+        this.asString(pending.tenantId) !== this.asString(actor?.tenantId)) ||
+      (evaluationReviewBinding.tenantId !== undefined &&
+        evaluationReviewBinding.tenantId !== this.asString(actor?.tenantId))
     ) {
       throw createRuntimeFailure(
         "EVALUATION_REVIEW_STALE",
         "Evaluation review evidence no longer matches the exact pending candidate and policy.",
       );
-    }
-    let disposition: "approved" | "declined";
-    try {
-      disposition = recoveryCoordinator.validateReviewResume({
-        binding,
-        decision: recoveryDecision,
-        threadId,
-        runId: binding.runId,
-        optionId,
-        actor: {
-          actorId,
-          actorType,
-          ...(this.asString(actor?.tenantId) !== undefined
-            ? { tenantId: this.asString(actor?.tenantId) }
-            : {}),
-        },
-        ...(this.asString(pending.tenantId) !== undefined
-          ? { expectedTenantId: this.asString(pending.tenantId) }
-          : {}),
-      });
-    } catch (error) {
-      const code = error instanceof Error
-        ? error.message === "RECOVERY_WAIT_EXPIRED"
-          ? "EVALUATION_REVIEW_EXPIRED"
-          : error.message
-        : "EVALUATION_RESUME_INVALID";
-      throw createRuntimeFailure(code, "Evaluation review resume validation failed.");
     }
     await this.appendRunEvent(
       input.runId,
@@ -4086,8 +3621,8 @@ export class ExecutionEngine {
       "INFO",
       {
         kind: "evaluation_review",
+        requestId: reviewRequestId,
         evaluationDecisionId: evaluationDecision.decisionId,
-        recoveryDecisionId: recoveryDecision.decisionId,
         optionId,
         actorId,
       },
@@ -4101,8 +3636,8 @@ export class ExecutionEngine {
       optionId === "terminal.fail" ? "WARN" : "INFO",
       {
         requestId: request.requestId,
+        reviewRequestId,
         evaluationDecisionId: evaluationDecision.decisionId,
-        recoveryDecisionId: recoveryDecision.decisionId,
         optionId,
         actorId,
       },
@@ -4110,11 +3645,7 @@ export class ExecutionEngine {
       { bypassBuffer: true },
     );
 
-    if (disposition === "declined" || optionId === "terminal.fail") {
-      await recoveryCoordinator.markActionFailed(
-        recoveryDecision,
-        "EVALUATION_DECLINED",
-      );
+    if (optionId === "terminal.fail") {
       return {
         output: await this.runLifecycleController.returnTerminal({
           runId: input.runId,
@@ -4155,7 +3686,6 @@ export class ExecutionEngine {
           Math.trunc(readMaybeNumber(pending.finalRevisionsUsed) ?? 0),
         ),
         evaluationDecision: structuredClone(evaluationDecision),
-        recoveryDecision: structuredClone(recoveryDecision),
         assistantOutputBoundaryDecision: structuredClone(boundaryDecision),
       };
       nextAgent.exec = nextExec;
@@ -4166,7 +3696,6 @@ export class ExecutionEngine {
         reason: "evaluation_accept_once",
         statePatch: { agent: nextAgent },
       });
-      await recoveryCoordinator.markActionCompleted(recoveryDecision);
       return {
         session,
         output: await this.runLifecycleController.returnTerminal({
@@ -4203,31 +3732,6 @@ export class ExecutionEngine {
         "The final-output evaluation revision bound has been reached.",
       );
     }
-    const handler = this.deps.recoveryRuntime?.workflowHandlerRegistry.resolve(
-      "evaluation.revise",
-    );
-    if (handler === undefined) {
-      throw createRuntimeFailure(
-        "EVALUATION_REVISION_UNAVAILABLE",
-        "The exact evaluation revision workflow is not registered.",
-      );
-    }
-    await recoveryCoordinator.markActionStarted(recoveryDecision);
-    try {
-      await handler({
-        runId: input.runId,
-        sessionId: input.session.sessionId,
-        failureCode: "EVALUATION_REJECTED",
-        execute: async () => ({ revisionAuthorized: true }),
-      });
-      await recoveryCoordinator.markActionCompleted(recoveryDecision);
-    } catch (error) {
-      await recoveryCoordinator.markActionFailed(
-        recoveryDecision,
-        this.mapError(error).code,
-      );
-      throw error;
-    }
     nextAgent.assistantText = null;
     nextAgent.finalOutput = undefined;
     nextAgent.retryContext = buildEvaluationRevisionContext({
@@ -4244,7 +3748,6 @@ export class ExecutionEngine {
       status: "revising",
       finalRevisionsUsed: finalRevisionsUsed + 1,
       evaluationDecision: structuredClone(evaluationDecision),
-      recoveryDecision: structuredClone(recoveryDecision),
     };
     nextAgent.exec = nextExec;
     const session = await this.deps.store.patchSessionState({
@@ -4252,111 +3755,6 @@ export class ExecutionEngine {
       expectedVersion: input.session.version,
       nextStepAgent: "agent.loop",
       reason: "evaluation_review_revision",
-      statePatch: { agent: nextAgent },
-    });
-    return { session };
-  }
-
-  private async maybeHandleRecoveryReviewResume(input: {
-    runId: string;
-    event: RuntimeEvent;
-    session: SessionRecord;
-    guardrails: Guardrails;
-    progressSeq: number;
-  }): Promise<{ session?: SessionRecord | undefined; output?: NormalizedOutput | undefined } | undefined> {
-    const coordinator = this.recoveryCoordinator;
-    if (coordinator === undefined) return;
-    const agent = this.asRecord(input.session.state.agent);
-    const review = this.asRecord(this.asRecord(agent?.recovery)?.review);
-    if (review === undefined || input.event.type !== "user.reply") return;
-    const decision = parseRecoveryDecisionV1(review.decision);
-    const binding = parseRecoveryReviewBindingV1(review.binding);
-    const metadata = this.asRecord(input.event.payload.metadata);
-    const actorRecord = this.asRecord(metadata?.actor ?? input.event.payload.actor);
-    const actorId = this.asString(actorRecord?.actorId);
-    const actorType = this.asString(actorRecord?.actorType);
-    const optionId = this.asString(input.event.payload.recoveryOptionId);
-    if (
-      actorId === undefined ||
-      (actorType !== "end_user" && actorType !== "operator" && actorType !== "service") ||
-      optionId === undefined
-    ) {
-      throw createRuntimeFailure(
-        "RECOVERY_RESUME_INVALID",
-        "Recovery review resume requires trusted actor metadata and an exact recoveryOptionId.",
-      );
-    }
-    let disposition: "approved" | "declined";
-    try {
-      disposition = coordinator.validateReviewResume({
-        binding,
-        decision,
-        threadId: this.asString(metadata?.threadId ?? input.event.payload.threadId) ?? input.session.sessionId,
-        runId: binding.runId,
-        optionId,
-        actor: {
-          actorId,
-          actorType,
-          ...(this.asString(actorRecord?.tenantId) !== undefined
-            ? { tenantId: this.asString(actorRecord?.tenantId) }
-            : {}),
-        },
-        ...(this.asString(review.tenantId) !== undefined
-          ? { expectedTenantId: this.asString(review.tenantId) }
-          : {}),
-        });
-      } catch (error) {
-      const code = error instanceof Error ? error.message : "RECOVERY_RESUME_INVALID";
-      throw createRuntimeFailure(code, "Recovery review resume validation failed.");
-    }
-    await this.appendRunEvent(
-      input.runId,
-      input.session.sessionId,
-      "interaction.resolved",
-      "INFO",
-      {
-        kind: "recovery_review",
-        decisionId: decision.decisionId,
-        optionId,
-        actorId,
-      },
-      undefined,
-      { bypassBuffer: true },
-    );
-    if (disposition === "declined") {
-      const runtimeError = {
-        code: "RECOVERY_DECLINED",
-        message: "The operator declined recovery.",
-      };
-      return {
-        output: await this.runLifecycleController.returnTerminal({
-          runId: input.runId,
-          sessionId: input.session.sessionId,
-          currentStep: input.session.currentStepAgent,
-          transition: {
-            status: "FAILED",
-            nextStepAgent: input.session.currentStepAgent ?? "agent.loop",
-          },
-          errors: [runtimeError],
-          guardrails: input.guardrails,
-          progressSeq: input.progressSeq,
-        }),
-      };
-    }
-    if (this.deps.store.patchSessionState === undefined) {
-      throw createRuntimeFailure(
-        "RECOVERY_RESUME_UNAVAILABLE",
-        "Recovery resume requires durable session patch support.",
-      );
-    }
-    const nextAgent = { ...(agent ?? {}) };
-    delete nextAgent.recovery;
-    delete nextAgent.waitingFor;
-    delete nextAgent.terminal;
-    const session = await this.deps.store.patchSessionState({
-      sessionId: input.session.sessionId,
-      expectedVersion: input.session.version,
-      reason: "recovery_review_resolved",
       statePatch: { agent: nextAgent },
     });
     return { session };

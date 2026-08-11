@@ -202,18 +202,15 @@ test("user-input requests are composer-owned without a duplicate timeline card",
   );
   assert.match(app, /operatorActionCardItems\.map\(\(item\) => \(/u);
   assert.match(app, /composerPolicy\.mode === "reply_to_request"/u);
-  assert.match(app, /composerPolicy\.mode === "select_recovery_option"/u);
+  assert.match(app, /composerPolicy\.mode === "select_evaluation_option"/u);
   assert.match(app, /recoveryOptionId:\s*optionId/u);
   assert.doesNotMatch(app, /Selected recovery option:/u);
   assert.match(app, /submitConversationMessage/u);
   assert.match(app, /Waiting for your decision/u);
   assert.match(app, /Waiting for your input/u);
   assert.match(app, /Queued behind current work/u);
-  assert.match(app, /triggeringFailureCode/u);
-  assert.match(
-    app,
-    /<details>\s*<summary>Technical details<\/summary>\s*<span>\{composerPolicy\.triggeringFailureSummary\}<\/span>/su,
-  );
+  assert.doesNotMatch(app, /triggeringFailureCode/u);
+  assert.match(app, /<EvaluationTechnicalDisclosure value=\{composerPolicy\.evaluationTechnicalDisclosure\}/u);
   assert.doesNotMatch(
     app,
     /<span>\{composerPolicy\.reviewKind === "evaluation"[\s\S]*?composerPolicy\.triggeringFailureSummary\s*\?\?/u,

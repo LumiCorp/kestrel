@@ -52,8 +52,7 @@ export type GatewayCredentialCacheEvent = {
     | "credential_cache_hit"
     | "credential_cache_miss"
     | "credential_cache_refresh"
-    | "credential_cache_evicted"
-    | "credential_auth_retry";
+    | "credential_cache_evicted";
   gatewayId: string;
   rawModelId: string;
 };
@@ -237,23 +236,7 @@ export class BrokeredModelGateway implements ModelGateway {
     try {
       return await this.getProvider(lease).call<T>(governedRequest, options);
     } catch (error) {
-      if (!isModelAuthenticationError(error)) {
-        throw toSecretFreeProviderError(error);
-      }
-      this.cache.invalidate(this.reference);
-      this.releaseLeaseRegistration?.();
-      this.releaseLeaseRegistration = undefined;
-      this.provider = undefined;
-      this.onEvent({ type: "credential_auth_retry", ...this.reference });
-      const refreshed = await this.cache.get(this.reference);
-      try {
-        return await this.getProvider(refreshed).call<T>(
-          { ...request, model: refreshed.rawModelId },
-          options,
-        );
-      } catch (retryError) {
-        throw toSecretFreeProviderError(retryError);
-      }
+      throw toSecretFreeProviderError(error);
     }
   }
 
@@ -493,15 +476,6 @@ function isLoopbackHostname(hostname: string) {
 
 function credentialCacheKey(reference: GatewayCredentialReference) {
   return `${reference.organizationId}\u0000${reference.environmentId}\u0000${reference.runId}\u0000${reference.gatewayId}\u0000${reference.rawModelId}`;
-}
-
-function isModelAuthenticationError(error: unknown) {
-  const candidate = asRecord(error);
-  return (
-    candidate?.code === "MODEL_AUTH_ERROR" ||
-    candidate?.status === 401 ||
-    candidate?.status === 403
-  );
 }
 
 function toSecretFreeProviderError(error: unknown): Error {

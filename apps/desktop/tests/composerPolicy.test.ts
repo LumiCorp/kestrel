@@ -6,7 +6,7 @@ import { getDesktopComposerSubmissionPolicy } from "../renderer/src/composerPoli
 import type { DesktopOperatorInboxItem } from "../src/contracts.js";
 import {
   evaluationReviewInteractionFixture,
-  recoveryReviewInteractionFixture,
+  legacyRecoveryReviewInteractionFixture,
 } from "../../../tests/fixtures/structured-review-contract.js";
 
 
@@ -31,7 +31,7 @@ test("Desktop composer answers the exact pending user-input request", () => {
   });
 });
 
-test("Desktop composer exposes exact recovery options instead of free text", () => {
+test("Desktop blocks persisted recovery reviews and exposes explicit cancellation", () => {
   const request = {
     itemId: "request:recovery-1",
     kind: "user_input_request",
@@ -41,7 +41,7 @@ test("Desktop composer exposes exact recovery options instead of free text", () 
     actionable: true,
     requestId: "recovery-1",
     createdAt: "2026-08-03T12:00:00.000Z",
-    interaction: withRequestId(recoveryReviewInteractionFixture, "recovery-1"),
+    interaction: withRequestId(legacyRecoveryReviewInteractionFixture, "recovery-1"),
     metadata: {
       reason: "recovery_review",
       allowedOptionIds: ["retry.primary", "terminal.fail"],
@@ -54,12 +54,9 @@ test("Desktop composer exposes exact recovery options instead of free text", () 
     inboxItems: [request],
     runActive: false,
   }), {
-    mode: "select_recovery_option",
+    mode: "invalid_review",
     item: request,
-    allowedOptionIds: ["retry.primary", "terminal.fail"],
-    reviewKind: "recovery",
-    triggeringFailureCode: "MODEL_AUTH_ERROR",
-    triggeringFailureSummary: "Provider authentication failed after refresh.",
+    error: "This recovery request can no longer be resumed safely. End the waiting turn and retry explicitly.",
   });
 });
 
@@ -94,14 +91,13 @@ test("Desktop composer exposes evaluation review options and disclosure", () => 
     inboxItems: [request],
     runActive: false,
   }), {
-    mode: "select_recovery_option",
+    mode: "select_evaluation_option",
     item: request,
     allowedOptionIds: [
       "evaluation.accept_once",
       "evaluation.revise",
       "terminal.fail",
     ],
-    reviewKind: "evaluation",
     evaluationTechnicalDisclosure:
       evaluationReviewInteractionFixture.metadata.evaluationTechnicalDisclosure,
   });

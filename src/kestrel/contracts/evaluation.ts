@@ -19,6 +19,8 @@ export const RUNTIME_EVALUATION_DECISION_VERSION =
   "runtime_evaluation_decision_v1" as const;
 export const EVALUATION_CALIBRATION_RECORD_VERSION =
   "evaluation_calibration_record_v1" as const;
+export const EVALUATION_REVIEW_BINDING_VERSION =
+  "evaluation_review_binding_v1" as const;
 
 export const COMPLETION_EVIDENCE_EVALUATOR_ID = "completion-evidence" as const;
 export const COMPLETION_EVIDENCE_EVALUATOR_VERSION = "1.0.0" as const;
@@ -110,6 +112,106 @@ export interface RuntimeEvaluationPolicyV1 {
     reviewOptionIds: Array<
       "evaluation.accept_once" | "evaluation.revise" | "terminal.fail"
     >;
+  };
+}
+
+export interface EvaluationReviewBindingV1 {
+  version: typeof EVALUATION_REVIEW_BINDING_VERSION;
+  requestId: string;
+  threadId: string;
+  runId: string;
+  evaluationDecisionId: string;
+  policyRevision: string;
+  profileFingerprint: string;
+  allowedOptionIds: Array<
+    "evaluation.accept_once" | "evaluation.revise" | "terminal.fail"
+  >;
+  issuedAt: string;
+  expiresAt?: string | undefined;
+  tenantId?: string | undefined;
+}
+
+export function createEvaluationReviewBindingV1(
+  input: Omit<EvaluationReviewBindingV1, "version">,
+): EvaluationReviewBindingV1 {
+  return parseEvaluationReviewBindingV1({
+    version: EVALUATION_REVIEW_BINDING_VERSION,
+    ...input,
+  });
+}
+
+export function parseEvaluationReviewBindingV1(
+  value: unknown,
+): EvaluationReviewBindingV1 {
+  const record = requireRecord(value, "Evaluation review binding");
+  rejectUnknownFields(
+    record,
+    new Set([
+      "version",
+      "requestId",
+      "threadId",
+      "runId",
+      "evaluationDecisionId",
+      "policyRevision",
+      "profileFingerprint",
+      "allowedOptionIds",
+      "issuedAt",
+      "expiresAt",
+      "tenantId",
+    ]),
+    "Evaluation review binding",
+  );
+  if (record.version !== EVALUATION_REVIEW_BINDING_VERSION) {
+    throw new Error(
+      `Evaluation review binding version must be '${EVALUATION_REVIEW_BINDING_VERSION}'.`,
+    );
+  }
+  const allowedOptionIds = requireArray(
+    record.allowedOptionIds,
+    "Evaluation review binding allowedOptionIds",
+  ).map((value, index) =>
+    requireExactId(value, `Evaluation review binding allowedOptionIds[${index}]`),
+  );
+  const supported = new Set([
+    "evaluation.accept_once",
+    "evaluation.revise",
+    "terminal.fail",
+  ]);
+  if (
+    allowedOptionIds.length === 0 ||
+    allowedOptionIds.some((optionId) => supported.has(optionId) === false)
+  ) {
+    throw new Error("Evaluation review binding contains an unsupported option ID.");
+  }
+  requireUnique(allowedOptionIds, "Evaluation review binding allowedOptionIds");
+  return {
+    version: EVALUATION_REVIEW_BINDING_VERSION,
+    requestId: requireBoundedString(record.requestId, "Evaluation review binding requestId", 512),
+    threadId: requireBoundedString(record.threadId, "Evaluation review binding threadId", 512),
+    runId: requireBoundedString(record.runId, "Evaluation review binding runId", 512),
+    evaluationDecisionId: requireBoundedString(
+      record.evaluationDecisionId,
+      "Evaluation review binding evaluationDecisionId",
+      512,
+    ),
+    policyRevision: requireBoundedString(
+      record.policyRevision,
+      "Evaluation review binding policyRevision",
+      512,
+    ),
+    profileFingerprint: requireBoundedString(
+      record.profileFingerprint,
+      "Evaluation review binding profileFingerprint",
+      512,
+    ),
+    allowedOptionIds: allowedOptionIds as EvaluationReviewBindingV1["allowedOptionIds"],
+    issuedAt: requireTimestamp(record.issuedAt, "Evaluation review binding issuedAt"),
+    ...(record.expiresAt !== undefined
+      ? { expiresAt: requireTimestamp(record.expiresAt, "Evaluation review binding expiresAt") }
+      : {}),
+    ...(record.tenantId !== undefined
+      ? { tenantId: requireBoundedString(record.tenantId, "Evaluation review binding tenantId", 512) }
+      : {}),
   };
 }
 
@@ -209,6 +311,7 @@ export interface RuntimeEvaluationDecisionV1 {
   budget: RuntimeEvaluationRequestV1["budget"];
   disposition: RuntimeEvaluationDispositionV1;
   reasonCode: string;
+  /** @deprecated Read compatibility for historical evaluation artifacts. */
   recoveryDecisionId?: string | undefined;
   createdAt: string;
 }

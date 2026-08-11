@@ -151,8 +151,7 @@ export class TuiRunController {
         pendingWait !== undefined &&
         this.context.shouldApplyCompactionOnContinuationResume(state.activeSession)
       );
-    const exactDecisionWait = submittedPendingWait?.metadata?.reason === "recovery_review" ||
-      submittedPendingWait?.metadata?.reason === "evaluation_review";
+    const exactDecisionWait = exactReview.kind === "structured_review";
     if (
       submittedPendingWait !== undefined &&
       (exactDecisionWait === false || recoveryOptionId !== undefined)

@@ -4,11 +4,11 @@ import type { RunnerInteractionRequestV1 } from "@kestrel-agents/protocol";
 
 import { PostgresOrchestrationStore } from "../../src/orchestration/PostgresOrchestrationStore.js";
 import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
-import { recoveryReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
+import { legacyRecoveryReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
 
 test("PostgreSQL orchestration store round-trips the complete interaction envelope", async () => {
   const interaction = structuredClone(
-    recoveryReviewInteractionFixture,
+    legacyRecoveryReviewInteractionFixture,
   ) as unknown as RunnerInteractionRequestV1;
   const row = {
     request_id: interaction.requestId,

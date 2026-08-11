@@ -139,20 +139,6 @@ export interface ModelGatewayCallOptions {
   signal?: AbortSignal | undefined;
   /** Awaited only to enqueue the event; consumers must do expensive work asynchronously. */
   onEvent?: ModelGatewayEventSink | undefined;
-  /**
-   * Authorizes an otherwise retryable same-route attempt. The gateway retains
-   * ownership of retry classification and delay calculation; recovery policy
-   * owns whether the retry may proceed.
-   */
-  authorizeRetry?: ((input: {
-    attempt: number;
-    maxAttempts: number;
-    failureCode?: string | undefined;
-    failureClass?: string | undefined;
-    retryable: boolean;
-    visibleOutputStarted: boolean;
-    retryDelayMs?: number | undefined;
-  }) => boolean | Promise<boolean>) | undefined;
 }
 
 export type ModelBudgetClass = "action" | "maintenance";

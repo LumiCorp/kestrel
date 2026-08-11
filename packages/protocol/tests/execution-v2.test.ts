@@ -26,7 +26,10 @@ import {
   type RunnerCommandType,
   type RunnerEventType,
 } from "../src/index.js";
-import { recoveryReviewInteractionFixture } from "../../../tests/fixtures/structured-review-contract.js";
+import {
+  evaluationReviewInteractionFixture,
+  legacyRecoveryReviewInteractionFixture,
+} from "../../../tests/fixtures/structured-review-contract.js";
 
 
 const profile = {
@@ -71,26 +74,26 @@ const terminalResult = {
   },
 };
 
-test("structured review contract is canonical across first-party clients", () => {
+test("evaluation review contract is canonical across first-party clients", () => {
   const interaction = createRunnerStructuredReviewInteractionV1({
-    reason: "recovery_review",
-    requestId: recoveryReviewInteractionFixture.requestId,
-    prompt: recoveryReviewInteractionFixture.prompt,
-    allowedOptionIds: ["retry.primary", "terminal.fail"],
-    triggeringFailureCode: "MODEL_AUTH_ERROR",
-    triggeringFailureSummary: "Provider authentication failed after refresh.",
+    reason: "evaluation_review",
+    requestId: evaluationReviewInteractionFixture.requestId,
+    prompt: evaluationReviewInteractionFixture.prompt,
+    allowedOptionIds: ["evaluation.accept_once", "evaluation.revise", "terminal.fail"],
+    evaluationTechnicalDisclosure:
+      evaluationReviewInteractionFixture.metadata.evaluationTechnicalDisclosure,
   });
 
-  assert.deepEqual(interaction, recoveryReviewInteractionFixture);
+  assert.deepEqual(interaction, evaluationReviewInteractionFixture);
   assert.deepEqual(parseRunnerStructuredReviewInteractionV1(interaction), {
     kind: "structured_review",
-    reason: "recovery_review",
-    requestId: "recovery-review-fixture",
+    reason: "evaluation_review",
+    requestId: "evaluation-review-fixture",
     eventType: "user.reply",
-    prompt: "Kestrel could not continue. Choose one recovery option.",
-    allowedOptionIds: ["retry.primary", "terminal.fail"],
-    triggeringFailureCode: "MODEL_AUTH_ERROR",
-    triggeringFailureSummary: "Provider authentication failed after refresh.",
+    prompt: "Result requires review.",
+    allowedOptionIds: ["evaluation.accept_once", "evaluation.revise", "terminal.fail"],
+    evaluationTechnicalDisclosure:
+      evaluationReviewInteractionFixture.metadata.evaluationTechnicalDisclosure,
   });
   assert.deepEqual(interaction.inputSchema, {
     type: "object",
@@ -99,7 +102,7 @@ test("structured review contract is canonical across first-party clients", () =>
     properties: {
       recoveryOptionId: {
         type: "string",
-        enum: ["retry.primary", "terminal.fail"],
+        enum: ["evaluation.accept_once", "evaluation.revise", "terminal.fail"],
       },
     },
   });
@@ -131,20 +134,33 @@ test("structured review contract rejects metadata and schema drift", () => {
   );
   assert.throws(
     () => createRunnerStructuredReviewInteractionV1({
-      reason: "recovery_review",
-      requestId: "recovery-review-unknown",
+      reason: "evaluation_review",
+      requestId: "evaluation-review-unknown",
       prompt: "Choose one option.",
-      allowedOptionIds: ["retry.unknown"],
+      allowedOptionIds: ["evaluation.unknown"],
     }),
     /unsupported option/u,
   );
-  const missingRequestId = structuredClone(recoveryReviewInteractionFixture) as Record<string, unknown>;
+  assert.throws(
+    () => createRunnerStructuredReviewInteractionV1({
+      reason: "recovery_review",
+      requestId: "recovery-review-retired",
+      prompt: "Choose one option.",
+      allowedOptionIds: ["retry.primary"],
+    }),
+    /retired/u,
+  );
+  assert.equal(
+    parseRunnerStructuredReviewInteractionV1(legacyRecoveryReviewInteractionFixture).kind,
+    "invalid_review",
+  );
+  const missingRequestId = structuredClone(evaluationReviewInteractionFixture) as Record<string, unknown>;
   delete missingRequestId.requestId;
   assert.equal(
     parseRunnerStructuredReviewInteractionV1(missingRequestId).kind,
     "invalid_review",
   );
-  const missingSchema = structuredClone(recoveryReviewInteractionFixture) as Record<string, unknown>;
+  const missingSchema = structuredClone(evaluationReviewInteractionFixture) as Record<string, unknown>;
   delete missingSchema.inputSchema;
   assert.equal(
     parseRunnerStructuredReviewInteractionV1(missingSchema).kind,
@@ -1436,7 +1452,7 @@ test("waiting outcomes require one canonical assistant prompt and durable reques
     );
   }
 
-  const malformedReview = structuredClone(recoveryReviewInteractionFixture) as Record<string, unknown>;
+  const malformedReview = structuredClone(legacyRecoveryReviewInteractionFixture) as Record<string, unknown>;
   delete malformedReview.inputSchema;
   assert.throws(
     () => parseRunnerEventV2({
@@ -1445,7 +1461,7 @@ test("waiting outcomes require one canonical assistant prompt and durable reques
       ts: "2026-07-15T12:00:00.000Z",
       payload: {
         result: {
-          assistantText: recoveryReviewInteractionFixture.prompt,
+          assistantText: legacyRecoveryReviewInteractionFixture.prompt,
           output: {
             ...waiting,
             waitFor: {

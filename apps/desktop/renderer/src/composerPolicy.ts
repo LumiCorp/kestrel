@@ -7,12 +7,9 @@ import {
 
 export type DesktopComposerSubmissionPolicy =
   | {
-      mode: "select_recovery_option";
+      mode: "select_evaluation_option";
       item: DesktopOperatorInboxItem & { requestId: string };
       allowedOptionIds: RunnerStructuredReviewOptionId[];
-      reviewKind: "recovery" | "evaluation";
-      triggeringFailureCode?: string | undefined;
-      triggeringFailureSummary?: string | undefined;
       evaluationTechnicalDisclosure?: Record<string, unknown> | undefined;
     }
   | {
@@ -49,16 +46,9 @@ export function getDesktopComposerSubmissionPolicy(input: {
     }
     if (review.kind === "structured_review") {
       return {
-        mode: "select_recovery_option",
+        mode: "select_evaluation_option",
         item: request,
         allowedOptionIds: [...review.allowedOptionIds],
-        reviewKind: review.reason === "evaluation_review" ? "evaluation" : "recovery",
-        ...(review.triggeringFailureCode !== undefined
-          ? { triggeringFailureCode: review.triggeringFailureCode }
-          : {}),
-        ...(review.triggeringFailureSummary !== undefined
-          ? { triggeringFailureSummary: review.triggeringFailureSummary }
-          : {}),
         ...(review.evaluationTechnicalDisclosure !== undefined
           ? { evaluationTechnicalDisclosure: review.evaluationTechnicalDisclosure }
           : {}),

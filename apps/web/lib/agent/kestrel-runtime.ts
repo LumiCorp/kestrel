@@ -29,7 +29,6 @@ import {
 } from "@/lib/agent/kestrel-runtime-core";
 import {
   isKestrelOneManagedRuntimeModel,
-  toRecoveryModelCandidate,
   toKestrelOneRuntimeModelSelection,
   type DesktopLocalRuntimeModelSelection,
   type EnvironmentRuntimeModelSelection,
@@ -654,7 +653,6 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     | undefined;
 }) {
   const primaryRuntimeModel = input.runtimeModels?.[0];
-  const fallbackRuntimeModels = input.runtimeModels?.slice(1) ?? [];
   const toolConfiguration = resolveKestrelOneToolProfileConfiguration({
     availableToolNames: [...KESTREL_ONE_HOSTED_RUNTIME_TOOL_NAMES],
     effectiveCapabilities: input.route.effectiveCapabilities,
@@ -693,18 +691,6 @@ export async function resolveHostedKestrelExecutionProfile(input: {
                       rawModelId: primaryRuntimeModel.model,
                       provider: primaryRuntimeModel.provider,
                     },
-                  }
-                : {}),
-              ...(fallbackRuntimeModels.length > 0
-                ? {
-                    recoveryModelCandidates: fallbackRuntimeModels.map(
-                      (candidate, index) =>
-                        toRecoveryModelCandidate(
-                          candidate,
-                          index + 1,
-                          input.route.runId,
-                        ),
-                    ),
                   }
                 : {}),
               default: false,

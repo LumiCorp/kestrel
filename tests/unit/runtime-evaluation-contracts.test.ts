@@ -28,7 +28,6 @@ import {
   composeKestrelOneProfile,
   fingerprintResolvedProfile,
 } from "../../src/profile/kestrelOnePolicy.js";
-import { resolveProfileWithRecoveryPolicy } from "../../src/profile/recoveryPolicy.js";
 
 const HASH_A = `sha256:${"a".repeat(64)}`;
 const HASH_B = `sha256:${"b".repeat(64)}`;
@@ -87,7 +86,7 @@ function policy() {
 }
 
 function profileWithPolicy(): TuiProfile {
-  return resolveProfileWithRecoveryPolicy({
+  return resolveProfileWithEvaluationPolicy({
     id: "custom-evaluation",
     label: "Custom Evaluation",
     agent: "reference-react",
@@ -201,49 +200,21 @@ test("runtime evaluation policy is canonical, strict, exact-ID only, and bounded
   );
 });
 
-test("evaluation profile composition is opt-in and adds exact recovery stages deterministically", () => {
+test("evaluation profile composition is opt-in and never creates recovery stages", () => {
   const base = profileWithPolicy();
   const resolved = resolveProfileWithEvaluationPolicy(base);
   assert.equal(resolved.evaluationPolicy?.revision, policy().revision);
-  assert.deepEqual(
-    resolved.recoveryPolicy?.stages.map((stage) => stage.action),
-    [
-      "retry_same_route",
-      "deterministic_workflow",
-      "human_review",
-      "terminal_failure",
-    ],
-  );
-  const workflow = resolved.recoveryPolicy?.stages.find(
-    (stage) => stage.action === "deterministic_workflow",
-  );
-  const review = resolved.recoveryPolicy?.stages.find(
-    (stage) => stage.action === "human_review",
-  );
-  assert.equal(workflow?.action, "deterministic_workflow");
-  assert.deepEqual(
-    workflow?.action === "deterministic_workflow" ? workflow.handlerIds : [],
-    ["evaluation.revise"],
-  );
-  assert.equal(review?.action, "human_review");
-  assert.deepEqual(review?.action === "human_review" ? review.optionIds : [], [
-    "evaluation.accept_once",
-    "evaluation.revise",
-    "terminal.fail",
-  ]);
-  assert.deepEqual(
-    resolveProfileWithEvaluationPolicy(resolved).recoveryPolicy,
-    resolved.recoveryPolicy,
-  );
+  assert.equal(resolved.recoveryPolicy, undefined);
+  assert.deepEqual(resolveProfileWithEvaluationPolicy(resolved), resolved);
 
-  const disabled = resolveProfileWithRecoveryPolicy({
+  const disabled = {
     id: "disabled",
     label: "Disabled",
     agent: "reference-react",
     sessionPrefix: "disabled",
     modelProvider: "openai",
     model: "gpt-5.4-2026-03-05",
-  });
+  } satisfies TuiProfile;
   assert.equal(resolveProfileWithEvaluationPolicy(disabled), disabled);
 });
 
@@ -301,13 +272,7 @@ test("managed evaluation composition is deterministic and tenant-bound credentia
   const first = composeKestrelOneProfile(input).profile;
   const second = composeKestrelOneProfile(input).profile;
   assert.deepEqual(first, second);
-  assert.ok(
-    first.recoveryPolicy?.stages.some(
-      (stage) =>
-        stage.action === "deterministic_workflow" &&
-        stage.handlerIds.includes("evaluation.revise"),
-    ),
-  );
+  assert.equal(first.recoveryPolicy, undefined);
 
   assert.throws(
     () =>

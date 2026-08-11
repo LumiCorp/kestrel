@@ -44,6 +44,7 @@ export interface PreparedToolPolicyDispositionV1 {
 export interface PreparedToolApprovalAuthorityV1 {
   authorityRevision: string;
   approvalId?: string | undefined;
+  /** @deprecated Historical read compatibility only. New calls ignore this field. */
   recoveryAdapterId?: string | undefined;
 }
 

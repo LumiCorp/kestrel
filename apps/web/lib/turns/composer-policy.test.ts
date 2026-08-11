@@ -5,7 +5,7 @@ import {
   type ComposerSubmissionPolicy,
   getComposerSubmissionPolicy,
 } from "@/lib/turns/composer-policy";
-import { recoveryReviewInteractionFixture } from "../../../../tests/fixtures/structured-review-contract";
+import { legacyRecoveryReviewInteractionFixture } from "../../../../tests/fixtures/structured-review-contract";
 
 
 const baseState: ThreadConversationState = {
@@ -77,14 +77,14 @@ test("blocks ordinary messages while approval is pending", () => {
 test("blocks free text for valid and malformed structured reviews", () => {
   const valid: ThreadConversationState["interactions"][number] = {
     id: "interaction-review",
-    requestId: recoveryReviewInteractionFixture.requestId,
+    requestId: legacyRecoveryReviewInteractionFixture.requestId,
     source: "runtime",
     sourceCheckpointId: null,
     kind: "user_input",
     eventType: "user.reply",
-    prompt: recoveryReviewInteractionFixture.prompt,
+    prompt: legacyRecoveryReviewInteractionFixture.prompt,
     status: "pending",
-    requestEnvelope: structuredClone(recoveryReviewInteractionFixture),
+    requestEnvelope: structuredClone(legacyRecoveryReviewInteractionFixture),
     responseEnvelope: null,
     responseMessageId: null,
     turnId: "turn-review",
@@ -97,7 +97,7 @@ test("blocks free text for valid and malformed structured reviews", () => {
     id: "interaction-malformed-review",
     requestId: "malformed-review",
     requestEnvelope: {
-      ...structuredClone(recoveryReviewInteractionFixture),
+      ...structuredClone(legacyRecoveryReviewInteractionFixture),
       requestId: "malformed-review",
       inputSchema: undefined,
     },

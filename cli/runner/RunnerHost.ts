@@ -692,38 +692,6 @@ export class RunnerHost {
         );
       }
     }
-    for (const stage of profile.recoveryPolicy?.stages ?? []) {
-      if (stage.action !== "alternate_model") continue;
-      for (const candidate of stage.candidates) {
-        const reference = candidate.credentialReference;
-        if (reference === undefined) continue;
-        if (!tenantId) {
-          throw new Error(
-            "Gateway-managed recovery candidates require an authenticated tenant context.",
-          );
-        }
-        if (reference.organizationId !== tenantId) {
-          throw new Error(
-            `Recovery candidate '${candidate.candidateId}' does not belong to the authenticated tenant.`,
-          );
-        }
-        const expectedRunId =
-          profile.modelCredential?.runId ?? payload.turn.runId;
-        if (expectedRunId === undefined || reference.runId !== expectedRunId) {
-          throw new Error(
-            `Recovery candidate '${candidate.candidateId}' does not belong to this run.`,
-          );
-        }
-        if (
-          profile.modelCredential !== undefined &&
-          reference.environmentId !== profile.modelCredential.environmentId
-        ) {
-          throw new Error(
-            `Recovery candidate '${candidate.candidateId}' does not belong to this environment.`,
-          );
-        }
-      }
-    }
     const turn: RunTurnInput = {
       ...payload.turn,
       ...(metadata?.actor !== undefined
@@ -3517,7 +3485,6 @@ async function resolveDefaultExecutionProfile(
         modelProvider: selected.modelProvider,
         model: selected.model,
         modelCredential: selected.modelCredential,
-        recoveryPolicy: selected.recoveryPolicy,
         evaluationPolicy: selected.evaluationPolicy,
         modelCapabilities: selected.modelCapabilities,
         agentStageConfig: selected.agentStageConfig,

@@ -12,7 +12,7 @@ import {
 import { extractWaitPrompt as extractSharedWaitPrompt } from "../../src/runtime/waitForPrompt.js";
 import {
   evaluationReviewInteractionFixture,
-  recoveryReviewInteractionFixture,
+  legacyRecoveryReviewInteractionFixture,
 } from "../fixtures/structured-review-contract.js";
 
 
@@ -105,18 +105,20 @@ test("evaluation review exposes and resolves only exact authored options", () =>
   );
 });
 
-test("recovery review uses shared labels and submits hidden canonical IDs", () => {
+test("persisted recovery review is blocked and directs the operator to stop", () => {
   const waitFor = {
     kind: "user" as const,
     eventType: "user.reply",
     metadata: { reason: "recovery_review" },
-    interaction: structuredClone(recoveryReviewInteractionFixture),
+    interaction: structuredClone(legacyRecoveryReviewInteractionFixture),
   };
 
-  assert.equal(resolveExactReviewOptionId(waitFor, "1"), "retry.primary");
+  assert.equal(resolveExactReviewOptionId(waitFor, "1"), undefined);
   assert.equal(resolveExactReviewOptionId(waitFor, "Try again"), undefined);
-  assert.match(formatExactReviewPrompt(waitFor, undefined) ?? "", /1\. Try again/u);
-  assert.match(formatExactReviewPrompt(waitFor, undefined) ?? "", /2\. End this run/u);
+  assert.equal(
+    formatExactReviewPrompt(waitFor, undefined),
+    "This recovery request can no longer be resumed safely. End the waiting turn and retry explicitly. Use /stop to end the waiting run.",
+  );
 });
 
 test("legacy structured review wait is blocked and directs the operator to stop", () => {

@@ -422,9 +422,6 @@ function extractManagedConfiguration(
     ...(profile.modelCapabilities !== undefined
       ? { modelCapabilities: structuredClone(profile.modelCapabilities) }
       : {}),
-    ...(profile.recoveryPolicy !== undefined
-      ? { recoveryPolicy: structuredClone(profile.recoveryPolicy) }
-      : {}),
     ...(profile.evaluationPolicy !== undefined
       ? { evaluationPolicy: structuredClone(profile.evaluationPolicy) }
       : {}),

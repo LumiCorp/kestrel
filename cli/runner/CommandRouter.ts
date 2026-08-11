@@ -4,10 +4,7 @@ import {
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
 import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
-import {
-  parseRecoveryModelCredentialReferenceV1,
-  parseRecoveryPolicyV1,
-} from "../../src/kestrel/contracts/recovery.js";
+import { parseRecoveryModelCredentialReferenceV1 } from "../../src/kestrel/contracts/recovery.js";
 import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/evaluation.js";
 import { parseKestrelManagedConfiguration } from "../config/ProfileStore.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
@@ -2298,23 +2295,6 @@ function validateProfilePayload(value: unknown, path: string): void {
     throw new Error(`${path}.agent must be a non-empty string`);
   }
   validateModelCredentialPayload(record, path);
-  if (record.recoveryPolicy !== undefined) {
-    const recoveryPolicy = parseRecoveryPolicyV1(record.recoveryPolicy);
-    const projectedCredential =
-      record.modelCredential === undefined
-        ? undefined
-        : parseRecoveryModelCredentialReferenceV1(record.modelCredential);
-    if (
-      recoveryPolicy.primaryModel.provider !== record.modelProvider ||
-      recoveryPolicy.primaryModel.model !== record.model ||
-      JSON.stringify(recoveryPolicy.primaryModel.credentialReference ?? null) !==
-        JSON.stringify(projectedCredential ?? null)
-    ) {
-      throw new Error(
-        `${path}.recoveryPolicy.primaryModel must match the profile primary model projection`,
-      );
-    }
-  }
   if (record.evaluationPolicy !== undefined) {
     const evaluationPolicy = parseRuntimeEvaluationPolicyV1(
       record.evaluationPolicy,

@@ -312,7 +312,6 @@ export interface RuntimeDependencies {
   outputNormalizer: OutputNormalizer;
   runEventListener?: ((event: PersistedRuntimeEvent) => void | Promise<void>) | undefined;
   heapDiagnostics?: HeapDiagnosticsReporter | undefined;
-  recoveryRuntime?: import("../../engine/recovery/RecoveryCoordinator.js").RecoveryRuntimeConfiguration | undefined;
   evaluationRuntime?: import("../../evaluation/RuntimeEvaluationCoordinator.js").RuntimeEvaluationRuntimeConfiguration | undefined;
   executionBoundaryRuntime?: import("../../security/ExecutionBoundaryPolicy.js").ExecutionBoundaryPolicyRuntime | undefined;
 }

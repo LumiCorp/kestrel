@@ -1,4 +1,5 @@
-export const recoveryReviewInteractionFixture = {
+/** Historical persisted wait fixture. New runtime code must never produce it. */
+export const legacyRecoveryReviewInteractionFixture = {
   version: "v1",
   requestId: "recovery-review-fixture",
   kind: "user_input",
