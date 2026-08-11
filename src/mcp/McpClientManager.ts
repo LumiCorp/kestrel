@@ -528,33 +528,47 @@ export class McpClientManager {
 async function callToolHandle<T>(handle: ToolHandle, input: unknown): Promise<T> {
   const args = asRecord(input) ?? {};
   let output: unknown;
-  if (handle.protocolKind === "resource") {
-    output = await readFunction(handle.client, "readResource").call(
-      handle.client,
-      { uri: handle.protocolTarget },
-    );
-  } else if (handle.protocolKind === "resource_template") {
-    const uri = readString(args, "uri");
-    if (!uri) {
-      throw createRuntimeFailure(
-        "MCP_RESOURCE_URI_REQUIRED",
-        "MCP resource template access requires a URI.",
+  try {
+    if (handle.protocolKind === "resource") {
+      output = await readFunction(handle.client, "readResource").call(
+        handle.client,
+        { uri: handle.protocolTarget },
+      );
+    } else if (handle.protocolKind === "resource_template") {
+      const uri = readString(args, "uri");
+      if (!uri) {
+        throw createRuntimeFailure(
+          "MCP_RESOURCE_URI_REQUIRED",
+          "MCP resource template access requires a URI.",
+        );
+      }
+      output = await readFunction(handle.client, "readResource").call(
+        handle.client,
+        { uri },
+      );
+    } else if (handle.protocolKind === "prompt") {
+      output = await readFunction(handle.client, "getPrompt").call(
+        handle.client,
+        { name: handle.protocolTarget, arguments: args },
+      );
+    } else {
+      output = await readFunction(handle.client, "callTool").call(
+        handle.client,
+        { name: handle.toolName, arguments: args },
       );
     }
-    output = await readFunction(handle.client, "readResource").call(
-      handle.client,
-      { uri },
-    );
-  } else if (handle.protocolKind === "prompt") {
-    output = await readFunction(handle.client, "getPrompt").call(
-      handle.client,
-      { name: handle.protocolTarget, arguments: args },
-    );
-  } else {
-    output = await readFunction(handle.client, "callTool").call(
-      handle.client,
-      { name: handle.toolName, arguments: args },
-    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("EXECUTION_AUTH_EXPIRED")
+    ) {
+      throw createRuntimeFailure(
+        "EXECUTION_AUTH_EXPIRED",
+        "Execution authorization expired before provider dispatch.",
+        { subsystem: "tooling", classification: "authorization", recoverable: true },
+      );
+    }
+    throw error;
   }
   return output as T;
 }

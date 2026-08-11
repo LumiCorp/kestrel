@@ -8,7 +8,11 @@ import type { MemorySnapshot, ProgressPhase, ProgressUpdateV1, RunEvent, RunLogE
 import type { Effect, GuardrailConfig, ManagedTaskWorktreeBinding, NormalizedOutput, RegionWorkItem, ResolvedEffect, RuntimeDependencies, StepContext, StepIO, StepTransition, Transition } from "../kestrel/contracts/execution.js";
 import type { AgentToolResult, ModelRequest, ToolConsoleSink } from "../kestrel/contracts/model-io.js";
 import type { AgentToolResultV2 } from "../kestrel/contracts/tool-invocation.js";
-import { parseRecoveryDecisionV1, parseRecoveryReviewBindingV1 } from "../kestrel/contracts/recovery.js";
+import {
+  buildRecoveryReviewInteractionV1,
+  parseRecoveryDecisionV1,
+  parseRecoveryReviewBindingV1,
+} from "../kestrel/contracts/recovery.js";
 import {
   hashCanonical,
   parseToolSurfaceSnapshotV1,
@@ -1166,6 +1170,24 @@ export class ExecutionEngine {
               },
             } satisfies RuntimeError;
         if (terminalRuntimeError !== runtimeError) errors.push(terminalRuntimeError);
+        if (
+          terminalRuntimeError.code === "RECOVERY_EXHAUSTED" &&
+          session !== undefined &&
+          lastStepAgent !== undefined
+        ) {
+          const review = await this.maybeEnterRecoveryReview({
+            runId,
+            event,
+            session,
+            currentStep: lastStepAgent,
+            stepIndex: guardrails.telemetry().stepsExecuted,
+            guardrails,
+            progressSeq,
+            triggeringFailureCode: runtimeError.code,
+            triggeringFailureSummary: runtimeError.message,
+          });
+          if (review !== undefined) return review;
+        }
         return await this.runLifecycleController.failRun({
           runId,
           event,
@@ -1840,29 +1862,12 @@ export class ExecutionEngine {
         allowedOptionIds: [...recovery.reviewBinding.allowedOptionIds],
         evaluationTechnicalDisclosure: technicalDisclosure,
       },
-      interaction: {
-        version: "v1" as const,
-        requestId: recovery.reviewBinding.bindingId,
-        kind: "user_input" as const,
-        eventType: "user.reply",
+      interaction: buildRecoveryReviewInteractionV1({
+        binding: recovery.reviewBinding,
+        reason: "evaluation_review",
         prompt: "Result requires review.",
-        inputSchema: {
-          type: "object",
-          additionalProperties: false,
-          required: ["recoveryOptionId"],
-          properties: {
-            recoveryOptionId: {
-              type: "string",
-              enum: [...recovery.reviewBinding.allowedOptionIds],
-            },
-          },
-        },
-        metadata: {
-          reason: "evaluation_review",
-          allowedOptionIds: [...recovery.reviewBinding.allowedOptionIds],
-          evaluationTechnicalDisclosure: technicalDisclosure,
-        },
-      },
+        metadata: { evaluationTechnicalDisclosure: technicalDisclosure },
+      }),
     };
     const pendingEvaluation = {
       status: input.result.decision.disposition === "quarantine"
@@ -2348,11 +2353,13 @@ export class ExecutionEngine {
       sessionState: input.sessionState,
     };
     if (checkpointContext === undefined) {
-      return this.deps.toolGateway.executePreparedToolCall(input.preparedToolCall, {
+      const result = await this.deps.toolGateway.executePreparedToolCall(input.preparedToolCall, {
         signal: input.signal,
         runContext: toolRunContext,
         ...(input.console !== undefined ? { console: input.console } : {}),
       });
+      this.throwIfExecutionAuthorizationFailed(result, toolName);
+      return result;
     }
 
     const preAction = await this.deps.workspaceCheckpointService!.capture({
@@ -2462,6 +2469,32 @@ export class ExecutionEngine {
       }
       throw error;
     }
+  }
+
+  private throwIfExecutionAuthorizationFailed(
+    result: AgentToolResultV2,
+    toolName: string,
+  ) {
+    if (
+      result.outcome.kind !== "failure" ||
+      ![
+        "EXECUTION_AUTH_EXPIRED",
+        "EXECUTION_AUTH_RENEWAL_DENIED",
+        "EXECUTION_AUTH_RENEWAL_UNAVAILABLE",
+      ].includes(result.outcome.normalizedFailureCode)
+    ) {
+      return;
+    }
+    throw createRuntimeFailure(
+      result.outcome.normalizedFailureCode,
+      result.outcome.error.message,
+      {
+        recoverable: false,
+        toolName,
+        effectState: result.outcome.effectState,
+        ...(result.outcome.error.details ?? {}),
+      },
+    );
   }
 
   private readLatestWorkspaceObservationBaseline(
@@ -3845,6 +3878,17 @@ export class ExecutionEngine {
           ? { triggeringFailureSummary: input.triggeringFailureSummary }
           : {}),
       },
+      interaction: buildRecoveryReviewInteractionV1({
+        binding: selection.reviewBinding,
+        reason: "recovery_review",
+        prompt,
+        metadata: {
+          triggeringFailureCode: input.triggeringFailureCode,
+          ...(input.triggeringFailureSummary !== undefined
+            ? { triggeringFailureSummary: input.triggeringFailureSummary }
+            : {}),
+        },
+      }),
     };
     await this.deps.store.commitStep({
       runId: input.runId,

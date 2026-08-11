@@ -507,6 +507,7 @@ function readWaitForFromSession(state: Record<string, unknown>): NormalizedOutpu
     kind: toNormalizedOutputWaitKind(wait.kind),
     eventType: wait.eventType,
     metadata: wait.metadata,
+    interaction: wait.interaction,
   });
 }
 
@@ -547,6 +548,7 @@ function readWaitForFromThread(
       kind: threadWait.kind,
       eventType: threadWait.eventType,
       metadata: threadWait.metadata,
+      interaction: threadWait.interaction,
     });
   }
   const approvalRequest = status.openRequests.find((request) => request.kind === "approval");
@@ -799,6 +801,7 @@ function buildWaitForMatcher(input: {
   kind: "approval" | "user" | "effect" | "region_merge" | "tool";
   eventType: string;
   metadata?: Record<string, unknown> | undefined;
+  interaction?: Exclude<NormalizedOutput["waitFor"], undefined>["interaction"] | undefined;
 }): NormalizedOutput["waitFor"] | undefined {
   if (input.kind === "user") {
     const prompt = asString(input.metadata?.prompt);
@@ -812,12 +815,14 @@ function buildWaitForMatcher(input: {
         ...input.metadata,
         prompt,
       },
+      ...(input.interaction !== undefined ? { interaction: input.interaction } : {}),
     };
   }
   return {
     kind: input.kind,
     eventType: input.eventType,
     ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+    ...(input.interaction !== undefined ? { interaction: input.interaction } : {}),
   };
 }
 

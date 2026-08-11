@@ -8,6 +8,7 @@ import type {
 	SharedToolModule,
 } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
+import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
 
 type VercelToolOptions = {
 	name: string;
@@ -163,6 +164,7 @@ async function invokeVercel(
 		body: JSON.stringify(input.body),
 	});
 	const body: unknown = await response.json().catch(() => ({}));
+	await throwIfExecutionAuthorizationRejected({ response, body, toolName: input.toolName });
 	if (!response.ok) {
 		throw new RuntimeFailure(
 			"KESTREL_ONE_VERCEL_ACTION_FAILED",

@@ -705,6 +705,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "service-bearer",
   ),
   api(
+    "app/api/runtime/executions/[executionId]/authorization/renew/route.ts",
+    "/api/runtime/executions/:executionId/authorization/renew",
+    "credential-boundary",
+    "service-boundary",
+    "service-bearer",
+  ),
+  api(
     "app/api/runtime/releases/candidates/route.ts",
     "/api/runtime/releases/candidates",
     "environments",

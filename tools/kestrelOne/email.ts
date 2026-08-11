@@ -8,6 +8,7 @@ import type {
   SharedToolModule,
 } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
+import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
 
 const definition: SharedToolDefinition = {
   name: "kestrel_one.email_send",
@@ -99,6 +100,11 @@ export const kestrelOneEmailSendTool: SharedToolModule = {
         `${definition.name} response`,
         await response.json().catch(() => ({}))
       );
+      await throwIfExecutionAuthorizationRejected({
+        response,
+        body,
+        toolName: definition.name,
+      });
       if (!response.ok) {
         throw new RuntimeFailure(
           "KESTREL_ONE_EMAIL_SEND_FAILED",

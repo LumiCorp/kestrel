@@ -17,6 +17,13 @@ export interface HostedMcpRuntimeConnection {
 
 export interface HostedMcpAuthorization {
   executionTicket: string;
+  renewal?: HostedExecutionAuthorizationRenewal | undefined;
+}
+
+export interface HostedExecutionAuthorizationRenewal {
+  version: "execution-authorization-renewal-v1";
+  endpoint: string;
+  token: string;
 }
 
 const UUID_PATTERN =
@@ -110,6 +117,44 @@ export function parseExecutionTicketAuthorization(value: unknown): string {
     authorization?.executionTicket,
     "mcpAuthorization.executionTicket"
   );
+}
+
+export function parseHostedExecutionAuthorization(
+  value: unknown,
+): HostedMcpAuthorization {
+  const authorization = asRecord(value);
+  const executionTicket = requireNonEmptyString(
+    authorization?.executionTicket,
+    "mcpAuthorization.executionTicket",
+  );
+  const renewal = asRecord(authorization?.renewal);
+  if (renewal === undefined) return { executionTicket };
+  if (renewal.version !== "execution-authorization-renewal-v1") {
+    throw new Error("mcpAuthorization.renewal.version is invalid");
+  }
+  const endpoint = requireNonEmptyString(
+    renewal.endpoint,
+    "mcpAuthorization.renewal.endpoint",
+  );
+  const parsedEndpoint = new URL(endpoint);
+  if (
+    parsedEndpoint.protocol !== "https:" &&
+    !(parsedEndpoint.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(parsedEndpoint.hostname))
+  ) {
+    throw new Error("mcpAuthorization.renewal.endpoint must use HTTPS");
+  }
+  return {
+    executionTicket,
+    renewal: {
+      version: "execution-authorization-renewal-v1",
+      endpoint,
+      token: requireNonEmptyString(
+        renewal.token,
+        "mcpAuthorization.renewal.token",
+      ),
+    },
+  };
 }
 
 function requireNonEmptyString(value: unknown, fieldName: string): string {

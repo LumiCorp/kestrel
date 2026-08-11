@@ -781,6 +781,7 @@ export class LocalCoreDesktopEnvironmentManager {
       secret: input.secret,
       commandRecord,
       executionTicket,
+      authorizationRenewal: input.claimed.authorizationRenewal,
       modelGrant: input.claimed.modelGrant,
     });
     const command = prepared.command;
@@ -946,6 +947,7 @@ export class LocalCoreDesktopEnvironmentManager {
     secret: EnvironmentSecret;
     commandRecord: Record<string, unknown>;
     executionTicket: string;
+    authorizationRenewal: unknown;
     modelGrant: unknown;
   }): {
     command: RunnerCommand;
@@ -1055,7 +1057,12 @@ export class LocalCoreDesktopEnvironmentManager {
             workspaceRoot: workspace.path,
             label: workspace.label,
           },
-          mcpAuthorization: { executionTicket: input.executionTicket },
+          mcpAuthorization: {
+            executionTicket: input.executionTicket,
+            ...(input.authorizationRenewal !== undefined
+              ? { renewal: input.authorizationRenewal }
+              : {}),
+          },
         },
       },
     });

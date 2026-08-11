@@ -1,6 +1,7 @@
 import path from "node:path";
 import { realpath } from "node:fs/promises";
 import {
+  EnvironmentTicketError,
   getFlyEnvironmentExecutionTarget,
   verifyEnvironmentExecutionTicket,
   type EnvironmentExecutionTicket,
@@ -24,8 +25,13 @@ export function authorizeWorkspaceRequest(input: {
       publicKey: input.publicKey,
       ...(input.now === undefined ? {} : { now: input.now }),
     });
-  } catch {
-    throw new WorkspaceRequestError(401, "WORKSPACE_TICKET_INVALID");
+  } catch (error) {
+    throw new WorkspaceRequestError(
+      401,
+      error instanceof EnvironmentTicketError && error.code === "TICKET_EXPIRED"
+        ? "EXECUTION_AUTH_EXPIRED"
+        : "WORKSPACE_TICKET_INVALID",
+    );
   }
   const target = getFlyEnvironmentExecutionTarget(ticket);
   if (

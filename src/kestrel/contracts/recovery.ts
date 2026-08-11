@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import type { RuntimeInteractionRequestV1 } from "./execution.js";
 
 export const RECOVERY_POLICY_VERSION = "recovery_policy_v1" as const;
 export const RECOVERY_DECISION_VERSION = "recovery_decision_v1" as const;
@@ -172,6 +174,81 @@ export interface RecoveryReviewBindingV1 {
   allowedOptionIds: string[];
   requestedAt: string;
   expiresAt?: string | undefined;
+}
+
+export function buildRecoveryReviewInteractionV1(input: {
+  binding: RecoveryReviewBindingV1;
+  reason: "recovery_review" | "evaluation_review";
+  prompt: string;
+  metadata?: Record<string, unknown> | undefined;
+}): RuntimeInteractionRequestV1 {
+  return {
+    version: "v1",
+    requestId: input.binding.bindingId,
+    kind: "user_input",
+    eventType: "user.reply",
+    prompt: input.prompt,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["recoveryOptionId"],
+      properties: {
+        recoveryOptionId: {
+          type: "string",
+          enum: [...input.binding.allowedOptionIds],
+        },
+      },
+    },
+    metadata: {
+      ...(input.metadata ?? {}),
+      reason: input.reason,
+      recoveryReviewBinding: structuredClone(input.binding),
+      allowedOptionIds: [...input.binding.allowedOptionIds],
+    },
+  };
+}
+
+export function assertRecoveryReviewInteractionV1(input: {
+  interaction: RuntimeInteractionRequestV1 | undefined;
+  binding: RecoveryReviewBindingV1;
+  reason: "recovery_review" | "evaluation_review";
+}): RuntimeInteractionRequestV1 {
+  const interaction = input.interaction;
+  const schema = asRecord(interaction?.inputSchema);
+  const properties = asRecord(schema?.properties);
+  const option = asRecord(properties?.recoveryOptionId);
+  const required = Array.isArray(schema?.required) ? schema.required : [];
+  const allowed = Array.isArray(option?.enum)
+    ? option.enum.filter((value): value is string => typeof value === "string")
+    : [];
+  const metadata = asRecord(interaction?.metadata);
+  const parsedBinding = parseRecoveryReviewBindingV1(
+    metadata?.recoveryReviewBinding,
+  );
+  if (
+    interaction?.version !== "v1" ||
+    interaction.kind !== "user_input" ||
+    interaction.eventType !== "user.reply" ||
+    interaction.requestId !== input.binding.bindingId ||
+    metadata?.reason !== input.reason ||
+    !isDeepStrictEqual(parsedBinding, input.binding) ||
+    schema?.additionalProperties !== false ||
+    Object.keys(properties ?? {}).length !== 1 ||
+    option?.type !== "string" ||
+    required.length !== 1 ||
+    required[0] !== "recoveryOptionId" ||
+    allowed.length !== input.binding.allowedOptionIds.length ||
+    allowed.some((value, index) => value !== input.binding.allowedOptionIds[index])
+  ) {
+    throw new Error("Recovery review interaction does not match its binding.");
+  }
+  return interaction;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;

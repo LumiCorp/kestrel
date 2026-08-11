@@ -73,6 +73,46 @@ test("blocks ordinary messages while approval is pending", () => {
   );
 });
 
+test("requires an exact option while recovery review is pending", () => {
+  const interaction: ThreadConversationState["interactions"][number] = {
+    id: "interaction-recovery",
+    requestId: "recovery-review-1",
+    source: "runtime",
+    sourceCheckpointId: null,
+    kind: "user_input",
+    eventType: "user.reply",
+    prompt: "Choose recovery.",
+    status: "pending",
+    requestEnvelope: {
+      metadata: {
+        reason: "recovery_review",
+        recoveryReviewBinding: {
+          version: "recovery_review_binding_v1",
+          bindingId: "recovery-review-1",
+          decisionId: "recovery-decision-1",
+          threadId: "thread-1",
+          runId: "run-1",
+          executionProfileFingerprint: "a".repeat(64),
+          policyRevision: `sha256:${"b".repeat(64)}`,
+          allowedOptionIds: ["retry.primary", "terminal.fail"],
+          requestedAt: "2026-07-15T12:00:00.000Z",
+        },
+      },
+    },
+    responseEnvelope: null,
+    responseMessageId: null,
+    turnId: "turn-recovery",
+    assistantMessageId: "assistant-recovery",
+    createdAt: "2026-07-15T12:00:00.000Z",
+    resolvedAt: null,
+  };
+  assert.deepEqual(policy({ ...baseState, interactions: [interaction] }), {
+    mode: "select_recovery_option",
+    interaction,
+    allowedOptionIds: ["retry.primary", "terminal.fail"],
+  });
+});
+
 test("queues against a durable active turn even when transport is ready", () => {
   assert.deepEqual(
     policy({

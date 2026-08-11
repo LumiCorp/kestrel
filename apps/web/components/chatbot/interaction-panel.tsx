@@ -7,7 +7,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { parseUrlElicitation } from "@/lib/mcp/interaction-protocol";
 import type { ThreadInteractionView } from "@/lib/turns/client-contract";
 import {
-  evaluationOptionLabel,
+  readRecoveryReviewEnvelope,
+  recoveryOptionLabel,
+} from "@/lib/turns/recovery-review";
+import {
   readEvaluationReview,
 } from "./evaluation-review";
 
@@ -50,7 +53,7 @@ export function InteractionPanel({
     const answer = content[interaction.requestId]?.trim();
     const message =
       recoveryOptionId !== undefined
-        ? evaluationOptionLabel(recoveryOptionId)
+        ? recoveryOptionLabel(recoveryOptionId)
         : interaction.kind === "approval"
         ? decision
           ? "Approved"
@@ -137,7 +140,7 @@ export function InteractionPanel({
       !(
         interaction.source === "runtime" &&
         interaction.kind === "user_input" &&
-        readEvaluationReview(interaction) === null
+        readRecoveryReviewEnvelope(interaction.requestEnvelope) === null
       )
   );
 
@@ -156,6 +159,9 @@ export function InteractionPanel({
         Agent requests that need your response
       </h2>
       {visibleInteractions.map((interaction, index) => {
+        const recoveryReview = readRecoveryReviewEnvelope(
+          interaction.requestEnvelope,
+        );
         const evaluationReview = readEvaluationReview(interaction);
         const urlElicitation =
           interaction.kind === "mcp_elicitation"
@@ -164,13 +170,15 @@ export function InteractionPanel({
         const isRuntimeQuestion =
           interaction.source === "runtime" &&
           interaction.kind === "user_input" &&
-          evaluationReview === null;
+          recoveryReview === null;
         return (
           <Card key={interaction.requestId}>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">
-                {evaluationReview !== null
-                  ? "Result requires review"
+                {recoveryReview !== null
+                  ? recoveryReview.reason === "evaluation_review"
+                    ? "Result requires review"
+                    : "Recovery requires a decision"
                   : interaction.kind === "approval" ||
                 interaction.kind === "mcp_sampling"
                   ? "Approval required"
@@ -273,8 +281,8 @@ export function InteractionPanel({
               ) : null}
               <div className="flex justify-end gap-2">
                 {interaction.source === "runtime" ? (
-                  evaluationReview !== null ? (
-                    evaluationReview.allowedOptionIds.map((optionId) => (
+                  recoveryReview !== null ? (
+                    recoveryReview.allowedOptionIds.map((optionId) => (
                       <Button
                         disabled={busy !== null}
                         key={optionId}
@@ -284,7 +292,7 @@ export function InteractionPanel({
                         size="sm"
                         variant={optionId === "terminal.fail" ? "outline" : "default"}
                       >
-                        {evaluationOptionLabel(optionId)}
+                        {recoveryOptionLabel(optionId)}
                       </Button>
                     ))
                   ) : interaction.kind === "approval" ? (

@@ -159,7 +159,7 @@ test(
       if (entry.access === "service-boundary") {
         assert.match(
           source,
-          /\b(?:authorizeDesktopConnector|authorizeDesktopPreviewTunnel|authorizeDesktopUser|getDesktopAccountProjection|revokeDesktopUserCredentials|publishDesktopPreview|renewDesktopPreview|unpublishDesktopPreview|authorizeEnvironmentReconcileCron|authorizeWorkspaceIdleNotification|authorizeGatewayCredentialBroker|resolveEnvironmentGatewayConfig|reportEnvironmentGatewayNgrokStatus|resolvePreviewEdgeRoute|verifyEnvironmentExecutionTicket|verifyEnvironmentServiceToken|verifyEnvironmentToolCredential|handleAppRuntimeRequest|verifyGithubActionsReleaseToken)\b/,
+          /\b(?:authorizeDesktopConnector|authorizeDesktopPreviewTunnel|authorizeDesktopUser|getDesktopAccountProjection|revokeDesktopUserCredentials|publishDesktopPreview|renewDesktopPreview|unpublishDesktopPreview|authorizeEnvironmentReconcileCron|authorizeWorkspaceIdleNotification|authorizeGatewayCredentialBroker|resolveEnvironmentGatewayConfig|reportEnvironmentGatewayNgrokStatus|resolvePreviewEdgeRoute|renewEnvironmentExecutionAuthorization|verifyEnvironmentExecutionTicket|verifyEnvironmentServiceToken|verifyEnvironmentToolCredential|handleAppRuntimeRequest|verifyGithubActionsReleaseToken)\b/,
           `${entry.file} must validate its service credential`,
         );
         continue;

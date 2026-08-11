@@ -1,4 +1,8 @@
 import type { ThreadInteractionView } from "../../lib/turns/client-contract";
+import {
+  readRecoveryReviewEnvelope,
+  recoveryOptionLabel,
+} from "../../lib/turns/recovery-review";
 
 export type EvaluationReview = {
   allowedOptionIds: string[];
@@ -17,15 +21,12 @@ export type EvaluationReview = {
 export function readEvaluationReview(
   interaction: ThreadInteractionView
 ): EvaluationReview | null {
-  const metadata = readRecord(interaction.requestEnvelope.metadata);
-  if (metadata?.reason !== "evaluation_review") return null;
+  const review = readRecoveryReviewEnvelope(interaction.requestEnvelope);
+  if (review?.reason !== "evaluation_review") return null;
+  const metadata = review.metadata;
   const disclosure = readRecord(metadata.evaluationTechnicalDisclosure);
   if (disclosure === null || typeof disclosure.candidate !== "string") return null;
-  const allowedOptionIds = Array.isArray(metadata.allowedOptionIds)
-    ? metadata.allowedOptionIds.filter(
-        (value): value is string => typeof value === "string" && value.length > 0
-      )
-    : [];
+  const allowedOptionIds = review.allowedOptionIds;
   if (allowedOptionIds.length === 0) return null;
   const assertions = Array.isArray(disclosure.assertions)
     ? disclosure.assertions.flatMap((value) => {
@@ -63,10 +64,7 @@ export function readEvaluationReview(
 }
 
 export function evaluationOptionLabel(optionId: string): string {
-  if (optionId === "evaluation.accept_once") return "Accept once";
-  if (optionId === "evaluation.revise") return "Revise result";
-  if (optionId === "terminal.fail") return "Fail run";
-  return optionId;
+  return recoveryOptionLabel(optionId);
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {

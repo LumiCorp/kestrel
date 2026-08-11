@@ -74,6 +74,36 @@ test("finalizeRuntimeAssistantResponse rejects a user-facing wait without a prom
   );
 });
 
+test("finalizeRuntimeAssistantResponse rejects recovery review without exact-option interaction", () => {
+  assert.throws(
+    () => finalizeRuntimeAssistantResponse({
+      output: output("WAITING", {
+        waitFor: {
+          kind: "user",
+          eventType: "user.reply",
+          metadata: {
+            reason: "recovery_review",
+            prompt: "Choose recovery.",
+            recoveryReviewBinding: {
+              version: "recovery_review_binding_v1",
+              bindingId: "recovery-review-1",
+              decisionId: "decision-1",
+              threadId: "session-contract",
+              runId: "run-contract",
+              executionProfileFingerprint: "a".repeat(64),
+              policyRevision: "revision-1",
+              allowedOptionIds: ["retry.primary", "terminal.fail"],
+              requestedAt: "2026-08-11T12:00:00.000Z",
+            },
+          },
+        },
+      }),
+      assistantText: "Choose recovery.",
+    }),
+    /exact-option interaction matching its binding/u,
+  );
+});
+
 test("finalizeRuntimeAssistantResponse preserves completed and non-user wait behavior", () => {
   const completed = finalizeRuntimeAssistantResponse({
     output: output("COMPLETED"),

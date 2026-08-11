@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   HOSTED_MCP_PROTOCOL_VERSION,
+  parseHostedExecutionAuthorization,
   parseHostedMcpContext,
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
@@ -87,6 +88,32 @@ test("hosted MCP runtime connection reads only the short-lived execution ticket"
     executionTicket: "signed-run-ticket",
   });
   assert.equal("credentials" in connection, false);
+});
+
+test("hosted execution authorization accepts an additive HTTPS renewal contract", () => {
+  assert.deepEqual(parseHostedExecutionAuthorization({
+    executionTicket: "signed-run-ticket",
+    renewal: {
+      version: "execution-authorization-renewal-v1",
+      endpoint: "https://kestrel.example/renew",
+      token: "opaque-renewal-token",
+    },
+  }), {
+    executionTicket: "signed-run-ticket",
+    renewal: {
+      version: "execution-authorization-renewal-v1",
+      endpoint: "https://kestrel.example/renew",
+      token: "opaque-renewal-token",
+    },
+  });
+  assert.throws(() => parseHostedExecutionAuthorization({
+    executionTicket: "signed-run-ticket",
+    renewal: {
+      version: "execution-authorization-renewal-v1",
+      endpoint: "http://kestrel.example/renew",
+      token: "opaque-renewal-token",
+    },
+  }), /must use HTTPS/u);
 });
 
 test("hosted MCP runtime connection requires an execution ticket", () => {

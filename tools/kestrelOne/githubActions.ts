@@ -5,6 +5,7 @@ import type {
   SharedToolModule,
 } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
+import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
 
 type GitHubActionToolOptions = {
   name: string;
@@ -249,6 +250,7 @@ async function invokeGitHubAction(
     `${input.toolName} response`,
     await response.json().catch(() => ({}))
   );
+  await throwIfExecutionAuthorizationRejected({ response, body, toolName: input.toolName });
   if (!response.ok) {
     throw new RuntimeFailure(
       "KESTREL_ONE_GITHUB_ACTION_FAILED",

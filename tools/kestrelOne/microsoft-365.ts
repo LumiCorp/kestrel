@@ -8,6 +8,7 @@ import type {
   SharedToolModule,
 } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
+import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
 
 type Microsoft365Operation =
   | "mail.list"
@@ -216,6 +217,7 @@ async function invokeMicrosoft365(
     `${input.toolName} response`,
     await response.json().catch(() => ({}))
   );
+  await throwIfExecutionAuthorizationRejected({ response, body, toolName: input.toolName });
   if (!response.ok) {
     throw new RuntimeFailure(
       "KESTREL_ONE_MICROSOFT_365_ACTION_FAILED",

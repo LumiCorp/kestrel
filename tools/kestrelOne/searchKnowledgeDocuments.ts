@@ -1,5 +1,6 @@
 import { RuntimeFailure, createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolModule } from "../contracts.js";
+import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
 
 const TOOL_NAME = "kestrel_one.search_knowledge_documents";
 
@@ -78,6 +79,7 @@ export const kestrelOneSearchKnowledgeDocumentsTool: SharedToolModule = {
         body: JSON.stringify(payload),
       });
 
+      await throwIfExecutionAuthorizationRejected({ response, toolName: TOOL_NAME });
       if (!response.ok) {
         const message = await readResponseText(response);
         throw new RuntimeFailure(

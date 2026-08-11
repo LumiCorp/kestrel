@@ -88,6 +88,23 @@ test("MCP request authorization rejects missing, invalid, and unknown grants", a
   );
 });
 
+test("MCP request authorization exposes the typed execution expiry", async () => {
+  const decision = await authorizeMcpRequest({
+    headers: {
+      authorization: `Bearer ${ticket()}`,
+      "x-kestrel-mcp-grant-id": grant.id,
+    },
+    publicKey: publicKeyPem,
+    grantStore: { async activateGrant() { return grant; } },
+    now: new Date(now.getTime() + 301_000),
+  });
+  assert.deepEqual(decision, {
+    ok: false,
+    status: 401,
+    code: "EXECUTION_AUTH_EXPIRED",
+  });
+});
+
 test("Origin validation is default-deny when browsers send an Origin", () => {
   assert.equal(
     isAllowedOrigin({ origin: undefined, allowedOrigins: new Set() }),

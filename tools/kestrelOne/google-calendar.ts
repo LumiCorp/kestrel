@@ -8,6 +8,7 @@ import type {
   SharedToolModule,
 } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
+import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
 
 type GoogleCalendarOperation =
   | "events.list"
@@ -302,6 +303,7 @@ async function invokeGoogleCalendar(
     `${input.toolName} response`,
     await response.json().catch(() => ({}))
   );
+  await throwIfExecutionAuthorizationRejected({ response, body, toolName: input.toolName });
   if (!response.ok) {
     throw new RuntimeFailure(
       "KESTREL_ONE_GOOGLE_CALENDAR_ACTION_FAILED",

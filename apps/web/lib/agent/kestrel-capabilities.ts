@@ -1,4 +1,7 @@
-import { verifyEnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
+import {
+  EnvironmentTicketError,
+  verifyEnvironmentExecutionTicket,
+} from "@lumi/kestrel-environment-auth";
 import { z } from "zod";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 
@@ -124,7 +127,8 @@ export function parseRunnerKnowledgeCapabilityRequest(input: {
         ? { contextGrantId: parsed.contextGrantId }
         : {}),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof EnvironmentTicketError) throw error;
     throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHORIZED" });
   }
 }

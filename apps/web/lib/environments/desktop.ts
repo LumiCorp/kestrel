@@ -27,12 +27,17 @@ import {
 import { z } from "zod";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { issueGatewayCredentialLease } from "@/lib/ai/gateway-credential-lease";
+import { resolveKestrelAppUrl } from "@/lib/app-url";
 import type { ProjectRole } from "@/lib/projects/access";
 import { toEnvironmentSlug } from "./contracts";
 import {
   organizationEnvironmentCreateLockKey,
   organizationEnvironmentDefaultLockKey,
 } from "./lifecycle-lock";
+import {
+  createExecutionAuthorizationRenewalToken,
+  EXECUTION_AUTHORIZATION_RENEWAL_VERSION,
+} from "./authorization-renewal";
 
 const ENROLLMENT_TTL_MS = 10 * 60_000;
 const CONNECTOR_REQUEST_SKEW_SECONDS = 60;
@@ -959,6 +964,14 @@ export async function claimDesktopEnvironmentCommand(
         .where(eq(schema.desktopEnvironmentConnections.id, connection.id));
     }
     const issuedAt = Math.floor(now.getTime() / 1000);
+    const renewal = createExecutionAuthorizationRenewalToken();
+    await transaction
+      .update(schema.environmentRunExecutions)
+      .set({
+        authorizationRenewalTokenHash: renewal.tokenHash,
+        updatedAt: now,
+      })
+      .where(eq(schema.environmentRunExecutions.id, execution.id));
     const [organization, project, thread, actor] = await Promise.all([
       transaction.query.organizations.findFirst({
         where: (table, { eq }) =>
@@ -1030,6 +1043,14 @@ export async function claimDesktopEnvironmentCommand(
           nonce: crypto.randomUUID(),
         },
       }),
+      authorizationRenewal: {
+        version: EXECUTION_AUTHORIZATION_RENEWAL_VERSION,
+        endpoint: new URL(
+          `/api/runtime/executions/${encodeURIComponent(execution.id)}/authorization/renew`,
+          resolveKestrelAppUrl(process.env),
+        ).toString(),
+        token: renewal.token,
+      },
       cancelRequested: Boolean(updated.cancelRequestedAt),
     };
   });

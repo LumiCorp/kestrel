@@ -524,6 +524,7 @@ function readWaitFor(value: unknown): Exclude<NormalizedOutput["waitFor"], undef
     return ;
   }
   const metadata = asRecord(record.metadata);
+  const interaction = asRecord(record.interaction);
   if (kind === "user") {
     const prompt = asString(metadata?.prompt);
     if (prompt === undefined) {
@@ -537,6 +538,9 @@ function readWaitFor(value: unknown): Exclude<NormalizedOutput["waitFor"], undef
         ...metadata,
         prompt,
       },
+      ...(interaction !== undefined
+        ? { interaction: interaction as Exclude<NormalizedOutput["waitFor"], undefined>["interaction"] }
+        : {}),
     };
   }
   return {
@@ -544,6 +548,9 @@ function readWaitFor(value: unknown): Exclude<NormalizedOutput["waitFor"], undef
     eventType,
     ...(typeof record.timeoutMs === "number" ? { timeoutMs: record.timeoutMs } : {}),
     ...(metadata !== undefined ? { metadata } : {}),
+    ...(interaction !== undefined
+      ? { interaction: interaction as Exclude<NormalizedOutput["waitFor"], undefined>["interaction"] }
+      : {}),
   };
 }
 

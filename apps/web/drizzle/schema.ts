@@ -2081,6 +2081,8 @@ export const environmentRunExecutions = pgTable(
       () => projectContextRevisions.id,
       { onDelete: "set null" },
     ),
+    projectContextGrantId: text("project_context_grant_id"),
+    authorizationRenewalTokenHash: text("authorization_renewal_token_hash"),
     actorId: text("actor_id").notNull(),
     runtimeImage: text("runtime_image").notNull(),
     effectiveCapabilities: jsonb("effective_capabilities")
