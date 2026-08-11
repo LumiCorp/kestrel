@@ -162,15 +162,21 @@ function resolveLabelAndTone(input: {
   }
 
   if (input.transportStatus === "error") {
-    return { label: "Agent error", tone: "error" };
+    return { label: "Connection error · reset to continue", tone: "error" };
   }
 
   if (input.conversationState.queue.pauseReason === "turn_failed") {
-    return { label: "Agent failed · queue paused", tone: "error" };
+    return {
+      label: "Agent failed · send a new message to continue",
+      tone: "error",
+    };
   }
 
   if (input.conversationState.queue.pauseReason === "turn_cancelled") {
-    return { label: "Turn interrupted · queue paused", tone: "attention" };
+    return {
+      label: "Turn interrupted · send a new message to continue",
+      tone: "attention",
+    };
   }
 
   if (input.submissionPolicy.mode === "queue_turn") {

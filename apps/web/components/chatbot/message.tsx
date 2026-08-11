@@ -1,9 +1,13 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
-import { ActivityIcon } from "lucide-react";
+import { ActivityIcon, ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { ThreadTurnView } from "@/lib/turns/client-contract";
+import {
+  agentProgressSummary,
+  isTerminalThreadTurnStatus,
+} from "@/lib/turns/activity-presentation";
 import type { ChatMessage, MessageFeedback } from "@/lib/types";
 import { cn, sanitizeText } from "@/lib/utils";
 import { useDataStream } from "./data-stream-provider";
@@ -29,6 +33,11 @@ import {
   type LiveProviderReasoning,
 } from "./live-runtime-presentation";
 import { PreviewAttachment } from "./preview-attachment";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./ui/collapsible";
 import { Weather, type WeatherAtLocation } from "./weather";
 
 type ToolLikePart = Extract<ChatMessage["parts"][number], { type: string }> & {
@@ -153,6 +162,65 @@ function turnActivityLabel(status: ThreadTurnView["status"] | undefined) {
   return "Activity details";
 }
 
+function AgentProgressDisclosure({
+  isLoading,
+  parts,
+  turnStatus,
+}: {
+  isLoading: boolean;
+  parts: Extract<
+    ChatMessage["parts"][number],
+    { type: "data-kestrel-agent-progress" }
+  >[];
+  turnStatus?: ThreadTurnView["status"];
+}) {
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const locksOpen = isLoading || !isTerminalThreadTurnStatus(turnStatus);
+  const isOpen = locksOpen || terminalOpen;
+
+  return (
+    <Collapsible
+      className="not-prose"
+      data-testid="kestrel-agent-progress"
+      onOpenChange={(open) => {
+        if (!locksOpen) setTerminalOpen(open);
+      }}
+      open={isOpen}
+    >
+      <CollapsibleTrigger className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-muted-foreground text-xs transition-colors hover:bg-muted hover:text-foreground">
+        <ActivityIcon className="size-3.5" />
+        <span>
+          {isTerminalThreadTurnStatus(turnStatus) && !isLoading
+            ? agentProgressSummary(parts.length)
+            : "Agent progress"}
+        </span>
+        {isLoading ? (
+          <span
+            aria-label="Agent is working"
+            className="ml-1 size-1.5 animate-pulse rounded-full bg-primary"
+          />
+        ) : null}
+        <ChevronDown
+          aria-hidden="true"
+          className={cn(
+            "ml-auto size-3 transition-transform",
+            isOpen && "rotate-180"
+          )}
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <ol className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-border/50 bg-muted/30 p-2.5 text-muted-foreground text-xs leading-relaxed">
+          {parts.map((part) => (
+            <li className="whitespace-pre-wrap" key={part.data.id}>
+              {part.data.text}
+            </li>
+          ))}
+        </ol>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export function KestrelActivityTimeline({
   parts,
   isLoading,
@@ -178,25 +246,11 @@ export function KestrelActivityTimeline({
   return (
     <div className="space-y-2" data-testid="kestrel-activity-timeline">
       {agentProgressParts.length > 0 ? (
-        <section className="not-prose" data-testid="kestrel-agent-progress">
-          <div className="flex items-center gap-1 px-2 py-1 text-muted-foreground text-xs">
-            <ActivityIcon className="size-3.5" />
-            <span>Agent progress</span>
-            {isLoading ? (
-              <span
-                aria-label="Agent is working"
-                className="ml-1 size-1.5 animate-pulse rounded-full bg-primary"
-              />
-            ) : null}
-          </div>
-          <ol className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-border/50 bg-muted/30 p-2.5 text-muted-foreground text-xs leading-relaxed">
-            {agentProgressParts.map((part) => (
-              <li className="whitespace-pre-wrap" key={part.data.id}>
-                {part.data.text}
-              </li>
-            ))}
-          </ol>
-        </section>
+        <AgentProgressDisclosure
+          isLoading={isLoading}
+          parts={agentProgressParts}
+          turnStatus={turnStatus}
+        />
       ) : null}
 
       {detailParts.length > 0 || liveStatuses.length > 0 ? (
@@ -659,7 +713,7 @@ const PurePreviewMessage = ({
                   <div key={key}>
                     <MessageContent
                       className={cn({
-                        "wrap-break-word w-fit rounded-2xl bg-message-user px-3 py-2 text-right text-message-user-foreground":
+                        "wrap-break-word w-fit rounded-2xl bg-message-user px-3 py-2 text-left text-message-user-foreground":
                           message.role === "user",
                         "max-w-none bg-transparent px-0 py-0 text-left":
                           message.role === "assistant",

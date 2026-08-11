@@ -1,14 +1,18 @@
 "use client";
 
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Button } from "@/components/chatbot/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/chatbot/ui/dropdown-menu";
-import { useChatVisibility } from "@/hooks/use-chat-visibility";
 import { cn } from "@/lib/utils";
 import {
   CheckCircleFillIcon,
@@ -40,23 +44,17 @@ const visibilities: Array<{
 ];
 
 export function VisibilitySelector({
-  threadId,
   className,
-  selectedVisibilityType,
+  onVisibilityTypeChange,
+  visibilityType,
 }: {
-  threadId: string;
-  selectedVisibilityType: VisibilityType;
+  onVisibilityTypeChange: (visibilityType: VisibilityType) => void;
+  visibilityType: VisibilityType;
 } & React.ComponentProps<typeof Button>) {
   const [open, setOpen] = useState(false);
 
-  const { visibilityType, setVisibilityType } = useChatVisibility({
-    threadId,
-    initialVisibilityType: selectedVisibilityType,
-  });
-
-  const selectedVisibility = useMemo(
-    () => visibilities.find((visibility) => visibility.id === visibilityType),
-    [visibilityType]
+  const selectedVisibility = visibilities.find(
+    (visibility) => visibility.id === visibilityType
   );
 
   return (
@@ -87,7 +85,7 @@ export function VisibilitySelector({
             data-testid={`visibility-selector-item-${visibility.id}`}
             key={visibility.id}
             onSelect={() => {
-              setVisibilityType(visibility.id);
+              onVisibilityTypeChange(visibility.id);
               setOpen(false);
             }}
           >
@@ -106,5 +104,44 @@ export function VisibilitySelector({
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+export function VisibilityMenuSub({
+  onVisibilityTypeChange,
+  visibilityType,
+}: {
+  onVisibilityTypeChange: (visibilityType: VisibilityType) => void;
+  visibilityType: VisibilityType;
+}) {
+  const selectedVisibility = visibilities.find(
+    (visibility) => visibility.id === visibilityType
+  );
+
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger className="min-h-11">
+        {selectedVisibility?.icon}
+        Visibility: {selectedVisibility?.label}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
+        <DropdownMenuRadioGroup
+          onValueChange={(value) =>
+            onVisibilityTypeChange(value as VisibilityType)
+          }
+          value={visibilityType}
+        >
+          {visibilities.map((visibility) => (
+            <DropdownMenuRadioItem
+              className="min-h-11"
+              key={visibility.id}
+              value={visibility.id}
+            >
+              {visibility.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }

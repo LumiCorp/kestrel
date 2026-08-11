@@ -93,7 +93,13 @@ function ComposerStatusEdge({
     <>
       <span
         aria-live="polite"
-        className="sr-only"
+        className={cn(
+          presentation.tone === "attention" || presentation.tone === "error"
+            ? "flex px-2 pt-1 font-medium text-xs"
+            : "sr-only",
+          presentation.tone === "attention" && "text-primary",
+          presentation.tone === "error" && "text-destructive"
+        )}
         data-queue-version={queueVersion}
         data-testid="composer-state"
         role="status"

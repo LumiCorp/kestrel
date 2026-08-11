@@ -117,6 +117,67 @@ test("conflicting explicit identities become visible projection issues", () => {
   assert.equal(projection.issues[0]?.code, "MESSAGE_TURN_CONFLICT");
 });
 
+for (const status of [
+  "running",
+  "waiting_for_input",
+  "completed",
+  "failed",
+  "cancelled",
+] as const) {
+  test(`a ${status} durable turn no longer presents its input as queued`, () => {
+    const conversationState = state();
+    conversationState.turns[0] = {
+      ...conversationState.turns[0]!,
+      status,
+      finishedAt:
+        status === "completed" || status === "failed" || status === "cancelled"
+          ? now
+          : null,
+    };
+    const queuedInput = message("user-1", "user", "Inspect a workspace.");
+    queuedInput.metadata = {
+      deliveryState: "queued",
+      kestrelTurnId: "turn-1",
+    };
+
+    const projection = projectThreadConversation({
+      conversationState,
+      messages: [queuedInput],
+    });
+    const item = projection.items[0];
+
+    assert.equal(item?.kind, "durable_turn");
+    if (item?.kind !== "durable_turn") assert.fail("expected durable turn");
+    assert.equal(item.messages[0]?.metadata?.deliveryState, undefined);
+    assert.equal(item.messages[0]?.metadata?.kestrelTurnId, "turn-1");
+  });
+}
+
+test("a queued durable turn retains its queued delivery state", () => {
+  const conversationState = state();
+  conversationState.turns[0] = {
+    ...conversationState.turns[0]!,
+    status: "queued",
+    finishedAt: null,
+    startedAt: null,
+  };
+  const queuedInput = message("user-1", "user", "Inspect a workspace.");
+  queuedInput.metadata = {
+    deliveryState: "queued",
+    kestrelTurnId: "turn-1",
+  };
+
+  const projection = projectThreadConversation({
+    conversationState,
+    messages: [queuedInput],
+  });
+  const item = projection.items[0];
+
+  assert.equal(item?.kind, "durable_turn");
+  if (item?.kind !== "durable_turn") assert.fail("expected durable turn");
+  assert.equal(item.messages[0]?.metadata?.deliveryState, "queued");
+});
+
 test("historical waiting precedes the resolved interaction in one timeline", () => {
   const assistant = message(
     "assistant-wait",

@@ -1,8 +1,14 @@
 import equal from "fast-deep-equal";
-import { memo } from "react";
+import { memo, useState } from "react";
 import { toast } from "sonner";
 import { useCopyToClipboard } from "usehooks-ts";
 import type { ChatMessage, MessageFeedback } from "@/lib/types";
+import {
+  type AssistantMessageFeedback,
+  nextMessageFeedback,
+  patchMessageFeedback,
+} from "@/lib/chat/message-feedback";
+import { cn } from "@/lib/utils";
 import { Action, Actions } from "./elements/actions";
 import { CopyIcon, PencilEditIcon, ThumbDownIcon, ThumbUpIcon } from "./icons";
 import { MessageSpeechControl } from "./message-speech-control";
@@ -32,6 +38,7 @@ export function PureMessageActions({
   ttsAvailable?: boolean;
 }) {
   const [_, copyToClipboard] = useCopyToClipboard();
+  const [feedbackPending, setFeedbackPending] = useState(false);
 
   if (isLoading) {
     return null;
@@ -51,6 +58,38 @@ export function PureMessageActions({
 
     await copyToClipboard(textFromParts);
     toast.success("Copied to clipboard!");
+  };
+
+  const submitFeedback = async (
+    selected: Exclude<AssistantMessageFeedback, null>
+  ) => {
+    if (feedbackPending) return;
+    const nextFeedback = nextMessageFeedback(
+      feedback?.feedback ?? null,
+      selected
+    );
+    setFeedbackPending(true);
+    try {
+      await patchMessageFeedback({
+        messageId: message.id,
+        threadId,
+        feedback: nextFeedback,
+      });
+      onFeedbackChange(message.id, nextFeedback);
+      toast.success(
+        nextFeedback === null
+          ? "Feedback removed"
+          : nextFeedback === "positive"
+            ? "Response upvoted"
+            : "Response downvoted"
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Feedback could not be saved."
+      );
+    } finally {
+      setFeedbackPending(false);
+    }
   };
 
   // User messages get edit (on hover) and copy actions
@@ -90,65 +129,33 @@ export function PureMessageActions({
       </Action>
 
       <Action
+        aria-pressed={feedback?.feedback === "positive"}
+        className={cn(
+          feedback?.feedback === "positive" && "text-foreground"
+        )}
         data-testid="message-upvote"
-        disabled={feedback?.feedback === "positive"}
-        onClick={() => {
-          const nextFeedback =
-            feedback?.feedback === "positive" ? null : "positive";
-          const upvote = fetch(`/api/messages/${message.id}/feedback`, {
-            method: "PATCH",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              threadId,
-              feedback: nextFeedback,
-            }),
-          });
-
-          toast.promise(upvote, {
-            loading: "Upvoting Response...",
-            success: () => {
-              onFeedbackChange(message.id, nextFeedback);
-
-              return "Upvoted Response!";
-            },
-            error: "Failed to upvote response.",
-          });
-        }}
-        tooltip="Upvote Response"
+        disabled={feedbackPending}
+        onClick={() => void submitFeedback("positive")}
+        tooltip={
+          feedback?.feedback === "positive" ? "Remove upvote" : "Upvote response"
+        }
       >
         <ThumbUpIcon />
       </Action>
 
       <Action
+        aria-pressed={feedback?.feedback === "negative"}
+        className={cn(
+          feedback?.feedback === "negative" && "text-foreground"
+        )}
         data-testid="message-downvote"
-        disabled={feedback?.feedback === "negative"}
-        onClick={() => {
-          const nextFeedback =
-            feedback?.feedback === "negative" ? null : "negative";
-          const downvote = fetch(`/api/messages/${message.id}/feedback`, {
-            method: "PATCH",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              threadId,
-              feedback: nextFeedback,
-            }),
-          });
-
-          toast.promise(downvote, {
-            loading: "Downvoting Response...",
-            success: () => {
-              onFeedbackChange(message.id, nextFeedback);
-
-              return "Downvoted Response!";
-            },
-            error: "Failed to downvote response.",
-          });
-        }}
-        tooltip="Downvote Response"
+        disabled={feedbackPending}
+        onClick={() => void submitFeedback("negative")}
+        tooltip={
+          feedback?.feedback === "negative"
+            ? "Remove downvote"
+            : "Downvote response"
+        }
       >
         <ThumbDownIcon />
       </Action>
