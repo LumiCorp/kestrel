@@ -6,11 +6,24 @@ import { toast } from "sonner";
 import { readJson } from "@/components/admin/admin-client-utils";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
+import { ResourceEmpty, ResourceList, ResourceRow } from "@/components/resource-list";
 import {
+  SettingsDisclosure,
   SettingsMetric,
+  SettingsMetricStrip,
   SettingsPage,
   SettingsPageHeader,
+  SettingsSection,
 } from "@/components/settings/settings-section";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +68,7 @@ export function LogsAdminClient({
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   async function loadStats() {
     setStatus("Loading log stats...");
@@ -89,6 +103,9 @@ export function LogsAdminClient({
       ),
     [stats]
   );
+  const attentionEvents = events.filter((event) =>
+    ["warn", "error"].includes(event.level),
+  );
 
   async function previewDelete() {
     if (!before) {
@@ -115,7 +132,7 @@ export function LogsAdminClient({
   async function deleteLogs() {
     if (!before) {
       toast.error("Choose a cutoff date first.");
-      return;
+      return false;
     }
     setBusy(true);
     const response = await fetch("/api/organization/audit", {
@@ -132,7 +149,7 @@ export function LogsAdminClient({
     setBusy(false);
     if (!response.ok) {
       toast.error(json.error || "Failed to delete logs");
-      return;
+      return false;
     }
     toast.success(`Deleted ${json.deletedCount ?? 0} log row(s).`);
     const cutoff = new Date(before).getTime();
@@ -146,6 +163,7 @@ export function LogsAdminClient({
     setPreviewCount(null);
     await loadStats();
     router.refresh();
+    return true;
   }
 
   async function investigateInAdminChat() {
@@ -199,57 +217,41 @@ export function LogsAdminClient({
         <div className="text-muted-foreground text-sm">{status}</div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <SettingsMetricStrip className="lg:grid-cols-3">
         <SettingsMetric label="Total logs" value={stats?.totalCount ?? 0} />
         <SettingsMetric label="Warnings" value={levelSummary.get("warn") ?? 0} />
         <SettingsMetric label="Errors" value={levelSummary.get("error") ?? 0} />
-      </div>
+      </SettingsMetricStrip>
 
-      <div className="border-y py-4">
-        <div className="grid gap-3 md:grid-cols-[1fr_180px_auto_auto]">
-          <Input
-            onChange={(event) => setBefore(event.target.value)}
-            type="datetime-local"
-            value={before}
-          />
-          <Select
-            onValueChange={(value) => setLevel(value === "all" ? "" : value)}
-            value={level || "all"}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="All levels" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All levels</SelectItem>
-              <SelectItem value="debug">Debug</SelectItem>
-              <SelectItem value="info">Info</SelectItem>
-              <SelectItem value="warn">Warn</SelectItem>
-              <SelectItem value="error">Error</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            disabled={busy}
-            onClick={() => void previewDelete()}
-            variant="outline"
-          >
-            Preview Delete
-          </Button>
-          <Button
-            disabled={busy}
-            onClick={() => void deleteLogs()}
-            variant="destructive"
-          >
-            Delete Matching Logs
-          </Button>
-        </div>
-        <div className="mt-3 text-muted-foreground text-sm">
-          {previewCount === null
-            ? "Choose a cutoff date to preview affected log rows."
-            : `${previewCount} log row(s) will be removed by the current filter.`}
-        </div>
-      </div>
+      <SettingsSection
+        description="Recent warnings and errors that may require an administrator."
+        title="Requires attention"
+      >
+        {attentionEvents.length > 0 ? (
+          <ResourceList>
+            {attentionEvents.map((event) => (
+              <ResourceRow
+                description={`${event.category} · ${event.action}`}
+                key={event.id}
+                status={
+                  <Badge variant={event.level === "error" ? "destructive" : "outline"}>
+                    {event.level}
+                  </Badge>
+                }
+                title={event.message}
+              />
+            ))}
+          </ResourceList>
+        ) : (
+          <ResourceEmpty title="No recent warnings or errors" />
+        )}
+      </SettingsSection>
 
-      <AdminDataTable
+      <SettingsSection
+        description="Latest structured administrative activity."
+        title="Recent activity"
+      >
+        <AdminDataTable
         columns={[
           { key: "event", label: "Event" },
           { key: "category", label: "Category" },
@@ -280,7 +282,85 @@ export function LogsAdminClient({
             </span>
           ),
         }))}
-      />
+        />
+      </SettingsSection>
+
+      <SettingsDisclosure
+        description="Preview and permanently prune retained audit rows."
+        title="Advanced maintenance"
+      >
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-[1fr_180px_auto]">
+            <Input
+              onChange={(event) => setBefore(event.target.value)}
+              type="datetime-local"
+              value={before}
+            />
+            <Select
+              onValueChange={(value) => setLevel(value === "all" ? "" : value)}
+              value={level || "all"}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="All levels" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All levels</SelectItem>
+                <SelectItem value="debug">Debug</SelectItem>
+                <SelectItem value="info">Info</SelectItem>
+                <SelectItem value="warn">Warn</SelectItem>
+                <SelectItem value="error">Error</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              disabled={busy}
+              onClick={() => void previewDelete()}
+              variant="outline"
+            >
+              Preview deletion
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+            <p className="text-muted-foreground text-sm">
+              {previewCount === null
+                ? "Choose a cutoff date and preview the affected rows."
+                : `${previewCount} log row(s) match the current filter.`}
+            </p>
+            <Button
+              disabled={busy || previewCount === null || previewCount === 0}
+              onClick={() => setDeleteOpen(true)}
+              variant="destructive"
+            >
+              Delete matching logs
+            </Button>
+          </div>
+        </div>
+      </SettingsDisclosure>
+
+      <AlertDialog onOpenChange={setDeleteOpen} open={deleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete these audit rows?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {previewCount ?? 0} matching row(s) will be permanently removed.
+              Historical activity outside this filter remains unchanged.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <Button
+              disabled={busy}
+              onClick={() =>
+                void deleteLogs().then((deleted) => {
+                  if (deleted) setDeleteOpen(false);
+                })
+              }
+              variant="destructive"
+            >
+              {busy ? "Deleting…" : "Delete audit rows"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </SettingsPage>
   );
 }

@@ -2,14 +2,15 @@
 
 import { useState } from "react";
 import {
+  SettingsDisclosure,
+  SettingsMetric,
+  SettingsMetricStrip,
   SettingsPage,
   SettingsPageHeader,
-  SettingsPanel,
-  SettingsPanelContent,
-  SettingsPanelDescription,
-  SettingsPanelHeader,
-  SettingsPanelTitle,
+  SettingsRow,
+  SettingsRows,
   SettingsSection,
+  SettingsStatusNotice,
 } from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -140,27 +141,52 @@ export function CostsUsageAdminClient({
   return (
     <SettingsPage>
       <SettingsPageHeader
-        actions={
-          <div className="flex gap-2">
-            {(["mtd", "7d", "30d", "90d"] as const).map((range) => (
-              <Button key={range} onClick={() => void refreshSnapshot(range)} size="sm" variant="outline">
-                {range === "mtd" ? "MTD" : range}
-              </Button>
-            ))}
-          </div>
-        }
         description="Inspect attributed operating cost, manage visibility, and maintain organization-specific rate assumptions."
         eyebrow="Organization"
         title="Costs & usage"
       />
 
-      {status ? <div className="text-muted-foreground text-sm">{status}</div> : null}
+      {status ? <SettingsStatusNotice title={status} /> : null}
+
+      <SettingsSection
+        description="Choose the reporting period without changing the underlying attribution."
+        title="Reporting period"
+      >
+        <div className="flex flex-wrap gap-2">
+          {(["mtd", "7d", "30d", "90d"] as const).map((range) => (
+            <Button
+              key={range}
+              onClick={() => void refreshSnapshot(range)}
+              size="sm"
+              variant={snapshot.period.range === range ? "default" : "outline"}
+            >
+              {range === "mtd" ? "Month to date" : range}
+            </Button>
+          ))}
+        </div>
+      </SettingsSection>
+
+      <SettingsMetricStrip>
+        <SettingsMetric
+          label="Attributed cost"
+          value={formatUsd(snapshot.totals.amountUsd ?? 0)}
+        />
+        <SettingsMetric label="Runs" value={formatNumber(snapshot.totals.runs)} />
+        <SettingsMetric
+          label="Failed"
+          value={formatNumber(snapshot.totals.failedRuns)}
+        />
+        <SettingsMetric
+          label="Active members"
+          value={formatNumber(snapshot.totals.activeMembers)}
+        />
+      </SettingsMetricStrip>
 
       <SettingsSection
         description="All members see organization dollar totals by default. Turn this on to remove all amounts, deltas, and cost breakdowns from member responses."
         title="Cost visibility"
       >
-        <div className="flex items-center justify-between gap-6 rounded-lg border p-4">
+        <div className="flex items-center justify-between gap-6 border-y py-4">
           <div>
             <div className="font-medium text-sm">Restrict dollars to owners and admins</div>
             <div className="mt-1 text-muted-foreground text-xs">
@@ -175,30 +201,11 @@ export function CostsUsageAdminClient({
         </div>
       </SettingsSection>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {snapshot.categories.map((category) => (
-          <div className="rounded-lg border p-4" key={category.category}>
-            <div className="text-muted-foreground text-xs uppercase tracking-wide">
-              {category.category.replace("_", " ")}
-            </div>
-            <div className="mt-2 font-semibold text-2xl tabular-nums">
-              {formatUsd(category.amountUsd ?? 0)}
-            </div>
-            <div className="mt-1 text-muted-foreground text-xs">
-              {formatNumber(category.usageQuantity)} {category.usageUnit}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <SettingsPanel>
-        <SettingsPanelHeader>
-          <SettingsPanelTitle>Attribution explorer</SettingsPanelTitle>
-          <SettingsPanelDescription>
-            Organization totals and admin-only attribution for the selected period.
-          </SettingsPanelDescription>
-        </SettingsPanelHeader>
-        <SettingsPanelContent className="grid gap-6 lg:grid-cols-2">
+      <SettingsSection
+        description="Organization totals and admin-only attribution for the selected period."
+        title="Attribution"
+      >
+        <div className="grid gap-8 lg:grid-cols-2">
           <AttributionTable
             rows={snapshot.people.map((row) => ({
               id: row.userId,
@@ -217,73 +224,115 @@ export function CostsUsageAdminClient({
             }))}
             title="Projects"
           />
-        </SettingsPanelContent>
-      </SettingsPanel>
+        </div>
+      </SettingsSection>
 
-      <SettingsPanel>
-        <SettingsPanelHeader>
-          <SettingsPanelTitle>Pricing coverage</SettingsPanelTitle>
-          <SettingsPanelDescription>
-            {snapshot.pricingCoverage.pricedMeters} of {snapshot.pricingCoverage.activeMeters}{" "}
-            active meters are priced. Unknown dollars are never estimated.
-          </SettingsPanelDescription>
-        </SettingsPanelHeader>
-        <SettingsPanelContent className="flex flex-wrap gap-2">
-          {snapshot.pricingCoverage.unpricedServices.map((item) => (
-            <Badge key={`${item.provider}/${item.service}/${item.meter}`} variant="outline">
-              {item.provider} · {item.service} · {item.meter} ({item.eventCount})
-            </Badge>
+      <SettingsSection
+        description="Attributed totals by operating category."
+        title="Categories"
+      >
+        <SettingsRows>
+          {snapshot.categories.map((category) => (
+            <SettingsRow
+              key={category.category}
+              label={category.category.replace("_", " ")}
+            >
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="font-medium tabular-nums">
+                  {formatUsd(category.amountUsd ?? 0)}
+                </span>
+                <span className="text-muted-foreground">
+                  {formatNumber(category.usageQuantity)} {category.usageUnit}
+                </span>
+              </div>
+            </SettingsRow>
           ))}
-          {snapshot.pricingCoverage.unpricedServices.length === 0 ? (
-            <span className="text-muted-foreground text-sm">No unpriced active providers.</span>
-          ) : null}
-        </SettingsPanelContent>
-      </SettingsPanel>
+        </SettingsRows>
+      </SettingsSection>
 
-      <SettingsPanel>
-        <SettingsPanelHeader>
-          <SettingsPanelTitle>Rate cards</SettingsPanelTitle>
-          <SettingsPanelDescription>
-            Organization overrides take precedence over Kestrel platform defaults. Historical rates remain versioned.
-          </SettingsPanelDescription>
-        </SettingsPanelHeader>
-        <SettingsPanelContent className="divide-y rounded-lg border">
-          {rates.map((rate) => (
-            <div className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[1fr_1fr_auto_auto]" key={rate.id}>
-              <div>
-                <div className="font-medium">{rate.provider} · {rate.service}</div>
-                <div className="text-muted-foreground text-xs">{rate.meter} / {rate.unit}</div>
-              </div>
-              <div className="text-muted-foreground text-xs">
-                {rate.organizationId ? "Organization override" : "Platform default"} · {rate.provenance}
-                <br />
-                {rate.effectiveTo
-                  ? `Ended ${new Date(rate.effectiveTo).toLocaleDateString()}`
-                  : new Date(rate.effectiveFrom) > new Date()
-                    ? `Scheduled ${new Date(rate.effectiveFrom).toLocaleDateString()}`
-                    : `Active since ${new Date(rate.effectiveFrom).toLocaleDateString()}`}
-              </div>
-              <div className="font-mono tabular-nums">
-                {formatUsd(Number(rate.unitPriceUsd))}/{rate.rateKind === "unit" ? rate.unit : rate.rateKind}
-              </div>
-              {rate.organizationId && !rate.effectiveTo ? (
-                <Button disabled={saving} onClick={() => void endRate(rate.id)} size="sm" variant="ghost">
-                  End rate
-                </Button>
+      <SettingsDisclosure
+        description="Pricing coverage, versioned rate cards, and organization overrides."
+        title="Advanced pricing"
+      >
+        <div className="space-y-8">
+          <div>
+            <h3 className="font-medium text-sm">Pricing coverage</h3>
+            <p className="mt-1 text-muted-foreground text-xs/5">
+              {snapshot.pricingCoverage.pricedMeters} of{" "}
+              {snapshot.pricingCoverage.activeMeters} active meters are priced.
+              Unknown dollars are never estimated.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {snapshot.pricingCoverage.unpricedServices.map((item) => (
+                <Badge
+                  key={`${item.provider}/${item.service}/${item.meter}`}
+                  variant="outline"
+                >
+                  {item.provider} · {item.service} · {item.meter} (
+                  {item.eventCount})
+                </Badge>
+              ))}
+              {snapshot.pricingCoverage.unpricedServices.length === 0 ? (
+                <span className="text-muted-foreground text-sm">
+                  No unpriced active providers.
+                </span>
               ) : null}
             </div>
-          ))}
-        </SettingsPanelContent>
-      </SettingsPanel>
+          </div>
 
-      <SettingsPanel>
-        <SettingsPanelHeader>
-          <SettingsPanelTitle>Create rate override</SettingsPanelTitle>
-          <SettingsPanelDescription>
-            Add a contract or explicit assumption for an unpriced provider. A new effective version ends the previous version; it never rewrites history.
-          </SettingsPanelDescription>
-        </SettingsPanelHeader>
-        <SettingsPanelContent>
+          <div>
+            <h3 className="font-medium text-sm">Rate cards</h3>
+            <div className="mt-3 divide-y border-y">
+              {rates.map((rate) => (
+                <div
+                  className="grid gap-2 py-3 text-sm md:grid-cols-[1fr_1fr_auto_auto]"
+                  key={rate.id}
+                >
+                  <div>
+                    <div className="font-medium">
+                      {rate.provider} · {rate.service}
+                    </div>
+                    <div className="text-muted-foreground text-xs">
+                      {rate.meter} / {rate.unit}
+                    </div>
+                  </div>
+                  <div className="text-muted-foreground text-xs">
+                    {rate.organizationId
+                      ? "Organization override"
+                      : "Platform default"}{" "}
+                    · {rate.provenance}
+                    <br />
+                    {rate.effectiveTo
+                      ? `Ended ${new Date(rate.effectiveTo).toLocaleDateString()}`
+                      : new Date(rate.effectiveFrom) > new Date()
+                        ? `Scheduled ${new Date(rate.effectiveFrom).toLocaleDateString()}`
+                        : `Active since ${new Date(rate.effectiveFrom).toLocaleDateString()}`}
+                  </div>
+                  <div className="font-mono tabular-nums">
+                    {formatUsd(Number(rate.unitPriceUsd))}/
+                    {rate.rateKind === "unit" ? rate.unit : rate.rateKind}
+                  </div>
+                  {rate.organizationId && !rate.effectiveTo ? (
+                    <Button
+                      disabled={saving}
+                      onClick={() => void endRate(rate.id)}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      End rate
+                    </Button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="font-medium text-sm">Create rate override</h3>
+            <p className="mt-1 text-muted-foreground text-xs/5">
+              Add a contract or explicit assumption for an unpriced provider.
+              New effective versions never rewrite history.
+            </p>
           <form action={createRate} className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <select className="h-9 rounded-md border bg-transparent px-3 text-sm" defaultValue="services" name="category">
               <option value="models">Models</option>
@@ -309,8 +358,9 @@ export function CostsUsageAdminClient({
             <Input className="xl:col-span-3" name="sourceUrl" placeholder="Provenance URL (optional)" type="url" />
             <Button disabled={saving} type="submit">Create override</Button>
           </form>
-        </SettingsPanelContent>
-      </SettingsPanel>
+          </div>
+        </div>
+      </SettingsDisclosure>
     </SettingsPage>
   );
 }

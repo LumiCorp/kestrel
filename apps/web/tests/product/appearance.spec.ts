@@ -13,6 +13,8 @@ test(
   "Appearance settings keep light and dark palettes independent and durable",
   async ({ page }) => {
     const root = page.locator("html");
+    await page.getByText("Choose light palette", { exact: true }).click();
+    await page.getByText("Choose dark palette", { exact: true }).click();
     const lightPalettes = page.getByRole("radiogroup", {
       name: "Light palette",
     });
@@ -42,6 +44,8 @@ test(
     ).toBe(lightBackground);
 
     await page.reload();
+    await page.getByText("Choose light palette", { exact: true }).click();
+    await page.getByText("Choose dark palette", { exact: true }).click();
     await expect(root).toHaveAttribute("data-light-palette", "juniper");
     await expect(root).toHaveAttribute("data-dark-palette", "iris");
     await expect(lightPalettes.getByRole("radio", { name: "Juniper" })).toBeChecked();
@@ -78,6 +82,11 @@ test(
     await expect(
       secondPage.getByRole("heading", { level: 1, name: "Appearance" })
     ).toBeVisible();
+    await page.getByText("Choose light palette", { exact: true }).click();
+    await secondPage
+      .getByText("Choose light palette", { exact: true })
+      .first()
+      .click();
 
     await page
       .getByRole("radiogroup", { name: "Light palette" })

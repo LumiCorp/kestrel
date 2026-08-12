@@ -76,14 +76,15 @@ test(
     });
 
     await page.reload();
+    await page
+      .getByText("Edit sender and credentials", { exact: true })
+      .click();
     await expect(
       page.getByPlaceholder("Configured — enter a new key to rotate"),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Send test email" }),
     ).toBeEnabled();
-    await expect(
-      page.getByText("Send a successful test email before enabling delivery."),
-    ).toBeVisible();
+    await expect(page.getByText("Ready to test", { exact: true })).toBeVisible();
   },
 );

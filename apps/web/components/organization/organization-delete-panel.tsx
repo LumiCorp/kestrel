@@ -3,10 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import {
+  SettingsDangerSection,
+  SettingsDisclosure,
+  SettingsStatusNotice,
+} from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 
 export function OrganizationDeletePanel({
   organizationName,
@@ -79,26 +83,21 @@ export function OrganizationDeletePanel({
   }
   if (operation) {
     return (
-      <div className="space-y-3 rounded-lg border border-destructive/40 p-5">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="font-medium">Deletion operation</p>
-            <p className="text-muted-foreground text-sm">{operation.stage}</p>
-          </div>
-          <Badge
-            variant={operation.status === "failed" ? "destructive" : "outline"}
-          >
-            {operation.status}
-          </Badge>
-        </div>
-        {operation.errorMessage ? (
-          <p className="text-destructive text-sm">{operation.errorMessage}</p>
-        ) : null}
-        {operation.inventory ? (
-          <pre className="overflow-x-auto rounded bg-muted p-3 text-xs">
-            {JSON.stringify(operation.inventory, null, 2)}
-          </pre>
-        ) : null}
+      <div className="space-y-6">
+        <SettingsStatusNotice
+          description={
+            operation.status === "failed"
+              ? operation.errorMessage ||
+                "The failed stage remains available for review and retry."
+              : `Current stage: ${operation.stage}`
+          }
+          title={
+            operation.status === "failed"
+              ? "Deletion needs attention"
+              : "Deletion in progress"
+          }
+          tone={operation.status === "failed" ? "error" : "info"}
+        />
         {operation.status === "failed" ? (
           <Button
             disabled={busy}
@@ -108,36 +107,61 @@ export function OrganizationDeletePanel({
             {busy ? "Retrying…" : "Retry teardown"}
           </Button>
         ) : null}
+        <SettingsDisclosure
+          description="Stage, status, error, and captured inventory."
+          title="Technical evidence"
+        >
+          <div className="space-y-3 text-sm">
+            <p>
+              <span className="text-muted-foreground">Stage:</span>{" "}
+              {operation.stage}
+            </p>
+            <p>
+              <span className="text-muted-foreground">Status:</span>{" "}
+              {operation.status}
+            </p>
+            {operation.errorMessage ? (
+              <p className="text-destructive">{operation.errorMessage}</p>
+            ) : null}
+            {operation.inventory ? (
+              <pre className="overflow-x-auto bg-muted p-3 text-xs">
+                {JSON.stringify(operation.inventory, null, 2)}
+              </pre>
+            ) : null}
+          </div>
+        </SettingsDisclosure>
       </div>
     );
   }
   return (
-    <div className="space-y-4 rounded-lg border border-destructive/40 p-5">
-      <div>
-        <h2 className="font-semibold text-lg">Delete organization</h2>
-        <p className="mt-1 text-muted-foreground text-sm">
-          This permanently removes every Environment, its Workspace machines and
-          volumes, managed compute, and organization data. Cancel any paid
-          subscription in Billing before continuing.
-        </p>
-      </div>
-      <div className="space-y-2">
-        <Label htmlFor="organization-delete-confirmation">
-          Type {organizationName} to confirm
-        </Label>
-        <Input
-          id="organization-delete-confirmation"
-          onChange={(event) => setConfirmationName(event.target.value)}
-          value={confirmationName}
+    <SettingsDangerSection
+      description="This removes every Environment, Workspace machine and volume, managed compute resource, and organization record."
+      title="Permanent deletion"
+    >
+      <div className="space-y-5">
+        <SettingsStatusNotice
+          description="Cancel any paid subscription in Billing before continuing. Deletion remains blocked while billing preconditions are unmet."
+          title="Billing must be settled first"
+          tone="warning"
         />
+        <div className="space-y-2">
+          <Label htmlFor="organization-delete-confirmation">
+            Type {organizationName} to confirm
+          </Label>
+          <Input
+            id="organization-delete-confirmation"
+            onChange={(event) => setConfirmationName(event.target.value)}
+            value={confirmationName}
+          />
+        </div>
+        <Button
+          disabled={busy || confirmationName !== organizationName}
+          onClick={() => void remove()}
+          variant="destructive"
+        >
+          {busy ? "Requesting…" : "Delete organization"}
+        </Button>
       </div>
-      <Button
-        disabled={busy || confirmationName !== organizationName}
-        onClick={() => void remove()}
-        variant="destructive"
-      >
-        {busy ? "Requesting…" : "Delete organization"}
-      </Button>
-    </div>
+    </SettingsDangerSection>
   );
 }

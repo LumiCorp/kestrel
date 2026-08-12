@@ -1,14 +1,7 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { WorkspaceLifecycleActions } from "@/components/organization/workspace-lifecycle-actions";
+import { ResourceEmpty, ResourceList, ResourceRow } from "@/components/resource-list";
 import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
@@ -28,84 +21,74 @@ export default async function OrganizationEnvironmentWorkspacesPage({
     ),
     orderBy: (table, { asc }) => [asc(table.name), asc(table.id)],
   });
+  const backups = await knowledgeDb.query.workspaceBackups.findMany({
+    where: and(
+      eq(schema.workspaceBackups.organizationId, organizationId),
+      eq(schema.workspaceBackups.environmentId, id),
+      eq(schema.workspaceBackups.status, "available"),
+    ),
+    orderBy: [desc(schema.workspaceBackups.createdAt)],
+  });
+  const latestBackupByWorkspace = new Map<
+    string,
+    (typeof backups)[number]
+  >();
+  for (const backup of backups) {
+    if (!latestBackupByWorkspace.has(backup.workspaceId)) {
+      latestBackupByWorkspace.set(backup.workspaceId, backup);
+    }
+  }
   return (
     <SettingsSection
       description="Each Workspace owns the machine and persistent volume it uses in this Environment."
       title="Workspaces"
     >
-      <div className="overflow-x-auto border-y">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead>Workspace</TableHead>
-              <TableHead>Runtime resources</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Managed actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {workspaces.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  className="py-8 text-center text-muted-foreground"
-                  colSpan={4}
-                >
-                  No Workspaces use this Environment yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              workspaces.map((workspace) => (
-                <TableRow key={workspace.id}>
-                  <TableCell>
-                    <p className="font-medium">{workspace.name}</p>
-                    <p className="text-muted-foreground text-xs">
-                      {workspace.kind} · {workspace.sourceType}
-                    </p>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    <p>
-                      Machine: {workspace.flyMachineId ?? "not provisioned"}
-                    </p>
-                    <p>Volume: {workspace.flyVolumeId ?? "not provisioned"}</p>
-                    {workspace.runtimeImage ? (
-                      <p className="mt-1 max-w-64 truncate text-muted-foreground">
-                        {workspace.runtimeImage}
-                      </p>
-                    ) : null}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        ["failed", "degraded"].includes(workspace.status)
-                          ? "destructive"
-                          : "outline"
-                      }
-                    >
-                      {workspace.status}
-                    </Badge>
-                    {workspace.failureMessage ? (
-                      <p className="mt-1 max-w-56 text-destructive text-xs">
-                        {workspace.failureMessage}
-                      </p>
-                    ) : null}
-                  </TableCell>
-                  <TableCell>
-                    <WorkspaceLifecycleActions
-                      environmentId={id}
-                      workspace={{
-                        id: workspace.id,
-                        name: workspace.name,
-                        status: workspace.status,
-                        machineId: workspace.flyMachineId,
-                      }}
-                    />
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      {workspaces.length === 0 ? (
+        <ResourceEmpty
+          description="Workspaces appear here when a Project binds to this Environment."
+          title="No Workspaces use this Environment yet"
+        />
+      ) : (
+        <ResourceList>
+          {workspaces.map((workspace) => {
+            const latestBackup = latestBackupByWorkspace.get(workspace.id);
+            return (
+              <ResourceRow
+                actions={
+                  <WorkspaceLifecycleActions
+                    environmentId={id}
+                    workspace={{
+                      id: workspace.id,
+                      name: workspace.name,
+                      status: workspace.status,
+                      machineId: workspace.flyMachineId,
+                    }}
+                  />
+                }
+                description={`${workspace.kind} · ${workspace.sourceType}`}
+                key={workspace.id}
+                metadata={
+                  latestBackup
+                    ? `Latest backup ${latestBackup.createdAt.toLocaleString()}`
+                    : "No available backup"
+                }
+                status={
+                  <Badge
+                    variant={
+                      ["failed", "degraded"].includes(workspace.status)
+                        ? "destructive"
+                        : "outline"
+                    }
+                  >
+                    {workspace.status}
+                  </Badge>
+                }
+                title={workspace.name}
+              />
+            );
+          })}
+        </ResourceList>
+      )}
     </SettingsSection>
   );
 }

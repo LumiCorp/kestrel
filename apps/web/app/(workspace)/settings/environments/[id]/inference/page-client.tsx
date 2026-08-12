@@ -4,11 +4,21 @@ import { CheckCircle2, Circle, Loader2, Server, Unplug } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-  SettingsPanel,
-  SettingsPanelContent,
-  SettingsPanelHeader,
-  SettingsPanelTitle,
+  SettingsDisclosure,
+  SettingsRow,
+  SettingsRows,
+  SettingsSection,
+  SettingsStatusSummary,
 } from "@/components/settings/settings-section";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -100,6 +110,11 @@ export function EnvironmentInferenceClient({
     Record<string, string>
   >({});
   const [busy, setBusy] = useState(false);
+  const [pendingRemoval, setPendingRemoval] = useState<{
+    kind: "deployment" | "gateway";
+    id: string;
+    name: string;
+  } | null>(null);
   const endpoint = `/api/organization/environments/${state.environment.id}/inference`;
 
   const refresh = useCallback(async () => {
@@ -129,6 +144,12 @@ export function EnvironmentInferenceClient({
       ),
     [state.models]
   );
+  const readyDeployments = state.managed.deployments.filter(
+    ({ deployment }) => deployment.status === "ready",
+  ).length;
+  const readyGateways = state.connected.filter((gateway) => gateway.enabled).length;
+  const endpointCount = state.managed.deployments.length + state.connected.length;
+  const readyEndpointCount = readyDeployments + readyGateways;
 
   async function request(
     body: Record<string, unknown>,
@@ -168,6 +189,7 @@ export function EnvironmentInferenceClient({
       } else {
         toast.success("Private inference updated.");
       }
+      return true;
     } catch (error) {
       try {
         await refresh();
@@ -179,22 +201,72 @@ export function EnvironmentInferenceClient({
           ? error.message
           : "Private inference request failed."
       );
+      return false;
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="space-y-4">
-      <SettingsPanel>
-        <SettingsPanelHeader>
-          <SettingsPanelTitle>Private inference</SettingsPanelTitle>
-          <p className="text-muted-foreground text-sm">
-            Models configured here are inherited by every Project and standalone
-            Thread in this Environment.
-          </p>
-        </SettingsPanelHeader>
-        <SettingsPanelContent className="space-y-4">
+    <div className="flex flex-col gap-6">
+      <SettingsSection
+        description="The default model and readiness of every private endpoint in this Environment."
+        title="Inference fleet"
+      >
+        <SettingsRows>
+          <SettingsRow label="Default model">
+            {availableModels.length > 0 ? (
+              <select
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                onChange={(event) =>
+                  void request(
+                    { modelId: event.target.value },
+                    { method: "PUT", path: `${endpoint}/default` },
+                  )
+                }
+                value={defaultModelId ?? ""}
+              >
+                <option disabled value="">
+                  Select a default model
+                </option>
+                {availableModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.alias || model.rawModelId}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="text-muted-foreground text-sm">
+                No validated model available
+              </span>
+            )}
+          </SettingsRow>
+          <SettingsRow label="Fleet health">
+            <SettingsStatusSummary
+              detail={`${readyEndpointCount} of ${endpointCount} endpoints ready`}
+              status={
+                endpointCount === 0
+                  ? "No endpoints"
+                  : readyEndpointCount === endpointCount
+                    ? "Healthy"
+                    : "Needs attention"
+              }
+              tone={
+                endpointCount > 0 && readyEndpointCount === endpointCount
+                  ? "positive"
+                  : "warning"
+              }
+            />
+          </SettingsRow>
+        </SettingsRows>
+      </SettingsSection>
+
+      <SettingsDisclosure
+        className="order-last"
+        description="Launch a managed profile or connect an existing RunPod endpoint."
+        title="Add inference endpoint"
+      >
+        <div className="space-y-4">
           <div className="flex gap-2">
             <Button
               onClick={() => setMode("managed")}
@@ -324,21 +396,16 @@ export function EnvironmentInferenceClient({
               </Button>
             </div>
           )}
-        </SettingsPanelContent>
-      </SettingsPanel>
+        </div>
+      </SettingsDisclosure>
 
       {state.managed.deployments.map(({ deployment, profile }) => (
-        <SettingsPanel key={deployment.id}>
-          <SettingsPanelHeader className="flex flex-row items-start justify-between space-y-0">
-            <div>
-              <SettingsPanelTitle>{deployment.displayName}</SettingsPanelTitle>
-              <p className="text-muted-foreground text-sm">
-                Managed · {profile.displayName}
-              </p>
-            </div>
-            <Badge variant="outline">{deployment.status}</Badge>
-          </SettingsPanelHeader>
-          <SettingsPanelContent className="space-y-4">
+        <SettingsDisclosure
+          description={`Managed · ${profile.displayName} · ${deployment.status}`}
+          key={deployment.id}
+          title={deployment.displayName}
+        >
+          <div className="space-y-4">
             <div className="grid gap-2 text-sm sm:grid-cols-4">
               {["Requested", "Capacity", "Validation", "Ready"].map(
                 (label, index) => {
@@ -387,21 +454,19 @@ export function EnvironmentInferenceClient({
               <Button
                 disabled={busy || deployment.status === "deleting"}
                 onClick={() =>
-                  void request(
-                    {},
-                    {
-                      method: "DELETE",
-                      path: `${endpoint}/deployments/${deployment.id}`,
-                    }
-                  )
+                  setPendingRemoval({
+                    kind: "deployment",
+                    id: deployment.id,
+                    name: deployment.displayName,
+                  })
                 }
                 variant="destructive"
               >
                 Delete
               </Button>
             </div>
-          </SettingsPanelContent>
-        </SettingsPanel>
+          </div>
+        </SettingsDisclosure>
       ))}
 
       {state.connected.map((gateway) => {
@@ -415,19 +480,12 @@ export function EnvironmentInferenceClient({
             : null;
         const manualModelId = gatewayModelIds[gateway.id] ?? "";
         return (
-          <SettingsPanel key={gateway.id}>
-            <SettingsPanelHeader className="flex flex-row items-start justify-between space-y-0">
-              <div>
-                <SettingsPanelTitle>{gateway.displayName}</SettingsPanelTitle>
-                <p className="text-muted-foreground text-sm">
-                  Connected RunPod endpoint
-                </p>
-              </div>
-              <Badge variant={gateway.enabled ? "default" : "outline"}>
-                {gateway.enabled ? "Ready" : "Validation required"}
-              </Badge>
-            </SettingsPanelHeader>
-            <SettingsPanelContent className="space-y-3">
+          <SettingsDisclosure
+            description={`Connected RunPod endpoint · ${gateway.enabled ? "Ready" : "Validation required"}`}
+            key={gateway.id}
+            title={gateway.displayName}
+          >
+            <div className="space-y-3">
               {gateway.metadata?.validationStatus === "model_id_required" ? (
                 <p className="text-destructive text-sm">
                   {validationMessage ??
@@ -527,51 +585,57 @@ export function EnvironmentInferenceClient({
               <Button
                 disabled={busy}
                 onClick={() =>
-                  void request(
-                    {},
-                    {
-                      method: "DELETE",
-                      path: `${endpoint}/gateways/${gateway.id}`,
-                    }
-                  )
+                  setPendingRemoval({
+                    kind: "gateway",
+                    id: gateway.id,
+                    name: gateway.displayName,
+                  })
                 }
                 variant="destructive"
               >
                 Remove endpoint
               </Button>
-            </SettingsPanelContent>
-          </SettingsPanel>
+            </div>
+          </SettingsDisclosure>
         );
       })}
 
-      {availableModels.length > 0 ? (
-        <SettingsPanel>
-          <SettingsPanelHeader>
-            <SettingsPanelTitle>Environment default</SettingsPanelTitle>
-          </SettingsPanelHeader>
-          <SettingsPanelContent className="flex gap-2">
-            <select
-              className="h-9 flex-1 rounded-md border bg-background px-3 text-sm"
-              onChange={(event) =>
-                void request(
-                  { modelId: event.target.value },
-                  { method: "PUT", path: `${endpoint}/default` }
-                )
-              }
-              value={defaultModelId ?? ""}
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!(open || busy)) setPendingRemoval(null);
+        }}
+        open={Boolean(pendingRemoval)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this inference endpoint?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingRemoval?.name || "This endpoint"} will stop serving models
+              to this Environment. The failed state remains visible if removal
+              does not complete.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                if (!pendingRemoval) return;
+                const path =
+                  pendingRemoval.kind === "deployment"
+                    ? `${endpoint}/deployments/${pendingRemoval.id}`
+                    : `${endpoint}/gateways/${pendingRemoval.id}`;
+                void request({}, { method: "DELETE", path }).then((removed) => {
+                  if (removed) setPendingRemoval(null);
+                });
+              }}
+              variant="destructive"
             >
-              <option disabled value="">
-                Select a default model
-              </option>
-              {availableModels.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.alias || model.rawModelId}
-                </option>
-              ))}
-            </select>
-          </SettingsPanelContent>
-        </SettingsPanel>
-      ) : null}
+              {busy ? "Removing…" : "Remove endpoint"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
