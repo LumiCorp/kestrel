@@ -23,10 +23,15 @@ export const workspacePreviewPublishTool: SharedToolModule = {
       type: "object",
       properties: {
         port: { type: "integer", minimum: 1024, maximum: 65_535 },
+        sessionId: {
+          type: "string",
+          minLength: 1,
+          description: "Exact sessionId returned by the exec_command call that started the listening application.",
+        },
         ttlMinutes: { type: "integer", minimum: 1, maximum: 240 },
         name: { type: "string", minLength: 1, maxLength: 80 },
       },
-      required: ["port"],
+      required: ["port", "sessionId"],
       additionalProperties: false,
     },
     capability: {
@@ -38,12 +43,31 @@ export const workspacePreviewPublishTool: SharedToolModule = {
   },
   createHandler: (context) => async (input) => {
     const body = parseObjectInput("workspace.preview.publish", input);
-    return withPublicWarning(
-      await requestPreview(context, "publish", ["previews"], {
+    const sessionId = requiredSessionId(body);
+    const payload = await requestPreview(context, "publish", ["previews"], {
         method: "POST",
-        body: JSON.stringify(body),
-      })
-    );
+        body: JSON.stringify({
+          port: body.port,
+          ...(body.ttlMinutes !== undefined ? { ttlMinutes: body.ttlMinutes } : {}),
+          ...(body.name !== undefined ? { name: body.name } : {}),
+        }),
+      });
+    const preview = requirePreview(payload);
+    try {
+      await retainPreviewProcess(context, {
+        processId: sessionId,
+        previewId: preview.id,
+        expiresAt: preview.expiresAt,
+      });
+    } catch (error) {
+      await closePreviewBestEffort(context, preview.id);
+      throw error;
+    }
+    return withPublicWarning(withPreview(payload, {
+      ...preview,
+      sessionId,
+      retentionStatus: "active",
+    }));
   },
 };
 
@@ -65,8 +89,27 @@ export const workspacePreviewListTool: SharedToolModule = {
     },
     presentation: previewPresentation("List Workspace Previews"),
   },
-  createHandler: (context) => async () =>
-    withPublicWarning(await requestPreview(context, "list", ["previews"])),
+  createHandler: (context) => async () => {
+    const payload = await requestPreview(context, "list", ["previews"]);
+    const record = asRecord(payload);
+    const previews = Array.isArray(record?.previews) ? record.previews : [];
+    const described = await Promise.all(previews.map(async (value) => {
+      const preview = asRecord(value);
+      const previewId = typeof preview?.id === "string" ? preview.id : undefined;
+      if (previewId === undefined) return value;
+      try {
+        const retention = await inspectPreviewRetention(context, previewId);
+        return {
+          ...preview,
+          ...(retention.processId !== undefined ? { sessionId: retention.processId } : {}),
+          retentionStatus: retention.status === "active" ? "active" : "missing",
+        };
+      } catch {
+        return { ...preview, retentionStatus: "unknown" };
+      }
+    }));
+    return withPublicWarning({ ...(record ?? {}), previews: described });
+  },
 };
 
 export const workspacePreviewInspectTool: SharedToolModule = {
@@ -120,14 +163,31 @@ export const workspacePreviewRenewTool: SharedToolModule = {
   createHandler: (context) => async (input) => {
     const body = parseObjectInput("workspace.preview.renew", input);
     const previewId = requiredPreviewId(body);
-    return withPublicWarning(
-      await requestPreview(
+    const payload = await requestPreview(
         context,
         "renew",
         ["previews", previewId],
         { method: "POST", body: JSON.stringify({ ttlMinutes: body.ttlMinutes }) }
-      )
-    );
+      );
+    const preview = requirePreview(payload);
+    const retention = await inspectPreviewRetention(context, previewId);
+    if (retention.status !== "active" || retention.processId === undefined) {
+      throw createRuntimeFailure(
+        "WORKSPACE_PREVIEW_RETENTION_MISSING",
+        "Workspace preview renewal could not confirm its backing process retention lease.",
+        { subsystem: "tooling", previewId },
+      );
+    }
+    await retainPreviewProcess(context, {
+      processId: retention.processId,
+      previewId,
+      expiresAt: preview.expiresAt,
+    });
+    return withPublicWarning(withPreview(payload, {
+      ...preview,
+      sessionId: retention.processId,
+      retentionStatus: "active",
+    }));
   },
 };
 
@@ -154,12 +214,16 @@ export const workspacePreviewCloseTool: SharedToolModule = {
     const previewId = requiredPreviewId(
       parseObjectInput("workspace.preview.close", input)
     );
-    return requestPreview(
+    const payload = await requestPreview(
       context,
       "close",
       ["previews", previewId],
       { method: "DELETE" }
     );
+    const release = requireRetentionService(context).releaseProcessRetention;
+    if (release === undefined) throw retentionUnavailable();
+    await release.call(context.devShellService, { leaseId: previewLeaseId(previewId) });
+    return payload;
   },
 };
 
@@ -236,6 +300,85 @@ function requiredPreviewId(input: Record<string, unknown>) {
     );
   }
   return previewId;
+}
+
+function requiredSessionId(input: Record<string, unknown>) {
+  const sessionId = readString(input, "sessionId")?.trim();
+  if (!sessionId) {
+    throw createRuntimeFailure(
+      "TOOL_INPUT_SCHEMA_FAILED",
+      "Workspace preview publication requires the exact exec_command sessionId.",
+      { subsystem: "tooling" },
+    );
+  }
+  return sessionId;
+}
+
+function requirePreview(payload: unknown): { id: string; expiresAt: string } & Record<string, unknown> {
+  const preview = asRecord(asRecord(payload)?.preview);
+  if (
+    typeof preview?.id !== "string" || preview.id.length === 0 ||
+    typeof preview.expiresAt !== "string" ||
+    Number.isFinite(new Date(preview.expiresAt).getTime()) === false
+  ) {
+    throw createRuntimeFailure(
+      "WORKSPACE_PREVIEW_RESPONSE_INVALID",
+      "Workspace preview response did not include an id and authoritative expiry.",
+      { subsystem: "tooling" },
+    );
+  }
+  return preview as { id: string; expiresAt: string } & Record<string, unknown>;
+}
+
+function withPreview(payload: unknown, preview: Record<string, unknown>) {
+  return { ...(asRecord(payload) ?? {}), preview };
+}
+
+function previewLeaseId(previewId: string) {
+  return `workspace-preview:${previewId}`;
+}
+
+async function retainPreviewProcess(
+  context: SharedToolContext,
+  input: { processId: string; previewId: string; expiresAt: string },
+) {
+  const retain = requireRetentionService(context).retainProcess;
+  if (retain === undefined) throw retentionUnavailable();
+  return retain.call(context.devShellService, {
+    processId: input.processId,
+    leaseId: previewLeaseId(input.previewId),
+    kind: "workspace_preview",
+    expiresAt: input.expiresAt,
+  });
+}
+
+async function inspectPreviewRetention(context: SharedToolContext, previewId: string) {
+  const inspect = requireRetentionService(context).inspectProcessRetention;
+  if (inspect === undefined) throw retentionUnavailable();
+  return inspect.call(context.devShellService, { leaseId: previewLeaseId(previewId) });
+}
+
+function requireRetentionService(context: SharedToolContext) {
+  if (context.devShellService === undefined) throw retentionUnavailable();
+  return context.devShellService;
+}
+
+function retentionUnavailable() {
+  return createRuntimeFailure(
+    "WORKSPACE_PREVIEW_RETENTION_UNAVAILABLE",
+    "Workspace preview process retention is unavailable.",
+    { subsystem: "tooling" },
+  );
+}
+
+async function closePreviewBestEffort(context: SharedToolContext, previewId: string) {
+  await requestPreview(context, "close", ["previews", previewId], { method: "DELETE" }).catch(() => {});
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function withPublicWarning(payload: unknown) {

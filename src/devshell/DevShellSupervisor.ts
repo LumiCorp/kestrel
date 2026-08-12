@@ -17,6 +17,10 @@ import {
 import type {
   DevProcessReadInput,
   DevProcessReadResult,
+  DevProcessRetainInput,
+  DevProcessRetentionInspectInput,
+  DevProcessRetentionReleaseInput,
+  DevProcessRetentionResult,
   DevProcessStartInput,
   DevProcessStartResult,
   DevProcessStopInput,
@@ -104,6 +108,8 @@ export class DevShellSupervisor {
       await this.store.upsertProcess({
         ...processRecord,
         status: "LOST",
+        lifecycle: "interactive",
+        retentionLeases: [],
         updatedAt: now,
         completedAt: now,
         failureReason:
@@ -324,6 +330,8 @@ export class DevShellSupervisor {
       startedAt: submittedAt,
       updatedAt: submittedAt,
       expiresAt,
+      lifecycle: "interactive",
+      retentionLeases: [],
       commandKind: commandExecution.commandKind,
       strictModeApplied: commandExecution.strictModeApplied,
       ...(commandExecution.strictModeReason !== undefined
@@ -428,6 +436,11 @@ export class DevShellSupervisor {
       return this.collectStoredProcessResultWithDeliveryCursor(record, input);
     }
     running.stopRequested = true;
+    running.record = {
+      ...running.record,
+      lifecycle: "interactive",
+      retentionLeases: [],
+    };
     const signal = input.signal ?? "SIGTERM";
     signalProcessTree(running.child, signal);
     await waitForProcessExit(running.child, normalizePositiveInt(input.waitMs, DEFAULT_YIELD_TIME_MS));
@@ -451,6 +464,87 @@ export class DevShellSupervisor {
     }
     await this.enforceSourceWriteGuard(running);
     return this.collectProcessResult(running, input);
+  }
+
+  async retainProcess(input: DevProcessRetainInput): Promise<DevProcessRetentionResult> {
+    const running = await this.requireLiveProcess(input.processId);
+    const lease = normalizeRetentionLease(input, this.now());
+    const activeLeases = activeRetentionLeases(running.record.retentionLeases, this.now());
+    const leases = input.ifUnleased === true && activeLeases.length > 0
+      ? activeLeases
+      : [...activeLeases.filter((candidate) => candidate.leaseId !== lease.leaseId), lease]
+          .sort((left, right) => left.leaseId.localeCompare(right.leaseId));
+    if (running.wallTimeout !== undefined) {
+      clearTimeout(running.wallTimeout);
+      running.wallTimeout = undefined;
+    }
+    running.record = {
+      ...running.record,
+      lifecycle: "retained",
+      retentionLeases: leases,
+      expiresAt: latestLeaseExpiry(leases),
+      updatedAt: this.now().toISOString(),
+    };
+    await this.persistLiveProcessRecord(running);
+    return describeRetention(running.record);
+  }
+
+  async inspectProcessRetention(
+    input: DevProcessRetentionInspectInput,
+  ): Promise<DevProcessRetentionResult> {
+    if ((input.processId === undefined) === (input.leaseId === undefined)) {
+      throw createRuntimeFailure(
+        "DEV_SHELL_RETENTION_INPUT_INVALID",
+        "Process retention inspection requires exactly one of processId or leaseId.",
+        { subsystem: "dev_shell" },
+      );
+    }
+    const running = input.processId !== undefined
+      ? this.processes.get(input.processId)
+      : [...this.processes.values()].find((candidate) =>
+          candidate.record.retentionLeases.some((lease) => lease.leaseId === input.leaseId)
+        );
+    if (running === undefined) {
+      return { status: "missing", leases: [] };
+    }
+    await this.pruneExpiredRetentionLeases(running);
+    if (running.record.lifecycle === "retained" && running.record.retentionLeases.length === 0) {
+      await this.stopRetainedProcess(running);
+      return { status: "missing", processId: running.record.processId, leases: [] };
+    }
+    return running.record.lifecycle === "retained"
+      ? describeRetention(running.record)
+      : { status: "missing", processId: running.record.processId, leases: [] };
+  }
+
+  async releaseProcessRetention(
+    input: DevProcessRetentionReleaseInput,
+  ): Promise<DevProcessRetentionResult> {
+    const running = [...this.processes.values()].find((candidate) =>
+      candidate.record.retentionLeases.some((lease) => lease.leaseId === input.leaseId)
+    );
+    if (running === undefined) {
+      return { status: "missing", leases: [] };
+    }
+    const leases = activeRetentionLeases(running.record.retentionLeases, this.now())
+      .filter((lease) => lease.leaseId !== input.leaseId);
+    running.record = {
+      ...running.record,
+      retentionLeases: leases,
+      updatedAt: this.now().toISOString(),
+      ...(leases.length > 0 ? { expiresAt: latestLeaseExpiry(leases) } : {}),
+    };
+    if (leases.length > 0) {
+      await this.persistLiveProcessRecord(running);
+      return describeRetention(running.record);
+    }
+    await this.stopRetainedProcess(running);
+    return {
+      status: "missing",
+      processId: running.record.processId,
+      lifecycle: "interactive",
+      leases: [],
+    };
   }
 
   private attachChildListeners(process: RunningProcess): void {
@@ -557,6 +651,8 @@ export class DevShellSupervisor {
     process.record = {
       ...process.record,
       status,
+      lifecycle: "interactive",
+      retentionLeases: [],
       updatedAt: completedAt,
       completedAt,
       exitCode,
@@ -587,6 +683,8 @@ export class DevShellSupervisor {
     process.record = {
       ...process.record,
       status: "FAILED",
+      lifecycle: "interactive",
+      retentionLeases: [],
       updatedAt: completedAt,
       completedAt,
       exitCode: 1,
@@ -695,7 +793,9 @@ export class DevShellSupervisor {
       ...authoritativeRecord,
       outputCursor: Math.max(authoritativeRecord.outputCursor, transcript.size),
       updatedAt: this.now().toISOString(),
-      expiresAt: this.bumpExpiry(authoritativeRecord.expiresAt, authoritativeRecord.idleTimeoutMs),
+      ...(authoritativeRecord.lifecycle === "interactive"
+        ? { expiresAt: this.bumpExpiry(authoritativeRecord.expiresAt, authoritativeRecord.idleTimeoutMs) }
+        : {}),
     };
     if (live !== undefined) {
       live.record = updatedRecord;
@@ -805,9 +905,17 @@ export class DevShellSupervisor {
   }
 
   private async expireIdleProcesses(): Promise<void> {
-    const now = this.now().toISOString();
+    const now = this.now();
     for (const process of [...this.processes.values()]) {
-      if (process.record.expiresAt > now) {
+      if (process.record.lifecycle === "retained") {
+        await this.pruneExpiredRetentionLeases(process);
+        if (process.record.retentionLeases.length > 0) {
+          continue;
+        }
+        await this.stopRetainedProcess(process);
+        continue;
+      }
+      if (process.record.expiresAt > now.toISOString()) {
         continue;
       }
       process.stopRequested = true;
@@ -877,6 +985,8 @@ export class DevShellSupervisor {
       const lostRecord: DevShellProcessRecord = {
         ...record,
         status: "LOST",
+        lifecycle: "interactive",
+        retentionLeases: [],
         updatedAt: completedAt,
         completedAt,
         failureReason:
@@ -929,9 +1039,41 @@ export class DevShellSupervisor {
     process.record = {
       ...process.record,
       updatedAt: this.now().toISOString(),
-      expiresAt: this.bumpExpiry(process.record.expiresAt, process.record.idleTimeoutMs),
+      ...(process.record.lifecycle === "interactive"
+        ? { expiresAt: this.bumpExpiry(process.record.expiresAt, process.record.idleTimeoutMs) }
+        : {}),
     };
     await this.persistLiveProcessRecord(process);
+  }
+
+  private async pruneExpiredRetentionLeases(process: RunningProcess): Promise<void> {
+    if (process.record.lifecycle !== "retained") return;
+    const leases = activeRetentionLeases(process.record.retentionLeases, this.now());
+    if (leases.length === process.record.retentionLeases.length) return;
+    process.record = {
+      ...process.record,
+      retentionLeases: leases,
+      updatedAt: this.now().toISOString(),
+      ...(leases.length > 0 ? { expiresAt: latestLeaseExpiry(leases) } : {}),
+    };
+    await this.persistLiveProcessRecord(process);
+  }
+
+  private async stopRetainedProcess(process: RunningProcess): Promise<void> {
+    process.stopRequested = true;
+    process.record = {
+      ...process.record,
+      lifecycle: "interactive",
+      retentionLeases: [],
+      updatedAt: this.now().toISOString(),
+    };
+    signalProcessTree(process.child, "SIGTERM");
+    await waitForProcessExit(process.child, 1500);
+    if (isProcessRunning(process.child)) {
+      signalProcessTree(process.child, "SIGKILL");
+      await waitForProcessExit(process.child, 500);
+    }
+    await process.settlement;
   }
 
   private async persistLiveProcessRecord(process: RunningProcess): Promise<void> {
@@ -952,6 +1094,49 @@ export class DevShellSupervisor {
       processId: record.processId,
     });
   }
+}
+
+function normalizeRetentionLease(
+  input: DevProcessRetainInput,
+  now: Date,
+): DevShellProcessRecord["retentionLeases"][number] {
+  const leaseId = input.leaseId.trim();
+  const expiresAt = new Date(input.expiresAt);
+  if (
+    leaseId.length === 0 ||
+    Number.isFinite(expiresAt.getTime()) === false ||
+    expiresAt <= now
+  ) {
+    throw createRuntimeFailure(
+      "DEV_SHELL_RETENTION_INPUT_INVALID",
+      "Process retention requires a non-empty leaseId and a future expiresAt.",
+      { subsystem: "dev_shell", processId: input.processId },
+    );
+  }
+  return { leaseId, kind: input.kind, expiresAt: expiresAt.toISOString() };
+}
+
+function activeRetentionLeases(
+  leases: DevShellProcessRecord["retentionLeases"],
+  now: Date,
+) {
+  return leases.filter((lease) => new Date(lease.expiresAt) > now);
+}
+
+function latestLeaseExpiry(leases: DevShellProcessRecord["retentionLeases"]) {
+  return leases.reduce(
+    (latest, lease) => lease.expiresAt > latest ? lease.expiresAt : latest,
+    leases[0]!.expiresAt,
+  );
+}
+
+function describeRetention(record: DevShellProcessRecord): DevProcessRetentionResult {
+  return {
+    status: "active",
+    processId: record.processId,
+    lifecycle: record.lifecycle,
+    leases: record.retentionLeases.map((lease) => ({ ...lease })),
+  };
 }
 
 function buildShellCommandExecutionPlan(input: {

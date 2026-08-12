@@ -7,14 +7,24 @@ export type DevShellProcessStatus =
 
 export const DEV_SHELL_BRIDGE_URL_ENV = "KESTREL_DEV_SHELL_BRIDGE_URL";
 export const DEV_SHELL_SOCKET_PATH_ENV = "KESTREL_DEV_SHELL_SOCKET_PATH";
-export const DEV_SHELL_SERVICE_PROTOCOL_VERSION = 2;
+export const DEV_SHELL_SERVICE_PROTOCOL_VERSION = 3;
 
 export interface DevShellHealth {
   ok: boolean;
   serviceProtocolVersion: number;
   capabilities: {
     processWriteAndRead: boolean;
+    processRetentionLeases: boolean;
   };
+}
+
+export type DevShellProcessLifecycle = "interactive" | "retained";
+export type DevShellProcessRetentionKind = "workspace_preview" | "standalone";
+
+export interface DevShellProcessRetentionLease {
+  leaseId: string;
+  kind: DevShellProcessRetentionKind;
+  expiresAt: string;
 }
 
 export type DevShellEnvMode = "inherit" | "allowlist";
@@ -82,6 +92,8 @@ export interface DevShellProcessRecord {
   startedAt: string;
   updatedAt: string;
   expiresAt: string;
+  lifecycle: DevShellProcessLifecycle;
+  retentionLeases: DevShellProcessRetentionLease[];
   completedAt?: string | undefined;
   exitCode?: number | undefined;
   stopSignal?: string | undefined;
@@ -139,6 +151,30 @@ export interface DevProcessStopInput {
   waitMs?: number | undefined;
   cursor?: number | undefined;
   maxBytes?: number | undefined;
+}
+
+export interface DevProcessRetainInput {
+  processId: string;
+  leaseId: string;
+  kind: DevShellProcessRetentionKind;
+  expiresAt: string;
+  ifUnleased?: boolean | undefined;
+}
+
+export interface DevProcessRetentionInspectInput {
+  processId?: string | undefined;
+  leaseId?: string | undefined;
+}
+
+export interface DevProcessRetentionReleaseInput {
+  leaseId: string;
+}
+
+export interface DevProcessRetentionResult {
+  status: "active" | "missing";
+  processId?: string | undefined;
+  lifecycle?: DevShellProcessLifecycle | undefined;
+  leases: DevShellProcessRetentionLease[];
 }
 
 export interface DevShellRunResult {
@@ -313,4 +349,7 @@ export interface DevShellServicePort {
   writeAndReadProcess(input: DevProcessWriteAndReadInput, options?: DevShellCommandOptions): Promise<DevProcessWriteAndReadResult>;
   readProcess(input: DevProcessReadInput, options?: DevShellCommandOptions): Promise<DevProcessReadResult>;
   stopProcess(input: DevProcessStopInput, options?: DevShellCommandOptions): Promise<DevProcessStopResult>;
+  retainProcess?(input: DevProcessRetainInput): Promise<DevProcessRetentionResult>;
+  inspectProcessRetention?(input: DevProcessRetentionInspectInput): Promise<DevProcessRetentionResult>;
+  releaseProcessRetention?(input: DevProcessRetentionReleaseInput): Promise<DevProcessRetentionResult>;
 }

@@ -469,6 +469,7 @@ test("LocalDevShellService restarts a stale supervisor with legacy health", asyn
         serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
         capabilities: {
           processWriteAndRead: true,
+          processRetentionLeases: true,
         },
       };
     }
@@ -565,6 +566,7 @@ test("LocalDevShellService cleans up an incompatible supervisor socket recorded 
           serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
           capabilities: {
             processWriteAndRead: true,
+            processRetentionLeases: true,
           },
         };
       }
@@ -598,13 +600,14 @@ test("LocalDevShellService cleans up an incompatible supervisor socket recorded 
   }
 });
 
-test("isCompatibleDevShellHealth requires the write_and_read process contract", () => {
+test("isCompatibleDevShellHealth requires the current process contract", () => {
   assert.equal(isCompatibleDevShellHealth({ ok: true }), false);
   assert.equal(isCompatibleDevShellHealth({
     ok: true,
     serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
     capabilities: {
       processWriteAndRead: true,
+      processRetentionLeases: true,
     },
   }), true);
 });

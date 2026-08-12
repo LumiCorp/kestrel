@@ -847,6 +847,102 @@ test("DevShellSupervisor keeps an explicit timeout active after startProcess ret
   }
 });
 
+test("DevShellSupervisor clears the original wall timeout when the first lease is acquired", async () => {
+  const { supervisor, workspaceRoot } = await createSupervisor();
+  try {
+    const started = await supervisor.startProcess({
+      workspaceRoot,
+      command: "sleep 30",
+      yieldTimeMs: 10,
+      timeoutMs: 100,
+    });
+    const processId = started.processId!;
+    await supervisor.retainProcess({
+      processId,
+      leaseId: "workspace-preview:preview-1",
+      kind: "workspace_preview",
+      expiresAt: new Date(Date.now() + 10_000).toISOString(),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const stillRunning = await supervisor.readProcess({ processId, waitMs: 0 });
+    assert.equal(stillRunning.status, "RUNNING");
+
+    const released = await supervisor.releaseProcessRetention({
+      leaseId: "workspace-preview:preview-1",
+    });
+    assert.equal(released.status, "missing");
+    const stopped = await supervisor.readProcess({ processId, waitMs: 0 });
+    assert.equal(stopped.status, "STOPPED");
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor renews an exact lease and retains until the final lease is released", async () => {
+  const { supervisor, workspaceRoot } = await createSupervisor();
+  try {
+    const started = await supervisor.startProcess({ workspaceRoot, command: "sleep 30", yieldTimeMs: 10 });
+    const processId = started.processId!;
+    const firstExpiry = new Date(Date.now() + 5_000).toISOString();
+    const renewedExpiry = new Date(Date.now() + 10_000).toISOString();
+    await supervisor.retainProcess({
+      processId,
+      leaseId: "workspace-preview:preview-1",
+      kind: "workspace_preview",
+      expiresAt: firstExpiry,
+    });
+    await supervisor.retainProcess({
+      processId,
+      leaseId: "finalize:run-1:process-1",
+      kind: "standalone",
+      expiresAt: firstExpiry,
+    });
+    await supervisor.retainProcess({
+      processId,
+      leaseId: "workspace-preview:preview-1",
+      kind: "workspace_preview",
+      expiresAt: renewedExpiry,
+    });
+
+    const inspected = await supervisor.inspectProcessRetention({ processId });
+    assert.equal(inspected.leases.length, 2);
+    assert.equal(
+      inspected.leases.find((lease) => lease.leaseId === "workspace-preview:preview-1")?.expiresAt,
+      renewedExpiry,
+    );
+    const afterFirstRelease = await supervisor.releaseProcessRetention({
+      leaseId: "workspace-preview:preview-1",
+    });
+    assert.equal(afterFirstRelease.status, "active");
+    assert.equal((await supervisor.readProcess({ processId, waitMs: 0 })).status, "RUNNING");
+    await supervisor.releaseProcessRetention({ leaseId: "finalize:run-1:process-1" });
+    assert.equal((await supervisor.readProcess({ processId, waitMs: 0 })).status, "STOPPED");
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor stops a retained process when its final lease expires", async () => {
+  let now = new Date("2026-08-12T12:00:00.000Z");
+  const { supervisor, workspaceRoot } = await createSupervisor(() => now);
+  try {
+    const started = await supervisor.startProcess({ workspaceRoot, command: "sleep 30", yieldTimeMs: 10 });
+    const processId = started.processId!;
+    await supervisor.retainProcess({
+      processId,
+      leaseId: "workspace-preview:preview-1",
+      kind: "workspace_preview",
+      expiresAt: "2026-08-12T12:01:00.000Z",
+    });
+    now = new Date("2026-08-12T12:01:00.000Z");
+    await (supervisor as unknown as { expireIdleProcesses(): Promise<void> }).expireIdleProcesses();
+    assert.equal((await supervisor.readProcess({ processId, waitMs: 0 })).status, "STOPPED");
+  } finally {
+    await supervisor.close();
+  }
+});
+
 test("InMemoryDevShellStore deep clones source-write guard results", async () => {
   const store = new InMemoryDevShellStore();
   const now = new Date().toISOString();
@@ -875,6 +971,8 @@ test("InMemoryDevShellStore deep clones source-write guard results", async () =>
     startedAt: now,
     updatedAt: now,
     expiresAt: now,
+    lifecycle: "interactive",
+    retentionLeases: [],
     sourceWriteGuard: {
       enabled: true,
       mode: "source_readonly",
@@ -1287,7 +1385,7 @@ test("DevShellSupervisor stops descendant processes when stopping a live process
   }
 });
 
-async function createSupervisor(): Promise<{
+async function createSupervisor(now?: () => Date): Promise<{
   supervisor: DevShellSupervisor;
   workspaceRoot: string;
   baseDir: string;
@@ -1298,7 +1396,7 @@ async function createSupervisor(): Promise<{
   await mkdir(workspaceRootPath, { recursive: true });
   const workspaceRoot = await realpath(workspaceRootPath);
   const store = new InMemoryDevShellStore();
-  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"), now);
   await supervisor.initialize();
   return { supervisor, workspaceRoot, baseDir, store };
 }

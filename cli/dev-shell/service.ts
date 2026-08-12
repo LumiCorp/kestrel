@@ -19,6 +19,8 @@ import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
 import type {
   DevShellHealth,
   DevProcessStartInput,
+  DevProcessRetainInput,
+  DevProcessRetentionReleaseInput,
   DevProcessStopInput,
   DevProcessWriteAndReadInput,
   DevProcessWriteInput,
@@ -134,13 +136,40 @@ async function handleRequest(
     return;
   }
 
-  const match = url.pathname.match(/^\/processes\/([^/]+)\/(write|write_and_read|read|stop)$/u);
+  if (method === "GET" && url.pathname === "/retentions") {
+    writeJson(response, 200, await supervisor.inspectProcessRetention({
+      ...(url.searchParams.get("processId") !== null
+        ? { processId: url.searchParams.get("processId")! }
+        : {}),
+      ...(url.searchParams.get("leaseId") !== null
+        ? { leaseId: url.searchParams.get("leaseId")! }
+        : {}),
+    }));
+    return;
+  }
+
+  const retentionMatch = url.pathname.match(/^\/retentions\/([^/]+)$/u);
+  if (method === "DELETE" && retentionMatch !== null) {
+    const input: DevProcessRetentionReleaseInput = {
+      leaseId: decodeURIComponent(retentionMatch[1]!),
+    };
+    writeJson(response, 200, await supervisor.releaseProcessRetention(input));
+    return;
+  }
+
+  const match = url.pathname.match(/^\/processes\/([^/]+)\/(write|write_and_read|read|stop|retention)$/u);
   if (match === null) {
     writeJson(response, 404, { error: "not_found" });
     return;
   }
   const processId = decodeURIComponent(match[1]!);
   const action = match[2]!;
+
+  if (method === "POST" && action === "retention") {
+    const body = await readJson(request) as unknown as Omit<DevProcessRetainInput, "processId">;
+    writeJson(response, 200, await supervisor.retainProcess({ ...body, processId }));
+    return;
+  }
 
   if (method === "POST" && action === "write") {
     const body = await readJson(request) as unknown as Omit<DevProcessWriteInput, "processId">;
@@ -194,6 +223,7 @@ function createHealthPayload(): DevShellHealth {
     serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
     capabilities: {
       processWriteAndRead: true,
+      processRetentionLeases: true,
     },
   };
 }

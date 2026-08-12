@@ -75,6 +75,15 @@ A versioned, fingerprinted binding between one exact provider identity, one pinn
 **Budget Allocation**
 A durable, revisioned resource envelope bound to one exact tenant, run, agent, subagent, or model/tool/sandbox/evaluator/embedding lineage scope. Child allocations reserve from their parent, and usage settles against a prior reservation without creating new credit.
 
+**Process Retention Lease**
+A developer-shell-owned, persisted claim that keeps one live process running until an authoritative expiry. Acquiring the first lease replaces the command wall timer; releasing or expiring the final lease stops the process. Reads never renew a lease.
+
+**Preview Lease**
+A control-plane-owned public URL-routing lease for one Workspace preview. Its stable preview ID is also the identity of the corresponding developer-shell Process Retention Lease, but the authorities remain separate.
+
+**Application Liveness**
+A current observation of whether an application is listening on its preview port. It is transient evidence, not URL-routing state and not process-retention authority.
+
 ## Current relationships
 
 - A **Mission Control Project** contains zero or more **Work Items** and advances through revision-checked typed actions.
@@ -86,6 +95,8 @@ A durable, revisioned resource envelope bound to one exact tenant, run, agent, s
 - **Review** follows evidence admission, and **Acceptance** requires an explicit authorized decision.
 - **Autopilot** acts through the same versioned Mission Control authority as an operator; it does not bypass Project revision, WIP, review, or acceptance rules.
 - Recovery resumes the exact pending runtime request. It does not directly rewrite the Mission Control Project.
+- A **Preview Lease** can remain valid while **Application Liveness** is temporarily unavailable, allowing the same public URL to recover after an application restart.
+- A preview-backed **Process Retention Lease** adopts the Preview Lease expiry. A finalized non-preview process receives a standalone 30-minute retention lease.
 
 ## Legacy migration vocabulary
 

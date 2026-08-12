@@ -37,6 +37,7 @@ function cloneProcess(record: DevShellProcessRecord): DevShellProcessRecord {
     },
     requestedTools: [...record.requestedTools],
     envNames: [...record.envNames],
+    retentionLeases: record.retentionLeases.map((lease) => ({ ...lease })),
     ...(record.sourceWriteGuard !== undefined
       ? { sourceWriteGuard: cloneSourceWriteGuard(record.sourceWriteGuard) }
       : {}),

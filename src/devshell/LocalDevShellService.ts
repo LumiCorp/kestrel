@@ -12,6 +12,10 @@ import type { RuntimeError } from "../kestrel/contracts/base.js";
 import type {
   DevProcessReadInput,
   DevProcessReadResult,
+  DevProcessRetainInput,
+  DevProcessRetentionInspectInput,
+  DevProcessRetentionReleaseInput,
+  DevProcessRetentionResult,
   DevProcessStartInput,
   DevProcessStartResult,
   DevProcessStopInput,
@@ -167,6 +171,29 @@ export class LocalDevShellService implements DevShellServicePort {
     const result = await this.request<DevProcessStopResult>("POST", `/processes/${encodeURIComponent(input.processId)}/stop`, input);
     await this.notifyObservedResult(result, options);
     return result;
+  }
+
+  async retainProcess(input: DevProcessRetainInput): Promise<DevProcessRetentionResult> {
+    return this.request(
+      "POST",
+      `/processes/${encodeURIComponent(input.processId)}/retention`,
+      input,
+    );
+  }
+
+  async inspectProcessRetention(
+    input: DevProcessRetentionInspectInput,
+  ): Promise<DevProcessRetentionResult> {
+    const query = new URLSearchParams();
+    if (input.processId !== undefined) query.set("processId", input.processId);
+    if (input.leaseId !== undefined) query.set("leaseId", input.leaseId);
+    return this.request("GET", `/retentions?${query.toString()}`);
+  }
+
+  async releaseProcessRetention(
+    input: DevProcessRetentionReleaseInput,
+  ): Promise<DevProcessRetentionResult> {
+    return this.request("DELETE", `/retentions/${encodeURIComponent(input.leaseId)}`);
   }
 
   async close(): Promise<void> {
@@ -657,7 +684,8 @@ export function isCompatibleDevShellHealth(health: unknown): health is DevShellH
     typeof capabilities === "object" &&
     capabilities !== null &&
     Array.isArray(capabilities) === false &&
-    (capabilities as Record<string, unknown>).processWriteAndRead === true
+    (capabilities as Record<string, unknown>).processWriteAndRead === true &&
+    (capabilities as Record<string, unknown>).processRetentionLeases === true
   );
 }
 
