@@ -3,35 +3,41 @@ import path from "node:path";
 
 export const ADMIN_DOCS = [
   {
+    group: "Start",
     slug: "getting-started",
     title: "Getting Started",
     description:
       "Bootstrap Kestrel One locally and understand the admin workspace.",
   },
   {
+    group: "Operate",
     slug: "admin-mode",
     title: "Admin Mode",
     description:
       "How admin routing, policy, and org scoping work in Kestrel One.",
   },
   {
+    group: "Operate",
     slug: "api-keys",
     title: "API Keys",
     description: "Manage app-owned admin API keys and rotation expectations.",
   },
   {
+    group: "Integrate",
     slug: "discord-bot",
     title: "Discord Bot",
     description:
       "Configure Discord guild bindings, gateway activation, and interactions endpoint readiness.",
   },
   {
+    group: "Integrate",
     slug: "sdk",
     title: "SDK",
     description:
       "Integrate against the canonical chat and knowledge API family.",
   },
   {
+    group: "Operate",
     slug: "knowledge-library",
     title: "Knowledge Library",
     description:
@@ -52,6 +58,6 @@ export async function readAdminDoc(slug: string) {
 
   return {
     ...doc,
-    content,
+    content: content.replace(/^#\s+[^\n]+\n+/u, ""),
   };
 }

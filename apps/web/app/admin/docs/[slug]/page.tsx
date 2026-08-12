@@ -4,7 +4,6 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 import { AdminDocContent } from "@/components/admin/admin-doc-content";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { Button } from "@/components/ui/button";
 import { readAdminDoc } from "@/lib/admin/docs";
 import { createMetadata } from "@/lib/metadata";
 import { publicAppUrl } from "@/lib/public-config";
@@ -66,18 +65,21 @@ export default async function AdminDocPage({ params }: AdminDocPageProps) {
   }
 
   return (
-    <div className="space-y-6">
-      <AdminPageHeader
-        actions={
-          <Button asChild variant="outline">
-            <Link href="/admin/docs">Back To Docs</Link>
-          </Button>
-        }
-        description={doc.description}
-        eyebrow="Reference"
-        title={doc.title}
-      />
+    <article className="mx-auto max-w-[75ch] space-y-6">
+      <nav aria-label="Breadcrumb" className="text-muted-foreground text-sm">
+        <Link
+          className="hover:text-foreground hover:underline"
+          href="/admin/docs"
+        >
+          Documentation
+        </Link>
+        <span aria-hidden="true" className="mx-2">
+          /
+        </span>
+        <span aria-current="page">{doc.title}</span>
+      </nav>
+      <AdminPageHeader description={doc.description} title={doc.title} />
       <AdminDocContent content={doc.content} />
-    </div>
+    </article>
   );
 }

@@ -2,14 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AdminStatusBanner } from "@/components/admin/admin-status-banner";
 import {
+  SettingsDisclosure,
+  SettingsFormActions,
   SettingsPage,
   SettingsPageHeader,
-  SettingsPanel,
-  SettingsPanelContent,
-  SettingsPanelHeader,
-  SettingsPanelTitle,
+  SettingsSection,
+  SettingsStatusNotice,
 } from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,6 +52,7 @@ const emptyConfig: Config = {
 
 export function AgentAdminClient() {
   const [config, setConfig] = useState<Config>(emptyConfig);
+  const [savedConfig, setSavedConfig] = useState<Config | null>(null);
   const [approvedModels, setApprovedModels] = useState<ApprovedModel[]>([]);
   const [status, setStatus] = useState("Loading configuration...");
   const [busy, setBusy] = useState(false);
@@ -72,7 +72,7 @@ export function AgentAdminClient() {
       if (Array.isArray(modelsJson.models)) {
         setApprovedModels(modelsJson.models);
       }
-      setConfig({
+      const nextConfig: Config = {
         additionalPrompt: json.additionalPrompt || "",
         responseStyle: json.responseStyle || "concise",
         language: json.language || "en",
@@ -81,7 +81,9 @@ export function AgentAdminClient() {
         temperature: json.temperature || 0.7,
         searchInstructions: json.searchInstructions || "",
         citationFormat: json.citationFormat || "inline",
-      });
+      };
+      setConfig(nextConfig);
+      setSavedConfig(nextConfig);
       setStatus("");
     })();
   }, []);
@@ -101,6 +103,7 @@ export function AgentAdminClient() {
     const json = await response.json().catch(() => ({}));
     setBusy(false);
     if (response.ok) {
+      setSavedConfig(config);
       setStatus("Configuration saved.");
       toast.success("Configuration saved.");
       return;
@@ -121,7 +124,7 @@ export function AgentAdminClient() {
       toast.error(json.error || "Reset failed");
       return;
     }
-    setConfig({
+    const nextConfig: Config = {
       additionalPrompt: json.additionalPrompt || "",
       responseStyle: json.responseStyle || "concise",
       language: json.language || "en",
@@ -130,10 +133,15 @@ export function AgentAdminClient() {
       temperature: json.temperature || 0.7,
       searchInstructions: json.searchInstructions || "",
       citationFormat: json.citationFormat || "inline",
-    });
+    };
+    setConfig(nextConfig);
+    setSavedConfig(nextConfig);
     setStatus("Configuration reset.");
     toast.success("Configuration reset.");
   }
+
+  const isDirty =
+    savedConfig !== null && JSON.stringify(config) !== JSON.stringify(savedConfig);
 
   return (
     <SettingsPage>
@@ -143,18 +151,18 @@ export function AgentAdminClient() {
         title="Agent defaults"
       />
       {status ? (
-        <AdminStatusBanner
-          description="These settings apply to the active organization."
+        <SettingsStatusNotice
+          description="These defaults apply to the active organization."
           title={status}
-          variant={status.includes("failed") ? "error" : "info"}
+          tone={status.toLowerCase().includes("failed") ? "error" : "info"}
         />
       ) : null}
-      <SettingsPanel className="max-w-4xl">
-        <SettingsPanelHeader>
-          <SettingsPanelTitle>Agent configuration</SettingsPanelTitle>
-        </SettingsPanelHeader>
-        <SettingsPanelContent className="grid gap-4">
-          <div className="grid gap-2">
+      <SettingsSection
+        description="The defaults people see most often when starting new work."
+        title="Core behavior"
+      >
+        <div className="grid max-w-2xl gap-5">
+          <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-center">
             <Label htmlFor="agent-response-style">Response style</Label>
             <Select
               onValueChange={(value: Config["responseStyle"]) =>
@@ -173,7 +181,7 @@ export function AgentAdminClient() {
               </SelectContent>
             </Select>
           </div>
-          <div className="grid gap-2">
+          <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-center">
             <Label htmlFor="agent-language">Language</Label>
             <Input
               id="agent-language"
@@ -186,7 +194,7 @@ export function AgentAdminClient() {
               value={config.language}
             />
           </div>
-          <div className="grid gap-2">
+          <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-center">
             <Label htmlFor="agent-default-model">Default model</Label>
             <Select
               onValueChange={(value) =>
@@ -209,7 +217,18 @@ export function AgentAdminClient() {
               </SelectContent>
             </Select>
           </div>
-          <div className="grid gap-2">
+        </div>
+      </SettingsSection>
+      <SettingsSection
+        description="Runtime limits, citations, and organization-specific instructions."
+        title="Advanced"
+      >
+        <SettingsDisclosure
+          description="Change only when the default execution policy needs explicit tuning."
+          title="Execution and prompt controls"
+        >
+          <div className="grid max-w-2xl gap-5">
+            <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-center">
             <Label htmlFor="agent-max-steps-multiplier">
               Max steps multiplier
             </Label>
@@ -224,8 +243,8 @@ export function AgentAdminClient() {
               type="number"
               value={config.maxStepsMultiplier}
             />
-          </div>
-          <div className="grid gap-2">
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-center">
             <Label htmlFor="agent-temperature">Temperature</Label>
             <Input
               id="agent-temperature"
@@ -239,8 +258,8 @@ export function AgentAdminClient() {
               type="number"
               value={config.temperature}
             />
-          </div>
-          <div className="grid gap-2">
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)] sm:items-center">
             <Label htmlFor="agent-citation-format">Citation format</Label>
             <Select
               onValueChange={(value: Config["citationFormat"]) =>
@@ -257,8 +276,8 @@ export function AgentAdminClient() {
                 <SelectItem value="none">None</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-          <div className="grid gap-2">
+            </div>
+            <div className="grid gap-2">
             <Label htmlFor="agent-additional-prompt">Additional prompt</Label>
             <Textarea
               id="agent-additional-prompt"
@@ -270,8 +289,8 @@ export function AgentAdminClient() {
               }
               value={config.additionalPrompt || ""}
             />
-          </div>
-          <div className="grid gap-2">
+            </div>
+            <div className="grid gap-2">
             <Label htmlFor="agent-search-instructions">
               Search instructions
             </Label>
@@ -285,34 +304,60 @@ export function AgentAdminClient() {
               }
               value={config.searchInstructions || ""}
             />
-          </div>
-          <div className="flex gap-2">
-            <Button
-              data-testid="agent-config-save"
-              disabled={busy}
-              onClick={() => void save()}
-            >
-              Save
-            </Button>
-            <Button
-              data-testid="agent-config-reset"
-              disabled={busy}
-              onClick={() => void reset()}
-              variant="outline"
-            >
-              Reset
-            </Button>
-          </div>
-          {status ? (
-            <div
-              className="text-muted-foreground text-sm"
-              data-testid="agent-config-status"
-            >
-              {status}
             </div>
-          ) : null}
-        </SettingsPanelContent>
-      </SettingsPanel>
+          </div>
+        </SettingsDisclosure>
+      </SettingsSection>
+      {isDirty ? (
+        <SettingsFormActions
+          status={
+            status ? (
+              <span data-testid="agent-config-status">{status}</span>
+            ) : (
+              "Unsaved changes"
+            )
+          }
+        >
+          <Button
+            data-testid="agent-config-discard"
+            disabled={busy}
+            onClick={() => {
+              if (savedConfig) {
+                setConfig(savedConfig);
+                setStatus("");
+              }
+            }}
+            variant="outline"
+          >
+            Discard changes
+          </Button>
+          <Button
+            data-testid="agent-config-save"
+            disabled={busy}
+            onClick={() => void save()}
+          >
+            Save defaults
+          </Button>
+        </SettingsFormActions>
+      ) : null}
+      <SettingsDisclosure
+        description="Restore Kestrel's organization defaults."
+        title="Reset all defaults"
+      >
+        <div className="flex items-center justify-between gap-4">
+          <p className="max-w-xl text-muted-foreground text-sm">
+            This replaces every field above with the managed defaults.
+          </p>
+          <Button
+            data-testid="agent-config-reset"
+            disabled={busy}
+            onClick={() => void reset()}
+            variant="outline"
+          >
+            Reset defaults
+          </Button>
+        </div>
+      </SettingsDisclosure>
     </SettingsPage>
   );
 }

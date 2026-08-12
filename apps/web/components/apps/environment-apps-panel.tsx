@@ -1,10 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
+import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppSettingsHeader } from "@/components/apps/app-settings-layout";
+import {
+  SettingsDisclosure,
+  SettingsSection,
+  SettingsStatusNotice,
+} from "@/components/settings/settings-section";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -441,6 +455,8 @@ export function EnvironmentAppSettings({
 }: Props) {
   const [configuration, setConfiguration] = useState(initialConfiguration);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [pendingDisconnect, setPendingDisconnect] =
+    useState<AppConnectionSummary | null>(null);
   const [reviewing, setReviewing] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -525,6 +541,7 @@ export function EnvironmentAppSettings({
           connection.id === body.connection!.id ? body.connection! : connection,
         ),
       }));
+      setPendingDisconnect(null);
       toast.success(
         "Connection disconnected. Encrypted configuration was retained for recovery.",
       );
@@ -583,6 +600,24 @@ export function EnvironmentAppSettings({
         }
       />
 
+      <SettingsStatusNotice
+        description={
+          configuration.app.readiness === "ready"
+            ? "Connections and access are ready for Projects in this Environment."
+            : configuration.capabilityReviews.length > 0
+              ? "Review the discovered capabilities before this App can be enabled."
+              : configuration.app.readiness === "setup_required"
+                ? "Add or repair a connection to continue setup."
+                : "Complete the next setup item below."
+        }
+        title={
+          configuration.app.readiness === "ready"
+            ? "Ready for Projects"
+            : configuration.app.readiness.replaceAll("_", " ")
+        }
+        tone={configuration.app.readiness === "ready" ? "success" : "warning"}
+      />
+
       {configuration.app.key === "built_in.weather" ? (
         <section>
           <h3 className="font-medium text-sm">Providers</h3>
@@ -616,7 +651,7 @@ export function EnvironmentAppSettings({
       ) : null}
 
       {configuration.capabilityReviews.map((review) => (
-        <section className="rounded-lg border p-4" key={review.snapshotId}>
+        <section className="border-y py-4" key={review.snapshotId}>
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <h3 className="font-medium text-sm">Review App capabilities</h3>
@@ -680,7 +715,7 @@ export function EnvironmentAppSettings({
       ) &&
       configuration.capabilityReviews.length === 0 &&
       configuration.capabilities.length === 0 ? (
-        <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border p-4">
+        <section className="flex flex-wrap items-center justify-between gap-4 border-y py-4">
           <div>
             <h3 className="font-medium text-sm">Checking capabilities</h3>
             <p className="mt-1 text-muted-foreground text-xs">
@@ -702,20 +737,17 @@ export function EnvironmentAppSettings({
         </section>
       ) : null}
 
-      <section>
-        <div className="flex items-center gap-2">
-          <KeyRound className="size-4 text-muted-foreground" />
-          <h3 className="font-medium text-sm">
-            {configuration.app.connectionModel === "none"
-              ? "Connection"
-              : configuration.app.connectionModel === "personal"
-                ? "Personal connections"
-                : configuration.app.connectionModel === "hybrid"
-                  ? "Shared and personal connections"
-                  : "Connections"}
-          </h3>
-        </div>
-        <div className="mt-3 divide-y border-y">
+      <SettingsSection
+        description="The credential or account path this Environment makes available to Projects."
+        title={
+          configuration.app.connectionModel === "personal"
+            ? "Personal connections"
+            : configuration.app.connectionModel === "hybrid"
+              ? "Shared and personal connections"
+              : "Connection"
+        }
+      >
+        <div className="divide-y border-y">
           {configuration.app.connectionModel === "none" ? (
             <p className="py-3 text-muted-foreground text-sm">
               No connection required. Kestrel provides this App directly.
@@ -754,9 +786,7 @@ export function EnvironmentAppSettings({
                     <Button
                       aria-label={`Disconnect ${connection.name}`}
                       disabled={disconnecting === connection.id}
-                      onClick={() =>
-                        void disconnect(configuration.app.key, connection.id)
-                      }
+                      onClick={() => setPendingDisconnect(connection)}
                       size="icon"
                       variant="ghost"
                     >
@@ -779,42 +809,78 @@ export function EnvironmentAppSettings({
             </p>
           )}
         </div>
-      </section>
+      </SettingsSection>
 
-      <section>
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="size-4 text-muted-foreground" />
-          <div>
-            <h3 className="font-medium text-sm">Access ceiling</h3>
-            <p className="mt-1 text-muted-foreground text-xs">
-              Projects can narrow these settings, but can never broaden them.
-            </p>
+      <SettingsSection
+        description="Projects can narrow these settings, but can never broaden them."
+        title="Access"
+      >
+        <SettingsDisclosure
+          description={`${configuration.capabilities.length} capabilit${configuration.capabilities.length === 1 ? "y" : "ies"} available.`}
+          title="Capability ceiling"
+        >
+          <div className="divide-y border-y">
+            {configuration.capabilities.length === 0 ? (
+              <p className="py-3 text-muted-foreground text-sm">
+                No capabilities are available yet.
+              </p>
+            ) : null}
+            {configuration.capabilities.map((capability) => (
+              <CapabilityRow
+                appKey={configuration.app.key}
+                capability={capability}
+                environmentId={environmentId}
+                key={capability.key}
+                onSaved={(saved) =>
+                  updateConfiguration((current) => ({
+                    ...current,
+                    capabilities: current.capabilities.map((item) =>
+                      item.key === saved.key ? saved : item,
+                    ),
+                  }))
+                }
+              />
+            ))}
           </div>
-        </div>
-        <div className="mt-3 divide-y border-y">
-          {configuration.capabilities.length === 0 ? (
-            <p className="py-3 text-muted-foreground text-sm">
-              No capabilities are available yet.
-            </p>
-          ) : null}
-          {configuration.capabilities.map((capability) => (
-            <CapabilityRow
-              appKey={configuration.app.key}
-              capability={capability}
-              environmentId={environmentId}
-              key={capability.key}
-              onSaved={(saved) =>
-                updateConfiguration((current) => ({
-                  ...current,
-                  capabilities: current.capabilities.map((item) =>
-                    item.key === saved.key ? saved : item,
-                  ),
-                }))
+        </SettingsDisclosure>
+      </SettingsSection>
+
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!(open || disconnecting)) setPendingDisconnect(null);
+        }}
+        open={Boolean(pendingDisconnect)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect this connection?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDisconnect?.name || "This connection"} will stop being
+              available to Projects. Encrypted configuration is retained for
+              recovery.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(disconnecting)}>
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              disabled={Boolean(disconnecting)}
+              onClick={() =>
+                pendingDisconnect
+                  ? void disconnect(
+                      configuration.app.key,
+                      pendingDisconnect.id,
+                    )
+                  : undefined
               }
-            />
-          ))}
-        </div>
-      </section>
+              variant="destructive"
+            >
+              {disconnecting ? "Disconnecting…" : "Disconnect"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -15,7 +15,7 @@ export default async function NewProjectPage({
   const mobileReturnTo = resolveMobileProjectReturn(await searchParams);
 
   return (
-    <AppPage>
+    <AppPage className="max-w-3xl">
       <div className="flex items-start gap-3 border-b pb-5">
         <Button asChild className="mt-0.5" size="icon" variant="ghost">
           <Link aria-label="Back to Projects" href="/projects">
@@ -26,9 +26,12 @@ export default async function NewProjectPage({
           <p className="font-medium text-muted-foreground text-xs uppercase tracking-[0.16em]">
             Projects
           </p>
-          <h1 className="mt-1 font-semibold text-3xl tracking-tight">New Project</h1>
+          <h1 className="mt-1 font-semibold text-3xl tracking-tight">
+            New Project
+          </h1>
           <p className="mt-1 text-muted-foreground">
-            Create a shared workspace for context, files, and collaborative Threads.
+            Create a shared workspace for context, files, and collaborative
+            Threads.
           </p>
         </div>
       </div>

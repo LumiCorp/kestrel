@@ -1,26 +1,29 @@
 "use client";
 
-import { ChevronDownIcon } from "@radix-ui/react-icons";
-import { AnimatePresence, motion } from "framer-motion";
-import { Loader2, MailPlus } from "lucide-react";
+import { Loader2, MailPlus, MoreHorizontal } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { ResourceEmpty, ResourceList, ResourceRow } from "@/components/resource-list";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { isValidOrganizationSlug } from "@/components/create-organization-dialog";
 import {
-  CreateOrganizationDialog,
-  isValidOrganizationSlug,
-} from "@/components/create-organization-dialog";
-import {
-  SettingsPanel,
-  SettingsPanelContent,
-  SettingsPanelHeader,
-  SettingsPanelTitle,
   SettingsActionGroup,
+  SettingsDisclosure,
   SettingsRow,
   SettingsRows,
   SettingsSection,
+  SettingsStatusNotice,
 } from "@/components/settings/settings-section";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import CopyButton from "@/components/ui/copy-button";
 import {
@@ -48,11 +51,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  organization,
-  useListOrganizations,
-  useSession,
-} from "@/lib/auth-client";
+import { organization, useSession } from "@/lib/auth-client";
 import type { ActiveOrganization, Session } from "@/lib/auth-types";
 import { isPersonalOrganization } from "@/lib/personal-workspace-shared";
 
@@ -62,26 +61,21 @@ export function OrganizationCard(props: {
   invitationOrigin: string | null;
   invitationSetupIssue: string | null;
 }) {
-  const router = useRouter();
-  const organizations = useListOrganizations();
   const [optimisticOrg, setOptimisticOrg] = useState<ActiveOrganization | null>(
     props.activeOrganization,
   );
   const [isRevoking, setIsRevoking] = useState<string[]>([]);
   const [isResending, setIsResending] = useState<string[]>([]);
-  const inviteVariants = {
-    hidden: { opacity: 0, height: 0 },
-    visible: { opacity: 1, height: "auto" },
-    exit: { opacity: 0, height: 0 },
-  };
+  const [pendingMemberRemoval, setPendingMemberRemoval] = useState<
+    NonNullable<ActiveOrganization["members"]>[number] | null
+  >(null);
+  const [pendingInvitationRevoke, setPendingInvitationRevoke] = useState<
+    NonNullable<ActiveOrganization["invitations"]>[number] | null
+  >(null);
+  const [removingMember, setRemovingMember] = useState(false);
 
   const { data } = useSession();
   const session = data || props.session;
-  const personalOrg =
-    organizations.data?.find((org: any) => isPersonalOrganization(org)) ?? null;
-  const teamOrganizations =
-    organizations.data?.filter((org: any) => !isPersonalOrganization(org)) ??
-    [];
   const activeIsPersonal = isPersonalOrganization(optimisticOrg);
 
   const currentMember = optimisticOrg?.members?.find(
@@ -96,6 +90,174 @@ export function OrganizationCard(props: {
     setOptimisticOrg(props.activeOrganization);
   }, [props.activeOrganization]);
 
+  const invitations = optimisticOrg?.invitations ?? [];
+  const pendingInvitations = invitations.filter(
+    (invitation) =>
+      invitation.status === "pending" && !isInvitationExpired(invitation),
+  );
+  const invitationHistory = invitations.filter(
+    (invitation) =>
+      invitation.status !== "pending" || isInvitationExpired(invitation),
+  );
+
+  async function revokeInvitation() {
+    if (!(pendingInvitationRevoke && optimisticOrg)) return;
+    const invitation = pendingInvitationRevoke;
+    setIsRevoking((current) => [...current, invitation.id]);
+    try {
+      const result = await organization.cancelInvitation({
+        invitationId: invitation.id,
+      });
+      if (result.error) throw new Error(result.error.message);
+      setOptimisticOrg({
+        ...optimisticOrg,
+        invitations: invitations.map((item) =>
+          item.id === invitation.id ? { ...item, status: "canceled" } : item,
+        ),
+      });
+      setPendingInvitationRevoke(null);
+      toast.success("Invitation revoked.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Invitation revoke failed.",
+      );
+    } finally {
+      setIsRevoking((current) =>
+        current.filter((id) => id !== invitation.id),
+      );
+    }
+  }
+
+  function resendInvitation(
+    invitation: NonNullable<ActiveOrganization["invitations"]>[number],
+  ) {
+    const request = isInvitationExpired(invitation)
+      ? organization
+          .cancelInvitation({ invitationId: invitation.id })
+          .then((cancelled: any) => {
+            if (cancelled.error) throw new Error(cancelled.error.message);
+            return organization.inviteMember({
+              email: invitation.email,
+              role: invitation.role,
+              fetchOptions: { throw: true },
+            });
+          })
+      : organization.inviteMember({
+          email: invitation.email,
+          role: invitation.role,
+          resend: true,
+          fetchOptions: { throw: true },
+        });
+
+    setIsResending((current) => [...current, invitation.id]);
+    toast.promise(request, {
+      loading: isInvitationExpired(invitation)
+        ? "Sending a new invitation…"
+        : "Resending invitation…",
+      success: isInvitationExpired(invitation)
+        ? "New invitation sent"
+        : "Invitation resent",
+      error: (error: any) =>
+        error.error?.message || error.message || "Invitation delivery failed",
+    });
+    void Promise.resolve(request)
+      .then(
+        () => {},
+        () => {},
+      )
+      .finally(() => {
+        setIsResending((current) =>
+          current.filter((id) => id !== invitation.id),
+        );
+      });
+  }
+
+  async function removeMember() {
+    if (!(pendingMemberRemoval && optimisticOrg)) return;
+    setRemovingMember(true);
+    try {
+      const result = await organization.removeMember({
+        memberIdOrEmail: pendingMemberRemoval.id,
+      });
+      if (result.error) throw new Error(result.error.message);
+      setOptimisticOrg({
+        ...optimisticOrg,
+        members: (optimisticOrg.members ?? []).filter(
+          (member) => member.id !== pendingMemberRemoval.id,
+        ),
+      });
+      setPendingMemberRemoval(null);
+      toast.success("Member removed.");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Member removal failed.",
+      );
+    } finally {
+      setRemovingMember(false);
+    }
+  }
+
+  function invitationRow(
+    invitation: NonNullable<ActiveOrganization["invitations"]>[number],
+  ) {
+    const expired = isInvitationExpired(invitation);
+    return (
+      <ResourceRow
+        actions={
+          <div className="flex items-center gap-1">
+            {invitation.status === "pending" &&
+            !expired &&
+            props.invitationOrigin ? (
+              <CopyButton
+                textToCopy={`${props.invitationOrigin}/accept-invitation/${invitation.id}`}
+              />
+            ) : null}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  aria-label={`Actions for invitation to ${invitation.email}`}
+                  disabled={
+                    isRevoking.includes(invitation.id) ||
+                    isResending.includes(invitation.id)
+                  }
+                  size="icon"
+                  variant="ghost"
+                >
+                  {isRevoking.includes(invitation.id) ||
+                  isResending.includes(invitation.id) ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <MoreHorizontal className="size-4" />
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {invitation.status === "pending" ? (
+                  <DropdownMenuItem
+                    onSelect={() => resendInvitation(invitation)}
+                  >
+                    {expired ? "Send new invitation" : "Resend invitation"}
+                  </DropdownMenuItem>
+                ) : null}
+                {invitation.status === "pending" ? (
+                  <DropdownMenuItem
+                    className="text-destructive"
+                    onSelect={() => setPendingInvitationRevoke(invitation)}
+                  >
+                    Revoke invitation
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        }
+        description={`${invitationState(invitation)} · ${invitation.role}`}
+        key={invitation.id}
+        title={invitation.email}
+      />
+    );
+  }
+
   return (
     <>
       {!activeIsPersonal && optimisticOrg ? (
@@ -105,406 +267,171 @@ export function OrganizationCard(props: {
           onUpdated={setOptimisticOrg}
         />
       ) : null}
-      <SettingsPanel>
-        <SettingsPanelHeader>
-          <SettingsPanelTitle>Organization</SettingsPanelTitle>
-          <div className="flex justify-between">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <div className="flex cursor-pointer items-center gap-1">
-                  <p className="text-sm">
-                    <span className="font-bold" />{" "}
-                    {activeIsPersonal
-                      ? "Personal"
-                      : optimisticOrg?.name || "Personal"}
-                  </p>
-
-                  <ChevronDownIcon />
-                </div>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                {personalOrg ? (
-                  <DropdownMenuItem
-                    className="py-1"
-                    onClick={async () => {
-                      if (personalOrg.id === optimisticOrg?.id) {
-                        return;
-                      }
-
-                      setOptimisticOrg({
-                        members: [],
-                        invitations: [],
-                        ...personalOrg,
-                      });
-                      const { data: activeData } = await organization.setActive(
-                        {
-                          organizationId: personalOrg.id,
-                        },
-                      );
-                      setOptimisticOrg(activeData);
-                      router.refresh();
-                    }}
-                  >
-                    <p className="sm text-sm">Personal</p>
-                  </DropdownMenuItem>
-                ) : null}
-                {teamOrganizations.map((org: any) => (
-                  <DropdownMenuItem
-                    className="py-1"
-                    key={org.id}
-                    onClick={async () => {
-                      if (org.id === optimisticOrg?.id) {
-                        return;
-                      }
-                      setOptimisticOrg({
-                        members: [],
-                        invitations: [],
-                        ...org,
-                      });
-                      const { data: activeData } = await organization.setActive(
-                        {
-                          organizationId: org.id,
-                        },
-                      );
-                      setOptimisticOrg(activeData);
-                      router.refresh();
-                    }}
-                  >
-                    <p className="sm text-sm">{org.name}</p>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <div>
-              <CreateOrganizationDialog />
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Avatar className="rounded-none">
-              <AvatarImage
-                className="h-full w-full rounded-none object-cover"
-                src={optimisticOrg?.logo || undefined}
-              />
-              <AvatarFallback className="rounded-none">
-                {(activeIsPersonal ? "Personal" : optimisticOrg?.name)?.charAt(
-                  0,
-                ) || "P"}
-              </AvatarFallback>
-            </Avatar>
-            <div>
-              <p>
-                {activeIsPersonal
-                  ? "Personal"
-                  : optimisticOrg?.name || "Personal"}
-              </p>
-              <p className="text-muted-foreground text-xs">
-                {optimisticOrg?.members?.length || 1} members
-              </p>
-            </div>
-          </div>
-        </SettingsPanelHeader>
-        <SettingsPanelContent>
-          <div className="flex flex-col gap-8 md:flex-row">
-            <div className="flex grow flex-col gap-2">
-              <p className="border-b-2 border-b-foreground/10 font-medium">
-                Members
-              </p>
-              <div className="flex flex-col gap-2">
-                {optimisticOrg?.members?.map((member) => (
-                  <div
-                    className="flex items-center justify-between"
-                    key={member.id}
-                  >
-                    <div className="flex items-center gap-2">
-                      <Avatar className="h-9 w-9 sm:flex">
-                        <AvatarImage
-                          className="object-cover"
-                          src={member.user.image || undefined}
-                        />
-                        <AvatarFallback>
-                          {member.user.name?.charAt(0)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="text-sm">{member.user.name}</p>
-                        <p className="text-muted-foreground text-xs">
-                          {member.role}
-                        </p>
-                      </div>
-                    </div>
-                    {!activeIsPersonal &&
-                      member.role !== "owner" &&
-                      (currentMember?.role === "owner" ||
-                        currentMember?.role === "admin") && (
-                        <Button
-                          onClick={() => {
-                            organization.removeMember({
-                              memberIdOrEmail: member.id,
-                            });
-                          }}
-                          size="sm"
-                          variant="destructive"
-                        >
-                          {currentMember?.id === member.id ? "Leave" : "Remove"}
-                        </Button>
-                      )}
-                  </div>
-                ))}
-                {activeIsPersonal && !optimisticOrg?.members?.length && (
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <Avatar>
-                        <AvatarImage src={session?.user.image || undefined} />
-                        <AvatarFallback>
-                          {session?.user.name?.charAt(0)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="text-sm">{session?.user.name}</p>
-                        <p className="text-muted-foreground text-xs">Owner</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            {canEditOrganization ? (
-              <div className="flex grow flex-col gap-2">
-                <p className="border-b-2 border-b-foreground/10 font-medium">
-                  Invites
-                </p>
-                {props.invitationSetupIssue ? (
-                  <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 text-sm dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
-                    {props.invitationSetupIssue}
-                  </p>
-                ) : null}
-                <div className="flex flex-col gap-2">
-                  <AnimatePresence>
-                    {optimisticOrg?.invitations?.map((invitation) => (
-                      <motion.div
-                        animate="visible"
-                        className="flex items-center justify-between"
-                        exit="exit"
-                        initial="hidden"
-                        key={invitation.id}
-                        layout
-                        variants={inviteVariants}
+      <SettingsSection
+        actions={
+          canEditOrganization && optimisticOrg ? (
+            <InviteMemberDialog
+              optimisticOrg={optimisticOrg}
+              setOptimisticOrg={setOptimisticOrg}
+            />
+          ) : null
+        }
+        description={`${optimisticOrg?.members?.length || 1} people with access to this organization.`}
+        title="Members"
+      >
+        <ResourceList>
+          {optimisticOrg?.members?.map((member) => (
+            <ResourceRow
+              actions={
+                !activeIsPersonal &&
+                member.role !== "owner" &&
+                canEditOrganization ? (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label={`Actions for ${member.user.name}`}
+                        size="icon"
+                        variant="ghost"
                       >
-                        <div>
-                          <p className="text-sm">{invitation.email}</p>
-                          <p className="text-muted-foreground text-xs">
-                            {invitationState(invitation)} · {invitation.role}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {invitation.status === "pending" ? (
-                            <Button
-                              disabled={isRevoking.includes(invitation.id)}
-                              onClick={() => {
-                                organization.cancelInvitation(
-                                  {
-                                    invitationId: invitation.id,
-                                  },
-                                  {
-                                    onRequest: () => {
-                                      setIsRevoking((current) => [
-                                        ...current,
-                                        invitation.id,
-                                      ]);
-                                    },
-                                    onSuccess: () => {
-                                      toast.message(
-                                        "Invitation revoked successfully",
-                                      );
-                                      setIsRevoking((current) =>
-                                        current.filter(
-                                          (id) => id !== invitation.id,
-                                        ),
-                                      );
-                                      setOptimisticOrg({
-                                        ...optimisticOrg,
-                                        invitations:
-                                          optimisticOrg?.invitations?.map(
-                                            (inv) =>
-                                              inv.id === invitation.id
-                                                ? { ...inv, status: "canceled" }
-                                                : inv,
-                                          ) || [],
-                                      });
-                                    },
-                                    onError: (ctx: any) => {
-                                      toast.error(ctx.error.message);
-                                      setIsRevoking((current) =>
-                                        current.filter(
-                                          (id) => id !== invitation.id,
-                                        ),
-                                      );
-                                    },
-                                  },
-                                );
-                              }}
-                              size="sm"
-                              variant="destructive"
-                            >
-                              {isRevoking.includes(invitation.id) ? (
-                                <Loader2 className="animate-spin" size={16} />
-                              ) : (
-                                "Revoke"
-                              )}
-                            </Button>
-                          ) : null}
-                          {invitation.status === "pending" &&
-                          !isInvitationExpired(invitation) ? (
-                            <Button
-                              disabled={isResending.includes(invitation.id)}
-                              onClick={() => {
-                                const resend = organization.inviteMember({
-                                  email: invitation.email,
-                                  role: invitation.role,
-                                  resend: true,
-                                  fetchOptions: { throw: true },
-                                });
-                                setIsResending((current) => [
-                                  ...current,
-                                  invitation.id,
-                                ]);
-                                toast.promise(resend, {
-                                  loading: "Resending invitation…",
-                                  success: "Invitation resent",
-                                  error: (error: any) =>
-                                    error.error?.message ||
-                                    "Invitation delivery failed",
-                                });
-                                void Promise.resolve(resend)
-                                  .then(
-                                    () => {},
-                                    () => {},
-                                  )
-                                  .finally(() => {
-                                    setIsResending((current) =>
-                                      current.filter(
-                                        (id) => id !== invitation.id,
-                                      ),
-                                    );
-                                  });
-                              }}
-                              size="sm"
-                              variant="outline"
-                            >
-                              {isResending.includes(invitation.id)
-                                ? "Sending…"
-                                : "Resend"}
-                            </Button>
-                          ) : null}
-                          {isInvitationExpired(invitation) ? (
-                            <Button
-                              disabled={isResending.includes(invitation.id)}
-                              onClick={() => {
-                                const renew = organization
-                                  .cancelInvitation({
-                                    invitationId: invitation.id,
-                                  })
-                                  .then((cancelled: any) => {
-                                    if (cancelled.error)
-                                      throw new Error(cancelled.error.message);
-                                    return organization.inviteMember({
-                                      email: invitation.email,
-                                      role: invitation.role,
-                                      fetchOptions: { throw: true },
-                                    });
-                                  });
-                                setIsResending((current) => [
-                                  ...current,
-                                  invitation.id,
-                                ]);
-                                toast.promise(renew, {
-                                  loading: "Sending a new invitation…",
-                                  success: "New invitation sent",
-                                  error: (error: any) =>
-                                    error.error?.message ||
-                                    error.message ||
-                                    "Invitation renewal failed",
-                                });
-                                void Promise.resolve(renew)
-                                  .then(
-                                    (result: any) => {
-                                      if (result?.data && optimisticOrg) {
-                                        setOptimisticOrg({
-                                          ...optimisticOrg,
-                                          invitations: [
-                                            result.data,
-                                            ...(
-                                              optimisticOrg.invitations || []
-                                            ).filter(
-                                              (item) =>
-                                                item.id !== invitation.id,
-                                            ),
-                                          ],
-                                        });
-                                      }
-                                    },
-                                    () => {},
-                                  )
-                                  .finally(() => {
-                                    setIsResending((current) =>
-                                      current.filter(
-                                        (id) => id !== invitation.id,
-                                      ),
-                                    );
-                                  });
-                              }}
-                              size="sm"
-                              variant="outline"
-                            >
-                              {isResending.includes(invitation.id)
-                                ? "Sending…"
-                                : "Send new invite"}
-                            </Button>
-                          ) : null}
-                          {invitation.status === "pending" &&
-                          !isInvitationExpired(invitation) &&
-                          props.invitationOrigin ? (
-                            <div>
-                              <CopyButton
-                                textToCopy={`${props.invitationOrigin}/accept-invitation/${invitation.id}`}
-                              />
-                            </div>
-                          ) : null}
-                        </div>
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
-                  {!activeIsPersonal &&
-                    optimisticOrg?.invitations?.length === 0 && (
-                      <motion.p
-                        animate={{ opacity: 1 }}
-                        className="text-muted-foreground text-sm"
-                        exit={{ opacity: 0 }}
-                        initial={{ opacity: 0 }}
+                        <MoreHorizontal className="size-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onSelect={() => setPendingMemberRemoval(member)}
                       >
-                        No Active Invitations
-                      </motion.p>
-                    )}
-                </div>
-              </div>
-            ) : null}
-          </div>
-          <div className="mt-4 flex w-full justify-end">
-            <div>
-              <div>
-                {canEditOrganization &&
-                  !activeIsPersonal &&
-                  optimisticOrg?.id && (
-                    <InviteMemberDialog
-                      optimisticOrg={optimisticOrg}
-                      setOptimisticOrg={setOptimisticOrg}
+                        {currentMember?.id === member.id
+                          ? "Leave organization"
+                          : "Remove member"}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                ) : null
+              }
+              description={member.user.email}
+              key={member.id}
+              status={<span className="capitalize">{member.role}</span>}
+              title={
+                <span className="flex items-center gap-3">
+                  <Avatar className="size-8">
+                    <AvatarImage
+                      className="object-cover"
+                      src={member.user.image || undefined}
                     />
-                  )}
-              </div>
-            </div>
-          </div>
-        </SettingsPanelContent>
-      </SettingsPanel>
+                    <AvatarFallback>
+                      {member.user.name?.charAt(0)}
+                    </AvatarFallback>
+                  </Avatar>
+                  {member.user.name}
+                </span>
+              }
+            />
+          ))}
+          {activeIsPersonal && !optimisticOrg?.members?.length ? (
+            <ResourceRow
+              description={session?.user.email}
+              status="Owner"
+              title={session?.user.name || "Personal account"}
+            />
+          ) : null}
+        </ResourceList>
+      </SettingsSection>
+
+      {canEditOrganization && props.invitationSetupIssue ? (
+        <SettingsStatusNotice
+          description={props.invitationSetupIssue}
+          title="Invitation delivery needs attention"
+          tone="warning"
+        />
+      ) : null}
+
+      {canEditOrganization && pendingInvitations.length > 0 ? (
+        <SettingsSection
+          description="Invitations awaiting a response."
+          title="Pending invitations"
+        >
+          <ResourceList>{pendingInvitations.map(invitationRow)}</ResourceList>
+        </SettingsSection>
+      ) : null}
+
+      {canEditOrganization && invitationHistory.length > 0 ? (
+        <SettingsDisclosure
+          description={`${invitationHistory.length} completed, canceled, or expired invitation${invitationHistory.length === 1 ? "" : "s"}.`}
+          title="Invitation history"
+        >
+          <ResourceList>{invitationHistory.map(invitationRow)}</ResourceList>
+        </SettingsDisclosure>
+      ) : null}
+
+      {canEditOrganization && invitations.length === 0 ? (
+        <ResourceEmpty
+          description="Invite someone when they need access to this organization."
+          title="No invitations"
+        />
+      ) : null}
+
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!(open || removingMember)) setPendingMemberRemoval(null);
+        }}
+        open={Boolean(pendingMemberRemoval)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingMemberRemoval?.id === currentMember?.id
+                ? "Leave this organization?"
+                : "Remove this member?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingMemberRemoval?.user.name || "This person"} will lose
+              organization access immediately.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removingMember}>Cancel</AlertDialogCancel>
+            <Button
+              disabled={removingMember}
+              onClick={() => void removeMember()}
+              variant="destructive"
+            >
+              {removingMember ? "Removing…" : "Remove access"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (
+            !(
+              open ||
+              (pendingInvitationRevoke &&
+                isRevoking.includes(pendingInvitationRevoke.id))
+            )
+          ) {
+            setPendingInvitationRevoke(null);
+          }
+        }}
+        open={Boolean(pendingInvitationRevoke)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke this invitation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The invitation for {pendingInvitationRevoke?.email} will stop
+              working immediately.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button onClick={() => void revokeInvitation()} variant="destructive">
+              Revoke invitation
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
@@ -664,7 +591,7 @@ function InviteMemberDialog({
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button className="w-full gap-2" size="sm" variant="secondary">
+        <Button className="gap-2" size="sm">
           <MailPlus size={16} />
           <p>Invite Member</p>
         </Button>

@@ -3,9 +3,16 @@
 import Link from "next/link";
 import { useCallback, useEffect, useId, useState } from "react";
 import { toast } from "sonner";
-import { AdminEmptyState } from "@/components/admin/admin-empty-state";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { AdminStatusBanner } from "@/components/admin/admin-status-banner";
+import { PageHeader } from "@/components/page-header";
+import {
+  ResourceEmpty,
+  ResourceList,
+  ResourceRow,
+} from "@/components/resource-list";
+import {
+  SettingsRowActionMenu,
+  SettingsStatusNotice,
+} from "@/components/settings/settings-section";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,13 +26,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -35,14 +35,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { TimeText } from "@/components/ui/time-text";
 import type { Session } from "@/lib/auth-types";
 import {
@@ -141,7 +134,9 @@ export function KnowledgeClient({
     const response = await fetch("/api/knowledge/documents", {
       cache: "no-store",
     });
-    const body = (await response.json().catch(() => ({}))) as DocumentsPayload & {
+    const body = (await response
+      .json()
+      .catch(() => ({}))) as DocumentsPayload & {
       error?: string;
     };
     if (!response.ok) {
@@ -203,7 +198,7 @@ export function KnowledgeClient({
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader
+      <PageHeader
         actions={
           <Button
             disabled={busyDocumentId === "upload"}
@@ -213,123 +208,147 @@ export function KnowledgeClient({
           </Button>
         }
         description="Shared material available across your organization. Add Project-only material from that Project’s context."
-        eyebrow="Workspace"
+        status={
+          <span className="text-muted-foreground text-xs">
+            {documentsData.readyCount} ready ·{" "}
+            {documentsData.failedCount + documentsData.partialCount} need
+            attention
+          </span>
+        }
         title="Organization Knowledge"
       />
 
       {status ? (
-        <AdminStatusBanner
+        <SettingsStatusNotice
           description="Changes appear here as document ingestion progresses."
           title={status}
-          variant={statusVariant}
+          tone={statusVariant}
         />
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Documents</CardTitle>
-          <CardDescription>
-            {documentsData.total} shared document{documentsData.total === 1 ? "" : "s"} in this organization.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-0">
-          {documentsData.documents.length === 0 ? (
-            <div className="p-6">
-              <AdminEmptyState
-                action={<Button onClick={() => setUploadDialogOpen(true)}>Upload document</Button>}
-                description="Upload a shared file here, or add private material from a Project’s context."
-                title="No organization documents yet"
+      {documentsData.documents.length === 0 ? (
+        <div className="border-y">
+          <ResourceEmpty
+            description="Upload shared material here, or add private material from a Project’s context."
+            title="No organization documents yet"
+          />
+        </div>
+      ) : (
+        <ResourceList>
+          {documentsData.documents.map((document) => {
+            const needsAttention =
+              document.status === "failed" || document.status === "partial";
+            return (
+              <ResourceRow
+                actions={
+                  canManage(document) ? (
+                    <div className="flex items-center gap-1">
+                      {needsAttention ? (
+                        <Button
+                          disabled={busyDocumentId === document.id}
+                          onClick={() => void reindexDocument(document.id)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          {busyDocumentId === document.id
+                            ? "Starting…"
+                            : "Reindex"}
+                        </Button>
+                      ) : null}
+                      <SettingsRowActionMenu
+                        label={`Actions for ${document.title || document.filename}`}
+                      >
+                        <DropdownMenuItem
+                          onSelect={() => setDeleteDocument(document)}
+                          variant="destructive"
+                        >
+                          Delete document
+                        </DropdownMenuItem>
+                      </SettingsRowActionMenu>
+                    </div>
+                  ) : undefined
+                }
+                description={
+                  <div className="space-y-1">
+                    <p>
+                      {formatFileSize(document.sizeBytes)} · uploaded by{" "}
+                      {document.uploaderName ||
+                        document.uploaderEmail ||
+                        "a member"}
+                    </p>
+                    {document.error ? (
+                      <p className="text-destructive">{document.error}</p>
+                    ) : null}
+                    {document.latestRun ? (
+                      <details className="text-xs">
+                        <summary className="cursor-pointer">
+                          Technical details
+                        </summary>
+                        <p className="mt-1 font-mono">
+                          {document.latestRun.stage} ·{" "}
+                          {document.latestRun.status} · {document.latestRun.id}
+                        </p>
+                      </details>
+                    ) : null}
+                  </div>
+                }
+                key={document.id}
+                metadata={
+                  <>
+                    {document.visibleProjectUsage.length > 0 ? (
+                      <span>
+                        Used in{" "}
+                        {document.visibleProjectUsage.map((project, index) => (
+                          <span key={project.id}>
+                            {index > 0 ? ", " : null}
+                            <Link
+                              className="underline-offset-4 hover:underline"
+                              href={`/projects/${project.id}`}
+                            >
+                              {project.name}
+                            </Link>
+                          </span>
+                        ))}
+                      </span>
+                    ) : (
+                      "Not used in your current Projects"
+                    )}
+                    <span aria-hidden="true"> · </span>
+                    Updated{" "}
+                    <TimeText
+                      mode="relative"
+                      value={
+                        document.latestRun?.updatedAt || document.updatedAt
+                      }
+                    />
+                  </>
+                }
+                status={
+                  <Badge variant={needsAttention ? "destructive" : "outline"}>
+                    {statusLabel(document.status)}
+                  </Badge>
+                }
+                title={
+                  <a
+                    className="underline-offset-4 hover:underline"
+                    href={`/api/knowledge/documents/${document.id}/download`}
+                  >
+                    {document.title || document.filename}
+                  </a>
+                }
               />
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Document</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Used in your Projects</TableHead>
-                    <TableHead>Updated</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {documentsData.documents.map((document) => (
-                    <TableRow key={document.id}>
-                      <TableCell>
-                        <div className="max-w-sm space-y-1">
-                          <a
-                            className="font-medium text-sm hover:underline"
-                            href={`/api/knowledge/documents/${document.id}/download`}
-                          >
-                            {document.title || document.filename}
-                          </a>
-                          <div className="text-muted-foreground text-xs">
-                            {formatFileSize(document.sizeBytes)} · uploaded by {document.uploaderName || document.uploaderEmail || "a member"}
-                          </div>
-                          {document.status === "failed" && document.error ? (
-                            <div className="text-destructive text-xs">{document.error}</div>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={document.status === "failed" ? "destructive" : "outline"}>
-                          {statusLabel(document.status)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {document.visibleProjectUsage.length > 0 ? (
-                          <div className="flex max-w-xs flex-wrap gap-x-2 gap-y-1 text-sm">
-                            {document.visibleProjectUsage.map((project) => (
-                              <Link className="underline-offset-4 hover:underline" href={`/projects/${project.id}`} key={project.id}>
-                                {project.name}
-                              </Link>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">Not in your current Project context</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">
-                        <TimeText mode="datetime" value={document.latestRun?.updatedAt || document.updatedAt} />
-                      </TableCell>
-                      <TableCell>
-                        {canManage(document) ? (
-                          <div className="flex justify-end gap-2">
-                            <Button
-                              disabled={busyDocumentId === document.id}
-                              onClick={() => void reindexDocument(document.id)}
-                              size="sm"
-                              variant="outline"
-                            >
-                              Reindex
-                            </Button>
-                            <Button
-                              disabled={busyDocumentId === document.id}
-                              onClick={() => setDeleteDocument(document)}
-                              size="sm"
-                              variant="destructive"
-                            >
-                              Delete
-                            </Button>
-                          </div>
-                        ) : null}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            );
+          })}
+        </ResourceList>
+      )}
 
       <Dialog onOpenChange={setUploadDialogOpen} open={uploadDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Upload organization knowledge</DialogTitle>
             <DialogDescription>
-              Uploaded files become shared organization Knowledge when indexing completes.
+              Uploaded files become shared organization Knowledge when indexing
+              completes.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -338,7 +357,9 @@ export function KnowledgeClient({
               accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.pptx"
               id={uploadInputId}
               multiple
-              onChange={(event) => setPendingFiles(Array.from(event.target.files || []))}
+              onChange={(event) =>
+                setPendingFiles(Array.from(event.target.files || []))
+              }
               type="file"
             />
             {pendingFiles.length > 0 ? (
@@ -348,19 +369,31 @@ export function KnowledgeClient({
             ) : null}
           </div>
           <DialogFooter>
-            <Button onClick={() => void uploadDocuments()} disabled={pendingFiles.length === 0 || busyDocumentId === "upload"}>
+            <Button
+              onClick={() => void uploadDocuments()}
+              disabled={
+                pendingFiles.length === 0 || busyDocumentId === "upload"
+              }
+            >
               {busyDocumentId === "upload" ? "Uploading…" : "Upload and index"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog onOpenChange={(open) => !open && setDeleteDocument(null)} open={Boolean(deleteDocument)}>
+      <AlertDialog
+        onOpenChange={(open) => !open && setDeleteDocument(null)}
+        open={Boolean(deleteDocument)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this document permanently?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Delete this document permanently?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the stored file, extracted chunks, and ingestion history. Project contexts that reference it will no longer retrieve it.
+              This removes the stored file, extracted chunks, and ingestion
+              history. Project contexts that reference it will no longer
+              retrieve it.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

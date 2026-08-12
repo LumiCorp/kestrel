@@ -111,24 +111,25 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
       ? `/api/threads/${routeThreadId}`
       : null,
     fetcher,
-    { errorRetryCount: 5, errorRetryInterval: 500 }
+    { errorRetryCount: 5, errorRetryInterval: 500 },
   );
   const resolvingThreadScope = Boolean(
     routeThreadId &&
-      routeThreadId !== "new" &&
-      !threadDetail &&
-      !threadDetailError
+    routeThreadId !== "new" &&
+    !threadDetail &&
+    !threadDetailError,
   );
   const threadScopeUnavailable = Boolean(
-    routeThreadId && routeThreadId !== "new" && threadDetailError
+    routeThreadId && routeThreadId !== "new" && threadDetailError,
   );
   const threadProjectId = threadDetail?.projectId;
   const activeProjectId = routeProjectId ?? threadProjectId ?? undefined;
-  const threadListKey = resolvingThreadScope || threadScopeUnavailable
-    ? null
-    : activeProjectId
-      ? `/api/threads?project_id=${encodeURIComponent(activeProjectId)}&limit=100`
-      : "/api/threads?standalone=true&limit=100";
+  const threadListKey =
+    resolvingThreadScope || threadScopeUnavailable
+      ? null
+      : activeProjectId
+        ? `/api/threads?project_id=${encodeURIComponent(activeProjectId)}&limit=100`
+        : "/api/threads?standalone=true&limit=100";
   const {
     data: threads,
     error: threadsError,
@@ -136,21 +137,22 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
     mutate: mutateThreads,
   } = useSWR<ThreadsResponse>(threadListKey, fetcher);
   const activeProject = projects?.projects.find(
-    ({ project }) => project.id === activeProjectId
+    ({ project }) => project.id === activeProjectId,
   )?.project;
   const projectThreads = useMemo(
     () => threads?.threads ?? [],
-    [threads?.threads]
+    [threads?.threads],
   );
   const visibleThreads = useMemo(
     () => filterAndSortThreads(projectThreads, threadQuery, threadSort),
-    [projectThreads, threadQuery, threadSort]
+    [projectThreads, threadQuery, threadSort],
   );
-  const newThreadHref = resolvingThreadScope || threadScopeUnavailable
-    ? null
-    : activeProjectId
-      ? `/projects/${activeProjectId}/threads/new`
-      : "/threads/new";
+  const newThreadHref =
+    resolvingThreadScope || threadScopeUnavailable
+      ? null
+      : activeProjectId
+        ? `/projects/${activeProjectId}/threads/new`
+        : "/threads/new";
 
   useEffect(() => {
     if (previousOrganizationId.current === organizationId) {
@@ -163,12 +165,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
       mutateThreads(undefined, { revalidate: true }),
       mutateThreadDetail(undefined, { revalidate: true }),
     ]);
-  }, [
-    organizationId,
-    mutateProjects,
-    mutateThreadDetail,
-    mutateThreads,
-  ]);
+  }, [organizationId, mutateProjects, mutateThreadDetail, mutateThreads]);
 
   useEffect(() => {
     if (!activeProjectId) return;
@@ -179,7 +176,15 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
     });
   }, [activeProjectId, organizationId]);
 
-  if (!isWorkPath(pathname) || pathname === "/projects") return null;
+  if (
+    !isWorkPath(pathname) ||
+    pathname === "/projects" ||
+    pathname === "/projects/new" ||
+    pathname === "/threads" ||
+    pathname.startsWith("/search")
+  ) {
+    return null;
+  }
 
   async function archiveThread(threadId: string) {
     const response = await fetch(`/api/threads/${threadId}`, {
@@ -197,16 +202,16 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
           ? {
               ...current,
               threads: current.threads.filter(
-                (thread) => thread.id !== threadId
+                (thread) => thread.id !== threadId,
               ),
             }
           : current,
-      { revalidate: false }
+      { revalidate: false },
     );
     toast.success("Thread archived");
     if (pathname === `/threads/${threadId}`) {
       router.replace(
-        activeProjectId ? `/projects/${activeProjectId}` : "/threads"
+        activeProjectId ? `/projects/${activeProjectId}` : "/threads",
       );
     }
   }
@@ -348,7 +353,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
                   className={cn(
                     "group/thread flex items-center rounded-md transition-colors hover:bg-sidebar-accent",
                     pathname === `/threads/${thread.id}` &&
-                      "bg-sidebar-accent text-sidebar-accent-foreground"
+                      "bg-sidebar-accent text-sidebar-accent-foreground",
                   )}
                   key={thread.id}
                 >
@@ -373,7 +378,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
                     <span
                       className={cn(
                         "min-w-0 flex-1 truncate",
-                        thread.unreadCount > 0 && "font-medium"
+                        thread.unreadCount > 0 && "font-medium",
                       )}
                     >
                       {thread.title || "New thread"}
@@ -431,7 +436,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
                   className={cn(
                     "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-sidebar-accent",
                     isActive &&
-                      "bg-sidebar-accent text-sidebar-accent-foreground"
+                      "bg-sidebar-accent text-sidebar-accent-foreground",
                   )}
                   href={href}
                   key={section.label}

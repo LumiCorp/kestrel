@@ -1,7 +1,11 @@
 import {
+  SettingsDangerSection,
+  SettingsDisclosure,
   SettingsRow,
   SettingsRows,
   SettingsSection,
+  SettingsStatusNotice,
+  SettingsStatusSummary,
 } from "@/components/settings/settings-section";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
@@ -26,6 +30,21 @@ export default async function OrganizationEnvironmentOverviewPage({
     environmentId: id,
   });
   if (!environment) return null;
+  const workspaces = await knowledgeDb.query.environmentWorkspaces.findMany({
+    where: (table, { and, eq, isNull }) =>
+      and(
+        eq(table.organizationId, organizationId),
+        eq(table.environmentId, environment.id),
+        isNull(table.deletedAt),
+      ),
+  });
+  const workspaceFailures = workspaces.filter((workspace) =>
+    ["failed", "degraded"].includes(workspace.status),
+  );
+  const latestHealthAt = workspaces
+    .map((workspace) => workspace.lastHealthAt)
+    .filter((value): value is Date => Boolean(value))
+    .sort((left, right) => right.getTime() - left.getTime())[0];
   if (environment.provider === "desktop") {
     const connection =
       await knowledgeDb.query.desktopEnvironmentConnections.findFirst({
@@ -45,16 +64,19 @@ export default async function OrganizationEnvironmentOverviewPage({
     return (
       <div className="space-y-8">
         <SettingsSection
-          description="Connection and capacity reported by the enrolled Desktop. Lifecycle readiness remains separate from online presence."
-          title="Desktop connection"
+          description="Connection, capacity, and Workspace availability reported by the enrolled Desktop."
+          title="Operational state"
         >
           <SettingsRows>
-            <SettingsRow label="Provider">Kestrel Desktop</SettingsRow>
-            <SettingsRow label="Lifecycle status">
-              {environment.status}
-            </SettingsRow>
             <SettingsRow label="Connection">
-              {connectionView?.connectionStatus ?? "offline"}
+              <SettingsStatusSummary
+                status={connectionView?.connectionStatus ?? "offline"}
+                tone={
+                  connectionView?.connectionStatus === "online"
+                    ? "positive"
+                    : "warning"
+                }
+              />
             </SettingsRow>
             <SettingsRow label="Last seen">
               {connectionView?.lastSeenAt
@@ -87,7 +109,21 @@ export default async function OrganizationEnvironmentOverviewPage({
             </SettingsRow>
           </SettingsRows>
         </SettingsSection>
-        <SettingsSection
+        <SettingsDisclosure
+          description="Provider, lifecycle, and enrollment metadata."
+          title="Technical details"
+        >
+          <SettingsRows>
+            <SettingsRow label="Provider">Kestrel Desktop</SettingsRow>
+            <SettingsRow label="Lifecycle status">
+              {environment.status}
+            </SettingsRow>
+            <SettingsRow label="Environment ID">
+              <code className="break-all text-xs">{environment.id}</code>
+            </SettingsRow>
+          </SettingsRows>
+        </SettingsDisclosure>
+        <SettingsDangerSection
           description="Revocation stops new remote work and invalidates this enrollment. It never deletes local folders, Git state, credentials, or unrelated processes."
           title="Danger zone"
         >
@@ -95,16 +131,55 @@ export default async function OrganizationEnvironmentOverviewPage({
             environmentId={environment.id}
             revoked={connection?.status === "revoked"}
           />
-        </SettingsSection>
+        </SettingsDangerSection>
       </div>
     );
   }
 
   return (
     <div className="space-y-8">
+      {workspaceFailures.length > 0 || environment.failureMessage ? (
+        <SettingsStatusNotice
+          description={
+            environment.failureMessage ??
+            `${workspaceFailures.length} Workspace${workspaceFailures.length === 1 ? "" : "s"} require review.`
+          }
+          title="This Environment needs attention"
+          tone="error"
+        />
+      ) : null}
       <SettingsSection
-        description="Core identity and lifecycle state for this execution plane."
-        title="Environment details"
+        description="Health, capacity, and default routing for this execution plane."
+        title="Operational state"
+      >
+        <SettingsRows>
+          <SettingsRow label="Health">
+            <SettingsStatusSummary
+              detail={`${workspaces.length - workspaceFailures.length}/${workspaces.length} healthy`}
+              status={workspaceFailures.length > 0 ? "Needs attention" : environment.status}
+              tone={workspaceFailures.length > 0 ? "warning" : "positive"}
+            />
+          </SettingsRow>
+          <SettingsRow label="Last health check">
+            {latestHealthAt ? latestHealthAt.toLocaleString() : "Not reported"}
+          </SettingsRow>
+          <SettingsRow label="Capacity">
+            {workspaces.length} Workspace{workspaces.length === 1 ? "" : "s"}
+          </SettingsRow>
+          <SettingsRow label="Failures">
+            {workspaceFailures.length || "None"}
+          </SettingsRow>
+          <SettingsRow label="Default Environment">
+            <EnvironmentOverviewActions
+              environmentId={environment.id}
+              initialIsDefault={environment.isDefault}
+            />
+          </SettingsRow>
+        </SettingsRows>
+      </SettingsSection>
+      <SettingsDisclosure
+        description="Region, runtime template, ingress, identifiers, and failure evidence."
+        title="Technical details"
       >
         <SettingsRows>
           <SettingsRow label="Region">{environment.region}</SettingsRow>
@@ -114,8 +189,9 @@ export default async function OrganizationEnvironmentOverviewPage({
           <SettingsRow label="Idle timeout">
             {environment.idleTimeoutMinutes} minutes
           </SettingsRow>
-          <SettingsRow label="Lifecycle status">
-            {environment.status}
+          <SettingsRow label="Preview ingress">Kestrel Edge</SettingsRow>
+          <SettingsRow label="Environment ID">
+            <code className="break-all text-xs">{environment.id}</code>
           </SettingsRow>
           {environment.failureCode ? (
             <SettingsRow label="Failure code">
@@ -131,16 +207,9 @@ export default async function OrganizationEnvironmentOverviewPage({
               </span>
             </SettingsRow>
           ) : null}
-          <SettingsRow label="Default Environment">
-            <EnvironmentOverviewActions
-              environmentId={environment.id}
-              initialIsDefault={environment.isDefault}
-            />
-          </SettingsRow>
-          <SettingsRow label="Preview ingress">Kestrel Edge</SettingsRow>
         </SettingsRows>
-      </SettingsSection>
-      <SettingsSection
+      </SettingsDisclosure>
+      <SettingsDangerSection
         description="Deletion permanently removes this Environment's Fly app and Workspace volumes."
         title="Danger zone"
       >
@@ -150,7 +219,7 @@ export default async function OrganizationEnvironmentOverviewPage({
           isDefault={environment.isDefault}
           status={environment.status}
         />
-      </SettingsSection>
+      </SettingsDangerSection>
     </div>
   );
 }

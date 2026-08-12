@@ -129,7 +129,7 @@ export default async function OrganizationPeoplePage() {
       <SettingsPageHeader
         description="Manage the active organization, membership, and invitations from the shared workspace shell."
         eyebrow="Workspace"
-        title="Members"
+        title="People"
       />
 
       <OrganizationCard

@@ -13,14 +13,12 @@ function requiredPort(name: string): number {
 }
 
 const port = requiredPort("KESTREL_PRODUCT_APP_PORT");
-const fakeOpenRouterPort = requiredPort(
-  "KESTREL_PRODUCT_FAKE_OPENROUTER_PORT"
-);
+const fakeOpenRouterPort = requiredPort("KESTREL_PRODUCT_FAKE_OPENROUTER_PORT");
 const runnerPort = requiredPort("KESTREL_PRODUCT_RUNNER_PORT");
 const workerReadyFile = process.env.KESTREL_PRODUCT_WORKER_READY_FILE;
 if (!workerReadyFile) {
   throw new Error(
-    "KESTREL_PRODUCT_WORKER_READY_FILE must be set by the product contract launcher."
+    "KESTREL_PRODUCT_WORKER_READY_FILE must be set by the product contract launcher.",
   );
 }
 const baseURL = `http://localhost:${port}`;
@@ -34,14 +32,14 @@ if (!storageRoot) {
 }
 const inheritedEnv = Object.fromEntries(
   Object.entries(process.env).filter(
-    (entry): entry is [string, string] => typeof entry[1] === "string"
-  )
+    (entry): entry is [string, string] => typeof entry[1] === "string",
+  ),
 );
 const webServerEnv = {
   ...inheritedEnv,
   AI_AGENT_API_KEY: "product-contract-key",
   AI_AGENT_BASE_URL: `http://127.0.0.1:${fakeOpenRouterPort}`,
-  AI_AGENT_MODEL: "openai/gpt-5.2-chat",
+  AI_AGENT_MODEL: "z-ai/glm-5.2",
   AI_PROVIDER: "openrouter",
   BETTER_AUTH_SECRET: "kestrel-product-contract-secret-0000000000000000",
   BETTER_AUTH_URL: baseURL,
@@ -64,12 +62,13 @@ const webServerEnv = {
   KESTREL_RUNNER_SERVICE_PORT: String(runnerPort),
   KESTREL_RUNNER_SERVICE_TOKEN: "product-contract-runner-token",
   KESTREL_WORKSPACE_SERVICE_TOKEN: "product-contract-workspace-token",
-  KESTREL_RUNNER_DATABASE_URL: process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL ?? databaseUrl,
+  KESTREL_RUNNER_DATABASE_URL:
+    process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL ?? databaseUrl,
   KESTREL_SKIP_RAG_FIXTURES: "true",
   NEXT_PUBLIC_APP_URL: baseURL,
   OPENROUTER_API_KEY: "product-contract-key",
   OPENROUTER_BASE_URL: `http://127.0.0.1:${fakeOpenRouterPort}`,
-  OPENROUTER_MODEL: "openai/gpt-5.2-chat",
+  OPENROUTER_MODEL: "z-ai/glm-5.2",
   STORAGE_PROVIDER: "local",
   STORAGE_LOCAL_ROOT: storageRoot,
 };
@@ -106,7 +105,5 @@ export default defineConfig({
       env: webServerEnv,
     },
   ],
-  projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-  ],
+  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

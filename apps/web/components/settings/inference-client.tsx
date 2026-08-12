@@ -5,12 +5,16 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   SettingsActionGroup,
+  SettingsDisclosure,
   SettingsExpandableRegion,
+  SettingsMetric,
+  SettingsMetricStrip,
   SettingsPage,
   SettingsPageHeader,
   SettingsRow,
   SettingsRows,
   SettingsSection,
+  SettingsStatusNotice,
   SettingsStatusSummary,
 } from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +30,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { getInferenceOverview } from "@/lib/settings/inference-presentation";
 
 type Connection = {
   status: string;
@@ -89,6 +94,7 @@ export function InferenceSettingsClient() {
   const [connectionEditing, setConnectionEditing] = useState(false);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   const refresh = useCallback(async () => {
     const [connectionResponse, profilesResponse, fleetResponse, policyResponse] =
@@ -128,6 +134,7 @@ export function InferenceSettingsClient() {
     setFleet(fleetJson.fleet ?? []);
     setQuota(String(policyJson.policy?.maxActiveDeployments ?? 1));
     setLoadError(null);
+    setLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -232,6 +239,13 @@ export function InferenceSettingsClient() {
     form.displayName.trim() &&
     form.imageRef.trim() &&
     form.expectedModelId.trim();
+  const overview = getInferenceOverview({
+    loaded,
+    connection,
+    profiles,
+    fleet,
+    quota: Number(quota) || 0,
+  });
 
   return (
     <SettingsPage>
@@ -246,6 +260,19 @@ export function InferenceSettingsClient() {
           {loadError}
         </div>
       ) : null}
+
+      <SettingsMetricStrip>
+        <SettingsMetric label="Connection" value={overview.connectionStatus} />
+        <SettingsMetric label="Active profile" value={overview.activeProfile} />
+        <SettingsMetric label="Fleet health" value={overview.fleetHealth} />
+        <SettingsMetric label="Active quota" value={overview.quota} />
+      </SettingsMetricStrip>
+
+      <SettingsStatusNotice
+        description="Across organization-owned GPU endpoints. Detailed usage remains available below."
+        title={`$${overview.attributedSpendUsd.toFixed(2)} attributed spend`}
+        tone={overview.fleetTone === "warning" ? "warning" : "info"}
+      />
 
       <SettingsSection
         description="RunPod supplies GPU capacity for organization-owned model serving. Credentials stay hidden until you choose to edit them."
@@ -351,192 +378,131 @@ export function InferenceSettingsClient() {
       </SettingsSection>
 
       <SettingsSection
-        description="Cap the number of active GPU deployments available to this organization."
-        title="Deployment policy"
+        description="Profile versioning and fleet administration stay available without competing with current operating state."
+        title="Advanced"
       >
-        <SettingsRows>
-          <SettingsRow label="Maximum active deployments">
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                className="w-28"
-                id="deployment-quota"
-                min="1"
-                onChange={(event) => setQuota(event.target.value)}
-                type="number"
-                value={quota}
-              />
-              <Button
-                disabled={Boolean(busy) || Number(quota) < 1}
-                onClick={() =>
-                  void run(
-                    "policy",
-                    async () => {
-                      const response = await fetch(
-                        "/api/organization/infrastructure/runpod-policy",
-                        {
-                          method: "PUT",
-                          headers: { "content-type": "application/json" },
-                          body: JSON.stringify({
-                            enabled: true,
-                            maxActiveDeployments: Number(quota),
-                          }),
-                        }
-                      );
-                      if (!response.ok) {
-                        throw new Error("Failed to update deployment policy.");
-                      }
-                    },
-                    "Deployment policy updated."
-                  )
-                }
-                size="sm"
-              >
-                Save policy
-              </Button>
-            </div>
-          </SettingsRow>
-        </SettingsRows>
-      </SettingsSection>
-
-      <SettingsSection
-        actions={
-          <Dialog onOpenChange={setProfileDialogOpen} open={profileDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm">
-                <Plus className="size-4" /> New profile
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>New immutable profile version</DialogTitle>
-                <DialogDescription>
-                  Create a draft RunPod deployment profile. It must be qualified
-                  before activation.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-2 md:grid-cols-2">
-                {Object.entries(form).map(([key, value]) => (
-                  <div className="space-y-2" key={key}>
-                    <Label htmlFor={`profile-${key}`}>
-                      {profileLabels[key as keyof typeof initialProfileForm]}
-                    </Label>
-                    <Input
-                      id={`profile-${key}`}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          [key]: event.target.value,
-                        }))
-                      }
-                      value={value}
-                    />
-                  </div>
-                ))}
-              </div>
-              <DialogFooter>
-                <Button
-                  onClick={() => setProfileDialogOpen(false)}
-                  variant="outline"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  disabled={Boolean(busy) || !profileValid}
-                  onClick={() => void createProfile()}
-                >
-                  {busy === "profile" ? "Creating…" : "Create draft"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        }
-        description="Versioned serverless images and model contracts move through qualification before activation."
-        title="Deployment profiles"
-      >
-        {profiles.length === 0 ? (
-          <div className="border-y py-8 text-center text-muted-foreground text-sm">
-            No deployment profiles yet.
-          </div>
-        ) : (
-          <div className="divide-y border-y">
-            {profiles.map((profile) => (
-              <div
-                className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between"
-                key={profile.id}
-              >
-                <div className="min-w-0">
-                  <div className="font-medium text-sm">
-                    {profile.displayName} v{profile.version}
-                  </div>
-                  <div className="truncate text-muted-foreground text-xs">
-                    {profile.imageRef} · {profile.expectedModelId}
-                  </div>
+        <div className="space-y-4">
+          <SettingsDisclosure
+            description="Quota changes affect how many organization-owned endpoints may run at once."
+            title="Deployment policy"
+          >
+            <SettingsRows>
+              <SettingsRow label="Maximum active deployments">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    className="w-28"
+                    id="deployment-quota"
+                    min="1"
+                    onChange={(event) => setQuota(event.target.value)}
+                    type="number"
+                    value={quota}
+                  />
+                  <Button
+                    disabled={Boolean(busy) || Number(quota) < 1}
+                    onClick={() =>
+                      void run(
+                        "policy",
+                        async () => {
+                          const response = await fetch(
+                            "/api/organization/infrastructure/runpod-policy",
+                            {
+                              method: "PUT",
+                              headers: { "content-type": "application/json" },
+                              body: JSON.stringify({
+                                enabled: true,
+                                maxActiveDeployments: Number(quota),
+                              }),
+                            },
+                          );
+                          if (!response.ok) {
+                            throw new Error("Failed to update deployment policy.");
+                          }
+                        },
+                        "Deployment policy updated.",
+                      )
+                    }
+                    size="sm"
+                  >
+                    Save policy
+                  </Button>
                 </div>
-                <SettingsActionGroup>
-                  <Badge variant="outline">{profile.status}</Badge>
-                  {profile.status === "draft" && !profile.qualifiedAt ? (
-                    <Button
-                      disabled={Boolean(busy)}
-                      onClick={() =>
-                        void run(
-                          profile.id,
-                          () =>
-                            post(
-                              `/api/organization/infrastructure/deployment-profiles/${profile.id}`,
-                              { action: "qualify" }
-                            ),
-                          "Profile qualified."
-                        )
-                      }
-                      size="sm"
-                    >
-                      <Play className="size-4" /> Qualify
+              </SettingsRow>
+            </SettingsRows>
+          </SettingsDisclosure>
+
+          <SettingsDisclosure
+            description="Draft, qualify, activate, and retire immutable serverless profiles."
+            title="Profile lifecycle"
+          >
+            <div className="space-y-4">
+              <Dialog onOpenChange={setProfileDialogOpen} open={profileDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm">
+                    <Plus className="size-4" /> New profile
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>New immutable profile version</DialogTitle>
+                    <DialogDescription>
+                      Create a draft RunPod deployment profile. It must be qualified before activation.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-4 py-2 md:grid-cols-2">
+                    {Object.entries(form).map(([key, value]) => (
+                      <div className="space-y-2" key={key}>
+                        <Label htmlFor={`profile-${key}`}>
+                          {profileLabels[key as keyof typeof initialProfileForm]}
+                        </Label>
+                        <Input
+                          id={`profile-${key}`}
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, [key]: event.target.value }))
+                          }
+                          value={value}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <DialogFooter>
+                    <Button onClick={() => setProfileDialogOpen(false)} variant="outline">
+                      Cancel
                     </Button>
-                  ) : null}
-                  {profile.status === "draft" && profile.qualifiedAt ? (
-                    <Button
-                      disabled={Boolean(busy)}
-                      onClick={() =>
-                        void run(
-                          profile.id,
-                          () =>
-                            post(
-                              `/api/organization/infrastructure/deployment-profiles/${profile.id}`,
-                              { action: "activate" }
-                            ),
-                          "Profile activated."
-                        )
-                      }
-                      size="sm"
-                    >
-                      Activate
+                    <Button disabled={Boolean(busy) || !profileValid} onClick={() => void createProfile()}>
+                      {busy === "profile" ? "Creating…" : "Create draft"}
                     </Button>
-                  ) : null}
-                  {profile.status === "active" ? (
-                    <Button
-                      disabled={Boolean(busy)}
-                      onClick={() =>
-                        void run(
-                          profile.id,
-                          () =>
-                            post(
-                              `/api/organization/infrastructure/deployment-profiles/${profile.id}`,
-                              { action: "deprecate" }
-                            ),
-                          "Profile deprecated."
-                        )
-                      }
-                      size="sm"
-                      variant="outline"
-                    >
-                      Deprecate
-                    </Button>
-                  ) : null}
-                </SettingsActionGroup>
-              </div>
-            ))}
-          </div>
-        )}
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+              {profiles.length === 0 ? (
+                <div className="border-y py-6 text-muted-foreground text-sm">No deployment profiles yet.</div>
+              ) : (
+                <div className="divide-y border-y">
+                  {profiles.map((profile) => (
+                    <div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between" key={profile.id}>
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm">{profile.displayName} v{profile.version}</div>
+                        <div className="truncate text-muted-foreground text-xs">{profile.imageRef} · {profile.expectedModelId}</div>
+                      </div>
+                      <SettingsActionGroup>
+                        <Badge variant="outline">{profile.status}</Badge>
+                        {profile.status === "draft" && !profile.qualifiedAt ? (
+                          <Button disabled={Boolean(busy)} onClick={() => void run(profile.id, () => post(`/api/organization/infrastructure/deployment-profiles/${profile.id}`, { action: "qualify" }), "Profile qualified.")} size="sm"> <Play className="size-4" /> Qualify </Button>
+                        ) : null}
+                        {profile.status === "draft" && profile.qualifiedAt ? (
+                          <Button disabled={Boolean(busy)} onClick={() => void run(profile.id, () => post(`/api/organization/infrastructure/deployment-profiles/${profile.id}`, { action: "activate" }), "Profile activated.")} size="sm">Activate</Button>
+                        ) : null}
+                        {profile.status === "active" ? (
+                          <Button disabled={Boolean(busy)} onClick={() => void run(profile.id, () => post(`/api/organization/infrastructure/deployment-profiles/${profile.id}`, { action: "deprecate" }), "Profile deprecated.")} size="sm" variant="outline">Deprecate</Button>
+                        ) : null}
+                      </SettingsActionGroup>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </SettingsDisclosure>
+        </div>
       </SettingsSection>
 
       <SettingsSection

@@ -12,7 +12,6 @@ import {
   CardDescription,
   CardFooter,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { client, organization, useSession } from "@/lib/auth-client";
@@ -149,21 +148,22 @@ export default function InvitationPage() {
   if (!session?.user) {
     return (
       <InvitationFrame>
-        <Card className="w-full max-w-md">
+        <Card className="w-full max-w-md border-0 shadow-none">
           <CardHeader>
-            <CardTitle>Organization Invitation</CardTitle>
+            <h1 className="font-semibold leading-none">
+              Organization Invitation
+            </h1>
             <CardDescription>
               Sign in or create an account to review this invitation.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-muted-foreground text-sm">
-              Use the email address that received the invitation. Kestrel One
-              accounts are created from organization invitations.
+              New to Kestrel One? Create the invited account here.
             </p>
           </CardContent>
           <CardFooter className="flex gap-2">
-            <Button asChild className="flex-1" variant="outline">
+            <Button asChild className="flex-1" variant="ghost">
               <Link
                 href={`/sign-in?callbackUrl=${encodeURIComponent(callbackURL)}`}
               >
@@ -199,25 +199,37 @@ export default function InvitationPage() {
   const expiresAt = new Date(invitation.expiresAt);
   return (
     <InvitationFrame>
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-md border-0 shadow-none">
         <CardHeader>
-          <CardTitle>Organization Invitation</CardTitle>
+          <h1 className="font-semibold leading-none">
+            Organization Invitation
+          </h1>
           <CardDescription>
-            You&apos;ve been invited to join an organization
+            Review who invited you, the organization, and your role.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {invitationStatus === "pending" ? (
             <div className="space-y-4">
-              <p>
-                <strong>{invitation.inviterEmail}</strong> has invited you to
-                join <strong>{invitation.organizationName}</strong> as a{" "}
-                <strong>{invitation.role || "member"}</strong>.
-              </p>
-              <p>
-                This invitation was sent to <strong>{invitation.email}</strong>{" "}
-                and expires {expiresAt.toLocaleString()}.
-              </p>
+              <dl className="divide-y border-y text-sm">
+                <InvitationFact
+                  label="Organization"
+                  value={invitation.organizationName}
+                />
+                <InvitationFact
+                  label="Role"
+                  value={invitation.role || "Member"}
+                />
+                <InvitationFact
+                  label="Invited by"
+                  value={invitation.inviterEmail}
+                />
+                <InvitationFact label="Account" value={invitation.email} />
+                <InvitationFact
+                  label="Expires"
+                  value={expiresAt.toLocaleString()}
+                />
+              </dl>
               {error ? (
                 <p className="text-destructive text-sm">{error}</p>
               ) : null}
@@ -226,8 +238,8 @@ export default function InvitationPage() {
           {invitationStatus === "accepted" ? (
             <div className="space-y-4 text-center">
               <CheckIcon className="mx-auto size-10 text-green-600" />
-              <h2 className="font-bold text-2xl">
-                Welcome to {invitation.organizationName}!
+              <h2 className="font-semibold text-xl">
+                Joined {invitation.organizationName}
               </h2>
               <p>
                 You&apos;ve joined the organization. Finishing your workspace
@@ -249,7 +261,7 @@ export default function InvitationPage() {
           {invitationStatus === "rejected" ? (
             <div className="space-y-4 text-center">
               <XIcon className="mx-auto size-10 text-red-600" />
-              <h2 className="font-bold text-2xl">Invitation Declined</h2>
+              <h2 className="font-semibold text-xl">Invitation Declined</h2>
               <p>
                 You&apos;ve declined the invitation to join{" "}
                 {invitation.organizationName}.
@@ -262,7 +274,7 @@ export default function InvitationPage() {
             <Button
               disabled={submitting}
               onClick={() => void handleReject()}
-              variant="outline"
+              variant="ghost"
             >
               Decline
             </Button>
@@ -282,7 +294,6 @@ function InvitationFrame({ children }: { children: React.ReactNode }) {
       className="flex min-h-[80vh] items-center"
       contentClassName="flex max-w-md justify-center"
     >
-      <div className="mask-[radial-gradient(ellipse_at_center,transparent_20%,black)] pointer-events-none absolute inset-0 flex items-center justify-center bg-white dark:bg-black" />
       {children}
     </PageContainer>
   );
@@ -291,7 +302,7 @@ function InvitationFrame({ children }: { children: React.ReactNode }) {
 function InvitationSkeleton() {
   return (
     <InvitationFrame>
-      <Card className="mx-auto w-full max-w-md">
+      <Card className="mx-auto w-full max-w-md border-0 shadow-none">
         <CardHeader>
           <Skeleton className="h-6 w-32" />
           <Skeleton className="h-4 w-full" />
@@ -302,5 +313,14 @@ function InvitationSkeleton() {
         </CardContent>
       </Card>
     </InvitationFrame>
+  );
+}
+
+function InvitationFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1 py-3 sm:grid-cols-[7rem_minmax(0,1fr)] sm:gap-4">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="break-words font-medium">{value}</dd>
+    </div>
   );
 }

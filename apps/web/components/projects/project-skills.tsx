@@ -1,11 +1,36 @@
 "use client";
 
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2, Plus, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import useSWR from "swr";
+import {
+  ResourceEmpty,
+  ResourceList,
+  ResourceRow,
+} from "@/components/resource-list";
+import { SettingsRowActionMenu } from "@/components/settings/settings-section";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -48,7 +73,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 async function requestJsonWithStatus<T>(
   url: string,
-  init?: RequestInit
+  init?: RequestInit,
 ): Promise<{ body: T; status: number }> {
   const response = await fetch(url, { cache: "no-store", ...init });
   const body = (await response.json().catch(() => ({}))) as T & {
@@ -70,12 +95,14 @@ export function ProjectSkills({
   const skillsUrl = `/api/projects/${projectId}/workspace/skills`;
   const { data, error, isLoading, mutate } = useSWR<WorkspaceSkillsResponse>(
     skillsUrl,
-    (url: string) => requestJson<WorkspaceSkillsResponse>(url)
+    (url: string) => requestJson<WorkspaceSkillsResponse>(url),
   );
   const [gitUrl, setGitUrl] = useState("");
   const [branch, setBranch] = useState("main");
   const [skillPath, setSkillPath] = useState("");
   const [editingSkillId, setEditingSkillId] = useState<string>();
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [removeSkillId, setRemoveSkillId] = useState<string>();
   const [working, setWorking] = useState(false);
 
   function clearForm() {
@@ -83,6 +110,23 @@ export function ProjectSkills({
     setBranch("main");
     setSkillPath("");
     setEditingSkillId(undefined);
+    setEditorOpen(false);
+  }
+
+  function openCreate() {
+    setGitUrl("");
+    setBranch("main");
+    setSkillPath("");
+    setEditingSkillId(undefined);
+    setEditorOpen(true);
+  }
+
+  function openEdit(skill: WorkspaceSkill) {
+    setEditingSkillId(skill.installationId);
+    setGitUrl(skill.source.gitUrl);
+    setBranch(skill.source.branch);
+    setSkillPath(skill.source.path ?? "");
+    setEditorOpen(true);
   }
 
   async function saveSkill() {
@@ -106,13 +150,13 @@ export function ProjectSkills({
       toast.success(
         payload.skill?.status === "ready"
           ? "Agent skill is ready."
-          : "Skill saved. It will activate when the Project workspace is available."
+          : "Skill saved. It will activate when the Project workspace is available.",
       );
     } catch (saveError) {
       toast.error(
         saveError instanceof Error
           ? saveError.message
-          : "Skill installation failed."
+          : "Skill installation failed.",
       );
     } finally {
       setWorking(false);
@@ -124,23 +168,24 @@ export function ProjectSkills({
     try {
       const result = await requestJsonWithStatus<WorkspaceSkillsResponse>(
         `${skillsUrl}/sync`,
-        { method: "POST" }
+        { method: "POST" },
       );
       await mutate(result.body, { revalidate: false });
       toast.success(
         result.status === 202
           ? "Sync queued. Skills will activate when the Project workspace is available."
           : result.body.skills.some(
-          (skill) => skill.status === "pending" || skill.status === "syncing"
-        )
-          ? "Sync queued. Pending skills will activate when the Project workspace is available."
-          : "Agent skills synchronized."
+                (skill) =>
+                  skill.status === "pending" || skill.status === "syncing",
+              )
+            ? "Sync queued. Pending skills will activate when the Project workspace is available."
+            : "Agent skills synchronized.",
       );
     } catch (syncError) {
       toast.error(
         syncError instanceof Error
           ? syncError.message
-          : "Skill synchronization failed."
+          : "Skill synchronization failed.",
       );
     } finally {
       setWorking(false);
@@ -152,21 +197,33 @@ export function ProjectSkills({
     try {
       const result = await requestJson<WorkspaceSkillsResponse>(
         `${skillsUrl}/${encodeURIComponent(installationId)}`,
-        { method: "DELETE" }
+        { method: "DELETE" },
       );
       await mutate(result, { revalidate: false });
       if (editingSkillId === installationId) clearForm();
+      setRemoveSkillId(undefined);
       toast.success("Agent skill removed.");
     } catch (removeError) {
       toast.error(
         removeError instanceof Error
           ? removeError.message
-          : "Skill removal failed."
+          : "Skill removal failed.",
       );
     } finally {
       setWorking(false);
     }
   }
+
+  const skills = data?.skills ?? [];
+  const syncRequired = skills.some(
+    (skill) =>
+      skill.status === "pending" ||
+      skill.status === "stale" ||
+      skill.status === "failed",
+  );
+  const skillToRemove = skills.find(
+    (skill) => skill.installationId === removeSkillId,
+  );
 
   return (
     <section className="w-full py-5">
@@ -178,19 +235,32 @@ export function ProjectSkills({
             Skills do not grant permissions or run installation hooks.
           </p>
         </div>
-        <Button
-          disabled={!canEdit || working || isLoading}
-          onClick={() => void syncSkills()}
-          size="sm"
-          variant="outline"
-        >
-          {working ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <RefreshCw className="size-4" />
-          )}
-          Sync
-        </Button>
+        {canEdit ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {syncRequired ? (
+              <Button
+                disabled={working || isLoading}
+                onClick={() => void syncSkills()}
+                size="sm"
+                variant="outline"
+              >
+                {working ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-4" />
+                )}
+                Sync pending changes
+              </Button>
+            ) : null}
+            <Button
+              disabled={working || isLoading}
+              onClick={openCreate}
+              size="sm"
+            >
+              <Plus className="size-4" /> Add skill
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {isLoading ? (
@@ -202,8 +272,8 @@ export function ProjectSkills({
       {error ? (
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-y py-4">
           <p className="text-destructive text-sm">
-            Project skills could not be loaded. You can retry without starting
-            a workspace.
+            Project skills could not be loaded. You can retry without starting a
+            workspace.
           </p>
           <Button onClick={() => void mutate()} size="sm" variant="outline">
             Retry
@@ -211,34 +281,125 @@ export function ProjectSkills({
         </div>
       ) : null}
 
-      {canEdit ? (
-        <div className="mt-6 rounded-xl border bg-card p-4">
-          <h3 className="font-medium">Add from Git</h3>
-          <p className="mt-1 text-muted-foreground text-sm">
-            Save a public HTTPS repository now. Kestrel activates it when the
-            Project workspace is available and idle.
-          </p>
-          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-            <div className="grid min-w-0 flex-1 gap-2">
-              <Label htmlFor="skill-git-url">Git repository URL</Label>
-              <Input
-                aria-label="Skill Git URL"
-                id="skill-git-url"
-                onChange={(event) => setGitUrl(event.target.value)}
-                placeholder="https://github.com/org/skills.git"
-                value={gitUrl}
+      {isLoading || error ? null : (
+        <div className="mt-6">
+          {skills.length ? (
+            <ResourceList>
+              {skills.map((skill) => (
+                <ResourceRow
+                  actions={
+                    canEdit ? (
+                      <SettingsRowActionMenu
+                        label={`Actions for ${skill.revision?.name ?? "pending skill"}`}
+                      >
+                        <DropdownMenuItem onSelect={() => openEdit(skill)}>
+                          Edit source
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onSelect={() =>
+                            setRemoveSkillId(skill.installationId)
+                          }
+                          variant="destructive"
+                        >
+                          Remove skill
+                        </DropdownMenuItem>
+                      </SettingsRowActionMenu>
+                    ) : undefined
+                  }
+                  description={
+                    <div className="space-y-2">
+                      {skill.revision?.description ? (
+                        <p>{skill.revision.description}</p>
+                      ) : (
+                        <p>
+                          Saved and waiting for the Project workspace to
+                          activate it.
+                        </p>
+                      )}
+                      {skill.lastSyncError ? (
+                        <p className="text-destructive">
+                          {skill.lastSyncError}
+                        </p>
+                      ) : null}
+                      <details className="text-xs">
+                        <summary className="cursor-pointer">
+                          Inspect provenance
+                        </summary>
+                        <div className="mt-1 break-all font-mono text-xs/5">
+                          <p>Source: {skill.source.gitUrl}</p>
+                          <p>
+                            Branch: {skill.source.branch}
+                            {skill.source.path ? ` · ${skill.source.path}` : ""}
+                          </p>
+                          {skill.revision ? (
+                            <>
+                              <p>Commit: {skill.revision.commitSha}</p>
+                              <p>Digest: {skill.revision.contentDigest}</p>
+                              <p>Instructions: {skill.revision.skillFile}</p>
+                            </>
+                          ) : null}
+                        </div>
+                      </details>
+                    </div>
+                  }
+                  key={skill.installationId}
+                  metadata={
+                    skill.revision?.commitSha
+                      ? `Revision ${skill.revision.commitSha.slice(0, 12)}`
+                      : undefined
+                  }
+                  status={
+                    <Badge variant="outline">
+                      {STATUS_LABELS[skill.status]}
+                    </Badge>
+                  }
+                  title={skill.revision?.name ?? "Pending skill"}
+                />
+              ))}
+            </ResourceList>
+          ) : (
+            <div className="border-y">
+              <ResourceEmpty
+                description="Add reusable guidance from a public HTTPS Git repository."
+                title="No agent skills installed"
               />
             </div>
-            <Button
-              disabled={working || !gitUrl.trim() || !branch.trim()}
-              onClick={() => void saveSkill()}
-            >
-              {editingSkillId === undefined ? "Install" : "Update"}
-            </Button>
+          )}
+        </div>
+      )}
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (open) setEditorOpen(true);
+          else if (!working) clearForm();
+        }}
+        open={editorOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editingSkillId === undefined ? "Add skill" : "Edit skill source"}
+            </DialogTitle>
+            <DialogDescription>
+              Save a public HTTPS repository. Kestrel activates it when the
+              Project workspace is available and idle.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            <Label htmlFor="skill-git-url">Git repository URL</Label>
+            <Input
+              aria-label="Skill Git URL"
+              id="skill-git-url"
+              onChange={(event) => setGitUrl(event.target.value)}
+              placeholder="https://github.com/org/skills.git"
+              value={gitUrl}
+            />
           </div>
-          <details className="mt-3 text-muted-foreground text-sm">
-            <summary>Advanced source options</summary>
-            <div className="mt-3 grid max-w-2xl gap-3 sm:grid-cols-2">
+          <details className="text-muted-foreground text-sm">
+            <summary className="cursor-pointer">
+              Advanced source options
+            </summary>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="skill-branch">Branch</Label>
                 <Input
@@ -261,102 +422,53 @@ export function ProjectSkills({
               </div>
             </div>
           </details>
-        </div>
-      ) : null}
-
-      {editingSkillId !== undefined ? (
-        <Button
-          className="mt-2"
-          onClick={clearForm}
-          size="sm"
-          variant="ghost"
-        >
-          Cancel edit
-        </Button>
-      ) : null}
-
-      {isLoading || error ? null : (
-        <div className="mt-6 divide-y border-y">
-          {(data?.skills ?? []).map((skill) => (
-            <div
-              className="flex items-start justify-between gap-4 py-4"
-              key={skill.installationId}
+          <DialogFooter>
+            <Button disabled={working} onClick={clearForm} variant="outline">
+              Cancel
+            </Button>
+            <Button
+              disabled={working || !gitUrl.trim() || !branch.trim()}
+              onClick={() => void saveSkill()}
             >
-              <div className="min-w-0">
-                <p className="font-medium">
-                  {skill.revision?.name ?? "Pending skill"}
-                </p>
-                <p className="mt-1 break-all text-muted-foreground text-sm">
-                  {skill.source.gitUrl}
-                </p>
-                {skill.revision?.description ? (
-                  <p className="mt-1 text-muted-foreground text-sm">
-                    {skill.revision.description}
-                  </p>
-                ) : null}
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
-                  <Badge variant="outline">
-                    {STATUS_LABELS[skill.status]}
-                  </Badge>
-                  {skill.revision?.commitSha ? (
-                    <span>{skill.revision.commitSha.slice(0, 12)}</span>
-                  ) : null}
-                </div>
-                {skill.lastSyncError ? (
-                  <p className="mt-2 text-destructive text-xs">
-                    {skill.lastSyncError}
-                  </p>
-                ) : null}
-                <details className="mt-2 text-muted-foreground text-xs">
-                  <summary>Inspect provenance</summary>
-                  <p>Source: {skill.source.gitUrl}</p>
-                  <p>
-                    Branch: {skill.source.branch}
-                    {skill.source.path ? ` · ${skill.source.path}` : ""}
-                  </p>
-                  {skill.revision ? (
-                    <>
-                      <p>Commit: {skill.revision.commitSha}</p>
-                      <p>Digest: {skill.revision.contentDigest}</p>
-                      <p>Instructions: {skill.revision.skillFile}</p>
-                    </>
-                  ) : null}
-                </details>
-              </div>
-              {canEdit ? (
-                <div className="flex shrink-0 gap-2">
-                  <Button
-                    disabled={working}
-                    onClick={() => {
-                      setEditingSkillId(skill.installationId);
-                      setGitUrl(skill.source.gitUrl);
-                      setBranch(skill.source.branch);
-                      setSkillPath(skill.source.path ?? "");
-                    }}
-                    size="sm"
-                    variant="outline"
-                  >
-                    Edit
-                  </Button>
-                  <Button
-                    disabled={working}
-                    onClick={() => void removeSkill(skill.installationId)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    Remove
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          ))}
-          {data?.skills.length === 0 ? (
-            <p className="py-6 text-muted-foreground text-sm">
-              No agent skills installed.
-            </p>
-          ) : null}
-        </div>
-      )}
+              {working
+                ? "Saving…"
+                : editingSkillId === undefined
+                  ? "Add skill"
+                  : "Save changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!(open || working)) setRemoveSkillId(undefined);
+        }}
+        open={Boolean(removeSkillId)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this skill?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {skillToRemove?.revision?.name ?? "This skill"} will stop
+              providing guidance to new Project runs. Its source repository is
+              unchanged.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={working}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={working || !removeSkillId}
+              onClick={(event) => {
+                event.preventDefault();
+                if (removeSkillId) void removeSkill(removeSkillId);
+              }}
+            >
+              {working ? "Removing…" : "Remove skill"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

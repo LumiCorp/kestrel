@@ -1,97 +1,91 @@
-import {
-  Activity,
-  ArrowRight,
-  Bot,
-  Boxes,
-  CloudCog,
-  CreditCard,
-  KeyRound,
-  Mail,
-  Network,
-  ScrollText,
-  Server,
-  Sparkles,
-  Users,
-} from "lucide-react";
-import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import type { OrganizationManagementEnvironment } from "@/lib/organizations/management";
+import { AlertTriangle } from "lucide-react";
 import { CreateOrganizationEnvironmentDialog } from "@/components/organization/create-environment-dialog";
+import { OrganizationIdentityEditor } from "@/components/organization/organization-identity-editor";
+import { ResourceEmpty, ResourceList, ResourceRow } from "@/components/resource-list";
+import {
+  SettingsDangerSection,
+  SettingsDisclosure,
+  SettingsPage,
+  SettingsPageHeader,
+  SettingsRow,
+  SettingsRows,
+  SettingsSection,
+  SettingsStatusNotice,
+  SettingsStatusSummary,
+} from "@/components/settings/settings-section";
+import { Badge } from "@/components/ui/badge";
+import type { OrganizationManagementEnvironment } from "@/lib/organizations/management";
 
-const organizationSections = [
+const managementGroups = [
   {
-    href: "/organization/setup",
-    icon: Sparkles,
-    title: "Setup",
-    description: "Organization readiness and next steps",
+    title: "Organization",
+    links: [
+      {
+        href: "/organization/setup",
+        title: "Setup",
+        description: "Readiness and next steps",
+      },
+      {
+        href: "/organization/people",
+        title: "People",
+        description: "Members, roles, and invitations",
+      },
+      {
+        href: "/organization/billing",
+        title: "Billing",
+        description: "Plan, subscription, and usage",
+      },
+    ],
   },
   {
-    href: "/organization/systems",
-    icon: Network,
-    title: "Systems map",
-    description: "Kestrel-managed estate, provider state, and active work",
+    title: "Runtime",
+    links: [
+      {
+        href: "/organization/systems",
+        title: "Systems",
+        description: "Managed estate and active work",
+      },
+      {
+        href: "/organization/connections",
+        title: "Connections",
+        description: "Providers, credentials, and models",
+      },
+      {
+        href: "/organization/inference",
+        title: "Inference",
+        description: "Private profiles and fleet health",
+      },
+      {
+        href: "/organization/agent-defaults",
+        title: "Agent defaults",
+        description: "Shared model and interaction defaults",
+      },
+    ],
   },
   {
-    href: "/organization/people",
-    icon: Users,
-    title: "People",
-    description: "Members, roles, and invitations",
-  },
-  {
-    href: "/organization/billing",
-    icon: CreditCard,
-    title: "Billing",
-    description: "Plan, subscription, and usage",
-  },
-  {
-    href: "/organization/connections",
-    icon: CloudCog,
-    title: "Connections",
-    description: "AI providers, credentials, and approved models",
-  },
-  {
-    href: "/organization/agent-defaults",
-    icon: Bot,
-    title: "Agent defaults",
-    description: "Shared model and interaction defaults",
-  },
-  {
-    href: "/organization/inference",
-    icon: Server,
-    title: "Inference",
-    description: "Private inference profiles and fleet health",
-  },
-  {
-    href: "/organization/usage",
-    icon: Activity,
-    title: "Costs & usage",
-    description: "Attributed spend, usage, and pricing",
-  },
-  {
-    href: "/organization/email",
-    icon: Mail,
-    title: "Email",
-    description: "Delivery configuration and testing",
-  },
-  {
-    href: "/organization/api-keys",
-    icon: KeyRound,
-    title: "API keys",
-    description: "Organization credentials",
-  },
-  {
-    href: "/organization/audit",
-    icon: ScrollText,
-    title: "Audit",
-    description: "Administrative activity and retention",
+    title: "Governance",
+    links: [
+      {
+        href: "/organization/usage",
+        title: "Costs & usage",
+        description: "Attributed spend and pricing",
+      },
+      {
+        href: "/organization/email",
+        title: "Email",
+        description: "Delivery configuration and testing",
+      },
+      {
+        href: "/organization/api-keys",
+        title: "API keys",
+        description: "Organization credentials",
+      },
+      {
+        href: "/organization/audit",
+        title: "Audit",
+        description: "Activity and retention",
+      },
+    ],
   },
 ] as const;
 
@@ -107,7 +101,9 @@ export function OrganizationManagementHome({
   activeOperations,
 }: {
   organization: {
+    id: string;
     name: string;
+    slug: string;
     lifecycleState: string;
     isPersonal: boolean;
     role: string;
@@ -127,16 +123,13 @@ export function OrganizationManagementHome({
   ).length;
 
   return (
-    <div className="space-y-8">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="font-medium text-muted-foreground text-sm">
-            Organization
-          </p>
-          <div className="mt-1 flex flex-wrap items-center gap-3">
-            <h1 className="font-semibold text-3xl tracking-tight">
-              {organization.name}
-            </h1>
+    <SettingsPage>
+      <SettingsPageHeader
+        actions={<CreateOrganizationEnvironmentDialog />}
+        description="Environments, access, and operating policy for this organization."
+        eyebrow="Organization"
+        status={
+          <div className="flex flex-wrap gap-2">
             {organization.isPersonal ? (
               <Badge variant="secondary">Personal</Badge>
             ) : null}
@@ -144,159 +137,125 @@ export function OrganizationManagementHome({
               <Badge variant="destructive">Deletion in progress</Badge>
             ) : null}
           </div>
-          <p className="mt-2 max-w-2xl text-muted-foreground text-sm">
-            Manage the execution environments this organization owns. Workspaces
-            carry their machine and persistent volume with them.
-          </p>
-        </div>
-        <CreateOrganizationEnvironmentDialog />
-      </header>
+        }
+        title={organization.name}
+      />
 
-      <section aria-labelledby="environments-heading" className="space-y-4">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <h2 className="font-semibold text-xl" id="environments-heading">
-              Environments
-            </h2>
-            <p className="text-muted-foreground text-sm">
-              {environments.length} total · {attention} need attention ·{" "}
-              {activeOperations.length} active operations
-            </p>
-          </div>
-        </div>
+      {attention > 0 ? (
+        <SettingsStatusNotice
+          description={`${attention} environment${attention === 1 ? "" : "s"} require review.`}
+          title="Some systems need attention"
+          tone="warning"
+        />
+      ) : null}
+
+      <SettingsSection
+        description={`${environments.length} total · ${activeOperations.length} active operation${activeOperations.length === 1 ? "" : "s"}`}
+        title="Environments"
+      >
         {environments.length === 0 ? (
-          <Card>
-            <CardContent className="py-10 text-center text-muted-foreground text-sm">
-              No environments yet.
-            </CardContent>
-          </Card>
+          <ResourceEmpty
+            description="Create the first environment when this organization is ready to run work."
+            title="No environments yet"
+          />
         ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {environments.map((environment) => (
-              <Card key={environment.id}>
-                <CardHeader className="space-y-2">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <CardTitle className="text-lg">
-                        {environment.name}
-                      </CardTitle>
-                      <CardDescription>
-                        {environment.provider === "desktop"
-                          ? `Desktop · ${environment.connectionState ?? "offline"}`
-                          : `${environment.region} · ${environment.runtimeTemplate}`}
-                      </CardDescription>
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-2">
+          <ResourceList>
+            {environments.map((environment) => {
+              const needsAttention =
+                ["failed", "degraded"].includes(environment.status) ||
+                environment.counts.attention > 0;
+              return (
+                <ResourceRow
+                  description={
+                    environment.provider === "desktop"
+                      ? `Desktop · ${environment.connectionState ?? "offline"}`
+                      : `${environment.region} · ${environment.runtimeTemplate}`
+                  }
+                  href={`/organization/environments/${environment.id}`}
+                  key={environment.id}
+                  metadata={`${environment.counts.total} workspace${environment.counts.total === 1 ? "" : "s"}${environment.counts.attention ? ` · ${environment.counts.attention} need attention` : ""}`}
+                  status={
+                    <div className="flex items-center gap-2">
                       {environment.isDefault ? (
                         <Badge variant="secondary">Default</Badge>
+                      ) : null}
+                      {needsAttention ? (
+                        <AlertTriangle
+                          aria-label="Needs attention"
+                          className="size-4 text-amber-600"
+                        />
                       ) : null}
                       <Badge variant={statusTone(environment.status)}>
                         {environment.status}
                       </Badge>
-                      {environment.connectionState ? (
-                        <Badge
-                          variant={
-                            environment.connectionState === "online"
-                              ? "default"
-                              : "outline"
-                          }
-                        >
-                          {environment.connectionState}
-                        </Badge>
-                      ) : null}
                     </div>
-                  </div>
-                  {environment.failureMessage ? (
-                    <p className="text-destructive text-sm">
-                      {environment.failureMessage}
-                    </p>
-                  ) : null}
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-4 gap-2 text-sm">
-                    <div>
-                      <p className="font-semibold">
-                        {environment.counts.total}
-                      </p>
-                      <p className="text-muted-foreground text-xs">
-                        Workspaces
-                      </p>
-                    </div>
-                    <div>
-                      <p className="font-semibold">
-                        {environment.counts.ready}
-                      </p>
-                      <p className="text-muted-foreground text-xs">Running</p>
-                    </div>
-                    <div>
-                      <p className="font-semibold">
-                        {environment.counts.stopped}
-                      </p>
-                      <p className="text-muted-foreground text-xs">Stopped</p>
-                    </div>
-                    <div>
-                      <p className="font-semibold text-destructive">
-                        {environment.counts.attention}
-                      </p>
-                      <p className="text-muted-foreground text-xs">Attention</p>
-                    </div>
-                  </div>
-                  <Button asChild className="w-full" variant="outline">
-                    <Link href={`/organization/environments/${environment.id}`}>
-                      Open environment <ArrowRight className="size-4" />
-                    </Link>
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                  }
+                  title={environment.name}
+                />
+              );
+            })}
+          </ResourceList>
         )}
-      </section>
+      </SettingsSection>
 
-      <section
-        aria-labelledby="organization-settings-heading"
-        className="space-y-4"
+      <SettingsSection
+        description="Quiet identifying details used throughout Kestrel One."
+        title="Identity"
       >
-        <div>
-          <h2
-            className="font-semibold text-xl"
-            id="organization-settings-heading"
+        <SettingsRows>
+          <SettingsRow label="Slug">
+            <span className="text-muted-foreground text-sm">
+              {organization.slug}
+            </span>
+          </SettingsRow>
+          <SettingsRow label="Your role">
+            <SettingsStatusSummary status={organization.role} />
+          </SettingsRow>
+        </SettingsRows>
+        {organization.role === "owner" || organization.role === "admin" ? (
+          <SettingsDisclosure
+            className="mt-4"
+            description="Change the name or URL-safe organization identifier."
+            title="Edit identity"
           >
-            Organization management
-          </h2>
-          <p className="text-muted-foreground text-sm">
-            People, access, billing, and operational policy for this
-            organization.
-          </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {organizationSections.map((section) => (
-            <Link
-              className="rounded-lg border p-4 transition-colors hover:bg-muted"
-              href={section.href}
-              key={section.href}
-            >
-              <section.icon className="mb-3 size-5 text-muted-foreground" />
-              <p className="font-medium text-sm">{section.title}</p>
-              <p className="mt-1 text-muted-foreground text-xs">
-                {section.description}
-              </p>
-            </Link>
-          ))}
-          {organization.role === "owner" && !organization.isPersonal ? (
-            <Link
-              className="rounded-lg border border-destructive/40 p-4 transition-colors hover:bg-destructive/5"
+            <OrganizationIdentityEditor
+              id={organization.id}
+              initialName={organization.name}
+              initialSlug={organization.slug}
+            />
+          </SettingsDisclosure>
+        ) : null}
+      </SettingsSection>
+
+      {managementGroups.map((group) => (
+        <SettingsSection key={group.title} title={group.title}>
+          <ResourceList>
+            {group.links.map((link) => (
+              <ResourceRow
+                description={link.description}
+                href={link.href}
+                key={link.href}
+                title={link.title}
+              />
+            ))}
+          </ResourceList>
+        </SettingsSection>
+      ))}
+
+      {organization.role === "owner" && !organization.isPersonal ? (
+        <SettingsDangerSection
+          description="Permanent organization and infrastructure actions."
+          title="Danger zone"
+        >
+          <ResourceList>
+            <ResourceRow
+              description="Review billing preconditions and deletion progress."
               href="/organization/danger"
-            >
-              <Boxes className="mb-3 size-5 text-destructive" />
-              <p className="font-medium text-sm">Danger zone</p>
-              <p className="mt-1 text-muted-foreground text-xs">
-                Permanently delete this organization and its infrastructure.
-              </p>
-            </Link>
-          ) : null}
-        </div>
-      </section>
-    </div>
+              title="Delete organization"
+            />
+          </ResourceList>
+        </SettingsDangerSection>
+      ) : null}
+    </SettingsPage>
   );
 }

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import type { Edge } from "@xyflow/react";
 import { RefreshCw } from "lucide-react";
 import Link from "next/link";
+import { ResourceList, ResourceRow } from "@/components/resource-list";
+import { SettingsDisclosure } from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +32,7 @@ export function OrganizationEstateMap({
   const [providerStates, setProviderStates] = useState<ProviderEnvironmentState[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [attentionOnly, setAttentionOnly] = useState(false);
 
   async function refresh(environmentId?: string) {
     setRefreshing(true);
@@ -52,7 +55,17 @@ export function OrganizationEstateMap({
     void refresh();
   }, []);
 
-  const { nodes, edges } = buildEstateGraph(snapshot, providerStates);
+  const graph = buildEstateGraph(snapshot, providerStates);
+  const nodes = attentionOnly
+    ? graph.nodes.filter((node) => node.data.attention)
+    : graph.nodes;
+  const visibleNodeIds = new Set(nodes.map((node) => node.id));
+  const edges = attentionOnly
+    ? graph.edges.filter(
+        (edge) =>
+          visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target),
+      )
+    : graph.edges;
   const selectedEnvironmentId = selection?.environmentId;
   const selectedEnvironment = selectedEnvironmentId
     ? snapshot.environments.find((environment) => environment.id === selectedEnvironmentId)
@@ -99,6 +112,25 @@ export function OrganizationEstateMap({
         </Button>
       </header>
 
+      <div className="flex flex-wrap gap-2">
+        <Button
+          aria-pressed={!attentionOnly}
+          onClick={() => setAttentionOnly(false)}
+          size="sm"
+          variant={attentionOnly ? "outline" : "default"}
+        >
+          All systems
+        </Button>
+        <Button
+          aria-pressed={attentionOnly}
+          onClick={() => setAttentionOnly(true)}
+          size="sm"
+          variant={attentionOnly ? "default" : "outline"}
+        >
+          Needs attention
+        </Button>
+      </div>
+
       {snapshot.environments.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-16 text-center">
@@ -112,7 +144,13 @@ export function OrganizationEstateMap({
           </CardContent>
         </Card>
       ) : (
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div
+        className={
+          selection
+            ? "grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]"
+            : "grid gap-6"
+        }
+      >
         <EstateCanvas
           edges={edges}
           nodes={nodes}
@@ -121,9 +159,28 @@ export function OrganizationEstateMap({
             if (node.data.environmentId) void refresh(node.data.environmentId);
           }}
         />
-        <Card className="h-fit">
+        <Card
+          className={
+            selection
+              ? "fixed inset-y-0 right-0 z-40 h-full w-[min(24rem,90vw)] overflow-y-auto rounded-none border-y-0 shadow-xl xl:static xl:z-auto xl:h-fit xl:w-auto xl:rounded-xl xl:border-y xl:shadow-sm"
+              : "hidden"
+          }
+          role="complementary"
+        >
           <CardHeader>
-            <CardTitle className="text-base">{selection?.label ?? "Select a system"}</CardTitle>
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle className="text-base">
+                {selection?.label ?? "Select a system"}
+              </CardTitle>
+              <Button
+                aria-label="Close system details"
+                onClick={() => setSelection(null)}
+                size="sm"
+                variant="ghost"
+              >
+                Close
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             {selection ? (
@@ -192,6 +249,34 @@ export function OrganizationEstateMap({
         </Card>
       </div>
       )}
+
+      <SettingsDisclosure
+        description="Keyboard-accessible Environment and Workspace fallback."
+        title="Systems list"
+      >
+        <ResourceList>
+          {snapshot.environments.map((environment) => (
+            <div key={environment.id}>
+              <ResourceRow
+                description={`${environment.region} · ${environment.workspaces.length} Workspaces`}
+                href={`/organization/environments/${environment.id}`}
+                status={environment.status}
+                title={environment.name}
+              />
+              {environment.workspaces.map((workspace) => (
+                <ResourceRow
+                  className="pl-6"
+                  description={`${workspace.kind} Workspace`}
+                  href={`/organization/environments/${environment.id}/workspaces`}
+                  key={workspace.id}
+                  status={workspace.status}
+                  title={workspace.name}
+                />
+              ))}
+            </div>
+          ))}
+        </ResourceList>
+      </SettingsDisclosure>
     </div>
   );
 }

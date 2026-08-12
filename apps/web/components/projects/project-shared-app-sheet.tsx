@@ -1,7 +1,14 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { Check, Loader2, ShieldCheck, Trash2, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Loader2,
+  ShieldCheck,
+  Trash2,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -53,7 +60,7 @@ function approvalLabel(mode: ProjectAppCapability["approvalMode"]) {
 }
 
 function allowedApprovalModes(
-  environmentMode: ProjectAppCapability["environmentApprovalMode"]
+  environmentMode: ProjectAppCapability["environmentApprovalMode"],
 ) {
   if (environmentMode === "deny") return ["deny"] as const;
   if (environmentMode === "ask") return ["ask", "deny"] as const;
@@ -118,13 +125,13 @@ export function ProjectSharedAppSheet({
             scope,
             isDefault: true,
           }),
-        }
+        },
       );
       await onChanged();
       toast.success(
         scope === "personal"
           ? "Your Project default connection was updated"
-          : "Project default connection updated"
+          : "Project default connection updated",
       );
     } catch (error) {
       toast.error(errorMessage(error, "Connection could not be attached."));
@@ -138,7 +145,7 @@ export function ProjectSharedAppSheet({
     try {
       await requestJson(
         `/api/projects/${projectId}/apps/${appKey}/connections/${connectionId}`,
-        { method: "DELETE" }
+        { method: "DELETE" },
       );
       await onChanged();
       toast.success("Connection removed from this Project");
@@ -154,7 +161,7 @@ export function ProjectSharedAppSheet({
     input: {
       enabled: boolean;
       approvalMode: ProjectAppCapability["approvalMode"];
-    }
+    },
   ) {
     setBusy(`capability:${capability.key}`);
     try {
@@ -164,7 +171,7 @@ export function ProjectSharedAppSheet({
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(input),
-        }
+        },
       );
       await onChanged();
     } catch (error) {
@@ -227,7 +234,9 @@ export function ProjectSharedAppSheet({
                       disabled={
                         !canEdit ||
                         busy === "app" ||
-                        !(configuration.enabled || configuration.dependencyReady)
+                        !(
+                          configuration.enabled || configuration.dependencyReady
+                        )
                       }
                       onCheckedChange={(enabled) => void updateApp(enabled)}
                     />
@@ -241,38 +250,40 @@ export function ProjectSharedAppSheet({
                         {isWorkflow
                           ? "Required Apps"
                           : supportsConnection
-                          ? isWeather
-                            ? "Optional Weather fallback"
-                            : isPersonalOnly
-                              ? "Your connection"
-                              : isHybrid
-                                ? "Personal and shared connections"
-                                : configuration.app.connectionRequirement ===
-                                    "optional"
-                                  ? "Optional shared connection"
-                                  : "Shared connection"
-                          : "Connection"}
+                            ? isWeather
+                              ? "Optional Weather fallback"
+                              : isPersonalOnly
+                                ? "Your connection"
+                                : isHybrid
+                                  ? "Personal and shared connections"
+                                  : configuration.app.connectionRequirement ===
+                                      "optional"
+                                    ? "Optional shared connection"
+                                    : "Shared connection"
+                            : "Connection"}
                       </h3>
                       <p className="mt-1 text-muted-foreground text-sm">
                         {isWorkflow
                           ? "This workflow coordinates capabilities from Apps that are already enabled for this Project. It never adds permissions of its own."
                           : supportsConnection
-                          ? isWeather
-                            ? "Weather always uses Open-Meteo first. Attach the Environment's Visual Crossing connection to enable the verified fallback for this Project."
-                            : isPersonalOnly
-                              ? "Your agents use your Project default. Teammates connect their own accounts."
-                              : isHybrid
-                                ? "Your personal default is used first. The Project shared default is used when you have none."
-                                : configuration.app.connectionRequirement ===
-                                    "optional"
-                                  ? "The App works without this connection; attaching one enables its optional provider path."
-                                  : "Agents use the Project default. They never choose or see credentials."
-                          : "No connection is required. Kestrel provides this App directly."}
+                            ? isWeather
+                              ? "Weather always uses Open-Meteo first. Attach the Environment's Visual Crossing connection to enable the verified fallback for this Project."
+                              : isPersonalOnly
+                                ? "Your agents use your Project default. Teammates connect their own accounts."
+                                : isHybrid
+                                  ? "Your personal default is used first. The Project shared default is used when you have none."
+                                  : configuration.app.connectionRequirement ===
+                                      "optional"
+                                    ? "The App works without this connection; attaching one enables its optional provider path."
+                                    : "Agents use the Project default. They never choose or see credentials."
+                            : "No connection is required. Kestrel provides this App directly."}
                       </p>
                     </div>
                     {isWorkflow ? (
                       <Badge variant="outline">
-                        {configuration.dependencyReady ? "Ready" : "Missing Apps"}
+                        {configuration.dependencyReady
+                          ? "Ready"
+                          : "Missing Apps"}
                       </Badge>
                     ) : supportsConnection ? (
                       <Badge variant="outline">
@@ -291,17 +302,22 @@ export function ProjectSharedAppSheet({
                               className={cn(
                                 "flex size-8 shrink-0 items-center justify-center rounded-full border",
                                 dependency.satisfied &&
-                                  "border-emerald-600 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                                  "border-emerald-600 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
                               )}
                             >
-                              {dependency.satisfied ? <Check className="size-4" /> : null}
+                              {dependency.satisfied ? (
+                                <Check className="size-4" />
+                              ) : null}
                             </span>
                             <div>
-                              <p className="font-medium text-sm">{dependency.role}</p>
+                              <p className="font-medium text-sm">
+                                {dependency.role}
+                              </p>
                               <p className="mt-1 text-muted-foreground text-xs">
                                 {dependency.alternatives
-                                  .map((alternative) =>
-                                    `${alternative.displayName}${alternative.ready ? " (ready)" : ""}`
+                                  .map(
+                                    (alternative) =>
+                                      `${alternative.displayName}${alternative.ready ? " (ready)" : ""}`,
                                   )
                                   .join(" or ")}
                               </p>
@@ -319,7 +335,7 @@ export function ProjectSharedAppSheet({
                             : canEdit;
                           const attachment =
                             configuration.attachedConnections.find(
-                              (item) => item.id === connection.id
+                              (item) => item.id === connection.id,
                             );
                           return (
                             <div
@@ -330,7 +346,7 @@ export function ProjectSharedAppSheet({
                                 className={cn(
                                   "flex size-8 shrink-0 items-center justify-center rounded-full border",
                                   attachment?.isDefault &&
-                                    "border-emerald-600 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                                    "border-emerald-600 bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
                                 )}
                               >
                                 {attachment?.isDefault ? (
@@ -449,27 +465,30 @@ export function ProjectSharedAppSheet({
                   </div>
                 </section>
 
-                <section className="border-t py-7">
-                  <div className="flex items-start gap-3">
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
-                      <ShieldCheck className="size-4" />
-                    </span>
-                    <div>
-                      <h3 className="font-semibold text-base">
-                        Agent capabilities
-                      </h3>
-                      <p className="mt-1 text-muted-foreground text-sm">
-                        This Project can only keep or narrow the Environment
-                        ceiling.
-                      </p>
+                <details className="group border-t py-7">
+                  <summary className="flex cursor-pointer list-none items-start justify-between gap-4 outline-none marker:hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+                    <div className="flex items-start gap-3">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
+                        <ShieldCheck className="size-4" />
+                      </span>
+                      <div>
+                        <h3 className="font-semibold text-base">
+                          Agent capabilities
+                        </h3>
+                        <p className="mt-1 text-muted-foreground text-sm">
+                          This Project can only keep or narrow the Environment
+                          ceiling.
+                        </p>
+                      </div>
                     </div>
-                  </div>
+                    <ChevronDown className="mt-2 size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+                  </summary>
                   <div className="mt-5 divide-y overflow-hidden rounded-xl border">
                     {configuration.capabilities.map((capability) => {
                       const capabilityBusy =
                         busy === `capability:${capability.key}`;
                       const modes = allowedApprovalModes(
-                        capability.environmentApprovalMode
+                        capability.environmentApprovalMode,
                       );
                       return (
                         <div className="px-4 py-4" key={capability.key}>
@@ -493,7 +512,7 @@ export function ProjectSharedAppSheet({
                               <p className="mt-2 text-muted-foreground text-xs">
                                 Environment:{" "}
                                 {approvalLabel(
-                                  capability.environmentApprovalMode
+                                  capability.environmentApprovalMode,
                                 )}
                               </p>
                             </div>
@@ -553,7 +572,7 @@ export function ProjectSharedAppSheet({
                       );
                     })}
                   </div>
-                </section>
+                </details>
               </>
             ) : (
               <section className="py-8">

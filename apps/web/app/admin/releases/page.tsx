@@ -1,6 +1,4 @@
-import Link from "next/link";
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { Button } from "@/components/ui/button";
 import { requireAdmin } from "@/lib/knowledge/auth";
 import {
   listFlyImageReleaseCanaries,
@@ -17,14 +15,9 @@ export default async function AdminReleasesPage() {
   return (
     <div className="space-y-6">
       <AdminPageHeader
-        actions={
-          <Button asChild variant="outline">
-            <Link href="/admin/environments">Environment operations</Link>
-          </Button>
-        }
-        description="Approve one coordinated image bundle, watch canary and sequential Environment rollout, and explicitly retry or roll back paused releases."
-        eyebrow="Platform operations"
-        title="Fly Image Releases"
+        description="Approve the next coordinated image bundle or recover an interrupted rollout."
+        eyebrow="Operations"
+        title="Releases"
       />
       <ReleasesClient
         canaries={canaries}
