@@ -41,12 +41,14 @@ export function WorkspaceLifecycleActions({
     name: string;
     status: string;
     machineId: string | null;
+    volumeId: string | null;
   };
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<"start" | "stop" | "retire" | null>(null);
   const [retireOpen, setRetireOpen] = useState(false);
   const [backupsOpen, setBackupsOpen] = useState(false);
+  const [technicalDetailsOpen, setTechnicalDetailsOpen] = useState(false);
   const [confirmationName, setConfirmationName] = useState("");
 
   async function requestAction(action: "start" | "stop") {
@@ -126,6 +128,9 @@ export function WorkspaceLifecycleActions({
           <DropdownMenuItem onSelect={() => setBackupsOpen(true)}>
             Backups and recovery
           </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setTechnicalDetailsOpen(true)}>
+            Technical details
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             className="text-destructive"
@@ -150,6 +155,37 @@ export function WorkspaceLifecycleActions({
             workspaceId={workspace.id}
             workspaceStatus={workspace.status}
           />
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        onOpenChange={setTechnicalDetailsOpen}
+        open={technicalDetailsOpen}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{workspace.name} technical details</DialogTitle>
+            <DialogDescription>
+              Provider identifiers used for operational evidence and support.
+            </DialogDescription>
+          </DialogHeader>
+          <dl className="divide-y border-y text-sm">
+            <div className="grid gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)]">
+              <dt className="text-muted-foreground">Workspace ID</dt>
+              <dd className="break-all font-mono text-xs">{workspace.id}</dd>
+            </div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)]">
+              <dt className="text-muted-foreground">Machine ID</dt>
+              <dd className="break-all font-mono text-xs">
+                {workspace.machineId ?? "Not provisioned"}
+              </dd>
+            </div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)]">
+              <dt className="text-muted-foreground">Volume ID</dt>
+              <dd className="break-all font-mono text-xs">
+                {workspace.volumeId ?? "Not provisioned"}
+              </dd>
+            </div>
+          </dl>
         </DialogContent>
       </Dialog>
       <Dialog onOpenChange={setRetireOpen} open={retireOpen}>

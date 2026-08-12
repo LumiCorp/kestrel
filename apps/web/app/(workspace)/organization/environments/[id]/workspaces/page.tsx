@@ -62,6 +62,7 @@ export default async function OrganizationEnvironmentWorkspacesPage({
                       name: workspace.name,
                       status: workspace.status,
                       machineId: workspace.flyMachineId,
+                      volumeId: workspace.flyVolumeId,
                     }}
                   />
                 }
