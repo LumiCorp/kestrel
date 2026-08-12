@@ -166,9 +166,9 @@ export async function resolveEnvironmentExecutionRoute(input: {
       await enqueueEnvironmentOperation(operation.id);
     }
   }
-  let authorization:
-    | Awaited<ReturnType<typeof finalizeHostedEnvironmentExecutionAuthorization>>
-    | null = null;
+  let authorization: Awaited<
+    ReturnType<typeof finalizeHostedEnvironmentExecutionAuthorization>
+  > | null = null;
   while (!authorization) {
     const { environment, workspace } = await waitForExecutionResources({
       organizationId: input.organizationId,
@@ -258,10 +258,7 @@ async function resolveDesktopEnvironmentExecutionRoute(input: {
     desktopCatalogId: string | null;
   };
 }) {
-  if (
-    input.workspace.status !== "ready" ||
-    !input.workspace.desktopCatalogId
-  ) {
+  if (input.workspace.status !== "ready" || !input.workspace.desktopCatalogId) {
     throw new Error("The bound Desktop workspace is unavailable.");
   }
   const [environment, connection, catalog] = await Promise.all([
@@ -486,8 +483,7 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
       : undefined;
     const now = Math.floor(Date.now() / 1000);
     const executionTicket = signEnvironmentExecutionTicket({
-      privateKey:
-      process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
+      privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
       ticket: {
         version: 2,
         audience: ENVIRONMENT_ROUTER_AUDIENCE,
@@ -664,11 +660,7 @@ async function waitForExecutionResources(input: {
         where: (table, { and, eq, inArray }) =>
           and(
             eq(table.environmentId, input.environmentId),
-            inArray(table.status, [
-              "draining",
-              "applying",
-              "verifying",
-            ]),
+            inArray(table.status, ["draining", "applying", "verifying"]),
             ...(input.owningReleaseTargetIds?.length
               ? [notInArray(table.id, [...input.owningReleaseTargetIds])]
               : []),
@@ -849,7 +841,9 @@ export async function activateEnvironmentModelGrant(input: {
         .limit(1)
         .for("share");
       if (deployment?.status !== "ready") {
-        throw new Error("Environment model grant gateway model is unavailable.");
+        throw new Error(
+          "Environment model grant gateway model is unavailable.",
+        );
       }
     }
     const [model] = await transaction
@@ -964,11 +958,56 @@ export async function updateEnvironmentExecutionRuntimeCursor(input: {
   executionId: string;
   eventId: string;
 }) {
-  const [updated] = await knowledgeDb
+  await settleEnvironmentExecutionRuntimeEvent(input);
+}
+
+export async function settleEnvironmentExecutionRuntimeEvent(input: {
+  organizationId: string;
+  executionId: string;
+  eventId: string;
+  terminalStatus?: "completed" | "failed" | "cancelled" | undefined;
+}) {
+  await knowledgeDb.transaction(async (transaction) => {
+    const [execution] = await transaction
+      .select({
+        status: schema.environmentRunExecutions.status,
+        lastRuntimeEventId: schema.environmentRunExecutions.lastRuntimeEventId,
+      })
+      .from(schema.environmentRunExecutions)
+      .where(
+        and(
+          eq(schema.environmentRunExecutions.id, input.executionId),
+          eq(
+            schema.environmentRunExecutions.organizationId,
+            input.organizationId,
+          ),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!execution)
+      throw new Error("Environment execution runtime event was not persisted.");
+    const terminal = ["completed", "failed", "cancelled"].includes(
+      execution.status,
+    );
+    if (terminal) {
+      if (execution.lastRuntimeEventId === input.eventId) return;
+      throw new Error(
+        "Environment execution runtime event was observed after terminal settlement.",
+      );
+    }
+    if (!(["routed", "running"] as string[]).includes(execution.status)) {
+      throw new Error("Environment execution runtime event was not persisted.");
+    }
+    const now = new Date();
+    await transaction
     .update(schema.environmentRunExecutions)
     .set({
       lastRuntimeEventId: input.eventId,
-      updatedAt: new Date(),
+        ...(input.terminalStatus
+          ? { status: input.terminalStatus, completedAt: now }
+          : {}),
+        updatedAt: now,
     })
     .where(
       and(
@@ -977,13 +1016,32 @@ export async function updateEnvironmentExecutionRuntimeCursor(input: {
           schema.environmentRunExecutions.organizationId,
           input.organizationId,
         ),
-        inArray(schema.environmentRunExecutions.status, ["routed", "running"]),
       ),
-    )
-    .returning({ id: schema.environmentRunExecutions.id });
-  if (!updated) {
-    throw new Error("Environment execution runtime cursor was not persisted.");
-  }
+      );
+    if (!input.terminalStatus) return;
+    await transaction
+      .update(schema.environmentModelGrants)
+      .set({ status: "closed", closedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(schema.environmentModelGrants.runId, input.executionId),
+          eq(
+            schema.environmentModelGrants.organizationId,
+            input.organizationId,
+          ),
+        ),
+      );
+    await transaction
+      .update(schema.mcpRunGrants)
+      .set({ status: "revoked", revokedAt: now })
+      .where(
+        and(
+          eq(schema.mcpRunGrants.runExecutionId, input.executionId),
+          eq(schema.mcpRunGrants.organizationId, input.organizationId),
+          inArray(schema.mcpRunGrants.status, ["issued", "active"]),
+        ),
+      );
+  });
 }
 
 export async function resolveEnvironmentExecutionAuthorizationRoute(input: {
@@ -1017,7 +1075,10 @@ export async function resolveEnvironmentExecutionAuthorizationRoute(input: {
     .where(
       and(
         eq(schema.environmentRunExecutions.id, input.executionId),
-        eq(schema.environmentRunExecutions.organizationId, input.organizationId),
+        eq(
+          schema.environmentRunExecutions.organizationId,
+          input.organizationId,
+        ),
         inArray(schema.environmentRunExecutions.status, ["routed", "running"]),
       ),
     )
@@ -1070,6 +1131,7 @@ export async function resolveEnvironmentExecutionCancellationRoute(input: {
     baseUrl: route.baseUrl,
     authToken: route.authToken,
     runtimeRunId: route.runtimeRunId,
+    lastRuntimeEventId: route.lastRuntimeEventId,
     sessionId: route.sessionId,
     actorId: route.actorId,
   };
@@ -1162,8 +1224,7 @@ async function recordEnvironmentExecutionInTransaction(
       ),
     columns: { projectId: true },
   });
-  if (!thread)
-    throw new Error("Environment execution Thread is unavailable.");
+  if (!thread) throw new Error("Environment execution Thread is unavailable.");
   if (input.projectContextRevisionId) {
     const revision = thread.projectId
       ? await transaction.query.projectContextRevisions.findFirst({
@@ -1176,9 +1237,7 @@ async function recordEnvironmentExecutionInTransaction(
         })
       : null;
     if (!revision) {
-      throw new Error(
-        "Environment execution Project context is unavailable.",
-      );
+      throw new Error("Environment execution Project context is unavailable.");
     }
   }
   await transaction.insert(schema.environmentRunExecutions).values({
@@ -1190,8 +1249,7 @@ async function recordEnvironmentExecutionInTransaction(
     projectId: thread.projectId,
     projectContextRevisionId: input.projectContextRevisionId ?? null,
     projectContextGrantId: input.projectContextGrantId ?? null,
-    authorizationRenewalTokenHash:
-      input.authorizationRenewalTokenHash ?? null,
+    authorizationRenewalTokenHash: input.authorizationRenewalTokenHash ?? null,
     actorId: input.actorId,
     runtimeImage: input.runtimeImage,
     effectiveCapabilities: [

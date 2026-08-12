@@ -9,11 +9,16 @@ export function validateFinalizationDecision(input: {
   lastActionResult?: unknown;
   evidenceLedger?: unknown;
 }): void {
-  if (input.action.kind !== "finalize" && input.action.kind !== "handoff_to_build" && input.action.kind !== "switch_mode") {
+  if (
+    input.action.kind !== "finalize" &&
+    input.action.kind !== "handoff_to_build" &&
+    input.action.kind !== "switch_mode"
+  ) {
     return;
   }
 
-  const actionInput = input.action.kind === "finalize" ? asRecord(input.action.input) : undefined;
+  const actionInput =
+    input.action.kind === "finalize" ? asRecord(input.action.input) : undefined;
   const message = asString(
     input.action.kind === "handoff_to_build"
       ? input.action.message
@@ -33,7 +38,10 @@ export function validateFinalizationDecision(input: {
     );
   }
   const userVisibleViolation = findUserVisibleTextViolation({
-    field: input.action.kind === "handoff_to_build" ? "handoff_to_build.message" : "finalize.message",
+    field:
+      input.action.kind === "handoff_to_build"
+        ? "handoff_to_build.message"
+        : "finalize.message",
     text: message,
   });
   if (userVisibleViolation !== undefined) {
@@ -53,6 +61,7 @@ export function validateFinalizationDecision(input: {
     message,
     lastActionResult: input.lastActionResult,
     evidenceLedger: input.evidenceLedger,
+    keepRunningSessionIds: readKeepRunningSessionIds(input.action),
   });
   if (input.action.finalizeReason !== "goal_satisfied") {
     return;
@@ -72,8 +81,8 @@ export function validateFinalizationDecision(input: {
       },
     );
   }
-  const legacyFields = ["changedFiles", "checksRun", "checksFailed"].filter((field) =>
-    Object.hasOwn(data ?? {}, field)
+  const legacyFields = ["changedFiles", "checksRun", "checksFailed"].filter(
+    (field) => Object.hasOwn(data ?? {}, field),
   );
   if (legacyFields.length > 0) {
     throw new DecisionCompileError(
@@ -95,6 +104,7 @@ function validateWorkspacePreviewUrls(input: {
   message: string;
   lastActionResult: unknown;
   evidenceLedger: unknown;
+  keepRunningSessionIds: string[];
 }): void {
   const evidenceUrls = collectWorkspacePreviewEvidenceUrls(input);
   if (evidenceUrls.length === 0) {
@@ -115,6 +125,9 @@ function validateWorkspacePreviewUrls(input: {
     const expectedUrls =
       previewId === undefined ? undefined : evidenceByPreviewId.get(previewId);
     if (expectedUrls === undefined || expectedUrls.has(suppliedUrl)) {
+      if (expectedUrls !== undefined) {
+        assertLiveRetainedPreviewEvidence(input, suppliedUrl);
+      }
       continue;
     }
     throw new DecisionCompileError(
@@ -131,6 +144,60 @@ function validateWorkspacePreviewUrls(input: {
       },
     );
   }
+}
+
+function assertLiveRetainedPreviewEvidence(
+  input: {
+    lastActionResult: unknown;
+    evidenceLedger: unknown;
+    keepRunningSessionIds: string[];
+  },
+  suppliedUrl: string,
+) {
+  const snapshots = collectPreviewSnapshots([
+    input.evidenceLedger,
+    input.lastActionResult,
+  ]).filter((snapshot) => snapshot.url === suppliedUrl);
+  const latest = snapshots.at(-1);
+  if (
+    latest?.applicationStatus === "listening" &&
+    latest.retentionStatus === "active" &&
+    typeof latest.sessionId === "string" &&
+    input.keepRunningSessionIds.includes(latest.sessionId)
+  )
+    return;
+  throw new DecisionCompileError(
+    "DECISION_POLICY_FAILED",
+    "Finalize can present a Workspace preview as live only with current liveness and retention evidence.",
+    "policy",
+    {
+      reason: "workspace_preview_live_evidence_required",
+      suppliedUrl,
+      requiredCorrection:
+        "List or publish the exact preview again, confirm applicationStatus listening and retentionStatus active, and include its sessionId in data.keepRunningSessionIds.",
+    },
+  );
+}
+
+function collectPreviewSnapshots(
+  values: unknown[],
+  depth = 0,
+): Array<Record<string, unknown>> {
+  if (depth > 10) return [];
+  return values.flatMap((value) => {
+    if (Array.isArray(value)) return collectPreviewSnapshots(value, depth + 1);
+    const record = asRecord(value);
+    if (record === undefined) return [];
+    const own =
+      typeof record.url === "string" &&
+      readWorkspacePreviewId(record.url) !== undefined
+        ? [record]
+        : [];
+    return [
+      ...own,
+      ...collectPreviewSnapshots(Object.values(record), depth + 1),
+    ];
+  });
 }
 
 function collectWorkspacePreviewEvidenceUrls(input: {
@@ -192,9 +259,9 @@ function extractUrlsFromValue(value: unknown, depth = 0): string[] {
 }
 
 function extractUrls(value: string): string[] {
-  return (
-    value.match(/https?:\/\/[^\s<>{}\[\]"'`]+/gu) ?? []
-  ).map((url) => url.replace(/[),.;:!?]+$/gu, ""));
+  return (value.match(/https?:\/\/[^\s<>{}\[\]"'`]+/gu) ?? []).map((url) =>
+    url.replace(/[),.;:!?]+$/gu, ""),
+  );
 }
 
 function readWorkspacePreviewId(value: string): string | undefined {
@@ -251,7 +318,11 @@ function validateKeepRunningSessionIds(
   }
   const normalized: string[] = [];
   for (const item of value) {
-    if (typeof item !== "string" || item.trim().length === 0 || item !== item.trim()) {
+    if (
+      typeof item !== "string" ||
+      item.trim().length === 0 ||
+      item !== item.trim()
+    ) {
       throw invalidKeepRunningSessionIds("keep_running_session_id_invalid");
     }
     normalized.push(item);
@@ -276,21 +347,25 @@ function invalidKeepRunningSessionIds(reason: string): DecisionCompileError {
 function readArtifactVerificationContradiction(input: {
   completionState: string | undefined;
   artifactVerification: unknown;
-}): {
+}):
+  | {
   message: string;
   reason: string;
   details: Record<string, unknown>;
-} | undefined {
+    }
+  | undefined {
   const artifactVerification = asRecord(input.artifactVerification);
   const status = asString(artifactVerification?.status);
-  const requirementFailures = readArtifactVerificationFailures(artifactVerification);
+  const requirementFailures =
+    readArtifactVerificationFailures(artifactVerification);
   if (
     input.completionState === "implemented_and_verified" &&
     artifactVerification !== undefined &&
     status !== "passed"
   ) {
     return {
-      message: "Finalize data cannot claim implemented_and_verified while artifactVerification is not passed.",
+      message:
+        "Finalize data cannot claim implemented_and_verified while artifactVerification is not passed.",
       reason: "implemented_and_verified_with_unpassed_artifact_verification",
       details: {
         artifactVerificationStatus: status ?? "missing",
@@ -298,9 +373,13 @@ function readArtifactVerificationContradiction(input: {
       },
     };
   }
-  if (status === "passed" && hasArtifactVerificationFailures(requirementFailures)) {
+  if (
+    status === "passed" &&
+    hasArtifactVerificationFailures(requirementFailures)
+  ) {
     return {
-      message: "Finalize artifactVerification cannot be passed while it also reports failures or non-passing requirements.",
+      message:
+        "Finalize artifactVerification cannot be passed while it also reports failures or non-passing requirements.",
       reason: "artifact_verification_passed_with_failures",
       details: requirementFailures,
     };
@@ -310,13 +389,17 @@ function readArtifactVerificationContradiction(input: {
 
 function readArtifactVerificationFailures(
   artifactVerification: Record<string, unknown> | undefined,
-): { failingRequirementIds?: string[] | undefined; failureCount?: number | undefined } {
+): {
+  failingRequirementIds?: string[] | undefined;
+  failureCount?: number | undefined;
+} {
   if (artifactVerification?.status !== "passed") {
     const failures = asArray(artifactVerification?.failures)
       .map((item) => asString(item)?.trim())
       .filter((item): item is string => item !== undefined && item.length > 0);
-    const failingRequirementIds = asArray(artifactVerification?.requirements)
-      .flatMap((item) => {
+    const failingRequirementIds = asArray(
+      artifactVerification?.requirements,
+    ).flatMap((item) => {
         const requirement = asRecord(item);
         const status = asString(requirement?.status);
         if (status === "passed" || status === undefined) {
@@ -333,8 +416,9 @@ function readArtifactVerificationFailures(
   const failures = asArray(artifactVerification.failures)
     .map((item) => asString(item)?.trim())
     .filter((item): item is string => item !== undefined && item.length > 0);
-  const failingRequirementIds = asArray(artifactVerification.requirements)
-    .flatMap((item) => {
+  const failingRequirementIds = asArray(
+    artifactVerification.requirements,
+  ).flatMap((item) => {
       const requirement = asRecord(item);
       const status = asString(requirement?.status);
       if (status === "passed" || status === undefined) {
@@ -353,5 +437,8 @@ function hasArtifactVerificationFailures(input: {
   failingRequirementIds?: string[] | undefined;
   failureCount?: number | undefined;
 }): boolean {
-  return (input.failureCount ?? 0) > 0 || (input.failingRequirementIds?.length ?? 0) > 0;
+  return (
+    (input.failureCount ?? 0) > 0 ||
+    (input.failingRequirementIds?.length ?? 0) > 0
+  );
 }

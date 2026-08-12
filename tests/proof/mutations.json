@@ -558,6 +558,24 @@
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=recorded replay returns EVALUATION_EVIDENCE_INCOMPLETE", "tests/unit/runtime-evaluation-replay.test.ts"],
       "testFiles": ["tests/unit/runtime-evaluation-replay.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
+    },
+    {
+      "id": "preview-unknown-liveness-reported-available",
+      "target": "apps/web/lib/apps/preview-lifecycle.ts",
+      "find": "        ? (\"unavailable\" as const)\n        : (\"unknown\" as const);",
+      "replace": "        ? (\"unavailable\" as const)\n        : (\"available\" as const);",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "lib/apps/preview-lifecycle.test.ts"],
+      "testFiles": ["apps/web/lib/apps/preview-lifecycle.test.ts"]
+    },
+    {
+      "id": "durable-turn-premature-cancellation-settlement",
+      "target": "apps/web/lib/turns/process-runtime.ts",
+      "find": "    if (stopped && !runtimeTerminalObserved && environmentExecutionId) {",
+      "replace": "    if (false && stopped && !runtimeTerminalObserved && environmentExecutionId) {",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=cancellation acknowledgement cannot", "lib/turns/worker-boundary.test.ts"],
+      "testFiles": ["apps/web/lib/turns/worker-boundary.test.ts"]
     }
   ]
 }

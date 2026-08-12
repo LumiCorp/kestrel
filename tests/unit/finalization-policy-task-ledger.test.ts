@@ -136,17 +136,55 @@ test("finalization accepts the exact Workspace preview URL", () => {
         ...FINALIZE_ACTION,
         input: {
           message: `The preview is live at ${exactUrl}.`,
-          data: {},
+          data: { keepRunningSessionIds: ["process-1"] },
         },
       },
       lastActionResult: {
         kind: "tool",
         toolName: "workspace.preview.publish",
         output: {
-          preview: { url: exactUrl },
+          preview: {
+            url: exactUrl,
+            applicationStatus: "listening",
+            retentionStatus: "active",
+            sessionId: "process-1",
+          },
         },
       },
     }),
+  );
+});
+
+test("finalization rejects a stopped Workspace preview as a live result", () => {
+  const exactUrl =
+    "https://p-49d7077ad58642715cb42553de349d44.preview.kestrelagents.dev";
+  assert.throws(
+    () =>
+      validateFinalizationDecision({
+        action: {
+          ...FINALIZE_ACTION,
+          input: {
+            message: `The preview is live at ${exactUrl}.`,
+            data: { keepRunningSessionIds: ["process-1"] },
+          },
+        },
+        lastActionResult: {
+          toolName: "workspace.preview.list",
+          output: {
+            previews: [
+              {
+                url: exactUrl,
+                applicationStatus: "not_listening",
+                retentionStatus: "active",
+                sessionId: "process-1",
+              },
+            ],
+          },
+        },
+      }),
+    (error) =>
+      error instanceof DecisionCompileError &&
+      error.diagnostics?.reason === "workspace_preview_live_evidence_required",
   );
 });
 
