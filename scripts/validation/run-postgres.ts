@@ -17,6 +17,7 @@ const files = execFileSync(
     "apps/web/lib/environments/release-target-execution-guard.postgres.test.ts",
     "apps/web/lib/environments/workspace-backup-revision.postgres.test.ts",
     "apps/web/lib/projects/skills.postgres.test.ts",
+    "apps/web/lib/signup-access-codes.postgres.test.ts",
   )
   .filter((file, index, all) => all.indexOf(file) === index)
   .sort()
@@ -60,6 +61,7 @@ const groups = [
     files: [
       "lib/apps/service.postgres.test.ts",
       "lib/db/edge-only-retirement.postgres.test.ts",
+      "lib/signup-access-codes.postgres.test.ts",
     ],
   },
   {

@@ -456,6 +456,20 @@
       "when": 1786554000000,
       "tag": "0064_personal_standalone_workspaces",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1786557600000,
+      "tag": "0065_ai_gateway_credential_health",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1786561200000,
+      "tag": "0066_signup_access_codes",
+      "breakpoints": true
     }
   ]
 }
