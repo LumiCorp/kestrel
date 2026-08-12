@@ -17,7 +17,7 @@ import { fingerprintCanonicalValue } from "./stable.js";
 export const KESTREL_POLICY_ID = "kestrel" as const;
 export const KESTREL_POLICY_LABEL = "Kestrel" as const;
 export const KESTREL_ONE_POLICY_LABEL = "Kestrel One" as const;
-export const KESTREL_POLICY_VERSION = 2 as const;
+export const KESTREL_POLICY_VERSION = 3 as const;
 export const KESTREL_PROMPT_POLICY_ID = "kestrel" as const;
 
 export const KESTREL_DIALOG_TOOL_NAMES = Object.freeze([
@@ -55,7 +55,7 @@ export const KESTREL_HARNESS_ECONOMICS = Object.freeze({
   version: 1,
   policy: {
     version: 1,
-    policyId: "economics:kestrel:v1",
+    policyId: "economics:kestrel:v2",
     mode: "observe",
     counting: {
       estimatorVersion: "utf8-byte-upper-bound:v1",
@@ -85,6 +85,21 @@ export const KESTREL_HARNESS_ECONOMICS = Object.freeze({
       model: "z-ai/glm-5.2",
       contextWindowTokens: 1_000_000,
       maxOutputTokens: 64_000,
+      counting: {
+        counter: "utf8-byte-upper-bound",
+        counterVersion: "1",
+        method: "conservative_estimate",
+        confidence: "conservative",
+      },
+      cache: { behavior: "provider_automatic" },
+    },
+    {
+      version: 1,
+      profileId: "openrouter:openai/gpt-5.6-luna:v1",
+      provider: "openrouter",
+      model: "openai/gpt-5.6-luna",
+      contextWindowTokens: 1_050_000,
+      maxOutputTokens: 128_000,
       counting: {
         counter: "utf8-byte-upper-bound",
         counterVersion: "1",
@@ -241,6 +256,9 @@ export function composeManagedKestrelProfile(
     policyId: KESTREL_POLICY_ID,
     policyVersion: KESTREL_POLICY_VERSION,
     promptPolicyId: KESTREL_PROMPT_POLICY_ID,
+    harnessEconomicsControlVersion: KESTREL_HARNESS_ECONOMICS.version,
+    harnessEconomicsPolicyId: KESTREL_HARNESS_ECONOMICS.policy.policyId,
+    harnessEconomicsPolicyVersion: KESTREL_HARNESS_ECONOMICS.policy.version,
     environmentPresetId: input.environmentPresetId,
     environmentPresetVersion: environmentPreset.version,
     environmentCapabilityPacks: resolvedEnvironment.capabilityPacks,
@@ -305,7 +323,10 @@ export function composeManagedKestrelProfile(
         }
       : {}),
     toolQueue: { ...DEFAULT_TOOL_QUEUE, ...(input.overlay?.toolQueue ?? {}) },
-    guardrails: { maxStepVisits: 80 },
+    guardrails: {
+      maxStepVisits: 80,
+      maxMaintenanceModelCallsPerRun: 8,
+    },
     codeMode: resolvedEnvironment.codeMode,
     devShell: resolvedEnvironment.devShell,
     delegation: {

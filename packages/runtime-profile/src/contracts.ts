@@ -191,7 +191,10 @@ export interface ManagedKestrelProfile extends RunnerProfile {
     checkpointSize?: number | undefined;
     retryCount?: number | undefined;
   };
-  guardrails: { maxStepVisits: number };
+  guardrails: {
+    maxStepVisits: number;
+    maxMaintenanceModelCallsPerRun: number;
+  };
   codeMode: ManagedCodeModeProfileConfig;
   devShell: ManagedDevShellProfileConfig;
   delegation: {
@@ -251,7 +254,7 @@ export interface ComposeManagedKestrelProfileInput {
 
 export interface ManagedKestrelProfileProvenance {
   policyId: "kestrel";
-  policyVersion: 2;
+  policyVersion: 3;
   promptPolicyId: "kestrel";
   environmentPresetId: KestrelManagedEnvironmentPresetId;
   environmentPresetVersion: number;

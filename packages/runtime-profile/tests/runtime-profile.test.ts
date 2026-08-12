@@ -14,37 +14,37 @@ import {
 const GOLDEN_PRESETS = {
   cli_safe_local: {
     composition:
-      "0b23d53961ac362d951dfba52bc0584b661c99f9bcfff55edb480fa88df0accb",
+      "cbafad03a320e86d90b7b7e1a270491704b55d3428dd2c124dd0232b58642da2",
     resolved:
-      "2c3780447a8890b1963756690ba98ff8a8d4d6a4c9781dd61477951338a4d991",
+      "5a1178f1e383cfbcb2dcd73558fc97722b7178c0f418543627e725e95bdb5650",
   },
   cli_dev_local: {
     composition:
-      "822a5258478cccd24be7c14b1207e0c27d53bbb5bfb13e05ac2f2cbdb4bc27aa",
+      "37f76dc9ecb662d0307215a1ec59e328bfec4a1830407280f66925739906b31a",
     resolved:
-      "fb8507d021be7b4ec9c08ce01fa9b4ab33fa2afb033aeade8bb612703c46b564",
+      "e4fff8cde8a0291f1eaab10cc6f8fa51c08d159917fc0fd9f6430fbabdae0715",
   },
   desktop_safe_local: {
     composition:
-      "24d2c4f788a72b6f29bc88160ddc9c4d08e5ae86e18d43249916a9466f1f19ac",
+      "932d6612c3f5ede065c9edb6185165bbc30d647bc1eb2a2b4fc62defe80439ae",
     resolved:
-      "2daf89a6cfb2884eba32aa911031afdcf69b909835786bd76ec170a8e0409080",
+      "283f51f970d6c43aba71d6d9a511ce7674950c89a689b49aedf91db77b0e2a1f",
   },
   desktop_dev_local: {
     composition:
-      "8833ca5a079ec1aa62cbc80a1a6432c5d7b662e81bf9783bb28cb6767c22f0a2",
+      "ead44f3d5c767ad57f338f984221119cda38eaa8fbe889a5888cae7415556325",
     resolved:
-      "79261247329c169f5bfef21ffcb5f85611b3ee2843d090b42d0f28ccd16fcb75",
+      "0a327335aac811f4fa199325d2ad02699f4c8b441c3e3d1e1149500e4299dd69",
   },
   workspace_hosted: {
     composition:
-      "43da808c86a550f03a8aef3a5714200582bcb967cd1a7eeef571b99998293b37",
+      "2c9d974f943421dbd19676809b6e10c515615af31cc0448fa3cdc2a9584efe42",
     resolved:
-      "3b95bfe09734cdcceed3207aee5782ab12f239d740d7ce631cbe48c5f7482f41",
+      "5a40b038b6da8aef67f58c996148d7a439958d9e2d78d2b0e591e8f09f4174ea",
   },
 } as const;
 
-test("managed profiles preserve the pre-extraction golden identities", () => {
+test("managed profiles preserve the current canonical golden identities", () => {
   for (const [environmentPresetId, golden] of Object.entries(GOLDEN_PRESETS)) {
     const composed = composeManagedKestrelProfile({
       environmentPresetId: environmentPresetId as keyof typeof GOLDEN_PRESETS,
