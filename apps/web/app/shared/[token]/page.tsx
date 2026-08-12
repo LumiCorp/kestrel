@@ -4,9 +4,7 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 import { Response } from "@/components/chatbot/elements/response";
 import { BrandLockup } from "@/components/brand";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { createMetadata } from "@/lib/metadata";
 import { publicAppUrl } from "@/lib/public-config";
 import { getPublicThreadByShareToken } from "@/lib/threads/store";
@@ -21,13 +19,13 @@ type SharedThreadPageProps = {
   params: Promise<{ token: string }>;
 };
 
-function SharedMessageCard({ message }: { message: ChatMessage }) {
+function SharedTranscriptMessage({ message }: { message: ChatMessage }) {
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base capitalize">{message.role}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <article className="grid gap-2 border-t py-5 sm:grid-cols-[5rem_minmax(0,1fr)] sm:gap-5">
+      <div className="font-medium text-muted-foreground text-xs capitalize">
+        {message.role === "assistant" ? "Kestrel" : message.role}
+      </div>
+      <div className="min-w-0 space-y-3">
         {message.parts?.map((part, index) => {
           if (part.type === "text") {
             return (
@@ -55,7 +53,11 @@ function SharedMessageCard({ message }: { message: ChatMessage }) {
             return (
               <div className="text-sm" key={`${message.id}-${index}`}>
                 <div className="mb-1 font-medium">
-                  {part.data.sender === "collaborator" ? part.data.name : part.data.sender === "kestrel" ? "Kestrel" : "System"}
+                  {part.data.sender === "collaborator"
+                    ? part.data.name
+                    : part.data.sender === "kestrel"
+                      ? "Kestrel"
+                      : "System"}
                 </div>
                 <div className="whitespace-pre-wrap">{part.data.text}</div>
               </div>
@@ -64,8 +66,8 @@ function SharedMessageCard({ message }: { message: ChatMessage }) {
 
           return null;
         })}
-      </CardContent>
-    </Card>
+      </div>
+    </article>
   );
 }
 
@@ -128,7 +130,7 @@ export default async function SharedThreadPage(props: SharedThreadPageProps) {
   return (
     <PageContainer
       className="min-h-screen py-8"
-      contentClassName="flex max-w-4xl flex-col gap-6"
+      contentClassName="flex max-w-3xl flex-col gap-6"
     >
       <Link
         aria-label="Kestrel One home"
@@ -139,7 +141,9 @@ export default async function SharedThreadPage(props: SharedThreadPageProps) {
       </Link>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-2">
-          <Badge variant="outline">Shared Thread</Badge>
+          <p className="font-medium text-muted-foreground text-xs uppercase tracking-[0.18em]">
+            Shared Thread
+          </p>
           <h1 className="font-semibold text-3xl">
             {thread.title || "Shared Thread"}
           </h1>
@@ -147,7 +151,7 @@ export default async function SharedThreadPage(props: SharedThreadPageProps) {
             Read-only, anonymized transcript shared from Kestrel One.
           </p>
         </div>
-        <Button asChild>
+        <Button asChild variant="outline">
           <Link href="/threads/new">Start Your Own Thread</Link>
         </Button>
       </div>
@@ -155,22 +159,24 @@ export default async function SharedThreadPage(props: SharedThreadPageProps) {
       <div className="space-y-4">
         {projection.items.map((item) =>
           item.kind === "standalone_message" ? (
-            <SharedMessageCard key={item.id} message={item.message} />
+            <SharedTranscriptMessage key={item.id} message={item.message} />
           ) : (
             <section
               aria-label={`Conversation turn ${item.turn?.sequence ?? ""}`.trim()}
-              className="space-y-3 rounded-xl border border-border/60 p-3"
+              className="space-y-0"
               data-turn-id={item.turnId}
               key={item.id}
             >
-              <div className="text-muted-foreground text-xs capitalize">
-                Turn {item.turn?.status.replaceAll("_", " ") ?? "recorded"}
-              </div>
+              {item.turn?.status && item.turn.status !== "completed" ? (
+                <div className="border-amber-600 border-l-2 py-1 pl-3 text-muted-foreground text-xs capitalize">
+                  Turn {item.turn.status.replaceAll("_", " ")}
+                </div>
+              ) : null}
               {item.messages.map((message) => (
-                <SharedMessageCard key={message.id} message={message} />
+                <SharedTranscriptMessage key={message.id} message={message} />
               ))}
             </section>
-          )
+          ),
         )}
       </div>
     </PageContainer>

@@ -2,15 +2,6 @@ import Link from "next/link";
 import { PageContainer } from "@/components/app-page";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { WelcomeWorkspaceSwitcher } from "@/components/welcome-workspace-switcher";
-import {
   canManageOrganization,
   requireActiveOrganization,
 } from "@/lib/knowledge/auth";
@@ -39,22 +30,21 @@ export default async function OrganizationWelcomePage() {
   return (
     <PageContainer
       className="flex min-h-full items-center py-12"
-      contentClassName="max-w-2xl"
+      contentClassName="max-w-xl"
     >
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle>
+      <section className="w-full space-y-6">
+        <header className="space-y-2">
+          <h1 className="font-semibold text-2xl tracking-tight sm:text-3xl">
             Welcome to {organization?.name || "your organization"}
-          </CardTitle>
-          <CardDescription>
-            You joined as {membership?.role || "a member"}. Your personal
-            workspace remains available from the organization switcher.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+          </h1>
+          <p className="text-muted-foreground text-sm/6">
+            You joined as {membership?.role || "a member"}.
+          </p>
+        </header>
+        <div className="space-y-4 border-y py-5">
           {readiness.ready ? (
             <p className="text-muted-foreground text-sm">
-              Your organization is ready for a new Thread.
+              Everything is ready for your first Thread.
             </p>
           ) : (
             <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-950 text-sm dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
@@ -71,8 +61,8 @@ export default async function OrganizationWelcomePage() {
               )}
             </div>
           )}
-        </CardContent>
-        <CardFooter className="flex flex-wrap gap-2">
+        </div>
+        <div className="flex flex-wrap gap-2">
           {readiness.ready ? (
             <Button asChild>
               <Link href="/threads/new">Start a Thread</Link>
@@ -80,17 +70,14 @@ export default async function OrganizationWelcomePage() {
           ) : null}
           {canManage && !readiness.ready ? (
             <Button asChild>
-              <Link href="/organization/setup">
-                Set up organization
-              </Link>
+              <Link href="/organization/setup">Set up organization</Link>
             </Button>
           ) : null}
-          <Button asChild variant="outline">
+          <Button asChild variant="ghost">
             <Link href="/threads">View Threads</Link>
           </Button>
-          <WelcomeWorkspaceSwitcher activeOrganizationId={organizationId} />
-        </CardFooter>
-      </Card>
+        </div>
+      </section>
     </PageContainer>
   );
 }

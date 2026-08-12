@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -54,15 +53,14 @@ export function StandaloneWorkspaceSetup({
         if (cancelled) return;
         if (
           payload.workspace &&
-          (payload.workspace.status !== "requested" ||
-            payload.binding !== null)
+          (payload.workspace.status !== "requested" || payload.binding !== null)
         ) {
           onConfigured();
           return;
         }
         setSetup(payload);
         setEnvironmentId(
-          payload.workspace?.environmentId ?? payload.environments[0]?.id ?? ""
+          payload.workspace?.environmentId ?? payload.environments[0]?.id ?? "",
         );
         if (payload.workspace?.sourceType === "github") {
           setSourceType("github");
@@ -74,7 +72,7 @@ export function StandaloneWorkspaceSetup({
           toast.error(
             error instanceof Error
               ? error.message
-              : "Personal Workspace setup is unavailable."
+              : "Personal Workspace setup is unavailable.",
           );
         }
       });
@@ -87,15 +85,15 @@ export function StandaloneWorkspaceSetup({
     if (!setup) return [];
     const grantsAllRepositories = setup.grants.some(
       (grant) =>
-        grant.environmentId === environmentId && grant.resourceId === null
+        grant.environmentId === environmentId && grant.resourceId === null,
     );
     const granted = new Set(
       setup.grants
         .filter((grant) => grant.environmentId === environmentId)
-        .map((grant) => grant.resourceId)
+        .map((grant) => grant.resourceId),
     );
     return setup.repositories.filter(
-      (repository) => grantsAllRepositories || granted.has(repository.id)
+      (repository) => grantsAllRepositories || granted.has(repository.id),
     );
   }, [environmentId, setup]);
 
@@ -130,7 +128,7 @@ export function StandaloneWorkspaceSetup({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Personal Workspace setup failed."
+          : "Personal Workspace setup failed.",
       );
     } finally {
       setSaving(false);
@@ -138,24 +136,25 @@ export function StandaloneWorkspaceSetup({
   }
 
   return (
-    <main className="flex min-h-dvh flex-col bg-background p-6">
-      <div className="mx-auto w-full max-w-3xl">
+    <main className="flex min-h-dvh flex-col justify-center bg-background p-6">
+      <div className="mx-auto w-full max-w-xl">
         <Button asChild className="mb-6" size="sm" variant="ghost">
           <Link href={`/threads/${threadId}`}>
             <ArrowLeft className="size-4" />
             Thread
           </Link>
         </Button>
-        <Card>
-          <CardHeader>
-            <CardTitle>Configure your Personal Workspace</CardTitle>
+        <section className="space-y-6">
+          <header>
+            <h1 className="font-semibold text-2xl tracking-tight sm:text-3xl">
+              Configure your Personal Workspace
+            </h1>
             <p className="text-muted-foreground text-sm">
-              Choose the organization Environment and optional GitHub repository
-              before Kestrel creates the persistent Workspace shared by your
-              standalone Threads.
+              Choose where standalone Threads run and whether to begin from a
+              repository.
             </p>
-          </CardHeader>
-          <CardContent className="space-y-5">
+          </header>
+          <div className="space-y-5 border-y py-5">
             <div className="space-y-2">
               <Label>Environment</Label>
               <Select onValueChange={setEnvironmentId} value={environmentId}>
@@ -206,23 +205,23 @@ export function StandaloneWorkspaceSetup({
                 </Select>
               </div>
             ) : null}
-            <div className="flex items-center justify-between border-t pt-4">
-              <p className="text-muted-foreground text-sm">
-                The Workspace filesystem persists when its compute sleeps.
-              </p>
-              <Button
-                disabled={
-                  saving ||
-                  !environmentId ||
-                  (sourceType === "github" && !resourceId)
-                }
-                onClick={() => void save()}
-              >
-                {saving ? "Configuring…" : "Configure Workspace"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-muted-foreground text-xs/5">
+              Files persist when compute sleeps.
+            </p>
+            <Button
+              disabled={
+                saving ||
+                !environmentId ||
+                (sourceType === "github" && !resourceId)
+              }
+              onClick={() => void save()}
+            >
+              {saving ? "Configuring…" : "Configure Workspace"}
+            </Button>
+          </div>
+        </section>
       </div>
     </main>
   );

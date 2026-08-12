@@ -8,7 +8,6 @@ import {
   Pencil,
   RotateCcw,
   Trash2,
-  Users,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { memo, useEffect, useRef, useState } from "react";
@@ -41,19 +40,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/chatbot/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/chatbot/ui/tooltip";
 import { useChatVisibility } from "@/hooks/use-chat-visibility";
 import { isThreadListCacheKey } from "@/lib/threads/cache-keys";
-import {
-  VisibilityMenuSub,
-  VisibilitySelector,
-  type VisibilityType,
-} from "./visibility-selector";
+import { VisibilityMenuSub, type VisibilityType } from "./visibility-selector";
 
 function PureChatHeader({
   archived,
@@ -83,6 +72,7 @@ function PureChatHeader({
   const initialTitle = threadTitle || "New Thread";
   const [displayTitle, setDisplayTitle] = useState(initialTitle);
   const [draftTitle, setDraftTitle] = useState(initialTitle);
+  const [currentProject, setCurrentProject] = useState(project ?? null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [isArchiving, setIsArchiving] = useState(false);
@@ -103,6 +93,10 @@ function PureChatHeader({
     setIsEditingTitle(false);
     cancelTitleSaveRef.current = false;
   }, [initialTitle, threadId]);
+
+  useEffect(() => {
+    setCurrentProject(project ?? null);
+  }, [project]);
 
   async function patchThread(body: Record<string, unknown>) {
     const response = await fetch(`/api/threads/${threadId}`, {
@@ -155,7 +149,7 @@ function PureChatHeader({
       setDisplayTitle(previousTitle);
       setDraftTitle(previousTitle);
       toast.error(
-        error instanceof Error ? error.message : "Thread update failed."
+        error instanceof Error ? error.message : "Thread update failed.",
       );
     } finally {
       renamePendingRef.current = false;
@@ -172,14 +166,16 @@ function PureChatHeader({
       await refreshThreadCaches();
       toast.success(nextArchived ? "Thread archived" : "Thread restored");
       if (nextArchived) {
-        router.replace(project ? `/projects/${project.id}` : "/threads");
+        router.replace(
+          currentProject ? `/projects/${currentProject.id}` : "/threads",
+        );
       }
       router.refresh();
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Thread lifecycle update failed."
+          : "Thread lifecycle update failed.",
       );
     } finally {
       setPending(false);
@@ -195,12 +191,15 @@ function PureChatHeader({
         disclosureAccepted: true,
       });
       await refreshThreadCaches();
+      setCurrentProject(
+        projects.find((candidate) => candidate.id === projectId) ?? null,
+      );
       setAssignmentDialogOpen(false);
       toast.success("Thread moved into Project");
       router.refresh();
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Thread assignment failed."
+        error instanceof Error ? error.message : "Thread assignment failed.",
       );
     } finally {
       setIsAssigning(false);
@@ -220,13 +219,13 @@ function PureChatHeader({
       }
       await refreshThreadCaches();
       toast.success("Thread permanently deleted");
-      router.replace(project ? `/projects/${project.id}` : "/threads");
+      router.replace(
+        currentProject ? `/projects/${currentProject.id}` : "/threads",
+      );
       router.refresh();
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Thread could not be deleted."
+        error instanceof Error ? error.message : "Thread could not be deleted.",
       );
       setIsDeleting(false);
     }
@@ -257,10 +256,10 @@ function PureChatHeader({
   }, [isEditingTitle]);
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <>
       <header className="sticky top-0 z-10 flex h-16 shrink-0 items-center gap-2 border-b bg-background px-3 md:px-5">
         <SidebarToggle className="md:hidden" />
-        <div className="group/title flex min-w-0 items-center gap-1">
+        <div className="flex min-w-0 items-center gap-2">
           {isEditingTitle ? (
             <form
               className="w-[min(28rem,55vw)] min-w-0"
@@ -298,48 +297,30 @@ function PureChatHeader({
           ) : (
             <h1 className="truncate font-semibold text-lg">{displayTitle}</h1>
           )}
-          {canManage && !archived ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  aria-label="Rename Thread"
-                  className="hidden size-8 shrink-0 opacity-0 transition-opacity md:inline-flex md:group-hover/title:opacity-100 md:group-focus-within/title:opacity-100"
-                  disabled={isRenaming}
-                  onClick={() => {
-                    cancelTitleSaveRef.current = false;
-                    setDraftTitle(displayTitle);
-                    setIsEditingTitle(true);
-                  }}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Pencil className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Rename Thread</TooltipContent>
-            </Tooltip>
-          ) : null}
-          {project ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  aria-label={`Shared Project: ${project.name}`}
-                  className="hidden size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground md:flex"
-                >
-                  <Users className="size-4" />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>Shared Project: {project.name}</TooltipContent>
-            </Tooltip>
+          {currentProject ? (
+            <span className="hidden truncate text-muted-foreground text-xs sm:inline">
+              / {currentProject.name}
+            </span>
           ) : null}
         </div>
 
-        <div className="ml-auto flex shrink-0 items-center md:hidden">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {isReadonly ? null : (
+            <Button
+              aria-label="Open Thread workspace"
+              className="h-9 px-2.5"
+              onClick={() => router.push(`/threads/${threadId}/workspace`)}
+              variant="outline"
+            >
+              <FolderCode className="size-4" />
+              <span className="hidden sm:inline">Workspace</span>
+            </Button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
                 aria-label="Thread actions"
-                className="size-11 p-0"
+                className="size-9 p-0"
                 size="icon"
                 variant="outline"
               >
@@ -361,14 +342,6 @@ function PureChatHeader({
                 </DropdownMenuItem>
               ) : null}
               {isReadonly ? null : (
-                <DropdownMenuItem
-                  className="min-h-11"
-                  onSelect={() => router.push(`/threads/${threadId}/workspace`)}
-                >
-                  <FolderCode className="size-4" /> Workspace
-                </DropdownMenuItem>
-              )}
-              {isReadonly ? null : (
                 <VisibilityMenuSub
                   onVisibilityTypeChange={(nextVisibilityType) =>
                     void setVisibilityType(nextVisibilityType)
@@ -376,7 +349,10 @@ function PureChatHeader({
                   visibilityType={visibilityType ?? selectedVisibilityType}
                 />
               )}
-              {canManage && !project && !archived && projects.length > 0 ? (
+              {canManage &&
+              !currentProject &&
+              !archived &&
+              projects.length > 0 ? (
                 <DropdownMenuItem
                   className="min-h-11"
                   onSelect={() => {
@@ -418,97 +394,6 @@ function PureChatHeader({
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
-
-        <div className="ml-auto hidden shrink-0 items-center gap-2 md:flex">
-          {!isReadonly && (
-            <VisibilitySelector
-              onVisibilityTypeChange={(nextVisibilityType) =>
-                void setVisibilityType(nextVisibilityType)
-              }
-              visibilityType={visibilityType ?? selectedVisibilityType}
-            />
-          )}
-          {!isReadonly && (
-            <Button
-              aria-label="Open Thread workspace"
-              className="h-8 px-2"
-              onClick={() => router.push(`/threads/${threadId}/workspace`)}
-              variant="outline"
-            >
-              <FolderCode className="size-4" />
-              <span className="hidden sm:inline">Workspace</span>
-            </Button>
-          )}
-          {canManage && !project && !archived && projects.length > 0 ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  aria-label="Move Thread to Project"
-                  className="size-8"
-                  onClick={() => {
-                    setProjectId("");
-                    setAssignmentDialogOpen(true);
-                  }}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <FolderInput className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Move Thread to Project</TooltipContent>
-            </Tooltip>
-          ) : null}
-          {canManage && archived ? (
-            <>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    aria-label="Restore Thread"
-                    className="size-8"
-                    disabled={isRestoring || isDeleting}
-                    onClick={() => void setArchived(false)}
-                    size="icon"
-                    variant="ghost"
-                  >
-                    <RotateCcw className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Restore Thread</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    aria-label="Delete Thread permanently"
-                    className="size-8 text-destructive hover:text-destructive"
-                    disabled={isRestoring || isDeleting}
-                    onClick={() => setDeleteDialogOpen(true)}
-                    size="icon"
-                    variant="ghost"
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Delete Thread permanently</TooltipContent>
-              </Tooltip>
-            </>
-          ) : canManage ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  aria-label="Archive Thread"
-                  className="size-8"
-                  disabled={isArchiving}
-                  onClick={() => void setArchived(true)}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Archive className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Archive Thread</TooltipContent>
-            </Tooltip>
-          ) : null}
         </div>
       </header>
 
@@ -576,7 +461,7 @@ function PureChatHeader({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </TooltipProvider>
+    </>
   );
 }
 
@@ -591,5 +476,5 @@ export const ChatHeader = memo(
     prevProps.project?.name === nextProps.project?.name &&
     prevProps.projects === nextProps.projects &&
     prevProps.selectedVisibilityType === nextProps.selectedVisibilityType &&
-    prevProps.isReadonly === nextProps.isReadonly
+    prevProps.isReadonly === nextProps.isReadonly,
 );

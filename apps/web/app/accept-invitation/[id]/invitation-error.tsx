@@ -7,7 +7,6 @@ import {
   CardDescription,
   CardFooter,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 
 export function InvitationError({
@@ -18,16 +17,16 @@ export function InvitationError({
   signInHref?: string;
 }) {
   return (
-    <Card className="mx-auto w-full max-w-md">
+    <Card className="mx-auto w-full max-w-md border-0 shadow-none">
       <CardHeader>
         <div className="flex items-center space-x-2">
           <AlertCircle className="h-6 w-6 text-destructive" />
-          <CardTitle className="text-destructive text-xl">
+          <h1 className="font-semibold text-destructive text-xl">
             Invitation Error
-          </CardTitle>
+          </h1>
         </div>
         <CardDescription>
-          There was an issue with your invitation.
+          This link cannot be used with the current account.
         </CardDescription>
       </CardHeader>
       <CardContent>
