@@ -3,8 +3,8 @@ import "server-only";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 
+import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
 import type { UIMessage } from "ai";
-import type { RunTurnAttachment } from "../../../../src/kestrel/contracts/orchestration.js";
 import { readUpload } from "@/lib/files/storage";
 import { assertUploadPathOwnedByUserAndThread } from "@/lib/files/upload-path";
 import { normalizeMediaType } from "@/lib/knowledge/documents/shared";
@@ -23,7 +23,7 @@ export async function hydrateRuntimeAttachments(input: {
   message: UIMessage | undefined;
   threadId: string;
   userId: string;
-}): Promise<RunTurnAttachment[]> {
+}): Promise<RunnerTurnAttachment[]> {
   const fileParts = (input.message?.parts ?? []).filter(
     (part) => part.type === "file",
   );
@@ -99,7 +99,7 @@ function imageMimeType(format: string | undefined): string | undefined {
   if (format === "png") return "image/png";
   if (format === "gif") return "image/gif";
   if (format === "webp") return "image/webp";
-  return undefined;
+  return;
 }
 
 function attachmentError(message: string): Error & { code: string } {
