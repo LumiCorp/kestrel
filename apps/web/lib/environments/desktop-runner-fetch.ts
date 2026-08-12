@@ -10,13 +10,13 @@ import { and, eq, inArray } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueDesktopEnvironmentCommand } from "./desktop";
 import {
-  composeKestrelOneProfile,
+  composeManagedKestrelProfile,
   fingerprintResolvedProfile,
-  KESTREL_ONE_POLICY_ID,
-  KESTREL_ONE_POLICY_VERSION,
-  KESTREL_ONE_ENVIRONMENT_PRESETS,
-  type KestrelOneProfileOverlay,
-} from "../../../../src/profile/kestrelOnePolicy";
+  KESTREL_ENVIRONMENT_PRESETS,
+  KESTREL_POLICY_ID,
+  KESTREL_POLICY_VERSION,
+  type ManagedKestrelProfileOverlay,
+} from "@kestrel/runtime-profile";
 
 const POLL_INTERVAL_MS = 250;
 const DEFAULT_DESKTOP_PROFILE: RunnerProfile = {
@@ -105,10 +105,10 @@ export function createDesktopEnvironmentRunnerFetch(input: {
         );
       }
       try {
-        const composed = composeKestrelOneProfile({
+        const composed = composeManagedKestrelProfile({
           environmentPresetId: "workspace_hosted",
           overlay: command.payload.managedConfiguration as
-            | KestrelOneProfileOverlay
+            | ManagedKestrelProfileOverlay
             | undefined,
         });
         const fingerprint = fingerprintResolvedProfile(composed.profile);
@@ -125,12 +125,12 @@ export function createDesktopEnvironmentRunnerFetch(input: {
               profileId: profile.id,
               fingerprint,
               policy: {
-                id: KESTREL_ONE_POLICY_ID,
-                version: KESTREL_ONE_POLICY_VERSION,
+                id: KESTREL_POLICY_ID,
+                version: KESTREL_POLICY_VERSION,
               },
               environmentPreset: {
                 id: "workspace_hosted",
-                version: KESTREL_ONE_ENVIRONMENT_PRESETS.workspace_hosted.version,
+                version: KESTREL_ENVIRONMENT_PRESETS.workspace_hosted.version,
               },
               resolvedProfile: profile,
             },
