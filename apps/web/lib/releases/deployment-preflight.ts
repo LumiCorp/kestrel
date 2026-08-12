@@ -62,23 +62,47 @@ export async function inspectFlyReleaseDeploymentReadiness(input: {
 }) {
   const sql = postgres(input.databaseUrl, { max: 1 });
   try {
-    const [state] = await sql<
-      Array<{
-        active_status: string | null;
-        stable_accepted_versions: number[] | null;
-      }>
-    >`
-      SELECT
-        active_release.status AS active_status,
-        router.environment_gateway_accepted_versions AS stable_accepted_versions
-      FROM fly_image_release_settings settings
-      LEFT JOIN fly_image_releases active_release
-        ON active_release.id = settings.active_release_id
-      LEFT JOIN fly_image_release_components router
-        ON router.release_id = settings.stable_release_id
-       AND router.role = 'environment-router'
-      WHERE settings.id = 'platform'
+    const [schemaState] = await sql<Array<{ metadata_available: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'fly_image_release_components'
+          AND column_name = 'environment_gateway_accepted_versions'
+      ) AS metadata_available
     `;
+    const [state] = schemaState?.metadata_available
+      ? await sql<
+          Array<{
+            active_status: string | null;
+            stable_accepted_versions: number[] | null;
+          }>
+        >`
+          SELECT
+            active_release.status AS active_status,
+            router.environment_gateway_accepted_versions AS stable_accepted_versions
+          FROM fly_image_release_settings settings
+          LEFT JOIN fly_image_releases active_release
+            ON active_release.id = settings.active_release_id
+          LEFT JOIN fly_image_release_components router
+            ON router.release_id = settings.stable_release_id
+           AND router.role = 'environment-router'
+          WHERE settings.id = 'platform'
+        `
+      : await sql<
+          Array<{
+            active_status: string | null;
+            stable_accepted_versions: null;
+          }>
+        >`
+          SELECT
+            active_release.status AS active_status,
+            NULL::integer[] AS stable_accepted_versions
+          FROM fly_image_release_settings settings
+          LEFT JOIN fly_image_releases active_release
+            ON active_release.id = settings.active_release_id
+          WHERE settings.id = 'platform'
+        `;
     return evaluateFlyReleaseDeploymentReadiness({
       activeStatus: state?.active_status ?? null,
       stableAcceptedVersions: state?.stable_accepted_versions ?? null,
