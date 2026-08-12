@@ -60,3 +60,73 @@ test("Connections distinguishes loading, failure, and true empty states", () => 
   assert.match(connections, /No providers configured yet/u);
   assert.match(connections, /Try again/u);
 });
+
+test("settings and organization surfaces keep creation and maintenance secondary", () => {
+  const appearance = read("components/settings/appearance-client.tsx");
+  const personalKeys = read("components/settings/personal-api-keys-client.tsx");
+  const organizationKeys = read(
+    "components/settings/organization-api-keys-client.tsx",
+  );
+  const people = read("components/settings/members-client.tsx");
+  const billing = read("components/settings/billing-client.tsx");
+  const usage = read("components/settings/usage-client.tsx");
+  const audit = read(
+    "app/(workspace)/settings/organization/audit/page-client.tsx",
+  );
+
+  assert.match(appearance, /title="Choose light palette"/u);
+  assert.match(appearance, /title="Choose dark palette"/u);
+  assert.match(personalKeys, /<Dialog onOpenChange=\{setCreateOpen\}/u);
+  assert.match(personalKeys, /<AlertDialog/u);
+  assert.match(organizationKeys, /<Dialog onOpenChange=\{setCreateOpen\}/u);
+  assert.match(organizationKeys, /Save this API key now/u);
+  assert.match(organizationKeys, /<AlertDialog/u);
+  assert.match(people, /title="Members"/u);
+  assert.match(people, /title="Pending invitations"/u);
+  assert.match(people, /title="Invitation history"/u);
+  assert.doesNotMatch(people, /CreateOrganizationDialog/u);
+  assert.doesNotMatch(people, /useListOrganizations/u);
+  assert.match(billing, /title="Subscription"/u);
+  assert.match(billing, /label="Next event"/u);
+  assert.match(usage, /title="Advanced pricing"/u);
+  assert.match(audit, /title="Requires attention"/u);
+  assert.match(audit, /title="Advanced maintenance"/u);
+  assert.match(audit, /<AlertDialog/u);
+});
+
+test("environment details prioritize health and disclose technical controls", () => {
+  const overview = read(
+    "app/(workspace)/organization/environments/[id]/page.tsx",
+  );
+  const runtime = read(
+    "app/(workspace)/organization/environments/[id]/runtime/page.tsx",
+  );
+  const workspaces = read(
+    "app/(workspace)/organization/environments/[id]/workspaces/page.tsx",
+  );
+  const apps = read(
+    "app/(workspace)/organization/environments/[id]/apps/page.tsx",
+  );
+  const inference = read(
+    "app/(workspace)/settings/environments/[id]/inference/page-client.tsx",
+  );
+  const access = read(
+    "app/(workspace)/settings/environments/[id]/access/environment-access-form.tsx",
+  );
+
+  assert.match(overview, /title="Operational state"/u);
+  assert.match(overview, /title="Technical details"/u);
+  assert.match(overview, /<SettingsDangerSection/u);
+  assert.match(runtime, /title="Runtime release"/u);
+  assert.match(runtime, /title="Runtime details"/u);
+  assert.match(runtime, /title="Provider reasoning policy"/u);
+  assert.match(workspaces, /<ResourceList>/u);
+  assert.doesNotMatch(workspaces, /<Table/u);
+  assert.match(apps, /title="Needs setup"/u);
+  assert.match(apps, /title="Ready"/u);
+  assert.match(apps, /title="Add custom app"/u);
+  assert.match(inference, /title="Inference fleet"/u);
+  assert.match(inference, /title="Add inference endpoint"/u);
+  assert.match(inference, /<AlertDialog/u);
+  assert.match(access, /"Read", "Write", "Administrative"/u);
+});

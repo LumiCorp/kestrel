@@ -20,8 +20,8 @@ export default async function DesktopEnrollmentPage(props: {
     });
   if (!request) notFound();
   return (
-    <main className="min-h-screen bg-muted/20">
-      <PageContainer className="py-12 sm:py-16" contentClassName="max-w-3xl">
+    <main className="min-h-screen bg-background">
+      <PageContainer className="py-12 sm:py-16" contentClassName="max-w-xl">
         <DesktopEnrollmentApproval
           desktopName={request.desktopName}
           fingerprint={request.fingerprint}

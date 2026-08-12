@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { StandaloneWorkspaceSetup } from "./standalone-workspace-setup";
 import {
   type EnvironmentActivation,
@@ -95,7 +96,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
   const [command, setCommand] = useState("pwd && git status --short");
   const [terminal, setTerminal] = useState("");
   const [terminalSessionId, setTerminalSessionId] = useState<string | null>(
-    null
+    null,
   );
   const [terminalCursor, setTerminalCursor] = useState(0);
   const [status, setStatus] = useState("Connecting to the Environment…");
@@ -113,6 +114,13 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
     useState<WorkspacePromotionPreview | null>(null);
   const [acceptingPromotion, setAcceptingPromotion] = useState(false);
   const [pushingPromotion, setPushingPromotion] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(true);
+  const [candidatesOpen, setCandidatesOpen] = useState(true);
+  const [terminalPanelOpen, setTerminalPanelOpen] = useState(true);
+  const [appFormOpen, setAppFormOpen] = useState(false);
+  const [mobilePane, setMobilePane] = useState<
+    "files" | "editor" | "candidates"
+  >("editor");
 
   const loadApplications = useCallback(async () => {
     const response = await fetch(`${base}/apps`, { cache: "no-store" });
@@ -136,7 +144,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
     async (path: string, showLoading = true) => {
       if (showLoading) setStatus("Loading Workspace…");
       const response = await fetch(
-        `${base}/tree?path=${encodeURIComponent(path)}`
+        `${base}/tree?path=${encodeURIComponent(path)}`,
       );
       if (!response.ok) throw new Error("Workspace tree is unavailable.");
       const data = (await response.json()) as { entries: TreeEntry[] };
@@ -144,7 +152,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
       setEntries(data.entries);
       if (showLoading) setStatus("Environment ready");
     },
-    [base]
+    [base],
   );
 
   useEffect(() => {
@@ -156,7 +164,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
           `/api/threads/${threadId}/environment`,
           {
             method: "POST",
-          }
+          },
         );
         const startPayload = (await startResponse.json()) as {
           activation?: EnvironmentActivation;
@@ -164,7 +172,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
         };
         if (!(startResponse.ok && startPayload.activation)) {
           throw new Error(
-            startPayload.error ?? "Workspace activation could not start."
+            startPayload.error ?? "Workspace activation could not start.",
           );
         }
         const ready = await waitForWorkspaceActivation({
@@ -172,7 +180,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
           read: async () => {
             const response = await fetch(
               `/api/threads/${threadId}/environment`,
-              { cache: "no-store", signal: activationController.signal }
+              { cache: "no-store", signal: activationController.signal },
             );
             const payload = (await response.json()) as {
               activation?: EnvironmentActivation;
@@ -180,7 +188,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
             };
             if (!(response.ok && payload.activation)) {
               throw new Error(
-                payload.error ?? "Environment activation is unavailable."
+                payload.error ?? "Environment activation is unavailable.",
               );
             }
             return payload.activation;
@@ -222,7 +230,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
     const interval = window.setInterval(() => {
       void (async () => {
         const treeResponse = await fetch(
-          `${base}/tree?path=${encodeURIComponent(directory)}`
+          `${base}/tree?path=${encodeURIComponent(directory)}`,
         );
         if (treeResponse.ok) {
           const tree = (await treeResponse.json()) as { entries: TreeEntry[] };
@@ -232,7 +240,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
         await loadApplications();
         if (!selectedPath) return;
         const fileResponse = await fetch(
-          `${base}/files?path=${encodeURIComponent(selectedPath)}`
+          `${base}/files?path=${encodeURIComponent(selectedPath)}`,
         );
         if (!fileResponse.ok) return;
         const remoteRevision = fileResponse.headers.get("etag");
@@ -240,7 +248,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
         if (fileDirty) {
           setRemoteChanged(true);
           setStatus(
-            "This file changed in the Environment. Reload before saving."
+            "This file changed in the Environment. Reload before saving.",
           );
           return;
         }
@@ -265,7 +273,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
     if (!(activation.status === "ready" && terminalSessionId)) return;
     const interval = window.setInterval(() => {
       void fetch(
-        `${base}/terminal/sessions/${terminalSessionId}/output?cursor=${terminalCursor}`
+        `${base}/terminal/sessions/${terminalSessionId}/output?cursor=${terminalCursor}`,
       )
         .then(async (response) => {
           if (!response.ok) return;
@@ -281,7 +289,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
           setTerminalCursor(payload.cursor);
           if (payload.status !== "running") {
             setStatus(
-              `Terminal ${payload.status}${payload.exitCode === null ? "" : ` (${payload.exitCode})`}`
+              `Terminal ${payload.status}${payload.exitCode === null ? "" : ` (${payload.exitCode})`}`,
             );
           }
         })
@@ -293,7 +301,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
   async function openFile(path: string) {
     setStatus(`Opening ${path}…`);
     const response = await fetch(
-      `${base}/files?path=${encodeURIComponent(path)}`
+      `${base}/files?path=${encodeURIComponent(path)}`,
     );
     if (!response.ok) throw new Error("File could not be opened.");
     const revision = response.headers.get("etag");
@@ -318,12 +326,12 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
           "if-match": fileRevision,
         },
         body: content,
-      }
+      },
     );
     if (response.status === 409) {
       setRemoteChanged(true);
       throw new Error(
-        "This file changed in the Environment. Reload it before saving."
+        "This file changed in the Environment. Reload it before saving.",
       );
     }
     if (!response.ok) throw new Error("File could not be saved.");
@@ -366,7 +374,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
         method: "POST",
         headers: { "content-type": "text/plain; charset=utf-8" },
         body: `${command}\n`,
-      }
+      },
     );
     if (!response.ok) throw new Error("Terminal input was rejected.");
     setCommand("");
@@ -410,10 +418,10 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
 
   async function setApplicationState(
     application: WorkspaceApplication,
-    action: "start" | "stop"
+    action: "start" | "stop",
   ) {
     setStatus(
-      action === "start" ? "Starting application…" : "Stopping application…"
+      action === "start" ? "Starting application…" : "Stopping application…",
     );
     const response = await fetch(`${base}/apps/${application.id}/${action}`, {
       method: "POST",
@@ -424,16 +432,16 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
     };
     if (!(response.ok && payload.application)) {
       throw new Error(
-        payload.error?.code ?? `Application could not ${action}.`
+        payload.error?.code ?? `Application could not ${action}.`,
       );
     }
     setApplications((current) =>
       current.map((item) =>
-        item.id === payload.application!.id ? payload.application! : item
-      )
+        item.id === payload.application!.id ? payload.application! : item,
+      ),
     );
     setStatus(
-      action === "start" ? "Application started" : "Application stopping"
+      action === "start" ? "Application started" : "Application stopping",
     );
   }
 
@@ -448,7 +456,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
     };
     if (!(response.ok && payload.preview)) {
       throw new Error(
-        payload.error?.code ?? "Candidate preview is unavailable."
+        payload.error?.code ?? "Candidate preview is unavailable.",
       );
     }
     setPromotionPreview(payload.preview);
@@ -469,7 +477,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
           body: JSON.stringify({
             candidateFingerprint: preview.candidateFingerprint,
           }),
-        }
+        },
       );
       const payload = (await response.json()) as {
         promotion?: WorkspacePromotion;
@@ -477,7 +485,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
       };
       if (!(response.ok && payload.promotion)) {
         throw new Error(
-          payload.error?.code ?? "Candidate could not be accepted."
+          payload.error?.code ?? "Candidate could not be accepted.",
         );
       }
       setPromotionPreview(null);
@@ -511,7 +519,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
         throw new Error(payload.error?.code ?? "Candidate branch push failed.");
       }
       setStatus(
-        `Pushed ${payload.repository ?? "repository"}#${payload.branch}`
+        `Pushed ${payload.repository ?? "repository"}#${payload.branch}`,
       );
     } finally {
       setPushingPromotion(false);
@@ -532,7 +540,39 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
             Thread
           </Link>
         </Button>
-        <div className="font-medium">Workspace</div>
+        <h1 className="font-medium">Workspace</h1>
+        <div className="ml-2 hidden items-center gap-1 sm:flex">
+          <Button
+            aria-pressed={filesOpen}
+            onClick={() => {
+              setFilesOpen((current) => !current);
+              setMobilePane("files");
+            }}
+            size="sm"
+            variant="ghost"
+          >
+            Files
+          </Button>
+          <Button
+            aria-pressed={candidatesOpen}
+            onClick={() => {
+              setCandidatesOpen((current) => !current);
+              setMobilePane("candidates");
+            }}
+            size="sm"
+            variant="ghost"
+          >
+            Candidates
+          </Button>
+          <Button
+            aria-pressed={terminalPanelOpen}
+            onClick={() => setTerminalPanelOpen((current) => !current)}
+            size="sm"
+            variant="ghost"
+          >
+            Terminal
+          </Button>
+        </div>
         <div
           aria-atomic="true"
           aria-live={activation.status === "failed" ? "assertive" : "polite"}
@@ -557,10 +597,50 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
           </span>
         </div>
       </header>
-      <div className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)_340px] grid-rows-[minmax(0,1fr)_220px]">
+      <div className="flex border-b sm:hidden">
+        {(["files", "editor", "candidates"] as const).map((pane) => (
+          <button
+            aria-pressed={mobilePane === pane}
+            className={cn(
+              "flex-1 border-transparent border-b-2 px-3 py-2 text-sm capitalize",
+              mobilePane === pane && "border-foreground font-medium",
+            )}
+            key={pane}
+            onClick={() => setMobilePane(pane)}
+            type="button"
+          >
+            {pane}
+          </button>
+        ))}
+        <button
+          aria-pressed={terminalPanelOpen}
+          className={cn(
+            "border-transparent border-b-2 px-3 py-2 text-sm",
+            terminalPanelOpen && "border-foreground font-medium",
+          )}
+          onClick={() => setTerminalPanelOpen((current) => !current)}
+          type="button"
+        >
+          Terminal
+        </button>
+      </div>
+      <div
+        className={cn(
+          "grid min-h-0 flex-1 grid-cols-1",
+          filesOpen &&
+            candidatesOpen &&
+            "lg:grid-cols-[240px_minmax(0,1fr)_320px]",
+          filesOpen && !candidatesOpen && "lg:grid-cols-[240px_minmax(0,1fr)]",
+          !filesOpen && candidatesOpen && "lg:grid-cols-[minmax(0,1fr)_320px]",
+        )}
+      >
         <aside
           aria-label="Workspace files"
-          className="row-span-2 overflow-auto border-r p-2 text-sm"
+          className={cn(
+            "min-h-0 overflow-auto border-r p-2 text-sm",
+            mobilePane !== "files" && "hidden lg:block",
+            !filesOpen && "lg:hidden",
+          )}
         >
           {directory && (
             <button
@@ -593,7 +673,12 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
             </button>
           ))}
         </aside>
-        <section className="flex min-h-0 flex-col">
+        <section
+          className={cn(
+            "min-h-0 flex-col",
+            mobilePane === "editor" ? "flex" : "hidden lg:flex",
+          )}
+        >
           <div className="flex h-10 items-center border-b px-3 text-sm">
             <span className="truncate">{selectedPath ?? "Select a file"}</span>
             <Button
@@ -602,8 +687,8 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
               onClick={() =>
                 void saveFile().catch((error: unknown) =>
                   setStatus(
-                    error instanceof Error ? error.message : "Save failed."
-                  )
+                    error instanceof Error ? error.message : "Save failed.",
+                  ),
                 )
               }
               size="sm"
@@ -629,7 +714,11 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
         </section>
         <aside
           aria-label="Workspace candidates"
-          className="min-h-0 overflow-auto border-l p-3 text-sm"
+          className={cn(
+            "min-h-0 overflow-auto border-l p-3 text-sm",
+            mobilePane !== "candidates" && "hidden lg:block",
+            !candidatesOpen && "lg:hidden",
+          )}
         >
           <div className="mb-3 flex items-center justify-between">
             <h2 className="font-medium">Candidates</h2>
@@ -653,8 +742,8 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
                       setStatus(
                         error instanceof Error
                           ? error.message
-                          : "Candidate preview failed."
-                      )
+                          : "Candidate preview failed.",
+                      ),
                   )
                 }
                 type="button"
@@ -710,8 +799,8 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
                       setStatus(
                         error instanceof Error
                           ? error.message
-                          : "Candidate branch push failed."
-                      )
+                          : "Candidate branch push failed.",
+                      ),
                     )
                   }
                   size="sm"
@@ -731,8 +820,8 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
                       setStatus(
                         error instanceof Error
                           ? error.message
-                          : "Candidate acceptance failed."
-                      )
+                          : "Candidate acceptance failed.",
+                      ),
                     )
                   }
                   size="sm"
@@ -743,25 +832,92 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
             </div>
           ) : null}
         </aside>
-        <section className="col-span-2 flex min-h-0 flex-col border-t bg-zinc-950 text-zinc-100">
-          <div className="flex flex-wrap items-center gap-2 border-zinc-800 border-b p-2">
+      </div>
+      <section className="border-t bg-background">
+        <div className="flex min-h-11 flex-wrap items-center gap-2 px-3 py-1.5">
+          <span className="mr-1 font-medium text-xs">Applications</span>
+          {applications.length === 0 ? (
+            <span className="text-muted-foreground text-xs">None running</span>
+          ) : null}
+          {applications.map((application) => (
+            <div className="flex items-center gap-1" key={application.id}>
+              {application.status === "running" ? (
+                <Button asChild size="sm" variant="outline">
+                  <a
+                    href={`${base}/apps/${application.id}/proxy/`}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {application.name} ·{" "}
+                    {application.desiredState === "stopped"
+                      ? "stopping"
+                      : application.status}
+                  </a>
+                </Button>
+              ) : (
+                <Button disabled size="sm" variant="outline">
+                  {application.name} · {application.status}
+                </Button>
+              )}
+              <Button
+                disabled={
+                  !environmentReady ||
+                  application.status === "starting" ||
+                  (application.desiredState === "stopped" &&
+                    application.processId !== null)
+                }
+                onClick={() =>
+                  void setApplicationState(
+                    application,
+                    application.status === "running" ? "stop" : "start",
+                  ).catch((error: unknown) =>
+                    setStatus(
+                      error instanceof Error
+                        ? error.message
+                        : "Application action failed.",
+                    ),
+                  )
+                }
+                size="sm"
+                variant="ghost"
+              >
+                {application.desiredState === "stopped" &&
+                application.status === "running"
+                  ? "Stopping"
+                  : application.status === "running"
+                    ? "Stop"
+                    : "Start"}
+              </Button>
+            </div>
+          ))}
+          <Button
+            className="ml-auto"
+            onClick={() => setAppFormOpen((current) => !current)}
+            size="sm"
+            variant="ghost"
+          >
+            {appFormOpen ? "Close" : "Add application"}
+          </Button>
+        </div>
+        {appFormOpen ? (
+          <div className="flex flex-wrap items-center gap-2 border-t bg-muted/20 p-2">
             <Input
               aria-label="Application name"
-              className="h-8 w-28 border-zinc-700 bg-zinc-900"
+              className="h-8 w-28"
               disabled={!environmentReady}
               onChange={(event) => setAppName(event.target.value)}
               value={appName}
             />
             <Input
               aria-label="Application start command"
-              className="h-8 min-w-48 flex-1 border-zinc-700 bg-zinc-900 font-mono"
+              className="h-8 min-w-48 flex-1 font-mono"
               disabled={!environmentReady}
               onChange={(event) => setAppCommand(event.target.value)}
               value={appCommand}
             />
             <Input
               aria-label="Application port"
-              className="h-8 w-20 border-zinc-700 bg-zinc-900 font-mono"
+              className="h-8 w-20 font-mono"
               disabled={!environmentReady}
               onChange={(event) => setAppPort(event.target.value)}
               value={appPort}
@@ -773,67 +929,19 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
                   setStatus(
                     error instanceof Error
                       ? error.message
-                      : "Application failed."
-                  )
+                      : "Application failed.",
+                  ),
                 )
               }
               size="sm"
-              variant="secondary"
             >
               Start app
             </Button>
-            {applications.map((application) => (
-              <div className="flex items-center gap-1" key={application.id}>
-                {application.status === "running" ? (
-                  <Button asChild size="sm" variant="outline">
-                    <a
-                      href={`${base}/apps/${application.id}/proxy/`}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {application.name} ·{" "}
-                      {application.desiredState === "stopped"
-                        ? "stopping"
-                        : application.status}
-                    </a>
-                  </Button>
-                ) : (
-                  <Button disabled size="sm" variant="outline">
-                    {application.name} · {application.status}
-                  </Button>
-                )}
-                <Button
-                  disabled={
-                    !environmentReady ||
-                    application.status === "starting" ||
-                    (application.desiredState === "stopped" &&
-                      application.processId !== null)
-                  }
-                  onClick={() =>
-                    void setApplicationState(
-                      application,
-                      application.status === "running" ? "stop" : "start"
-                    ).catch((error: unknown) =>
-                      setStatus(
-                        error instanceof Error
-                          ? error.message
-                          : "Application action failed."
-                      )
-                    )
-                  }
-                  size="sm"
-                  variant="ghost"
-                >
-                  {application.desiredState === "stopped" &&
-                  application.status === "running"
-                    ? "Stopping"
-                    : application.status === "running"
-                      ? "Stop"
-                      : "Start"}
-                </Button>
-              </div>
-            ))}
           </div>
+        ) : null}
+      </section>
+      {terminalPanelOpen ? (
+        <section className="flex h-[220px] min-h-0 flex-col border-t bg-zinc-950 text-zinc-100">
           <div className="flex gap-2 border-zinc-800 border-b p-2">
             <Input
               aria-label="Terminal input"
@@ -844,8 +952,10 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
                 if (event.key === "Enter")
                   void sendTerminalInput().catch((error: unknown) =>
                     setStatus(
-                      error instanceof Error ? error.message : "Command failed."
-                    )
+                      error instanceof Error
+                        ? error.message
+                        : "Command failed.",
+                    ),
                   );
               }}
               value={command}
@@ -855,8 +965,8 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
               onClick={() =>
                 void sendTerminalInput().catch((error: unknown) =>
                   setStatus(
-                    error instanceof Error ? error.message : "Command failed."
-                  )
+                    error instanceof Error ? error.message : "Command failed.",
+                  ),
                 )
               }
               size="sm"
@@ -873,8 +983,8 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
                   setStatus(
                     error instanceof Error
                       ? error.message
-                      : "Terminal action failed."
-                  )
+                      : "Terminal action failed.",
+                  ),
                 )
               }
               size="sm"
@@ -891,7 +1001,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
             {terminal}
           </pre>
         </section>
-      </div>
+      ) : null}
     </main>
   );
 }

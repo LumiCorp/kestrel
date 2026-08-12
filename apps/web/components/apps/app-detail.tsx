@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, KeyRound, ShieldCheck } from "lucide-react";
+import { Check, KeyRound, MoreHorizontal } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -11,8 +11,28 @@ import {
 } from "@/components/apps/app-settings-layout";
 import { GithubConnectionCard } from "@/components/apps/github-connection-card";
 import { Microsoft365ConnectionCard } from "@/components/apps/microsoft-365-connection-card";
+import {
+  SettingsDisclosure,
+  SettingsStatusNotice,
+} from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { AppDetail as AppDetailType } from "@/lib/apps/types";
 
 const CATEGORY_LABELS = {
@@ -25,10 +45,20 @@ const CATEGORY_LABELS = {
   custom: "Custom",
 } as const;
 
+const READINESS_LABELS: Record<AppDetailType["readiness"], string> = {
+  ready: "Ready",
+  setup_required: "Setup required",
+  install_required: "Install required",
+  degraded: "Needs attention",
+  disabled: "Disabled",
+};
+
 function InstallButton({ app }: { app: AppDetailType }) {
   const router = useRouter();
   const [working, setWorking] = useState(false);
-  if (app.installMode === "inherited" || !app.canManageInstallation) return null;
+  const [confirmDisable, setConfirmDisable] = useState(false);
+  if (app.installMode === "inherited" || !app.canManageInstallation)
+    return null;
   const installed = app.installationStatus === "installed";
 
   async function updateInstallation() {
@@ -36,7 +66,7 @@ function InstallButton({ app }: { app: AppDetailType }) {
     try {
       const response = await fetch(
         `/api/apps/${encodeURIComponent(app.key)}/installation`,
-        { method: installed ? "DELETE" : "POST" }
+        { method: installed ? "DELETE" : "POST" },
       );
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -50,27 +80,78 @@ function InstallButton({ app }: { app: AppDetailType }) {
           : "The App can now be configured in Environments and Projects.",
       });
       router.refresh();
+      return true;
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "App could not be updated."
+        error instanceof Error ? error.message : "App could not be updated.",
       );
+      return false;
     } finally {
       setWorking(false);
     }
   }
 
+  if (installed) {
+    return (
+      <>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button aria-label="App actions" size="icon" variant="ghost">
+              <MoreHorizontal className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onSelect={() => setConfirmDisable(true)}
+              variant="destructive"
+            >
+              Disable App
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <AlertDialog onOpenChange={setConfirmDisable} open={confirmDisable}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Disable {app.displayName}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                The App will no longer be available to Environments or Projects.
+                Existing connections and policy are retained for recovery.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={working}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void updateInstallation().then((updated) => {
+                    if (updated) setConfirmDisable(false);
+                  });
+                }}
+              >
+                {working ? "Disabling…" : "Disable App"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </>
+    );
+  }
+
   return (
-    <Button
-      disabled={working}
-      onClick={() => void updateInstallation()}
-      variant={installed ? "outline" : "default"}
-    >
-      {working ? "Saving…" : installed ? "Disable App" : "Install App"}
+    <Button disabled={working} onClick={() => void updateInstallation()}>
+      {working
+        ? "Saving…"
+        : app.installationStatus === "disabled"
+          ? "Enable App"
+          : "Install App"}
     </Button>
   );
 }
 
-function approvalLabel(mode: AppDetailType["capabilities"][number]["defaultApprovalMode"]) {
+function approvalLabel(
+  mode: AppDetailType["capabilities"][number]["defaultApprovalMode"],
+) {
   if (mode === "ask") return "Ask first";
   if (mode === "deny") return "Off";
   return "Automatic";
@@ -83,6 +164,16 @@ export function AppDetail({ app }: { app: AppDetailType }) {
     entries.push(capability);
     groups.set(capability.groupKey, entries);
   }
+  const readinessDescription =
+    app.readiness === "ready"
+      ? "This App is available where Environment and Project policy allow it."
+      : app.readiness === "install_required"
+        ? "Install this App before configuring connections or Project access."
+        : app.readiness === "setup_required"
+          ? "Add the required connection to make this App available."
+          : app.readiness === "degraded"
+            ? "Review the connection state below before relying on this App."
+            : "Enable this App to make it available again.";
 
   return (
     <div className="space-y-8">
@@ -94,18 +185,32 @@ export function AppDetail({ app }: { app: AppDetailType }) {
         description={app.description}
         icon={app.icon}
         name={app.displayName}
-        status={CATEGORY_LABELS[app.category]}
+        status={`${READINESS_LABELS[app.readiness]} · ${CATEGORY_LABELS[app.category]}`}
+      />
+
+      <SettingsStatusNotice
+        description={readinessDescription}
+        title={READINESS_LABELS[app.readiness]}
+        tone={
+          app.readiness === "ready"
+            ? "success"
+            : app.readiness === "degraded" || app.readiness === "setup_required"
+              ? "warning"
+              : "info"
+        }
       />
 
       {app.key === "github" && app.installationStatus === "installed" ? (
         <GithubConnectionCard />
       ) : null}
-      {app.key === "microsoft_365" &&
-      app.installationStatus === "installed" ? (
+      {app.key === "microsoft_365" && app.installationStatus === "installed" ? (
         <Microsoft365ConnectionCard />
       ) : null}
 
-      <AppSettingsSection icon={<KeyRound className="size-4" />} title="Connections">
+      <AppSettingsSection
+        icon={<KeyRound className="size-4" />}
+        title="Connections"
+      >
         {app.connectionModel === "none" ? (
           <p className="py-3 text-muted-foreground text-sm">
             No account or credential is required.
@@ -117,7 +222,9 @@ export function AppDetail({ app }: { app: AppDetailType }) {
               key={connection.id}
             >
               <div className="min-w-0">
-                <p className="truncate font-medium text-sm">{connection.name}</p>
+                <p className="truncate font-medium text-sm">
+                  {connection.name}
+                </p>
                 <p className="mt-1 text-muted-foreground text-xs">
                   {connection.ownerType === "personal"
                     ? "Personal connection"
@@ -127,7 +234,9 @@ export function AppDetail({ app }: { app: AppDetailType }) {
                 </p>
               </div>
               <Badge
-                variant={connection.status === "connected" ? "default" : "outline"}
+                variant={
+                  connection.status === "connected" ? "default" : "outline"
+                }
               >
                 {connection.status}
               </Badge>
@@ -145,19 +254,16 @@ export function AppDetail({ app }: { app: AppDetailType }) {
             {app.connectionModel === "environment" ||
             app.connectionModel === "hybrid" ? (
               <Button asChild size="sm" variant="outline">
-                <Link href="/organization">
-                  Open Environments
-                </Link>
+                <Link href="/organization">Open Environments</Link>
               </Button>
             ) : null}
           </div>
         )}
       </AppSettingsSection>
 
-      <AppSettingsSection
-        description="Environment policy is the ceiling. Projects can narrow these defaults, but never broaden them."
-        icon={<ShieldCheck className="size-4" />}
-        title="Capabilities"
+      <SettingsDisclosure
+        description={`${app.capabilityCount} capabilities. Environment policy is the ceiling; Projects can only narrow it.`}
+        title="Capability details"
       >
         {[...groups.entries()].map(([group, capabilities]) => (
           <div className="py-3" key={group}>
@@ -183,7 +289,10 @@ export function AppDetail({ app }: { app: AppDetailType }) {
                       </p>
                     </div>
                   </div>
-                  <Badge className="justify-self-start md:justify-self-end" variant="secondary">
+                  <Badge
+                    className="justify-self-start md:justify-self-end"
+                    variant="secondary"
+                  >
                     {approvalLabel(capability.defaultApprovalMode)}
                   </Badge>
                 </div>
@@ -191,20 +300,7 @@ export function AppDetail({ app }: { app: AppDetailType }) {
             </div>
           </div>
         ))}
-      </AppSettingsSection>
-
-      <div className="flex gap-3 border-y py-4">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
-          <ShieldCheck className="size-4" />
-        </span>
-        <div>
-          <p className="font-medium text-sm">Access stays governed</p>
-          <p className="mt-1 text-muted-foreground text-sm">
-            Environment access is the ceiling. Projects and personal sharing can
-            only narrow it.
-          </p>
-        </div>
-      </div>
+      </SettingsDisclosure>
     </div>
   );
 }

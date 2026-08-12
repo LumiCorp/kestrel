@@ -17,6 +17,9 @@ const systemsMapService = read("lib/organizations/systems-map.ts");
 const environmentWorkspaces = read(
   "app/(workspace)/organization/environments/[id]/workspaces/page.tsx",
 );
+const workspaceLifecycleActions = read(
+  "components/organization/workspace-lifecycle-actions.tsx",
+);
 const teamSwitcher = read("components/team-switcher.tsx");
 const startRoute = read(
   "app/api/organization/environments/[id]/workspaces/[workspaceId]/start/route.ts",
@@ -40,7 +43,10 @@ test(
     assert.match(home, /requireOrganizationAdmin/u);
     assert.match(systemsMapPage, /requireOrganizationAdmin/u);
     assert.match(systemsMapRoute, /requireOrganizationAdmin/u);
-    assert.match(homeUi, /Systems map/u);
+    assert.match(
+      homeUi,
+      /href: "\/organization\/systems"[\s\S]*?title: "Systems"/u,
+    );
     assert.match(systemsMapService, /threadCount/u);
     assert.doesNotMatch(systemsMapService, /title:\s*schema\.threads\.title/u);
     assert.doesNotMatch(systemsMapService, /provider\.getMachine\(/u);
@@ -48,15 +54,18 @@ test(
     assert.match(systemsMapService, /eq\(schema\.threadTurns\.organizationId, input\.organizationId\)/u);
     assert.match(
       homeUi,
-      /Manage the execution environments this organization owns/u,
+      /Environments, access, and operating policy for this organization/u,
     );
     assert.doesNotMatch(homeUi, /title:\s*"Machines"/u);
     assert.match(
       environmentWorkspaces,
       /Each Workspace owns the machine and persistent volume/u,
     );
-    assert.match(environmentWorkspaces, /Machine:/u);
-    assert.match(environmentWorkspaces, /Volume:/u);
+    assert.match(environmentWorkspaces, /machineId: workspace\.flyMachineId/u);
+    assert.match(environmentWorkspaces, /volumeId: workspace\.flyVolumeId/u);
+    assert.match(workspaceLifecycleActions, /Technical details/u);
+    assert.match(workspaceLifecycleActions, /Machine ID/u);
+    assert.match(workspaceLifecycleActions, /Volume ID/u);
   },
 );
 

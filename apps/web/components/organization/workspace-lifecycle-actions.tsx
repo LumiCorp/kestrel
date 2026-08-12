@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { MoreHorizontal } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,6 +15,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { WorkspaceBackupActions } from "@/app/(workspace)/settings/environments/[id]/workspaces/workspace-backup-actions";
 
 async function requestError(response: Response, fallback: string) {
@@ -33,11 +41,14 @@ export function WorkspaceLifecycleActions({
     name: string;
     status: string;
     machineId: string | null;
+    volumeId: string | null;
   };
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<"start" | "stop" | "retire" | null>(null);
   const [retireOpen, setRetireOpen] = useState(false);
+  const [backupsOpen, setBackupsOpen] = useState(false);
+  const [technicalDetailsOpen, setTechnicalDetailsOpen] = useState(false);
   const [confirmationName, setConfirmationName] = useState("");
 
   async function requestAction(action: "start" | "stop") {
@@ -91,40 +102,92 @@ export function WorkspaceLifecycleActions({
   }
 
   return (
-    <div className="flex flex-wrap justify-end gap-2">
-      {workspace.status === "stopped" && workspace.machineId ? (
-        <Button
-          disabled={busy !== null}
-          onClick={() => void requestAction("start")}
-          size="sm"
-          variant="outline"
-        >
-          {busy === "start" ? "Starting…" : "Start"}
-        </Button>
-      ) : null}
-      {workspace.status === "ready" && workspace.machineId ? (
-        <Button
-          disabled={busy !== null}
-          onClick={() => void requestAction("stop")}
-          size="sm"
-          variant="outline"
-        >
-          {busy === "stop" ? "Stopping…" : "Stop"}
-        </Button>
-      ) : null}
-      <WorkspaceBackupActions
-        environmentId={environmentId}
-        workspaceId={workspace.id}
-        workspaceStatus={workspace.status}
-      />
-      <Button
-        disabled={busy !== null || workspace.status === "deleting"}
-        onClick={() => setRetireOpen(true)}
-        size="sm"
-        variant="destructive"
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            aria-label={`Actions for ${workspace.name}`}
+            disabled={busy !== null}
+            size="icon"
+            variant="ghost"
+          >
+            <MoreHorizontal className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {workspace.status === "stopped" && workspace.machineId ? (
+            <DropdownMenuItem onSelect={() => void requestAction("start")}>
+              Start Workspace
+            </DropdownMenuItem>
+          ) : null}
+          {workspace.status === "ready" && workspace.machineId ? (
+            <DropdownMenuItem onSelect={() => void requestAction("stop")}>
+              Stop Workspace
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem onSelect={() => setBackupsOpen(true)}>
+            Backups and recovery
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setTechnicalDetailsOpen(true)}>
+            Technical details
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="text-destructive"
+            disabled={workspace.status === "deleting"}
+            onSelect={() => setRetireOpen(true)}
+          >
+            Retire Workspace
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Dialog onOpenChange={setBackupsOpen} open={backupsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{workspace.name} backups</DialogTitle>
+            <DialogDescription>
+              Create checkpoints, retry failed backups, or restore the latest
+              protected revision.
+            </DialogDescription>
+          </DialogHeader>
+          <WorkspaceBackupActions
+            environmentId={environmentId}
+            workspaceId={workspace.id}
+            workspaceStatus={workspace.status}
+          />
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        onOpenChange={setTechnicalDetailsOpen}
+        open={technicalDetailsOpen}
       >
-        Retire
-      </Button>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{workspace.name} technical details</DialogTitle>
+            <DialogDescription>
+              Provider identifiers used for operational evidence and support.
+            </DialogDescription>
+          </DialogHeader>
+          <dl className="divide-y border-y text-sm">
+            <div className="grid gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)]">
+              <dt className="text-muted-foreground">Workspace ID</dt>
+              <dd className="break-all font-mono text-xs">{workspace.id}</dd>
+            </div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)]">
+              <dt className="text-muted-foreground">Machine ID</dt>
+              <dd className="break-all font-mono text-xs">
+                {workspace.machineId ?? "Not provisioned"}
+              </dd>
+            </div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)]">
+              <dt className="text-muted-foreground">Volume ID</dt>
+              <dd className="break-all font-mono text-xs">
+                {workspace.volumeId ?? "Not provisioned"}
+              </dd>
+            </div>
+          </dl>
+        </DialogContent>
+      </Dialog>
       <Dialog onOpenChange={setRetireOpen} open={retireOpen}>
         <DialogContent>
           <DialogHeader>
@@ -156,6 +219,6 @@ export function WorkspaceLifecycleActions({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

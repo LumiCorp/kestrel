@@ -7,6 +7,8 @@ import { resetDbRuntimeForTests } from "@/lib/db/runtime";
 
 const baseUrl = process.env.AI_AGENT_BASE_URL?.trim();
 if (!baseUrl) throw new Error("AI_AGENT_BASE_URL is required.");
+const rawModelId = process.env.AI_AGENT_MODEL?.trim();
+if (!rawModelId) throw new Error("AI_AGENT_MODEL is required.");
 const organizationId = process.env.KESTREL_SEED_ORGANIZATION_ID?.trim();
 const apiKey = process.env.OPENROUTER_API_KEY?.trim();
 if (!organizationId)
@@ -29,7 +31,7 @@ await saveGatewayModel({
   gatewayId: gateway.id,
   gatewayProvider: "openrouter",
   gatewayBaseUrl: providerBaseUrl,
-  rawModelId: "gpt-5-mini",
+  rawModelId,
   modality: "language",
   approved: true,
   isDefault: true,

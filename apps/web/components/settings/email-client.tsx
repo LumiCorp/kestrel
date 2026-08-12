@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AdminStatusBanner } from "@/components/admin/admin-status-banner";
 import {
+  SettingsDisclosure,
   SettingsPage,
   SettingsPageHeader,
-  SettingsPanel,
-  SettingsPanelContent,
-  SettingsPanelHeader,
-  SettingsPanelTitle,
+  SettingsRow,
+  SettingsRows,
+  SettingsSection,
+  SettingsStatusNotice,
+  SettingsStatusSummary,
 } from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -72,6 +73,8 @@ export function EmailIntegrationAdminClient({
   const hasTestPrerequisites = Boolean(
     config.credentialConfigured && config.fromEmail.trim()
   );
+  const configured = config.persisted && hasTestPrerequisites;
+  const tested = config.status === "ready" || config.enabled;
 
   const load = useCallback(async () => {
     const response = await fetch(apiBase, {
@@ -155,166 +158,137 @@ export function EmailIntegrationAdminClient({
         title={scope === "organization" ? "Organization email" : "System email"}
       />
       {message ? (
-        <AdminStatusBanner
-          description="Email configuration could not be loaded."
+        <SettingsStatusNotice
+          description="The last saved state remains unchanged."
           title={message}
-          variant="error"
+          tone="error"
         />
       ) : null}
-      <SettingsPanel className="max-w-3xl">
-        <SettingsPanelHeader>
-          <SettingsPanelTitle className="flex items-center justify-between">
-            Resend
-            <Badge
-              variant={config.status === "ready" ? "default" : "secondary"}
-            >
-              {config.status.replace("_", " ")}
-            </Badge>
-          </SettingsPanelTitle>
-        </SettingsPanelHeader>
-        <SettingsPanelContent className="grid gap-5">
-          {scope === "platform" ? (
-            <div className="grid gap-2">
-              <Label htmlFor="email-source">Credential source</Label>
-              <Select
-                onValueChange={(
-                  credentialSource: EmailConfig["credentialSource"]
-                ) => setConfig((current) => ({ ...current, credentialSource }))}
-                value={config.credentialSource}
-              >
-                <SelectTrigger id="email-source">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="environment">
-                    Environment (RESEND_API_KEY)
-                  </SelectItem>
-                  <SelectItem value="stored">Encrypted in Kestrel One</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
-          {scope === "organization" || config.credentialSource === "stored" ? (
-            <div className="grid gap-2">
-              <Label htmlFor="email-api-key">Resend API key</Label>
-              <Input
-                autoComplete="off"
-                id="email-api-key"
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder={
-                  config.credentialConfigured
-                    ? "Configured — enter a new key to rotate"
-                    : "re_..."
-                }
-                type="password"
-                value={apiKey}
-              />
-            </div>
-          ) : null}
-          {scope === "platform" &&
-          config.credentialSource === "environment" &&
-          !config.credentialConfigured ? (
-            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-950 text-sm dark:text-amber-100">
-              RESEND_API_KEY is unavailable to this deployment. Set it in the
-              deployment environment, or select “Encrypted in Kestrel One” and
-              save a Resend API key here.
-            </p>
-          ) : null}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field
-              id="email-from-name"
-              label="From name"
-              onChange={(fromName) =>
-                setConfig((current) => ({ ...current, fromName }))
-              }
-              value={config.fromName}
+      <SettingsSection
+        description="Complete each step in order. Delivery cannot be enabled until Resend accepts a test message."
+        title="Readiness"
+      >
+        <SettingsRows>
+          <SettingsRow label="1 · Configure">
+            <SettingsStatusSummary
+              detail={configured ? config.fromEmail : "Sender and credential required"}
+              status={configured ? "Complete" : "Next action"}
+              tone={configured ? "positive" : "warning"}
             />
-            <Field
-              id="email-from-address"
-              label="From address"
-              onChange={(fromEmail) =>
-                setConfig((current) => ({ ...current, fromEmail }))
-              }
-              type="email"
-              value={config.fromEmail}
-            />
-          </div>
-          <Field
-            id="email-reply-to"
-            label="Reply-to (optional)"
-            onChange={(replyTo) =>
-              setConfig((current) => ({ ...current, replyTo: replyTo || null }))
-            }
-            type="email"
-            value={config.replyTo || ""}
-          />
-          <div className="flex flex-wrap gap-3">
-            <Button disabled={busy} onClick={() => void save()}>
-              Save configuration
-            </Button>
-            <Button
-              disabled={busy || !config.persisted || !hasTestPrerequisites}
-              onClick={() => void testDelivery()}
-              variant="outline"
-            >
-              Send test email
-            </Button>
-            <div className="ml-auto flex items-center gap-2">
-              <Label htmlFor="email-enabled">Enabled</Label>
-              <Switch
-                checked={config.enabled}
-                disabled={
-                  busy || (config.status !== "ready" && !config.enabled)
-                }
-                id="email-enabled"
-                onCheckedChange={(enabled) => void save(enabled)}
+          </SettingsRow>
+          <SettingsRow label="2 · Test">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <SettingsStatusSummary
+                detail={config.lastTestedAt ? new Date(config.lastTestedAt).toLocaleString() : "Not tested"}
+                status={tested ? "Accepted" : configured ? "Ready to test" : "Waiting"}
+                tone={tested ? "positive" : configured ? "warning" : "neutral"}
               />
-            </div>
-          </div>
-          {!config.enabled && config.status !== "ready" ? (
-            <p className="text-muted-foreground text-sm">
-              Send a successful test email before enabling delivery.
-            </p>
-          ) : null}
-          {config.lastTestedAt ? (
-            <p className="text-muted-foreground text-sm">
-              Last accepted test:{" "}
-              {new Date(config.lastTestedAt).toLocaleString()}
-            </p>
-          ) : null}
-        </SettingsPanelContent>
-      </SettingsPanel>
-      <SettingsPanel className="max-w-3xl">
-        <SettingsPanelHeader>
-          <SettingsPanelTitle>
-            {scope === "organization"
-              ? "Organization email activity"
-              : "Platform email activity"}
-          </SettingsPanelTitle>
-        </SettingsPanelHeader>
-        <SettingsPanelContent className="space-y-3">
-          {events.length ? (
-            events.map((event) => (
-              <div
-                className="flex items-start justify-between gap-4 border-b pb-3 text-sm"
-                key={event.id}
+              <Button
+                disabled={busy || !configured}
+                onClick={() => void testDelivery()}
+                size="sm"
+                variant="outline"
               >
-                <div>
-                  <div className="font-medium">{event.message}</div>
-                  <div className="text-muted-foreground">{event.action}</div>
-                </div>
-                <time className="whitespace-nowrap text-muted-foreground">
-                  {new Date(event.createdAt).toLocaleString()}
-                </time>
+                Send test email
+              </Button>
+            </div>
+          </SettingsRow>
+          <SettingsRow label="3 · Enable">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <SettingsStatusSummary
+                detail="Production delivery"
+                status={config.enabled ? "Enabled" : tested ? "Ready to enable" : "Waiting"}
+                tone={config.enabled ? "positive" : tested ? "warning" : "neutral"}
+              />
+              <div className="flex items-center gap-2">
+                <Label htmlFor="email-enabled">Enabled</Label>
+                <Switch
+                  checked={config.enabled}
+                  disabled={busy || !(tested || config.enabled)}
+                  id="email-enabled"
+                  onCheckedChange={(enabled) => void save(enabled)}
+                />
               </div>
-            ))
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              No {scope} email events yet.
-            </p>
-          )}
-        </SettingsPanelContent>
-      </SettingsPanel>
+            </div>
+          </SettingsRow>
+        </SettingsRows>
+      </SettingsSection>
+
+      <SettingsSection
+        description="Sender identity and credential changes are saved without enabling delivery."
+        title="Configuration"
+      >
+        <SettingsDisclosure
+          defaultOpen={!configured}
+          description={`${config.provider} · ${config.status.replace("_", " ")}`}
+          title={configured ? "Edit sender and credentials" : "Configure sender and credentials"}
+        >
+          <div className="grid max-w-3xl gap-5">
+            {scope === "platform" ? (
+              <div className="grid gap-2">
+                <Label htmlFor="email-source">Credential source</Label>
+                <Select
+                  onValueChange={(credentialSource: EmailConfig["credentialSource"]) =>
+                    setConfig((current) => ({ ...current, credentialSource }))
+                  }
+                  value={config.credentialSource}
+                >
+                  <SelectTrigger id="email-source"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="environment">Environment (RESEND_API_KEY)</SelectItem>
+                    <SelectItem value="stored">Encrypted in Kestrel One</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            {scope === "organization" || config.credentialSource === "stored" ? (
+              <div className="grid gap-2">
+                <Label htmlFor="email-api-key">Resend API key</Label>
+                <Input
+                  autoComplete="off"
+                  id="email-api-key"
+                  onChange={(event) => setApiKey(event.target.value)}
+                  placeholder={config.credentialConfigured ? "Configured — enter a new key to rotate" : "re_..."}
+                  type="password"
+                  value={apiKey}
+                />
+              </div>
+            ) : null}
+            {scope === "platform" && config.credentialSource === "environment" && !config.credentialConfigured ? (
+              <SettingsStatusNotice
+                description="Set it in the deployment environment, or store an encrypted Resend key here."
+                title="RESEND_API_KEY is unavailable to this deployment."
+                tone="warning"
+              />
+            ) : null}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field id="email-from-name" label="From name" onChange={(fromName) => setConfig((current) => ({ ...current, fromName }))} value={config.fromName} />
+              <Field id="email-from-address" label="From address" onChange={(fromEmail) => setConfig((current) => ({ ...current, fromEmail }))} type="email" value={config.fromEmail} />
+            </div>
+            <Field id="email-reply-to" label="Reply-to (optional)" onChange={(replyTo) => setConfig((current) => ({ ...current, replyTo: replyTo || null }))} type="email" value={config.replyTo || ""} />
+            <div><Button disabled={busy} onClick={() => void save()}>{busy ? "Saving…" : "Save configuration"}</Button></div>
+          </div>
+        </SettingsDisclosure>
+      </SettingsSection>
+
+      <SettingsSection
+        description="Recent configuration, test, and delivery events."
+        title="Activity"
+      >
+        <SettingsDisclosure
+          description={`${events.length} recent event${events.length === 1 ? "" : "s"}`}
+          title={scope === "organization" ? "Organization email activity" : "Platform email activity"}
+        >
+          <div className="divide-y border-y">
+            {events.length ? events.map((event) => (
+              <div className="flex flex-col justify-between gap-1 py-3 text-sm sm:flex-row sm:gap-4" key={event.id}>
+                <div><div className="font-medium">{event.message}</div><div className="text-muted-foreground">{event.action}</div></div>
+                <time className="whitespace-nowrap text-muted-foreground">{new Date(event.createdAt).toLocaleString()}</time>
+              </div>
+            )) : <p className="py-4 text-muted-foreground text-sm">No {scope} email events yet.</p>}
+          </div>
+        </SettingsDisclosure>
+      </SettingsSection>
     </SettingsPage>
   );
 }
