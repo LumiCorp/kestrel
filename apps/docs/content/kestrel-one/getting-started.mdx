@@ -1,6 +1,6 @@
 ---
 title: Join Kestrel One and start a Thread
-summary: Accept your invitation, join the right organization, and start work your team can continue together.
+summary: Create a personal workspace with a signup code or accept an invitation to join an existing organization.
 section: kestrel-one
 audience: everyone
 status: active
@@ -12,16 +12,27 @@ updatedAt: 2026-08-04
 
 ## Prerequisites
 
-You need an unexpired organization invitation addressed to your account. The organization also needs an available Environment and at least one approved, ready model before the first Thread can run.
+You need either a valid signup code or an unexpired organization invitation addressed to your email.
 
-## Join your organization
+## Create a personal workspace with a signup code
+
+1. Open `/sign-up`, enter your email and password, and supply the signup code. A code grants account creation only; it does not add you to another organization.
+2. Verify your email from the message Kestrel One sends you.
+3. Choose OpenAI, Anthropic, or OpenRouter, enter a valid API key, sync the provider catalog, and explicitly approve one default language model.
+4. Enter and verify your Fly organization slug and API token.
+5. Wait while Kestrel One provisions the default Environment. Progress is saved, and a failed provisioning operation can be retried from onboarding.
+6. When the Environment is ready, Kestrel One opens a new Thread.
+
+There is no skip path. The AI and Fly credentials remain masked after saving and can later be replaced in organization settings.
+
+## Join an existing organization by invitation
 
 1. Open the invitation sent by your Kestrel One administrator.
-2. Sign in, or create a Kestrel One account with the exact email address that received the invitation. Kestrel One account creation is invitation-only.
+2. Sign in, or create a Kestrel One account with the exact email address that received the invitation. This email-bound invitation is the signup authority for that flow; no signup code is used.
 3. Review the organization and role, then choose **Join organization**.
 4. Kestrel One activates that organization and opens its welcome screen. Start a standalone Thread when the organization is ready.
 
-An organization invitation grants access to that organization only. It does not
+An organization invitation grants its stated role in that organization only. It does not
 automatically add you to private Projects; a Project owner can add you when the
 work requires it.
 
@@ -50,7 +61,7 @@ Confirm the active organization, Thread identity, approved model, terminal outco
 
 ## Using the source instead
 
-An invitation is required only for the Lumi-hosted service. Use [Kestrel One source and hosting](/kestrel-one/source-and-hosting) to clone `v0.8.0` and run the repository development path.
+A signup code or organization invitation is required only for the Lumi-hosted service. Use [Kestrel One source and hosting](/kestrel-one/source-and-hosting) to clone `v0.8.0` and run the repository development path.
 
 If the invitation was sent to another email address, sign out and use the invited
 account. If an invitation has expired or was revoked, ask an organization owner

@@ -8,6 +8,9 @@ import {
   saveGatewayModel,
 } from "@/lib/ai/gateways";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import {
+  signupOnboardingSetupMutationGuard,
+} from "@/lib/signup-onboarding-mutation-guard";
 
 function safeErrorResponse(error: unknown) {
   const result = getSafeGatewayAdminError(error);
@@ -52,7 +55,14 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId } = await requireOrganizationAdmin();
+    const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const params = paramsSchema.parse(await context.params);
     const body = bodySchema.parse(await request.json());
     const model = await saveGatewayModel({
@@ -71,7 +81,14 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId } = await requireOrganizationAdmin();
+    const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const params = paramsSchema.parse(await context.params);
     const query = deleteQuerySchema.parse({
       modelId: request.nextUrl.searchParams.get("modelId"),

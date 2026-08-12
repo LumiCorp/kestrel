@@ -79,6 +79,7 @@ test(
                   properties: {
                     code: { enum: string[] };
                     nextStep: { enum: string[] };
+                    settingsPath: { enum: string[] };
                   };
                 };
               };
@@ -93,6 +94,10 @@ test(
         "model_access",
         "workspace_compute",
         "environment_execution",
+      ]);
+      assert.deepEqual(properties.settingsPath.enum, [
+        "/settings/organization/ai-providers",
+        "/settings/organization/setup",
       ]);
     }
   },

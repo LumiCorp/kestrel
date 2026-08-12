@@ -15,6 +15,7 @@ import {
   Server,
   Sparkles,
   ShieldCheck,
+  TicketCheck,
   User,
   Users,
 } from "lucide-react";
@@ -101,6 +102,11 @@ const organizationItems: SettingsItem[] = [
 ];
 
 const platformItems: SettingsItem[] = [
+  {
+    href: "/settings/platform/signup-codes",
+    icon: TicketCheck,
+    label: "Signup codes",
+  },
   {
     href: "/settings/platform/users",
     icon: Users,

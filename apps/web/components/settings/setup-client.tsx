@@ -3,7 +3,7 @@
 import { CheckCircle2, Circle, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   SettingsActionGroup,
@@ -42,6 +42,8 @@ export type SetupGateway = {
   enabled: boolean;
   hasApiKey: boolean;
   environmentId: string | null;
+  credentialStatus?: string;
+  credentialValidatedAt?: string | null;
   models: SetupModel[];
 };
 
@@ -59,6 +61,29 @@ type SetupModel = {
 
 const POLL_MS = 3000;
 
+type SignupOnboardingPayload = {
+  onboarding?: { readiness?: OrganizationChatReadiness | null };
+  gateways?: SetupGateway[];
+  canComplete?: boolean;
+  redirectTo?: string;
+  error?: string;
+};
+
+type SignupOnboardingAction =
+  | { action: "connect-provider"; provider: SetupProvider; apiKey: string }
+  | { action: "select-default-model"; modelId: string }
+  | {
+      action: "configure-fly";
+      organizationSlug: string;
+      apiToken: string | null;
+    }
+  | { action: "retry-default-environment" }
+  | { action: "complete" };
+
+async function readJson(response: Response) {
+  return (await response.json().catch(() => ({}))) as SignupOnboardingPayload;
+}
+
 function statusTone(ready: boolean) {
   return ready ? "positive" as const : "neutral" as const;
 }
@@ -74,14 +99,25 @@ function SetupStepIcon({ ready }: { ready: boolean }) {
 export function OrganizationSetupClient({
   initialReadiness,
   initialGateways,
+  initialCanComplete = false,
+  mode = "organization",
 }: {
   initialReadiness: OrganizationChatReadiness;
   initialGateways: SetupGateway[];
+  initialCanComplete?: boolean;
+  mode?: "organization" | "signup";
 }) {
   const router = useRouter();
   const [readiness, setReadiness] = useState(initialReadiness);
   const [gateways, setGateways] = useState(initialGateways);
-  const [provider, setProvider] = useState<SetupProvider>("lumi");
+  const [canComplete, setCanComplete] = useState(initialCanComplete);
+  const [completionState, setCompletionState] = useState<
+    "idle" | "busy" | "failed"
+  >("idle");
+  const completionRequested = useRef(false);
+  const [provider, setProvider] = useState<SetupProvider>(
+    mode === "signup" ? "openai" : "lumi",
+  );
   const [apiKey, setApiKey] = useState("");
   const [providerBusy, setProviderBusy] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
@@ -116,6 +152,9 @@ export function OrganizationSetupClient({
         .filter(
           (gateway) =>
             gateway.enabled &&
+            (mode !== "signup" ||
+              (gateway.credentialStatus === "ready" &&
+                Boolean(gateway.credentialValidatedAt))) &&
             (gateway.environmentId === null ||
               gateway.environmentId ===
                 readiness.environmentExecution.environmentId)
@@ -125,7 +164,7 @@ export function OrganizationSetupClient({
             .filter((model) => model.modality === "language")
             .map((model) => ({ ...model, gatewayName: gateway.displayName }))
         ),
-    [gateways, readiness.environmentExecution.environmentId]
+    [gateways, mode, readiness.environmentExecution.environmentId]
   );
 
   useEffect(() => {
@@ -137,7 +176,53 @@ export function OrganizationSetupClient({
     }
   }, [languageModels, selectedModelId]);
 
+  const applySignupPayload = useCallback(
+    (payload: SignupOnboardingPayload) => {
+      const nextReadiness = payload.onboarding?.readiness;
+      if (!(nextReadiness && Array.isArray(payload.gateways))) {
+        throw new Error("Personal workspace readiness is unavailable.");
+      }
+      setReadiness(nextReadiness);
+      setGateways(payload.gateways);
+      setCanComplete(Boolean(payload.canComplete));
+      setFlySlug(
+        (current) =>
+          current || nextReadiness.workspaceCompute.organizationSlug || "",
+      );
+      if (payload.redirectTo) {
+        window.location.assign(payload.redirectTo);
+      }
+      return nextReadiness;
+    },
+    [],
+  );
+
+  const requestSignupAction = useCallback(
+    async (action: SignupOnboardingAction) => {
+      const response = await fetch("/api/onboarding", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(action),
+      });
+      const payload = await readJson(response);
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Onboarding update failed.");
+      }
+      applySignupPayload(payload);
+      return payload;
+    },
+    [applySignupPayload],
+  );
+
   const refreshReadiness = useCallback(async () => {
+    if (mode === "signup") {
+      const response = await fetch("/api/onboarding", { cache: "no-store" });
+      const payload = await readJson(response);
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Personal workspace readiness is unavailable.");
+      }
+      return applySignupPayload(payload);
+    }
     const response = await fetch("/api/organization/setup", {
       cache: "no-store",
     });
@@ -151,9 +236,18 @@ export function OrganizationSetupClient({
       current || payload.readiness.workspaceCompute.organizationSlug || ""
     );
     return payload.readiness as OrganizationChatReadiness;
-  }, [router]);
+  }, [applySignupPayload, mode, router]);
 
   const refreshGateways = useCallback(async () => {
+    if (mode === "signup") {
+      const response = await fetch("/api/onboarding", { cache: "no-store" });
+      const payload = await readJson(response);
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Model providers are unavailable.");
+      }
+      applySignupPayload(payload);
+      return payload.gateways ?? [];
+    }
     const response = await fetch("/api/organization/ai/gateways", {
       cache: "no-store",
     });
@@ -172,12 +266,14 @@ export function OrganizationSetupClient({
         enabled: item.gateway.enabled,
         hasApiKey: item.gateway.hasApiKey,
         environmentId: item.gateway.environmentId,
+        credentialStatus: item.gateway.credentialStatus,
+        credentialValidatedAt: item.gateway.credentialValidatedAt,
         models: item.models,
       })
     );
     setGateways(next);
     return next;
-  }, []);
+  }, [applySignupPayload, mode]);
 
   useEffect(() => {
     if (
@@ -197,6 +293,16 @@ export function OrganizationSetupClient({
   async function connectProvider() {
     setProviderBusy(true);
     try {
+      if (mode === "signup") {
+        await requestSignupAction({
+          action: "connect-provider",
+          provider,
+          apiKey,
+        });
+        setApiKey("");
+        toast.success("Provider connected and language models synced.");
+        return;
+      }
       const existingGateway = gateways.find(
         (gateway) => gateway.provider === provider && gateway.environmentId === null
       );
@@ -241,6 +347,9 @@ export function OrganizationSetupClient({
       toast.success("Provider connected and language models synced.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Provider setup failed.");
+      if (mode === "signup") {
+        await refreshReadiness().catch(() => {});
+      }
     } finally {
       setProviderBusy(false);
     }
@@ -251,6 +360,14 @@ export function OrganizationSetupClient({
     if (!model) return;
     setModelBusy(true);
     try {
+      if (mode === "signup") {
+        await requestSignupAction({
+          action: "select-default-model",
+          modelId: model.id,
+        });
+        toast.success("Default language model is ready.");
+        return;
+      }
       const response = await fetch(
         `/api/organization/ai/gateways/${encodeURIComponent(model.gatewayId)}/models`,
         {
@@ -282,6 +399,10 @@ export function OrganizationSetupClient({
   }
 
   async function requestEnvironmentRecovery() {
+    if (mode === "signup") {
+      await requestSignupAction({ action: "retry-default-environment" });
+      return;
+    }
     const response = await fetch("/api/organization/setup", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -297,6 +418,20 @@ export function OrganizationSetupClient({
   async function configureFly() {
     setFlyBusy(true);
     try {
+      if (mode === "signup") {
+        const payload = await requestSignupAction({
+          action: "configure-fly",
+          organizationSlug: flySlug,
+          apiToken: flyToken || null,
+        });
+        setFlyToken("");
+        toast.success(
+          payload.onboarding?.readiness?.environmentExecution.deploymentEnabled
+            ? "Fly is verified and Environment recovery was requested."
+            : "Fly is verified. Hosted Environments must be enabled for this deployment.",
+        );
+        return;
+      }
       const configureResponse = await fetch(
         "/api/organization/infrastructure/connections/fly",
         {
@@ -341,6 +476,11 @@ export function OrganizationSetupClient({
   async function enableExecution() {
     setExecutionBusy(true);
     try {
+      if (mode === "signup") {
+        await requestEnvironmentRecovery();
+        toast.success("Environment execution enabled and recovery requested.");
+        return;
+      }
       const response = await fetch("/api/organization/environments", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -373,13 +513,40 @@ export function OrganizationSetupClient({
     }
   }
 
+  const completeSignup = useCallback(async () => {
+    if (completionRequested.current) return;
+    completionRequested.current = true;
+    setCompletionState("busy");
+    try {
+      await requestSignupAction({ action: "complete" });
+    } catch (error) {
+      completionRequested.current = false;
+      setCompletionState("failed");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Workspace completion could not be saved.",
+      );
+    }
+  }, [requestSignupAction]);
+
+  useEffect(() => {
+    if (mode === "signup" && readiness.ready && canComplete) {
+      void completeSignup();
+    }
+  }, [canComplete, completeSignup, mode, readiness.ready]);
+
   if (readiness.ready) {
     return (
       <SettingsPage>
         <SettingsPageHeader
-          description="Your organization has the minimum configuration required to run agent chats."
-          eyebrow="Organization"
-          title="Setup complete"
+          description={
+            mode === "signup"
+              ? "Your provider, model, Fly connection, and Environment are ready."
+              : "Your organization has the minimum configuration required to run agent chats."
+          }
+          eyebrow={mode === "signup" ? "Kestrel One" : "Organization"}
+          title={mode === "signup" ? "You're ready" : "Setup complete"}
         />
         <SettingsSection
           description="Model access, workspace compute, and Environment execution are ready."
@@ -405,9 +572,23 @@ export function OrganizationSetupClient({
             </SettingsRow>
           </SettingsRows>
           <div className="mt-5">
-            <Button asChild>
-              <Link href="/threads/new">Start first chat</Link>
-            </Button>
+            {mode === "signup" ? (
+              <Button
+                disabled={completionState === "busy"}
+                onClick={() => void completeSignup()}
+              >
+                {completionState === "busy" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : null}
+                {completionState === "failed"
+                  ? "Finish onboarding"
+                  : "Finishing onboarding…"}
+              </Button>
+            ) : (
+              <Button asChild>
+                <Link href="/threads/new">Start first chat</Link>
+              </Button>
+            )}
           </div>
         </SettingsSection>
       </SettingsPage>
@@ -417,9 +598,13 @@ export function OrganizationSetupClient({
   return (
     <SettingsPage>
       <SettingsPageHeader
-        description="Complete these three checks to let your team start agent chats. You can leave and return at any time."
-        eyebrow="Organization"
-        title="Finish setup"
+        description={
+          mode === "signup"
+            ? "Your progress is saved as each connection is verified."
+            : "Complete these three checks to let your team start agent chats. You can leave and return at any time."
+        }
+        eyebrow={mode === "signup" ? "Kestrel One" : "Organization"}
+        title={mode === "signup" ? "Finish your workspace" : "Finish setup"}
       />
 
       <SettingsSection
@@ -450,7 +635,9 @@ export function OrganizationSetupClient({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {SETUP_PROVIDERS.map((option) => (
+                      {SETUP_PROVIDERS.filter(
+                        (option) => mode !== "signup" || option.key !== "lumi",
+                      ).map((option) => (
                         <SelectItem key={option.key} value={option.key}>
                           {option.label}
                         </SelectItem>
@@ -507,6 +694,7 @@ export function OrganizationSetupClient({
         </SettingsRows>
       </SettingsSection>
 
+      {mode !== "signup" || readiness.modelAccess.ready ? (
       <SettingsSection
         description="Fly provides the CPU workspace runtimes where agents execute and persistent workspaces live."
         title="2. Workspace compute"
@@ -564,7 +752,9 @@ export function OrganizationSetupClient({
           )}
         </SettingsRows>
       </SettingsSection>
+      ) : null}
 
+      {mode !== "signup" || readiness.workspaceCompute.ready ? (
       <SettingsSection
         description="The existing default Environment is provisioned automatically after Fly verification."
         title="3. Environment execution"
@@ -613,7 +803,8 @@ export function OrganizationSetupClient({
                     {executionBusy ? "Retrying…" : "Retry"}
                   </Button>
                 ) : null}
-                {readiness.environmentExecution.environmentId ? (
+                {readiness.environmentExecution.environmentId &&
+                mode !== "signup" ? (
                   <Button asChild size="sm" variant="ghost">
                     <Link
                       href={`/settings/organization/environments/${readiness.environmentExecution.environmentId}/activity`}
@@ -627,6 +818,7 @@ export function OrganizationSetupClient({
           )}
         </SettingsRows>
       </SettingsSection>
+      ) : null}
     </SettingsPage>
   );
 }

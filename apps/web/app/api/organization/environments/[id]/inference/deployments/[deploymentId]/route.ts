@@ -15,6 +15,9 @@ import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { enqueueManagedRunPodRun } from "@/lib/knowledge/queue";
 import { routeIdSchema } from "@/lib/knowledge/validation";
+import {
+  signupOnboardingSetupMutationGuard,
+} from "@/lib/signup-onboarding-mutation-guard";
 
 const paramsSchema = z.object({
   id: routeIdSchema,
@@ -59,7 +62,14 @@ export async function POST(
 ) {
   try {
     assertEnvironmentPrivateInferenceEnabled();
-    const { organizationId } = await requireOrganizationAdmin();
+    const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     actionSchema.parse(await request.json());
     const params = await resolveParams(context);
     const current = await getManagedRunPodDeployment({
@@ -91,7 +101,14 @@ export async function DELETE(
   context: { params: Promise<{ id: string; deploymentId: string }> }
 ) {
   try {
-    const { organizationId } = await requireOrganizationAdmin();
+    const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const result = await queueManagedRunPodDeletion({
       organizationId,
       ...(await resolveParams(context)),

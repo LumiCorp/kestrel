@@ -48,7 +48,7 @@ const productPaths = [
     description:
       "Bring people, shared context, and connected capabilities into the work with Projects, Threads, Knowledge, Apps, and execution Environments.",
     action: "Access hosted Kestrel One",
-    href: "/sign-in",
+    href: "/sign-up",
     icon: Users,
   },
   {
@@ -106,7 +106,7 @@ const capabilities = [
 
 const betaNotes = [
   "Products and contracts share version 0.8.0; the corrected Runtime npm package is 0.8.2.",
-  "Kestrel One source is public; Lumi-hosted access remains invitation-only.",
+  "Kestrel One source is public; Lumi-hosted signup requires an invite code.",
   "Desktop 0.8.0 is a signed manual download; stable OTA proof is deferred to 0.8.1.",
   "Release identity, known Beta limitations, and compatibility remain public.",
 ] as const;
@@ -310,7 +310,7 @@ export function LandingPage() {
                   size="lg"
                   variant="outline"
                 >
-                  <Link href="/sign-in">
+                  <Link href="/sign-up">
                     Access hosted Kestrel One
                     <ArrowRight />
                   </Link>
@@ -595,7 +595,7 @@ export function LandingPage() {
                 </Link>
               </Button>
               <Button asChild className="h-11 px-5" size="lg" variant="outline">
-                <Link href="/sign-in">
+                <Link href="/sign-up">
                   <Users />
                   Hosted access
                 </Link>
