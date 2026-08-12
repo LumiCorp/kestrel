@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { TuiProfile } from "../../../cli/contracts.js";
 import type { RuntimeTurnInput, RuntimeTurnResult } from "../../runtime/RuntimeTurn.js";
 import type {
+  CodexRolloutCheckpointStore,
   RuntimeAdapterCallbacksV1,
   RuntimeAdapterV1,
   RuntimeBindingV1,
@@ -58,14 +59,23 @@ interface CodexSessionState {
   completion: Deferred<CodexCompletion>;
   liveConnectionLost?: boolean | undefined;
   cleanupInput?: (() => Promise<void>) | undefined;
+  rolloutPath?: string | undefined;
+  codexHome?: string | undefined;
+  tornDown?: boolean | undefined;
+  processFailureCode?: "CODEX_PROTOCOL_INVALID" | "CODEX_RUNTIME_FAILED" | undefined;
 }
 
 export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
   private readonly sessions = new Map<string, CodexSessionState>();
   private readonly sessionByNativeThread = new Map<string, CodexSessionState>();
+  private readonly lostWaits = new Map<
+    string,
+    { bindingId: string; requestId: string }
+  >();
   private client: CodexClient | undefined;
   private clientStart: Promise<void> | undefined;
   private credentialFingerprint: string | undefined;
+  private clientEnvironment: RuntimeEnvironmentMap | undefined;
 
   constructor(
     private readonly profile: TuiProfile,
@@ -77,6 +87,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
     private readonly createClient: (
       options: CodexAppServerClientOptions,
     ) => CodexClient = (options) => new CodexAppServerClient(options),
+    private readonly checkpoints?: CodexRolloutCheckpointStore,
   ) {}
 
   async describe(): Promise<RuntimeDescriptorV1> {
@@ -112,9 +123,12 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
         "ready",
       );
     } catch (error) {
+      const code = readErrorCode(error);
       return descriptor(
-        "unavailable",
-        error instanceof Error ? error.message : String(error),
+        code === "CODEX_PROTOCOL_INVALID" ? "version_mismatch" : "unavailable",
+        code === "CODEX_PROTOCOL_INVALID"
+          ? "The installed Codex app-server protocol is incompatible."
+          : "Codex readiness could not be established.",
       );
     }
   }
@@ -137,7 +151,9 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
         code === "RUNTIME_ATTACHMENT_UNSUPPORTED" ||
         code === "RUNTIME_NATIVE_SESSION_LOST" ||
         code === "RUNTIME_LIVE_WAIT_LOST" ||
-        code === "RUNTIME_BINDING_DEGRADED"
+        code === "RUNTIME_BINDING_DEGRADED" ||
+        code === "CODEX_PROTOCOL_INVALID" ||
+        code === "CODEX_RUNTIME_FAILED"
       ) {
         return failed(input.turn, code, error instanceof Error ? error.message : String(error));
       }
@@ -160,23 +176,23 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
   async release(binding: RuntimeBindingV1): Promise<void> {
     const state = this.sessions.get(binding.threadId);
     if (state !== undefined && state.binding.bindingId === binding.bindingId) {
-      this.sessions.delete(binding.threadId);
-      this.sessionByNativeThread.delete(state.nativeThreadId);
-      await cleanupCodexInput(state);
-      await this.client?.request("thread/unsubscribe", {
-        threadId: state.nativeThreadId,
-      }).catch(() => undefined);
+      state.pending?.resolved.resolve(false);
+      await this.teardownState(state, true);
     }
+    await this.checkpoints?.release(binding.bindingId);
+    this.lostWaits.delete(binding.threadId);
     await this.nativeSessions.release(binding.bindingId);
   }
 
   async dispose(): Promise<void> {
-    await Promise.allSettled([...this.sessions.values()].map(cleanupCodexInput));
-    this.sessions.clear();
-    this.sessionByNativeThread.clear();
+    await Promise.allSettled(
+      [...this.sessions.values()].map((state) => this.teardownState(state, false)),
+    );
     this.client?.close();
     this.client = undefined;
     this.clientStart = undefined;
+    this.clientEnvironment = undefined;
+    this.lostWaits.clear();
   }
 
   private async ensureClient(): Promise<void> {
@@ -189,7 +205,31 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       this.credentialFingerprint !== snapshot.credentialFingerprint
     ) {
       if (this.sessions.size > 0) {
-        throw new Error("Codex credentials changed during an active Turn.");
+        await Promise.allSettled(
+          [...this.sessions.values()].map((state) =>
+            state.pending !== undefined
+              ? this.failLiveWait(
+                  state,
+                  "Codex credentials changed or expired during the live interaction.",
+                )
+              : Promise.resolve(
+                  state.completion.resolve({
+                    status: "FAILED",
+                    error: {
+                      code: "CODEX_RUNTIME_FAILED",
+                      message:
+                        "Codex credentials changed during the active Turn.",
+                    },
+                  }),
+                ),
+          ),
+        );
+        throw Object.assign(
+          new Error(
+            "Codex credentials changed or expired during the live interaction.",
+          ),
+          { code: "RUNTIME_LIVE_WAIT_LOST" },
+        );
       }
       this.client.close();
       this.client = undefined;
@@ -203,6 +243,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       onExit: (error) => this.onExit(error),
     });
     this.credentialFingerprint = snapshot.credentialFingerprint;
+    this.clientEnvironment = { ...snapshot.env };
     this.clientStart = this.client.start().catch((error) => {
       this.clientStart = undefined;
       throw error;
@@ -230,31 +271,50 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       binding.nativeSessionState = "degraded";
       throw nativeSessionLost("The persisted Codex Thread for this binding is missing.");
     }
+    if (persisted?.status === "degraded") {
+      binding.status = "degraded";
+      binding.nativeSessionState = "degraded";
+      throw nativeSessionLost("The persisted Codex Thread is degraded.");
+    }
+    if (persisted !== undefined && persisted.status !== "released") {
+      await this.ensurePersistedCorrelation(persisted, binding);
+    }
     const prepared = await prepareCodexInput({
       ...turn,
       ...(persisted !== undefined ? { history: undefined } : {}),
     });
     let nativeThreadId: string;
+    let rolloutPath: string | undefined;
     if (persisted !== undefined && persisted.status !== "released") {
       if (persisted.runtimeId !== "codex") {
         throw nativeSessionLost("The Runtime binding contains incompatible native state.");
       }
       try {
+        const codexHome = this.clientEnvironment?.CODEX_HOME;
+        if (codexHome !== undefined) {
+          await this.checkpoints?.materialize({
+            bindingId: binding.bindingId,
+            codexHome,
+          });
+          // A missing checkpoint is not proof of loss when the app-server is
+          // still using the original CODEX_HOME. Let thread/resume establish
+          // whether the native rollout remains available. Cross-root loss
+          // fails here naturally without replaying canonical history.
+        }
         const resumed = await this.client!.request<CodexThreadResumeResponse>("thread/resume", {
           threadId: persisted.nativeSessionId,
         });
         nativeThreadId = resumed.thread.id;
+        rolloutPath = resumed.thread.path ?? undefined;
       } catch {
         await prepared.cleanup();
         binding.status = "degraded";
         binding.nativeSessionState = "degraded";
-        if (persisted.status !== "degraded") {
-          await this.nativeSessions.save({
-            ...persisted,
-            status: "degraded",
-            updatedAt: new Date().toISOString(),
-          });
-        }
+        await this.nativeSessions.save({
+          ...persisted,
+          status: "degraded",
+          updatedAt: new Date().toISOString(),
+        });
         throw nativeSessionLost("Codex could not resume the native Thread for this binding.");
       }
     } else {
@@ -285,11 +345,15 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
         throw error;
       }
       nativeThreadId = thread.thread.id;
+      rolloutPath = thread.thread.path ?? undefined;
       const now = new Date().toISOString();
       await this.nativeSessions.save({
         version: "runtime_native_session_v1",
         bindingId: binding.bindingId,
         runtimeId: "codex",
+        threadId: binding.threadId,
+        participantId: binding.participantId,
+        environmentId: binding.environmentId,
         nativeSessionId: nativeThreadId,
         nativeVersion: CODEX_VERSION,
         status: "ready",
@@ -319,6 +383,10 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       toolCalls: 0,
       segment,
       completion,
+      ...(rolloutPath !== undefined ? { rolloutPath } : {}),
+      ...(this.clientEnvironment?.CODEX_HOME !== undefined
+        ? { codexHome: this.clientEnvironment.CODEX_HOME }
+        : {}),
     };
     this.sessions.set(turn.sessionId, state);
     this.sessionByNativeThread.set(state.nativeThreadId, state);
@@ -332,12 +400,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       });
       state.nativeTurnId = started.turn.id;
     } catch (error) {
-      this.sessions.delete(turn.sessionId);
-      this.sessionByNativeThread.delete(state.nativeThreadId);
-      await cleanupCodexInput(state);
-      await this.client?.request("thread/unsubscribe", {
-        threadId: state.nativeThreadId,
-      }).catch(() => undefined);
+      await this.teardownState(state, true);
       throw error;
     }
     if (signal !== undefined) {
@@ -357,6 +420,19 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
   ): Promise<RuntimeTurnResult> {
     const state = this.sessions.get(turn.sessionId);
     const requestId = turn.resumeRequestId?.trim();
+    const lostWait = this.lostWaits.get(turn.sessionId);
+    if (
+      state === undefined &&
+      lostWait !== undefined &&
+      lostWait.bindingId === binding.bindingId &&
+      requestId === lostWait.requestId
+    ) {
+      return failed(
+        turn,
+        "RUNTIME_LIVE_WAIT_LOST",
+        "The Codex live interaction connection was lost.",
+      );
+    }
     if (
       state === undefined ||
       state.binding.bindingId !== binding.bindingId ||
@@ -377,7 +453,6 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
     try {
       await this.ensureClient();
     } catch {
-      state.liveConnectionLost = true;
       return failed(
         turn,
         "RUNTIME_LIVE_WAIT_LOST",
@@ -392,6 +467,10 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
     );
     const delivered = await pending.resolved.promise;
     if (!delivered) {
+      await this.failLiveWait(
+        state,
+        "The Codex live interaction connection was lost.",
+      );
       return failed(turn, "RUNTIME_LIVE_WAIT_LOST", "The Codex live interaction connection was lost.");
     }
     if (state.pending === pending) state.pending = undefined;
@@ -461,12 +540,28 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
         },
       });
     }
-    this.sessions.delete(turn.sessionId);
-    this.sessionByNativeThread.delete(state.nativeThreadId);
-    await cleanupCodexInput(state);
-    await this.client?.request("thread/unsubscribe", {
-      threadId: state.nativeThreadId,
-    }).catch(() => undefined);
+    if (
+      outcome.completion.status === "COMPLETED" &&
+      state.codexHome !== undefined &&
+      state.rolloutPath !== undefined
+    ) {
+      try {
+        await this.checkpoints?.capture({
+          bindingId: state.binding.bindingId,
+          codexHome: state.codexHome,
+          rolloutPath: state.rolloutPath,
+        });
+      } catch {
+        outcome.completion = {
+          status: "FAILED",
+          error: {
+            code: "CODEX_RUNTIME_FAILED",
+            message: "Codex continuation state could not be checkpointed.",
+          },
+        };
+      }
+    }
+    await this.teardownState(state, true);
     if (outcome.completion.status === "ABORTED") {
       throw new Error("Codex Runtime Turn was cancelled.");
     }
@@ -527,15 +622,6 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
         String(notification.params.requestId) === String(state.pending.nativeRequestId)
       ) {
         state.pending.resolved.resolve(true);
-      } else {
-        for (const candidate of this.sessionByNativeThread.values()) {
-          if (
-            candidate.pending !== undefined &&
-            String(notification.params.requestId) === String(candidate.pending.nativeRequestId)
-          ) {
-            candidate.pending.resolved.resolve(true);
-          }
-        }
       }
       return;
     }
@@ -559,22 +645,130 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
             }
           : {}),
       });
+      void cleanupCodexInput(state);
+      void this.teardownState(state, false);
     }
   }
 
   private onExit(error: Error): void {
     for (const state of this.sessions.values()) {
-      state.binding.status = "degraded";
-      state.liveConnectionLost = true;
-      state.pending?.resolved.resolve(false);
+      const liveWaitLost = state.pending !== undefined;
+      const processFailureCode =
+        readErrorCode(error) === "CODEX_PROTOCOL_INVALID"
+          ? "CODEX_PROTOCOL_INVALID"
+          : "CODEX_RUNTIME_FAILED";
+      state.processFailureCode = processFailureCode;
+      if (liveWaitLost) {
+        state.binding.status = "degraded";
+        state.binding.nativeSessionState = "degraded";
+        state.liveConnectionLost = true;
+        state.pending?.resolved.resolve(false);
+        this.lostWaits.set(state.binding.threadId, {
+          bindingId: state.binding.bindingId,
+          requestId: state.pending!.requestId,
+        });
+        void this.persistDegraded(state.binding.bindingId);
+      }
       state.completion.resolve({
         status: "FAILED",
-        error: { code: "RUNTIME_LIVE_WAIT_LOST", message: error.message },
+        error: {
+          code: liveWaitLost
+            ? "RUNTIME_LIVE_WAIT_LOST"
+            : processFailureCode,
+          message: liveWaitLost
+            ? "The Codex live interaction connection was lost."
+            : processFailureCode === "CODEX_PROTOCOL_INVALID"
+              ? "The Codex app-server emitted an invalid protocol message."
+              : "The Codex app-server exited during the Turn.",
+        },
       });
-      void cleanupCodexInput(state);
+      void this.teardownState(state, false);
     }
     this.client = undefined;
     this.clientStart = undefined;
+  }
+
+  private async failLiveWait(
+    state: CodexSessionState,
+    message: string,
+  ): Promise<void> {
+    state.binding.status = "degraded";
+    state.binding.nativeSessionState = "degraded";
+    state.liveConnectionLost = true;
+    if (state.pending !== undefined) {
+      this.lostWaits.set(state.binding.threadId, {
+        bindingId: state.binding.bindingId,
+        requestId: state.pending.requestId,
+      });
+    }
+    state.pending?.resolved.resolve(false);
+    state.completion.resolve({
+      status: "FAILED",
+      error: { code: "RUNTIME_LIVE_WAIT_LOST", message },
+    });
+    await this.persistDegraded(state.binding.bindingId);
+    await this.teardownState(state, false);
+  }
+
+  private async persistDegraded(bindingId: string): Promise<void> {
+    const persisted = await this.nativeSessions.load(bindingId);
+    if (persisted === undefined || persisted.status !== "ready") return;
+    await this.nativeSessions.save({
+      ...persisted,
+      status: "degraded",
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  private async ensurePersistedCorrelation(
+    persisted: Exclude<
+      Awaited<ReturnType<RuntimeNativeSessionStore["load"]>>,
+      undefined | { status: "released" }
+    >,
+    binding: RuntimeBindingV1,
+  ): Promise<void> {
+    for (const [stored, expected] of [
+      [persisted.threadId, binding.threadId],
+      [persisted.participantId, binding.participantId],
+      [persisted.environmentId, binding.environmentId],
+    ] as const) {
+      if (stored !== undefined && stored !== expected) {
+        binding.status = "degraded";
+        binding.nativeSessionState = "degraded";
+        throw nativeSessionLost(
+          "The persisted Codex Thread correlation does not match this binding.",
+        );
+      }
+    }
+    if (
+      persisted.threadId === undefined ||
+      persisted.participantId === undefined ||
+      persisted.environmentId === undefined
+    ) {
+      await this.nativeSessions.save({
+        ...persisted,
+        threadId: binding.threadId,
+        participantId: binding.participantId,
+        environmentId: binding.environmentId,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  private async teardownState(
+    state: CodexSessionState,
+    unsubscribe: boolean,
+  ): Promise<void> {
+    if (state.tornDown) return;
+    state.tornDown = true;
+    this.sessions.delete(state.binding.threadId);
+    this.sessionByNativeThread.delete(state.nativeThreadId);
+    await cleanupCodexInput(state);
+    if (unsubscribe) {
+      await this.client?.request("thread/unsubscribe", {
+        threadId: state.nativeThreadId,
+      }).catch(() => undefined);
+    }
   }
 }
 

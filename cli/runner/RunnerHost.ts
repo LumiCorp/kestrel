@@ -176,6 +176,22 @@ export interface RunnerProfileProvider {
 }
 
 export type RunnerProfileSourcePolicy = "inline-or-registered" | "registered-only";
+export type RunnerRuntimeEnvironmentOperation =
+  | "runtime.describe"
+  | "runtime.release";
+export type RunnerRuntimeEnvironmentAuthorizer = (
+  environmentId: string,
+  operation: RunnerRuntimeEnvironmentOperation,
+) => boolean | Promise<boolean>;
+export interface RunnerRunStartRuntimeEnvironmentIdentity {
+  runnerSessionId: string;
+  runtimeId: NonNullable<RunTurnInput["runtimeId"]>;
+  runtimeBindingId?: string | undefined;
+  participantId?: string | undefined;
+}
+export type RunnerRunStartRuntimeEnvironmentResolver = (
+  identity: RunnerRunStartRuntimeEnvironmentIdentity,
+) => string | undefined | Promise<string | undefined>;
 
 export interface RunnerRuntime {
   describeRuntime?: (() => Promise<RuntimeDescriptorV1>) | undefined;
@@ -465,7 +481,8 @@ export interface RunnerRuntime {
   close(): Promise<void>;
 }
 
-export type RunnerRuntimeFactory = (
+export interface RunnerRuntimeFactory {
+  (
   profile: TuiProfile,
   onRunLog: (entry: RunLogEntry) => void,
   onProgress: (update: ProgressUpdateV1) => void,
@@ -476,7 +493,11 @@ export type RunnerRuntimeFactory = (
   onDetachedTurnEvent: (event: DetachedTurnLifecycleEvent) => void,
   onInteractionDelivered: (event: RuntimeInteractionDeliveredV1) => void,
   onNativeSessionEstablished: (event: RuntimeNativeSessionEstablishedV1) => void
-) => RunnerRuntime;
+  ): RunnerRuntime;
+  releaseRuntimeBinding?:
+    | ((input: RuntimeReleaseCommandPayload) => Promise<void>)
+    | undefined;
+}
 
 export function createLiveOnlyProgressListener(listener: (update: ProgressUpdateV1) => void): (update: ProgressUpdateV1) => void {
   return (update) => {
@@ -529,6 +550,9 @@ export class RunnerHost {
   private readonly runtimeFactory: RunnerRuntimeFactory;
   private readonly profileProvider: RunnerProfileProvider;
   private readonly profileSourcePolicy: RunnerProfileSourcePolicy;
+  private readonly runtimeEnvironmentId: string | undefined;
+  private readonly authorizeRuntimeEnvironment: RunnerRuntimeEnvironmentAuthorizer | undefined;
+  private readonly resolveRunStartRuntimeEnvironment: RunnerRunStartRuntimeEnvironmentResolver | undefined;
   private readonly diagnosticsStore = new DiagnosticLogStore();
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly commandBySession = new Map<string, string>();
@@ -551,12 +575,18 @@ export class RunnerHost {
     profileProvider: RunnerProfileProvider = createDefaultProfileProvider(),
     options: {
       profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
+      runtimeEnvironmentId?: string | undefined;
+      authorizeRuntimeEnvironment?: RunnerRuntimeEnvironmentAuthorizer | undefined;
+      resolveRunStartRuntimeEnvironment?: RunnerRunStartRuntimeEnvironmentResolver | undefined;
     } = {}
   ) {
     this.writer = writer;
     this.runtimeFactory = runtimeFactory;
     this.profileProvider = profileProvider;
     this.profileSourcePolicy = options.profileSourcePolicy ?? "inline-or-registered";
+    this.runtimeEnvironmentId = options.runtimeEnvironmentId?.trim() || undefined;
+    this.authorizeRuntimeEnvironment = options.authorizeRuntimeEnvironment;
+    this.resolveRunStartRuntimeEnvironment = options.resolveRunStartRuntimeEnvironment;
   }
 
   async profileList(commandId: string, _payload: ProfileListCommandPayload): Promise<void> {
@@ -611,6 +641,26 @@ export class RunnerHost {
       throw new Error("runtime.describe is not supported by this runner profile provider.");
     }
     const resolution = await compose(payload);
+    const credentialEnvironmentId =
+      resolution.resolvedProfile.modelCredential?.environmentId;
+    if (
+      credentialEnvironmentId !== undefined &&
+      credentialEnvironmentId !== payload.environmentId
+    ) {
+      throw new Error(
+        "runtime.describe credential authority does not match the selected Environment.",
+      );
+    }
+    if (
+      !(await this.isRuntimeEnvironmentAuthorized(
+        payload.environmentId,
+        "runtime.describe",
+      ))
+    ) {
+      throw new Error(
+        "runtime.describe Environment authority does not match the selected Environment.",
+      );
+    }
     const runtime = this.runtimeFactory(
       resolution.resolvedProfile,
       () => {},
@@ -633,7 +683,7 @@ export class RunnerHost {
         descriptor,
         profileFingerprint: resolution.fingerprint,
         capabilityDigest: createHash("sha256").update(JSON.stringify(descriptor.capabilities)).digest("hex"),
-        environmentId: payload.environmentPresetId,
+        environmentId: payload.environmentId,
         observedAt: new Date().toISOString()
       };
       this.writer.emit("runtime.described", result, { commandId });
@@ -645,22 +695,37 @@ export class RunnerHost {
   async runtimeRelease(
     commandId: string,
     payload: RuntimeReleaseCommandPayload,
-    metadata?: RunnerCommandMetadata,
+    _metadata?: RunnerCommandMetadata,
   ): Promise<void> {
-    if (payload.runtimeId !== "kestrel") {
-      const runtime = this.selectRuntimes(metadata).find(
-        (candidate) => candidate.releaseRuntimeBinding !== undefined,
+    if (!(await this.isRuntimeEnvironmentAuthorized(
+      payload.environmentId,
+      "runtime.release",
+    ))) {
+      throw new Error(
+        "runtime.release Environment correlation does not match Runner authority.",
       );
-      if (runtime?.releaseRuntimeBinding === undefined) {
+    }
+    if (payload.runtimeId !== "kestrel") {
+      if (this.runtimeFactory.releaseRuntimeBinding === undefined) {
         throw new Error("The selected Runtime does not support binding release.");
       }
-      await runtime.releaseRuntimeBinding(payload);
+      await this.runtimeFactory.releaseRuntimeBinding(payload);
     }
     this.writer.emit("runtime.released", payload, {
       commandId,
       sessionId: payload.threadId,
       threadId: payload.threadId,
     });
+  }
+
+  private async isRuntimeEnvironmentAuthorized(
+    environmentId: string,
+    operation: RunnerRuntimeEnvironmentOperation,
+  ): Promise<boolean> {
+    if (environmentId === this.runtimeEnvironmentId) return true;
+    return this.authorizeRuntimeEnvironment === undefined
+      ? false
+      : await this.authorizeRuntimeEnvironment(environmentId, operation);
   }
 
   runStart(
@@ -698,8 +763,29 @@ export class RunnerHost {
         throw new Error("Gateway-managed execution credential does not belong to the authenticated tenant.");
       }
     }
+    const runtimeId = payload.turn.runtimeId ?? profile.runtimeId ?? "kestrel";
+    if (runtimeId !== (profile.runtimeId ?? "kestrel")) {
+      throw createRuntimeFailure(
+        "RUNTIME_BINDING_IMMUTABLE",
+        "The requested Runtime does not match the resolved execution profile.",
+      );
+    }
+    const runtimeEnvironmentId = await this.resolveTrustedRunStartEnvironment({
+      runnerSessionId: payload.turn.sessionId,
+      runtimeId,
+      ...(payload.turn.runtimeBindingId !== undefined
+        ? { runtimeBindingId: payload.turn.runtimeBindingId }
+        : {}),
+      ...(payload.turn.participantId !== undefined
+        ? { participantId: payload.turn.participantId }
+        : {}),
+    });
     const turn: RunTurnInput = {
       ...payload.turn,
+      runtimeId,
+      // Environment authority is always supplied by the Runner composition
+      // boundary. A structurally compatible direct caller cannot inject it.
+      runtimeEnvironmentId,
       ...(metadata?.actor !== undefined
         ? {
             actor: {
@@ -717,6 +803,9 @@ export class RunnerHost {
         {
           sessionId: turn.sessionId,
           ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
+          runtimeId: turn.runtimeId,
+          ...(turn.runtimeBindingId !== undefined ? { runtimeBindingId: turn.runtimeBindingId } : {}),
+          ...(turn.participantId !== undefined ? { participantId: turn.participantId } : {}),
           eventType: turn.eventType
         },
         {
@@ -785,6 +874,9 @@ export class RunnerHost {
           {
             sessionId: turn.sessionId,
             ...(concurrent.runId !== undefined ? { runId: concurrent.runId } : {}),
+            runtimeId: turn.runtimeId,
+            ...(turn.runtimeBindingId !== undefined ? { runtimeBindingId: turn.runtimeBindingId } : {}),
+            ...(turn.participantId !== undefined ? { participantId: turn.participantId } : {}),
             eventType: turn.eventType
           },
           {
@@ -1020,6 +1112,18 @@ export class RunnerHost {
       this.commandTypeBySession.delete(turn.sessionId);
       this.activeRuns.delete(turn.sessionId);
     }
+  }
+
+  private async resolveTrustedRunStartEnvironment(
+    identity: RunnerRunStartRuntimeEnvironmentIdentity,
+  ): Promise<string | undefined> {
+    const resolved = this.resolveRunStartRuntimeEnvironment === undefined
+      ? this.runtimeEnvironmentId
+      : await this.resolveRunStartRuntimeEnvironment(identity);
+    const normalized = resolved?.trim();
+    return normalized === undefined || normalized.length === 0
+      ? undefined
+      : normalized;
   }
 
   jobRun(commandId: string, payload: JobRunCommandPayload): Promise<void> {

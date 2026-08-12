@@ -48,6 +48,11 @@ export type WebHistoryLine = WebHistoryLineBase & (
 export interface WebRunTurnRequest {
   sessionId: string;
   runId?: string | undefined;
+  runtimeId?: "kestrel" | "codex" | "claude" | undefined;
+  runtimeBindingId?: string | undefined;
+  runtimeBindingStatus?: "ready" | "degraded" | "released" | undefined;
+  runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
+  participantId?: string | undefined;
   message: string;
   eventType: string;
   history?: WebHistoryLine[] | undefined;

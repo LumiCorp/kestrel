@@ -18,6 +18,8 @@ import {
   RunnerHost,
   type RunnerProfileProvider,
   type RunnerProfileSourcePolicy,
+  type RunnerRunStartRuntimeEnvironmentResolver,
+  type RunnerRuntimeEnvironmentAuthorizer,
 } from "./RunnerHost.js";
 import type {
   RunnerServiceEventJournal,
@@ -42,6 +44,9 @@ export interface RunnerServiceHostOptions {
   runtimeFactory?: ConstructorParameters<typeof RunnerHost>[1] | undefined;
   profileProvider?: RunnerProfileProvider | undefined;
   profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
+  runtimeEnvironmentId?: string | undefined;
+  authorizeRuntimeEnvironment?: RunnerRuntimeEnvironmentAuthorizer | undefined;
+  resolveRunStartRuntimeEnvironment?: RunnerRunStartRuntimeEnvironmentResolver | undefined;
   serviceVersion: string;
   eventJournal?: RunnerServiceEventJournal | undefined;
 }
@@ -542,7 +547,12 @@ export class RunnerServiceHost {
       this.events,
       options.runtimeFactory,
       options.profileProvider,
-      { profileSourcePolicy: options.profileSourcePolicy },
+      {
+        profileSourcePolicy: options.profileSourcePolicy,
+        runtimeEnvironmentId: options.runtimeEnvironmentId,
+        authorizeRuntimeEnvironment: options.authorizeRuntimeEnvironment,
+        resolveRunStartRuntimeEnvironment: options.resolveRunStartRuntimeEnvironment,
+      },
     );
     this.router = new CommandRouter(this.host, this.events);
     this.health = createRunnerHealthV1({

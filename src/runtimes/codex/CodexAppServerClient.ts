@@ -9,6 +9,10 @@ import type {
   CodexServerNotification,
   CodexServerRequest,
 } from "./protocol.js";
+import {
+  parseCodexResponseResult,
+  parseCodexServerMessage,
+} from "./protocol.js";
 
 const require = createRequire(import.meta.url);
 
@@ -19,6 +23,7 @@ interface JsonRpcError {
 }
 
 interface PendingRequest {
+  method: string;
   resolve(value: unknown): void;
   reject(error: Error): void;
 }
@@ -36,6 +41,7 @@ export class CodexAppServerClient {
   private readonly pending = new Map<number, PendingRequest>();
   private initialized = false;
   private closing = false;
+  private protocolFailed = false;
 
   constructor(private readonly options: CodexAppServerClientOptions = {}) {}
 
@@ -87,7 +93,7 @@ export class CodexAppServerClient {
   async request<TResult = unknown>(method: string, params?: unknown): Promise<TResult> {
     const id = this.nextId++;
     const promise = new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { method, resolve, reject });
     });
     this.write({ jsonrpc: "2.0", id, method, ...(params !== undefined ? { params } : {}) });
     return (await promise) as TResult;
@@ -125,32 +131,69 @@ export class CodexAppServerClient {
     try {
       message = JSON.parse(line);
     } catch {
+      this.failProtocol(protocolError("Codex emitted invalid JSON."));
       return;
     }
-    if (!isRecord(message)) return;
-    if (typeof message.id === "number" && ("result" in message || "error" in message)) {
+    if (!isRecord(message) || message.jsonrpc !== "2.0") {
+      this.failProtocol(protocolError("Codex emitted an invalid JSON-RPC envelope."));
+      return;
+    }
+    if ("result" in message || "error" in message) {
+      if (
+        typeof message.id !== "number" ||
+        (("result" in message) === ("error" in message))
+      ) {
+        this.failProtocol(protocolError("Codex response correlation is malformed."));
+        return;
+      }
       const pending = this.pending.get(message.id);
-      if (pending === undefined) return;
+      if (pending === undefined) {
+        this.failProtocol(protocolError("Codex response ID is stale or unknown."));
+        return;
+      }
       this.pending.delete(message.id);
-      if (isRecord(message.error)) {
+      if ("error" in message) {
+        if (
+          !isRecord(message.error) ||
+          typeof message.error.code !== "number" ||
+          typeof message.error.message !== "string"
+        ) {
+          const error = protocolError("Codex error response is malformed.");
+          pending.reject(error);
+          this.failProtocol(error);
+          return;
+        }
         pending.reject(
-          new Error(
-            typeof message.error.message === "string"
-              ? message.error.message
-              : "Codex app-server request failed.",
-          ),
+          new Error(message.error.message),
         );
       } else {
-        pending.resolve(message.result);
+        try {
+          pending.resolve(parseCodexResponseResult(pending.method, message.result));
+        } catch (error) {
+          pending.reject(asError(error));
+        }
       }
       return;
     }
-    if (typeof message.method !== "string") return;
-    if ("id" in message) {
-      this.options.onServerRequest?.(message as unknown as CodexAnyServerRequest);
-    } else {
-      this.options.onNotification?.(message as unknown as CodexServerNotification);
+    try {
+      const parsed = parseCodexServerMessage(message);
+      if (parsed?.kind === "request") {
+        this.options.onServerRequest?.(parsed.value);
+      } else if (parsed?.kind === "notification") {
+        this.options.onNotification?.(parsed.value);
+      }
+    } catch (error) {
+      this.failProtocol(asError(error));
     }
+  }
+
+  private failProtocol(error: Error): void {
+    if (this.protocolFailed) return;
+    this.protocolFailed = true;
+    for (const pending of this.pending.values()) pending.reject(error);
+    this.pending.clear();
+    this.options.onExit?.(error);
+    this.close();
   }
 }
 
@@ -162,4 +205,12 @@ function normalizeNodeEnvironment(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value));
+}
+
+function protocolError(message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code: "CODEX_PROTOCOL_INVALID" });
 }

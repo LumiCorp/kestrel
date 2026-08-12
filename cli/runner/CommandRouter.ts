@@ -36,6 +36,7 @@ import type {
   ProjectSnapshotGetCommandPayload,
   RunCancelCommandPayload,
   RuntimeReleaseCommandPayload,
+  RuntimeDescribeCommandPayload,
   RunnerCommand,
   RunnerPingCommandPayload,
   RunStartCommandPayload,
@@ -165,7 +166,7 @@ export class CommandRouter {
       }
 
       if (command.type === "runtime.describe") {
-        const payload = validateExecutionProfileResolvePayload(command.payload);
+        const payload = validateRuntimeDescribePayload(command.payload);
         await this.host.runtimeDescribe(command.id, payload);
         return;
       }
@@ -580,6 +581,22 @@ export class CommandRouter {
       { commandId: command.id },
     );
   }
+}
+
+function validateRuntimeDescribePayload(
+  value: unknown,
+): RuntimeDescribeCommandPayload {
+  const shared = validateExecutionProfileResolvePayload(value);
+  const environmentId =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>).environmentId
+      : undefined;
+  if (typeof environmentId !== "string" || environmentId.trim().length === 0) {
+    throw new Error(
+      "runtime.describe payload.environmentId must be a non-empty string",
+    );
+  }
+  return { ...shared, environmentId: environmentId.trim() };
 }
 
 function readCommandId(value: unknown): string | undefined {

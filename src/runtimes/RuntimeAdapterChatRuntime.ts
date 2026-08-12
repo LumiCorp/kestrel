@@ -9,13 +9,16 @@ import type {
   RuntimeId,
 } from "./contracts.js";
 import type { RuntimeReleaseCommandPayload } from "@kestrel-agents/protocol";
+import type { RuntimeBindingReleaseCoordinator } from "./RuntimeBindingReleaseCoordinator.js";
 
 export class RuntimeAdapterChatRuntime {
   private readonly bindings = new Map<string, RuntimeBindingV1>();
+  private readonly unregisterBindings = new Map<string, () => void>();
 
   constructor(
     private readonly runtimeId: Exclude<RuntimeId, "kestrel">,
     private readonly adapter: RuntimeAdapterV1,
+    private readonly releaseCoordinator?: RuntimeBindingReleaseCoordinator,
   ) {}
 
   async describeRuntime(): Promise<RuntimeDescriptorV1> {
@@ -27,11 +30,13 @@ export class RuntimeAdapterChatRuntime {
     options: { signal?: AbortSignal | undefined } = {},
   ): Promise<RuntimeTurnResult> {
     const binding = await this.bindingFor(turn);
+    const continuation = turn.resumeBlockedRun === true;
     if (
-      binding.status === "degraded" ||
       binding.status === "released" ||
-      binding.nativeSessionState === "degraded" ||
-      binding.nativeSessionState === "released"
+      binding.nativeSessionState === "released" ||
+      (!continuation &&
+        (binding.status === "degraded" ||
+          binding.nativeSessionState === "degraded"))
     ) {
       throw createRuntimeFailure(
         "RUNTIME_BINDING_DEGRADED",
@@ -40,7 +45,7 @@ export class RuntimeAdapterChatRuntime {
     }
     return await this.adapter.execute(
       {
-        kind: turn.resumeBlockedRun === true ? "continue" : "start",
+        kind: continuation ? "continue" : "start",
         binding,
         turn,
       },
@@ -80,12 +85,15 @@ export class RuntimeAdapterChatRuntime {
       throw new Error("Runtime release correlation does not match the binding.");
     }
     await this.adapter.release(binding);
-    binding.status = "released";
-    binding.nativeSessionState = "released";
+    applyBindingTransition(binding, "released", "released");
+    this.unregisterBindings.get(input.threadId)?.();
+    this.unregisterBindings.delete(input.threadId);
     this.bindings.delete(input.threadId);
   }
 
   async close(): Promise<void> {
+    for (const unregister of this.unregisterBindings.values()) unregister();
+    this.unregisterBindings.clear();
     this.bindings.clear();
     await this.adapter.dispose();
   }
@@ -93,18 +101,6 @@ export class RuntimeAdapterChatRuntime {
   private async bindingFor(turn: RuntimeTurnInput): Promise<RuntimeBindingV1> {
     const existing = this.bindings.get(turn.sessionId);
     if (existing !== undefined) {
-      if (turn.runtimeBindingStatus !== undefined) {
-        existing.status = turn.runtimeBindingStatus;
-      }
-      if (turn.runtimeNativeSessionState !== undefined) {
-        existing.nativeSessionState = turn.runtimeNativeSessionState;
-        if (
-          turn.runtimeNativeSessionState === "degraded" ||
-          turn.runtimeNativeSessionState === "released"
-        ) {
-          existing.status = turn.runtimeNativeSessionState;
-        }
-      }
       if (
         (turn.runtimeBindingId !== undefined &&
           turn.runtimeBindingId !== existing.bindingId) ||
@@ -115,17 +111,16 @@ export class RuntimeAdapterChatRuntime {
           "The Runtime binding for this Thread cannot change after execution starts.",
         );
       }
+      applyBindingTransition(
+        existing,
+        turn.runtimeBindingStatus ?? existing.status,
+        turn.runtimeNativeSessionState ?? existing.nativeSessionState,
+      );
       return existing;
     }
 
-    const descriptor = await this.adapter.describe();
-    if (descriptor.availability !== "ready") {
-      throw new Error(
-        descriptor.unavailableReason ??
-          `${descriptor.displayName} Runtime is ${descriptor.availability}.`,
-      );
-    }
     const environmentId =
+      turn.runtimeEnvironmentId ??
       turn.mcpContext?.environmentId ??
       readString(turn.workspace, "workspaceId") ??
       "local";
@@ -140,9 +135,7 @@ export class RuntimeAdapterChatRuntime {
       runtimeId: this.runtimeId,
       environmentId,
       adapterContractVersion: 1,
-      capabilityDigest: createHash("sha256")
-        .update(JSON.stringify(descriptor))
-        .digest("hex"),
+      capabilityDigest: "",
       status: "ready",
       nativeSessionState: "uninitialized",
       ...(turn.runtimeNativeSessionState
@@ -150,8 +143,62 @@ export class RuntimeAdapterChatRuntime {
         : {}),
       ...(turn.runtimeBindingStatus ? { status: turn.runtimeBindingStatus } : {}),
     };
+    await this.releaseCoordinator?.record(binding);
+    const descriptor = await this.adapter.describe();
+    if (descriptor.availability !== "ready") {
+      throw new Error(
+        descriptor.unavailableReason ??
+          `${descriptor.displayName} Runtime is ${descriptor.availability}.`,
+      );
+    }
+    binding.capabilityDigest = createHash("sha256")
+      .update(JSON.stringify(descriptor.capabilities))
+      .digest("hex");
+    let unregister: (() => void) | undefined;
+    if (this.releaseCoordinator !== undefined) {
+      unregister = await this.releaseCoordinator.register(binding, async () => {
+          await this.releaseRuntimeBinding({
+            runtimeId: this.runtimeId,
+            bindingId: binding.bindingId,
+            participantId: binding.participantId,
+            threadId: binding.threadId,
+            environmentId: binding.environmentId,
+          });
+        });
+    }
     this.bindings.set(turn.sessionId, binding);
+    if (unregister !== undefined) {
+      this.unregisterBindings.set(turn.sessionId, unregister);
+    }
     return binding;
+  }
+}
+
+function applyBindingTransition(
+  binding: RuntimeBindingV1,
+  nextStatus: RuntimeBindingV1["status"],
+  nextNativeState: RuntimeBindingV1["nativeSessionState"],
+): void {
+  const bindingRank = { ready: 0, degraded: 1, released: 2 } as const;
+  const nativeRank = {
+    uninitialized: 0,
+    ready: 1,
+    degraded: 2,
+    released: 3,
+  } as const;
+  if (
+    bindingRank[nextStatus] < bindingRank[binding.status] ||
+    nativeRank[nextNativeState] < nativeRank[binding.nativeSessionState]
+  ) {
+    throw createRuntimeFailure(
+      "RUNTIME_BINDING_DEGRADED",
+      "Stale Runtime binding state cannot replace a newer lifecycle state.",
+    );
+  }
+  binding.status = nextStatus;
+  binding.nativeSessionState = nextNativeState;
+  if (nextNativeState === "degraded" || nextNativeState === "released") {
+    binding.status = nextNativeState;
   }
 }
 

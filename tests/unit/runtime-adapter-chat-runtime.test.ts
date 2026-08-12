@@ -154,3 +154,65 @@ test("foreign Runtime execution fails closed for degraded and released bindings"
   }
   assert.equal(executed, false);
 });
+
+test("foreign Runtime lifecycle rejects a stale ready state after degradation", async () => {
+  const adapter: RuntimeAdapterV1 = {
+    async describe() { return descriptor(); },
+    async execute() { return {} as RuntimeTurnResult; },
+    async cancel() {},
+    async release() {},
+    async dispose() {},
+  };
+  const runtime = new RuntimeAdapterChatRuntime("codex", adapter);
+  await runtime.runTurn(turn({
+    runtimeBindingId: "binding:stable",
+    runtimeBindingStatus: "ready",
+    runtimeNativeSessionState: "ready",
+  }));
+  await assert.rejects(
+    () => runtime.runTurn(turn({
+      runtimeBindingId: "binding:stable",
+      runtimeBindingStatus: "degraded",
+      runtimeNativeSessionState: "degraded",
+    })),
+    (error: unknown) =>
+      typeof error === "object" && error !== null && "code" in error &&
+      error.code === "RUNTIME_BINDING_DEGRADED",
+  );
+  await assert.rejects(
+    () => runtime.runTurn(turn({
+      runtimeBindingId: "binding:stable",
+      runtimeBindingStatus: "ready",
+      runtimeNativeSessionState: "ready",
+    })),
+    /Stale Runtime binding state/u,
+  );
+});
+
+test("a degraded binding still dispatches its obsolete live-wait continuation", async () => {
+  let calls = 0;
+  const adapter: RuntimeAdapterV1 = {
+    async describe() { return descriptor(); },
+    async execute(input) {
+      calls += 1;
+      if (calls === 1) {
+        input.binding.status = "degraded";
+        input.binding.nativeSessionState = "degraded";
+      }
+      return {} as RuntimeTurnResult;
+    },
+    async cancel() {},
+    async release() {},
+    async dispose() {},
+  };
+  const runtime = new RuntimeAdapterChatRuntime("codex", adapter);
+  await runtime.runTurn(turn({ runtimeBindingId: "binding:wait" }));
+  await runtime.runTurn(turn({
+    runtimeBindingId: "binding:wait",
+    runtimeBindingStatus: "degraded",
+    runtimeNativeSessionState: "degraded",
+    resumeBlockedRun: true,
+    resumeRequestId: "lost-request",
+  }));
+  assert.equal(calls, 2);
+});

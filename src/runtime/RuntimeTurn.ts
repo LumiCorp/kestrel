@@ -55,6 +55,10 @@ export interface RuntimeTurnMissionControlExecution {
 export interface RuntimeTurnInput {
   sessionId: string;
   runId?: string | undefined;
+  /** Runtime identity validated by RunnerHost against the resolved profile. */
+  runtimeId?: "kestrel" | "codex" | "claude" | undefined;
+  /** Environment-owned identity injected by RunnerHost. */
+  runtimeEnvironmentId?: string | undefined;
   runtimeBindingId?: string | undefined;
   runtimeBindingStatus?: "ready" | "degraded" | "released" | undefined;
   runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
@@ -69,7 +73,7 @@ export interface RuntimeTurnInput {
     | {
         requestId: string;
         eventType: string;
-        message: string;
+        message?: string | undefined;
         answers?: Record<string, string[]> | undefined;
         approved?: boolean | undefined;
         reason?: string | undefined;

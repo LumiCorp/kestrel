@@ -75,6 +75,37 @@ class WaitingCodexClient implements CodexClient {
   exit() { this.options.onExit?.(new Error("app-server exited")); }
 }
 
+class ExitingCodexClient implements CodexClient {
+  constructor(
+    private readonly options: CodexAppServerClientOptions,
+    private readonly failure: Error,
+  ) {}
+  async start() {}
+  async request<TResult>(method: string): Promise<TResult> {
+    if (method === "thread/start") {
+      return { thread: { id: "native-thread-exit" } } as TResult;
+    }
+    if (method === "turn/start") {
+      queueMicrotask(() => this.options.onExit?.(this.failure));
+      return { turn: { id: "turn-exit" } } as TResult;
+    }
+    return {} as TResult;
+  }
+  respond() {}
+  respondError() {}
+  close() {}
+}
+
+class MissingResumeCodexClient extends FakeCodexClient {
+  override async request<TResult>(method: string, params?: unknown): Promise<TResult> {
+    if (method === "thread/resume") {
+      this.requests.push({ method, params });
+      throw new Error("native rollout not found");
+    }
+    return await super.request<TResult>(method, params);
+  }
+}
+
 const profile: TuiProfile = {
   id: "codex",
   label: "Codex",
@@ -174,6 +205,11 @@ test("Codex fails a lost live wait without restarting or answering an obsolete r
     nativeRequestId: "41",
   });
   client!.exit();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    (adapter as unknown as { sessions: Map<string, unknown> }).sessions.size,
+    0,
+  );
 
   const resumed = await adapter.execute({
     kind: "continue",
@@ -196,4 +232,170 @@ test("Codex fails a lost live wait without restarting or answering an obsolete r
   assert.equal(resumed.output.errors[0]?.code, "RUNTIME_LIVE_WAIT_LOST");
   assert.equal(clientCount, 1);
   assert.equal(client!.responses, 0);
+});
+
+test("Codex ordinary process exit is retryable without degrading native state", async () => {
+  const ordinaryBinding = {
+    ...binding,
+    status: "ready" as const,
+    nativeSessionState: "uninitialized" as const,
+  };
+  const store = new InMemoryRuntimeNativeSessionStore();
+  const adapter = new CodexRuntimeAdapter(
+    profile,
+    {},
+    {},
+    store,
+    undefined,
+    (options) => new ExitingCodexClient(options, new Error("process exited")),
+  );
+  const result = await adapter.execute({
+    kind: "start",
+    binding: ordinaryBinding,
+    turn: { sessionId: binding.threadId, eventType: "user.message", message: "work" },
+  });
+  assert.equal(result.output.status, "FAILED");
+  assert.equal(result.output.errors[0]?.code, "CODEX_RUNTIME_FAILED");
+  assert.equal(ordinaryBinding.status, "ready");
+  assert.equal((await store.load(binding.bindingId))?.status, "ready");
+});
+
+test("Codex retries native resume on the original root after a first-turn process exit", async () => {
+  const restartBinding = {
+    ...binding,
+    status: "ready" as const,
+    nativeSessionState: "uninitialized" as const,
+  };
+  const store = new InMemoryRuntimeNativeSessionStore();
+  const environment = async () => ({
+    env: { CODEX_HOME: "/tmp/kestrel-codex-original-root" },
+    credentialFingerprint: "same-root",
+  });
+  const missingCheckpoint = {
+    async capture() {},
+    async materialize() { return "missing" as const; },
+    async release() {},
+  };
+  const first = new CodexRuntimeAdapter(
+    profile,
+    {},
+    {},
+    store,
+    environment,
+    (options) => new ExitingCodexClient(options, new Error("process exited")),
+    missingCheckpoint,
+  );
+  const failed = await first.execute({
+    kind: "start",
+    binding: restartBinding,
+    turn: { sessionId: binding.threadId, eventType: "user.message", message: "first" },
+  });
+  assert.equal(failed.output.errors[0]?.code, "CODEX_RUNTIME_FAILED");
+  assert.equal(restartBinding.nativeSessionState, "ready");
+
+  const clients: FakeCodexClient[] = [];
+  const restarted = new CodexRuntimeAdapter(
+    profile,
+    {},
+    {},
+    store,
+    environment,
+    (options) => {
+      const client = new FakeCodexClient(options);
+      clients.push(client);
+      return client;
+    },
+    missingCheckpoint,
+  );
+  const resumed = await restarted.execute({
+    kind: "start",
+    binding: restartBinding,
+    turn: { sessionId: binding.threadId, eventType: "user.message", message: "second" },
+  });
+  assert.equal(resumed.output.status, "COMPLETED");
+  assert.equal(
+    clients[0]?.requests.some((request) => request.method === "thread/resume"),
+    true,
+  );
+});
+
+test("Codex preserves CODEX_PROTOCOL_INVALID for app-server validation failure", async () => {
+  const protocolBinding = {
+    ...binding,
+    status: "ready" as const,
+    nativeSessionState: "uninitialized" as const,
+  };
+  const error = Object.assign(new Error("malformed native payload"), {
+    code: "CODEX_PROTOCOL_INVALID",
+  });
+  const adapter = new CodexRuntimeAdapter(
+    profile,
+    {},
+    {},
+    new InMemoryRuntimeNativeSessionStore(),
+    undefined,
+    (options) => new ExitingCodexClient(options, error),
+  );
+  const result = await adapter.execute({
+    kind: "start",
+    binding: protocolBinding,
+    turn: { sessionId: binding.threadId, eventType: "user.message", message: "work" },
+  });
+  assert.equal(result.output.status, "FAILED");
+  assert.equal(result.output.errors[0]?.code, "CODEX_PROTOCOL_INVALID");
+});
+
+test("Codex maps a failed native resume without a checkpoint to native-session loss", async () => {
+  const resumeBinding = {
+    ...binding,
+    status: "ready" as const,
+    nativeSessionState: "ready" as const,
+  };
+  const store = new InMemoryRuntimeNativeSessionStore();
+  await store.save({
+    version: "runtime_native_session_v1",
+    bindingId: binding.bindingId,
+    runtimeId: "codex",
+    threadId: binding.threadId,
+    participantId: binding.participantId,
+    environmentId: binding.environmentId,
+    nativeSessionId: "native-thread-missing-checkpoint",
+    nativeVersion: "0.147.0",
+    status: "ready",
+    createdAt: "2026-08-12T00:00:00.000Z",
+    updatedAt: "2026-08-12T00:00:00.000Z",
+  });
+  const clients: FakeCodexClient[] = [];
+  const adapter = new CodexRuntimeAdapter(
+    profile,
+    {},
+    {},
+    store,
+    async () => ({
+      env: { CODEX_HOME: "/tmp/kestrel-codex-missing-checkpoint" },
+      credentialFingerprint: "credential-root-b",
+    }),
+    (options) => {
+      const client = new MissingResumeCodexClient(options);
+      clients.push(client);
+      return client;
+    },
+    {
+      async capture() {},
+      async materialize() { return "missing"; },
+      async release() {},
+    },
+  );
+  const result = await adapter.execute({
+    kind: "start",
+    binding: resumeBinding,
+    turn: { sessionId: binding.threadId, eventType: "user.message", message: "resume" },
+  });
+  assert.equal(result.output.status, "FAILED");
+  assert.equal(result.output.errors[0]?.code, "RUNTIME_NATIVE_SESSION_LOST");
+  assert.equal(
+    clients[0]?.requests.some((request) => request.method === "thread/resume"),
+    true,
+  );
+  assert.equal((await store.load(binding.bindingId))?.status, "degraded");
 });

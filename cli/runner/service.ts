@@ -7,6 +7,9 @@ import {
 import { createRunnerServiceServer } from "./RunnerService.js";
 
 async function main(): Promise<void> {
+  const runtimeEnvironmentId = requireEnvironmentId(
+    process.env.KESTREL_ENVIRONMENT_ID,
+  );
   const store = await createHostedRunnerStoreFromEnv({
     onStoreQuarantined: ({ sqlitePath, recoveryPath }) => {
       process.stdout.write(`${JSON.stringify({
@@ -34,6 +37,7 @@ async function main(): Promise<void> {
           },
         }),
     profileSourcePolicy: "registered-only",
+    runtimeEnvironmentId,
     onRuntimeStoreEvent: (event) => {
       process.stdout.write(
         `${JSON.stringify({
@@ -66,6 +70,16 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => {
     void shutdown().finally(() => process.exit(0));
   });
+}
+
+function requireEnvironmentId(value: string | undefined): string {
+  const normalized = value?.trim();
+  if (normalized === undefined || normalized.length === 0) {
+    throw new Error(
+      "KESTREL_ENVIRONMENT_ID is required for Runner Runtime authority.",
+    );
+  }
+  return normalized;
 }
 
 function parsePort(value: string | undefined): number | undefined {

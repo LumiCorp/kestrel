@@ -1155,6 +1155,18 @@ function buildRunStartPayload(
     turn: {
       sessionId: request.sessionId,
       ...(request.runId !== undefined ? { runId: request.runId } : {}),
+      ...(request.runtimeBindingId !== undefined
+        ? { runtimeBindingId: request.runtimeBindingId }
+        : {}),
+      ...(request.runtimeBindingStatus !== undefined
+        ? { runtimeBindingStatus: request.runtimeBindingStatus }
+        : {}),
+      ...(request.runtimeNativeSessionState !== undefined
+        ? { runtimeNativeSessionState: request.runtimeNativeSessionState }
+        : {}),
+      ...(request.participantId !== undefined
+        ? { participantId: request.participantId }
+        : {}),
       message: request.message,
       eventType: request.eventType,
       modeSystemV2Enabled: profile.modeSystemV2Enabled === true,

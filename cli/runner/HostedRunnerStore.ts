@@ -16,9 +16,12 @@ import {
 } from "./RunnerHost.js";
 import { composeHydraRuntime } from "../runtime/HydraRuntime.js";
 import {
+  FileCodexRolloutCheckpointStore,
   FileClaudeSessionStore,
+  FileRuntimeBindingCorrelationStore,
   FileRuntimeNativeSessionStore,
 } from "../../src/runtimes/FileRuntimeStateStore.js";
+import { RuntimeBindingReleaseCoordinator } from "../../src/runtimes/RuntimeBindingReleaseCoordinator.js";
 import { resolveGatewayCredentialLease } from "../runtime/gateway-credential-broker.js";
 import {
   buildRuntimeChildEnvironment,
@@ -53,7 +56,15 @@ export function createHostedRunnerRuntimeFactory(
   );
   const nativeSessionStore = new FileRuntimeNativeSessionStore(stateRoot);
   const claudeSessionStore = new FileClaudeSessionStore(stateRoot);
-  return (
+  const codexCheckpointStore = new FileCodexRolloutCheckpointStore(stateRoot);
+  const bindingCorrelationStore = new FileRuntimeBindingCorrelationStore(stateRoot);
+  const releaseCoordinator = new RuntimeBindingReleaseCoordinator(
+    nativeSessionStore,
+    claudeSessionStore,
+    codexCheckpointStore,
+    bindingCorrelationStore,
+  );
+  const factory: RunnerRuntimeFactory = (
     profile,
     onRunLog,
     onProgress,
@@ -88,6 +99,8 @@ export function createHostedRunnerRuntimeFactory(
       runtimeEnv: process.env,
       nativeSessionStore,
       claudeSessionStore,
+      codexCheckpointStore,
+      releaseCoordinator,
       resolveRuntimeEnvironment: async (runtimeId) => {
         if (profile.modelCredential === undefined) {
           throw new Error(
@@ -154,6 +167,9 @@ export function createHostedRunnerRuntimeFactory(
       },
     });
   };
+  factory.releaseRuntimeBinding = (payload) =>
+    releaseCoordinator.release(payload);
+  return factory;
 }
 
 export async function createHostedRunnerStore(input: {

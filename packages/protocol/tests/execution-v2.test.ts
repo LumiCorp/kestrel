@@ -235,6 +235,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
   },
   "runtime.describe": {
     environmentPresetId: "workspace_hosted",
+    environmentId: "environment-1",
     managedConfiguration: { runtimeId: "codex", model: "gpt-5" },
   },
   "runtime.release": {
@@ -1344,6 +1345,18 @@ test("canonical event parser rejects unknown and malformed payloads", () => {
 test("Runtime identity and structured interaction answers are boundary validated", () => {
   assert.throws(
     () =>
+      parseRunnerCommandV2({
+        id: "runtime-invalid-turn",
+        type: "run.start",
+        payload: {
+          profile,
+          turn: { ...turn, runtimeId: "unknown" },
+        },
+      }),
+    /runtimeId/u,
+  );
+  assert.throws(
+    () =>
       parseRunnerEventV2({
         id: "runtime-invalid",
         type: "run.started",
@@ -1375,6 +1388,44 @@ test("Runtime identity and structured interaction answers are boundary validated
     },
   });
   assert.equal(parsed.type, "run.start");
+
+  const answersOnly = parseRunnerCommandV2({
+    id: "runtime-answers-only",
+    type: "run.start",
+    payload: {
+      profile,
+      turn: {
+        ...turn,
+        resumeBlockedRun: true,
+        resumeRequestId: "question-1",
+        interactionResponse: {
+          requestId: "question-1",
+          eventType: "runtime.interaction.response",
+          answers: { "question-1": ["Option A"] },
+        },
+      },
+    },
+  });
+  assert.equal(answersOnly.type, "run.start");
+  assert.throws(
+    () => parseRunnerCommandV2({
+      id: "runtime-empty-response",
+      type: "run.start",
+      payload: {
+        profile,
+        turn: {
+          ...turn,
+          resumeBlockedRun: true,
+          resumeRequestId: "question-1",
+          interactionResponse: {
+            requestId: "question-1",
+            eventType: "runtime.interaction.response",
+          },
+        },
+      },
+    }),
+    /message or answers/u,
+  );
 });
 
 test("canonical event parser normalizes a blank optional session updatedAt", () => {

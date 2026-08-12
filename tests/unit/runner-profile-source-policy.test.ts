@@ -400,3 +400,177 @@ test("registered-only RunnerHost rejects mutable profile ids before lookup", asy
   assert.equal(lookups, 0);
   await host.close();
 });
+
+test("runtime.describe requires and echoes environment-owned authority", async () => {
+  const events: Array<{ type: string; payload: unknown }> = [];
+  const host = new RunnerHost(
+    { emit(type, payload) { events.push({ type, payload }); } },
+    () => ({
+      async describeRuntime() {
+        return {
+          version: "runtime_descriptor_v1",
+          runtimeId: "codex",
+          displayName: "Codex",
+          adapterContractVersion: 1,
+          nativeVersion: "test",
+          availability: "ready",
+          interactionStrategies: ["live_connection"],
+          capabilities: {
+            modes: ["chat", "plan", "build"],
+            continuation: true,
+            cancellation: true,
+            usage: false,
+            attachments: ["image", "text"],
+            conversationPersistence: "native_resume",
+            interactionRecovery: "connection_bound",
+          },
+        };
+      },
+      async runTurn() { throw new Error("must not execute"); },
+      async close() {},
+    }),
+    {
+      async listProfiles() { return []; },
+      async getProfile() { return undefined; },
+      async describeRuntimeProfile() {
+        return {
+          version: 1,
+          profileId: "runtime-describe",
+          fingerprint: "a".repeat(64),
+          policy: { id: "kestrel", version: 2 },
+          environmentPreset: { id: "desktop_safe_local", version: 1 },
+          resolvedProfile: {
+            id: "runtime-describe",
+            label: "Runtime describe",
+            agent: "kestrel",
+            sessionPrefix: "runtime-describe",
+            runtimeId: "codex",
+          },
+        };
+      },
+    },
+    { runtimeEnvironmentId: "environment-authority" },
+  );
+  await assert.rejects(
+    () => host.runtimeDescribe("foreign", {
+      environmentPresetId: "desktop_safe_local",
+      environmentId: "foreign-environment",
+    }),
+    /does not match/u,
+  );
+  await host.runtimeDescribe("matching", {
+    environmentPresetId: "desktop_safe_local",
+    environmentId: "environment-authority",
+  });
+  assert.equal(events[0]?.type, "runtime.described");
+  assert.equal(
+    (events[0]?.payload as { environmentId?: string }).environmentId,
+    "environment-authority",
+  );
+  await host.close();
+});
+
+test("RunnerHost rejects a run.start Runtime that disagrees with its profile", async () => {
+  const host = new RunnerHost(
+    writer,
+    () => {
+      throw new Error("runtime must not be created");
+    },
+    undefined,
+    { runtimeEnvironmentId: "environment-authority" },
+  );
+  await assert.rejects(
+    () => host.runStart("runtime-mismatch", {
+      profile: {
+        id: "codex-profile",
+        label: "Codex",
+        agent: "kestrel",
+        sessionPrefix: "codex",
+        runtimeId: "codex",
+      },
+      turn: {
+        sessionId: "thread-runtime-mismatch",
+        runtimeId: "claude",
+        message: "must not execute",
+        eventType: "user.message",
+      },
+    }),
+    (error: unknown) =>
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "RUNTIME_BINDING_IMMUTABLE",
+  );
+  await host.close();
+});
+
+test("RunnerHost injects run.start Environment authority from the trusted binding resolver", async () => {
+  let receivedEnvironmentId: string | undefined;
+  let resolvedIdentity: unknown;
+  const host = new RunnerHost(
+    writer,
+    () => ({
+      async runTurn(input) {
+        receivedEnvironmentId = input.runtimeEnvironmentId;
+        return {
+          assistantText: "done",
+          output: {
+            status: "COMPLETED",
+            sessionId: input.sessionId,
+            runId: "run-authority",
+            quality: {
+              citationCoverage: 0,
+              unresolvedClaims: 0,
+              reworkRate: 0,
+              thrashIndex: 0,
+            },
+            errors: [],
+            telemetry: {
+              stepsExecuted: 1,
+              toolCalls: 0,
+              modelCalls: 0,
+              durationMs: 1,
+            },
+          },
+        };
+      },
+      async close() {},
+    }),
+    undefined,
+    {
+      runtimeEnvironmentId: "static-local-environment",
+      async resolveRunStartRuntimeEnvironment(identity) {
+        resolvedIdentity = identity;
+        return "binding-owned-web-environment";
+      },
+    },
+  );
+  await host.runStart("trusted-run-environment", {
+    profile: {
+      id: "codex-profile",
+      label: "Codex",
+      agent: "kestrel",
+      sessionPrefix: "codex",
+      runtimeId: "codex",
+    },
+    turn: {
+      sessionId: "thread-trusted-environment",
+      runtimeId: "codex",
+      runtimeBindingId: "binding-trusted-environment",
+      participantId: "participant-trusted-environment",
+      message: "execute",
+      eventType: "user.message",
+      // This internal-only field models a structurally compatible caller trying
+      // to inject authority. The trusted resolver must overwrite it.
+      runtimeEnvironmentId: "untrusted-caller-environment",
+    },
+  });
+  assert.deepEqual(resolvedIdentity, {
+    runnerSessionId: "thread-trusted-environment",
+    runtimeId: "codex",
+    runtimeBindingId: "binding-trusted-environment",
+    participantId: "participant-trusted-environment",
+  });
+  assert.equal(receivedEnvironmentId, "binding-owned-web-environment");
+  await host.close();
+});

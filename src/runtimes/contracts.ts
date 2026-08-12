@@ -41,20 +41,68 @@ export interface RuntimeDescriptorV1 {
   unavailableReason?: string | undefined;
 }
 
-export interface RuntimeNativeSessionV1 {
+interface RuntimeNativeSessionBaseV1 {
   version: "runtime_native_session_v1";
   bindingId: string;
   runtimeId: Exclude<RuntimeId, "kestrel">;
-  nativeSessionId: string;
+  /** Optional only while reading pre-Hydra-correlation legacy records. */
+  threadId?: string | undefined;
+  /** Optional only while reading pre-Hydra-correlation legacy records. */
+  participantId?: string | undefined;
+  /** Optional only while reading pre-Hydra-correlation legacy records. */
+  environmentId?: string | undefined;
   nativeVersion: string;
-  status: "ready" | "degraded" | "released";
   createdAt: string;
   updatedAt: string;
 }
 
+export type RuntimeNativeSessionV1 = RuntimeNativeSessionBaseV1 &
+  (
+    | {
+        status: "ready" | "degraded";
+        nativeSessionId: string;
+      }
+    | {
+        status: "released";
+        nativeSessionId?: never;
+      }
+  );
+
 export interface RuntimeNativeSessionStore {
   load(bindingId: string): Promise<RuntimeNativeSessionV1 | undefined>;
   save(session: RuntimeNativeSessionV1): Promise<void>;
+  release(bindingId: string): Promise<void>;
+}
+
+export interface RuntimeBindingCorrelationV1 {
+  version: "runtime_binding_correlation_v1";
+  bindingId: string;
+  runtimeId: Exclude<RuntimeId, "kestrel">;
+  threadId: string;
+  participantId: string;
+  environmentId: string;
+  status: "active" | "released";
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Private environment-owned identity proof used only for exact release routing. */
+export interface RuntimeBindingCorrelationStore {
+  load(bindingId: string): Promise<RuntimeBindingCorrelationV1 | undefined>;
+  register(binding: RuntimeBindingV1): Promise<void>;
+  release(binding: RuntimeBindingV1): Promise<void>;
+}
+
+export interface CodexRolloutCheckpointStore {
+  capture(input: {
+    bindingId: string;
+    codexHome: string;
+    rolloutPath: string;
+  }): Promise<void>;
+  materialize(input: {
+    bindingId: string;
+    codexHome: string;
+  }): Promise<"materialized" | "same_root" | "missing">;
   release(bindingId: string): Promise<void>;
 }
 
@@ -78,12 +126,144 @@ export class InMemoryRuntimeNativeSessionStore
   }
 
   async save(session: RuntimeNativeSessionV1): Promise<void> {
+    const existing = this.sessions.get(session.bindingId);
+    assertNativeSessionTransition(existing, session);
     this.sessions.set(session.bindingId, { ...session });
   }
 
   async release(bindingId: string): Promise<void> {
-    this.sessions.delete(bindingId);
+    const existing = this.sessions.get(bindingId);
+    if (existing === undefined || existing.status === "released") return;
+    this.sessions.set(bindingId, releasedNativeSession(existing));
   }
+}
+
+export class InMemoryRuntimeBindingCorrelationStore
+  implements RuntimeBindingCorrelationStore
+{
+  private readonly bindings = new Map<string, RuntimeBindingCorrelationV1>();
+
+  async load(bindingId: string): Promise<RuntimeBindingCorrelationV1 | undefined> {
+    const binding = this.bindings.get(bindingId);
+    return binding === undefined ? undefined : { ...binding };
+  }
+
+  async register(binding: RuntimeBindingV1): Promise<void> {
+    if (binding.runtimeId === "kestrel") return;
+    const existing = this.bindings.get(binding.bindingId);
+    if (existing !== undefined) {
+      assertBindingCorrelationTransition(existing, binding, "active");
+      return;
+    }
+    const now = new Date().toISOString();
+    this.bindings.set(binding.bindingId, {
+      version: "runtime_binding_correlation_v1",
+      bindingId: binding.bindingId,
+      runtimeId: binding.runtimeId,
+      threadId: binding.threadId,
+      participantId: binding.participantId,
+      environmentId: binding.environmentId,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  async release(binding: RuntimeBindingV1): Promise<void> {
+    if (binding.runtimeId === "kestrel") return;
+    const existing = this.bindings.get(binding.bindingId);
+    if (existing === undefined) {
+      throw new Error("Runtime binding correlation was not registered.");
+    }
+    assertBindingCorrelationTransition(existing, binding, "released");
+    if (existing.status === "released") return;
+    this.bindings.set(binding.bindingId, {
+      ...existing,
+      status: "released",
+      updatedAt: new Date().toISOString(),
+    });
+  }
+}
+
+export function assertBindingCorrelationTransition(
+  existing: RuntimeBindingCorrelationV1,
+  binding: RuntimeBindingV1,
+  nextStatus: RuntimeBindingCorrelationV1["status"],
+): void {
+  if (
+    existing.bindingId !== binding.bindingId ||
+    existing.runtimeId !== binding.runtimeId ||
+    existing.threadId !== binding.threadId ||
+    existing.participantId !== binding.participantId ||
+    existing.environmentId !== binding.environmentId
+  ) {
+    throw new Error("Runtime binding correlation cannot change.");
+  }
+  if (existing.status === "released" && nextStatus === "active") {
+    throw new Error("A released Runtime binding cannot become active.");
+  }
+}
+
+export function assertNativeSessionTransition(
+  existing: RuntimeNativeSessionV1 | undefined,
+  next: RuntimeNativeSessionV1,
+): void {
+  if (existing === undefined) {
+    if (next.status === "released") {
+      throw new Error("A native Runtime session cannot begin in released state.");
+    }
+    return;
+  }
+  if (
+    existing.bindingId !== next.bindingId ||
+    existing.runtimeId !== next.runtimeId ||
+    existing.nativeVersion !== next.nativeVersion ||
+    existing.createdAt !== next.createdAt
+  ) {
+    throw new Error("Native Runtime session identity cannot change.");
+  }
+  for (const field of ["threadId", "participantId", "environmentId"] as const) {
+    if (
+      existing[field] !== undefined &&
+      existing[field] !== next[field]
+    ) {
+      throw new Error("Native Runtime binding correlation cannot change.");
+    }
+  }
+  if (
+    existing.status !== "released" &&
+    next.status !== "released" &&
+    existing.nativeSessionId !== next.nativeSessionId
+  ) {
+    throw new Error("Native Runtime session correlation cannot change.");
+  }
+  const rank = { ready: 0, degraded: 1, released: 2 } as const;
+  if (rank[next.status] < rank[existing.status]) {
+    throw new Error(
+      `Native Runtime session state cannot move from ${existing.status} to ${next.status}.`,
+    );
+  }
+}
+
+export function releasedNativeSession(
+  existing: Exclude<RuntimeNativeSessionV1, { status: "released" }>,
+): RuntimeNativeSessionV1 {
+  return {
+    version: existing.version,
+    bindingId: existing.bindingId,
+    runtimeId: existing.runtimeId,
+    ...(existing.threadId !== undefined ? { threadId: existing.threadId } : {}),
+    ...(existing.participantId !== undefined
+      ? { participantId: existing.participantId }
+      : {}),
+    ...(existing.environmentId !== undefined
+      ? { environmentId: existing.environmentId }
+      : {}),
+    nativeVersion: existing.nativeVersion,
+    status: "released",
+    createdAt: existing.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 export interface RuntimeBindingV1 {

@@ -22,6 +22,10 @@ function attachment(kind: "image" | "text", payload: Buffer) {
 }
 
 function turn(): RuntimeTurnInput {
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
   return {
     sessionId: "thread-1",
     eventType: "user.message",
@@ -32,7 +36,7 @@ function turn(): RuntimeTurnInput {
     ],
     attachments: [
       attachment("text", Buffer.from("text attachment")),
-      attachment("image", Buffer.from([0x89, 0x50, 0x4e, 0x47])),
+      attachment("image", png),
     ],
   };
 }
@@ -44,10 +48,32 @@ test("Codex input preserves canonical history and verified attachments", async (
     assert.match(JSON.stringify(prepared.input), /text attachment/u);
     const image = prepared.input.find((item) => item.type === "localImage");
     assert.ok(image?.type === "localImage");
-    assert.deepEqual(await readFile(image.path), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    assert.deepEqual(
+      await readFile(image.path),
+      Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    );
   } finally {
     await prepared.cleanup();
   }
+});
+
+test("adapter attachment defense rejects unsupported MIME and non-canonical base64", async () => {
+  const unsupported = turn();
+  unsupported.attachments![0] = {
+    ...unsupported.attachments![0]!,
+    mimeType: "application/octet-stream",
+  };
+  assert.throws(() => claudePrompt(unsupported), /unsupported MIME/u);
+
+  const nonCanonical = turn();
+  nonCanonical.attachments![1] = {
+    ...nonCanonical.attachments![1]!,
+    data: `${nonCanonical.attachments![1]!.data}\n`,
+  };
+  assert.throws(() => claudePrompt(nonCanonical), /canonical base64/u);
 });
 
 test("Claude input uses structured image content and rejects attachment tampering", async () => {

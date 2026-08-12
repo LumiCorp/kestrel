@@ -23,6 +23,8 @@ import type {
   RunnerHost,
   RunnerProfileProvider,
   RunnerProfileSourcePolicy,
+  RunnerRunStartRuntimeEnvironmentResolver,
+  RunnerRuntimeEnvironmentAuthorizer,
 } from "./RunnerHost.js";
 import type { CommandRouter } from "./CommandRouter.js";
 import {
@@ -60,6 +62,7 @@ const TERMINAL_EVENT_TYPES = new Set<RunnerEvent["type"]>([
   "profile.loaded",
   "execution-profile.resolved",
   "runtime.described",
+  "runtime.released",
   "job.completed",
   "job.failed",
   "run.completed",
@@ -89,6 +92,9 @@ interface RunnerServiceRuntimeOptions {
   runtimeFactory?: ConstructorParameters<typeof RunnerHost>[1] | undefined;
   profileProvider?: RunnerProfileProvider | undefined;
   profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
+  runtimeEnvironmentId?: string | undefined;
+  authorizeRuntimeEnvironment?: RunnerRuntimeEnvironmentAuthorizer | undefined;
+  resolveRunStartRuntimeEnvironment?: RunnerRunStartRuntimeEnvironmentResolver | undefined;
   serviceVersion?: string | undefined;
   eventJournal?: RunnerServiceEventJournal | undefined;
   runtimeStore?: RunnerRuntimeStoreLifecycle | undefined;
@@ -257,6 +263,9 @@ export function createRunnerServiceHttpHandler(
     runtimeFactory: options.runtimeFactory,
     profileProvider: options.profileProvider,
     profileSourcePolicy: options.profileSourcePolicy,
+    runtimeEnvironmentId: options.runtimeEnvironmentId,
+    authorizeRuntimeEnvironment: options.authorizeRuntimeEnvironment,
+    resolveRunStartRuntimeEnvironment: options.resolveRunStartRuntimeEnvironment,
     serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
     eventJournal: options.eventJournal,
   });
@@ -387,6 +396,10 @@ export async function createRunnerServiceServer(options: RunnerServiceOptions = 
     authToken: options.authToken,
     runtimeFactory: options.runtimeFactory,
     profileProvider: options.profileProvider,
+    profileSourcePolicy: options.profileSourcePolicy,
+    runtimeEnvironmentId: options.runtimeEnvironmentId,
+    authorizeRuntimeEnvironment: options.authorizeRuntimeEnvironment,
+    resolveRunStartRuntimeEnvironment: options.resolveRunStartRuntimeEnvironment,
     serviceVersion: options.serviceVersion,
     eventJournal: options.eventJournal,
     runtimeStore: options.runtimeStore,
@@ -549,6 +562,10 @@ export function createInMemoryRunnerService(options: RunnerServiceOptions = {}):
   const serviceHost = new RunnerServiceHost({
     runtimeFactory: options.runtimeFactory,
     profileProvider: options.profileProvider,
+    profileSourcePolicy: options.profileSourcePolicy,
+    runtimeEnvironmentId: options.runtimeEnvironmentId,
+    authorizeRuntimeEnvironment: options.authorizeRuntimeEnvironment,
+    resolveRunStartRuntimeEnvironment: options.resolveRunStartRuntimeEnvironment,
     serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
     eventJournal: options.eventJournal,
   });

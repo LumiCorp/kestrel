@@ -181,7 +181,9 @@ export interface ExecutionProfileResolveCommandPayload {
   authoringProfileId?: string | undefined;
 }
 
-export type RuntimeDescribeCommandPayload = ExecutionProfileResolveCommandPayload;
+export type RuntimeDescribeCommandPayload = ExecutionProfileResolveCommandPayload & {
+  environmentId: string;
+};
 
 export interface RuntimeReleaseCommandPayload {
   runtimeId: "kestrel" | "codex" | "claude";

@@ -41,6 +41,7 @@ function completedQuery(): Query {
     yield {
       type: "result",
       subtype: "success",
+      is_error: false,
       session_id: "native",
       usage: { input_tokens: 1, output_tokens: 1 },
     } as unknown as SDKMessage;
@@ -128,6 +129,49 @@ test("Claude resumes the persisted native session on an ordinary later turn", as
   assert.equal(options[1]?.sessionId, undefined);
 });
 
+test("Claude SDK error terminal results fail instead of completing", async () => {
+  const isolatedBinding = {
+    ...binding,
+    status: "ready" as const,
+    nativeSessionState: "uninitialized" as const,
+  };
+  const runQuery = (() => {
+    const iterator = (async function* () {
+      yield {
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        errors: ["private native diagnostic"],
+        session_id: "native",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      } as unknown as SDKMessage;
+    })();
+    return Object.assign(iterator, {
+      close() {},
+      initializationResult: async () => ({}),
+      accountInfo: async () => ({ email: "test@example.com" }),
+      supportedModels: async () => [{ value: "claude-sonnet-4-5" }],
+    }) as unknown as Query;
+  }) as typeof import("@anthropic-ai/claude-agent-sdk").query;
+  const adapter = new ClaudeRuntimeAdapter(
+    profile,
+    {},
+    {},
+    new InMemoryRuntimeNativeSessionStore(),
+    undefined,
+    undefined,
+    runQuery,
+  );
+  const result = await adapter.execute({
+    kind: "start",
+    binding: isolatedBinding,
+    turn: { sessionId: binding.threadId, eventType: "user.message", message: "work" },
+  });
+  assert.equal(result.output.status, "FAILED");
+  assert.equal(result.output.errors[0]?.code, "CLAUDE_RUNTIME_FAILED");
+  assert.doesNotMatch(result.output.errors[0]?.message ?? "", /private native/u);
+});
+
 test("Claude maps structured question answers and acknowledges after callback resolution", async () => {
   binding.nativeSessionState = "uninitialized";
   const events: string[] = [];
@@ -158,6 +202,13 @@ test("Claude maps structured question answers and acknowledges after callback re
         type: "assistant",
         session_id: "native",
         message: { content: [{ type: "text", text: "Continuing" }] },
+      } as unknown as SDKMessage;
+      yield {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        session_id: "native",
+        usage: { input_tokens: 1, output_tokens: 1 },
       } as unknown as SDKMessage;
     })();
     return Object.assign(iterator, {
@@ -220,6 +271,88 @@ test("Claude maps structured question answers and acknowledges after callback re
       answers: { "Which workspace?": ["A"] },
     },
   );
+});
+
+test("Claude does not acknowledge delivery from error or missing terminal results", async () => {
+  const terminals: Array<SDKMessage | undefined> = [
+    {
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      session_id: "native",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    } as unknown as SDKMessage,
+    undefined,
+  ];
+  for (const [index, terminal] of terminals.entries()) {
+    const isolatedBinding = {
+      ...binding,
+      bindingId: `${binding.bindingId}-${index}`,
+      threadId: `${binding.threadId}-${index}`,
+      status: "ready" as const,
+      nativeSessionState: "uninitialized" as const,
+    };
+    let delivered = 0;
+    const runQuery = ((input: { options?: Options }) => {
+      const iterator = (async function* () {
+        await input.options!.canUseTool!(
+          "Bash",
+          { command: "pnpm test" },
+          {
+            signal: new AbortController().signal,
+            suggestions: [],
+            toolUseID: "tool-error",
+            title: "Run tests",
+            description: "Run tests",
+            requestId: "native-error",
+          },
+        );
+        if (terminal !== undefined) yield terminal;
+      })();
+      return Object.assign(iterator, {
+        close() {},
+        initializationResult: async () => ({}),
+        accountInfo: async () => ({ email: "test@example.com" }),
+        supportedModels: async () => [{ value: "claude-sonnet-4-5" }],
+      }) as unknown as Query;
+    }) as typeof import("@anthropic-ai/claude-agent-sdk").query;
+    const adapter = new ClaudeRuntimeAdapter(
+      profile,
+      { onInteractionDelivered: () => { delivered += 1; } },
+      {},
+      new InMemoryRuntimeNativeSessionStore(),
+      undefined,
+      undefined,
+      runQuery,
+    );
+    const waiting = await adapter.execute({
+      kind: "start",
+      binding: isolatedBinding,
+      turn: { sessionId: isolatedBinding.threadId, eventType: "user.message", message: "work" },
+    });
+    const requestId = waiting.output.waitFor?.interaction?.requestId;
+    assert.equal(typeof requestId, "string");
+    const result = await adapter.execute({
+      kind: "continue",
+      binding: isolatedBinding,
+      turn: {
+        sessionId: isolatedBinding.threadId,
+        eventType: "runtime.interaction.response",
+        message: "Approve",
+        resumeBlockedRun: true,
+        resumeRequestId: requestId,
+        interactionResponse: {
+          requestId: requestId!,
+          eventType: "runtime.interaction.response",
+          message: "Approve",
+          approved: true,
+        },
+      },
+    });
+    assert.equal(result.output.status, "FAILED");
+    assert.equal(result.output.errors[0]?.code, "CLAUDE_RUNTIME_FAILED");
+    assert.equal(delivered, 0);
+  }
 });
 
 test("Claude credential rotation fails a live wait before resolving its callback", async () => {
@@ -289,4 +422,98 @@ test("Claude credential rotation fails a live wait before resolving its callback
   assert.equal(result.output.errors[0]?.code, "RUNTIME_LIVE_WAIT_LOST");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(permissionResolved, true);
+  assert.equal(
+    (adapter as unknown as { sessions: Map<string, unknown> }).sessions.size,
+    0,
+  );
+});
+
+test("Claude denies a second concurrent callback without replacing the first", async () => {
+  const isolatedBinding = {
+    ...binding,
+    status: "ready" as const,
+    nativeSessionState: "uninitialized" as const,
+  };
+  let secondResult: PermissionResult | null | undefined;
+  const runQuery = ((input: { options?: Options }) => {
+    const iterator = (async function* () {
+      const first = input.options!.canUseTool!(
+        "Bash",
+        { command: "first" },
+        {
+          signal: new AbortController().signal,
+          suggestions: [],
+          toolUseID: "tool-first",
+          title: "First",
+          description: "First",
+          requestId: "request-first",
+        },
+      );
+      secondResult = await input.options!.canUseTool!(
+        "Bash",
+        { command: "second" },
+        {
+          signal: new AbortController().signal,
+          suggestions: [],
+          toolUseID: "tool-second",
+          title: "Second",
+          description: "Second",
+          requestId: "request-second",
+        },
+      );
+      await first;
+      yield {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        session_id: "native",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      } as unknown as SDKMessage;
+    })();
+    return Object.assign(iterator, {
+      close() {},
+      initializationResult: async () => ({}),
+      accountInfo: async () => ({ email: "test@example.com" }),
+      supportedModels: async () => [{ value: "claude-sonnet-4-5" }],
+    }) as unknown as Query;
+  }) as typeof import("@anthropic-ai/claude-agent-sdk").query;
+  const adapter = new ClaudeRuntimeAdapter(
+    profile,
+    {},
+    {},
+    new InMemoryRuntimeNativeSessionStore(),
+    undefined,
+    undefined,
+    runQuery,
+  );
+  const waiting = await adapter.execute({
+    kind: "start",
+    binding: isolatedBinding,
+    turn: { sessionId: binding.threadId, eventType: "user.message", message: "work" },
+  });
+  assert.equal(waiting.output.status, "WAITING");
+  assert.equal(secondResult?.behavior, "deny");
+  assert.equal(
+    secondResult?.behavior === "deny" ? secondResult.toolUseID : undefined,
+    "tool-second",
+  );
+  const requestId = waiting.output.waitFor?.interaction?.requestId;
+  const completed = await adapter.execute({
+    kind: "continue",
+    binding: isolatedBinding,
+    turn: {
+      sessionId: binding.threadId,
+      eventType: "runtime.interaction.response",
+      message: "Approve first",
+      resumeBlockedRun: true,
+      resumeRequestId: requestId,
+      interactionResponse: {
+        requestId: requestId!,
+        eventType: "runtime.interaction.response",
+        message: "Approve first",
+        approved: true,
+      },
+    },
+  });
+  assert.equal(completed.output.status, "COMPLETED");
 });

@@ -15,6 +15,19 @@ export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v3" as const
 export const RUNNER_WAITING_PROMPT_HISTORY_KIND = "runtime.waiting_prompt" as const;
 export const RUNNER_ASSISTANT_TEXT_HISTORY_KIND = "runtime.assistant_text" as const;
 
+export const RUNTIME_FAILURE_CODES = [
+  "RUNTIME_BINDING_DEGRADED",
+  "RUNTIME_NATIVE_SESSION_LOST",
+  "RUNTIME_LIVE_WAIT_LOST",
+  "RUNTIME_ATTACHMENT_UNSUPPORTED",
+  "RUNTIME_EVENT_PERSISTENCE_FAILED",
+  "CODEX_PROTOCOL_INVALID",
+  "CODEX_RUNTIME_FAILED",
+  "CLAUDE_RUNTIME_FAILED",
+] as const;
+
+export type RuntimeFailureCode = (typeof RUNTIME_FAILURE_CODES)[number];
+
 export interface ConversationMessageCursor {
   completedAt: string;
   turnId: string;
@@ -489,6 +502,8 @@ export interface RunnerWorkspaceSkillCatalogEntry {
 export interface RunnerTurnInput {
   sessionId: string;
   runId?: string | undefined;
+  /** Selected Runtime. Missing legacy values are interpreted as Kestrel. */
+  runtimeId?: "kestrel" | "codex" | "claude" | undefined;
   runtimeBindingId?: string | undefined;
   runtimeBindingStatus?: "ready" | "degraded" | "released" | undefined;
   runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
@@ -501,7 +516,7 @@ export interface RunnerTurnInput {
   interactionResponse?: {
     requestId: string;
     eventType: string;
-    message: string;
+    message?: string | undefined;
     answers?: Record<string, string[]> | undefined;
     approved?: boolean | undefined;
     reason?: string | undefined;
@@ -1110,7 +1125,10 @@ export interface ExecutionProfileResolveCommandPayload {
   authoringProfileId?: string | undefined;
 }
 
-export type RuntimeDescribeCommandPayload = ExecutionProfileResolveCommandPayload;
+export type RuntimeDescribeCommandPayload = ExecutionProfileResolveCommandPayload & {
+  /** Environment execution authority selected by the caller. */
+  environmentId: string;
+};
 
 export interface RuntimeReleaseCommandPayload {
   runtimeId: "kestrel" | "codex" | "claude";
@@ -1636,6 +1654,30 @@ export interface RunnerRuntimeDescriptorV1 {
     interactionRecovery: "connection_bound" | "durable_resume";
   };
   unavailableReason?: string | undefined;
+}
+
+/** Canonical descriptor for Kestrel's built-in Runtime. */
+export function createKestrelRuntimeDescriptorV1(
+  nativeVersion = "0.7.0",
+): RunnerRuntimeDescriptorV1 {
+  return {
+    version: "runtime_descriptor_v1",
+    runtimeId: "kestrel",
+    displayName: "Kestrel",
+    adapterContractVersion: 1,
+    nativeVersion,
+    availability: "ready",
+    interactionStrategies: ["deferred_session"],
+    capabilities: {
+      modes: ["chat", "plan", "build"],
+      continuation: true,
+      cancellation: true,
+      usage: true,
+      attachments: ["image", "text"],
+      conversationPersistence: "native_resume",
+      interactionRecovery: "durable_resume",
+    },
+  };
 }
 
 export interface JobStartedEventPayload {
@@ -2517,6 +2559,18 @@ function parseRunnerCommandPayloadV2(
       requireNonEmptyString(payload.profileId, `${label}.profileId`);
       break;
     case "execution-profile.resolve":
+      validateEnum(payload.environmentPresetId, `${label}.environmentPresetId`, [
+        "cli_safe_local",
+        "cli_dev_local",
+        "desktop_safe_local",
+        "desktop_dev_local",
+        "workspace_hosted",
+      ]);
+      if (payload.managedConfiguration !== undefined) {
+        requireRecord(payload.managedConfiguration, `${label}.managedConfiguration`);
+      }
+      validateOptionalNonEmptyString(payload.authoringProfileId, `${label}.authoringProfileId`);
+      break;
     case "runtime.describe":
       validateEnum(payload.environmentPresetId, `${label}.environmentPresetId`, [
         "cli_safe_local",
@@ -2525,6 +2579,7 @@ function parseRunnerCommandPayloadV2(
         "desktop_dev_local",
         "workspace_hosted",
       ]);
+      requireNonEmptyString(payload.environmentId, `${label}.environmentId`);
       if (payload.managedConfiguration !== undefined) {
         requireRecord(payload.managedConfiguration, `${label}.managedConfiguration`);
       }
@@ -3391,6 +3446,15 @@ function validateRunTurn(value: unknown, label: string): void {
   const turn = requireRecord(value, label);
   requireNonEmptyString(turn.sessionId, `${label}.sessionId`);
   validateOptionalNonEmptyString(turn.runId, `${label}.runId`);
+  if (
+    turn.runtimeId !== undefined &&
+    (typeof turn.runtimeId !== "string" ||
+      !["kestrel", "codex", "claude"].includes(turn.runtimeId))
+  ) {
+    throw new RunnerProtocolContractError(
+      `${label}.runtimeId must be kestrel, codex, or claude`,
+    );
+  }
   validateOptionalNonEmptyString(turn.runtimeBindingId, `${label}.runtimeBindingId`);
   if (
     turn.runtimeBindingStatus !== undefined &&
@@ -3421,8 +3485,13 @@ function validateRunTurn(value: unknown, label: string): void {
     );
     requireNonEmptyString(response.requestId, `${label}.interactionResponse.requestId`);
     requireNonEmptyString(response.eventType, `${label}.interactionResponse.eventType`);
-    requireString(response.message, `${label}.interactionResponse.message`);
+    validateOptionalString(response.message, `${label}.interactionResponse.message`);
     validateOptionalAnswerMap(response.answers, `${label}.interactionResponse.answers`);
+    if (response.message === undefined && response.answers === undefined) {
+      throw new RunnerProtocolContractError(
+        `${label}.interactionResponse must include message or answers`,
+      );
+    }
     validateOptionalBoolean(response.approved, `${label}.interactionResponse.approved`);
     validateOptionalString(response.reason, `${label}.interactionResponse.reason`);
     validateOptionalNonEmptyString(

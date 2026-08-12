@@ -4,13 +4,16 @@ import { ClaudeRuntimeAdapter } from "../../src/runtimes/claude/ClaudeRuntimeAda
 import { CodexRuntimeAdapter } from "../../src/runtimes/codex/CodexRuntimeAdapter.js";
 import type { RuntimeAdapterCallbacksV1 } from "../../src/runtimes/contracts.js";
 import type {
+  CodexRolloutCheckpointStore,
   RuntimeEnvironmentResolver,
   RuntimeEnvironmentMap,
   RuntimeNativeSessionStore,
 } from "../../src/runtimes/contracts.js";
 import type { SessionStore } from "@anthropic-ai/claude-agent-sdk";
+import { createKestrelRuntimeDescriptorV1 } from "@kestrel-agents/protocol";
 import { runtimeIdOrDefault } from "../../src/runtimes/contracts.js";
 import { RuntimeAdapterChatRuntime } from "../../src/runtimes/RuntimeAdapterChatRuntime.js";
+import type { RuntimeBindingReleaseCoordinator } from "../../src/runtimes/RuntimeBindingReleaseCoordinator.js";
 
 export function composeHydraRuntime(input: {
   profile: TuiProfile;
@@ -20,12 +23,16 @@ export function composeHydraRuntime(input: {
   nativeSessionStore?: RuntimeNativeSessionStore | undefined;
   claudeSessionStore?: SessionStore | undefined;
   resolveRuntimeEnvironment?: RuntimeEnvironmentResolver | undefined;
+  codexCheckpointStore?: CodexRolloutCheckpointStore | undefined;
+  releaseCoordinator?: RuntimeBindingReleaseCoordinator | undefined;
 }): RunnerRuntime {
   const runtimeId = runtimeIdOrDefault(input.profile.runtimeId);
   if (runtimeId === "kestrel") {
     return new Proxy(input.kestrel, {
       get(target, property, receiver) {
-        if (property === "describeRuntime") return async () => kestrelDescriptor();
+        if (property === "describeRuntime") {
+          return async () => createKestrelRuntimeDescriptorV1();
+        }
         const value = Reflect.get(target, property, receiver) as unknown;
         return typeof value === "function"
           ? (value as (...args: unknown[]) => unknown).bind(target)
@@ -42,6 +49,8 @@ export function composeHydraRuntime(input: {
           input.runtimeEnv,
           input.nativeSessionStore,
           input.resolveRuntimeEnvironment,
+          undefined,
+          input.codexCheckpointStore,
         )
       : new ClaudeRuntimeAdapter(
           input.profile,
@@ -51,7 +60,11 @@ export function composeHydraRuntime(input: {
           input.claudeSessionStore,
           input.resolveRuntimeEnvironment,
         );
-  const execution = new RuntimeAdapterChatRuntime(runtimeId, adapter);
+  const execution = new RuntimeAdapterChatRuntime(
+    runtimeId,
+    adapter,
+    input.releaseCoordinator,
+  );
 
   return new Proxy(input.kestrel, {
     get(target, property, receiver) {
@@ -77,25 +90,4 @@ export function composeHydraRuntime(input: {
         : value;
     },
   });
-}
-
-function kestrelDescriptor() {
-  return {
-    version: "runtime_descriptor_v1" as const,
-    runtimeId: "kestrel" as const,
-    displayName: "Kestrel",
-    adapterContractVersion: 1 as const,
-    nativeVersion: "0.7.0",
-    availability: "ready" as const,
-    interactionStrategies: ["deferred_session" as const],
-    capabilities: {
-      modes: ["chat", "plan", "build"] as Array<"chat" | "plan" | "build">,
-      continuation: true,
-      cancellation: true,
-      usage: true,
-      attachments: ["image", "text"] as Array<"image" | "text">,
-      conversationPersistence: "native_resume" as const,
-      interactionRecovery: "durable_resume" as const,
-    },
-  };
 }

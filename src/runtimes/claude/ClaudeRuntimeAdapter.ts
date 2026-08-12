@@ -6,6 +6,7 @@ import {
   type PermissionResult,
   type Query,
   type SDKMessage,
+  type SDKResultMessage,
   type SDKUserMessage,
   type SessionStore,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -48,6 +49,7 @@ interface ClaudeCompletion {
 }
 
 interface ClaudeSessionState {
+  sessionId: string;
   binding: RuntimeBindingV1;
   nativeSessionId: string;
   query: Query;
@@ -70,6 +72,7 @@ interface ClaudeSessionState {
   initialization: Promise<void>;
   credentialFingerprint: string;
   settled?: ClaudeCompletion | undefined;
+  terminalResult?: SDKResultMessage | undefined;
 }
 
 type ReleasableClaudeSessionStore = SessionStore & {
@@ -78,6 +81,10 @@ type ReleasableClaudeSessionStore = SessionStore & {
 
 export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
   private readonly sessions = new Map<string, ClaudeSessionState>();
+  private readonly lostWaits = new Map<
+    string,
+    { bindingId: string; requestId: string }
+  >();
 
   constructor(
     private readonly profile: TuiProfile,
@@ -135,7 +142,7 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
     } catch (error) {
       return claudeDescriptor(
         "unavailable",
-        error instanceof Error ? error.message : String(error),
+        "Claude Code readiness could not be established.",
       );
     } finally {
       probe?.close();
@@ -187,8 +194,9 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
     const state = this.sessions.get(binding.threadId);
     if (state !== undefined && state.binding.bindingId === binding.bindingId) {
       await this.cancel({ binding, sessionId: binding.threadId });
-      this.sessions.delete(binding.threadId);
+      this.sessions.delete(state.sessionId);
     }
+    this.lostWaits.delete(binding.threadId);
     if (persisted?.nativeSessionId) {
       await this.sessionStore?.releaseSession?.(persisted.nativeSessionId);
     }
@@ -199,9 +207,14 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
     const states = [...this.sessions.values()];
     this.sessions.clear();
     for (const state of states) {
+      settleClaudePending(
+        state,
+        "The Claude Runtime was disposed before the interaction completed.",
+      );
       state.abortController.abort();
       state.query.close();
     }
+    this.lostWaits.clear();
   }
 
   private async start(
@@ -231,6 +244,14 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
       binding.nativeSessionState = "degraded";
       throw nativeSessionLost("The Runtime binding contains incompatible native state.");
     }
+    if (persisted?.status === "degraded") {
+      binding.status = "degraded";
+      binding.nativeSessionState = "degraded";
+      throw nativeSessionLost("The persisted Claude Code session is degraded.");
+    }
+    if (persisted !== undefined && persisted.status !== "released") {
+      await this.ensurePersistedCorrelation(persisted, binding);
+    }
     const nativeSessionId = persisted?.nativeSessionId ?? randomUUID();
     const environmentSnapshot = this.resolveEnvironment === undefined
       ? { env: this.env, credentialFingerprint: "static" }
@@ -239,6 +260,13 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
     const segment = deferred<PendingClaudeInteraction>();
     let state!: ClaudeSessionState;
     const canUseTool: CanUseTool = async (toolName, toolInput, permission) => {
+      if (state.pending !== undefined) {
+        return {
+          behavior: "deny",
+          message: "Kestrel already has a pending Runtime interaction.",
+          toolUseID: permission.toolUseID,
+        };
+      }
       const pending: PendingClaudeInteraction = {
         requestId: randomUUID(),
         nativeRequestId: permission.requestId,
@@ -288,6 +316,7 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
       },
     });
     state = {
+      sessionId: turn.sessionId,
       binding,
       nativeSessionId,
       query: runtimeQuery,
@@ -312,6 +341,9 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
         version: "runtime_native_session_v1",
         bindingId: binding.bindingId,
         runtimeId: "claude",
+        threadId: binding.threadId,
+        participantId: binding.participantId,
+        environmentId: binding.environmentId,
         nativeSessionId,
         nativeVersion: CLAUDE_AGENT_SDK_VERSION,
         status: "ready",
@@ -330,6 +362,7 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
     });
     state.completion = this.consume(state).then((completion) => {
       state.settled = completion;
+      this.sessions.delete(state.sessionId);
       return completion;
     });
     this.sessions.set(turn.sessionId, state);
@@ -343,6 +376,19 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
   ): Promise<RuntimeTurnResult> {
     const state = this.sessions.get(turn.sessionId);
     const requestId = turn.resumeRequestId?.trim();
+    const lostWait = this.lostWaits.get(turn.sessionId);
+    if (
+      state === undefined &&
+      lostWait !== undefined &&
+      lostWait.bindingId === binding.bindingId &&
+      requestId === lostWait.requestId
+    ) {
+      return failed(
+        turn,
+        "RUNTIME_LIVE_WAIT_LOST",
+        "The Claude live interaction connection was lost.",
+      );
+    }
     if (
       state === undefined ||
       state.binding.bindingId !== binding.bindingId ||
@@ -371,7 +417,7 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
           throw new Error("Claude credentials rotated or expired.");
         }
       } catch {
-        settleClaudePending(
+        await this.failLiveWait(
           state,
           "Claude credentials changed or expired during the live interaction.",
         );
@@ -461,11 +507,27 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
       for await (const message of state.query) {
         state.nativeActivity = true;
         state.nativeActivitySequence += 1;
-        acknowledgeClaudeDelivery(state, this.callbacks);
         consumeClaudeMessage(message, state);
+        if (message.type !== "result" || isSuccessfulClaudeResult(message)) {
+          acknowledgeClaudeDelivery(
+            state,
+            this.callbacks,
+            message.type === "result",
+          );
+        }
       }
       await state.initialization;
-      acknowledgeClaudeDelivery(state, this.callbacks, true);
+      const result = state.terminalResult;
+      if (
+        result === undefined ||
+        result.subtype !== "success" ||
+        result.is_error !== false
+      ) {
+        return terminalFromState(state, "FAILED", {
+          code: "CLAUDE_RUNTIME_FAILED",
+          message: `Claude Code ended with ${result?.subtype ?? "missing_result"}.`,
+        });
+      }
       return terminalFromState(state, "COMPLETED");
     } catch (error) {
       if (state.abortController.signal.aborted) {
@@ -473,6 +535,12 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
       }
       const liveWaitLost =
         state.pending !== undefined || state.awaitingDelivery !== undefined;
+      if (state.pending !== undefined) {
+        this.lostWaits.set(state.sessionId, {
+          bindingId: state.binding.bindingId,
+          requestId: state.pending.requestId,
+        });
+      }
       settleClaudePending(
         state,
         error instanceof Error ? error.message : String(error),
@@ -485,13 +553,20 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
         const persisted = await this.nativeSessions.load(
           state.binding.bindingId,
         );
-        if (persisted !== undefined) {
+        if (persisted !== undefined && persisted.status !== "released") {
           await this.nativeSessions.save({
             ...persisted,
             status: "degraded",
             updatedAt: new Date().toISOString(),
           });
         }
+      }
+      if (liveWaitLost) {
+        state.binding.status = "degraded";
+        state.binding.nativeSessionState = "degraded";
+        await this.persistDegraded(state.binding.bindingId);
+        state.abortController.abort();
+        state.query.close();
       }
       return terminalFromState(state, "FAILED", {
         code: liveWaitLost
@@ -504,6 +579,76 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
           : nativeSessionMissing
           ? "Claude could not resume the native session for this binding."
           : error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async failLiveWait(
+    state: ClaudeSessionState,
+    message: string,
+  ): Promise<void> {
+    state.binding.status = "degraded";
+    state.binding.nativeSessionState = "degraded";
+    const pending = state.pending;
+    if (pending !== undefined) {
+      this.lostWaits.set(state.sessionId, {
+        bindingId: state.binding.bindingId,
+        requestId: pending.requestId,
+      });
+    }
+    settleClaudePending(state, message);
+    state.awaitingDelivery = undefined;
+    state.abortController.abort();
+    state.query.close();
+    await this.persistDegraded(state.binding.bindingId);
+    this.sessions.delete(state.sessionId);
+    state.settled = terminalFromState(state, "FAILED", {
+      code: "RUNTIME_LIVE_WAIT_LOST",
+      message,
+    });
+  }
+
+  private async persistDegraded(bindingId: string): Promise<void> {
+    const persisted = await this.nativeSessions.load(bindingId);
+    if (persisted === undefined || persisted.status !== "ready") return;
+    await this.nativeSessions.save({
+      ...persisted,
+      status: "degraded",
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  private async ensurePersistedCorrelation(
+    persisted: Exclude<
+      Awaited<ReturnType<RuntimeNativeSessionStore["load"]>>,
+      undefined | { status: "released" }
+    >,
+    binding: RuntimeBindingV1,
+  ): Promise<void> {
+    for (const [stored, expected] of [
+      [persisted.threadId, binding.threadId],
+      [persisted.participantId, binding.participantId],
+      [persisted.environmentId, binding.environmentId],
+    ] as const) {
+      if (stored !== undefined && stored !== expected) {
+        binding.status = "degraded";
+        binding.nativeSessionState = "degraded";
+        throw nativeSessionLost(
+          "The persisted Claude Code session correlation does not match this binding.",
+        );
+      }
+    }
+    if (
+      persisted.threadId === undefined ||
+      persisted.participantId === undefined ||
+      persisted.environmentId === undefined
+    ) {
+      await this.nativeSessions.save({
+        ...persisted,
+        threadId: binding.threadId,
+        participantId: binding.participantId,
+        environmentId: binding.environmentId,
+        updatedAt: new Date().toISOString(),
       });
     }
   }
@@ -625,9 +770,16 @@ function consumeClaudeMessage(message: SDKMessage, state: ClaudeSessionState): v
     }
   }
   if (message.type === "result") {
+    state.terminalResult = message;
     const usage = readUsage(message);
     Object.assign(state, { finalUsage: usage });
   }
+}
+
+function isSuccessfulClaudeResult(
+  message: SDKResultMessage,
+): boolean {
+  return message.subtype === "success" && message.is_error === false;
 }
 
 function readUsage(message: Extract<SDKMessage, { type: "result" }>): {
