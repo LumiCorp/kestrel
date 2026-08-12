@@ -8,6 +8,7 @@ import { EXECUTION_PROTOCOL_VERSION } from "@kestrel-agents/protocol";
 
 import type { RunnerEvent } from "../../cli/protocol/contracts.js";
 import { LocalCoreProtocolEventJournal } from "../../src/localCore/protocolEventJournal.js";
+import { LocalCoreRuntimeBindingStore } from "../../src/localCore/runtimeBindings.js";
 import {
   closeLocalCoreStore,
   ensureLocalCoreStore,
@@ -197,6 +198,79 @@ test("Local Core protocol journal rejects malformed event envelopes during repla
   }
 });
 
+test("Local Core journal refuses a critical native event without an authoritative binding", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-protocol-binding-missing-"));
+  try {
+    const handle = await ensureLocalCoreStore({ homePath: home });
+    const bindings = new LocalCoreRuntimeBindingStore(handle.executor);
+    const journal = new LocalCoreProtocolEventJournal(handle.executor, bindings);
+    const event = nativeSessionEstablished("critical-event-missing", "missing-session");
+
+    await assert.rejects(journal.append(event), /authoritative Local Core binding/i);
+    const stored = await handle.executor.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM runner_protocol_events WHERE event_id = $1",
+      [event.id],
+    );
+    assert.equal(stored.rows[0]?.count, "0");
+  } finally {
+    await closeLocalCoreStore(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core journal commits native lifecycle and event identity atomically", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-protocol-binding-atomic-"));
+  try {
+    const handle = await ensureLocalCoreStore({ homePath: home });
+    const bindings = new LocalCoreRuntimeBindingStore(handle.executor);
+    const binding = await bindings.admit({
+      canonicalThreadId: "thread-main:runtime-session",
+      runnerSessionId: "runtime-session",
+      runtimeId: "codex",
+      capabilityDigest: "capabilities",
+      modelProvider: "openai",
+      modelId: "gpt-5",
+    });
+    const journal = new LocalCoreProtocolEventJournal(handle.executor, bindings);
+    await journal.append(runnerPong("duplicate-event", "command-pong", "nonce"));
+
+    await assert.rejects(
+      journal.append(nativeSessionEstablished("duplicate-event", binding.runnerSessionId, {
+        bindingId: binding.bindingId,
+        participantId: binding.participantId,
+        runtimeId: "codex",
+      })),
+      /duplicate|unique|primary key/i,
+    );
+    assert.equal(
+      (await bindings.get(binding.canonicalThreadId))?.nativeSessionState,
+      "uninitialized",
+    );
+
+    const established = nativeSessionEstablished(
+      "native-established",
+      binding.runnerSessionId,
+      {
+        bindingId: binding.bindingId,
+        participantId: binding.participantId,
+        runtimeId: "codex",
+      },
+    );
+    await journal.append(established);
+    assert.equal(
+      (await bindings.get(binding.canonicalThreadId))?.nativeSessionState,
+      "ready",
+    );
+    assert.deepEqual(
+      await journal.replayAfter("duplicate-event", {}, () => undefined),
+      { status: "ok" },
+    );
+  } finally {
+    await closeLocalCoreStore(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 async function insertRawProtocolEvent(
   executor: ConstructorParameters<typeof LocalCoreProtocolEventJournal>[0],
   event: Record<string, unknown>,
@@ -293,6 +367,37 @@ function runnerCompleted(
           },
         },
       },
+    },
+  };
+}
+
+function nativeSessionEstablished(
+  id: string,
+  sessionId: string,
+  binding: {
+    bindingId: string;
+    participantId: string;
+    runtimeId: "codex" | "claude";
+  } = {
+    bindingId: "binding-missing",
+    participantId: "runtime:codex:missing",
+    runtimeId: "codex",
+  },
+): RunnerEvent {
+  return {
+    id,
+    type: "run.native_session.established",
+    ts: "2026-07-13T12:00:00.000Z",
+    runId: "runtime-run",
+    sessionId,
+    commandId: "runtime-command",
+    payload: {
+      version: "runtime_native_session_established_v1",
+      sessionId,
+      runId: "runtime-run",
+      bindingId: binding.bindingId,
+      participantId: binding.participantId,
+      runtimeId: binding.runtimeId,
     },
   };
 }

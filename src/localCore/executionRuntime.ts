@@ -14,9 +14,12 @@ import { LocalCoreGoogleWorkspaceService } from "./googleWorkspaceService.js";
 import { composeHydraRuntime } from "../../cli/runtime/HydraRuntime.js";
 import path from "node:path";
 import {
+  FileCodexRolloutCheckpointStore,
   FileClaudeSessionStore,
+  FileRuntimeBindingCorrelationStore,
   FileRuntimeNativeSessionStore,
 } from "../runtimes/FileRuntimeStateStore.js";
+import { RuntimeBindingReleaseCoordinator } from "../runtimes/RuntimeBindingReleaseCoordinator.js";
 import {
   buildRuntimeChildEnvironment,
   fingerprintRuntimeEnvironment,
@@ -51,7 +54,15 @@ export function createLocalCoreRunnerRuntimeFactory(
   );
   const nativeSessionStore = new FileRuntimeNativeSessionStore(nativeStateRoot);
   const claudeSessionStore = new FileClaudeSessionStore(nativeStateRoot);
-  const runtimeFactory = createRuntimeFactoryWithStore(store, {
+  const codexCheckpointStore = new FileCodexRolloutCheckpointStore(nativeStateRoot);
+  const bindingCorrelationStore = new FileRuntimeBindingCorrelationStore(nativeStateRoot);
+  const releaseCoordinator = new RuntimeBindingReleaseCoordinator(
+    nativeSessionStore,
+    claudeSessionStore,
+    codexCheckpointStore,
+    bindingCorrelationStore,
+  );
+  const kestrelRuntimeFactory = createRuntimeFactoryWithStore(store, {
     enableUserTerminals: true,
     enableWorkspaceChanges: true,
     ...(options.homePath !== undefined
@@ -76,7 +87,7 @@ export function createLocalCoreRunnerRuntimeFactory(
         }
       : {}),
   });
-  return (
+  const runtimeFactory: RunnerRuntimeFactory = (
     profile,
     onRunLog,
     onProgress,
@@ -97,7 +108,7 @@ export function createLocalCoreRunnerRuntimeFactory(
             model: profile.model,
           })
         : undefined;
-    const kestrel = new KestrelChatRuntime(profile, runtimeFactory, {
+    const kestrel = new KestrelChatRuntime(profile, kestrelRuntimeFactory, {
       onRunLog,
       onProgress,
       onConsole,
@@ -119,13 +130,15 @@ export function createLocalCoreRunnerRuntimeFactory(
       },
       runtimeEnv:
         resolvedRuntimeEnvironment === undefined
-          ? process.env
+          ? {}
           : {
               ...resolvedRuntimeEnvironment.runtimeEnv,
               ...resolvedRuntimeEnvironment.modelEnv,
             },
       nativeSessionStore,
       claudeSessionStore,
+      codexCheckpointStore,
+      releaseCoordinator,
       resolveRuntimeEnvironment: async () => {
         const selectedEnvironment: RuntimeEnvironmentMap = resolvedRuntimeEnvironment === undefined
           ? {}
@@ -138,8 +151,8 @@ export function createLocalCoreRunnerRuntimeFactory(
           ? Boolean(selectedEnvironment.OPENAI_API_KEY?.trim())
           : Boolean(selectedEnvironment.ANTHROPIC_API_KEY?.trim());
         const nativeLoginRoot = runtimeId === "codex"
-          ? process.env.CODEX_HOME
-          : process.env.CLAUDE_CONFIG_DIR;
+          ? selectedEnvironment.CODEX_HOME
+          : selectedEnvironment.CLAUDE_CONFIG_DIR;
         const authenticationSource = hasManagedCredential
           ? "profile-credential"
           : "native-login";
@@ -179,6 +192,10 @@ export function createLocalCoreRunnerRuntimeFactory(
       },
     });
   };
+  runtimeFactory.releaseRuntimeBinding = async (input) => {
+    await releaseCoordinator.release(input);
+  };
+  return runtimeFactory;
 }
 
 function toKestrelRuntimeEnvironment(

@@ -23,6 +23,7 @@ import {
   parseLocalCoreBuildIdentity,
   parseLocalCoreExecutionProfileResolution,
   parseLocalCoreRuntimeDescriptorResolution,
+  parseLocalCoreRuntimeBindingResponse,
   parseLocalCoreRuntimeStoreResetResult,
   parseLocalCoreSystemLifecycle,
   parseLocalCoreSystemShutdownResult,
@@ -33,6 +34,11 @@ import {
   type LocalCoreExecutionProfileResolveRequest,
   type LocalCoreRuntimeDescribeRequest,
   type LocalCoreRuntimeDescriptorResolution,
+  type LocalCoreRuntimeBindingAdmissionRequest,
+  type LocalCoreRuntimeBindingProjectionRequest,
+  type LocalCoreRuntimeBindingCorrelationRequest,
+  type LocalCoreRuntimeRecoveryForkRequest,
+  type LocalCoreRuntimeBindingResponse,
   type LocalCoreRuntimeStoreResetResult,
   type LocalCoreSystemLifecycle,
   type LocalCoreSystemShutdownRequest,
@@ -590,8 +596,15 @@ export class LocalCoreClient {
 
   async describeRuntime(
     input: LocalCoreRuntimeDescribeRequest,
+    options: { signal?: AbortSignal | undefined } = {},
   ): Promise<LocalCoreRuntimeDescriptorResolution> {
-    const response = await this.post("/v1/runtimes/describe", input);
+    const response = await this.request(
+      "POST",
+      "/v1/runtimes/describe",
+      input,
+      true,
+      { signal: options.signal },
+    );
     return parseLocalCoreRuntimeDescriptorResolution(
       readObjectField<Record<string, unknown>>(
         response,
@@ -599,6 +612,87 @@ export class LocalCoreClient {
         "Runtime descriptor resolution",
       ),
     );
+  }
+
+  async runtimeEnvironmentIdentity(): Promise<string> {
+    const response = await this.get("/v1/runtime-bindings/environment");
+    const value = readUnknownField(response, "environmentId", "Runtime environment identity");
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw new Error("Local Core Runtime environment identity is invalid.");
+    }
+    return value;
+  }
+
+  async getRuntimeBinding(
+    canonicalThreadId: string,
+  ): Promise<LocalCoreRuntimeBindingResponse | undefined> {
+    const response = await this.post("/v1/runtime-bindings/get", { canonicalThreadId });
+    const binding = readUnknownField(response, "binding", "Runtime binding lookup");
+    return binding === undefined
+      ? undefined
+      : parseLocalCoreRuntimeBindingResponse(binding);
+  }
+
+  async admitRuntimeBinding(
+    input: LocalCoreRuntimeBindingAdmissionRequest,
+  ): Promise<LocalCoreRuntimeBindingResponse> {
+    const response = await this.post("/v1/runtime-bindings/admit", input);
+    return parseLocalCoreRuntimeBindingResponse(readUnknownField(response, "binding", "Runtime binding admission"));
+  }
+
+  async projectRuntimeBinding(
+    input: LocalCoreRuntimeBindingProjectionRequest,
+  ): Promise<LocalCoreRuntimeBindingResponse> {
+    const response = await this.post("/v1/runtime-bindings/project", input);
+    return parseLocalCoreRuntimeBindingResponse(readUnknownField(response, "binding", "Runtime binding projection"));
+  }
+
+  async establishRuntimeBinding(
+    event: ReturnType<typeof parseRunnerEventV2>,
+  ): Promise<LocalCoreRuntimeBindingResponse> {
+    const response = await this.post("/v1/runtime-bindings/establish", { event });
+    return parseLocalCoreRuntimeBindingResponse(readUnknownField(response, "binding", "Runtime binding establishment"));
+  }
+
+  async degradeRuntimeBinding(
+    input: LocalCoreRuntimeBindingCorrelationRequest & {
+      lossCode: "RUNTIME_NATIVE_SESSION_LOST" | "RUNTIME_LIVE_WAIT_LOST";
+    },
+  ): Promise<LocalCoreRuntimeBindingResponse> {
+    const response = await this.post("/v1/runtime-bindings/degrade", input);
+    return parseLocalCoreRuntimeBindingResponse(readUnknownField(response, "binding", "Runtime binding degradation"));
+  }
+
+  async createRuntimeRecoveryFork(
+    input: LocalCoreRuntimeRecoveryForkRequest,
+  ): Promise<{
+    source: LocalCoreRuntimeBindingResponse;
+    fork: LocalCoreRuntimeBindingResponse;
+  }> {
+    const response = await this.post("/v1/runtime-bindings/recovery-forks", input);
+    const recovery = readObjectField<Record<string, unknown>>(
+      response,
+      "recovery",
+      "Runtime recovery fork",
+    );
+    return {
+      source: parseLocalCoreRuntimeBindingResponse(recovery.source),
+      fork: parseLocalCoreRuntimeBindingResponse(recovery.fork),
+    };
+  }
+
+  async releaseRuntimeBinding(
+    input: LocalCoreRuntimeBindingCorrelationRequest,
+  ): Promise<LocalCoreRuntimeBindingResponse> {
+    const response = await this.post("/v1/runtime-bindings/release", input);
+    return parseLocalCoreRuntimeBindingResponse(readUnknownField(response, "binding", "Runtime binding release"));
+  }
+
+  /** Qualification-only: the daemon rejects this unless paid Hydra smoke is approved. */
+  async removeRuntimeNativeSessionForSmoke(
+    input: LocalCoreRuntimeBindingCorrelationRequest,
+  ): Promise<void> {
+    await this.post("/v1/runtime-bindings/diagnostics/remove-native-session", input);
   }
 
   async desktopSettings<TSettings = Record<string, unknown>>(): Promise<{
@@ -1127,7 +1221,10 @@ export class LocalCoreClient {
     path: string,
     body: unknown,
     auth: boolean,
-    options: { timeout?: "default" | "none" | undefined } = {},
+    options: {
+      timeout?: "default" | "none" | undefined;
+      signal?: AbortSignal | undefined;
+    } = {},
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -1136,6 +1233,7 @@ export class LocalCoreClient {
           socketPath: this.socketPath,
           path,
           method,
+          signal: options.signal,
           ...(options.timeout === "none" ? {} : { timeout: this.timeoutMs }),
           headers: {
             ...(auth ? { authorization: `Bearer ${this.token}` } : {}),
@@ -1302,6 +1400,13 @@ function readObjectField<T extends object>(
     );
   }
   return candidate as T;
+}
+
+function readUnknownField(value: unknown, field: string, label: string): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`Local Core ${label} response must be an object.`);
+  }
+  return (value as Record<string, unknown>)[field];
 }
 
 function readBooleanField(

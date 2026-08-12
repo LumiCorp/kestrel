@@ -9,6 +9,7 @@ import {
   appendRendererTranscript,
   archiveRendererThread,
   createRendererThread,
+  forkRendererThreadForRuntimeRecovery,
   getRendererTurnContinuation,
   getRendererThreadArchiveBlockReason,
   getTerminalWaitEventType,
@@ -37,6 +38,67 @@ test("new Desktop conversations default to the local checkout", () => {
 
 test("new Desktop conversations default to chat mode", () => {
   assert.equal(createRendererThread().mode, "chat");
+});
+
+test("Desktop Runtime recovery forks sanitize the lost wait and preserve authoritative binding state", () => {
+  const source = {
+    ...createRendererThread({ runtimeId: "claude" }),
+    id: "source-thread",
+    sessionId: "source-session",
+    runtimeBindingStatus: "degraded" as const,
+    runtimeNativeSessionState: "degraded" as const,
+    latestRuntimeLossCode: "RUNTIME_LIVE_WAIT_LOST" as const,
+    transcript: [
+      {
+        role: "user" as const,
+        text: "Remember the durable context",
+        timestamp: "2026-08-12T10:00:00.000Z",
+        data: { nested: { privateRuntimeMetadata: { nativeRequestId: "native-secret" } } },
+      },
+      {
+        role: "assistant" as const,
+        text: "I remember it.",
+        timestamp: "2026-08-12T10:00:01.000Z",
+      },
+      {
+        role: "system" as const,
+        text: "Approve this action?",
+        timestamp: "2026-08-12T10:00:02.000Z",
+        data: { kind: "runtime.waiting_prompt", requestId: "request-1" },
+      },
+      {
+        role: "user" as const,
+        text: "Approve",
+        timestamp: "2026-08-12T10:00:03.000Z",
+      },
+    ],
+  };
+  const state = {
+    entries: {},
+    activeThreadId: source.id,
+    threads: [source],
+    theme: "system" as const,
+  };
+
+  const recovered = forkRendererThreadForRuntimeRecovery(state, source.id, {
+    runtimeId: "claude",
+    threadId: "fork-thread",
+    sessionId: "fork-session",
+    bindingStatus: "ready",
+    nativeSessionState: "uninitialized",
+  });
+  const fork = recovered.threads[0]!;
+  assert.equal(fork.id, "fork-thread");
+  assert.equal(fork.runtimeId, "claude");
+  assert.equal(fork.runtimeBindingStatus, "ready");
+  assert.equal(fork.runtimeNativeSessionState, "uninitialized");
+  assert.equal(fork.latestRuntimeLossCode, undefined);
+  assert.deepEqual(fork.transcript.map((line) => line.text), [
+    "Remember the durable context",
+    "I remember it.",
+  ]);
+  assert.equal(JSON.stringify(fork.transcript).includes("privateRuntimeMetadata"), false);
+  assert.equal(recovered.threads[1], source);
 });
 
 test("Desktop preserves explicit build mode but defaults missing persisted mode to chat", () => {

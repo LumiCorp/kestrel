@@ -83,6 +83,17 @@ export interface RendererThread {
   modelConfigurationId: string;
   modelConfigurationRevision: number;
   runtimeId: RuntimeId;
+  runtimeBindingStatus?: "ready" | "degraded" | "released" | undefined;
+  runtimeNativeSessionState?:
+    | "uninitialized"
+    | "ready"
+    | "degraded"
+    | "released"
+    | undefined;
+  latestRuntimeLossCode?:
+    | "RUNTIME_NATIVE_SESSION_LOST"
+    | "RUNTIME_LIVE_WAIT_LOST"
+    | undefined;
   enabledAppIds: string[];
   rawSummary: Record<string, unknown>;
   rawState: Record<string, unknown>;
@@ -284,9 +295,16 @@ export function addRendererThread(
   };
 }
 
-export function forkRendererThreadToKestrel(
+export function forkRendererThreadForRuntimeRecovery(
   state: DesktopRendererState,
   sourceThreadId: string,
+  target: {
+    runtimeId: RuntimeId;
+    threadId: string;
+    sessionId: string;
+    bindingStatus: "ready" | "degraded" | "released";
+    nativeSessionState: "uninitialized" | "ready" | "degraded" | "released";
+  },
 ): DesktopRendererState {
   const source = state.threads.find((thread) => thread.id === sourceThreadId);
   if (source === undefined) return state;
@@ -294,14 +312,19 @@ export function forkRendererThreadToKestrel(
     ...(source.projectPath !== undefined ? { projectPath: source.projectPath } : {}),
     modelConfigurationId: source.modelConfigurationId,
     modelConfigurationRevision: source.modelConfigurationRevision,
-    runtimeId: "kestrel",
+    runtimeId: target.runtimeId,
     enabledAppIds: source.enabledAppIds,
   });
   const hydratedFork: RendererThread = {
     ...fork,
-    title: `${source.title} (Kestrel fork)`,
+    id: target.threadId,
+    sessionId: target.sessionId,
+    title: `${source.title} (${target.runtimeId === "kestrel" ? "Kestrel" : "Runtime"} fork)`,
     titleLocked: true,
-    transcript: source.transcript.map((line) => ({ ...line })),
+    transcript: sanitizeRecoveryTranscript(source.transcript),
+    runtimeBindingStatus: target.bindingStatus,
+    runtimeNativeSessionState: target.nativeSessionState,
+    latestRuntimeLossCode: undefined,
     mode: source.mode,
     workspaceMode: source.workspaceMode,
     workspaceBaseRef: source.workspaceBaseRef,
@@ -314,6 +337,56 @@ export function forkRendererThreadToKestrel(
     activeThreadId: hydratedFork.id,
     threads: [hydratedFork, ...state.threads],
   };
+}
+
+function sanitizeRecoveryTranscript(
+  transcript: readonly RendererTranscriptLine[],
+): RendererTranscriptLine[] {
+  let lostWaitIndex = -1;
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    const line = transcript[index]!;
+    const data = asRecord(line.data);
+    if (
+      line.role === "system" &&
+      (data?.kind === "runtime.waiting_prompt" ||
+        typeof data?.requestId === "string")
+    ) {
+      lostWaitIndex = index;
+      break;
+    }
+  }
+  const answerIndex = lostWaitIndex < 0
+    ? -1
+    : transcript.findIndex(
+        (line, index) => index > lostWaitIndex && line.role === "user",
+      );
+  return transcript.flatMap((line, index) => {
+    const data = asRecord(line.data);
+    if (
+      index === answerIndex ||
+      (line.role === "system" &&
+        (data?.kind === "runtime.waiting_prompt" ||
+          typeof data?.requestId === "string"))
+    ) {
+      return [];
+    }
+    return [{
+      ...line,
+      ...(line.data !== undefined
+        ? { data: stripPrivateRuntimeMetadata(line.data) }
+        : {}),
+    }];
+  });
+}
+
+function stripPrivateRuntimeMetadata(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripPrivateRuntimeMetadata);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== "privateRuntimeMetadata")
+      .map(([key, entry]) => [key, stripPrivateRuntimeMetadata(entry)]),
+  );
 }
 
 export function selectRendererThread(
@@ -599,6 +672,9 @@ export function serializeDesktopRendererState(
         modelConfigurationId: thread.modelConfigurationId,
         modelConfigurationRevision: thread.modelConfigurationRevision,
         runtimeId: thread.runtimeId,
+        runtimeBindingStatus: thread.runtimeBindingStatus,
+        runtimeNativeSessionState: thread.runtimeNativeSessionState,
+        latestRuntimeLossCode: thread.latestRuntimeLossCode,
         enabledAppIds: [...thread.enabledAppIds],
         ...(thread.mode === "build"
           ? { actSubmode: "safe" }
@@ -914,6 +990,21 @@ function collectThreads(store: {
               ? rawState.modelConfigurationRevision
               : defaults.modelConfigurationRevision ?? 1,
           runtimeId: isRuntimeId(rawState.runtimeId) ? rawState.runtimeId : "kestrel",
+          ...(rawState.runtimeBindingStatus === "ready" ||
+          rawState.runtimeBindingStatus === "degraded" ||
+          rawState.runtimeBindingStatus === "released"
+            ? { runtimeBindingStatus: rawState.runtimeBindingStatus }
+            : {}),
+          ...(rawState.runtimeNativeSessionState === "uninitialized" ||
+          rawState.runtimeNativeSessionState === "ready" ||
+          rawState.runtimeNativeSessionState === "degraded" ||
+          rawState.runtimeNativeSessionState === "released"
+            ? { runtimeNativeSessionState: rawState.runtimeNativeSessionState }
+            : {}),
+          ...(rawState.latestRuntimeLossCode === "RUNTIME_NATIVE_SESSION_LOST" ||
+          rawState.latestRuntimeLossCode === "RUNTIME_LIVE_WAIT_LOST"
+            ? { latestRuntimeLossCode: rawState.latestRuntimeLossCode }
+            : {}),
           enabledAppIds: Array.isArray(rawState.enabledAppIds)
             ? [...new Set(rawState.enabledAppIds.flatMap((appId) =>
                 typeof appId === "string" ? [normalizeDesktopAppId(appId)] : []

@@ -13,6 +13,10 @@ import type {
   RunnerServiceEventReplayResult,
 } from "../../cli/runner/RunnerServiceEventJournal.js";
 import type { SqlExecutor } from "../store/PostgresSessionStore.js";
+import {
+  LocalCoreRuntimeBindingError,
+  type LocalCoreRuntimeBindingStore,
+} from "./runtimeBindings.js";
 
 const REPLAY_PAGE_SIZE = 500;
 
@@ -29,7 +33,10 @@ interface StoredProtocolEvent {
 export class LocalCoreProtocolEventJournal implements RunnerServiceEventJournal {
   private readonly executor: SqlExecutor;
 
-  constructor(executor: SqlExecutor) {
+  constructor(
+    executor: SqlExecutor,
+    private readonly runtimeBindings?: LocalCoreRuntimeBindingStore,
+  ) {
     this.executor = executor;
   }
 
@@ -39,31 +46,88 @@ export class LocalCoreProtocolEventJournal implements RunnerServiceEventJournal 
 
   async append(event: RunnerEvent): Promise<void> {
     const parsed = parseRunnerEventV2(event) as RunnerEvent;
-    await this.executor.query(
-      `INSERT INTO runner_protocol_events (
-         event_id,
-         event_type,
-         occurred_at,
-         run_id,
-         session_id,
-         thread_id,
-         command_id,
-         event_json
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        parsed.id,
-        parsed.type,
-        parsed.ts,
-        parsed.runId ?? null,
-        parsed.sessionId ?? null,
-        parsed.threadId ?? null,
-        parsed.commandId ?? null,
-        {
-          executionProtocolVersion: EXECUTION_PROTOCOL_VERSION,
-          event: parsed,
-        } satisfies StoredProtocolEvent,
-      ],
-    );
+    if (this.runtimeBindings !== undefined) {
+      await this.runtimeBindings.transaction(async (bindings, executor) => {
+        await this.applyRuntimeBindingEvent(parsed, bindings);
+        await appendProtocolEvent(executor, parsed);
+      });
+      return;
+    }
+    await appendProtocolEvent(this.executor, parsed);
+  }
+
+  private async applyRuntimeBindingEvent(
+    event: RunnerEvent,
+    bindings: LocalCoreRuntimeBindingStore,
+  ): Promise<void> {
+    if (event.type === "run.native_session.established") {
+      const binding = await bindings.getForRunnerSession(event.payload.sessionId);
+      if (binding === undefined) {
+        throw new LocalCoreRuntimeBindingError(
+          "RUNTIME_BINDING_NOT_FOUND",
+          "Native-session establishment has no authoritative Local Core binding.",
+        );
+      }
+      await bindings.establish({
+        canonicalThreadId: binding.canonicalThreadId,
+        bindingId: event.payload.bindingId,
+        participantId: event.payload.participantId,
+        runtimeId: event.payload.runtimeId,
+        environmentId: binding.environmentId,
+      });
+      return;
+    }
+    if (event.type === "runtime.released") {
+      const binding = await bindings.get(event.payload.threadId);
+      if (binding === undefined) {
+        throw new LocalCoreRuntimeBindingError(
+          "RUNTIME_BINDING_NOT_FOUND",
+          "Runtime release has no authoritative Local Core binding.",
+        );
+      }
+      await bindings.release({
+        canonicalThreadId: binding.canonicalThreadId,
+        bindingId: event.payload.bindingId,
+        participantId: event.payload.participantId,
+        runtimeId: event.payload.runtimeId,
+        environmentId: event.payload.environmentId,
+        acknowledgementEventId: event.id,
+      });
+      return;
+    }
+    if (event.type !== "run.failed") return;
+    const code = readRuntimeFailureCode(event.payload.error);
+    if (
+      code !== "RUNTIME_NATIVE_SESSION_LOST" &&
+      code !== "RUNTIME_LIVE_WAIT_LOST"
+    ) return;
+    if (event.sessionId === undefined) {
+      throw new LocalCoreRuntimeBindingError(
+        "RUNTIME_BINDING_CORRELATION_INVALID",
+        "Runtime loss has no canonical Desktop Thread correlation.",
+      );
+    }
+    const binding = await bindings.getForRunnerSession(event.sessionId);
+    if (binding === undefined) {
+      throw new LocalCoreRuntimeBindingError(
+        "RUNTIME_BINDING_NOT_FOUND",
+        "Runtime loss has no authoritative Local Core binding.",
+      );
+    }
+    if (binding.runtimeId === "kestrel") {
+      throw new LocalCoreRuntimeBindingError(
+        "RUNTIME_BINDING_CORRELATION_INVALID",
+        "A foreign Runtime loss cannot be applied to a Kestrel binding.",
+      );
+    }
+    await bindings.degrade({
+      canonicalThreadId: binding.canonicalThreadId,
+      bindingId: binding.bindingId,
+      participantId: binding.participantId,
+      runtimeId: binding.runtimeId,
+      environmentId: binding.environmentId,
+      lossCode: code,
+    });
   }
 
   async findTerminalEvent(
@@ -178,6 +242,43 @@ export class LocalCoreProtocolEventJournal implements RunnerServiceEventJournal 
     }
     return { status: "ok" };
   }
+}
+
+async function appendProtocolEvent(
+  executor: SqlExecutor,
+  parsed: RunnerEvent,
+): Promise<void> {
+  await executor.query(
+    `INSERT INTO runner_protocol_events (
+       event_id,
+       event_type,
+       occurred_at,
+       run_id,
+       session_id,
+       thread_id,
+       command_id,
+       event_json
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      parsed.id,
+      parsed.type,
+      parsed.ts,
+      parsed.runId ?? null,
+      parsed.sessionId ?? null,
+      parsed.threadId ?? null,
+      parsed.commandId ?? null,
+      {
+        executionProtocolVersion: EXECUTION_PROTOCOL_VERSION,
+        event: parsed,
+      } satisfies StoredProtocolEvent,
+    ],
+  );
+}
+
+function readRuntimeFailureCode(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+  const code = (value as Record<string, unknown>).code;
+  return typeof code === "string" ? code : undefined;
 }
 
 function appendFilterCondition(

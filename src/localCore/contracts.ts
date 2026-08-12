@@ -1,5 +1,11 @@
 import type { TuiProfile } from "../../cli/contracts.js";
-import type { RuntimeDescriptorV1 } from "../runtimes/contracts.js";
+import { isRuntimeId, type RuntimeDescriptorV1, type RuntimeId } from "../runtimes/contracts.js";
+import type {
+  AdmitLocalRuntimeBindingInput,
+  CorrelateLocalRuntimeBindingInput,
+  LocalRuntimeBindingV1,
+  ProjectLocalRuntimeBindingInput,
+} from "./runtimeBindings.js";
 import {
   parseDesktopExecutionSelection,
   type DesktopExecutionSelection,
@@ -83,7 +89,15 @@ export type LocalCoreExecutionProfileResolveRequest =
       profileId: string;
     };
 
-export type LocalCoreRuntimeDescribeRequest = LocalCoreExecutionProfileResolveRequest;
+export type LocalCoreRuntimeDescribeRequest =
+  | LocalCoreExecutionProfileResolveRequest
+  | {
+      client: "web";
+      runtimeId: Exclude<RuntimeId, "kestrel">;
+      modelProvider: string;
+      model: string;
+      environmentId: string;
+    };
 
 export interface LocalCoreRuntimeDescriptorResolution {
   version: "runtime_descriptor_resolution_v1";
@@ -95,8 +109,208 @@ export interface LocalCoreRuntimeDescriptorResolution {
   readinessExpiresAt?: string | undefined;
 }
 
-export const parseLocalCoreRuntimeDescribeRequest =
-  parseLocalCoreExecutionProfileResolveRequest;
+export function parseLocalCoreRuntimeDescribeRequest(
+  value: unknown,
+): LocalCoreRuntimeDescribeRequest {
+  const record = requireLocalCoreRecord(value, "Runtime describe request");
+  if (record.client === "web" && record.runtimeId !== undefined) {
+    rejectUnknownLocalCoreFields(
+      record,
+      new Set(["client", "runtimeId", "modelProvider", "model", "environmentId"]),
+      "Runtime describe request",
+    );
+    if (record.runtimeId !== "codex" && record.runtimeId !== "claude") {
+      throw new Error("Runtime describe request.runtimeId must be codex or claude.");
+    }
+    return {
+      client: "web",
+      runtimeId: record.runtimeId,
+      modelProvider: requireLocalCoreString(
+        record.modelProvider,
+        "Runtime describe request.modelProvider",
+      ),
+      model: requireLocalCoreString(record.model, "Runtime describe request.model"),
+      environmentId: requireLocalCoreString(
+        record.environmentId,
+        "Runtime describe request.environmentId",
+      ),
+    };
+  }
+  return parseLocalCoreExecutionProfileResolveRequest(value);
+}
+
+export type LocalCoreRuntimeBindingAdmissionRequest = AdmitLocalRuntimeBindingInput;
+export type LocalCoreRuntimeBindingProjectionRequest = ProjectLocalRuntimeBindingInput;
+export type LocalCoreRuntimeBindingCorrelationRequest = CorrelateLocalRuntimeBindingInput;
+export interface LocalCoreRuntimeRecoveryForkRequest {
+  sourceCanonicalThreadId: string;
+  targetCanonicalThreadId: string;
+  targetRunnerSessionId: string;
+  targetRuntimeId: RuntimeId;
+  lossCode: "RUNTIME_NATIVE_SESSION_LOST" | "RUNTIME_LIVE_WAIT_LOST";
+}
+export type LocalCoreRuntimeBindingResponse = LocalRuntimeBindingV1;
+
+export function parseLocalCoreRuntimeBindingResponse(
+  value: unknown,
+): LocalCoreRuntimeBindingResponse {
+  const record = requireLocalCoreRecord(value, "Runtime binding");
+  if (record.version !== "local_runtime_binding_v1") {
+    throw new Error("Runtime binding.version is invalid.");
+  }
+  const runtimeId = parseRuntimeId(record.runtimeId, "Runtime binding.runtimeId");
+  const recoveryPolicy = record.recoveryPolicy;
+  if (
+    recoveryPolicy !== undefined &&
+    recoveryPolicy !== "fork_to_kestrel" &&
+    recoveryPolicy !== "fork_to_same_runtime"
+  ) {
+    throw new Error("Runtime binding.recoveryPolicy is invalid.");
+  }
+  return {
+    version: "local_runtime_binding_v1",
+    canonicalThreadId: requireLocalCoreString(record.canonicalThreadId, "Runtime binding.canonicalThreadId"),
+    runnerSessionId: requireLocalCoreString(record.runnerSessionId, "Runtime binding.runnerSessionId"),
+    bindingId: requireLocalCoreString(record.bindingId, "Runtime binding.bindingId"),
+    participantId: requireLocalCoreString(record.participantId, "Runtime binding.participantId"),
+    runtimeId,
+    environmentId: requireLocalCoreString(record.environmentId, "Runtime binding.environmentId"),
+    capabilityDigest: requireLocalCoreString(record.capabilityDigest, "Runtime binding.capabilityDigest"),
+    modelProvider: requireLocalCoreString(record.modelProvider, "Runtime binding.modelProvider"),
+    modelId: requireLocalCoreString(record.modelId, "Runtime binding.modelId"),
+    status: parseRuntimeBindingStatus(record.status, "Runtime binding.status"),
+    nativeSessionState: parseRuntimeNativeState(record.nativeSessionState, "Runtime binding.nativeSessionState"),
+    ...(typeof record.latestLossCode === "string" ? { latestLossCode: requireLocalCoreString(record.latestLossCode, "Runtime binding.latestLossCode") } : {}),
+    ...(typeof record.sourceBindingId === "string" ? { sourceBindingId: requireLocalCoreString(record.sourceBindingId, "Runtime binding.sourceBindingId") } : {}),
+    ...(typeof record.forkedFromThreadId === "string" ? { forkedFromThreadId: requireLocalCoreString(record.forkedFromThreadId, "Runtime binding.forkedFromThreadId") } : {}),
+    ...(recoveryPolicy !== undefined ? { recoveryPolicy } : {}),
+    createdAt: requireLocalCoreString(record.createdAt, "Runtime binding.createdAt"),
+    updatedAt: requireLocalCoreString(record.updatedAt, "Runtime binding.updatedAt"),
+  };
+}
+
+export function parseLocalCoreRuntimeBindingAdmissionRequest(
+  value: unknown,
+): LocalCoreRuntimeBindingAdmissionRequest {
+  const record = requireLocalCoreRecord(value, "Runtime binding admission");
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set([
+      "canonicalThreadId", "runtimeId", "capabilityDigest", "modelProvider",
+      "modelId", "environmentId", "bindingId", "participantId", "runnerSessionId",
+    ]),
+    "Runtime binding admission",
+  );
+  return {
+    canonicalThreadId: requireLocalCoreString(record.canonicalThreadId, "Runtime binding admission.canonicalThreadId"),
+    runnerSessionId: requireLocalCoreString(record.runnerSessionId, "Runtime binding admission.runnerSessionId"),
+    runtimeId: parseRuntimeId(record.runtimeId, "Runtime binding admission.runtimeId"),
+    capabilityDigest: requireLocalCoreString(record.capabilityDigest, "Runtime binding admission.capabilityDigest"),
+    modelProvider: requireLocalCoreString(record.modelProvider, "Runtime binding admission.modelProvider"),
+    modelId: requireLocalCoreString(record.modelId, "Runtime binding admission.modelId"),
+    ...(typeof record.environmentId === "string" ? { environmentId: requireLocalCoreString(record.environmentId, "Runtime binding admission.environmentId") } : {}),
+    ...(typeof record.bindingId === "string" ? { bindingId: requireLocalCoreString(record.bindingId, "Runtime binding admission.bindingId") } : {}),
+    ...(typeof record.participantId === "string" ? { participantId: requireLocalCoreString(record.participantId, "Runtime binding admission.participantId") } : {}),
+  };
+}
+
+export function parseLocalCoreRuntimeBindingProjectionRequest(
+  value: unknown,
+): LocalCoreRuntimeBindingProjectionRequest {
+  const record = requireLocalCoreRecord(value, "Runtime binding projection");
+  const base = parseLocalCoreRuntimeBindingAdmissionRequest({
+    canonicalThreadId: record.canonicalThreadId,
+    runnerSessionId: record.runnerSessionId,
+    runtimeId: record.runtimeId,
+    capabilityDigest: record.capabilityDigest,
+    modelProvider: record.modelProvider,
+    modelId: record.modelId,
+    environmentId: record.environmentId,
+    bindingId: record.bindingId,
+    participantId: record.participantId,
+  });
+  if (
+    typeof base.environmentId !== "string" ||
+    typeof base.bindingId !== "string" ||
+    typeof base.participantId !== "string"
+  ) {
+    throw new Error("Runtime binding projection requires exact binding correlation.");
+  }
+  return {
+    ...base,
+    environmentId: base.environmentId,
+    bindingId: base.bindingId,
+    participantId: base.participantId,
+    status: parseRuntimeBindingStatus(record.status, "Runtime binding projection.status"),
+    nativeSessionState: parseRuntimeNativeState(record.nativeSessionState, "Runtime binding projection.nativeSessionState"),
+  };
+}
+
+function parseRuntimeId(value: unknown, label: string): RuntimeId {
+  if (!isRuntimeId(value)) throw new Error(`${label} is invalid.`);
+  return value;
+}
+
+function parseRuntimeBindingStatus(
+  value: unknown,
+  label: string,
+): "ready" | "degraded" | "released" {
+  if (value !== "ready" && value !== "degraded" && value !== "released") {
+    throw new Error(`${label} is invalid.`);
+  }
+  return value;
+}
+
+function parseRuntimeNativeState(
+  value: unknown,
+  label: string,
+): "uninitialized" | "ready" | "degraded" | "released" {
+  if (value !== "uninitialized" && value !== "ready" && value !== "degraded" && value !== "released") {
+    throw new Error(`${label} is invalid.`);
+  }
+  return value;
+}
+
+export function parseLocalCoreRuntimeBindingCorrelationRequest(
+  value: unknown,
+): LocalCoreRuntimeBindingCorrelationRequest {
+  const record = requireLocalCoreRecord(value, "Runtime binding correlation");
+  return {
+    canonicalThreadId: requireLocalCoreString(record.canonicalThreadId, "Runtime binding correlation.canonicalThreadId"),
+    bindingId: requireLocalCoreString(record.bindingId, "Runtime binding correlation.bindingId"),
+    participantId: requireLocalCoreString(record.participantId, "Runtime binding correlation.participantId"),
+    runtimeId: parseRuntimeId(record.runtimeId, "Runtime binding correlation.runtimeId"),
+    environmentId: requireLocalCoreString(record.environmentId, "Runtime binding correlation.environmentId"),
+  };
+}
+
+export function parseLocalCoreRuntimeRecoveryForkRequest(
+  value: unknown,
+): LocalCoreRuntimeRecoveryForkRequest {
+  const record = requireLocalCoreRecord(value, "Runtime recovery fork");
+  rejectUnknownLocalCoreFields(
+    record,
+    new Set([
+      "sourceCanonicalThreadId",
+      "targetCanonicalThreadId",
+      "targetRunnerSessionId",
+      "targetRuntimeId",
+      "lossCode",
+    ]),
+    "Runtime recovery fork",
+  );
+  const lossCode = record.lossCode;
+  if (lossCode !== "RUNTIME_NATIVE_SESSION_LOST" && lossCode !== "RUNTIME_LIVE_WAIT_LOST") {
+    throw new Error("Runtime recovery fork.lossCode is invalid.");
+  }
+  return {
+    sourceCanonicalThreadId: requireLocalCoreString(record.sourceCanonicalThreadId, "Runtime recovery fork.sourceCanonicalThreadId"),
+    targetCanonicalThreadId: requireLocalCoreString(record.targetCanonicalThreadId, "Runtime recovery fork.targetCanonicalThreadId"),
+    targetRunnerSessionId: requireLocalCoreString(record.targetRunnerSessionId, "Runtime recovery fork.targetRunnerSessionId"),
+    targetRuntimeId: parseRuntimeId(record.targetRuntimeId, "Runtime recovery fork.targetRuntimeId"),
+    lossCode,
+  };
+}
 
 export function parseLocalCoreRuntimeDescriptorResolution(
   value: unknown,

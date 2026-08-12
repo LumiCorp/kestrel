@@ -186,6 +186,12 @@ const desktopBridge: DesktopBridge = {
   describeRuntime(runtimeId: RuntimeId, selection: DesktopExecutionSelection) {
     return ipcRenderer.invoke("desktop:describe-runtime", runtimeId, selection);
   },
+  getRuntimeBinding(canonicalThreadId) {
+    return ipcRenderer.invoke("desktop:get-runtime-binding", canonicalThreadId);
+  },
+  createRuntimeRecoveryFork(input) {
+    return ipcRenderer.invoke("desktop:create-runtime-recovery-fork", input);
+  },
   selectAttachments(threadId) {
     return ipcRenderer.invoke("desktop:select-attachments", threadId);
   },

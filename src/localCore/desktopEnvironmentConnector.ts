@@ -45,6 +45,7 @@ const PRESENCE_INTERVAL_MS = 30_000;
 const ENROLLMENT_POLL_MS = 5_000;
 const COMMAND_LEASE_RENEW_MS = 30_000;
 const MAX_ACTIVE_RUNTIME_RELEASES_PER_CONNECTION = 4;
+const MAX_ACTIVE_RUNTIME_DESCRIPTOR_PROBES_PER_CONNECTION = 2;
 
 type EnrollmentSecret = {
   privateKey: string;
@@ -163,6 +164,7 @@ export class LocalCoreDesktopEnvironmentManager {
   #closed = false;
   #tickActive = false;
   #releaseTickActive = false;
+  #descriptorProbeTickActive = false;
   #presenceTimer: NodeJS.Timeout | undefined;
   #pollTimer: NodeJS.Timeout | undefined;
   #enrollmentTimer: NodeJS.Timeout | undefined;
@@ -173,6 +175,10 @@ export class LocalCoreDesktopEnvironmentManager {
   }> = [];
   readonly #activeCommands = new Map<string, ActiveDesktopCommand>();
   readonly #activeReleases = new Map<
+    string,
+    { connectionId: string; controller: AbortController }
+  >();
+  readonly #activeDescriptorProbes = new Map<
     string,
     { connectionId: string; controller: AbortController }
   >();
@@ -197,13 +203,18 @@ export class LocalCoreDesktopEnvironmentManager {
     this.#capacity = config.environments[0]?.capacity ?? 1;
     await this.refreshEnrollments();
     await this.#synchronizeAll();
-    await Promise.all([this.#pollCommands(), this.#pollRuntimeReleases()]);
+    await Promise.all([
+      this.#pollCommands(),
+      this.#pollRuntimeReleases(),
+      this.#pollRuntimeDescriptorProbes(),
+    ]);
     this.#presenceTimer = setInterval(() => {
       void this.#synchronizeAll();
     }, PRESENCE_INTERVAL_MS);
     this.#pollTimer = setInterval(() => {
       void this.#pollCommands();
       void this.#pollRuntimeReleases();
+      void this.#pollRuntimeDescriptorProbes();
     }, COMMAND_POLL_MS);
     this.#enrollmentTimer = setInterval(() => {
       void this.refreshEnrollments();
@@ -222,6 +233,9 @@ export class LocalCoreDesktopEnvironmentManager {
       active.controller.abort();
     }
     for (const active of this.#activeReleases.values()) {
+      active.controller.abort();
+    }
+    for (const active of this.#activeDescriptorProbes.values()) {
       active.controller.abort();
     }
     await Promise.allSettled(
@@ -286,6 +300,35 @@ export class LocalCoreDesktopEnvironmentManager {
         }),
       ),
     };
+  }
+
+  async assertRuntimeDescriptorEnvironment(
+    environmentId: string,
+  ): Promise<LocalCoreDesktopEnvironment> {
+    const normalized = requireText(environmentId, "environmentId");
+    const config = await this.#configStore.read();
+    const matches = config.environments.filter(
+      (environment) =>
+        environment.environmentId === normalized && environment.status === "active",
+    );
+    if (matches.length !== 1) {
+      throw new Error(
+        "The Runtime descriptor Environment is not an active signed Desktop enrollment.",
+      );
+    }
+    return matches[0]!;
+  }
+
+  async authorizeRuntimeEnvironment(environmentId: string): Promise<boolean> {
+    try {
+      const environment = await this.assertRuntimeDescriptorEnvironment(
+        environmentId,
+      );
+      await this.#readEnvironmentSecret(environment.connectionId);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async startEnrollment(input: {
@@ -666,6 +709,179 @@ export class LocalCoreDesktopEnvironmentManager {
     }
   }
 
+  async #pollRuntimeDescriptorProbes(): Promise<void> {
+    if (this.#closed || this.#descriptorProbeTickActive || !this.#client) return;
+    this.#descriptorProbeTickActive = true;
+    try {
+      const config = await this.#configStore.read();
+      for (const environment of config.environments) {
+        const activeForConnection = [
+          ...this.#activeDescriptorProbes.values(),
+        ].filter(
+          (active) => active.connectionId === environment.connectionId,
+        ).length;
+        const available =
+          MAX_ACTIVE_RUNTIME_DESCRIPTOR_PROBES_PER_CONNECTION -
+          activeForConnection;
+        if (available <= 0) continue;
+        const secret = await this.#readEnvironmentSecret(
+          environment.connectionId,
+        );
+        for (let claimedCount = 0; claimedCount < available; claimedCount += 1) {
+          try {
+            const claimed = await signedFetchJson({
+              environment,
+              secret,
+              pathname: `/api/runtime/desktop-environments/${encodeURIComponent(environment.connectionId)}/runtime-descriptor-probes/claim`,
+              method: "POST",
+              body: {},
+              allowNoContent: true,
+            });
+            if (!claimed) break;
+            const probe = requireRecord(claimed.probe, "probe");
+            const probeId = requireText(probe.id, "probe.id");
+            if (this.#activeDescriptorProbes.has(probeId)) continue;
+            const controller = new AbortController();
+            this.#activeDescriptorProbes.set(probeId, {
+              connectionId: environment.connectionId,
+              controller,
+            });
+            void this.#executeRuntimeDescriptorProbe({
+              environment,
+              secret,
+              claimed,
+              controller,
+            })
+              .catch((error) =>
+                this.#completeRuntimeDescriptorProbeFailure({
+                  environment,
+                  secret,
+                  claimed,
+                  error,
+                }),
+              )
+              .catch((error) => this.#recordConnectionError(environment, error))
+              .finally(() => this.#activeDescriptorProbes.delete(probeId));
+          } catch (error) {
+            await this.#recordConnectionError(environment, error);
+            break;
+          }
+        }
+      }
+    } finally {
+      this.#descriptorProbeTickActive = false;
+    }
+  }
+
+  async #executeRuntimeDescriptorProbe(input: {
+    environment: LocalCoreDesktopEnvironment;
+    secret: EnvironmentSecret;
+    claimed: Record<string, unknown>;
+    controller: AbortController;
+  }): Promise<void> {
+    if (!this.#client) throw new Error("Local Core is unavailable.");
+    const probe = requireRecord(input.claimed.probe, "probe");
+    const probeId = requireText(probe.id, "probe.id");
+    const claimToken = requireText(input.claimed.claimToken, "claimToken");
+    const environmentId = requireText(probe.environmentId, "probe.environmentId");
+    if (environmentId !== input.environment.environmentId) {
+      throw Object.assign(
+        new Error("The descriptor probe targets a different Desktop Environment."),
+        { code: "DESKTOP_RUNTIME_DESCRIPTOR_CORRELATION_INVALID" },
+      );
+    }
+    const runtimeId = requireRuntimeId(probe.runtimeId);
+    if (runtimeId === "kestrel") {
+      throw Object.assign(
+        new Error("Foreign Runtime descriptor probes require Codex or Claude."),
+        { code: "DESKTOP_RUNTIME_DESCRIPTOR_CORRELATION_INVALID" },
+      );
+    }
+    const request = requireRecord(probe.request, "probe.request");
+    if (
+      request.client !== "web" ||
+      request.runtimeId !== runtimeId ||
+      request.environmentId !== environmentId
+    ) {
+      throw Object.assign(
+        new Error("The descriptor probe request correlation is invalid."),
+        { code: "DESKTOP_RUNTIME_DESCRIPTOR_CORRELATION_INVALID" },
+      );
+    }
+    const leaseTimer = setInterval(() => {
+      void signedFetchJson({
+        environment: input.environment,
+        secret: input.secret,
+        pathname: `/api/runtime/desktop-environments/${encodeURIComponent(input.environment.connectionId)}/runtime-descriptor-probes/${encodeURIComponent(probeId)}/lease`,
+        method: "POST",
+        body: { claimToken },
+      }).catch(() => input.controller.abort());
+    }, COMMAND_LEASE_RENEW_MS);
+    leaseTimer.unref();
+    try {
+      if (input.controller.signal.aborted) throw input.controller.signal.reason;
+      const resolution = await this.#client.describeRuntime({
+        client: "web",
+        runtimeId,
+        modelProvider: requireText(request.modelProvider, "probe.request.modelProvider"),
+        model: requireText(request.model, "probe.request.model"),
+        environmentId,
+      }, { signal: input.controller.signal });
+      if (
+        resolution.environmentId !== environmentId ||
+        resolution.descriptor.runtimeId !== runtimeId
+      ) {
+        throw Object.assign(
+          new Error("Local Core returned a differently correlated Runtime descriptor."),
+          { code: "DESKTOP_RUNTIME_DESCRIPTOR_CORRELATION_INVALID" },
+        );
+      }
+      const event = parseRunnerEventV2({
+        id: randomUUID(),
+        type: "runtime.described",
+        ts: new Date().toISOString(),
+        commandId: probeId,
+        payload: resolution,
+      });
+      await signedFetchJson({
+        environment: input.environment,
+        secret: input.secret,
+        pathname: `/api/runtime/desktop-environments/${encodeURIComponent(input.environment.connectionId)}/runtime-descriptor-probes/${encodeURIComponent(probeId)}/complete`,
+        method: "POST",
+        body: {
+          claimToken,
+          outcome: { status: "resolved", event },
+        },
+      });
+    } finally {
+      clearInterval(leaseTimer);
+    }
+  }
+
+  async #completeRuntimeDescriptorProbeFailure(input: {
+    environment: LocalCoreDesktopEnvironment;
+    secret: EnvironmentSecret;
+    claimed: Record<string, unknown>;
+    error: unknown;
+  }): Promise<void> {
+    if (isAbortError(input.error)) return;
+    const probe = requireRecord(input.claimed.probe, "probe");
+    const probeId = requireText(probe.id, "probe.id");
+    await signedFetchJson({
+      environment: input.environment,
+      secret: input.secret,
+      pathname: `/api/runtime/desktop-environments/${encodeURIComponent(input.environment.connectionId)}/runtime-descriptor-probes/${encodeURIComponent(probeId)}/complete`,
+      method: "POST",
+      body: {
+        claimToken: requireText(input.claimed.claimToken, "claimToken"),
+        outcome: {
+          status: "failed",
+          failureCode: runtimeDescriptorProbeFailureCode(input.error),
+        },
+      },
+    });
+  }
+
   async #executeRuntimeRelease(input: {
     environment: LocalCoreDesktopEnvironment;
     secret: EnvironmentSecret;
@@ -966,13 +1182,14 @@ export class LocalCoreDesktopEnvironmentManager {
       });
       return;
     }
-    const prepared = this.#prepareRunnerCommand({
+    const prepared = await this.#prepareRunnerCommand({
       environment: input.environment,
       secret: input.secret,
       commandRecord,
       executionTicket,
       authorizationRenewal: input.claimed.authorizationRenewal,
       modelGrant: input.claimed.modelGrant,
+      runtimeBinding: input.claimed.runtimeBinding,
     });
     const command = prepared.command;
     await this.#journalStore.put({
@@ -1132,17 +1349,18 @@ export class LocalCoreDesktopEnvironmentManager {
     }
   }
 
-  #prepareRunnerCommand(input: {
+  async #prepareRunnerCommand(input: {
     environment: LocalCoreDesktopEnvironment;
     secret: EnvironmentSecret;
     commandRecord: Record<string, unknown>;
     executionTicket: string;
     authorizationRenewal: unknown;
     modelGrant: unknown;
-  }): {
+    runtimeBinding: unknown;
+  }): Promise<{
     command: RunnerCommand;
     modelCredentialReference?: GatewayCredentialReference | undefined;
-  } {
+  }> {
     const ticket = verifyEnvironmentExecutionTicket({
       token: input.executionTicket,
       publicKey: input.environment.ticketPublicKey,
@@ -1187,6 +1405,46 @@ export class LocalCoreDesktopEnvironmentManager {
     ) {
       throw new Error("Desktop execution run does not match its ticket.");
     }
+    const bindingProjection = requireRecord(
+      input.runtimeBinding,
+      "command.runtimeBinding",
+    );
+    const runtimeId = requireRuntimeId(bindingProjection.runtimeId);
+    const bindingStatus = requireRuntimeBindingStatus(bindingProjection.status);
+    const nativeSessionState = requireRuntimeNativeState(
+      bindingProjection.nativeSessionState,
+    );
+    const turnRuntimeId = base.payload.turn.runtimeId ?? "kestrel";
+    if (
+      bindingProjection.environmentId !== ticket.environmentId ||
+      bindingProjection.environmentId !== input.environment.environmentId ||
+      (base.payload.profile?.runtimeId ?? "kestrel") !== runtimeId ||
+      turnRuntimeId !== runtimeId ||
+      base.payload.turn.runtimeBindingId !== bindingProjection.bindingId ||
+      base.payload.turn.participantId !== bindingProjection.participantId ||
+      base.payload.turn.runtimeBindingStatus !== bindingStatus ||
+      base.payload.turn.runtimeNativeSessionState !== nativeSessionState
+    ) {
+      throw new Error(
+        "Desktop Runtime binding projection does not match its execution authority.",
+      );
+    }
+    await this.#client!.projectRuntimeBinding({
+      canonicalThreadId: base.payload.turn.sessionId,
+      runnerSessionId: base.payload.turn.sessionId,
+      bindingId: requireText(bindingProjection.bindingId, "runtimeBinding.bindingId"),
+      participantId: requireText(bindingProjection.participantId, "runtimeBinding.participantId"),
+      runtimeId,
+      environmentId: requireText(bindingProjection.environmentId, "runtimeBinding.environmentId"),
+      capabilityDigest: requireText(bindingProjection.capabilityDigest, "runtimeBinding.capabilityDigest"),
+      modelProvider: requireText(
+        base.payload.profile?.modelProvider,
+        "profile.modelProvider",
+      ),
+      modelId: requireText(base.payload.profile?.model, "profile.model"),
+      status: bindingStatus,
+      nativeSessionState,
+    });
     const profile =
       base.payload.profile &&
       typeof base.payload.profile === "object" &&
@@ -1754,6 +2012,29 @@ function requireRuntimeId(value: unknown): "kestrel" | "codex" | "claude" {
   return value;
 }
 
+function requireRuntimeBindingStatus(
+  value: unknown,
+): "ready" | "degraded" | "released" {
+  if (value !== "ready" && value !== "degraded" && value !== "released") {
+    throw new Error("runtimeBinding.status is invalid.");
+  }
+  return value;
+}
+
+function requireRuntimeNativeState(
+  value: unknown,
+): "uninitialized" | "ready" | "degraded" | "released" {
+  if (
+    value !== "uninitialized" &&
+    value !== "ready" &&
+    value !== "degraded" &&
+    value !== "released"
+  ) {
+    throw new Error("runtimeBinding.nativeSessionState is invalid.");
+  }
+  return value;
+}
+
 function runtimeReleaseFailureCode(error: unknown): string {
   if (
     typeof error === "object" &&
@@ -1765,6 +2046,19 @@ function runtimeReleaseFailureCode(error: unknown): string {
     return error.code;
   }
   return "RUNTIME_RELEASE_DELIVERY_FAILED";
+}
+
+function runtimeDescriptorProbeFailureCode(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    /^[A-Z0-9_]{1,80}$/u.test(error.code)
+  ) {
+    return error.code;
+  }
+  return "RUNTIME_DESCRIPTOR_FAILED";
 }
 
 function isAbortError(error: unknown): boolean {

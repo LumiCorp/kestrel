@@ -10,7 +10,7 @@ export function extractTerminalFailure(
 ): {
   message: string;
   capabilityId?: DesktopCapabilityId | undefined;
-  recovery?: "fork_to_kestrel" | undefined;
+  recovery?: "fork_to_kestrel" | "fork_to_same_runtime" | undefined;
 } | undefined {
   if (event.type !== "run.failed") {
     return;
@@ -25,6 +25,8 @@ export function extractTerminalFailure(
       explicitCapabilityId ?? capabilityForRuntimeFailureCode(code, selectedProvider),
     ...(code === "RUNTIME_NATIVE_SESSION_LOST"
       ? { recovery: "fork_to_kestrel" as const }
+      : code === "RUNTIME_LIVE_WAIT_LOST"
+        ? { recovery: "fork_to_same_runtime" as const }
       : {}),
   };
 }

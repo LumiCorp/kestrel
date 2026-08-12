@@ -10,11 +10,19 @@ export interface DesktopThreadWorkspaceRegistration {
   workspace: WorkspaceRuntimeContext;
 }
 
+export function canonicalDesktopThreadId(sessionId: string): string {
+  const normalized = sessionId.trim();
+  if (normalized.length === 0) {
+    throw new Error("Desktop sessionId must be non-empty.");
+  }
+  return `thread-main:${normalized}`;
+}
+
 export async function syncDesktopThreadWorkspace(
   store: SessionStore,
   input: DesktopThreadWorkspaceRegistration,
 ): Promise<ThreadRecord> {
-  const canonicalThreadId = `thread-main:${input.sessionId}`;
+  const canonicalThreadId = canonicalDesktopThreadId(input.sessionId);
   if (input.threadId !== canonicalThreadId) {
     throw new Error(`Desktop threadId must be '${canonicalThreadId}'.`);
   }

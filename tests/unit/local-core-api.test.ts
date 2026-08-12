@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test, describe } from "node:test";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { request, type ClientRequest, type IncomingMessage } from "node:http";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -43,6 +44,7 @@ import { KestrelClient as KestrelSdkClient } from "../../packages/sdk/src/runner
 import {
   EXECUTION_PROTOCOL_VERSION,
   RUNNER_COMMAND_CONTRACT_VERSION,
+  createKestrelRuntimeDescriptorV1,
 } from "../../packages/protocol/src/index.js";
 
 describe("Local Core API process contracts", { concurrency: 2 }, () => {
@@ -285,6 +287,123 @@ test("Local Core API serves health/status with bearer token auth", async () => {
     assert.equal(existsSync(paths.lockPath), false);
   } finally {
     await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core durably drains recovery cleanup through runtime.release", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-local-release-"));
+  const delivered: Array<{
+    runtimeId: string;
+    bindingId: string;
+    participantId: string;
+    threadId: string;
+    environmentId: string;
+  }> = [];
+  const runtimeFactory: NonNullable<
+    Parameters<typeof startLocalCoreApiServer>[0]["executionRuntimeFactory"]
+  > = () => ({
+    async runTurn(turn) {
+      return {
+        assistantText: "unused",
+        finalizedPayload: null,
+        output: {
+          status: "COMPLETED" as const,
+          sessionId: turn.sessionId,
+          runId: turn.runId ?? randomUUID(),
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      };
+    },
+    async describeRuntime() {
+      return createKestrelRuntimeDescriptorV1();
+    },
+    async close() {},
+  });
+  runtimeFactory.releaseRuntimeBinding = async (input) => {
+    delivered.push(input);
+  };
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    executionRuntimeFactory: runtimeFactory,
+  });
+  const client = new LocalCoreClient({
+    socketPath: server.socketPath,
+    token: server.token,
+  });
+  let sourceBindingId: string | undefined;
+  try {
+    const source = await client.admitRuntimeBinding({
+      canonicalThreadId: "thread:local-release-source",
+      runnerSessionId: "session:local-release-source",
+      runtimeId: "codex",
+      capabilityDigest: "codex-capabilities",
+      modelProvider: "openrouter",
+      modelId: "z-ai/glm-5.2",
+    });
+    sourceBindingId = source.bindingId;
+    await client.degradeRuntimeBinding({
+      canonicalThreadId: source.canonicalThreadId,
+      bindingId: source.bindingId,
+      participantId: source.participantId,
+      runtimeId: source.runtimeId,
+      environmentId: source.environmentId,
+      lossCode: "RUNTIME_NATIVE_SESSION_LOST",
+    });
+    await client.createRuntimeRecoveryFork({
+      sourceCanonicalThreadId: source.canonicalThreadId,
+      targetCanonicalThreadId: "thread:local-release-fork",
+      targetRunnerSessionId: "session:local-release-fork",
+      targetRuntimeId: "kestrel",
+      lossCode: "RUNTIME_NATIVE_SESSION_LOST",
+    });
+
+    await waitFor(async () =>
+      (await client.getRuntimeBinding(source.canonicalThreadId))?.status === "released",
+    );
+    assert.deepEqual(delivered, [{
+      runtimeId: source.runtimeId,
+      bindingId: source.bindingId,
+      participantId: source.participantId,
+      threadId: source.canonicalThreadId,
+      environmentId: source.environmentId,
+    }]);
+  } finally {
+    await server.close();
+  }
+
+  try {
+    const handle = await ensureLocalCoreStore({ homePath: home });
+    const outbox = await handle.executor.query<{
+      state: string;
+      attempts: number;
+      acknowledgement_event_id: string | null;
+    }>(
+      `SELECT state, attempts, acknowledgement_event_id
+         FROM local_runtime_binding_release_outbox
+        WHERE binding_id = $1`,
+      [sourceBindingId],
+    );
+    assert.equal(outbox.rows[0]?.state, "released");
+    assert.equal(outbox.rows[0]?.attempts, 1);
+    assert.match(outbox.rows[0]?.acknowledgement_event_id ?? "", /^[0-9a-f-]{36}$/u);
+  } finally {
+    await closeLocalCoreStore(home);
     await rm(home, { recursive: true, force: true });
   }
 });

@@ -108,7 +108,7 @@ import {
   getRendererThreadArchiveBlockReason,
   getTerminalWaitEventType,
   getTerminalWaitingPrompt,
-  forkRendererThreadToKestrel,
+  forkRendererThreadForRuntimeRecovery,
   readDesktopRendererState,
   renameRendererThread,
   resolveRendererThreadProjectPath,
@@ -325,6 +325,17 @@ export function DesktopApp(props: {
   const activeThreadFeedback = activeThread === undefined
     ? { activity: "Ready" }
     : threadFeedback[activeThread.id] ?? { activity: "Ready" };
+  const runtimeBindingReadOnly =
+    activeThread?.runtimeBindingStatus === "degraded" ||
+    activeThread?.runtimeBindingStatus === "released";
+  const activeRuntimeRecovery =
+    activeThread?.runtimeBindingStatus === "degraded"
+      ? activeThread.latestRuntimeLossCode === "RUNTIME_NATIVE_SESSION_LOST"
+        ? "fork_to_kestrel"
+        : activeThread.latestRuntimeLossCode === "RUNTIME_LIVE_WAIT_LOST"
+          ? "fork_to_same_runtime"
+          : undefined
+      : undefined;
   const activeLifecycleActivity = composerPolicy.mode === "select_evaluation_option"
     ? "Waiting for your decision"
     : composerPolicy.mode === "reply_to_request"
@@ -337,6 +348,11 @@ export function DesktopApp(props: {
   useEffect(() => {
     threadsRef.current = state?.threads ?? [];
   }, [state?.threads]);
+
+  useEffect(() => {
+    if (activeThread === undefined) return;
+    void refreshRuntimeBinding(activeThread).catch(() => undefined);
+  }, [activeThread?.id, activeThread?.sessionId]);
 
   function setActiveRuns(update: (current: Record<string, ActiveRun>) => Record<string, ActiveRun>): void {
     setAuthorityCaches((current) => ({ ...current, activeRuns: update(current.activeRuns) }));
@@ -359,7 +375,7 @@ export function DesktopApp(props: {
     activity: string,
     error: string,
     errorCapability?: DesktopCapabilityId | undefined,
-    errorRecovery?: "fork_to_kestrel" | undefined,
+    errorRecovery?: "fork_to_kestrel" | "fork_to_same_runtime" | undefined,
   ): void {
     setThreadFeedback((current) => updateDesktopThreadFeedback(current, threadId, {
       activity,
@@ -563,6 +579,23 @@ export function DesktopApp(props: {
                 );
               }
             }
+          } else if (event.type === "run.failed") {
+            const failure = extractTerminalFailure(
+              event,
+              settings?.selectedProvider,
+            );
+            if (failure !== undefined) {
+              setThreadFailure(
+                rendererThread.id,
+                "Run failed",
+                failure.message,
+                failure.capabilityId,
+                failure.recovery,
+              );
+              if (failure.recovery !== undefined) {
+                void refreshRuntimeBinding(rendererThread);
+              }
+            }
           }
           setActiveRuns((current) => {
             const next = { ...current };
@@ -574,7 +607,7 @@ export function DesktopApp(props: {
           });
         }
       }
-    }), []);
+    }), [settings?.selectedProvider]);
 
   useEffect(() => window.kestrelDesktop.onRuntimeHealth(setRuntimeHealth), []);
 
@@ -890,6 +923,8 @@ export function DesktopApp(props: {
       || activeThread === undefined
       || message.trim().length === 0
       || settings === undefined
+      || activeThread.runtimeBindingStatus === "degraded"
+      || activeThread.runtimeBindingStatus === "released"
     ) {
       return;
     }
@@ -1000,9 +1035,61 @@ export function DesktopApp(props: {
       void refreshThreadAuthority(activeThread).catch((cause) => {
         setThreadFailure(activeThread.id, "Thread status unavailable", errorMessage(cause));
       });
+      void refreshRuntimeBinding(activeThread).catch(() => undefined);
     }
     return;
 
+  }
+
+  async function refreshRuntimeBinding(thread: RendererThread): Promise<void> {
+    const binding = await window.kestrelDesktop.getRuntimeBinding(
+      localCoreThreadId(thread.sessionId),
+    );
+    if (binding === undefined) return;
+    setState((current) => current === undefined
+      ? current
+      : updateRendererThread(current, thread.id, (entry) => ({
+          ...entry,
+          runtimeId: binding.runtimeId,
+          runtimeBindingStatus: binding.status,
+          runtimeNativeSessionState: binding.nativeSessionState,
+          ...(binding.latestLossCode === "RUNTIME_NATIVE_SESSION_LOST" ||
+          binding.latestLossCode === "RUNTIME_LIVE_WAIT_LOST"
+            ? { latestRuntimeLossCode: binding.latestLossCode }
+            : { latestRuntimeLossCode: undefined }),
+        })));
+  }
+
+  async function recoverRuntimeThread(): Promise<void> {
+    if (
+      activeThread === undefined ||
+      activeRuntimeRecovery === undefined
+    ) return;
+    const source = activeThread;
+    const lossCode = activeRuntimeRecovery === "fork_to_kestrel"
+      ? "RUNTIME_NATIVE_SESSION_LOST"
+      : "RUNTIME_LIVE_WAIT_LOST";
+    const targetRuntimeId = lossCode === "RUNTIME_NATIVE_SESSION_LOST"
+      ? "kestrel"
+      : source.runtimeId;
+    const targetSessionId = crypto.randomUUID();
+    const targetThreadId = crypto.randomUUID();
+    const recovery = await window.kestrelDesktop.createRuntimeRecoveryFork({
+      sourceCanonicalThreadId: localCoreThreadId(source.sessionId),
+      targetCanonicalThreadId: localCoreThreadId(targetSessionId),
+      targetRunnerSessionId: targetSessionId,
+      targetRuntimeId,
+      lossCode,
+    });
+    setState((current) => current === undefined
+      ? current
+      : forkRendererThreadForRuntimeRecovery(current, source.id, {
+          runtimeId: targetRuntimeId,
+          threadId: targetThreadId,
+          sessionId: recovery.fork.runnerSessionId,
+          bindingStatus: recovery.fork.status,
+          nativeSessionState: recovery.fork.nativeSessionState,
+        }));
   }
 
   async function submitEvaluationOption(optionId: RunnerStructuredReviewOptionId): Promise<void> {
@@ -1755,18 +1842,25 @@ export function DesktopApp(props: {
             activity={activeLifecycleActivity}
             error={activeThreadFeedback.error}
             systemError={systemError}
-            errorAction={activeThreadFeedback.errorRecovery === "fork_to_kestrel" ? (
+            errorAction={activeRuntimeRecovery !== undefined ? (
               <button
                 className="secondary-button"
                 type="button"
-                onClick={() => {
-                  if (activeThread === undefined) return;
-                  setState((current) => current === undefined
-                    ? current
-                    : forkRendererThreadToKestrel(current, activeThread.id));
-                }}
+                onClick={() => void recoverRuntimeThread().catch((cause) => {
+                  if (activeThread !== undefined) {
+                    setThreadFailure(
+                      activeThread.id,
+                      "Recovery failed",
+                      errorMessage(cause),
+                      undefined,
+                      activeRuntimeRecovery,
+                    );
+                  }
+                })}
               >
-                Fork to a new Kestrel conversation
+                {activeRuntimeRecovery === "fork_to_kestrel"
+                  ? "Fork to a new Kestrel conversation"
+                  : "Fork to a new Runtime conversation"}
               </button>
             ) : activeThreadFeedback.errorCapability !== undefined ? (
               <button
@@ -1828,7 +1922,7 @@ export function DesktopApp(props: {
                   </li>
                 ) : null}
 
-                {!archivedThreadSelected ? operatorActionCardItems.map((item) => (
+                {!archivedThreadSelected && !runtimeBindingReadOnly ? operatorActionCardItems.map((item) => (
                   <OperatorActionCard
                     key={item.itemId}
                     item={item}
@@ -1854,7 +1948,18 @@ export function DesktopApp(props: {
 
           {archivedThreadSelected ? null : (
             <>
-            {composerPolicy.mode === "select_evaluation_option" ? (
+            {runtimeBindingReadOnly ? (
+              <section className="composer recovery-option-composer" aria-label="Read-only Runtime conversation">
+                <div className="recovery-option-copy">
+                  <strong>This conversation is read-only</strong>
+                  <span>
+                    {activeRuntimeRecovery === undefined
+                      ? "Its Runtime binding has been released."
+                      : "Use the recovery action above to continue in a new conversation."}
+                  </span>
+                </div>
+              </section>
+            ) : composerPolicy.mode === "select_evaluation_option" ? (
             <section className="composer recovery-option-composer" aria-label="Evaluation options">
               <div className="recovery-option-copy">
                 <strong>Result requires review</strong>
@@ -1922,6 +2027,7 @@ export function DesktopApp(props: {
               aria-label="Message"
               placeholder={composerPolicy.mode === "reply_to_request" ? "Reply to Kestrel" : "Message Kestrel"}
               rows={3}
+              disabled={activeThread.runtimeBindingStatus === "degraded" || activeThread.runtimeBindingStatus === "released"}
               value={activeThread.draft}
               onChange={(event) => {
                 setState((current) => current === undefined ? current : updateRendererDraft(current, activeThread.id, event.target.value));
@@ -2038,7 +2144,7 @@ export function DesktopApp(props: {
                     type="submit"
                     title="Send message"
                     aria-label="Send message"
-                    disabled={activeThread.draft.trim().length === 0}
+                    disabled={activeThread.draft.trim().length === 0 || activeThread.runtimeBindingStatus === "degraded" || activeThread.runtimeBindingStatus === "released"}
                   >
                     <Send size={17} />
                   </button>

@@ -4,7 +4,7 @@ export interface DesktopThreadFeedback {
   activity: string;
   error?: string | undefined;
   errorCapability?: DesktopCapabilityId | undefined;
-  errorRecovery?: "fork_to_kestrel" | undefined;
+  errorRecovery?: "fork_to_kestrel" | "fork_to_same_runtime" | undefined;
 }
 
 export function updateDesktopThreadFeedback(

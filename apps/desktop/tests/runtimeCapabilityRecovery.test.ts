@@ -37,3 +37,10 @@ test("a lost native session offers a Kestrel fork instead of mutating the bindin
     "fork_to_kestrel",
   );
 });
+
+test("a lost live wait offers a same-Runtime fork", () => {
+  assert.equal(
+    extractTerminalFailure(failed("RUNTIME_LIVE_WAIT_LOST"), "openai")?.recovery,
+    "fork_to_same_runtime",
+  );
+});

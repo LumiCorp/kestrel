@@ -139,6 +139,8 @@ import type {
   DesktopUpdateBlocker,
   DesktopUninstallApplyInput,
 } from "./contracts.js";
+import { projectDesktopRunnerEvent } from "./runtimeEventProjection.js";
+import { canonicalDesktopThreadId } from "../../../src/localCore/desktopThreadWorkspace.js";
 import { createDesktopError } from "./errors.js";
 import {
   DESKTOP_LOCAL_CORE_EXECUTION_PROFILE_INCOMPATIBLE,
@@ -665,7 +667,10 @@ async function startDesktopExecutionServicesOnce(): Promise<void> {
           (event.type.startsWith("run.") || event.type === "task.updated") &&
           mainWindow?.isDestroyed() === false
         ) {
-          mainWindow.webContents.send("desktop:runner-event", event);
+          mainWindow.webContents.send(
+            "desktop:runner-event",
+            projectDesktopRunnerEvent(event),
+          );
         }
       } catch {
         // Protocol parsing and command-specific error handling remain owned by the adapter.
@@ -2003,7 +2008,7 @@ function registerIpcHandlers(
       executionSelection,
       ...turnRequest
     } = request;
-    const canonicalThreadId = `thread-main:${request.sessionId}`;
+    const canonicalThreadId = canonicalDesktopThreadId(request.sessionId);
     if (threadId !== canonicalThreadId) {
       throw createDesktopError({
         code: "desktop.invalid_run_thread",
@@ -2019,6 +2024,23 @@ function registerIpcHandlers(
           : [{ id: definition.id, contractVersion: definition.contractVersion }];
       }),
     };
+    assertHydraRuntimeReleased(globalExecutionSelection.runtimeId, process.env);
+    const readiness =
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) =>
+          await client.describeRuntime({
+            client: "desktop",
+            selection: globalExecutionSelection,
+          }),
+      );
+    if (readiness.descriptor.availability !== "ready") {
+      throw createDesktopError({
+        code: "desktop.runtime_unavailable",
+        message:
+          readiness.descriptor.unavailableReason ??
+          "The selected Runtime is not ready in this environment.",
+      });
+    }
     const executionProfile = await requireLocalCoreConnectionManager().executeIdempotent(
       async (client) => await client.resolveExecutionProfile({
         client: "desktop",
@@ -2026,6 +2048,25 @@ function registerIpcHandlers(
       }),
     );
     const runProfile = executionProfile.resolvedProfile;
+    const bindingModelProvider = requireDesktopString(
+      runProfile.modelProvider,
+      "Desktop Runtime model provider is unavailable.",
+    );
+    const bindingModelId = requireDesktopString(
+      runProfile.model,
+      "Desktop Runtime model is unavailable.",
+    );
+    const runtimeBinding =
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.admitRuntimeBinding({
+          canonicalThreadId,
+          runnerSessionId: request.sessionId,
+          runtimeId: globalExecutionSelection.runtimeId,
+          capabilityDigest: readiness.capabilityDigest,
+          modelProvider: bindingModelProvider,
+          modelId: bindingModelId,
+        }),
+      );
     const workflows = resolveDesktopWorkflowSelections(
       globalExecutionSelection,
       desktopSettings.mcpServers,
@@ -2087,6 +2128,11 @@ function registerIpcHandlers(
       messageId,
       turn: {
         ...turnRequest,
+        runtimeId: runtimeBinding.runtimeId,
+        runtimeBindingId: runtimeBinding.bindingId,
+        runtimeBindingStatus: runtimeBinding.status,
+        runtimeNativeSessionState: runtimeBinding.nativeSessionState,
+        participantId: runtimeBinding.participantId,
         ...(attachments !== undefined ? { attachments } : {}),
         ...(workflowInstructions !== undefined
           ? { systemInstructions: [workflowInstructions] }
@@ -2129,6 +2175,76 @@ function registerIpcHandlers(
           }),
       );
       return resolution.descriptor;
+    },
+  );
+
+  ipcMain.handle(
+    "desktop:get-runtime-binding",
+    async (_event, canonicalThreadId: unknown) =>
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.getRuntimeBinding(
+          requireDesktopString(
+            canonicalThreadId,
+            "Desktop Runtime binding Thread is required.",
+          ),
+        ),
+      ),
+  );
+
+  ipcMain.handle(
+    "desktop:create-runtime-recovery-fork",
+    async (_event, value: unknown) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw createDesktopError({
+          code: "desktop.invalid_runtime_recovery",
+          message: "Desktop Runtime recovery request is invalid.",
+        });
+      }
+      const input = value as Record<string, unknown>;
+      const sourceCanonicalThreadId = requireDesktopString(
+        input.sourceCanonicalThreadId,
+        "Desktop Runtime recovery source Thread is required.",
+      );
+      const targetCanonicalThreadId = requireDesktopString(
+        input.targetCanonicalThreadId,
+        "Desktop Runtime recovery target Thread is required.",
+      );
+      const targetRunnerSessionId = requireDesktopString(
+        input.targetRunnerSessionId,
+        "Desktop Runtime recovery target Runner session is required.",
+      );
+      const targetRuntimeId = input.targetRuntimeId;
+      const lossCode = input.lossCode;
+      if (
+        (targetRuntimeId !== "kestrel" &&
+          targetRuntimeId !== "codex" &&
+          targetRuntimeId !== "claude") ||
+        (lossCode !== "RUNTIME_NATIVE_SESSION_LOST" &&
+          lossCode !== "RUNTIME_LIVE_WAIT_LOST")
+      ) {
+        throw createDesktopError({
+          code: "desktop.invalid_runtime_recovery",
+          message: "Desktop Runtime recovery policy is invalid.",
+        });
+      }
+      return await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => {
+          const source = await client.getRuntimeBinding(sourceCanonicalThreadId);
+          if (source === undefined) {
+            throw createDesktopError({
+              code: "desktop.runtime_binding_missing",
+              message: "Desktop Runtime recovery source binding was not found.",
+            });
+          }
+          return await client.createRuntimeRecoveryFork({
+            sourceCanonicalThreadId: source.canonicalThreadId,
+            targetCanonicalThreadId,
+            targetRunnerSessionId,
+            targetRuntimeId,
+            lossCode,
+          });
+        },
+      );
     },
   );
 
@@ -2192,6 +2308,14 @@ function registerIpcHandlers(
           }),
       );
     const runProfile = executionProfile.resolvedProfile;
+    const bindingModelProvider = requireDesktopString(
+      runProfile.modelProvider,
+      "Desktop Runtime model provider is unavailable.",
+    );
+    const bindingModelId = requireDesktopString(
+      runProfile.model,
+      "Desktop Runtime model is unavailable.",
+    );
     const workflows = resolveDesktopWorkflowSelections(
       globalExecutionSelection,
       desktopSettings.mcpServers,
@@ -2207,13 +2331,24 @@ function registerIpcHandlers(
       });
     }
     const workflowInstructions = formatDesktopWorkflowInstructions(workflows);
-    const canonicalThreadId = `thread-main:${request.sessionId}`;
+    const canonicalThreadId = canonicalDesktopThreadId(request.sessionId);
     if (threadId !== undefined && threadId !== canonicalThreadId) {
       throw createDesktopError({
         code: "desktop.invalid_run_thread",
         message: "Desktop run thread does not match its Local Core session.",
       });
     }
+    const runtimeBinding =
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.admitRuntimeBinding({
+          canonicalThreadId,
+          runnerSessionId: request.sessionId,
+          runtimeId: globalExecutionSelection.runtimeId,
+          capabilityDigest: readiness.capabilityDigest,
+          modelProvider: bindingModelProvider,
+          modelId: bindingModelId,
+        }),
+      );
     if (attachmentIds !== undefined) {
       const listed =
         await requireLocalCoreConnectionManager().executeIdempotent(
@@ -2279,6 +2414,11 @@ function registerIpcHandlers(
       ).runTurnStream(
         {
           ...turnRequest,
+          runtimeId: runtimeBinding.runtimeId,
+          runtimeBindingId: runtimeBinding.bindingId,
+          runtimeBindingStatus: runtimeBinding.status,
+          runtimeNativeSessionState: runtimeBinding.nativeSessionState,
+          participantId: runtimeBinding.participantId,
           ...(attachments !== undefined ? { attachments } : {}),
           ...(workflowInstructions !== undefined
             ? { systemInstructions: [workflowInstructions] }

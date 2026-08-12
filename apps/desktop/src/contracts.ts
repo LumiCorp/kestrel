@@ -96,6 +96,7 @@ import type { MissionControlProjectStateRecord } from "../../../src/missionContr
 import type { MissionControlCompletionContract } from "../../../src/missionControl/reviewContracts.js";
 import type { DesktopEnvironmentStatusProjection } from "../../../src/localCore/desktopEnvironmentConnector.js";
 import type { LocalCoreSystemLifecycleBlocker } from "../../../src/localCore/contracts.js";
+import type { LocalCoreRuntimeBindingResponse } from "../../../src/localCore/contracts.js";
 import type {
   KestrelOneAccountStatus,
   KestrelOneAuthorizationSessionView,
@@ -479,6 +480,19 @@ export interface DesktopBridge {
     runtimeId: RuntimeId,
     selection: DesktopExecutionSelection,
   ): Promise<RuntimeDescriptorV1>;
+  getRuntimeBinding(
+    canonicalThreadId: string,
+  ): Promise<LocalCoreRuntimeBindingResponse | undefined>;
+  createRuntimeRecoveryFork(input: {
+    sourceCanonicalThreadId: string;
+    targetCanonicalThreadId: string;
+    targetRunnerSessionId: string;
+    targetRuntimeId: RuntimeId;
+    lossCode: "RUNTIME_NATIVE_SESSION_LOST" | "RUNTIME_LIVE_WAIT_LOST";
+  }): Promise<{
+    source: LocalCoreRuntimeBindingResponse;
+    fork: LocalCoreRuntimeBindingResponse;
+  }>;
   selectAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
   importAttachment(
     input: DesktopAttachmentImportInput,

@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import {
@@ -10,6 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { parseRunnerEventV2 } from "@kestrel-agents/protocol";
 
 import { SessionStore } from "../../cli/session/SessionStore.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
@@ -75,6 +76,10 @@ import type {
 import {
   parseLocalCoreExecutionProfileResolveRequest,
   parseLocalCoreRuntimeDescribeRequest,
+  parseLocalCoreRuntimeBindingAdmissionRequest,
+  parseLocalCoreRuntimeBindingProjectionRequest,
+  parseLocalCoreRuntimeBindingCorrelationRequest,
+  parseLocalCoreRuntimeRecoveryForkRequest,
   parseLocalCoreRuntimeStoreResetRequest,
   parseLocalCoreSystemShutdownRequest,
 } from "./contracts.js";
@@ -126,6 +131,7 @@ import { verifyAndStoreLocalCoreExternalDatabase } from "./externalDatabaseVerif
 import { detectLocalCoreMigrationState } from "./legacyState.js";
 import { releaseCoreLock, writeCoreLockHeartbeat } from "./lock.js";
 import { LocalCoreProtocolEventJournal } from "./protocolEventJournal.js";
+import { LocalCoreRuntimeBindingReleaseWorker } from "./runtimeBindingReleaseWorker.js";
 import type {
   LocalCoreManagedCredentialReadiness,
   LocalCoreProviderReadiness,
@@ -144,7 +150,12 @@ import {
   resolveLocalCoreConfiguredProfiles,
   resolveLocalCoreDesktopExecutionConfig,
   resolveLocalCoreExecutionProfile,
+  resolveLocalCoreRecoveryExecutionSelection,
+  resolveLocalCoreRuntimeDescribeProfile,
+  projectLocalCoreRuntimeManagedConfiguration,
 } from "./profileProvider.js";
+import { LocalCoreRuntimeBindingError, LocalCoreRuntimeBindingStore } from "./runtimeBindings.js";
+import { FileRuntimeNativeSessionStore } from "../runtimes/FileRuntimeStateStore.js";
 import { ensureLocalCoreReady } from "./ready.js";
 import {
   archiveLocalCorePgliteStore,
@@ -192,6 +203,7 @@ interface LocalCoreExecutionBundle {
   runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
   credentialReadiness: LocalCoreRuntimeCredentialReadiness;
   runtimeFactory: NonNullable<StartLocalCoreApiServerOptions["executionRuntimeFactory"]>;
+  runtimeBindings: LocalCoreRuntimeBindingStore;
 }
 
 type LocalCoreRuntimeCredentialReadiness = Pick<
@@ -247,6 +259,7 @@ export async function startLocalCoreApiServer(
   let ownsLock = false;
   let socketPrepared = false;
   let executionBundle: LocalCoreExecutionBundle | undefined;
+  let runtimeBindingReleaseWorker: LocalCoreRuntimeBindingReleaseWorker | undefined;
   let projectRunRegistry: DesktopProjectRunRegistry | undefined;
   let server: http.Server | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
@@ -308,6 +321,7 @@ export async function startLocalCoreApiServer(
         options,
         token,
         runtimeConfigurationStore,
+        desktopEnvironments,
       });
     } catch (error) {
       status = markExecutionUnavailable(status, error);
@@ -509,6 +523,7 @@ export async function startLocalCoreApiServer(
               options,
               token,
               runtimeConfigurationStore,
+              desktopEnvironments,
             });
             executionBundle = nextBundle;
             return next;
@@ -559,6 +574,7 @@ export async function startLocalCoreApiServer(
               token,
               runtimeConfigurationStore,
               runtimeConfiguration,
+              desktopEnvironments,
             });
             executionBundle = nextBundle;
             return runtimeConfiguration;
@@ -612,6 +628,7 @@ export async function startLocalCoreApiServer(
               options,
               token,
               runtimeConfigurationStore,
+              desktopEnvironments,
             });
             if (nextBundle === undefined) {
               throw new Error(
@@ -727,7 +744,12 @@ export async function startLocalCoreApiServer(
                 "Local Core execution is unavailable.",
               );
             }
-            const resolution = await resolveLocalCoreExecutionProfile(
+            if (descriptorRequest.client === "web" && "runtimeId" in descriptorRequest) {
+              await desktopEnvironments.assertRuntimeDescriptorEnvironment(
+                descriptorRequest.environmentId,
+              );
+            }
+            const resolution = await resolveLocalCoreRuntimeDescribeProfile(
               home.homePath,
               descriptorRequest,
               {
@@ -735,6 +757,56 @@ export async function startLocalCoreApiServer(
                 registerProfile: false,
               },
             );
+            if (!(descriptorRequest.client === "web" && "runtimeId" in descriptorRequest)) {
+              const environmentId = await activeExecution.runtimeBindings.environmentId();
+              const commandId = randomUUID();
+              let described: LocalCoreRuntimeDescriptorResolution | undefined;
+              let runnerFailure: Error | undefined;
+              await new LocalCoreClient({
+                socketPath: paths.apiSocketPath,
+                token,
+                timeoutMs: 35_000,
+              }).sendRunnerCommand(
+                JSON.stringify({
+                  version: "runner_command_v2",
+                  id: commandId,
+                  type: "runtime.describe",
+                  metadata: {
+                    actor: {
+                      actorId: "local-core-runtime-descriptor",
+                      actorType: "service",
+                    },
+                  },
+                  payload: {
+                    environmentPresetId: resolution.environmentPreset.id,
+                    environmentId,
+                    managedConfiguration:
+                      projectLocalCoreRuntimeManagedConfiguration(
+                        resolution.resolvedProfile,
+                      ),
+                  },
+                }),
+                {
+                  onLine(line) {
+                    const event = parseRunnerEventV2(JSON.parse(line) as unknown);
+                    if (event.commandId !== commandId) return;
+                    if (event.type === "runtime.described") {
+                      described = event.payload;
+                    } else if (event.type === "runner.error") {
+                      runnerFailure = Object.assign(
+                        new Error(event.payload.message),
+                        { code: event.payload.code },
+                      );
+                    }
+                  },
+                },
+              );
+              if (runnerFailure !== undefined) throw runnerFailure;
+              if (described === undefined) {
+                throw new Error("Local Core Runner returned no Runtime descriptor event.");
+              }
+              return described;
+            }
             const runtime = activeExecution.runtimeFactory(
               resolution.resolvedProfile,
               () => {},
@@ -759,13 +831,16 @@ export async function startLocalCoreApiServer(
                 capabilityDigest: createHash("sha256")
                   .update(JSON.stringify(descriptor.capabilities))
                   .digest("hex"),
-                environmentId: resolution.environmentPreset.id,
+                environmentId: descriptorRequest.environmentId,
                 observedAt: new Date().toISOString(),
               };
             } finally {
               await runtime.close();
             }
           },
+          runtimeBindings: executionBundle?.runtimeBindings,
+          notifyRuntimeBindingReleasePending: () =>
+            runtimeBindingReleaseWorker?.wake() ?? Promise.resolve(),
           requestSystemShutdown,
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
@@ -783,6 +858,15 @@ export async function startLocalCoreApiServer(
       socketPath: paths.apiSocketPath,
       authToken: token,
     });
+    runtimeBindingReleaseWorker = new LocalCoreRuntimeBindingReleaseWorker({
+      runtimeBindings: () => executionBundle?.runtimeBindings,
+      runnerClient: new LocalCoreClient({
+        socketPath: paths.apiSocketPath,
+        token,
+        timeoutMs: 120_000,
+      }),
+    });
+    runtimeBindingReleaseWorker.start();
     await desktopEnvironments.start(
       new LocalCoreClient({
         socketPath: paths.apiSocketPath,
@@ -814,6 +898,7 @@ export async function startLocalCoreApiServer(
         await googleWorkspaceOAuthSessions?.close();
         await kestrelOneAccount.close();
         await desktopEnvironments.close();
+        await runtimeBindingReleaseWorker?.close();
         const activeExecution = executionBundle;
         executionBundle = undefined;
         await closeServer({
@@ -883,6 +968,7 @@ export async function startLocalCoreApiServer(
     await googleWorkspaceOAuthSessions?.close();
     await kestrelOneAccount.close();
     await desktopEnvironments.close();
+    await runtimeBindingReleaseWorker?.close();
     if (idleTimeout !== undefined) {
       clearTimeout(idleTimeout);
     }
@@ -912,6 +998,7 @@ async function createExecutionBundle(input: {
   token: string;
   runtimeConfigurationStore: LocalCoreRuntimeConfigurationStore;
   runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
+  desktopEnvironments: LocalCoreDesktopEnvironmentManager;
 }): Promise<LocalCoreExecutionBundle | undefined> {
   if (input.status.state === "blocked") {
     return;
@@ -966,6 +1053,7 @@ async function createExecutionBundle(input: {
         : {}),
     });
   }
+  const runtimeBindings = new LocalCoreRuntimeBindingStore(storeHandle.executor);
   const handler = createRunnerServiceHttpHandler({
     pathPrefix: "/runtime/v2",
     authToken: input.token,
@@ -976,7 +1064,15 @@ async function createExecutionBundle(input: {
       { runtimeConfiguration },
     ),
     profileSourcePolicy: "registered-only",
-    eventJournal: new LocalCoreProtocolEventJournal(storeHandle.executor),
+    runtimeEnvironmentId: await runtimeBindings.environmentId(),
+    authorizeRuntimeEnvironment: async (environmentId: string) =>
+      await input.desktopEnvironments.authorizeRuntimeEnvironment(environmentId),
+    resolveRunStartRuntimeEnvironment: async (identity) =>
+      await runtimeBindings.resolveRunStartEnvironment(identity),
+    eventJournal: new LocalCoreProtocolEventJournal(
+      storeHandle.executor,
+      runtimeBindings,
+    ),
   });
   try {
     await handler.ready();
@@ -986,6 +1082,7 @@ async function createExecutionBundle(input: {
       runtimeConfiguration,
       credentialReadiness,
       runtimeFactory,
+      runtimeBindings,
     };
   } catch (error) {
     await handler.close({ abortActiveRuns: true }).catch(() => {});
@@ -1249,6 +1346,8 @@ async function handleRequest(input: {
   describeRuntime(
     request: LocalCoreRuntimeDescribeRequest,
   ): Promise<LocalCoreRuntimeDescriptorResolution>;
+  runtimeBindings?: LocalCoreRuntimeBindingStore | undefined;
+  notifyRuntimeBindingReleasePending(): Promise<void>;
   requestSystemShutdown(
     reason: LocalCoreSystemShutdownRequest["reason"],
   ): LocalCoreSystemShutdownResult;
@@ -1945,6 +2044,205 @@ async function handleRequest(input: {
         );
       });
       writeJson(input.response, 200, { ok: true, resolution });
+      return;
+    }
+    if (method === "GET" && url.pathname === "/v1/runtime-bindings/environment") {
+      const store = requireRuntimeBindingStore(input.runtimeBindings);
+      writeJson(input.response, 200, {
+        ok: true,
+        environmentId: await store.environmentId(),
+      });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/runtime-bindings/get") {
+      const body = await readJsonBody(input.request);
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new LocalCoreApiRequestError(400, "RUNTIME_BINDING_INPUT_INVALID", "Runtime binding lookup is invalid.");
+      }
+      const canonicalThreadId = (body as Record<string, unknown>).canonicalThreadId;
+      if (typeof canonicalThreadId !== "string" || canonicalThreadId.trim().length === 0) {
+        throw new LocalCoreApiRequestError(400, "RUNTIME_BINDING_INPUT_INVALID", "Runtime binding lookup requires canonicalThreadId.");
+      }
+      writeJson(input.response, 200, {
+        ok: true,
+        binding: await requireRuntimeBindingStore(input.runtimeBindings).get(canonicalThreadId),
+      });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/runtime-bindings/admit") {
+      const binding = await requireRuntimeBindingStore(input.runtimeBindings).admit(
+        parseLocalCoreRuntimeBindingAdmissionRequest(await readJsonBody(input.request)),
+      );
+      writeJson(input.response, 200, { ok: true, binding });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/runtime-bindings/project") {
+      const binding = await requireRuntimeBindingStore(input.runtimeBindings).project(
+        parseLocalCoreRuntimeBindingProjectionRequest(await readJsonBody(input.request)),
+      );
+      writeJson(input.response, 200, { ok: true, binding });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/runtime-bindings/establish") {
+      const body = await readJsonBody(input.request);
+      const record = typeof body === "object" && body !== null && !Array.isArray(body)
+        ? body as Record<string, unknown>
+        : {};
+      const event = parseRunnerEventV2(record.event);
+      if (event.type !== "run.native_session.established") {
+        throw new LocalCoreApiRequestError(400, "RUNTIME_BINDING_EVENT_INVALID", "Runtime binding establishment requires its durable Runner event.");
+      }
+      const store = requireRuntimeBindingStore(input.runtimeBindings);
+      const authoritative = await store.getForRunnerSession(event.payload.sessionId);
+      if (authoritative === undefined) {
+        throw new LocalCoreApiRequestError(409, "RUNTIME_BINDING_NOT_FOUND", "Runtime binding establishment has no authoritative Thread.");
+      }
+      const binding = await store.establish({
+        canonicalThreadId: authoritative.canonicalThreadId,
+        bindingId: event.payload.bindingId,
+        participantId: event.payload.participantId,
+        runtimeId: event.payload.runtimeId,
+        environmentId: authoritative.environmentId,
+      });
+      writeJson(input.response, 200, { ok: true, binding });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/runtime-bindings/degrade") {
+      const body = await readJsonBody(input.request);
+      const correlation = parseLocalCoreRuntimeBindingCorrelationRequest(body);
+      const lossCode = typeof body === "object" && body !== null && !Array.isArray(body)
+        ? (body as Record<string, unknown>).lossCode
+        : undefined;
+      if (lossCode !== "RUNTIME_NATIVE_SESSION_LOST" && lossCode !== "RUNTIME_LIVE_WAIT_LOST") {
+        throw new LocalCoreApiRequestError(400, "RUNTIME_BINDING_LOSS_INVALID", "Runtime binding degradation requires a supported terminal loss.");
+      }
+      const binding = await requireRuntimeBindingStore(input.runtimeBindings).degrade({
+        ...correlation,
+        lossCode,
+      });
+      writeJson(input.response, 200, { ok: true, binding });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/runtime-bindings/recovery-forks") {
+      const intent = parseLocalCoreRuntimeRecoveryForkRequest(
+        await readJsonBody(input.request),
+      );
+      const store = requireRuntimeBindingStore(input.runtimeBindings);
+      const source = await store.get(intent.sourceCanonicalThreadId);
+      if (source === undefined) {
+        throw new LocalCoreApiRequestError(
+          409,
+          "RUNTIME_BINDING_NOT_FOUND",
+          "Runtime recovery source binding was not found.",
+        );
+      }
+      const expectedTarget = intent.lossCode === "RUNTIME_NATIVE_SESSION_LOST"
+        ? "kestrel"
+        : source.runtimeId;
+      if (intent.targetRuntimeId !== expectedTarget) {
+        throw new LocalCoreApiRequestError(
+          409,
+          "RUNTIME_RECOVERY_POLICY_INVALID",
+          "The requested Runtime recovery target does not match the proven terminal loss.",
+        );
+      }
+      const runtimeConfiguration = await input.runtimeConfigurationStore.read();
+      const targetSelection = await resolveLocalCoreRecoveryExecutionSelection(
+        input.status.home.homePath,
+        {
+          runtimeId: intent.targetRuntimeId,
+          modelProvider: source.modelProvider,
+          model: source.modelId,
+        },
+        { runtimeConfiguration },
+      );
+      const readiness = await input.describeRuntime({
+        client: "desktop",
+        selection: targetSelection,
+      });
+      if (
+        readiness.descriptor.availability !== "ready" ||
+        readiness.descriptor.runtimeId !== intent.targetRuntimeId
+      ) {
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_RUNTIME_UNAVAILABLE",
+          readiness.descriptor.unavailableReason ??
+            "The recovery Runtime is not ready in this environment.",
+        );
+      }
+      const resolvedTarget = await resolveLocalCoreExecutionProfile(
+        input.status.home.homePath,
+        { client: "desktop", selection: targetSelection },
+        { runtimeConfiguration, registerProfile: false },
+      );
+      const targetModelProvider = resolvedTarget.resolvedProfile.modelProvider;
+      const targetModelId = resolvedTarget.resolvedProfile.model;
+      if (
+        targetModelProvider === undefined ||
+        targetModelProvider.trim().length === 0 ||
+        targetModelId === undefined ||
+        targetModelId.trim().length === 0
+      ) {
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_RUNTIME_UNAVAILABLE",
+          "The recovery Runtime model route is incomplete.",
+        );
+      }
+      const recovery = await store.createRecoveryFork({
+        canonicalThreadId: source.canonicalThreadId,
+        bindingId: source.bindingId,
+        participantId: source.participantId,
+        runtimeId: source.runtimeId,
+        environmentId: source.environmentId,
+        targetCanonicalThreadId: intent.targetCanonicalThreadId,
+        targetRunnerSessionId: intent.targetRunnerSessionId,
+        targetRuntimeId: intent.targetRuntimeId,
+        targetEnvironmentId: readiness.environmentId,
+        targetCapabilityDigest: readiness.capabilityDigest,
+        targetModelProvider,
+        targetModelId,
+        lossCode: intent.lossCode,
+      });
+      void input.notifyRuntimeBindingReleasePending().catch(() => {});
+      writeJson(input.response, 200, { ok: true, recovery });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/runtime-bindings/release") {
+      const correlation = parseLocalCoreRuntimeBindingCorrelationRequest(await readJsonBody(input.request));
+      const binding = await requireRuntimeBindingStore(input.runtimeBindings).release(correlation);
+      void input.notifyRuntimeBindingReleasePending().catch(() => {});
+      writeJson(input.response, 200, { ok: true, binding });
+      return;
+    }
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/runtime-bindings/diagnostics/remove-native-session"
+    ) {
+      if ((input.ensureOptions.env ?? process.env).KESTREL_HYDRA_SMOKE_APPROVED !== "1") {
+        throw new LocalCoreApiRequestError(404, "LOCAL_CORE_API_NOT_FOUND", "Unknown Local Core API endpoint.");
+      }
+      const correlation = parseLocalCoreRuntimeBindingCorrelationRequest(await readJsonBody(input.request));
+      const store = requireRuntimeBindingStore(input.runtimeBindings);
+      const binding = await store.get(correlation.canonicalThreadId);
+      if (binding === undefined) {
+        throw new LocalCoreApiRequestError(409, "RUNTIME_BINDING_NOT_FOUND", "The qualification binding does not exist.");
+      }
+      if (
+        binding.bindingId !== correlation.bindingId ||
+        binding.participantId !== correlation.participantId ||
+        binding.runtimeId !== correlation.runtimeId ||
+        binding.environmentId !== correlation.environmentId ||
+        binding.nativeSessionState !== "ready" ||
+        binding.runtimeId === "kestrel"
+      ) {
+        throw new LocalCoreApiRequestError(409, "RUNTIME_BINDING_CORRELATION_INVALID", "The qualification binding correlation is invalid.");
+      }
+      await new FileRuntimeNativeSessionStore(
+        path.join(input.status.home.homePath, "runtime", "native-runtimes"),
+      ).release(binding.bindingId);
+      writeJson(input.response, 200, { ok: true });
       return;
     }
     if (
@@ -2666,18 +2964,34 @@ async function handleRequest(input: {
       error instanceof LocalCoreApiRequestError ? error : undefined;
     const runtimeConfigurationError =
       error instanceof LocalCoreRuntimeConfigurationError ? error : undefined;
+    const runtimeBindingError =
+      error instanceof LocalCoreRuntimeBindingError ? error : undefined;
     writeJson(
       input.response,
-      requestError?.statusCode ?? 500,
+      requestError?.statusCode ?? (runtimeBindingError === undefined ? 500 : 409),
       errorBody(
         requestError?.code ??
           runtimeConfigurationError?.code ??
+          runtimeBindingError?.code ??
           "LOCAL_CORE_API_ERROR",
         error instanceof Error ? error.message : String(error),
         requestError?.details,
       ),
     );
   }
+}
+
+function requireRuntimeBindingStore(
+  store: LocalCoreRuntimeBindingStore | undefined,
+): LocalCoreRuntimeBindingStore {
+  if (store === undefined) {
+    throw new LocalCoreApiRequestError(
+      503,
+      "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+      "Local Core Runtime binding authority is unavailable.",
+    );
+  }
+  return store;
 }
 
 function parseCredentialPath(pathname: string) {
