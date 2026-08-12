@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PageContainer } from "@/components/app-page";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,7 +37,10 @@ export default async function OrganizationWelcomePage() {
   ]);
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-2xl items-center px-4 py-12">
+    <PageContainer
+      className="flex min-h-full items-center py-12"
+      contentClassName="max-w-2xl"
+    >
       <Card className="w-full">
         <CardHeader>
           <CardTitle>
@@ -76,7 +80,7 @@ export default async function OrganizationWelcomePage() {
           ) : null}
           {canManage && !readiness.ready ? (
             <Button asChild>
-              <Link href="/settings/organization/setup">
+              <Link href="/organization/setup">
                 Set up organization
               </Link>
             </Button>
@@ -87,6 +91,6 @@ export default async function OrganizationWelcomePage() {
           <WelcomeWorkspaceSwitcher activeOrganizationId={organizationId} />
         </CardFooter>
       </Card>
-    </div>
+    </PageContainer>
   );
 }

@@ -1,3 +1,9 @@
-import EnvironmentDetailLayout from "@/app/(workspace)/settings/environments/[id]/layout";
+import type { ReactNode } from "react";
 
-export default EnvironmentDetailLayout;
+export default function LegacyOrganizationEnvironmentLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  return children;
+}

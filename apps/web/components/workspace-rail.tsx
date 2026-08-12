@@ -97,44 +97,60 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
       : undefined;
   const routeThreadId = pathname.match(/^\/threads\/([^/]+)/)?.[1];
   const previousOrganizationId = useRef(organizationId);
-  const { data: projects, mutate: mutateProjects } =
-    useSWR<ProjectsResponse>("/api/projects", fetcher);
-  const { data: threads, mutate: mutateThreads } = useSWR<ThreadsResponse>(
-    "/api/threads?limit=100",
-    fetcher
-  );
-  const { data: threadDetail, mutate: mutateThreadDetail } = useSWR<
-    ThreadDetailResponse
-  >(
+  const {
+    data: projects,
+    isLoading: projectsLoading,
+    mutate: mutateProjects,
+  } = useSWR<ProjectsResponse>("/api/projects", fetcher);
+  const {
+    data: threadDetail,
+    error: threadDetailError,
+    mutate: mutateThreadDetail,
+  } = useSWR<ThreadDetailResponse>(
     routeThreadId && routeThreadId !== "new"
       ? `/api/threads/${routeThreadId}`
       : null,
     fetcher,
     { errorRetryCount: 5, errorRetryInterval: 500 }
   );
-  const threadProjectId =
-    threadDetail?.projectId ??
-    threads?.threads.find((thread) => thread.id === routeThreadId)?.projectId;
+  const resolvingThreadScope = Boolean(
+    routeThreadId &&
+      routeThreadId !== "new" &&
+      !threadDetail &&
+      !threadDetailError
+  );
+  const threadScopeUnavailable = Boolean(
+    routeThreadId && routeThreadId !== "new" && threadDetailError
+  );
+  const threadProjectId = threadDetail?.projectId;
   const activeProjectId = routeProjectId ?? threadProjectId ?? undefined;
+  const threadListKey = resolvingThreadScope || threadScopeUnavailable
+    ? null
+    : activeProjectId
+      ? `/api/threads?project_id=${encodeURIComponent(activeProjectId)}&limit=100`
+      : "/api/threads?standalone=true&limit=100";
+  const {
+    data: threads,
+    error: threadsError,
+    isLoading: threadsLoading,
+    mutate: mutateThreads,
+  } = useSWR<ThreadsResponse>(threadListKey, fetcher);
   const activeProject = projects?.projects.find(
     ({ project }) => project.id === activeProjectId
   )?.project;
   const projectThreads = useMemo(
-    () =>
-      activeProjectId
-        ? (threads?.threads.filter(
-            (thread) => thread.projectId === activeProjectId
-          ) ?? [])
-        : (threads?.threads.filter((thread) => thread.projectId === null) ?? []),
-    [activeProjectId, threads?.threads]
+    () => threads?.threads ?? [],
+    [threads?.threads]
   );
   const visibleThreads = useMemo(
     () => filterAndSortThreads(projectThreads, threadQuery, threadSort),
     [projectThreads, threadQuery, threadSort]
   );
-  const newThreadHref = activeProjectId
-    ? `/projects/${activeProjectId}/threads/new`
-    : "/threads/new";
+  const newThreadHref = resolvingThreadScope || threadScopeUnavailable
+    ? null
+    : activeProjectId
+      ? `/projects/${activeProjectId}/threads/new`
+      : "/threads/new";
 
   useEffect(() => {
     if (previousOrganizationId.current === organizationId) {
@@ -144,7 +160,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
 
     void Promise.allSettled([
       mutateProjects({ projects: [] }, { revalidate: true }),
-      mutateThreads({ threads: [] }, { revalidate: true }),
+      mutateThreads(undefined, { revalidate: true }),
       mutateThreadDetail(undefined, { revalidate: true }),
     ]);
   }, [
@@ -163,16 +179,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
     });
   }, [activeProjectId, organizationId]);
 
-  if (!isWorkPath(pathname)) return null;
-
-  const projectWorkHref = (projectId: string) => {
-    const latestThread = threads?.threads.find(
-      (thread) => thread.projectId === projectId
-    );
-    return latestThread
-      ? `/threads/${latestThread.id}`
-      : `/projects/${projectId}/threads/new`;
-  };
+  if (!isWorkPath(pathname) || pathname === "/projects") return null;
 
   async function archiveThread(threadId: string) {
     const response = await fetch(`/api/threads/${threadId}`, {
@@ -213,22 +220,33 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
         >
           <FolderOpen className="size-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate text-left">
-            {activeProject?.name ?? "Standalone Threads"}
+            {activeProject?.name ??
+              (activeProjectId
+                ? projectsLoading
+                  ? "Loading Project…"
+                  : "Project"
+                : resolvingThreadScope
+                  ? "Loading Project…"
+                  : "Standalone Threads")}
           </span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Projects</DropdownMenuLabel>
-        {projects?.projects.map(({ project }) => (
-          <DropdownMenuItem asChild key={project.id}>
-            <Link href={projectWorkHref(project.id)}>
-              <FolderOpen className="size-4" />
-              <span className="truncate">{project.name}</span>
-            </Link>
-          </DropdownMenuItem>
-        ))}
-        {projects?.projects.length ? null : (
+        {projectsLoading ? (
+          <DropdownMenuItem disabled>Loading Projects…</DropdownMenuItem>
+        ) : (
+          projects?.projects.map(({ project }) => (
+            <DropdownMenuItem asChild key={project.id}>
+              <Link href={`/projects/${project.id}`}>
+                <FolderOpen className="size-4" />
+                <span className="truncate">{project.name}</span>
+              </Link>
+            </DropdownMenuItem>
+          ))
+        )}
+        {projectsLoading || projects?.projects.length ? null : (
           <DropdownMenuItem disabled>No Projects yet</DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
@@ -246,11 +264,17 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
     <>
       <div className="flex items-center gap-2 border-b px-3 py-2 md:hidden">
         <div className="min-w-0 flex-1">{projectSwitcher}</div>
-        <Button asChild size="sm">
-          <Link href={newThreadHref}>
+        {routeProjectId ? null : newThreadHref ? (
+          <Button asChild size="sm">
+            <Link href={newThreadHref}>
+              <Plus className="size-4" /> New Thread
+            </Link>
+          </Button>
+        ) : (
+          <Button disabled size="sm">
             <Plus className="size-4" /> New Thread
-          </Link>
-        </Button>
+          </Button>
+        )}
       </div>
       <aside className="hidden h-full min-h-0 w-72 shrink-0 flex-col border-r bg-sidebar md:flex">
         <div className="border-b p-3">{projectSwitcher}</div>
@@ -268,11 +292,17 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
             </div>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button asChild aria-label="New Thread" size="icon">
-                  <Link href={newThreadHref}>
+                {newThreadHref ? (
+                  <Button asChild aria-label="New Thread" size="icon">
+                    <Link href={newThreadHref}>
+                      <Plus className="size-4" />
+                    </Link>
+                  </Button>
+                ) : (
+                  <Button aria-label="New Thread" disabled size="icon">
                     <Plus className="size-4" />
-                  </Link>
-                </Button>
+                  </Button>
+                )}
               </TooltipTrigger>
               <TooltipContent side="top">New Thread</TooltipContent>
             </Tooltip>
@@ -300,7 +330,19 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
             <div className="px-2 py-1 text-muted-foreground text-xs uppercase tracking-wide">
               Recent Threads
             </div>
-            {visibleThreads?.length ? (
+            {resolvingThreadScope || threadsLoading ? (
+              <p
+                aria-live="polite"
+                className="px-2 py-2 text-muted-foreground text-sm"
+                role="status"
+              >
+                Loading Threads…
+              </p>
+            ) : threadDetailError || threadsError ? (
+              <p className="px-2 py-2 text-destructive text-sm" role="alert">
+                Threads could not be loaded.
+              </p>
+            ) : visibleThreads.length ? (
               visibleThreads.map((thread) => (
                 <div
                   className={cn(
@@ -341,7 +383,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
                     <DropdownMenuTrigger asChild>
                       <Button
                         aria-label={`Thread actions for ${thread.title || "New thread"}`}
-                        className="mr-1 size-7 opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100 data-[state=open]:opacity-100"
+                        className="mr-1 size-7 text-muted-foreground"
                         size="icon"
                         variant="ghost"
                       >

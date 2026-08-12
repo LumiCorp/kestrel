@@ -12,6 +12,7 @@ export function AppSettingsHeader({
   backLabel,
   status,
   action,
+  headingLevel = 1,
 }: {
   appKey: string;
   icon: string | null;
@@ -21,6 +22,7 @@ export function AppSettingsHeader({
   backLabel: string;
   status: string;
   action?: ReactNode;
+  headingLevel?: 1 | 2;
 }) {
   return (
     <div className="space-y-6">
@@ -35,7 +37,11 @@ export function AppSettingsHeader({
           <AppIcon appKey={appKey} className="size-12" icon={icon} />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-semibold text-xl">{name}</h1>
+              {headingLevel === 1 ? (
+                <h1 className="font-semibold text-xl">{name}</h1>
+              ) : (
+                <h2 className="font-semibold text-xl">{name}</h2>
+              )}
               <Badge variant="outline">{status}</Badge>
             </div>
             <p className="mt-1 max-w-2xl text-muted-foreground text-sm">

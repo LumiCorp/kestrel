@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { PageContainer } from "@/components/app-page";
 import { DesktopEnrollmentApproval } from "./desktop-enrollment-approval";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { knowledgeDb } from "@/lib/knowledge/db";
@@ -19,12 +20,14 @@ export default async function DesktopEnrollmentPage(props: {
     });
   if (!request) notFound();
   return (
-    <main className="min-h-screen bg-muted/20 px-6 py-16">
-      <DesktopEnrollmentApproval
-        desktopName={request.desktopName}
-        fingerprint={request.fingerprint}
-        requestId={request.id}
-      />
+    <main className="min-h-screen bg-muted/20">
+      <PageContainer className="py-12 sm:py-16" contentClassName="max-w-3xl">
+        <DesktopEnrollmentApproval
+          desktopName={request.desktopName}
+          fingerprint={request.fingerprint}
+          requestId={request.id}
+        />
+      </PageContainer>
     </main>
   );
 }

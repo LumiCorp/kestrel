@@ -807,7 +807,7 @@ export function OrganizationSetupClient({
                 mode !== "signup" ? (
                   <Button asChild size="sm" variant="ghost">
                     <Link
-                      href={`/settings/organization/environments/${readiness.environmentExecution.environmentId}/activity`}
+                      href={`/organization/environments/${readiness.environmentExecution.environmentId}/activity`}
                     >
                       View Environment operations
                     </Link>

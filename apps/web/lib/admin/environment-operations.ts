@@ -13,6 +13,7 @@ export async function getPlatformEnvironmentOperationDiagnostics() {
     activeCountRows,
     failedCountRows,
     activeOperations,
+    historyOperations,
     failedOperations,
     duplicateDailyBackups,
   ] = await Promise.all([
@@ -47,6 +48,31 @@ export async function getPlatformEnvironmentOperationDiagnostics() {
       .innerJoin(environment, eq(environment.id, operation.environmentId))
       .leftJoin(workspace, eq(workspace.id, operation.workspaceId))
       .where(inArray(operation.status, ["queued", "running"]))
+      .orderBy(desc(operation.updatedAt))
+      .limit(100),
+    knowledgeDb
+      .select({
+        id: operation.id,
+        organizationName: organization.name,
+        environmentName: environment.name,
+        workspaceName: workspace.name,
+        type: operation.type,
+        status: operation.status,
+        stage: operation.stage,
+        attempt: operation.attempt,
+        errorCode: operation.errorCode,
+        errorMessage: operation.errorMessage,
+        createdAt: operation.createdAt,
+        updatedAt: operation.updatedAt,
+      })
+      .from(operation)
+      .innerJoin(
+        organization,
+        eq(organization.id, operation.organizationId),
+      )
+      .innerJoin(environment, eq(environment.id, operation.environmentId))
+      .leftJoin(workspace, eq(workspace.id, operation.workspaceId))
+      .where(inArray(operation.status, ["completed", "cancelled"]))
       .orderBy(desc(operation.updatedAt))
       .limit(100),
     knowledgeDb
@@ -107,6 +133,7 @@ export async function getPlatformEnvironmentOperationDiagnostics() {
     failedCount: Number(failedCountRows[0]?.value ?? 0),
     activeOperations,
     failedOperations,
+    historyOperations,
     duplicateDailyBackups: duplicateDailyBackups.map((row) => ({
       ...row,
       operationCount: Number(row.operationCount),

@@ -11,7 +11,7 @@ export default async function OrganizationDangerPage() {
   if (isPersonalOrganizationSlug(organization.slug)) notFound();
   const operation = await getOrganizationDeletionOperation({ organizationId });
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-8 sm:px-6 lg:px-10">
+    <div className="max-w-3xl space-y-6">
       <div>
         <p className="font-medium text-destructive text-sm">Danger zone</p>
         <h1 className="mt-1 font-semibold text-3xl tracking-tight">

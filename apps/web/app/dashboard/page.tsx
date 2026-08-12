@@ -163,7 +163,7 @@ export default async function DashboardPage({
           <div className="flex items-center justify-between gap-4">
             <h2 className="font-medium text-sm">Attribution</h2>
             <Button asChild size="sm" variant="outline">
-              <Link href="/settings/organization/usage">
+              <Link href="/organization/usage">
                 Open explorer <ExternalLink className="ml-1 size-3.5" />
               </Link>
             </Button>

@@ -113,7 +113,7 @@ export function NavUser({ session }: { session: Session | null }) {
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
-                <Link href="/settings/organization/billing">
+                <Link href="/organization/billing">
                   <CreditCard />
                   Billing
                 </Link>

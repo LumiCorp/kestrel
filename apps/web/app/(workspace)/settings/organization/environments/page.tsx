@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
+import { permanentRedirect } from "next/navigation";
 
-export default async function OrganizationEnvironmentsPage() {
-  redirect("/organization");
+export default function LegacyOrganizationEnvironmentsPage() {
+  permanentRedirect("/organization");
 }

@@ -1,5 +1,7 @@
 import {
+  Activity,
   ArrowRight,
+  Bot,
   Boxes,
   CloudCog,
   CreditCard,
@@ -7,6 +9,8 @@ import {
   Mail,
   Network,
   ScrollText,
+  Server,
+  Sparkles,
   Users,
 } from "lucide-react";
 import Link from "next/link";
@@ -23,6 +27,12 @@ import type { OrganizationManagementEnvironment } from "@/lib/organizations/mana
 import { CreateOrganizationEnvironmentDialog } from "@/components/organization/create-environment-dialog";
 
 const organizationSections = [
+  {
+    href: "/organization/setup",
+    icon: Sparkles,
+    title: "Setup",
+    description: "Organization readiness and next steps",
+  },
   {
     href: "/organization/systems",
     icon: Network,
@@ -44,8 +54,26 @@ const organizationSections = [
   {
     href: "/organization/connections",
     icon: CloudCog,
-    title: "Connections & models",
-    description: "Providers, models, and runtime setup",
+    title: "Connections",
+    description: "AI providers, credentials, and approved models",
+  },
+  {
+    href: "/organization/agent-defaults",
+    icon: Bot,
+    title: "Agent defaults",
+    description: "Shared model and interaction defaults",
+  },
+  {
+    href: "/organization/inference",
+    icon: Server,
+    title: "Inference",
+    description: "Private inference profiles and fleet health",
+  },
+  {
+    href: "/organization/usage",
+    icon: Activity,
+    title: "Costs & usage",
+    description: "Attributed spend, usage, and pricing",
   },
   {
     href: "/organization/email",
@@ -99,7 +127,7 @@ export function OrganizationManagementHome({
   ).length;
 
   return (
-    <div className="mx-auto w-full max-w-7xl space-y-10 px-4 py-8 sm:px-6 lg:px-10">
+    <div className="space-y-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="font-medium text-muted-foreground text-sm">

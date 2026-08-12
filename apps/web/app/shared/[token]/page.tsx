@@ -12,6 +12,7 @@ import { publicAppUrl } from "@/lib/public-config";
 import { getPublicThreadByShareToken } from "@/lib/threads/store";
 import { projectThreadConversation } from "@/lib/turns/conversation-projector";
 import type { ChatMessage } from "@/lib/types";
+import { PageContainer } from "@/components/app-page";
 import { convertToUIMessages } from "@/lib/utils";
 
 const getSharedThread = cache(getPublicThreadByShareToken);
@@ -125,7 +126,10 @@ export default async function SharedThreadPage(props: SharedThreadPageProps) {
   });
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-6 px-4 py-8">
+    <PageContainer
+      className="min-h-screen py-8"
+      contentClassName="flex max-w-4xl flex-col gap-6"
+    >
       <Link
         aria-label="Kestrel One home"
         className="inline-flex w-fit rounded-sm outline-none ring-ring focus-visible:ring-2 focus-visible:ring-offset-2"
@@ -169,6 +173,6 @@ export default async function SharedThreadPage(props: SharedThreadPageProps) {
           )
         )}
       </div>
-    </div>
+    </PageContainer>
   );
 }

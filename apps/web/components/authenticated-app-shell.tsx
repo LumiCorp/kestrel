@@ -25,7 +25,7 @@ export function AuthenticatedAppShell({
         activeOrganization={activeOrganization}
         session={session}
       />
-      <SidebarInset>
+      <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
         <header className="flex h-16 shrink-0 items-center gap-2">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
@@ -36,7 +36,7 @@ export function AuthenticatedAppShell({
             <div className="font-medium text-sm">{sectionLabel}</div>
           </div>
         </header>
-        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       </SidebarInset>
     </SidebarProvider>
   );

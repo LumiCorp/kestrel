@@ -1,27 +1,12 @@
-import { notFound } from "next/navigation";
-import { EnvironmentAppSettings } from "@/components/apps/environment-apps-panel";
-import { getEnvironmentAppConfiguration } from "@/lib/apps/service";
-import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import { permanentRedirect } from "next/navigation";
 
-export default async function EnvironmentAppDetailPage({
+export default async function LegacyOrganizationEnvironmentAppDetailPage({
   params,
 }: {
   params: Promise<{ id: string; appKey: string }>;
 }) {
-  const { organizationId } = await requireOrganizationAdmin();
   const { id, appKey } = await params;
-  const decodedAppKey = decodeURIComponent(appKey);
-  const configuration = await getEnvironmentAppConfiguration({
-    organizationId,
-    environmentId: id,
-    appKey: decodedAppKey,
-  }).catch(() => null);
-  if (!configuration) notFound();
-
-  return (
-    <EnvironmentAppSettings
-      environmentId={id}
-      initialConfiguration={configuration}
-    />
+  permanentRedirect(
+    `/organization/environments/${id}/apps/${encodeURIComponent(appKey)}`,
   );
 }

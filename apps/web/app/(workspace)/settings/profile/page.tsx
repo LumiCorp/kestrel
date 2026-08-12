@@ -1,8 +1,6 @@
 import { headers } from "next/headers";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SettingsPage, SettingsPageHeader } from "@/components/settings/settings-section";
-import { Button } from "@/components/ui/button";
 import { auth } from "@/lib/auth";
 import type { SerializedSessionRecord, Session } from "@/lib/auth-types";
 import { dbClient } from "@/lib/db-client";
@@ -23,11 +21,6 @@ export default async function ProfileSettingsPage() {
   return (
     <SettingsPage>
       <SettingsPageHeader
-        actions={
-          <Button asChild size="sm" variant="outline">
-            <Link href="/settings/api-keys">Personal API keys</Link>
-          </Button>
-        }
         description="Manage your account, active sessions, and personal preferences."
         eyebrow="Personal"
         title="Profile"

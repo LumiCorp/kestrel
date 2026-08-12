@@ -31,7 +31,7 @@ export default async function EnvironmentDetailLayout({
     environmentId: id,
   });
   if (!environment) notFound();
-  const base = `/settings/organization/environments/${environment.id}`;
+  const base = `/organization/environments/${environment.id}`;
   const tabs =
     environment.provider === "desktop"
       ? [baseTabs[0], ...baseTabs.slice(2)]
@@ -49,7 +49,7 @@ export default async function EnvironmentDetailLayout({
       <div className="space-y-3">
         <Link
           className="text-muted-foreground text-sm hover:text-foreground"
-          href="/settings/organization/environments"
+          href="/organization"
         >
           ← Environments
         </Link>

@@ -48,6 +48,7 @@ import {
   TooltipTrigger,
 } from "@/components/chatbot/ui/tooltip";
 import { useChatVisibility } from "@/hooks/use-chat-visibility";
+import { isThreadListCacheKey } from "@/lib/threads/cache-keys";
 import {
   VisibilityMenuSub,
   VisibilitySelector,
@@ -118,8 +119,7 @@ function PureChatHeader({
   async function refreshThreadCaches() {
     await Promise.all([
       mutate(`/api/threads/${threadId}`),
-      mutate("/api/threads?limit=30"),
-      mutate("/api/threads?limit=100"),
+      mutate(isThreadListCacheKey),
       mutate("/api/projects"),
     ]);
   }

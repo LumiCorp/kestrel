@@ -1,4 +1,5 @@
 import { AuthenticatedAppShell } from "@/components/authenticated-app-shell";
+import { AppPage } from "@/components/app-page";
 import { requireAuthenticatedShell } from "@/lib/knowledge/auth";
 
 export default async function DebugLayout({
@@ -21,7 +22,7 @@ export default async function DebugLayout({
       sectionLabel="Debug"
       session={session}
     >
-      {children}
+      <AppPage>{children}</AppPage>
     </AuthenticatedAppShell>
   );
 }

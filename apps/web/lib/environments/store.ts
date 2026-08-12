@@ -215,7 +215,7 @@ export async function recoverDefaultEnvironmentProvisioning(input: {
     if (!operation) {
       throw new EnvironmentContractError(
         "ENVIRONMENT_UNAVAILABLE",
-        `Default Environment provisioning history is missing. Open /settings/organization/environments/${environment.id}/activity.`,
+        `Default Environment provisioning history is missing. Open /organization/environments/${environment.id}/activity.`,
       );
     }
     const recoveryAction = selectDefaultEnvironmentRecoveryAction({
@@ -231,7 +231,7 @@ export async function recoverDefaultEnvironmentProvisioning(input: {
     if (recoveryAction === "unsupported") {
       throw new EnvironmentContractError(
         "ENVIRONMENT_UNAVAILABLE",
-        `Default Environment state '${environment.status}' cannot be retried automatically. Open /settings/organization/environments/${environment.id}/activity.`,
+        `Default Environment state '${environment.status}' cannot be retried automatically. Open /organization/environments/${environment.id}/activity.`,
       );
     }
     const now = new Date();

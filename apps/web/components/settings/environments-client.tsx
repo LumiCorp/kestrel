@@ -315,7 +315,7 @@ export function EnvironmentsAdminClient({
             </TableHeader>
             <TableBody>
               {environments.map((environment) => {
-                const href = `/settings/organization/environments/${environment.id}`;
+                const href = `/organization/environments/${environment.id}`;
                 return (
                   <TableRow key={environment.id}>
                     <TableCell>

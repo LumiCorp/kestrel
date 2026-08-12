@@ -1,7 +1,5 @@
-import { InferenceSettingsClient } from "@/components/settings/inference-client";
-import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import { permanentRedirect } from "next/navigation";
 
-export default async function InferenceSettingsPage() {
-  await requireOrganizationAdmin();
-  return <InferenceSettingsClient />;
+export default function LegacyOrganizationInferencePage() {
+  permanentRedirect("/organization/inference");
 }

@@ -1,7 +1,5 @@
-import { AgentAdminClient } from "@/components/settings/agent-defaults-client";
-import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import { permanentRedirect } from "next/navigation";
 
-export default async function AgentDefaultsSettingsPage() {
-  await requireOrganizationAdmin();
-  return <AgentAdminClient />;
+export default function LegacyOrganizationAgentDefaultsPage() {
+  permanentRedirect("/organization/agent-defaults");
 }

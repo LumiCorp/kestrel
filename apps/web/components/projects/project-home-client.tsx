@@ -4,9 +4,10 @@ import {
   Archive,
   Copy,
   ExternalLink,
-  MessageSquare,
+  MoreHorizontal,
   Plus,
   RotateCcw,
+  Settings2,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -15,8 +16,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
+import { PageHeader } from "@/components/page-header";
 import { ProjectApps } from "@/components/projects/project-apps";
 import { ProjectSkills } from "@/components/projects/project-skills";
+import {
+  ResourceEmpty,
+  ResourceList,
+  ResourceRow,
+} from "@/components/resource-list";
 import {
   SettingsRow,
   SettingsRows,
@@ -34,6 +41,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -45,11 +59,17 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { TimeText } from "@/components/ui/time-text";
 import {
   projectTabHref,
   resolveProjectTab,
   type ProjectTab,
 } from "@/lib/projects/project-tabs";
+import {
+  getProjectSavePresentation,
+  getProjectSurfaceAccess,
+  partitionProjectThreads,
+} from "@/lib/projects/project-presentation";
 
 type Role = "owner" | "editor" | "member";
 type DocumentItem = {
@@ -69,20 +89,6 @@ export type ProjectHomeData = {
     environmentId: string;
     archivedAt: string | null;
   };
-  environments: Array<{
-    id: string;
-    name: string;
-    region: string;
-    provider: "fly" | "desktop";
-    status: string;
-  }>;
-  desktopCatalog: Array<{
-    id: string;
-    environmentId: string;
-    label: string;
-    availability: "available" | "missing";
-  }>;
-  desktopCatalogId: string | null;
   role: Role;
   contextRevision: { instructions: string } | null;
   documents: DocumentItem[];
@@ -126,7 +132,11 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { mutate } = useSWRConfig();
-  const canEdit = initial.role === "owner" || initial.role === "editor";
+  const surfaceAccess = getProjectSurfaceAccess({
+    role: initial.role,
+    archivedAt: initial.project.archivedAt,
+  });
+  const canEdit = surfaceAccess.canEdit;
   const [name, setName] = useState(initial.project.name);
   const [description, setDescription] = useState(
     initial.project.description ?? "",
@@ -146,17 +156,13 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [environmentId, setEnvironmentId] = useState(
-    initial.project.environmentId,
-  );
-  const [movingEnvironment, setMovingEnvironment] = useState(false);
-  const [desktopCatalogId, setDesktopCatalogId] = useState(
-    initial.desktopCatalogId ?? "",
-  );
-  const committedBindingRef = useRef({
-    environmentId: initial.project.environmentId,
-    desktopCatalogId: initial.desktopCatalogId ?? "",
-  });
+  const [memberRemoval, setMemberRemoval] = useState<
+    ProjectHomeData["members"][number] | null
+  >(null);
+  const [memberRemovalBusy, setMemberRemovalBusy] = useState(false);
+  const [memberRemovalError, setMemberRemovalError] = useState<string>();
+  const memberRemovalTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const membersFallbackFocusRef = useRef<HTMLDivElement | null>(null);
   const [threadActionId, setThreadActionId] = useState<string | null>(null);
   const activeTab = resolveProjectTab({
     tab: searchParams.get("tab"),
@@ -179,117 +185,15 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
   const candidates = initial.organizationMembers.filter(
     (member) => !memberIds.has(member.organizationMemberId),
   );
-
-  async function changeEnvironment(nextEnvironmentId: string) {
-    if (nextEnvironmentId === environmentId) return;
-    setEnvironmentId(nextEnvironmentId);
-    const nextEnvironment = initial.environments.find(
-      (environment) => environment.id === nextEnvironmentId,
-    );
-    if (nextEnvironment?.provider === "desktop") {
-      const candidates = initial.desktopCatalog.filter(
-        (workspace) => workspace.environmentId === nextEnvironmentId,
-      );
-      setDesktopCatalogId("");
-      setMovingEnvironment(false);
-      if (candidates.length === 1) {
-        await bindDesktopWorkspace(nextEnvironmentId, candidates[0]!.id);
-      } else if (candidates.length === 0) {
-        restoreCommittedBinding();
-        toast.error(
-          "This Desktop Environment has no available synced projects.",
-        );
-      }
-      return;
-    }
-    setMovingEnvironment(true);
-    try {
-      const response = await fetch(
-        `/api/projects/${initial.project.id}/environment`,
-        {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ environmentId: nextEnvironmentId }),
-        },
-      );
-      const result = (await response.json()) as {
-        binding?: { environmentId: string };
-        error?: string;
-      };
-      if (!(response.ok && result.binding)) {
-        throw new Error(
-          result.error ?? "Project Environment could not be changed.",
-        );
-      }
-      setEnvironmentId(result.binding.environmentId);
-      setDesktopCatalogId("");
-      committedBindingRef.current = {
-        environmentId: result.binding.environmentId,
-        desktopCatalogId: "",
-      };
-      toast.success("Project Environment changed. New Threads will use it.");
-      router.refresh();
-    } catch (error) {
-      restoreCommittedBinding();
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Project Environment could not be changed.",
-      );
-    } finally {
-      setMovingEnvironment(false);
-    }
-  }
-
-  async function bindDesktopWorkspace(
-    nextEnvironmentId: string,
-    catalogId: string,
-  ) {
-    setMovingEnvironment(true);
-    try {
-      const response = await fetch(
-        `/api/projects/${initial.project.id}/workspace`,
-        {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            environmentId: nextEnvironmentId,
-            source: { type: "desktop", catalogId },
-          }),
-        },
-      );
-      const result = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(
-          result.error ?? "Desktop workspace could not be bound.",
-        );
-      }
-      setEnvironmentId(nextEnvironmentId);
-      setDesktopCatalogId(catalogId);
-      committedBindingRef.current = {
-        environmentId: nextEnvironmentId,
-        desktopCatalogId: catalogId,
-      };
-      toast.success(
-        "Desktop workspace bound. Project members can now run tasks there.",
-      );
-      router.refresh();
-    } catch (error) {
-      restoreCommittedBinding();
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Desktop workspace could not be bound.",
-      );
-    } finally {
-      setMovingEnvironment(false);
-    }
-  }
-
-  function restoreCommittedBinding() {
-    setEnvironmentId(committedBindingRef.current.environmentId);
-    setDesktopCatalogId(committedBindingRef.current.desktopCatalogId);
-  }
+  const { activeThreads, archivedThreads } = partitionProjectThreads(
+    initial.threads,
+  );
+  const savePresentation = getProjectSavePresentation({
+    canEdit,
+    saving,
+    name,
+    revision,
+  });
 
   async function setThreadArchived(threadId: string, archived: boolean) {
     setThreadActionId(threadId);
@@ -304,6 +208,9 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
         throw new Error(result.error ?? "Thread could not be updated.");
       }
       toast.success(archived ? "Thread archived." : "Thread restored.");
+      await mutate(
+        `/api/threads?project_id=${initial.project.id}&limit=100`,
+      );
       router.refresh();
     } catch (error) {
       toast.error(
@@ -328,6 +235,9 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
         throw new Error(result.error ?? "Thread could not be duplicated.");
       }
       toast.success("Thread duplicated.");
+      await mutate(
+        `/api/threads?project_id=${initial.project.id}&limit=100`,
+      );
       router.refresh();
     } catch (error) {
       toast.error(
@@ -452,22 +362,36 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
     toast.success("Member role updated");
   }
 
-  async function removeMember(organizationMemberId: string) {
-    const response = await fetch(
-      `/api/projects/${initial.project.id}/members/${organizationMemberId}`,
-      { method: "DELETE" },
-    );
-    const result = (await response.json()) as { error?: string };
-    if (!response.ok) {
-      toast.error(result.error || "Member could not be removed.");
-      return;
+  async function removeMember() {
+    if (!memberRemoval) return;
+    const member = memberRemoval;
+    setMemberRemovalBusy(true);
+    setMemberRemovalError(undefined);
+    try {
+      const response = await fetch(
+        `/api/projects/${initial.project.id}/members/${member.organizationMemberId}`,
+        { method: "DELETE" },
+      );
+      const result = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setMemberRemovalError(
+          result.error || "Member could not be removed.",
+        );
+        return;
+      }
+      setMembers((current) =>
+        current.filter(
+          (currentMember) =>
+            currentMember.organizationMemberId !== member.organizationMemberId,
+        ),
+      );
+      toast.success("Project member removed");
+      setMemberRemoval(null);
+    } catch {
+      setMemberRemovalError("Member could not be removed.");
+    } finally {
+      setMemberRemovalBusy(false);
     }
-    setMembers((current) =>
-      current.filter(
-        (member) => member.organizationMemberId !== organizationMemberId,
-      ),
-    );
-    toast.success("Project member removed");
   }
 
   async function setArchived(archived: boolean) {
@@ -484,7 +408,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
     toast.success(archived ? "Project archived" : "Project restored");
     await Promise.all([
       mutate("/api/projects"),
-      mutate("/api/threads?limit=30"),
+      mutate(`/api/threads?project_id=${initial.project.id}&limit=100`),
     ]);
     router.push(archived ? "/projects" : `/projects/${initial.project.id}`);
     router.refresh();
@@ -502,7 +426,7 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
     toast.success("Project permanently deleted");
     await Promise.all([
       mutate("/api/projects"),
-      mutate("/api/threads?limit=30"),
+      mutate(`/api/threads?project_id=${initial.project.id}&limit=100`),
     ]);
     router.push("/projects");
     router.refresh();
@@ -524,139 +448,145 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
     else window.location.href = result.publicUrl;
   }
 
+  function renderThreadRow(thread: ProjectHomeData["threads"][number]) {
+    const displayTitle = thread.title || "New thread";
+    const activityAt = thread.archivedAt || thread.updatedAt;
+
+    return (
+      <ResourceRow
+        actions={
+          thread.canManage ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  aria-label={`Thread actions for ${displayTitle}`}
+                  className="text-muted-foreground"
+                  disabled={threadActionId !== null}
+                  size="icon-sm"
+                  variant="ghost"
+                >
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  disabled={threadActionId !== null}
+                  onSelect={() => void duplicateThread(thread.id)}
+                >
+                  <Copy className="size-4" /> Duplicate Thread
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={threadActionId !== null}
+                  onSelect={() =>
+                    void setThreadArchived(thread.id, !thread.archivedAt)
+                  }
+                >
+                  {thread.archivedAt ? (
+                    <RotateCcw className="size-4" />
+                  ) : (
+                    <Archive className="size-4" />
+                  )}
+                  {thread.archivedAt ? "Restore Thread" : "Archive Thread"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null
+        }
+        href={`/threads/${thread.id}`}
+        key={thread.id}
+        status={
+          <span className="hidden text-muted-foreground text-xs sm:inline">
+            {thread.archivedAt ? "Archived" : "Updated"}{" "}
+            <TimeText mode="relative" value={activityAt} />
+          </span>
+        }
+        title={displayTitle}
+      />
+    );
+  }
+
   return (
     <>
-      <header className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-muted-foreground text-sm capitalize">
-            {initial.role} · context revision{" "}
-            {initial.project.currentContextRevision}
-          </p>
-          <h1 className="font-semibold text-3xl">{initial.project.name}</h1>
-          <p className="mt-1 text-muted-foreground">
-            {initial.project.description || "Shared Project workspace"}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-end gap-2 sm:justify-end">
-          <div className="grid gap-1.5">
-            <Label
-              className="text-muted-foreground text-xs"
-              htmlFor="project-environment"
-            >
-              Environment
-            </Label>
-            <Select
-              disabled={
-                !canEdit ||
-                movingEnvironment ||
-                Boolean(initial.project.archivedAt)
-              }
-              onValueChange={(value) => void changeEnvironment(value)}
-              value={environmentId}
-            >
-              <SelectTrigger
-                aria-label="Project Environment"
-                id="project-environment"
-                className="w-[180px]"
-              >
-                <SelectValue placeholder="Select Environment" />
-              </SelectTrigger>
-              <SelectContent>
-                {initial.environments.map((environment) => (
-                  <SelectItem
-                    disabled={
-                      environment.status !== "ready" &&
-                      environment.id !== environmentId
-                    }
-                    key={environment.id}
-                    value={environment.id}
-                  >
-                    {environment.name} ·{" "}
-                    {environment.provider === "desktop"
-                      ? "Desktop"
-                      : environment.region}
-                    {environment.status === "ready"
-                      ? ""
-                      : ` · ${environment.status}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {initial.environments.find(
-            (environment) => environment.id === environmentId,
-          )?.provider === "desktop" ? (
-            <div className="grid gap-1.5">
-              <Label
-                className="text-muted-foreground text-xs"
-                htmlFor="project-desktop-workspace"
-              >
-                Desktop workspace
-              </Label>
-              <Select
-                disabled={
-                  !canEdit ||
-                  movingEnvironment ||
-                  Boolean(initial.project.archivedAt)
-                }
-                onValueChange={(value) =>
-                  void bindDesktopWorkspace(environmentId, value)
-                }
-                value={desktopCatalogId}
-              >
-                <SelectTrigger
-                  id="project-desktop-workspace"
-                  className="w-[220px]"
-                >
-                  <SelectValue placeholder="Select synced project" />
-                </SelectTrigger>
-                <SelectContent>
-                  {initial.desktopCatalog
-                    .filter(
-                      (workspace) => workspace.environmentId === environmentId,
-                    )
-                    .map((workspace) => (
-                      <SelectItem key={workspace.id} value={workspace.id}>
-                        {workspace.label}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
-          {!initial.project.archivedAt && (
-            <Button
-              disabled={movingEnvironment}
-              onClick={() =>
-                router.push(`/projects/${initial.project.id}/threads/new`)
-              }
-            >
-              <Plus className="size-4" /> New Thread
-            </Button>
-          )}
-          {initial.role === "owner" &&
-            (initial.project.archivedAt ? (
-              <>
-                <Button
-                  onClick={() => void setArchived(false)}
-                  variant="outline"
-                >
-                  <RotateCcw className="size-4" /> Restore project
+      <div className="border-b pb-5">
+        <PageHeader
+          actions={
+            <>
+              {surfaceAccess.canCreateThread ? (
+                <Button asChild>
+                  <Link href={`/projects/${initial.project.id}/threads/new`}>
+                    <Plus className="size-4" /> New Thread
+                  </Link>
                 </Button>
-                <Button
-                  onClick={() => setDeleteDialogOpen(true)}
-                  variant="destructive"
-                >
-                  <Trash2 className="size-4" /> Delete project
-                </Button>
-              </>
-            ) : (
-              <Button onClick={() => void setArchived(true)} variant="outline">
-                <Archive className="size-4" /> Archive project
-              </Button>
-            ))}
-        </div>
-      </header>
+              ) : null}
+              {surfaceAccess.hasProjectActions ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      aria-label="Project actions"
+                      size="icon"
+                      variant="outline"
+                    >
+                      <MoreHorizontal className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {surfaceAccess.canConfigureWorkspace ? (
+                      <DropdownMenuItem asChild>
+                        <Link href={`/projects/${initial.project.id}/workspace`}>
+                          <Settings2 className="size-4" /> Configure Workspace
+                        </Link>
+                      </DropdownMenuItem>
+                    ) : null}
+                    {surfaceAccess.canConfigureWorkspace &&
+                    surfaceAccess.canArchive ? (
+                      <DropdownMenuSeparator />
+                    ) : null}
+                    {surfaceAccess.canRestore ? (
+                      <>
+                        <DropdownMenuItem
+                          onSelect={() => void setArchived(false)}
+                        >
+                          <RotateCcw className="size-4" /> Restore Project
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onSelect={() => setDeleteDialogOpen(true)}
+                          variant="destructive"
+                        >
+                          <Trash2 className="size-4" /> Delete Project
+                        </DropdownMenuItem>
+                      </>
+                    ) : surfaceAccess.canArchive ? (
+                      <DropdownMenuItem
+                        onSelect={() => void setArchived(true)}
+                      >
+                        <Archive className="size-4" /> Archive Project
+                      </DropdownMenuItem>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+            </>
+          }
+          description={
+            initial.project.description || "Shared Project workspace"
+          }
+          eyebrow="Project"
+          status={
+            <p className="text-muted-foreground text-xs">
+              {initial.project.archivedAt ? (
+                <>
+                  Archived <span aria-hidden="true">·</span>{" "}
+                </>
+              ) : null}
+              <span className="capitalize">{initial.role}</span>{" "}
+              <span aria-hidden="true">·</span> Context revision{" "}
+              {initial.project.currentContextRevision}
+            </p>
+          }
+          title={initial.project.name}
+        />
+      </div>
       <Tabs
         onValueChange={(value) =>
           router.push(
@@ -668,8 +598,8 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
         }
         value={activeTab}
       >
-        <div className="border-b pb-4 md:hidden">
-          <TabsList className="h-9 bg-transparent p-0 md:hidden">
+        <div className="no-visible-scrollbar overflow-x-auto border-b pb-4 md:hidden">
+          <TabsList className="h-9 w-max bg-transparent p-0 md:hidden">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="context">Context</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
@@ -680,102 +610,69 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
         </div>
 
         <TabsContent value="overview">
+          <section className="mt-6" aria-labelledby="active-project-threads">
+            <div className="mb-3 flex items-baseline justify-between gap-3">
+              <h2 className="font-medium" id="active-project-threads">
+                Active Threads
+              </h2>
+              <span className="text-muted-foreground text-xs tabular-nums">
+                {activeThreads.length}
+              </span>
+            </div>
+            <ResourceList>
+              {activeThreads.map(renderThreadRow)}
+              {activeThreads.length === 0 ? (
+                <div role="listitem">
+                  <ResourceEmpty title="No active Threads in this Project" />
+                </div>
+              ) : null}
+            </ResourceList>
+            {archivedThreads.length > 0 ? (
+              <details className="border-b text-sm">
+                <summary className="cursor-pointer py-3 text-muted-foreground hover:text-foreground">
+                  Archived Threads ({archivedThreads.length})
+                </summary>
+                <ResourceList className="border-b-0">
+                  {archivedThreads.map(renderThreadRow)}
+                </ResourceList>
+              </details>
+            ) : null}
+          </section>
           {initial.previews.length > 0 ? (
-            <section className="mt-6 rounded-lg border p-4">
-              <h2 className="font-medium">Published Desktop previews</h2>
-              <p className="mt-1 text-muted-foreground text-sm">
-                Access is checked against current Project membership.
-              </p>
-              <div className="mt-3 divide-y">
-                {initial.previews.map((preview) => (
-                  <div
-                    className="flex items-center justify-between gap-3 py-3"
-                    key={preview.id}
-                  >
-                    <div>
-                      <p className="font-medium text-sm">{preview.name}</p>
-                      <p className="text-muted-foreground text-xs">
-                        Expires {new Date(preview.expiresAt).toLocaleString()}
-                      </p>
-                    </div>
-                    <Button
-                      onClick={() => void openProtectedPreview(preview.id)}
-                      size="sm"
-                      variant="outline"
-                    >
-                      <ExternalLink className="size-4" />
-                      Open
-                    </Button>
-                  </div>
-                ))}
+            <section className="mt-8" aria-labelledby="published-previews">
+              <div className="mb-3">
+                <h2 className="font-medium" id="published-previews">
+                  Published Desktop previews
+                </h2>
+                <p className="mt-1 text-muted-foreground text-sm">
+                  Access follows current Project membership.
+                </p>
               </div>
+              <ResourceList>
+                {initial.previews.map((preview) => (
+                  <ResourceRow
+                    actions={
+                      <Button
+                        onClick={() => void openProtectedPreview(preview.id)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        <ExternalLink className="size-4" /> Open
+                      </Button>
+                    }
+                    key={preview.id}
+                    metadata={
+                      <>
+                        Expires{" "}
+                        <TimeText mode="relative" value={preview.expiresAt} />
+                      </>
+                    }
+                    title={preview.name}
+                  />
+                ))}
+              </ResourceList>
             </section>
           ) : null}
-          <section className="mt-6">
-            <div className="divide-y border-y">
-              {initial.threads.map((thread) => (
-                <div
-                  className="group flex items-center gap-3 py-3 text-sm"
-                  key={thread.id}
-                >
-                  <Link
-                    className="flex min-w-0 flex-1 items-center gap-3 transition-colors hover:text-primary"
-                    href={`/threads/${thread.id}`}
-                  >
-                    <MessageSquare className="size-4 shrink-0 text-muted-foreground group-hover:text-primary" />
-                    <span className="min-w-0 flex-1 truncate font-medium">
-                      {thread.title || "New thread"}
-                    </span>
-                    <span className="shrink-0 text-muted-foreground text-xs">
-                      {thread.archivedAt ? "Archived" : "Updated"}{" "}
-                      {new Date(
-                        thread.archivedAt || thread.updatedAt,
-                      ).toLocaleString()}
-                    </span>
-                  </Link>
-                  {thread.canManage ? (
-                    <div className="flex shrink-0 items-center gap-1">
-                      <Button
-                        aria-label={`Duplicate ${thread.title}`}
-                        disabled={threadActionId !== null}
-                        onClick={() => void duplicateThread(thread.id)}
-                        size="icon-sm"
-                        title="Duplicate thread"
-                        variant="ghost"
-                      >
-                        <Copy className="size-4" />
-                      </Button>
-                      <Button
-                        aria-label={`${thread.archivedAt ? "Restore" : "Archive"} ${thread.title}`}
-                        disabled={threadActionId !== null}
-                        onClick={() =>
-                          void setThreadArchived(thread.id, !thread.archivedAt)
-                        }
-                        size="icon-sm"
-                        title={
-                          thread.archivedAt
-                            ? "Restore thread"
-                            : "Archive thread"
-                        }
-                        variant="ghost"
-                      >
-                        {thread.archivedAt ? (
-                          <RotateCcw className="size-4" />
-                        ) : (
-                          <Archive className="size-4" />
-                        )}
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-              {!initial.threads.length && (
-                <p className="py-10 text-center text-muted-foreground text-sm">
-                  No Project Threads yet.
-                </p>
-              )}
-            </div>
-          </section>
         </TabsContent>
 
         <TabsContent value="context">
@@ -819,10 +716,10 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
               />
               {canEdit && (
                 <Button
-                  disabled={saving || !name.trim()}
+                  disabled={savePresentation.disabled}
                   onClick={() => void saveContext()}
                 >
-                  {saving ? "Saving…" : `Save revision ${revision + 1}`}
+                  {savePresentation.label}
                 </Button>
               )}
             </div>
@@ -891,92 +788,106 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
             description="Project roles control context, membership, and publishing access."
             title="Project members"
           >
-            <div className="divide-y border-y">
-              {members.map((member) => (
-                <div
-                  className="flex flex-wrap items-center justify-between gap-3 py-3"
-                  key={member.organizationMemberId}
-                >
-                  <div>
-                    <p className="font-medium">{member.name}</p>
-                    <p className="text-muted-foreground text-sm">
-                      {member.email}
-                    </p>
-                  </div>
-                  {initial.role === "owner" ? (
-                    <div className="flex items-center gap-2">
-                      <Select
-                        onValueChange={(role: Role) =>
-                          void updateMember(member.organizationMemberId, role)
-                        }
-                        value={member.role}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="owner">Owner</SelectItem>
-                          <SelectItem value="editor">Editor</SelectItem>
-                          <SelectItem value="member">Member</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        aria-label={`Remove ${member.name}`}
-                        onClick={() =>
-                          void removeMember(member.organizationMemberId)
-                        }
-                        size="icon"
-                        variant="ghost"
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
+            <div
+              aria-label="Project members"
+              className="focus:outline-none"
+              ref={membersFallbackFocusRef}
+              tabIndex={-1}
+            >
+              <div className="divide-y border-y">
+                {members.map((member) => (
+                  <div
+                    className="flex flex-wrap items-center justify-between gap-3 py-3"
+                    key={member.organizationMemberId}
+                  >
+                    <div>
+                      <p className="font-medium">{member.name}</p>
+                      <p className="text-muted-foreground text-sm">
+                        {member.email}
+                      </p>
                     </div>
-                  ) : (
-                    <span className="text-muted-foreground text-sm capitalize">
-                      {member.role}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-            {initial.role === "owner" && candidates.length > 0 && (
-              <div className="flex flex-wrap gap-2 pt-4">
-                <Select onValueChange={setCandidateId} value={candidateId}>
-                  <SelectTrigger className="min-w-64">
-                    <SelectValue placeholder="Choose organization member" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {candidates.map((member) => (
-                      <SelectItem
-                        key={member.organizationMemberId}
-                        value={member.organizationMemberId}
-                      >
-                        {member.name} · {member.email}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  onValueChange={(role: Role) => setCandidateRole(role)}
-                  value={candidateRole}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="owner">Owner</SelectItem>
-                    <SelectItem value="editor">Editor</SelectItem>
-                    <SelectItem value="member">Member</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button
-                  disabled={!candidateId}
-                  onClick={() => void addMember()}
-                >
-                  <Plus className="size-4" /> Add
-                </Button>
+                    {initial.role === "owner" ? (
+                      <div className="flex items-center gap-2">
+                        <Select
+                          onValueChange={(role: Role) =>
+                            void updateMember(
+                              member.organizationMemberId,
+                              role,
+                            )
+                          }
+                          value={member.role}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="owner">Owner</SelectItem>
+                            <SelectItem value="editor">Editor</SelectItem>
+                            <SelectItem value="member">Member</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          aria-label={`Remove ${member.name}`}
+                          onClick={(event) => {
+                            memberRemovalTriggerRef.current =
+                              event.currentTarget;
+                            setMemberRemovalError(undefined);
+                            setMemberRemoval(member);
+                          }}
+                          size="icon"
+                          type="button"
+                          variant="ghost"
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground text-sm capitalize">
+                        {member.role}
+                      </span>
+                    )}
+                  </div>
+                ))}
               </div>
-            )}
+              {initial.role === "owner" && candidates.length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-4">
+                  <Select onValueChange={setCandidateId} value={candidateId}>
+                    <SelectTrigger className="min-w-64">
+                      <SelectValue placeholder="Choose organization member" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {candidates.map((member) => (
+                        <SelectItem
+                          key={member.organizationMemberId}
+                          value={member.organizationMemberId}
+                        >
+                          {member.name} · {member.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    onValueChange={(role: Role) => setCandidateRole(role)}
+                    value={candidateRole}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="owner">Owner</SelectItem>
+                      <SelectItem value="editor">Editor</SelectItem>
+                      <SelectItem value="member">Member</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    disabled={!candidateId}
+                    onClick={() => void addMember()}
+                  >
+                    <Plus className="size-4" /> Add
+                  </Button>
+                </div>
+              )}
+            </div>
           </SettingsSection>
         </TabsContent>
 
@@ -1019,6 +930,55 @@ export function ProjectHomeClient({ initial }: { initial: ProjectHomeData }) {
           </SettingsSection>
         </TabsContent>
       </Tabs>
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (memberRemovalBusy) return;
+          if (!open) {
+            setMemberRemoval(null);
+            setMemberRemovalError(undefined);
+          }
+        }}
+        open={Boolean(memberRemoval)}
+      >
+        <AlertDialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const trigger = memberRemovalTriggerRef.current;
+            const focusTarget = trigger?.isConnected
+              ? trigger
+              : membersFallbackFocusRef.current;
+            focusTarget?.focus();
+            memberRemovalTriggerRef.current = null;
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove {memberRemoval?.name} from this Project?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              They will lose access to this Project, its Threads, and its
+              Project-owned files. You can add them again later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {memberRemovalError ? (
+            <p className="text-destructive text-sm" role="alert">
+              {memberRemovalError}
+            </p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={memberRemovalBusy}>
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              disabled={memberRemovalBusy}
+              onClick={() => void removeMember()}
+              variant="destructive"
+            >
+              {memberRemovalBusy ? "Removing…" : "Remove member"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog onOpenChange={setDeleteDialogOpen} open={deleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

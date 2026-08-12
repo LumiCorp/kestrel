@@ -1,7 +1,5 @@
-import { EmailIntegrationAdminClient } from "@/components/settings/email-client";
-import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import { permanentRedirect } from "next/navigation";
 
-export default async function OrganizationEmailSettingsPage() {
-  await requireOrganizationAdmin();
-  return <EmailIntegrationAdminClient scope="organization" />;
+export default function LegacyOrganizationEmailPage() {
+  permanentRedirect("/organization/email");
 }

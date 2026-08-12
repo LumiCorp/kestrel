@@ -2,6 +2,7 @@
 
 import { MobileIcon } from "@radix-ui/react-icons";
 import {
+  ChevronDown,
   Edit,
   Fingerprint,
   Laptop,
@@ -23,16 +24,19 @@ import { toast } from "sonner";
 import { UAParser } from "ua-parser-js";
 import { PasswordInput } from "@/components/password-input";
 import {
-  SettingsPanel,
-  SettingsPanelContent,
-  SettingsPanelFooter,
-  SettingsPanelHeader,
-  SettingsPanelTitle,
+  SettingsRow,
+  SettingsRows,
+  SettingsSection,
 } from "@/components/settings/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import CopyButton from "@/components/ui/copy-button";
 import {
   Dialog,
@@ -55,6 +59,7 @@ import {
 } from "@/components/ui/table";
 import { client, signOut, useSession } from "@/lib/auth-client";
 import type { SerializedSessionRecord, Session } from "@/lib/auth-types";
+import { partitionProfileSessions } from "@/lib/settings/profile-presentation";
 
 function TwoFactorSection({ session }: { session: Session | null }) {
   const [isPendingTwoFa, setIsPendingTwoFa] = useState<boolean>(false);
@@ -121,9 +126,7 @@ function TwoFactorSection({ session }: { session: Session | null }) {
   };
 
   return (
-    <div className="flex flex-col gap-2">
-      <p className="text-sm">Two Factor</p>
-      <div className="flex gap-2">
+    <div className="flex flex-wrap gap-2">
         {twoFactorEnabled && (
           <Dialog>
             <DialogTrigger asChild>
@@ -259,7 +262,28 @@ function TwoFactorSection({ session }: { session: Session | null }) {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-      </div>
+    </div>
+  );
+}
+
+function SessionIdentity({ session }: { session: SerializedSessionRecord }) {
+  const parser = new UAParser(session.userAgent || "");
+  const device = parser.getDevice().type;
+  const operatingSystem = parser.getOS().name;
+  const browser = parser.getBrowser().name;
+  const description =
+    [operatingSystem, browser].filter(Boolean).join(" · ") ||
+    session.userAgent ||
+    "Unknown device";
+
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      {device === "mobile" ? (
+        <MobileIcon className="size-4 shrink-0 text-muted-foreground" />
+      ) : (
+        <Laptop className="size-4 shrink-0 text-muted-foreground" />
+      )}
+      <span className="truncate text-sm">{description}</span>
     </div>
   );
 }
@@ -275,6 +299,7 @@ function ActiveSessionsSection({
 }) {
   const router = useRouter();
   const [isTerminating, setIsTerminating] = useState<string>();
+  const [otherSessionsOpen, setOtherSessionsOpen] = useState(false);
 
   const handleTerminateSession = async (session: SerializedSessionRecord) => {
     setIsTerminating(session.id);
@@ -294,40 +319,76 @@ function ActiveSessionsSection({
     setIsTerminating(undefined);
   };
 
+  const { currentSession, otherSessions } = partitionProfileSessions(
+    activeSessions,
+    currentSessionId,
+  );
+
   return (
-    <div className="flex w-max flex-col gap-1 border-l-2 px-2">
-      <p className="font-medium text-xs">Active Sessions</p>
-      {activeSessions
-        .filter((s) => s.userAgent)
-        .map((s) => (
-          <div key={s.id}>
-            <div className="flex items-center gap-2 font-medium text-black text-sm dark:text-white">
-              {new UAParser(s.userAgent || "").getDevice().type === "mobile" ? (
-                <MobileIcon />
-              ) : (
-                <Laptop size={16} />
-              )}
-              {new UAParser(s.userAgent || "").getOS().name || s.userAgent},{" "}
-              {new UAParser(s.userAgent || "").getBrowser().name}
-              <button
-                className="cursor-pointer border-red-600 text-red-500 text-xs underline opacity-80"
-                onClick={() => handleTerminateSession(s)}
-                type="button"
+    <SettingsRows>
+      <div className="flex items-center justify-between gap-4 py-4">
+        <div className="min-w-0">
+          <div className="mb-1 text-muted-foreground text-xs">This device</div>
+          {currentSession ? (
+            <SessionIdentity session={currentSession} />
+          ) : (
+            <p className="text-sm">Current session</p>
+          )}
+        </div>
+        <span className="shrink-0 text-emerald-700 text-xs dark:text-emerald-400">
+          Current
+        </span>
+      </div>
+
+      {otherSessions.length > 0 ? (
+        <Collapsible onOpenChange={setOtherSessionsOpen} open={otherSessionsOpen}>
+          <CollapsibleTrigger asChild>
+            <button
+              className="flex w-full items-center justify-between gap-4 py-4 text-left"
+              type="button"
+            >
+              <span className="text-sm">
+                Other active sessions
+                <span className="ml-2 text-muted-foreground">
+                  {otherSessions.length}
+                </span>
+              </span>
+              <ChevronDown
+                className={`size-4 text-muted-foreground transition-transform ${
+                  otherSessionsOpen ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="divide-y border-t">
+            {otherSessions.map((otherSession) => (
+              <div
+                className="flex items-center justify-between gap-4 py-4 pl-3"
+                key={otherSession.id}
               >
-                {(() => {
-                  if (isTerminating === s.id) {
-                    return <Loader2 className="animate-spin" size={15} />;
-                  }
-                  if (s.id === currentSessionId) {
-                    return "Sign Out";
-                  }
-                  return "Terminate";
-                })()}
-              </button>
-            </div>
-          </div>
-        ))}
-    </div>
+                <SessionIdentity session={otherSession} />
+                <Button
+                  disabled={isTerminating === otherSession.id}
+                  onClick={() => handleTerminateSession(otherSession)}
+                  size="sm"
+                  variant="ghost"
+                >
+                  {isTerminating === otherSession.id ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    "Terminate"
+                  )}
+                </Button>
+              </div>
+            ))}
+          </CollapsibleContent>
+        </Collapsible>
+      ) : (
+        <div className="py-4 text-muted-foreground text-sm">
+          No other active sessions
+        </div>
+      )}
+    </SettingsRows>
   );
 }
 
@@ -343,17 +404,72 @@ export default function UserCard(props: {
     useState<boolean>(false);
   const [activeSessions, setActiveSessions] = useState(props.activeSessions);
   const removeActiveSession = (sessionId: string) =>
-    setActiveSessions(activeSessions.filter((s) => s.id !== sessionId));
+    setActiveSessions((current) =>
+      current.filter((activeSession) => activeSession.id !== sessionId)
+    );
+
+  const sessionAction = (session?.session as {
+    impersonatedBy?: string | null;
+  })?.impersonatedBy ? (
+    <Button
+      disabled={isSignOut}
+      onClick={async () => {
+        setIsSignOut(true);
+        await client.admin.stopImpersonating();
+        setIsSignOut(false);
+        toast.info("Impersonation stopped successfully");
+        router.push("/dashboard");
+      }}
+      size="sm"
+      variant="outline"
+    >
+      {isSignOut ? (
+        <Loader2 className="size-4 animate-spin" />
+      ) : (
+        <>
+          <StopCircle className="mr-2 size-4" />
+          Stop impersonation
+        </>
+      )}
+    </Button>
+  ) : (
+    <Button
+      disabled={isSignOut}
+      onClick={async () => {
+        setIsSignOut(true);
+        await signOut({
+          fetchOptions: {
+            onSuccess() {
+              router.push("/");
+            },
+          },
+        });
+        setIsSignOut(false);
+      }}
+      size="sm"
+      variant="outline"
+    >
+      {isSignOut ? (
+        <Loader2 className="size-4 animate-spin" />
+      ) : (
+        <>
+          <LogOut className="mr-2 size-4" />
+          Sign out
+        </>
+      )}
+    </Button>
+  );
+
   return (
-    <SettingsPanel>
-      <SettingsPanelHeader>
-        <SettingsPanelTitle>Account</SettingsPanelTitle>
-      </SettingsPanelHeader>
-      <SettingsPanelContent className="grid grid-cols-1 gap-8">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <Avatar className="hidden h-9 w-9 sm:flex">
+    <div>
+      <SettingsSection
+        description="The identity shown across your organization and work."
+        title="Identity"
+      >
+        <SettingsRows>
+          <div className="flex items-center justify-between gap-4 py-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <Avatar className="size-9">
                 <AvatarImage
                   alt="Avatar"
                   className="object-cover"
@@ -361,26 +477,25 @@ export default function UserCard(props: {
                 />
                 <AvatarFallback>{session?.user.name.charAt(0)}</AvatarFallback>
               </Avatar>
-              <div className="grid">
+              <div className="min-w-0">
                 <p className="font-medium text-sm leading-none">
                   {session?.user.name}
                 </p>
-                <p className="text-sm">{session?.user.email}</p>
+                <p className="mt-1 truncate text-muted-foreground text-sm">
+                  {session?.user.email}
+                </p>
               </div>
             </div>
             <EditUserDialog />
           </div>
-        </div>
 
-        {session?.user.emailVerified ? null : (
-          <Alert>
-            <AlertTitle>Verify Your Email Address</AlertTitle>
+          {session?.user.emailVerified ? null : (
+            <Alert className="my-4">
+            <AlertTitle>Verify your email address</AlertTitle>
             <AlertDescription className="text-muted-foreground">
-              Please verify your email address. Check your inbox for the
-              verification email. If you haven't received the email, click the
-              button below to resend.
+              Check your inbox for the verification email.
               <Button
-                className="mt-2"
+                className="mt-3"
                 onClick={async () => {
                   await client.sendVerificationEmail(
                     {
@@ -407,87 +522,56 @@ export default function UserCard(props: {
                 {emailVerificationPending ? (
                   <Loader2 className="animate-spin" size={15} />
                 ) : (
-                  "Resend Verification Email"
-                )}
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
+                    "Resend verification email"
+                  )}
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+        </SettingsRows>
+      </SettingsSection>
 
+      <SettingsSection
+        description="Password and authentication methods for this account."
+        title="Sign-in & security"
+      >
+        <SettingsRows>
+          <SettingsRow
+            description="Update your password and optionally revoke other sessions."
+            label="Password"
+          >
+            <ChangePassword />
+          </SettingsRow>
+          <SettingsRow
+            description="Require a time-based code in addition to your password."
+            label="Two-factor authentication"
+          >
+            <TwoFactorSection session={session as Session | null} />
+          </SettingsRow>
+          <SettingsRow
+            description="Use a trusted device for passwordless sign-in."
+            label="Passkeys"
+          >
+            <div className="flex flex-wrap gap-2">
+              <AddPasskey />
+              <ListPasskeys />
+            </div>
+          </SettingsRow>
+        </SettingsRows>
+      </SettingsSection>
+
+      <SettingsSection
+        actions={sessionAction}
+        description="Devices currently authorized to use your account."
+        title="Sessions"
+      >
         <ActiveSessionsSection
           activeSessions={activeSessions}
           currentSessionId={props.session?.session.id}
           onSessionRemove={removeActiveSession}
         />
-        <div className="flex flex-wrap items-center justify-between gap-2 border-y py-4">
-          <div className="flex flex-col gap-2">
-            <p className="text-sm">Passkeys</p>
-            <div className="flex flex-wrap gap-2">
-              <AddPasskey />
-              <ListPasskeys />
-            </div>
-          </div>
-          <TwoFactorSection session={session as Session | null} />
-        </div>
-      </SettingsPanelContent>
-      <SettingsPanelFooter className="items-center justify-between gap-2">
-        <ChangePassword />
-        {(session?.session as { impersonatedBy?: string | null })
-          ?.impersonatedBy ? (
-          <Button
-            className="z-10 gap-2"
-            disabled={isSignOut}
-            onClick={async () => {
-              setIsSignOut(true);
-              await client.admin.stopImpersonating();
-              setIsSignOut(false);
-              toast.info("Impersonation stopped successfully");
-              router.push("/dashboard");
-            }}
-            variant="secondary"
-          >
-            <span className="text-sm">
-              {isSignOut ? (
-                <Loader2 className="animate-spin" size={15} />
-              ) : (
-                <div className="flex items-center gap-2">
-                  <StopCircle color="red" size={16} />
-                  Stop Impersonation
-                </div>
-              )}
-            </span>
-          </Button>
-        ) : (
-          <Button
-            className="z-10 gap-2"
-            disabled={isSignOut}
-            onClick={async () => {
-              setIsSignOut(true);
-              await signOut({
-                fetchOptions: {
-                  onSuccess() {
-                    router.push("/");
-                  },
-                },
-              });
-              setIsSignOut(false);
-            }}
-            variant="secondary"
-          >
-            <span className="text-sm">
-              {isSignOut ? (
-                <Loader2 className="animate-spin" size={15} />
-              ) : (
-                <div className="flex items-center gap-2">
-                  <LogOut size={16} />
-                  Sign Out
-                </div>
-              )}
-            </span>
-          </Button>
-        )}
-      </SettingsPanelFooter>
-    </SettingsPanel>
+      </SettingsSection>
+    </div>
   );
 }
 

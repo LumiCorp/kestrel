@@ -49,6 +49,7 @@ import {
   DEFAULT_KESTREL_ONE_INTERACTION_MODE,
   type KestrelOneInteractionMode,
 } from "@/lib/turns/interaction-mode";
+import { isThreadListCacheKey } from "@/lib/threads/cache-keys";
 import type {
   Attachment,
   ChatFirstTurnHandoff,
@@ -366,8 +367,7 @@ function useChatCallbacks(input: {
         finishLiveRuntimePresentation(current)
       );
       input.mutate(`/api/threads/${input.threadId}`);
-      input.mutate("/api/threads?limit=30");
-      input.mutate("/api/threads?limit=100");
+      input.mutate(isThreadListCacheKey);
       input.mutate(unstable_serialize(getThreadHistoryPaginationKey));
       void input.refreshConversationState?.().catch(() => {});
     },
