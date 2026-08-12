@@ -32,6 +32,10 @@ import {
   type LocalCoreCredentialId,
   type LocalCoreCredentialStore,
 } from "../../src/localCore/credentialStore.js";
+import {
+  LocalCoreDesktopEnvironmentConfigStore,
+  type LocalCoreDesktopEnvironmentConfig,
+} from "../../src/localCore/desktopEnvironmentConfig.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
 import { SessionStore } from "../../cli/session/SessionStore.js";
 import { ProfileStore } from "../../cli/config/ProfileStore.js";
@@ -404,6 +408,88 @@ test("Local Core durably drains recovery cleanup through runtime.release", async
     assert.match(outbox.rows[0]?.acknowledgement_event_id ?? "", /^[0-9a-f-]{36}$/u);
   } finally {
     await closeLocalCoreStore(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Desktop Web Runtime descriptors require RunnerHost Environment authority", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-desc-auth-"));
+  const environmentId = randomUUID();
+  const now = new Date().toISOString();
+  const desktopEnvironmentConfig = {
+    version: 1,
+    enrollments: [],
+    environments: [{
+      connectionId: randomUUID(),
+      environmentId,
+      organizationId: randomUUID(),
+      baseUrl: "https://kestrel.example/",
+      desktopName: "Unauthorized Descriptor Desktop",
+      ticketPublicKey: "not-needed-for-readiness-authority-test",
+      status: "active",
+      capacity: 1,
+      workspaces: [],
+      createdAt: now,
+      updatedAt: now,
+    }],
+  } satisfies LocalCoreDesktopEnvironmentConfig;
+  const runtimeFactory: NonNullable<
+    Parameters<typeof startLocalCoreApiServer>[0]["executionRuntimeFactory"]
+  > = () => ({
+    async runTurn() { throw new Error("not reached"); },
+    async describeRuntime() {
+      return {
+        version: "runtime_descriptor_v1",
+        runtimeId: "codex",
+        displayName: "Codex",
+        adapterContractVersion: 1,
+        nativeVersion: "test",
+        availability: "ready",
+        interactionStrategies: ["live_connection"],
+        capabilities: {
+          modes: ["chat", "plan", "build"],
+          continuation: true,
+          cancellation: true,
+          usage: false,
+          attachments: ["image", "text"],
+          conversationPersistence: "native_resume",
+          interactionRecovery: "connection_bound",
+        },
+      };
+    },
+    async close() {},
+  });
+  const server = await startLocalCoreApiServer({
+    env: { KESTREL_CORE_HOME: home },
+    platform: "darwin",
+    coreVersion: "0.6.0",
+    idleTimeoutMs: 0,
+    executionRuntimeFactory: runtimeFactory,
+  });
+  try {
+    await new LocalCoreDesktopEnvironmentConfigStore(
+      resolveLocalCorePaths(home).stateRootPath,
+    ).write(desktopEnvironmentConfig);
+    const client = new LocalCoreClient({
+      socketPath: server.socketPath,
+      token: server.token,
+    });
+    const route = (await client.desktopExecutionConfig()).resolvedProfile;
+    await assert.rejects(
+      () => client.describeRuntime({
+        client: "web",
+        runtimeId: "codex",
+        modelProvider: route.modelProvider,
+        model: route.model,
+        environmentId,
+      }),
+      (error) =>
+        error instanceof LocalCoreApiError &&
+        error.statusCode === 409 &&
+        /Environment authority/u.test(error.message),
+    );
+  } finally {
+    await server.close();
     await rm(home, { recursive: true, force: true });
   }
 });

@@ -757,86 +757,58 @@ export async function startLocalCoreApiServer(
                 registerProfile: false,
               },
             );
-            if (!(descriptorRequest.client === "web" && "runtimeId" in descriptorRequest)) {
-              const environmentId = await activeExecution.runtimeBindings.environmentId();
-              const commandId = randomUUID();
-              let described: LocalCoreRuntimeDescriptorResolution | undefined;
-              let runnerFailure: Error | undefined;
-              await new LocalCoreClient({
-                socketPath: paths.apiSocketPath,
-                token,
-                timeoutMs: 35_000,
-              }).sendRunnerCommand(
-                JSON.stringify({
-                  version: "runner_command_v2",
-                  id: commandId,
-                  type: "runtime.describe",
-                  metadata: {
-                    actor: {
-                      actorId: "local-core-runtime-descriptor",
-                      actorType: "service",
-                    },
-                  },
-                  payload: {
-                    environmentPresetId: resolution.environmentPreset.id,
-                    environmentId,
-                    managedConfiguration:
-                      projectLocalCoreRuntimeManagedConfiguration(
-                        resolution.resolvedProfile,
-                      ),
-                  },
-                }),
-                {
-                  onLine(line) {
-                    const event = parseRunnerEventV2(JSON.parse(line) as unknown);
-                    if (event.commandId !== commandId) return;
-                    if (event.type === "runtime.described") {
-                      described = event.payload;
-                    } else if (event.type === "runner.error") {
-                      runnerFailure = Object.assign(
-                        new Error(event.payload.message),
-                        { code: event.payload.code },
-                      );
-                    }
+            const environmentId =
+              descriptorRequest.client === "web" &&
+              "runtimeId" in descriptorRequest
+                ? descriptorRequest.environmentId
+                : await activeExecution.runtimeBindings.environmentId();
+            const commandId = randomUUID();
+            let described: LocalCoreRuntimeDescriptorResolution | undefined;
+            let runnerFailure: Error | undefined;
+            await new LocalCoreClient({
+              socketPath: paths.apiSocketPath,
+              token,
+              timeoutMs: 35_000,
+            }).sendRunnerCommand(
+              JSON.stringify({
+                version: "runner_command_v2",
+                id: commandId,
+                type: "runtime.describe",
+                metadata: {
+                  actor: {
+                    actorId: "local-core-runtime-descriptor",
+                    actorType: "service",
                   },
                 },
-              );
-              if (runnerFailure !== undefined) throw runnerFailure;
-              if (described === undefined) {
-                throw new Error("Local Core Runner returned no Runtime descriptor event.");
-              }
-              return described;
-            }
-            const runtime = activeExecution.runtimeFactory(
-              resolution.resolvedProfile,
-              () => {},
-              () => {},
-              () => {},
-              () => {},
-              () => {},
-              () => {},
-              () => {},
-              () => {},
-              () => {},
+                payload: {
+                  environmentPresetId: resolution.environmentPreset.id,
+                  environmentId,
+                  managedConfiguration:
+                    projectLocalCoreRuntimeManagedConfiguration(
+                      resolution.resolvedProfile,
+                    ),
+                },
+              }),
+              {
+                onLine(line) {
+                  const event = parseRunnerEventV2(JSON.parse(line) as unknown);
+                  if (event.commandId !== commandId) return;
+                  if (event.type === "runtime.described") {
+                    described = event.payload;
+                  } else if (event.type === "runner.error") {
+                    runnerFailure = Object.assign(
+                      new Error(event.payload.message),
+                      { code: event.payload.code },
+                    );
+                  }
+                },
+              },
             );
-            try {
-              if (runtime.describeRuntime === undefined) {
-                throw new Error("The selected Runtime does not support readiness descriptions.");
-              }
-              const descriptor = await runtime.describeRuntime();
-              return {
-                version: "runtime_descriptor_resolution_v1",
-                descriptor,
-                profileFingerprint: resolution.fingerprint,
-                capabilityDigest: createHash("sha256")
-                  .update(JSON.stringify(descriptor.capabilities))
-                  .digest("hex"),
-                environmentId: descriptorRequest.environmentId,
-                observedAt: new Date().toISOString(),
-              };
-            } finally {
-              await runtime.close();
+            if (runnerFailure !== undefined) throw runnerFailure;
+            if (described === undefined) {
+              throw new Error("Local Core Runner returned no Runtime descriptor event.");
             }
+            return described;
           },
           runtimeBindings: executionBundle?.runtimeBindings,
           notifyRuntimeBindingReleasePending: () =>
