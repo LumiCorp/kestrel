@@ -94,12 +94,15 @@ test(
     });
 
     await page.reload();
+    await page
+      .getByText("Edit sender and credentials", { exact: true })
+      .click();
     await expect(
       page.getByPlaceholder("Configured — enter a new key to rotate"),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Save configuration" }),
     ).toBeEnabled();
-    await expect(page.getByText("disabled", { exact: true })).toBeVisible();
+    await expect(page.getByText("resend · disabled", { exact: true })).toBeVisible();
   },
 );

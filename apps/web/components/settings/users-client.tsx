@@ -4,10 +4,30 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
-import { SettingsPage, SettingsPageHeader } from "@/components/settings/settings-section";
+import {
+  SettingsPage,
+  SettingsPageHeader,
+  SettingsStatusNotice,
+} from "@/components/settings/settings-section";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { TimeText } from "@/components/ui/time-text";
 import {
   deleteAdminUserAction,
@@ -35,6 +55,10 @@ export function UsersAdminClient({
   const [users, setUsers] = useState<AdminUser[]>(initialUsers);
   const [query, setQuery] = useState("");
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<{
+    user: AdminUser;
+    kind: "role" | "delete";
+  } | null>(null);
 
   useEffect(() => {
     setUsers(initialUsers);
@@ -67,6 +91,7 @@ export function UsersAdminClient({
     setUsers((current) =>
       current.map((user) => (user.id === userId ? { ...user, role } : user))
     );
+    setPendingAction(null);
     toast.success(result.message || "User role updated.");
   }
 
@@ -81,6 +106,7 @@ export function UsersAdminClient({
       return;
     }
     setUsers((current) => current.filter((user) => user.id !== userId));
+    setPendingAction(null);
     toast.success(result.message || "User deleted.");
   }
 
@@ -112,10 +138,17 @@ export function UsersAdminClient({
           { key: "actions", label: "Actions", className: "text-right" },
         ]}
         empty={
-          <AdminEmptyState
-            description="No users match the current query."
-            title="No matching users"
-          />
+          query ? (
+            <AdminEmptyState
+              description="No users match the current query."
+              title="No matching users"
+            />
+          ) : (
+            <SettingsStatusNotice
+              description="Accounts appear here after their first successful sign-in."
+              title="No platform users"
+            />
+          )
         }
         rows={visibleUsers.map((user) => {
           const isCurrentUser = user.id === currentUserId;
@@ -147,33 +180,91 @@ export function UsersAdminClient({
             actions: isCurrentUser ? (
               <div className="text-muted-foreground text-sm">Current user</div>
             ) : (
-              <div className="flex justify-end gap-2">
-                <Button
-                  disabled={busyUserId === user.id}
-                  onClick={() =>
-                    void updateRole(
-                      user.id,
-                      user.role === "admin" ? "user" : "admin"
-                    )
-                  }
-                  size="sm"
-                  variant="outline"
-                >
-                  {user.role === "admin" ? "Make User" : "Make Admin"}
-                </Button>
-                <Button
-                  disabled={busyUserId === user.id}
-                  onClick={() => void deleteUser(user.id)}
-                  size="sm"
-                  variant="destructive"
-                >
-                  Delete
-                </Button>
-              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    aria-label={`Actions for ${user.name}`}
+                    disabled={busyUserId === user.id}
+                    size="icon"
+                    variant="ghost"
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    onSelect={() => setPendingAction({ kind: "role", user })}
+                  >
+                    {user.role === "admin" ? (
+                      <UserRound className="size-4" />
+                    ) : (
+                      <ShieldCheck className="size-4" />
+                    )}
+                    {user.role === "admin" ? "Make user" : "Make admin"}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive"
+                    onSelect={() => setPendingAction({ kind: "delete", user })}
+                  >
+                    <Trash2 className="size-4" /> Delete user
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             ),
           };
         })}
       />
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (!(open || busyUserId)) setPendingAction(null);
+        }}
+        open={Boolean(pendingAction)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingAction?.kind === "delete"
+                ? `Delete ${pendingAction.user.name}?`
+                : `Change ${pendingAction?.user.name}'s platform role?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingAction?.kind === "delete"
+                ? "This removes the account and its platform access. This action cannot be undone."
+                : `Their role will change to ${pendingAction?.user.role === "admin" ? "user" : "admin"} immediately.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(busyUserId)}>
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              disabled={Boolean(busyUserId)}
+              onClick={() => {
+                if (!pendingAction) return;
+                if (pendingAction.kind === "delete") {
+                  void deleteUser(pendingAction.user.id);
+                  return;
+                }
+                void updateRole(
+                  pendingAction.user.id,
+                  pendingAction.user.role === "admin" ? "user" : "admin",
+                );
+              }}
+              variant={
+                pendingAction?.kind === "delete" ? "destructive" : "default"
+              }
+            >
+              {busyUserId
+                ? "Updating…"
+                : pendingAction?.kind === "delete"
+                  ? "Delete user"
+                  : "Change role"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </SettingsPage>
   );
 }
+import { MoreHorizontal, ShieldCheck, Trash2, UserRound } from "lucide-react";

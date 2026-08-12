@@ -7,14 +7,16 @@ import { Button } from "@/components/ui/button";
 import type { EnvironmentCapabilityGrant } from "@/drizzle/schema";
 
 const capabilities = [
-  ["repository.read", "Repository read", "auto"],
-  ["repository.push_agent_branch", "Push agent branches", "auto"],
-  ["issue.write", "Issues", "ask"],
-  ["pull_request.write", "Pull requests", "ask"],
-  ["merge.write", "Merges", "ask"],
-  ["release.write", "Releases", "ask"],
-  ["workflow.dispatch", "Workflows", "ask"],
+  ["repository.read", "Repository read", "auto", "Read"],
+  ["repository.push_agent_branch", "Push agent branches", "auto", "Write"],
+  ["issue.write", "Issues", "ask", "Write"],
+  ["pull_request.write", "Pull requests", "ask", "Write"],
+  ["merge.write", "Merges", "ask", "Administrative"],
+  ["release.write", "Releases", "ask", "Administrative"],
+  ["workflow.dispatch", "Workflows", "ask", "Administrative"],
 ] as const;
+
+const capabilityGroups = ["Read", "Write", "Administrative"] as const;
 
 export function EnvironmentAccessForm({
   environmentId,
@@ -110,47 +112,58 @@ export function EnvironmentAccessForm({
   }
 
   return (
-    <div className="divide-y border-y">
-      {capabilities.map(([capabilityKey, label, enabledMode]) => {
-        const grant = grants.find(
-          (candidate) =>
-            candidate.resourceId === null &&
-            candidate.capabilityKey === capabilityKey
-        );
-        const enabled = grant?.approvalMode === enabledMode;
-        return (
-          <div
-            className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between"
-            key={capabilityKey}
-          >
-            <div>
-              <div className="font-medium text-sm">{label}</div>
-              <p className="text-muted-foreground text-xs">
-                {enabledMode === "ask"
-                  ? "Requires approval for each external mutation."
-                  : "Available automatically within actor permissions."}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant={enabled ? "default" : "outline"}>
-                {enabled
-                  ? enabledMode === "ask"
-                    ? "Approval"
-                    : "Allowed"
-                  : "Denied"}
-              </Badge>
-              <Button
-                disabled={busyKey === capabilityKey}
-                onClick={() => void setGrant({ capabilityKey, enabledMode })}
-                size="sm"
-                variant="outline"
-              >
-                {enabled ? "Disable" : "Enable"}
-              </Button>
-            </div>
+    <div className="space-y-7">
+      {capabilityGroups.map((group) => (
+        <section key={group}>
+          <h3 className="mb-2 font-medium text-sm">{group}</h3>
+          <div className="divide-y border-y">
+            {capabilities
+              .filter((capability) => capability[3] === group)
+              .map(([capabilityKey, label, enabledMode]) => {
+                const grant = grants.find(
+                  (candidate) =>
+                    candidate.resourceId === null &&
+                    candidate.capabilityKey === capabilityKey,
+                );
+                const enabled = grant?.approvalMode === enabledMode;
+                return (
+                  <div
+                    className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between"
+                    key={capabilityKey}
+                  >
+                    <div>
+                      <div className="font-medium text-sm">{label}</div>
+                      <p className="text-muted-foreground text-xs">
+                        {enabledMode === "ask"
+                          ? "Requires approval for each external mutation."
+                          : "Available automatically within actor permissions."}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant={enabled ? "default" : "outline"}>
+                        {enabled
+                          ? enabledMode === "ask"
+                            ? "Approval"
+                            : "Allowed"
+                          : "Denied"}
+                      </Badge>
+                      <Button
+                        disabled={busyKey === capabilityKey}
+                        onClick={() =>
+                          void setGrant({ capabilityKey, enabledMode })
+                        }
+                        size="sm"
+                        variant="outline"
+                      >
+                        {enabled ? "Disable" : "Enable"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
           </div>
-        );
-      })}
+        </section>
+      ))}
     </div>
   );
 }

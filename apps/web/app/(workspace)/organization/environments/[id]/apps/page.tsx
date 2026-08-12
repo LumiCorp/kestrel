@@ -1,7 +1,11 @@
 import { McpEnvironmentPanel } from "@/app/admin/environments/mcp-environment-panel";
-import { AppGallery } from "@/components/apps/app-gallery";
+import { ResourceEmpty, ResourceList, ResourceRow } from "@/components/resource-list";
 import { Button } from "@/components/ui/button";
-import { SettingsSection } from "@/components/settings/settings-section";
+import {
+  SettingsDisclosure,
+  SettingsSection,
+  SettingsStatusSummary,
+} from "@/components/settings/settings-section";
 import { listEnvironmentAppConfigurations } from "@/lib/apps/service";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import Link from "next/link";
@@ -17,48 +21,66 @@ export default async function OrganizationEnvironmentAppsPage({
     organizationId,
     environmentId: id,
   });
-  const readyCount = configurations.filter(
-    (configuration) => configuration.app.readiness === "ready"
-  ).length;
-  return (
-    <div className="space-y-10">
-      <section>
-        <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h3 className="font-semibold text-xl">Environment Apps</h3>
-            <p className="mt-1 text-muted-foreground text-sm">
-              {readyCount} of {configurations.length} ready for Projects. Select
-              an App to manage its connections and access ceiling.
-            </p>
-          </div>
-          <Button asChild size="sm" variant="outline">
-            <Link href="/apps">Browse Apps</Link>
-          </Button>
-        </div>
-        <AppGallery
-          getHref={(app) =>
-            `/organization/environments/${id}/apps/${encodeURIComponent(app.key)}`
+  const ready = configurations.filter(
+    (configuration) => configuration.app.readiness === "ready",
+  );
+  const needsSetup = configurations.filter(
+    (configuration) => configuration.app.readiness !== "ready",
+  );
+  const appRow = (configuration: (typeof configurations)[number]) => (
+    <ResourceRow
+      description={configuration.app.description}
+      href={`/organization/environments/${id}/apps/${encodeURIComponent(configuration.app.key)}`}
+      key={configuration.app.key}
+      status={
+        <SettingsStatusSummary
+          status={configuration.app.readiness.replaceAll("_", " ")}
+          tone={
+            configuration.app.readiness === "ready" ? "positive" : "warning"
           }
-          items={configurations.map((configuration) => ({
-            key: configuration.app.key,
-            name: configuration.app.displayName,
-            description: configuration.app.description,
-            icon: configuration.app.icon,
-            status:
-              configuration.app.readiness === "ready"
-                ? "Ready"
-                : configuration.app.readiness.replaceAll("_", " "),
-            statusTone:
-              configuration.app.readiness === "ready" ? "ready" : "warning",
-          }))}
         />
-      </section>
+      }
+      title={configuration.app.displayName}
+    />
+  );
+  return (
+    <div>
       <SettingsSection
-        description="Connect a private App. Kestrel checks its capabilities and keeps them disabled until you approve them."
-        title="Custom App"
+        actions={
+          <Button asChild size="sm" variant="outline">
+            <Link href="/apps">Add app</Link>
+          </Button>
+        }
+        description="Resolve connections or approvals before these Apps can be used by Projects."
+        title="Needs setup"
+      >
+        {needsSetup.length > 0 ? (
+          <ResourceList>{needsSetup.map(appRow)}</ResourceList>
+        ) : (
+          <ResourceEmpty title="No Apps need setup" />
+        )}
+      </SettingsSection>
+
+      <SettingsSection
+        description={`${ready.length} App${ready.length === 1 ? "" : "s"} available to Projects in this Environment.`}
+        title="Ready"
+      >
+        {ready.length > 0 ? (
+          <ResourceList>{ready.map(appRow)}</ResourceList>
+        ) : (
+          <ResourceEmpty
+            description="Add an App, then complete its connection and access setup."
+            title="No Apps are ready"
+          />
+        )}
+      </SettingsSection>
+
+      <SettingsDisclosure
+        description="Connect a private App and review its discovered capabilities before approval."
+        title="Add custom app"
       >
         <McpEnvironmentPanel environmentId={id} />
-      </SettingsSection>
+      </SettingsDisclosure>
     </div>
   );
 }

@@ -1,8 +1,6 @@
 import { headers } from "next/headers";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SettingsPage, SettingsPageHeader } from "@/components/settings/settings-section";
-import { Button } from "@/components/ui/button";
 import { auth } from "@/lib/auth";
 import type { ActiveOrganization } from "@/lib/auth-types";
 import {
@@ -102,11 +100,6 @@ export default async function OrganizationBillingPage() {
   return (
     <SettingsPage>
       <SettingsPageHeader
-        actions={
-          <Button asChild size="sm" variant="outline">
-            <Link href="/organization/people">Manage Organization</Link>
-          </Button>
-        }
         description="Manage the active organization’s subscription, renewal state, and plan changes."
         eyebrow="Account"
         title="Billing"

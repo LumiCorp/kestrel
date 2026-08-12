@@ -1,7 +1,9 @@
 import {
+  SettingsDisclosure,
   SettingsRow,
   SettingsRows,
   SettingsSection,
+  SettingsStatusSummary,
 } from "@/components/settings/settings-section";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
@@ -28,8 +30,39 @@ export default async function OrganizationEnvironmentRuntimePage({
   return (
     <div>
       <SettingsSection
-        description="Fly runtime images are managed as coordinated, validated platform releases. Stopped Workspaces are configured without starting and verified on their next activation."
-        title="Workspace runtime"
+        description="Release alignment across this Environment's Workspaces."
+        title="Runtime release"
+      >
+        <SettingsRows>
+          <SettingsRow label="Alignment">
+            <SettingsStatusSummary
+              detail="Stopped Workspaces apply the release on their next activation."
+              status={
+                releaseStatus.desiredRuntimeImage
+                  ? environment.runtimeImage === releaseStatus.desiredRuntimeImage
+                  ? "Current"
+                  : "Update pending" : "Bootstrap"
+              }
+              tone={
+                releaseStatus.desiredRuntimeImage
+                  ? environment.runtimeImage === releaseStatus.desiredRuntimeImage
+                  ? "positive"
+                  : "warning" : "neutral"
+              }
+            />
+          </SettingsRow>
+          <SettingsRow label="Release status">
+            <Badge variant="outline">
+              {releaseStatus.rolloutStatus ??
+                (releaseStatus.stableReleaseId ? "stable" : "bootstrap")}
+            </Badge>
+          </SettingsRow>
+        </SettingsRows>
+      </SettingsSection>
+
+      <SettingsDisclosure
+        description="Applied and desired image digests, template, and idle policy."
+        title="Runtime details"
       >
         <SettingsRows>
           <SettingsRow label="Applied image">
@@ -43,12 +76,6 @@ export default async function OrganizationEnvironmentRuntimePage({
                 "Bootstrap configuration (no stable release yet)"}
             </span>
           </SettingsRow>
-          <SettingsRow label="Release status">
-            <Badge variant="outline">
-              {releaseStatus.rolloutStatus ??
-                (releaseStatus.stableReleaseId ? "stable" : "bootstrap")}
-            </Badge>
-          </SettingsRow>
           <SettingsRow label="Runtime template">
             {environment.runtimeTemplate}
           </SettingsRow>
@@ -56,10 +83,11 @@ export default async function OrganizationEnvironmentRuntimePage({
             {environment.idleTimeoutMinutes} minutes
           </SettingsRow>
         </SettingsRows>
-      </SettingsSection>
-      <SettingsSection
+      </SettingsDisclosure>
+
+      <SettingsDisclosure
         description="Control what reasoning providers may return and how long Kestrel retains it."
-        title="Provider reasoning"
+        title="Provider reasoning policy"
       >
         <ReasoningPolicyForm
           environmentId={environment.id}
@@ -72,7 +100,7 @@ export default async function OrganizationEnvironmentRuntimePage({
             retentionDays: environment.reasoningRetentionDays,
           }}
         />
-      </SettingsSection>
+      </SettingsDisclosure>
     </div>
   );
 }

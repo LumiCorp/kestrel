@@ -6,6 +6,11 @@ import type { CSSProperties } from "react";
 import { Button } from "@/components/ui/button";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { usePalette } from "@/components/palette-provider";
+import {
+  SettingsDisclosure,
+  SettingsSection,
+  SettingsStatusSummary,
+} from "@/components/settings/settings-section";
 import { cn } from "@/lib/utils";
 import {
   PALETTE_FAMILIES,
@@ -142,21 +147,19 @@ export function AppearanceSettings() {
     setLightPalette,
     setDarkPalette,
   } = usePalette();
+  const lightCurrent = PALETTE_FAMILIES.find(
+    (palette) => palette.id === lightPalette,
+  );
+  const darkCurrent = PALETTE_FAMILIES.find(
+    (palette) => palette.id === darkPalette,
+  );
 
   return (
-    <div className="space-y-10">
-      <section
-        aria-labelledby="appearance-mode-heading"
-        className="grid gap-5 border-t py-6 lg:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)] lg:gap-10"
+    <div>
+      <SettingsSection
+        description="Choose when Kestrel One uses your light and dark palettes."
+        title="Mode"
       >
-        <div>
-          <h3 className="font-semibold text-base tracking-tight" id="appearance-mode-heading">
-            Appearance mode
-          </h3>
-          <p className="mt-1 max-w-sm text-muted-foreground text-sm/6">
-            Choose when Kestrel One uses your light and dark palettes.
-          </p>
-        </div>
         <RadioGroup
           aria-labelledby="appearance-mode-heading"
           className="grid gap-3 sm:grid-cols-3"
@@ -168,7 +171,7 @@ export function AppearanceSettings() {
             return (
               <label
                 className={cn(
-                  "cursor-pointer rounded-lg border bg-background p-4 transition-colors hover:border-ring/70",
+                  "cursor-pointer border px-3 py-2.5 transition-colors hover:border-ring/70",
                   selected && "border-ring ring-2 ring-ring/20"
                 )}
                 htmlFor={`appearance-mode-${mode.id}`}
@@ -182,52 +185,64 @@ export function AppearanceSettings() {
                   <mode.icon className="size-4" aria-hidden="true" />
                   <span className="font-medium text-sm">{mode.label}</span>
                 </div>
-                <p className="mt-2 pl-7 text-muted-foreground text-xs/5">
+                <p className="mt-1 pl-7 text-muted-foreground text-xs/5">
                   {mode.description}
                 </p>
               </label>
             );
           })}
         </RadioGroup>
-      </section>
+      </SettingsSection>
 
-      <section
-        aria-labelledby="light-palette-heading"
-        className="grid gap-5 border-t py-6 lg:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)] lg:gap-10"
+      <SettingsSection
+        description="Your selected palettes remain independent so each mode stays intentional."
+        title="Palettes"
       >
-        <div>
-          <h3 className="font-semibold text-base tracking-tight" id="light-palette-heading">
-            Light palette
-          </h3>
-          <p className="mt-1 max-w-sm text-muted-foreground text-sm/6">
-            Used whenever light mode is active. Choosing it does not change your current mode.
-          </p>
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="border-y py-4">
+              <p className="text-muted-foreground text-xs uppercase tracking-wide">
+                Light
+              </p>
+              <SettingsStatusSummary
+                className="mt-2"
+                detail="Current palette"
+                status={lightCurrent?.label ?? lightPalette}
+              />
+            </div>
+            <div className="border-y py-4">
+              <p className="text-muted-foreground text-xs uppercase tracking-wide">
+                Dark
+              </p>
+              <SettingsStatusSummary
+                className="mt-2"
+                detail="Current palette"
+                status={darkCurrent?.label ?? darkPalette}
+              />
+            </div>
+          </div>
+          <SettingsDisclosure
+            description="Used whenever light mode is active."
+            title="Choose light palette"
+          >
+            <PaletteGrid
+              mode="light"
+              onValueChange={setLightPalette}
+              value={lightPalette}
+            />
+          </SettingsDisclosure>
+          <SettingsDisclosure
+            description="Used whenever dark mode is active."
+            title="Choose dark palette"
+          >
+            <PaletteGrid
+              mode="dark"
+              onValueChange={setDarkPalette}
+              value={darkPalette}
+            />
+          </SettingsDisclosure>
         </div>
-        <PaletteGrid
-          mode="light"
-          onValueChange={setLightPalette}
-          value={lightPalette}
-        />
-      </section>
-
-      <section
-        aria-labelledby="dark-palette-heading"
-        className="grid gap-5 border-t py-6 lg:grid-cols-[minmax(12rem,17rem)_minmax(0,1fr)] lg:gap-10"
-      >
-        <div>
-          <h3 className="font-semibold text-base tracking-tight" id="dark-palette-heading">
-            Dark palette
-          </h3>
-          <p className="mt-1 max-w-sm text-muted-foreground text-sm/6">
-            Used whenever dark mode is active. Choosing it does not change your current mode.
-          </p>
-        </div>
-        <PaletteGrid
-          mode="dark"
-          onValueChange={setDarkPalette}
-          value={darkPalette}
-        />
-      </section>
+      </SettingsSection>
     </div>
   );
 }
