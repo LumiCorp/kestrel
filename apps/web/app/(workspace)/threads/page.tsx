@@ -1,8 +1,10 @@
-import { Archive, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import Link from "next/link";
 import { AppPage } from "@/components/app-page";
+import { PageHeader } from "@/components/page-header";
 import { ThreadIndex } from "@/components/threads/thread-index";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import {
   getThreadUnreadCountsForUser,
@@ -32,28 +34,32 @@ export default async function ThreadsPage({
 
   return (
     <AppPage className="max-w-5xl">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="font-semibold text-3xl">Threads</h1>
-          <p className="mt-1 text-muted-foreground">
-            Your standalone conversations. Project conversations stay with their
-            shared workspace.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button asChild variant="outline">
-            <Link href={showArchived ? "/threads" : "/threads?archived=true"}>
-              <Archive className="size-4" />
-              {showArchived ? "Active" : "Archived"}
-            </Link>
-          </Button>
+      <PageHeader
+        actions={
           <Button asChild>
             <Link href="/threads/new">
               <Plus className="size-4" /> New Thread
             </Link>
           </Button>
-        </div>
-      </div>
+        }
+        description="Standalone conversations. Project conversations stay with their shared workspace."
+        status={
+          <span className="text-muted-foreground text-xs">
+            {threads.length} {showArchived ? "archived" : "active"}
+          </span>
+        }
+        title="Threads"
+      />
+      <Tabs value={showArchived ? "archived" : "active"}>
+        <TabsList>
+          <TabsTrigger asChild value="active">
+            <Link href="/threads">Active</Link>
+          </TabsTrigger>
+          <TabsTrigger asChild value="archived">
+            <Link href="/threads?archived=true">Archived</Link>
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
       <ThreadIndex
         archived={showArchived}
         threads={threads.map((thread) => ({

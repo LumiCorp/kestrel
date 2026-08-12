@@ -1,6 +1,7 @@
 import { AppsGallery } from "@/components/apps/apps-gallery";
 import { AppPage } from "@/components/app-page";
 import { listAppsForOrganization } from "@/lib/apps/service";
+import { getDefaultOrganizationEnvironment } from "@/lib/environments/store";
 import {
   canManageOrganization,
   requireActiveOrganization,
@@ -12,14 +13,26 @@ export default async function AppsPage() {
     organizationId,
     userId: session.user.id,
   });
-  const overview = await listAppsForOrganization({
-    organizationId,
-    userId: session.user.id,
-    canManageOrganization: canManage,
-  });
+  const [overview, defaultEnvironment] = await Promise.all([
+    listAppsForOrganization({
+      organizationId,
+      userId: session.user.id,
+      canManageOrganization: canManage,
+    }),
+    canManage
+      ? getDefaultOrganizationEnvironment(organizationId)
+      : Promise.resolve(null),
+  ]);
   return (
     <AppPage className="max-w-7xl">
-      <AppsGallery initial={overview} />
+      <AppsGallery
+        addAppHref={
+          defaultEnvironment
+            ? `/organization/environments/${defaultEnvironment.id}/apps`
+            : undefined
+        }
+        initial={overview}
+      />
     </AppPage>
   );
 }

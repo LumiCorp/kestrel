@@ -1,12 +1,7 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import {
-  CalendarDays,
-  Loader2,
-  ShieldCheck,
-  X,
-} from "lucide-react";
+import { CalendarDays, Loader2, ShieldCheck, X } from "lucide-react";
 import Image from "next/image";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -70,7 +65,7 @@ function ProviderIcon({
     <span
       className={cn(
         "flex shrink-0 items-center justify-center rounded-xl border bg-background shadow-sm",
-        compact ? "size-10" : "size-12"
+        compact ? "size-10" : "size-12",
       )}
     >
       <Image
@@ -97,11 +92,15 @@ export function ProjectApps({
   const statusUrl = `/api/projects/${projectId}/apps/google`;
   const { data, error, isLoading, mutate } = useSWR<GoogleConnectionStatus>(
     statusUrl,
-    fetchJson
+    fetchJson,
   );
   const projectAppsUrl = `/api/projects/${projectId}/apps`;
-  const { data: projectApps, mutate: mutateProjectApps } =
-    useSWR<ProjectAppsResponse>(projectAppsUrl, fetchJson);
+  const {
+    data: projectApps,
+    error: projectAppsError,
+    isLoading: projectAppsLoading,
+    mutate: mutateProjectApps,
+  } = useSWR<ProjectAppsResponse>(projectAppsUrl, fetchJson);
   const [googleOpen, setGoogleOpen] = useState(false);
   const [sharedAppKey, setSharedAppKey] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
@@ -133,14 +132,14 @@ export function ProjectApps({
         toast.error(
           syncError instanceof Error
             ? syncError.message
-            : "Google Calendar could not be synchronized."
+            : "Google Calendar could not be synchronized.",
         );
         throw syncError;
       } finally {
         setWorking(false);
       }
     },
-    [mutate, statusUrl]
+    [mutate, statusUrl],
   );
 
   useEffect(() => {
@@ -188,7 +187,7 @@ export function ProjectApps({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ calendar: true, shareAvailability }),
-        }
+        },
       );
       if (result.url) {
         window.location.assign(result.url);
@@ -199,7 +198,7 @@ export function ProjectApps({
       toast.error(
         connectError instanceof Error
           ? connectError.message
-          : "Google Calendar could not be connected."
+          : "Google Calendar could not be connected.",
       );
     } finally {
       setWorking(false);
@@ -220,14 +219,14 @@ export function ProjectApps({
       toast.success(
         enabled
           ? "Calendar availability shared with this Project"
-          : "Calendar availability is private"
+          : "Calendar availability is private",
       );
     } catch (sharingError) {
       setShareOverride(null);
       toast.error(
         sharingError instanceof Error
           ? sharingError.message
-          : "Availability sharing could not be updated."
+          : "Availability sharing could not be updated.",
       );
     } finally {
       setWorking(false);
@@ -248,7 +247,7 @@ export function ProjectApps({
       toast.error(
         disconnectError instanceof Error
           ? disconnectError.message
-          : "Google Calendar could not be removed."
+          : "Google Calendar could not be removed.",
       );
     } finally {
       setWorking(false);
@@ -264,62 +263,119 @@ export function ProjectApps({
       ? "Connected"
       : "Not connected";
 
+  function toGalleryItem(configuration: ProjectAppConfiguration) {
+    const isGoogle = configuration.app.key === "google_workspace";
+    const needsConnection =
+      configuration.app.connectionRequirement === "required";
+    const projectDefault =
+      configuration.attachedConnections.find(
+        (connection) => connection.isDefault && connection.scope === "personal",
+      ) ??
+      configuration.attachedConnections.find(
+        (connection) => connection.isDefault && connection.scope === "shared",
+      );
+    const isWorkflow = configuration.dependencies.length > 0;
+    const status = isGoogle
+      ? isLoading
+        ? "Checking…"
+        : googleLabel
+      : isWorkflow
+        ? configuration.dependencyReady
+          ? configuration.enabled
+            ? "Enabled"
+            : "Ready to enable"
+          : "Missing Apps"
+        : configuration.enabled && !needsConnection
+          ? "Enabled"
+          : configuration.enabled && projectDefault
+            ? `Using ${projectDefault.name}`
+            : configuration.availableConnections.length
+              ? "Available"
+              : "Setup required";
+    return {
+      key: configuration.app.key,
+      name: configuration.app.displayName,
+      description: configuration.app.description,
+      icon: configuration.app.icon,
+      status,
+      statusTone:
+        status === "Enabled" ||
+        status === "Connected" ||
+        status.startsWith("Using ")
+          ? ("ready" as const)
+          : status === "Setup required" ||
+              status === "Reconnect" ||
+              status === "Missing Apps"
+            ? ("warning" as const)
+            : ("neutral" as const),
+    };
+  }
+
+  const enabledApps = projectApps?.apps.filter((app) => app.enabled) ?? [];
+  const availableApps = projectApps?.apps.filter((app) => !app.enabled) ?? [];
+
   return (
     <div className="w-full py-5">
+      {projectAppsLoading ? (
+        <p
+          className="border-y py-6 text-muted-foreground text-sm"
+          role="status"
+        >
+          Loading Project Apps…
+        </p>
+      ) : null}
+
+      {projectAppsError ? (
+        <div className="flex items-center justify-between gap-4 border-y py-4">
+          <p className="text-destructive text-sm">
+            Project Apps could not be loaded.
+          </p>
+          <Button
+            onClick={() => void mutateProjectApps()}
+            size="sm"
+            variant="outline"
+          >
+            Retry
+          </Button>
+        </div>
+      ) : null}
+
       {projectApps?.apps.length ? (
-        <AppGallery
-          items={projectApps.apps.map((configuration) => {
-          const isGoogle = configuration.app.key === "google_workspace";
-          const needsConnection =
-            configuration.app.connectionRequirement === "required";
-          const projectDefault =
-            configuration.attachedConnections.find(
-              (connection) =>
-                connection.isDefault && connection.scope === "personal"
-            ) ??
-            configuration.attachedConnections.find(
-              (connection) =>
-                connection.isDefault && connection.scope === "shared"
-            );
-          const isWorkflow = configuration.dependencies.length > 0;
-          const status = isGoogle
-            ? isLoading
-              ? "Checking…"
-              : googleLabel
-            : isWorkflow
-              ? configuration.dependencyReady
-                ? configuration.enabled
-                  ? "Enabled"
-                  : "Ready to enable"
-                : "Missing Apps"
-            : configuration.enabled && !needsConnection
-              ? "Enabled"
-              : configuration.enabled && projectDefault
-                ? `Using ${projectDefault.name}`
-                : configuration.availableConnections.length
-                  ? "Available"
-                  : "Setup required";
-          return {
-            key: configuration.app.key,
-            name: configuration.app.displayName,
-            description: configuration.app.description,
-            icon: configuration.app.icon,
-            status,
-            statusTone:
-              status === "Enabled" || status === "Connected" || status.startsWith("Using ")
-                ? "ready"
-                : status === "Setup required" || status === "Reconnect" || status === "Missing Apps"
-                  ? "warning"
-                  : "neutral",
-          };
-        })}
-          onSelect={(item) => {
-            const configuration = projectApps.apps.find(
-              (candidate) => candidate.app.key === item.key
-            );
-            if (configuration) chooseApp(configuration);
-          }}
-        />
+        <div className="space-y-8">
+          {enabledApps.length ? (
+            <section className="space-y-3">
+              <h2 className="font-semibold text-base">Enabled</h2>
+              <AppGallery
+                items={enabledApps.map(toGalleryItem)}
+                layout="list"
+                onSelect={(item) => {
+                  const configuration = enabledApps.find(
+                    (candidate) => candidate.app.key === item.key,
+                  );
+                  if (configuration) chooseApp(configuration);
+                }}
+              />
+            </section>
+          ) : null}
+          <section className="space-y-3">
+            <h2 className="font-semibold text-base">Available</h2>
+            <AppGallery
+              empty={
+                <p className="border-y py-6 text-muted-foreground text-sm">
+                  Every available App is enabled for this Project.
+                </p>
+              }
+              items={availableApps.map(toGalleryItem)}
+              layout="list"
+              onSelect={(item) => {
+                const configuration = availableApps.find(
+                  (candidate) => candidate.app.key === item.key,
+                );
+                if (configuration) chooseApp(configuration);
+              }}
+            />
+          </section>
+        </div>
       ) : projectApps ? (
         <div className="border-y py-6">
           <p className="font-medium text-sm">No Apps available</p>
@@ -500,7 +556,7 @@ export function ProjectApps({
         canEdit={canEdit && projectApps?.role !== "member"}
         configuration={
           projectApps?.apps.find(
-            (configuration) => configuration.app.key === sharedAppKey
+            (configuration) => configuration.app.key === sharedAppKey,
           ) ?? null
         }
         onChanged={() => mutateProjectApps()}
