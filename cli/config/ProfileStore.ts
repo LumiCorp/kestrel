@@ -543,11 +543,6 @@ function validateProfile(
       ? item.model
       : undefined;
   const modelCredential = parseModelCredential(item.modelCredential, id);
-  if (version >= 8 && item.recoveryPolicy !== undefined) {
-    notices.push(
-      `Profile '${id}' recoveryPolicy is deprecated and ignored; model retries are runtime-owned.`,
-    );
-  }
   const evaluationPolicy =
     version >= 9 && item.evaluationPolicy !== undefined
       ? parseRuntimeEvaluationPolicyV1(item.evaluationPolicy)
@@ -871,7 +866,6 @@ const KESTREL_MANAGED_OVERLAY_FIELDS = new Set([
   "devShell",
   "delegationLimits",
   "reasoning",
-  "recoveryPolicy",
   "evaluationPolicy",
   "theme",
   "default",
@@ -883,9 +877,7 @@ const KESTREL_MANAGED_CONFIGURATION_FIELDS = new Set([
   "modelProvider",
   "model",
   "modelCredential",
-  "recoveryPolicy",
   "evaluationPolicy",
-  "recoveryModelCandidates",
   "modelCapabilities",
   "agentStageConfig",
   "modelTimeoutMs",
@@ -1179,7 +1171,6 @@ function sanitizeProfileForPersistence(profile: TuiProfile): TuiProfile {
   delete persisted.modelCapabilities;
   delete persisted.agentStageConfig;
   delete persisted.modelTimeoutMs;
-  delete persisted.recoveryPolicy;
   return persisted;
 }
 

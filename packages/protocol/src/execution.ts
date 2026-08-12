@@ -344,7 +344,6 @@ export interface RunnerProfile {
   sessionPrefix: string;
   modelProvider?: RunnerModelProvider | undefined;
   model?: string | undefined;
-  recoveryPolicy?: Record<string, unknown> | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   defaultInteractionMode?: RunnerInteractionMode | undefined;
   defaultActSubmode?: RunnerActSubmode | undefined;
@@ -592,7 +591,7 @@ export type RunnerStructuredReviewClassificationV1 =
     }
   | {
       kind: "invalid_review";
-      reason: RunnerStructuredReviewReason;
+      reason?: RunnerStructuredReviewReason | undefined;
       error: string;
     };
 
@@ -705,7 +704,12 @@ export function parseRunnerStructuredReviewInteractionV1(
   const metadata = isRecord(value.metadata) ? value.metadata : undefined;
   const reason = metadata?.reason;
   if (reason !== "recovery_review" && reason !== "evaluation_review") {
-    return { kind: "ordinary" };
+    return metadata !== undefined && Object.hasOwn(metadata, "allowedOptionIds")
+      ? {
+          kind: "invalid_review",
+          error: "Structured reviews require a supported metadata.reason.",
+        }
+      : { kind: "ordinary" };
   }
   const reviewMetadata = metadata as Record<string, unknown>;
   const invalid = (error: string): RunnerStructuredReviewClassificationV1 => ({
@@ -3551,7 +3555,10 @@ function validateRunnerInteractionRequest(
   validateOptionalRecord(interaction.inputSchema, `${label}.inputSchema`);
   validateOptionalRecord(interaction.metadata, `${label}.metadata`);
   const structuredReview = parseRunnerStructuredReviewInteractionV1(interaction);
-  if (structuredReview.kind === "invalid_review") {
+  if (
+    structuredReview.kind === "invalid_review" &&
+    structuredReview.reason !== "recovery_review"
+  ) {
     throw new RunnerProtocolContractError(
       `${label} is an invalid structured review: ${structuredReview.error}`,
     );
@@ -3664,7 +3671,6 @@ function validateRunnerProfile(
     "lmstudio",
   ]);
   validateOptionalNonEmptyString(profile.model, `${label}.model`);
-  validateOptionalRecord(profile.recoveryPolicy, `${label}.recoveryPolicy`);
   validateOptionalBoolean(profile.modeSystemV2Enabled, `${label}.modeSystemV2Enabled`);
   validateOptionalEnum(profile.defaultInteractionMode, `${label}.defaultInteractionMode`, [
     "chat",

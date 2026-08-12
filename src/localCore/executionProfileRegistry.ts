@@ -69,7 +69,6 @@ export class LocalCoreExecutionProfileRegistry {
   ): Promise<RegisteredExecutionProfile> {
     assertSecretFreeProfile(inputProfile);
     const activeProfile = structuredClone(inputProfile);
-    delete activeProfile.recoveryPolicy;
     assertValidEvaluationPolicy(activeProfile);
     const fingerprintSeed = {
       ...structuredClone(activeProfile),
@@ -209,7 +208,6 @@ function parseStoredProfile(value: unknown, index: number): TuiProfile {
   assertValidEvaluationPolicy(profile as TuiProfile);
   assertValidOciMcpEgressBindings(profile as TuiProfile);
   const parsed = structuredClone(profile as TuiProfile);
-  delete parsed.recoveryPolicy;
   return parsed;
 }
 

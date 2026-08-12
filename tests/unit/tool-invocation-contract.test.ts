@@ -68,6 +68,35 @@ test("prepared calls accept only exact model or trusted-runtime origins", () => 
   );
 });
 
+test("prepared approval authority rejects retired recovery adapters", () => {
+  assert.throws(
+    () => parsePreparedToolCallV1({
+      version: "v1",
+      runId: "run-1",
+      sessionId: "session-1",
+      callId: "call-1",
+      activation,
+      origin: {
+        kind: "model",
+        snapshotId: hashCanonical({ request: "model-1" }),
+        modelToolCallId: "model-call-1",
+      },
+      effectiveInput: { message: "done" },
+      policy: {
+        decision: "approval_required",
+        policyRevision: hashCanonical({ policy: "v1" }),
+      },
+      approval: {
+        authorityRevision: hashCanonical({ authority: "v1" }),
+        approvalId: "approval-1",
+        recoveryAdapterId: "alternate-tool:v1",
+      },
+      preparedAt: timestamp,
+    }),
+    /approval contains unknown field 'recoveryAdapterId'/u,
+  );
+});
+
 test("tool outcomes require normalized terminal evidence and forbid retry after commit", () => {
   const failure = parseToolExecutionOutcomeV1({
     version: "v1",

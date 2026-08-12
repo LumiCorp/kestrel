@@ -200,11 +200,10 @@ test("runtime evaluation policy is canonical, strict, exact-ID only, and bounded
   );
 });
 
-test("evaluation profile composition is opt-in and never creates recovery stages", () => {
+test("evaluation profile composition is opt-in", () => {
   const base = profileWithPolicy();
   const resolved = resolveProfileWithEvaluationPolicy(base);
   assert.equal(resolved.evaluationPolicy?.revision, policy().revision);
-  assert.equal(resolved.recoveryPolicy, undefined);
   assert.deepEqual(resolveProfileWithEvaluationPolicy(resolved), resolved);
 
   const disabled = {
@@ -272,7 +271,6 @@ test("managed evaluation composition is deterministic and tenant-bound credentia
   const first = composeKestrelOneProfile(input).profile;
   const second = composeKestrelOneProfile(input).profile;
   assert.deepEqual(first, second);
-  assert.equal(first.recoveryPolicy, undefined);
 
   assert.throws(
     () =>

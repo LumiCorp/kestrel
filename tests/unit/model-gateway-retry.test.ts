@@ -25,9 +25,8 @@ test("createOpenRouterHttpError preserves retry-after seconds for rate limits", 
 });
 
 test("RetryingModelGateway honors retry-after hints on rate-limited model calls", async () => {
-  const originalRandom = Math.random;
-  Math.random = () => 0.5;
   let attempts = 0;
+  const observedRetryDelaysMs: number[] = [];
   const gateway = new RetryingModelGateway(async <T>() => {
     attempts += 1;
     if (attempts === 1) {
@@ -49,19 +48,54 @@ test("RetryingModelGateway honors retry-after hints on rate-limited model calls"
   });
 
   const startedAt = Date.now();
-  try {
-    const result = await gateway.call<{ ok: true }>({
+  const result = await gateway.call<{ ok: true }>(
+    {
       input: { task: "retry-rate-limit-with-hint" },
       messages: [],
       responseFormat: "json",
-    });
+    },
+    {
+      onEvent: (event) => {
+        if (event.type === "attempt.failed" && event.retryDelayMs !== undefined) {
+          observedRetryDelaysMs.push(event.retryDelayMs);
+        }
+      },
+    },
+  );
 
-    assert.deepEqual(result, { ok: true });
-    assert.equal(attempts, 2);
-    assert.ok(Date.now() - startedAt >= 200, "expected retry-after wait before retry");
-  } finally {
-    Math.random = originalRandom;
-  }
+  assert.deepEqual(result, { ok: true });
+  assert.equal(attempts, 2);
+  assert.deepEqual(observedRetryDelaysMs, [250]);
+  assert.ok(Date.now() - startedAt >= 240, "expected exact retry-after wait before retry");
+});
+
+test("RetryingModelGateway caps provider retry-after hints at 30 seconds", async () => {
+  const controller = new AbortController();
+  let observedRetryDelayMs: number | undefined;
+  const gateway = new RetryingModelGateway(async () => {
+    throw Object.assign(new Error("rate limited"), {
+      code: "MODEL_RATE_LIMITED",
+      status: 429,
+      retryAfterMs: 60_000,
+    });
+  }, { retryCount: 1 });
+
+  await assert.rejects(
+    () => gateway.call(
+      { input: "capped retry hint" },
+      {
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (event.type === "attempt.failed") {
+            observedRetryDelayMs = event.retryDelayMs;
+            controller.abort();
+          }
+        },
+      },
+    ),
+    /Run cancelled\./u,
+  );
+  assert.equal(observedRetryDelayMs, 30_000);
 });
 
 test("RetryingModelGateway uses slower backoff for rate limits without retry-after hints", async () => {

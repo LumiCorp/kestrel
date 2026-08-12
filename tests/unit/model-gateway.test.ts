@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import type { ModelRequest } from "../../src/kestrel/contracts/model-io.js";
 
 import { RetryingModelGateway } from "../../src/io/ModelGateway.js";
+import { createOpenAiHttpError } from "../../models/openai/OpenAiErrors.js";
 
 
 test("RetryingModelGateway retries timeout and surfaces IO_MODEL_TIMEOUT code", async () => {
@@ -86,6 +87,87 @@ test("RetryingModelGateway retries transient provider 502 failures", async () =>
   const response = await gateway.call<{ ok: boolean }>({ input: "retry transient" });
   assert.equal(response.ok, true);
   assert.equal(calls, 3);
+});
+
+test("RetryingModelGateway retries HTTP 408 three total attempts and preserves the timeout", async () => {
+  let calls = 0;
+  const gateway = new RetryingModelGateway(
+    async () => {
+      calls += 1;
+      throw createOpenAiHttpError(408, "request timeout", "OpenAI", 1);
+    },
+    { retryCount: 2 },
+  );
+
+  await assert.rejects(
+    () => gateway.call({ input: "retry timeout" }),
+    (error: unknown) => {
+      const failure = error as {
+        code?: unknown;
+        status?: unknown;
+        details?: Record<string, unknown>;
+      };
+      assert.equal(calls, 3);
+      assert.equal(failure.code, "MODEL_TIMEOUT");
+      assert.equal(failure.status, 408);
+      assert.equal(failure.details?.gatewayAttempts, 3);
+      assert.equal(failure.details?.gatewayMaxAttempts, 3);
+      assert.deepEqual(failure.details?.gatewayRetryDelaysMs, [1, 1]);
+      return true;
+    },
+  );
+});
+
+test("RetryingModelGateway lets retryable HTTP status override a generic provider code", async () => {
+  let calls = 0;
+  const gateway = new RetryingModelGateway(async <T>() => {
+    calls += 1;
+    if (calls === 1) {
+      throw Object.assign(new Error("generic bad response"), {
+        code: "MODEL_BAD_RESPONSE",
+        status: 408,
+        retryAfterMs: 1,
+      });
+    }
+    return { ok: true } as T;
+  }, { retryCount: 1 });
+
+  assert.deepEqual(await gateway.call({ input: "status wins" }), { ok: true });
+  assert.equal(calls, 2);
+});
+
+test("RetryingModelGateway does not retry bare fetch-failed message text", async () => {
+  let calls = 0;
+  const gateway = new RetryingModelGateway(async () => {
+    calls += 1;
+    throw new Error("fetch failed");
+  }, { retryCount: 2 });
+
+  await assert.rejects(() => gateway.call({ input: "no heuristic retry" }), /fetch failed/u);
+  assert.equal(calls, 1);
+});
+
+test("RetryingModelGateway retries native network failures", async () => {
+  for (const failure of [
+    Object.assign(new Error("connection reset"), { code: "ECONNRESET" }),
+    Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("dns lookup failed"), { code: "ENOTFOUND" }),
+    }),
+  ]) {
+    let calls = 0;
+    const gateway = new RetryingModelGateway(
+      async <T>() => {
+        calls += 1;
+        if (calls === 1) throw failure;
+        return { ok: true } as T;
+      },
+      { retryCount: 1 },
+    );
+
+    const response = await gateway.call<{ ok: boolean }>({ input: "retry network" });
+    assert.equal(response.ok, true);
+    assert.equal(calls, 2);
+  }
 });
 
 test("RetryingModelGateway does not retry non-transient provider errors", async () => {

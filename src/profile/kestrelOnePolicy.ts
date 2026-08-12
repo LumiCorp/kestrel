@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
 import type { TuiProfile } from "../../cli/contracts.js";
-import type { RecoveryModelCandidateV1 } from "../kestrel/contracts/recovery.js";
 import {
   createKestrelEnvironmentBindingV1,
   createKestrelProfileDefinitionV1,
@@ -231,9 +230,7 @@ export interface KestrelOneProfileOverlay {
   modelProvider?: TuiProfile["modelProvider"] | undefined;
   model?: string | undefined;
   modelCredential?: TuiProfile["modelCredential"] | undefined;
-  recoveryPolicy?: TuiProfile["recoveryPolicy"] | undefined;
   evaluationPolicy?: TuiProfile["evaluationPolicy"] | undefined;
-  recoveryModelCandidates?: RecoveryModelCandidateV1[] | undefined;
   modelCapabilities?: TuiProfile["modelCapabilities"] | undefined;
   /** @deprecated Harness economics is policy-owned and rejected by composition. */
   harnessEconomics?: TuiProfile["harnessEconomics"] | undefined;
@@ -327,7 +324,7 @@ function composeLegacyKestrelOneProfile(
     environmentPresetId: input.environmentPresetId,
     environmentPresetVersion: environmentPreset.version,
     environmentCapabilityPacks: resolvedEnvironment.capabilityPacks,
-    overlay: stripDeprecatedRecoveryFields(input.overlay),
+    overlay: input.overlay ?? {},
     toolAllowlist,
   });
   const profileId =
@@ -600,7 +597,6 @@ export function createKestrelEnvironmentBindingFromOverlay(input: {
     shellKind,
     capabilityPacks: [...resolved.capabilityPacks],
     modelRoute,
-    recoveryModelCandidates: [],
     sandbox: {
       ...(input.overlay?.codeMode !== undefined
         ? { codeMode: structuredClone(input.overlay.codeMode) }
@@ -771,16 +767,6 @@ export function fingerprintResolvedProfile(
 
 function fingerprintKestrelOneComposition(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("hex");
-}
-
-function stripDeprecatedRecoveryFields(
-  overlay: KestrelOneProfileOverlay | undefined,
-): Omit<KestrelOneProfileOverlay, "recoveryPolicy" | "recoveryModelCandidates"> {
-  if (overlay === undefined) return {};
-  const cloned = structuredClone(overlay);
-  delete cloned.recoveryPolicy;
-  delete cloned.recoveryModelCandidates;
-  return cloned;
 }
 
 function assertNoPolicyControlledOverlay(

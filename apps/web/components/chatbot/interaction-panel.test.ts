@@ -5,7 +5,6 @@ import type { ThreadInteractionView } from "../../lib/turns/client-contract";
 import {
   evaluationOptionLabel,
   readEvaluationReview,
-  readRecoveryReview,
 } from "./evaluation-review";
 import { readThreadStructuredReview } from "../../lib/turns/structured-review";
 import {
@@ -96,71 +95,4 @@ test("Web ordinary runtime questions are not misclassified as evaluation review"
   } satisfies ThreadInteractionView;
 
   assert.equal(readEvaluationReview(interaction), null);
-});
-
-test("Web recovery review requires server-authored descriptors for every allowed option", () => {
-  const interaction = {
-    id: "interaction-3",
-    requestId: "recovery-review-1",
-    source: "runtime",
-    sourceCheckpointId: null,
-    kind: "user_input",
-    eventType: "user.reply",
-    prompt: "Choose a recovery option.",
-    status: "pending",
-    requestEnvelope: {
-      metadata: {
-        reason: "recovery_review",
-        allowedOptionIds: ["retry.primary", "terminal.fail"],
-        recoveryReviewBinding: {
-          version: "recovery_review_binding_v1",
-          bindingId: "recovery-review-1",
-          decisionId: "recovery-decision-1",
-          threadId: "thread-3",
-          runId: "run-3",
-          executionProfileFingerprint: "c".repeat(64),
-          policyRevision: `sha256:${"d".repeat(64)}`,
-          allowedOptionIds: ["retry.primary", "terminal.fail"],
-          requestedAt: "2026-08-11T12:00:00.000Z",
-        },
-        recoveryOptions: [
-          {
-            id: "retry.primary",
-            label: "Retry",
-            description: "Retry the primary recovery route.",
-            kind: "retry",
-          },
-          {
-            id: "terminal.fail",
-            label: "Stop",
-            description: "Stop recovery and fail this run.",
-            kind: "terminal",
-          },
-        ],
-      },
-    },
-    responseEnvelope: null,
-    responseMessageId: null,
-    turnId: "turn-3",
-    assistantMessageId: "message-3",
-    createdAt: "2026-08-11T12:00:00.000Z",
-    resolvedAt: null,
-  } satisfies ThreadInteractionView;
-
-  assert.deepEqual(readRecoveryReview(interaction), {
-    options: [
-      {
-        id: "retry.primary",
-        label: "Retry",
-        description: "Retry the primary recovery route.",
-        kind: "retry",
-      },
-      {
-        id: "terminal.fail",
-        label: "Stop",
-        description: "Stop recovery and fail this run.",
-        kind: "terminal",
-      },
-    ],
-  });
 });

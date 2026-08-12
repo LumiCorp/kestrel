@@ -202,23 +202,21 @@ export type {
 } from "./contracts/execution-boundary-policy.js";
 export {
   RECOVERY_DECISION_VERSION,
-  RECOVERY_POLICY_VERSION,
   RECOVERY_REVIEW_BINDING_VERSION,
   parseRecoveryDecisionV1,
-  parseRecoveryModelCandidateV1,
-  parseRecoveryModelCredentialReferenceV1,
-  parseRecoveryPolicyV1,
   parseRecoveryReviewBindingV1,
-} from "./contracts/recovery.js";
+} from "./contracts/legacy-recovery-evidence.js";
 export type {
   RecoveryDecisionV1,
-  RecoveryModelCandidateV1,
-  RecoveryModelCredentialReferenceV1,
-  RecoveryPolicyV1,
   RecoveryReviewBindingV1,
   RecoveryScopeV1,
-  RecoveryStageV1,
-} from "./contracts/recovery.js";
+} from "./contracts/legacy-recovery-evidence.js";
+export { parseModelCredentialReferenceV1 } from "./contracts/model-route.js";
+export type {
+  ModelCredentialReferenceV1,
+  ModelRouteCapabilitiesV1,
+  ModelRouteProviderV1,
+} from "./contracts/model-route.js";
 export {
   BUDGET_ALLOCATION_VERSION,
   BUDGET_LEDGER_ENTRY_VERSION,

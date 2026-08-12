@@ -88,33 +88,6 @@ test("Local Core execution profile registry invalidates immutable selection revi
   assert.notEqual(first.profileId, integrationRevision.profileId);
 });
 
-test("Local Core execution profile registry ignores deprecated recovery policy input", async () => {
-  const home = await mkdtemp(
-    path.join(os.tmpdir(), "kestrel-execution-profile-recovery-"),
-  );
-  const profile = composeKestrelOneProfile({
-    environmentPresetId: "desktop_dev_local",
-    overlay: { modelProvider: "openai", model: "gpt-5.4" },
-  }).profile;
-  const registry = new LocalCoreExecutionProfileRegistry(home);
-
-  const first = await registry.register(profile, "desktop_dev_local");
-  const changed = await registry.register(
-    {
-      ...profile,
-      recoveryPolicy: {
-        version: "recovery_policy_v1",
-        policyId: "deprecated-and-ignored",
-      } as never,
-    },
-    "desktop_dev_local",
-  );
-
-  assert.equal(first.fingerprint, changed.fingerprint);
-  assert.equal(first.profileId, changed.profileId);
-  assert.equal(first.profile.recoveryPolicy, undefined);
-});
-
 test("Local Core execution profile registry rejects secret material", async () => {
   const home = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-execution-profile-secret-"),

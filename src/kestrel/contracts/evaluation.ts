@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 
 import {
-  parseRecoveryModelCredentialReferenceV1,
-  type RecoveryModelCandidateV1,
-  type RecoveryModelCredentialReferenceV1,
-  type RecoveryModelProviderV1,
-} from "./recovery.js";
+  parseModelCredentialReferenceV1,
+  type ModelCredentialReferenceV1,
+  type ModelRouteCapabilitiesV1,
+  type ModelRouteProviderV1,
+} from "./model-route.js";
 
 export const RUNTIME_EVALUATION_POLICY_VERSION =
   "runtime_evaluation_policy_v1" as const;
@@ -52,11 +52,11 @@ export interface RuntimeEvaluationAssetBundleRefV1 {
 
 export interface RuntimeEvaluationJudgeRouteV1 {
   route: "profile_primary";
-  provider: RecoveryModelProviderV1;
+  provider: ModelRouteProviderV1;
   model: string;
   modelRegistrationRevision: string;
-  capabilities: RecoveryModelCandidateV1["capabilities"];
-  credentialReference?: RecoveryModelCredentialReferenceV1 | undefined;
+  capabilities: ModelRouteCapabilitiesV1;
+  credentialReference?: ModelCredentialReferenceV1 | undefined;
   pricing: {
     priceRevision: string;
     inputUsdPerMillionTokens: number;
@@ -277,7 +277,7 @@ export interface RuntimeEvaluationVerdictV1 {
   requestId: string;
   evaluator: RuntimeEvaluationPolicyV1["evaluator"];
   judge: {
-    provider: RecoveryModelProviderV1;
+    provider: ModelRouteProviderV1;
     requestedModel: string;
     observedModelRevision: string;
     routeIndependence: "shared_primary_route";
@@ -323,7 +323,7 @@ export interface EvaluationCalibrationRecordV1 {
   evaluator: RuntimeEvaluationPolicyV1["evaluator"];
   assetBundleRevision: string;
   requestedRoute: {
-    provider: RecoveryModelProviderV1;
+    provider: ModelRouteProviderV1;
     model: string;
     modelRegistrationRevision: string;
   };
@@ -1439,7 +1439,7 @@ function parseJudge(
   const credentialReference =
     record.credentialReference === undefined
       ? undefined
-      : parseRecoveryModelCredentialReferenceV1(record.credentialReference);
+      : parseModelCredentialReferenceV1(record.credentialReference);
   if (
     credentialReference !== undefined &&
     (credentialReference.provider !== provider ||
@@ -1509,7 +1509,7 @@ function parseJudge(
 function parseJudgeCapabilities(
   value: unknown,
   label: string,
-): RecoveryModelCandidateV1["capabilities"] {
+): ModelRouteCapabilitiesV1 {
   const record = requireRecord(value, label);
   rejectUnknownFields(
     record,
@@ -1736,7 +1736,7 @@ function requireHookKind(
 function requireProvider(
   value: unknown,
   label: string,
-): RecoveryModelProviderV1 {
+): ModelRouteProviderV1 {
   if (
     value !== "openrouter" &&
     value !== "openai" &&

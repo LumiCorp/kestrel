@@ -166,6 +166,16 @@ test("structured review contract rejects metadata and schema drift", () => {
     parseRunnerStructuredReviewInteractionV1(missingSchema).kind,
     "invalid_review",
   );
+  const missingReason = structuredClone(evaluationReviewInteractionFixture) as Record<string, unknown>;
+  const missingReasonMetadata = missingReason.metadata as Record<string, unknown>;
+  delete missingReasonMetadata.reason;
+  assert.deepEqual(
+    parseRunnerStructuredReviewInteractionV1(missingReason),
+    {
+      kind: "invalid_review",
+      error: "Structured reviews require a supported metadata.reason.",
+    },
+  );
 });
 
 const jobOutput = {
@@ -1452,9 +1462,9 @@ test("waiting outcomes require one canonical assistant prompt and durable reques
     );
   }
 
-  const malformedReview = structuredClone(legacyRecoveryReviewInteractionFixture) as Record<string, unknown>;
-  delete malformedReview.inputSchema;
-  assert.throws(
+  const malformedLegacyReview = structuredClone(legacyRecoveryReviewInteractionFixture) as Record<string, unknown>;
+  delete malformedLegacyReview.inputSchema;
+  assert.doesNotThrow(
     () => parseRunnerEventV2({
       id: "event-waiting-malformed-review",
       type: "run.completed",
@@ -1467,7 +1477,30 @@ test("waiting outcomes require one canonical assistant prompt and durable reques
             waitFor: {
               kind: "user",
               eventType: "user.reply",
-              interaction: malformedReview,
+              interaction: malformedLegacyReview,
+            },
+          },
+        },
+      },
+    }),
+  );
+
+  const malformedEvaluationReview = structuredClone(evaluationReviewInteractionFixture) as Record<string, unknown>;
+  delete malformedEvaluationReview.inputSchema;
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event-waiting-malformed-evaluation-review",
+      type: "run.completed",
+      ts: "2026-07-15T12:00:00.000Z",
+      payload: {
+        result: {
+          assistantText: evaluationReviewInteractionFixture.prompt,
+          output: {
+            ...waiting,
+            waitFor: {
+              kind: "user",
+              eventType: "user.reply",
+              interaction: malformedEvaluationReview,
             },
           },
         },

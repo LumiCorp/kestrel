@@ -72,10 +72,10 @@ async function main(): Promise<void> {
         : "other";
     if (credential === "live" && injectTransientFailure) {
       injectTransientFailure = false;
-      providerEvidence.push({ status: 503, credential, injected: true });
+      providerEvidence.push({ status: 408, credential, injected: true });
       return new Response(
         JSON.stringify({ error: { message: "Injected transient failure", type: "server_error" } }),
-        { status: 503, headers: { "content-type": "application/json" } },
+        { status: 408, headers: { "content-type": "application/json", "retry-after": "0.01" } },
       );
     }
     const response = await originalFetch(input, init);
@@ -150,7 +150,7 @@ async function main(): Promise<void> {
     const legacy = await proveLegacyWaitCancellation();
 
     assert.equal(
-      providerEvidence.filter((entry) => entry.injected && entry.status === 503).length,
+      providerEvidence.filter((entry) => entry.injected && entry.status === 408).length,
       1,
     );
     assert.ok(

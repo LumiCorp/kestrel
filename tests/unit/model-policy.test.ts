@@ -132,10 +132,9 @@ test("resolveProfileWithModelPolicy overlays shared model authority onto shell-l
   });
   assert.equal(resolved.modelTimeoutMs, 45_000);
   assert.equal(resolved.modelCapabilities?.visionInputEnabled, true);
-  assert.equal(resolved.recoveryPolicy, undefined);
 });
 
-test("resolveProfileWithModelPolicy does not materialize generic recovery policy", () => {
+test("resolveProfileWithModelPolicy updates the selected model without hidden routing", () => {
   const original = resolveProfileWithModelPolicy(
     {
       ...createWebDemoProfile(),
@@ -158,8 +157,6 @@ test("resolveProfileWithModelPolicy does not materialize generic recovery policy
     modelCapabilities: { visionInputEnabled: true },
   });
 
-  assert.equal(original.recoveryPolicy, undefined);
-  assert.equal(resolved.recoveryPolicy, undefined);
   assert.equal(resolved.modelProvider, "openai");
   assert.equal(resolved.model, "gpt-5.4-2026-03-05");
 });

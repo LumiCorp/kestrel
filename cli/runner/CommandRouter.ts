@@ -4,7 +4,7 @@ import {
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
 import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
-import { parseRecoveryModelCredentialReferenceV1 } from "../../src/kestrel/contracts/recovery.js";
+import { parseModelCredentialReferenceV1 } from "../../src/kestrel/contracts/model-route.js";
 import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/evaluation.js";
 import { parseKestrelManagedConfiguration } from "../config/ProfileStore.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
@@ -2302,7 +2302,7 @@ function validateProfilePayload(value: unknown, path: string): void {
     const projectedCredential =
       record.modelCredential === undefined
         ? undefined
-        : parseRecoveryModelCredentialReferenceV1(record.modelCredential);
+        : parseModelCredentialReferenceV1(record.modelCredential);
     if (
       evaluationPolicy.judge.provider !== record.modelProvider ||
       evaluationPolicy.judge.model !== record.model ||
@@ -2332,7 +2332,7 @@ function validateModelCredentialPayload(
   }
 
   const reference = profile.modelCredential as Record<string, unknown>;
-  const parsedReference = parseRecoveryModelCredentialReferenceV1(reference);
+  const parsedReference = parseModelCredentialReferenceV1(reference);
   const rawModelId = parsedReference.rawModelId;
   const model = requireNonEmptyString(profile.model, `${path}.model`);
   if (model.trim() !== rawModelId.trim()) {

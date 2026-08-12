@@ -10,6 +10,7 @@ import {
   type ModelTimingPolicyConfig,
 } from "./ModelTimingPolicy.js";
 import { RunCancelledError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { classifyModelTransportFailure } from "./ModelTransportError.js";
 
 export type ModelInvoker = <T>(request: ModelRequest, options?: ModelGatewayCallOptions) => Promise<T>;
 
@@ -257,7 +258,7 @@ function hasBudgetForAnotherAttempt(
 function resolveRetryDelayMs(error: unknown, attempt: number): number {
   const hintedRetryAfterMs = readRetryAfterMs(error);
   if (hintedRetryAfterMs !== undefined) {
-    return applyRetryJitter(Math.min(30_000, hintedRetryAfterMs));
+    return Math.min(30_000, hintedRetryAfterMs);
   }
 
   const rateLimited = isRateLimitedModelError(error);
@@ -291,6 +292,17 @@ function isRetryableModelError(error: unknown): boolean {
   }
 
   if (
+    status === 408 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
+    return true;
+  }
+
+  if (
     code === "MODEL_AUTH_ERROR" ||
     code === "MODEL_PROVIDER_SCHEMA" ||
     code === "MODEL_VALIDATION_ERROR" ||
@@ -310,18 +322,11 @@ function isRetryableModelError(error: unknown): boolean {
     return true;
   }
 
-  if (status === undefined) {
-    return false;
+  if (classifyModelTransportFailure(error) !== undefined) {
+    return true;
   }
 
-  return (
-    status === 408 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  );
+  return false;
 }
 
 function isRateLimitedModelError(error: unknown): boolean {

@@ -2890,6 +2890,22 @@ export class ExecutionEngine {
         };
       }
       const payload = this.asRecord(effect.payload);
+      const retiredRecoveryFields = [
+        "recoveryDecision",
+        "recoveryAdapterId",
+        "recoverySourceToolId",
+      ].filter((field) => payload !== undefined && Object.hasOwn(payload, field));
+      if (retiredRecoveryFields.length > 0) {
+        throw createRuntimeFailure(
+          "TOOL_EFFECT_PREPARATION_FAILED",
+          "Tool effects cannot contain retired recovery transition fields.",
+          {
+            recoverable: false,
+            effectType: effect.type,
+            fields: retiredRecoveryFields,
+          },
+        );
+      }
       const toolName = this.asString(payload?.toolName);
       const rawInput = this.asRecord(payload?.toolInput);
       if (payload === undefined || toolName === undefined || rawInput === undefined) {
@@ -3049,9 +3065,6 @@ export class ExecutionEngine {
         toolInput: _toolInput,
         toolSurfaceSnapshot: _toolSurfaceSnapshot,
         modelToolCallId: _modelToolCallId,
-        recoveryDecision: _recoveryDecision,
-        recoveryAdapterId: _recoveryAdapterId,
-        recoverySourceToolId: _recoverySourceToolId,
         ...remainingPayload
       } = payload;
       return {
