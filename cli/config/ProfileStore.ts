@@ -17,10 +17,6 @@ import type {
   GuardrailConfig,
 } from "../../src/kestrel/contracts/execution.js";
 import { parseHarnessEconomicsControlV1 } from "../../src/economics/policy.js";
-import {
-  parseRecoveryModelCandidateV1,
-  parseRecoveryPolicyV1,
-} from "../../src/kestrel/contracts/recovery.js";
 import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/evaluation.js";
 import type {
   McpServerConfig,
@@ -34,7 +30,6 @@ import {
   ModelPolicyStore,
   resolveProfileWithModelPolicy,
 } from "../../src/profile/modelPolicy.js";
-import { resolveRecoveryPolicyForProfile } from "../../src/profile/recoveryPolicy.js";
 import {
   composeKestrelOneProfile,
   KESTREL_ONE_DIALOG_TOOL_NAMES,
@@ -317,13 +312,9 @@ export class ProfileStore {
     profiles: TuiProfile[],
   ): TuiProfile[] {
     const modelPolicy = this.modelPolicyStore.read();
-    return profiles.map((profile) => {
-      const resolved = resolveProfileWithModelPolicy(profile, modelPolicy);
-      return {
-        ...resolved,
-        recoveryPolicy: resolveRecoveryPolicyForProfile(resolved),
-      };
-    });
+    return profiles.map((profile) =>
+      resolveProfileWithModelPolicy(profile, modelPolicy),
+    );
   }
 }
 
@@ -552,10 +543,6 @@ function validateProfile(
       ? item.model
       : undefined;
   const modelCredential = parseModelCredential(item.modelCredential, id);
-  const recoveryPolicy =
-    version >= 8 && item.recoveryPolicy !== undefined
-      ? parseRecoveryPolicyV1(item.recoveryPolicy)
-      : undefined;
   const evaluationPolicy =
     version >= 9 && item.evaluationPolicy !== undefined
       ? parseRuntimeEvaluationPolicyV1(item.evaluationPolicy)
@@ -611,7 +598,6 @@ function validateProfile(
     ...(modelProvider !== undefined ? { modelProvider } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(modelCredential !== undefined ? { modelCredential } : {}),
-    ...(recoveryPolicy !== undefined ? { recoveryPolicy } : {}),
     ...(evaluationPolicy !== undefined ? { evaluationPolicy } : {}),
     ...(storeDriver !== undefined ? { storeDriver } : {}),
     ...(approvalPolicyPackId !== undefined ? { approvalPolicyPackId } : {}),
@@ -742,9 +728,6 @@ function createManagedKestrelOneProfile(
     ...(overlay.reasoning !== undefined
       ? { reasoning: overlay.reasoning }
       : {}),
-    ...(overlay.recoveryPolicy !== undefined
-      ? { recoveryPolicy: overlay.recoveryPolicy }
-      : {}),
     ...(overlay.evaluationPolicy !== undefined
       ? { evaluationPolicy: overlay.evaluationPolicy }
       : {}),
@@ -807,9 +790,6 @@ function extractKestrelOneManagedOverlay(
     },
     ...(profile.reasoning !== undefined
       ? { reasoning: structuredClone(profile.reasoning) }
-      : {}),
-    ...(isAuthoredRecoveryPolicy(profile)
-      ? { recoveryPolicy: structuredClone(profile.recoveryPolicy) }
       : {}),
     ...(profile.evaluationPolicy !== undefined
       ? { evaluationPolicy: structuredClone(profile.evaluationPolicy) }
@@ -886,7 +866,6 @@ const KESTREL_MANAGED_OVERLAY_FIELDS = new Set([
   "devShell",
   "delegationLimits",
   "reasoning",
-  "recoveryPolicy",
   "evaluationPolicy",
   "theme",
   "default",
@@ -898,9 +877,7 @@ const KESTREL_MANAGED_CONFIGURATION_FIELDS = new Set([
   "modelProvider",
   "model",
   "modelCredential",
-  "recoveryPolicy",
   "evaluationPolicy",
-  "recoveryModelCandidates",
   "modelCapabilities",
   "agentStageConfig",
   "modelTimeoutMs",
@@ -923,14 +900,6 @@ export function parseKestrelManagedConfiguration(
   if (unknown !== undefined) {
     throw new Error(
       `execution-profile.resolve managedConfiguration contains unsupported field '${unknown}'`,
-    );
-  }
-  if (
-    record.recoveryPolicy !== undefined &&
-    record.recoveryModelCandidates !== undefined
-  ) {
-    throw new Error(
-      "execution-profile.resolve managedConfiguration cannot include both recoveryPolicy and recoveryModelCandidates",
     );
   }
   const overlay = parseKestrelOneManagedOverlayValue(
@@ -964,20 +933,10 @@ export function parseKestrelManagedConfiguration(
           ),
         }
       : {}),
-    ...(record.recoveryPolicy !== undefined
-      ? { recoveryPolicy: parseRecoveryPolicyV1(record.recoveryPolicy) }
-      : {}),
     ...(record.evaluationPolicy !== undefined
       ? {
           evaluationPolicy: parseRuntimeEvaluationPolicyV1(
             record.evaluationPolicy,
-          ),
-        }
-      : {}),
-    ...(record.recoveryModelCandidates !== undefined
-      ? {
-          recoveryModelCandidates: parseRecoveryModelCandidates(
-            record.recoveryModelCandidates,
           ),
         }
       : {}),
@@ -1120,9 +1079,6 @@ function parseKestrelOneManagedOverlayValue(
           ),
         }
       : {}),
-    ...(record.recoveryPolicy !== undefined
-      ? { recoveryPolicy: parseRecoveryPolicyV1(record.recoveryPolicy) }
-      : {}),
     ...(record.evaluationPolicy !== undefined
       ? {
           evaluationPolicy: parseRuntimeEvaluationPolicyV1(
@@ -1205,7 +1161,6 @@ function isKestrelManagedProfileId(profileId: string): boolean {
 }
 
 function sanitizeProfileForPersistence(profile: TuiProfile): TuiProfile {
-  const preserveRecoveryPolicy = isAuthoredRecoveryPolicy(profile);
   const persisted = structuredClone(profile);
   delete persisted.environmentShellKind;
   delete persisted.environmentPresetId;
@@ -1216,29 +1171,7 @@ function sanitizeProfileForPersistence(profile: TuiProfile): TuiProfile {
   delete persisted.modelCapabilities;
   delete persisted.agentStageConfig;
   delete persisted.modelTimeoutMs;
-  if (preserveRecoveryPolicy === false) {
-    delete persisted.recoveryPolicy;
-  }
   return persisted;
-}
-
-function isAuthoredRecoveryPolicy(profile: TuiProfile): boolean {
-  if (
-    profile.recoveryPolicy === undefined ||
-    profile.modelProvider === undefined ||
-    profile.model === undefined
-  ) {
-    return false;
-  }
-  try {
-    const generated = resolveRecoveryPolicyForProfile({
-      ...structuredClone(profile),
-      recoveryPolicy: undefined,
-    });
-    return generated.revision !== profile.recoveryPolicy.revision;
-  } catch {
-    return true;
-  }
 }
 
 function pickRecordFields(
@@ -1327,26 +1260,6 @@ function parseModelCredential(
     rawModelId: candidate.rawModelId.trim(),
     provider: candidate.provider,
   };
-}
-
-function parseRecoveryModelCandidates(value: unknown) {
-  if (Array.isArray(value) === false || value.length === 0) {
-    throw new Error(
-      "execution-profile.resolve managedConfiguration.recoveryModelCandidates must be a non-empty array",
-    );
-  }
-  const candidates = value.map((candidate) =>
-    parseRecoveryModelCandidateV1(candidate),
-  );
-  if (
-    new Set(candidates.map((candidate) => candidate.candidateId)).size !==
-    candidates.length
-  ) {
-    throw new Error(
-      "execution-profile.resolve managedConfiguration.recoveryModelCandidates must have unique candidate IDs",
-    );
-  }
-  return candidates;
 }
 
 function parseStoreDriver(

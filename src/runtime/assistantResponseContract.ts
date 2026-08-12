@@ -4,6 +4,7 @@ import type {
   WaitForMatcher,
 } from "../kestrel/contracts/execution.js";
 import type { InteractionRequestRecord } from "../kestrel/contracts/orchestration.js";
+import { parseRunnerStructuredReviewInteractionV1 } from "@kestrel-agents/protocol";
 import {
   digestCanonicalValue,
   parseExecutionBoundaryDecisionV1,
@@ -16,10 +17,6 @@ import type {
 } from "../security/ExecutionBoundaryPolicy.js";
 import { createRuntimeFailure } from "./RuntimeFailure.js";
 import { extractUserReplyQuestion, extractWaitPrompt } from "./waitForPrompt.js";
-import {
-  assertRecoveryReviewInteractionV1,
-  parseRecoveryReviewBindingV1,
-} from "../kestrel/contracts/recovery.js";
 
 export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   waitFor: T,
@@ -42,39 +39,84 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   }
 
   const metadata = asRecord(waitFor.metadata);
-  const reviewReason = metadata?.reason;
-  if (reviewReason === "recovery_review" || reviewReason === "evaluation_review") {
-    try {
-      const binding = parseRecoveryReviewBindingV1(
-        metadata?.recoveryReviewBinding,
-      );
-      assertRecoveryReviewInteractionV1({
-        interaction: waitFor.interaction,
-        binding,
-        reason: reviewReason,
-      });
-    } catch {
-      throw createRuntimeFailure(
-        "RUNTIME_INTERACTION_CONTRACT_VIOLATION",
-        "Recovery review wait must provide an exact-option interaction matching its binding.",
-        { eventType: waitFor.eventType, reviewReason },
-      );
-    }
+  const structuredReviewReason = metadata?.reason;
+  if (
+    (structuredReviewReason === "recovery_review" ||
+      structuredReviewReason === "evaluation_review") &&
+    waitFor.interaction === undefined
+  ) {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      "A structured review wait must provide its complete interaction contract.",
+      { eventType: waitFor.eventType, reason: structuredReviewReason },
+    );
+  }
+  const authoredStructuredReview =
+    structuredReviewReason === "recovery_review" ||
+    structuredReviewReason === "evaluation_review"
+      ? parseRunnerStructuredReviewInteractionV1(waitFor.interaction)
+      : undefined;
+  if (authoredStructuredReview?.kind === "invalid_review") {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      authoredStructuredReview.error,
+      { eventType: waitFor.eventType, reason: authoredStructuredReview.reason },
+    );
+  }
+  if (authoredStructuredReview?.kind === "ordinary") {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      "A structured review wait must preserve its structured interaction metadata.",
+      { eventType: waitFor.eventType, reason: structuredReviewReason },
+    );
   }
   const requestId =
     readNonEmptyString(options.requestId) ??
     readNonEmptyString(waitFor.interaction?.requestId) ??
     readNonEmptyString(metadata?.requestId) ??
     readNonEmptyString(options.fallbackRequestId);
-  const interaction: RuntimeInteractionRequestV1 = {
-    ...(waitFor.interaction ?? {}),
-    version: "v1",
-    ...(requestId !== undefined ? { requestId } : {}),
-    kind: waitFor.kind === "approval" ? "approval" : "user_input",
-    eventType: waitFor.eventType,
-    prompt,
-    ...(waitFor.kind === "approval" ? readApprovalPresentation(metadata) : {}),
-  };
+  if (
+    authoredStructuredReview?.kind === "structured_review" &&
+    requestId !== undefined &&
+    requestId !== authoredStructuredReview.requestId
+  ) {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      "A structured review requestId cannot be replaced at the assistant boundary.",
+      { eventType: waitFor.eventType, reason: authoredStructuredReview.reason },
+    );
+  }
+  const interaction: RuntimeInteractionRequestV1 =
+    authoredStructuredReview?.kind === "structured_review"
+      ? structuredClone(waitFor.interaction as RuntimeInteractionRequestV1)
+      : {
+          ...(waitFor.interaction ?? {}),
+          version: "v1",
+          ...(requestId !== undefined ? { requestId } : {}),
+          kind: waitFor.kind === "approval" ? "approval" : "user_input",
+          eventType: waitFor.eventType,
+          prompt,
+          ...(waitFor.kind === "approval" ? readApprovalPresentation(metadata) : {}),
+        };
+  const structuredReview = parseRunnerStructuredReviewInteractionV1(interaction);
+  if (structuredReview.kind === "invalid_review") {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      structuredReview.error,
+      { eventType: waitFor.eventType, reason: structuredReview.reason },
+    );
+  }
+  if (
+    (structuredReviewReason === "recovery_review" ||
+      structuredReviewReason === "evaluation_review") &&
+    structuredReview.kind !== "structured_review"
+  ) {
+    throw createRuntimeFailure(
+      "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+      "A structured review wait must preserve its structured interaction metadata.",
+      { eventType: waitFor.eventType, reason: structuredReviewReason },
+    );
+  }
 
   return {
     ...waitFor,

@@ -96,17 +96,7 @@ export function applyKestrelOneModelsToProfile(
   };
   if ("desktopLocal" in selection) {
     const { modelCredential: _modelCredential, ...local } = selected;
-    return {
-      ...local,
-      ...(selections.length > 1
-        ? {
-            recoveryModelCandidates: selections
-              .slice(1)
-              .map((candidate, index) =>
-                toRecoveryModelCandidate(candidate, index + 1, runId)),
-          }
-        : {}),
-    };
+    return local;
   }
   return {
     ...selected,
@@ -119,14 +109,6 @@ export function applyKestrelOneModelsToProfile(
       rawModelId: selection.model,
       provider: selection.provider,
     },
-    ...(selections.length > 1
-      ? {
-          recoveryModelCandidates: selections
-            .slice(1)
-            .map((candidate, index) =>
-              toRecoveryModelCandidate(candidate, index + 1, runId)),
-        }
-      : {}),
   };
 }
 
@@ -134,40 +116,6 @@ export function isKestrelOneManagedRuntimeModel(
   selection: EnvironmentRuntimeModelSelection,
 ): selection is KestrelOneRuntimeModelSelection {
   return !("desktopLocal" in selection);
-}
-
-export function toRecoveryModelCandidate(
-  selection: EnvironmentRuntimeModelSelection,
-  ordinal: number,
-  runId: string
-) {
-  return {
-    candidateId: `fallback.${ordinal}.${selection.id}`,
-    provider: selection.provider,
-    model: selection.model,
-    capabilities: {
-      visionInputEnabled: false,
-      toolCallingEnabled: true,
-      structuredOutputEnabled: true,
-      reasoningModes:
-        selection.provider === "ollama" || selection.provider === "lmstudio"
-          ? (["off", "summary"] as const)
-          : (["off", "summary", "provider_visible"] as const),
-    },
-    ...("desktopLocal" in selection
-      ? {}
-      : {
-          credentialReference: {
-            source: "kestrel-one" as const,
-            runId,
-            gatewayId: selection.gatewayId,
-            organizationId: selection.organizationId,
-            environmentId: selection.environmentId,
-            rawModelId: selection.model,
-            provider: selection.provider,
-          },
-        }),
-  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

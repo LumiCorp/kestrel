@@ -1,9 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
+import type {
+  NormalizedOutput,
+  RuntimeInteractionRequestV1,
+} from "../../src/kestrel/contracts/execution.js";
 import { enforceRuntimeAssistantResponseBoundary, finalizeRuntimeAssistantResponse } from "../../src/runtime/assistantResponseContract.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
+import { evaluationReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
 
 test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stale assistant text", () => {
   const result = finalizeRuntimeAssistantResponse({
@@ -74,7 +78,7 @@ test("finalizeRuntimeAssistantResponse rejects a user-facing wait without a prom
   );
 });
 
-test("finalizeRuntimeAssistantResponse rejects recovery review without exact-option interaction", () => {
+test("assistant response boundary rejects a structured review without its canonical envelope", () => {
   assert.throws(
     () => finalizeRuntimeAssistantResponse({
       output: output("WAITING", {
@@ -83,24 +87,59 @@ test("finalizeRuntimeAssistantResponse rejects recovery review without exact-opt
           eventType: "user.reply",
           metadata: {
             reason: "recovery_review",
-            prompt: "Choose recovery.",
-            recoveryReviewBinding: {
-              version: "recovery_review_binding_v1",
-              bindingId: "recovery-review-1",
-              decisionId: "decision-1",
-              threadId: "session-contract",
-              runId: "run-contract",
-              executionProfileFingerprint: "a".repeat(64),
-              policyRevision: "revision-1",
-              allowedOptionIds: ["retry.primary", "terminal.fail"],
-              requestedAt: "2026-08-11T12:00:00.000Z",
-            },
+            prompt: "Choose a recovery option.",
+            allowedOptionIds: ["retry.primary", "terminal.fail"],
           },
         },
       }),
-      assistantText: "Choose recovery.",
+      assistantText: "Choose a recovery option.",
     }),
-    /exact-option interaction matching its binding/u,
+    /complete interaction contract/u,
+  );
+});
+
+test("assistant response boundary preserves a valid evaluation review envelope", () => {
+  const interaction = structuredClone(evaluationReviewInteractionFixture);
+  const result = finalizeRuntimeAssistantResponse({
+    output: output("WAITING", {
+      waitFor: {
+        kind: "user",
+        eventType: "user.reply",
+        metadata: {
+          reason: "evaluation_review",
+          prompt: interaction.prompt,
+        },
+        interaction,
+      },
+    }),
+    assistantText: interaction.prompt,
+  });
+
+  assert.deepEqual(result.output.waitFor?.interaction, interaction);
+});
+
+test("assistant response boundary does not repair a structured review missing its request ID", () => {
+  const interaction = structuredClone(
+    evaluationReviewInteractionFixture,
+  ) as unknown as Record<string, unknown>;
+  delete interaction.requestId;
+
+  assert.throws(
+    () => finalizeRuntimeAssistantResponse({
+      output: output("WAITING", {
+        waitFor: {
+          kind: "user",
+          eventType: "user.reply",
+          metadata: {
+            reason: "evaluation_review",
+            prompt: evaluationReviewInteractionFixture.prompt,
+          },
+          interaction: interaction as RuntimeInteractionRequestV1,
+        },
+      }),
+      assistantText: evaluationReviewInteractionFixture.prompt,
+    }),
+    /non-empty requestId/u,
   );
 });
 

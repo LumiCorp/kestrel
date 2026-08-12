@@ -9,7 +9,10 @@ import type {
   WaitForMatcher,
 } from "./execution.js";
 import type { HarnessEconomicsPolicyV1 } from "../../economics/contracts.js";
-import type { RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
+import type {
+  RunnerExternalApprovalBindingV1,
+  RunnerInteractionRequestV1,
+} from "@kestrel-agents/protocol";
 import type { RuntimeTurnActor } from "../../runtime/RuntimeTurn.js";
 
 export type ThreadStatus = "IDLE" | "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
@@ -182,6 +185,7 @@ export interface InteractionRequestRecord {
   delegationId?: string | undefined;
   waitKind?: WaitForMatcher["kind"] | undefined;
   prompt?: string | undefined;
+  interaction?: RunnerInteractionRequestV1 | undefined;
   metadata?: Record<string, unknown> | undefined;
   response?: Record<string, unknown> | undefined;
   createdAt: string;

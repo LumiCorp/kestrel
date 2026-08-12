@@ -11,13 +11,6 @@ import {
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
 import { COMPLETION_EVIDENCE_ASSET_BUNDLE_V1 } from "../../src/evaluation/assets.js";
 import { createDefaultRuntimeEvaluatorRegistry } from "../../src/evaluation/index.js";
-import {
-  RecoveryModelRegistry,
-  RecoveryToolAdapterRegistry,
-  RecoveryWorkflowHandlerRegistry,
-  createDefaultRecoveryToolResultNormalizers,
-  registerDefaultRecoveryWorkflowHandlers,
-} from "../../src/engine/recovery/RecoveryRegistries.js";
 import { resolveProfileWithEvaluationPolicy } from "../../src/profile/evaluationPolicy.js";
 import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
@@ -127,18 +120,9 @@ function createHarness(
   } = {},
 ) {
   const profile = resolvedProfile();
-  const recoveryPolicy = profile.recoveryPolicy!;
   const store = options.store ?? new InMemorySessionStore();
   const callState = options.callState ?? { count: 0 };
   const gateway: ModelGateway = { call: async <T>() => ({}) as T };
-  const modelRegistry = new RecoveryModelRegistry();
-  modelRegistry.register({
-    candidate: recoveryPolicy.primaryModel,
-    policyRevision: recoveryPolicy.revision,
-    gateway,
-  });
-  const workflowHandlerRegistry = new RecoveryWorkflowHandlerRegistry();
-  registerDefaultRecoveryWorkflowHandlers(workflowHandlerRegistry);
   const events: string[] = [];
   const fingerprint = fingerprintResolvedProfile(profile);
   const kestrel = new Kestrel({
@@ -147,14 +131,6 @@ function createHarness(
     toolGateway: createTestToolGateway({}),
     runEventListener: (event) => {
       events.push(event.type);
-    },
-    recoveryRuntime: {
-      policy: recoveryPolicy,
-      executionProfileFingerprint: fingerprint,
-      modelRegistry,
-      toolAdapterRegistry: new RecoveryToolAdapterRegistry(),
-      toolResultNormalizerRegistry: createDefaultRecoveryToolResultNormalizers(),
-      workflowHandlerRegistry,
     },
     evaluationRuntime: {
       policy: profile.evaluationPolicy!,
@@ -269,7 +245,7 @@ test("one evaluation revision clears the withheld candidate and reevaluates once
     (session?.state.agent as Record<string, unknown>).assistantText,
     "Revised complete result.",
   );
-  assert.equal(harness.events.includes("recovery.action.completed"), true);
+  assert.equal(harness.events.includes("evaluation.action.selected"), true);
 });
 
 test("evaluation review withholds the candidate and accept-once delivers the exact stored result", async () => {
@@ -314,11 +290,7 @@ test("evaluation review withholds the candidate and accept-once delivers the exa
   const pendingEvaluation = (withheldAgent.exec as Record<string, unknown>)
     .pendingEvaluation as Record<string, unknown>;
   const evaluationDecision = pendingEvaluation.evaluationDecision as Record<string, unknown>;
-  const recoveryDecision = pendingEvaluation.recoveryDecision as Record<string, unknown>;
-  assert.equal(
-    evaluationDecision.recoveryDecisionId,
-    recoveryDecision.decisionId,
-  );
+  assert.equal(evaluationDecision.recoveryDecisionId, undefined);
 
   const accepted = await harness.kestrel.run({
     id: "evaluation-review-resume-event",
@@ -620,8 +592,7 @@ test("operator-selected evaluation revision resumes the exact action after resta
   assert.equal(callState.count, 2);
   assert.equal((await store.getRun(completed.runId))?.status, "COMPLETED");
   const eventTypes = store.getRunEvents().map((event) => event.type);
-  assert.equal(eventTypes.includes("recovery.action.started"), true);
-  assert.equal(eventTypes.includes("recovery.action.completed"), true);
+  assert.equal(eventTypes.includes("evaluation.action.selected"), true);
   assert.equal(eventTypes.includes("evaluation.completed"), true);
   assert.equal(eventTypes.includes("run.completed"), true);
 });

@@ -65,7 +65,6 @@ const AUTHORITY_FIELDS = [
   "devShell",
 ] as const;
 const BEHAVIOR_FIELDS = [
-  "recoveryPolicy",
   "evaluationPolicy",
   "reasoning",
   "delegationLimits",
@@ -74,7 +73,6 @@ const ENVIRONMENT_FIELDS = [
   "modelProvider",
   "model",
   "modelCredential",
-  "recoveryModelCandidates",
   "modelCapabilities",
   "storeDriver",
   "approvalPolicyPackId",
@@ -421,9 +419,6 @@ function extractManagedConfiguration(
     ...(profile.model !== undefined ? { model: profile.model } : {}),
     ...(profile.modelCapabilities !== undefined
       ? { modelCapabilities: structuredClone(profile.modelCapabilities) }
-      : {}),
-    ...(profile.recoveryPolicy !== undefined
-      ? { recoveryPolicy: structuredClone(profile.recoveryPolicy) }
       : {}),
     ...(profile.evaluationPolicy !== undefined
       ? { evaluationPolicy: structuredClone(profile.evaluationPolicy) }

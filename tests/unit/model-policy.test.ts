@@ -132,18 +132,9 @@ test("resolveProfileWithModelPolicy overlays shared model authority onto shell-l
   });
   assert.equal(resolved.modelTimeoutMs, 45_000);
   assert.equal(resolved.modelCapabilities?.visionInputEnabled, true);
-  assert.equal(resolved.recoveryPolicy?.primaryModel.provider, "openai");
-  assert.equal(
-    resolved.recoveryPolicy?.primaryModel.model,
-    "gpt-5.4-2026-03-05",
-  );
-  assert.equal(
-    resolved.recoveryPolicy?.primaryModel.capabilities.visionInputEnabled,
-    true,
-  );
 });
 
-test("resolveProfileWithModelPolicy canonically rebinds recovery primary authority", () => {
+test("resolveProfileWithModelPolicy updates the selected model without hidden routing", () => {
   const original = resolveProfileWithModelPolicy(
     {
       ...createWebDemoProfile(),
@@ -166,11 +157,8 @@ test("resolveProfileWithModelPolicy canonically rebinds recovery primary authori
     modelCapabilities: { visionInputEnabled: true },
   });
 
-  assert.equal(resolved.recoveryPolicy?.policyId, original.recoveryPolicy?.policyId);
-  assert.deepEqual(resolved.recoveryPolicy?.stages, original.recoveryPolicy?.stages);
-  assert.notEqual(resolved.recoveryPolicy?.revision, original.recoveryPolicy?.revision);
-  assert.equal(resolved.recoveryPolicy?.primaryModel.provider, "openai");
-  assert.equal(resolved.recoveryPolicy?.primaryModel.model, "gpt-5.4-2026-03-05");
+  assert.equal(resolved.modelProvider, "openai");
+  assert.equal(resolved.model, "gpt-5.4-2026-03-05");
 });
 
 test("resolveProfileWithModelPolicy defaults agent.loop to the shared model when stage overrides are empty", () => {

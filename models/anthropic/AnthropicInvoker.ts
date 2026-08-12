@@ -8,6 +8,7 @@ import {
 } from "./AnthropicErrors.js";
 import { buildAnthropicHttpRequest, mapAnthropicResponse } from "./AnthropicMapper.js";
 import { readServerSentEvents } from "../SseStream.js";
+import { parseRetryAfterMs } from "../../src/io/RetryAfter.js";
 
 interface CreateAnthropicInvokerOptions {
   env: AnthropicEnvConfig;
@@ -37,7 +38,11 @@ export function createAnthropicInvoker(options: CreateAnthropicInvokerOptions): 
       });
       const requestId = response.headers.get("request-id") ?? undefined;
       if (response.ok === false) {
-        throw createAnthropicHttpError(response.status, await safeReadText(response));
+        throw createAnthropicHttpError(
+          response.status,
+          await safeReadText(response),
+          parseRetryAfterMs(response.headers.get("retry-after")),
+        );
       }
 
       const payload = callOptions.onEvent === undefined

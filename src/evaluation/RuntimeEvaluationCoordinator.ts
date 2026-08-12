@@ -145,52 +145,6 @@ export class RuntimeEvaluationCoordinator {
     return kind === "pre_delivery" || hook.selectorIds.includes(sourceId);
   }
 
-  async bindRecoveryDecision(input: {
-    decision: RuntimeEvaluationDecisionV1;
-    recoveryDecisionId: string;
-    stepIndex: number;
-  }): Promise<RuntimeEvaluationDecisionV1> {
-    const decision = parseRuntimeEvaluationDecisionV1(input.decision);
-    if (
-      decision.profileFingerprint !== this.executionProfileFingerprint ||
-      decision.policyRevision !== this.policy.revision
-    ) {
-      throw new Error(
-        "Runtime evaluation recovery binding does not match the resolved policy.",
-      );
-    }
-    const bound = parseRuntimeEvaluationDecisionV1({
-      ...decision,
-      decisionId: `evaluation-decision:${shortDigest({
-        evaluationDecisionId: decision.decisionId,
-        recoveryDecisionId: input.recoveryDecisionId,
-      })}`,
-      recoveryDecisionId: input.recoveryDecisionId,
-    });
-    await this.persistArtifact({
-      runId: bound.runId,
-      sessionId: bound.sessionId,
-      stepIndex: input.stepIndex,
-      artifactId: artifactId(bound.requestId, "action-decision"),
-      type: ARTIFACT_TYPES.actionDecision,
-      payload: { decision: structuredClone(bound) },
-    });
-    await this.options.appendLifecycleEvent({
-      runId: bound.runId,
-      sessionId: bound.sessionId,
-      type: "evaluation.action.selected",
-      level: bound.disposition === "continue" ? "INFO" : "WARN",
-      metadata: {
-        requestId: bound.requestId,
-        evaluationDecisionId: bound.decisionId,
-        recoveryDecisionId: input.recoveryDecisionId,
-        disposition: bound.disposition,
-      },
-      stepIndex: input.stepIndex,
-    });
-    return bound;
-  }
-
   async evaluateHook(
     input: RuntimeEvaluationHookInputV1,
   ): Promise<RuntimeEvaluationHookResultV1 | undefined> {

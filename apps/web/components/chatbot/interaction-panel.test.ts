@@ -5,8 +5,12 @@ import type { ThreadInteractionView } from "../../lib/turns/client-contract";
 import {
   evaluationOptionLabel,
   readEvaluationReview,
-  readRecoveryReview,
 } from "./evaluation-review";
+import { readThreadStructuredReview } from "../../lib/turns/structured-review";
+import {
+  evaluationReviewInteractionFixture,
+  legacyRecoveryReviewInteractionFixture,
+} from "../../../../tests/fixtures/structured-review-contract";
 
 test("Web evaluation review reads only exact durable options and bounded disclosure", () => {
   const interaction = {
@@ -18,35 +22,7 @@ test("Web evaluation review reads only exact durable options and bounded disclos
     eventType: "user.reply",
     prompt: "Result requires review.",
     status: "pending",
-    requestEnvelope: {
-      metadata: {
-        reason: "evaluation_review",
-        allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
-        recoveryReviewBinding: {
-          version: "recovery_review_binding_v1",
-          bindingId: "evaluation-review-1",
-          decisionId: "evaluation-decision-1",
-          threadId: "thread-1",
-          runId: "run-1",
-          executionProfileFingerprint: "a".repeat(64),
-          policyRevision: `sha256:${"b".repeat(64)}`,
-          allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
-          requestedAt: "2026-08-04T12:00:00.000Z",
-        },
-        evaluationTechnicalDisclosure: {
-          candidate: "Withheld result.",
-          score: 0.42,
-          confidence: 0.81,
-          rationale: "The result lacks evidence.",
-          assertions: [{
-            assertionId: "evidence_consistent",
-            passed: false,
-            rationale: "No durable reference was supplied.",
-          }],
-          evidenceReferences: ["artifact:1"],
-        },
-      },
-    },
+    requestEnvelope: structuredClone(evaluationReviewInteractionFixture),
     responseEnvelope: null,
     responseMessageId: null,
     turnId: "turn-1",
@@ -56,58 +32,47 @@ test("Web evaluation review reads only exact durable options and bounded disclos
   } satisfies ThreadInteractionView;
 
   assert.deepEqual(readEvaluationReview(interaction), {
-    allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
-    candidate: "Withheld result.",
-    score: 0.42,
-    confidence: 0.81,
-    rationale: "The result lacks evidence.",
-    assertions: [{
-      assertionId: "evidence_consistent",
-      passed: false,
-      rationale: "No durable reference was supplied.",
-    }],
-    evidenceReferences: ["artifact:1"],
+    allowedOptionIds: [
+      "evaluation.accept_once",
+      "evaluation.revise",
+      "terminal.fail",
+    ],
+    candidate: "Fixture candidate",
+    score: 0.6,
+    confidence: 0.8,
+    rationale: "Fixture rationale",
+    assertions: [],
+    evidenceReferences: [],
   });
   assert.equal(evaluationOptionLabel("evaluation.accept_once"), "Accept once");
   assert.equal(evaluationOptionLabel("evaluation.revise"), "Revise result");
   assert.equal(evaluationOptionLabel("terminal.fail"), "Fail run");
 });
 
-test("Web generic recovery review reads exact options from its binding", () => {
+test("Web blocks persisted recovery envelopes as legacy waits", () => {
   const interaction = {
-    id: "interaction-3",
-    requestId: "recovery-review-1",
+    id: "interaction-recovery",
+    requestId: legacyRecoveryReviewInteractionFixture.requestId,
     source: "runtime",
     sourceCheckpointId: null,
     kind: "user_input",
     eventType: "user.reply",
-    prompt: "Choose recovery.",
+    prompt: legacyRecoveryReviewInteractionFixture.prompt,
     status: "pending",
-    requestEnvelope: {
-      metadata: {
-        reason: "recovery_review",
-        recoveryReviewBinding: {
-          version: "recovery_review_binding_v1",
-          bindingId: "recovery-review-1",
-          decisionId: "recovery-decision-1",
-          threadId: "thread-3",
-          runId: "run-3",
-          executionProfileFingerprint: "c".repeat(64),
-          policyRevision: `sha256:${"d".repeat(64)}`,
-          allowedOptionIds: ["retry.primary", "terminal.fail"],
-          requestedAt: "2026-08-04T12:00:00.000Z",
-        },
-      },
-    },
+    requestEnvelope: structuredClone(legacyRecoveryReviewInteractionFixture),
     responseEnvelope: null,
     responseMessageId: null,
-    turnId: "turn-3",
-    assistantMessageId: "message-3",
+    turnId: "turn-recovery",
+    assistantMessageId: "message-recovery",
     createdAt: "2026-08-04T12:00:00.000Z",
     resolvedAt: null,
   } satisfies ThreadInteractionView;
 
-  assert.equal(readEvaluationReview(interaction), null);
+  assert.deepEqual(readThreadStructuredReview(interaction), {
+    kind: "invalid_review",
+    reason: "recovery_review",
+    error: "This recovery request can no longer be resumed safely. End the waiting turn and retry explicitly.",
+  });
 });
 
 test("Web ordinary runtime questions are not misclassified as evaluation review", () => {
@@ -130,71 +95,4 @@ test("Web ordinary runtime questions are not misclassified as evaluation review"
   } satisfies ThreadInteractionView;
 
   assert.equal(readEvaluationReview(interaction), null);
-});
-
-test("Web recovery review requires server-authored descriptors for every allowed option", () => {
-  const interaction = {
-    id: "interaction-3",
-    requestId: "recovery-review-1",
-    source: "runtime",
-    sourceCheckpointId: null,
-    kind: "user_input",
-    eventType: "user.reply",
-    prompt: "Choose a recovery option.",
-    status: "pending",
-    requestEnvelope: {
-      metadata: {
-        reason: "recovery_review",
-        allowedOptionIds: ["retry.primary", "terminal.fail"],
-        recoveryReviewBinding: {
-          version: "recovery_review_binding_v1",
-          bindingId: "recovery-review-1",
-          decisionId: "recovery-decision-1",
-          threadId: "thread-3",
-          runId: "run-3",
-          executionProfileFingerprint: "c".repeat(64),
-          policyRevision: `sha256:${"d".repeat(64)}`,
-          allowedOptionIds: ["retry.primary", "terminal.fail"],
-          requestedAt: "2026-08-11T12:00:00.000Z",
-        },
-        recoveryOptions: [
-          {
-            id: "retry.primary",
-            label: "Retry",
-            description: "Retry the primary recovery route.",
-            kind: "retry",
-          },
-          {
-            id: "terminal.fail",
-            label: "Stop",
-            description: "Stop recovery and fail this run.",
-            kind: "terminal",
-          },
-        ],
-      },
-    },
-    responseEnvelope: null,
-    responseMessageId: null,
-    turnId: "turn-3",
-    assistantMessageId: "message-3",
-    createdAt: "2026-08-11T12:00:00.000Z",
-    resolvedAt: null,
-  } satisfies ThreadInteractionView;
-
-  assert.deepEqual(readRecoveryReview(interaction), {
-    options: [
-      {
-        id: "retry.primary",
-        label: "Retry",
-        description: "Retry the primary recovery route.",
-        kind: "retry",
-      },
-      {
-        id: "terminal.fail",
-        label: "Stop",
-        description: "Stop recovery and fail this run.",
-        kind: "terminal",
-      },
-    ],
-  });
 });

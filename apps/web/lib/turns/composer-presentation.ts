@@ -83,10 +83,7 @@ export function resolveComposerPresentation(input: {
     };
   }
 
-  if (
-    submissionPolicy.mode === "blocked_interaction" ||
-    submissionPolicy.mode === "select_recovery_option"
-  ) {
+  if (submissionPolicy.mode === "blocked_interaction") {
     return {
       ...labelAndTone,
       action: { disabled: true, kind: "blocked" },
@@ -145,8 +142,7 @@ function resolveLabelAndTone(input: {
 }): Pick<ComposerPresentation, "label" | "tone"> {
   if (
     input.submissionPolicy.mode === "answer_interaction" ||
-    input.submissionPolicy.mode === "blocked_interaction" ||
-    input.submissionPolicy.mode === "select_recovery_option"
+    input.submissionPolicy.mode === "blocked_interaction"
   ) {
     const interaction = input.submissionPolicy.interaction;
     return {

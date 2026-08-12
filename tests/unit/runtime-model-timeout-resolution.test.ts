@@ -1,10 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  resolveModelRetryCount,
-  resolveModelTimeoutMs,
-} from "../../cli/runtime/KestrelChatRuntime.js";
+import { resolveModelTimeoutMs } from "../../cli/runtime/KestrelChatRuntime.js";
 
 
 test("resolveModelTimeoutMs prefers profile override over env", () => {
@@ -45,28 +42,4 @@ test("resolveModelTimeoutMs leaves hosted providers unchanged when profile and e
     {} as NodeJS.ProcessEnv,
   );
   assert.equal(timeout, undefined);
-});
-
-test("resolveModelRetryCount prefers env override", () => {
-  const retryCount = resolveModelRetryCount(
-    { modelProvider: "ollama" },
-    { KCHAT_MODEL_RETRY_COUNT: "2" } as NodeJS.ProcessEnv,
-  );
-  assert.equal(retryCount, 2);
-});
-
-test("resolveModelRetryCount defaults local OpenAI-compatible providers to zero retries", () => {
-  const retryCount = resolveModelRetryCount(
-    { modelProvider: "lmstudio" },
-    {} as NodeJS.ProcessEnv,
-  );
-  assert.equal(retryCount, 0);
-});
-
-test("resolveModelRetryCount leaves hosted providers unchanged when env is unset", () => {
-  const retryCount = resolveModelRetryCount(
-    { modelProvider: "openai" },
-    {} as NodeJS.ProcessEnv,
-  );
-  assert.equal(retryCount, undefined);
 });

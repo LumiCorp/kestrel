@@ -1,8 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { RunnerInteractionRequestV1 } from "@kestrel-agents/protocol";
 
 import { getDesktopComposerSubmissionPolicy } from "../renderer/src/composerPolicy.js";
 import type { DesktopOperatorInboxItem } from "../src/contracts.js";
+import {
+  evaluationReviewInteractionFixture,
+  legacyRecoveryReviewInteractionFixture,
+} from "../../../tests/fixtures/structured-review-contract.js";
 
 
 test("Desktop composer answers the exact pending user-input request", () => {
@@ -26,7 +31,7 @@ test("Desktop composer answers the exact pending user-input request", () => {
   });
 });
 
-test("Desktop composer exposes exact recovery options instead of free text", () => {
+test("Desktop blocks persisted recovery reviews and exposes explicit cancellation", () => {
   const request = {
     itemId: "request:recovery-1",
     kind: "user_input_request",
@@ -36,6 +41,7 @@ test("Desktop composer exposes exact recovery options instead of free text", () 
     actionable: true,
     requestId: "recovery-1",
     createdAt: "2026-08-03T12:00:00.000Z",
+    interaction: withRequestId(legacyRecoveryReviewInteractionFixture, "recovery-1"),
     metadata: {
       reason: "recovery_review",
       allowedOptionIds: ["retry.primary", "terminal.fail"],
@@ -48,12 +54,9 @@ test("Desktop composer exposes exact recovery options instead of free text", () 
     inboxItems: [request],
     runActive: false,
   }), {
-    mode: "select_recovery_option",
+    mode: "invalid_review",
     item: request,
-    allowedOptionIds: ["retry.primary", "terminal.fail"],
-    reviewKind: "recovery",
-    triggeringFailureCode: "RECOVERY_EXHAUSTED",
-    triggeringFailureSummary: "The model response did not meet Kestrel's response contract.",
+    error: "This recovery request can no longer be resumed safely. End the waiting turn and retry explicitly.",
   });
 });
 
@@ -67,9 +70,14 @@ test("Desktop composer exposes evaluation review options and disclosure", () => 
     actionable: true,
     requestId: "evaluation-1",
     createdAt: "2026-08-04T12:00:00.000Z",
+    interaction: withRequestId(evaluationReviewInteractionFixture, "evaluation-1"),
     metadata: {
       reason: "evaluation_review",
-      allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
+      allowedOptionIds: [
+        "evaluation.accept_once",
+        "evaluation.revise",
+        "terminal.fail",
+      ],
       evaluationTechnicalDisclosure: {
         candidate: "Withheld candidate",
         score: 0.4,
@@ -83,15 +91,19 @@ test("Desktop composer exposes evaluation review options and disclosure", () => 
     inboxItems: [request],
     runActive: false,
   }), {
-    mode: "select_recovery_option",
+    mode: "select_evaluation_option",
     item: request,
-    allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
-    reviewKind: "evaluation",
-    evaluationTechnicalDisclosure: request.metadata.evaluationTechnicalDisclosure,
+    allowedOptionIds: [
+      "evaluation.accept_once",
+      "evaluation.revise",
+      "terminal.fail",
+    ],
+    evaluationTechnicalDisclosure:
+      evaluationReviewInteractionFixture.metadata.evaluationTechnicalDisclosure,
   });
 });
 
-test("Desktop composer preserves legacy recovery waits without a failure summary", () => {
+test("Desktop composer blocks legacy recovery waits that lack a canonical interaction", () => {
   const request = {
     itemId: "request:legacy-recovery",
     kind: "user_input_request",
@@ -112,11 +124,9 @@ test("Desktop composer preserves legacy recovery waits without a failure summary
     inboxItems: [request],
     runActive: false,
   }), {
-    mode: "select_recovery_option",
+    mode: "invalid_review",
     item: request,
-    allowedOptionIds: ["terminal.fail"],
-    reviewKind: "recovery",
-    triggeringFailureCode: "RECOVERY_EXHAUSTED",
+    error: "This request cannot be answered safely because its interaction contract is missing.",
   });
 });
 
@@ -148,3 +158,13 @@ test("Desktop composer queues ordinary input only while a run is active", () => 
     runActive: false,
   }), { mode: "start_turn" });
 });
+
+function withRequestId(
+  fixture: object,
+  requestId: string,
+): RunnerInteractionRequestV1 {
+  return {
+    ...(structuredClone(fixture) as RunnerInteractionRequestV1),
+    requestId,
+  };
+}

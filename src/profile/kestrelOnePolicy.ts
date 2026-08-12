@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
 import type { TuiProfile } from "../../cli/contracts.js";
-import type { RecoveryModelCandidateV1 } from "../kestrel/contracts/recovery.js";
 import {
   createKestrelEnvironmentBindingV1,
   createKestrelProfileDefinitionV1,
@@ -22,10 +21,6 @@ import {
   type ShellKind,
   type ShellPresetId,
 } from "./runtimeProfile.js";
-import {
-  rebindRecoveryPolicyPrimaryModel,
-  resolveProfileWithRecoveryPolicy,
-} from "./recoveryPolicy.js";
 import { resolveProfileWithEvaluationPolicy } from "./evaluationPolicy.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
 
@@ -235,9 +230,7 @@ export interface KestrelOneProfileOverlay {
   modelProvider?: TuiProfile["modelProvider"] | undefined;
   model?: string | undefined;
   modelCredential?: TuiProfile["modelCredential"] | undefined;
-  recoveryPolicy?: TuiProfile["recoveryPolicy"] | undefined;
   evaluationPolicy?: TuiProfile["evaluationPolicy"] | undefined;
-  recoveryModelCandidates?: RecoveryModelCandidateV1[] | undefined;
   modelCapabilities?: TuiProfile["modelCapabilities"] | undefined;
   /** @deprecated Harness economics is policy-owned and rejected by composition. */
   harnessEconomics?: TuiProfile["harnessEconomics"] | undefined;
@@ -360,9 +353,6 @@ function composeLegacyKestrelOneProfile(
     ...(input.overlay?.modelCredential !== undefined
       ? { modelCredential: input.overlay.modelCredential }
       : {}),
-    ...(input.overlay?.recoveryPolicy !== undefined
-      ? { recoveryPolicy: input.overlay.recoveryPolicy }
-      : {}),
     ...(input.overlay?.evaluationPolicy !== undefined
       ? { evaluationPolicy: input.overlay.evaluationPolicy }
       : {}),
@@ -425,13 +415,7 @@ function composeLegacyKestrelOneProfile(
       : {}),
   };
 
-  const recoveredProfile =
-    profile.modelProvider !== undefined && profile.model !== undefined
-      ? resolveProfileWithRecoveryPolicy(profile, {
-          alternateModels: input.overlay?.recoveryModelCandidates,
-        })
-      : profile;
-  const resolvedProfile = resolveProfileWithEvaluationPolicy(recoveredProfile);
+  const resolvedProfile = resolveProfileWithEvaluationPolicy(profile);
 
   return {
     profile: resolvedProfile,
@@ -613,9 +597,6 @@ export function createKestrelEnvironmentBindingFromOverlay(input: {
     shellKind,
     capabilityPacks: [...resolved.capabilityPacks],
     modelRoute,
-    recoveryModelCandidates: structuredClone(
-      input.overlay?.recoveryModelCandidates ?? [],
-    ),
     sandbox: {
       ...(input.overlay?.codeMode !== undefined
         ? { codeMode: structuredClone(input.overlay.codeMode) }
@@ -672,9 +653,6 @@ export function createKestrelProfileDefinitionFromOverlay(
       defaultInteractionMode: DEFAULT_INTERACTION_MODE,
       defaultActSubmode: DEFAULT_ACT_SUBMODE,
     },
-    ...(overlay?.recoveryPolicy !== undefined
-      ? { recoveryPolicy: structuredClone(overlay.recoveryPolicy) }
-      : {}),
     ...(overlay?.evaluationPolicy !== undefined
       ? { evaluationPolicy: structuredClone(overlay.evaluationPolicy) }
       : {}),
@@ -703,29 +681,16 @@ function bindDefinitionPoliciesToEnvironment(
 ): TuiProfile {
   if (binding.modelRoute.kind !== "pinned") {
     if (
-      definition.recoveryPolicy !== undefined ||
       definition.evaluationPolicy !== undefined
     ) {
       throw new Error(
-        "Route-bound Kestrel recovery and evaluation policies require a pinned environment model route.",
+        "Route-bound Kestrel evaluation policies require a pinned environment model route.",
       );
     }
     return profile;
   }
-  const recovered =
-    definition.recoveryPolicy === undefined
-      ? resolveProfileWithRecoveryPolicy(profile, {
-          alternateModels: binding.recoveryModelCandidates,
-        })
-      : {
-          ...profile,
-          recoveryPolicy: rebindRecoveryPolicyPrimaryModel(
-            profile,
-            definition.recoveryPolicy,
-          ),
-        };
   if (definition.evaluationPolicy === undefined) {
-    return recovered;
+    return profile;
   }
   const evaluationPolicy = createRuntimeEvaluationPolicyV1({
     ...structuredClone(definition.evaluationPolicy),
@@ -746,7 +711,7 @@ function bindDefinitionPoliciesToEnvironment(
     },
   });
   return resolveProfileWithEvaluationPolicy({
-    ...recovered,
+    ...profile,
     evaluationPolicy,
   });
 }

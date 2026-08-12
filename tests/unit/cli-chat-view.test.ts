@@ -5,6 +5,7 @@ import React from "react";
 import { renderToString } from "ink";
 
 import { ChatView } from "../../cli/ink/views/ChatView.js";
+import { evaluationReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
 
 
 test("ChatView renders transcript and compose shell", () => {
@@ -164,6 +165,45 @@ test("ChatView keeps the composer interactive while waiting for user input", () 
   assert.doesNotMatch(text, /Type message or \//);
   assert.doesNotMatch(text, /Message Details/);
   assert.doesNotMatch(text, /Run in progress/);
+});
+
+test("ChatView replaces free text with the evaluation review picker", () => {
+  const now = new Date().toISOString();
+  const text = renderToString(
+    React.createElement(ChatView, {
+      session: {
+        name: "review-thread",
+        sessionId: "session-review",
+        profileId: "reference",
+        createdAt: now,
+        updatedAt: now,
+        started: true,
+        pendingWaitFor: {
+          kind: "user",
+          eventType: "user.reply",
+          metadata: { reason: "evaluation_review" },
+          interaction: structuredClone(evaluationReviewInteractionFixture),
+        },
+      },
+      transcript: [],
+      runLogs: [],
+      scroll: { offset: 0, cursor: 0, tailLocked: true },
+      statusLine: "waiting",
+      draft: "free text must not render",
+      running: true,
+      composerFocused: true,
+      viewportColumns: 120,
+      viewportRows: 40,
+      unreadCount: 0,
+      onDraftChange: () => {},
+      onSubmit: () => {},
+    }),
+  );
+
+  assert.match(text, /1\. Accept once/u);
+  assert.match(text, /2\. Revise result/u);
+  assert.match(text, /3\. Fail run/u);
+  assert.doesNotMatch(text, /free text must not render/u);
 });
 
 test("ChatView keeps the composer interactive for operator steer drafts during a running turn", () => {

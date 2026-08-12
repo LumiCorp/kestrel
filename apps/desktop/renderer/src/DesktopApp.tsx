@@ -28,6 +28,10 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  runnerStructuredReviewOptionLabel,
+  type RunnerStructuredReviewOptionId,
+} from "@kestrel-agents/protocol";
 
 import type {
   DesktopCapabilityId,
@@ -228,7 +232,9 @@ export function DesktopApp(props: {
   }, [workNavigatorOpen]);
   const activeRun = activeThread === undefined
     ? undefined
-    : activeRuns[activeThread.id] ?? (threadViews[activeThread.id]?.activeRun?.status === "RUNNING"
+    : activeRuns[activeThread.id] ?? (
+      threadViews[activeThread.id]?.activeRun?.status === "RUNNING" ||
+      threadViews[activeThread.id]?.activeRun?.status === "WAITING"
       ? {
           threadId: activeThread.id,
           sessionId: activeThread.sessionId,
@@ -251,7 +257,7 @@ export function DesktopApp(props: {
   const activeThreadFeedback = activeThread === undefined
     ? { activity: "Ready" }
     : threadFeedback[activeThread.id] ?? { activity: "Ready" };
-  const activeLifecycleActivity = composerPolicy.mode === "select_recovery_option"
+  const activeLifecycleActivity = composerPolicy.mode === "select_evaluation_option"
     ? "Waiting for your decision"
     : composerPolicy.mode === "reply_to_request"
       ? "Waiting for your input"
@@ -929,11 +935,11 @@ export function DesktopApp(props: {
 
   }
 
-  async function submitRecoveryOption(optionId: string): Promise<void> {
+  async function submitEvaluationOption(optionId: RunnerStructuredReviewOptionId): Promise<void> {
     if (
       state === undefined ||
       activeThread === undefined ||
-      composerPolicy.mode !== "select_recovery_option"
+      composerPolicy.mode !== "select_evaluation_option"
     ) {
       return;
     }
@@ -1763,32 +1769,12 @@ export function DesktopApp(props: {
 
           {archivedThreadSelected ? null : (
             <>
-            {composerPolicy.mode === "select_recovery_option" ? (
-            <section className="composer recovery-option-composer" aria-label={composerPolicy.reviewKind === "evaluation" ? "Evaluation options" : "Recovery options"}>
+            {composerPolicy.mode === "select_evaluation_option" ? (
+            <section className="composer recovery-option-composer" aria-label="Evaluation options">
               <div className="recovery-option-copy">
-                <strong>{composerPolicy.reviewKind === "evaluation"
-                  ? "Result requires review"
-                  : composerPolicy.triggeringFailureSummary !== undefined
-                    ? "Kestrel couldn't continue"
-                    : "Recovery is exhausted"}</strong>
-                <span>{composerPolicy.reviewKind === "evaluation"
-                  ? "Choose how to handle the withheld result."
-                  : composerPolicy.triggeringFailureSummary !== undefined
-                    ? "Automatic recovery could not resolve this error. Choose one allowed recovery option."
-                    : "Choose one allowed recovery option."}</span>
-                {composerPolicy.triggeringFailureCode !== undefined && composerPolicy.triggeringFailureSummary === undefined ? (
-                  <code>{composerPolicy.triggeringFailureCode}</code>
-                ) : null}
-                {composerPolicy.reviewKind === "recovery" && composerPolicy.triggeringFailureSummary !== undefined ? (
-                  <details>
-                    <summary>Technical details</summary>
-                    <span>{composerPolicy.triggeringFailureSummary}</span>
-                    {composerPolicy.triggeringFailureCode !== undefined ? (
-                      <code>{composerPolicy.triggeringFailureCode}</code>
-                    ) : null}
-                  </details>
-                ) : null}
-                {composerPolicy.reviewKind === "evaluation" && composerPolicy.evaluationTechnicalDisclosure !== undefined ? (
+                <strong>Result requires review</strong>
+                <span>Choose how to handle the withheld result.</span>
+                {composerPolicy.evaluationTechnicalDisclosure !== undefined ? (
                   <details>
                     <summary>Technical details</summary>
                     <EvaluationTechnicalDisclosure value={composerPolicy.evaluationTechnicalDisclosure} />
@@ -1802,14 +1788,26 @@ export function DesktopApp(props: {
                     key={optionId}
                     type="button"
                     disabled={operatorActionPending[composerPolicy.item.itemId] === true}
-                    onClick={() => void submitRecoveryOption(optionId)}
+                    onClick={() => void submitEvaluationOption(optionId)}
                   >
-                    {recoveryOptionLabel(optionId)}
+                    {runnerStructuredReviewOptionLabel("evaluation_review", optionId)}
                   </button>
                 ))}
               </div>
             </section>
-            ) : null}
+            ) : composerPolicy.mode === "invalid_review" ? (
+              <section className="composer recovery-option-composer" aria-label="Invalid review request">
+                <div className="recovery-option-copy">
+                  <strong>This request cannot be answered safely</strong>
+                  <span>{composerPolicy.error}</span>
+                </div>
+                <div className="recovery-option-actions">
+                  <button className="primary-button" type="button" onClick={() => void cancelActiveRun()}>
+                    End waiting turn
+                  </button>
+                </div>
+              </section>
+            ) : (
             <form
             className={`composer ${composerFocused || activeThread.draft.trim().length > 0 || activeThread.draftAttachmentIds.length > 0 ? "composer-expanded" : ""}`}
             onBlur={(event) => {
@@ -1946,6 +1944,7 @@ export function DesktopApp(props: {
               </div>
             </div>
             </form>
+            )}
             </>
           )}
           </main>
@@ -2181,14 +2180,6 @@ export function DesktopApp(props: {
 
     </div>
   );
-}
-
-function recoveryOptionLabel(optionId: string): string {
-  if (optionId === "retry.primary") return "Retry";
-  if (optionId === "evaluation.accept_once") return "Accept once";
-  if (optionId === "evaluation.revise") return "Revise result";
-  if (optionId === "terminal.fail") return "End run";
-  return optionId;
 }
 
 function EvaluationTechnicalDisclosure({ value }: { value: Record<string, unknown> }) {

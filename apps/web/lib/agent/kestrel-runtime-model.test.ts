@@ -120,7 +120,7 @@ test("Desktop-local model selection never carries a Kestrel One credential refer
   assert.equal(profile.modelCredential, undefined);
 });
 
-test("ordered runtime model candidates retain exact per-route credential bindings", () => {
+test("ordered runtime models select only the explicit primary route", () => {
   const profile = applyKestrelOneModelsToProfile(
     {
       id: "kestrel-one",
@@ -149,28 +149,10 @@ test("ordered runtime model candidates retain exact per-route credential binding
     "run-1",
   );
 
-  assert.deepEqual(profile.recoveryModelCandidates, [
-    {
-      candidateId: "fallback.1.fallback",
-      provider: "anthropic",
-      model: "claude-sonnet-4-5",
-      capabilities: {
-        visionInputEnabled: false,
-        toolCallingEnabled: true,
-        structuredOutputEnabled: true,
-        reasoningModes: ["off", "summary", "provider_visible"],
-      },
-      credentialReference: {
-        source: "kestrel-one",
-        runId: "run-1",
-        gatewayId: "gateway-fallback",
-        organizationId: "org-1",
-        environmentId: "env-1",
-        rawModelId: "claude-sonnet-4-5",
-        provider: "anthropic",
-      },
-    },
-  ]);
+  assert.equal(profile.modelProvider, "openai");
+  assert.equal(profile.model, "gpt-5.4");
+  assert.equal(profile.modelCredential?.gatewayId, "gateway-primary");
+  assert.equal("recoveryModelCandidates" in profile, false);
 });
 
 test("Lumi models select the configured native runner protocol", () => {

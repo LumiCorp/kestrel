@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import {
   buildWaitingSystemText,
   extractWaitPrompt,
+  readExactReview,
   resolveExactReviewOptionId,
 } from "./waitForPrompt.js";
 import type { TuiAppContext } from "./TuiAppContext.js";
@@ -91,12 +92,23 @@ export class TuiRunController {
     const state = this.context.uiStore.getState();
     const submittedPendingWait = state.activeSession.pendingWaitFor;
     const pendingWait = input.forceFreshTurn === true ? undefined : submittedPendingWait;
+    const exactReview = readExactReview(pendingWait);
+    if (input.resumeBlockedRun === true && exactReview.kind === "invalid_review") {
+      throw new Error(`${exactReview.error} Use /stop to end the waiting run.`);
+    }
     const resumeRequestId = input.resumeBlockedRun === true
       ? pendingWait?.interaction?.requestId?.trim()
       : undefined;
     const recoveryOptionId = input.resumeBlockedRun === true
       ? resolveExactReviewOptionId(pendingWait, input.submittedMessage)
       : undefined;
+    if (
+      input.resumeBlockedRun === true &&
+      exactReview.kind === "structured_review" &&
+      recoveryOptionId === undefined
+    ) {
+      throw new Error("Choose one exact structured-review option.");
+    }
     if (input.resumeBlockedRun === true && !resumeRequestId) {
       throw new Error(
         "Cannot resume the blocked run because its pending request ID is missing.",
@@ -139,8 +151,7 @@ export class TuiRunController {
         pendingWait !== undefined &&
         this.context.shouldApplyCompactionOnContinuationResume(state.activeSession)
       );
-    const exactDecisionWait = submittedPendingWait?.metadata?.reason === "recovery_review" ||
-      submittedPendingWait?.metadata?.reason === "evaluation_review";
+    const exactDecisionWait = exactReview.kind === "structured_review";
     if (
       submittedPendingWait !== undefined &&
       (exactDecisionWait === false || recoveryOptionId !== undefined)

@@ -31,6 +31,7 @@ import {
 } from "./inputActions.js";
 import { dispatchAppInput } from "./inputDispatcher.js";
 import { truncate } from "./ui/format.js";
+import { readExactReview } from "../app/waitForPrompt.js";
 import {
   buildOperatorCodeWorkspace,
   buildOperatorDelegationWorkspace,
@@ -111,6 +112,13 @@ export function AppRoot(props: AppRootProps): React.JSX.Element {
   }, [props.controller]);
 
   useInput((input, key) => {
+    if (
+      state.activeView === "chat" &&
+      state.activeRegion === "composer" &&
+      readExactReview(state.activeSession.pendingWaitFor).kind === "structured_review"
+    ) {
+      return;
+    }
     dispatchAppInput({
       state,
       controller: props.controller,

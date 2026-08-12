@@ -6,10 +6,6 @@ import type { TuiProfile } from "../../cli/contracts.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { resolveKestrelHomePath } from "../runtime/kestrelHome.js";
 import { DEFAULT_MODEL_BY_PROVIDER, type ModelProviderId } from "./runtimeProfile.js";
-import {
-  rebindRecoveryPolicyPrimaryModel,
-  resolveProfileWithRecoveryPolicy,
-} from "./recoveryPolicy.js";
 import { resolveProfileWithEvaluationPolicy } from "./evaluationPolicy.js";
 
 export const MODEL_POLICY_FILE_NAME = "model-policy.json";
@@ -168,17 +164,7 @@ export function resolveProfileWithModelPolicy(
       visionInputEnabled: policy.modelCapabilities.visionInputEnabled,
     },
   };
-  const recoveredProfile =
-    profile.recoveryPolicy === undefined
-      ? resolveProfileWithRecoveryPolicy(projectedProfile, options)
-      : {
-          ...projectedProfile,
-          recoveryPolicy: rebindRecoveryPolicyPrimaryModel(
-            projectedProfile,
-            profile.recoveryPolicy,
-          ),
-        };
-  return resolveProfileWithEvaluationPolicy(recoveredProfile);
+  return resolveProfileWithEvaluationPolicy(projectedProfile);
 }
 
 export class ModelPolicyStore {

@@ -5,6 +5,7 @@ import {
   type ComposerSubmissionPolicy,
   getComposerSubmissionPolicy,
 } from "@/lib/turns/composer-policy";
+import { legacyRecoveryReviewInteractionFixture } from "../../../../tests/fixtures/structured-review-contract";
 
 
 const baseState: ThreadConversationState = {
@@ -73,44 +74,43 @@ test("blocks ordinary messages while approval is pending", () => {
   );
 });
 
-test("requires an exact option while recovery review is pending", () => {
-  const interaction: ThreadConversationState["interactions"][number] = {
-    id: "interaction-recovery",
-    requestId: "recovery-review-1",
+test("blocks free text for valid and malformed structured reviews", () => {
+  const valid: ThreadConversationState["interactions"][number] = {
+    id: "interaction-review",
+    requestId: legacyRecoveryReviewInteractionFixture.requestId,
     source: "runtime",
     sourceCheckpointId: null,
     kind: "user_input",
     eventType: "user.reply",
-    prompt: "Choose recovery.",
+    prompt: legacyRecoveryReviewInteractionFixture.prompt,
     status: "pending",
-    requestEnvelope: {
-      metadata: {
-        reason: "recovery_review",
-        recoveryReviewBinding: {
-          version: "recovery_review_binding_v1",
-          bindingId: "recovery-review-1",
-          decisionId: "recovery-decision-1",
-          threadId: "thread-1",
-          runId: "run-1",
-          executionProfileFingerprint: "a".repeat(64),
-          policyRevision: `sha256:${"b".repeat(64)}`,
-          allowedOptionIds: ["retry.primary", "terminal.fail"],
-          requestedAt: "2026-07-15T12:00:00.000Z",
-        },
-      },
-    },
+    requestEnvelope: structuredClone(legacyRecoveryReviewInteractionFixture),
     responseEnvelope: null,
     responseMessageId: null,
-    turnId: "turn-recovery",
-    assistantMessageId: "assistant-recovery",
-    createdAt: "2026-07-15T12:00:00.000Z",
+    turnId: "turn-review",
+    assistantMessageId: "assistant-review",
+    createdAt: "2026-08-05T12:00:00.000Z",
     resolvedAt: null,
   };
-  assert.deepEqual(policy({ ...baseState, interactions: [interaction] }), {
-    mode: "select_recovery_option",
-    interaction,
-    allowedOptionIds: ["retry.primary", "terminal.fail"],
-  });
+  const malformed = {
+    ...valid,
+    id: "interaction-malformed-review",
+    requestId: "malformed-review",
+    requestEnvelope: {
+      ...structuredClone(legacyRecoveryReviewInteractionFixture),
+      requestId: "malformed-review",
+      inputSchema: undefined,
+    },
+  };
+
+  assert.equal(
+    policy({ ...baseState, interactions: [valid] }).mode,
+    "blocked_interaction",
+  );
+  assert.equal(
+    policy({ ...baseState, interactions: [malformed] }).mode,
+    "blocked_interaction",
+  );
 });
 
 test("queues against a durable active turn even when transport is ready", () => {

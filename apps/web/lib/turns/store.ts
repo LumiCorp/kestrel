@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { KestrelInteractionPresentation } from "@kestrel-agents/ai-sdk";
+import { parseRunnerStructuredReviewInteractionV1 } from "@kestrel-agents/protocol";
 import {
   and,
   asc,
@@ -31,7 +32,6 @@ import {
   terminalQueueOutcome,
 } from "@/lib/turns/contracts";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
-import { readRecoveryReviewEnvelope } from "@/lib/turns/recovery-review";
 
 type TurnTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -1505,19 +1505,42 @@ export async function resolveDurableRuntimeInteraction(input: {
         "An approval interaction requires an explicit decision.",
       );
     }
-    const requestEnvelope = readPlainRecord(interaction.requestEnvelope);
-    const requestMetadata = readPlainRecord(requestEnvelope?.metadata);
-    const reviewReason = requestMetadata?.reason;
-    const review = readRecoveryReviewEnvelope(requestEnvelope);
-    const isReview =
-      reviewReason === "recovery_review" || reviewReason === "evaluation_review";
+    const structuredReview = parseRunnerStructuredReviewInteractionV1(
+      interaction.requestEnvelope,
+    );
+    if (structuredReview.kind === "invalid_review") {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "This structured review cannot be answered safely. End the waiting turn.",
+      );
+    }
     if (
-      (isReview &&
-        (review === null ||
-          review.bindingId !== interaction.requestId ||
-          input.recoveryOptionId === undefined ||
-          review.allowedOptionIds.includes(input.recoveryOptionId) === false)) ||
-      (!isReview && input.recoveryOptionId !== undefined)
+      structuredReview.kind === "structured_review" &&
+      (input.recoveryOptionId === undefined ||
+        !structuredReview.allowedOptionIds.some(
+          (optionId) => optionId === input.recoveryOptionId,
+        ))
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The interaction response must select one exact allowed recovery option.",
+      );
+    }
+    const inputSchema = readPlainRecord(interaction.requestEnvelope)?.inputSchema;
+    const inputContract = readPlainRecord(inputSchema);
+    const properties = readPlainRecord(inputContract?.properties);
+    const optionSchema = readPlainRecord(properties?.recoveryOptionId);
+    const allowedOptionIds = Array.isArray(optionSchema?.enum)
+      ? optionSchema.enum.filter((value): value is string => typeof value === "string")
+      : [];
+    const requiresRecoveryOption = Array.isArray(inputContract?.required) &&
+      inputContract.required.includes("recoveryOptionId");
+    if (
+      (structuredReview.kind === "ordinary" &&
+        requiresRecoveryOption &&
+        input.recoveryOptionId === undefined) ||
+      (input.recoveryOptionId !== undefined &&
+        allowedOptionIds.includes(input.recoveryOptionId) === false)
     ) {
       throw new DurableTurnError(
         "TURN_CONFLICT",

@@ -22,6 +22,7 @@ import type {
   AgentProgressUpdateV1,
   NormalizedOutput,
 } from "../../src/index.js";
+import { evaluationReviewInteractionFixture } from "../fixtures/structured-review-contract.js";
 
 
 function makeCompletedOutput(sessionId: string, runId: string): NormalizedOutput {
@@ -357,25 +358,13 @@ test("TuiRunController forwards an exact evaluation review option", async () => 
       eventType: "user.reply",
       metadata: {
         reason: "evaluation_review",
-        allowedOptionIds: ["evaluation.accept_once", "terminal.fail"],
+        allowedOptionIds: [
+          "evaluation.accept_once",
+          "evaluation.revise",
+          "terminal.fail",
+        ],
       },
-      interaction: {
-        version: "v1",
-        requestId: "evaluation-review-1",
-        kind: "user_input",
-        eventType: "user.reply",
-        prompt: "Result requires review.",
-        inputSchema: {
-          type: "object",
-          required: ["recoveryOptionId"],
-          properties: {
-            recoveryOptionId: {
-              type: "string",
-              enum: ["evaluation.accept_once", "terminal.fail"],
-            },
-          },
-        },
-      },
+      interaction: structuredClone(evaluationReviewInteractionFixture),
     },
   });
 
@@ -386,8 +375,27 @@ test("TuiRunController forwards an exact evaluation review option", async () => 
 
   assert.equal(harness.commands[0]?.type, "operator.control");
   assert.equal(harness.commands[0]?.payload.action, "reply");
-  assert.equal(harness.commands[0]?.payload.requestId, "evaluation-review-1");
+  assert.equal(harness.commands[0]?.payload.requestId, "evaluation-review-fixture");
   assert.equal(harness.commands[0]?.payload.recoveryOptionId, "evaluation.accept_once");
+});
+
+test("TuiRunController blocks a legacy review without a canonical envelope", async () => {
+  const harness = createRunHarness({
+    pendingWaitFor: {
+      kind: "user",
+      eventType: "user.reply",
+      metadata: { reason: "recovery_review" },
+    },
+  });
+
+  await assert.rejects(
+    () => harness.controller.startActiveTurn({
+      submittedMessage: "retry.primary",
+      resumeBlockedRun: true,
+    }),
+    /cannot be answered safely/u,
+  );
+  assert.equal(harness.commands.length, 0);
 });
 
 test("TuiRunController preserves a blocked wait when its request identity is missing", async () => {

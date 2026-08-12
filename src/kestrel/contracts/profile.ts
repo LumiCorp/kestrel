@@ -17,12 +17,9 @@ import {
   type RuntimeEvaluationPolicyV1,
 } from "./evaluation.js";
 import {
-  parseRecoveryModelCandidateV1,
-  parseRecoveryPolicyV1,
-  type RecoveryModelCandidateV1,
-  type RecoveryModelCredentialReferenceV1,
-  type RecoveryPolicyV1,
-} from "./recovery.js";
+  type ModelCredentialReferenceV1,
+  type ModelRouteCapabilitiesV1,
+} from "./model-route.js";
 
 export const KESTREL_PROFILE_DEFINITION_VERSION =
   "kestrel_profile_definition_v1" as const;
@@ -51,7 +48,6 @@ export interface KestrelProfileDefinitionV1 {
     defaultInteractionMode: InteractionMode;
     defaultActSubmode: ActSubmode;
   };
-  recoveryPolicy?: RecoveryPolicyV1 | undefined;
   evaluationPolicy?: RuntimeEvaluationPolicyV1 | undefined;
   reasoning: {
     request: {
@@ -76,8 +72,8 @@ export interface KestrelPinnedModelRouteV1 {
   provider: ModelProviderId;
   model: string;
   modelRegistrationRevision: string;
-  capabilities: RecoveryModelCandidateV1["capabilities"];
-  credentialReference?: RecoveryModelCredentialReferenceV1 | undefined;
+  capabilities: ModelRouteCapabilitiesV1;
+  credentialReference?: ModelCredentialReferenceV1 | undefined;
   pricingRecord?:
     | {
         recordId: string;
@@ -109,7 +105,6 @@ export interface KestrelEnvironmentBindingV1 {
   shellKind: ShellKind;
   capabilityPacks: CapabilityPackId[];
   modelRoute: KestrelEnvironmentModelRouteV1;
-  recoveryModelCandidates: RecoveryModelCandidateV1[];
   sandbox: {
     codeMode?: CodeModeProfileConfig | undefined;
     devShell?: DevShellProfileConfig | undefined;
@@ -205,7 +200,6 @@ const profileDefinitionSchema = z
     label: z.literal(KESTREL_CANONICAL_PROFILE_LABEL),
     agent: z.literal("kestrel"),
     interaction: interactionSchema,
-    recoveryPolicy: z.unknown().optional(),
     evaluationPolicy: z.unknown().optional(),
     reasoning: reasoningSchema,
     delegation: delegationSchema,
@@ -454,7 +448,6 @@ const environmentBindingSchema = z
       ]),
     ),
     modelRoute: modelRouteSchema,
-    recoveryModelCandidates: z.array(z.unknown()).max(64),
     sandbox: z
       .object({
         codeMode: codeModeSchema.optional(),
@@ -532,16 +525,9 @@ export function parseKestrelProfileDefinitionV1(
   value: unknown,
 ): KestrelProfileDefinitionV1 {
   const raw = profileDefinitionSchema.parse(value);
-  const {
-    recoveryPolicy: rawRecoveryPolicy,
-    evaluationPolicy: rawEvaluationPolicy,
-    ...base
-  } = raw;
+  const { evaluationPolicy: rawEvaluationPolicy, ...base } = raw;
   const parsed: KestrelProfileDefinitionV1 = {
     ...base,
-    ...(rawRecoveryPolicy !== undefined
-      ? { recoveryPolicy: parseRecoveryPolicyV1(rawRecoveryPolicy) }
-      : {}),
     ...(rawEvaluationPolicy !== undefined
       ? { evaluationPolicy: parseRuntimeEvaluationPolicyV1(rawEvaluationPolicy) }
       : {}),
@@ -576,12 +562,7 @@ export function parseKestrelEnvironmentBindingV1(
   value: unknown,
 ): KestrelEnvironmentBindingV1 {
   const raw = environmentBindingSchema.parse(value);
-  const parsed = {
-    ...raw,
-    recoveryModelCandidates: raw.recoveryModelCandidates.map((candidate) =>
-      parseRecoveryModelCandidateV1(candidate),
-    ),
-  } as KestrelEnvironmentBindingV1;
+  const parsed = raw as KestrelEnvironmentBindingV1;
   requireUnique(parsed.capabilityPacks, "Kestrel environment capability packs");
   requireUnique(
     parsed.tools.additionalToolNames,
@@ -590,10 +571,6 @@ export function parseKestrelEnvironmentBindingV1(
   requireUnique(
     parsed.tools.mcpServers.map((server) => server.id),
     "Kestrel environment MCP server ids",
-  );
-  requireUnique(
-    parsed.recoveryModelCandidates.map((candidate) => candidate.candidateId),
-    "Kestrel environment recovery candidate ids",
   );
   if (parsed.modelRoute.kind === "pinned") {
     requireUnique(
@@ -739,21 +716,6 @@ function assertPinnedRouteOwnership(
           "Kestrel environment credential reference does not match its tenant binding.",
         );
       }
-    }
-  }
-  for (const candidate of binding.recoveryModelCandidates) {
-    const candidateCredential = candidate.credentialReference;
-    if (candidateCredential === undefined) continue;
-    if (
-      candidateCredential.provider !== candidate.provider ||
-      candidateCredential.rawModelId !== candidate.model ||
-      binding.tenant.scope !== "hosted" ||
-      candidateCredential.organizationId !== binding.tenant.organizationId ||
-      candidateCredential.environmentId !== binding.tenant.environmentId
-    ) {
-      throw new Error(
-        `Kestrel recovery candidate '${candidate.candidateId}' does not match its environment route.`,
-      );
     }
   }
 }

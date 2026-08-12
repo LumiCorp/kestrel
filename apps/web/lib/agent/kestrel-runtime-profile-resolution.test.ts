@@ -134,28 +134,6 @@ test(
           rawModelId: "gpt-5.1",
           provider: "openai",
         },
-        recoveryModelCandidates: [
-          {
-            candidateId: "fallback.1.gateway_model_456",
-            provider: "anthropic",
-            model: "claude-sonnet-4-5",
-            capabilities: {
-              visionInputEnabled: false,
-              toolCallingEnabled: true,
-              structuredOutputEnabled: true,
-              reasoningModes: ["off", "summary", "provider_visible"],
-            },
-            credentialReference: {
-              source: "kestrel-one",
-              runId: "exec_123",
-              gatewayId: "gateway_456",
-              organizationId: "org_123",
-              environmentId: "env_123",
-              rawModelId: "claude-sonnet-4-5",
-              provider: "anthropic",
-            },
-          },
-        ],
         default: false,
       },
     });

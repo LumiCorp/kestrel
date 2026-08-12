@@ -44,7 +44,6 @@ export interface PreparedToolPolicyDispositionV1 {
 export interface PreparedToolApprovalAuthorityV1 {
   authorityRevision: string;
   approvalId?: string | undefined;
-  recoveryAdapterId?: string | undefined;
 }
 
 export interface PreparedToolInputAdapterV1 {
@@ -166,7 +165,6 @@ const POLICY_KEYS = new Set([
 const APPROVAL_KEYS = new Set([
   "authorityRevision",
   "approvalId",
-  "recoveryAdapterId",
 ]);
 const INPUT_ADAPTER_KEYS = new Set(["adapterId", "metadata"]);
 const OUTCOME_KEYS = new Set([
@@ -573,14 +571,6 @@ function parseApproval(value: unknown): PreparedToolApprovalAuthorityV1 {
     ...(input.approvalId === undefined
       ? {}
       : { approvalId: stringValue(input.approvalId, "prepared tool call.approval.approvalId") }),
-    ...(input.recoveryAdapterId === undefined
-      ? {}
-      : {
-          recoveryAdapterId: stringValue(
-            input.recoveryAdapterId,
-            "prepared tool call.approval.recoveryAdapterId",
-          ),
-        }),
   };
 }
 

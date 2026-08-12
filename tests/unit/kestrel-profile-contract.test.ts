@@ -146,7 +146,6 @@ test("environment bindings reject route, credential, tenant, and unknown-field d
       },
       credentialReference: credential,
     },
-    recoveryModelCandidates: [],
     sandbox: {},
     apps: { approvalModes: {} },
     tools: {
@@ -198,7 +197,7 @@ test("environment bindings reject route, credential, tenant, and unknown-field d
   );
 });
 
-test("canonical composition binds model recovery to the exact environment route", () => {
+test("canonical composition binds the selected model to the exact environment route", () => {
   const binding = createKestrelEnvironmentBindingFromOverlay({
     environmentPresetId: "cli_safe_local",
     overlay: {
@@ -217,22 +216,10 @@ test("canonical composition binds model recovery to the exact environment route"
   assert.equal(composed.profile.label, "Kestrel");
   assert.equal(composed.profile.modelProvider, "openai");
   assert.equal(composed.profile.model, "gpt-5.1");
-  assert.equal(
-    composed.profile.recoveryPolicy?.primaryModel.provider,
-    "openai",
-  );
-  assert.equal(
-    composed.profile.recoveryPolicy?.primaryModel.model,
-    "gpt-5.1",
-  );
-  assert.equal(
-    composed.profile.recoveryPolicy?.primaryModel.capabilities
-      .visionInputEnabled,
-    true,
-  );
+  assert.equal(composed.profile.modelCapabilities?.visionInputEnabled, true);
 });
 
-test("canonical composition rebinds evaluation and recovery to one exact route", () => {
+test("canonical composition rebinds evaluation to the exact selected route", () => {
   const hashA = `sha256:${"a".repeat(64)}`;
   const hashB = `sha256:${"b".repeat(64)}`;
   const authoredEvaluation = createRuntimeEvaluationPolicyV1({
@@ -294,8 +281,6 @@ test("canonical composition rebinds evaluation and recovery to one exact route",
     definition,
     environmentBinding: binding,
   }).profile;
-  assert.equal(composed.recoveryPolicy?.primaryModel.provider, "anthropic");
-  assert.equal(composed.recoveryPolicy?.primaryModel.model, "claude-sonnet-4-5");
   assert.equal(composed.evaluationPolicy?.judge.provider, "anthropic");
   assert.equal(composed.evaluationPolicy?.judge.model, "claude-sonnet-4-5");
   assert.equal(

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import {
+  parseRunnerStructuredReviewInteractionV1,
   parseRunnerExternalApprovalBindingV1,
   serializeCanonicalApprovalPayload,
 } from "@kestrel-agents/protocol";
@@ -10,7 +11,7 @@ import {
   interactionRequestThreadMismatchFailure,
   createRuntimeFailure,
 } from "../runtime/RuntimeFailure.js";
-import { parseRecoveryReviewBindingV1 } from "../kestrel/contracts/recovery.js";
+import { parseEvaluationReviewBindingV1 } from "../kestrel/contracts/evaluation.js";
 import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
 import type {
   ApprovalGrantRecord,
@@ -36,10 +37,18 @@ export class InteractionManager {
       eventType?: string | undefined;
       metadata?: Record<string, unknown> | undefined;
       interaction?: {
+        version?: string | undefined;
         requestId?: string | undefined;
         kind?: string | undefined;
         eventType?: string | undefined;
         prompt?: string | undefined;
+        inputSchema?: Record<string, unknown> | undefined;
+        metadata?: Record<string, unknown> | undefined;
+        approval?: {
+          toolCallId: string;
+          toolName: string;
+          input: unknown;
+        } | undefined;
       } | undefined;
     } | undefined;
   }): Promise<InteractionRequestRecord | undefined> {
@@ -74,13 +83,12 @@ export class InteractionManager {
 
     const metadata = waitFor.metadata ?? {};
     const interaction = waitFor.interaction;
+    const requestId =
+      readNonEmptyString(interaction?.requestId)?.trim() ??
+      readNonEmptyString(metadata.requestId)?.trim() ??
+      `request-${randomUUID()}`;
     const request: InteractionRequestRecord = {
-      requestId:
-        typeof interaction?.requestId === "string" && interaction.requestId.length > 0
-          ? interaction.requestId
-          : typeof metadata.requestId === "string" && metadata.requestId.length > 0
-            ? metadata.requestId
-          : `request-${randomUUID()}`,
+      requestId,
       threadId: input.threadId,
       ...(input.runId !== undefined ? { runId: input.runId } : {}),
       kind: requestKind,
@@ -93,6 +101,17 @@ export class InteractionManager {
         : typeof metadata.prompt === "string"
           ? { prompt: metadata.prompt }
           : {}),
+      ...(interaction !== undefined &&
+        interaction.version === "v1" &&
+        typeof interaction.requestId === "string" &&
+        interaction.requestId.trim().length > 0 &&
+        interaction.kind === requestKind &&
+        interaction.eventType === eventType &&
+        typeof interaction.prompt === "string"
+        ? {
+            interaction: structuredClone(interaction) as InteractionRequestRecord["interaction"],
+          }
+        : {}),
       metadata: {
         ...metadata,
         ...(input.actor !== undefined
@@ -144,33 +163,7 @@ export class InteractionManager {
     }
 
     const actor = normalizeTrustedActor(input.actor);
-    try {
-      validateRecoveryReviewReply({ request, input, actor });
-    } catch (error) {
-      const code =
-        typeof error === "object" && error !== null &&
-        typeof (error as { code?: unknown }).code === "string"
-          ? (error as { code: string }).code
-          : undefined;
-      if (code === "RECOVERY_REVIEW_STALE" || code === "RECOVERY_WAIT_EXPIRED") {
-        const resolvedAt = new Date().toISOString();
-        await this.store.upsertInteractionRequest({
-          ...request,
-          status: "CANCELLED",
-          response: { validationErrorCode: code },
-          resolvedAt,
-        });
-        const thread = await this.store.getThread(request.threadId);
-        if (thread?.currentRequestId === request.requestId) {
-          await this.store.upsertThread({
-            ...thread,
-            currentRequestId: undefined,
-            updatedAt: resolvedAt,
-          });
-        }
-      }
-      throw error;
-    }
+    validateStructuredReviewReply({ request, input, actor });
     const binding =
       request.kind === "approval" && input.approve !== false
         ? readExternalApprovalBinding(request.metadata)
@@ -248,19 +241,28 @@ export class InteractionManager {
   }
 }
 
-function validateRecoveryReviewReply(input: {
+function validateStructuredReviewReply(input: {
   request: InteractionRequestRecord;
   input: ReplyToRequestInput;
   actor: RuntimeTurnActor | undefined;
 }): void {
-  const isRecoveryReview =
-    input.request.metadata?.reason === "recovery_review" ||
-    input.request.metadata?.reason === "evaluation_review";
-  if (!isRecoveryReview) {
+  const review = parseRunnerStructuredReviewInteractionV1(
+    input.request.interaction,
+  );
+  const outerReason = input.request.metadata?.reason;
+  const outerClaimsReview =
+    outerReason === "recovery_review" || outerReason === "evaluation_review";
+  if (review.kind === "invalid_review" || (outerClaimsReview && review.kind === "ordinary")) {
+    throw createRuntimeFailure(
+      "STRUCTURED_REVIEW_INVALID",
+      "This structured review cannot be answered safely. End the waiting run.",
+    );
+  }
+  if (review.kind === "ordinary") {
     if (input.input.recoveryOptionId !== undefined) {
       throw createRuntimeFailure(
-        "RECOVERY_OPTION_UNEXPECTED",
-        "A recovery option can only resolve a recovery review request.",
+        "STRUCTURED_REVIEW_OPTION_UNEXPECTED",
+        "An option ID can only resolve a structured review request.",
       );
     }
     return;
@@ -269,8 +271,8 @@ function validateRecoveryReviewReply(input: {
   const optionId = readNonEmptyString(input.input.recoveryOptionId);
   if (optionId === undefined) {
     throw createRuntimeFailure(
-      "RECOVERY_RESUME_INVALID",
-      "Recovery review resume requires an exact recoveryOptionId.",
+      "EVALUATION_REVIEW_RESUME_INVALID",
+      "Evaluation review requires an exact recoveryOptionId.",
     );
   }
   if (
@@ -278,35 +280,46 @@ function validateRecoveryReviewReply(input: {
     (input.actor.actorType !== "operator" && input.actor.actorType !== "end_user")
   ) {
     throw createRuntimeFailure(
-      "RECOVERY_ACTOR_INVALID",
-      "Recovery review must be decided by an authenticated operator or end user.",
+      "EVALUATION_REVIEW_ACTOR_INVALID",
+      "Evaluation review must be decided by an authenticated operator or end user.",
     );
   }
-
   let binding;
   try {
-    binding = parseRecoveryReviewBindingV1(
-      input.request.metadata?.recoveryReviewBinding,
+    binding = parseEvaluationReviewBindingV1(
+      input.request.metadata?.evaluationReviewBinding,
     );
   } catch {
     throw createRuntimeFailure(
-      "RECOVERY_REVIEW_STALE",
-      "Recovery review binding is missing or invalid.",
+      "EVALUATION_REVIEW_STALE",
+      "Evaluation review binding is missing or invalid.",
     );
   }
   if (
+    binding.requestId !== input.request.requestId ||
     binding.threadId !== input.request.threadId ||
-    (input.request.runId !== undefined && binding.runId !== input.request.runId)
+    input.request.runId === undefined ||
+    binding.runId !== input.request.runId ||
+    binding.evaluationDecisionId !== input.request.metadata?.decisionId
   ) {
     throw createRuntimeFailure(
-      "RECOVERY_REVIEW_STALE",
-      "Recovery review binding no longer matches the pending request.",
+      "EVALUATION_REVIEW_STALE",
+      "Evaluation review binding no longer matches the pending request.",
     );
   }
-  if (binding.allowedOptionIds.includes(optionId) === false) {
+  if (
+    review.allowedOptionIds.some((allowedOptionId) => allowedOptionId === optionId) === false ||
+    binding.allowedOptionIds.includes(
+      optionId as "evaluation.accept_once" | "evaluation.revise" | "terminal.fail",
+    ) === false ||
+    binding.allowedOptionIds.length !== review.allowedOptionIds.length ||
+    binding.allowedOptionIds.some(
+      (allowedOptionId, index) => allowedOptionId !== review.allowedOptionIds[index],
+    )
+  ) {
     throw createRuntimeFailure(
-      "RECOVERY_OPTION_NOT_ALLOWED",
-      `Recovery option '${optionId}' is not allowed for this review.`,
+      "EVALUATION_OPTION_NOT_ALLOWED",
+      `Evaluation option '${optionId}' is not allowed for this review.`,
     );
   }
   if (
@@ -314,8 +327,8 @@ function validateRecoveryReviewReply(input: {
     Date.parse(binding.expiresAt) <= Date.now()
   ) {
     throw createRuntimeFailure(
-      "RECOVERY_WAIT_EXPIRED",
-      "Recovery review has expired.",
+      "EVALUATION_WAIT_EXPIRED",
+      "Evaluation review has expired.",
     );
   }
   const trustedRequestActor = normalizeTrustedActor(
@@ -324,10 +337,11 @@ function validateRecoveryReviewReply(input: {
   if (
     trustedRequestActor?.tenantId !== undefined &&
     trustedRequestActor.tenantId !== input.actor.tenantId
+    || binding.tenantId !== undefined && binding.tenantId !== input.actor.tenantId
   ) {
     throw createRuntimeFailure(
-      "RECOVERY_TENANT_MISMATCH",
-      "Recovery review actor does not belong to the requesting tenant.",
+      "EVALUATION_TENANT_MISMATCH",
+      "Evaluation review actor does not belong to the requesting tenant.",
     );
   }
 }

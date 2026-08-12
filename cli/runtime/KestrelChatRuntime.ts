@@ -102,17 +102,7 @@ import {
   type EvaluationCalibrationRecordV1,
 } from "../../src/kestrel/contracts/evaluation.js";
 import type { RuntimeEvaluationRuntimeConfiguration } from "../../src/evaluation/RuntimeEvaluationCoordinator.js";
-import { parseRecoveryPolicyV1, type RecoveryModelCandidateV1 } from "../../src/kestrel/contracts/recovery.js";
-import {
-  RecoveryModelRegistry,
-  RecoveryToolAdapterRegistry,
-  RecoveryWorkflowHandlerRegistry,
-  createDefaultRecoveryToolResultNormalizers,
-  registerDefaultRecoveryWorkflowHandlers,
-} from "../../src/engine/recovery/RecoveryRegistries.js";
-import type { RecoveryRuntimeConfiguration } from "../../src/engine/recovery/RecoveryCoordinator.js";
 import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.js";
-import { resolveRecoveryPolicyForProfile } from "../../src/profile/recoveryPolicy.js";
 import type { SessionStore } from "../../src/kestrel/contracts/store.js";
 import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
@@ -3376,9 +3366,6 @@ function createRuntimeWithStore(
       });
     },
   });
-  const recoveryRuntime = profile.modelProvider !== undefined && profile.model !== undefined
-    ? createRecoveryRuntimeConfiguration(profile, modelGateway, modelEnv)
-    : undefined;
   const evaluationRuntime = profile.evaluationPolicy === undefined
     ? undefined
     : createRuntimeEvaluationConfiguration(profile, modelGateway, runtimeEnv);
@@ -3406,7 +3393,6 @@ function createRuntimeWithStore(
     store,
     modelGateway,
     executionBoundaryRuntime,
-    ...(recoveryRuntime !== undefined ? { recoveryRuntime } : {}),
     ...(evaluationRuntime !== undefined ? { evaluationRuntime } : {}),
     providerReasoningVault,
     toolGateway: toolRegistry,
@@ -3699,12 +3685,11 @@ export function createModelGatewayForProfile(
   }
   const env = options.env ?? process.env;
   const timeoutMs = resolveModelTimeoutMs(profile, env);
-  const retryCount = resolveModelRetryCount(profile, env);
   const provider = profile.modelProvider ?? "openrouter";
   const gatewayOptions = {
     env,
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    ...(retryCount !== undefined ? { retryCount } : {}),
+    retryCount: 2,
     ...(profile.model !== undefined
       ? { envConfig: { model: profile.model } }
       : {}),
@@ -3720,64 +3705,6 @@ export function createModelGatewayForProfile(
             ? createLmStudioModelGatewayFromEnv(gatewayOptions)
             : createOpenRouterModelGatewayFromEnv(gatewayOptions),
   );
-}
-
-export function createRecoveryRuntimeConfiguration(
-  profile: TuiProfile,
-  primaryGateway: ModelGateway,
-  env: NodeJS.ProcessEnv = process.env,
-): RecoveryRuntimeConfiguration {
-  const policy = profile.recoveryPolicy === undefined
-    ? resolveRecoveryPolicyForProfile(profile, { env })
-    : parseRecoveryPolicyV1(profile.recoveryPolicy);
-  const modelRegistry = new RecoveryModelRegistry();
-  modelRegistry.register({
-    candidate: policy.primaryModel,
-    policyRevision: policy.revision,
-    gateway: primaryGateway,
-  });
-  const retryStage = policy.stages.find((stage) => stage.action === "retry_same_route");
-  const retryCount = retryStage?.action === "retry_same_route"
-    ? Math.max(0, retryStage.maxAttempts - 1)
-    : 0;
-  for (const stage of policy.stages) {
-    if (stage.action !== "alternate_model") continue;
-    for (const candidate of stage.candidates) {
-      modelRegistry.register({
-        candidate,
-        policyRevision: policy.revision,
-        gateway: createModelGatewayForRecoveryCandidate(candidate, {
-          env,
-          timeoutMs: resolveModelTimeoutMs(profile, env),
-          retryCount,
-        }),
-      });
-    }
-  }
-  const workflowHandlerRegistry = new RecoveryWorkflowHandlerRegistry();
-  registerDefaultRecoveryWorkflowHandlers(workflowHandlerRegistry);
-  return {
-    policy,
-    executionProfileFingerprint: fingerprintResolvedProfile({
-      ...profile,
-      recoveryPolicy: policy,
-    }),
-    modelRegistry,
-    toolAdapterRegistry: new RecoveryToolAdapterRegistry(),
-    toolResultNormalizerRegistry: createDefaultRecoveryToolResultNormalizers(),
-    workflowHandlerRegistry,
-    validateCredential: (candidate) => {
-      const credential = candidate.credentialReference;
-      if (credential === undefined) return true;
-      const primaryCredential = policy.primaryModel.credentialReference;
-      return primaryCredential !== undefined &&
-        credential.runId === primaryCredential.runId &&
-        credential.organizationId === primaryCredential.organizationId &&
-        credential.environmentId === primaryCredential.environmentId &&
-        credential.provider === candidate.provider &&
-        credential.rawModelId === candidate.model;
-    },
-  };
 }
 
 export function createRuntimeEvaluationConfiguration(
@@ -3812,7 +3739,6 @@ export function createRuntimeEvaluationJudgeInvoker(
       try {
         response = await judgeGateway.call<ModelResponse<unknown>>(request, {
           signal,
-          authorizeRetry: () => false,
         });
       } catch (error) {
         if (signal.aborted) throw signal.reason ?? error;
@@ -3873,38 +3799,6 @@ function readStructuredEvaluationOutput(
   } catch {
     throw new Error("Runtime evaluator returned malformed structured output.");
   }
-}
-
-function createModelGatewayForRecoveryCandidate(
-  candidate: RecoveryModelCandidateV1,
-  options: {
-    env: NodeJS.ProcessEnv;
-    timeoutMs: number | undefined;
-    retryCount: number;
-  },
-): ModelGateway {
-  if (candidate.credentialReference !== undefined) {
-    return createGatewayManagedModelGateway({
-      modelCredential: candidate.credentialReference,
-    });
-  }
-  const gatewayOptions = {
-    env: options.env,
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-    retryCount: options.retryCount,
-    envConfig: { model: candidate.model },
-  };
-  return createLazyModelGateway(() =>
-    candidate.provider === "openai"
-      ? createOpenAiModelGatewayFromEnv(gatewayOptions)
-      : candidate.provider === "anthropic"
-        ? createAnthropicModelGatewayFromEnv(gatewayOptions)
-        : candidate.provider === "ollama"
-          ? createOllamaModelGatewayFromEnv(gatewayOptions)
-          : candidate.provider === "lmstudio"
-            ? createLmStudioModelGatewayFromEnv(gatewayOptions)
-            : createOpenRouterModelGatewayFromEnv(gatewayOptions),
-  );
 }
 
 function createLazyModelGateway(factory: () => ModelGateway): ModelGateway {
@@ -4187,20 +4081,6 @@ export function resolveModelTimeoutMs(
   return profile.modelProvider === "ollama" ||
     profile.modelProvider === "lmstudio"
     ? LOCAL_OPENAI_COMPATIBLE_MODEL_TIMEOUT_MS
-    : undefined;
-}
-
-export function resolveModelRetryCount(
-  profile: Pick<TuiProfile, "modelProvider">,
-  env: NodeJS.ProcessEnv = process.env,
-): number | undefined {
-  const envRetryCount = parseEnvInt("KCHAT_MODEL_RETRY_COUNT", env);
-  if (envRetryCount !== undefined) {
-    return envRetryCount;
-  }
-  return profile.modelProvider === "ollama" ||
-    profile.modelProvider === "lmstudio"
-    ? LOCAL_OPENAI_COMPATIBLE_MODEL_RETRY_COUNT
     : undefined;
 }
 

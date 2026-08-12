@@ -13,10 +13,7 @@ import type {
   ToolExecutionClass,
 } from "../src/index.js";
 import type { SubAgentResultEnvelope } from "../src/kestrel/contracts/orchestration.js";
-import type {
-  RecoveryModelCredentialReferenceV1,
-  RecoveryPolicyV1,
-} from "../src/kestrel/contracts/recovery.js";
+import type { ModelCredentialReferenceV1 } from "../src/kestrel/contracts/model-route.js";
 import type { RuntimeEvaluationPolicyV1 } from "../src/kestrel/contracts/evaluation.js";
 import type {
   KestrelEnvironmentBindingV1,
@@ -199,7 +196,7 @@ export interface ToolQueueProfileConfig {
   retryCount?: number | undefined;
 }
 
-export type ModelCredentialReference = RecoveryModelCredentialReferenceV1;
+export type ModelCredentialReference = ModelCredentialReferenceV1;
 
 export interface TuiProfile {
   id: string;
@@ -217,7 +214,6 @@ export interface TuiProfile {
   modelProvider?: ModelProviderId | undefined;
   model?: string | undefined;
   modelCredential?: ModelCredentialReference | undefined;
-  recoveryPolicy?: RecoveryPolicyV1 | undefined;
   evaluationPolicy?: RuntimeEvaluationPolicyV1 | undefined;
   modelCapabilities?:
     | {
@@ -289,7 +285,6 @@ export interface KestrelOneManagedProfileOverlay {
     | Pick<DelegationPolicyConfig, "maxConcurrentChildSessions" | "maxDepth">
     | undefined;
   reasoning?: TuiProfile["reasoning"] | undefined;
-  recoveryPolicy?: RecoveryPolicyV1 | undefined;
   evaluationPolicy?: RuntimeEvaluationPolicyV1 | undefined;
   theme?: ThemeOverrides | undefined;
   default?: boolean | undefined;

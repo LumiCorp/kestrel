@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { PgBoss } from "pg-boss";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
+import { evaluationReviewInteractionFixture } from "../../../../tests/fixtures/structured-review-contract";
 
 
 const databaseUrl = process.env.KESTREL_TURN_DB_TEST_URL?.trim();
@@ -55,6 +56,7 @@ test(
     const retriedStoppedThreadId = `turn-retried-stopped-${suffix}`;
     const resumedThreadId = `turn-resumed-${suffix}`;
     const interactionThreadId = `turn-interaction-${suffix}`;
+    const structuredReviewThreadId = `turn-structured-review-${suffix}`;
     const now = new Date();
 
     context.after(async () => {
@@ -124,6 +126,10 @@ test(
           ),
           (
             ${interactionThreadId}, 'Interaction Turn', ${userId},
+            ${organizationId}, 'mobile'
+          ),
+          (
+            ${structuredReviewThreadId}, 'Structured Review Turn', ${userId},
             ${organizationId}, 'mobile'
           )
       `;
@@ -503,6 +509,65 @@ test(
       status: "completed",
     });
     assert.equal(resumedCompletion.nextTurnId, queuedWhileWaiting.turn.id);
+
+    const reviewTurn = await createTurn(
+      structuredReviewThreadId,
+      "structured-review",
+    );
+    assert.ok(await store.claimDurableThreadTurn(reviewTurn.turn.id));
+    const reviewRequestId = `structured-review-${suffix}`;
+    const reviewEnvelope = {
+      ...structuredClone(evaluationReviewInteractionFixture),
+      requestId: reviewRequestId,
+      source: "runtime" as const,
+      status: "pending" as const,
+    };
+    await store.persistDurableAssistantOutcome({
+      turnId: reviewTurn.turn.id,
+      messages: [{
+        id: `assistant-structured-review-${suffix}`,
+        parts: [{
+          type: "data-kestrel-interaction",
+          id: `interaction:${reviewRequestId}`,
+          data: reviewEnvelope,
+        }],
+        model: "kestrel-one",
+        source: "mobile",
+        projectContextRevisionId: null,
+      }],
+      interaction: reviewEnvelope,
+    });
+    await assert.rejects(
+      store.resolveDurableRuntimeInteraction({
+        threadId: structuredReviewThreadId,
+        organizationId,
+        userId,
+        requestId: reviewRequestId,
+        eventType: "user.reply",
+        message: "Try again",
+        messageId: `review-free-text-${suffix}`,
+        source: "mobile",
+      }),
+      /must select one exact allowed recovery option/u,
+    );
+    const pendingReview = await store.listThreadInteractionsForUser({
+      threadId: structuredReviewThreadId,
+      organizationId,
+      userId,
+    });
+    assert.equal(pendingReview[0]?.status, "pending");
+    const resolvedReview = await store.resolveDurableRuntimeInteraction({
+      threadId: structuredReviewThreadId,
+      organizationId,
+      userId,
+      requestId: reviewRequestId,
+      eventType: "user.reply",
+      message: "Try again",
+      recoveryOptionId: "evaluation.accept_once",
+      messageId: `review-option-${suffix}`,
+      source: "mobile",
+    });
+    assert.equal(resolvedReview.shouldDispatch, true);
 
     const dispatchFailure = await createTurn(
       dispatchFailureThreadId,

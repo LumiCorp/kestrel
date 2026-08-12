@@ -1,51 +1,45 @@
 ---
-title: Recovery contracts
-summary: Reference Kestrel recovery policy, option identifiers, pending-request binding, resume behavior, terminal outcomes, and evidence.
+title: Runtime failure and review semantics
+summary: Reference Kestrel model retries, ordinary clarification, evaluation review, terminal failure, and legacy waits.
 section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-11
 ---
 
-Recovery is a policy-owned continuation of existing work. It is not a generic retry and must not create a replacement session merely because a run is blocked or failed.
+Kestrel does not use a generic recovery policy. Each failure stays with the component that owns it:
 
-## Recovery terminology
+- The model gateway retries transient model-call failures.
+- Tool gateways own tool-specific retries.
+- The execution engine owns deterministic loop intervention and ordinary clarification.
+- Runtime evaluation owns structured review.
+- Other failures terminate with their original safe error code.
 
-A recovery review describes the observed problem and supported next actions. A recovery option identifies one registered action. A pending request binds the operator’s selection to the exact waiting work.
+## Model calls
 
-## Recovery policy
+The selected Environment model receives at most three total attempts, before visible output starts and within the run budget. Kestrel does not switch providers or models automatically. Authentication, authorization, schema, validation, cancellation, malformed-response, HTTP 409, and HTTP 425 failures are terminal.
 
-The effective runtime profile determines which failures are reviewable, which actions may be offered, and what evidence is required before execution.
+## Questions and approvals
 
-## Registries and supported actions
+When the runtime genuinely needs user information, it emits an ordinary question and accepts text. External effects continue to use the existing approval contract and server-derived authority.
 
-Recovery actions come from explicit registries. Consumers display registered options and identifiers; they do not infer actions from error text.
+## Evaluation review
 
-## Recovery option identifiers
+Evaluation is the only producer of structured reviews. Every review persists its complete canonical interaction envelope and allows only `evaluation.accept_once`, `evaluation.revise`, and `terminal.fail`. Clients display shared labels but submit the exact option identifier. Free text cannot resolve an evaluation review.
 
-Treat option identifiers as opaque contract values. Return the selected identifier unchanged with the pending request identity.
+## Terminal failure and retry
 
-## Pending-request binding
+A terminal failure produces no interaction request. Clients show the original safe code and message. “Try turn again” or `/retry` starts a new execution attempt from the failed turn; it does not resume the failed run.
 
-A recovery response is valid only for the request, session/thread, actor, and current state that produced it. Reject stale, cross-session, or already-consumed responses.
+## Legacy recovery waits
 
-## Reviews and operator context
-
-Show the first unhealthy owner, observed evidence, effect of each action, and whether external work may already have occurred.
-
-## Resume behavior
-
-Resume the same durable session and request. Preserve conversation history, correlation, profile, workspace, and committed state.
-
-## Terminal outcomes
-
-Recovery may return to running work or finish as completed, failed, or cancelled. Waiting is non-terminal and must remain visible as such.
+Persisted `recovery_review` waits remain readable but cannot accept text or option identifiers. Clients show “This request can no longer be resumed safely” and provide the existing explicit cancellation action. Kestrel never guesses an answer or cancels these waits automatically.
 
 ## Persistence and replay
 
-Persist accepted decisions and resulting state transitions. Replay may reconstruct the decision path without silently executing an external effect again.
+Persist evaluation decisions and resulting state transitions. Duplicate decisions resolve once. Replay may reconstruct the evaluation path without repeating external effects.
 
 ## Consumer rules
 
-Render only registered options, bind submissions exactly, handle stale decisions explicitly, and verify the original work continued.
+Render ordinary questions as text input, approvals through approval controls, evaluation reviews through exact options, and terminal errors without a fake waiting state.

@@ -151,7 +151,9 @@ export function createPreparedToolCallV1(input: {
   const approval = input.approval === undefined
     ? undefined
     : {
-        ...input.approval,
+        ...(input.approval.approvalId === undefined
+          ? {}
+          : { approvalId: input.approval.approvalId }),
         authorityRevision: hashCanonical({
           version: "prepared-tool-approval-authority-v1",
           activation: input.activation,
@@ -159,9 +161,6 @@ export function createPreparedToolCallV1(input: {
           inputAdapters,
           policyRevision: input.policy.policyRevision,
           upstreamAuthorityRevision: input.approval.authorityRevision,
-          ...(input.approval.recoveryAdapterId === undefined
-            ? {}
-            : { recoveryAdapterId: input.approval.recoveryAdapterId }),
         }),
       };
   return parsePreparedToolCallV1({

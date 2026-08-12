@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { serializeCanonicalApprovalPayload } from "@kestrel-agents/protocol";
+import {
+  createRunnerStructuredReviewInteractionV1,
+  serializeCanonicalApprovalPayload,
+} from "@kestrel-agents/protocol";
 
 import type { NormalizedOutput } from "../../src/kestrel/contracts/execution.js";
 import type { PersistedRunRecord, SessionRecord } from "../../src/kestrel/contracts/store.js";
+import { createEvaluationReviewBindingV1 } from "../../src/kestrel/contracts/evaluation.js";
 
 import {
   ThreadRuntime,
@@ -844,22 +848,35 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
   });
   const request = waiting.wait?.request;
   assert.ok(request);
+  const policyRevision = `sha256:${"b".repeat(64)}`;
+  const profileFingerprint = "a".repeat(64);
   await sessionStore.upsertInteractionRequest({
     ...request,
+    interaction: createRunnerStructuredReviewInteractionV1({
+      reason: "evaluation_review",
+      requestId: request.requestId,
+      prompt: "Choose an exact evaluation outcome.",
+      allowedOptionIds: ["evaluation.accept_once"],
+      evaluationTechnicalDisclosure: {
+        candidate: "Evaluation candidate",
+        assertions: [],
+        evidenceReferences: [],
+      },
+    }),
     metadata: {
       ...(request.metadata ?? {}),
       reason: "evaluation_review",
-      recoveryReviewBinding: {
-        version: "recovery_review_binding_v1",
-        bindingId: request.requestId,
-        decisionId: "evaluation-decision-1",
+      decisionId: "evaluation-decision-1",
+      evaluationReviewBinding: createEvaluationReviewBindingV1({
+        requestId: request.requestId,
         threadId: request.threadId,
         runId: waiting.output.runId,
-        executionProfileFingerprint: "a".repeat(64),
-        policyRevision: `sha256:${"b".repeat(64)}`,
-        allowedOptionIds: ["evaluation.accept"],
-        requestedAt: new Date().toISOString(),
-      },
+        evaluationDecisionId: "evaluation-decision-1",
+        profileFingerprint,
+        policyRevision,
+        allowedOptionIds: ["evaluation.accept_once"],
+        issuedAt: new Date().toISOString(),
+      }),
     },
   });
 
@@ -882,7 +899,7 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
     threadId: "thread-message-exact",
     requestId: request.requestId,
     message: "Accept",
-    recoveryOptionId: "evaluation.accept",
+    recoveryOptionId: "evaluation.accept_once",
     actor: { actorType: "end_user", actorId: "user-1" },
   });
   for (let attempt = 0; attempt < 10 && executor.inputs.length < 3; attempt += 1) await tick();
@@ -893,7 +910,7 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
   assert.equal((await runtime.getThreadStatus("thread-message-exact"))?.thread.currentRequestId, undefined);
 });
 
-test("ThreadRuntime retires persisted generic recovery waits and releases queued messages", async () => {
+test("ThreadRuntime preserves persisted generic recovery waits until explicit cancellation", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
     { output: buildOutput({ runId: "ignored-retired-follow-up", status: "COMPLETED" }) },
@@ -939,16 +956,13 @@ test("ThreadRuntime retires persisted generic recovery waits and releases queued
   });
 
   const reconciled = await runtime.getThreadStatus(thread.threadId);
-  assert.equal(reconciled?.thread.status, "FAILED");
-  assert.equal(reconciled?.thread.currentRequestId, undefined);
+  assert.equal(reconciled?.thread.status, "WAITING");
+  assert.equal(reconciled?.thread.currentRequestId, "request-retired-recovery");
   assert.equal(
-    (await sessionStore.getInteractionRequest("request-retired-recovery"))?.response?.validationErrorCode,
-    "RECOVERY_REVIEW_RETIRED",
+    (await sessionStore.getInteractionRequest("request-retired-recovery"))?.status,
+    "PENDING",
   );
-  for (let attempt = 0; attempt < 10 && executor.inputs.length < 1; attempt += 1) await tick();
-  assert.equal(executor.inputs.length, 1);
-  assert.equal(executor.inputs[0]?.eventType, "user.follow_up");
-  assert.equal(executor.inputs[0]?.message, "What happened?");
+  assert.equal(executor.inputs.length, 0);
 });
 
 test("ThreadRuntime supersedes stale waits when a new continuation wait replaces them", async () => {

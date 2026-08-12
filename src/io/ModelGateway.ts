@@ -10,6 +10,7 @@ import {
   type ModelTimingPolicyConfig,
 } from "./ModelTimingPolicy.js";
 import { RunCancelledError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { classifyModelTransportFailure } from "./ModelTransportError.js";
 
 export type ModelInvoker = <T>(request: ModelRequest, options?: ModelGatewayCallOptions) => Promise<T>;
 
@@ -127,18 +128,7 @@ export class RetryingModelGateway implements ModelGateway {
             Date.now() - startedAtMs,
           );
         const retryDelayMs = retryEligible ? resolveRetryDelayMs(error, attempt) : undefined;
-        const retryAuthorized = retryEligible && options.authorizeRetry !== undefined
-          ? await options.authorizeRetry({
-              attempt: attemptNumber,
-              maxAttempts,
-              ...(readFailureCode(error) !== undefined ? { failureCode: readFailureCode(error) } : {}),
-              ...(readFailureClass(error) !== undefined ? { failureClass: readFailureClass(error) } : {}),
-              retryable,
-              visibleOutputStarted,
-              ...(retryDelayMs !== undefined ? { retryDelayMs } : {}),
-            })
-          : retryEligible;
-        const willRetry = retryEligible && retryAuthorized;
+        const willRetry = retryEligible;
         await options.onEvent?.({
           type: "attempt.failed",
           attempt: attemptNumber,
@@ -268,7 +258,7 @@ function hasBudgetForAnotherAttempt(
 function resolveRetryDelayMs(error: unknown, attempt: number): number {
   const hintedRetryAfterMs = readRetryAfterMs(error);
   if (hintedRetryAfterMs !== undefined) {
-    return applyRetryJitter(hintedRetryAfterMs);
+    return Math.min(30_000, hintedRetryAfterMs);
   }
 
   const rateLimited = isRateLimitedModelError(error);
@@ -293,67 +283,50 @@ function isRetryableModelError(error: unknown): boolean {
   const status = typeof record?.status === "number" ? record.status : undefined;
 
   if (
-    code === "MODEL_AUTH_ERROR" ||
-    code === "MODEL_PROVIDER_SCHEMA"
+    status === 401 ||
+    status === 403 ||
+    status === 409 ||
+    status === 425
   ) {
     return false;
   }
 
-  if (code === "MODEL_BAD_RESPONSE") {
-    return isRetryableProviderWrapperBadResponse(error);
+  if (
+    status === 408 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ) {
+    return true;
+  }
+
+  if (
+    code === "MODEL_AUTH_ERROR" ||
+    code === "MODEL_PROVIDER_SCHEMA" ||
+    code === "MODEL_VALIDATION_ERROR" ||
+    code === "MODEL_BAD_RESPONSE" ||
+    code === "MODEL_MALFORMED_RESPONSE"
+  ) {
+    return false;
   }
 
   if (
     code === "IO_MODEL_TIMEOUT" ||
     code === "MODEL_TIMEOUT" ||
     code === "MODEL_RATE_LIMITED" ||
-    code === "MODEL_PROVIDER_ERROR" ||
     code === "MODEL_NETWORK_DNS" ||
     code === "MODEL_NETWORK_ERROR"
   ) {
     return true;
   }
 
-  if (status === undefined) {
-    return false;
-  }
-
-  return (
-    status === 408 ||
-    status === 409 ||
-    status === 425 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  );
-}
-
-function isRetryableProviderWrapperBadResponse(error: unknown): boolean {
-  const record = asRecord(error);
-  const topLevelStatus = typeof record?.status === "number" ? record.status : undefined;
-  const details = asRecord(record?.details);
-  const detailStatus = typeof details?.status === "number" ? details.status : undefined;
-  if ((topLevelStatus ?? detailStatus) !== 400) {
-    return false;
-  }
-
-  if (
-    typeof details?.nestedProviderMessage === "string" ||
-    typeof details?.providerRaw === "string" ||
-    details?.parsedProviderError !== undefined
-  ) {
-    return false;
-  }
-
-  if (details?.providerMessage === "Provider returned error") {
+  if (classifyModelTransportFailure(error) !== undefined) {
     return true;
   }
 
-  const parsedBody = asRecord(details?.parsedBody);
-  const parsedError = asRecord(parsedBody?.error);
-  return parsedError?.message === "Provider returned error";
+  return false;
 }
 
 function isRateLimitedModelError(error: unknown): boolean {

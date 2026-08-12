@@ -344,7 +344,6 @@ export interface RunnerProfile {
   sessionPrefix: string;
   modelProvider?: RunnerModelProvider | undefined;
   model?: string | undefined;
-  recoveryPolicy?: Record<string, unknown> | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   defaultInteractionMode?: RunnerInteractionMode | undefined;
   defaultActSubmode?: RunnerActSubmode | undefined;
@@ -565,6 +564,364 @@ export interface RunnerInteractionRequestV1 extends Record<string, unknown> {
     toolName: string;
     input: unknown;
   } | undefined;
+}
+
+export type RunnerStructuredReviewReason =
+  | "recovery_review"
+  | "evaluation_review";
+
+export type RunnerStructuredReviewOptionId =
+  | "retry.primary"
+  | "evaluation.accept_once"
+  | "evaluation.revise"
+  | "terminal.fail";
+
+export type RunnerStructuredReviewClassificationV1 =
+  | { kind: "ordinary" }
+  | {
+      kind: "structured_review";
+      reason: RunnerStructuredReviewReason;
+      requestId: string;
+      eventType: "user.reply";
+      prompt: string;
+      allowedOptionIds: RunnerStructuredReviewOptionId[];
+      triggeringFailureCode?: string | undefined;
+      triggeringFailureSummary?: string | undefined;
+      evaluationTechnicalDisclosure?: Record<string, unknown> | undefined;
+    }
+  | {
+      kind: "invalid_review";
+      reason?: RunnerStructuredReviewReason | undefined;
+      error: string;
+    };
+
+export interface CreateRunnerStructuredReviewInteractionV1Input {
+  reason: RunnerStructuredReviewReason;
+  requestId: string;
+  prompt: string;
+  allowedOptionIds: readonly string[];
+  triggeringFailureCode?: string | undefined;
+  triggeringFailureSummary?: string | undefined;
+  evaluationTechnicalDisclosure?: Record<string, unknown> | undefined;
+}
+
+export function parseRunnerInteractionRequestV1(
+  value: unknown,
+  expectedEventType?: string | undefined,
+): RunnerInteractionRequestV1 {
+  const interaction = requireRecord(value, "runner interaction");
+  const eventType = expectedEventType ?? requireNonEmptyString(
+    interaction.eventType,
+    "runner interaction.eventType",
+  );
+  validateRunnerInteractionRequest(interaction, "runner interaction", eventType);
+  return structuredClone(interaction) as RunnerInteractionRequestV1;
+}
+
+const RECOVERY_REVIEW_OPTION_IDS = new Set<RunnerStructuredReviewOptionId>([
+  "retry.primary",
+  "terminal.fail",
+]);
+const EVALUATION_REVIEW_OPTION_IDS = new Set<RunnerStructuredReviewOptionId>([
+  "evaluation.accept_once",
+  "evaluation.revise",
+  "terminal.fail",
+]);
+
+export function runnerStructuredReviewOptionLabel(
+  reason: RunnerStructuredReviewReason,
+  optionId: RunnerStructuredReviewOptionId,
+): string {
+  if (reason === "recovery_review") {
+    if (optionId === "retry.primary") return "Try again";
+    if (optionId === "terminal.fail") return "End this run";
+  } else {
+    if (optionId === "evaluation.accept_once") return "Accept once";
+    if (optionId === "evaluation.revise") return "Revise result";
+    if (optionId === "terminal.fail") return "Fail run";
+  }
+  throw new RunnerProtocolContractError(
+    `Structured review option '${optionId}' is invalid for '${reason}'.`,
+  );
+}
+
+export function createRunnerStructuredReviewInteractionV1(
+  input: CreateRunnerStructuredReviewInteractionV1Input,
+): RunnerInteractionRequestV1 {
+  if (input.reason === "recovery_review") {
+    throw new RunnerProtocolContractError(
+      "Generic recovery reviews are retired and cannot be created.",
+    );
+  }
+  const requestId = requireNonEmptyString(input.requestId, "structured review.requestId");
+  const prompt = requireNonEmptyString(input.prompt, "structured review.prompt");
+  const allowedOptionIds = validateStructuredReviewOptionIds(
+    input.reason,
+    input.allowedOptionIds,
+    "structured review.allowedOptionIds",
+  );
+  const interaction: RunnerInteractionRequestV1 = {
+    version: "v1",
+    requestId,
+    kind: "user_input",
+    eventType: "user.reply",
+    prompt,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["recoveryOptionId"],
+      properties: {
+        recoveryOptionId: {
+          type: "string",
+          enum: [...allowedOptionIds],
+        },
+      },
+    },
+    metadata: {
+      reason: input.reason,
+      allowedOptionIds: [...allowedOptionIds],
+      evaluationTechnicalDisclosure: validateEvaluationTechnicalDisclosure(
+        input.evaluationTechnicalDisclosure,
+        "structured review.evaluationTechnicalDisclosure",
+      ),
+    },
+  };
+  const classification = parseRunnerStructuredReviewInteractionV1(interaction);
+  if (classification.kind !== "structured_review") {
+    throw new RunnerProtocolContractError(
+      classification.kind === "invalid_review"
+        ? classification.error
+        : "Structured review interaction was not recognized.",
+    );
+  }
+  return interaction;
+}
+
+export function parseRunnerStructuredReviewInteractionV1(
+  value: unknown,
+): RunnerStructuredReviewClassificationV1 {
+  if (!isRecord(value)) return { kind: "ordinary" };
+  const metadata = isRecord(value.metadata) ? value.metadata : undefined;
+  const reason = metadata?.reason;
+  if (reason !== "recovery_review" && reason !== "evaluation_review") {
+    return metadata !== undefined && Object.hasOwn(metadata, "allowedOptionIds")
+      ? {
+          kind: "invalid_review",
+          error: "Structured reviews require a supported metadata.reason.",
+        }
+      : { kind: "ordinary" };
+  }
+  const reviewMetadata = metadata as Record<string, unknown>;
+  const invalid = (error: string): RunnerStructuredReviewClassificationV1 => ({
+    kind: "invalid_review",
+    reason,
+    error,
+  });
+  if (reason === "recovery_review") {
+    return invalid(
+      "This recovery request can no longer be resumed safely. End the waiting turn and retry explicitly.",
+    );
+  }
+  if (value.version !== "v1" || value.kind !== "user_input") {
+    return invalid("Structured reviews must be v1 user_input interactions.");
+  }
+  if (value.eventType !== "user.reply") {
+    return invalid("Structured reviews must use the user.reply event type.");
+  }
+  if (typeof value.requestId !== "string" || value.requestId.trim().length === 0) {
+    return invalid("Structured reviews require a non-empty requestId.");
+  }
+  if (typeof value.prompt !== "string" || value.prompt.trim().length === 0) {
+    return invalid("Structured reviews require a non-empty prompt.");
+  }
+  const metadataKeys = Object.keys(reviewMetadata).sort();
+  const allowedMetadataKeys = ["allowedOptionIds", "evaluationTechnicalDisclosure", "reason"];
+  if (metadataKeys.some((key) => allowedMetadataKeys.includes(key) === false)) {
+    return invalid("Structured review metadata contains unsupported fields.");
+  }
+  let allowedOptionIds: RunnerStructuredReviewOptionId[];
+  try {
+    allowedOptionIds = validateStructuredReviewOptionIds(
+      reason,
+      reviewMetadata.allowedOptionIds,
+      "structured review metadata.allowedOptionIds",
+    );
+  } catch (error) {
+    return invalid(error instanceof Error ? error.message : "Structured review options are invalid.");
+  }
+  const inputSchema = isRecord(value.inputSchema) ? value.inputSchema : undefined;
+  const properties = isRecord(inputSchema?.properties) ? inputSchema.properties : undefined;
+  const optionSchema = isRecord(properties?.recoveryOptionId)
+    ? properties.recoveryOptionId
+    : undefined;
+  const required = inputSchema?.required;
+  const schemaOptions = optionSchema?.enum;
+  if (
+    inputSchema?.type !== "object" ||
+    inputSchema.additionalProperties !== false ||
+    !Array.isArray(required) ||
+    required.length !== 1 ||
+    required[0] !== "recoveryOptionId" ||
+    properties === undefined ||
+    Object.keys(properties).length !== 1 ||
+    optionSchema?.type !== "string" ||
+    !Array.isArray(schemaOptions) ||
+    schemaOptions.some((optionId) => typeof optionId !== "string")
+  ) {
+    return invalid("Structured reviews require the canonical recoveryOptionId input schema.");
+  }
+  if (
+    schemaOptions.length !== allowedOptionIds.length ||
+    schemaOptions.some((optionId, index) => optionId !== allowedOptionIds[index])
+  ) {
+    return invalid("Structured review schema options must exactly match metadata.allowedOptionIds.");
+  }
+  let evaluationTechnicalDisclosure: Record<string, unknown> | undefined;
+  try {
+    evaluationTechnicalDisclosure = validateEvaluationTechnicalDisclosure(
+      reviewMetadata.evaluationTechnicalDisclosure,
+      "structured review metadata.evaluationTechnicalDisclosure",
+    );
+  } catch (error) {
+    return invalid(error instanceof Error ? error.message : "Evaluation review disclosure is invalid.");
+  }
+  return {
+    kind: "structured_review",
+    reason,
+    requestId: value.requestId.trim(),
+    eventType: "user.reply",
+    prompt: value.prompt.trim(),
+    allowedOptionIds,
+    ...(typeof reviewMetadata.triggeringFailureCode === "string"
+      ? { triggeringFailureCode: reviewMetadata.triggeringFailureCode.trim() }
+      : {}),
+    ...(typeof reviewMetadata.triggeringFailureSummary === "string"
+      ? { triggeringFailureSummary: reviewMetadata.triggeringFailureSummary.trim() }
+      : {}),
+    ...(evaluationTechnicalDisclosure !== undefined
+      ? { evaluationTechnicalDisclosure }
+      : {}),
+  };
+}
+
+function validateStructuredReviewOptionIds(
+  reason: RunnerStructuredReviewReason,
+  value: unknown,
+  label: string,
+): RunnerStructuredReviewOptionId[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new RunnerProtocolContractError(`${label} must be a non-empty array.`);
+  }
+  const supported = reason === "recovery_review"
+    ? RECOVERY_REVIEW_OPTION_IDS
+    : EVALUATION_REVIEW_OPTION_IDS;
+  const result: RunnerStructuredReviewOptionId[] = [];
+  for (const optionId of value) {
+    if (typeof optionId !== "string" || optionId.trim().length === 0) {
+      throw new RunnerProtocolContractError(`${label} must contain non-empty strings.`);
+    }
+    if (!supported.has(optionId as RunnerStructuredReviewOptionId)) {
+      throw new RunnerProtocolContractError(
+        `${label} contains unsupported option '${optionId}'.`,
+      );
+    }
+    if (result.includes(optionId as RunnerStructuredReviewOptionId)) {
+      throw new RunnerProtocolContractError(`${label} must not contain duplicates.`);
+    }
+    result.push(optionId as RunnerStructuredReviewOptionId);
+  }
+  return result;
+}
+
+function validateEvaluationTechnicalDisclosure(
+  value: unknown,
+  label: string,
+): Record<string, unknown> {
+  const disclosure = requireRecord(value, label);
+  const allowedKeys = new Set([
+    "candidate",
+    "score",
+    "confidence",
+    "assertions",
+    "rationale",
+    "evidenceReferences",
+    "reasonCode",
+  ]);
+  if (Object.keys(disclosure).some((key) => allowedKeys.has(key) === false)) {
+    throw new RunnerProtocolContractError(`${label} contains unsupported fields.`);
+  }
+  requireNonEmptyString(disclosure.candidate, `${label}.candidate`);
+  if (disclosure.score !== undefined && typeof disclosure.score !== "number") {
+    throw new RunnerProtocolContractError(`${label}.score must be a number.`);
+  }
+  if (disclosure.confidence !== undefined && typeof disclosure.confidence !== "number") {
+    throw new RunnerProtocolContractError(`${label}.confidence must be a number.`);
+  }
+  if (disclosure.rationale !== undefined) {
+    requireNonEmptyString(disclosure.rationale, `${label}.rationale`);
+  }
+  if (disclosure.reasonCode !== undefined) {
+    requireNonEmptyString(disclosure.reasonCode, `${label}.reasonCode`);
+  }
+  if (!Array.isArray(disclosure.assertions)) {
+    throw new RunnerProtocolContractError(`${label}.assertions must be an array.`);
+  }
+  for (const [index, assertionValue] of disclosure.assertions.entries()) {
+    const assertion = requireRecord(
+      assertionValue,
+      `${label}.assertions[${index}]`,
+    );
+    const allowedAssertionKeys = new Set([
+      "assertionId",
+      "required",
+      "passed",
+      "rationale",
+      "evidenceRefs",
+    ]);
+    if (Object.keys(assertion).some((key) => !allowedAssertionKeys.has(key))) {
+      throw new RunnerProtocolContractError(
+        `${label}.assertions[${index}] contains unsupported fields.`,
+      );
+    }
+    requireNonEmptyString(
+      assertion.assertionId,
+      `${label}.assertions[${index}].assertionId`,
+    );
+    if (typeof assertion.passed !== "boolean") {
+      throw new RunnerProtocolContractError(
+        `${label}.assertions[${index}].passed must be a boolean.`,
+      );
+    }
+    if (assertion.required !== undefined && typeof assertion.required !== "boolean") {
+      throw new RunnerProtocolContractError(
+        `${label}.assertions[${index}].required must be a boolean.`,
+      );
+    }
+    if (assertion.rationale !== undefined) {
+      requireNonEmptyString(
+        assertion.rationale,
+        `${label}.assertions[${index}].rationale`,
+      );
+    }
+    if (
+      assertion.evidenceRefs !== undefined &&
+      (!Array.isArray(assertion.evidenceRefs) ||
+        assertion.evidenceRefs.some((reference) => typeof reference !== "string"))
+    ) {
+      throw new RunnerProtocolContractError(
+        `${label}.assertions[${index}].evidenceRefs must be a string array.`,
+      );
+    }
+  }
+  if (
+    !Array.isArray(disclosure.evidenceReferences) ||
+    disclosure.evidenceReferences.some(
+      (reference) => typeof reference !== "string" || reference.trim().length === 0,
+    )
+  ) {
+    throw new RunnerProtocolContractError(`${label}.evidenceReferences must be a string array.`);
+  }
+  return structuredClone(disclosure);
 }
 
 export interface RunnerWaitFor extends Record<string, unknown> {
@@ -3156,6 +3513,17 @@ function validateRunnerWaitFor(value: unknown, label: string): void {
   if (waitFor.interaction !== undefined) {
     validateRunnerInteractionRequest(waitFor.interaction, `${label}.interaction`, eventType);
   }
+  validateOptionalRecord(waitFor.metadata, `${label}.metadata`);
+  const waitMetadata = isRecord(waitFor.metadata) ? waitFor.metadata : undefined;
+  const reviewReason = waitMetadata?.reason;
+  if (reviewReason === "evaluation_review") {
+    const review = parseRunnerStructuredReviewInteractionV1(waitFor.interaction);
+    if (review.kind !== "structured_review" || review.reason !== "evaluation_review") {
+      throw new RunnerProtocolContractError(
+        `${label}.interaction must contain the canonical evaluation_review contract`,
+      );
+    }
+  }
   if (
     (waitFor.kind === "user" || waitFor.kind === "approval") &&
     waitFor.interaction === undefined
@@ -3185,6 +3553,16 @@ function validateRunnerInteractionRequest(
   }
   requireNonEmptyString(interaction.prompt, `${label}.prompt`);
   validateOptionalRecord(interaction.inputSchema, `${label}.inputSchema`);
+  validateOptionalRecord(interaction.metadata, `${label}.metadata`);
+  const structuredReview = parseRunnerStructuredReviewInteractionV1(interaction);
+  if (
+    structuredReview.kind === "invalid_review" &&
+    structuredReview.reason !== "recovery_review"
+  ) {
+    throw new RunnerProtocolContractError(
+      `${label} is an invalid structured review: ${structuredReview.error}`,
+    );
+  }
   if (interaction.approval !== undefined) {
     const approval = requireRecord(interaction.approval, `${label}.approval`);
     requireNonEmptyString(approval.toolCallId, `${label}.approval.toolCallId`);
@@ -3293,7 +3671,6 @@ function validateRunnerProfile(
     "lmstudio",
   ]);
   validateOptionalNonEmptyString(profile.model, `${label}.model`);
-  validateOptionalRecord(profile.recoveryPolicy, `${label}.recoveryPolicy`);
   validateOptionalBoolean(profile.modeSystemV2Enabled, `${label}.modeSystemV2Enabled`);
   validateOptionalEnum(profile.defaultInteractionMode, `${label}.defaultInteractionMode`, [
     "chat",

@@ -8,6 +8,7 @@ import {
 } from "./OpenAiErrors.js";
 import { buildOpenAiHttpRequest, mapOpenAiResponse } from "./OpenAiMapper.js";
 import { readServerSentEvents } from "../SseStream.js";
+import { parseRetryAfterMs } from "../../src/io/RetryAfter.js";
 
 interface CreateOpenAiInvokerOptions {
   env: OpenAiEnvConfig;
@@ -44,7 +45,12 @@ export function createOpenAiInvoker(options: CreateOpenAiInvokerOptions): OpenAi
       const requestId = response.headers.get("x-request-id") ?? undefined;
       if (response.ok === false) {
         const bodyText = await safeReadText(response);
-        throw createOpenAiHttpError(response.status, bodyText, providerLabel);
+        throw createOpenAiHttpError(
+          response.status,
+          bodyText,
+          providerLabel,
+          parseRetryAfterMs(response.headers.get("retry-after")),
+        );
       }
 
       const payload = callOptions.onEvent === undefined
