@@ -73,6 +73,7 @@ test("Workspace preview tools follow Environment App approval capabilities", () 
       toolAllowlist: [
         "workspace.preview.publish",
         "workspace.preview.list",
+        "workspace.preview.inspect",
         "workspace.preview.renew",
         "workspace.preview.close",
       ],
@@ -80,17 +81,20 @@ test("Workspace preview tools follow Environment App approval capabilities", () 
     effectiveCapabilities: [
       "app:built_in.previews.publish:auto",
       "app:built_in.previews.list:auto",
+      "app:built_in.previews.inspect:auto",
       "app:built_in.previews.close:ask",
     ],
   });
   assert.deepEqual(restricted.toolAllowlist, [
     "workspace.preview.publish",
     "workspace.preview.list",
+    "workspace.preview.inspect",
     "workspace.preview.close",
   ]);
   assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
     "workspace.preview.publish": "auto",
     "workspace.preview.list": "auto",
+    "workspace.preview.inspect": "auto",
     "workspace.preview.close": "ask",
   });
 });

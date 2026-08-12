@@ -435,6 +435,13 @@
       "when": 1786464000000,
       "tag": "0061_run_scoped_authorization",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1786467600000,
+      "tag": "0062_runtime_event_cursor",
+      "breakpoints": true
     }
   ]
 }

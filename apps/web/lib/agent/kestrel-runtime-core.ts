@@ -51,6 +51,7 @@ export type KestrelOneHistoryEntry = RunnerHistoryEntry;
 export type KestrelOneAgentTurnInput = KestrelAgentTurnInput & {
   interactionMode: KestrelOneInteractionMode;
   signal?: AbortSignal;
+  abortBehavior?: "cancel" | "detach" | undefined;
   resumeRequestId?: string | undefined;
 };
 
@@ -88,17 +89,21 @@ export function adaptKestrelAgentForKestrelOne(
 ): KestrelOneAgent {
   return {
     stream(input, context) {
-      if (input.resumeRequestId !== undefined) {
-        const { resumeRequestId, ...turn } = input;
+      const {
+        abortBehavior: _abortBehavior,
+        resumeRequestId,
+        ...agentInput
+      } = input;
+      if (resumeRequestId !== undefined) {
         return agent.resumeStream(
           {
-            ...(turn as KestrelAgentResumeInput),
+            ...(agentInput as KestrelAgentResumeInput),
             requestId: resumeRequestId,
           },
           context
         );
       }
-      return agent.stream(input, context);
+      return agent.stream(agentInput, context);
     },
     close() {
       return agent.close();
@@ -110,6 +115,7 @@ export type KestrelOneAgentResponsePersistMeta = {
   model: string;
   title: string | null;
   errorMessage: string | null;
+  errorCode?: string | undefined;
   failureVisible: boolean;
   terminalStatus: KestrelTerminalStatus;
   interaction: KestrelInteractionPresentation | null;
@@ -158,6 +164,7 @@ export type KestrelOneAgentResponseInput = {
   };
   transientTitle?: Promise<string | null> | null;
   signal?: AbortSignal;
+  abortBehavior?: "cancel" | "detach" | undefined;
   onUiChunk?: (chunk: KestrelUiStreamChunk) => void;
   onRuntimeEvent?: (event: RunnerRunStreamEvent) => void;
   onFinishPersist?: (
@@ -184,6 +191,7 @@ export function createKestrelOneRequestContext(
       tenantId: input.organizationId,
     },
     tenantId: input.organizationId,
+    durability: "continue_on_disconnect",
   };
 }
 
@@ -286,6 +294,7 @@ export function createKestrelOneAgentResponseFromAgent(
                 },
               },
               signal: input.signal ?? input.request.signal,
+              abortBehavior: input.abortBehavior,
             },
             context,
             input.runtimeModel
@@ -350,6 +359,7 @@ export function createKestrelOneAgentResponseFromAgent(
           DEFAULT_PROFILE_ID,
         title: title ?? null,
         errorMessage: streamResult.errorMessage,
+        errorCode: streamResult.errorCode,
         failureVisible: streamResult.failureVisible,
         terminalStatus: streamResult.terminalStatus,
         interaction: streamResult.interaction,

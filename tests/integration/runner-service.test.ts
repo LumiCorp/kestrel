@@ -70,6 +70,15 @@ class MemoryRunnerServiceEventJournal implements RunnerServiceEventJournal {
 
   ready(): void {}
 
+  findTerminalEvent(filter: RunnerEventSubscriptionFilter): RunnerEvent | null {
+    return [...this.events].reverse().find((event) =>
+      (event.type === "run.completed"
+        || event.type === "run.failed"
+        || event.type === "run.cancelled")
+      && matchesTestSubscriptionFilter(event, filter)
+    ) ?? null;
+  }
+
   async replayAfter(
     sinceEventId: string,
     filter: RunnerEventSubscriptionFilter,
@@ -2095,10 +2104,14 @@ test("runner service keeps durable runs active when a stream disconnects", async
         },
       }),
     });
-    assert.equal(unknownCursor.status, 409);
+    assert.equal(unknownCursor.status, 410);
+    assert.equal(
+      unknownCursor.headers.get("x-kestrel-event-cursor-status"),
+      "unknown",
+    );
     const unknownCursorBody = await unknownCursor.text();
     assert.match(unknownCursorBody, /"type":"runner\.error"/);
-    assert.match(unknownCursorBody, /"code":"RUNNER_EVENT_CURSOR_UNKNOWN"/);
+    assert.match(unknownCursorBody, /"code":"RUNNER_EVENT_CURSOR_EXPIRED"/);
     assert.doesNotMatch(unknownCursorBody, /"type":"run\.started"/);
 
     const replay = await fetch(`${server.url}/events/stream`, {
@@ -2220,6 +2233,35 @@ test("runner service replays journaled events from sinceEventId after host recre
     runtimeFactory,
   });
   try {
+    const reconciled = await fetch(`${recreatedServer.url}/events/stream`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        connection: "close",
+      },
+      body: JSON.stringify({
+        filter: {
+          sessionId: "session-journal-replay",
+          runId: "run-journal-replay",
+          sinceEventId: "missing-journal-cursor",
+        },
+        metadata: {
+          actor: {
+            actorId: "web-user-1",
+            actorType: "end_user",
+            tenantId: "internal",
+          },
+          tenantId: "internal",
+        },
+      }),
+    });
+    assert.equal(reconciled.status, 200);
+    assert.equal(reconciled.headers.get("x-kestrel-event-cursor-status"), "unknown");
+    const reconciledBody = await reconciled.text();
+    assert.match(reconciledBody, new RegExp(completed.id));
+    assert.match(reconciledBody, /"type":"run\.completed"/u);
+    assert.doesNotMatch(reconciledBody, /"type":"run\.started"/u);
+
     const replay = await fetch(`${recreatedServer.url}/events/stream`, {
       method: "POST",
       headers: {

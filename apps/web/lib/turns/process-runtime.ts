@@ -9,6 +9,8 @@ import { eq } from "drizzle-orm";
 import {
   cancelInterruptedKestrelOneExecution,
   createKestrelOneAgentResponse,
+  createKestrelOneReattachmentResponse,
+  type KestrelOneAgentResponseInput,
 } from "@/lib/agent/kestrel-runtime";
 import {
   appendKestrelUiChunkIfDurable,
@@ -254,6 +256,7 @@ export async function processDurableThreadTurn(
   turnId: string,
   options: { retryCount?: number; workerSignal?: AbortSignal } = {},
 ) {
+  let reattachExecutionId: string | null = null;
   if ((options.retryCount ?? 0) > 0) {
     const interrupted = await knowledgeDb.query.threadTurns.findFirst({
       where: eq(schema.threadTurns.id, turnId),
@@ -268,7 +271,7 @@ export async function processDurableThreadTurn(
       },
     });
     if (interrupted?.status === "running") {
-      if (interrupted.environmentExecutionId) {
+      if (interrupted.cancelRequestedAt && interrupted.environmentExecutionId) {
         await cancelInterruptedKestrelOneExecution({
           organizationId: interrupted.organizationId,
           executionId: interrupted.environmentExecutionId,
@@ -284,34 +287,53 @@ export async function processDurableThreadTurn(
         });
       }
       const stopped = Boolean(interrupted.cancelRequestedAt);
-      const failureMessage = stopped
-        ? "The user stopped this turn before it finished."
-        : "The Kestrel agent was interrupted before this turn finished. Please try again.";
-      const scaffold = await getDurableTurnOpenReplayScaffold(turnId);
-      const presentation = buildFailurePresentation({
-        errorMessage: failureMessage,
-        status: stopped ? "cancelled" : "failed",
-        turn: {
-          id: turnId,
-          projectContextRevisionId: interrupted.projectContextRevisionId,
-          requestedModelId: interrupted.requestedModelId,
-          source: interrupted.source,
-        },
-        assistantMessageId: scaffold.assistantMessageId,
-        textPartId: scaffold.textPartId,
-      });
-      const completion = await completeDurableThreadTurn({
-        turnId,
-        status: stopped ? "cancelled" : "failed",
-        messages: presentation.messages,
-        replayChunks: presentation.replayChunks,
-        failureCode: stopped ? "TURN_STOPPED" : "TURN_WORKER_INTERRUPTED",
-        failureMessage: stopped ? null : failureMessage,
-      });
-      return { processed: true, nextTurnId: completion.nextTurnId };
+      if (!stopped && interrupted.environmentExecutionId) {
+        reattachExecutionId = interrupted.environmentExecutionId;
+        await appendDurableTurnEvent({
+          turnId,
+          type: "turn.activity",
+          data: {
+            stage: "runtime.reconnecting",
+            message: "Connection interrupted; reconnecting to the running agent.",
+            executionId: reattachExecutionId,
+          },
+        });
+      }
+      if (!stopped && reattachExecutionId) {
+        // The execution remains owned by the durable runner. Continue below
+        // with journal reattachment; never replay the original run.start.
+      } else {
+        const failureMessage = stopped
+          ? "The user stopped this turn before it finished."
+          : "The connection to the agent was interrupted before completion.";
+        const scaffold = await getDurableTurnOpenReplayScaffold(turnId);
+        const presentation = buildFailurePresentation({
+          errorMessage: failureMessage,
+          status: stopped ? "cancelled" : "failed",
+          turn: {
+            id: turnId,
+            projectContextRevisionId: interrupted.projectContextRevisionId,
+            requestedModelId: interrupted.requestedModelId,
+            source: interrupted.source,
+          },
+          assistantMessageId: scaffold.assistantMessageId,
+          textPartId: scaffold.textPartId,
+        });
+        const completion = await completeDurableThreadTurn({
+          turnId,
+          status: stopped ? "cancelled" : "failed",
+          messages: presentation.messages,
+          replayChunks: presentation.replayChunks,
+          failureCode: stopped ? "TURN_STOPPED" : "TURN_WORKER_INTERRUPTED",
+          failureMessage: stopped ? null : failureMessage,
+        });
+        return { processed: true, nextTurnId: completion.nextTurnId };
+      }
     }
   }
-  const turn = await claimDurableThreadTurn(turnId);
+  const turn = reattachExecutionId
+    ? await claimDurableThreadTurn(turnId, { resumeRunning: true })
+    : await claimDurableThreadTurn(turnId);
   if (!turn) {
     return { processed: false, nextTurnId: null };
   }
@@ -322,6 +344,7 @@ export async function processDurableThreadTurn(
   let persistedAssistantMessageCount = 0;
   let environmentExecutionId = turn.environmentExecutionId;
   let runtimeStartedRecorded = false;
+  let runtimeTerminalObserved = false;
   let runtimeStartedEvent: {
     eventId: string;
     runtimeRunId: string;
@@ -350,6 +373,7 @@ export async function processDurableThreadTurn(
   };
   const cancellation = new AbortController();
   let cancellationRequested = false;
+  let runtimeCancellationSent = false;
   let workerInterrupted = false;
   let cancellationDeadline: ReturnType<typeof setTimeout> | null = null;
   const scheduleCancellationDeadline = () => {
@@ -367,6 +391,13 @@ export async function processDurableThreadTurn(
       .then((requested) => {
         if (requested) {
           cancellationRequested = true;
+          if (environmentExecutionId && !runtimeCancellationSent) {
+            runtimeCancellationSent = true;
+            void cancelInterruptedKestrelOneExecution({
+              organizationId: turn.organizationId,
+              executionId: environmentExecutionId,
+            }).catch(() => {});
+          }
           scheduleCancellationDeadline();
         }
       })
@@ -384,6 +415,7 @@ export async function processDurableThreadTurn(
   const terminal: {
     status: KestrelTerminalStatus;
     error: string | null;
+    errorCode: string | null;
     interaction: KestrelInteractionPresentation | null;
     messages: DurableAssistantOutcomeMessage[];
     replayChunks: DurableReplayChunk[];
@@ -392,6 +424,7 @@ export async function processDurableThreadTurn(
   } = {
     status: "contract_failure",
     error: null,
+    errorCode: null,
     interaction: null,
     messages: [],
     replayChunks: [],
@@ -417,7 +450,7 @@ export async function processDurableThreadTurn(
       milestoneId: `turn:${turn.id}:context`,
     });
     projectContext = await loadBoundProjectContext(turn);
-    const response = await createKestrelOneAgentResponse({
+    const responseInput: KestrelOneAgentResponseInput = {
       request: workerRequest(turn.id),
       session,
       organizationId: turn.organizationId,
@@ -470,11 +503,19 @@ export async function processDurableThreadTurn(
             })
           : null,
       signal: cancellation.signal,
+      abortBehavior: "detach",
       onExecutionRouted: (executionId) => {
         environmentExecutionId = executionId;
         eventWrites = eventWrites.then(recordRuntimeStarted);
       },
       onRuntimeEvent(event) {
+        if (
+          event.type === "run.completed" ||
+          event.type === "run.failed" ||
+          event.type === "run.cancelled"
+        ) {
+          runtimeTerminalObserved = true;
+        }
         eventWrites = eventWrites.then(async () => {
           try {
             if (event.type === "run.started") {
@@ -509,6 +550,9 @@ export async function processDurableThreadTurn(
         }
       },
       onUiChunk(chunk) {
+        if (workerInterrupted) {
+          return;
+        }
         const scaffold = readKestrelReplayScaffoldChunk(chunk);
         if (scaffold.assistantMessageId) {
           terminal.assistantMessageId = scaffold.assistantMessageId;
@@ -538,6 +582,7 @@ export async function processDurableThreadTurn(
         await eventWrites;
         terminal.status = meta.terminalStatus;
         terminal.error = meta.errorMessage;
+        terminal.errorCode = meta.errorCode ?? null;
         terminal.interaction = meta.interaction;
         const messagesForPersistence =
           prepareKestrelRuntimeMessagesForPersistence(finishedMessages, meta);
@@ -586,9 +631,23 @@ export async function processDurableThreadTurn(
           });
         }
       },
-    });
+    };
+    const response = reattachExecutionId
+      ? await createKestrelOneReattachmentResponse({
+          ...responseInput,
+          executionId: reattachExecutionId,
+        })
+      : await createKestrelOneAgentResponse(responseInput);
     await drainResponse(response);
     await eventWrites;
+    if (
+      workerInterrupted &&
+      environmentExecutionId &&
+      !runtimeTerminalObserved &&
+      !cancellationRequested
+    ) {
+      throw new Error("The durable turn worker lease ended during execution.");
+    }
     assertVisibleCompletedOutcome(
       terminal.status,
       persistedAssistantMessageCount,
@@ -609,6 +668,11 @@ export async function processDurableThreadTurn(
         completionStatus === "failed"
           ? workerInterrupted
             ? "TURN_WORKER_INTERRUPTED"
+            : terminal.errorCode === "AGENT_CONNECTION_INTERRUPTED"
+              ? "AGENT_CONNECTION_INTERRUPTED"
+            : terminal.errorCode === "RUNNER_EVENT_CURSOR_EXPIRED" ||
+                terminal.errorCode === "RUNNER_EVENT_CURSOR_UNKNOWN"
+              ? terminal.errorCode
             : terminal.status === "contract_failure"
               ? "PRESENTATION_CONTRACT_FAILURE"
               : "RUNTIME_FAILED"
@@ -619,6 +683,16 @@ export async function processDurableThreadTurn(
   } catch (error) {
     await eventWrites.catch(() => {});
     if (
+      workerInterrupted &&
+      environmentExecutionId &&
+      !runtimeTerminalObserved &&
+      !cancellationRequested
+    ) {
+      // The runner owns a continue-on-disconnect execution. Leave the durable
+      // turn running so the queue retry can reattach from its persisted cursor.
+      throw error;
+    }
+    if (
       waitingCommitted ||
       (await getDurableTurn(turn.id).catch(() => null))?.status ===
         "waiting_for_input"
@@ -627,6 +701,10 @@ export async function processDurableThreadTurn(
     }
     const message =
       error instanceof Error ? error.message : "Durable turn execution failed.";
+    const errorCode =
+      error instanceof Error && "code" in error && typeof error.code === "string"
+        ? error.code
+        : null;
     const stopped =
       cancellationRequested ||
       (await isDurableTurnCancellationRequested(turn.id).catch(() => false));
@@ -646,6 +724,11 @@ export async function processDurableThreadTurn(
         ? "TURN_STOPPED"
         : workerInterrupted
           ? "TURN_WORKER_INTERRUPTED"
+          : errorCode === "AGENT_CONNECTION_INTERRUPTED"
+            ? "AGENT_CONNECTION_INTERRUPTED"
+          : errorCode === "RUNNER_EVENT_CURSOR_EXPIRED" ||
+              errorCode === "RUNNER_EVENT_CURSOR_UNKNOWN"
+            ? errorCode
           : "TURN_WORKER_FAILED",
       failureMessage: stopped ? null : message,
     });

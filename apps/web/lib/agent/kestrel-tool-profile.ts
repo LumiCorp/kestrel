@@ -87,6 +87,7 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
   ],
   ["workspace.preview.publish", { appKey: "built_in.previews", capabilityKey: "publish" }],
   ["workspace.preview.list", { appKey: "built_in.previews", capabilityKey: "list" }],
+  ["workspace.preview.inspect", { appKey: "built_in.previews", capabilityKey: "inspect" }],
   ["workspace.preview.renew", { appKey: "built_in.previews", capabilityKey: "renew" }],
   ["workspace.preview.close", { appKey: "built_in.previews", capabilityKey: "close" }],
   [

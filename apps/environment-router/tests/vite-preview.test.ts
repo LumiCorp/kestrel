@@ -133,6 +133,7 @@ test("a real Vite app serves documents and HMR WebSockets through the preview re
       revision: "vite",
       workspaces: [],
       modelGrants: [],
+      appGrants: [],
       previews: [{
         id: previewId,
         workspaceId: scope.workspaceId,

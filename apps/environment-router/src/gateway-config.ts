@@ -1,14 +1,16 @@
-import type { EnvironmentGatewayConfig } from "@lumi/kestrel-environment-auth";
+import type {
+  EnvironmentGatewayConfigV3,
+} from "@lumi/kestrel-environment-auth";
 import { ENVIRONMENT_GATEWAY_CONFIG_VERSION } from "@lumi/kestrel-environment-auth";
 
 const RETIRED_PREVIEW_PROVIDER_FIELD = ["n", "g", "r", "o", "k"].join("");
 
 export class EnvironmentGatewayConfigClient {
-  private current: EnvironmentGatewayConfig | null = null;
+  private current: EnvironmentGatewayConfigV3 | null = null;
   private timer: NodeJS.Timeout | null = null;
-  private refreshing: Promise<EnvironmentGatewayConfig> | null = null;
+  private refreshing: Promise<EnvironmentGatewayConfigV3> | null = null;
   private readonly listeners = new Set<
-    (config: EnvironmentGatewayConfig) => void | Promise<void>
+    (config: EnvironmentGatewayConfigV3) => void | Promise<void>
   >();
 
   constructor(
@@ -23,6 +25,10 @@ export class EnvironmentGatewayConfigClient {
 
   get snapshot() {
     return this.current;
+  }
+
+  get controlPlaneUrl() {
+    return requireControlPlaneUrl(this.input.controlPlaneUrl);
   }
 
   start() {
@@ -41,19 +47,19 @@ export class EnvironmentGatewayConfigClient {
     this.timer = null;
   }
 
-  subscribe(listener: (config: EnvironmentGatewayConfig) => void | Promise<void>) {
+  subscribe(listener: (config: EnvironmentGatewayConfigV3) => void | Promise<void>) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  refresh(): Promise<EnvironmentGatewayConfig> {
+  refresh(): Promise<EnvironmentGatewayConfigV3> {
     this.refreshing ??= this.load().finally(() => {
       this.refreshing = null;
     });
     return this.refreshing;
   }
 
-  async refreshLatest(): Promise<EnvironmentGatewayConfig> {
+  async refreshLatest(): Promise<EnvironmentGatewayConfigV3> {
     const inFlight = this.refreshing;
     if (inFlight) await inFlight.catch(() => undefined);
     return this.refresh();
@@ -113,25 +119,29 @@ function requireControlPlaneUrl(value: string) {
   return url;
 }
 
-function parseEnvironmentGatewayConfig(value: unknown): EnvironmentGatewayConfig {
+function parseEnvironmentGatewayConfig(value: unknown): EnvironmentGatewayConfigV3 {
   if (!isRecord(value)) {
     throw new Error("Environment gateway configuration is invalid.");
   }
   if (
-    value.version !== ENVIRONMENT_GATEWAY_CONFIG_VERSION ||
+    (value.version !== 2 && value.version !== ENVIRONMENT_GATEWAY_CONFIG_VERSION) ||
     typeof value.environmentId !== "string" ||
     !value.environmentId ||
     typeof value.revision !== "string" ||
     RETIRED_PREVIEW_PROVIDER_FIELD in value ||
     !Array.isArray(value.workspaces) ||
     !Array.isArray(value.previews) ||
-    !Array.isArray(value.modelGrants)
+    !Array.isArray(value.modelGrants) ||
+    (value.version === ENVIRONMENT_GATEWAY_CONFIG_VERSION && !Array.isArray(value.appGrants))
   ) {
     throw new Error("Environment gateway configuration is invalid.");
   }
   const workspaces = value.workspaces.map(parseWorkspace);
   const previews = value.previews.map(parsePreview);
   const modelGrants = value.modelGrants.map(parseModelGrant);
+  const appGrants = value.version === 2
+    ? []
+    : (value.appGrants as unknown[]).map(parseAppGrant);
   const workspaceMachines = new Map(
     workspaces.map((workspace) => [workspace.id, workspace.machineId])
   );
@@ -139,7 +149,8 @@ function parseEnvironmentGatewayConfig(value: unknown): EnvironmentGatewayConfig
     previews.some(
       (preview) => workspaceMachines.get(preview.workspaceId) !== preview.machineId
     ) ||
-    modelGrants.some((grant) => !workspaceMachines.has(grant.workspaceId))
+    modelGrants.some((grant) => !workspaceMachines.has(grant.workspaceId)) ||
+    appGrants.some((grant) => !workspaceMachines.has(grant.workspaceId))
   ) {
     throw new Error("Environment gateway configuration workspace scope is invalid.");
   }
@@ -153,10 +164,26 @@ function parseEnvironmentGatewayConfig(value: unknown): EnvironmentGatewayConfig
     workspaces,
     previews,
     modelGrants,
+    appGrants,
   };
 }
 
-function parseWorkspace(value: unknown): EnvironmentGatewayConfig["workspaces"][number] {
+function parseAppGrant(value: unknown): EnvironmentGatewayConfigV3["appGrants"][number] {
+  if (!isRecord(value)) throw invalid();
+  return {
+    executionId: stringField(value, "executionId"),
+    runId: nullableStringField(value, "runId"),
+    workspaceId: stringField(value, "workspaceId"),
+    executionTicket: stringField(value, "executionTicket"),
+    credentialExpiresAt: dateField(value, "credentialExpiresAt"),
+  };
+}
+
+function nullableStringField(value: Record<string, unknown>, key: string) {
+  return value[key] === null ? null : stringField(value, key);
+}
+
+function parseWorkspace(value: unknown): EnvironmentGatewayConfigV3["workspaces"][number] {
   if (!isRecord(value)) throw invalid();
   const serviceTokenHash = stringField(value, "serviceTokenHash");
   if (!/^[A-Za-z0-9_-]{43}$/u.test(serviceTokenHash)) throw invalid();
@@ -167,7 +194,7 @@ function parseWorkspace(value: unknown): EnvironmentGatewayConfig["workspaces"][
   };
 }
 
-function parsePreview(value: unknown): EnvironmentGatewayConfig["previews"][number] {
+function parsePreview(value: unknown): EnvironmentGatewayConfigV3["previews"][number] {
   if (!isRecord(value) || "ingress" in value) throw invalid();
   const port = integerField(value, "port");
   const expiresAt = dateField(value, "expiresAt");
@@ -188,7 +215,7 @@ function parsePreview(value: unknown): EnvironmentGatewayConfig["previews"][numb
   };
 }
 
-function parseModelGrant(value: unknown): EnvironmentGatewayConfig["modelGrants"][number] {
+function parseModelGrant(value: unknown): EnvironmentGatewayConfigV3["modelGrants"][number] {
   if (!isRecord(value)) throw invalid();
   const provider = value.provider;
   const protocol = value.protocol;
@@ -201,7 +228,7 @@ function parseModelGrant(value: unknown): EnvironmentGatewayConfig["modelGrants"
     workspaceId: stringField(value, "workspaceId"),
     gatewayId: stringField(value, "gatewayId"),
     rawModelId: stringField(value, "rawModelId"),
-    provider: provider as EnvironmentGatewayConfig["modelGrants"][number]["provider"],
+    provider: provider as EnvironmentGatewayConfigV3["modelGrants"][number]["provider"],
     protocol,
     baseUrl,
     apiKey: nullableString(value, "apiKey"),

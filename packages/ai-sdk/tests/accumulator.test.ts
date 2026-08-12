@@ -146,6 +146,32 @@ test("empty completed output becomes a visible contract failure", () => {
   );
 });
 
+test("runner errors remain runtime failures and preserve their code", () => {
+  const accumulator = createKestrelPresentationAccumulator({
+    assistantMessageId: "assistant-runner-error",
+  });
+  const parts = accumulator.append({
+    id: "runner-error-1",
+    type: "runner.error",
+    ts: new Date().toISOString(),
+    commandId: "command-1",
+    payload: {
+      code: "AGENT_CONNECTION_INTERRUPTED",
+      message: "The connection to the agent was interrupted before completion.",
+    },
+  });
+  const status = parts.find((part) => part.type === "data-kestrel-status");
+  assert.equal(status?.type, "data-kestrel-status");
+  if (status?.type === "data-kestrel-status") {
+    assert.equal(status.data.status, "failed");
+    assert.equal(status.data.errorCode, "AGENT_CONNECTION_INTERRUPTED");
+    assert.equal(
+      status.data.errorMessage,
+      "The connection to the running agent was interrupted and could not be restored.",
+    );
+  }
+});
+
 test("upstream activation failures remain runtime failures", async () => {
   const chunks: Array<Record<string, unknown>> = [];
   const writer = {
@@ -174,6 +200,25 @@ test("upstream activation failures remain runtime failures", async () => {
     ),
     true,
   );
+});
+
+test("stream failures preserve SDK error codes without becoming contract failures", async () => {
+  const error = Object.assign(new Error("Cursor is outside the replay window."), {
+    code: "RUNNER_EVENT_CURSOR_EXPIRED",
+  });
+  const snapshot = await writeKestrelFailureToUIMessage({
+    writer: {
+      write() {},
+      merge() {},
+      onError: undefined,
+    } as UIMessageStreamWriter<KestrelUIMessage>,
+    error,
+    assistantMessageId: "assistant-cursor-expired",
+    textPartId: "text-cursor-expired",
+  });
+  assert.equal(snapshot.terminalStatus, "failed");
+  assert.equal(snapshot.errorCode, "RUNNER_EVENT_CURSOR_EXPIRED");
+  assert.equal(snapshot.message.metadata?.kestrelContractFailure, undefined);
 });
 
 test("AI SDK stream and persisted message are emitted from the same accumulator", async () => {

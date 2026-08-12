@@ -9,6 +9,7 @@ import type {
 } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
 import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
+import { resolveKestrelOneAppRequest } from "./appTransport.js";
 
 const definition: SharedToolDefinition = {
   name: "kestrel_one.email_send",
@@ -72,24 +73,20 @@ export const kestrelOneEmailSendTool: SharedToolModule = {
   createHandler(context) {
     return async (value: unknown) => {
       const input = parseObjectInput(definition.name, value);
-      const appUrl = requireContextValue(
-        context.kestrelOne?.appUrl,
-        "KESTREL_ONE_APP_URL"
-      );
-      const ticket = requireContextValue(
-        context.kestrelOne?.executionTicket,
-        "Environment execution ticket"
+      const transport = resolveKestrelOneAppRequest(
+        context,
+        "/api/runtime/email/action",
       );
       const approvalId = requireContextValue(
         context.runtime?.approvalId,
         "Runtime email approval ID"
       );
       const response = await (context.fetchImpl ?? fetch)(
-        new URL("/api/runtime/email/action", appUrl),
+        transport.url,
         {
           method: "POST",
           headers: {
-            authorization: `Bearer ${ticket}`,
+            authorization: `Bearer ${transport.authorization}`,
             "content-type": "application/json",
             "x-kestrel-approval-id": approvalId,
           },

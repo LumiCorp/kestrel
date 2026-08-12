@@ -71,6 +71,7 @@ test(
       revision: "edge",
       workspaces: [],
       modelGrants: [],
+      appGrants: [],
       previews: [
         {
           id: "preview-edge",
@@ -167,7 +168,7 @@ test(
 );
 
 test(
-  "gateway configuration v2 rejects retired provider fields",
+  "gateway configuration v3 accepts v2 during rollout and rejects retired provider fields",
   async () => {
     const baseConfig = {
       version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
@@ -181,6 +182,7 @@ test(
         },
       ],
       modelGrants: [],
+      appGrants: [],
       previews: [
         {
           id: "preview-1",
@@ -196,6 +198,11 @@ test(
     const client = clientFor(baseConfig);
     assert.deepEqual(await client.refresh(), baseConfig);
     client.stop();
+
+    const { appGrants: _appGrants, ...versionTwoFields } = baseConfig;
+    const versionTwoClient = clientFor({ ...versionTwoFields, version: 2 });
+    assert.deepEqual(await versionTwoClient.refresh(), baseConfig);
+    versionTwoClient.stop();
 
     const retiredProviderField = ["n", "g", "r", "o", "k"].join("");
     for (const [label, invalid] of [
@@ -232,6 +239,7 @@ test(
       revision: "one",
       workspaces: [],
       modelGrants: [],
+      appGrants: [],
       previews: [],
     };
     const client = clientFor(config);
@@ -266,6 +274,7 @@ test(
           revision: String(fetchCount),
           workspaces: [],
           modelGrants: [],
+          appGrants: [],
           previews: [],
         });
       },

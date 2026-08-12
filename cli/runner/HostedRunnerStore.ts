@@ -9,7 +9,10 @@ import {
 } from "../../src/store/createSessionStore.js";
 import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import { KestrelChatRuntime, createRuntimeFactoryWithStore } from "../runtime/KestrelChatRuntime.js";
-import type { RunnerHost } from "./RunnerHost.js";
+import {
+  createLiveOnlyProgressListener,
+  type RunnerHost,
+} from "./RunnerHost.js";
 
 type RunnerRuntimeFactory = NonNullable<
   ConstructorParameters<typeof RunnerHost>[1]
@@ -43,7 +46,7 @@ export function createHostedRunnerRuntimeFactory(
   ) =>
     new KestrelChatRuntime(profile, runtimeFactory, {
       onRunLog,
-      onProgress,
+      onProgress: createLiveOnlyProgressListener(onProgress),
       onConsole,
       onReasoning,
       onTaskUpdate,

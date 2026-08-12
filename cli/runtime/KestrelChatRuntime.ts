@@ -3292,6 +3292,8 @@ function createRuntimeWithStore(
     devShell: profile.devShell,
     kestrelOne: {
       appUrl: parseEnvString("KESTREL_ONE_APP_URL", runtimeEnv),
+      appRelayUrl: parseEnvString("KESTREL_ENVIRONMENT_GATEWAY_URL", runtimeEnv),
+      appRelayToken: parseEnvString("KESTREL_WORKSPACE_SERVICE_TOKEN", runtimeEnv),
       workspaceRuntimeUrl: parseEnvString(
         "KESTREL_WORKSPACE_RUNTIME_URL",
         runtimeEnv,

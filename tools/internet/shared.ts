@@ -27,8 +27,8 @@ import {
 import { isTavilyDateString } from "./dates.js";
 import {
   createKestrelOneTavilyProvider,
-  hasKestrelOneTavilyContext,
 } from "./kestrel-one-provider.js";
+import { resolveKestrelOneAppProviderTransport } from "../kestrelOne/appTransport.js";
 import { createTavilyInternetProvider } from "./provider.js";
 
 export function getInternetProvider(
@@ -38,11 +38,11 @@ export function getInternetProvider(
     return context.internetProvider;
   }
 
-  if (hasKestrelOneTavilyContext(context)) {
+  const hostedTransport = resolveKestrelOneAppProviderTransport(context);
+  if (hostedTransport !== undefined) {
     return createKestrelOneTavilyProvider({
-      appUrl: context.kestrelOne.appUrl,
-      executionTicket: context.kestrelOne.executionTicket,
-      approvalModes: context.kestrelOne.appApprovalModes,
+      ...hostedTransport,
+      approvalModes: context.kestrelOne?.appApprovalModes,
       fetchImpl: context.fetchImpl,
     });
   }

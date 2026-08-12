@@ -214,11 +214,11 @@ const kestrelEdgePreviewAdapter: AppProviderAdapter = {
   authMethods: ["none"],
   runtime: {
     mode: "lifecycle",
-    capabilityKeys: ["publish", "list", "renew", "close"],
+    capabilityKeys: ["publish", "list", "inspect", "renew", "close"],
     assertTarget(input) {
       const [resource, previewId] = input.path;
       const allowed =
-        resource === "previews" &&
+        (resource === "previews" &&
         ((input.capability === "publish" &&
           input.method === "POST" &&
           input.path.length === 1) ||
@@ -232,7 +232,12 @@ const kestrelEdgePreviewAdapter: AppProviderAdapter = {
           (input.capability === "close" &&
             input.method === "DELETE" &&
             input.path.length === 2 &&
-            Boolean(previewId)));
+            Boolean(previewId)))) ||
+        (input.capability === "inspect" &&
+          input.method === "GET" &&
+          resource === "ports" &&
+          input.path.length === 2 &&
+          /^\d+$/u.test(previewId ?? ""));
       if (!allowed) {
         throw new AppProviderRuntimeContractError(
           "PREVIEW_TARGET_DENIED",

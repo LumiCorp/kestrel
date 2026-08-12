@@ -18,6 +18,15 @@ export type EvaluationReview = {
   evidenceReferences: string[];
 };
 
+export type RecoveryReview = {
+  options: Array<{
+    id: string;
+    label: string;
+    description: string;
+    kind: "retry" | "terminal" | "alternative";
+  }>;
+};
+
 export function readEvaluationReview(
   interaction: ThreadInteractionView
 ): EvaluationReview | null {
@@ -65,6 +74,41 @@ export function readEvaluationReview(
 
 export function evaluationOptionLabel(optionId: string): string {
   return recoveryOptionLabel(optionId);
+}
+
+export function readRecoveryReview(
+  interaction: ThreadInteractionView
+): RecoveryReview | null {
+  const review = readRecoveryReviewEnvelope(interaction.requestEnvelope);
+  if (review?.reason !== "recovery_review") return null;
+  const metadata = review.metadata;
+  const allowedOptionIds = review.allowedOptionIds;
+  const options = Array.isArray(metadata.recoveryOptions)
+    ? metadata.recoveryOptions.flatMap((value) => {
+        const option = readRecord(value);
+        const kind = option?.kind;
+        return option !== null &&
+          typeof option.id === "string" &&
+          allowedOptionIds.includes(option.id) &&
+          typeof option.label === "string" &&
+          typeof option.description === "string" &&
+          (kind === "retry" || kind === "terminal" || kind === "alternative")
+          ? [{
+              id: option.id,
+              label: option.label,
+              description: option.description,
+              kind: kind as "retry" | "terminal" | "alternative",
+            }]
+          : [];
+      })
+    : [];
+  if (
+    options.length !== allowedOptionIds.length ||
+    new Set(options.map((option) => option.id)).size !== allowedOptionIds.length
+  ) {
+    return null;
+  }
+  return { options };
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {

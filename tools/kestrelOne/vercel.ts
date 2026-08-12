@@ -9,6 +9,7 @@ import type {
 } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
 import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
+import { resolveKestrelOneAppRequest } from "./appTransport.js";
 
 type VercelToolOptions = {
 	name: string;
@@ -139,26 +140,18 @@ async function invokeVercel(
 		toolName: string;
 	},
 ) {
-	const appUrl = requireContextValue(
-		context.kestrelOne?.appUrl,
-		"KESTREL_ONE_APP_URL",
-	);
-	const ticket = requireContextValue(
-		context.kestrelOne?.executionTicket,
-		"Environment execution ticket",
-	);
 	const approval =
 		context.kestrelOne?.appApprovalModes?.[input.toolName] === "ask"
 			? "confirmed"
 			: "auto";
-	const url = new URL(
+	const transport = resolveKestrelOneAppRequest(
+		context,
 		`/api/runtime/apps/vercel/${encodeURIComponent(input.capability)}/${approval}/${input.path}`,
-		appUrl,
 	);
-	const response = await (context.fetchImpl ?? fetch)(url, {
+	const response = await (context.fetchImpl ?? fetch)(transport.url, {
 		method: "POST",
 		headers: {
-			authorization: `Bearer ${ticket}`,
+			authorization: `Bearer ${transport.authorization}`,
 			"content-type": "application/json",
 		},
 		body: JSON.stringify(input.body),

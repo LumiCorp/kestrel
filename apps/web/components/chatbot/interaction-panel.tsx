@@ -7,11 +7,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { parseUrlElicitation } from "@/lib/mcp/interaction-protocol";
 import type { ThreadInteractionView } from "@/lib/turns/client-contract";
 import {
-  readRecoveryReviewEnvelope,
-  recoveryOptionLabel,
-} from "@/lib/turns/recovery-review";
-import {
+  evaluationOptionLabel,
   readEvaluationReview,
+  readRecoveryReview,
 } from "./evaluation-review";
 
 export type RuntimeInteractionResponse = {
@@ -50,10 +48,12 @@ export function InteractionPanel({
     decision?: boolean,
     recoveryOptionId?: string
   ) {
+    const recoveryReview = readRecoveryReview(interaction);
     const answer = content[interaction.requestId]?.trim();
     const message =
       recoveryOptionId !== undefined
-        ? recoveryOptionLabel(recoveryOptionId)
+        ? recoveryReview?.options.find((option) => option.id === recoveryOptionId)?.label ??
+          evaluationOptionLabel(recoveryOptionId)
         : interaction.kind === "approval"
         ? decision
           ? "Approved"
@@ -140,7 +140,8 @@ export function InteractionPanel({
       !(
         interaction.source === "runtime" &&
         interaction.kind === "user_input" &&
-        readRecoveryReviewEnvelope(interaction.requestEnvelope) === null
+        readEvaluationReview(interaction) === null &&
+        readRecoveryReview(interaction) === null
       )
   );
 
@@ -159,10 +160,8 @@ export function InteractionPanel({
         Agent requests that need your response
       </h2>
       {visibleInteractions.map((interaction, index) => {
-        const recoveryReview = readRecoveryReviewEnvelope(
-          interaction.requestEnvelope,
-        );
         const evaluationReview = readEvaluationReview(interaction);
+        const recoveryReview = readRecoveryReview(interaction);
         const urlElicitation =
           interaction.kind === "mcp_elicitation"
             ? parseUrlElicitation(interaction.requestEnvelope)
@@ -170,15 +169,16 @@ export function InteractionPanel({
         const isRuntimeQuestion =
           interaction.source === "runtime" &&
           interaction.kind === "user_input" &&
+          evaluationReview === null &&
           recoveryReview === null;
         return (
           <Card key={interaction.requestId}>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">
-                {recoveryReview !== null
-                  ? recoveryReview.reason === "evaluation_review"
-                    ? "Result requires review"
-                    : "Recovery requires a decision"
+                {evaluationReview !== null
+                  ? "Result requires review"
+                  : recoveryReview !== null
+                  ? "Recovery choice required"
                   : interaction.kind === "approval" ||
                 interaction.kind === "mcp_sampling"
                   ? "Approval required"
@@ -281,8 +281,8 @@ export function InteractionPanel({
               ) : null}
               <div className="flex justify-end gap-2">
                 {interaction.source === "runtime" ? (
-                  recoveryReview !== null ? (
-                    recoveryReview.allowedOptionIds.map((optionId) => (
+                  evaluationReview !== null ? (
+                    evaluationReview.allowedOptionIds.map((optionId) => (
                       <Button
                         disabled={busy !== null}
                         key={optionId}
@@ -292,7 +292,22 @@ export function InteractionPanel({
                         size="sm"
                         variant={optionId === "terminal.fail" ? "outline" : "default"}
                       >
-                        {recoveryOptionLabel(optionId)}
+                        {evaluationOptionLabel(optionId)}
+                      </Button>
+                    ))
+                  ) : recoveryReview !== null ? (
+                    recoveryReview.options.map((option) => (
+                      <Button
+                        disabled={busy !== null}
+                        key={option.id}
+                        onClick={() =>
+                          void resolveRuntime(interaction, undefined, option.id)
+                        }
+                        size="sm"
+                        title={option.description}
+                        variant={option.kind === "terminal" ? "outline" : "default"}
+                      >
+                        {option.label}
                       </Button>
                     ))
                   ) : interaction.kind === "approval" ? (

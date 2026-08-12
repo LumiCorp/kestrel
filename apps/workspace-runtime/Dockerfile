@@ -36,7 +36,7 @@ ARG KESTREL_GIT_SHA=unknown
 LABEL org.opencontainers.image.source="https://github.com/LumiCorp/kestrel"
 LABEL org.opencontainers.image.revision=$KESTREL_GIT_SHA
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates openssh-client python3 util-linux && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl openssh-client procps python3 util-linux && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/dist ./dist
@@ -50,6 +50,8 @@ COPY --from=build /app/packages/workspace-skills ./packages/workspace-skills
 RUN test -f /app/dist/db/migrations/001_sessions_runs.sql \
     && test -f /app/dist/cli/runner/service.js \
     && test -f /app/dist/cli/dev-shell/service.js \
+    && curl --version \
+    && ps -ef >/dev/null \
     && python3 --version \
     && mkdir -p /workspace \
     && node /app/apps/workspace-runtime/scripts/dev-shell-package-smoke.mjs

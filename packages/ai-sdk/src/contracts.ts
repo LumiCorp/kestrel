@@ -174,6 +174,7 @@ export interface KestrelPresentationSnapshot {
   assistantText: string | null;
   terminalStatus: KestrelTerminalStatus;
   errorMessage: string | null;
+  errorCode?: string | undefined;
   failureVisible: boolean;
   interaction: KestrelInteractionPresentation | null;
   finalizedPayload?: unknown | undefined;

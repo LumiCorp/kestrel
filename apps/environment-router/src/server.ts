@@ -12,6 +12,7 @@ import { proxyWorkspaceRequest } from "./proxy.js";
 import { EnvironmentGatewayConfigClient } from "./gateway-config.js";
 import { authorizeConfigRefreshToken } from "./config-refresh-auth.js";
 import { handleModelRelay } from "./model-relay.js";
+import { handleAppRelay } from "./app-relay.js";
 import { PreviewRelay } from "./preview-relay.js";
 import { handleWorkspaceIdle } from "./workspace-idle.js";
 
@@ -114,6 +115,10 @@ const server = createServer(async (request, response) => {
     await handleModelRelay({ request, response, config: gatewayConfig });
     return;
   }
+  if (pathname.startsWith("/internal/apps/")) {
+    await handleAppRelay({ request, response, config: gatewayConfig });
+    return;
+  }
   if (pathname === "/internal/workspaces/idle") {
     await handleWorkspaceIdle({ request, response, config: gatewayConfig });
     return;
@@ -194,6 +199,13 @@ async function applyDecision(
     response,
     targetUrl: decision.targetUrl,
     bufferedBody,
+    correlation: {
+      organizationId: decision.ticket.organizationId,
+      environmentId: decision.ticket.environmentId,
+      workspaceId: decision.ticket.workspaceId,
+      threadId: decision.ticket.threadId,
+      executionId: decision.ticket.runId,
+    },
   });
 }
 

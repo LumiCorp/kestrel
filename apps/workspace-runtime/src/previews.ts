@@ -1,5 +1,9 @@
 import { connect } from "node:net";
 
+export function isValidPreviewInspectionPort(port: number) {
+  return Number.isSafeInteger(port) && port >= 1024 && port <= 65_535;
+}
+
 export function isPortListening(port: number) {
   return new Promise<boolean>((resolve) => {
     let settled = false;

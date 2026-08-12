@@ -958,21 +958,28 @@ async function handleEventSubscriptionRequest(
   if (subscription.status !== "ok") {
     removeCloseListeners();
     const expired = subscription.status === "cursor_expired";
-    writeEventResponse(
-      response,
-      expired ? 410 : 409,
-      makeRunnerErrorEvent(
-        undefined,
-        expired ? "RUNNER_EVENT_CURSOR_EXPIRED" : "RUNNER_EVENT_CURSOR_UNKNOWN",
-        expired
-          ? "The requested runner event cursor is outside the retained replay window."
-          : "The requested runner event cursor is unknown.",
-        {
-          sinceEventId: filter.sinceEventId,
-          cursorStatus: subscription.status,
-        },
-      ),
-    );
+    const reconciledTerminal = await eventBus.findTerminalEvent(filter);
+    if (reconciledTerminal !== null) {
+      response.writeHead(200, {
+        ...SSE_HEADERS,
+        "X-Kestrel-Event-Cursor-Status": expired ? "expired" : "unknown",
+      });
+      response.end(encodeSseChunk(reconciledTerminal));
+      return;
+    }
+    response.writeHead(410, {
+      ...JSON_HEADERS,
+      "X-Kestrel-Event-Cursor-Status": expired ? "expired" : "unknown",
+    });
+    response.end(serializeRunnerEvent(makeRunnerErrorEvent(
+      undefined,
+      "RUNNER_EVENT_CURSOR_EXPIRED",
+      "The requested runner event cursor could not be reconciled from the retained event journal.",
+      {
+        sinceEventId: filter.sinceEventId,
+        cursorStatus: subscription.status,
+      },
+    )));
     return;
   }
   if (replayAbortController.signal.aborted || response.destroyed) {

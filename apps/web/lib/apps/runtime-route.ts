@@ -1,4 +1,5 @@
 import {
+  EnvironmentTicketError,
   type EnvironmentExecutionTicket,
   verifyEnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
@@ -233,6 +234,12 @@ export async function handleAppRuntimeRequest(input: {
       return NextResponse.json(
         { error: { code: error.code } },
         { status: error.status }
+      );
+    }
+    if (error instanceof EnvironmentTicketError) {
+      return NextResponse.json(
+        { error: { code: error.code } },
+        { status: 401 },
       );
     }
     if (isRuntimeContractError(error)) {

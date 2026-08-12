@@ -304,6 +304,29 @@ export class RunnerServiceEventBus implements RunnerEventSink {
     }
   }
 
+  async findTerminalEvent(
+    filter: RunnerEventSubscriptionFilter,
+  ): Promise<RunnerEvent | null> {
+    if (filter.runId === undefined) {
+      return null;
+    }
+    await this.publicationTail;
+    const terminal = this.journal === undefined
+      ? [...this.history].reverse().find((event) =>
+          isRunTerminalEvent(event)
+          && matchesSubscriptionFilter(event, filter)
+        ) ?? null
+      : await this.journal.findTerminalEvent?.(filter) ?? null;
+    if (
+      terminal === null
+      || !isRunTerminalEvent(terminal)
+      || !matchesSubscriptionFilter(terminal, filter)
+    ) {
+      return null;
+    }
+    return this.liveOverlay.get(terminal.id) ?? terminal;
+  }
+
   private remember(events: readonly RunnerEvent[]): void {
     if (this.journal !== undefined) {
       return;
@@ -561,6 +584,12 @@ function matchesSubscriptionFilter(
     return false;
   }
   return true;
+}
+
+function isRunTerminalEvent(event: RunnerEvent): boolean {
+  return event.type === "run.completed"
+    || event.type === "run.failed"
+    || event.type === "run.cancelled";
 }
 
 function isAbortSignalSet(signal: AbortSignal | undefined): boolean {

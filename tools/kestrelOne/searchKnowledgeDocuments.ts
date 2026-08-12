@@ -1,6 +1,7 @@
 import { RuntimeFailure, createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolModule } from "../contracts.js";
 import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
+import { resolveKestrelOneAppRequest } from "./appTransport.js";
 
 const TOOL_NAME = "kestrel_one.search_knowledge_documents";
 
@@ -43,18 +44,7 @@ export const kestrelOneSearchKnowledgeDocumentsTool: SharedToolModule = {
 
     return async (input: unknown) => {
       const payload = parseKestrelOneSearchKnowledgeDocumentsInput(input);
-      const appUrl = readConfiguredString(context.kestrelOne?.appUrl, "KESTREL_ONE_APP_URL");
-      const toolToken =
-        context.kestrelOne?.executionTicket?.trim() ||
-        readConfiguredString(context.kestrelOne?.toolToken, "KESTREL_ONE_TOOL_TOKEN");
       const tenantId = context.kestrelOne?.tenantId?.trim();
-
-      if (!appUrl) {
-        throw configurationFailure("KESTREL_ONE_APP_URL");
-      }
-      if (!toolToken) {
-        throw configurationFailure("Environment execution ticket");
-      }
       if (!tenantId) {
         throw createRuntimeFailure(
           "KESTREL_ONE_TOOL_TENANT_MISSING",
@@ -68,10 +58,14 @@ export const kestrelOneSearchKnowledgeDocumentsTool: SharedToolModule = {
         );
       }
 
-      const response = await fetchImpl(resolveCapabilityUrl(appUrl), {
+      const transport = resolveKestrelOneAppRequest(
+        context,
+        "/api/kestrel/tools/search-knowledge-documents",
+      );
+      const response = await fetchImpl(transport.url, {
         method: "POST",
         headers: {
-          authorization: `Bearer ${toolToken}`,
+          authorization: `Bearer ${transport.authorization}`,
           "content-type": "application/json",
           "x-kestrel-tenant-id": tenantId,
           "x-organization-id": tenantId,

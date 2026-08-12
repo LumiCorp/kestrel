@@ -9,6 +9,7 @@ import type {
 } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
 import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
+import { resolveKestrelOneAppRequest } from "./appTransport.js";
 
 type GoogleCalendarOperation =
   | "events.list"
@@ -274,23 +275,19 @@ async function invokeGoogleCalendar(
     toolName: string;
   }
 ) {
-  const appUrl = requireContextValue(
-    context.kestrelOne?.appUrl,
-    "KESTREL_ONE_APP_URL"
-  );
-  const ticket = requireContextValue(
-    context.kestrelOne?.executionTicket,
-    "Environment execution ticket"
+  const transport = resolveKestrelOneAppRequest(
+    context,
+    "/api/runtime/google-calendar/action",
   );
   const approvalConfirmed =
     input.requiresApproval ||
     context.kestrelOne?.appApprovalModes?.[input.toolName] === "ask";
   const response = await (context.fetchImpl ?? fetch)(
-    new URL("/api/runtime/google-calendar/action", appUrl),
+    transport.url,
     {
       method: "POST",
       headers: {
-        authorization: `Bearer ${ticket}`,
+        authorization: `Bearer ${transport.authorization}`,
         "content-type": "application/json",
         ...(approvalConfirmed
           ? { "x-kestrel-runtime-approval": "confirmed" }

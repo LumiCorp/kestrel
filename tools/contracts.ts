@@ -241,6 +241,9 @@ export interface SharedToolContext {
         tenantId?: string | undefined;
         contextGrantId?: string | undefined;
         executionTicket?: string | undefined;
+        appRelayUrl?: string | undefined;
+        appRelayToken?: string | undefined;
+        executionRunId?: string | undefined;
         workspaceRuntimeUrl?: string | undefined;
         appApprovalModes?: Record<string, "auto" | "ask"> | undefined;
       }

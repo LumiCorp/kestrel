@@ -3,6 +3,7 @@ import { createKestrelOneVisualCrossingWeatherAdapter } from "./kestrelOneWeathe
 import { createOpenMeteoWeatherAdapter } from "./openMeteoWeather.js";
 import { createVisualCrossingWeatherAdapter } from "./visualCrossingWeather.js";
 import type { WeatherProviderAdapter } from "./weatherProvider.js";
+import { resolveKestrelOneAppProviderTransport } from "../kestrelOne/appTransport.js";
 
 export interface WeatherProviderSet {
   primary: {
@@ -30,16 +31,16 @@ export function resolveWeatherProviderSet(
     adapter: createOpenMeteoWeatherAdapter({ fetchImpl: context.fetchImpl }),
   };
   const hosted = context.kestrelOne;
-  if (hosted?.appUrl?.trim() && hosted.executionTicket?.trim()) {
+  const hostedTransport = resolveKestrelOneAppProviderTransport(context);
+  if (hostedTransport !== undefined) {
     return {
       primary,
       fallback: {
         key: "visual-crossing",
         availability: "hosted-broker",
         adapter: createKestrelOneVisualCrossingWeatherAdapter({
-          appUrl: hosted.appUrl,
-          executionTicket: hosted.executionTicket,
-          approvalModes: hosted.appApprovalModes,
+          ...hostedTransport,
+          approvalModes: hosted?.appApprovalModes,
           fetchImpl: context.fetchImpl,
         }),
       },

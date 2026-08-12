@@ -35,9 +35,10 @@ export function createKestrelOneVisualCrossingWeatherAdapter(input: {
       const runtimeName = CAPABILITY_RUNTIME_NAMES[capability];
       const approval =
         input.approvalModes?.[runtimeName] === "ask" ? "confirmed" : "auto";
+      const appUrl = input.appUrl.endsWith("/") ? input.appUrl : `${input.appUrl}/`;
       const url = new URL(
-        `/api/runtime/apps/built_in.weather/${capability}/${approval}/timeline`,
-        input.appUrl,
+        `api/runtime/apps/built_in.weather/${capability}/${approval}/timeline`,
+        appUrl,
       );
       const response = await fetchImpl(url, {
         method: "POST",

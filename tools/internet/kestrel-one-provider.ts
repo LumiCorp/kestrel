@@ -41,9 +41,10 @@ export function createKestrelOneTavilyProvider(input: {
     const runtimeName = CAPABILITY_RUNTIME_NAMES[capability];
     const approval =
       input.approvalModes?.[runtimeName] === "ask" ? "confirmed" : "auto";
+    const appUrl = input.appUrl.endsWith("/") ? input.appUrl : `${input.appUrl}/`;
     const baseUrl = new URL(
-      `/api/runtime/apps/tavily/${capability}/${approval}`,
-      input.appUrl
+      `api/runtime/apps/tavily/${capability}/${approval}`,
+      appUrl,
     ).toString();
     const provider = createTavilyInternetProvider({
       apiKey: input.executionTicket,

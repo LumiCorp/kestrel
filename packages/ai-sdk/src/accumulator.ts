@@ -73,6 +73,7 @@ export function createKestrelPresentationAccumulator(input: {
   let terminalStatus: KestrelTerminalStatus = "working";
   let runId: string | undefined;
   let errorMessage: string | null = null;
+  let errorCode: string | undefined;
   let interaction: KestrelInteractionPresentation | null = null;
   let finalizedPayload: unknown | undefined;
   let telemetry: RunnerTelemetry | undefined;
@@ -107,18 +108,27 @@ export function createKestrelPresentationAccumulator(input: {
     { type: "data-kestrel-provider-reasoning", id: reasoning.id, data: reasoning },
   ];
 
-  const fail = (error: unknown) => {
-    const message = error instanceof Error ? error.message : "The Kestrel presentation contract failed.";
+  const fail = (error: unknown, runtimeErrorCode?: string) => {
+    const rawMessage = error instanceof Error ? error.message : "The Kestrel presentation contract failed.";
     const contractFailure = error instanceof KestrelPresentationContractError;
+    const preservedRuntimeCode = runtimeErrorCode ?? readRuntimeErrorCode(error);
+    const message = contractFailure
+      ? rawMessage
+      : publicRuntimeErrorMessage(preservedRuntimeCode, rawMessage);
     terminalStatus = contractFailure ? "contract_failure" : "failed";
     errorMessage = message;
+    errorCode = contractFailure ? error.code : preservedRuntimeCode;
     return appendPart({
       type: "data-kestrel-status",
       id: "status:contract",
       data: {
         status: terminalStatus,
         ...(runId !== undefined ? { runId } : {}),
-        ...(contractFailure ? { errorCode: error.code } : {}),
+        ...(contractFailure
+          ? { errorCode: error.code }
+          : preservedRuntimeCode !== undefined
+            ? { errorCode: preservedRuntimeCode }
+            : {}),
         errorMessage: message,
       },
     });
@@ -153,6 +163,7 @@ export function createKestrelPresentationAccumulator(input: {
       assistantText,
       terminalStatus,
       errorMessage,
+      ...(errorCode !== undefined ? { errorCode } : {}),
       failureVisible:
         terminalStatus === "failed" ||
         terminalStatus === "cancelled" ||
@@ -267,7 +278,7 @@ export function createKestrelPresentationAccumulator(input: {
           return emitted;
         }
         if (event.type === "runner.error") {
-          return fail(new KestrelPresentationContractError(event.payload.message));
+          return fail(new Error(event.payload.message), event.payload.code);
         }
         return [];
       } catch (error) {
@@ -283,7 +294,11 @@ export function createKestrelPresentationAccumulator(input: {
         }
         if (event.type === "run.failed") {
           terminalStatus = "failed";
-          errorMessage = event.payload.error.message;
+          errorCode = event.payload.error.code;
+          errorMessage = publicRuntimeErrorMessage(
+            errorCode,
+            event.payload.error.message,
+          );
         } else if (event.type === "run.cancelled") {
           terminalStatus = "cancelled";
           errorMessage = "The run was cancelled before it finished.";
@@ -333,6 +348,7 @@ export function createKestrelPresentationAccumulator(input: {
         data: {
           status: terminalStatus,
           ...(runId !== undefined ? { runId } : {}),
+          ...(errorCode !== undefined ? { errorCode } : {}),
           ...(errorMessage !== null ? { errorMessage } : {}),
         },
       });
@@ -340,6 +356,19 @@ export function createKestrelPresentationAccumulator(input: {
     },
     snapshot,
   };
+}
+
+function publicRuntimeErrorMessage(code: string | undefined, message: string) {
+  return code === "AGENT_CONNECTION_INTERRUPTED"
+    ? "The connection to the running agent was interrupted and could not be restored."
+    : message;
+}
+
+function readRuntimeErrorCode(error: unknown) {
+  return error && typeof error === "object" && "code" in error &&
+      typeof error.code === "string"
+    ? error.code
+    : undefined;
 }
 
 function decodeDialogMessage(value: unknown): KestrelDialogMessagePresentation {
