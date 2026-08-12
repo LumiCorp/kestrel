@@ -157,6 +157,7 @@ test("portable validation harnesses do not enforce wall-clock correctness gates"
   );
   assert.match(productPlaywright, /timeout:\s*0/u);
   assert.match(productPlaywright, /expect:\s*\{ timeout:\s*0 \}/u);
+  assert.match(productPlaywright, /KESTREL_ENVIRONMENT_ID/u);
   assert.match(productPlaywright, /KESTREL_ENVIRONMENT_GATEWAY_URL/u);
   assert.match(productPlaywright, /KESTREL_WORKSPACE_SERVICE_TOKEN/u);
 });
