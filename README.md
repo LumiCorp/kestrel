@@ -1,3 +1,9 @@
+> [!WARNING]
+> **Hydra is experimental and under active development.** This branch adds
+> first-class Codex and Claude Code Runtimes for extended feature testing. It is
+> not the stable Kestrel release line and should not be used for production
+> deployments. The Hydra release gate remains disabled by default.
+
 <p align="center">
   <img src="apps/docs/public/brand/kestrel-mark.png" alt="Kestrel" width="104" />
 </p>
