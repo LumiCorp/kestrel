@@ -1679,6 +1679,10 @@ export const environmentWorkspaces = pgTable(
       () => threads.id,
       { onDelete: "cascade" },
     ),
+    personalOwnerUserId: text("personal_owner_user_id").references(
+      () => users.id,
+      { onDelete: "restrict" },
+    ),
     createdByUserId: text("created_by_user_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
@@ -1737,10 +1741,10 @@ export const environmentWorkspaces = pgTable(
       .where(
         sql`${table.projectId} is not null and ${table.deletedAt} is null`,
       ),
-    uniqueIndex("environment_workspaces_thread_idx")
-      .on(table.environmentId, table.standaloneThreadId)
+    uniqueIndex("environment_workspaces_personal_owner_idx")
+      .on(table.organizationId, table.personalOwnerUserId)
       .where(
-        sql`${table.standaloneThreadId} is not null and ${table.deletedAt} is null`,
+        sql`${table.personalOwnerUserId} is not null and ${table.deletedAt} is null`,
       ),
     uniqueIndex("environment_workspaces_machine_idx")
       .on(table.flyMachineId)
@@ -1756,9 +1760,9 @@ export const environmentWorkspaces = pgTable(
     check(
       "environment_workspaces_owner_check",
       sql`(
-        (${table.kind} = 'project' and ${table.projectId} is not null and ${table.standaloneThreadId} is null)
+        (${table.kind} = 'project' and ${table.projectId} is not null and ${table.standaloneThreadId} is null and ${table.personalOwnerUserId} is null)
         or
-        (${table.kind} = 'scratch' and ${table.projectId} is null and ${table.standaloneThreadId} is not null)
+        (${table.kind} = 'scratch' and ${table.projectId} is null and ${table.personalOwnerUserId} is not null and ${table.standaloneThreadId} is null)
       )`,
     ),
     check(

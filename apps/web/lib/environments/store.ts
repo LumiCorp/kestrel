@@ -19,6 +19,7 @@ import {
   environmentLifecycleLockKey,
   organizationEnvironmentCreateLockKey,
   organizationEnvironmentDefaultLockKey,
+  threadEnvironmentBindingLockKey,
   workspaceLifecycleLockKey,
 } from "./lifecycle-lock";
 
@@ -814,10 +815,9 @@ export async function resolveOrCreateThreadExecutionBinding(input: {
   threadId: string;
   userId: string;
 }) {
-  const lockKey = `kestrel:thread-environment:${input.threadId}`;
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${threadEnvironmentBindingLockKey(input.threadId)}, 0))`,
     );
     const thread = await transaction.query.threads.findFirst({
       where: (table, { and, eq, isNull }) =>
@@ -831,6 +831,20 @@ export async function resolveOrCreateThreadExecutionBinding(input: {
       throw new EnvironmentContractError(
         "ENVIRONMENT_BINDING_NOT_FOUND",
         "Thread is unavailable for Environment execution.",
+      );
+    }
+    const personalOwnerUserId = thread.projectId
+      ? null
+      : thread.createdByUserId;
+    if (!(thread.projectId || personalOwnerUserId)) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_BINDING_NOT_FOUND",
+        "Standalone Thread has no Personal Workspace owner.",
+      );
+    }
+    if (!thread.projectId) {
+      await transaction.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:personal-workspace:${input.organizationId}:${personalOwnerUserId}`}, 0))`,
       );
     }
 
@@ -867,6 +881,15 @@ export async function resolveOrCreateThreadExecutionBinding(input: {
             ),
         })
       : null;
+    const personalWorkspace = thread.projectId
+      ? null : await transaction.query.environmentWorkspaces.findFirst({
+          where: (table, { and, eq, isNull }) =>
+            and(
+              eq(table.organizationId, input.organizationId),
+              eq(table.personalOwnerUserId, personalOwnerUserId!),
+              isNull(table.deletedAt),
+            ),
+        });
     const environment = project
       ? await transaction.query.environments.findFirst({
           where: (table, { and, eq, isNull, notInArray }) =>
@@ -881,7 +904,9 @@ export async function resolveOrCreateThreadExecutionBinding(input: {
           where: (table, { and, eq, isNull, notInArray }) =>
             and(
               eq(table.organizationId, input.organizationId),
-              eq(table.isDefault, true),
+              personalWorkspace
+                ? eq(table.id, personalWorkspace.environmentId)
+                : eq(table.isDefault, true),
               isNull(table.archivedAt),
               notInArray(table.status, [...UNAVAILABLE_ENVIRONMENT_STATES]),
             ),
@@ -897,7 +922,7 @@ export async function resolveOrCreateThreadExecutionBinding(input: {
       organizationId: input.organizationId,
       environmentId: environment.id,
       projectId: thread.projectId,
-      threadId: thread.id,
+      personalOwnerUserId,
       userId: input.userId,
     });
     const source = project ? "project" : "organization";
@@ -906,7 +931,7 @@ export async function resolveOrCreateThreadExecutionBinding(input: {
       .values({
         threadId: thread.id,
         organizationId: input.organizationId,
-        environmentId: environment.id,
+        environmentId: workspace.environmentId,
         workspaceId: workspace.id,
         source,
         boundByUserId: input.userId,
@@ -1073,7 +1098,7 @@ async function findOrCreateWorkspace(
     organizationId: string;
     environmentId: string;
     projectId: string | null;
-    threadId: string;
+    personalOwnerUserId: string | null;
     userId: string;
   },
 ) {
@@ -1081,10 +1106,15 @@ async function findOrCreateWorkspace(
     where: (table, { and, eq, isNull }) =>
       and(
         eq(table.organizationId, input.organizationId),
-        eq(table.environmentId, input.environmentId),
         input.projectId
-          ? eq(table.projectId, input.projectId)
-          : eq(table.standaloneThreadId, input.threadId),
+          ? and(
+              eq(table.environmentId, input.environmentId),
+              eq(table.projectId, input.projectId),
+            )
+          : and(
+              eq(table.kind, "scratch"),
+              eq(table.personalOwnerUserId, input.personalOwnerUserId!),
+            ),
         isNull(table.deletedAt),
       ),
   });
@@ -1101,9 +1131,10 @@ async function findOrCreateWorkspace(
       organizationId: input.organizationId,
       environmentId: input.environmentId,
       projectId: input.projectId,
-      standaloneThreadId: input.projectId ? null : input.threadId,
+      standaloneThreadId: null,
+      personalOwnerUserId: input.personalOwnerUserId,
       createdByUserId: input.userId,
-      name: input.projectId ? "Project workspace" : "Thread workspace",
+      name: input.projectId ? "Project workspace" : "Personal workspace",
       kind: input.projectId ? "project" : "scratch",
       sourceType: "blank",
       status: "requested",
@@ -1877,10 +1908,9 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
   userId: string;
   source: WorkspaceSource;
 }) {
-  const lockKey = `kestrel:thread-environment:${input.threadId}`;
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${threadEnvironmentBindingLockKey(input.threadId)}, 0))`,
     );
     const [thread, environment] = await Promise.all([
       transaction.query.threads.findFirst({
@@ -1909,12 +1939,22 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
         "Standalone Thread or Environment is unavailable.",
       );
     }
+    const personalOwnerUserId = thread.createdByUserId;
+    if (!personalOwnerUserId) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_BINDING_NOT_FOUND",
+        "Standalone Thread has no Personal Workspace owner.",
+      );
+    }
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:personal-workspace:${input.organizationId}:${personalOwnerUserId}`}, 0))`,
+    );
     const [existing, existingBinding] = await Promise.all([
       transaction.query.environmentWorkspaces.findFirst({
         where: (table, { and, eq, isNull }) =>
           and(
             eq(table.organizationId, input.organizationId),
-            eq(table.standaloneThreadId, input.threadId),
+            eq(table.personalOwnerUserId, personalOwnerUserId),
             isNull(table.deletedAt),
           ),
       }),
@@ -1983,9 +2023,10 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
               id: workspaceId,
               organizationId: input.organizationId,
               environmentId: input.environmentId,
-              standaloneThreadId: input.threadId,
+              standaloneThreadId: null,
+              personalOwnerUserId,
               createdByUserId: input.userId,
-              name: thread.title || "Thread workspace",
+              name: "Personal workspace",
               kind: "scratch",
               status: "requested",
               createdAt: now,
@@ -1995,7 +2036,13 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
             .returning()
         )[0];
     if (!workspace) {
-      throw new Error("Standalone Thread Workspace creation failed.");
+      throw new Error("Personal Workspace creation failed.");
+    }
+    if (existing && existing.environmentId !== input.environmentId) {
+      await transaction
+        .update(schema.threadExecutionBindings)
+        .set({ environmentId: input.environmentId, updatedAt: now })
+        .where(eq(schema.threadExecutionBindings.workspaceId, workspace.id));
     }
     const [binding] = await transaction
       .insert(schema.threadExecutionBindings)
@@ -2004,7 +2051,7 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
         organizationId: input.organizationId,
         environmentId: input.environmentId,
         workspaceId: workspace.id,
-        source: "thread",
+        source: "organization",
         boundByUserId: input.userId,
         createdAt: now,
         updatedAt: now,
@@ -2015,7 +2062,7 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
           organizationId: input.organizationId,
           environmentId: input.environmentId,
           workspaceId: workspace.id,
-          source: "thread",
+          source: "organization",
           boundByUserId: input.userId,
           updatedAt: now,
         },
@@ -2056,7 +2103,7 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
             .returning()
         )[0];
     if (!operation) {
-      throw new Error("Standalone Thread Workspace operation failed.");
+      throw new Error("Personal Workspace operation failed.");
     }
     return { binding, workspace, operation };
   });

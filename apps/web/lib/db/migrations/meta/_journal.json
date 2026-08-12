@@ -442,6 +442,13 @@
       "when": 1786467600000,
       "tag": "0062_runtime_event_cursor",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1786554000000,
+      "tag": "0063_personal_standalone_workspaces",
+      "breakpoints": true
     }
   ]
 }

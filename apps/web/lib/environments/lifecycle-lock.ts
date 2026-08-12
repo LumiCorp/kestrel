@@ -6,6 +6,10 @@ export function workspaceLifecycleLockKey(workspaceId: string): string {
   return `kestrel:workspace:lifecycle:${workspaceId}`;
 }
 
+export function threadEnvironmentBindingLockKey(threadId: string): string {
+  return `kestrel:thread-environment:${threadId}`;
+}
+
 export function organizationEnvironmentDefaultLockKey(
   organizationId: string,
 ): string {

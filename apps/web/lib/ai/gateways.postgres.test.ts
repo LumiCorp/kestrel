@@ -161,10 +161,10 @@ test(
       `;
       await transaction`
         INSERT INTO "environment_workspaces" (
-          "id", "organization_id", "environment_id", "standalone_thread_id",
+          "id", "organization_id", "environment_id", "personal_owner_user_id",
           "created_by_user_id", "name", "kind", "status", "runtime_image"
         ) VALUES (
-          ${workspaceId}, ${organizationId}, ${environmentId}, ${threadId},
+          ${workspaceId}, ${organizationId}, ${environmentId}, ${userId},
           ${userId}, 'Grant Workspace', 'scratch', 'ready', 'runtime:test'
         )
       `;

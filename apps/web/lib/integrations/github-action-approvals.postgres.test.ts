@@ -37,7 +37,7 @@ test(
         await tx`INSERT INTO "organization" ("id", "name", "slug", "createdAt") VALUES (${ids.organization}, 'Approval Org', ${`approval-org-${suffix}`}, now())`;
         await tx`INSERT INTO "threads" ("id", "created_by_user_id", "organization_id") VALUES (${ids.thread}, ${ids.user}, ${ids.organization})`;
         await tx`INSERT INTO "environments" ("id", "organization_id", "created_by_user_id", "name", "slug", "region", "status") VALUES (${ids.environment}, ${ids.organization}, ${ids.user}, 'Approval Environment', 'approval', 'iad', 'ready')`;
-        await tx`INSERT INTO "environment_workspaces" ("id", "organization_id", "environment_id", "standalone_thread_id", "created_by_user_id", "name", "kind", "source_type", "status") VALUES (${ids.workspace}, ${ids.organization}, ${ids.environment}, ${ids.thread}, ${ids.user}, 'Approval Workspace', 'scratch', 'blank', 'ready')`;
+        await tx`INSERT INTO "environment_workspaces" ("id", "organization_id", "environment_id", "personal_owner_user_id", "created_by_user_id", "name", "kind", "source_type", "status") VALUES (${ids.workspace}, ${ids.organization}, ${ids.environment}, ${ids.user}, ${ids.user}, 'Approval Workspace', 'scratch', 'blank', 'ready')`;
         await tx`INSERT INTO "tool_connection_resources" ("id", "organization_id", "provider_key", "external_id", "resource_type", "label") VALUES (${ids.resource}, ${ids.organization}, 'github', ${`repository:acme/widgets:${suffix}`}, 'repository', 'acme/widgets')`;
         for (const executionId of [
           ids.requestedExecution,

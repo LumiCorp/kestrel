@@ -47,6 +47,37 @@ test("Environment ownership is canonical on Projects after the follow-up migrati
   );
 });
 
+test("Standalone Threads converge on one personal Workspace per organization member", () => {
+  const personalWorkspaceMigration = fs.readFileSync(
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "migrations/0063_personal_standalone_workspaces.sql"
+    ),
+    "utf8"
+  );
+  assert.match(personalWorkspaceMigration, /personal_owner_user_id/u);
+  assert.match(
+    personalWorkspaceMigration,
+    /environment_workspaces_personal_owner_idx/u
+  );
+  assert.match(
+    personalWorkspaceMigration,
+    /"organization_id", "personal_owner_user_id"/u
+  );
+  assert.match(
+    personalWorkspaceMigration,
+    /DROP INDEX "environment_workspaces_thread_idx"/u
+  );
+  assert.doesNotMatch(
+    personalWorkspaceMigration,
+    /"personal_owner_user_id" IS NULL\s+AND "standalone_thread_id" IS NOT NULL/u
+  );
+  assert.doesNotMatch(
+    personalWorkspaceMigration,
+    /UPDATE |DELETE FROM|INSERT INTO/u
+  );
+});
+
 test("Environment migration pins isolation and lazy Workspace invariants", () => {
   assert.match(migration, /environments_org_default_idx/u);
   assert.match(migration, /fly_gateway_machine_id/u);
