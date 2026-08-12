@@ -1,6 +1,15 @@
 import "server-only";
 
-import { and, asc, eq, inArray, lt, or } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  getTableColumns,
+  inArray,
+  lt,
+  ne,
+  or,
+} from "drizzle-orm";
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
   signEnvironmentExecutionTicket,
@@ -39,11 +48,22 @@ export async function processRuntimeBindingReleaseOutbox(
       lt(schema.runtimeBindingReleaseOutbox.updatedAt, staleDeliveryBefore),
     ),
   );
-  const candidates = await knowledgeDb.query.runtimeBindingReleaseOutbox.findMany({
-    where: retryableState,
-    orderBy: [asc(schema.runtimeBindingReleaseOutbox.createdAt)],
-    limit,
-  });
+  const candidates = await knowledgeDb
+    .select(getTableColumns(schema.runtimeBindingReleaseOutbox))
+    .from(schema.runtimeBindingReleaseOutbox)
+    .innerJoin(
+      schema.environments,
+      and(
+        eq(
+          schema.environments.id,
+          schema.runtimeBindingReleaseOutbox.environmentId,
+        ),
+        ne(schema.environments.provider, "desktop"),
+      ),
+    )
+    .where(retryableState)
+    .orderBy(asc(schema.runtimeBindingReleaseOutbox.createdAt))
+    .limit(limit);
   let released = 0;
   let failed = 0;
   for (const candidate of candidates) {

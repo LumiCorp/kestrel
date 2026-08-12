@@ -85,8 +85,35 @@ session identifiers remain in the Environment-owned Runtime store, and the
 durable binding records only its lifecycle marker: `uninitialized`, `ready`,
 `degraded`, or `released`.
 
-The gate remains off until one build passes authenticated Codex and Claude Code
-smoke runs covering two ordinary Turns, a live question or approval, text and
-image attachments, cancellation, native restart and resume, credential
-refresh, and both recovery-fork policies. A native-session loss offers a new
-Kestrel Thread; a live-wait loss offers a new Thread using the same Runtime.
+Permanent deletion and recovery cleanup first write a non-secret Runtime
+release outbox record. Hosted Environments receive `runtime.release` through
+their Runner route. Desktop Environments claim the same durable record through
+the signed Desktop connector after reconnecting; this cleanup queue is
+independent of live Thread executions and does not consume Desktop run
+capacity. Only an exactly correlated durable `runtime.released` event settles
+the outbox. Expired claims are safely reissued because release is idempotent by
+binding identity.
+
+The gate remains off until one clean revision passes `pnpm hydra:smoke`. Its
+local authenticated matrix covers both Runtimes, two ordinary Turns, a live
+question or approval, text and image attachments, cancellation, native restart
+and resume, configuration-generation credential refresh, and missing-session
+classification. A smaller authenticated Kestrel One candidate canary then
+proves exact-revision admission, deployed routing, native continuation, and
+immutable binding. The sanitized `.artifacts/hydra/<sha>/evidence.json` digest
+is mandatory in unified release evidence. There are no automatic model retries
+or single-provider waivers.
+
+Recovery-fork policies remain deterministic product gates: native-session loss
+offers a new Kestrel Thread; live-wait loss offers a new Thread using the same
+Runtime. Stable deployments keep the gate off until the exact candidate's
+combined evidence passes; disabling the single gate remains the rollback.
+
+The supervised smoke requires `KESTREL_HYDRA_SMOKE_APPROVED=1`, explicit
+`KESTREL_HYDRA_CODEX_MODEL` and `KESTREL_HYDRA_CLAUDE_MODEL` selections, and
+either provider credentials or explicitly approved native login roots through
+`KESTREL_HYDRA_CODEX_HOME` and `KESTREL_HYDRA_CLAUDE_CONFIG_DIR`. The candidate
+phase additionally requires `KESTREL_HYDRA_CANDIDATE_URL`, the authenticated
+Playwright `KESTREL_HYDRA_CANDIDATE_STORAGE_STATE`, and
+`KESTREL_HYDRA_CANDIDATE_PROJECT_ID`. These inputs are consumed only at runtime
+and are prohibited from the evidence artifact.

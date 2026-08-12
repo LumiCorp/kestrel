@@ -826,6 +826,10 @@ export const runtimeBindingReleaseOutbox = pgTable(
       enum: ["pending", "delivering", "released", "failed"],
     }).notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),
+    claimTokenHash: text("claim_token_hash"),
+    claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    acknowledgementEventId: text("acknowledgement_event_id"),
     acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
     failureCode: text("failure_code"),
     failureMessage: text("failure_message"),
@@ -835,6 +839,14 @@ export const runtimeBindingReleaseOutbox = pgTable(
   (table) => [
     uniqueIndex("runtime_binding_release_outbox_idempotency_idx").on(table.idempotencyKey),
     index("runtime_binding_release_outbox_state_idx").on(table.state, table.createdAt),
+    uniqueIndex("runtime_binding_release_outbox_ack_event_idx")
+      .on(table.acknowledgementEventId)
+      .where(sql`${table.acknowledgementEventId} is not null`),
+    index("runtime_binding_release_outbox_claim_idx").on(
+      table.environmentId,
+      table.state,
+      table.createdAt,
+    ),
   ],
 );
 

@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS "runtime_binding_release_outbox" (
   "idempotency_key" text NOT NULL,
   "state" text DEFAULT 'pending' NOT NULL,
   "attempts" integer DEFAULT 0 NOT NULL,
+  "claim_token_hash" text,
+  "claim_expires_at" timestamp with time zone,
+  "claimed_at" timestamp with time zone,
+  "acknowledgement_event_id" text,
   "acknowledged_at" timestamp with time zone,
   "failure_code" text,
   "failure_message" text,
@@ -64,3 +68,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS "runtime_binding_release_outbox_idempotency_id
   ON "runtime_binding_release_outbox" ("idempotency_key");
 CREATE INDEX IF NOT EXISTS "runtime_binding_release_outbox_state_idx"
   ON "runtime_binding_release_outbox" ("state", "created_at");
+CREATE UNIQUE INDEX IF NOT EXISTS "runtime_binding_release_outbox_ack_event_idx"
+  ON "runtime_binding_release_outbox" ("acknowledgement_event_id")
+  WHERE "acknowledgement_event_id" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS "runtime_binding_release_outbox_claim_idx"
+  ON "runtime_binding_release_outbox" ("environment_id", "state", "created_at");

@@ -44,6 +44,7 @@ const COMMAND_POLL_MS = 2_000;
 const PRESENCE_INTERVAL_MS = 30_000;
 const ENROLLMENT_POLL_MS = 5_000;
 const COMMAND_LEASE_RENEW_MS = 30_000;
+const MAX_ACTIVE_RUNTIME_RELEASES_PER_CONNECTION = 4;
 
 type EnrollmentSecret = {
   privateKey: string;
@@ -161,6 +162,7 @@ export class LocalCoreDesktopEnvironmentManager {
   #roundRobinIndex = 0;
   #closed = false;
   #tickActive = false;
+  #releaseTickActive = false;
   #presenceTimer: NodeJS.Timeout | undefined;
   #pollTimer: NodeJS.Timeout | undefined;
   #enrollmentTimer: NodeJS.Timeout | undefined;
@@ -170,6 +172,10 @@ export class LocalCoreDesktopEnvironmentManager {
     health: "ready" | "unavailable";
   }> = [];
   readonly #activeCommands = new Map<string, ActiveDesktopCommand>();
+  readonly #activeReleases = new Map<
+    string,
+    { connectionId: string; controller: AbortController }
+  >();
 
   constructor(input: {
     homePath: string;
@@ -191,12 +197,13 @@ export class LocalCoreDesktopEnvironmentManager {
     this.#capacity = config.environments[0]?.capacity ?? 1;
     await this.refreshEnrollments();
     await this.#synchronizeAll();
-    await this.#pollCommands();
+    await Promise.all([this.#pollCommands(), this.#pollRuntimeReleases()]);
     this.#presenceTimer = setInterval(() => {
       void this.#synchronizeAll();
     }, PRESENCE_INTERVAL_MS);
     this.#pollTimer = setInterval(() => {
       void this.#pollCommands();
+      void this.#pollRuntimeReleases();
     }, COMMAND_POLL_MS);
     this.#enrollmentTimer = setInterval(() => {
       void this.refreshEnrollments();
@@ -212,6 +219,9 @@ export class LocalCoreDesktopEnvironmentManager {
     if (this.#pollTimer) clearInterval(this.#pollTimer);
     if (this.#enrollmentTimer) clearInterval(this.#enrollmentTimer);
     for (const active of this.#activeCommands.values()) {
+      active.controller.abort();
+    }
+    for (const active of this.#activeReleases.values()) {
       active.controller.abort();
     }
     await Promise.allSettled(
@@ -593,6 +603,186 @@ export class LocalCoreDesktopEnvironmentManager {
     } catch {
       this.#advertisedModels = [];
     }
+  }
+
+  async #pollRuntimeReleases(): Promise<void> {
+    if (this.#closed || this.#releaseTickActive || !this.#client) return;
+    this.#releaseTickActive = true;
+    try {
+      const config = await this.#configStore.read();
+      for (const environment of config.environments) {
+        const activeForConnection = [...this.#activeReleases.values()].filter(
+          (active) => active.connectionId === environment.connectionId,
+        ).length;
+        const available =
+          MAX_ACTIVE_RUNTIME_RELEASES_PER_CONNECTION - activeForConnection;
+        if (available <= 0) continue;
+        const secret = await this.#readEnvironmentSecret(
+          environment.connectionId,
+        );
+        for (let claimedCount = 0; claimedCount < available; claimedCount += 1) {
+          try {
+            const claimed = await signedFetchJson({
+              environment,
+              secret,
+              pathname: `/api/runtime/desktop-environments/${encodeURIComponent(environment.connectionId)}/runtime-releases/claim`,
+              method: "POST",
+              body: {},
+              allowNoContent: true,
+            });
+            if (!claimed) break;
+            const release = requireRecord(claimed.release, "release");
+            const releaseId = requireText(release.id, "release.id");
+            if (this.#activeReleases.has(releaseId)) continue;
+            const controller = new AbortController();
+            this.#activeReleases.set(releaseId, {
+              connectionId: environment.connectionId,
+              controller,
+            });
+            void this.#executeRuntimeRelease({
+              environment,
+              secret,
+              claimed,
+              controller,
+            })
+              .catch((error) =>
+                this.#completeRuntimeReleaseFailure({
+                  environment,
+                  secret,
+                  claimed,
+                  error,
+                }),
+              )
+              .catch((error) => this.#recordConnectionError(environment, error))
+              .finally(() => this.#activeReleases.delete(releaseId));
+          } catch (error) {
+            await this.#recordConnectionError(environment, error);
+            break;
+          }
+        }
+      }
+    } finally {
+      this.#releaseTickActive = false;
+    }
+  }
+
+  async #executeRuntimeRelease(input: {
+    environment: LocalCoreDesktopEnvironment;
+    secret: EnvironmentSecret;
+    claimed: Record<string, unknown>;
+    controller: AbortController;
+  }): Promise<void> {
+    if (!this.#client) throw new Error("Local Core is unavailable.");
+    const release = requireRecord(input.claimed.release, "release");
+    const releaseId = requireText(release.id, "release.id");
+    const claimToken = requireText(input.claimed.claimToken, "claimToken");
+    const runtimeId = requireRuntimeId(release.runtimeId);
+    if (runtimeId === "kestrel") {
+      throw Object.assign(new Error("Kestrel bindings do not require native release."), {
+        code: "RUNTIME_RELEASE_DELIVERY_FAILED",
+      });
+    }
+    const command = parseRunnerCommandV2({
+      version: "runner_command_v2",
+      id: releaseId,
+      type: "runtime.release",
+      payload: {
+        runtimeId,
+        bindingId: requireText(release.bindingId, "release.bindingId"),
+        participantId: requireText(release.participantId, "release.participantId"),
+        threadId: requireText(release.threadId, "release.threadId"),
+        environmentId: requireText(release.environmentId, "release.environmentId"),
+      },
+      metadata: {
+        tenantId: input.environment.organizationId,
+        actor: {
+          actorId: requireText(release.actorUserId, "release.actorUserId"),
+          actorType: "operator",
+          tenantId: input.environment.organizationId,
+          orgRole: "org_admin",
+        },
+        profile: {
+          id: `runtime-release-${runtimeId}`,
+          label: `Runtime release (${runtimeId})`,
+          agent: "kestrel",
+          sessionPrefix: "runtime-release",
+          defaultInteractionMode: "build",
+          runtimeId,
+        },
+      },
+    });
+    let acknowledgement: RunnerEvent | undefined;
+    let runnerFailure: { code: string; message: string } | undefined;
+    const leaseTimer = setInterval(() => {
+      void signedFetchJson({
+        environment: input.environment,
+        secret: input.secret,
+        pathname: `/api/runtime/desktop-environments/${encodeURIComponent(input.environment.connectionId)}/runtime-releases/${encodeURIComponent(releaseId)}/lease`,
+        method: "POST",
+        body: { claimToken },
+      }).catch(() => input.controller.abort());
+    }, COMMAND_LEASE_RENEW_MS);
+    leaseTimer.unref();
+    try {
+      await this.#client.sendRunnerCommand(JSON.stringify(command), {
+        signal: input.controller.signal,
+        onLine: (line) => {
+          const event = parseRunnerEventV2(JSON.parse(line) as unknown);
+          if (event.type === "runtime.released" && event.commandId === releaseId) {
+            acknowledgement = event;
+          } else if (event.type === "runner.error" && event.commandId === releaseId) {
+            runnerFailure = { code: event.payload.code, message: event.payload.message };
+          }
+        },
+      });
+      if (runnerFailure) {
+        throw Object.assign(new Error(runnerFailure.message), {
+          code: runnerFailure.code,
+        });
+      }
+      if (!acknowledgement) {
+        throw Object.assign(
+          new Error("Local Core did not acknowledge the Runtime release."),
+          { code: "RUNTIME_RELEASE_DELIVERY_FAILED" },
+        );
+      }
+      await signedFetchJson({
+        environment: input.environment,
+        secret: input.secret,
+        pathname: `/api/runtime/desktop-environments/${encodeURIComponent(input.environment.connectionId)}/runtime-releases/${encodeURIComponent(releaseId)}/complete`,
+        method: "POST",
+        body: {
+          claimToken,
+          outcome: { status: "released", event: acknowledgement },
+        },
+      });
+    } finally {
+      clearInterval(leaseTimer);
+    }
+  }
+
+  async #completeRuntimeReleaseFailure(input: {
+    environment: LocalCoreDesktopEnvironment;
+    secret: EnvironmentSecret;
+    claimed: Record<string, unknown>;
+    error: unknown;
+  }): Promise<void> {
+    if (isAbortError(input.error)) return;
+    const release = requireRecord(input.claimed.release, "release");
+    const releaseId = requireText(release.id, "release.id");
+    await signedFetchJson({
+      environment: input.environment,
+      secret: input.secret,
+      pathname: `/api/runtime/desktop-environments/${encodeURIComponent(input.environment.connectionId)}/runtime-releases/${encodeURIComponent(releaseId)}/complete`,
+      method: "POST",
+      body: {
+        claimToken: requireText(input.claimed.claimToken, "claimToken"),
+        outcome: {
+          status: "failed",
+          failureCode: runtimeReleaseFailureCode(input.error),
+        },
+      },
+    });
   }
 
   async #pollCommands(): Promise<void> {
@@ -1555,6 +1745,30 @@ function requireText(value: unknown, field: string): string {
     throw new Error(`${field} must be a non-empty string.`);
   }
   return value;
+}
+
+function requireRuntimeId(value: unknown): "kestrel" | "codex" | "claude" {
+  if (value !== "kestrel" && value !== "codex" && value !== "claude") {
+    throw new Error("release.runtimeId is invalid.");
+  }
+  return value;
+}
+
+function runtimeReleaseFailureCode(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    /^[A-Z0-9_]{1,80}$/u.test(error.code)
+  ) {
+    return error.code;
+  }
+  return "RUNTIME_RELEASE_DELIVERY_FAILED";
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function requireInteger(value: unknown, field: string): number {

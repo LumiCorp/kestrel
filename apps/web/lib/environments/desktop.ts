@@ -13,6 +13,10 @@ import {
   signEnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
 import {
+  parseRunnerEventV2,
+  type RunnerEventEnvelope,
+} from "@kestrel-agents/protocol";
+import {
   and,
   asc,
   eq,
@@ -45,6 +49,15 @@ const CONNECTOR_NONCE_TTL_MS = 5 * 60_000;
 const CONNECTOR_CREDENTIAL_ROTATION_MS = 12 * 60 * 60_000;
 const CONNECTOR_PREVIOUS_CREDENTIAL_GRACE_MS = 5 * 60_000;
 const COMMAND_LEASE_MS = 90_000;
+const RUNTIME_RELEASE_FAILURE_CODES = new Set([
+  "RUNTIME_RELEASE_DELIVERY_FAILED",
+  "RUNTIME_RELEASE_ROUTE_UNAVAILABLE",
+  "RUNTIME_BINDING_DEGRADED",
+  "RUNTIME_NATIVE_SESSION_LOST",
+  "RUNTIME_LIVE_WAIT_LOST",
+  "CLAUDE_RUNTIME_FAILED",
+  "CODEX_RUNTIME_FAILED",
+]);
 export const DESKTOP_ENVIRONMENTS_FEATURE_KEY = "desktop_environments";
 const DESKTOP_ROUTE_CAPABILITIES = [
   "profile.read",
@@ -129,6 +142,17 @@ export const desktopCommandCompletionSchema = z.object({
   status: z.enum(["completed", "failed", "cancelled"]),
   failureCode: z.string().trim().min(1).max(120).optional(),
   failureMessage: z.string().trim().min(1).max(1000).optional(),
+});
+
+export const desktopRuntimeReleaseCompletionSchema = z.object({
+  claimToken: z.string().min(32).max(256),
+  outcome: z.discriminatedUnion("status", [
+    z.object({ status: z.literal("released"), event: z.unknown() }),
+    z.object({
+      status: z.literal("failed"),
+      failureCode: z.string().trim().min(1).max(120),
+    }),
+  ]),
 });
 
 export type DesktopConnectorAuthorization = {
@@ -1081,6 +1105,186 @@ export async function claimDesktopEnvironmentCommand(
   }
 }
 
+export async function claimDesktopRuntimeRelease(
+  authorization: DesktopConnectorAuthorization,
+) {
+  const now = new Date();
+  const claimToken = randomBytes(32).toString("base64url");
+  return await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:desktop-runtime-release:${authorization.connection.id}`}, 0))`,
+    );
+    const [candidate] = await transaction
+      .select()
+      .from(schema.runtimeBindingReleaseOutbox)
+      .where(
+        and(
+          eq(
+            schema.runtimeBindingReleaseOutbox.organizationId,
+            authorization.connection.organizationId,
+          ),
+          eq(
+            schema.runtimeBindingReleaseOutbox.environmentId,
+            authorization.environment.id,
+          ),
+          or(
+            inArray(schema.runtimeBindingReleaseOutbox.state, [
+              "pending",
+              "failed",
+            ]),
+            and(
+              eq(schema.runtimeBindingReleaseOutbox.state, "delivering"),
+              lt(schema.runtimeBindingReleaseOutbox.claimExpiresAt, now),
+            ),
+          ),
+        ),
+      )
+      .orderBy(
+        asc(schema.runtimeBindingReleaseOutbox.createdAt),
+        asc(schema.runtimeBindingReleaseOutbox.id),
+      )
+      .limit(1);
+    if (!candidate) return null;
+    const claimExpiresAt = new Date(now.getTime() + COMMAND_LEASE_MS);
+    const [claimed] = await transaction
+      .update(schema.runtimeBindingReleaseOutbox)
+      .set({
+        state: "delivering",
+        attempts: candidate.attempts + 1,
+        claimTokenHash: hashSecret(claimToken),
+        claimExpiresAt,
+        claimedAt: now,
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: now,
+      })
+      .where(eq(schema.runtimeBindingReleaseOutbox.id, candidate.id))
+      .returning();
+    if (!claimed) return null;
+    return {
+      release: {
+        id: claimed.id,
+        runtimeId: claimed.runtimeId,
+        bindingId: claimed.bindingId,
+        participantId: claimed.participantId,
+        threadId: claimed.threadId,
+        environmentId: claimed.environmentId,
+        actorUserId: claimed.actorUserId,
+      },
+      claimToken,
+      claimExpiresAt: claimExpiresAt.toISOString(),
+    };
+  });
+}
+
+export async function renewDesktopRuntimeReleaseLease(input: {
+  authorization: DesktopConnectorAuthorization;
+  releaseId: string;
+  body: unknown;
+}) {
+  const body = z
+    .object({ claimToken: z.string().min(32).max(256) })
+    .parse(input.body);
+  const release = await requireClaimedRuntimeRelease({
+    authorization: input.authorization,
+    releaseId: input.releaseId,
+    claimToken: body.claimToken,
+  });
+  const now = new Date();
+  const claimExpiresAt = new Date(now.getTime() + COMMAND_LEASE_MS);
+  const [renewed] = await knowledgeDb
+    .update(schema.runtimeBindingReleaseOutbox)
+    .set({ claimExpiresAt, updatedAt: now })
+    .where(
+      and(
+        eq(schema.runtimeBindingReleaseOutbox.id, release.id),
+        eq(schema.runtimeBindingReleaseOutbox.state, "delivering"),
+      ),
+    )
+    .returning();
+  if (!renewed) {
+    throw new DesktopConnectorAuthError("DESKTOP_RUNTIME_RELEASE_CLAIM_INVALID");
+  }
+  return { claimExpiresAt: claimExpiresAt.toISOString() };
+}
+
+export async function completeDesktopRuntimeRelease(input: {
+  authorization: DesktopConnectorAuthorization;
+  releaseId: string;
+  body: unknown;
+}) {
+  const body = desktopRuntimeReleaseCompletionSchema.parse(input.body);
+  const release = await requireClaimedRuntimeRelease({
+    authorization: input.authorization,
+    releaseId: input.releaseId,
+    claimToken: body.claimToken,
+    allowReleased: body.outcome.status === "released",
+  });
+  const now = new Date();
+  if (body.outcome.status === "failed") {
+    if (release.state === "released") {
+      throw new DesktopConnectorAuthError("DESKTOP_RUNTIME_RELEASE_ALREADY_ACKNOWLEDGED");
+    }
+    const failureCode = RUNTIME_RELEASE_FAILURE_CODES.has(
+      body.outcome.failureCode,
+    )
+      ? body.outcome.failureCode
+      : "RUNTIME_RELEASE_DELIVERY_FAILED";
+    const [failed] = await knowledgeDb
+      .update(schema.runtimeBindingReleaseOutbox)
+      .set({
+        state: "failed",
+        claimTokenHash: null,
+        claimExpiresAt: null,
+        failureCode,
+        failureMessage: "Runtime binding release will be retried.",
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.runtimeBindingReleaseOutbox.id, release.id),
+          eq(schema.runtimeBindingReleaseOutbox.state, "delivering"),
+        ),
+      )
+      .returning();
+    if (!failed) {
+      throw new DesktopConnectorAuthError("DESKTOP_RUNTIME_RELEASE_CLAIM_INVALID");
+    }
+    return failed;
+  }
+
+  const event = parseRunnerEventV2(body.outcome.event);
+  assertRuntimeReleaseAcknowledgement(release, event);
+  if (release.state === "released") {
+    if (release.acknowledgementEventId !== event.id) {
+      throw new DesktopConnectorAuthError("DESKTOP_RUNTIME_RELEASE_ACK_CONFLICT");
+    }
+    return release;
+  }
+  const [completed] = await knowledgeDb
+    .update(schema.runtimeBindingReleaseOutbox)
+    .set({
+      state: "released",
+      acknowledgementEventId: event.id,
+      acknowledgedAt: now,
+      claimExpiresAt: null,
+      failureCode: null,
+      failureMessage: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.runtimeBindingReleaseOutbox.id, release.id),
+        eq(schema.runtimeBindingReleaseOutbox.state, "delivering"),
+      ),
+    )
+    .returning();
+  if (!completed) {
+    throw new DesktopConnectorAuthError("DESKTOP_RUNTIME_RELEASE_CLAIM_INVALID");
+  }
+  return completed;
+}
+
 export async function appendDesktopCommandEvents(input: {
   authorization: DesktopConnectorAuthorization;
   commandId: string;
@@ -1372,6 +1576,52 @@ async function requireClaimedCommand(input: {
     throw new DesktopConnectorAuthError("DESKTOP_COMMAND_CLAIM_INVALID");
   }
   return command;
+}
+
+async function requireClaimedRuntimeRelease(input: {
+  authorization: DesktopConnectorAuthorization;
+  releaseId: string;
+  claimToken: string;
+  allowReleased?: boolean | undefined;
+}) {
+  const release = await knowledgeDb.query.runtimeBindingReleaseOutbox.findFirst({
+    where: (table, { and, eq, inArray }) =>
+      and(
+        eq(table.id, input.releaseId),
+        eq(table.organizationId, input.authorization.connection.organizationId),
+        eq(table.environmentId, input.authorization.environment.id),
+        inArray(
+          table.state,
+          input.allowReleased ? ["delivering", "released"] : ["delivering"],
+        ),
+      ),
+  });
+  if (
+    !release?.claimTokenHash ||
+    !secretMatches(input.claimToken, release.claimTokenHash) ||
+    (release.state === "delivering" &&
+      (!release.claimExpiresAt || release.claimExpiresAt <= new Date()))
+  ) {
+    throw new DesktopConnectorAuthError("DESKTOP_RUNTIME_RELEASE_CLAIM_INVALID");
+  }
+  return release;
+}
+
+function assertRuntimeReleaseAcknowledgement(
+  release: typeof schema.runtimeBindingReleaseOutbox.$inferSelect,
+  event: ReturnType<typeof parseRunnerEventV2>,
+): asserts event is RunnerEventEnvelope<"runtime.released"> {
+  if (
+    event.type !== "runtime.released" ||
+    event.commandId !== release.id ||
+    event.payload.runtimeId !== release.runtimeId ||
+    event.payload.bindingId !== release.bindingId ||
+    event.payload.participantId !== release.participantId ||
+    event.payload.threadId !== release.threadId ||
+    event.payload.environmentId !== release.environmentId
+  ) {
+    throw new DesktopConnectorAuthError("DESKTOP_RUNTIME_RELEASE_ACK_INVALID");
+  }
 }
 
 function normalizeEd25519PublicKey(value: string) {

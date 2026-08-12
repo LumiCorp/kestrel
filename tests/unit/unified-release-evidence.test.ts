@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { validateUnifiedReleaseEvidence } from "../../scripts/check-unified-release-evidence.js";
 
@@ -22,9 +26,43 @@ const flyRoles = [
   "turn-worker",
   "runpod-worker",
 ];
+const evidenceDirectory = mkdtempSync(path.join(os.tmpdir(), "hydra-evidence-test-"));
+const hydraArtifact = "hydra.json";
+const hydraBytes = Buffer.from(JSON.stringify({
+  version: "hydra_smoke_evidence_v1",
+  sourceSha,
+  startedAt: timestamp,
+  completedAt: timestamp,
+  status: "passed",
+  local: {
+    status: "passed",
+    runtimes: ["codex", "claude"].map((runtimeId) => ({
+      runtimeId,
+      nativeVersion: "test",
+      modelId: `${runtimeId}-model`,
+      authenticationSource: "native-login",
+      scenarios: [{ id: "local", status: "passed", durationMs: 1 }],
+    })),
+  },
+  candidate: {
+    status: "passed",
+    origin: "https://candidate.example.test",
+    deploymentRevision: sourceSha,
+    runtimes: ["codex", "claude"].map((runtimeId) => ({
+      runtimeId,
+      modelId: `${runtimeId}-model`,
+      scenarios: [{ id: "candidate", status: "passed", durationMs: 1 }],
+    })),
+  },
+}));
+writeFileSync(path.join(evidenceDirectory, hydraArtifact), hydraBytes);
+test.after(() => rmSync(evidenceDirectory, { recursive: true, force: true }));
+
+const validate = (evidence: unknown) =>
+  validateUnifiedReleaseEvidence(evidence, { evidenceDirectory });
 
 test("accepts a complete immutable candidate evidence bundle", () => {
-  assert.doesNotThrow(() => validateUnifiedReleaseEvidence(validEvidence()));
+  assert.doesNotThrow(() => validate(validEvidence()));
 });
 
 test("rejects package and source revision mismatches", () => {
@@ -32,7 +70,7 @@ test("rejects package and source revision mismatches", () => {
   const packageEvidence = evidence.npm.packages[0];
   assert.ok(packageEvidence);
   packageEvidence.version = "0.7.0";
-  assert.throws(() => validateUnifiedReleaseEvidence(evidence), /version mismatch/u);
+  assert.throws(() => validate(evidence), /version mismatch/u);
 });
 
 test("rejects mutable Fly references", () => {
@@ -40,13 +78,13 @@ test("rejects mutable Fly references", () => {
   const flyEvidence = evidence.fly[0];
   assert.ok(flyEvidence);
   flyEvidence.image = "registry.fly.io/kestrel-one-runner:0.8.0";
-  assert.throws(() => validateUnifiedReleaseEvidence(evidence), /image is mutable/u);
+  assert.throws(() => validate(evidence), /image is mutable/u);
 });
 
 test("rejects a changed stable OTA pointer", () => {
   const evidence = validEvidence();
   evidence.desktopOta.afterSha256 = "c".repeat(64);
-  assert.throws(() => validateUnifiedReleaseEvidence(evidence), /OTA metadata changed/u);
+  assert.throws(() => validate(evidence), /OTA metadata changed/u);
 });
 
 test("requires both exact-revision production deployments", () => {
@@ -56,20 +94,20 @@ test("requires both exact-revision production deployments", () => {
     deployments: { docs: evidence.deployments.docs },
   };
   assert.throws(
-    () => validateUnifiedReleaseEvidence(incompleteDeployments),
+    () => validate(incompleteDeployments),
     /deployments are incomplete or duplicated/u,
   );
 });
 
 test("requires latest to match only for cutover evidence", () => {
   const candidate = validEvidence();
-  assert.doesNotThrow(() => validateUnifiedReleaseEvidence(candidate));
+  assert.doesNotThrow(() => validate(candidate));
   candidate.phase = "cutover";
-  assert.throws(() => validateUnifiedReleaseEvidence(candidate), /latest dist-tag mismatch/u);
+  assert.throws(() => validate(candidate), /latest dist-tag mismatch/u);
   for (const packageEvidence of candidate.npm.packages) {
     packageEvidence.distTags.latest = packageEvidence.version;
   }
-  assert.doesNotThrow(() => validateUnifiedReleaseEvidence(candidate));
+  assert.doesNotThrow(() => validate(candidate));
 });
 
 test("requires the explicit Runtime npm patch version", () => {
@@ -77,7 +115,7 @@ test("requires the explicit Runtime npm patch version", () => {
   const runtime = evidence.npm.packages.find(({ name }) => name === "@kestrel-agents/kestrel");
   assert.ok(runtime);
   runtime.version = "0.8.0";
-  assert.throws(() => validateUnifiedReleaseEvidence(evidence), /kestrel version mismatch/u);
+  assert.throws(() => validate(evidence), /kestrel version mismatch/u);
 });
 
 function validEvidence() {
@@ -141,5 +179,11 @@ function validEvidence() {
       { name: "kestrel-one-hosted", status: "passed", completedAt: timestamp },
       { name: "docs-production", status: "passed", completedAt: timestamp },
     ],
+    hydra: {
+      sourceSha,
+      artifact: hydraArtifact,
+      artifactSha256: createHash("sha256").update(hydraBytes).digest("hex"),
+      status: "passed",
+    },
   };
 }

@@ -307,6 +307,82 @@ test(
     assert.notEqual(connection?.credentialHash, consumed.connectorCredential);
     assert.equal(connection?.encryptionPublicKey, encryptionKeys.publicKey);
     assert.match(connection?.publicKey ?? "", /BEGIN PUBLIC KEY/u);
+
+    const releaseId = crypto.randomUUID();
+    const releaseThreadId = crypto.randomUUID();
+    await sql`
+      INSERT INTO "runtime_binding_release_outbox" (
+        "id", "organization_id", "runtime_id", "binding_id",
+        "participant_id", "thread_id", "environment_id", "workspace_id",
+        "actor_user_id", "idempotency_key", "state", "attempts",
+        "created_at", "updated_at"
+      ) VALUES (
+        ${releaseId}, ${organizationId}, 'codex', 'binding-desktop-release',
+        'runtime:codex', ${releaseThreadId}, ${approved.environment.id},
+        ${workspaceId}, ${userId}, ${`release:${releaseId}`}, 'pending', 0,
+        ${now}, ${now}
+      )
+    `;
+    const claimedRelease = await desktop.claimDesktopRuntimeRelease(authorization);
+    assert.equal(claimedRelease?.release.id, releaseId);
+    assert.equal(claimedRelease?.release.environmentId, approved.environment.id);
+    assert.ok(claimedRelease);
+    const renewed = await desktop.renewDesktopRuntimeReleaseLease({
+      authorization,
+      releaseId,
+      body: { claimToken: claimedRelease.claimToken },
+    });
+    assert.equal(Date.parse(renewed.claimExpiresAt) > Date.now(), true);
+    await assert.rejects(
+      desktop.renewDesktopRuntimeReleaseLease({
+        authorization,
+        releaseId,
+        body: { claimToken: "foreign-runtime-release-claim-token-value" },
+      }),
+      (error: unknown) =>
+        error instanceof desktop.DesktopConnectorAuthError &&
+        error.code === "DESKTOP_RUNTIME_RELEASE_CLAIM_INVALID",
+    );
+    const acknowledgement = {
+      id: crypto.randomUUID(),
+      type: "runtime.released",
+      ts: new Date().toISOString(),
+      commandId: releaseId,
+      sessionId: releaseThreadId,
+      threadId: releaseThreadId,
+      payload: {
+        runtimeId: "codex",
+        bindingId: "binding-desktop-release",
+        participantId: "runtime:codex",
+        threadId: releaseThreadId,
+        environmentId: approved.environment.id,
+      },
+    };
+    const completedRelease = await desktop.completeDesktopRuntimeRelease({
+      authorization,
+      releaseId,
+      body: {
+        claimToken: claimedRelease.claimToken,
+        outcome: { status: "released", event: acknowledgement },
+      },
+    });
+    assert.equal(completedRelease.state, "released");
+    assert.equal(completedRelease.acknowledgementEventId, acknowledgement.id);
+    const duplicateCompletion = await desktop.completeDesktopRuntimeRelease({
+      authorization,
+      releaseId,
+      body: {
+        claimToken: claimedRelease.claimToken,
+        outcome: { status: "released", event: acknowledgement },
+      },
+    });
+    assert.equal(duplicateCompletion.acknowledgementEventId, acknowledgement.id);
+    const [unchangedCapacity] = await sql<Array<{ activeRuns: number }>>`
+      SELECT "active_runs"::int AS "activeRuns"
+      FROM "desktop_environment_connections"
+      WHERE "id" = ${consumed.connectionId}
+    `;
+    assert.equal(unchangedCapacity?.activeRuns, 0);
   },
 );
 

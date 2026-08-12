@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { validateHydraSmokeEvidence } from "./hydra-smoke-contract.js";
 
 const PUBLIC_PACKAGES = [
   "@kestrel-agents/protocol",
@@ -85,6 +87,12 @@ interface ReleaseEvidence {
     name: string;
     status: string;
   }>;
+  hydra: {
+    sourceSha: string;
+    artifact: string;
+    artifactSha256: string;
+    status: "passed";
+  };
 }
 
 interface DeploymentEvidence {
@@ -98,7 +106,10 @@ const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_FLY_IMAGE_PATTERN =
   /^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u;
 
-export function validateUnifiedReleaseEvidence(input: unknown): void {
+export function validateUnifiedReleaseEvidence(
+  input: unknown,
+  options: { evidenceDirectory?: string | undefined } = {},
+): void {
   assertRecord(input, "release evidence");
   const evidence = input as unknown as ReleaseEvidence;
   assert.ok(evidence.phase === "candidate" || evidence.phase === "cutover");
@@ -223,6 +234,34 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
     assertPassed(canary.status, `canary ${canary.name}`);
     assertTimestamp(canary.completedAt, `canary ${canary.name}`);
   }
+
+  assertRecord(evidence.hydra, "Hydra evidence reference");
+  assert.equal(evidence.hydra.sourceSha, evidence.sourceSha);
+  assertPassed(evidence.hydra.status, "Hydra smoke");
+  assert.match(evidence.hydra.artifactSha256, CHECKSUM_PATTERN);
+  assertNonEmpty(evidence.hydra.artifact, "Hydra artifact path");
+  assert.equal(
+    path.isAbsolute(evidence.hydra.artifact),
+    false,
+    "Hydra artifact path must be relative",
+  );
+  assertNonEmpty(
+    options.evidenceDirectory,
+    "Unified evidence directory for Hydra artifact verification",
+  );
+  const hydraArtifactPath = path.resolve(
+    options.evidenceDirectory,
+    evidence.hydra.artifact,
+  );
+  const hydraBytes = readFileSync(hydraArtifactPath);
+  assert.equal(
+    createHash("sha256").update(hydraBytes).digest("hex"),
+    evidence.hydra.artifactSha256,
+    "Hydra artifact checksum mismatch",
+  );
+  const hydraEvidence = JSON.parse(hydraBytes.toString("utf8")) as unknown;
+  validateHydraSmokeEvidence(hydraEvidence, { requirePassed: true });
+  assert.equal(hydraEvidence.sourceSha, evidence.sourceSha);
 }
 
 function assertExactNames<T>(
@@ -260,6 +299,8 @@ if (isMain) {
   const evidencePath = process.argv[2];
   assertNonEmpty(evidencePath, "release evidence JSON path");
   const evidence = JSON.parse(readFileSync(path.resolve(evidencePath), "utf8")) as unknown;
-  validateUnifiedReleaseEvidence(evidence);
+  validateUnifiedReleaseEvidence(evidence, {
+    evidenceDirectory: path.dirname(path.resolve(evidencePath)),
+  });
   console.log(`unified release evidence passed (${(evidence as ReleaseEvidence).version})`);
 }

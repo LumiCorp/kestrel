@@ -43,4 +43,10 @@ test("Hydra correctness migration persists native lifecycle and acknowledgement 
   assert.match(migration, /'uninitialized', 'ready', 'degraded', 'released'/u);
   assert.match(migration, /"acknowledgement_event_id" text/u);
   assert.match(migration, /runtime_interaction_deliveries_ack_event_idx/u);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS "runtime_binding_release_outbox"/u);
+  assert.match(migration, /"claim_token_hash" text/u);
+  assert.match(migration, /"claim_expires_at" timestamp with time zone/u);
+  assert.match(migration, /"claimed_at" timestamp with time zone/u);
+  assert.match(migration, /runtime_binding_release_outbox_ack_event_idx/u);
+  assert.match(migration, /runtime_binding_release_outbox_claim_idx/u);
 });

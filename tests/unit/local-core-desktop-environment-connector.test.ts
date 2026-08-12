@@ -80,6 +80,9 @@ test(
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (request, init) => {
       const url = new URL(String(request));
+      if (url.pathname.includes("/runtime-releases/")) {
+        return new Response(null, { status: 204 });
+      }
       if (url.pathname.endsWith("/commands/claim")) {
         if (claimServed) return new Response(null, { status: 204 });
         claimServed = true;
@@ -148,6 +151,96 @@ test(
     assert.equal(runnerStarted, false);
     assert.equal(completionBody?.status, "failed");
     assert.equal(completionBody?.failureCode, "DESKTOP_COMMAND_INVALID");
+  },
+);
+
+test(
+  "Desktop Environment delivers Runtime release independently of run capacity",
+  async (context) => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-release-"));
+    let manager: LocalCoreDesktopEnvironmentManager | undefined;
+    context.after(async () => {
+      await manager?.close();
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 10 });
+    });
+    const credentialStore = new MemoryLocalCoreCredentialStore();
+    const signingKeys = generateKeyPairSync("ed25519");
+    const connectionId = "00000000-0000-4000-8000-000000000011";
+    const environmentId = "00000000-0000-4000-8000-000000000012";
+    const organizationId = "00000000-0000-4000-8000-000000000013";
+    const releaseId = "00000000-0000-4000-8000-000000000014";
+    const threadId = "00000000-0000-4000-8000-000000000015";
+    const now = new Date().toISOString();
+    await new LocalCoreDesktopEnvironmentConfigStore(home).write({
+      version: 1,
+      enrollments: [],
+      environments: [{
+        connectionId, environmentId, organizationId,
+        baseUrl: "https://kestrel.example/", desktopName: "Release Desktop",
+        ticketPublicKey: signingKeys.publicKey.export({ format: "pem", type: "spki" }).toString(),
+        status: "active", capacity: 1, workspaces: [], createdAt: now, updatedAt: now,
+      }],
+    });
+    await credentialStore.set(
+      `kestrel_one.environment.${connectionId}`,
+      JSON.stringify({
+        privateKey: signingKeys.privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
+        encryptionPrivateKey: "unused",
+        connectorCredential: "connector-credential-value",
+      }),
+    );
+    let releaseClaimed = false;
+    let completionBody: Record<string, unknown> | undefined;
+    let resolveCompletion: (() => void) | undefined;
+    const completed = new Promise<void>((resolve) => { resolveCompletion = resolve; });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (request, init) => {
+      const url = new URL(String(request));
+      if (url.pathname.endsWith("/commands/claim")) return new Response(null, { status: 204 });
+      if (url.pathname.endsWith("/runtime-releases/claim")) {
+        if (releaseClaimed) return new Response(null, { status: 204 });
+        releaseClaimed = true;
+        return Response.json({
+          release: {
+            id: releaseId, runtimeId: "codex", bindingId: "binding-release",
+            participantId: "runtime:codex", threadId, environmentId,
+            actorUserId: "00000000-0000-4000-8000-000000000016",
+          },
+          claimToken: "runtime-release-claim-token-long-enough",
+          claimExpiresAt: new Date(Date.now() + 90_000).toISOString(),
+        });
+      }
+      if (url.pathname.endsWith(`/runtime-releases/${releaseId}/complete`)) {
+        completionBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        resolveCompletion?.();
+        return Response.json({ state: "released" });
+      }
+      return Response.json({});
+    };
+    context.after(() => { globalThis.fetch = originalFetch; });
+    manager = new LocalCoreDesktopEnvironmentManager({ homePath: home, credentialStore, coreVersion: "test" });
+    const client = {
+      async desktopExecutionConfig() {
+        return { resolvedProfile: { modelProvider: "openrouter", model: "test" } };
+      },
+      async sendRunnerCommand(line: string, input: { onLine(line: string): void }) {
+        const command = JSON.parse(line) as { id: string; payload: Record<string, unknown> };
+        assert.equal(command.id, releaseId);
+        input.onLine(JSON.stringify({
+          id: crypto.randomUUID(), type: "runtime.released", ts: new Date().toISOString(),
+          commandId: releaseId, sessionId: threadId, threadId,
+          payload: command.payload,
+        }));
+      },
+    } as unknown as LocalCoreClient;
+    await manager.start(client);
+    await Promise.race([
+      completed,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Release was not completed.")), 1_000)),
+    ]);
+    const outcome = completionBody?.outcome as Record<string, unknown> | undefined;
+    assert.equal(outcome?.status, "released");
+    assert.equal((outcome?.event as Record<string, unknown>)?.commandId, releaseId);
   },
 );
 
