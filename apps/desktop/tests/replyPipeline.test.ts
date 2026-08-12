@@ -22,7 +22,14 @@ test("Desktop forwards runner events from one centralized transport observer", a
   const source = await readFile(mainPath, "utf8");
 
   assert.match(source, /runnerTransport\.observe\(\{/u);
-  assert.match(source, /mainWindow\.webContents\.send\("desktop:runner-event", event\)/u);
+  assert.match(
+    source,
+    /mainWindow\.webContents\.send\(\s*"desktop:runner-event",\s*projectDesktopRunnerEvent\(event\),?\s*\)/u,
+  );
+  assert.doesNotMatch(
+    source,
+    /mainWindow\.webContents\.send\(\s*"desktop:runner-event",\s*event\s*\)/u,
+  );
   assert.match(source, /onEvent\(\) \{\}/u);
   assert.doesNotMatch(source, /event\.sender\.send\("desktop:runner-event"/u);
 });
