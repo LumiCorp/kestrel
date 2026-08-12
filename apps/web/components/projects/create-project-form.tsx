@@ -41,7 +41,7 @@ export function CreateProjectForm({
       await mutate("/api/projects");
       if (mobileReturnTo) {
         window.location.assign(
-          buildMobileProjectCallback(mobileReturnTo, result.project.id)
+          buildMobileProjectCallback(mobileReturnTo, result.project.id),
         );
         return;
       }
@@ -49,7 +49,7 @@ export function CreateProjectForm({
       router.refresh();
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Project creation failed."
+        error instanceof Error ? error.message : "Project creation failed.",
       );
     } finally {
       setCreating(false);
@@ -58,13 +58,13 @@ export function CreateProjectForm({
 
   return (
     <form
-      className="divide-y border-y"
+      className="max-w-2xl divide-y border-y"
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
     >
-      <div className="grid gap-3 py-5 sm:grid-cols-[15rem_minmax(0,1fr)] sm:gap-8">
+      <div className="grid gap-3 py-5">
         <div>
           <Label htmlFor="project-name">Name</Label>
           <p className="mt-1 text-muted-foreground text-xs">
@@ -79,7 +79,7 @@ export function CreateProjectForm({
           value={name}
         />
       </div>
-      <div className="grid gap-3 py-5 sm:grid-cols-[15rem_minmax(0,1fr)] sm:gap-8">
+      <div className="grid gap-3 py-5">
         <div>
           <Label htmlFor="project-description">Description</Label>
           <p className="mt-1 text-muted-foreground text-xs">
@@ -93,23 +93,32 @@ export function CreateProjectForm({
           value={description}
         />
       </div>
-      <div className="grid gap-3 py-5 sm:grid-cols-[15rem_minmax(0,1fr)] sm:gap-8">
-        <div>
-          <Label htmlFor="project-instructions">Instructions</Label>
-          <p className="mt-1 text-muted-foreground text-xs">
-            Shared with every Thread created in this Project.
-          </p>
+      <details className="group py-5">
+        <summary className="cursor-pointer list-none font-medium text-sm outline-none marker:hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">
+          Add instructions now
+          <span className="mt-1 block font-normal text-muted-foreground text-xs">
+            Optional durable guidance shared with every Thread in this Project.
+          </span>
+        </summary>
+        <div className="mt-4 grid gap-2">
+          <Label className="sr-only" htmlFor="project-instructions">
+            Instructions
+          </Label>
+          <Textarea
+            id="project-instructions"
+            onChange={(event) => setInstructions(event.target.value)}
+            placeholder="Add durable context and working instructions…"
+            rows={6}
+            value={instructions}
+          />
         </div>
-        <Textarea
-          id="project-instructions"
-          onChange={(event) => setInstructions(event.target.value)}
-          placeholder="Add durable context and working instructions…"
-          rows={8}
-          value={instructions}
-        />
-      </div>
+      </details>
       <div className="flex justify-end gap-2 py-5">
-        <Button onClick={() => router.push("/projects")} type="button" variant="outline">
+        <Button
+          onClick={() => router.push("/projects")}
+          type="button"
+          variant="outline"
+        >
           Cancel
         </Button>
         <Button disabled={creating || !name.trim()} type="submit">

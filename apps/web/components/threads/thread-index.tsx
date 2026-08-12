@@ -1,12 +1,25 @@
 "use client";
 
-import { Archive, ArrowDownUp, MessageSquare, Search } from "lucide-react";
+import {
+  Archive,
+  ArrowDownUp,
+  MessageSquare,
+  MoreHorizontal,
+  RotateCcw,
+  Search,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   filterAndSortThreads,
   type ThreadListItem,
@@ -24,11 +37,11 @@ export function ThreadIndex({
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<ThreadSort>("recent");
   const [pendingThreadIds, setPendingThreadIds] = useState<Set<string>>(
-    () => new Set()
+    () => new Set(),
   );
   const visibleThreads = useMemo(
     () => filterAndSortThreads(threads, query, sort),
-    [query, sort, threads]
+    [query, sort, threads],
   );
 
   async function setArchived(threadId: string, nextArchived: boolean) {
@@ -42,7 +55,7 @@ export function ThreadIndex({
       });
       if (!response.ok) {
         throw new Error(
-          `Thread could not be ${nextArchived ? "archived" : "restored"}`
+          `Thread could not be ${nextArchived ? "archived" : "restored"}`,
         );
       }
       toast.success(nextArchived ? "Thread archived" : "Thread restored");
@@ -51,7 +64,7 @@ export function ThreadIndex({
       toast.error(
         error instanceof Error
           ? error.message
-          : `Thread could not be ${nextArchived ? "archived" : "restored"}`
+          : `Thread could not be ${nextArchived ? "archived" : "restored"}`,
       );
     } finally {
       setPendingThreadIds((current) => {
@@ -115,23 +128,31 @@ export function ThreadIndex({
                 {new Date(thread.updatedAt).toLocaleString()}
               </time>
             </Link>
-            <Button
-              aria-label={`${archived ? "Restore" : "Archive"} ${thread.title}`}
-              aria-busy={pendingThreadIds.has(thread.id)}
-              disabled={pendingThreadIds.has(thread.id)}
-              onClick={() => void setArchived(thread.id, !archived)}
-              size="sm"
-              variant="ghost"
-            >
-              <Archive className="size-4" />
-              {pendingThreadIds.has(thread.id)
-                ? archived
-                  ? "Restoring…"
-                  : "Archiving…"
-                : archived
-                  ? "Restore"
-                  : "Archive"}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  aria-label={`Thread actions for ${thread.title}`}
+                  aria-busy={pendingThreadIds.has(thread.id)}
+                  disabled={pendingThreadIds.has(thread.id)}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onSelect={() => void setArchived(thread.id, !archived)}
+                >
+                  {archived ? (
+                    <RotateCcw className="size-4" />
+                  ) : (
+                    <Archive className="size-4" />
+                  )}
+                  {archived ? "Restore Thread" : "Archive Thread"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         ))}
         {visibleThreads.length === 0 ? (
