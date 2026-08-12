@@ -40,11 +40,12 @@ interface ProtocolClientRunnerError extends Error {
   details?: Record<string, unknown> | undefined;
 }
 
-interface ProtocolTransport {
+export interface ProtocolTransport {
   start(handlers: {
     onLine: (line: string) => void;
     onExit: (code: number | null) => void;
     onErrorOutput?: ((line: string) => void) | undefined;
+    onTransportError?: ((commandId: string, error: Error) => void) | undefined;
   }): void;
   send(line: string): void;
   stop(): Promise<void>;
@@ -88,6 +89,12 @@ export class ProtocolClient {
       },
       onErrorOutput: (line) => {
         this.recordProcessStderr(line);
+      },
+      onTransportError: (commandId, error) => {
+        const pending = this.pending.get(commandId);
+        if (!pending) return;
+        this.pending.delete(commandId);
+        pending.reject(error);
       },
     });
   }
@@ -400,5 +407,3 @@ function optionalNonEmptyString(value: unknown): string | undefined {
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
 }
-
-export type { ProtocolTransport };

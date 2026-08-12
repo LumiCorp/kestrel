@@ -27,8 +27,10 @@ export interface ProtocolTransport {
   start(handlers: {
     onLine: (line: string) => void;
     onExit: (code: number | null) => void;
+    onTransportError?: ((commandId: string, error: Error) => void) | undefined;
   }): void;
   send(line: string): void;
+  abort(commandId: string): void;
   stop(): Promise<void>;
 }
 
@@ -106,6 +108,19 @@ export class ProtocolClient {
     this.listeners.clear();
   }
 
+  detachCommand(commandId: string): void {
+    const pending = this.pending.get(commandId);
+    if (pending === undefined) {
+      return;
+    }
+    this.pending.delete(commandId);
+    this.transport.abort(commandId);
+    pending.reject(new KestrelProtocolError(
+      "Protocol command detached before response.",
+      { code: "RUNNER_TRANSPORT_DETACHED" },
+    ));
+  }
+
   private start(): void {
     if (this.started) {
       return;
@@ -117,6 +132,9 @@ export class ProtocolClient {
       },
       onExit: () => {
         this.onExit();
+      },
+      onTransportError: (commandId, error) => {
+        this.onTransportError(commandId, error);
       },
     });
   }
@@ -196,6 +214,13 @@ export class ProtocolClient {
       pending.reject(new KestrelProtocolError("Protocol transport exited before response."));
     }
     this.pending.clear();
+  }
+
+  private onTransportError(commandId: string, error: Error): void {
+    const pending = this.pending.get(commandId);
+    if (pending === undefined) return;
+    this.pending.delete(commandId);
+    pending.reject(error);
   }
 }
 

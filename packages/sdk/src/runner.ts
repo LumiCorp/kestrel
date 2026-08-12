@@ -1,5 +1,9 @@
 export { KestrelClient } from "./KestrelClient.js";
 export {
+  RemoteRunnerTransport,
+  type RemoteRunnerTransportOptions,
+} from "./internal/RemoteRunnerTransport.js";
+export {
   KestrelConfigurationError,
   KestrelHttpError,
   KestrelProtocolError,

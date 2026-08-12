@@ -51,6 +51,8 @@ import {
   activateEnvironmentModelGrant,
   resolveEnvironmentExecutionRoute,
   resolveEnvironmentExecutionCancellationRoute,
+  resolveEnvironmentExecutionAuthorizationRoute,
+  updateEnvironmentExecutionRuntimeCursor,
   updateEnvironmentExecutionRuntimeIdentity,
   updateEnvironmentExecutionStatus,
 } from "@/lib/environments/execution-route";
@@ -146,6 +148,7 @@ class KestrelOneRunnerClient extends KestrelClient {
       profile: RunnerProfile;
       turn: RunnerTurnInput;
       signal?: AbortSignal | undefined;
+      abortBehavior?: "cancel" | "detach" | undefined;
     },
     context: KestrelRequestContext,
   ): RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent> {
@@ -158,6 +161,7 @@ class KestrelOneRunnerClient extends KestrelClient {
       context,
       {
         signal: input.signal,
+        abortBehavior: input.abortBehavior,
         isStreamEvent: isRunnerRunStreamEvent,
         isTerminalEvent: isRunnerRunTerminalEvent,
         onCancel: async (runId, commandId) => {
@@ -224,6 +228,11 @@ export async function cancelInterruptedKestrelOneExecution(input: {
     } finally {
       if (timeout) clearTimeout(timeout);
     }
+    await updateEnvironmentExecutionStatus({
+      organizationId: input.organizationId,
+      executionId: input.executionId,
+      status: "cancelled",
+    });
     return true;
   } finally {
     await client.close();
@@ -314,6 +323,7 @@ export type KestrelOneAgentResponseInput = {
   };
   transientTitle?: Promise<string | null> | null;
   signal?: AbortSignal;
+  abortBehavior?: "cancel" | "detach" | undefined;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
   onUiChunk?: (chunk: KestrelUiStreamChunk) => void;
   onRuntimeEvent?: (event: RunnerRunStreamEvent) => void;
@@ -433,10 +443,23 @@ function createModelAwareKestrelOneAgent(input: {
             target: {
               kind: "remote",
               baseUrl: route.baseUrl,
-              authToken: route.authToken,
-              ...(route.provider === "desktop"
-                ? { fetchImpl: route.fetchImpl }
-                : {}),
+              ...(route.provider === "fly"
+                ? {
+                    authTokenProvider: createExecutionAuthTokenProvider({
+                      organizationId: input.organizationId,
+                      executionId: route.runId,
+                    }),
+                    onTransportEvent: createExecutionTransportObserver({
+                      organizationId: input.organizationId,
+                      executionId: route.runId,
+                    }),
+                  }
+                : {
+                    authToken: route.authToken,
+                    ...(route.provider === "desktop"
+                      ? { fetchImpl: route.fetchImpl }
+                      : {}),
+                  }),
             },
           });
           clients.add(client);
@@ -460,7 +483,7 @@ function createModelAwareKestrelOneAgent(input: {
               }
             })();
           }
-          const { signal, resumeRequestId, ...turn } = turnInput;
+          const { signal, abortBehavior, resumeRequestId, ...turn } = turnInput;
           const eventType = turn.eventType || "user.message";
           const resolvedProfile = await resolveHostedKestrelExecutionProfile({
             client,
@@ -512,6 +535,7 @@ function createModelAwareKestrelOneAgent(input: {
               profileId: resolvedProfile.profileId,
               turn: normalizedTurn,
               ...(signal ? { signal } : {}),
+              ...(abortBehavior ? { abortBehavior } : {}),
             },
             context,
           );
@@ -534,6 +558,11 @@ function createModelAwareKestrelOneAgent(input: {
               });
               observedRuntimeIdentity = true;
             }
+            await updateEnvironmentExecutionRuntimeCursor({
+              organizationId: input.organizationId,
+              executionId: route.runId,
+              eventId: event.id,
+            });
             routed.push(event);
           }
           const terminal = await downstream.result;
@@ -569,7 +598,10 @@ function createModelAwareKestrelOneAgent(input: {
           });
           routed.complete(terminal);
         } catch (error) {
-          if (executionId) {
+          if (
+            executionId
+            && readRuntimeErrorCode(error) !== "RUNNER_TRANSPORT_DETACHED"
+          ) {
             await updateEnvironmentExecutionStatus({
               organizationId: input.organizationId,
               executionId,
@@ -773,15 +805,29 @@ export async function generateKestrelOneExternalReply(input: {
     target: {
       kind: "remote",
       baseUrl: route.baseUrl,
-      authToken: route.authToken,
-      ...(route.provider === "desktop"
-        ? { fetchImpl: route.fetchImpl }
-        : {}),
+      ...(route.provider === "fly"
+        ? {
+            authTokenProvider: createExecutionAuthTokenProvider({
+              organizationId: input.organizationId,
+              executionId: route.runId,
+            }),
+            onTransportEvent: createExecutionTransportObserver({
+              organizationId: input.organizationId,
+              executionId: route.runId,
+            }),
+          }
+        : {
+            authToken: route.authToken,
+            ...(route.provider === "desktop"
+              ? { fetchImpl: route.fetchImpl }
+              : {}),
+          }),
     },
   });
   const context: KestrelRequestContext = {
     actor: input.actor,
     tenantId: input.organizationId,
+    durability: "continue_on_disconnect",
   };
 
   try {
@@ -920,6 +966,34 @@ export async function generateKestrelOneExternalReply(input: {
   }
 }
 
+function createExecutionAuthTokenProvider(input: {
+  organizationId: string;
+  executionId: string;
+}) {
+  return async () => {
+    const route = await resolveEnvironmentExecutionAuthorizationRoute(input);
+    if (!route) {
+      throw new Error("Environment execution authorization is no longer active.");
+    }
+    return route.authToken;
+  };
+}
+
+function createExecutionTransportObserver(input: {
+  organizationId: string;
+  executionId: string;
+}) {
+  return (event: { type: string; [key: string]: unknown }) => {
+    process.stdout.write(`${JSON.stringify({
+      ...event,
+      type: `agent.runtime.${event.type}`,
+      organizationId: input.organizationId,
+      executionId: input.executionId,
+      occurredAt: new Date().toISOString(),
+    })}\n`);
+  };
+}
+
 export async function createKestrelOneAgentResponse(
   input: KestrelOneAgentResponseInput,
 ) {
@@ -991,12 +1065,141 @@ export async function createKestrelOneAgentResponse(
   });
 }
 
+export async function createKestrelOneReattachmentResponse(
+  input: Omit<KestrelOneAgentResponseInput, "agent" | "onExecutionRouted"> & {
+    executionId: string;
+  },
+) {
+  let cursorWrites = Promise.resolve();
+  let executionSettlement = Promise.resolve();
+  const route = await resolveEnvironmentExecutionAuthorizationRoute({
+    organizationId: input.organizationId,
+    executionId: input.executionId,
+  });
+  if (!(route?.runtimeRunId && route.lastRuntimeEventId)) {
+    throw connectionInterruptedError(
+      "The connection to the agent was interrupted before completion and no durable event cursor was available.",
+      "RUNNER_EVENT_CURSOR_UNAVAILABLE",
+    );
+  }
+  const client = new KestrelOneRunnerClient({
+    target: {
+      kind: "remote",
+      baseUrl: route.baseUrl,
+      authTokenProvider: createExecutionAuthTokenProvider({
+        organizationId: input.organizationId,
+        executionId: input.executionId,
+      }),
+      onTransportEvent: createExecutionTransportObserver({
+        organizationId: input.organizationId,
+        executionId: input.executionId,
+      }),
+    },
+  });
+  const agent: KestrelOneAgent = {
+    stream(turn, context) {
+      const stream = client.reattachRun(
+        {
+          sessionId: route.sessionId,
+          runId: route.runtimeRunId!,
+          sinceEventId: route.lastRuntimeEventId!,
+          signal: turn.signal,
+          abortBehavior: turn.abortBehavior,
+        },
+        context,
+      );
+      executionSettlement = stream.result.then(async (terminal) => {
+          await cursorWrites;
+          await updateEnvironmentExecutionStatus({
+            organizationId: input.organizationId,
+            executionId: input.executionId,
+            status: terminalExecutionStatus(terminal),
+          });
+        }, async (error: unknown) => {
+          const code = readRuntimeErrorCode(error);
+          if (
+            code !== "RUNNER_EVENT_CURSOR_EXPIRED"
+            && code !== "RUNNER_EVENT_CURSOR_UNKNOWN"
+          ) {
+            // A transport interruption leaves the execution active for the
+            // next durable worker lease to reattach.
+            return;
+          }
+          await cursorWrites;
+          await updateEnvironmentExecutionStatus({
+            organizationId: input.organizationId,
+            executionId: input.executionId,
+            status: "failed",
+          });
+        });
+      void executionSettlement.catch(() => {});
+      return stream;
+    },
+    close: () => client.close(),
+  };
+  return createKestrelOneAgentResponseFromAgent({
+    request: input.request,
+    agent,
+    ownsAgent: true,
+    session: input.session,
+    organizationId: input.organizationId,
+    correlation: readRequestCorrelation(input.request),
+    threadId: input.threadId,
+    durableTurnId: input.durableTurnId,
+    messages: input.messages,
+    approvalDecision: input.approvalDecision,
+    interactionResponse: input.interactionResponse,
+    modelId: input.modelId ?? "kestrel",
+    interactionMode: input.interactionMode,
+    projectContext: input.projectContext,
+    transientTitle: null,
+    signal: input.signal,
+    onUiChunk: input.onUiChunk,
+    onRuntimeEvent: (event) => {
+      cursorWrites = cursorWrites.then(() =>
+        updateEnvironmentExecutionRuntimeCursor({
+          organizationId: input.organizationId,
+          executionId: input.executionId,
+          eventId: event.id,
+        }),
+      );
+      void cursorWrites.catch(() => {});
+      input.onRuntimeEvent?.(event);
+    },
+    onFinishPersist: async (messages, meta) => {
+      await cursorWrites;
+      await executionSettlement;
+      await input.onFinishPersist?.(messages, meta);
+    },
+  });
+}
+
+function connectionInterruptedError(message: string, detailCode: string) {
+  const error = new Error(message) as Error & {
+    code: string;
+    details: { code: string };
+  };
+  error.name = "KestrelConnectionInterruptedError";
+  error.code = "AGENT_CONNECTION_INTERRUPTED";
+  error.details = { code: detailCode };
+  return error;
+}
+
 function terminalExecutionStatus(
   terminal: RunnerRunTerminalEvent,
 ): "completed" | "failed" | "cancelled" {
   if (terminal.type === "run.cancelled") return "cancelled";
   if (terminal.type === "run.failed") return "failed";
   return "completed";
+}
+
+function readRuntimeErrorCode(error: unknown): string | undefined {
+  return error !== null
+      && typeof error === "object"
+      && "code" in error
+      && typeof error.code === "string"
+    ? error.code
+    : undefined;
 }
 
 async function resolveDesktopLocalRuntimeModel(input: {

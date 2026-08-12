@@ -1593,6 +1593,9 @@ function resolveScopedRunContext(
             ...(tenantId !== undefined ? { tenantId } : {}),
             ...(contextGrantId !== undefined ? { contextGrantId } : {}),
             ...(executionTicket !== undefined ? { executionTicket } : {}),
+            ...(executionTicket !== undefined
+              ? { executionRunId: readExecutionTicketRunId(executionTicket) }
+              : {}),
           },
         }
       : {}),
@@ -1637,6 +1640,21 @@ function resolveScopedRunContext(
             },
           }),
   };
+}
+
+function readExecutionTicketRunId(ticket: string): string | undefined {
+  const payload = ticket.split(".")[1];
+  if (!payload) return;
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as { runId?: unknown };
+    return typeof decoded.runId === "string" && decoded.runId.trim()
+      ? decoded.runId.trim()
+      : undefined;
+  } catch {
+    return;
+  }
 }
 
 function readInteractionMode(

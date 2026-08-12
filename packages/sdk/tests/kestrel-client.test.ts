@@ -50,6 +50,17 @@ function createRemoteClient(target: Omit<KestrelRemoteTarget, "kind">): KestrelC
   });
 }
 
+test("remote targets reject simultaneous static and renewable authorization", () => {
+  assert.throws(
+    () => createRemoteClient(({
+      baseUrl: "http://runner.internal",
+      authToken: "static-token",
+      authTokenProvider: async () => "renewed-token",
+    }) as unknown as Omit<KestrelRemoteTarget, "kind">),
+    /authToken or authTokenProvider, not both/u,
+  );
+});
+
 class ControlledProtocolTransport implements ProtocolTransport {
   private handlers?: {
     onLine: (line: string) => void;
@@ -883,7 +894,7 @@ test("KestrelClient cancel includes runId after the stream learns it", async () 
   await client.close();
 });
 
-test("RemoteRunnerTransport rejects an SSE stream that ends before a terminal event", async () => {
+test("RemoteRunnerTransport reports an interrupted SSE stream separately from protocol failure", async () => {
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     fetchImpl: async (_input, init) => {
@@ -916,9 +927,239 @@ test("RemoteRunnerTransport rejects an SSE stream that ends before a terminal ev
     }, context),
     (error: unknown) =>
       error instanceof KestrelProtocolError &&
-      error.code === "RUNNER_PROTOCOL_ERROR" &&
+      error.code === "RUNNER_TRANSPORT_INTERRUPTED" &&
       /ended before a terminal event/u.test(error.message),
   );
+  await client.close();
+});
+
+test("KestrelClient reattaches a durable run from the last accepted event without replaying run.start", async () => {
+  const requestedPaths: string[] = [];
+  const requestedTokens: string[] = [];
+  const transportEvents: Array<{ type: string; attempt?: number; delayMs?: number }> = [];
+  let tokenSequence = 0;
+  let reattachCalls = 0;
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    authTokenProvider: async () => `token-${++tokenSequence}`,
+    onTransportEvent: (event) => transportEvents.push(event),
+    fetchImpl: async (input, init) => {
+      const url = new URL(String(input));
+      requestedPaths.push(url.pathname);
+      requestedTokens.push(String(new Headers(init?.headers).get("authorization")));
+      if (url.pathname === "/commands/stream") {
+        const command = JSON.parse(String(init?.body)) as { id: string };
+        return new Response(
+          `event: run.started\ndata: ${JSON.stringify({
+            id: "evt-durable-started",
+            type: "run.started",
+            ts: new Date().toISOString(),
+            commandId: command.id,
+            sessionId: "session-durable",
+            runId: "run-durable",
+            payload: {
+              sessionId: "session-durable",
+              eventType: "user.message",
+            },
+          })}\n\n`,
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      assert.equal(url.pathname, "/events/stream");
+      reattachCalls += 1;
+      const subscription = JSON.parse(String(init?.body)) as {
+        filter: { sinceEventId?: string };
+      };
+      assert.equal(subscription.filter.sinceEventId, "evt-durable-started");
+      if (reattachCalls === 1) {
+        return new Response("temporarily unavailable", { status: 503 });
+      }
+      return new Response(
+        `event: run.completed\ndata: ${JSON.stringify({
+          id: "evt-durable-completed",
+          type: "run.completed",
+          ts: new Date().toISOString(),
+          commandId: "original-command",
+          sessionId: "session-durable",
+          runId: "run-durable",
+          payload: { result: completedResult("session-durable", "run-durable") },
+        })}\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+
+  const stream = client.streamRun(
+    {
+      profileId: "kestrel",
+      turn: {
+        sessionId: "session-durable",
+        message: "continue after disconnect",
+        eventType: "user.message",
+      },
+    },
+    { ...context, durability: "continue_on_disconnect" },
+  );
+  const seen: string[] = [];
+  for await (const event of stream) seen.push(event.type);
+  assert.equal((await stream.result).type, "run.completed");
+  assert.deepEqual(seen, ["run.started", "run.completed"]);
+  assert.deepEqual(requestedPaths, [
+    "/commands/stream",
+    "/events/stream",
+    "/events/stream",
+  ]);
+  assert.deepEqual(requestedTokens, [
+    "Bearer token-1",
+    "Bearer token-2",
+    "Bearer token-3",
+  ]);
+  assert.deepEqual(transportEvents, [
+    { type: "reconnect.attempt", attempt: 1, delayMs: 250 },
+    { type: "reconnect.failed", attempt: 1, code: "RUNNER_HTTP_ERROR" },
+    { type: "reconnect.attempt", attempt: 2, delayMs: 500 },
+    { type: "reconnect.succeeded", attempt: 2 },
+  ]);
+  await client.close();
+});
+
+test("KestrelClient accepts authoritative terminal reconciliation for an unknown cursor", async () => {
+  const transportEvents: Array<{ type: string; code?: string }> = [];
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    onTransportEvent: (event) => transportEvents.push(event),
+    fetchImpl: async (input, init) => {
+      assert.equal(new URL(String(input)).pathname, "/events/stream");
+      const subscription = JSON.parse(String(init?.body)) as {
+        filter: { sessionId?: string; runId?: string; sinceEventId?: string };
+      };
+      assert.deepEqual(subscription.filter, {
+        sessionId: "session-reconciled",
+        runId: "run-reconciled",
+        sinceEventId: "expired-cursor",
+      });
+      return new Response(
+        `event: run.completed\ndata: ${JSON.stringify({
+          id: "evt-reconciled-completed",
+          type: "run.completed",
+          ts: new Date().toISOString(),
+          sessionId: "session-reconciled",
+          runId: "run-reconciled",
+          payload: { result: completedResult("session-reconciled", "run-reconciled") },
+        })}\n\n`,
+        {
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "x-kestrel-event-cursor-status": "unknown",
+          },
+        },
+      );
+    },
+  });
+
+  const stream = client.reattachRun({
+    sessionId: "session-reconciled",
+    runId: "run-reconciled",
+    sinceEventId: "expired-cursor",
+  }, context);
+  assert.equal((await stream.result).type, "run.completed");
+  assert.deepEqual(transportEvents, [
+    { type: "reconnect.attempt", attempt: 1, delayMs: 0 },
+    { type: "cursor.unknown", code: "RUNNER_EVENT_CURSOR_UNKNOWN" },
+    { type: "reconnect.succeeded", attempt: 1 },
+  ]);
+  await client.close();
+});
+
+test("KestrelClient detaches a durable transport abort without cancelling the run", async () => {
+  const requestedPaths: string[] = [];
+  const controller = new AbortController();
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (input, init) => {
+      const url = new URL(String(input));
+      requestedPaths.push(url.pathname);
+      assert.equal(url.pathname, "/commands/stream");
+      const command = JSON.parse(String(init?.body)) as { id: string };
+      const body = new ReadableStream<Uint8Array>({
+        start(streamController) {
+          streamController.enqueue(new TextEncoder().encode(
+            `event: run.started\ndata: ${JSON.stringify({
+              id: "evt-detached-started",
+              type: "run.started",
+              ts: new Date().toISOString(),
+              commandId: command.id,
+              sessionId: "session-detached",
+              runId: "run-detached",
+              payload: {
+                sessionId: "session-detached",
+                eventType: "user.message",
+              },
+            })}\n\n`,
+          ));
+          init?.signal?.addEventListener("abort", () => {
+            streamController.error(new DOMException(
+              "The operation was aborted.",
+              "AbortError",
+            ));
+          }, { once: true });
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  });
+  const stream = client.streamRun({
+    profileId: "kestrel",
+    turn: {
+      sessionId: "session-detached",
+      message: "keep running after this worker leaves",
+      eventType: "user.message",
+    },
+    signal: controller.signal,
+    abortBehavior: "detach",
+  }, { ...context, durability: "continue_on_disconnect" });
+
+  const iterator = stream[Symbol.asyncIterator]();
+  assert.equal((await iterator.next()).value?.type, "run.started");
+  controller.abort();
+  await assert.rejects(
+    stream.result,
+    (error: unknown) =>
+      error instanceof KestrelProtocolError
+      && error.code === "RUNNER_TRANSPORT_DETACHED",
+  );
+  assert.deepEqual(requestedPaths, ["/commands/stream"]);
+  await client.close();
+});
+
+test("KestrelClient presents unrecoverable durable transport loss as an agent interruption", async () => {
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async () => new Response("", {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }),
+  });
+  const stream = client.streamRun(
+    {
+      profileId: "kestrel",
+      turn: {
+        sessionId: "session-no-cursor",
+        message: "lose the connection before run.started",
+        eventType: "user.message",
+      },
+    },
+    { ...context, durability: "continue_on_disconnect" },
+  );
+  await assert.rejects(stream.result, (error: unknown) => {
+    assert.ok(error instanceof KestrelProtocolError);
+    assert.equal(error.code, "AGENT_CONNECTION_INTERRUPTED");
+    return true;
+  });
   await client.close();
 });
 

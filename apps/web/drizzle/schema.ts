@@ -2089,6 +2089,7 @@ export const environmentRunExecutions = pgTable(
       .$type<string[]>()
       .notNull(),
     runtimeRunId: text("runtime_run_id"),
+    lastRuntimeEventId: text("last_runtime_event_id"),
     reasoningPolicySnapshot: jsonb("reasoning_policy_snapshot").$type<{
       request: {
         mode: "off" | "summary" | "provider_visible";

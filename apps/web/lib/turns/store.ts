@@ -829,7 +829,10 @@ export async function reorderDurableThreadQueue(input: {
   });
 }
 
-export async function claimDurableThreadTurn(turnId: string) {
+export async function claimDurableThreadTurn(
+  turnId: string,
+  options: { resumeRunning?: boolean } = {},
+) {
   return knowledgeDb.transaction(async (tx) => {
     const [candidate] = await tx
       .select()
@@ -879,8 +882,12 @@ export async function claimDurableThreadTurn(turnId: string) {
             orderBy: (table, { asc }) => [asc(table.resolvedAt)],
           })
         : null;
-    if (!(isInitialClaim || interaction)) {
+    const isRunningResume = options.resumeRunning && turn.status === "running";
+    if (!(isInitialClaim || interaction || isRunningResume)) {
       return null;
+    }
+    if (isRunningResume) {
+      return { ...turn, interactionResponse: null };
     }
     assertThreadTurnTransition(turn.status, "running");
     const now = new Date();

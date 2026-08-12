@@ -78,6 +78,7 @@ test("model relay enforces workspace run and model while keeping provider creden
           credentialExpiresAt: new Date(Date.now() + 60_000).toISOString(),
         },
       ],
+      appGrants: [],
     }),
   });
   await config.refresh();

@@ -20,6 +20,9 @@ importers:
       '@kestrel-agents/protocol':
         specifier: workspace:*
         version: link:packages/protocol
+      '@kestrel-agents/sdk':
+        specifier: workspace:*
+        version: link:packages/sdk
       '@kestrel-agents/workspace-skills':
         specifier: workspace:*
         version: link:packages/workspace-skills

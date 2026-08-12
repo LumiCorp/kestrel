@@ -43,6 +43,7 @@ export class LocalRunnerTransport implements ProtocolTransport {
     | {
         onLine: (line: string) => void;
         onExit: (code: number | null) => void;
+        onTransportError?: ((commandId: string, error: Error) => void) | undefined;
       }
     | undefined;
   private closed = false;
@@ -55,6 +56,7 @@ export class LocalRunnerTransport implements ProtocolTransport {
   start(handlers: {
     onLine: (line: string) => void;
     onExit: (code: number | null) => void;
+    onTransportError?: ((commandId: string, error: Error) => void) | undefined;
   }): void {
     this.handlers = handlers;
   }
@@ -79,6 +81,10 @@ export class LocalRunnerTransport implements ProtocolTransport {
     void this.dispatch(command, controller).finally(() => {
       this.releaseController(command.id, controller);
     });
+  }
+
+  abort(commandId: string): void {
+    this.controllers.get(commandId)?.abort();
   }
 
   async stop(): Promise<void> {

@@ -5,9 +5,9 @@ import type {
 } from "../contracts.js";
 import { KestrelConfigurationError } from "../errors.js";
 
-export interface ResolvedRemoteTarget extends KestrelRemoteTarget {
+export type ResolvedRemoteTarget = KestrelRemoteTarget & {
   fetchImpl: typeof fetch;
-}
+};
 
 export type ResolvedClientTarget = ResolvedRemoteTarget | KestrelLocalTarget;
 
@@ -52,14 +52,47 @@ export function resolveClientTarget(
       "KestrelClient target.kind must be either local or remote.",
     );
   }
-  return {
+  if (target.authToken !== undefined && target.authTokenProvider !== undefined) {
+    throw new KestrelConfigurationError(
+      "KestrelClient remote targets accept authToken or authTokenProvider, not both.",
+    );
+  }
+  if (
+    target.authTokenProvider !== undefined &&
+    typeof target.authTokenProvider !== "function"
+  ) {
+    throw new KestrelConfigurationError(
+      "KestrelClient target.authTokenProvider must be a function.",
+    );
+  }
+  const resolvedBase = {
     kind: "remote",
     baseUrl: requireNonEmptyString(target.baseUrl, "target.baseUrl"),
-    ...(target.authToken !== undefined
-      ? { authToken: requireNonEmptyString(target.authToken, "target.authToken") }
+    ...(target.onTransportEvent !== undefined
+      ? { onTransportEvent: target.onTransportEvent }
       : {}),
     fetchImpl: target.fetchImpl ?? fetch,
-  };
+  } as const;
+  if (target.authTokenProvider !== undefined) {
+    return { ...resolvedBase, authTokenProvider: target.authTokenProvider };
+  }
+  if (target.authToken !== undefined) {
+    return {
+      ...resolvedBase,
+      authToken: requireNonEmptyString(target.authToken, "target.authToken"),
+    };
+  }
+  return resolvedBase;
+}
+
+export async function resolveRemoteAuthToken(
+  target: ResolvedRemoteTarget,
+): Promise<string | undefined> {
+  const token = target.authTokenProvider !== undefined
+    ? await target.authTokenProvider()
+    : target.authToken;
+  if (token === undefined) return;
+  return requireNonEmptyString(token, "target authorization");
 }
 
 function requireNonEmptyString(value: unknown, field: string): string {

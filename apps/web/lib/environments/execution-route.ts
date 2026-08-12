@@ -55,7 +55,7 @@ export class EnvironmentActivationError extends Error {
   }
 }
 
-const ROUTE_CAPABILITIES = [
+export const ENVIRONMENT_EXECUTION_ROUTE_CAPABILITIES = [
   "profile.read",
   "run.stream",
   "run.cancel",
@@ -78,6 +78,8 @@ const ROUTE_CAPABILITIES = [
   "knowledge.search",
   "kestrel.tools.invoke",
 ] as const;
+
+const ROUTE_CAPABILITIES = ENVIRONMENT_EXECUTION_ROUTE_CAPABILITIES;
 
 export async function resolveEnvironmentExecutionRoute(input: {
   organizationId: string;
@@ -938,7 +940,34 @@ export async function updateEnvironmentExecutionRuntimeIdentity(input: {
   }
 }
 
-export async function resolveEnvironmentExecutionCancellationRoute(input: {
+export async function updateEnvironmentExecutionRuntimeCursor(input: {
+  organizationId: string;
+  executionId: string;
+  eventId: string;
+}) {
+  const [updated] = await knowledgeDb
+    .update(schema.environmentRunExecutions)
+    .set({
+      lastRuntimeEventId: input.eventId,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.environmentRunExecutions.id, input.executionId),
+        eq(
+          schema.environmentRunExecutions.organizationId,
+          input.organizationId,
+        ),
+        inArray(schema.environmentRunExecutions.status, ["routed", "running"]),
+      ),
+    )
+    .returning({ id: schema.environmentRunExecutions.id });
+  if (!updated) {
+    throw new Error("Environment execution runtime cursor was not persisted.");
+  }
+}
+
+export async function resolveEnvironmentExecutionAuthorizationRoute(input: {
   organizationId: string;
   executionId: string;
 }) {
@@ -949,6 +978,7 @@ export async function resolveEnvironmentExecutionCancellationRoute(input: {
       threadId: schema.environmentRunExecutions.threadId,
       actorId: schema.environmentRunExecutions.actorId,
       runtimeRunId: schema.environmentRunExecutions.runtimeRunId,
+      lastRuntimeEventId: schema.environmentRunExecutions.lastRuntimeEventId,
       flyAppName: schema.environments.flyAppName,
       routerUrl: schema.environments.routerUrl,
       flyMachineId: schema.environmentWorkspaces.flyMachineId,
@@ -968,17 +998,14 @@ export async function resolveEnvironmentExecutionCancellationRoute(input: {
     .where(
       and(
         eq(schema.environmentRunExecutions.id, input.executionId),
-        eq(
-          schema.environmentRunExecutions.organizationId,
-          input.organizationId,
-        ),
+        eq(schema.environmentRunExecutions.organizationId, input.organizationId),
         inArray(schema.environmentRunExecutions.status, ["routed", "running"]),
       ),
     )
     .limit(1);
-  if (!route?.runtimeRunId) return null;
+  if (!route) return null;
   if (!(route.flyAppName && route.flyMachineId && route.routerUrl)) {
-    throw new Error("Environment execution cancellation route is incomplete.");
+    throw new Error("Environment execution authorization route is incomplete.");
   }
   const now = Math.floor(Date.now() / 1000);
   const authToken = signEnvironmentExecutionTicket({
@@ -1008,7 +1035,23 @@ export async function resolveEnvironmentExecutionCancellationRoute(input: {
     baseUrl: route.routerUrl,
     authToken,
     runtimeRunId: route.runtimeRunId,
+    lastRuntimeEventId: route.lastRuntimeEventId,
     sessionId: route.threadId,
+    actorId: route.actorId,
+  };
+}
+
+export async function resolveEnvironmentExecutionCancellationRoute(input: {
+  organizationId: string;
+  executionId: string;
+}) {
+  const route = await resolveEnvironmentExecutionAuthorizationRoute(input);
+  if (!route?.runtimeRunId) return null;
+  return {
+    baseUrl: route.baseUrl,
+    authToken: route.authToken,
+    runtimeRunId: route.runtimeRunId,
+    sessionId: route.sessionId,
     actorId: route.actorId,
   };
 }

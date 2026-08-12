@@ -6,6 +6,7 @@ import type {
   JobRunCommandPayload,
   RunnerEventSubscriptionFilter,
   KestrelRunRequest,
+  KestrelRunAttachment,
   McpRefreshCommandPayload,
   McpStatusCommandPayload,
   OperatorControlCommandPayload,
@@ -63,7 +64,12 @@ import type {
 } from "./contracts.js";
 import { KestrelHttpError, KestrelProtocolError, toKestrelError } from "./errors.js";
 import { BufferedRunnerStream } from "./RunnerStream.js";
-import { resolveClientTarget, type ResolvedClientTarget } from "./internal/clientTarget.js";
+import {
+  resolveClientTarget,
+  resolveRemoteAuthToken,
+  type ResolvedClientTarget,
+  type ResolvedRemoteTarget,
+} from "./internal/clientTarget.js";
 import { LocalRunnerTransport } from "./internal/LocalRunnerTransport.js";
 import { ProtocolClient } from "./internal/ProtocolClient.js";
 import { RemoteRunnerTransport } from "./internal/RemoteRunnerTransport.js";
@@ -102,14 +108,15 @@ export class KestrelClient {
         body = response.body;
         status = response.status;
       } else {
+        const authToken = await resolveRemoteAuthToken(this.target);
         const response = await this.target.fetchImpl(
           new URL("/health", `${this.target.baseUrl}/`).toString(),
           {
             method: "GET",
             headers: {
               accept: "application/json",
-              ...(this.target.authToken !== undefined
-                ? { authorization: `Bearer ${this.target.authToken}` }
+              ...(authToken !== undefined
+                ? { authorization: `Bearer ${authToken}` }
                 : {}),
             },
           },
@@ -239,6 +246,7 @@ export class KestrelClient {
   streamRun(
     input: KestrelRunRequest & {
       signal?: AbortSignal | undefined;
+      abortBehavior?: "cancel" | "detach" | undefined;
     },
     context: KestrelRequestContext,
   ): RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent> {
@@ -251,6 +259,7 @@ export class KestrelClient {
       context,
       {
         signal: input.signal,
+        abortBehavior: input.abortBehavior,
         isStreamEvent: isRunnerRunStreamEvent,
         isTerminalEvent: isRunnerRunTerminalEvent,
         onCancel: async (runId, commandId) => {
@@ -262,6 +271,50 @@ export class KestrelClient {
         },
       },
     );
+  }
+
+  reattachRun(
+    input: KestrelRunAttachment,
+    context: KestrelRequestContext,
+  ): RunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent> {
+    if (input.signal?.aborted === true) {
+      return createAbortedRunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent>();
+    }
+    const controller = new AbortController();
+    const abortHandler = () => {
+      if (input.abortBehavior === "detach") {
+        controller.abort();
+      } else {
+        void stream.cancel().catch(() => {});
+      }
+    };
+    input.signal?.addEventListener("abort", abortHandler, { once: true });
+    let stream!: BufferedRunnerStream<RunnerRunStreamEvent, RunnerRunTerminalEvent>;
+    const result = this.consumeReattachedRun({
+      sessionId: input.sessionId,
+      runId: input.runId,
+      sinceEventId: input.sinceEventId,
+      context,
+      signal: controller.signal,
+      initialDelay: false,
+      onEvent: (event) => stream.push(event),
+    }).then((terminal) => {
+      stream.finish();
+      return terminal;
+    }).finally(() => {
+      input.signal?.removeEventListener("abort", abortHandler);
+    });
+    stream = new BufferedRunnerStream(
+      result,
+      async () => {
+        controller.abort();
+        await this.cancelRun(
+          { sessionId: input.sessionId, runId: input.runId },
+          context,
+        );
+      },
+    );
+    return stream;
   }
 
   subscribe(
@@ -631,6 +684,7 @@ export class KestrelClient {
     context: KestrelRequestContext,
     options: {
       signal?: AbortSignal | undefined;
+      abortBehavior?: "cancel" | "detach" | undefined;
       isStreamEvent: (event: RunnerEvent) => event is TEvent;
       isTerminalEvent: (event: TEvent) => event is TTerminal;
       onCancel?: ((runId: string | undefined, commandId: string) => Promise<void>) | undefined;
@@ -644,6 +698,8 @@ export class KestrelClient {
     let cancelRequested = false;
     let cancellationPromise: Promise<void> | undefined;
     let latestRunId: string | undefined;
+    let latestEventId: string | undefined;
+    let recoveryController: AbortController | undefined;
     let stream!: BufferedRunnerStream<TEvent, TTerminal>;
     const unsubscribe = this.client.onEvent((event) => {
       if (event.commandId !== commandId) {
@@ -655,6 +711,7 @@ export class KestrelClient {
       if (event.runId !== undefined) {
         latestRunId = event.runId;
       }
+      latestEventId = event.id;
       stream.push(event);
       if (options.isTerminalEvent(event)) {
         settled = true;
@@ -664,12 +721,45 @@ export class KestrelClient {
     });
 
     const abortHandler = () => {
+      if (options.abortBehavior === "detach") {
+        recoveryController?.abort();
+        this.client.detachCommand(commandId);
+        return;
+      }
       cancellationPromise ??= stream.cancel();
       void cancellationPromise.catch(() => {});
     };
     options.signal?.addEventListener("abort", abortHandler, { once: true });
 
     const result = this.client.sendCommandWithId(commandId, type, payload, toCommandMetadata(context))
+      .catch(async (error: unknown) => {
+        if (
+          type !== "run.start" ||
+          context.durability !== "continue_on_disconnect" ||
+          isRecoverableConnectionError(error, this.target) === false
+        ) {
+          throw error;
+        }
+        if (latestRunId === undefined || latestEventId === undefined) {
+          throw new KestrelProtocolError(
+            "The connection to the running agent was interrupted before a durable event cursor was available.",
+            {
+              code: "AGENT_CONNECTION_INTERRUPTED",
+              details: { causeCode: readErrorCode(error) },
+            },
+          );
+        }
+        recoveryController = new AbortController();
+        return await this.consumeReattachedRun({
+          sessionId: (payload as RunnerCommandPayloadByType["run.start"]).turn.sessionId,
+          runId: latestRunId,
+          sinceEventId: latestEventId,
+          context,
+          signal: recoveryController.signal,
+          initialDelay: true,
+          onEvent: (event) => stream.push(event as TEvent),
+        }) as unknown as RunnerResponseByCommandType[TType];
+      })
       .finally(async () => {
         try {
           if (cancellationPromise !== undefined) {
@@ -678,6 +768,7 @@ export class KestrelClient {
         } finally {
           settled = true;
           unsubscribe();
+          stream.finish();
           options.signal?.removeEventListener("abort", abortHandler);
         }
       }) as unknown as Promise<TTerminal>;
@@ -689,6 +780,7 @@ export class KestrelClient {
           return;
         }
         cancelRequested = true;
+        recoveryController?.abort();
         if (options.onCancel !== undefined) {
           await options.onCancel(latestRunId, commandId);
         }
@@ -723,13 +815,14 @@ export class KestrelClient {
       return;
     }
 
+    const authToken = await resolveRemoteAuthToken(this.target);
     const response = await this.target.fetchImpl(`${this.target.baseUrl}/events/stream`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         accept: "text/event-stream, application/json",
-        ...(this.target.authToken !== undefined
-          ? { authorization: `Bearer ${this.target.authToken}` }
+        ...(authToken !== undefined
+          ? { authorization: `Bearer ${authToken}` }
           : {}),
       },
       body: JSON.stringify({
@@ -738,6 +831,7 @@ export class KestrelClient {
       }),
       signal: controller.signal,
     });
+    this.notifyCursorStatus(response);
 
     const contentType = response.headers.get("content-type") ?? "";
     if (contentType.includes("text/event-stream") === false) {
@@ -792,6 +886,124 @@ export class KestrelClient {
       throw error;
     }
   }
+
+  private async consumeReattachedRun(input: {
+    sessionId: string;
+    runId: string;
+    sinceEventId: string;
+    context: KestrelRequestContext;
+    signal: AbortSignal;
+    initialDelay: boolean;
+    onEvent: (event: RunnerRunStreamEvent) => void;
+  }): Promise<RunnerRunTerminalEvent> {
+    let cursor = input.sinceEventId;
+    const acceptedEventIds = new Set<string>([cursor]);
+    let attempt = 0;
+    for (;;) {
+      const delayMs = input.initialDelay || attempt > 0
+        ? reconnectDelay(attempt)
+        : 0;
+      this.notifyTransportEvent({
+        type: "reconnect.attempt",
+        attempt: attempt + 1,
+        delayMs,
+      });
+      if (input.initialDelay || attempt > 0) {
+        await waitForReconnect(delayMs, input.signal);
+      }
+      const controller = new AbortController();
+      const abortHandler = () => controller.abort();
+      input.signal.addEventListener("abort", abortHandler, { once: true });
+      let terminal: RunnerRunTerminalEvent | undefined;
+      try {
+        await this.openSubscription(
+          {
+            sessionId: input.sessionId,
+            runId: input.runId,
+            sinceEventId: cursor,
+          },
+          input.context,
+          controller,
+          (event) => {
+            if (
+              event.runId !== input.runId ||
+              (event.sessionId !== undefined && event.sessionId !== input.sessionId) ||
+              acceptedEventIds.has(event.id)
+            ) {
+              return;
+            }
+            if (isRunnerRunStreamEvent(event) === false) return;
+            acceptedEventIds.add(event.id);
+            cursor = event.id;
+            input.onEvent(event);
+            if (isRunnerRunTerminalEvent(event)) {
+              terminal = event;
+              controller.abort();
+            }
+          },
+          () => {},
+        );
+      } catch (error) {
+        if (input.signal.aborted) throw abortError();
+        const code = readErrorCode(error);
+        if (isRecoverableConnectionError(error, this.target) === false) {
+          if (code === "RUNNER_EVENT_CURSOR_EXPIRED") {
+            this.notifyTransportEvent({ type: "cursor.expired", code });
+          } else if (code === "RUNNER_EVENT_CURSOR_UNKNOWN") {
+            this.notifyTransportEvent({ type: "cursor.unknown", code });
+          }
+          this.notifyTransportEvent({
+            type: "reconnect.failed",
+            attempt: attempt + 1,
+            code,
+          });
+          throw error;
+        }
+        this.notifyTransportEvent({
+          type: "reconnect.failed",
+          attempt: attempt + 1,
+          code,
+        });
+      } finally {
+        input.signal.removeEventListener("abort", abortHandler);
+      }
+      if (terminal !== undefined) {
+        this.notifyTransportEvent({
+          type: "reconnect.succeeded",
+          attempt: attempt + 1,
+        });
+        return terminal;
+      }
+      if (input.signal.aborted) throw abortError();
+      attempt += 1;
+    }
+  }
+
+  private notifyTransportEvent(
+    event: Parameters<NonNullable<ResolvedRemoteTarget["onTransportEvent"]>>[0],
+  ) {
+    if (this.target.kind !== "remote") return;
+    try {
+      this.target.onTransportEvent?.(event);
+    } catch {
+      // Transport instrumentation must never affect execution.
+    }
+  }
+
+  private notifyCursorStatus(response: Response) {
+    const status = response.headers.get("x-kestrel-event-cursor-status");
+    if (status === "expired") {
+      this.notifyTransportEvent({
+        type: "cursor.expired",
+        code: "RUNNER_EVENT_CURSOR_EXPIRED",
+      });
+    } else if (status === "unknown") {
+      this.notifyTransportEvent({
+        type: "cursor.unknown",
+        code: "RUNNER_EVENT_CURSOR_UNKNOWN",
+      });
+    }
+  }
 }
 
 function toCommandMetadata(context: KestrelRequestContext): RunnerCommandMetadata {
@@ -801,6 +1013,13 @@ function toCommandMetadata(context: KestrelRequestContext): RunnerCommandMetadat
     ...(context.profile !== undefined ? { profile: context.profile } : {}),
     ...(context.durability !== undefined ? { durability: context.durability } : {}),
   };
+}
+
+function readErrorCode(error: unknown) {
+  return error && typeof error === "object" && "code" in error &&
+      typeof error.code === "string"
+    ? error.code
+    : "RUNNER_TRANSPORT_ERROR";
 }
 
 function isTerminalJobEvent(event: RunnerJobStreamEvent): event is RunnerJobTerminalEvent {
@@ -821,10 +1040,51 @@ function validateSubscriptionFilter(filter: RunnerEventSubscriptionFilter): void
 }
 
 function createAbortedRunnerStream<TEvent, TTerminal>(): RunnerStream<TEvent, TTerminal> {
-  const error = new Error("The operation was aborted.");
-  error.name = "AbortError";
+  const error = abortError();
   return new BufferedRunnerStream<TEvent, TTerminal>(
     Promise.reject(error),
     async () => {},
   );
+}
+
+function reconnectDelay(attempt: number): number {
+  return [250, 500, 1_000][attempt] ?? 2_000;
+}
+
+function waitForReconnect(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", abortHandler);
+      resolve();
+    }, delayMs);
+    const abortHandler = () => {
+      clearTimeout(timeout);
+      reject(abortError());
+    };
+    signal.addEventListener("abort", abortHandler, { once: true });
+  });
+}
+
+function abortError(): Error {
+  const error = new Error("The operation was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function isRecoverableConnectionError(
+  error: unknown,
+  target: ResolvedClientTarget,
+): boolean {
+  if (target.kind !== "remote" || !(error instanceof Error)) return false;
+  const code = "code" in error ? String(error.code) : "";
+  if (code === "RUNNER_TRANSPORT_ERROR" || code === "RUNNER_TRANSPORT_INTERRUPTED") {
+    return true;
+  }
+  if (code !== "RUNNER_HTTP_ERROR") return false;
+  const status = "status" in error && typeof error.status === "number"
+    ? error.status
+    : undefined;
+  return status === 502 || status === 503 || status === 504 ||
+    (status === 401 && target.authTokenProvider !== undefined);
 }

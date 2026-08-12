@@ -6,6 +6,7 @@ import type {
 } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
 import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
+import { resolveKestrelOneAppRequest } from "./appTransport.js";
 
 type GitHubActionToolOptions = {
   name: string;
@@ -214,13 +215,9 @@ async function invokeGitHubAction(
     toolName: string;
   }
 ) {
-  const appUrl = requireContextValue(
-    context.kestrelOne?.appUrl,
-    "KESTREL_ONE_APP_URL"
-  );
-  const ticket = requireContextValue(
-    context.kestrelOne?.executionTicket,
-    "Environment execution ticket"
+  const transport = resolveKestrelOneAppRequest(
+    context,
+    "/api/runtime/github/action",
   );
   const approvalRequired =
     input.requiresApproval ||
@@ -232,11 +229,11 @@ async function invokeGitHubAction(
       )
     : undefined;
   const response = await (context.fetchImpl ?? fetch)(
-    new URL("/api/runtime/github/action", appUrl),
+    transport.url,
     {
       method: "POST",
       headers: {
-        authorization: `Bearer ${ticket}`,
+        authorization: `Bearer ${transport.authorization}`,
         "content-type": "application/json",
         ...(approvalId ? { "x-kestrel-approval-id": approvalId } : {}),
       },

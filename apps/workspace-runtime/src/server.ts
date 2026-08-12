@@ -30,7 +30,10 @@ import { readWorkspaceFile, writeWorkspaceFile } from "./files.js";
 import { requestGitHubToolCredential } from "./github-credentials.js";
 import { notifyWorkspaceIdle } from "./idle.js";
 import { workspaceListenHost } from "./network.js";
-import { isPortListening } from "./previews.js";
+import {
+  isPortListening,
+  isValidPreviewInspectionPort,
+} from "./previews.js";
 import { buildWorkspaceProxyHeaders, isRunnerProxyPath } from "./proxy.js";
 import {
   handlePreviewRelayHttp,
@@ -261,15 +264,9 @@ const server = createServer(async (request, response) => {
     }
     const previewPort = url.pathname.match(/^\/v1\/preview-ports\/(\d+)$/u);
     if (request.method === "GET" && previewPort?.[1]) {
-      requireCapability(ticket.capabilities, "workspace.previews.write");
+      requireCapability(ticket.capabilities, "workspace.previews.read");
       const port = Number.parseInt(previewPort[1], 10);
-      if (
-        !Number.isSafeInteger(port) ||
-        port < 1024 ||
-        port > 65_535 ||
-        port === 43_104 ||
-        port === 43_105
-      ) {
+      if (!isValidPreviewInspectionPort(port)) {
         throw new WorkspaceRequestError(400, "WORKSPACE_PREVIEW_PORT_INVALID");
       }
       if (!(await isPortListening(port))) {

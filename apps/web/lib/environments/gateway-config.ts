@@ -1,6 +1,8 @@
-import type { EnvironmentGatewayConfig } from "@lumi/kestrel-environment-auth";
+import type { EnvironmentGatewayConfigV3 } from "@lumi/kestrel-environment-auth";
 import { ENVIRONMENT_GATEWAY_CONFIG_VERSION } from "@lumi/kestrel-environment-auth";
 import {
+  ENVIRONMENT_ROUTER_AUDIENCE,
+  signEnvironmentExecutionTicket,
   PREVIEW_RELAY_TICKET_AUDIENCE,
   PREVIEW_RELAY_TICKET_VERSION,
   signPreviewRelayTicket,
@@ -9,6 +11,7 @@ import { and, eq, gt, inArray } from "drizzle-orm";
 import { issueGatewayCredentialLease } from "@/lib/ai/gateway-credential-lease";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { verifyEnvironmentServiceToken } from "./service-tokens";
+import { ENVIRONMENT_EXECUTION_ROUTE_CAPABILITIES } from "./execution-route";
 
 export class EnvironmentGatewayConfigError extends Error {
   constructor(
@@ -24,7 +27,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
   environmentId: string;
   authorization: string | null;
   now?: Date | undefined;
-}): Promise<EnvironmentGatewayConfig> {
+}): Promise<EnvironmentGatewayConfigV3> {
   const now = input.now ?? new Date();
   const environment = await knowledgeDb.query.environments.findFirst({
     where: (table, { eq: equals }) =>
@@ -50,7 +53,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
     );
   }
 
-  const [workspaces, previews, modelGrants] = await Promise.all([
+  const [workspaces, previews, modelGrants, appExecutions] = await Promise.all([
       knowledgeDb.query.environmentWorkspaces.findMany({
         where: and(
           eq(schema.environmentWorkspaces.environmentId, environment.id),
@@ -88,12 +91,53 @@ export async function resolveEnvironmentGatewayConfig(input: {
             inArray(schema.environmentRunExecutions.status, ["routed", "running"])
           )
         ),
+      knowledgeDb.query.environmentRunExecutions.findMany({
+        where: and(
+          eq(schema.environmentRunExecutions.environmentId, environment.id),
+          inArray(schema.environmentRunExecutions.status, ["routed", "running"]),
+        ),
+      }),
     ]);
 
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]));
   const relayIssuedAt = Math.floor(now.getTime() / 1000);
   const relayPrivateKey =
     process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "";
+  const appGrants = appExecutions.flatMap((execution) => {
+    const workspace = workspaceById.get(execution.workspaceId);
+    if (!workspace?.flyMachineId) return [];
+    const issuedAt = Math.floor(now.getTime() / 1000);
+    const expiresAt = issuedAt + 300;
+    return [{
+      executionId: execution.id,
+      runId: execution.runtimeRunId,
+      workspaceId: execution.workspaceId,
+      executionTicket: signEnvironmentExecutionTicket({
+        privateKey: relayPrivateKey,
+        ticket: {
+          version: 2,
+          audience: ENVIRONMENT_ROUTER_AUDIENCE,
+          organizationId: execution.organizationId,
+          environmentId: execution.environmentId,
+          workspaceId: execution.workspaceId,
+          threadId: execution.threadId,
+          runId: execution.id,
+          actorId: execution.actorId,
+          agentId: "kestrel-one-app-relay",
+          target: {
+            provider: "fly",
+            appName: flyAppName,
+            machineId: workspace.flyMachineId,
+          },
+          capabilities: [...ENVIRONMENT_EXECUTION_ROUTE_CAPABILITIES],
+          issuedAt,
+          expiresAt,
+          nonce: crypto.randomUUID(),
+        },
+      }),
+      credentialExpiresAt: new Date(expiresAt * 1000).toISOString(),
+    }];
+  });
   const resolvedModelGrants = await Promise.all(
     modelGrants.map(async ({ grant }) => {
       const lease = await issueGatewayCredentialLease({
@@ -170,6 +214,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
         : [];
     }),
     modelGrants: resolvedModelGrants,
+    appGrants,
   };
 }
 

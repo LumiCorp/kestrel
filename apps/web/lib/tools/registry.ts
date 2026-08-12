@@ -120,6 +120,14 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
         defaultPolicy: { loggingMode: "metadata_only", rateLimitMode: "off" },
       }),
       createCapability({
+        key: "inspect",
+        runtimeName: "workspace.preview.inspect",
+        displayName: "Inspect preview port",
+        description: "Check whether a local Workspace port is listening.",
+        accessMode: "status",
+        defaultPolicy: { loggingMode: "metadata_only", rateLimitMode: "off" },
+      }),
+      createCapability({
         key: "renew",
         runtimeName: "workspace.preview.renew",
         displayName: "Renew preview",

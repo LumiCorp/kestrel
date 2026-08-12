@@ -74,6 +74,7 @@ test("Kestrel-One knowledge tool maps app HTTP failures without retrying", async
     kestrelOne: {
       appUrl: "https://one.example.test",
       toolToken: "tool-token",
+      executionTicket: "environment-ticket",
       tenantId: "org_123",
     },
   });

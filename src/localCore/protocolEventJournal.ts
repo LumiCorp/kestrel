@@ -66,6 +66,33 @@ export class LocalCoreProtocolEventJournal implements RunnerServiceEventJournal 
     );
   }
 
+  async findTerminalEvent(
+    filter: RunnerEventSubscriptionFilter,
+  ): Promise<RunnerEvent | null> {
+    if (filter.runId === undefined) {
+      return null;
+    }
+    const conditions = [
+      "run_id = $1",
+      "event_type IN ('run.completed', 'run.failed', 'run.cancelled')",
+    ];
+    const values: unknown[] = [filter.runId];
+    appendFilterCondition(conditions, values, "session_id", filter.sessionId);
+    appendFilterCondition(conditions, values, "thread_id", filter.threadId);
+    const result = await this.executor.query<{ event_json: unknown }>(
+      `SELECT event_json
+         FROM runner_protocol_events
+        WHERE ${conditions.join(" AND ")}
+        ORDER BY sequence DESC
+        LIMIT 1`,
+      values,
+    );
+    const value = result.rows[0]?.event_json;
+    return value === undefined || !isCurrentProtocolEvent(value)
+      ? null
+      : parseRunnerEventJson(value);
+  }
+
   async replayAfter(
     sinceEventId: string,
     filter: RunnerEventSubscriptionFilter,

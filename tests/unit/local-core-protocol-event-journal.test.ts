@@ -75,6 +75,46 @@ test("Local Core protocol journal rejects an unknown durable cursor", async () =
   }
 });
 
+test("Local Core protocol journal reconciles an exact run terminal event", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-protocol-journal-terminal-"));
+  try {
+    const handle = await ensureLocalCoreStore({ homePath: home });
+    const journal = new LocalCoreProtocolEventJournal(handle.executor);
+    await journal.ready();
+    const terminal = runnerCompleted(
+      "event-terminal",
+      "command-terminal",
+      "session-terminal",
+      "run-terminal",
+    );
+    await journal.append(terminal);
+    await journal.append(runnerCompleted(
+      "event-other-terminal",
+      "command-other-terminal",
+      "session-other-terminal",
+      "run-other-terminal",
+    ));
+
+    assert.deepEqual(
+      await journal.findTerminalEvent({
+        sessionId: "session-terminal",
+        runId: "run-terminal",
+      }),
+      terminal,
+    );
+    assert.equal(
+      await journal.findTerminalEvent({
+        sessionId: "session-wrong",
+        runId: "run-terminal",
+      }),
+      null,
+    );
+  } finally {
+    await closeLocalCoreStore(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("Local Core protocol journal expires cursors from an older execution protocol", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-protocol-journal-version-"));
   try {
@@ -215,5 +255,44 @@ function runnerPong(
     runId,
     commandId,
     payload: { nonce },
+  };
+}
+
+function runnerCompleted(
+  id: string,
+  commandId: string,
+  sessionId: string,
+  runId: string,
+): RunnerEvent {
+  return {
+    id,
+    type: "run.completed",
+    ts: "2026-07-13T12:00:00.000Z",
+    runId,
+    sessionId,
+    commandId,
+    payload: {
+      result: {
+        assistantText: "done",
+        output: {
+          status: "COMPLETED",
+          sessionId,
+          runId,
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      },
+    },
   };
 }

@@ -1,4 +1,4 @@
-export const ENVIRONMENT_GATEWAY_CONFIG_VERSION = 2 as const;
+export const ENVIRONMENT_GATEWAY_CONFIG_VERSION = 3 as const;
 
 export type EnvironmentGatewayPreviewRoute = {
   id: string;
@@ -28,8 +28,15 @@ export type EnvironmentGatewayModelGrant = {
   credentialExpiresAt: string;
 };
 
-export type EnvironmentGatewayConfig = {
-  version: typeof ENVIRONMENT_GATEWAY_CONFIG_VERSION;
+export type EnvironmentGatewayAppGrant = {
+  executionId: string;
+  runId: string | null;
+  workspaceId: string;
+  executionTicket: string;
+  credentialExpiresAt: string;
+};
+
+type EnvironmentGatewayConfigBase = {
   environmentId: string;
   revision: string;
   workspaces: Array<{
@@ -40,3 +47,17 @@ export type EnvironmentGatewayConfig = {
   previews: EnvironmentGatewayPreviewRoute[];
   modelGrants: EnvironmentGatewayModelGrant[];
 };
+
+export type EnvironmentGatewayConfigV2 = EnvironmentGatewayConfigBase & {
+  version: 2;
+  appGrants?: never;
+};
+
+export type EnvironmentGatewayConfigV3 = EnvironmentGatewayConfigBase & {
+  version: typeof ENVIRONMENT_GATEWAY_CONFIG_VERSION;
+  appGrants: EnvironmentGatewayAppGrant[];
+};
+
+export type EnvironmentGatewayConfig =
+  | EnvironmentGatewayConfigV2
+  | EnvironmentGatewayConfigV3;

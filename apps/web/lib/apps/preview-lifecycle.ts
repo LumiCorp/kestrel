@@ -36,6 +36,14 @@ export async function handlePreviewLifecycle(input: {
       );
     case "list":
       return NextResponse.json({ previews: await listPreviews(input.ticket) });
+    case "inspect":
+      return NextResponse.json(
+        await inspectPreviewPort({
+          ticket: input.ticket,
+          authorization: input.authorization,
+          port: parsePreviewPort(input.path[1]),
+        })
+      );
     case "renew":
       return NextResponse.json({
         preview: await renewPreview({
@@ -319,6 +327,17 @@ async function assertPortListening(input: {
   authorization: string;
   port: number;
 }) {
+  const inspection = await inspectPreviewPort(input);
+  if (inspection.status === "not_listening") {
+    throw new AppRuntimeError("WORKSPACE_PREVIEW_PORT_NOT_LISTENING", 409);
+  }
+}
+
+async function inspectPreviewPort(input: {
+  ticket: EnvironmentExecutionTicket;
+  authorization: string;
+  port: number;
+}): Promise<{ port: number; status: "listening" | "not_listening" }> {
   const environment = await knowledgeDb.query.environments.findFirst({
     where: (table, { eq: equals }) => equals(table.id, input.ticket.environmentId),
     columns: { routerUrl: true },
@@ -331,13 +350,20 @@ async function assertPortListening(input: {
     { headers: { authorization: input.authorization }, cache: "no-store" }
   );
   if (!response.ok) {
-    throw new AppRuntimeError(
-      response.status === 409
-        ? "WORKSPACE_PREVIEW_PORT_NOT_LISTENING"
-        : "WORKSPACE_PREVIEW_PORT_CHECK_FAILED",
-      response.status === 409 ? 409 : 502
-    );
+    if (response.status === 409) {
+      return { port: input.port, status: "not_listening" };
+    }
+    throw new AppRuntimeError("WORKSPACE_PREVIEW_PORT_CHECK_FAILED", 502);
   }
+  return { port: input.port, status: "listening" };
+}
+
+function parsePreviewPort(value: string | undefined) {
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1024 || port > 65_535) {
+    throw new AppRuntimeError("WORKSPACE_PREVIEW_PORT_INVALID", 400);
+  }
+  return port;
 }
 
 async function refreshGateway(

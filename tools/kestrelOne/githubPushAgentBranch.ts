@@ -7,6 +7,7 @@ import { RuntimeFailure, createRuntimeFailure } from "../../src/runtime/RuntimeF
 import type { SharedToolModule } from "../contracts.js";
 import { parseObjectInput, readString } from "../helpers.js";
 import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
+import { resolveKestrelOneAppRequest } from "./appTransport.js";
 
 const execFileAsync = promisify(execFile);
 const TOOL_NAME = "kestrel_one.github_push_agent_branch";
@@ -58,9 +59,7 @@ export const kestrelOneGitHubPushAgentBranchTool: SharedToolModule = {
       const workspaceRoot = context.fileSystem?.workspaceRoot?.trim();
       const sessionId = context.runtime?.sessionId;
       const runId = context.runtime?.runId;
-      const appUrl = context.kestrelOne?.appUrl?.trim();
-      const ticket = context.kestrelOne?.executionTicket?.trim();
-      if (!(workspaceRoot && sessionId && runId && appUrl && ticket)) {
+      if (!(workspaceRoot && sessionId && runId)) {
         throw createRuntimeFailure(
           "KESTREL_ONE_GITHUB_PUSH_CONTEXT_MISSING",
           "GitHub agent-branch push requires managed Workspace and signed run context.",
@@ -72,12 +71,16 @@ export const kestrelOneGitHubPushAgentBranchTool: SharedToolModule = {
           }
         );
       }
+      const transport = resolveKestrelOneAppRequest(
+        context,
+        "/api/runtime/github/token",
+      );
       const credentialResponse = await (context.fetchImpl ?? fetch)(
-        new URL("/api/runtime/github/token", appUrl),
+        transport.url,
         {
           method: "POST",
           headers: {
-            authorization: `Bearer ${ticket}`,
+            authorization: `Bearer ${transport.authorization}`,
             "content-type": "application/json",
           },
           body: JSON.stringify({

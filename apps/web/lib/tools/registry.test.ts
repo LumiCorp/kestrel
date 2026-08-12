@@ -18,7 +18,7 @@ test("tool registry includes seeded built-in and external providers", () => {
   assert.equal(previews?.app.connectionRequirement, "none");
   assert.deepEqual(
     previews?.capabilities.map((capability) => capability.key),
-    ["publish", "list", "renew", "close"],
+    ["publish", "list", "inspect", "renew", "close"],
   );
   assert.match(
     previews?.capabilities[0]?.description ?? "",

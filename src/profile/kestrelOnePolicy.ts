@@ -109,6 +109,7 @@ export const KESTREL_ONE_WORKSPACE_TOOL_NAMES = Object.freeze([
   "kestrel_one.github_push_agent_branch",
   "workspace.preview.publish",
   "workspace.preview.list",
+  "workspace.preview.inspect",
   "workspace.preview.renew",
   "workspace.preview.close",
   "kestrel_one.github_issue_create",

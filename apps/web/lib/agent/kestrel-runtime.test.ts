@@ -43,6 +43,7 @@ test("createKestrelOneRequestContext maps session and organization into runner c
       tenantId: "org_123",
     },
     tenantId: "org_123",
+    durability: "continue_on_disconnect",
   });
 });
 

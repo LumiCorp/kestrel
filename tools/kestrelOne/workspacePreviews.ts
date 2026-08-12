@@ -1,6 +1,7 @@
 import { createRuntimeFailure, RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolContext, SharedToolModule } from "../contracts.js";
 import { parseObjectInput, readString } from "../helpers.js";
+import { resolveKestrelOneAppRequest } from "./appTransport.js";
 
 const PUBLIC_WARNING =
   "This is an anonymous bearer URL. Anyone with the URL can access the application until the preview closes or expires.";
@@ -66,6 +67,33 @@ export const workspacePreviewListTool: SharedToolModule = {
   },
   createHandler: (context) => async () =>
     withPublicWarning(await requestPreview(context, "list", ["previews"])),
+};
+
+export const workspacePreviewInspectTool: SharedToolModule = {
+  definition: {
+    name: "workspace.preview.inspect",
+    description:
+      "Check whether an HTTP server is listening on a local Workspace port. Process listings are supporting evidence only; use this result or a direct HTTP response before claiming reachability. Report an exact exception name only when it was observed in tool output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "integer", minimum: 1024, maximum: 65_535 },
+      },
+      required: ["port"],
+      additionalProperties: false,
+    },
+    capability: {
+      ...sharedCapability,
+      latencyClass: "low",
+      costClass: "free",
+      executionClass: "read_only",
+    },
+    presentation: previewPresentation("Inspect Workspace Preview Port"),
+  },
+  createHandler: (context) => async (input) => {
+    const body = parseObjectInput("workspace.preview.inspect", input);
+    return requestPreview(context, "inspect", ["ports", String(body.port)]);
+  },
 };
 
 export const workspacePreviewRenewTool: SharedToolModule = {
@@ -138,6 +166,7 @@ export const workspacePreviewCloseTool: SharedToolModule = {
 export const workspacePreviewTools = [
   workspacePreviewPublishTool,
   workspacePreviewListTool,
+  workspacePreviewInspectTool,
   workspacePreviewRenewTool,
   workspacePreviewCloseTool,
 ];
@@ -154,24 +183,10 @@ function previewPresentation(displayName: string) {
 
 async function requestPreview(
   context: SharedToolContext,
-  capability: "publish" | "list" | "renew" | "close",
+  capability: "publish" | "list" | "inspect" | "renew" | "close",
   path: string[],
   init: RequestInit = {}
 ) {
-  const baseUrl = context.kestrelOne?.appUrl?.trim();
-  const ticket = context.kestrelOne?.executionTicket?.trim();
-  if (!(baseUrl && ticket)) {
-    throw createRuntimeFailure(
-      "WORKSPACE_PREVIEW_CONTEXT_MISSING",
-      "Workspace previews require a hosted Workspace and signed run context.",
-      {
-        subsystem: "tooling",
-        toolName: `workspace.preview.${capability}`,
-        classification: "configuration",
-        recoverable: true,
-      }
-    );
-  }
   const runtimeName = `workspace.preview.${capability}`;
   const approval =
     context.kestrelOne?.appApprovalModes?.[runtimeName] === "ask"
@@ -180,10 +195,11 @@ async function requestPreview(
   const pathname = `/api/runtime/apps/built_in.previews/${capability}/${approval}/${path
     .map(encodeURIComponent)
     .join("/")}`;
-  const response = await (context.fetchImpl ?? fetch)(new URL(pathname, baseUrl), {
+  const transport = resolveKestrelOneAppRequest(context, pathname);
+  const response = await (context.fetchImpl ?? fetch)(transport.url, {
     ...init,
     headers: {
-      authorization: `Bearer ${ticket}`,
+      authorization: `Bearer ${transport.authorization}`,
       ...(init.body ? { "content-type": "application/json" } : {}),
     },
   });

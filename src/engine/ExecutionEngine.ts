@@ -176,6 +176,36 @@ function summarizeRecoveryFailureMessage(message: string): string | undefined {
   return `${summary.slice(0, RECOVERY_FAILURE_SUMMARY_MAX_CHARS - 1).trimEnd()}…`;
 }
 
+function recoveryReviewOptionDescriptor(id: string): {
+  id: string;
+  label: string;
+  description: string;
+  kind: "retry" | "terminal" | "alternative";
+} {
+  if (id === "retry.primary") {
+    return {
+      id,
+      label: "Retry",
+      description: "Retry the primary recovery route.",
+      kind: "retry",
+    };
+  }
+  if (id === "terminal.fail") {
+    return {
+      id,
+      label: "Stop",
+      description: "Stop recovery and fail this run.",
+      kind: "terminal",
+    };
+  }
+  return {
+    id,
+    label: id,
+    description: "Continue with this recovery option.",
+    kind: "alternative",
+  };
+}
+
 interface RunLifecycleObservabilityFrame {
   runId: string;
   sessionId: string;
@@ -3887,6 +3917,9 @@ export class ExecutionEngine {
           ...(input.triggeringFailureSummary !== undefined
             ? { triggeringFailureSummary: input.triggeringFailureSummary }
             : {}),
+          recoveryOptions: selection.reviewBinding.allowedOptionIds.map(
+            (id) => recoveryReviewOptionDescriptor(id),
+          ),
         },
       }),
     };

@@ -26,6 +26,9 @@ export interface RunnerServiceEventReplayOptions {
 export interface RunnerServiceEventJournal {
   ready(): void | Promise<void>;
   append(event: RunnerEvent): void | Promise<void>;
+  findTerminalEvent?(
+    filter: RunnerEventSubscriptionFilter,
+  ): RunnerEvent | null | Promise<RunnerEvent | null>;
   replayAfter(
     sinceEventId: string,
     filter: RunnerEventSubscriptionFilter,

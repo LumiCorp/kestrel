@@ -197,7 +197,7 @@ function workspaceHttpCapability(method: string, pathname: string) {
     return "workspace.apps.write";
   }
   if (method === "GET" && /^\/v1\/preview-ports\/\d+$/u.test(pathname)) {
-    return "workspace.previews.write";
+    return "workspace.previews.read";
   }
   if (
     (method === "POST" && pathname === "/v1/backups/prepare") ||
