@@ -83,7 +83,7 @@ test("Docker build-context changes rebuild every managed image", () => {
   assert.equal(impacted.length, 5);
 });
 
-test("workspace-runtime image builds and carries the shared memory package", async () => {
+test("workspace-runtime image builds and carries private shared runtime packages", async () => {
   const dockerfile = await readFile(
     path.join(process.cwd(), "apps/workspace-runtime/Dockerfile"),
     "utf8",
@@ -131,6 +131,36 @@ test("workspace-runtime image builds and carries the shared memory package", asy
     dockerfile,
     /COPY --from=build \/app\/packages\/memory \.\/packages\/memory/u,
     "the memory package must be present behind the production workspace symlink",
+  );
+  assert.ok(
+    workspaceRuntime.inputs.includes("packages/runtime-profile/**"),
+    "Runtime Profile changes must rebuild the workspace-runtime image",
+  );
+  const runtimeProfileManifestCopy = dockerfile.indexOf(
+    "COPY packages/runtime-profile/package.json packages/runtime-profile/package.json",
+  );
+  assert.ok(
+    runtimeProfileManifestCopy >= 0 && runtimeProfileManifestCopy < dependencyInstall,
+    "the Runtime Profile manifest must be present before pnpm install",
+  );
+  const runtimeProfileSourceCopy = dockerfile.indexOf(
+    "COPY packages/runtime-profile packages/runtime-profile",
+  );
+  const runtimeProfileBuild = dockerfile.indexOf(
+    "pnpm --filter @kestrel/runtime-profile build",
+  );
+  assert.ok(
+    runtimeProfileSourceCopy >= 0 && runtimeProfileSourceCopy < runtimeProfileBuild,
+    "the Runtime Profile sources must be present before its build",
+  );
+  assert.ok(
+    runtimeProfileBuild >= 0 && runtimeProfileBuild < dockerfile.indexOf("pnpm run clean"),
+    "the Runtime Profile package must be built before the root runtime",
+  );
+  assert.match(
+    dockerfile,
+    /COPY --from=build \/app\/packages\/runtime-profile \.\/packages\/runtime-profile/u,
+    "the Runtime Profile package must be present behind the production workspace symlink",
   );
 });
 

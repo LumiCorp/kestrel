@@ -52,6 +52,7 @@ const REQUIRED_RUNTIME_RESOURCE_PATHS = [
   "packages/protocol/dist/index.js",
   "packages/workspace-skills/dist/index.js",
   "packages/memory/dist/index.js",
+  "packages/runtime-profile/dist/index.js",
   "packages/environment-auth/dist/index.js",
   "cli/client/RemoteRunnerTransport.ts",
   "scripts/local-core-release-smoke.ts",
@@ -238,8 +239,10 @@ function checkDesktopResources(): void {
       errors.push(`Desktop runtime resource package.json must include dependency '${dependency}'.`);
     }
   }
-  if (resourcePackage.dependencies?.["@kestrel-agents/protocol"] === undefined) {
-    errors.push("Desktop runtime resources must declare @kestrel-agents/protocol.");
+  for (const dependency of ["@kestrel-agents/protocol", "@kestrel/runtime-profile"]) {
+    if (resourcePackage.dependencies?.[dependency] === undefined) {
+      errors.push(`Desktop runtime resources must declare ${dependency}.`);
+    }
   }
   if (resourcePackage.dependencies?.next !== undefined) {
     errors.push("Desktop runtime resource package.json must not include the retired Next.js renderer dependency.");
@@ -252,6 +255,9 @@ function checkDesktopResources(): void {
   }
   if (existsSync(path.join(payloadRoot, "packages", "protocol", "src"))) {
     errors.push("Desktop Local Core build inputs must include only the built protocol payload, not package source.");
+  }
+  if (existsSync(path.join(payloadRoot, "packages", "runtime-profile", "src"))) {
+    errors.push("Desktop Local Core build inputs must include only the built Runtime Profile payload, not package source.");
   }
 
   const packageStage = path.join(ROOT, "apps", "desktop", ".desktop-package");
@@ -284,7 +290,13 @@ function checkDesktopResources(): void {
         `Prepared Desktop Local Core dependencies are invalid: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    for (const dependency of ["tsx", "pg", "@electric-sql/pglite", "@kestrel-agents/protocol"]) {
+    for (const dependency of [
+      "tsx",
+      "pg",
+      "@electric-sql/pglite",
+      "@kestrel-agents/protocol",
+      "@kestrel/runtime-profile",
+    ]) {
       if (!existsSync(path.join(installedRuntimeRoot, "node_modules", dependency))) {
         errors.push(`Prepared package resources must include node_modules/${dependency}.`);
       }

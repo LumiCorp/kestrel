@@ -20,6 +20,11 @@ const RUNTIME_WORKSPACE_PACKAGES = [
     tarballPrefix: "kestrel-agents-memory-",
   },
   {
+    name: "@kestrel/runtime-profile",
+    directory: "packages/runtime-profile",
+    tarballPrefix: "kestrel-runtime-profile-",
+  },
+  {
     name: "@lumi/kestrel-environment-auth",
     directory: "packages/environment-auth",
     tarballPrefix: "lumi-kestrel-environment-auth-",

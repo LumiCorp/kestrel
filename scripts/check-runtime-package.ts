@@ -36,10 +36,17 @@ const forbiddenPrefixes = [
 
 const bundledDependencyPrefixes = [
   "node_modules/@kestrel-agents/memory/",
+  "node_modules/@kestrel/runtime-profile/",
   "node_modules/@lumi/kestrel-environment-auth/",
 ] as const;
 
-const allowedWorkspacePackagePrefixes = ["packages/mcp-security/"] as const;
+const npmDryRunAllowedWorkspacePackagePrefixes = [
+  "packages/mcp-security/",
+  // npm follows the root workspace link while collecting a bundled dependency.
+  // The packer must never retain that source-tree alias in the final tarball.
+  "packages/runtime-profile/",
+] as const;
+const packedWorkspacePackagePrefixes = ["packages/mcp-security/"] as const;
 
 const requiredFiles = [
   "package.json",
@@ -101,7 +108,7 @@ try {
     }
     if (filePath.startsWith("packages/")) {
       assert.ok(
-        allowedWorkspacePackagePrefixes.some((prefix) => filePath.startsWith(prefix)),
+        npmDryRunAllowedWorkspacePackagePrefixes.some((prefix) => filePath.startsWith(prefix)),
         `runtime package contains unexpected workspace package '${filePath}'`,
       );
     }
@@ -142,6 +149,7 @@ try {
   assert.equal(manifest.types, "dist/src/index.d.ts");
   assert.equal(manifest.dependencies?.["@kestrel-agents/protocol"], "workspace:*");
   assert.equal(manifest.dependencies?.["@kestrel-agents/workspace-skills"], "workspace:*");
+  assert.equal(manifest.dependencies?.["@kestrel/runtime-profile"], "workspace:*");
   assert.equal(
     manifest.optionalDependencies?.fsevents,
     "2.3.3",
@@ -155,8 +163,17 @@ try {
     filePaths.has("node_modules/@kestrel-agents/memory/package.json"),
     "runtime package is missing the bundled memory manifest",
   );
+  assert.ok(
+    filePaths.has("node_modules/@kestrel/runtime-profile/dist/index.js"),
+    "runtime package is missing the bundled Runtime Profile implementation",
+  );
+  assert.ok(
+    filePaths.has("node_modules/@kestrel/runtime-profile/package.json"),
+    "runtime package is missing the bundled Runtime Profile manifest",
+  );
   assert.deepEqual(manifest.bundledDependencies, [
     "@kestrel-agents/memory",
+    "@kestrel/runtime-profile",
     "@lumi/kestrel-environment-auth",
   ]);
   assert.ok(filePaths.has(manifest.main), `runtime package main '${manifest.main}' is not packed`);
@@ -180,7 +197,7 @@ try {
   );
   for (const packedFilePath of packedWorkspaceFiles) {
     assert.ok(
-      allowedWorkspacePackagePrefixes.some((prefix) => packedFilePath.startsWith(prefix)),
+      packedWorkspacePackagePrefixes.some((prefix) => packedFilePath.startsWith(prefix)),
       `pnpm-packed runtime contains unexpected workspace package '${packedFilePath}'`,
     );
     assert.equal(
@@ -207,8 +224,14 @@ try {
     packedManifest.version,
     "packed runtime must depend on the exact matching memory version",
   );
+  assert.equal(
+    packedManifest.dependencies?.["@kestrel/runtime-profile"],
+    packedManifest.version,
+    "packed runtime must depend on the exact matching Runtime Profile version",
+  );
   for (const bundledManifestPath of [
     "node_modules/@kestrel-agents/memory/package.json",
+    "node_modules/@kestrel/runtime-profile/package.json",
     "node_modules/@lumi/kestrel-environment-auth/package.json",
   ]) {
     const bundledManifest = JSON.parse(
@@ -220,6 +243,21 @@ try {
       `bundled ${bundledManifest.name ?? bundledManifestPath} manifest must match the runtime version`,
     );
   }
+  const bundledRuntimeProfileManifest = JSON.parse(
+    readFileSync(
+      path.join(
+        extractDir,
+        "package",
+        "node_modules/@kestrel/runtime-profile/package.json",
+      ),
+      "utf8",
+    ),
+  ) as { private?: unknown };
+  assert.equal(
+    bundledRuntimeProfileManifest.private,
+    true,
+    "bundled Runtime Profile package must remain private",
+  );
 
   execFileSync(
     resolveNpmCommand(),

@@ -43,6 +43,8 @@ export const LOCAL_CORE_BUILD_INPUT_PATHS = [
   "packages/workspace-skills/dist",
   "packages/memory/package.json",
   "packages/memory/dist",
+  "packages/runtime-profile/package.json",
+  "packages/runtime-profile/dist",
   "packages/environment-auth/package.json",
   "packages/environment-auth/dist",
   "packages/mcp-security/package.json",
@@ -79,6 +81,10 @@ const PACKAGED_WORKSPACE_DEPENDENCIES = [
   {
     sourcePath: "packages/memory",
     packageName: "@kestrel-agents/memory",
+  },
+  {
+    sourcePath: "packages/runtime-profile",
+    packageName: "@kestrel/runtime-profile",
   },
   {
     sourcePath: "packages/environment-auth",

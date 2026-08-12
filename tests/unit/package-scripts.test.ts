@@ -17,6 +17,7 @@ test("runtime package publishes only the public executable boundary", async () =
   assert.equal(pkg.types, "dist/src/index.d.ts");
   assert.equal(pkg.dependencies?.["@kestrel-agents/protocol"], "workspace:*");
   assert.equal(pkg.dependencies?.["@kestrel-agents/workspace-skills"], "workspace:*");
+  assert.equal(pkg.dependencies?.["@kestrel/runtime-profile"], "workspace:*");
   for (const required of [
     "dist/src",
     "dist/agents",

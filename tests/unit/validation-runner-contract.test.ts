@@ -210,6 +210,7 @@ test("root builds prepare every shared workspace artifact before compilation", (
     "@lumi/kestrel-environment-auth",
     "@kestrel/mcp-security",
     "@kestrel-agents/protocol",
+    "@kestrel/runtime-profile",
     "@kestrel-agents/sdk",
     "@kestrel-agents/ai-sdk",
     "@kestrel-agents/next",
@@ -222,6 +223,10 @@ test("root builds prepare every shared workspace artifact before compilation", (
   assert.match(
     rootPackage.scripts?.["web:prepare"] ?? "",
     /--filter @kestrel-agents\/workspace-skills build/u,
+  );
+  assert.match(
+    rootPackage.scripts?.["web:prepare"] ?? "",
+    /--filter @kestrel\/runtime-profile build/u,
   );
   assert.match(runnerDockerIgnore, /^tests\/\*$/mu);
   assert.doesNotMatch(runnerDockerIgnore, /tests\/helpers/u);

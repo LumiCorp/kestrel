@@ -27,7 +27,10 @@ const sourceExtensions = new Set([
   ".ts",
   ".tsx",
 ]);
-const allowedSharedKestrelPackages = new Set(["@kestrel/mcp-security"]);
+const allowedSharedKestrelPackages = new Set([
+  "@kestrel/mcp-security",
+  "@kestrel/runtime-profile",
+]);
 const failures: string[] = [];
 let dependencies: Record<string, string> = {};
 

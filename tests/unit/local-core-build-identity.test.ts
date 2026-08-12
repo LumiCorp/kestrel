@@ -160,6 +160,7 @@ test("prepared Local Core dependency verification rejects installed payload drif
     ["packages/protocol", "@kestrel-agents/protocol"],
     ["packages/workspace-skills", "@kestrel-agents/workspace-skills"],
     ["packages/memory", "@kestrel-agents/memory"],
+    ["packages/runtime-profile", "@kestrel/runtime-profile"],
     ["packages/environment-auth", "@lumi/kestrel-environment-auth"],
   ] as const;
   try {

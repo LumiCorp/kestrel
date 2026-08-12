@@ -21,6 +21,7 @@
         "packages/mcp-security/**",
         "packages/sdk/**",
         "packages/protocol/**",
+        "packages/runtime-profile/**",
         "packages/workspace-skills/**",
         "agents/**",
         "cli/**",
@@ -82,6 +83,7 @@
         "packages/environment-auth/**",
         "packages/mcp-security/**",
         "packages/protocol/**",
+        "packages/runtime-profile/**",
         "packages/sdk/**",
         "packages/ai-sdk/**",
         "packages/next/**",
@@ -104,6 +106,7 @@
         "pnpm-workspace.yaml",
         "apps/web/**",
         "packages/environment-auth/**",
+        "packages/runtime-profile/**",
         "deploy/fly/kestrel-one-runpod-worker/**"
       ]
     }

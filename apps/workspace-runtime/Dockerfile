@@ -8,6 +8,7 @@ COPY packages/memory/package.json packages/memory/package.json
 COPY packages/mcp-security/package.json packages/mcp-security/package.json
 COPY packages/sdk/package.json packages/sdk/package.json
 COPY packages/protocol/package.json packages/protocol/package.json
+COPY packages/runtime-profile/package.json packages/runtime-profile/package.json
 COPY packages/workspace-skills/package.json packages/workspace-skills/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/workspace-runtime apps/workspace-runtime
@@ -16,6 +17,7 @@ COPY packages/memory packages/memory
 COPY packages/mcp-security packages/mcp-security
 COPY packages/sdk packages/sdk
 COPY packages/protocol packages/protocol
+COPY packages/runtime-profile packages/runtime-profile
 COPY packages/workspace-skills packages/workspace-skills
 COPY agents agents
 COPY cli cli
@@ -27,6 +29,7 @@ RUN pnpm --filter @lumi/kestrel-environment-auth build \
     && pnpm --filter @kestrel-agents/memory build \
     && pnpm --filter @kestrel-agents/workspace-skills build \
     && pnpm --filter @kestrel-agents/sdk build \
+    && pnpm --filter @kestrel/runtime-profile build \
     && pnpm run clean \
     && pnpm exec tsc -p tsconfig.json \
     && pnpm --filter @kestrel/workspace-runtime build
@@ -45,6 +48,7 @@ COPY --from=build /app/apps/workspace-runtime ./apps/workspace-runtime
 COPY --from=build /app/packages/environment-auth ./packages/environment-auth
 COPY --from=build /app/packages/memory ./packages/memory
 COPY --from=build /app/packages/protocol ./packages/protocol
+COPY --from=build /app/packages/runtime-profile ./packages/runtime-profile
 COPY --from=build /app/packages/sdk ./packages/sdk
 COPY --from=build /app/packages/workspace-skills ./packages/workspace-skills
 RUN test -f /app/dist/db/migrations/001_sessions_runs.sql \

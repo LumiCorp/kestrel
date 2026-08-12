@@ -58,6 +58,7 @@ const REQUIRED_LIBEXEC_PATHS = [
   "packages/protocol/dist/index.js",
   "packages/workspace-skills/dist/index.js",
   "packages/memory/dist/index.js",
+  "packages/runtime-profile/dist/index.js",
   "packages/environment-auth/dist/index.js",
   "src/replay/RuntimeReplayBundle.ts",
   ...(TARGET_PLATFORM === "darwin"
@@ -92,6 +93,7 @@ const REQUIRED_DEPENDENCIES = [
   "ink",
   "@electric-sql/pglite",
   "@kestrel-agents/protocol",
+  "@kestrel/runtime-profile",
 ] as const;
 
 const artifactPath = path.join(root, "apps", "cli", "out", `kestrel-cli-${TARGET_VERSION}-${TARGET_PLATFORM}-${TARGET_ARCH}.tar.gz`);
@@ -258,6 +260,9 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
   }
   if (existsSync(path.join(libexecRoot, "packages", "protocol", "src"))) {
     errors.push("artifact Local Core build inputs must include only the built protocol payload, not package source");
+  }
+  if (existsSync(path.join(libexecRoot, "packages", "runtime-profile", "src"))) {
+    errors.push("artifact Local Core build inputs must include only the built Runtime Profile payload, not package source");
   }
 
   for (const envFile of collectLocalEnvFiles(libexecRoot)) {
