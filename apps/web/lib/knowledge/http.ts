@@ -71,6 +71,7 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     code === "APP_POLICY_WIDENS_ENVIRONMENT" ||
     code === "MCP_INTERACTION_CONFLICT" ||
     code === "TURN_CONFLICT" ||
+    code === "RUNTIME_UNAVAILABLE" ||
     code === "QUEUE_PAUSED" ||
     message === "MCP capability snapshot has already been reviewed."
   ) {

@@ -62,7 +62,7 @@ function createUnixSocketFetch(socketPath: string): typeof fetch {
             }
           }
           resolve(new Response(
-            Readable.toWeb(incoming) as ReadableStream<Uint8Array>,
+            Readable.toWeb(incoming) as unknown as ReadableStream<Uint8Array>,
             {
               status: incoming.statusCode ?? 500,
               ...(incoming.statusMessage !== undefined

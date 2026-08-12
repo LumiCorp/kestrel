@@ -64,6 +64,7 @@ function PureChatHeader({
   projects,
   selectedVisibilityType,
   isReadonly,
+  runtimeId,
 }: {
   archived: boolean;
   canManage: boolean;
@@ -73,6 +74,7 @@ function PureChatHeader({
   projects: Array<{ id: string; name: string }>;
   selectedVisibilityType: VisibilityType;
   isReadonly: boolean;
+  runtimeId: "kestrel" | "codex" | "claude";
 }) {
   const router = useRouter();
   const { mutate } = useSWRConfig();
@@ -298,6 +300,9 @@ function PureChatHeader({
           ) : (
             <h1 className="truncate font-semibold text-lg">{displayTitle}</h1>
           )}
+          <span className="shrink-0 rounded-md border px-1.5 py-0.5 text-muted-foreground text-xs">
+            {runtimeId === "kestrel" ? "Kestrel" : runtimeId === "codex" ? "Codex" : "Claude Code"}
+          </span>
           {canManage && !archived ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -587,6 +592,7 @@ export const ChatHeader = memo(
     prevProps.canManage === nextProps.canManage &&
     prevProps.threadId === nextProps.threadId &&
     prevProps.threadTitle === nextProps.threadTitle &&
+    prevProps.runtimeId === nextProps.runtimeId &&
     prevProps.project?.id === nextProps.project?.id &&
     prevProps.project?.name === nextProps.project?.name &&
     prevProps.projects === nextProps.projects &&

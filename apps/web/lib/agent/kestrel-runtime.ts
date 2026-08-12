@@ -18,9 +18,7 @@ import {
 import type { InferUIMessageChunk, UIMessage } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
 import { recordEmailAppApprovalRequest } from "@/lib/apps/email-app-approvals";
-import {
-  generateKestrelOneExternalReplyFromAgent,
-} from "@/lib/agent/kestrel-external-runtime-core";
+import { generateKestrelOneExternalReplyFromAgent } from "@/lib/agent/kestrel-external-runtime-core";
 import {
   adaptKestrelAgentForKestrelOne,
   createKestrelOneAgentResponseFromAgent,
@@ -66,6 +64,7 @@ const DEFAULT_PROFILE_ID = "kestrel";
 const DEFAULT_HOSTED_AGENT_ID = "kestrel-one";
 const HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
   "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
+type RuntimeId = "kestrel" | "codex" | "claude";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
 
 class KestrelOneRunnerClient extends KestrelClient {
@@ -295,6 +294,15 @@ export type KestrelOneAgentResponseInput = {
   environmentId: string;
   threadId: string;
   durableTurnId?: string | undefined;
+  runtimeId?: RuntimeId | undefined;
+  runtimeBindingId?: string | undefined;
+  runtimeNativeSessionState?:
+    | "uninitialized"
+    | "ready"
+    | "degraded"
+    | "released"
+    | undefined;
+  participantId?: string | undefined;
   messages: UIMessage[];
   approvalDecision?:
     | {
@@ -308,6 +316,7 @@ export type KestrelOneAgentResponseInput = {
         requestId: string;
         eventType: string;
         message: string;
+        answers?: Record<string, string[]> | undefined;
         approved?: boolean | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
@@ -340,6 +349,7 @@ function createModelAwareKestrelOneAgent(input: {
   threadId: string;
   actorUserId: string;
   durableTurnId?: string | undefined;
+  runtimeId: RuntimeId;
   projectContextRevisionId?: string | undefined;
   projectContextGrantId?: string | undefined;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
@@ -409,20 +419,17 @@ function createModelAwareKestrelOneAgent(input: {
           await input.onExecutionRouted?.(executionId);
           const projectSkills =
             route.provider !== "desktop" && route.projectId
-            ? await synchronizeProjectSkills({
-                organizationId: input.organizationId,
-                projectId: route.projectId,
-                actorUserId: input.actorUserId,
-                route: {
-                  baseUrl: route.baseUrl,
-                  authToken: route.authToken,
-                },
-              })
-            : null;
-          if (
-            runtimeModel &&
-            isKestrelOneManagedRuntimeModel(runtimeModel)
-          ) {
+              ? await synchronizeProjectSkills({
+                  organizationId: input.organizationId,
+                  projectId: route.projectId,
+                  actorUserId: input.actorUserId,
+                  route: {
+                    baseUrl: route.baseUrl,
+                    authToken: route.authToken,
+                  },
+                })
+              : null;
+          if (runtimeModel && isKestrelOneManagedRuntimeModel(runtimeModel)) {
             await activateEnvironmentModelGrant({
               organizationId: input.organizationId,
               environmentId: route.environmentId,
@@ -489,6 +496,7 @@ function createModelAwareKestrelOneAgent(input: {
           const resolvedProfile = await resolveHostedKestrelExecutionProfile({
             client,
             context,
+            runtimeId: input.runtimeId,
             route: {
               runId: route.runId,
               environmentId: route.environmentId,
@@ -500,6 +508,10 @@ function createModelAwareKestrelOneAgent(input: {
               ? { runtimeModels: [runtimeModel] }
               : {}),
           });
+          assertResolvedRuntimeReady(
+            resolvedProfile,
+            input.runtimeId ?? "kestrel",
+          );
           const mcpContext = route.mcpPolicy
             ? await issueHostedMcpRunContext({
                 runExecutionId: route.runId,
@@ -512,7 +524,9 @@ function createModelAwareKestrelOneAgent(input: {
           const normalizedTurn = {
             ...turn,
             eventType,
-            ...(projectSkills ? { workspaceSkills: projectSkills.catalog } : {}),
+            ...(projectSkills
+              ? { workspaceSkills: projectSkills.catalog }
+              : {}),
             ...(resumeRequestId !== undefined
               ? {
                   resumeBlockedRun: true,
@@ -653,6 +667,7 @@ export async function resolveHostedKestrelExecutionProfile(input: {
         ...EnvironmentRuntimeModelSelection[],
       ]
     | undefined;
+  runtimeId?: RuntimeId | undefined;
 }) {
   const primaryRuntimeModel = input.runtimeModels?.[0];
   const environmentPresetId =
@@ -669,6 +684,7 @@ export async function resolveHostedKestrelExecutionProfile(input: {
       {
         environmentPresetId,
         managedConfiguration: {
+          runtimeId: input.runtimeId ?? "kestrel",
           label: "Kestrel One",
           additionalToolNames: toolConfiguration.additionalToolNames,
           kestrelOneAppApprovalModes:
@@ -830,16 +846,16 @@ export async function generateKestrelOneExternalReply(input: {
   try {
     const projectSkills =
       route.provider !== "desktop" && route.projectId
-      ? await synchronizeProjectSkills({
-          organizationId: input.organizationId,
-          projectId: route.projectId,
-          actorUserId: input.actor.actorId,
-          route: {
-            baseUrl: route.baseUrl,
-            authToken: route.authToken,
-          },
-        })
-      : null;
+        ? await synchronizeProjectSkills({
+            organizationId: input.organizationId,
+            projectId: route.projectId,
+            actorUserId: input.actor.actorId,
+            route: {
+              baseUrl: route.baseUrl,
+              authToken: route.authToken,
+            },
+          })
+        : null;
     if (route.provider !== "desktop") {
       await updateEnvironmentExecutionStatus({
         organizationId: input.organizationId,
@@ -884,6 +900,7 @@ export async function generateKestrelOneExternalReply(input: {
       },
       runtimeModels: [runtimeModel],
     });
+    assertResolvedRuntimeReady(resolvedProfile, "kestrel");
     const mcpContext = route.mcpPolicy
       ? await issueHostedMcpRunContext({
           runExecutionId: route.runId,
@@ -991,6 +1008,28 @@ function createExecutionTransportObserver(input: {
   };
 }
 
+function assertResolvedRuntimeReady(
+  resolution: ExecutionProfileResolvedEventPayload,
+  runtimeId: RuntimeId,
+): void {
+  const descriptor = resolution.runtimeDescriptor;
+  // Kestrel is the built-in Runtime and remains available for legacy Runner
+  // profiles that predate Runtime descriptors. Foreign Runtimes must always
+  // prove readiness through the resolved execution profile.
+  if (runtimeId === "kestrel" && descriptor === undefined) return;
+  if (descriptor === undefined || descriptor.runtimeId !== runtimeId) {
+    throw new Error(
+      "The Environment did not return matching Runtime readiness.",
+    );
+  }
+  if (descriptor.availability !== "ready") {
+    throw new Error(
+      descriptor.unavailableReason ??
+      `${descriptor.displayName} is ${descriptor.availability}.`,
+    );
+  }
+}
+
 export async function createKestrelOneAgentResponse(
   input: KestrelOneAgentResponseInput,
 ) {
@@ -1033,6 +1072,7 @@ export async function createKestrelOneAgentResponse(
         threadId: input.threadId,
         actorUserId: input.session.user.id,
         durableTurnId: input.durableTurnId,
+        runtimeId: input.runtimeId ?? "kestrel",
         projectContextRevisionId: input.projectContext?.contextRevisionId,
         projectContextGrantId: input.projectContext?.grantId,
         onExecutionRouted: input.onExecutionRouted,
@@ -1047,6 +1087,10 @@ export async function createKestrelOneAgentResponse(
     correlation: readRequestCorrelation(input.request),
     threadId: input.threadId,
     durableTurnId: input.durableTurnId,
+    runtimeBindingId: input.runtimeBindingId,
+    runtimeNativeSessionState: input.runtimeNativeSessionState,
+    participantId: input.participantId,
+    runtimeId: input.runtimeId ?? "kestrel",
     messages: input.messages,
     approvalDecision: input.approvalDecision,
     interactionResponse: input.interactionResponse,

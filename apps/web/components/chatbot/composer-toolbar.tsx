@@ -16,7 +16,12 @@ export function ComposerToolbar({
   modeDisabled,
   modelControl,
   onInteractionModeChange,
+  onRuntimeChange,
   primaryAction,
+  runtimeDisabled,
+  runtimeId,
+  hydraEnabled,
+  runtimeReadiness,
 }: {
   activeEnvironmentName?: string;
   capabilityControls: ReactNode;
@@ -25,7 +30,15 @@ export function ComposerToolbar({
   modeDisabled: boolean;
   modelControl: ReactNode;
   onInteractionModeChange: (mode: KestrelOneInteractionMode) => void;
+  onRuntimeChange: (runtimeId: "kestrel" | "codex" | "claude") => void;
   primaryAction: ReactNode;
+  runtimeDisabled: boolean;
+  runtimeId: "kestrel" | "codex" | "claude";
+  hydraEnabled: boolean;
+  runtimeReadiness?: Partial<Record<"codex" | "claude", {
+    availability: "loading" | "ready" | "auth_required" | "version_mismatch" | "unavailable";
+    reason?: string | undefined;
+  }>>;
 }) {
   return (
     <PromptInputToolbar
@@ -62,6 +75,31 @@ export function ComposerToolbar({
             </button>
           ))}
         </div>
+        <label className="sr-only" htmlFor="conversation-runtime">Runtime</label>
+        <select
+          className="h-8 rounded-md border bg-background px-2 text-xs"
+          disabled={runtimeDisabled}
+          id="conversation-runtime"
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === "kestrel" || value === "codex" || value === "claude") {
+              onRuntimeChange(value);
+            }
+          }}
+          value={runtimeId}
+        >
+          <option value="kestrel">Kestrel</option>
+          <option
+            disabled={!hydraEnabled || runtimeReadiness?.codex?.availability !== "ready"}
+            title={runtimeReadiness?.codex?.reason}
+            value="codex"
+          >Codex{runtimeReadiness?.codex?.availability === "loading" ? " (checking…)" : ""}</option>
+          <option
+            disabled={!hydraEnabled || runtimeReadiness?.claude?.availability !== "ready"}
+            title={runtimeReadiness?.claude?.reason}
+            value="claude"
+          >Claude Code{runtimeReadiness?.claude?.availability === "loading" ? " (checking…)" : ""}</option>
+        </select>
         {activeEnvironmentName ? (
           <span className="hidden max-w-40 shrink-0 truncate rounded-md border px-2 py-1 text-muted-foreground text-xs sm:inline">
             Environment: {activeEnvironmentName}

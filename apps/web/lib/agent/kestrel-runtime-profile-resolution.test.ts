@@ -105,6 +105,7 @@ test(
     assert.deepEqual(calls[0]?.input, {
       environmentPresetId: "workspace_hosted",
       managedConfiguration: {
+        runtimeId: "kestrel",
         label: "Kestrel One",
         additionalToolNames: [
           "kestrel_one.google_calendar_list_events",
@@ -198,6 +199,7 @@ test(
     assert.equal(calls.length, 1);
     assert.equal(calls[0]?.input.environmentPresetId, "cli_dev_local");
     assert.deepEqual(calls[0]?.input.managedConfiguration, {
+      runtimeId: "kestrel",
       label: "Kestrel One",
       additionalToolNames: [],
       kestrelOneAppApprovalModes: {},

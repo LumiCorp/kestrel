@@ -7,6 +7,7 @@ import type {
   RunTurnAttachment,
 } from "../../src/contracts";
 import { extractWaitPrompt } from "../../../../src/runtime/waitForPrompt";
+import { isRuntimeId, type RuntimeId } from "../../../../src/runtimes/contracts";
 import {
   DESKTOP_DEFAULT_ENABLED_APP_IDS,
   normalizeDesktopAppId,
@@ -81,6 +82,7 @@ export interface RendererThread {
   promptHistory: string[];
   modelConfigurationId: string;
   modelConfigurationRevision: number;
+  runtimeId: RuntimeId;
   enabledAppIds: string[];
   rawSummary: Record<string, unknown>;
   rawState: Record<string, unknown>;
@@ -107,6 +109,7 @@ export function readDesktopRendererState(
     projectPath?: string | undefined;
     modelConfigurationId?: string | undefined;
     modelConfigurationRevision?: number | undefined;
+    runtimeId?: RuntimeId | undefined;
     enabledAppIds?: string[] | undefined;
     theme?: RendererTheme | undefined;
   } = {},
@@ -147,6 +150,7 @@ export function createRendererThread(input: {
   projectPath?: string | undefined;
   modelConfigurationId?: string | undefined;
   modelConfigurationRevision?: number | undefined;
+  runtimeId?: RuntimeId | undefined;
   enabledAppIds?: string[] | undefined;
 } = {}): RendererThread {
   const now = new Date().toISOString();
@@ -175,6 +179,7 @@ export function createRendererThread(input: {
     promptHistory: [],
     modelConfigurationId: input.modelConfigurationId ?? "desktop-default",
     modelConfigurationRevision: input.modelConfigurationRevision ?? 1,
+    runtimeId: input.runtimeId ?? "kestrel",
     enabledAppIds: [
       ...new Set(
         (input.enabledAppIds ?? DESKTOP_DEFAULT_ENABLED_APP_IDS).map(normalizeDesktopAppId),
@@ -276,6 +281,38 @@ export function addRendererThread(
     ...state,
     activeThreadId: thread.id,
     threads: [thread, ...state.threads],
+  };
+}
+
+export function forkRendererThreadToKestrel(
+  state: DesktopRendererState,
+  sourceThreadId: string,
+): DesktopRendererState {
+  const source = state.threads.find((thread) => thread.id === sourceThreadId);
+  if (source === undefined) return state;
+  const fork = createRendererThread({
+    ...(source.projectPath !== undefined ? { projectPath: source.projectPath } : {}),
+    modelConfigurationId: source.modelConfigurationId,
+    modelConfigurationRevision: source.modelConfigurationRevision,
+    runtimeId: "kestrel",
+    enabledAppIds: source.enabledAppIds,
+  });
+  const hydratedFork: RendererThread = {
+    ...fork,
+    title: `${source.title} (Kestrel fork)`,
+    titleLocked: true,
+    transcript: source.transcript.map((line) => ({ ...line })),
+    mode: source.mode,
+    workspaceMode: source.workspaceMode,
+    workspaceBaseRef: source.workspaceBaseRef,
+    workspaceSetupIgnoredFiles: source.workspaceSetupIgnoredFiles,
+    workspaceSetupExecutable: source.workspaceSetupExecutable,
+    workspaceSetupArgs: source.workspaceSetupArgs,
+  };
+  return {
+    ...state,
+    activeThreadId: hydratedFork.id,
+    threads: [hydratedFork, ...state.threads],
   };
 }
 
@@ -561,6 +598,7 @@ export function serializeDesktopRendererState(
         diffView: thread.diffView,
         modelConfigurationId: thread.modelConfigurationId,
         modelConfigurationRevision: thread.modelConfigurationRevision,
+        runtimeId: thread.runtimeId,
         enabledAppIds: [...thread.enabledAppIds],
         ...(thread.mode === "build"
           ? { actSubmode: "safe" }
@@ -591,6 +629,7 @@ export function toDesktopExecutionSelection(
 ): DesktopExecutionSelection {
   const enabled = new Set(enabledAppIds);
   return {
+    runtimeId: thread.runtimeId,
     modelConfiguration: {
       id: thread.modelConfigurationId,
       revision: thread.modelConfigurationRevision,
@@ -874,6 +913,7 @@ function collectThreads(store: {
             rawState.modelConfigurationRevision > 0
               ? rawState.modelConfigurationRevision
               : defaults.modelConfigurationRevision ?? 1,
+          runtimeId: isRuntimeId(rawState.runtimeId) ? rawState.runtimeId : "kestrel",
           enabledAppIds: Array.isArray(rawState.enabledAppIds)
             ? [...new Set(rawState.enabledAppIds.flatMap((appId) =>
                 typeof appId === "string" ? [normalizeDesktopAppId(appId)] : []

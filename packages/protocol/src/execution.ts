@@ -51,6 +51,7 @@ export const RUNNER_COMMAND_TYPES = [
   "profile.list",
   "profile.get",
   "execution-profile.resolve",
+  "runtime.describe",
   "job.run",
   "run.start",
   "run.cancel",
@@ -124,6 +125,8 @@ export type RunnerStreamingCommandType =
   (typeof RUNNER_STREAMING_COMMAND_TYPES)[number];
 
 export const RUNNER_RUNTIME_ACTIVITY_EVENT_TYPES = [
+  "run.native_session.established",
+  "run.interaction.delivered",
   "run.tool.started",
   "run.tool.completed",
   "run.tool.failed",
@@ -170,12 +173,15 @@ export const RUNNER_EVENT_TYPES = [
   "profile.listed",
   "profile.loaded",
   "execution-profile.resolved",
+  "runtime.described",
   "job.started",
   "job.progress",
   "job.completed",
   "job.failed",
   "run.started",
   "run.cancelled",
+  "run.native_session.established",
+  "run.interaction.delivered",
   "run.tool.started",
   "run.tool.completed",
   "run.tool.failed",
@@ -342,6 +348,7 @@ export interface RunnerProfile {
   label: string;
   agent: string;
   sessionPrefix: string;
+  runtimeId?: "kestrel" | "codex" | "claude" | undefined;
   modelProvider?: RunnerModelProvider | undefined;
   model?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
@@ -480,11 +487,23 @@ export interface RunnerWorkspaceSkillCatalogEntry {
 export interface RunnerTurnInput {
   sessionId: string;
   runId?: string | undefined;
+  runtimeBindingId?: string | undefined;
+  runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
+  participantId?: string | undefined;
   message: string;
   eventType: string;
   attachments?: RunnerTurnAttachment[] | undefined;
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
+  interactionResponse?: {
+    requestId: string;
+    eventType: string;
+    message: string;
+    answers?: Record<string, string[]> | undefined;
+    approved?: boolean | undefined;
+    reason?: string | undefined;
+    recoveryOptionId?: string | undefined;
+  } | undefined;
   recoveryOptionId?: string | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
@@ -1088,6 +1107,8 @@ export interface ExecutionProfileResolveCommandPayload {
   authoringProfileId?: string | undefined;
 }
 
+export type RuntimeDescribeCommandPayload = ExecutionProfileResolveCommandPayload;
+
 export type RunnerProfileReference =
   | {
       profile: RunnerProfile;
@@ -1470,6 +1491,7 @@ export interface RunnerCommandPayloadByType {
   "profile.list": ProfileListCommandPayload;
   "profile.get": ProfileGetCommandPayload;
   "execution-profile.resolve": ExecutionProfileResolveCommandPayload;
+  "runtime.describe": RuntimeDescribeCommandPayload;
   "job.run": JobRunCommandPayload;
   "run.start": RunStartCommandPayload;
   "run.cancel": RunCancelCommandPayload;
@@ -1571,6 +1593,37 @@ export interface ExecutionProfileResolvedEventPayload {
     version: number;
   };
   resolvedProfile: RunnerProfile;
+  runtimeDescriptor?: RunnerRuntimeDescriptorV1 | undefined;
+}
+
+export interface RuntimeDescriptorResolutionV1 {
+  version: "runtime_descriptor_resolution_v1";
+  descriptor: RunnerRuntimeDescriptorV1;
+  profileFingerprint: string;
+  capabilityDigest: string;
+  environmentId: string;
+  observedAt: string;
+  readinessExpiresAt?: string | undefined;
+}
+
+export interface RunnerRuntimeDescriptorV1 {
+  version: "runtime_descriptor_v1";
+  runtimeId: "kestrel" | "codex" | "claude";
+  displayName: string;
+  adapterContractVersion: 1;
+  nativeVersion: string;
+  availability: "ready" | "auth_required" | "version_mismatch" | "unavailable";
+  interactionStrategies: Array<"live_connection" | "live_callback" | "deferred_session">;
+  capabilities: {
+    modes: Array<"chat" | "plan" | "build">;
+    continuation: boolean;
+    cancellation: boolean;
+    usage: boolean;
+    attachments: Array<"image" | "text">;
+    conversationPersistence: "native_resume" | "none";
+    interactionRecovery: "connection_bound" | "durable_resume";
+  };
+  unavailableReason?: string | undefined;
 }
 
 export interface JobStartedEventPayload {
@@ -1602,6 +1655,9 @@ export interface JobFailedEventPayload {
 export interface RunStartedEventPayload {
   sessionId: string;
   runId?: string | undefined;
+  runtimeId?: "kestrel" | "codex" | "claude" | undefined;
+  runtimeBindingId?: string | undefined;
+  participantId?: string | undefined;
   eventType: string;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
@@ -1745,6 +1801,24 @@ export interface RunnerToolUpdateV1 {
 
 export interface RunProgressEventPayload {
   update: RunnerProgressUpdateV1;
+}
+
+export interface RunInteractionDeliveredEventPayload {
+  version: "runtime_interaction_delivered_v1";
+  sessionId: string;
+  runId: string;
+  bindingId: string;
+  participantId: string;
+  requestId: string;
+}
+
+export interface RunNativeSessionEstablishedEventPayload {
+  version: "runtime_native_session_established_v1";
+  sessionId: string;
+  runId: string;
+  bindingId: string;
+  participantId: string;
+  runtimeId: "codex" | "claude";
 }
 
 export interface RunModelReasoningEventPayload {
@@ -1988,12 +2062,15 @@ export interface RunnerEventPayloadByType {
   "profile.listed": ProfileListedEventPayload;
   "profile.loaded": ProfileLoadedEventPayload;
   "execution-profile.resolved": ExecutionProfileResolvedEventPayload;
+  "runtime.described": RuntimeDescriptorResolutionV1;
   "job.started": JobStartedEventPayload;
   "job.progress": JobProgressEventPayload;
   "job.completed": JobCompletedEventPayload;
   "job.failed": JobFailedEventPayload;
   "run.started": RunStartedEventPayload;
   "run.cancelled": RunCancelledEventPayload;
+  "run.native_session.established": RunNativeSessionEstablishedEventPayload;
+  "run.interaction.delivered": RunInteractionDeliveredEventPayload;
   "run.tool.started": RunToolEventPayload;
   "run.tool.completed": RunToolEventPayload;
   "run.tool.failed": RunToolEventPayload;
@@ -2066,6 +2143,7 @@ export interface RunnerResponseByCommandType {
   "profile.list": RunnerEventEnvelope<"profile.listed">;
   "profile.get": RunnerEventEnvelope<"profile.loaded">;
   "execution-profile.resolve": RunnerEventEnvelope<"execution-profile.resolved">;
+  "runtime.describe": RunnerEventEnvelope<"runtime.described">;
   "job.run": RunnerEventEnvelope<"job.completed"> | RunnerEventEnvelope<"job.failed">;
   "run.start": RunnerRunTerminalEvent;
   "run.cancel": RunnerEventEnvelope<"run.cancelled">;
@@ -2132,6 +2210,7 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "profile.list": ["profile.listed"],
   "profile.get": ["profile.loaded"],
   "execution-profile.resolve": ["execution-profile.resolved"],
+  "runtime.describe": ["runtime.described"],
   "job.run": ["job.completed", "job.failed"],
   "run.start": ["run.completed", "run.failed", "run.cancelled"],
   "run.cancel": ["run.cancelled"],
@@ -2423,6 +2502,7 @@ function parseRunnerCommandPayloadV2(
       requireNonEmptyString(payload.profileId, `${label}.profileId`);
       break;
     case "execution-profile.resolve":
+    case "runtime.describe":
       validateEnum(payload.environmentPresetId, `${label}.environmentPresetId`, [
         "cli_safe_local",
         "cli_dev_local",
@@ -2870,6 +2950,22 @@ function parseRunnerEventPayloadV2(
         requireRecord(payload.resolvedProfile, `${label}.resolvedProfile`),
         `${label}.resolvedProfile`,
       );
+      if (payload.runtimeDescriptor !== undefined) {
+        validateRuntimeDescriptor(payload.runtimeDescriptor, `${label}.runtimeDescriptor`);
+      }
+      break;
+    case "runtime.described":
+      if (payload.version !== "runtime_descriptor_resolution_v1") {
+        throw new RunnerProtocolContractError(`${label}.version is invalid`);
+      }
+      validateRuntimeDescriptor(payload.descriptor, `${label}.descriptor`);
+      validateSha256(payload.profileFingerprint, `${label}.profileFingerprint`);
+      validateSha256(payload.capabilityDigest, `${label}.capabilityDigest`);
+      requireNonEmptyString(payload.environmentId, `${label}.environmentId`);
+      requireIsoTimestamp(payload.observedAt, `${label}.observedAt`);
+      if (payload.readinessExpiresAt !== undefined) {
+        requireIsoTimestamp(payload.readinessExpiresAt, `${label}.readinessExpiresAt`);
+      }
       break;
     case "job.started":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
@@ -2904,6 +3000,13 @@ function parseRunnerEventPayloadV2(
     case "run.started":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       validateOptionalNonEmptyString(payload.runId, `${label}.runId`);
+      validateOptionalEnum(payload.runtimeId, `${label}.runtimeId`, [
+        "kestrel",
+        "codex",
+        "claude",
+      ]);
+      validateOptionalNonEmptyString(payload.runtimeBindingId, `${label}.runtimeBindingId`);
+      validateOptionalNonEmptyString(payload.participantId, `${label}.participantId`);
       requireNonEmptyString(payload.eventType, `${label}.eventType`);
       validateOptionalNonEmptyString(payload.stepAgent, `${label}.stepAgent`);
       validateOptionalBoolean(payload.modeSystemV2Enabled, `${label}.modeSystemV2Enabled`);
@@ -2927,6 +3030,30 @@ function parseRunnerEventPayloadV2(
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       validateOptionalNonEmptyString(payload.runId, `${label}.runId`);
       requireRecord(payload.result, `${label}.result`);
+      break;
+    case "run.interaction.delivered":
+      if (payload.version !== "runtime_interaction_delivered_v1") {
+        throw new RunnerProtocolContractError(
+          `${label}.version must be runtime_interaction_delivered_v1`,
+        );
+      }
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.runId, `${label}.runId`);
+      requireNonEmptyString(payload.bindingId, `${label}.bindingId`);
+      requireNonEmptyString(payload.participantId, `${label}.participantId`);
+      requireNonEmptyString(payload.requestId, `${label}.requestId`);
+      break;
+    case "run.native_session.established":
+      if (payload.version !== "runtime_native_session_established_v1") {
+        throw new RunnerProtocolContractError(
+          `${label}.version must be runtime_native_session_established_v1`,
+        );
+      }
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.runId, `${label}.runId`);
+      requireNonEmptyString(payload.bindingId, `${label}.bindingId`);
+      requireNonEmptyString(payload.participantId, `${label}.participantId`);
+      validateEnum(payload.runtimeId, `${label}.runtimeId`, ["codex", "claude"]);
       break;
     case "run.console":
       requireRecord(payload.update, `${label}.update`);
@@ -3235,11 +3362,43 @@ function validateRunTurn(value: unknown, label: string): void {
   const turn = requireRecord(value, label);
   requireNonEmptyString(turn.sessionId, `${label}.sessionId`);
   validateOptionalNonEmptyString(turn.runId, `${label}.runId`);
+  validateOptionalNonEmptyString(turn.runtimeBindingId, `${label}.runtimeBindingId`);
+  if (
+    turn.runtimeNativeSessionState !== undefined &&
+    (typeof turn.runtimeNativeSessionState !== "string" ||
+      !["uninitialized", "ready", "degraded", "released"].includes(
+        turn.runtimeNativeSessionState,
+      ))
+  ) {
+    throw new Error(`${label}.runtimeNativeSessionState must be a valid lifecycle state.`);
+  }
+  validateOptionalNonEmptyString(turn.participantId, `${label}.participantId`);
   requireString(turn.message, `${label}.message`);
   requireNonEmptyString(turn.eventType, `${label}.eventType`);
   validateOptionalAttachments(turn.attachments, `${label}.attachments`);
   validateOptionalBoolean(turn.resumeBlockedRun, `${label}.resumeBlockedRun`);
   validateOptionalNonEmptyString(turn.resumeRequestId, `${label}.resumeRequestId`);
+  if (turn.interactionResponse !== undefined) {
+    const response = requireRecord(
+      turn.interactionResponse,
+      `${label}.interactionResponse`,
+    );
+    requireNonEmptyString(response.requestId, `${label}.interactionResponse.requestId`);
+    requireNonEmptyString(response.eventType, `${label}.interactionResponse.eventType`);
+    requireString(response.message, `${label}.interactionResponse.message`);
+    validateOptionalAnswerMap(response.answers, `${label}.interactionResponse.answers`);
+    validateOptionalBoolean(response.approved, `${label}.interactionResponse.approved`);
+    validateOptionalString(response.reason, `${label}.interactionResponse.reason`);
+    validateOptionalNonEmptyString(
+      response.recoveryOptionId,
+      `${label}.interactionResponse.recoveryOptionId`,
+    );
+    if (turn.resumeRequestId !== response.requestId) {
+      throw new RunnerProtocolContractError(
+        `${label}.interactionResponse.requestId must match resumeRequestId`,
+      );
+    }
+  }
   validateOptionalNonEmptyString(turn.recoveryOptionId, `${label}.recoveryOptionId`);
   if (turn.resumeBlockedRun === true && turn.resumeRequestId === undefined) {
     throw new RunnerProtocolContractError(
@@ -3284,6 +3443,25 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalAutoCompaction(turn.autoCompaction, `${label}.autoCompaction`);
   validateOptionalRecord(turn.workspace, `${label}.workspace`);
   validateOptionalWorkspaceSkills(turn.workspaceSkills, `${label}.workspaceSkills`);
+}
+
+function validateOptionalAnswerMap(value: unknown, label: string): void {
+  if (value === undefined) return;
+  const answers = requireRecord(value, label);
+  for (const [questionId, selections] of Object.entries(answers)) {
+    requireNonEmptyString(questionId, `${label} key`);
+    if (
+      !Array.isArray(selections) ||
+      selections.length === 0 ||
+      selections.some(
+        (selection) => typeof selection !== "string" || selection.trim().length === 0,
+      )
+    ) {
+      throw new RunnerProtocolContractError(
+        `${label}.${questionId} must contain one or more non-empty strings`,
+      );
+    }
+  }
 }
 
 function parseJobInput(value: unknown, label: string): RunnerJobInputV1 {
@@ -3663,6 +3841,11 @@ function validateRunnerProfile(
   requireNonEmptyString(profile.label, `${label}.label`);
   requireNonEmptyString(profile.agent, `${label}.agent`);
   requireNonEmptyString(profile.sessionPrefix, `${label}.sessionPrefix`);
+  validateOptionalEnum(profile.runtimeId, `${label}.runtimeId`, [
+    "kestrel",
+    "codex",
+    "claude",
+  ]);
   validateOptionalEnum(profile.modelProvider, `${label}.modelProvider`, [
     "openrouter",
     "openai",
@@ -3705,6 +3888,39 @@ function validateRunnerProfile(
     }
   }
   validateOptionalBoolean(profile.default, `${label}.default`);
+}
+
+function validateRuntimeDescriptor(value: unknown, label: string): void {
+  const descriptor = requireRecord(value, label);
+  if (descriptor.version !== "runtime_descriptor_v1") {
+    throw new RunnerProtocolContractError(`${label}.version must be runtime_descriptor_v1`);
+  }
+  validateEnum(descriptor.runtimeId, `${label}.runtimeId`, ["kestrel", "codex", "claude"]);
+  requireNonEmptyString(descriptor.displayName, `${label}.displayName`);
+  if (descriptor.adapterContractVersion !== 1) {
+    throw new RunnerProtocolContractError(`${label}.adapterContractVersion must be 1`);
+  }
+  requireNonEmptyString(descriptor.nativeVersion, `${label}.nativeVersion`);
+  validateEnum(descriptor.availability, `${label}.availability`, [
+    "ready",
+    "auth_required",
+    "version_mismatch",
+    "unavailable",
+  ]);
+  validateOptionalEnumArray(
+    descriptor.interactionStrategies,
+    `${label}.interactionStrategies`,
+    ["live_connection", "live_callback", "deferred_session"],
+  );
+  const capabilities = requireRecord(descriptor.capabilities, `${label}.capabilities`);
+  validateOptionalEnumArray(capabilities.modes, `${label}.capabilities.modes`, ["chat", "plan", "build"]);
+  validateOptionalBoolean(capabilities.continuation, `${label}.capabilities.continuation`);
+  validateOptionalBoolean(capabilities.cancellation, `${label}.capabilities.cancellation`);
+  validateOptionalBoolean(capabilities.usage, `${label}.capabilities.usage`);
+  validateOptionalEnumArray(capabilities.attachments, `${label}.capabilities.attachments`, ["image", "text"]);
+  validateEnum(capabilities.conversationPersistence, `${label}.capabilities.conversationPersistence`, ["native_resume", "none"]);
+  validateEnum(capabilities.interactionRecovery, `${label}.capabilities.interactionRecovery`, ["connection_bound", "durable_resume"]);
+  validateOptionalString(descriptor.unavailableReason, `${label}.unavailableReason`);
 }
 
 function validateWorkspaceCheckpointRecord(

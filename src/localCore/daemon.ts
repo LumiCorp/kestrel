@@ -540,7 +540,10 @@ async function waitForDaemon(input: {
     try {
       const inspected = await inspectWithExpected(
         {
-          env: { KESTREL_CORE_HOME: input.homePath },
+          env: {
+            NODE_ENV: process.env.NODE_ENV ?? "production",
+            KESTREL_CORE_HOME: input.homePath,
+          },
           coreVersion: input.expectedBuildIdentity.suiteVersion,
           buildIdentity: input.expectedBuildIdentity,
           isPidAlive: input.isPidAlive,

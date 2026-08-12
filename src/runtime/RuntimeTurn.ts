@@ -55,12 +55,26 @@ export interface RuntimeTurnMissionControlExecution {
 export interface RuntimeTurnInput {
   sessionId: string;
   runId?: string | undefined;
+  runtimeBindingId?: string | undefined;
+  runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
+  participantId?: string | undefined;
   eventId?: string | undefined;
   message: string;
   eventType: string;
   attachments?: RunTurnAttachment[] | undefined;
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
+  interactionResponse?:
+    | {
+        requestId: string;
+        eventType: string;
+        message: string;
+        answers?: Record<string, string[]> | undefined;
+        approved?: boolean | undefined;
+        reason?: string | undefined;
+        recoveryOptionId?: string | undefined;
+      }
+    | undefined;
   recoveryOptionId?: string | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;

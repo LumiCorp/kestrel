@@ -20,6 +20,7 @@ export type KestrelOneRouteOwner =
   | "mobile"
   | "models"
   | "public"
+  | "runtimes"
   | "stats"
   | "threads"
   | "tool-boundary"
@@ -1739,6 +1740,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/api/models/approved/route.ts",
     "/api/models/approved",
     "models",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/runtimes/describe/route.ts",
+    "/api/runtimes/describe",
+    "runtimes",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,
   ),

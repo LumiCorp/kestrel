@@ -163,6 +163,12 @@ export class CommandRouter {
         return;
       }
 
+      if (command.type === "runtime.describe") {
+        const payload = validateExecutionProfileResolvePayload(command.payload);
+        await this.host.runtimeDescribe(command.id, payload);
+        return;
+      }
+
       if (command.type === "run.start") {
         const payload = validateRunStartPayload(command.payload);
         await this.host.runStart(command.id, payload, command.metadata);

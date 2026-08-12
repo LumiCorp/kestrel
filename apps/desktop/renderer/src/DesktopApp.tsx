@@ -46,6 +46,10 @@ import type {
   DesktopRuntimeHealth,
   DesktopThreadAuthorityResult,
 } from "../../src/contracts";
+import type {
+  RuntimeDescriptorV1,
+  RuntimeId,
+} from "../../../../src/runtimes/contracts";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
 import {
   ConversationTimeline,
@@ -104,6 +108,7 @@ import {
   getRendererThreadArchiveBlockReason,
   getTerminalWaitEventType,
   getTerminalWaitingPrompt,
+  forkRendererThreadToKestrel,
   readDesktopRendererState,
   renameRendererThread,
   resolveRendererThreadProjectPath,
@@ -166,6 +171,10 @@ export function DesktopApp(props: {
   const [state, setState] = useState<DesktopRendererState>();
   const [settings, setSettings] = useState<DesktopRendererSettings>();
   const [runtimeHealth, setRuntimeHealth] = useState<DesktopRuntimeHealth>();
+  const [runtimeDescriptors, setRuntimeDescriptors] = useState<
+    Partial<Record<RuntimeId, RuntimeDescriptorV1>>
+  >({});
+  const [runtimeProbeGeneration, setRuntimeProbeGeneration] = useState(0);
   const [authorityCaches, setAuthorityCaches] = useState<DesktopAuthorityCaches>({
     activeRuns: {},
     threadViews: {},
@@ -214,6 +223,65 @@ export function DesktopApp(props: {
   useEffect(() => {
     if (activeThread?.archivedAt !== undefined) setSurface("chat");
   }, [activeThread?.archivedAt]);
+
+  useEffect(() => {
+    const refresh = () => setRuntimeProbeGeneration((generation) => generation + 1);
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, []);
+
+  useEffect(() => {
+    if (activeThread === undefined || settings === undefined) return;
+    let cancelled = false;
+    const selection = toDesktopExecutionSelection(
+      activeThread,
+      settings.apps,
+      settings.defaultEnabledAppIds,
+    );
+    void Promise.all(
+      (["kestrel", "codex", "claude"] as const).map(async (runtimeId) => {
+        try {
+          return [runtimeId, await window.kestrelDesktop.describeRuntime(runtimeId, selection)] as const;
+        } catch (error) {
+          return [
+            runtimeId,
+            {
+              version: "runtime_descriptor_v1",
+              runtimeId,
+              displayName: runtimeId === "kestrel" ? "Kestrel" : runtimeId === "codex" ? "Codex" : "Claude Code",
+              adapterContractVersion: 1,
+              nativeVersion: "unknown",
+              availability: "unavailable",
+              interactionStrategies: [],
+              capabilities: {
+                modes: [],
+                continuation: false,
+                cancellation: false,
+                usage: false,
+                attachments: [],
+                conversationPersistence: "none",
+                interactionRecovery: "connection_bound",
+              },
+              unavailableReason: error instanceof Error ? error.message : String(error),
+            } satisfies RuntimeDescriptorV1,
+          ] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (!cancelled) setRuntimeDescriptors(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeThread?.id,
+    activeThread?.modelConfigurationId,
+    activeThread?.modelConfigurationRevision,
+    activeThread?.enabledAppIds,
+    activeThread?.runtimeId,
+    runtimeProbeGeneration,
+    settings,
+  ]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -291,11 +359,13 @@ export function DesktopApp(props: {
     activity: string,
     error: string,
     errorCapability?: DesktopCapabilityId | undefined,
+    errorRecovery?: "fork_to_kestrel" | undefined,
   ): void {
     setThreadFeedback((current) => updateDesktopThreadFeedback(current, threadId, {
       activity,
       error,
       ...(errorCapability !== undefined ? { errorCapability } : { errorCapability: undefined }),
+      ...(errorRecovery !== undefined ? { errorRecovery } : { errorRecovery: undefined }),
     }));
   }
 
@@ -1404,7 +1474,8 @@ export function DesktopApp(props: {
   );
   const modelSelectionLocked = archivedThreadSelected
     || activeRun !== undefined
-    || activeThread.pendingWaitEventType !== undefined;
+    || activeThread.pendingWaitEventType !== undefined
+    || activeThread.transcript.length > 0;
   const selectedProject =
     settings?.projects.find((project) => project.path === selectedProjectPath) ??
     settings?.projects[0];
@@ -1445,6 +1516,7 @@ export function DesktopApp(props: {
         >
           <span className="titlebar-thread-context">
             <strong className="titlebar-thread-title">{activeThread.title}</strong>
+            <small>{activeThread.runtimeId === "kestrel" ? "Kestrel" : activeThread.runtimeId === "codex" ? "Codex" : "Claude Code"}</small>
           </span>
           {surface === "chat" ? null : <span className="titlebar-page-title">{surfacePageTitle(surface)}</span>}
         </div>
@@ -1683,7 +1755,20 @@ export function DesktopApp(props: {
             activity={activeLifecycleActivity}
             error={activeThreadFeedback.error}
             systemError={systemError}
-            errorAction={activeThreadFeedback.errorCapability !== undefined ? (
+            errorAction={activeThreadFeedback.errorRecovery === "fork_to_kestrel" ? (
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  if (activeThread === undefined) return;
+                  setState((current) => current === undefined
+                    ? current
+                    : forkRendererThreadToKestrel(current, activeThread.id));
+                }}
+              >
+                Fork to a new Kestrel conversation
+              </button>
+            ) : activeThreadFeedback.errorCapability !== undefined ? (
               <button
                 className="secondary-button"
                 type="button"
@@ -1867,6 +1952,29 @@ export function DesktopApp(props: {
             ) : null}
             <div className="composer-actions">
               <div className="composer-actions-left">
+                <div className="composer-model-selector">
+                  <select
+                    aria-label="Conversation runtime"
+                    disabled={modelSelectionLocked}
+                    value={activeThread.runtimeId}
+                    onChange={(event) => {
+                      const runtimeId = event.target.value;
+                      if (runtimeId !== "kestrel" && runtimeId !== "codex" && runtimeId !== "claude") return;
+                      if (runtimeDescriptors[runtimeId]?.availability !== "ready") return;
+                      setState((current) => current === undefined
+                        ? current
+                        : updateRendererThread(current, activeThread.id, (thread) => ({
+                            ...thread,
+                            runtimeId,
+                          })));
+                    }}
+                  >
+                    <option disabled={runtimeDescriptors.kestrel?.availability !== "ready"} value="kestrel">Kestrel</option>
+                    <option disabled={runtimeDescriptors.codex?.availability !== "ready"} value="codex">Codex</option>
+                    <option disabled={runtimeDescriptors.claude?.availability !== "ready"} value="claude">Claude Code</option>
+                  </select>
+                  <ChevronDown className="composer-model-chevron" size={14} aria-hidden="true" />
+                </div>
                 <div className="composer-model-selector">
                   <select
                     aria-label="Conversation model"

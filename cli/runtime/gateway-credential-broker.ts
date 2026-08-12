@@ -301,6 +301,19 @@ export function createGatewayManagedModelGateway(
   });
 }
 
+export async function resolveGatewayCredentialLease(
+  profile: Pick<TuiProfile, "modelCredential">,
+): Promise<GatewayCredentialLease> {
+  const reference = profile.modelCredential;
+  if (!reference || reference.source !== "kestrel-one") {
+    throw new GatewayCredentialBrokerError(
+      "GATEWAY_CREDENTIAL_REFERENCE_REQUIRED",
+      "Gateway-managed Runtime profile is missing its credential reference.",
+    );
+  }
+  return await getDefaultCredentialCache().get(reference);
+}
+
 export function resetDefaultGatewayCredentialCacheForTests() {
   defaultCredentialCache?.clear();
   defaultCredentialCache = undefined;

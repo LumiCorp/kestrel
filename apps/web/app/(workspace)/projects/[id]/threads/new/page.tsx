@@ -8,6 +8,7 @@ import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { getOrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
 import { requireProjectRole } from "@/lib/projects/access";
+import { isHydraRuntimesEnabled } from "@/lib/runtimes/release-gate";
 import { generateUUID } from "@/lib/utils";
 
 export default async function NewProjectThreadPage({
@@ -51,6 +52,7 @@ export default async function NewProjectThreadPage({
           id={threadId}
           initialChatModel={initialChatModel}
           key={threadId}
+          hydraEnabled={isHydraRuntimesEnabled()}
           newTurnDisabledReason={
             readiness.applicable && !readiness.ready
               ? "Finish organization setup before starting a new agent turn."

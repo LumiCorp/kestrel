@@ -112,7 +112,7 @@ export async function verifyAndStoreLocalCoreMcpServer(
   }
   const originals = new Map<LocalCoreCredentialId, string | undefined>();
   const env = buildVerificationEnvironment(
-    options.baseEnv ?? {},
+    options.baseEnv ?? { NODE_ENV: process.env.NODE_ENV ?? "production" },
     options.environmentOptions ?? {},
     input.credentials.map((binding) => binding.envKey),
   );

@@ -11,6 +11,17 @@ import type { LocalCoreCredentialStore } from "./credentialStore.js";
 import { createLocalCoreMcpOAuthProviderFactory } from "./mcpOAuthProvider.js";
 import { LocalCoreMicrosoft365Service } from "./microsoft365Service.js";
 import { LocalCoreGoogleWorkspaceService } from "./googleWorkspaceService.js";
+import { composeHydraRuntime } from "../../cli/runtime/HydraRuntime.js";
+import path from "node:path";
+import {
+  FileClaudeSessionStore,
+  FileRuntimeNativeSessionStore,
+} from "../runtimes/FileRuntimeStateStore.js";
+import {
+  buildRuntimeChildEnvironment,
+  fingerprintRuntimeEnvironment,
+} from "../runtimes/RuntimeChildEnvironment.js";
+import type { RuntimeEnvironmentMap } from "../runtimes/contracts.js";
 
 type RunnerRuntimeFactory = NonNullable<
   ConstructorParameters<typeof RunnerHost>[1]
@@ -32,6 +43,13 @@ export function createLocalCoreRunnerRuntimeFactory(
   options: LocalCoreRunnerRuntimeFactoryOptions = {},
 ): RunnerRuntimeFactory {
   const runtimeEnvironmentResolver = options.runtimeEnvironmentResolver;
+  const nativeStateRoot = path.join(
+    path.resolve(options.homePath ?? process.cwd()),
+    "runtime",
+    "native-runtimes",
+  );
+  const nativeSessionStore = new FileRuntimeNativeSessionStore(nativeStateRoot);
+  const claudeSessionStore = new FileClaudeSessionStore(nativeStateRoot);
   const runtimeFactory = createRuntimeFactoryWithStore(store, {
     enableUserTerminals: true,
     enableWorkspaceChanges: true,
@@ -65,8 +83,20 @@ export function createLocalCoreRunnerRuntimeFactory(
     onReasoning,
     onTaskUpdate,
     onRunEvent,
-  ) =>
-    new KestrelChatRuntime(profile, runtimeFactory, {
+    _onDetachedTurnEvent,
+    onInteractionDelivered,
+    onNativeSessionEstablished,
+  ) => {
+    const resolvedRuntimeEnvironment =
+      options.runtimeEnvironmentResolver !== undefined &&
+      profile.modelProvider !== undefined &&
+      profile.model !== undefined
+        ? options.runtimeEnvironmentResolver.resolve({
+            modelProvider: profile.modelProvider,
+            model: profile.model,
+          })
+        : undefined;
+    const kestrel = new KestrelChatRuntime(profile, runtimeFactory, {
       onRunLog,
       onProgress,
       onConsole,
@@ -74,6 +104,61 @@ export function createLocalCoreRunnerRuntimeFactory(
       onTaskUpdate,
       onRunEvent,
     });
+    return composeHydraRuntime({
+      profile,
+      kestrel,
+      callbacks: {
+        onRunLog,
+        onProgress,
+        onConsole,
+        onReasoning,
+        onRunEvent,
+        onInteractionDelivered,
+        onNativeSessionEstablished,
+      },
+      runtimeEnv:
+        resolvedRuntimeEnvironment === undefined
+          ? process.env
+          : {
+              ...resolvedRuntimeEnvironment.runtimeEnv,
+              ...resolvedRuntimeEnvironment.modelEnv,
+            },
+      nativeSessionStore,
+      claudeSessionStore,
+      resolveRuntimeEnvironment: async () => {
+        const selectedEnvironment: RuntimeEnvironmentMap = resolvedRuntimeEnvironment === undefined
+          ? {}
+          : {
+              ...resolvedRuntimeEnvironment.runtimeEnv,
+              ...resolvedRuntimeEnvironment.modelEnv,
+            };
+        const runtimeId = profile.runtimeId === "claude" ? "claude" : "codex";
+        const hasManagedCredential = runtimeId === "codex"
+          ? Boolean(selectedEnvironment.OPENAI_API_KEY?.trim())
+          : Boolean(selectedEnvironment.ANTHROPIC_API_KEY?.trim());
+        const nativeLoginRoot = runtimeId === "codex"
+          ? process.env.CODEX_HOME
+          : process.env.CLAUDE_CONFIG_DIR;
+        const configurationDirectory = hasManagedCredential
+          ? path.join(nativeStateRoot, "credentials", runtimeId)
+          : nativeLoginRoot;
+        const env = buildRuntimeChildEnvironment({
+          runtimeId,
+          baseEnvironment: process.env,
+          runtimeEnvironment: selectedEnvironment,
+          ...(configurationDirectory !== undefined
+            ? { configurationDirectory }
+            : {}),
+        });
+        const fingerprint = fingerprintRuntimeEnvironment({
+          runtimeId,
+          environment: env,
+          scope: [profile.id, profile.model ?? "", hasManagedCredential ? "managed" : "native-login"],
+        });
+        return { env, credentialFingerprint: fingerprint };
+      },
+    });
+  };
 }
 
 function toKestrelRuntimeEnvironment(

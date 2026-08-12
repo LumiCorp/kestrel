@@ -233,6 +233,10 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
       model: "z-ai/glm-5.2",
     },
   },
+  "runtime.describe": {
+    environmentPresetId: "workspace_hosted",
+    managedConfiguration: { runtimeId: "codex", model: "gpt-5" },
+  },
   "job.run": {
     profileId: "kestrel",
     input: {
@@ -460,6 +464,31 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
       agentProfileId: "kestrel",
     },
   },
+  "runtime.described": {
+    version: "runtime_descriptor_resolution_v1",
+    descriptor: {
+      version: "runtime_descriptor_v1",
+      runtimeId: "codex",
+      displayName: "Codex",
+      adapterContractVersion: 1,
+      nativeVersion: "1",
+      availability: "ready",
+      interactionStrategies: ["live_connection"],
+      capabilities: {
+        modes: ["chat", "plan", "build"],
+        continuation: true,
+        cancellation: true,
+        usage: false,
+        attachments: ["text", "image"],
+        conversationPersistence: "native_resume",
+        interactionRecovery: "connection_bound",
+      },
+    },
+    profileFingerprint: "a".repeat(64),
+    capabilityDigest: "b".repeat(64),
+    environmentId: "workspace_hosted",
+    observedAt: "2026-08-12T00:00:00.000Z",
+  },
   "job.started": {
     sessionId: "session-1",
     threadId: "thread-1",
@@ -483,6 +512,22 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
     reasoningKeyVersion: 1,
   },
   "run.cancelled": { sessionId: "session-1", result: terminalResult },
+  "run.native_session.established": {
+    version: "runtime_native_session_established_v1",
+    sessionId: "session-1",
+    runId: "run-1",
+    bindingId: "binding-1",
+    participantId: "runtime:codex",
+    runtimeId: "codex",
+  },
+  "run.interaction.delivered": {
+    version: "runtime_interaction_delivered_v1",
+    sessionId: "session-1",
+    runId: "run-1",
+    bindingId: "binding-1",
+    participantId: "runtime:codex",
+    requestId: "request-1",
+  },
   "run.tool.started": { update: toolUpdate("started") },
   "run.tool.completed": { update: toolUpdate("completed") },
   "run.tool.failed": { update: toolUpdate("failed") },
@@ -1280,6 +1325,42 @@ test("canonical event parser rejects unknown and malformed payloads", () => {
     }),
     /event\.ts/u,
   );
+});
+
+test("Runtime identity and structured interaction answers are boundary validated", () => {
+  assert.throws(
+    () =>
+      parseRunnerEventV2({
+        id: "runtime-invalid",
+        type: "run.started",
+        ts: "2026-08-11T00:00:00.000Z",
+        payload: {
+          sessionId: "session-1",
+          eventType: "user.message",
+          runtimeId: "unknown",
+        },
+      }),
+    /runtimeId/u,
+  );
+  const parsed = parseRunnerCommandV2({
+    id: "runtime-answer",
+    type: "run.start",
+    payload: {
+      profile,
+      turn: {
+        ...turn,
+        resumeBlockedRun: true,
+        resumeRequestId: "question-1",
+        interactionResponse: {
+          requestId: "question-1",
+          eventType: "runtime.interaction.response",
+          message: "Option A",
+          answers: { "question-1": ["Option A"] },
+        },
+      },
+    },
+  });
+  assert.equal(parsed.type, "run.start");
 });
 
 test("canonical event parser normalizes a blank optional session updatedAt", () => {

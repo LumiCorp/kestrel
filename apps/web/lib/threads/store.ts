@@ -36,7 +36,7 @@ export async function listThreadsForUser(
     endingBefore?: string | null;
     projectId?: string | null;
     includeArchived?: boolean;
-  }
+  },
 ): Promise<DbThread[]> {
   const limit = options?.limit ?? 50;
   const anchor = options?.endingBefore
@@ -56,41 +56,41 @@ export async function listThreadsForUser(
     .from(schema.projectMembers)
     .innerJoin(
       schema.projects,
-      eq(schema.projects.id, schema.projectMembers.projectId)
+      eq(schema.projects.id, schema.projectMembers.projectId),
     )
     .innerJoin(
       schema.members,
       and(
         eq(schema.members.id, schema.projectMembers.organizationMemberId),
         eq(schema.members.organizationId, organizationId),
-        eq(schema.members.userId, userId)
-      )
+        eq(schema.members.userId, userId),
+      ),
     )
     .where(
-      options?.includeArchived ? undefined : isNull(schema.projects.archivedAt)
+      options?.includeArchived ? undefined : isNull(schema.projects.archivedAt),
     );
   const scopeFilter =
     options?.projectId === null
       ? and(
           isNull(schema.threads.projectId),
-          eq(schema.threads.createdByUserId, userId)
+          eq(schema.threads.createdByUserId, userId),
         )
       : options?.projectId
         ? eq(schema.threads.projectId, options.projectId)
         : or(
             and(
               isNull(schema.threads.projectId),
-              eq(schema.threads.createdByUserId, userId)
+              eq(schema.threads.createdByUserId, userId),
             ),
-            inArray(schema.threads.projectId, accessibleProjectIds)
+            inArray(schema.threads.projectId, accessibleProjectIds),
           );
   const cursorFilter = anchor
     ? or(
         lt(schema.threads.updatedAt, anchor.updatedAt),
         and(
           eq(schema.threads.updatedAt, anchor.updatedAt),
-          lt(schema.threads.id, anchor.id)
-        )
+          lt(schema.threads.id, anchor.id),
+        ),
       )
     : undefined;
 
@@ -104,8 +104,8 @@ export async function listThreadsForUser(
           ? undefined
           : isNull(schema.threads.archivedAt),
         scopeFilter,
-        cursorFilter
-      )
+        cursorFilter,
+      ),
     )
     .orderBy(desc(schema.threads.updatedAt), desc(schema.threads.id))
     .limit(limit);
@@ -119,7 +119,7 @@ export async function getThreadUnreadCountsForUser(input: {
   if (input.threadIds.length === 0) return new Map<string, number>();
   const threadIds = sql.join(
     input.threadIds.map((threadId) => sql`${threadId}`),
-    sql`, `
+    sql`, `,
   );
   const rows = await knowledgeDb.execute(sql`
     select
@@ -151,7 +151,7 @@ export async function getThreadUnreadCountsForUser(input: {
     Array.from(rows).map((row) => [
       String(row.threadId),
       Number(row.unreadCount),
-    ])
+    ]),
   );
 }
 
@@ -159,7 +159,7 @@ export async function getThreadAccessForUser(
   id: string,
   userId: string,
   organizationId: string,
-  includeArchived = false
+  includeArchived = false,
 ): Promise<ThreadAccess | null> {
   const thread = await knowledgeDb.query.threads.findFirst({
     where: (table, { and, eq }) =>
@@ -202,7 +202,7 @@ export async function getThreadForUser(
   id: string,
   userId: string,
   organizationId: string,
-  includeArchived = false
+  includeArchived = false,
 ) {
   return (
     await getThreadAccessForUser(id, userId, organizationId, includeArchived)
@@ -212,27 +212,27 @@ export async function getThreadForUser(
 export async function getThreadByExternalThreadId(
   organizationId: string,
   origin: "github" | "discord",
-  externalThreadId: string
+  externalThreadId: string,
 ) {
   return knowledgeDb.query.threads.findFirst({
     where: (table, { and, eq }) =>
       and(
         eq(table.organizationId, organizationId),
         eq(table.origin, origin),
-        eq(table.externalThreadId, externalThreadId)
+        eq(table.externalThreadId, externalThreadId),
       ),
   });
 }
 
 export async function getThreadMessageByExternalMessageId(
   threadId: string,
-  externalMessageId: string
+  externalMessageId: string,
 ) {
   return knowledgeDb.query.threadMessages.findFirst({
     where: (table, { and, eq }) =>
       and(
         eq(table.threadId, threadId),
-        eq(table.externalMessageId, externalMessageId)
+        eq(table.externalMessageId, externalMessageId),
       ),
   });
 }
@@ -241,13 +241,13 @@ export async function getThreadWithMessagesForUser(
   id: string,
   userId: string,
   organizationId: string,
-  includeArchived = false
+  includeArchived = false,
 ) {
   const access = await getThreadAccessForUser(
     id,
     userId,
     organizationId,
-    includeArchived
+    includeArchived,
   );
   if (!access) {
     return null;
@@ -260,7 +260,7 @@ export async function getThreadWithMessagesForUser(
     ...new Set(
       messages
         .map((message) => message.authorUserId)
-        .filter((authorId): authorId is string => Boolean(authorId))
+        .filter((authorId): authorId is string => Boolean(authorId)),
     ),
   ];
   const authors =
@@ -296,7 +296,7 @@ export async function getPublicThreadByShareToken(token: string) {
       and(
         eq(table.shareToken, token),
         eq(table.isPublic, true),
-        isNull(table.archivedAt)
+        isNull(table.archivedAt),
       ),
   });
   if (!thread) {
@@ -350,6 +350,9 @@ export async function createThreadForUser(input: {
   origin?: "web" | "mobile" | "github" | "discord" | "api";
   externalThreadId?: string | null;
   title?: string | null;
+  interactionMode?: "chat" | "plan" | "build";
+  runtimeId?: "kestrel" | "codex" | "claude";
+  runtimeCapabilityDigest?: string | undefined;
 }) {
   const mode = input.mode ?? "chat";
   const origin = input.origin ?? "web";
@@ -365,24 +368,61 @@ export async function createThreadForUser(input: {
     });
   }
   const now = new Date();
-  const [thread] = await knowledgeDb
-    .insert(schema.threads)
-    .values({
-      id: input.id,
-      createdByUserId: input.userId,
-      organizationId: input.organizationId,
-      projectId: projectId ?? null,
-      mode,
-      origin,
-      externalThreadId: input.externalThreadId ?? null,
-      activeStreamId: null,
-      title: input.title ?? "",
-      isPublic: false,
-      shareToken: null,
+  const runtimeId = input.runtimeId ?? "kestrel";
+  const participantId = `runtime:${input.organizationId}:${runtimeId}`;
+  const runtimeBindingId = `binding:${input.id}`;
+  const thread = await knowledgeDb.transaction(async (tx) => {
+    await tx
+      .insert(schema.runtimeParticipants)
+      .values({
+        id: participantId,
+        organizationId: input.organizationId,
+        runtimeId,
+        displayName:
+          runtimeId === "kestrel"
+            ? "Kestrel"
+            : runtimeId === "codex"
+              ? "Codex"
+              : "Claude Code",
+        createdAt: now,
+      })
+      .onConflictDoNothing();
+    const [created] = await tx
+      .insert(schema.threads)
+      .values({
+        id: input.id,
+        createdByUserId: input.userId,
+        organizationId: input.organizationId,
+        projectId: projectId ?? null,
+        mode,
+        origin,
+        externalThreadId: input.externalThreadId ?? null,
+        activeStreamId: null,
+        title: input.title ?? "",
+        interactionMode: input.interactionMode ?? "chat",
+        runtimeId,
+        runtimeBindingId,
+        isPublic: false,
+        shareToken: null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!created) throw new Error("Thread creation failed.");
+    await tx.insert(schema.runtimeBindings).values({
+      id: runtimeBindingId,
+      threadId: created.id,
+      participantId,
+      runtimeId,
+      adapterContractVersion: 1,
+      capabilityDigest: input.runtimeCapabilityDigest ?? null,
+      status: "ready",
+      nativeSessionState: runtimeId === "kestrel" ? "ready" : "uninitialized",
       createdAt: now,
       updatedAt: now,
-    })
-    .returning();
+    });
+    return created;
+  });
   if (thread?.projectId) {
     await recordProjectAuditEvent({
       projectId: thread.projectId,
@@ -404,7 +444,7 @@ export async function updateThreadTitleForUser(input: {
   const access = await getThreadAccessForUser(
     input.id,
     input.userId,
-    input.organizationId
+    input.organizationId,
   );
   if (!access?.canManage) {
     return null;
@@ -448,7 +488,7 @@ export async function updateThreadInteractionModeForUser(input: {
 
 export async function saveThreadMessages(
   messages: Array<Partial<DbThreadMessage>>,
-  options?: { meterUsage?: boolean }
+  options?: { meterUsage?: boolean },
 ) {
   if (messages.length === 0) {
     return [];
@@ -458,8 +498,8 @@ export async function saveThreadMessages(
       messages.map((message, index) => [
         message.id ?? `__generated__${index}`,
         message,
-      ])
-    ).values()
+      ]),
+    ).values(),
   );
   const result = await knowledgeDb
     .insert(schema.threadMessages)
@@ -485,7 +525,7 @@ export async function saveThreadMessages(
           (message.source as "web" | "mobile" | "api" | "github" | "discord") ??
           "web",
         createdAt: message.createdAt ?? new Date(),
-      }))
+      })),
     )
     .onConflictDoUpdate({
       target: schema.threadMessages.id,
@@ -514,14 +554,14 @@ export async function saveThreadMessages(
       .where(inArray(schema.threads.id, threadIds));
   }
   if (options?.meterUsage !== false) {
-    await meterPersistedModelMessages(result.map((message) => message.id)).catch(
-      (error) => {
-        console.error(
-          "Model usage metering will retry from the durable message ledger.",
-          { message: error instanceof Error ? error.message : "Unknown error" }
-        );
-      }
-    );
+    await meterPersistedModelMessages(
+      result.map((message) => message.id),
+    ).catch((error) => {
+      console.error(
+        "Model usage metering will retry from the durable message ledger.",
+        { message: error instanceof Error ? error.message : "Unknown error" },
+      );
+    });
   }
   return result;
 }
@@ -529,7 +569,7 @@ export async function saveThreadMessages(
 export async function getThreadActiveStreamIdForUser(
   id: string,
   userId: string,
-  organizationId: string
+  organizationId: string,
 ) {
   return (
     (await getThreadForUser(id, userId, organizationId))?.activeStreamId ?? null
@@ -545,7 +585,7 @@ export async function setThreadActiveStreamIdForUser(input: {
   const access = await getThreadAccessForUser(
     input.id,
     input.userId,
-    input.organizationId
+    input.organizationId,
   );
   if (!access) {
     return null;
@@ -569,7 +609,7 @@ export async function clearThreadActiveStreamIdForUser(input: {
 export async function updateThreadMessageFeedback(
   id: string,
   threadId: string,
-  feedback: "positive" | "negative" | null
+  feedback: "positive" | "negative" | null,
 ) {
   const [message] = await knowledgeDb
     .update(schema.threadMessages)
@@ -577,8 +617,8 @@ export async function updateThreadMessageFeedback(
     .where(
       and(
         eq(schema.threadMessages.id, id),
-        eq(schema.threadMessages.threadId, threadId)
-      )
+        eq(schema.threadMessages.threadId, threadId),
+      ),
     )
     .returning();
   return message ?? null;
@@ -593,7 +633,7 @@ export async function updateThreadSharingForUser(input: {
   const access = await getThreadAccessForUser(
     input.id,
     input.userId,
-    input.organizationId
+    input.organizationId,
   );
   if (!access?.canPublish) {
     return null;
@@ -621,7 +661,7 @@ export async function updateThreadSharingForUser(input: {
 export async function getThreadMessageByIdForUser(
   id: string,
   userId: string,
-  organizationId: string
+  organizationId: string,
 ) {
   const message = await knowledgeDb.query.threadMessages.findFirst({
     where: (table, { eq }) => eq(table.id, id),
@@ -644,7 +684,7 @@ export async function deleteThreadMessagesAfterTimestamp(input: {
     !(await getThreadForUser(
       input.threadId,
       input.userId,
-      input.organizationId
+      input.organizationId,
     ))
   ) {
     return;
@@ -654,8 +694,8 @@ export async function deleteThreadMessagesAfterTimestamp(input: {
     .where(
       and(
         eq(schema.threadMessages.threadId, input.threadId),
-        gte(schema.threadMessages.createdAt, input.timestamp)
-      )
+        gte(schema.threadMessages.createdAt, input.timestamp),
+      ),
     );
 }
 
@@ -669,7 +709,7 @@ export async function archiveThreadForUser(input: {
     input.id,
     input.userId,
     input.organizationId,
-    true
+    true,
   );
   if (!access?.canManage) {
     return null;
@@ -695,7 +735,7 @@ export async function permanentlyDeleteThreadForUser(input: {
     input.id,
     input.userId,
     input.organizationId,
-    true
+    true,
   );
   if (!(access?.canManage && access.thread.archivedAt)) {
     return null;
@@ -720,7 +760,7 @@ export async function assignStandaloneThreadToProject(input: {
   const access = await getThreadAccessForUser(
     input.id,
     input.userId,
-    input.organizationId
+    input.organizationId,
   );
   if (
     !access ||

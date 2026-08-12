@@ -47,6 +47,7 @@ import { LocalCoreConnectionManager } from "../../../src/localCore/connectionMan
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
 import { parseLocalCoreBuildIdentity } from "../../../src/localCore/contracts.js";
 import { LOCAL_CORE_BUILD_MANIFEST_NAME } from "../../../src/localCore/buildIdentity.js";
+import { assertHydraRuntimeReleased } from "../../../src/runtimes/HydraReleaseGate.js";
 import type { LocalCoreCredentialId } from "../../../src/localCore/credentialStore.js";
 import { listMcpOAuthCredentialIds } from "../../../src/localCore/mcpOAuthProvider.js";
 import {
@@ -78,6 +79,7 @@ import {
   formatDesktopWorkflowInstructions,
   getDesktopAppDefinition,
   resolveDesktopWorkflowSelections,
+  parseDesktopExecutionSelection,
 } from "../../../src/desktopShell/configuration.js";
 import {
   desktopStandardAppToolRequiresApproval,
@@ -2099,6 +2101,37 @@ function registerIpcHandlers(
     };
   });
 
+  ipcMain.handle(
+    "desktop:describe-runtime",
+    async (_event, runtimeId: unknown, selection: unknown) => {
+      if (runtimeId !== "kestrel" && runtimeId !== "codex" && runtimeId !== "claude") {
+        throw createDesktopError({
+          code: "desktop.invalid_runtime",
+          message: "Desktop Runtime selection is invalid.",
+        });
+      }
+      if (typeof selection !== "object" || selection === null || Array.isArray(selection)) {
+        throw createDesktopError({
+          code: "desktop.invalid_runtime_selection",
+          message: "Desktop Runtime readiness selection is invalid.",
+        });
+      }
+      assertHydraRuntimeReleased(runtimeId, process.env);
+      const parsedSelection = parseDesktopExecutionSelection({
+        ...(selection as Record<string, unknown>),
+        runtimeId,
+      });
+      const resolution = await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) =>
+          await client.describeRuntime({
+            client: "desktop",
+            selection: parsedSelection,
+          }),
+      );
+      return resolution.descriptor;
+    },
+  );
+
   ipcMain.handle("desktop:run-turn", async (_event, input: unknown) => {
     let request: DesktopRunTurnRequest;
     try {
@@ -2120,6 +2153,7 @@ function registerIpcHandlers(
       executionSelection,
       ...turnRequest
     } = request;
+    assertHydraRuntimeReleased(executionSelection.runtimeId, process.env);
     const globalExecutionSelection = {
       ...executionSelection,
       apps: getEffectiveDesktopEnabledAppIds(desktopSettings).flatMap((id) => {
@@ -2133,6 +2167,22 @@ function registerIpcHandlers(
           : [{ id: definition.id, contractVersion: definition.contractVersion }];
       }),
     };
+    const readiness =
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) =>
+          await client.describeRuntime({
+            client: "desktop",
+            selection: globalExecutionSelection,
+          }),
+      );
+    if (readiness.descriptor.availability !== "ready") {
+      throw createDesktopError({
+        code: "desktop.runtime_unavailable",
+        message:
+          readiness.descriptor.unavailableReason ??
+          "The selected Runtime is not ready in this environment.",
+      });
+    }
     const executionProfile =
       await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) =>
@@ -5478,6 +5528,7 @@ async function prepareDefaultDesktopRunnerAdapter(
         await client.resolveExecutionProfile({
           client: "desktop",
           selection: {
+            runtimeId: "kestrel",
             modelConfiguration:
               currentDesktopModelConfigurationRef(configuration),
             apps,

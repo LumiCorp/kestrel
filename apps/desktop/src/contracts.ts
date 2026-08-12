@@ -86,6 +86,11 @@ import type {
   DesktopWorkspaceGitSnapshot,
   DesktopWorkspaceFeedbackSubmitResult,
 } from "../../../src/desktopShell/contracts.js";
+import type { DesktopExecutionSelection } from "../../../src/desktopShell/configuration.js";
+import type {
+  RuntimeDescriptorV1,
+  RuntimeId,
+} from "../../../src/runtimes/contracts.js";
 import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
 import type { MissionControlProjectStateRecord } from "../../../src/missionControl/projectAuthority.js";
 import type { MissionControlCompletionContract } from "../../../src/missionControl/reviewContracts.js";
@@ -470,6 +475,10 @@ export interface DesktopBridge {
   submitConversationMessage(
     request: DesktopConversationMessageRequest,
   ): Promise<DesktopConversationMessageResult>;
+  describeRuntime(
+    runtimeId: RuntimeId,
+    selection: DesktopExecutionSelection,
+  ): Promise<RuntimeDescriptorV1>;
   selectAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
   importAttachment(
     input: DesktopAttachmentImportInput,

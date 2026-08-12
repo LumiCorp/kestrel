@@ -50,15 +50,40 @@ test("registered-only RunnerHost rejects inline profiles", async () => {
 
 test("RunnerHost emits execution profile resolution from provider", async () => {
   const events: Array<{ type: string; payload: unknown }> = [];
+  let descriptorProbes = 0;
   const host = new RunnerHost(
     {
       emit(type, payload) {
         events.push({ type, payload });
       },
     },
-    () => {
-      throw new Error("runtime must not be created");
-    },
+    () => ({
+      async describeRuntime() {
+        descriptorProbes += 1;
+        return {
+          version: "runtime_descriptor_v1",
+          runtimeId: "kestrel",
+          displayName: "Kestrel",
+          adapterContractVersion: 1,
+          nativeVersion: "test",
+          availability: "ready",
+          interactionStrategies: ["deferred_session"],
+          capabilities: {
+            modes: ["chat", "plan", "build"],
+            continuation: true,
+            cancellation: true,
+            usage: true,
+            attachments: ["image", "text"],
+            conversationPersistence: "native_resume",
+            interactionRecovery: "durable_resume",
+          },
+        };
+      },
+      async runTurn() {
+        throw new Error("profile readiness must not execute a turn");
+      },
+      async close() {},
+    }),
     {
       async listProfiles() {
         return [];
@@ -98,9 +123,15 @@ test("RunnerHost emits execution profile resolution from provider", async () => 
   });
 
   assert.equal(events[0]?.type, "execution-profile.resolved");
+  assert.equal(descriptorProbes, 1);
   assert.equal(
     (events[0]?.payload as { profileId?: string } | undefined)?.profileId,
     `kestrel:workspace_hosted:${"a".repeat(64)}`,
+  );
+  assert.equal(
+    (events[0]?.payload as { runtimeDescriptor?: { availability?: string } })
+      .runtimeDescriptor?.availability,
+    "ready",
   );
   await host.close();
 });

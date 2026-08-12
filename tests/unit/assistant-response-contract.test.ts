@@ -29,6 +29,19 @@ test("finalizeRuntimeAssistantResponse canonicalizes a user reply wait over stal
     kind: "user_input",
     eventType: "user.reply",
     prompt: "Which workspace should I inspect?",
+    inputSchema: {
+      type: "object",
+      properties: {
+        answer: {
+          type: "array",
+          items: { type: "string", minLength: 1 },
+          minItems: 1,
+          maxItems: 1,
+        },
+      },
+      required: ["answer"],
+      additionalProperties: false,
+    },
   });
 });
 

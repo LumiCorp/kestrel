@@ -2153,6 +2153,7 @@ test("Local Core registers a Core-owned Desktop execution profile resolved from 
     const resolved = await client.resolveExecutionProfile({
       client: "desktop",
       selection: {
+        runtimeId: "kestrel",
         modelConfiguration: { id: "desktop-default", revision: 1 },
         apps: [],
       },

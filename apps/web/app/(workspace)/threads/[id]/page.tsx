@@ -12,6 +12,7 @@ import {
 } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { getOrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
+import { isHydraRuntimesEnabled } from "@/lib/runtimes/release-gate";
 import { getProjectDetail, listProjectsForUser } from "@/lib/projects/store";
 import { getThreadWithMessagesForUser } from "@/lib/threads/store";
 import {
@@ -97,6 +98,8 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
         initialChatExists={Boolean(chat)}
         initialChatModel={initialChatModel}
         initialInteractionMode={chat?.interactionMode ?? "chat"}
+        initialRuntimeId={chat?.runtimeId ?? "kestrel"}
+        hydraEnabled={isHydraRuntimesEnabled()}
         initialConversationState={{
           interactions: interactions.map((interaction) => ({
             ...interaction,

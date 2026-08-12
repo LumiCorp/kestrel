@@ -39,6 +39,8 @@ import type {
   DesktopUiStateV1,
 } from "./contracts.js";
 import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
+import type { RuntimeId } from "../../../src/runtimes/contracts.js";
+import type { DesktopExecutionSelection } from "../../../src/desktopShell/configuration.js";
 
 const desktopBridge: DesktopBridge = {
   getBridgeInfo(): Promise<DesktopBridgeInfo> {
@@ -180,6 +182,9 @@ const desktopBridge: DesktopBridge = {
     request: DesktopConversationMessageRequest,
   ): Promise<DesktopConversationMessageResult> {
     return ipcRenderer.invoke("desktop:conversation-message-submit", request);
+  },
+  describeRuntime(runtimeId: RuntimeId, selection: DesktopExecutionSelection) {
+    return ipcRenderer.invoke("desktop:describe-runtime", runtimeId, selection);
   },
   selectAttachments(threadId) {
     return ipcRenderer.invoke("desktop:select-attachments", threadId);

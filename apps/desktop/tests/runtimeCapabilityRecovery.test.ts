@@ -30,3 +30,10 @@ test("runtime failure-provided capability ownership takes precedence", () => {
     "tools.internet.tavily",
   );
 });
+
+test("a lost native session offers a Kestrel fork instead of mutating the binding", () => {
+  assert.equal(
+    extractTerminalFailure(failed("RUNTIME_NATIVE_SESSION_LOST"), "openai")?.recovery,
+    "fork_to_kestrel",
+  );
+});

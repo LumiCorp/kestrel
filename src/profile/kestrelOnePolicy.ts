@@ -247,6 +247,7 @@ export const KESTREL_ONE_ENVIRONMENT_PRESETS: Readonly<
 });
 
 export interface KestrelOneProfileOverlay {
+  runtimeId?: TuiProfile["runtimeId"] | undefined;
   label?: string | undefined;
   modelProvider?: TuiProfile["modelProvider"] | undefined;
   model?: string | undefined;
@@ -355,6 +356,7 @@ function composeLegacyKestrelOneProfile(
     label: input.overlay?.label ?? KESTREL_ONE_POLICY_LABEL,
     agent: "kestrel",
     sessionPrefix: KESTREL_ONE_POLICY_ID,
+    runtimeId: input.overlay?.runtimeId ?? "kestrel",
     agentProfileId: runtimeIdentity.agentProfileId,
     agentProfileLabel: runtimeIdentity.agentProfileLabel,
     shellKind,

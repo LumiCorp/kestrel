@@ -51,6 +51,7 @@ function buildRecord(): ChatFirstTurnHandoff {
     ],
     modelId: "chat-model-1",
     interactionMode: "plan",
+    runtimeId: "codex",
     createdAt: 1_700_000_000_000,
     pendingAssistant: true,
   };
@@ -112,6 +113,13 @@ test("first-turn handoff expires after the ttl", () => {
   Date.now = () => record.createdAt + 60_001;
 
   assert.equal(readChatFirstTurnHandoff(record.threadId), null);
+});
+
+test("legacy first-turn handoff defaults to the Kestrel Runtime", () => {
+  const { runtimeId: _runtimeId, ...legacy } = buildRecord();
+  sessionStorageMock.setItem("chat:first-turn:chat-1", JSON.stringify(legacy));
+
+  assert.equal(readChatFirstTurnHandoff("chat-1")?.runtimeId, "kestrel");
 });
 
 test("first-turn handoff rejects invalid payloads", () => {

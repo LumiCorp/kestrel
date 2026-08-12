@@ -17,6 +17,7 @@ export type RuntimeInteractionResponse = {
   requestId: string;
   eventType: string;
   message: string;
+  answers?: Record<string, string[]> | undefined;
   approved?: boolean | undefined;
   reason?: string | undefined;
   recoveryOptionId?: string | undefined;
@@ -36,6 +37,9 @@ export function InteractionPanel({
   embedded?: boolean;
 }) {
   const [content, setContent] = useState<Record<string, string>>({});
+  const [questionAnswers, setQuestionAnswers] = useState<
+    Record<string, Record<string, string[]>>
+  >({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const firstControlRef = useRef<HTMLTextAreaElement | null>(null);
@@ -49,8 +53,18 @@ export function InteractionPanel({
     decision?: boolean,
     recoveryOptionId?: string
   ) {
-    const answer = content[interaction.requestId]?.trim();
     const structuredReview = readThreadStructuredReview(interaction);
+    const questions = runtimeQuestions(interaction);
+    const answers = questionAnswers[interaction.requestId];
+    const missingQuestion = questions.some(
+      (question) => !(answers?.[question.id]?.some((answer) => answer.trim())),
+    );
+    const answer = questions.length > 0
+      ? questions
+          .flatMap((question) => answers?.[question.id] ?? [])
+          .join(", ")
+          .trim()
+      : content[interaction.requestId]?.trim();
     const message =
       recoveryOptionId !== undefined && structuredReview.kind === "structured_review"
         ? runnerStructuredReviewOptionLabel(
@@ -62,7 +76,7 @@ export function InteractionPanel({
           ? "Approved"
           : "Denied"
         : answer;
-    if (!message) {
+    if (!message || missingQuestion) {
       setError("Enter a response before continuing.");
       return;
     }
@@ -73,6 +87,7 @@ export function InteractionPanel({
         requestId: interaction.requestId,
         eventType: interaction.eventType,
         message,
+        ...(questions.length > 0 && answers !== undefined ? { answers } : {}),
         ...(interaction.kind === "approval" ? { approved: decision } : {}),
         ...(recoveryOptionId !== undefined ? { recoveryOptionId } : {}),
       });
@@ -202,6 +217,7 @@ export function InteractionPanel({
           interaction.source === "runtime" &&
           interaction.kind === "user_input" &&
           structuredReview.kind === "ordinary";
+        const questions = isRuntimeQuestion ? runtimeQuestions(interaction) : [];
         return (
           <Card key={interaction.requestId}>
             <CardHeader className="pb-2">
@@ -267,7 +283,53 @@ export function InteractionPanel({
                   </div>
                 </details>
               ) : null}
-              {isRuntimeQuestion ? (
+              {isRuntimeQuestion && questions.length > 0 ? (
+                <div className="space-y-3">
+                  {questions.map((question) => (
+                    <label className="grid gap-1 text-sm" key={question.id}>
+                      <span className="font-medium">{question.title}</span>
+                      {question.options.length > 0 ? (
+                        <select
+                          className="rounded-md border bg-background p-2"
+                          multiple={question.multiSelect}
+                          onChange={(event) => {
+                            const values = Array.from(event.target.selectedOptions).map(
+                              (option) => option.value,
+                            );
+                            setQuestionAnswers((current) => ({
+                              ...current,
+                              [interaction.requestId]: {
+                                ...current[interaction.requestId],
+                                [question.id]: values,
+                              },
+                            }));
+                          }}
+                          value={questionAnswers[interaction.requestId]?.[question.id] ?? []}
+                        >
+                          {!question.multiSelect ? <option value="">Select an answer</option> : null}
+                          {question.options.map((option) => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <Textarea
+                          aria-label={question.title}
+                          onChange={(event) =>
+                            setQuestionAnswers((current) => ({
+                              ...current,
+                              [interaction.requestId]: {
+                                ...current[interaction.requestId],
+                                [question.id]: [event.target.value],
+                              },
+                            }))
+                          }
+                          value={questionAnswers[interaction.requestId]?.[question.id]?.[0] ?? ""}
+                        />
+                      )}
+                    </label>
+                  ))}
+                </div>
+              ) : isRuntimeQuestion ? (
                 <Textarea
                   aria-label="Response to the agent"
                   onChange={(event) =>
@@ -408,4 +470,34 @@ export function InteractionPanel({
       ) : null}
     </section>
   );
+}
+
+function runtimeQuestions(interaction: ThreadInteractionView): Array<{
+  id: string;
+  title: string;
+  options: string[];
+  multiSelect: boolean;
+}> {
+  const inputSchema = asRecord(interaction.requestEnvelope.inputSchema);
+  const properties = asRecord(inputSchema?.properties);
+  if (!properties) return [];
+  return Object.entries(properties).flatMap(([id, value]) => {
+    const property = asRecord(value);
+    const items = asRecord(property?.items);
+    if (!property || property.type !== "array" || typeof property.title !== "string") return [];
+    return [{
+      id,
+      title: property.title,
+      options: Array.isArray(items?.enum)
+        ? items.enum.filter((option): option is string => typeof option === "string")
+        : [],
+      multiSelect: property.maxItems !== 1,
+    }];
+  });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }

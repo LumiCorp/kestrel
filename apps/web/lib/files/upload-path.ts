@@ -19,6 +19,17 @@ export function assertUploadPathOwnedByUser(
   }
 }
 
+export function assertUploadPathOwnedByUserAndThread(
+  pathname: string[],
+  userId: string,
+  threadId: string,
+) {
+  assertUploadPathOwnedByUser(pathname, userId);
+  if (pathname[1] !== sanitizeSegment(threadId)) {
+    throw new Error("Forbidden");
+  }
+}
+
 export function buildUploadPath(parts: {
   userId: string;
   threadId: string;

@@ -147,13 +147,13 @@ async function readDurableDispatchState(turnId: string) {
   return state;
 }
 
-async function hasResolvedUnconsumedRuntimeInteraction(turnId: string) {
+async function hasAnsweredUndeliveredRuntimeInteraction(turnId: string) {
   const interaction = await knowledgeDb.query.threadInteractions.findFirst({
     columns: { id: true },
     where: and(
       eq(schema.threadInteractions.turnId, turnId),
       eq(schema.threadInteractions.source, "runtime"),
-      eq(schema.threadInteractions.status, "resolved"),
+      eq(schema.threadInteractions.status, "processing"),
       isNull(schema.threadInteractions.resumedAt),
     ),
   });
@@ -195,7 +195,7 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
     if (turn.status === "waiting_for_input") {
       if (
         turn.queueState === "running" &&
-        (await hasResolvedUnconsumedRuntimeInteraction(turn.turnId))
+        (await hasAnsweredUndeliveredRuntimeInteraction(turn.turnId))
       ) {
         await dispatchTurnOrReconcile(boss, turn.turnId);
       }

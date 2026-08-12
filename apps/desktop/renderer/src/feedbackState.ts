@@ -4,6 +4,7 @@ export interface DesktopThreadFeedback {
   activity: string;
   error?: string | undefined;
   errorCapability?: DesktopCapabilityId | undefined;
+  errorRecovery?: "fork_to_kestrel" | undefined;
 }
 
 export function updateDesktopThreadFeedback(
@@ -27,6 +28,11 @@ export function clearDesktopThreadError(
 ): Record<string, DesktopThreadFeedback> {
   const feedback = current[threadId];
   if (feedback === undefined) return current;
-  const { error: _error, errorCapability: _errorCapability, ...withoutError } = feedback;
+  const {
+    error: _error,
+    errorCapability: _errorCapability,
+    errorRecovery: _errorRecovery,
+    ...withoutError
+  } = feedback;
   return { ...current, [threadId]: withoutError };
 }

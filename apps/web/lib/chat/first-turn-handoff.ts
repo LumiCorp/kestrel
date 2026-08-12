@@ -29,6 +29,10 @@ function isValidRecord(value: unknown): value is ChatFirstTurnHandoff {
     ) &&
     typeof candidate.modelId === "string" &&
     isKestrelOneInteractionMode(candidate.interactionMode) &&
+    (candidate.runtimeId === undefined ||
+      candidate.runtimeId === "kestrel" ||
+      candidate.runtimeId === "codex" ||
+      candidate.runtimeId === "claude") &&
     typeof candidate.createdAt === "number" &&
     typeof candidate.pendingAssistant === "boolean"
   );
@@ -67,7 +71,10 @@ export function readChatFirstTurnHandoff(threadId: string) {
       return null;
     }
 
-    return parsed;
+    return {
+      ...parsed,
+      runtimeId: parsed.runtimeId ?? "kestrel",
+    };
   } catch {
     sessionStorage.removeItem(getStorageKey(threadId));
     return null;

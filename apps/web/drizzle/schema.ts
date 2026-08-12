@@ -714,6 +714,12 @@ export const threads = pgTable(
     })
       .notNull()
       .default("chat"),
+    runtimeId: text("runtime_id", {
+      enum: ["kestrel", "codex", "claude"],
+    })
+      .notNull()
+      .default("kestrel"),
+    runtimeBindingId: text("runtime_binding_id"),
     activeStreamId: text("active_stream_id"),
     isPublic: boolean("is_public").notNull().default(false),
     shareToken: text("share_token"),
@@ -735,6 +741,69 @@ export const threads = pgTable(
     index("threads_archived_at_idx").on(table.archivedAt),
     index("threads_parent_thread_id_idx").on(table.parentThreadId),
     uniqueIndex("threads_share_token_idx").on(table.shareToken),
+  ],
+);
+
+export const runtimeParticipants = pgTable(
+  "runtime_participants",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    runtimeId: text("runtime_id", {
+      enum: ["kestrel", "codex", "claude"],
+    }).notNull(),
+    displayName: text("display_name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("runtime_participants_org_runtime_idx").on(
+      table.organizationId,
+      table.runtimeId,
+    ),
+  ],
+);
+
+export const runtimeBindings = pgTable(
+  "runtime_bindings",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    participantId: text("participant_id")
+      .notNull()
+      .references(() => runtimeParticipants.id, { onDelete: "restrict" }),
+    runtimeId: text("runtime_id", {
+      enum: ["kestrel", "codex", "claude"],
+    }).notNull(),
+    adapterContractVersion: integer("adapter_contract_version")
+      .notNull()
+      .default(1),
+    capabilityDigest: text("capability_digest"),
+    status: text("status", {
+      enum: ["ready", "degraded", "released"],
+    })
+      .notNull()
+      .default("ready"),
+    nativeSessionState: text("native_session_state", {
+      enum: ["uninitialized", "ready", "degraded", "released"],
+    })
+      .notNull()
+      .default("ready"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("runtime_bindings_thread_idx").on(table.threadId),
+    index("runtime_bindings_participant_idx").on(table.participantId),
   ],
 );
 
@@ -4543,6 +4612,7 @@ export const threadInteractions = pgTable(
     resolvedByUserId: text("resolved_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     resumedAt: timestamp("resumed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -4569,6 +4639,63 @@ export const threadInteractions = pgTable(
         OR
         (${table.source} = 'mcp' AND ${table.sourceCheckpointId} IS NOT NULL)
       )`,
+    ),
+  ],
+);
+
+export const runtimeInteractionDeliveries = pgTable(
+  "runtime_interaction_deliveries",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    interactionId: text("interaction_id")
+      .notNull()
+      .references(() => threadInteractions.id, { onDelete: "cascade" }),
+    turnId: text("turn_id")
+      .notNull()
+      .references(() => threadTurns.id, { onDelete: "cascade" }),
+    bindingId: text("binding_id")
+      .notNull()
+      .references(() => runtimeBindings.id, { onDelete: "cascade" }),
+    requestId: text("request_id").notNull(),
+    strategy: text("strategy", {
+      enum: ["kestrel_continuation", "live_connection", "live_callback"],
+    }).notNull(),
+    nativeCorrelation: jsonb("native_correlation")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    idempotencyKey: text("idempotency_key").notNull(),
+    state: text("state", {
+      enum: ["pending", "delivering", "delivered", "failed", "expired"],
+    })
+      .notNull()
+      .default("pending"),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    acknowledgementEventId: text("acknowledgement_event_id"),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("runtime_interaction_deliveries_interaction_idx").on(
+      table.interactionId,
+    ),
+    uniqueIndex("runtime_interaction_deliveries_idempotency_idx").on(
+      table.idempotencyKey,
+    ),
+    uniqueIndex("runtime_interaction_deliveries_ack_event_idx")
+      .on(table.acknowledgementEventId)
+      .where(sql`${table.acknowledgementEventId} is not null`),
+    index("runtime_interaction_deliveries_turn_state_idx").on(
+      table.turnId,
+      table.state,
     ),
   ],
 );

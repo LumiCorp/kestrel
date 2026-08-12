@@ -44,6 +44,7 @@ export interface LocalCoreProfileProviderOptions {
    * legacy ModelPolicyStore.
    */
   runtimeConfiguration?: LocalCoreRuntimeConfigurationV1 | undefined;
+  registerProfile?: boolean | undefined;
 }
 
 export class LocalCoreReservedProfileIdError extends Error {
@@ -161,9 +162,17 @@ export async function resolveLocalCoreExecutionProfile(
     profile,
     environmentPresetId,
   );
-  const registered = await new LocalCoreExecutionProfileRegistry(
-    homePath,
-  ).register(profile, environmentPresetId, provenance);
+  const registered = options.registerProfile === false
+    ? {
+        profileId: profile.id,
+        fingerprint: fingerprintResolvedProfile(profile),
+        profile,
+      }
+    : await new LocalCoreExecutionProfileRegistry(homePath).register(
+        profile,
+        environmentPresetId,
+        provenance,
+      );
   return {
     version: 1,
     profileId: registered.profileId,
@@ -253,6 +262,7 @@ export async function resolveLocalCoreDesktopExecutionConfig(
     {
       client: "desktop",
       selection: {
+        runtimeId: "kestrel",
         modelConfiguration: {
           id: selectedConfiguration.id,
           revision: selectedConfiguration.currentRevision,

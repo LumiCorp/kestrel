@@ -137,6 +137,8 @@ test("public run stream event names separate operational, provider, and agent ac
   assert.deepEqual(RUNNER_RUN_STREAM_EVENT_TYPES, [
     "run.started",
     "run.cancelled",
+    "run.native_session.established",
+    "run.interaction.delivered",
     "run.tool.started",
     "run.tool.completed",
     "run.tool.failed",

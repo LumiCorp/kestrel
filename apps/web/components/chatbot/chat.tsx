@@ -92,6 +92,7 @@ type ChatController = {
 function createChatTransport(
   currentModelIdRef: { current: string },
   interactionModeRef: { current: KestrelOneInteractionMode },
+  runtimeIdRef: { current: "kestrel" | "codex" | "claude" },
   resumeTurnIdRef: { current: string | null },
   onSuccessfulResponse?: (response: Response) => void
 ) {
@@ -106,10 +107,10 @@ function createChatTransport(
       return {
         api: `/api/threads/${request.id}`,
         body: buildThreadTurnRequestBody({
-          body: request.body,
           messages: request.messages,
           model: currentModelIdRef.current,
           interactionMode: interactionModeRef.current,
+          body: { ...request.body, runtimeId: runtimeIdRef.current },
         }),
       };
     },
@@ -210,6 +211,7 @@ function useSharedChatState(
   initialChatModel: string,
   threadId: string,
   initialInteractionMode: KestrelOneInteractionMode = DEFAULT_KESTREL_ONE_INTERACTION_MODE,
+  initialRuntimeId: "kestrel" | "codex" | "claude" = "kestrel",
 ) {
   const { setDataStream } = useDataStream(threadId);
   const [input, setInput] = useState("");
@@ -221,6 +223,8 @@ function useSharedChatState(
     initialInteractionMode
   );
   const interactionModeRef = useRef(interactionMode);
+  const [runtimeId, setRuntimeId] = useState(initialRuntimeId);
+  const runtimeIdRef = useRef(runtimeId);
   const updateInteractionMode = useCallback((mode: KestrelOneInteractionMode) => {
     interactionModeRef.current = mode;
     setInteractionMode(mode);
@@ -238,8 +242,16 @@ function useSharedChatState(
   }, [interactionMode]);
 
   useEffect(() => {
+    runtimeIdRef.current = runtimeId;
+  }, [runtimeId]);
+
+  useEffect(() => {
     updateInteractionMode(initialInteractionMode);
   }, [initialInteractionMode, threadId, updateInteractionMode]);
+
+  useEffect(() => {
+    setRuntimeId(initialRuntimeId);
+  }, [initialRuntimeId, threadId]);
 
   return {
     attachments,
@@ -255,6 +267,9 @@ function useSharedChatState(
     setFeedbackOverrides,
     setInput,
     setInteractionMode: updateInteractionMode,
+    runtimeId,
+    runtimeIdRef,
+    setRuntimeId,
     setShowCreditCardAlert,
     showCreditCardAlert,
   };
@@ -420,6 +435,8 @@ function ChatShell({
   onFeedbackChange,
   onModelChange,
   onInteractionModeChange,
+  runtimeId,
+  onRuntimeChange,
   regenerate,
   selectedVisibilityType,
   sendMessage,
@@ -440,6 +457,7 @@ function ChatShell({
   threadTitle,
   threadExists,
   newTurnDisabledReason,
+  hydraEnabled,
 }: {
   addToolApprovalResponse: ChatController["addToolApprovalResponse"];
   archived: boolean;
@@ -461,6 +479,8 @@ function ChatShell({
   ) => void;
   onModelChange: (modelId: string) => void;
   onInteractionModeChange: (mode: KestrelOneInteractionMode) => void;
+  runtimeId: "kestrel" | "codex" | "claude";
+  onRuntimeChange: (runtimeId: "kestrel" | "codex" | "claude") => void;
   regenerate: ChatController["regenerate"];
   selectedVisibilityType: VisibilityType;
   sendMessage: ChatController["sendMessage"];
@@ -486,6 +506,7 @@ function ChatShell({
   threadTitle?: string;
   threadExists: boolean;
   newTurnDisabledReason?: string;
+  hydraEnabled: boolean;
 }) {
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
 
@@ -499,6 +520,7 @@ function ChatShell({
           archived={archived}
           canManage={canManage}
           isReadonly={headerReadonly}
+          runtimeId={runtimeId}
           project={project}
           projects={projects}
           selectedVisibilityType={selectedVisibilityType}
@@ -549,9 +571,12 @@ function ChatShell({
               messages={messages}
               modelScopeQuery={modelScopeQuery}
               newTurnDisabledReason={newTurnDisabledReason}
+              hydraEnabled={hydraEnabled}
               onInterrupt={onInterrupt}
               onModelChange={onModelChange}
               onInteractionModeChange={onInteractionModeChange}
+              runtimeId={runtimeId}
+              onRuntimeChange={onRuntimeChange}
               onRuntimeInteractionResponse={onRuntimeInteractionResponse}
               queueMessage={queueMessage}
               selectedModelId={currentModelId}
@@ -628,6 +653,7 @@ export function BootstrapChat({
   projectName,
   activeEnvironment,
   newTurnDisabledReason,
+  hydraEnabled,
 }: {
   id: string;
   initialChatModel: string;
@@ -635,6 +661,7 @@ export function BootstrapChat({
   projectName?: string;
   activeEnvironment?: { id: string; name: string };
   newTurnDisabledReason?: string;
+  hydraEnabled: boolean;
 }) {
   const router = useRouter();
   const { resetArtifact, setMetadata } = useArtifact();
@@ -681,6 +708,7 @@ export function BootstrapChat({
       messageParts: userMessage.parts,
       modelId: shared.currentModelIdRef.current,
       interactionMode: shared.interactionModeRef.current,
+      runtimeId: shared.runtimeIdRef.current,
       createdAt: Date.now(),
       pendingAssistant: true,
     });
@@ -723,9 +751,12 @@ export function BootstrapChat({
           projectId ? `&projectId=${encodeURIComponent(projectId)}` : undefined
         }
         newTurnDisabledReason={newTurnDisabledReason}
+        hydraEnabled={hydraEnabled}
         onFeedbackChange={() => {}}
         onModelChange={shared.setCurrentModelId}
         onInteractionModeChange={shared.setInteractionMode}
+        runtimeId={shared.runtimeId}
+        onRuntimeChange={shared.setRuntimeId}
         onRefreshConversationState={async () => {}}
         onRuntimeInteractionResponse={async () => {}}
         project={
@@ -757,6 +788,7 @@ export function Chat({
   initialMessages,
   initialChatModel,
   initialInteractionMode,
+  initialRuntimeId,
   initialVisibilityType,
   initialShareToken,
   initialChatExists,
@@ -770,11 +802,13 @@ export function Chat({
   projects = [],
   threadTitle,
   newTurnDisabledReason,
+  hydraEnabled,
 }: {
   id: string;
   initialMessages: ChatMessage[];
   initialChatModel: string;
   initialInteractionMode: KestrelOneInteractionMode;
+  initialRuntimeId: "kestrel" | "codex" | "claude";
   initialVisibilityType: VisibilityType;
   initialShareToken?: string | null;
   initialChatExists: boolean;
@@ -788,6 +822,7 @@ export function Chat({
   projects?: Array<{ id: string; name: string }>;
   threadTitle?: string;
   newTurnDisabledReason?: string;
+  hydraEnabled: boolean;
 }) {
   const { resetArtifact, setMetadata } = useArtifact();
   const { setDataStream } = useDataStream(id);
@@ -797,7 +832,12 @@ export function Chat({
     initialShareToken,
   });
   const { mutate } = useSWRConfig();
-  const shared = useSharedChatState(initialChatModel, id, initialInteractionMode);
+  const shared = useSharedChatState(
+    initialChatModel,
+    id,
+    initialInteractionMode,
+    initialRuntimeId,
+  );
   const hasShownResumeWarningRef = useRef(false);
   const hasShownResumedToastRef = useRef(false);
   const hasShownStreamWarningRef = useRef(false);
@@ -855,11 +895,16 @@ export function Chat({
     if (handoff?.interactionMode) {
       shared.setInteractionMode(handoff.interactionMode);
     }
+    if (handoff?.runtimeId) {
+      shared.setRuntimeId(handoff.runtimeId);
+    }
   }, [
     handoff?.interactionMode,
     handoff?.modelId,
+    handoff?.runtimeId,
     shared.setCurrentModelId,
     shared.setInteractionMode,
+    shared.setRuntimeId,
   ]);
 
   const refreshConversationState = useCallback(async () => {
@@ -927,6 +972,7 @@ export function Chat({
       createChatTransport(
         shared.currentModelIdRef,
         shared.interactionModeRef,
+        shared.runtimeIdRef,
         resumeTurnIdRef,
         (response) => {
           setChatExists(true);
@@ -934,7 +980,7 @@ export function Chat({
           if (turnId) streamedTurnIdRef.current = turnId;
         }
       ),
-    [shared.currentModelIdRef, shared.interactionModeRef]
+    [shared.currentModelIdRef, shared.interactionModeRef, shared.runtimeIdRef]
   );
 
   const controller = useChat<ChatMessage>({
@@ -1218,6 +1264,7 @@ export function Chat({
       body: {
         ...(handoff.projectId ? { projectId: handoff.projectId } : {}),
         interactionMode: handoff.interactionMode,
+        runtimeId: handoff.runtimeId,
       },
     });
   }, [
@@ -1296,6 +1343,7 @@ export function Chat({
         messages={displayMessages}
         modelScopeQuery={`&threadId=${encodeURIComponent(id)}`}
         newTurnDisabledReason={newTurnDisabledReason}
+        hydraEnabled={hydraEnabled}
         onFeedbackChange={(messageId, feedback) => {
           shared.setFeedbackOverrides((current) => ({
             ...current,
@@ -1304,6 +1352,8 @@ export function Chat({
         }}
         onInterrupt={interruptActiveTurn}
         onInteractionModeChange={(mode) => void changeInteractionMode(mode)}
+        runtimeId={shared.runtimeId}
+        onRuntimeChange={shared.setRuntimeId}
         onModelChange={shared.setCurrentModelId}
         onRefreshConversationState={refreshConversationState}
         onRuntimeInteractionResponse={respondToRuntimeInteraction}

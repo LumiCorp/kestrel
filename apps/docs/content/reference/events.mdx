@@ -17,6 +17,8 @@ Every public event carries canonical identity, ordering, timestamp, and correlat
 | Event | Meaning |
 | --- | --- |
 | `run.started` | The runner accepted the run |
+| `run.native_session.established` | A foreign Runtime persisted the opaque native conversation for its immutable binding |
+| `run.interaction.delivered` | A Runtime confirmed delivery of an operator response to its live native request |
 | `run.progress` | Operational lifecycle and timing information; never conversational agent progress |
 | `run.model.reasoning.started` | A labeled provider reasoning stream began |
 | `run.model.reasoning.delta` | A live-only provider summary or visible-thinking delta; never raw or encrypted reasoning state |

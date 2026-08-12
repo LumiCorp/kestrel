@@ -444,6 +444,7 @@ test("ProfileStore rejects conflicting behavior across legacy environment overla
 
 test("Kestrel managed configuration parser validates SDK supplied overlays", () => {
   const parsed = parseKestrelManagedConfiguration({
+    runtimeId: "codex",
     label: "Kestrel One",
     modelProvider: "openai",
     model: "gpt-5.1",
@@ -471,6 +472,7 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
     default: false,
   });
 
+  assert.equal(parsed.runtimeId, "codex");
   assert.equal(parsed.modelProvider, "openai");
   assert.equal(parsed.modelCredential?.gatewayId, "gateway_123");
   assert.equal(parsed.modelCapabilities?.visionInputEnabled, true);
@@ -479,6 +481,13 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
       "kestrel_one.search_knowledge_documents"
     ],
     "auto",
+  );
+  assert.throws(
+    () =>
+      parseKestrelManagedConfiguration({
+        runtimeId: "unknown-runtime",
+      }),
+    /runtimeId must be kestrel, codex, or claude/u,
   );
   assert.throws(
     () =>

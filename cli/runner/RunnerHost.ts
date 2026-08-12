@@ -1,16 +1,13 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import {
-  encodeConversationMessageCursor,
-  parseConversationMessageCursor,
-  type RunnerActorMetadata,
-} from "@kestrel-agents/protocol";
+import { createHash } from "node:crypto";
+import { encodeConversationMessageCursor, parseConversationMessageCursor, type RunnerActorMetadata } from "@kestrel-agents/protocol";
 
 import {
   buildPersistedRuntimeEventFromProgressUpdate,
   readAgentProgressUpdateFromPersistedRuntimeEvent,
   readProgressUpdateFromPersistedRuntimeEvent,
   readReasoningUpdateFromPersistedRuntimeEvent,
-  readToolUpdateFromPersistedRuntimeEvent,
+  readToolUpdateFromPersistedRuntimeEvent
 } from "../../src/events/RuntimeEventProjections.js";
 import type {
   McpStatusSnapshot,
@@ -43,7 +40,7 @@ import type {
   WorkspaceReviewSnapshot,
   WorkspaceValidationSnapshot,
   WorkspaceGitSnapshot,
-  MissionControlProjectStateRecord,
+  MissionControlProjectStateRecord
 } from "../../src/index.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
@@ -51,15 +48,14 @@ import { resolveKestrelHome } from "../config/kestrelHome.js";
 import { ProfileStore } from "../config/ProfileStore.js";
 import type { OperatorAssemblySummary, TuiProfile } from "../contracts.js";
 import { DiagnosticLogStore } from "../diagnostics/DiagnosticLogStore.js";
-import {
-  buildJobReplayPointer,
-  type JobRunResultV1,
-} from "../job/contracts.js";
+import { buildJobReplayPointer, type JobRunResultV1 } from "../job/contracts.js";
 import { readDatabaseUrlSource } from "../localCoreEnv.js";
 import type {
   JobRunCommandPayload,
   ExecutionProfileResolveCommandPayload,
   ExecutionProfileResolvedEventPayload,
+  RuntimeDescribeCommandPayload,
+  RuntimeDescriptorResolutionV1,
   McpRefreshCommandPayload,
   McpStatusCommandPayload,
   OperatorControlCommandPayload,
@@ -120,35 +116,34 @@ import type {
   WorkspaceManagedCleanupCommandPayload,
   WorkspaceManagedInspectCommandPayload,
   WorkspaceManagedRestoreCommandPayload,
-  WorkspaceManagedSetupRetryCommandPayload,
+  WorkspaceManagedSetupRetryCommandPayload
 } from "../protocol/contracts.js";
-import {
-  LocalCoreExecutionProfileRegistry,
-  type ExecutionProfileRevisionProvenance,
-} from "../../src/localCore/executionProfileRegistry.js";
+import { LocalCoreExecutionProfileRegistry, type ExecutionProfileRevisionProvenance } from "../../src/localCore/executionProfileRegistry.js";
 import {
   assertKestrelExecutionProfileEconomicsAdmission,
   composeKestrelProfile,
+  fingerprintResolvedProfile,
   KESTREL_ONE_ENVIRONMENT_PRESETS,
   KESTREL_POLICY_ID,
   KESTREL_POLICY_VERSION,
   LEGACY_KESTREL_ONE_POLICY_ID,
-  type KestrelOneProfileOverlay,
+  type KestrelOneProfileOverlay
 } from "../../src/profile/kestrelOnePolicy.js";
 import {
   type DelegationTaskUpdate,
   KestrelChatRuntime,
   type KestrelChatRuntimeOptions,
   type RunTurnInput,
-  type RunTurnResult,
+  type RunTurnResult
 } from "../runtime/KestrelChatRuntime.js";
 import type { DetachedTurnLifecycleEvent } from "../../src/orchestration/index.js";
 import type { RunnerEventSink } from "./EventWriter.js";
+import type { RuntimeDescriptorV1, RuntimeInteractionDeliveredV1, RuntimeNativeSessionEstablishedV1 } from "../../src/runtimes/contracts.js";
 
 const EMPTY_TOOL_RUNTIME_STATUS: ToolRuntimeStatus = {
   healthy: true,
   checkedAt: new Date(0).toISOString(),
-  providers: {},
+  providers: {}
 };
 
 interface RuntimeEntry {
@@ -175,26 +170,17 @@ interface ActiveRunEntry {
 export interface RunnerProfileProvider {
   listProfiles(): Promise<TuiProfile[]>;
   getProfile(profileId: string): Promise<TuiProfile | undefined>;
-  resolveExecutionProfile?(
-    payload: ExecutionProfileResolveCommandPayload,
-  ): Promise<ExecutionProfileResolvedEventPayload>;
+  resolveExecutionProfile?(payload: ExecutionProfileResolveCommandPayload): Promise<ExecutionProfileResolvedEventPayload>;
+  describeRuntimeProfile?(payload: RuntimeDescribeCommandPayload): Promise<ExecutionProfileResolvedEventPayload>;
 }
 
-export type RunnerProfileSourcePolicy =
-  | "inline-or-registered"
-  | "registered-only";
+export type RunnerProfileSourcePolicy = "inline-or-registered" | "registered-only";
 
 export interface RunnerRuntime {
-  runTurn(
-    input: RunTurnInput,
-    options?: { signal?: AbortSignal | undefined }
-  ): Promise<RunTurnResult>;
-  cancelActiveRun?:
-    | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
-    | undefined;
-  recoverOrphanedActiveRun?:
-    | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
-    | undefined;
+  describeRuntime?: (() => Promise<RuntimeDescriptorV1>) | undefined;
+  runTurn(input: RunTurnInput, options?: { signal?: AbortSignal | undefined }): Promise<RunTurnResult>;
+  cancelActiveRun?: ((sessionId: string) => Promise<{ runId?: string | undefined }>) | undefined;
+  recoverOrphanedActiveRun?: ((sessionId: string) => Promise<{ runId?: string | undefined }>) | undefined;
   describeSession?:
     | ((sessionId: string) => Promise<
         | {
@@ -205,18 +191,10 @@ export interface RunnerRuntime {
             updatedAt?: string | undefined;
             waitFor?: RunTurnResult["output"]["waitFor"] | undefined;
             activeAssembly?: OperatorAssemblySummary | undefined;
-            operatorInbox?:
-              | import("../contracts.js").OperatorInboxSummary
-              | undefined;
-            childBlocker?:
-              | import("../contracts.js").OperatorChildBlockerSummary
-              | undefined;
-            latestCheckpoint?:
-              | import("../contracts.js").OperatorCheckpointSummary
-              | undefined;
-            latestSteering?:
-              | import("../contracts.js").OperatorSteeringSummary
-              | undefined;
+            operatorInbox?: import("../contracts.js").OperatorInboxSummary | undefined;
+            childBlocker?: import("../contracts.js").OperatorChildBlockerSummary | undefined;
+            latestCheckpoint?: import("../contracts.js").OperatorCheckpointSummary | undefined;
+            latestSteering?: import("../contracts.js").OperatorSteeringSummary | undefined;
             focusedThreadId?: string | undefined;
           }
         | undefined
@@ -266,39 +244,44 @@ export interface RunnerRuntime {
         import("../../src/orchestration/contracts.js").OperatorRunView | null
       >)
     | undefined;
+  getOperatorRunView?: ((runId: string) => Promise<import("../../src/orchestration/contracts.js").OperatorRunView | null>) | undefined;
   getRetainedProviderReasoning?:
-    | ((input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) => Promise<Array<{
-        provider: string;
-        model: string;
-        format: string;
-        text: string;
-        createdAt: string;
-        expiresAt: string;
-      }>>)
+    | ((input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) => Promise<
+        Array<{
+          provider: string;
+          model: string;
+          format: string;
+          text: string;
+          createdAt: string;
+          expiresAt: string;
+        }>
+      >)
     | undefined;
-  deleteRetainedProviderReasoning?: ((input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) => Promise<number>) | undefined;
+  deleteRetainedProviderReasoning?:
+    | ((input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) => Promise<number>)
+    | undefined;
   getProviderReasoningVaultStatus?: (() => { ready: boolean; keyVersion: number; keySource: string }) | undefined;
   performOperatorAction?:
     | ((
-        input: OperatorControlCommandPayload & { actor?: RunnerActorMetadata | undefined }
+        input: OperatorControlCommandPayload & {
+          actor?: RunnerActorMetadata | undefined;
+        }
       ) => Promise<{
         sessionId?: string | undefined;
         threadId: string;
-        inbox?:
-          | import("../../src/orchestration/contracts.js").OperatorInboxSnapshot
-          | undefined;
-        view?:
-          | import("../../src/orchestration/contracts.js").OperatorThreadView
-          | undefined;
+        inbox?: import("../../src/orchestration/contracts.js").OperatorInboxSnapshot | undefined;
+        view?: import("../../src/orchestration/contracts.js").OperatorThreadView | undefined;
         result?: RunTurnResult | undefined;
       }>)
     | undefined;
   performAcceptedOperatorAction?:
-    | ((input: OperatorControlCommandPayload & {
-        action: "approve" | "reject" | "reply" | "retry";
-        actor?: RunnerActorMetadata | undefined;
-        signal?: AbortSignal | undefined;
-      }) => Promise<{
+    | ((
+        input: OperatorControlCommandPayload & {
+          action: "approve" | "reject" | "reply" | "retry";
+          actor?: RunnerActorMetadata | undefined;
+          signal?: AbortSignal | undefined;
+        }
+      ) => Promise<{
         accepted: {
           sessionId?: string | undefined;
           threadId: string;
@@ -343,29 +326,19 @@ export interface RunnerRuntime {
         checkpoint: WorkspaceCheckpointDetail;
       }>)
     | undefined;
-  diffWorkspaceCheckpoints?:
-    | ((
-        input: WorkspaceCheckpointDiffCommandPayload
-      ) => Promise<{ sessionId: string; diff: WorkspaceDiffRecord }>)
-    | undefined;
+  diffWorkspaceCheckpoints?: ((input: WorkspaceCheckpointDiffCommandPayload) => Promise<{ sessionId: string; diff: WorkspaceDiffRecord }>) | undefined;
   restoreWorkspaceCheckpoint?:
-    | ((
-        input: WorkspaceCheckpointRestoreCommandPayload
-      ) => Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }>)
+    | ((input: WorkspaceCheckpointRestoreCommandPayload) => Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }>)
     | undefined;
   cleanupWorkspaceCheckpoints?:
-    | ((
-        input: import("../protocol/contracts.js").WorkspaceCheckpointCleanupCommandPayload
-      ) => Promise<
+    | ((input: import("../protocol/contracts.js").WorkspaceCheckpointCleanupCommandPayload) => Promise<
         {
           sessionId: string;
         } & import("../../src/workspaceCheckpoints/contracts.js").WorkspaceCheckpointCleanupResult
       >)
     | undefined;
   restoreLatestWorkspacePromotion?:
-    | ((
-        input: WorkspacePromotionUndoLatestCommandPayload
-      ) => Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }>)
+    | ((input: WorkspacePromotionUndoLatestCommandPayload) => Promise<{ sessionId: string; restore: WorkspaceRestoreRecord }>)
     | undefined;
   listWorkspacePromotions?:
     | ((input: WorkspacePromotionListCommandPayload) => Promise<{
@@ -374,9 +347,7 @@ export interface RunnerRuntime {
       }>)
     | undefined;
   previewWorkspacePromotion?:
-    | ((
-        input: WorkspacePromotionPreviewCommandPayload
-      ) => Promise<{ sessionId: string; preview: WorkspacePromotionPreview }>)
+    | ((input: WorkspacePromotionPreviewCommandPayload) => Promise<{ sessionId: string; preview: WorkspacePromotionPreview }>)
     | undefined;
   applyWorkspacePromotion?:
     | ((
@@ -395,14 +366,22 @@ export interface RunnerRuntime {
       }>)
     | undefined;
   cleanupManagedWorktree?:
-    | ((input: WorkspaceManagedCleanupCommandPayload & { cleanedBy?: string | undefined }) => Promise<{
+    | ((
+        input: WorkspaceManagedCleanupCommandPayload & {
+          cleanedBy?: string | undefined;
+        }
+      ) => Promise<{
         sessionId: string;
         checkpoint: WorkspaceCheckpointDetail;
         cleanup: ManagedTaskWorktreeCleanupResult;
       }>)
     | undefined;
   restoreManagedWorktree?:
-    | ((input: WorkspaceManagedRestoreCommandPayload & { restoredBy?: string | undefined }) => Promise<{
+    | ((
+        input: WorkspaceManagedRestoreCommandPayload & {
+          restoredBy?: string | undefined;
+        }
+      ) => Promise<{
         sessionId: string;
         binding: ManagedTaskWorktreeBinding;
         restore: WorkspaceRestoreRecord;
@@ -425,15 +404,30 @@ export interface RunnerRuntime {
   addWorkspaceFeedback?: ((input: WorkspaceFeedbackAddCommandPayload) => Promise<WorkspaceFeedbackSnapshot>) | undefined;
   listWorkspaceFeedback?: ((input: WorkspaceFeedbackListCommandPayload) => Promise<WorkspaceFeedbackSnapshot>) | undefined;
   removeWorkspaceFeedback?: ((input: WorkspaceFeedbackRemoveCommandPayload) => Promise<WorkspaceFeedbackSnapshot>) | undefined;
-  submitWorkspaceFeedback?: ((input: WorkspaceFeedbackSubmitCommandPayload) => Promise<{ snapshot: WorkspaceFeedbackSnapshot; result: RunTurnResult }>) | undefined;
+  submitWorkspaceFeedback?:
+    | ((input: WorkspaceFeedbackSubmitCommandPayload) => Promise<{
+        snapshot: WorkspaceFeedbackSnapshot;
+        result: RunTurnResult;
+      }>)
+    | undefined;
   runWorkspaceReview?: ((input: WorkspaceReviewRunCommandPayload) => Promise<WorkspaceReviewSnapshot>) | undefined;
   listWorkspaceReviews?: ((input: WorkspaceReviewListCommandPayload) => Promise<WorkspaceReviewSnapshot>) | undefined;
   updateWorkspaceReviewFinding?: ((input: WorkspaceReviewUpdateCommandPayload) => Promise<WorkspaceReviewSnapshot>) | undefined;
-  submitWorkspaceReviewFindings?: ((input: WorkspaceReviewSubmitCommandPayload) => Promise<{ snapshot: WorkspaceReviewSnapshot; result: RunTurnResult }>) | undefined;
+  submitWorkspaceReviewFindings?:
+    | ((input: WorkspaceReviewSubmitCommandPayload) => Promise<{
+        snapshot: WorkspaceReviewSnapshot;
+        result: RunTurnResult;
+      }>)
+    | undefined;
   inspectWorkspaceValidation?: ((input: WorkspaceValidationInspectCommandPayload) => Promise<WorkspaceValidationSnapshot>) | undefined;
   runWorkspaceValidation?: ((input: WorkspaceValidationRunCommandPayload) => Promise<WorkspaceValidationSnapshot>) | undefined;
   cancelWorkspaceValidation?: ((input: WorkspaceValidationCancelCommandPayload) => Promise<WorkspaceValidationSnapshot>) | undefined;
-  submitWorkspaceValidationFailures?: ((input: WorkspaceValidationSubmitCommandPayload) => Promise<{ snapshot: WorkspaceValidationSnapshot; result: RunTurnResult }>) | undefined;
+  submitWorkspaceValidationFailures?:
+    | ((input: WorkspaceValidationSubmitCommandPayload) => Promise<{
+        snapshot: WorkspaceValidationSnapshot;
+        result: RunTurnResult;
+      }>)
+    | undefined;
   inspectWorkspaceGit?: ((input: WorkspaceGitInspectCommandPayload) => Promise<WorkspaceGitSnapshot>) | undefined;
   performWorkspaceGitAction?: ((input: WorkspaceGitActionCommandPayload) => Promise<WorkspaceGitSnapshot>) | undefined;
   getSessionState?:
@@ -447,18 +441,10 @@ export interface RunnerRuntime {
               updatedAt?: string | undefined;
               waitFor?: RunTurnResult["output"]["waitFor"] | undefined;
               activeAssembly?: OperatorAssemblySummary | undefined;
-              operatorInbox?:
-                | import("../contracts.js").OperatorInboxSummary
-                | undefined;
-              childBlocker?:
-                | import("../contracts.js").OperatorChildBlockerSummary
-                | undefined;
-              latestCheckpoint?:
-                | import("../contracts.js").OperatorCheckpointSummary
-                | undefined;
-              latestSteering?:
-                | import("../contracts.js").OperatorSteeringSummary
-                | undefined;
+              operatorInbox?: import("../contracts.js").OperatorInboxSummary | undefined;
+              childBlocker?: import("../contracts.js").OperatorChildBlockerSummary | undefined;
+              latestCheckpoint?: import("../contracts.js").OperatorCheckpointSummary | undefined;
+              latestSteering?: import("../contracts.js").OperatorSteeringSummary | undefined;
               focusedThreadId?: string | undefined;
             };
             version: number;
@@ -467,36 +453,12 @@ export interface RunnerRuntime {
         | undefined
       >)
     | undefined;
-  getProjectSnapshot?:
-    | ((
-        input: ProjectSnapshotGetCommandPayload
-      ) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>)
-    | undefined;
-  getMissionControlProject?:
-    | ((
-        input: MissionControlProjectGetCommandPayload
-      ) => Promise<MissionControlProjectStateRecord>)
-    | undefined;
-  executeMissionControlAction?:
-    | ((
-        input: MissionControlActionExecuteCommandPayload
-      ) => Promise<MissionControlProjectStateRecord>)
-    | undefined;
-  performProjectAction?:
-    | ((
-        input: ProjectActionCommandPayload
-      ) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>)
-    | undefined;
-  getProjectReviewDetail?:
-    | ((
-        input: ProjectReviewGetCommandPayload
-      ) => Promise<{ sessionId: string; detail: ProductReviewDetail }>)
-    | undefined;
-  performProjectReviewAction?:
-    | ((
-        input: ProjectReviewActionCommandPayload
-      ) => Promise<{ sessionId: string; detail: ProductReviewDetail }>)
-    | undefined;
+  getProjectSnapshot?: ((input: ProjectSnapshotGetCommandPayload) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>) | undefined;
+  getMissionControlProject?: ((input: MissionControlProjectGetCommandPayload) => Promise<MissionControlProjectStateRecord>) | undefined;
+  executeMissionControlAction?: ((input: MissionControlActionExecuteCommandPayload) => Promise<MissionControlProjectStateRecord>) | undefined;
+  performProjectAction?: ((input: ProjectActionCommandPayload) => Promise<{ sessionId: string; snapshot: ProductProjectSnapshot }>) | undefined;
+  getProjectReviewDetail?: ((input: ProjectReviewGetCommandPayload) => Promise<{ sessionId: string; detail: ProductReviewDetail }>) | undefined;
+  performProjectReviewAction?: ((input: ProjectReviewActionCommandPayload) => Promise<{ sessionId: string; detail: ProductReviewDetail }>) | undefined;
   getToolRuntimeStatus?: (() => Promise<ToolRuntimeStatus>) | undefined;
   refreshToolRuntime?: (() => Promise<ToolRuntimeStatus>) | undefined;
   close(): Promise<void>;
@@ -511,22 +473,19 @@ export type RunnerRuntimeFactory = (
   onTaskUpdate: (update: DelegationTaskUpdate) => void,
   onRunEvent: (event: RunEvent) => void,
   onDetachedTurnEvent: (event: DetachedTurnLifecycleEvent) => void,
+  onInteractionDelivered: (event: RuntimeInteractionDeliveredV1) => void,
+  onNativeSessionEstablished: (event: RuntimeNativeSessionEstablishedV1) => void
 ) => RunnerRuntime;
 
-export function createLiveOnlyProgressListener(
-  listener: (update: ProgressUpdateV1) => void,
-): (update: ProgressUpdateV1) => void {
+export function createLiveOnlyProgressListener(listener: (update: ProgressUpdateV1) => void): (update: ProgressUpdateV1) => void {
   return (update) => {
     if (update.persist === false) listener(update);
   };
 }
 
 export function createDefaultRunnerRuntimeFactory(
-  createRuntime: (
-    profile: TuiProfile,
-    options: KestrelChatRuntimeOptions,
-  ) => RunnerRuntime = (profile, options) =>
-    new KestrelChatRuntime(profile, undefined, options),
+  createRuntime: (profile: TuiProfile, options: KestrelChatRuntimeOptions) => RunnerRuntime = (profile, options) =>
+    new KestrelChatRuntime(profile, undefined, options)
 ): RunnerRuntimeFactory {
   return (
     profile,
@@ -537,6 +496,8 @@ export function createDefaultRunnerRuntimeFactory(
     onTaskUpdate,
     onRunEvent,
     onDetachedTurnEvent,
+    _onInteractionDelivered,
+    _onNativeSessionEstablished
   ) =>
     createRuntime(profile, {
       onRunLog,
@@ -545,28 +506,20 @@ export function createDefaultRunnerRuntimeFactory(
       onReasoning,
       onTaskUpdate,
       onRunEvent,
-      onDetachedTurnEvent,
+      onDetachedTurnEvent
     });
 }
 
-function normalizeFinalizedResultRunId(
-  result: RunTurnResult,
-  acceptedRunId: string | undefined
-): RunTurnResult {
-  if (
-    acceptedRunId === undefined ||
-    result.finalizedPayload === undefined ||
-    result.output.status !== "COMPLETED" ||
-    result.output.runId === acceptedRunId
-  ) {
+function normalizeFinalizedResultRunId(result: RunTurnResult, acceptedRunId: string | undefined): RunTurnResult {
+  if (acceptedRunId === undefined || result.finalizedPayload === undefined || result.output.status !== "COMPLETED" || result.output.runId === acceptedRunId) {
     return result;
   }
   return {
     ...result,
     output: {
       ...result.output,
-      runId: acceptedRunId,
-    },
+      runId: acceptedRunId
+    }
   };
 }
 
@@ -578,16 +531,10 @@ export class RunnerHost {
   private readonly diagnosticsStore = new DiagnosticLogStore();
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly commandBySession = new Map<string, string>();
-  private readonly commandTypeBySession = new Map<
-    string,
-    "run.start" | "job.run" | "operator.control"
-  >();
+  private readonly commandTypeBySession = new Map<string, "run.start" | "job.run" | "operator.control">();
   private readonly threadIdBySession = new Map<string, string>();
   private readonly activeRuns = new Map<string, ActiveRunEntry>();
-  private readonly orphanRecoveryBySession = new Map<
-    string,
-    Promise<{ runId?: string | undefined }>
-  >();
+  private readonly orphanRecoveryBySession = new Map<string, Promise<{ runId?: string | undefined }>>();
   private readonly activeExecutions = new Set<Promise<void>>();
   private readonly runtimeUsage = new AsyncLocalStorage<Set<RuntimeLease>>();
   private readonly runtimeLeases = new WeakMap<RunnerRuntime, RuntimeLease>();
@@ -603,27 +550,20 @@ export class RunnerHost {
     profileProvider: RunnerProfileProvider = createDefaultProfileProvider(),
     options: {
       profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
-    } = {},
+    } = {}
   ) {
     this.writer = writer;
     this.runtimeFactory = runtimeFactory;
     this.profileProvider = profileProvider;
-    this.profileSourcePolicy =
-      options.profileSourcePolicy ?? "inline-or-registered";
+    this.profileSourcePolicy = options.profileSourcePolicy ?? "inline-or-registered";
   }
 
-  async profileList(
-    commandId: string,
-    _payload: ProfileListCommandPayload
-  ): Promise<void> {
+  async profileList(commandId: string, _payload: ProfileListCommandPayload): Promise<void> {
     const profiles = await this.profileProvider.listProfiles();
     this.writer.emit("profile.listed", { profiles }, { commandId });
   }
 
-  async profileGet(
-    commandId: string,
-    payload: ProfileGetCommandPayload
-  ): Promise<void> {
+  async profileGet(commandId: string, payload: ProfileGetCommandPayload): Promise<void> {
     const profile = await this.profileProvider.getProfile(payload.profileId);
     if (profile === undefined) {
       this.writer.emit(
@@ -632,8 +572,8 @@ export class RunnerHost {
           code: "PROFILE_NOT_FOUND",
           message: `Profile '${payload.profileId}' was not found.`,
           details: {
-            profileId: payload.profileId,
-          },
+            profileId: payload.profileId
+          }
         },
         { commandId }
       );
@@ -642,35 +582,77 @@ export class RunnerHost {
     this.writer.emit("profile.loaded", { profile }, { commandId });
   }
 
-  async executionProfileResolve(
-    commandId: string,
-    payload: ExecutionProfileResolveCommandPayload,
-  ): Promise<void> {
+  async executionProfileResolve(commandId: string, payload: ExecutionProfileResolveCommandPayload): Promise<void> {
     if (this.profileProvider.resolveExecutionProfile === undefined) {
-      throw new Error(
-        "execution-profile.resolve is not supported by this runner profile provider.",
-      );
+      throw new Error("execution-profile.resolve is not supported by this runner profile provider.");
     }
-    const resolution =
-      await this.profileProvider.resolveExecutionProfile(payload);
+    const resolution = await this.profileProvider.resolveExecutionProfile(payload);
     assertKestrelExecutionProfileEconomicsAdmission({
       profile: resolution.resolvedProfile,
       environmentPresetId: payload.environmentPresetId,
     });
-    this.writer.emit("execution-profile.resolved", resolution, { commandId });
+    const runtime = this.getRuntime(resolution.resolvedProfile);
+    const runtimeDescriptor = runtime.describeRuntime === undefined ? undefined : await runtime.describeRuntime();
+    this.writer.emit(
+      "execution-profile.resolved",
+      {
+        ...resolution,
+        ...(runtimeDescriptor !== undefined ? { runtimeDescriptor } : {})
+      },
+      { commandId }
+    );
+  }
+
+  async runtimeDescribe(commandId: string, payload: RuntimeDescribeCommandPayload): Promise<void> {
+    const compose = this.profileProvider.describeRuntimeProfile;
+    if (compose === undefined) {
+      throw new Error("runtime.describe is not supported by this runner profile provider.");
+    }
+    const resolution = await compose(payload);
+    const runtime = this.runtimeFactory(
+      resolution.resolvedProfile,
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {},
+      () => {}
+    );
+    try {
+      if (runtime.describeRuntime === undefined) {
+        throw new Error("The selected Runtime does not support readiness descriptions.");
+      }
+      const descriptor = await runtime.describeRuntime();
+      const result: RuntimeDescriptorResolutionV1 = {
+        version: "runtime_descriptor_resolution_v1",
+        descriptor,
+        profileFingerprint: resolution.fingerprint,
+        capabilityDigest: createHash("sha256").update(JSON.stringify(descriptor.capabilities)).digest("hex"),
+        environmentId: payload.environmentPresetId,
+        observedAt: new Date().toISOString()
+      };
+      this.writer.emit("runtime.described", result, { commandId });
+    } finally {
+      await runtime.close();
+    }
   }
 
   runStart(
     commandId: string,
-    payload: { profile?: TuiProfile | undefined; profileId?: string | undefined; turn: RunTurnInput },
-    metadata?: RunnerCommandMetadata | undefined,
+    payload: {
+      profile?: TuiProfile | undefined;
+      profileId?: string | undefined;
+      turn: RunTurnInput;
+    },
+    metadata?: RunnerCommandMetadata | undefined
   ): Promise<void> {
     if (this.closing) {
       return Promise.reject(new Error("Runner host is closing and cannot accept new executions."));
     }
-    return this.trackExecution(this.withRuntimeUsage(
-      () => this.executeRunStart(commandId, payload, metadata),
-    ));
+    return this.trackExecution(this.withRuntimeUsage(() => this.executeRunStart(commandId, payload, metadata)));
   }
 
   private async executeRunStart(
@@ -687,14 +669,30 @@ export class RunnerHost {
     const tenantId = metadata?.actor?.tenantId ?? metadata?.tenantId;
     if (profile.modelCredential) {
       if (!tenantId) {
-        throw new Error(
-          "Gateway-managed execution requires an authenticated tenant context.",
-        );
+        throw new Error("Gateway-managed execution requires an authenticated tenant context.");
       }
       if (profile.modelCredential.organizationId !== tenantId) {
-        throw new Error(
-          "Gateway-managed execution credential does not belong to the authenticated tenant.",
-        );
+        throw new Error("Gateway-managed execution credential does not belong to the authenticated tenant.");
+      }
+    }
+    for (const stage of profile.recoveryPolicy?.stages ?? []) {
+      if (stage.action !== "alternate_model") continue;
+      for (const candidate of stage.candidates) {
+        const reference = candidate.credentialReference;
+        if (reference === undefined) continue;
+        if (!tenantId) {
+          throw new Error("Gateway-managed recovery candidates require an authenticated tenant context.");
+        }
+        if (reference.organizationId !== tenantId) {
+          throw new Error(`Recovery candidate '${candidate.candidateId}' does not belong to the authenticated tenant.`);
+        }
+        const expectedRunId = profile.modelCredential?.runId ?? payload.turn.runId;
+        if (expectedRunId === undefined || reference.runId !== expectedRunId) {
+          throw new Error(`Recovery candidate '${candidate.candidateId}' does not belong to this run.`);
+        }
+        if (profile.modelCredential !== undefined && reference.environmentId !== profile.modelCredential.environmentId) {
+          throw new Error(`Recovery candidate '${candidate.candidateId}' does not belong to this environment.`);
+        }
       }
     }
     const turn: RunTurnInput = {
@@ -703,18 +701,12 @@ export class RunnerHost {
         ? {
             actor: {
               ...metadata.actor,
-              ...(metadata.actor.tenantId === undefined &&
-              metadata.tenantId !== undefined
-                ? { tenantId: metadata.tenantId }
-                : {}),
-            },
+              ...(metadata.actor.tenantId === undefined && metadata.tenantId !== undefined ? { tenantId: metadata.tenantId } : {})
+            }
           }
-        : {}),
+        : {})
     };
-    const requestedRunId =
-      typeof turn.runId === "string" && turn.runId.trim().length > 0
-        ? turn.runId.trim()
-        : undefined;
+    const requestedRunId = typeof turn.runId === "string" && turn.runId.trim().length > 0 ? turn.runId.trim() : undefined;
     const existing = this.activeRuns.get(turn.sessionId);
     if (existing !== undefined) {
       this.writer.emit(
@@ -722,13 +714,13 @@ export class RunnerHost {
         {
           sessionId: turn.sessionId,
           ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
-          eventType: turn.eventType,
+          eventType: turn.eventType
         },
         {
           commandId,
           sessionId: turn.sessionId,
           threadId: turn.sessionId,
-          ...(existing.runId !== undefined ? { runId: existing.runId } : {}),
+          ...(existing.runId !== undefined ? { runId: existing.runId } : {})
         }
       );
       return;
@@ -751,21 +743,19 @@ export class RunnerHost {
               status: "FAILED",
               sessionId: turn.sessionId,
               runId: requestedRunId ?? commandId,
-              error: failure,
+              error: failure
             }),
             error: {
               code: failure.code,
               message: failure.message,
-              ...(failure.details !== undefined
-                ? { details: failure.details }
-                : {}),
-            },
+              ...(failure.details !== undefined ? { details: failure.details } : {})
+            }
           },
           {
             commandId,
             ...(requestedRunId !== undefined ? { runId: requestedRunId } : {}),
-            sessionId: turn.sessionId,
-          },
+            sessionId: turn.sessionId
+          }
         );
         await this.appendTerminalHandoffDiagnostic({
           scope: "terminal_handoff.runner_exception",
@@ -776,10 +766,8 @@ export class RunnerHost {
             commandId,
             code: failure.code,
             message: failure.message,
-            ...(failure.details !== undefined
-              ? { details: failure.details }
-              : {}),
-          },
+            ...(failure.details !== undefined ? { details: failure.details } : {})
+          }
         });
         return;
       } finally {
@@ -794,14 +782,14 @@ export class RunnerHost {
           {
             sessionId: turn.sessionId,
             ...(concurrent.runId !== undefined ? { runId: concurrent.runId } : {}),
-            eventType: turn.eventType,
+            eventType: turn.eventType
           },
           {
             commandId,
             sessionId: turn.sessionId,
             threadId: turn.sessionId,
-            ...(concurrent.runId !== undefined ? { runId: concurrent.runId } : {}),
-          },
+            ...(concurrent.runId !== undefined ? { runId: concurrent.runId } : {})
+          }
         );
         return;
       }
@@ -815,7 +803,7 @@ export class RunnerHost {
       commandId,
       profileId: profile.id,
       abortController,
-      ...(requestedRunId !== undefined ? { runId: requestedRunId } : {}),
+      ...(requestedRunId !== undefined ? { runId: requestedRunId } : {})
     });
 
     this.writer.emit(
@@ -823,63 +811,74 @@ export class RunnerHost {
       {
         sessionId: turn.sessionId,
         ...(requestedRunId !== undefined ? { runId: requestedRunId } : {}),
+        runtimeId: profile.runtimeId ?? "kestrel",
+        ...(turn.runtimeBindingId !== undefined ? { runtimeBindingId: turn.runtimeBindingId } : {}),
+        ...(turn.participantId !== undefined ? { participantId: turn.participantId } : {}),
         eventType: turn.eventType,
         ...(turn.stepAgent !== undefined ? { stepAgent: turn.stepAgent } : {}),
-        ...(turn.modeSystemV2Enabled !== undefined
-          ? { modeSystemV2Enabled: turn.modeSystemV2Enabled }
-          : {}),
-        ...(turn.interactionMode !== undefined
-          ? { interactionMode: turn.interactionMode }
-          : {}),
-        ...(turn.actSubmode !== undefined
-          ? { actSubmode: turn.actSubmode }
-          : {}),
-        ...(turn.mcpContext !== undefined
-          ? { mcpContext: turn.mcpContext }
-          : {}),
-        ...(turn.clientCapabilities !== undefined
-          ? { clientCapabilities: turn.clientCapabilities }
-          : {}),
-        ...(turn.executionPolicy !== undefined
-          ? { executionPolicy: turn.executionPolicy }
-          : {}),
+        ...(turn.modeSystemV2Enabled !== undefined ? { modeSystemV2Enabled: turn.modeSystemV2Enabled } : {}),
+        ...(turn.interactionMode !== undefined ? { interactionMode: turn.interactionMode } : {}),
+        ...(turn.actSubmode !== undefined ? { actSubmode: turn.actSubmode } : {}),
+        ...(turn.mcpContext !== undefined ? { mcpContext: turn.mcpContext } : {}),
+        ...(turn.clientCapabilities !== undefined ? { clientCapabilities: turn.clientCapabilities } : {}),
+        ...(turn.executionPolicy !== undefined ? { executionPolicy: turn.executionPolicy } : {}),
         ...(reasoningVaultStatus !== undefined
-          ? { reasoningKeyReady: reasoningVaultStatus.ready, reasoningKeyVersion: reasoningVaultStatus.keyVersion }
-          : {}),
+          ? {
+              reasoningKeyReady: reasoningVaultStatus.ready,
+              reasoningKeyVersion: reasoningVaultStatus.keyVersion
+            }
+          : {})
       },
       {
         commandId,
         sessionId: turn.sessionId,
         threadId: turn.sessionId,
-        ...(requestedRunId !== undefined ? { runId: requestedRunId } : {}),
+        ...(requestedRunId !== undefined ? { runId: requestedRunId } : {})
       }
     );
 
     try {
       const result = await runtime.runTurn(turn, {
-        signal: abortController.signal,
+        signal: abortController.signal
       });
-      const terminalResult = normalizeFinalizedResultRunId(
-        result,
-        requestedRunId
-      );
+      if (
+        (profile.runtimeId ?? "kestrel") === "kestrel" &&
+        turn.interactionResponse !== undefined &&
+        turn.runtimeBindingId !== undefined &&
+        turn.participantId !== undefined
+      ) {
+        this.writer.emit(
+          "run.interaction.delivered",
+          {
+            version: "runtime_interaction_delivered_v1",
+            sessionId: turn.sessionId,
+            runId: requestedRunId ?? result.output.runId,
+            bindingId: turn.runtimeBindingId,
+            participantId: turn.participantId,
+            requestId: turn.interactionResponse.requestId
+          },
+          {
+            commandId,
+            sessionId: turn.sessionId,
+            threadId: turn.sessionId,
+            runId: requestedRunId ?? result.output.runId
+          }
+        );
+      }
+      const terminalResult = normalizeFinalizedResultRunId(result, requestedRunId);
       const active = this.activeRuns.get(turn.sessionId);
       if (active !== undefined && active.commandId === commandId) {
         active.runId = requestedRunId ?? terminalResult.output.runId;
       }
       const emittedRunId = requestedRunId ?? terminalResult.output.runId;
-      if (
-        requestedRunId !== undefined &&
-        terminalResult.output.runId !== requestedRunId
-      ) {
+      if (requestedRunId !== undefined && terminalResult.output.runId !== requestedRunId) {
         const error = {
           code: "RUN_ID_MISMATCH",
-          message:
-            "Runtime returned a different run ID than the accepted runner run ID.",
+          message: "Runtime returned a different run ID than the accepted runner run ID.",
           details: {
             requestedRunId,
-            outputRunId: terminalResult.output.runId,
-          },
+            outputRunId: terminalResult.output.runId
+          }
         };
         this.writer.emit(
           "run.failed",
@@ -890,15 +889,15 @@ export class RunnerHost {
               output: {
                 ...terminalResult.output,
                 status: "FAILED",
-                errors: [...terminalResult.output.errors, error],
-              },
+                errors: [...terminalResult.output.errors, error]
+              }
             },
-            error,
+            error
           },
           {
             commandId,
             runId: emittedRunId,
-            sessionId: turn.sessionId,
+            sessionId: turn.sessionId
           }
         );
         return;
@@ -913,11 +912,10 @@ export class RunnerHost {
             commandId,
             runId: emittedRunId,
             outputStatus: terminalResult.output.status,
-            finalizedPayloadPresent:
-              terminalResult.finalizedPayload !== undefined,
+            finalizedPayloadPresent: terminalResult.finalizedPayload !== undefined,
             errorCode: terminalResult.output.errors[0]?.code,
-            errorMessage: terminalResult.output.errors[0]?.message,
-          },
+            errorMessage: terminalResult.output.errors[0]?.message
+          }
         });
         this.writer.emit(
           "run.failed",
@@ -925,13 +923,13 @@ export class RunnerHost {
             result: terminalResult,
             error: {
               code: terminalResult.output.errors[0]?.code ?? "RUN_FAILED",
-              message: terminalResult.output.errors[0]?.message ?? "Run failed",
-            },
+              message: terminalResult.output.errors[0]?.message ?? "Run failed"
+            }
           },
           {
             commandId,
             runId: emittedRunId,
-            sessionId: turn.sessionId,
+            sessionId: turn.sessionId
           }
         );
         return;
@@ -946,9 +944,8 @@ export class RunnerHost {
           commandId,
           runId: emittedRunId,
           outputStatus: terminalResult.output.status,
-          finalizedPayloadPresent:
-            terminalResult.finalizedPayload !== undefined,
-        },
+          finalizedPayloadPresent: terminalResult.finalizedPayload !== undefined
+        }
       });
       this.writer.emit(
         "run.completed",
@@ -956,16 +953,12 @@ export class RunnerHost {
         {
           commandId,
           runId: emittedRunId,
-          sessionId: turn.sessionId,
+          sessionId: turn.sessionId
         }
       );
     } catch (error) {
       const active = this.activeRuns.get(turn.sessionId);
-      if (
-        abortController.signal.aborted &&
-        active?.commandId === commandId &&
-        active.cancelRequested === true
-      ) {
+      if (abortController.signal.aborted && active?.commandId === commandId && active.cancelRequested === true) {
         this.writer.emit(
           "run.cancelled",
           {
@@ -974,13 +967,13 @@ export class RunnerHost {
             result: buildNonResponsiveTerminalResult({
               status: "CANCELLED",
               sessionId: turn.sessionId,
-              runId: active.runId ?? requestedRunId ?? commandId,
-            }),
+              runId: active.runId ?? requestedRunId ?? commandId
+            })
           },
           {
             commandId,
             ...(active.runId !== undefined ? { runId: active.runId } : {}),
-            sessionId: turn.sessionId,
+            sessionId: turn.sessionId
           }
         );
         return;
@@ -993,20 +986,18 @@ export class RunnerHost {
             status: "FAILED",
             sessionId: turn.sessionId,
             runId: active?.runId ?? requestedRunId ?? commandId,
-            error: failure,
+            error: failure
           }),
           error: {
             code: failure.code,
             message: failure.message,
-            ...(failure.details !== undefined
-              ? { details: failure.details }
-              : {}),
-          },
+            ...(failure.details !== undefined ? { details: failure.details } : {})
+          }
         },
         {
           commandId,
           ...(active?.runId !== undefined ? { runId: active.runId } : {}),
-          sessionId: turn.sessionId,
+          sessionId: turn.sessionId
         }
       );
       await this.appendTerminalHandoffDiagnostic({
@@ -1018,10 +1009,8 @@ export class RunnerHost {
           commandId,
           code: failure.code,
           message: failure.message,
-          ...(failure.details !== undefined
-            ? { details: failure.details }
-            : {}),
-        },
+          ...(failure.details !== undefined ? { details: failure.details } : {})
+        }
       });
     } finally {
       this.commandBySession.delete(turn.sessionId);
@@ -1032,41 +1021,30 @@ export class RunnerHost {
 
   jobRun(commandId: string, payload: JobRunCommandPayload): Promise<void> {
     if (this.closing) {
-      return Promise.reject(
-        new Error("Runner host is closing and cannot accept new executions.")
-      );
+      return Promise.reject(new Error("Runner host is closing and cannot accept new executions."));
     }
-    return this.trackExecution(this.withRuntimeUsage(
-      () => this.executeJobRun(commandId, payload),
-    ));
+    return this.trackExecution(this.withRuntimeUsage(() => this.executeJobRun(commandId, payload)));
   }
 
-  private async executeJobRun(
-    commandId: string,
-    payload: JobRunCommandPayload
-  ): Promise<void> {
+  private async executeJobRun(commandId: string, payload: JobRunCommandPayload): Promise<void> {
     const profileInput = payload.profile ?? payload.input.profile;
     const profileIdInput = payload.profileId ?? payload.input.profileId;
     const resolvedProfile = await this.resolveProfileOrThrow(
       {
         ...(profileInput !== undefined ? { profile: profileInput } : {}),
-        ...(profileIdInput !== undefined ? { profileId: profileIdInput } : {}),
+        ...(profileIdInput !== undefined ? { profileId: profileIdInput } : {})
       },
       "job.run"
     );
     this.assertAcceptingExecutions();
     const profile: TuiProfile = {
       ...resolvedProfile,
-      ...(payload.input.storeDriver !== undefined
-        ? { storeDriver: payload.input.storeDriver }
-        : {}),
-      ...(payload.input.approvalPolicyPackId !== undefined
-        ? { approvalPolicyPackId: payload.input.approvalPolicyPackId }
-        : {}),
+      ...(payload.input.storeDriver !== undefined ? { storeDriver: payload.input.storeDriver } : {}),
+      ...(payload.input.approvalPolicyPackId !== undefined ? { approvalPolicyPackId: payload.input.approvalPolicyPackId } : {})
     };
     const turn: RunTurnInput = {
       ...payload.input.turn,
-      eventType: payload.input.turn.eventType ?? "job.run",
+      eventType: payload.input.turn.eventType ?? "job.run"
     };
     const runtime = this.getRuntime(profile);
     this.commandBySession.set(turn.sessionId, commandId);
@@ -1075,27 +1053,23 @@ export class RunnerHost {
     this.activeRuns.set(turn.sessionId, {
       commandId,
       profileId: profile.id,
-      abortController,
+      abortController
     });
 
     const defaultThreadId = turn.sessionId;
-    const initialThreadId = await this.resolveThreadIdForSession(
-      runtime,
-      turn.sessionId,
-      defaultThreadId
-    );
+    const initialThreadId = await this.resolveThreadIdForSession(runtime, turn.sessionId, defaultThreadId);
     this.threadIdBySession.set(turn.sessionId, initialThreadId);
     this.writer.emit(
       "job.started",
       {
         sessionId: turn.sessionId,
         threadId: initialThreadId,
-        profileId: profile.id,
+        profileId: profile.id
       },
       {
         commandId,
         sessionId: turn.sessionId,
-        threadId: initialThreadId,
+        threadId: initialThreadId
       }
     );
     this.writer.emit(
@@ -1104,33 +1078,29 @@ export class RunnerHost {
         sessionId: turn.sessionId,
         threadId: initialThreadId,
         stage: "accepted",
-        message: "Job accepted by runner host.",
+        message: "Job accepted by runner host."
       },
       {
         commandId,
         sessionId: turn.sessionId,
-        threadId: initialThreadId,
+        threadId: initialThreadId
       }
     );
 
     try {
       const result = await runtime.runTurn(turn, {
-        signal: abortController.signal,
+        signal: abortController.signal
       });
       const active = this.activeRuns.get(turn.sessionId);
       if (active !== undefined && active.commandId === commandId) {
         active.runId = result.output.runId;
       }
-      const threadId = await this.resolveThreadIdForSession(
-        runtime,
-        turn.sessionId,
-        defaultThreadId
-      );
+      const threadId = await this.resolveThreadIdForSession(runtime, turn.sessionId, defaultThreadId);
       this.threadIdBySession.set(turn.sessionId, threadId);
       const replay = buildJobReplayPointer({
         sessionId: turn.sessionId,
         threadId,
-        runId: result.output.runId,
+        runId: result.output.runId
       });
       const output: JobRunResultV1 = {
         version: "job_run_result_v1",
@@ -1138,11 +1108,9 @@ export class RunnerHost {
         threadId,
         runId: result.output.runId,
         status: result.output.status,
-        ...(result.output.waitFor !== undefined
-          ? { waitFor: result.output.waitFor }
-          : {}),
+        ...(result.output.waitFor !== undefined ? { waitFor: result.output.waitFor } : {}),
         replay,
-        result,
+        result
       };
 
       this.writer.emit(
@@ -1152,13 +1120,13 @@ export class RunnerHost {
           threadId,
           runId: result.output.runId,
           stage: "finalizing",
-          message: "Run terminal state reached; finalizing job output.",
+          message: "Run terminal state reached; finalizing job output."
         },
         {
           commandId,
           sessionId: turn.sessionId,
           threadId,
-          runId: result.output.runId,
+          runId: result.output.runId
         }
       );
 
@@ -1166,25 +1134,23 @@ export class RunnerHost {
         const error = {
           code: result.output.errors[0]?.code ?? "RUN_FAILED",
           message: result.output.errors[0]?.message ?? "Run failed",
-          ...(result.output.errors[0]?.details !== undefined
-            ? { details: result.output.errors[0]?.details }
-            : {}),
+          ...(result.output.errors[0]?.details !== undefined ? { details: result.output.errors[0]?.details } : {})
         };
         this.writer.emit(
           "job.failed",
           {
             output: {
               ...output,
-              error,
+              error
             },
             replay,
-            error,
+            error
           },
           {
             commandId,
             sessionId: turn.sessionId,
             threadId,
-            runId: result.output.runId,
+            runId: result.output.runId
           }
         );
         return;
@@ -1194,35 +1160,31 @@ export class RunnerHost {
         "job.completed",
         {
           output,
-          replay,
+          replay
         },
         {
           commandId,
           sessionId: turn.sessionId,
           threadId,
-          runId: result.output.runId,
+          runId: result.output.runId
         }
       );
     } catch (error) {
       const active = this.activeRuns.get(turn.sessionId);
       const runId = active?.runId ?? `job-failed-${commandId}`;
-      const threadId = await this.resolveThreadIdForSession(
-        runtime,
-        turn.sessionId,
-        defaultThreadId
-      );
+      const threadId = await this.resolveThreadIdForSession(runtime, turn.sessionId, defaultThreadId);
       this.threadIdBySession.set(turn.sessionId, threadId);
       const replay = buildJobReplayPointer({
         sessionId: turn.sessionId,
         threadId,
-        runId,
+        runId
       });
       const failure = this.normalizeTerminalError(error);
       const result = buildNonResponsiveTerminalResult({
         status: "FAILED",
         sessionId: turn.sessionId,
         runId,
-        error: failure,
+        error: failure
       });
       this.writer.emit(
         "job.failed",
@@ -1235,16 +1197,16 @@ export class RunnerHost {
             status: "FAILED",
             replay,
             result,
-            error: failure,
+            error: failure
           },
           replay,
-          error: failure,
+          error: failure
         },
         {
           commandId,
           sessionId: turn.sessionId,
           threadId,
-          runId,
+          runId
         }
       );
     } finally {
@@ -1266,54 +1228,39 @@ export class RunnerHost {
         error,
         descriptor: {
           databaseUrl,
-          databaseUrlSource: readDatabaseUrlSource(),
+          databaseUrlSource: readDatabaseUrlSource()
         },
-        env: process.env,
+        env: process.env
       });
       if (databaseFailure !== undefined) {
         return {
           code: databaseFailure.code,
           message: databaseFailure.message,
-          ...(databaseFailure.details !== undefined
-            ? { details: databaseFailure.details }
-            : {}),
+          ...(databaseFailure.details !== undefined ? { details: databaseFailure.details } : {})
         };
       }
     }
 
-    const code =
-      typeof (error as { code?: unknown })?.code === "string"
-        ? String((error as { code?: string }).code)
-        : "RUNNER_RUNTIME_ERROR";
+    const code = typeof (error as { code?: unknown })?.code === "string" ? String((error as { code?: string }).code) : "RUNNER_RUNTIME_ERROR";
     const message = error instanceof Error ? error.message : String(error);
     const details =
-      typeof (error as { details?: unknown })?.details === "object" &&
-      (error as { details?: unknown }).details !== null
+      typeof (error as { details?: unknown })?.details === "object" && (error as { details?: unknown }).details !== null
         ? (error as { details: Record<string, unknown> }).details
         : undefined;
     return {
       code,
       message,
-      ...(details !== undefined ? { details } : {}),
+      ...(details !== undefined ? { details } : {})
     };
   }
 
-  async runCancel(
-    commandId: string,
-    payload: RunCancelCommandPayload,
-    metadata?: RunnerCommandMetadata | undefined
-  ): Promise<void> {
+  async runCancel(commandId: string, payload: RunCancelCommandPayload, metadata?: RunnerCommandMetadata | undefined): Promise<void> {
     const active = this.activeRuns.get(payload.sessionId);
     let cancelledRunId: string | undefined;
     let cancelled = false;
     if (active !== undefined) {
-      const matchesRunId =
-        payload.runId === undefined ||
-        active.runId === undefined ||
-        payload.runId === active.runId;
-      const matchesCommandId =
-        payload.commandId === undefined ||
-        payload.commandId === active.commandId;
+      const matchesRunId = payload.runId === undefined || active.runId === undefined || payload.runId === active.runId;
+      const matchesCommandId = payload.commandId === undefined || payload.commandId === active.commandId;
       if (matchesRunId && matchesCommandId) {
         if (active.runId === undefined && payload.runId !== undefined) {
           active.runId = payload.runId;
@@ -1324,10 +1271,7 @@ export class RunnerHost {
         cancelled = true;
       }
     } else {
-      cancelledRunId = await this.cancelPersistedActiveRun(
-        payload.sessionId,
-        metadata
-      );
+      cancelledRunId = await this.cancelPersistedActiveRun(payload.sessionId, metadata);
       cancelled = cancelledRunId !== undefined;
     }
 
@@ -1340,21 +1284,15 @@ export class RunnerHost {
           details: {
             sessionId: payload.sessionId,
             ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
-            ...(payload.commandId !== undefined
-              ? { commandId: payload.commandId }
-              : {}),
-            ...(active?.runId !== undefined
-              ? { activeRunId: active.runId }
-              : {}),
-            ...(active?.commandId !== undefined
-              ? { activeCommandId: active.commandId }
-              : {}),
-          },
+            ...(payload.commandId !== undefined ? { commandId: payload.commandId } : {}),
+            ...(active?.runId !== undefined ? { activeRunId: active.runId } : {}),
+            ...(active?.commandId !== undefined ? { activeCommandId: active.commandId } : {})
+          }
         },
         {
           commandId,
           sessionId: payload.sessionId,
-          ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+          ...(payload.runId !== undefined ? { runId: payload.runId } : {})
         }
       );
       return;
@@ -1368,22 +1306,18 @@ export class RunnerHost {
         result: buildNonResponsiveTerminalResult({
           status: "CANCELLED",
           sessionId: payload.sessionId,
-          runId: cancelledRunId ?? payload.runId ?? active?.runId ?? commandId,
-        }),
+          runId: cancelledRunId ?? payload.runId ?? active?.runId ?? commandId
+        })
       },
       {
         commandId,
         sessionId: payload.sessionId,
-        ...(cancelledRunId !== undefined ? { runId: cancelledRunId } : {}),
+        ...(cancelledRunId !== undefined ? { runId: cancelledRunId } : {})
       }
     );
   }
 
-  async describeSession(
-    commandId: string,
-    payload: SessionDescribeCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async describeSession(commandId: string, payload: SessionDescribeCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.describeSession === "function") {
         const described = await runtime.describeSession(payload.sessionId);
@@ -1391,9 +1325,7 @@ export class RunnerHost {
           this.writer.emit("session.described", described, {
             commandId,
             sessionId: described.sessionId,
-            ...(described.threadId !== undefined
-              ? { threadId: described.threadId }
-              : {}),
+            ...(described.threadId !== undefined ? { threadId: described.threadId } : {})
           });
           return;
         }
@@ -1403,20 +1335,16 @@ export class RunnerHost {
       "session.described",
       {
         sessionId: payload.sessionId,
-        version: 0,
+        version: 0
       },
       {
         commandId,
-        sessionId: payload.sessionId,
+        sessionId: payload.sessionId
       }
     );
   }
 
-  async sessionState(
-    commandId: string,
-    payload: SessionStateCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async sessionState(commandId: string, payload: SessionStateCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getSessionState === "function") {
         const state = await runtime.getSessionState(payload.sessionId);
@@ -1424,9 +1352,7 @@ export class RunnerHost {
           this.writer.emit("session.state", state, {
             commandId,
             sessionId: state.session.sessionId,
-            ...(state.session.threadId !== undefined
-              ? { threadId: state.session.threadId }
-              : {}),
+            ...(state.session.threadId !== undefined ? { threadId: state.session.threadId } : {})
           });
           return;
         }
@@ -1438,23 +1364,19 @@ export class RunnerHost {
       {
         session: {
           sessionId: payload.sessionId,
-          version: 0,
+          version: 0
         },
         version: 0,
-        graph: { version: 1, rootTaskIds: [], tasks: {} },
+        graph: { version: 1, rootTaskIds: [], tasks: {} }
       },
       {
         commandId,
-        sessionId: payload.sessionId,
+        sessionId: payload.sessionId
       }
     );
   }
 
-  async operatorInbox(
-    commandId: string,
-    payload: OperatorInboxCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async operatorInbox(commandId: string, payload: OperatorInboxCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.listOperatorInbox === "function") {
         const inbox = await runtime.listOperatorInbox(payload);
@@ -1463,12 +1385,8 @@ export class RunnerHost {
           { inbox },
           {
             commandId,
-            ...(payload.sessionId !== undefined
-              ? { sessionId: payload.sessionId }
-              : {}),
-            ...(payload.threadId !== undefined
-              ? { threadId: payload.threadId }
-              : {}),
+            ...(payload.sessionId !== undefined ? { sessionId: payload.sessionId } : {}),
+            ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {})
           }
         );
         return;
@@ -1478,17 +1396,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Operator inbox is unavailable.",
+        message: "Operator inbox is unavailable."
       },
       { commandId }
     );
   }
 
-  async operatorThread(
-    commandId: string,
-    payload: OperatorThreadCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async operatorThread(commandId: string, payload: OperatorThreadCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getOperatorThreadView === "function") {
         const view = await runtime.getOperatorThreadView(payload.threadId);
@@ -1498,7 +1412,7 @@ export class RunnerHost {
             { view },
             {
               commandId,
-              threadId: payload.threadId,
+              threadId: payload.threadId
             }
           );
           return;
@@ -1509,49 +1423,53 @@ export class RunnerHost {
       "runner.error",
       {
         code: "OPERATOR_THREAD_NOT_FOUND",
-        message: `Thread '${payload.threadId}' was not found.`,
+        message: `Thread '${payload.threadId}' was not found.`
       },
       { commandId }
     );
   }
 
-  async conversationMessagesList(
-    commandId: string,
-    payload: ConversationMessagesListCommandPayload,
-    metadata?: RunnerCommandMetadata,
-  ): Promise<void> {
+  async conversationMessagesList(commandId: string, payload: ConversationMessagesListCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     const limit = Math.max(1, Math.min(500, Math.trunc(payload.limit ?? 100)));
-    const completedAfter = payload.afterCursor === undefined
-      ? undefined
-      : parseConversationMessageCursor(payload.afterCursor);
+    const completedAfter = payload.afterCursor === undefined ? undefined : parseConversationMessageCursor(payload.afterCursor);
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.listCompletedConversationMessages !== "function") continue;
       const page = await runtime.listCompletedConversationMessages({
         threadId: payload.threadId,
         ...(completedAfter !== undefined ? { completedAfter } : {}),
-        limit: limit + 1,
+        limit: limit + 1
       });
       const hasMore = payload.afterCursor !== undefined && page.length > limit;
       const messages = page.slice(0, limit);
       if (payload.afterCursor === undefined) messages.reverse();
       const cursorMessage = messages.at(-1);
-      this.writer.emit("conversation.messages", {
-        threadId: payload.threadId,
-        messages,
-        hasMore,
-        ...(cursorMessage !== undefined ? {
-          nextCursor: encodeConversationMessageCursor({
-            completedAt: cursorMessage.completedAt,
-            turnId: cursorMessage.turnId,
-          }),
-        } : {}),
-      }, { commandId, threadId: payload.threadId });
+      this.writer.emit(
+        "conversation.messages",
+        {
+          threadId: payload.threadId,
+          messages,
+          hasMore,
+          ...(cursorMessage !== undefined
+            ? {
+                nextCursor: encodeConversationMessageCursor({
+                  completedAt: cursorMessage.completedAt,
+                  turnId: cursorMessage.turnId
+                })
+              }
+            : {})
+        },
+        { commandId, threadId: payload.threadId }
+      );
       return;
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Conversation message recovery is unavailable.",
-    }, { commandId, threadId: payload.threadId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Conversation message recovery is unavailable."
+      },
+      { commandId, threadId: payload.threadId }
+    );
   }
 
   async conversationMessageSubmit(
@@ -1620,9 +1538,7 @@ export class RunnerHost {
           { view },
           {
             commandId,
-            ...(payload.sessionId !== undefined
-              ? { sessionId: payload.sessionId }
-              : {}),
+            ...(payload.sessionId !== undefined ? { sessionId: payload.sessionId } : {})
           }
         );
         return;
@@ -1632,17 +1548,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Operator run index is unavailable.",
+        message: "Operator run index is unavailable."
       },
       { commandId }
     );
   }
 
-  async operatorRun(
-    commandId: string,
-    payload: OperatorRunCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async operatorRun(commandId: string, payload: OperatorRunCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getOperatorRunView === "function") {
         const view = await runtime.getOperatorRunView(payload.runId);
@@ -1654,9 +1566,7 @@ export class RunnerHost {
               commandId,
               runId: payload.runId,
               sessionId: view.run.sessionId,
-              ...(view.threadId !== undefined
-                ? { threadId: view.threadId }
-                : {}),
+              ...(view.threadId !== undefined ? { threadId: view.threadId } : {})
             }
           );
           return;
@@ -1668,70 +1578,85 @@ export class RunnerHost {
       {
         code: "OPERATOR_RUN_NOT_FOUND",
         message: `Run '${payload.runId}' was not found.`,
-        details: { runId: payload.runId },
+        details: { runId: payload.runId }
       },
       { commandId, runId: payload.runId }
     );
   }
 
-  async operatorRunReasoning(
-    commandId: string,
-    payload: OperatorRunReasoningCommandPayload,
-    metadata?: RunnerCommandMetadata,
-  ): Promise<void> {
+  async operatorRunReasoning(commandId: string, payload: OperatorRunReasoningCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     if (metadata?.actor?.orgRole !== "org_admin") {
-      this.writer.emit("runner.error", {
-        code: "RUNNER_FORBIDDEN",
-        message: "Retained provider reasoning is restricted to organization administrators.",
-      }, { commandId, runId: payload.runId });
+      this.writer.emit(
+        "runner.error",
+        {
+          code: "RUNNER_FORBIDDEN",
+          message: "Retained provider reasoning is restricted to organization administrators."
+        },
+        { commandId, runId: payload.runId }
+      );
       return;
     }
     for (const runtime of this.selectRuntimes(metadata)) {
       const action = payload.action ?? "read";
       if (action === "read" && typeof runtime.getRetainedProviderReasoning !== "function") continue;
       if (action === "delete" && typeof runtime.deleteRetainedProviderReasoning !== "function") continue;
-      const deletedCount = action === "delete"
-        ? await runtime.deleteRetainedProviderReasoning!({ runId: payload.runId, sessionId: payload.sessionId, actorRole: metadata.actor.orgRole, actorId: metadata.actor.actorId })
-        : undefined;
-      const entries = action === "read"
-        ? await runtime.getRetainedProviderReasoning!({ runId: payload.runId, sessionId: payload.sessionId, actorRole: metadata.actor.orgRole, actorId: metadata.actor.actorId })
-        : [];
-      this.writer.emit("operator.run.reasoning", {
-        runId: payload.runId,
-        entries,
-        action,
-        ...(deletedCount !== undefined ? { deletedCount } : {}),
-        retention: "provider_visible",
-        access: "org_admin",
-      }, { commandId, runId: payload.runId });
+      const deletedCount =
+        action === "delete"
+          ? await runtime.deleteRetainedProviderReasoning!({
+              runId: payload.runId,
+              sessionId: payload.sessionId,
+              actorRole: metadata.actor.orgRole,
+              actorId: metadata.actor.actorId
+            })
+          : undefined;
+      const entries =
+        action === "read"
+          ? await runtime.getRetainedProviderReasoning!({
+              runId: payload.runId,
+              sessionId: payload.sessionId,
+              actorRole: metadata.actor.orgRole,
+              actorId: metadata.actor.actorId
+            })
+          : [];
+      this.writer.emit(
+        "operator.run.reasoning",
+        {
+          runId: payload.runId,
+          entries,
+          action,
+          ...(deletedCount !== undefined ? { deletedCount } : {}),
+          retention: "provider_visible",
+          access: "org_admin"
+        },
+        { commandId, runId: payload.runId }
+      );
       return;
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Retained provider reasoning is unavailable.",
-    }, { commandId, runId: payload.runId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Retained provider reasoning is unavailable."
+      },
+      { commandId, runId: payload.runId }
+    );
   }
 
-  async operatorControl(
-    commandId: string,
-    payload: OperatorControlCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async operatorControl(commandId: string, payload: OperatorControlCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (payload.completionMode === "accepted") {
         if (
-          (
-            payload.action !== "approve" &&
-            payload.action !== "reject" &&
-            payload.action !== "reply" &&
-            payload.action !== "retry"
-          )
-          || typeof runtime.performAcceptedOperatorAction !== "function"
+          (payload.action !== "approve" && payload.action !== "reject" && payload.action !== "reply" && payload.action !== "retry") ||
+          typeof runtime.performAcceptedOperatorAction !== "function"
         ) {
-          this.writer.emit("runner.error", {
-            code: "RUNNER_RUNTIME_ERROR",
-            message: "Accepted operator control is available only for approval, reply, and retry actions.",
-          }, { commandId, threadId: payload.threadId });
+          this.writer.emit(
+            "runner.error",
+            {
+              code: "RUNNER_RUNTIME_ERROR",
+              message: "Accepted operator control is available only for approval, reply, and retry actions."
+            },
+            { commandId, threadId: payload.threadId }
+          );
           return;
         }
         const actor = metadata?.actor;
@@ -1740,7 +1665,7 @@ export class RunnerHost {
           ...payload,
           action: payload.action,
           ...(actor !== undefined ? { actor } : {}),
-          signal: abortController.signal,
+          signal: abortController.signal
         });
         const sessionId = execution.accepted.sessionId;
         if (sessionId !== undefined) {
@@ -1751,27 +1676,31 @@ export class RunnerHost {
             commandId,
             profileId: metadata?.profile?.id ?? "operator-control",
             abortController,
-            ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {}),
+            ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {})
           });
         }
         this.writer.emit("operator.controlled", execution.accepted, {
           commandId,
           ...(sessionId !== undefined ? { sessionId } : {}),
           ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {}),
-          threadId: payload.threadId,
+          threadId: payload.threadId
         });
         if (execution.accepted.disposition === "accepted" && sessionId !== undefined) {
-          this.writer.emit("run.started", {
-            sessionId,
-            eventType: "user.reply",
-            ...(payload.interactionMode !== undefined ? { interactionMode: payload.interactionMode } : {}),
-            ...(payload.actSubmode !== undefined ? { actSubmode: payload.actSubmode } : {}),
-          }, {
-            commandId,
-            sessionId,
-            ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {}),
-            threadId: payload.threadId,
-          });
+          this.writer.emit(
+            "run.started",
+            {
+              sessionId,
+              eventType: "user.reply",
+              ...(payload.interactionMode !== undefined ? { interactionMode: payload.interactionMode } : {}),
+              ...(payload.actSubmode !== undefined ? { actSubmode: payload.actSubmode } : {})
+            },
+            {
+              commandId,
+              sessionId,
+              ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {}),
+              threadId: payload.threadId
+            }
+          );
         }
         const completion = execution.completion
           .then((result) => {
@@ -1779,32 +1708,54 @@ export class RunnerHost {
             const runId = result.output.runId;
             const active = this.activeRuns.get(completedSessionId);
             if (active?.commandId === commandId && active.cancelRequested === true) {
-              this.writer.emit("run.cancelled", {
-                sessionId: completedSessionId,
-                runId,
-                result: buildNonResponsiveTerminalResult({
-                  status: "CANCELLED",
+              this.writer.emit(
+                "run.cancelled",
+                {
                   sessionId: completedSessionId,
                   runId,
-                }),
-              }, { commandId, sessionId: completedSessionId, runId, threadId: payload.threadId });
+                  result: buildNonResponsiveTerminalResult({
+                    status: "CANCELLED",
+                    sessionId: completedSessionId,
+                    runId
+                  })
+                },
+                {
+                  commandId,
+                  sessionId: completedSessionId,
+                  runId,
+                  threadId: payload.threadId
+                }
+              );
               return;
             }
             if (result.output.status === "FAILED") {
-              this.writer.emit("run.failed", {
-                result,
-                error: {
-                  code: result.output.errors[0]?.code ?? "RUN_FAILED",
-                  message: result.output.errors[0]?.message ?? "Run failed",
+              this.writer.emit(
+                "run.failed",
+                {
+                  result,
+                  error: {
+                    code: result.output.errors[0]?.code ?? "RUN_FAILED",
+                    message: result.output.errors[0]?.message ?? "Run failed"
+                  }
                 },
-              }, { commandId, sessionId: completedSessionId, runId, threadId: payload.threadId });
+                {
+                  commandId,
+                  sessionId: completedSessionId,
+                  runId,
+                  threadId: payload.threadId
+                }
+              );
             } else {
-              this.writer.emit("run.completed", { result }, {
-                commandId,
-                sessionId: completedSessionId,
-                runId,
-                threadId: payload.threadId,
-              });
+              this.writer.emit(
+                "run.completed",
+                { result },
+                {
+                  commandId,
+                  sessionId: completedSessionId,
+                  runId,
+                  threadId: payload.threadId
+                }
+              );
             }
           })
           .catch((error: unknown) => {
@@ -1813,27 +1764,44 @@ export class RunnerHost {
             const active = completedSessionId !== undefined ? this.activeRuns.get(completedSessionId) : undefined;
             if (completedSessionId !== undefined && active?.commandId === commandId && active.cancelRequested === true) {
               const runId = active.runId ?? execution.accepted.runId ?? commandId;
-              this.writer.emit("run.cancelled", {
-                sessionId: completedSessionId,
-                runId,
-                result: buildNonResponsiveTerminalResult({ status: "CANCELLED", sessionId: completedSessionId, runId }),
-              }, { commandId, sessionId: completedSessionId, runId, threadId: payload.threadId });
+              this.writer.emit(
+                "run.cancelled",
+                {
+                  sessionId: completedSessionId,
+                  runId,
+                  result: buildNonResponsiveTerminalResult({
+                    status: "CANCELLED",
+                    sessionId: completedSessionId,
+                    runId
+                  })
+                },
+                {
+                  commandId,
+                  sessionId: completedSessionId,
+                  runId,
+                  threadId: payload.threadId
+                }
+              );
               return;
             }
-            this.writer.emit("run.failed", {
-              result: buildNonResponsiveTerminalResult({
-                status: "FAILED",
-                sessionId: completedSessionId ?? payload.threadId,
-                runId: execution.accepted.runId ?? commandId,
-                error: failure,
-              }),
-              error: failure,
-            }, {
-              commandId,
-              ...(completedSessionId !== undefined ? { sessionId: completedSessionId } : {}),
-              ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {}),
-              threadId: payload.threadId,
-            });
+            this.writer.emit(
+              "run.failed",
+              {
+                result: buildNonResponsiveTerminalResult({
+                  status: "FAILED",
+                  sessionId: completedSessionId ?? payload.threadId,
+                  runId: execution.accepted.runId ?? commandId,
+                  error: failure
+                }),
+                error: failure
+              },
+              {
+                commandId,
+                ...(completedSessionId !== undefined ? { sessionId: completedSessionId } : {}),
+                ...(execution.accepted.runId !== undefined ? { runId: execution.accepted.runId } : {}),
+                threadId: payload.threadId
+              }
+            );
           })
           .finally(() => {
             if (sessionId !== undefined && this.commandBySession.get(sessionId) === commandId) {
@@ -1850,15 +1818,17 @@ export class RunnerHost {
         const actor = metadata?.actor;
         const result = await runtime.performOperatorAction({
           ...payload,
-          ...(actor !== undefined ? { actor } : {}),
+          ...(actor !== undefined ? { actor } : {})
         });
-        this.writer.emit("operator.controlled", { ...result, disposition: "completed" }, {
-          commandId,
-          ...(result.sessionId !== undefined
-            ? { sessionId: result.sessionId }
-            : {}),
-          threadId: result.threadId,
-        });
+        this.writer.emit(
+          "operator.controlled",
+          { ...result, disposition: "completed" },
+          {
+            commandId,
+            ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
+            threadId: result.threadId
+          }
+        );
         return;
       }
     }
@@ -1866,26 +1836,20 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Operator control is unavailable.",
+        message: "Operator control is unavailable."
       },
       { commandId }
     );
   }
 
-  async taskGraphGet(
-    commandId: string,
-    payload: TaskGraphGetCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async taskGraphGet(commandId: string, payload: TaskGraphGetCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getTaskGraph === "function") {
         const snapshot = await runtime.getTaskGraph(payload);
         this.writer.emit("task.graph", snapshot, {
           commandId,
           sessionId: snapshot.sessionId,
-          ...(payload.threadId !== undefined
-            ? { threadId: payload.threadId }
-            : {}),
+          ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {})
         });
         return;
       }
@@ -1894,17 +1858,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Task graph is unavailable.",
+        message: "Task graph is unavailable."
       },
       { commandId }
     );
   }
 
-  async taskGraphUpdate(
-    commandId: string,
-    payload: TaskGraphUpdateCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async taskGraphUpdate(commandId: string, payload: TaskGraphUpdateCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.updateTaskGraph === "function") {
         try {
@@ -1912,9 +1872,7 @@ export class RunnerHost {
           this.writer.emit("task.graph", snapshot, {
             commandId,
             sessionId: snapshot.sessionId,
-            ...(payload.threadId !== undefined
-              ? { threadId: payload.threadId }
-              : {}),
+            ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {})
           });
           return;
         } catch (error) {
@@ -1926,17 +1884,13 @@ export class RunnerHost {
                 message: error.message,
                 details: {
                   sessionId: payload.sessionId,
-                  ...(payload.expectedVersion !== undefined
-                    ? { expectedVersion: payload.expectedVersion }
-                    : {}),
-                },
+                  ...(payload.expectedVersion !== undefined ? { expectedVersion: payload.expectedVersion } : {})
+                }
               },
               {
                 commandId,
                 sessionId: payload.sessionId,
-                ...(payload.threadId !== undefined
-                  ? { threadId: payload.threadId }
-                  : {}),
+                ...(payload.threadId !== undefined ? { threadId: payload.threadId } : {})
               }
             );
             return;
@@ -1949,23 +1903,19 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Task graph is unavailable.",
+        message: "Task graph is unavailable."
       },
       { commandId }
     );
   }
 
-  async projectSnapshotGet(
-    commandId: string,
-    payload: ProjectSnapshotGetCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async projectSnapshotGet(commandId: string, payload: ProjectSnapshotGetCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getProjectSnapshot === "function") {
         const snapshot = await runtime.getProjectSnapshot(payload);
         this.writer.emit("project.snapshot", snapshot, {
           commandId,
-          sessionId: snapshot.sessionId,
+          sessionId: snapshot.sessionId
         });
         return;
       }
@@ -1974,25 +1924,17 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Project snapshot is unavailable.",
+        message: "Project snapshot is unavailable."
       },
       { commandId }
     );
   }
 
-  async missionControlProjectGet(
-    commandId: string,
-    payload: MissionControlProjectGetCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async missionControlProjectGet(commandId: string, payload: MissionControlProjectGetCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getMissionControlProject === "function") {
         const project = await runtime.getMissionControlProject(payload);
-        this.writer.emit(
-          "mission_control.project",
-          { projectId: project.projectId, project: { ...project } },
-          { commandId }
-        );
+        this.writer.emit("mission_control.project", { projectId: project.projectId, project: { ...project } }, { commandId });
         return;
       }
     }
@@ -2000,25 +1942,17 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Mission Control project authority is unavailable.",
+        message: "Mission Control project authority is unavailable."
       },
       { commandId }
     );
   }
 
-  async missionControlActionExecute(
-    commandId: string,
-    payload: MissionControlActionExecuteCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async missionControlActionExecute(commandId: string, payload: MissionControlActionExecuteCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.executeMissionControlAction === "function") {
         const project = await runtime.executeMissionControlAction(payload);
-        this.writer.emit(
-          "mission_control.project",
-          { projectId: project.projectId, project: { ...project } },
-          { commandId }
-        );
+        this.writer.emit("mission_control.project", { projectId: project.projectId, project: { ...project } }, { commandId });
         return;
       }
     }
@@ -2026,17 +1960,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Mission Control command authority is unavailable.",
+        message: "Mission Control command authority is unavailable."
       },
       { commandId }
     );
   }
 
-  async workspaceCheckpointCapture(
-    commandId: string,
-    payload: WorkspaceCheckpointCaptureCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async workspaceCheckpointCapture(commandId: string, payload: WorkspaceCheckpointCaptureCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.captureWorkspaceCheckpoint === "function") {
         const response = await runtime.captureWorkspaceCheckpoint(payload);
@@ -2045,7 +1975,7 @@ export class RunnerHost {
           {
             sessionId: response.sessionId,
             operation: "capture",
-            checkpoint: response.checkpoint,
+            checkpoint: response.checkpoint
           },
           { commandId, sessionId: response.sessionId }
         );
@@ -2056,17 +1986,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Workspace checkpoints are unavailable.",
+        message: "Workspace checkpoints are unavailable."
       },
       { commandId }
     );
   }
 
-  async workspaceCheckpointList(
-    commandId: string,
-    payload: WorkspaceCheckpointListCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async workspaceCheckpointList(commandId: string, payload: WorkspaceCheckpointListCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.listWorkspaceCheckpoints === "function") {
         const response = await runtime.listWorkspaceCheckpoints(payload);
@@ -2075,7 +2001,7 @@ export class RunnerHost {
           {
             sessionId: response.sessionId,
             operation: "list",
-            checkpoints: response.checkpoints,
+            checkpoints: response.checkpoints
           },
           { commandId, sessionId: response.sessionId }
         );
@@ -2086,17 +2012,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Workspace checkpoints are unavailable.",
+        message: "Workspace checkpoints are unavailable."
       },
       { commandId }
     );
   }
 
-  async workspaceCheckpointInspect(
-    commandId: string,
-    payload: WorkspaceCheckpointInspectCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async workspaceCheckpointInspect(commandId: string, payload: WorkspaceCheckpointInspectCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.inspectWorkspaceCheckpoint === "function") {
         const response = await runtime.inspectWorkspaceCheckpoint(payload);
@@ -2105,7 +2027,7 @@ export class RunnerHost {
           {
             sessionId: response.sessionId,
             operation: "inspect",
-            checkpoint: response.checkpoint,
+            checkpoint: response.checkpoint
           },
           { commandId, sessionId: response.sessionId }
         );
@@ -2116,17 +2038,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Workspace checkpoints are unavailable.",
+        message: "Workspace checkpoints are unavailable."
       },
       { commandId }
     );
   }
 
-  async workspaceCheckpointDiff(
-    commandId: string,
-    payload: WorkspaceCheckpointDiffCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async workspaceCheckpointDiff(commandId: string, payload: WorkspaceCheckpointDiffCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.diffWorkspaceCheckpoints === "function") {
         const response = await runtime.diffWorkspaceCheckpoints(payload);
@@ -2135,7 +2053,7 @@ export class RunnerHost {
           {
             sessionId: response.sessionId,
             operation: "diff",
-            diff: response.diff,
+            diff: response.diff
           },
           { commandId, sessionId: response.sessionId }
         );
@@ -2146,17 +2064,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Workspace checkpoints are unavailable.",
+        message: "Workspace checkpoints are unavailable."
       },
       { commandId }
     );
   }
 
-  async workspaceCheckpointRestore(
-    commandId: string,
-    payload: WorkspaceCheckpointRestoreCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async workspaceCheckpointRestore(commandId: string, payload: WorkspaceCheckpointRestoreCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.restoreWorkspaceCheckpoint === "function") {
         const response = await runtime.restoreWorkspaceCheckpoint(payload);
@@ -2165,7 +2079,7 @@ export class RunnerHost {
           {
             sessionId: response.sessionId,
             operation: "restore",
-            restore: response.restore,
+            restore: response.restore
           },
           { commandId, sessionId: response.sessionId }
         );
@@ -2176,17 +2090,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Workspace checkpoints are unavailable.",
+        message: "Workspace checkpoints are unavailable."
       },
       { commandId }
     );
   }
 
-  async workspaceCheckpointCleanup(
-    commandId: string,
-    payload: WorkspaceCheckpointCleanupCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async workspaceCheckpointCleanup(commandId: string, payload: WorkspaceCheckpointCleanupCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.cleanupWorkspaceCheckpoints === "function") {
         const response = await runtime.cleanupWorkspaceCheckpoints(payload);
@@ -2198,7 +2108,7 @@ export class RunnerHost {
             cleanup: response.cleanup,
             deletedCheckpoints: response.deletedCheckpoints,
             remainingCheckpointCount: response.remainingCheckpointCount,
-            remainingBytes: response.remainingBytes,
+            remainingBytes: response.remainingBytes
           },
           { commandId, sessionId: response.sessionId }
         );
@@ -2209,17 +2119,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Workspace checkpoints are unavailable.",
+        message: "Workspace checkpoints are unavailable."
       },
       { commandId }
     );
   }
 
-  async workspacePromotionUndoLatest(
-    commandId: string,
-    payload: WorkspacePromotionUndoLatestCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async workspacePromotionUndoLatest(commandId: string, payload: WorkspacePromotionUndoLatestCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.restoreLatestWorkspacePromotion === "function") {
         const response = await runtime.restoreLatestWorkspacePromotion(payload);
@@ -2228,7 +2134,7 @@ export class RunnerHost {
           {
             sessionId: response.sessionId,
             operation: "promotion.undo_latest",
-            restore: response.restore,
+            restore: response.restore
           },
           { commandId, sessionId: response.sessionId }
         );
@@ -2239,17 +2145,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Workspace promotion undo is unavailable.",
+        message: "Workspace promotion undo is unavailable."
       },
       { commandId }
     );
   }
 
-  async workspacePromotionList(
-    commandId: string,
-    payload: WorkspacePromotionListCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async workspacePromotionList(commandId: string, payload: WorkspacePromotionListCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.listWorkspacePromotions === "function") {
         const response = await runtime.listWorkspacePromotions(payload);
@@ -2258,7 +2160,7 @@ export class RunnerHost {
           {
             sessionId: response.sessionId,
             operation: "promotion.list",
-            promotions: response.promotions,
+            promotions: response.promotions
           },
           { commandId, sessionId: response.sessionId }
         );
@@ -2269,17 +2171,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Workspace promotion listing is unavailable.",
+        message: "Workspace promotion listing is unavailable."
       },
       { commandId }
     );
   }
 
-  async workspacePromotionPreview(
-    commandId: string,
-    payload: WorkspacePromotionPreviewCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async workspacePromotionPreview(commandId: string, payload: WorkspacePromotionPreviewCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.previewWorkspacePromotion === "function") {
         const response = await runtime.previewWorkspacePromotion(payload);
@@ -2288,7 +2186,7 @@ export class RunnerHost {
           {
             sessionId: response.sessionId,
             operation: "promotion.preview",
-            preview: response.preview,
+            preview: response.preview
           },
           { commandId, sessionId: response.sessionId }
         );
@@ -2299,31 +2197,25 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Workspace promotion preview is unavailable.",
+        message: "Workspace promotion preview is unavailable."
       },
       { commandId }
     );
   }
 
-  async workspacePromotionApply(
-    commandId: string,
-    payload: WorkspacePromotionApplyCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async workspacePromotionApply(commandId: string, payload: WorkspacePromotionApplyCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.applyWorkspacePromotion === "function") {
         const response = await runtime.applyWorkspacePromotion({
           ...payload,
-          ...(metadata?.actor?.actorId
-            ? { appliedBy: metadata.actor.actorId }
-            : {}),
+          ...(metadata?.actor?.actorId ? { appliedBy: metadata.actor.actorId } : {})
         });
         this.writer.emit(
           "workspace.checkpoint",
           {
             sessionId: response.sessionId,
             operation: "promotion.apply",
-            promotion: response.promotion,
+            promotion: response.promotion
           },
           { commandId, sessionId: response.sessionId }
         );
@@ -2334,17 +2226,13 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Workspace promotion acceptance is unavailable.",
+        message: "Workspace promotion acceptance is unavailable."
       },
       { commandId }
     );
   }
 
-  async workspaceManagedInspect(
-    commandId: string,
-    payload: WorkspaceManagedInspectCommandPayload,
-    metadata?: RunnerCommandMetadata,
-  ): Promise<void> {
+  async workspaceManagedInspect(commandId: string, payload: WorkspaceManagedInspectCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.inspectManagedWorktree === "function") {
         const response = await runtime.inspectManagedWorktree(payload);
@@ -2353,29 +2241,29 @@ export class RunnerHost {
           {
             sessionId: response.sessionId,
             operation: "managed.inspect",
-            managedInspection: response.inspection,
+            managedInspection: response.inspection
           },
-          { commandId, sessionId: response.sessionId },
+          { commandId, sessionId: response.sessionId }
         );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Managed worktree inspection is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Managed worktree inspection is unavailable."
+      },
+      { commandId }
+    );
   }
 
-  async workspaceManagedCleanup(
-    commandId: string,
-    payload: WorkspaceManagedCleanupCommandPayload,
-    metadata?: RunnerCommandMetadata,
-  ): Promise<void> {
+  async workspaceManagedCleanup(commandId: string, payload: WorkspaceManagedCleanupCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.cleanupManagedWorktree === "function") {
         const response = await runtime.cleanupManagedWorktree({
           ...payload,
-          ...(metadata?.actor?.actorId ? { cleanedBy: metadata.actor.actorId } : {}),
+          ...(metadata?.actor?.actorId ? { cleanedBy: metadata.actor.actorId } : {})
         });
         this.writer.emit(
           "workspace.checkpoint",
@@ -2383,29 +2271,29 @@ export class RunnerHost {
             sessionId: response.sessionId,
             operation: "managed.cleanup",
             managedCleanup: response.cleanup,
-            cleanupCheckpoint: response.checkpoint,
+            cleanupCheckpoint: response.checkpoint
           },
-          { commandId, sessionId: response.sessionId },
+          { commandId, sessionId: response.sessionId }
         );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Managed worktree cleanup is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Managed worktree cleanup is unavailable."
+      },
+      { commandId }
+    );
   }
 
-  async workspaceManagedRestore(
-    commandId: string,
-    payload: WorkspaceManagedRestoreCommandPayload,
-    metadata?: RunnerCommandMetadata,
-  ): Promise<void> {
+  async workspaceManagedRestore(commandId: string, payload: WorkspaceManagedRestoreCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.restoreManagedWorktree === "function") {
         const response = await runtime.restoreManagedWorktree({
           ...payload,
-          ...(metadata?.actor?.actorId ? { restoredBy: metadata.actor.actorId } : {}),
+          ...(metadata?.actor?.actorId ? { restoredBy: metadata.actor.actorId } : {})
         });
         this.writer.emit(
           "workspace.checkpoint",
@@ -2413,39 +2301,47 @@ export class RunnerHost {
             sessionId: response.sessionId,
             operation: "managed.restore",
             managedBinding: response.binding,
-            restore: response.restore,
+            restore: response.restore
           },
-          { commandId, sessionId: response.sessionId },
+          { commandId, sessionId: response.sessionId }
         );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Managed worktree restore is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Managed worktree restore is unavailable."
+      },
+      { commandId }
+    );
   }
 
-  async workspaceManagedSetupRetry(
-    commandId: string,
-    payload: WorkspaceManagedSetupRetryCommandPayload,
-    metadata?: RunnerCommandMetadata,
-  ): Promise<void> {
+  async workspaceManagedSetupRetry(commandId: string, payload: WorkspaceManagedSetupRetryCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.retryManagedWorktreeSetup === "function") {
         const response = await runtime.retryManagedWorktreeSetup(payload);
-        this.writer.emit("workspace.checkpoint", {
-          sessionId: response.sessionId,
-          operation: "managed.setup.retry",
-          managedInspection: response.inspection,
-        }, { commandId, sessionId: response.sessionId });
+        this.writer.emit(
+          "workspace.checkpoint",
+          {
+            sessionId: response.sessionId,
+            operation: "managed.setup.retry",
+            managedInspection: response.inspection
+          },
+          { commandId, sessionId: response.sessionId }
+        );
         return;
       }
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: "Managed worktree setup retry is unavailable.",
-    }, { commandId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Managed worktree setup retry is unavailable."
+      },
+      { commandId }
+    );
   }
 
   async userTerminalStart(commandId: string, payload: UserTerminalStartCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
@@ -2478,7 +2374,13 @@ export class RunnerHost {
     metadata: RunnerCommandMetadata | undefined,
     operation: "start" | "list" | "read" | "write" | "resize" | "stop",
     method: "startUserTerminal" | "listUserTerminals" | "readUserTerminal" | "writeUserTerminal" | "resizeUserTerminal" | "stopUserTerminal",
-    payload: UserTerminalStartCommandPayload | UserTerminalListCommandPayload | UserTerminalReadCommandPayload | UserTerminalWriteCommandPayload | UserTerminalResizeCommandPayload | UserTerminalStopCommandPayload,
+    payload:
+      | UserTerminalStartCommandPayload
+      | UserTerminalListCommandPayload
+      | UserTerminalReadCommandPayload
+      | UserTerminalWriteCommandPayload
+      | UserTerminalResizeCommandPayload
+      | UserTerminalStopCommandPayload
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       const handler = runtime[method] as ((input: typeof payload) => Promise<UserTerminalRecord | UserTerminalRecord[] | UserTerminalReadResult>) | undefined;
@@ -2489,126 +2391,291 @@ export class RunnerHost {
       const eventPayload = Array.isArray(response)
         ? { sessionId, operation, terminals: response }
         : operation === "read" && "output" in response
-          ? { sessionId, operation, terminal: response.terminal, output: response.output, cursor: response.cursor, nextCursor: response.nextCursor, truncated: response.truncated }
+          ? {
+              sessionId,
+              operation,
+              terminal: response.terminal,
+              output: response.output,
+              cursor: response.cursor,
+              nextCursor: response.nextCursor,
+              truncated: response.truncated
+            }
           : { sessionId, operation, terminal: response as UserTerminalRecord };
       this.writer.emit("user.terminal", eventPayload, { commandId, sessionId });
       return;
     }
-    this.writer.emit("runner.error", {
-      code: "RUNNER_RUNTIME_ERROR",
-      message: `User terminal ${operation} is unavailable.`,
-    }, { commandId, sessionId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: `User terminal ${operation} is unavailable.`
+      },
+      { commandId, sessionId }
+    );
   }
 
   async workspaceChangesInspect(commandId: string, payload: WorkspaceChangesInspectCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.inspectWorkspaceChanges !== "function") continue;
       const snapshot = await runtime.inspectWorkspaceChanges(payload);
-      this.writer.emit("workspace.changes", { sessionId: payload.sessionId, threadId: payload.threadId, operation: "inspect", snapshot }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+      this.writer.emit(
+        "workspace.changes",
+        {
+          sessionId: payload.sessionId,
+          threadId: payload.threadId,
+          operation: "inspect",
+          snapshot
+        },
+        { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+      );
       return;
     }
-    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: "Workspace change inspection is unavailable." }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace change inspection is unavailable."
+      },
+      { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+    );
   }
 
   async workspaceChangesMutate(commandId: string, payload: WorkspaceChangesMutateCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.mutateWorkspaceChanges !== "function") continue;
       const result = await runtime.mutateWorkspaceChanges(payload);
-      this.writer.emit("workspace.changes", {
-        sessionId: payload.sessionId,
-        threadId: payload.threadId,
-        operation: "mutate",
-        snapshot: result.snapshot,
-        previousFingerprint: result.previousFingerprint,
-        mutationOperation: result.operation,
-      }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+      this.writer.emit(
+        "workspace.changes",
+        {
+          sessionId: payload.sessionId,
+          threadId: payload.threadId,
+          operation: "mutate",
+          snapshot: result.snapshot,
+          previousFingerprint: result.previousFingerprint,
+          mutationOperation: result.operation
+        },
+        { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+      );
       return;
     }
-    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: "Workspace change mutation is unavailable." }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: "Workspace change mutation is unavailable."
+      },
+      { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+    );
   }
 
-  async workspaceFeedbackAdd(commandId: string, payload: WorkspaceFeedbackAddCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "add", "addWorkspaceFeedback"); }
-  async workspaceFeedbackList(commandId: string, payload: WorkspaceFeedbackListCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "list", "listWorkspaceFeedback"); }
-  async workspaceFeedbackRemove(commandId: string, payload: WorkspaceFeedbackRemoveCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "remove", "removeWorkspaceFeedback"); }
-  async workspaceFeedbackSubmit(commandId: string, payload: WorkspaceFeedbackSubmitCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "submit", "submitWorkspaceFeedback"); }
+  async workspaceFeedbackAdd(commandId: string, payload: WorkspaceFeedbackAddCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "add", "addWorkspaceFeedback");
+  }
+  async workspaceFeedbackList(commandId: string, payload: WorkspaceFeedbackListCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "list", "listWorkspaceFeedback");
+  }
+  async workspaceFeedbackRemove(commandId: string, payload: WorkspaceFeedbackRemoveCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "remove", "removeWorkspaceFeedback");
+  }
+  async workspaceFeedbackSubmit(commandId: string, payload: WorkspaceFeedbackSubmitCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceFeedbackCommand(commandId, payload, metadata, "submit", "submitWorkspaceFeedback");
+  }
 
   private async runWorkspaceFeedbackCommand(
     commandId: string,
-    payload: WorkspaceFeedbackAddCommandPayload | WorkspaceFeedbackListCommandPayload | WorkspaceFeedbackRemoveCommandPayload | WorkspaceFeedbackSubmitCommandPayload,
+    payload:
+      | WorkspaceFeedbackAddCommandPayload
+      | WorkspaceFeedbackListCommandPayload
+      | WorkspaceFeedbackRemoveCommandPayload
+      | WorkspaceFeedbackSubmitCommandPayload,
     metadata: RunnerCommandMetadata | undefined,
     operation: "add" | "list" | "remove" | "submit",
-    method: "addWorkspaceFeedback" | "listWorkspaceFeedback" | "removeWorkspaceFeedback" | "submitWorkspaceFeedback",
+    method: "addWorkspaceFeedback" | "listWorkspaceFeedback" | "removeWorkspaceFeedback" | "submitWorkspaceFeedback"
   ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
-      const handler = runtime[method] as ((input: typeof payload) => Promise<WorkspaceFeedbackSnapshot | { snapshot: WorkspaceFeedbackSnapshot; result: RunTurnResult }>) | undefined;
+      const handler = runtime[method] as
+        | ((input: typeof payload) => Promise<WorkspaceFeedbackSnapshot | { snapshot: WorkspaceFeedbackSnapshot; result: RunTurnResult }>)
+        | undefined;
       if (typeof handler !== "function") continue;
       const response = await handler.call(runtime, payload);
       const snapshot = "snapshot" in response ? response.snapshot : response;
       const submissionRunId = "result" in response ? response.result.output.runId : undefined;
-      this.writer.emit("workspace.feedback", { sessionId: payload.sessionId, threadId: payload.threadId, operation, snapshot, ...(submissionRunId ? { submissionRunId } : {}) }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+      this.writer.emit(
+        "workspace.feedback",
+        {
+          sessionId: payload.sessionId,
+          threadId: payload.threadId,
+          operation,
+          snapshot,
+          ...(submissionRunId ? { submissionRunId } : {})
+        },
+        { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+      );
       return;
     }
-    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: `Workspace feedback ${operation} is unavailable.` }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: `Workspace feedback ${operation} is unavailable.`
+      },
+      { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+    );
   }
 
-  async workspaceReviewRun(commandId: string, payload: WorkspaceReviewRunCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceReviewCommand(commandId, payload, metadata, "run", "runWorkspaceReview"); }
-  async workspaceReviewList(commandId: string, payload: WorkspaceReviewListCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceReviewCommand(commandId, payload, metadata, "list", "listWorkspaceReviews"); }
-  async workspaceReviewUpdate(commandId: string, payload: WorkspaceReviewUpdateCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceReviewCommand(commandId, payload, metadata, "update", "updateWorkspaceReviewFinding"); }
-  async workspaceReviewSubmit(commandId: string, payload: WorkspaceReviewSubmitCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceReviewCommand(commandId, payload, metadata, "submit", "submitWorkspaceReviewFindings"); }
-
-  private async runWorkspaceReviewCommand(commandId: string, payload: WorkspaceReviewRunCommandPayload | WorkspaceReviewListCommandPayload | WorkspaceReviewUpdateCommandPayload | WorkspaceReviewSubmitCommandPayload, metadata: RunnerCommandMetadata | undefined, operation: "run" | "list" | "update" | "submit", method: "runWorkspaceReview" | "listWorkspaceReviews" | "updateWorkspaceReviewFinding" | "submitWorkspaceReviewFindings"): Promise<void> {
-    for (const runtime of this.selectRuntimes(metadata)) {
-      const handler = runtime[method] as ((input: typeof payload) => Promise<WorkspaceReviewSnapshot | { snapshot: WorkspaceReviewSnapshot; result: RunTurnResult }>) | undefined;
-      if (typeof handler !== "function") continue;
-      const response = await handler.call(runtime, payload); const snapshot = "snapshot" in response ? response.snapshot : response; const runId = "result" in response ? response.result.output.runId : undefined;
-      this.writer.emit("workspace.review", { sessionId: payload.sessionId, threadId: payload.threadId, operation, snapshot, ...(runId ? { runId } : {}) }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId }); return;
-    }
-    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: `Workspace review ${operation} is unavailable.` }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+  async workspaceReviewRun(commandId: string, payload: WorkspaceReviewRunCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceReviewCommand(commandId, payload, metadata, "run", "runWorkspaceReview");
+  }
+  async workspaceReviewList(commandId: string, payload: WorkspaceReviewListCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceReviewCommand(commandId, payload, metadata, "list", "listWorkspaceReviews");
+  }
+  async workspaceReviewUpdate(commandId: string, payload: WorkspaceReviewUpdateCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceReviewCommand(commandId, payload, metadata, "update", "updateWorkspaceReviewFinding");
+  }
+  async workspaceReviewSubmit(commandId: string, payload: WorkspaceReviewSubmitCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceReviewCommand(commandId, payload, metadata, "submit", "submitWorkspaceReviewFindings");
   }
 
-  async workspaceValidationInspect(commandId: string, payload: WorkspaceValidationInspectCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceValidationCommand(commandId, payload, metadata, "inspect", "inspectWorkspaceValidation"); }
-  async workspaceValidationRun(commandId: string, payload: WorkspaceValidationRunCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceValidationCommand(commandId, payload, metadata, "run", "runWorkspaceValidation"); }
-  async workspaceValidationCancel(commandId: string, payload: WorkspaceValidationCancelCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceValidationCommand(commandId, payload, metadata, "cancel", "cancelWorkspaceValidation"); }
-  async workspaceValidationSubmit(commandId: string, payload: WorkspaceValidationSubmitCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceValidationCommand(commandId, payload, metadata, "submit", "submitWorkspaceValidationFailures"); }
-
-  private async runWorkspaceValidationCommand(commandId: string, payload: WorkspaceValidationInspectCommandPayload | WorkspaceValidationRunCommandPayload | WorkspaceValidationCancelCommandPayload | WorkspaceValidationSubmitCommandPayload, metadata: RunnerCommandMetadata | undefined, operation: "inspect" | "run" | "cancel" | "submit", method: "inspectWorkspaceValidation" | "runWorkspaceValidation" | "cancelWorkspaceValidation" | "submitWorkspaceValidationFailures"): Promise<void> {
+  private async runWorkspaceReviewCommand(
+    commandId: string,
+    payload: WorkspaceReviewRunCommandPayload | WorkspaceReviewListCommandPayload | WorkspaceReviewUpdateCommandPayload | WorkspaceReviewSubmitCommandPayload,
+    metadata: RunnerCommandMetadata | undefined,
+    operation: "run" | "list" | "update" | "submit",
+    method: "runWorkspaceReview" | "listWorkspaceReviews" | "updateWorkspaceReviewFinding" | "submitWorkspaceReviewFindings"
+  ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
-      const handler = runtime[method] as ((input: typeof payload) => Promise<WorkspaceValidationSnapshot | { snapshot: WorkspaceValidationSnapshot; result: RunTurnResult }>) | undefined;
+      const handler = runtime[method] as
+        | ((input: typeof payload) => Promise<WorkspaceReviewSnapshot | { snapshot: WorkspaceReviewSnapshot; result: RunTurnResult }>)
+        | undefined;
       if (typeof handler !== "function") continue;
       const response = await handler.call(runtime, payload);
       const snapshot = "snapshot" in response ? response.snapshot : response;
       const runId = "result" in response ? response.result.output.runId : undefined;
-      this.writer.emit("workspace.validation", { sessionId: payload.sessionId, threadId: payload.threadId, operation, snapshot, ...(runId ? { runId } : {}) }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+      this.writer.emit(
+        "workspace.review",
+        {
+          sessionId: payload.sessionId,
+          threadId: payload.threadId,
+          operation,
+          snapshot,
+          ...(runId ? { runId } : {})
+        },
+        { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+      );
       return;
     }
-    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: `Workspace validation ${operation} is unavailable.` }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: `Workspace review ${operation} is unavailable.`
+      },
+      { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+    );
   }
 
-  async workspaceGitInspect(commandId: string, payload: WorkspaceGitInspectCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceGitCommand(commandId, payload, metadata, "inspect", "inspectWorkspaceGit"); }
-  async workspaceGitAction(commandId: string, payload: WorkspaceGitActionCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> { await this.runWorkspaceGitCommand(commandId, payload, metadata, "action", "performWorkspaceGitAction"); }
+  async workspaceValidationInspect(commandId: string, payload: WorkspaceValidationInspectCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceValidationCommand(commandId, payload, metadata, "inspect", "inspectWorkspaceValidation");
+  }
+  async workspaceValidationRun(commandId: string, payload: WorkspaceValidationRunCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceValidationCommand(commandId, payload, metadata, "run", "runWorkspaceValidation");
+  }
+  async workspaceValidationCancel(commandId: string, payload: WorkspaceValidationCancelCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceValidationCommand(commandId, payload, metadata, "cancel", "cancelWorkspaceValidation");
+  }
+  async workspaceValidationSubmit(commandId: string, payload: WorkspaceValidationSubmitCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceValidationCommand(commandId, payload, metadata, "submit", "submitWorkspaceValidationFailures");
+  }
 
-  private async runWorkspaceGitCommand(commandId: string, payload: WorkspaceGitInspectCommandPayload | WorkspaceGitActionCommandPayload, metadata: RunnerCommandMetadata | undefined, operation: "inspect" | "action", method: "inspectWorkspaceGit" | "performWorkspaceGitAction"): Promise<void> {
+  private async runWorkspaceValidationCommand(
+    commandId: string,
+    payload:
+      | WorkspaceValidationInspectCommandPayload
+      | WorkspaceValidationRunCommandPayload
+      | WorkspaceValidationCancelCommandPayload
+      | WorkspaceValidationSubmitCommandPayload,
+    metadata: RunnerCommandMetadata | undefined,
+    operation: "inspect" | "run" | "cancel" | "submit",
+    method: "inspectWorkspaceValidation" | "runWorkspaceValidation" | "cancelWorkspaceValidation" | "submitWorkspaceValidationFailures"
+  ): Promise<void> {
+    for (const runtime of this.selectRuntimes(metadata)) {
+      const handler = runtime[method] as
+        | ((input: typeof payload) => Promise<WorkspaceValidationSnapshot | { snapshot: WorkspaceValidationSnapshot; result: RunTurnResult }>)
+        | undefined;
+      if (typeof handler !== "function") continue;
+      const response = await handler.call(runtime, payload);
+      const snapshot = "snapshot" in response ? response.snapshot : response;
+      const runId = "result" in response ? response.result.output.runId : undefined;
+      this.writer.emit(
+        "workspace.validation",
+        {
+          sessionId: payload.sessionId,
+          threadId: payload.threadId,
+          operation,
+          snapshot,
+          ...(runId ? { runId } : {})
+        },
+        { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+      );
+      return;
+    }
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: `Workspace validation ${operation} is unavailable.`
+      },
+      { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+    );
+  }
+
+  async workspaceGitInspect(commandId: string, payload: WorkspaceGitInspectCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceGitCommand(commandId, payload, metadata, "inspect", "inspectWorkspaceGit");
+  }
+  async workspaceGitAction(commandId: string, payload: WorkspaceGitActionCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    await this.runWorkspaceGitCommand(commandId, payload, metadata, "action", "performWorkspaceGitAction");
+  }
+
+  private async runWorkspaceGitCommand(
+    commandId: string,
+    payload: WorkspaceGitInspectCommandPayload | WorkspaceGitActionCommandPayload,
+    metadata: RunnerCommandMetadata | undefined,
+    operation: "inspect" | "action",
+    method: "inspectWorkspaceGit" | "performWorkspaceGitAction"
+  ): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       const handler = runtime[method] as ((input: typeof payload) => Promise<WorkspaceGitSnapshot>) | undefined;
       if (typeof handler !== "function") continue;
       const snapshot = await handler.call(runtime, payload);
-      this.writer.emit("workspace.git", { sessionId: payload.sessionId, threadId: payload.threadId, operation, snapshot }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+      this.writer.emit(
+        "workspace.git",
+        {
+          sessionId: payload.sessionId,
+          threadId: payload.threadId,
+          operation,
+          snapshot
+        },
+        { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+      );
       return;
     }
-    this.writer.emit("runner.error", { code: "RUNNER_RUNTIME_ERROR", message: `Workspace Git ${operation} is unavailable.` }, { commandId, sessionId: payload.sessionId, threadId: payload.threadId });
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUNNER_RUNTIME_ERROR",
+        message: `Workspace Git ${operation} is unavailable.`
+      },
+      { commandId, sessionId: payload.sessionId, threadId: payload.threadId }
+    );
   }
 
-  async projectAction(
-    commandId: string,
-    payload: ProjectActionCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async projectAction(commandId: string, payload: ProjectActionCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.performProjectAction === "function") {
         const snapshot = await runtime.performProjectAction(payload);
         this.writer.emit("project.snapshot", snapshot, {
           commandId,
-          sessionId: snapshot.sessionId,
+          sessionId: snapshot.sessionId
         });
         return;
       }
@@ -2617,23 +2684,19 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Project actions are unavailable.",
+        message: "Project actions are unavailable."
       },
       { commandId }
     );
   }
 
-  async projectReviewGet(
-    commandId: string,
-    payload: ProjectReviewGetCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async projectReviewGet(commandId: string, payload: ProjectReviewGetCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.getProjectReviewDetail === "function") {
         const detail = await runtime.getProjectReviewDetail(payload);
         this.writer.emit("project.review", detail, {
           commandId,
-          sessionId: detail.sessionId,
+          sessionId: detail.sessionId
         });
         return;
       }
@@ -2642,23 +2705,19 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Project review is unavailable.",
+        message: "Project review is unavailable."
       },
       { commandId }
     );
   }
 
-  async projectReviewAction(
-    commandId: string,
-    payload: ProjectReviewActionCommandPayload,
-    metadata?: RunnerCommandMetadata
-  ): Promise<void> {
+  async projectReviewAction(commandId: string, payload: ProjectReviewActionCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.performProjectReviewAction === "function") {
         const detail = await runtime.performProjectReviewAction(payload);
         this.writer.emit("project.review", detail, {
           commandId,
-          sessionId: detail.sessionId,
+          sessionId: detail.sessionId
         });
         return;
       }
@@ -2667,49 +2726,37 @@ export class RunnerHost {
       "runner.error",
       {
         code: "RUNNER_RUNTIME_ERROR",
-        message: "Project review is unavailable.",
+        message: "Project review is unavailable."
       },
       { commandId }
     );
   }
 
-  async ping(
-    commandId: string,
-    payload: RunnerPingCommandPayload
-  ): Promise<void> {
+  async ping(commandId: string, payload: RunnerPingCommandPayload): Promise<void> {
     this.writer.emit(
       "runner.pong",
       {
-        ...(payload.nonce !== undefined ? { nonce: payload.nonce } : {}),
+        ...(payload.nonce !== undefined ? { nonce: payload.nonce } : {})
       },
       { commandId }
     );
   }
 
-  async mcpStatus(
-    commandId: string,
-    payload: McpStatusCommandPayload
-  ): Promise<void> {
+  async mcpStatus(commandId: string, payload: McpStatusCommandPayload): Promise<void> {
     const profile = await this.resolveProfileOrThrow(payload, "mcp.status");
     const runtime = this.getRuntime(profile);
-    const status =
-      runtime.getToolRuntimeStatus !== undefined
-        ? await runtime.getToolRuntimeStatus()
-        : EMPTY_TOOL_RUNTIME_STATUS;
+    const status = runtime.getToolRuntimeStatus !== undefined ? await runtime.getToolRuntimeStatus() : EMPTY_TOOL_RUNTIME_STATUS;
 
     this.writer.emit(
       "mcp.status",
       {
-        status: getMcpStatusSnapshot(status),
+        status: getMcpStatusSnapshot(status)
       },
       { commandId }
     );
   }
 
-  async mcpRefresh(
-    commandId: string,
-    payload: McpRefreshCommandPayload
-  ): Promise<void> {
+  async mcpRefresh(commandId: string, payload: McpRefreshCommandPayload): Promise<void> {
     const profile = await this.resolveProfileOrThrow(payload, "mcp.refresh");
     const runtime = this.getRuntime(profile);
     const status =
@@ -2722,7 +2769,7 @@ export class RunnerHost {
     this.writer.emit(
       "mcp.refreshed",
       {
-        status: getMcpStatusSnapshot(status),
+        status: getMcpStatusSnapshot(status)
       },
       { commandId }
     );
@@ -2734,9 +2781,7 @@ export class RunnerHost {
 
   executeCommand(operation: () => Promise<void>): Promise<void> {
     if (this.closing) {
-      return Promise.reject(
-        new Error("Runner host is closing and cannot accept new commands.")
-      );
+      return Promise.reject(new Error("Runner host is closing and cannot accept new commands."));
     }
 
     return this.trackExecution(this.withRuntimeUsage(operation));
@@ -2747,9 +2792,7 @@ export class RunnerHost {
     return this.closePromise;
   }
 
-  private async closeInternal(options: {
-    abortActiveRuns?: boolean | undefined;
-  }): Promise<void> {
+  private async closeInternal(options: { abortActiveRuns?: boolean | undefined }): Promise<void> {
     this.closing = true;
     if (options.abortActiveRuns === true) {
       for (const active of this.activeRuns.values()) {
@@ -2759,9 +2802,7 @@ export class RunnerHost {
     }
     await Promise.allSettled([...this.activeExecutions]);
     this.closeUnusedRetiredRuntimes(true);
-    const currentLeases = new Set(
-      [...this.runtimes.values()].map((entry) => entry.lease),
-    );
+    const currentLeases = new Set([...this.runtimes.values()].map((entry) => entry.lease));
     const closeResults = await Promise.allSettled(
       [...currentLeases].map(async (lease) => {
         lease.state = "closing";
@@ -2770,12 +2811,10 @@ export class RunnerHost {
         } finally {
           lease.state = "closed";
         }
-      }),
+      })
     );
     await Promise.allSettled([...this.retiredRuntimeClosures]);
-    const runtimeCloseFailure = closeResults.find(
-      (result): result is PromiseRejectedResult => result.status === "rejected"
-    );
+    const runtimeCloseFailure = closeResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
     const retiredRuntimeCloseFailure = this.retiredRuntimeCloseFailures[0];
     this.runtimes.clear();
     this.retiredRuntimes.clear();
@@ -2849,12 +2888,7 @@ export class RunnerHost {
   }
 
   private closeRetiredRuntimeIfUnused(lease: RuntimeLease, force = false): void {
-    if (
-      lease.state !== "retired"
-      || lease.ownerCount > 0
-      || (force === false && lease.activeUsers > 0)
-      || this.retiredRuntimes.delete(lease) === false
-    ) {
+    if (lease.state !== "retired" || lease.ownerCount > 0 || (force === false && lease.activeUsers > 0) || this.retiredRuntimes.delete(lease) === false) {
       return;
     }
     lease.state = "closing";
@@ -2879,9 +2913,7 @@ export class RunnerHost {
     const existing = this.runtimeLeases.get(runtime);
     if (existing !== undefined) {
       if (existing.state === "closing" || existing.state === "closed") {
-        throw new Error(
-          "Runner runtime factory returned an instance that has already begun closing.",
-        );
+        throw new Error("Runner runtime factory returned an instance that has already begun closing.");
       }
       if (existing.state === "retired") {
         this.retiredRuntimes.delete(existing);
@@ -2895,7 +2927,7 @@ export class RunnerHost {
       runtime,
       activeUsers: 0,
       ownerCount: 1,
-      state: "active",
+      state: "active"
     };
     this.runtimeLeases.set(runtime, lease);
     return lease;
@@ -2943,6 +2975,12 @@ export class RunnerHost {
       (event) => {
         this.onDetachedTurnEvent(event);
       },
+      (event) => {
+        this.onInteractionDelivered(event);
+      },
+      (event) => {
+        this.onNativeSessionEstablished(event);
+      }
     );
 
     let entry: RuntimeEntry;
@@ -2957,7 +2995,7 @@ export class RunnerHost {
       entry = {
         key,
         runtime,
-        lease,
+        lease
       };
     }
     this.runtimes.set(profile.id, entry);
@@ -2974,10 +3012,7 @@ export class RunnerHost {
     return false;
   }
 
-  private async cancelPersistedActiveRun(
-    sessionId: string,
-    metadata?: RunnerCommandMetadata | undefined
-  ): Promise<string | undefined> {
+  private async cancelPersistedActiveRun(sessionId: string, metadata?: RunnerCommandMetadata | undefined): Promise<string | undefined> {
     for (const runtime of this.selectRuntimes(metadata)) {
       const result = await runtime.cancelActiveRun?.(sessionId);
       if (result?.runId !== undefined) {
@@ -3008,28 +3043,19 @@ export class RunnerHost {
   ): Promise<TuiProfile> {
     if (input.profile !== undefined) {
       if (this.profileSourcePolicy === "registered-only") {
-        throw new Error(
-          `${commandType} inline profiles are not accepted by this runner; resolve and submit profileId instead`,
-        );
+        throw new Error(`${commandType} inline profiles are not accepted by this runner; resolve and submit profileId instead`);
       }
       return input.profile;
     }
     if (input.profileId !== undefined) {
-      if (
-        this.profileSourcePolicy === "registered-only" &&
-        /:[a-f0-9]{64}$/u.test(input.profileId) === false
-      ) {
-        throw new Error(
-          `${commandType} profileId '${input.profileId}' is not an immutable Local Core execution profile reference`,
-        );
+      if (this.profileSourcePolicy === "registered-only" && /:[a-f0-9]{64}$/u.test(input.profileId) === false) {
+        throw new Error(`${commandType} profileId '${input.profileId}' is not an immutable Local Core execution profile reference`);
       }
       const profile = await this.profileProvider.getProfile(input.profileId);
       if (profile !== undefined) {
         return profile;
       }
-      throw new Error(
-        `${commandType} profileId '${input.profileId}' was not found`
-      );
+      throw new Error(`${commandType} profileId '${input.profileId}' was not found`);
     }
     throw new Error(`${commandType} requires profile or profileId`);
   }
@@ -3043,7 +3069,7 @@ export class RunnerHost {
       {
         runId: normalizedEntry.runId,
         sessionId: normalizedEntry.sessionId,
-        ...(commandId !== undefined ? { commandId } : {}),
+        ...(commandId !== undefined ? { commandId } : {})
       }
     );
   }
@@ -3076,12 +3102,8 @@ export class RunnerHost {
   private emitProgressUpdate(update: ProgressUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     const commandId = this.commandBySession.get(normalizedUpdate.sessionId);
-    const commandType = this.commandTypeBySession.get(
-      normalizedUpdate.sessionId
-    );
-    const threadId =
-      this.threadIdBySession.get(normalizedUpdate.sessionId) ??
-      normalizedUpdate.sessionId;
+    const commandType = this.commandTypeBySession.get(normalizedUpdate.sessionId);
+    const threadId = this.threadIdBySession.get(normalizedUpdate.sessionId) ?? normalizedUpdate.sessionId;
     this.writer.emit(
       "run.progress",
       { update: normalizedUpdate },
@@ -3089,7 +3111,7 @@ export class RunnerHost {
         runId: normalizedUpdate.runId,
         sessionId: normalizedUpdate.sessionId,
         ...(commandId !== undefined ? { commandId } : {}),
-        durability: normalizedUpdate.persist ? "durable" : "live_only",
+        durability: normalizedUpdate.persist ? "durable" : "live_only"
       }
     );
     if (commandType === "job.run") {
@@ -3101,14 +3123,14 @@ export class RunnerHost {
           runId: normalizedUpdate.runId,
           stage: "runtime_progress",
           message: normalizedUpdate.message,
-          update: normalizedUpdate,
+          update: normalizedUpdate
         },
         {
           runId: normalizedUpdate.runId,
           sessionId: normalizedUpdate.sessionId,
           threadId,
           ...(commandId !== undefined ? { commandId } : {}),
-          durability: normalizedUpdate.persist ? "durable" : "live_only",
+          durability: normalizedUpdate.persist ? "durable" : "live_only"
         }
       );
     }
@@ -3117,9 +3139,7 @@ export class RunnerHost {
   private onConsole(update: RunConsoleUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     const commandId = this.commandBySession.get(normalizedUpdate.sessionId);
-    const threadId =
-      this.threadIdBySession.get(normalizedUpdate.sessionId) ??
-      normalizedUpdate.sessionId;
+    const threadId = this.threadIdBySession.get(normalizedUpdate.sessionId) ?? normalizedUpdate.sessionId;
     this.writer.emit(
       "run.console",
       { update: normalizedUpdate },
@@ -3127,7 +3147,7 @@ export class RunnerHost {
         runId: normalizedUpdate.runId,
         sessionId: normalizedUpdate.sessionId,
         threadId,
-        ...(commandId !== undefined ? { commandId } : {}),
+        ...(commandId !== undefined ? { commandId } : {})
       }
     );
   }
@@ -3135,15 +3155,8 @@ export class RunnerHost {
   private emitToolUpdate(update: RunToolUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     const commandId = this.commandBySession.get(normalizedUpdate.sessionId);
-    const threadId =
-      this.threadIdBySession.get(normalizedUpdate.sessionId) ??
-      normalizedUpdate.sessionId;
-    const type =
-      normalizedUpdate.phase === "started"
-        ? "run.tool.started"
-        : normalizedUpdate.phase === "completed"
-          ? "run.tool.completed"
-          : "run.tool.failed";
+    const threadId = this.threadIdBySession.get(normalizedUpdate.sessionId) ?? normalizedUpdate.sessionId;
+    const type = normalizedUpdate.phase === "started" ? "run.tool.started" : normalizedUpdate.phase === "completed" ? "run.tool.completed" : "run.tool.failed";
     this.writer.emit(
       type,
       { update: normalizedUpdate },
@@ -3151,46 +3164,33 @@ export class RunnerHost {
         runId: normalizedUpdate.runId,
         sessionId: normalizedUpdate.sessionId,
         threadId,
-        ...(commandId !== undefined ? { commandId } : {}),
+        ...(commandId !== undefined ? { commandId } : {})
       }
     );
   }
 
-  private normalizeActiveRunIdentity<
-    T extends { sessionId: string; runId: string },
-  >(value: T): T {
+  private normalizeActiveRunIdentity<T extends { sessionId: string; runId: string }>(value: T): T {
     const acceptedRunId = this.activeRuns.get(value.sessionId)?.runId;
     if (acceptedRunId === undefined || acceptedRunId === value.runId) {
       return value;
     }
     return {
       ...value,
-      runId: acceptedRunId,
+      runId: acceptedRunId
     };
   }
 
-  private async resolveThreadIdForSession(
-    runtime: RunnerRuntime,
-    sessionId: string,
-    fallbackThreadId: string
-  ): Promise<string> {
+  private async resolveThreadIdForSession(runtime: RunnerRuntime, sessionId: string, fallbackThreadId: string): Promise<string> {
     const described = await runtime.describeSession?.(sessionId);
     if (described === undefined) {
       return fallbackThreadId;
     }
-    if (
-      typeof described.threadId === "string" &&
-      described.threadId.length > 0
-    ) {
+    if (typeof described.threadId === "string" && described.threadId.length > 0) {
       return described.threadId;
     }
-    throw createRuntimeFailure(
-      "RUNNER_THREAD_ID_UNAVAILABLE",
-      `Session '${sessionId}' did not resolve a canonical thread ID.`,
-      {
-        sessionId,
-      }
-    );
+    throw createRuntimeFailure("RUNNER_THREAD_ID_UNAVAILABLE", `Session '${sessionId}' did not resolve a canonical thread ID.`, {
+      sessionId
+    });
   }
 
   private onReasoning(update: ReasoningUpdateV1 | ModelReasoningUpdateV1): void {
@@ -3212,7 +3212,7 @@ export class RunnerHost {
         runId: normalizedUpdate.runId,
         sessionId: normalizedUpdate.sessionId,
         ...(commandId !== undefined ? { commandId } : {}),
-        durability: "live_only",
+        durability: "live_only"
       }
     );
   }
@@ -3220,12 +3220,16 @@ export class RunnerHost {
   private emitAgentProgressUpdate(update: AgentProgressUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     const commandId = this.commandBySession.get(normalizedUpdate.sessionId);
-    this.writer.emit("run.agent_progress", { update: normalizedUpdate }, {
-      runId: normalizedUpdate.runId,
-      sessionId: normalizedUpdate.sessionId,
-      ...(commandId !== undefined ? { commandId } : {}),
-      durability: "durable",
-    });
+    this.writer.emit(
+      "run.agent_progress",
+      { update: normalizedUpdate },
+      {
+        runId: normalizedUpdate.runId,
+        sessionId: normalizedUpdate.sessionId,
+        ...(commandId !== undefined ? { commandId } : {}),
+        durability: "durable"
+      }
+    );
   }
 
   private onTaskUpdate(update: DelegationTaskUpdate): void {
@@ -3237,34 +3241,60 @@ export class RunnerHost {
       sessionId: event.sessionId,
       threadId: event.threadId,
       runId: event.runId,
-      durability: "durable" as const,
+      durability: "durable" as const
     };
     if (event.type === "started") {
-      this.writer.emit("run.started", {
-        sessionId: event.sessionId,
-        runId: event.runId,
-        eventType: event.eventType,
-      }, identity);
+      this.writer.emit(
+        "run.started",
+        {
+          sessionId: event.sessionId,
+          runId: event.runId,
+          eventType: event.eventType
+        },
+        identity
+      );
       return;
     }
     if (event.type === "completed") {
       this.writer.emit("run.completed", { result: event.result }, identity);
       return;
     }
-    const result = event.result ?? buildNonResponsiveTerminalResult({
-      status: "FAILED",
-      sessionId: event.sessionId,
-      runId: event.runId,
-      error: event.error,
-    });
+    const result =
+      event.result ??
+      buildNonResponsiveTerminalResult({
+        status: "FAILED",
+        sessionId: event.sessionId,
+        runId: event.runId,
+        error: event.error
+      });
     this.writer.emit("run.failed", { result, error: event.error }, identity);
+  }
+
+  private onInteractionDelivered(event: RuntimeInteractionDeliveredV1): void {
+    const commandId = this.commandBySession.get(event.sessionId);
+    this.writer.emit("run.interaction.delivered", event, {
+      runId: event.runId,
+      sessionId: event.sessionId,
+      threadId: event.sessionId,
+      ...(commandId !== undefined ? { commandId } : {}),
+      durability: "durable"
+    });
+  }
+
+  private onNativeSessionEstablished(event: RuntimeNativeSessionEstablishedV1): void {
+    const commandId = this.commandBySession.get(event.sessionId);
+    this.writer.emit("run.native_session.established", event, {
+      runId: event.runId,
+      sessionId: event.sessionId,
+      threadId: event.sessionId,
+      ...(commandId !== undefined ? { commandId } : {}),
+      durability: "durable"
+    });
   }
 
   private async emitTaskUpdate(update: DelegationTaskUpdate): Promise<void> {
     const parentThreadId = update.task.parentSessionId;
-    const sessionId =
-      this.findSessionIdForThread(parentThreadId) ??
-      await this.resolveSessionIdForThread(parentThreadId);
+    const sessionId = this.findSessionIdForThread(parentThreadId) ?? (await this.resolveSessionIdForThread(parentThreadId));
     const externalThreadId = sessionId ?? parentThreadId;
     const commandId = this.commandBySession.get(externalThreadId);
     this.writer.emit(
@@ -3273,17 +3303,13 @@ export class RunnerHost {
         task: update.task,
         kind: update.kind,
         assistantText: update.assistantText,
-        ...(update.finalizedPayload !== undefined
-          ? { finalizedPayload: update.finalizedPayload }
-          : {}),
-        ...(update.dialogMessage !== undefined
-          ? { dialogMessage: update.dialogMessage }
-          : {}),
+        ...(update.finalizedPayload !== undefined ? { finalizedPayload: update.finalizedPayload } : {}),
+        ...(update.dialogMessage !== undefined ? { dialogMessage: update.dialogMessage } : {})
       },
       {
         sessionId: externalThreadId,
         threadId: externalThreadId,
-        ...(commandId !== undefined ? { commandId } : {}),
+        ...(commandId !== undefined ? { commandId } : {})
       }
     );
   }
@@ -3295,9 +3321,7 @@ export class RunnerHost {
     return undefined;
   }
 
-  private async resolveSessionIdForThread(
-    threadId: string
-  ): Promise<string | undefined> {
+  private async resolveSessionIdForThread(threadId: string): Promise<string | undefined> {
     for (const entry of this.runtimes.values()) {
       if (typeof entry.runtime.getOperatorThreadView !== "function") continue;
       try {
@@ -3328,7 +3352,7 @@ export class RunnerHost {
         sessionId: input.sessionId,
         profileId: input.profileId,
         cwd: process.cwd(),
-        details: JSON.stringify(input.details, null, 2),
+        details: JSON.stringify(input.details, null, 2)
       });
     } catch {
       // Diagnostics must never change terminal handoff behavior.
@@ -3340,7 +3364,13 @@ function buildNonResponsiveTerminalResult(input: {
   status: "FAILED" | "CANCELLED";
   sessionId: string;
   runId: string;
-  error?: { code: string; message: string; details?: Record<string, unknown> | undefined } | undefined;
+  error?:
+    | {
+        code: string;
+        message: string;
+        details?: Record<string, unknown> | undefined;
+      }
+    | undefined;
 }): RunTurnResult {
   return {
     assistantText: null,
@@ -3352,22 +3382,25 @@ function buildNonResponsiveTerminalResult(input: {
         citationCoverage: 0,
         unresolvedClaims: 0,
         reworkRate: 0,
-        thrashIndex: 0,
+        thrashIndex: 0
       },
-      errors: input.error === undefined
-        ? []
-        : [{
-            code: input.error.code,
-            message: input.error.message,
-            ...(input.error.details !== undefined ? { details: input.error.details } : {}),
-          }],
+      errors:
+        input.error === undefined
+          ? []
+          : [
+              {
+                code: input.error.code,
+                message: input.error.message,
+                ...(input.error.details !== undefined ? { details: input.error.details } : {})
+              }
+            ],
       telemetry: {
         stepsExecuted: 0,
         toolCalls: 0,
         modelCalls: 0,
-        durationMs: 0,
-      },
-    },
+        durationMs: 0
+      }
+    }
   };
 }
 
@@ -3391,7 +3424,7 @@ function getMcpStatusSnapshot(status: ToolRuntimeStatus): McpStatusSnapshot {
     healthy: status.healthy,
     checkedAt: status.checkedAt,
     servers: [],
-    tools: [],
+    tools: []
   };
 }
 
@@ -3401,12 +3434,7 @@ function isMcpStatusSnapshot(value: unknown): value is McpStatusSnapshot {
   }
 
   const record = value as Record<string, unknown>;
-  return (
-    typeof record.healthy === "boolean" &&
-    typeof record.checkedAt === "string" &&
-    Array.isArray(record.servers) &&
-    Array.isArray(record.tools)
-  );
+  return typeof record.healthy === "boolean" && typeof record.checkedAt === "string" && Array.isArray(record.servers) && Array.isArray(record.tools);
 }
 
 function createDefaultProfileProvider(): RunnerProfileProvider {
@@ -3452,34 +3480,42 @@ function createDefaultProfileProvider(): RunnerProfileProvider {
         policy: provenance.policy,
         environmentPreset: {
           id: payload.environmentPresetId,
-          version: provenance.environmentPreset.version,
+          version: provenance.environmentPreset.version
         },
-        resolvedProfile: registered.profile,
+        resolvedProfile: registered.profile
       };
     },
+    async describeRuntimeProfile(payload: RuntimeDescribeCommandPayload): Promise<ExecutionProfileResolvedEventPayload> {
+      const profile = await resolveDefaultExecutionProfile(store, payload);
+      const provenance = buildDefaultExecutionProfileProvenance(profile, payload);
+      return {
+        version: 1,
+        profileId: profile.id,
+        fingerprint: fingerprintResolvedProfile(profile),
+        policy: provenance.policy,
+        environmentPreset: {
+          id: payload.environmentPresetId,
+          version: provenance.environmentPreset.version
+        },
+        resolvedProfile: profile
+      };
+    }
   };
 }
 
-async function resolveDefaultExecutionProfile(
-  store: ProfileStore,
-  payload: ExecutionProfileResolveCommandPayload,
-): Promise<TuiProfile> {
-  const managedConfiguration = payload.managedConfiguration as
-    | KestrelOneProfileOverlay
-    | undefined;
+async function resolveDefaultExecutionProfile(store: ProfileStore, payload: ExecutionProfileResolveCommandPayload): Promise<TuiProfile> {
+  const managedConfiguration = payload.managedConfiguration as KestrelOneProfileOverlay | undefined;
   if (payload.authoringProfileId === undefined) {
     return composeKestrelProfile({
       environmentPresetId: payload.environmentPresetId,
-      overlay: managedConfiguration,
+      overlay: managedConfiguration
     }).profile;
   }
 
   const profiles = await store.load();
   const selected = store.findById(profiles, payload.authoringProfileId);
   if (selected === undefined) {
-    throw new Error(
-      `Profile '${payload.authoringProfileId}' was not found.`,
-    );
+    throw new Error(`Profile '${payload.authoringProfileId}' was not found.`);
   }
   if (
     selected.id === KESTREL_POLICY_ID ||
@@ -3508,22 +3544,17 @@ async function resolveDefaultExecutionProfile(
         reasoning: selected.reasoning,
         theme: selected.theme,
         default: selected.default,
-        ...(managedConfiguration ?? {}),
-      },
+        ...(managedConfiguration ?? {})
+      }
     }).profile;
   }
   if (managedConfiguration !== undefined) {
-    throw new Error(
-      "execution-profile.resolve cannot apply Kestrel managed configuration to a custom profile.",
-    );
+    throw new Error("execution-profile.resolve cannot apply Kestrel managed configuration to a custom profile.");
   }
   return selected;
 }
 
-function buildDefaultExecutionProfileProvenance(
-  profile: TuiProfile,
-  payload: ExecutionProfileResolveCommandPayload,
-): ExecutionProfileRevisionProvenance {
+function buildDefaultExecutionProfileProvenance(profile: TuiProfile, payload: ExecutionProfileResolveCommandPayload): ExecutionProfileRevisionProvenance {
   const isKestrelProfile =
     profile.agentProfileId === KESTREL_POLICY_ID ||
     profile.agentProfileId === LEGACY_KESTREL_ONE_POLICY_ID ||
@@ -3532,19 +3563,19 @@ function buildDefaultExecutionProfileProvenance(
   return {
     policy: {
       id: isKestrelProfile ? KESTREL_POLICY_ID : (profile.agentProfileId ?? profile.id),
-      version: isKestrelProfile ? KESTREL_POLICY_VERSION : 1,
+      version: isKestrelProfile ? KESTREL_POLICY_VERSION : 1
     },
     environmentPreset: {
       id: payload.environmentPresetId,
-      version: KESTREL_ONE_ENVIRONMENT_PRESETS[payload.environmentPresetId].version,
+      version: KESTREL_ONE_ENVIRONMENT_PRESETS[payload.environmentPresetId].version
     },
     ...(payload.authoringProfileId !== undefined
       ? {
           authoringProfile: {
             id: payload.authoringProfileId,
-            revision: "registered-resolution-v1",
-          },
+            revision: "registered-resolution-v1"
+          }
         }
-      : {}),
+      : {})
   };
 }

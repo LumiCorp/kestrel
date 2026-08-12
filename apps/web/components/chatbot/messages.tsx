@@ -1,5 +1,6 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import { ArrowDownIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useMessages } from "@/hooks/use-messages";
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
@@ -68,10 +69,51 @@ function PureMessages({
   onRefreshConversationState,
   onRuntimeInteractionResponse,
 }: MessagesProps) {
+  const router = useRouter();
   const latestAssistantMessageId = [...messages]
     .reverse()
     .find((message) => message.role === "assistant")?.id;
   const [ttsAvailable, setTtsAvailable] = useState<boolean | null>(null);
+  const [forkingLostSession, setForkingLostSession] = useState(false);
+  const [lostSessionForkError, setLostSessionForkError] = useState<string | null>(null);
+  const nativeSessionLost = conversationState.turns.some(
+    (turn) =>
+      turn.status === "failed" && turn.failureCode === "RUNTIME_NATIVE_SESSION_LOST"
+  );
+  const liveWaitLost = conversationState.turns.some(
+    (turn) =>
+      turn.status === "failed" && turn.failureCode === "RUNTIME_LIVE_WAIT_LOST"
+  );
+
+  async function forkRuntimeRecovery() {
+    setForkingLostSession(true);
+    setLostSessionForkError(null);
+    try {
+      const response = await fetch(`/api/threads/${threadId}/duplicate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          failureCode: nativeSessionLost
+            ? "RUNTIME_NATIVE_SESSION_LOST"
+            : "RUNTIME_LIVE_WAIT_LOST",
+        }),
+      });
+      const result = (await response.json()) as {
+        thread?: { id?: string };
+        error?: string;
+      };
+      if (!response.ok || !result.thread?.id) {
+        throw new Error(result.error ?? "The Kestrel fork could not be created.");
+      }
+      router.push(`/threads/${result.thread.id}`);
+    } catch (error) {
+      setLostSessionForkError(
+        error instanceof Error ? error.message : "The Kestrel fork could not be created."
+      );
+    } finally {
+      setForkingLostSession(false);
+    }
+  }
 
   useEffect(() => {
     let isCancelled = false;
@@ -287,6 +329,33 @@ function PureMessages({
             >
               This conversation could not be assembled from its durable turn
               records. Reload the Thread or contact support.
+            </div>
+          ) : null}
+
+          {!isReadonly && (nativeSessionLost || liveWaitLost) ? (
+            <div
+              className="flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm"
+              role="alert"
+            >
+              <span>
+                {nativeSessionLost
+                  ? "The native Runtime conversation is no longer available."
+                  : "The Runtime connection was lost during a live interaction."}
+                {" "}This Thread remains locked to its Runtime.
+                {lostSessionForkError ? ` ${lostSessionForkError}` : ""}
+              </span>
+              <button
+                className="shrink-0 rounded-md border px-3 py-1.5 font-medium disabled:opacity-50"
+                disabled={forkingLostSession}
+                onClick={() => void forkRuntimeRecovery()}
+                type="button"
+              >
+                {forkingLostSession
+                  ? "Creating fork…"
+                  : nativeSessionLost
+                    ? "Fork to Kestrel"
+                    : "Fork with same Runtime"}
+              </button>
             </div>
           ) : null}
 

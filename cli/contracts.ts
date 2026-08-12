@@ -52,6 +52,7 @@ import type {
   ShellKind,
   ShellPresetId,
 } from "../src/profile/runtimeProfile.js";
+import type { RuntimeId } from "../src/runtimes/contracts.js";
 import type {
   ThemeMode,
   ThemeOverrides,
@@ -203,6 +204,8 @@ export interface TuiProfile {
   label: string;
   agent: SupportedAgent;
   sessionPrefix: string;
+  /** Agent execution engine. Omitted profiles retain the Kestrel Runtime. */
+  runtimeId?: RuntimeId | undefined;
   agentProfileId?: string | undefined;
   agentProfileLabel?: string | undefined;
   shellKind?: ShellKind | undefined;
@@ -275,6 +278,7 @@ export interface TuiProfile {
 }
 
 export interface KestrelOneManagedProfileOverlay {
+  runtimeId?: TuiProfile["runtimeId"] | undefined;
   approvalPolicyPackId?: ApprovalPolicyPackId | undefined;
   additionalToolNames?: string[] | undefined;
   mcpServers?: McpServerConfig[] | undefined;

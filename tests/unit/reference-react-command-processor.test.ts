@@ -273,6 +273,19 @@ test("createReferenceReactWaitCheckpoint records processor-owned user waits and 
       kind: "user_input",
       eventType: "user.reply",
       prompt: "Switch mode to continue.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          answer: {
+            type: "array",
+            items: { type: "string", minLength: 1 },
+            minItems: 1,
+            maxItems: 1,
+          },
+        },
+        required: ["answer"],
+        additionalProperties: false,
+      },
     },
   });
   assert.equal(react.assistantText, "Switch mode to continue.");

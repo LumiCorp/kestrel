@@ -96,6 +96,23 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
           kind: waitFor.kind === "approval" ? "approval" : "user_input",
           eventType: waitFor.eventType,
           prompt,
+          ...(waitFor.kind === "user" && waitFor.interaction?.inputSchema === undefined
+            ? {
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    answer: {
+                      type: "array",
+                      items: { type: "string", minLength: 1 },
+                      minItems: 1,
+                      maxItems: 1,
+                    },
+                  },
+                  required: ["answer"],
+                  additionalProperties: false,
+                },
+              }
+            : {}),
           ...(waitFor.kind === "approval" ? readApprovalPresentation(metadata) : {}),
         };
   const structuredReview = parseRunnerStructuredReviewInteractionV1(interaction);

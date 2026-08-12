@@ -6,6 +6,7 @@ import { resolvePreferredLanguageModelId } from "@/lib/ai/gateways";
 import { getDefaultOrganizationEnvironment } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { getOrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
+import { isHydraRuntimesEnabled } from "@/lib/runtimes/release-gate";
 import { generateUUID } from "@/lib/utils";
 
 function BootstrapChatFallback() {
@@ -36,6 +37,7 @@ export default async function ChatIndexPage() {
           id={id}
           initialChatModel={initialChatModel}
           key={id}
+          hydraEnabled={isHydraRuntimesEnabled()}
           newTurnDisabledReason={
             readiness.applicable && !readiness.ready
               ? "Finish organization setup before starting a new agent turn."

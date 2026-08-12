@@ -59,6 +59,7 @@ const TERMINAL_EVENT_TYPES = new Set<RunnerEvent["type"]>([
   "profile.listed",
   "profile.loaded",
   "execution-profile.resolved",
+  "runtime.described",
   "job.completed",
   "job.failed",
   "run.completed",

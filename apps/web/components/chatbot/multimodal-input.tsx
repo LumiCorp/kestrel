@@ -191,9 +191,12 @@ function PureMultimodalInput({
   onModelChange,
   interactionMode,
   onInteractionModeChange,
+  runtimeId,
+  onRuntimeChange,
   activeEnvironmentName,
   modelScopeQuery,
   newTurnDisabledReason,
+  hydraEnabled,
 }: {
   threadId: string;
   input: string;
@@ -220,13 +223,89 @@ function PureMultimodalInput({
   onModelChange?: (modelId: string) => void;
   interactionMode: KestrelOneInteractionMode;
   onInteractionModeChange: (mode: KestrelOneInteractionMode) => void;
+  runtimeId: "kestrel" | "codex" | "claude";
+  onRuntimeChange: (runtimeId: "kestrel" | "codex" | "claude") => void;
   activeEnvironmentName?: string;
   modelScopeQuery?: string;
   newTurnDisabledReason?: string;
+  hydraEnabled: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
   const { setArtifact } = useArtifact();
+  const [runtimeReadiness, setRuntimeReadiness] = useState<Partial<Record<
+    "codex" | "claude",
+    {
+      availability: "loading" | "ready" | "auth_required" | "version_mismatch" | "unavailable";
+      reason?: string | undefined;
+    }
+  >>>({});
+  const runtimeReadinessRequest = useRef(0);
+
+  useEffect(() => {
+    if (!hydraEnabled || messages.length > 0) return;
+    const controller = new AbortController();
+    const projectId = new URLSearchParams(
+      modelScopeQuery?.replace(/^&/u, "") ?? "",
+    ).get("projectId");
+    const load = async () => {
+      const requestId = ++runtimeReadinessRequest.current;
+      setRuntimeReadiness({
+        codex: { availability: "loading" },
+        claude: { availability: "loading" },
+      });
+      const entries = await Promise.all(
+        (["codex", "claude"] as const).map(async (candidate) => {
+          try {
+            const response = await fetch("/api/runtimes/describe", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                runtimeId: candidate,
+                modelId: selectedModelId,
+                ...(projectId ? { projectId } : {}),
+              }),
+              signal: controller.signal,
+            });
+            const body = await response.json() as {
+              resolution?: { descriptor?: { availability?: string; unavailableReason?: string } };
+              error?: string;
+            };
+            const availability = body.resolution?.descriptor?.availability;
+            return [candidate, {
+              availability: response.ok && (
+                availability === "ready" ||
+                availability === "auth_required" ||
+                availability === "version_mismatch" ||
+                availability === "unavailable"
+              ) ? availability : "unavailable",
+              ...(body.resolution?.descriptor?.unavailableReason || body.error
+                ? { reason: body.resolution?.descriptor?.unavailableReason ?? body.error }
+                : {}),
+            }] as const;
+          } catch (error) {
+            if (controller.signal.aborted) throw error;
+            return [candidate, {
+              availability: "unavailable" as const,
+              reason: error instanceof Error ? error.message : "Runtime readiness failed.",
+            }] as const;
+          }
+        }),
+      );
+      if (
+        !controller.signal.aborted &&
+        requestId === runtimeReadinessRequest.current
+      ) {
+        setRuntimeReadiness(Object.fromEntries(entries));
+      }
+    };
+    void load();
+    window.addEventListener("focus", load);
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", load);
+    };
+  }, [hydraEnabled, messages.length, modelScopeQuery, selectedModelId]);
 
   const hasAutoFocused = useRef(false);
   useEffect(() => {
@@ -993,6 +1072,7 @@ function PureMultimodalInput({
             />
           }
           onInteractionModeChange={onInteractionModeChange}
+          onRuntimeChange={onRuntimeChange}
           primaryAction={
             <ComposerActionButton
               clearError={clearError}
@@ -1003,6 +1083,10 @@ function PureMultimodalInput({
               setMessages={setMessages}
             />
           }
+          runtimeDisabled={messages.length > 0 || status !== "ready"}
+          runtimeId={runtimeId}
+          hydraEnabled={hydraEnabled}
+          runtimeReadiness={runtimeReadiness}
         />
       </PromptInput>
 

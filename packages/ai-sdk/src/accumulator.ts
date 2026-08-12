@@ -301,6 +301,7 @@ export function createKestrelPresentationAccumulator(input: {
           );
         } else if (event.type === "run.cancelled") {
           terminalStatus = "cancelled";
+          errorCode = undefined;
           errorMessage = "The run was cancelled before it finished.";
         } else {
           const result = event.payload.result;
@@ -313,6 +314,7 @@ export function createKestrelPresentationAccumulator(input: {
               "run.completed.payload.result.assistantText",
             );
             terminalStatus = "completed";
+            errorCode = null;
             errorMessage = null;
           } else if (result.output.status === "WAITING") {
             const waitingAssistantText = requireNonEmptyString(
@@ -327,6 +329,7 @@ export function createKestrelPresentationAccumulator(input: {
             }
             assistantText = waitingAssistantText;
             terminalStatus = "waiting";
+            errorCode = null;
             errorMessage = null;
             appendPart({
               type: "data-kestrel-interaction",

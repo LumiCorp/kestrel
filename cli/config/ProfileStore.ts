@@ -39,6 +39,7 @@ import {
   type KestrelOneProfileOverlay,
 } from "../../src/profile/kestrelOnePolicy.js";
 import { resolveRuntimeProfileSelection } from "../../src/profile/runtimeProfile.js";
+import { isRuntimeId } from "../../src/runtimes/contracts.js";
 import type {
   KestrelOneManagedProfileOverlay,
   ProfilesFileV10,
@@ -873,6 +874,7 @@ const KESTREL_MANAGED_OVERLAY_FIELDS = new Set([
 
 const KESTREL_MANAGED_CONFIGURATION_FIELDS = new Set([
   ...KESTREL_MANAGED_OVERLAY_FIELDS,
+  "runtimeId",
   "label",
   "modelProvider",
   "model",
@@ -915,6 +917,11 @@ export function parseKestrelManagedConfiguration(
     "execution-profile.resolve managedConfiguration.model",
   );
   return {
+    ...(record.runtimeId !== undefined
+      ? {
+          runtimeId: parseManagedRuntimeId(record.runtimeId),
+        }
+      : {}),
     ...(label !== undefined ? { label } : {}),
     ...(record.modelProvider !== undefined
       ? {
@@ -982,6 +989,15 @@ export function parseKestrelManagedConfiguration(
       : {}),
     ...overlay,
   };
+}
+
+function parseManagedRuntimeId(value: unknown) {
+  if (!isRuntimeId(value)) {
+    throw new Error(
+      "execution-profile.resolve managedConfiguration.runtimeId must be kestrel, codex, or claude",
+    );
+  }
+  return value;
 }
 
 function parseKestrelOneManagedOverlayValue(

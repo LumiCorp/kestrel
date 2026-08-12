@@ -23,7 +23,10 @@ async function main(): Promise<void> {
     ...(store === undefined
       ? {}
       : {
-          runtimeFactory: createHostedRunnerRuntimeFactory(store.store),
+          runtimeFactory: createHostedRunnerRuntimeFactory(
+            store.store,
+            process.env.KESTREL_RUNNER_STORE_DIR,
+          ),
           runtimeStore: {
             ready: store.ready,
             probe: store.probe,

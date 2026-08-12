@@ -297,6 +297,7 @@ test(
         apps: [{ id: "weather", contractVersion: 1 }],
       }),
       {
+        runtimeId: "kestrel",
         modelConfiguration: { id: "primary", revision: 2 },
         apps: [{ id: DESKTOP_WEATHER_APP_ID, contractVersion: 1 }],
       },

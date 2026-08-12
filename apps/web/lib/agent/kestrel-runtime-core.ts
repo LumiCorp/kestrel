@@ -27,6 +27,7 @@ import {
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
 import type { EnvironmentRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-model";
 import type { Session } from "@/lib/auth-types";
+import { hydrateRuntimeAttachments } from "@/lib/runtimes/attachments";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 
@@ -134,6 +135,10 @@ export type KestrelOneAgentResponseInput = {
   correlation: KestrelOneRequestCorrelation;
   threadId: string;
   durableTurnId?: string | undefined;
+  runtimeBindingId?: string | undefined;
+  runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
+  participantId?: string | undefined;
+  runtimeId?: "kestrel" | "codex" | "claude" | undefined;
   messages: UIMessage[];
   approvalDecision?:
     | {
@@ -147,6 +152,7 @@ export type KestrelOneAgentResponseInput = {
         requestId: string;
         eventType: string;
         message: string;
+        answers?: Record<string, string[]> | undefined;
         approved?: boolean | undefined;
         reason?: string | undefined;
         recoveryOptionId?: string | undefined;
@@ -249,21 +255,39 @@ export function createKestrelOneAgentResponseFromAgent(
 
       try {
         try {
+          const attachments = input.runtimeId !== undefined && input.runtimeId !== "kestrel"
+            ? await hydrateRuntimeAttachments({
+                message: input.messages.at(-1),
+                threadId: input.threadId,
+                userId: input.session.user.id,
+              })
+            : [];
           const runStream = await input.agent.stream(
             {
               sessionId: input.threadId,
+              ...(input.runtimeBindingId !== undefined
+                ? { runtimeBindingId: input.runtimeBindingId }
+                : {}),
+              ...(input.runtimeNativeSessionState !== undefined
+                ? { runtimeNativeSessionState: input.runtimeNativeSessionState }
+                : {}),
+              ...(input.participantId !== undefined
+                ? { participantId: input.participantId }
+                : {}),
               message: latestUserMessage,
               eventType: interactionResponse?.eventType ?? "user.message",
               interactionMode: input.interactionMode,
               ...(interactionResponse !== undefined
                 ? {
                     resumeRequestId: interactionResponse.requestId,
+                    interactionResponse,
                     ...(interactionResponse.recoveryOptionId !== undefined
                       ? { recoveryOptionId: interactionResponse.recoveryOptionId }
                       : {}),
                   }
                 : {}),
               history,
+              ...(attachments.length > 0 ? { attachments } : {}),
               ...(input.projectContext
                 ? {
                     projectContext: {

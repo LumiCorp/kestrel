@@ -1,4 +1,5 @@
 import type { TuiProfile } from "../../cli/contracts.js";
+import type { RuntimeDescriptorV1 } from "../runtimes/contracts.js";
 import {
   parseDesktopExecutionSelection,
   type DesktopExecutionSelection,
@@ -82,6 +83,53 @@ export type LocalCoreExecutionProfileResolveRequest =
       profileId: string;
     };
 
+export type LocalCoreRuntimeDescribeRequest = LocalCoreExecutionProfileResolveRequest;
+
+export interface LocalCoreRuntimeDescriptorResolution {
+  version: "runtime_descriptor_resolution_v1";
+  descriptor: RuntimeDescriptorV1;
+  profileFingerprint: string;
+  capabilityDigest: string;
+  environmentId: string;
+  observedAt: string;
+  readinessExpiresAt?: string | undefined;
+}
+
+export const parseLocalCoreRuntimeDescribeRequest =
+  parseLocalCoreExecutionProfileResolveRequest;
+
+export function parseLocalCoreRuntimeDescriptorResolution(
+  value: unknown,
+): LocalCoreRuntimeDescriptorResolution {
+  const record = requireLocalCoreRecord(value, "Runtime descriptor resolution");
+  if (record.version !== "runtime_descriptor_resolution_v1") {
+    throw new Error("Runtime descriptor resolution.version is invalid.");
+  }
+  return {
+    version: "runtime_descriptor_resolution_v1",
+    descriptor: parseLocalCoreRuntimeDescriptor(record.descriptor),
+    profileFingerprint: requireLocalCoreString(
+      record.profileFingerprint,
+      "Runtime descriptor resolution.profileFingerprint",
+    ),
+    capabilityDigest: requireLocalCoreString(
+      record.capabilityDigest,
+      "Runtime descriptor resolution.capabilityDigest",
+    ),
+    environmentId: requireLocalCoreString(
+      record.environmentId,
+      "Runtime descriptor resolution.environmentId",
+    ),
+    observedAt: requireLocalCoreString(
+      record.observedAt,
+      "Runtime descriptor resolution.observedAt",
+    ),
+    ...(typeof record.readinessExpiresAt === "string"
+      ? { readinessExpiresAt: record.readinessExpiresAt }
+      : {}),
+  };
+}
+
 export interface LocalCoreExecutionProfileResolution {
   version: typeof LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_VERSION;
   profileId: string;
@@ -101,6 +149,7 @@ export interface LocalCoreExecutionProfileResolution {
     version: number;
   };
   resolvedProfile: TuiProfile;
+  runtimeDescriptor?: RuntimeDescriptorV1 | undefined;
 }
 
 export function parseLocalCoreExecutionProfileResolveRequest(
@@ -153,6 +202,7 @@ export function parseLocalCoreExecutionProfileResolution(
       "policy",
       "environmentPreset",
       "resolvedProfile",
+      "runtimeDescriptor",
     ]),
     "execution profile resolution",
   );
@@ -265,7 +315,40 @@ export function parseLocalCoreExecutionProfileResolution(
       version: environmentPreset.version,
     },
     resolvedProfile: structuredClone(profile as TuiProfile),
+    ...(record.runtimeDescriptor !== undefined
+      ? { runtimeDescriptor: parseLocalCoreRuntimeDescriptor(record.runtimeDescriptor) }
+      : {}),
   };
+}
+
+function parseLocalCoreRuntimeDescriptor(value: unknown): RuntimeDescriptorV1 {
+  const descriptor = requireLocalCoreRecord(value, "execution profile resolution.runtimeDescriptor");
+  const capabilities = requireLocalCoreRecord(
+    descriptor.capabilities,
+    "execution profile resolution.runtimeDescriptor.capabilities",
+  );
+  if (
+    descriptor.version !== "runtime_descriptor_v1" ||
+    (descriptor.runtimeId !== "kestrel" && descriptor.runtimeId !== "codex" && descriptor.runtimeId !== "claude") ||
+    typeof descriptor.displayName !== "string" ||
+    descriptor.adapterContractVersion !== 1 ||
+    typeof descriptor.nativeVersion !== "string" ||
+    (descriptor.availability !== "ready" &&
+      descriptor.availability !== "auth_required" &&
+      descriptor.availability !== "version_mismatch" &&
+      descriptor.availability !== "unavailable") ||
+    !Array.isArray(descriptor.interactionStrategies) ||
+    !Array.isArray(capabilities.modes) ||
+    typeof capabilities.continuation !== "boolean" ||
+    typeof capabilities.cancellation !== "boolean" ||
+    typeof capabilities.usage !== "boolean" ||
+    !Array.isArray(capabilities.attachments) ||
+    (capabilities.conversationPersistence !== "native_resume" && capabilities.conversationPersistence !== "none") ||
+    (capabilities.interactionRecovery !== "connection_bound" && capabilities.interactionRecovery !== "durable_resume")
+  ) {
+    throw new Error("Local Core execution profile resolution.runtimeDescriptor is invalid.");
+  }
+  return structuredClone(descriptor) as unknown as RuntimeDescriptorV1;
 }
 
 export interface LocalCoreRuntimeStoreResetRequest {

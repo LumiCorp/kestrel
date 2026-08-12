@@ -2,6 +2,7 @@ import "server-only";
 
 import type { KestrelInteractionPresentation } from "@kestrel-agents/ai-sdk";
 import { parseRunnerStructuredReviewInteractionV1 } from "@kestrel-agents/protocol";
+import { Ajv } from "ajv";
 import {
   and,
   asc,
@@ -37,6 +38,13 @@ import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 type TurnTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
 >[0];
+
+const interactionSchemaValidator = new Ajv({
+  allErrors: true,
+  coerceTypes: false,
+  removeAdditional: false,
+  strict: false,
+});
 
 export class DurableTurnError extends Error {
   readonly code:
@@ -346,11 +354,65 @@ async function createDurableThreadTurnInTransaction(
   await tx.execute(
     sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(input.threadId)}, 0))`,
   );
-  const thread = await lockAccessibleThread(tx, {
+  let thread = await lockAccessibleThread(tx, {
     threadId: input.threadId,
     organizationId: input.organizationId,
     userId: input.authorUserId,
   });
+  if (!thread.runtimeBindingId) {
+    const now = new Date();
+    const runtimeId = thread.runtimeId ?? "kestrel";
+    const participantId = `runtime:${thread.organizationId}:${runtimeId}`;
+    const runtimeBindingId = `binding:${thread.id}`;
+    await tx
+      .insert(schema.runtimeParticipants)
+      .values({
+        id: participantId,
+        organizationId: thread.organizationId,
+        runtimeId,
+        displayName:
+          runtimeId === "kestrel"
+            ? "Kestrel"
+            : runtimeId === "codex"
+              ? "Codex"
+              : "Claude Code",
+        createdAt: now,
+      })
+      .onConflictDoNothing();
+    await tx
+      .insert(schema.runtimeBindings)
+      .values({
+        id: runtimeBindingId,
+        threadId: thread.id,
+        participantId,
+        runtimeId,
+        adapterContractVersion: 1,
+        status: "ready",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({ target: schema.runtimeBindings.threadId });
+    const [binding] = await tx
+      .select({ id: schema.runtimeBindings.id })
+      .from(schema.runtimeBindings)
+      .where(eq(schema.runtimeBindings.threadId, thread.id))
+      .limit(1);
+    if (!binding) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Thread Runtime binding could not be materialized.",
+      );
+    }
+    const [updatedThread] = await tx
+      .update(schema.threads)
+      .set({ runtimeId, runtimeBindingId: binding.id, updatedAt: now })
+      .where(eq(schema.threads.id, thread.id))
+      .returning();
+    if (!updatedThread) {
+      throw new DurableTurnError("TURN_NOT_FOUND", "Thread not found.");
+    }
+    thread = updatedThread;
+  }
   const [existing] = await tx
     .select()
     .from(schema.threadTurns)
@@ -588,6 +650,18 @@ export async function createMobileThreadWithFirstTurn(
       }
     } else {
       const now = new Date();
+      const participantId = `runtime:${input.organizationId}:kestrel`;
+      const runtimeBindingId = `binding:${input.threadId}`;
+      await tx
+        .insert(schema.runtimeParticipants)
+        .values({
+          id: participantId,
+          organizationId: input.organizationId,
+          runtimeId: "kestrel",
+          displayName: "Kestrel",
+          createdAt: now,
+        })
+        .onConflictDoNothing();
       const [thread] = await tx
         .insert(schema.threads)
         .values({
@@ -597,6 +671,8 @@ export async function createMobileThreadWithFirstTurn(
           projectId: input.projectId,
           mode: "chat",
           origin: "mobile",
+          runtimeId: "kestrel",
+          runtimeBindingId,
           activeStreamId: null,
           title: "",
           isPublic: false,
@@ -608,6 +684,16 @@ export async function createMobileThreadWithFirstTurn(
       if (!thread) {
         throw new Error("Thread creation failed.");
       }
+      await tx.insert(schema.runtimeBindings).values({
+        id: runtimeBindingId,
+        threadId: thread.id,
+        participantId,
+        runtimeId: "kestrel",
+        adapterContractVersion: 1,
+        status: "ready",
+        createdAt: now,
+        updatedAt: now,
+      });
       if (input.projectId) {
         await tx.insert(schema.projectAuditEvents).values({
           id: crypto.randomUUID(),
@@ -695,6 +781,23 @@ export async function createMobileThreadBranchWithFirstTurn(
     }
 
     const now = new Date();
+    const participantId = `runtime:${input.organizationId}:${parent.runtimeId}`;
+    const runtimeBindingId = `binding:${input.threadId}`;
+    await tx
+      .insert(schema.runtimeParticipants)
+      .values({
+        id: participantId,
+        organizationId: input.organizationId,
+        runtimeId: parent.runtimeId,
+        displayName:
+          parent.runtimeId === "kestrel"
+            ? "Kestrel"
+            : parent.runtimeId === "codex"
+              ? "Codex"
+              : "Claude Code",
+        createdAt: now,
+      })
+      .onConflictDoNothing();
     const [thread] = await tx
       .insert(schema.threads)
       .values({
@@ -706,6 +809,8 @@ export async function createMobileThreadBranchWithFirstTurn(
         branchAnchorMessageId: input.anchorMessageId,
         mode: "chat",
         origin: "mobile",
+        runtimeId: parent.runtimeId,
+        runtimeBindingId,
         activeStreamId: null,
         title: "",
         isPublic: false,
@@ -715,6 +820,16 @@ export async function createMobileThreadBranchWithFirstTurn(
       })
       .returning();
     if (!thread) throw new Error("Branch creation failed.");
+    await tx.insert(schema.runtimeBindings).values({
+      id: runtimeBindingId,
+      threadId: thread.id,
+      participantId,
+      runtimeId: parent.runtimeId,
+      adapterContractVersion: 1,
+      status: "ready",
+      createdAt: now,
+      updatedAt: now,
+    });
 
     const prefix = await tx
       .select()
@@ -778,7 +893,7 @@ export async function reorderDurableThreadQueue(input: {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(input.threadId)}, 0))`,
     );
-    await lockAccessibleThread(tx, input);
+    const lockedThread = await lockAccessibleThread(tx, input);
     const [queueState] = await tx
       .select()
       .from(schema.threadTurnQueueState)
@@ -846,7 +961,7 @@ export async function claimDurableThreadTurn(
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(candidate.threadId)}, 0))`,
     );
-    await lockAccessibleThread(tx, {
+    const lockedThread = await lockAccessibleThread(tx, {
       threadId: candidate.threadId,
       organizationId: candidate.organizationId,
       userId: candidate.authorUserId,
@@ -877,10 +992,10 @@ export async function claimDurableThreadTurn(
             where: and(
               eq(schema.threadInteractions.turnId, turn.id),
               eq(schema.threadInteractions.source, "runtime"),
-              eq(schema.threadInteractions.status, "resolved"),
+              eq(schema.threadInteractions.status, "processing"),
               isNull(schema.threadInteractions.resumedAt),
             ),
-            orderBy: (table, { asc }) => [asc(table.resolvedAt)],
+            orderBy: (table, { asc }) => [asc(table.answeredAt)],
           })
         : null;
     const isRunningResume = options.resumeRunning && turn.status === "running";
@@ -914,16 +1029,19 @@ export async function claimDurableThreadTurn(
       stage: interaction ? "retrying" : "preparing",
       now,
     });
-    if (interaction) {
-      await tx
-        .update(schema.threadInteractions)
-        .set({ resumedAt: now, updatedAt: now })
-        .where(eq(schema.threadInteractions.id, interaction.id));
-    }
     const response = interaction?.responseEnvelope;
+    const binding = lockedThread.runtimeBindingId
+      ? await tx.query.runtimeBindings.findFirst({
+          where: eq(schema.runtimeBindings.id, lockedThread.runtimeBindingId),
+        })
+      : null;
     return running
       ? {
           ...running,
+          runtimeId: lockedThread.runtimeId,
+          runtimeBindingId: lockedThread.runtimeBindingId,
+          runtimeNativeSessionState: binding?.nativeSessionState ?? "uninitialized",
+          participantId: `runtime:${lockedThread.organizationId}:${lockedThread.runtimeId}`,
           interactionResponse:
             response &&
             typeof response.eventType === "string" &&
@@ -932,6 +1050,9 @@ export async function claimDurableThreadTurn(
                   requestId: interaction.requestId,
                   eventType: response.eventType,
                   message: response.message,
+                  ...(readAnswerMap(response.answers) !== undefined
+                    ? { answers: readAnswerMap(response.answers)! }
+                    : {}),
                   ...(typeof response.approved === "boolean"
                     ? { approved: response.approved }
                     : {}),
@@ -1436,6 +1557,7 @@ export async function resolveDurableRuntimeInteraction(input: {
   requestId: string;
   eventType: string;
   message: string;
+  answers?: Record<string, string[]> | undefined;
   approved?: boolean | undefined;
   reason?: string | undefined;
   recoveryOptionId?: string | undefined;
@@ -1446,7 +1568,7 @@ export async function resolveDurableRuntimeInteraction(input: {
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(input.threadId)}, 0))`,
     );
-    await lockAccessibleThread(tx, input);
+    const lockedThread = await lockAccessibleThread(tx, input);
     const [interaction] = await tx
       .select()
       .from(schema.threadInteractions)
@@ -1472,14 +1594,18 @@ export async function resolveDurableRuntimeInteraction(input: {
         "The interaction response event type does not match the pending request.",
       );
     }
-    if (interaction.status === "resolved") {
+    if (interaction.status === "resolved" || interaction.status === "processing") {
+      const replayType =
+        interaction.status === "resolved"
+          ? "interaction.resolved"
+          : "interaction.answered";
       const [resolvedEvent] = await tx
         .select({ sequence: schema.threadTurnEvents.sequence })
         .from(schema.threadTurnEvents)
         .where(
           and(
             eq(schema.threadTurnEvents.turnId, interaction.turnId),
-            eq(schema.threadTurnEvents.type, "interaction.resolved"),
+            eq(schema.threadTurnEvents.type, replayType),
             sql`${schema.threadTurnEvents.data}->>'requestId' = ${input.requestId}`,
           ),
         )
@@ -1529,6 +1655,13 @@ export async function resolveDurableRuntimeInteraction(input: {
     }
     const inputSchema = readPlainRecord(interaction.requestEnvelope)?.inputSchema;
     const inputContract = readPlainRecord(inputSchema);
+    const normalizedAnswers = interaction.kind === "user_input"
+      ? validateRuntimeInteractionAnswers({
+          inputSchema: inputContract,
+          answers: input.answers,
+          legacyMessage: input.message,
+        })
+      : input.answers;
     const properties = readPlainRecord(inputContract?.properties);
     const optionSchema = readPlainRecord(properties?.recoveryOptionId);
     const allowedOptionIds = Array.isArray(optionSchema?.enum)
@@ -1577,6 +1710,9 @@ export async function resolveDurableRuntimeInteraction(input: {
       eventType: input.eventType,
       message: input.message,
       messageId: input.messageId,
+      ...(normalizedAnswers !== undefined
+        ? { answers: normalizedAnswers }
+        : {}),
       ...(typeof input.approved === "boolean"
         ? { approved: input.approved }
         : {}),
@@ -1600,13 +1736,145 @@ export async function resolveDurableRuntimeInteraction(input: {
     await tx
       .update(schema.threadInteractions)
       .set({
-        status: "resolved",
+        status: "processing",
         responseEnvelope,
         resolvedByUserId: input.userId,
-        resolvedAt: now,
+        answeredAt: now,
         updatedAt: now,
       })
       .where(eq(schema.threadInteractions.id, interaction.id));
+    if (!lockedThread.runtimeBindingId) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Thread Runtime binding is missing.",
+      );
+    }
+    const strategy =
+      lockedThread.runtimeId === "codex"
+        ? "live_connection"
+        : lockedThread.runtimeId === "claude"
+          ? "live_callback"
+          : "kestrel_continuation";
+    await tx
+      .insert(schema.runtimeInteractionDeliveries)
+      .values({
+        id: crypto.randomUUID(),
+        interactionId: interaction.id,
+        turnId: turn.id,
+        bindingId: lockedThread.runtimeBindingId,
+        requestId: input.requestId,
+        strategy,
+        nativeCorrelation: { requestId: input.requestId },
+        attempt: 1,
+        idempotencyKey: `${interaction.id}:1`,
+        state: "delivering",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: schema.runtimeInteractionDeliveries.interactionId,
+        set: {
+          state: "delivering",
+          failureCode: null,
+          failureMessage: null,
+          updatedAt: now,
+        },
+      });
+    if (interaction.assistantMessageId) {
+      const [assistantMessage] = await tx
+        .select({ parts: schema.threadMessages.parts })
+        .from(schema.threadMessages)
+        .where(eq(schema.threadMessages.id, interaction.assistantMessageId))
+        .limit(1)
+        .for("update");
+      if (assistantMessage) {
+        await tx
+          .update(schema.threadMessages)
+          .set({
+            parts: setInteractionPresentationStatus(
+              assistantMessage.parts,
+              interaction.requestId,
+              "processing",
+            ),
+          })
+          .where(eq(schema.threadMessages.id, interaction.assistantMessageId));
+      }
+    }
+    await tx
+      .update(schema.threadTurnQueueState)
+      .set({
+        state: "running",
+        pauseReason: null,
+        version: queueState.version + 1,
+        updatedAt: now,
+      })
+      .where(eq(schema.threadTurnQueueState.threadId, input.threadId));
+    const resolvedEvent = await appendTurnEvent(tx, {
+      turnId: turn.id,
+      type: "interaction.answered",
+      data: {
+        requestId: input.requestId,
+        eventType: input.eventType,
+        status: "processing",
+        messageId: input.messageId,
+      },
+    });
+    return {
+      turnId: turn.id,
+      shouldDispatch: true,
+      replayAfterSequence: resolvedEvent.sequence,
+    };
+  });
+}
+
+export async function acknowledgeDurableRuntimeInteractionDelivery(input: {
+  turnId: string;
+  requestId: string;
+  acknowledgementEventId: string;
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    const [interaction] = await tx
+      .select()
+      .from(schema.threadInteractions)
+      .where(
+        and(
+          eq(schema.threadInteractions.turnId, input.turnId),
+          eq(schema.threadInteractions.requestId, input.requestId),
+          eq(schema.threadInteractions.source, "runtime"),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!interaction) return null;
+    if (interaction.status === "resolved") return interaction;
+    if (interaction.status !== "processing") {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The runtime interaction is not awaiting delivery acknowledgement.",
+      );
+    }
+    const now = new Date();
+    const [resolved] = await tx
+      .update(schema.threadInteractions)
+      .set({
+        status: "resolved",
+        resolvedAt: now,
+        resumedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(schema.threadInteractions.id, interaction.id))
+      .returning();
+    await tx
+      .update(schema.runtimeInteractionDeliveries)
+      .set({
+        state: "delivered",
+        acknowledgedAt: now,
+        acknowledgementEventId: input.acknowledgementEventId,
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: now,
+      })
+      .where(eq(schema.runtimeInteractionDeliveries.interactionId, interaction.id));
     if (interaction.assistantMessageId) {
       const [assistantMessage] = await tx
         .select({ parts: schema.threadMessages.parts })
@@ -1627,37 +1895,143 @@ export async function resolveDurableRuntimeInteraction(input: {
           .where(eq(schema.threadMessages.id, interaction.assistantMessageId));
       }
     }
-    await tx
-      .update(schema.threadTurnQueueState)
-      .set({
-        state: "running",
-        pauseReason: null,
-        version: queueState.version + 1,
-        updatedAt: now,
-      })
-      .where(eq(schema.threadTurnQueueState.threadId, input.threadId));
-    const resolvedEvent = await appendTurnEvent(tx, {
-      turnId: turn.id,
+    await appendTurnEvent(tx, {
+      turnId: input.turnId,
       type: "interaction.resolved",
       data: {
         requestId: input.requestId,
-        eventType: input.eventType,
+        eventType: interaction.eventType,
         status: "resolved",
-        messageId: input.messageId,
       },
     });
-    return {
-      turnId: turn.id,
-      shouldDispatch: true,
-      replayAfterSequence: resolvedEvent.sequence,
-    };
+    return resolved ?? null;
   });
+}
+
+export async function markRuntimeNativeSessionEstablished(input: {
+  threadId: string;
+  bindingId: string;
+  runtimeId: "codex" | "claude";
+}) {
+  const [binding] = await knowledgeDb
+    .update(schema.runtimeBindings)
+    .set({ nativeSessionState: "ready", updatedAt: new Date() })
+    .where(
+      and(
+        eq(schema.runtimeBindings.id, input.bindingId),
+        eq(schema.runtimeBindings.threadId, input.threadId),
+        eq(schema.runtimeBindings.runtimeId, input.runtimeId),
+      ),
+    )
+    .returning();
+  return binding ?? null;
+}
+
+export async function failDurableRuntimeInteractionDelivery(input: {
+  turnId: string;
+  requestId: string;
+  code: string;
+  message: string;
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    const [interaction] = await tx
+      .select()
+      .from(schema.threadInteractions)
+      .where(
+        and(
+          eq(schema.threadInteractions.turnId, input.turnId),
+          eq(schema.threadInteractions.requestId, input.requestId),
+          eq(schema.threadInteractions.source, "runtime"),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!interaction || interaction.status !== "processing") return null;
+    const now = new Date();
+    await tx
+      .update(schema.runtimeInteractionDeliveries)
+      .set({
+        state: "failed",
+        failureCode: input.code,
+        failureMessage: input.message,
+        updatedAt: now,
+      })
+      .where(eq(schema.runtimeInteractionDeliveries.interactionId, interaction.id));
+    const [failed] = await tx
+      .update(schema.threadInteractions)
+      .set({ status: "failed", updatedAt: now })
+      .where(eq(schema.threadInteractions.id, interaction.id))
+      .returning();
+    return failed ?? null;
+  });
+}
+
+function validateRuntimeInteractionAnswers(input: {
+  inputSchema: Record<string, unknown> | null;
+  answers?: Record<string, string[]> | undefined;
+  legacyMessage: string;
+}): Record<string, string[]> {
+  if (input.inputSchema === null) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The runtime question is missing its answer contract.",
+    );
+  }
+  const required = Array.isArray(input.inputSchema.required)
+    ? input.inputSchema.required.filter(
+        (value): value is string => typeof value === "string",
+      )
+    : [];
+  const answers = input.answers ??
+    (required.length === 1
+      ? { [required[0]!]: [input.legacyMessage] }
+      : undefined);
+  if (answers === undefined) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "This runtime question requires structured answers for every question.",
+    );
+  }
+  let validate;
+  try {
+    validate = interactionSchemaValidator.compile(input.inputSchema);
+  } catch {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The runtime question contains an invalid answer contract.",
+    );
+  }
+  if (!validate(answers)) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The interaction response does not match the pending runtime question.",
+    );
+  }
+  return answers;
 }
 
 function readPlainRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function readAnswerMap(value: unknown): Record<string, string[]> | undefined {
+  const record = readPlainRecord(value);
+  if (record === null) return undefined;
+  const answers: Record<string, string[]> = {};
+  for (const [questionId, selections] of Object.entries(record)) {
+    if (
+      questionId.trim().length === 0 ||
+      !Array.isArray(selections) ||
+      selections.length === 0 ||
+      selections.some((selection) => typeof selection !== "string")
+    ) {
+      return undefined;
+    }
+    answers[questionId] = selections as string[];
+  }
+  return answers;
 }
 
 function appendInteractionPresentationParts(
@@ -1724,7 +2098,7 @@ function appendInteractionPresentationParts(
 function setInteractionPresentationStatus(
   value: unknown,
   requestId: string,
-  status: "resolved" | "cancelled",
+  status: "processing" | "resolved" | "cancelled",
 ) {
   if (!Array.isArray(value)) return value;
   return value.map((part) => {
@@ -2011,6 +2385,27 @@ export async function completeDurableThreadTurn(input: {
         input.failureCode,
         now
       );
+    }
+    if (
+      input.failureCode === "RUNTIME_NATIVE_SESSION_LOST" ||
+      input.failureCode === "RUNTIME_LIVE_WAIT_LOST"
+    ) {
+      const owningThread = await tx.query.threads.findFirst({
+        where: eq(schema.threads.id, turn.threadId),
+        columns: { runtimeBindingId: true },
+      });
+      if (owningThread?.runtimeBindingId) {
+        await tx
+          .update(schema.runtimeBindings)
+          .set({
+            status: "degraded",
+            ...(input.failureCode === "RUNTIME_NATIVE_SESSION_LOST"
+              ? { nativeSessionState: "degraded" as const }
+              : {}),
+            updatedAt: now,
+          })
+          .where(eq(schema.runtimeBindings.id, owningThread.runtimeBindingId));
+      }
     }
     await terminalizeTurnEnvironmentExecution(tx, turn, input.status, now);
     await appendDurableReplayChunks(tx, turn.id, input.replayChunks ?? []);

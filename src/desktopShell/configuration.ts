@@ -7,6 +7,7 @@ import {
 } from "@kestrel-agents/protocol";
 import type { ModelPolicyV1 } from "../profile/modelPolicy.js";
 import type { ModelProviderId } from "../profile/runtimeProfile.js";
+import { isRuntimeId, type RuntimeId } from "../runtimes/contracts.js";
 import { getDesktopStandardAppConnection } from "./standardAppConnections.js";
 
 export const DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID = "desktop-default";
@@ -46,6 +47,7 @@ export interface DesktopAppRef {
 }
 
 export interface DesktopExecutionSelection {
+  runtimeId: RuntimeId;
   modelConfiguration: DesktopModelConfigurationRef;
   apps: DesktopAppRef[];
 }
@@ -555,6 +557,7 @@ export function parseDesktopExecutionSelection(
     })
     .sort((left, right) => left.id.localeCompare(right.id));
   return {
+    runtimeId: isRuntimeId(record.runtimeId) ? record.runtimeId : "kestrel",
     modelConfiguration: {
       id: requireString(model.id, "executionSelection.modelConfiguration.id"),
       revision: requirePositiveInteger(

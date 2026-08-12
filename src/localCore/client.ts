@@ -22,6 +22,7 @@ import {
   parseLocalCoreDesktopExecutionConfig,
   parseLocalCoreBuildIdentity,
   parseLocalCoreExecutionProfileResolution,
+  parseLocalCoreRuntimeDescriptorResolution,
   parseLocalCoreRuntimeStoreResetResult,
   parseLocalCoreSystemLifecycle,
   parseLocalCoreSystemShutdownResult,
@@ -30,6 +31,8 @@ import {
   type LocalCoreBuildIdentityV1,
   type LocalCoreExecutionProfileResolution,
   type LocalCoreExecutionProfileResolveRequest,
+  type LocalCoreRuntimeDescribeRequest,
+  type LocalCoreRuntimeDescriptorResolution,
   type LocalCoreRuntimeStoreResetResult,
   type LocalCoreSystemLifecycle,
   type LocalCoreSystemShutdownRequest,
@@ -581,6 +584,19 @@ export class LocalCoreClient {
         response,
         "resolution",
         "execution profile resolution",
+      ),
+    );
+  }
+
+  async describeRuntime(
+    input: LocalCoreRuntimeDescribeRequest,
+  ): Promise<LocalCoreRuntimeDescriptorResolution> {
+    const response = await this.post("/v1/runtimes/describe", input);
+    return parseLocalCoreRuntimeDescriptorResolution(
+      readObjectField<Record<string, unknown>>(
+        response,
+        "resolution",
+        "Runtime descriptor resolution",
       ),
     );
   }

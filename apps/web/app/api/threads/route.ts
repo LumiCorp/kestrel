@@ -5,6 +5,8 @@ import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessageSchema } from "@/lib/knowledge/validation";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
+import { assertRuntimeReleased } from "@/lib/runtimes/release-gate";
+import { assertRuntimeAdmissionReady } from "@/lib/runtimes/descriptor-service";
 import {
   createThreadForUser,
   getThreadUnreadCountsForUser,
@@ -16,6 +18,7 @@ const createBodySchema = z.object({
   id: routeIdSchema,
   projectId: routeIdSchema.nullable().optional(),
   mode: z.enum(["chat", "admin"]).optional().default("chat"),
+  runtimeId: z.enum(["kestrel", "codex", "claude"]).optional().default("kestrel"),
   message: (uiMessageSchema as z.ZodType<UIMessage>).optional(),
 });
 
@@ -74,13 +77,34 @@ export async function POST(request: NextRequest) {
         { status: 403 }
       );
     }
+    try {
+      assertRuntimeReleased(body.runtimeId);
+    } catch (error) {
+      return NextResponse.json(
+        {
+          code: "RUNTIME_RELEASE_DISABLED",
+          error: error instanceof Error ? error.message : String(error),
+        },
+        { status: 503 },
+      );
+    }
 
+    const runtimeResolution = body.runtimeId === "kestrel"
+      ? undefined
+      : await assertRuntimeAdmissionReady({
+          organizationId,
+          userId: user.id,
+          runtimeId: body.runtimeId,
+          projectId: body.projectId,
+        });
     const thread = await createThreadForUser({
       id: body.id,
       userId: user.id,
       organizationId,
       projectId: body.projectId,
       mode: body.mode,
+      runtimeId: body.runtimeId,
+      runtimeCapabilityDigest: runtimeResolution?.capabilityDigest,
       title: "",
     });
     if (!thread) {

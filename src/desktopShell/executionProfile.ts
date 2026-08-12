@@ -86,6 +86,7 @@ export function resolveDesktopKestrelOneProfile(input: {
   const base = composeKestrelOneProfile({
     environmentPresetId,
     overlay: {
+      runtimeId: selection.runtimeId,
       label: `${resolved.configuration.name} · Kestrel One`,
       approvalPolicyPackId,
       additionalToolNames: selectedAppTools,

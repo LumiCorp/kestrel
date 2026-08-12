@@ -23,6 +23,8 @@ import {
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
 import { KESTREL_ONE_INTERACTION_MODES } from "@/lib/turns/interaction-mode";
 import { createDurableTurnReplayResponse } from "@/lib/turns/replay-response";
+import { assertRuntimeReleased } from "@/lib/runtimes/release-gate";
+import { assertRuntimeAdmissionReady } from "@/lib/runtimes/descriptor-service";
 import {
   createDurableThreadTurn,
   listDurableThreadQueueForUser,
@@ -125,6 +127,38 @@ export async function POST(
     if (!(thread || body.message)) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
+    const requestedRuntimeId = body.runtimeId ?? thread?.runtimeId ?? "kestrel";
+    try {
+      assertRuntimeReleased(requestedRuntimeId);
+    } catch (error) {
+      return NextResponse.json(
+        {
+          code: "RUNTIME_RELEASE_DISABLED",
+          error: error instanceof Error ? error.message : String(error),
+        },
+        { status: 503 },
+      );
+    }
+    if (thread && requestedRuntimeId !== thread.runtimeId) {
+      return NextResponse.json(
+        {
+          code: "RUNTIME_BINDING_IMMUTABLE",
+          error: "The Runtime for an existing Thread cannot be changed.",
+        },
+        { status: 409 },
+      );
+    }
+    const needsRuntimeAdmission = requestedRuntimeId !== "kestrel" &&
+      (!thread || thread.messages.length === 0);
+    const runtimeResolution = needsRuntimeAdmission
+      ? await assertRuntimeAdmissionReady({
+          organizationId,
+          userId: user.id,
+          runtimeId: requestedRuntimeId,
+          modelId: body.model,
+          projectId: thread?.projectId ?? body.projectId,
+        })
+      : undefined;
     if (!thread) {
       const createdThread = await createThreadForUser({
         id: params.id,
@@ -132,6 +166,8 @@ export async function POST(
         organizationId,
         projectId: body.projectId,
         mode: "chat",
+        runtimeId: body.runtimeId,
+        runtimeCapabilityDigest: runtimeResolution?.capabilityDigest,
         title: "",
       });
       if (!createdThread) {
@@ -161,6 +197,7 @@ export async function POST(
         requestId: body.interactionResponse.requestId,
         eventType: body.interactionResponse.eventType,
         message: body.interactionResponse.message,
+        answers: body.interactionResponse.answers,
         approved: body.interactionResponse.approved,
         reason: body.interactionResponse.reason,
         recoveryOptionId: body.interactionResponse.recoveryOptionId,

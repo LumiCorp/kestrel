@@ -69,9 +69,12 @@ import type {
   LocalCoreSystemShutdownRequest,
   LocalCoreSystemShutdownResult,
   LocalCoreStatus,
+  LocalCoreRuntimeDescribeRequest,
+  LocalCoreRuntimeDescriptorResolution,
 } from "./contracts.js";
 import {
   parseLocalCoreExecutionProfileResolveRequest,
+  parseLocalCoreRuntimeDescribeRequest,
   parseLocalCoreRuntimeStoreResetRequest,
   parseLocalCoreSystemShutdownRequest,
 } from "./contracts.js";
@@ -188,6 +191,7 @@ interface LocalCoreExecutionBundle {
   store: RuntimeSessionStore;
   runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
   credentialReadiness: LocalCoreRuntimeCredentialReadiness;
+  runtimeFactory: NonNullable<StartLocalCoreApiServerOptions["executionRuntimeFactory"]>;
 }
 
 type LocalCoreRuntimeCredentialReadiness = Pick<
@@ -714,6 +718,54 @@ export async function startLocalCoreApiServer(
           getSystemLifecycle,
           getRuntimeCredentialReadiness: () =>
             executionBundle?.credentialReadiness,
+          describeRuntime: async (descriptorRequest) => {
+            const activeExecution = executionBundle;
+            if (activeExecution === undefined) {
+              throw new LocalCoreApiRequestError(
+                503,
+                "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+                "Local Core execution is unavailable.",
+              );
+            }
+            const resolution = await resolveLocalCoreExecutionProfile(
+              home.homePath,
+              descriptorRequest,
+              {
+                runtimeConfiguration: activeExecution.runtimeConfiguration,
+                registerProfile: false,
+              },
+            );
+            const runtime = activeExecution.runtimeFactory(
+              resolution.resolvedProfile,
+              () => {},
+              () => {},
+              () => {},
+              () => {},
+              () => {},
+              () => {},
+              () => {},
+              () => {},
+              () => {},
+            );
+            try {
+              if (runtime.describeRuntime === undefined) {
+                throw new Error("The selected Runtime does not support readiness descriptions.");
+              }
+              const descriptor = await runtime.describeRuntime();
+              return {
+                version: "runtime_descriptor_resolution_v1",
+                descriptor,
+                profileFingerprint: resolution.fingerprint,
+                capabilityDigest: createHash("sha256")
+                  .update(JSON.stringify(descriptor.capabilities))
+                  .digest("hex"),
+                environmentId: resolution.environmentPreset.id,
+                observedAt: new Date().toISOString(),
+              };
+            } finally {
+              await runtime.close();
+            }
+          },
           requestSystemShutdown,
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
@@ -932,6 +984,7 @@ async function createExecutionBundle(input: {
       store: storeHandle.store,
       runtimeConfiguration,
       credentialReadiness,
+      runtimeFactory,
     };
   } catch (error) {
     await handler.close({ abortActiveRuns: true }).catch(() => {});
@@ -1192,6 +1245,9 @@ async function handleRequest(input: {
   getRuntimeCredentialReadiness():
     | LocalCoreRuntimeCredentialReadiness
     | undefined;
+  describeRuntime(
+    request: LocalCoreRuntimeDescribeRequest,
+  ): Promise<LocalCoreRuntimeDescriptorResolution>;
   requestSystemShutdown(
     reason: LocalCoreSystemShutdownRequest["reason"],
   ): LocalCoreSystemShutdownResult;
@@ -1862,6 +1918,32 @@ async function handleRequest(input: {
           { runtimeConfiguration },
         ),
       });
+      return;
+    }
+    if (
+      method === "POST" &&
+      url.pathname === "/v1/runtimes/describe"
+    ) {
+      let request;
+      try {
+        request = parseLocalCoreRuntimeDescribeRequest(
+          await readJsonBody(input.request),
+        );
+      } catch (error) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_RUNTIME_DESCRIPTOR_INPUT_INVALID",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      const resolution = await input.describeRuntime(request).catch((error) => {
+        throw new LocalCoreApiRequestError(
+          409,
+          "LOCAL_CORE_RUNTIME_UNAVAILABLE",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+      writeJson(input.response, 200, { ok: true, resolution });
       return;
     }
     if (

@@ -41,6 +41,7 @@ import type {
   WorkspaceGitSnapshot,
 } from "../../src/index.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
+import type { RuntimeDescriptorV1 } from "../../src/runtimes/contracts.js";
 import type {
   OperatorInboxSnapshot,
   OperatorRunIndexView,
@@ -179,6 +180,8 @@ export interface ExecutionProfileResolveCommandPayload {
   managedConfiguration?: Record<string, unknown> | undefined;
   authoringProfileId?: string | undefined;
 }
+
+export type RuntimeDescribeCommandPayload = ExecutionProfileResolveCommandPayload;
 
 export interface RunCancelCommandPayload {
   sessionId: string;
@@ -489,6 +492,7 @@ export interface RunnerCommandPayloadByType {
   "profile.list": ProfileListCommandPayload;
   "profile.get": ProfileGetCommandPayload;
   "execution-profile.resolve": ExecutionProfileResolveCommandPayload;
+  "runtime.describe": RuntimeDescribeCommandPayload;
   "job.run": JobRunCommandPayload;
   "run.start": RunStartCommandPayload;
   "run.cancel": RunCancelCommandPayload;
@@ -585,6 +589,10 @@ export const RUN_STARTED_ACT_SUBMODES = [
 export interface RunStartedEventPayload {
   sessionId: string;
   runId?: string | undefined;
+  runtimeId?: "kestrel" | "codex" | "claude" | undefined;
+  runtimeBindingId?: string | undefined;
+  runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
+  participantId?: string | undefined;
   eventType: string;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
@@ -835,6 +843,17 @@ export interface ExecutionProfileResolvedEventPayload {
     version: number;
   };
   resolvedProfile: TuiProfile;
+  runtimeDescriptor?: RuntimeDescriptorV1 | undefined;
+}
+
+export interface RuntimeDescriptorResolutionV1 {
+  version: "runtime_descriptor_resolution_v1";
+  descriptor: RuntimeDescriptorV1;
+  profileFingerprint: string;
+  capabilityDigest: string;
+  environmentId: string;
+  observedAt: string;
+  readinessExpiresAt?: string | undefined;
 }
 
 export interface TaskUpdatedEventPayload {
@@ -932,16 +951,37 @@ export interface McpRefreshedEventPayload {
   status: McpStatusSnapshot;
 }
 
+export interface RunInteractionDeliveredEventPayload {
+  version: "runtime_interaction_delivered_v1";
+  sessionId: string;
+  runId: string;
+  bindingId: string;
+  participantId: string;
+  requestId: string;
+}
+
+export interface RunNativeSessionEstablishedEventPayload {
+  version: "runtime_native_session_established_v1";
+  sessionId: string;
+  runId: string;
+  bindingId: string;
+  participantId: string;
+  runtimeId: "codex" | "claude";
+}
+
 export interface RunnerEventPayloadByType {
   "profile.listed": ProfileListedEventPayload;
   "profile.loaded": ProfileLoadedEventPayload;
   "execution-profile.resolved": ExecutionProfileResolvedEventPayload;
+  "runtime.described": RuntimeDescriptorResolutionV1;
   "job.started": JobStartedEventPayload;
   "job.progress": JobProgressEventPayload;
   "job.completed": JobCompletedEventPayload;
   "job.failed": JobFailedEventPayload;
   "run.started": RunStartedEventPayload;
   "run.cancelled": RunCancelledEventPayload;
+  "run.native_session.established": RunNativeSessionEstablishedEventPayload;
+  "run.interaction.delivered": RunInteractionDeliveredEventPayload;
   "run.tool.started": RunToolEventPayload;
   "run.tool.completed": RunToolEventPayload;
   "run.tool.failed": RunToolEventPayload;

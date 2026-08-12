@@ -7,7 +7,11 @@ import type {
 export function extractTerminalFailure(
   event: DesktopRunnerEvent,
   selectedProvider: DesktopRendererSettings["selectedProvider"] | undefined,
-): { message: string; capabilityId?: DesktopCapabilityId | undefined } | undefined {
+): {
+  message: string;
+  capabilityId?: DesktopCapabilityId | undefined;
+  recovery?: "fork_to_kestrel" | undefined;
+} | undefined {
   if (event.type !== "run.failed") {
     return;
   }
@@ -19,6 +23,9 @@ export function extractTerminalFailure(
     message: readString(error?.message) ?? code ?? "Run failed.",
     capabilityId:
       explicitCapabilityId ?? capabilityForRuntimeFailureCode(code, selectedProvider),
+    ...(code === "RUNTIME_NATIVE_SESSION_LOST"
+      ? { recovery: "fork_to_kestrel" as const }
+      : {}),
   };
 }
 

@@ -37,6 +37,9 @@ import { assertVisibleCompletedOutcome } from "@/lib/turns/outcome-invariant";
 import { DURABLE_TURN_STOP_GRACE_MS } from "@/lib/turns/contracts";
 import {
   appendDurableTurnEvent,
+  acknowledgeDurableRuntimeInteractionDelivery,
+  markRuntimeNativeSessionEstablished,
+  failDurableRuntimeInteractionDelivery,
   claimDurableThreadTurn,
   completeDurableThreadTurn,
   type DurableAssistantOutcomeMessage,
@@ -162,8 +165,7 @@ function buildFailurePresentation(input: {
       turnId: input.turn.id,
       status: input.status,
       text: assistantText(message),
-      errorMessage:
-        input.status === "failed" ? input.errorMessage : null,
+      errorMessage: input.status === "failed" ? input.errorMessage : null,
       includeStart: input.assistantMessageId === null,
       includeTextStart: input.textPartId === null,
     }) as DurableReplayChunk[],
@@ -457,6 +459,10 @@ export async function processDurableThreadTurn(
       environmentId: turn.requestedEnvironmentId,
       threadId: turn.threadId,
       durableTurnId: turn.id,
+      runtimeId: turn.runtimeId,
+      runtimeBindingId: turn.runtimeBindingId ?? undefined,
+      runtimeNativeSessionState: turn.runtimeNativeSessionState,
+      participantId: turn.participantId,
       messages,
       modelId: turn.requestedModelId ?? undefined,
       interactionMode: turn.requestedInteractionMode,
@@ -517,6 +523,22 @@ export async function processDurableThreadTurn(
           runtimeTerminalObserved = true;
         }
         eventWrites = eventWrites.then(async () => {
+          if (event.type === "run.interaction.delivered") {
+            await acknowledgeDurableRuntimeInteractionDelivery({
+              turnId: turn.id,
+              requestId: event.payload.requestId,
+              acknowledgementEventId: event.id,
+            });
+            return;
+          }
+          if (event.type === "run.native_session.established") {
+            await markRuntimeNativeSessionEstablished({
+              threadId: turn.threadId,
+              bindingId: event.payload.bindingId,
+              runtimeId: event.payload.runtimeId,
+            });
+            return;
+          }
           try {
             if (event.type === "run.started") {
               if (event.runId) {
@@ -659,6 +681,20 @@ export async function processDurableThreadTurn(
     // result is authoritative even if the worker lease ends immediately after
     // it. Earlier worker loss reaches the failed/catch paths instead.
     const completionStatus = terminalTurnStatus(terminal.status);
+    if (
+      completionStatus === "failed" &&
+      terminal.errorCode === "RUNTIME_LIVE_WAIT_LOST" &&
+      turn.interactionResponse?.requestId
+    ) {
+      await failDurableRuntimeInteractionDelivery({
+        turnId: turn.id,
+        requestId: turn.interactionResponse.requestId,
+        code: "RUNTIME_LIVE_WAIT_LOST",
+        message:
+          terminal.error ??
+          "The Runtime did not acknowledge the interaction response.",
+      });
+    }
     const completion = await completeDurableThreadTurn({
       turnId: turn.id,
       status: completionStatus,
@@ -666,18 +702,12 @@ export async function processDurableThreadTurn(
       replayChunks: terminal.replayChunks,
       failureCode:
         completionStatus === "failed"
-          ? workerInterrupted
-            ? "TURN_WORKER_INTERRUPTED"
-            : terminal.errorCode === "MODEL_AUTH_ERROR"
-              ? terminal.errorCode
-            : terminal.errorCode === "AGENT_CONNECTION_INTERRUPTED"
-              ? "AGENT_CONNECTION_INTERRUPTED"
-            : terminal.errorCode === "RUNNER_EVENT_CURSOR_EXPIRED" ||
-                terminal.errorCode === "RUNNER_EVENT_CURSOR_UNKNOWN"
-              ? terminal.errorCode
-            : terminal.status === "contract_failure"
-              ? "PRESENTATION_CONTRACT_FAILURE"
-              : "RUNTIME_FAILED"
+          ? (terminal.errorCode ??
+            (workerInterrupted
+              ? "TURN_WORKER_INTERRUPTED"
+              : terminal.status === "contract_failure"
+                ? "PRESENTATION_CONTRACT_FAILURE"
+                : "RUNTIME_FAILED"))
           : null,
       failureMessage: terminal.error,
     });
@@ -710,6 +740,21 @@ export async function processDurableThreadTurn(
     const stopped =
       cancellationRequested ||
       (await isDurableTurnCancellationRequested(turn.id).catch(() => false));
+    const runtimeFailureCode =
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "RUNTIME_LIVE_WAIT_LOST"
+        ? "RUNTIME_LIVE_WAIT_LOST"
+        : null;
+    if (runtimeFailureCode && turn.interactionResponse?.requestId) {
+      await failDurableRuntimeInteractionDelivery({
+        turnId: turn.id,
+        requestId: turn.interactionResponse.requestId,
+        code: runtimeFailureCode,
+        message,
+      }).catch(() => {});
+    }
     const failurePresentation = buildFailurePresentation({
       errorMessage: message,
       status: stopped ? "cancelled" : "failed",
@@ -724,16 +769,16 @@ export async function processDurableThreadTurn(
       replayChunks: failurePresentation.replayChunks,
       failureCode: stopped
         ? "TURN_STOPPED"
+        : runtimeFailureCode
+          ? runtimeFailureCode
           : workerInterrupted
-          ? "TURN_WORKER_INTERRUPTED"
-          : errorCode === "MODEL_AUTH_ERROR"
-            ? errorCode
-          : errorCode === "AGENT_CONNECTION_INTERRUPTED"
-            ? "AGENT_CONNECTION_INTERRUPTED"
-          : errorCode === "RUNNER_EVENT_CURSOR_EXPIRED" ||
-              errorCode === "RUNNER_EVENT_CURSOR_UNKNOWN"
-            ? errorCode
-          : "TURN_WORKER_FAILED",
+            ? "TURN_WORKER_INTERRUPTED"
+            : errorCode === "MODEL_AUTH_ERROR" ||
+                errorCode === "AGENT_CONNECTION_INTERRUPTED" ||
+                errorCode === "RUNNER_EVENT_CURSOR_EXPIRED" ||
+                errorCode === "RUNNER_EVENT_CURSOR_UNKNOWN"
+              ? errorCode
+              : "TURN_WORKER_FAILED",
       failureMessage: stopped ? null : message,
     });
     return { processed: true, nextTurnId: completion.nextTurnId };

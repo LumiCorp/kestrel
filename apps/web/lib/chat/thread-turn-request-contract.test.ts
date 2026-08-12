@@ -8,59 +8,64 @@ const userMessage = {
   parts: [{ type: "text", text: "Continue." }],
 };
 
-test(
-  "Thread turn boundary accepts exactly one explicit action",
-  () => {
-    assert.equal(
-      threadTurnBodySchema.safeParse({ message: userMessage }).success,
-      true
-    );
-    assert.equal(
-      threadTurnBodySchema.safeParse({
-        approvalResponse: {
-          messageId: "assistant-1",
-          approvalId: "approval-1",
-          approved: true,
-        },
-      }).success,
-      true
-    );
-    assert.equal(
-      threadTurnBodySchema.safeParse({
-        interactionResponse: {
-          requestId: "request-1",
-          eventType: "user_input",
-          message: "Continue",
-        },
-      }).success,
-      true
-    );
-  }
-);
+test("Thread turn boundary accepts exactly one explicit action", () => {
+  assert.equal(
+    threadTurnBodySchema.safeParse({ message: userMessage }).success,
+    true,
+  );
+  assert.equal(
+    threadTurnBodySchema.safeParse({
+      approvalResponse: {
+        messageId: "assistant-1",
+        approvalId: "approval-1",
+        approved: true,
+      },
+    }).success,
+    true,
+  );
+  assert.equal(
+    threadTurnBodySchema.safeParse({
+      interactionResponse: {
+        requestId: "request-1",
+        eventType: "user_input",
+        message: "Continue",
+      },
+    }).success,
+    true,
+  );
+});
 
-test(
-  "Thread turn boundary rejects history replay and ambiguous actions",
-  () => {
-    assert.equal(
-      threadTurnBodySchema.safeParse({ messages: [userMessage] }).success,
-      false
-    );
-    assert.equal(
-      threadTurnBodySchema.safeParse({
-        message: userMessage,
-        approvalResponse: {
-          messageId: "assistant-1",
-          approvalId: "approval-1",
-          approved: true,
-        },
-      }).success,
-      false
-    );
-    assert.equal(
-      threadTurnBodySchema.safeParse({
-        message: { ...userMessage, role: "assistant" },
-      }).success,
-      false
-    );
-  }
-);
+test("Thread turn boundary rejects history replay and ambiguous actions", () => {
+  assert.equal(
+    threadTurnBodySchema.safeParse({ messages: [userMessage] }).success,
+    false,
+  );
+  assert.equal(
+    threadTurnBodySchema.safeParse({
+      messages: [userMessage],
+      interactionResponse: {
+        requestId: "request-1",
+        eventType: "user_input",
+        message: "Continue",
+      },
+    }).success,
+    true,
+  );
+  assert.equal(
+    threadTurnBodySchema.safeParse({
+      message: userMessage,
+      approvalResponse: {
+        messageId: "assistant-1",
+        approvalId: "approval-1",
+        approved: true,
+      },
+    }).success,
+    false,
+  );
+  assert.equal(
+    threadTurnBodySchema.safeParse({
+      message: { ...userMessage, role: "assistant" },
+    }).success,
+    false,
+  );
+});

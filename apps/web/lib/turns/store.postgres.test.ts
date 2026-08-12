@@ -391,6 +391,14 @@ test(
                 kind: "user_input",
                 eventType: "user.reply",
                 prompt: "Which workspace should I inspect?",
+                inputSchema: {
+                  type: "object",
+                  properties: {
+                    workspace: { type: "array", items: { type: "string" }, minItems: 1 },
+                  },
+                  required: ["workspace"],
+                  additionalProperties: false,
+                },
                 source: "runtime",
                 status: "pending",
               },
@@ -408,6 +416,14 @@ test(
         kind: "user_input",
         eventType: "user.reply",
         prompt: "Which workspace should I inspect?",
+        inputSchema: {
+          type: "object",
+          properties: {
+            workspace: { type: "array", items: { type: "string" }, minItems: 1 },
+          },
+          required: ["workspace"],
+          additionalProperties: false,
+        },
         source: "runtime",
         status: "pending",
       },
@@ -516,14 +532,29 @@ test(
       WHERE interaction."request_id" = ${requestId}
     `;
     assert.deepEqual(committedResumeWindow, {
-      interactionStatus: "resolved",
+      interactionStatus: "processing",
       queueState: "running",
       resumedAt: null,
       turnStatus: "waiting_for_input",
     });
+    const [pendingDelivery] = await sql<
+      Array<{ state: string; acknowledgedAt: Date | null; attempt: number }>
+    >`
+      SELECT
+        "state",
+        "acknowledged_at" AS "acknowledgedAt",
+        "attempt"
+      FROM "runtime_interaction_deliveries"
+      WHERE "request_id" = ${requestId}
+    `;
+    assert.deepEqual(pendingDelivery, {
+      state: "delivering",
+      acknowledgedAt: null,
+      attempt: 1,
+    });
 
-    // Simulate process death after the resolution transaction commits but
-    // before the route enqueues the resumed worker job.
+    // Simulate process death after the answer transaction commits but before
+    // the route enqueues the worker that delivers it to the native runtime.
     await queue.reconcileDurableThreadTurnQueue();
     await queue.reconcileDurableThreadTurnQueue();
     const [reconciledResumeJobs] = await sql<Array<{ count: number }>>`
@@ -553,7 +584,22 @@ test(
       requestId,
       eventType: "user.reply",
       message: "Workspace A",
+      answers: { workspace: ["Workspace A"] },
     });
+    await store.acknowledgeDurableRuntimeInteractionDelivery({
+      turnId: waiting.turn.id,
+      requestId,
+      acknowledgementEventId: `event-${suffix}`,
+    });
+    const [acknowledgedDelivery] = await sql<
+      Array<{ state: string; acknowledgedAt: Date | null }>
+    >`
+      SELECT "state", "acknowledged_at" AS "acknowledgedAt"
+      FROM "runtime_interaction_deliveries"
+      WHERE "request_id" = ${requestId}
+    `;
+    assert.equal(acknowledgedDelivery?.state, "delivered");
+    assert.ok(acknowledgedDelivery?.acknowledgedAt instanceof Date);
     await store.persistDurableAssistantOutcome({
       turnId: waiting.turn.id,
       interaction: null,
