@@ -203,7 +203,7 @@ test("release workflow bounds controller readiness polling", async () => {
   assert.match(workflow, /for attempt in \$\(seq 1 45\); do/u);
   assert.match(
     workflow,
-    /verify-control-worker-readiness\.ts \$\{\{ github\.sha \}\}/u,
+    /--command "pnpm --filter @kestrel\/kestrel-one exec tsx scripts\/verify-control-worker-readiness\.ts \$\{\{ github\.sha \}\}"/u,
   );
   assert.match(workflow, /did not become ready within 90 seconds/u);
   assert.match(workflow, /flyctl logs --app kestrel-one-control-worker --no-tail 2>&1 \| tail -n 200/u);
