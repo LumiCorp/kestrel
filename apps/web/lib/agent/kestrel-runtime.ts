@@ -64,6 +64,8 @@ import type { ResolvedOciMcpEgressBindingV1 } from "@kestrel/mcp-security";
 
 const DEFAULT_PROFILE_ID = "kestrel";
 const DEFAULT_HOSTED_AGENT_ID = "kestrel-one";
+const HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
+  "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
 
 class KestrelOneRunnerClient extends KestrelClient {
@@ -653,53 +655,62 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     | undefined;
 }) {
   const primaryRuntimeModel = input.runtimeModels?.[0];
+  const environmentPresetId =
+    primaryRuntimeModel !== undefined &&
+    !isKestrelOneManagedRuntimeModel(primaryRuntimeModel)
+      ? "cli_dev_local"
+      : "workspace_hosted";
   const toolConfiguration = resolveKestrelOneToolProfileConfiguration({
     availableToolNames: [...KESTREL_ONE_HOSTED_RUNTIME_TOOL_NAMES],
     effectiveCapabilities: input.route.effectiveCapabilities,
   });
-  return await input.client.resolveExecutionProfile(
-    {
-      environmentPresetId: "workspace_hosted",
-      managedConfiguration: {
-        label: "Kestrel One",
-        additionalToolNames: toolConfiguration.additionalToolNames,
-        kestrelOneAppApprovalModes:
-          toolConfiguration.kestrelOneAppApprovalModes,
-        ...(input.route.reasoningPolicy !== undefined
-          ? { reasoning: input.route.reasoningPolicy }
-          : {}),
-        ...(input.route.ociMcpEgressBindings !== undefined
-          ? { ociMcpEgressBindings: input.route.ociMcpEgressBindings }
-          : {}),
-        ...(primaryRuntimeModel !== undefined
-          ? {
-              modelProvider: primaryRuntimeModel.provider,
-              model: primaryRuntimeModel.model,
-              agentStageConfig: {
-                modelByStage: {
-                  "agent.loop": primaryRuntimeModel.model,
+  try {
+    return await input.client.resolveExecutionProfile(
+      {
+        environmentPresetId,
+        managedConfiguration: {
+          label: "Kestrel One",
+          additionalToolNames: toolConfiguration.additionalToolNames,
+          kestrelOneAppApprovalModes:
+            toolConfiguration.kestrelOneAppApprovalModes,
+          ...(input.route.reasoningPolicy !== undefined
+            ? { reasoning: input.route.reasoningPolicy }
+            : {}),
+          ...(input.route.ociMcpEgressBindings !== undefined
+            ? { ociMcpEgressBindings: input.route.ociMcpEgressBindings }
+            : {}),
+          ...(primaryRuntimeModel !== undefined
+            ? {
+                modelProvider: primaryRuntimeModel.provider,
+                model: primaryRuntimeModel.model,
+                agentStageConfig: {
+                  modelByStage: {
+                    "agent.loop": primaryRuntimeModel.model,
+                  },
                 },
-              },
-              ...(isKestrelOneManagedRuntimeModel(primaryRuntimeModel)
-                ? {
-                    modelCredential: {
-                      source: "kestrel-one",
-                      runId: input.route.runId,
-                      gatewayId: primaryRuntimeModel.gatewayId,
-                      organizationId: primaryRuntimeModel.organizationId,
-                      environmentId: primaryRuntimeModel.environmentId,
-                      rawModelId: primaryRuntimeModel.model,
-                      provider: primaryRuntimeModel.provider,
-                    },
-                  }
-                : {}),
-              default: false,
-            }
-          : {}),
+                ...(isKestrelOneManagedRuntimeModel(primaryRuntimeModel)
+                  ? {
+                      modelCredential: {
+                        source: "kestrel-one",
+                        runId: input.route.runId,
+                        gatewayId: primaryRuntimeModel.gatewayId,
+                        organizationId: primaryRuntimeModel.organizationId,
+                        environmentId: primaryRuntimeModel.environmentId,
+                        rawModelId: primaryRuntimeModel.model,
+                        provider: primaryRuntimeModel.provider,
+                      },
+                    }
+                  : {}),
+                default: false,
+              }
+            : {}),
+        },
       },
-    },
-    input.context,
-  );
+      input.context,
+    );
+  } catch (error) {
+    throw mapHostedKestrelProfileResolutionError(error, primaryRuntimeModel);
+  }
 }
 
 class EnvironmentRoutedRunnerStream
@@ -1186,6 +1197,44 @@ function readRuntimeErrorCode(error: unknown): string | undefined {
       && typeof error.code === "string"
     ? error.code
     : undefined;
+}
+
+function mapHostedKestrelProfileResolutionError(
+  error: unknown,
+  selection: EnvironmentRuntimeModelSelection | undefined,
+): unknown {
+  if (
+    readRuntimeErrorCode(error) !==
+    HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE
+  ) {
+    return error;
+  }
+  const details =
+    error !== null &&
+    typeof error === "object" &&
+    "details" in error &&
+    typeof error.details === "object" &&
+    error.details !== null
+      ? (error.details as Record<string, unknown>)
+      : undefined;
+  const provider =
+    typeof details?.provider === "string"
+      ? details.provider
+      : selection?.provider;
+  const model =
+    typeof details?.model === "string" ? details.model : selection?.model;
+  const message =
+    provider !== undefined && model !== undefined
+      ? `Kestrel One cannot start with ${provider}/${model} because that exact hosted model does not have a Kestrel economics profile. Choose a supported model and try again.`
+      : "Kestrel One cannot start because its hosted model route is not pinned to an exact supported provider and model. Choose a supported model and try again.";
+  const mapped = new Error(message) as Error & {
+    code: string;
+    details?: Record<string, unknown> | undefined;
+  };
+  mapped.name = "KestrelHostedModelProfileError";
+  mapped.code = HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE;
+  if (details !== undefined) mapped.details = details;
+  return mapped;
 }
 
 async function resolveDesktopLocalRuntimeModel(input: {

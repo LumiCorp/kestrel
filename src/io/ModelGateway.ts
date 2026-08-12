@@ -47,7 +47,8 @@ export class RetryingModelGateway implements ModelGateway {
     const retryDelaysMs: number[] = [];
     const startedAtMs = Date.now();
 
-    const maxAttempts = this.config.retryCount + 1;
+    const retryCount = resolveRetryCount(options.retryCount, this.config.retryCount);
+    const maxAttempts = retryCount + 1;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       throwIfAborted(options.signal);
       let visibleOutputStarted = false;
@@ -157,6 +158,17 @@ export class RetryingModelGateway implements ModelGateway {
       retryDelaysMs,
     );
   }
+}
+
+function resolveRetryCount(
+  override: number | undefined,
+  fallback: number,
+): number {
+  const retryCount = override ?? fallback;
+  if (Number.isSafeInteger(retryCount) === false || retryCount < 0) {
+    throw new RangeError("Model gateway retryCount must be a non-negative safe integer.");
+  }
+  return retryCount;
 }
 
 async function withTimeout<T>(

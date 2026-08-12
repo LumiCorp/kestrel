@@ -11,6 +11,7 @@ import {
   parseDesktopModelConfigurations,
 } from "../desktopShell/configuration.js";
 import {
+  assertKestrelExecutionProfileEconomicsAdmission,
   composeKestrelOneProfile,
   fingerprintResolvedProfile,
   KESTREL_ONE_ENVIRONMENT_PRESETS,
@@ -386,6 +387,10 @@ export function createLocalCoreProfileProvider(
         profile.agentProfileId === LEGACY_KESTREL_ONE_POLICY_ID ||
         profile.id === KESTREL_ONE_POLICY_ID ||
         profile.id === LEGACY_KESTREL_ONE_POLICY_ID;
+      assertKestrelExecutionProfileEconomicsAdmission({
+        profile,
+        environmentPresetId: payload.environmentPresetId,
+      });
       const provenance: ExecutionProfileRevisionProvenance = {
         policy: {
           id: isKestrelProfile

@@ -23,11 +23,15 @@ import {
 } from "./runtimeProfile.js";
 import { resolveProfileWithEvaluationPolicy } from "./evaluationPolicy.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
+import { resolveModelEconomicsProfileV1 } from "../economics/policy.js";
+import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
 export const KESTREL_POLICY_ID = "kestrel";
 export const KESTREL_POLICY_LABEL = "Kestrel";
-export const KESTREL_POLICY_VERSION = 2;
+export const KESTREL_POLICY_VERSION = 3;
 export const KESTREL_PROMPT_POLICY_ID = "kestrel";
+export const KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE =
+  "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED";
 
 export const LEGACY_KESTREL_ONE_POLICY_ID = "kestrel-one";
 export const LEGACY_KESTREL_ONE_PROMPT_POLICY_ID = "kestrel-one";
@@ -133,7 +137,7 @@ export const KESTREL_HARNESS_ECONOMICS = Object.freeze({
   version: 1,
   policy: {
     version: 1,
-    policyId: "economics:kestrel:v1",
+    policyId: "economics:kestrel:v2",
     mode: "observe",
     counting: {
       estimatorVersion: "utf8-byte-upper-bound:v1",
@@ -168,6 +172,23 @@ export const KESTREL_HARNESS_ECONOMICS = Object.freeze({
       model: "z-ai/glm-5.2",
       contextWindowTokens: 1_000_000,
       maxOutputTokens: 64_000,
+      counting: {
+        counter: "utf8-byte-upper-bound",
+        counterVersion: "1",
+        method: "conservative_estimate",
+        confidence: "conservative",
+      },
+      cache: {
+        behavior: "provider_automatic",
+      },
+    },
+    {
+      version: 1,
+      profileId: "openrouter:openai/gpt-5.6-luna:v1",
+      provider: "openrouter",
+      model: "openai/gpt-5.6-luna",
+      contextWindowTokens: 1_050_000,
+      maxOutputTokens: 128_000,
       counting: {
         counter: "utf8-byte-upper-bound",
         counterVersion: "1",
@@ -318,9 +339,7 @@ function composeLegacyKestrelOneProfile(
   assertRequiredKestrelOneTools(toolAllowlist);
 
   const fingerprint = fingerprintKestrelOneComposition({
-    policyId: KESTREL_ONE_POLICY_ID,
-    policyVersion: KESTREL_ONE_POLICY_VERSION,
-    promptPolicyId: KESTREL_ONE_PROMPT_POLICY_ID,
+    ...kestrelPolicyFingerprintRevision(),
     environmentPresetId: input.environmentPresetId,
     environmentPresetVersion: environmentPreset.version,
     environmentCapabilityPacks: resolvedEnvironment.capabilityPacks,
@@ -389,7 +408,10 @@ function composeLegacyKestrelOneProfile(
       ...DEFAULT_TOOL_QUEUE,
       ...(input.overlay?.toolQueue ?? {}),
     },
-    guardrails: { maxStepVisits: 80 },
+    guardrails: {
+      maxStepVisits: 80,
+      maxMaintenanceModelCallsPerRun: 8,
+    },
     codeMode: resolvedEnvironment.codeMode,
     devShell: resolvedEnvironment.devShell,
     delegation: {
@@ -466,6 +488,7 @@ export function composeKestrelProfile(
   ]);
   assertRequiredKestrelOneTools(toolAllowlist);
   const fingerprint = fingerprintKestrelOneComposition({
+    ...kestrelPolicyFingerprintRevision(),
     profileDefinitionRevision: definition.revision,
     environmentBindingRevision: binding.revision,
     toolAllowlist,
@@ -514,7 +537,10 @@ export function composeKestrelProfile(
       binding.tools.ociMcpEgressBindings,
     ) as TuiProfile["ociMcpEgressBindings"],
     toolQueue: { ...DEFAULT_TOOL_QUEUE, ...binding.queues.tool },
-    guardrails: { maxStepVisits: 80 },
+    guardrails: {
+      maxStepVisits: 80,
+      maxMaintenanceModelCallsPerRun: 8,
+    },
     codeMode: resolvedEnvironment.codeMode,
     devShell: resolvedEnvironment.devShell,
     delegation: {
@@ -767,6 +793,103 @@ export function fingerprintResolvedProfile(
 
 function fingerprintKestrelOneComposition(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("hex");
+}
+
+function kestrelPolicyFingerprintRevision(): Record<string, string | number> {
+  return {
+    policyId: KESTREL_POLICY_ID,
+    policyVersion: KESTREL_POLICY_VERSION,
+    promptPolicyId: KESTREL_PROMPT_POLICY_ID,
+    harnessEconomicsControlVersion: KESTREL_HARNESS_ECONOMICS.version,
+    harnessEconomicsPolicyId: KESTREL_HARNESS_ECONOMICS.policy.policyId,
+    harnessEconomicsPolicyVersion: KESTREL_HARNESS_ECONOMICS.policy.version,
+  };
+}
+
+export function assertKestrelExecutionProfileEconomicsAdmission(input: {
+  profile: TuiProfile;
+  environmentPresetId: ComposeKestrelOneProfileInput["environmentPresetId"];
+}): void {
+  if (input.environmentPresetId !== "workspace_hosted") return;
+  const provider = input.profile.modelProvider;
+  const model = input.profile.model;
+  const details = {
+    provider: provider ?? null,
+    model: model ?? null,
+    preset: input.environmentPresetId,
+  };
+  if (
+    provider === undefined ||
+    model === undefined ||
+    model.trim().length === 0
+  ) {
+    throw createRuntimeFailure(
+      KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE,
+      "Hosted Kestrel execution requires a pinned provider and model with an exact economics profile before run.start.",
+      { ...details, reason: "pinned_model_route_required" },
+    );
+  }
+  const canonicalEconomicsProfile = resolveModelEconomicsProfileV1(
+    KESTREL_HARNESS_ECONOMICS,
+    provider,
+    model,
+  );
+  const credential = input.profile.modelCredential;
+  for (const [stage, stageModel] of Object.entries(
+    input.profile.agentStageConfig?.modelByStage ?? {},
+  )) {
+    if (stageModel !== model) {
+      throw createRuntimeFailure(
+        KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE,
+        `Hosted Kestrel stage '${stage}' model '${stageModel}' must exactly match the admitted top-level model '${model}'.`,
+        {
+          ...details,
+          reason:
+            stage === "agent.loop"
+              ? "agent_loop_model_mismatch"
+              : "stage_model_mismatch",
+          stage,
+          stageModel,
+        },
+      );
+    }
+  }
+  if (
+    credential !== undefined &&
+    (credential.provider !== provider || credential.rawModelId !== model)
+  ) {
+    throw createRuntimeFailure(
+      KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE,
+      "Hosted Kestrel model credentials must exactly match the admitted top-level provider and model.",
+      {
+        ...details,
+        reason: "model_credential_route_mismatch",
+        credentialProvider: credential.provider,
+        credentialModel: credential.rawModelId,
+      },
+    );
+  }
+  const economics = input.profile.harnessEconomics;
+  const embeddedEconomicsProfile =
+    economics === undefined
+      ? undefined
+      : resolveModelEconomicsProfileV1(economics, provider, model);
+  if (
+    canonicalEconomicsProfile === undefined ||
+    economics === undefined ||
+    economics.version !== KESTREL_HARNESS_ECONOMICS.version ||
+    economics.policy.policyId !== KESTREL_HARNESS_ECONOMICS.policy.policyId ||
+    economics.policy.version !== KESTREL_HARNESS_ECONOMICS.policy.version ||
+    embeddedEconomicsProfile === undefined ||
+    stableJson(embeddedEconomicsProfile) !==
+      stableJson(canonicalEconomicsProfile)
+  ) {
+    throw createRuntimeFailure(
+      KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE,
+      `Hosted Kestrel model route '${provider}/${model}' requires an exact economics profile before run.start.`,
+      { ...details, reason: "model_profile_not_found" },
+    );
+  }
 }
 
 function assertNoPolicyControlledOverlay(

@@ -1742,6 +1742,100 @@ test("CommandRouter rejects invalid execution profile managed configuration", as
   await host.close();
 });
 
+test("CommandRouter preserves hosted economics admission failure code and details", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(
+    writer,
+    () => ({
+      runTurn: async () => {
+        throw new Error("not used");
+      },
+      close: async () => {},
+    }),
+    {
+      async listProfiles() {
+        return [];
+      },
+      async getProfile() {
+        return undefined;
+      },
+      async resolveExecutionProfile() {
+        return {
+          version: 1,
+          profileId: `kestrel:workspace_hosted:${"c".repeat(64)}`,
+          fingerprint: "c".repeat(64),
+          policy: { id: "kestrel", version: 3 },
+          environmentPreset: { id: "workspace_hosted", version: 1 },
+          resolvedProfile: {
+            id: `kestrel:workspace_hosted:${"c".repeat(64)}`,
+            label: "Kestrel One",
+            agent: "kestrel",
+            sessionPrefix: "kestrel",
+            agentProfileId: "kestrel",
+            modelProvider: "openrouter",
+            model: "openai/gpt-5.6-luna-unsupported-alias",
+          },
+        };
+      },
+    },
+  );
+  const router = new CommandRouter(host, writer);
+
+  const events: Array<{
+    type: string;
+    payload: {
+      code?: string;
+      message?: string;
+      details?: Record<string, unknown>;
+    };
+  }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(
+      JSON.parse(line) as {
+        type: string;
+        payload: {
+          code?: string;
+          message?: string;
+          details?: Record<string, unknown>;
+        };
+      },
+    );
+  });
+
+  await router.acceptLine(
+    JSON.stringify({
+      id: "cmd-execution-profile-economics-required",
+      type: "execution-profile.resolve",
+      payload: {
+        environmentPresetId: "workspace_hosted",
+        managedConfiguration: {
+          modelProvider: "openrouter",
+          model: "openai/gpt-5.6-luna-unsupported-alias",
+        },
+      },
+    }),
+  );
+  await tick();
+
+  assert.equal(events[0]?.type, "runner.error");
+  assert.equal(
+    events[0]?.payload.code,
+    "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED",
+  );
+  assert.match(events[0]?.payload.message ?? "", /exact economics profile/iu);
+  assert.deepEqual(events[0]?.payload.details, {
+    runtimeCode: "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED",
+    provider: "openrouter",
+    model: "openai/gpt-5.6-luna-unsupported-alias",
+    preset: "workspace_hosted",
+    reason: "model_profile_not_found",
+  });
+  rl.close();
+  await host.close();
+});
+
 test("workspace checkpoint commands dispatch through CommandRouter", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);

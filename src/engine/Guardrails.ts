@@ -96,20 +96,21 @@ export class Guardrails {
   }
 
   onModelCall(budgetClass: ModelBudgetClass = "action"): void {
-    this.modelCalls += 1;
     if (budgetClass === "maintenance") {
-      this.maintenanceModelCalls += 1;
       if (
         this.config.maxMaintenanceModelCallsPerRun !== undefined &&
-        this.maintenanceModelCalls > this.config.maxMaintenanceModelCallsPerRun
+        this.maintenanceModelCalls >= this.config.maxMaintenanceModelCallsPerRun
       ) {
         throw new GuardrailViolationError(
           "MAX_MAINTENANCE_MODEL_CALLS_EXCEEDED",
           `maxMaintenanceModelCallsPerRun exceeded (${this.config.maxMaintenanceModelCallsPerRun})`,
         );
       }
+      this.modelCalls += 1;
+      this.maintenanceModelCalls += 1;
       return;
     }
+    this.modelCalls += 1;
     this.actionModelCalls += 1;
     if (this.actionModelCalls > this.config.maxModelCallsPerRun) {
       throw new GuardrailViolationError(

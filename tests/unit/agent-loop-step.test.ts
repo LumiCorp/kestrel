@@ -21,11 +21,16 @@ import {
   resolveModelTokenCounter,
   type ModelEconomicsProfileV1,
 } from "../../src/economics/index.js";
+import { KESTREL_HARNESS_ECONOMICS } from "../../src/profile/kestrelOnePolicy.js";
+import { Guardrails } from "../../src/engine/Guardrails.js";
 
 import { normalizeContinuationOffer, type ContinuationOfferV1 } from "../../src/runtime/continuationOffer.js";
 import { createRuntimeContinuationState } from "../../src/runtime/continuationState.js";
 import { stringifySanitizedJson } from "../../src/runtime/jsonSanitizer.js";
-import { RunCancelledError } from "../../src/runtime/RuntimeFailure.js";
+import {
+  RunCancelledError,
+  createRuntimeFailure,
+} from "../../src/runtime/RuntimeFailure.js";
 import {
   appendToolResultToTranscript,
   appendUserTurnToTranscript,
@@ -452,6 +457,8 @@ const MKDIR_TOOL: ModelToolSpec = {
 
 function buildStep(input?: {
   tools?: ModelToolSpec[];
+  agentProvider?: string;
+  agentModel?: string;
   maintenanceModel?: string;
     capabilityManifest?: Array<{
       name: string;
@@ -464,7 +471,10 @@ function buildStep(input?: {
   }>;
 }) {
   return createAgentLoopStep({
-    agentModel: "test/agent",
+    ...(input?.agentProvider !== undefined
+      ? { agentProvider: input.agentProvider }
+      : {}),
+    agentModel: input?.agentModel ?? "test/agent",
     ...(input?.maintenanceModel !== undefined ? { maintenanceModel: input.maintenanceModel } : {}),
     agentToolsProvider: () => input?.tools ?? [READ_TEXT_TOOL],
     capabilityManifestProvider: () => input?.capabilityManifest ?? [
@@ -2783,6 +2793,167 @@ test("observe-mode token compaction uses repeated bounded chunks without verific
   assert.equal(readActiveTaskGoalFromTranscript(transcriptPatch), "Preserve the active task while compacting.");
 });
 
+test("Luna uses its exact token-aware capacity instead of legacy 120k source chunks", async () => {
+  const lunaModel = "openai/gpt-5.6-luna";
+  const transcript: ModelTranscript = {
+    version: 1,
+    windowId: 1,
+    items: Array.from({ length: 21 }, (_, index) => ({
+      id: `luna-item-${index}`,
+      createdAt:
+        `2026-08-12T12:00:${String(index).padStart(2, "0")}.000Z`,
+      kind: index === 0 ? "user" as const : "assistant_text" as const,
+      content:
+        index === 0
+          ? "Preserve this active Luna task while compacting."
+          : `Luna incident evidence ${index}: ${"x".repeat(59_000)}`,
+    })),
+  };
+  const ctx = context();
+  ctx.event.payload = {
+    runtimeAssembly: {
+      modelProvider: "openrouter",
+      model: lunaModel,
+      harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
+    },
+  };
+  ctx.session.state.agent = {
+    goal: "Preserve this active Luna task while compacting.",
+    modelTranscript: transcript,
+  };
+  const requests: ModelRequest[] = [];
+
+  const transition = await buildStep({
+    agentProvider: "openrouter",
+    agentModel: lunaModel,
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(ctx, {
+    useModel: async (request) => {
+      requests.push(request);
+      if (request.metadata?.phase === "agent.compaction") {
+        return { output: compactionSummary() } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Continue after Luna compaction.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  const compactionRequests = requests.filter(
+    (request) => request.metadata?.phase === "agent.compaction",
+  );
+  const firstSourcePrompt = String(
+    compactionRequests[0]?.messages?.[1]?.content ?? "",
+  );
+  const transcriptPatch = (
+    transition.statePatch?.agent as Record<string, unknown>
+  ).modelTranscript as {
+    compactions?: Array<{ summarySource?: unknown }>;
+  };
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(compactionRequests.length > 0, true);
+  assert.equal(
+    compactionRequests.every(
+      (request) =>
+        request.model === lunaModel &&
+        request.metadata?.requestedProvider === "openrouter" &&
+        request.providerOptions?.openrouter?.maxTokens === 8_000,
+    ),
+    true,
+  );
+  assert.equal(firstSourcePrompt.length > 120_000, true);
+  assert.equal(
+    transcriptPatch.compactions?.every(
+      (record) => record.summarySource === "model",
+    ),
+    true,
+  );
+});
+
+test("compaction dispatches eight maintenance calls then uses fallback for remaining chunks", async () => {
+  const transcript: ModelTranscript = {
+    version: 1,
+    windowId: 1,
+    items: Array.from({ length: 120 }, (_, index) => ({
+      id: `budget-item-${index}`,
+      createdAt:
+        `2026-08-12T12:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
+      kind: index === 0 ? "user" as const : "assistant_text" as const,
+      content:
+        index === 0
+          ? "Preserve the active task across the maintenance cap."
+          : `Budgeted evidence ${index}. `.repeat(220),
+    })),
+  };
+  const guardrails = new Guardrails({
+    maxStepsPerRun: 10,
+    maxToolCallsPerRun: 10,
+    maxModelCallsPerRun: 2,
+    maxMaintenanceModelCallsPerRun: 8,
+    maxConcurrentToolJobsPerRun: 2,
+    maxConcurrentToolJobsGlobal: 4,
+    maxQueuedToolJobsPerRun: 10,
+    toolBatchCheckpointSize: 5,
+    toolCallRetryCount: 1,
+  });
+  let maintenanceDispatches = 0;
+
+  const transition = await buildStep({
+    tools: [largeCompactionTool()],
+    capabilityManifest: compactionCapabilityManifest(),
+  })(compactionRetryContext(transcript, 1, "observe"), {
+    useModel: async (request) => {
+      if (request.metadata?.modelBudgetClass === "maintenance") {
+        guardrails.onModelCall("maintenance");
+        maintenanceDispatches += 1;
+        return { output: compactionSummary() } as ModelResponse<unknown>;
+      }
+      return modelResponse({
+        reason: "Continue after bounded maintenance fallback.",
+        nextAction: {
+          kind: "tool",
+          name: "fs.read_text",
+          input: { path: "README.md" },
+        },
+      });
+    },
+  } satisfies StepIO);
+  const transcriptPatch = (
+    transition.statePatch?.agent as Record<string, unknown>
+  ).modelTranscript as {
+    compactions?: Array<{
+      summarySource?: unknown;
+      failureCode?: unknown;
+    }>;
+  };
+
+  assert.equal(transition.status, "RUNNING");
+  assert.equal(maintenanceDispatches, 8);
+  assert.equal(guardrails.telemetry().maintenanceModelCalls, 8);
+  assert.equal((transcriptPatch.compactions?.length ?? 0) > 8, true);
+  assert.equal(
+    transcriptPatch.compactions?.slice(0, 8).every(
+      (record) => record.summarySource === "model",
+    ),
+    true,
+  );
+  assert.equal(
+    transcriptPatch.compactions?.slice(8).every(
+      (record) =>
+        record.summarySource === "runtime_fallback" &&
+        record.failureCode === "MAX_MAINTENANCE_MODEL_CALLS_EXCEEDED",
+    ),
+    true,
+  );
+});
+
 test("action admission includes manifest message and request-control overhead", async () => {
   const transcript = compactionRetryTranscript();
   const calibrationContext = compactionRetryContext(
@@ -3343,8 +3514,7 @@ test("invalid JSON exhausts retries into a durable fallback and continues", asyn
   };
 
   assert.equal(transition.status, "RUNNING");
-  assert.equal(compactionRequests.length >= 2, true);
-  assert.equal(compactionRequests.length % 2, 0);
+  assert.equal(compactionRequests.length, 2);
   assert.match(correction, /must be valid JSON/u);
   assert.doesNotMatch(correction, /rejected-output-marker/u);
   assert.equal(transcriptPatch.compactions?.at(-1)?.summarySource, "runtime_fallback");
@@ -3403,7 +3573,10 @@ test("maintenance provider failure uses runtime fallback without persisting prov
     useModel: async (request) => {
       requests.push(request);
       if (request.metadata?.phase === "agent.compaction") {
-        throw new Error("secret provider detail");
+        throw createRuntimeFailure(
+          "MODEL_RATE_LIMITED",
+          "secret provider detail",
+        );
       }
       return modelResponse({
         reason: "Continue after provider fallback.",
@@ -3418,7 +3591,14 @@ test("maintenance provider failure uses runtime fallback without persisting prov
 
   assert.equal(transition.status, "RUNNING");
   assert.equal(transcriptPatch.compactions?.at(-1)?.summarySource, "runtime_fallback");
-  assert.equal(transcriptPatch.compactions?.at(-1)?.failureCode, "COMPACTION_MAINTENANCE_PROVIDER_FAILED");
+  assert.equal(
+    transcriptPatch.compactions?.at(-1)?.failureCode,
+    "MODEL_RATE_LIMITED",
+  );
+  assert.equal(
+    requests.filter((request) => request.metadata?.phase === "agent.compaction").length,
+    1,
+  );
   assert.doesNotMatch(serialized, /secret provider detail/u);
 });
 

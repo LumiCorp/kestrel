@@ -2555,6 +2555,12 @@ test("every canonical Kestrel One environment exposes dialogs without legacy del
     const profile = composeKestrelOneProfile({
       environmentPresetId,
       overlay: {
+        ...(environmentPresetId === "workspace_hosted"
+          ? {
+              modelProvider: "openrouter" as const,
+              model: "openai/gpt-5.6-luna",
+            }
+          : {}),
         additionalToolNames: [
           "agent.spawn",
           "delegate.spawn_child",

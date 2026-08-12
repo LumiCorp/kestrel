@@ -134,6 +134,7 @@ const DEFAULT_GUARDRAILS: GuardrailConfig = {
   maxStepsPerRun: 500,
   maxToolCallsPerRun: 500,
   maxModelCallsPerRun: 50,
+  maxMaintenanceModelCallsPerRun: 8,
   maxStepVisits: 80,
   maxConcurrentToolJobsPerRun: 8,
   maxConcurrentToolJobsGlobal: 24,
@@ -364,6 +365,7 @@ export class ExecutionEngine {
     this.guardrailConfig = {
       ...DEFAULT_GUARDRAILS,
       ...guardrailConfig,
+      maxMaintenanceModelCallsPerRun: 8,
     };
     this.toolQueueEnabled = this.resolveToolQueueEnabled();
     const evaluationRuntime = this.deps.evaluationRuntime;
