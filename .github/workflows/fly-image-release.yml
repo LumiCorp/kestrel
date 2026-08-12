@@ -68,7 +68,7 @@ jobs:
           for attempt in $(seq 1 45); do
             if flyctl ssh console \
               --app kestrel-one-control-worker \
-              --command "pnpm --filter @kestrel/kestrel-one tsx scripts/verify-control-worker-readiness.ts ${{ github.sha }}"
+              --command "pnpm --filter @kestrel/kestrel-one exec tsx scripts/verify-control-worker-readiness.ts ${{ github.sha }}"
             then
               exit 0
             fi
