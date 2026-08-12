@@ -542,6 +542,15 @@
       "testFiles": ["tests/unit/runtime-evaluation-integration.test.ts", "tests/helpers/runtimeEvaluationCalibration.ts"]
     },
     {
+      "id": "process-retention-wall-timeout-not-cleared",
+      "target": "src/devshell/DevShellSupervisor.ts",
+      "find": "    if (running.wallTimeout !== undefined) {",
+      "replace": "    if (false && running.wallTimeout !== undefined) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=clears the original wall timeout", "tests/unit/dev-shell-supervisor.test.ts"],
+      "testFiles": ["tests/unit/dev-shell-supervisor.test.ts"]
+    },
+    {
       "id": "evaluation-replay-projection-mismatch-acceptance",
       "target": "src/evaluation/RuntimeEvaluationReplay.ts",
       "find": "  } catch (error) {\n    if (error instanceof RuntimeEvaluationReplayError) {\n      return incompleteEvidence(input.waits);\n    }\n    return incompleteEvidence(input.waits);\n  }",

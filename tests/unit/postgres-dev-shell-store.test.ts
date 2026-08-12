@@ -9,7 +9,7 @@ import type {
 import { ScriptedSqlExecutor } from "../helpers/ScriptedSqlExecutor.js";
 
 
-test("PostgresDevShellStore persists source-write guard JSON on upsert", async () => {
+test("PostgresDevShellStore persists source-write guard and retention lease JSON on upsert", async () => {
   const sql = new ScriptedSqlExecutor([
     { match: /^INSERT INTO dev_shell_processes/u, rowCount: 1 },
   ]);
@@ -22,6 +22,8 @@ test("PostgresDevShellStore persists source-write guard JSON on upsert", async (
   const query = sql.queries[0]!;
   assert.match(query.text, /source_write_guard_json/u);
   assert.equal(query.values?.[21], JSON.stringify(sourceWriteGuard));
+  assert.equal(query.values?.[22], "interactive");
+  assert.equal(query.values?.[23], "[]");
   sql.assertExhausted();
 });
 
@@ -39,6 +41,8 @@ test("PostgresDevShellStore maps source-write guard JSON from getProcess", async
   const record = await store.getProcess("proc-1");
 
   assert.deepEqual(record?.sourceWriteGuard, sourceWriteGuard);
+  assert.equal(record?.lifecycle, "interactive");
+  assert.deepEqual(record?.retentionLeases, []);
   sql.assertExhausted();
 });
 
@@ -88,6 +92,8 @@ function buildProcessRecord(input: {
     startedAt: now,
     updatedAt: now,
     expiresAt: now,
+    lifecycle: "interactive",
+    retentionLeases: [],
     completedAt: now,
     exitCode: 0,
     ...(input.sourceWriteGuard !== undefined ? { sourceWriteGuard: input.sourceWriteGuard } : {}),
@@ -121,6 +127,8 @@ function buildDevShellProcessRow(input: {
     stop_signal: record.stopSignal ?? null,
     failure_reason: record.failureReason ?? null,
     source_write_guard_json: input.source_write_guard_json ?? null,
+    lifecycle: record.lifecycle,
+    retention_leases_json: record.retentionLeases,
   };
 }
 

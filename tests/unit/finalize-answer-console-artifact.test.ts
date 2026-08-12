@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import type { AgentToolResult } from "../../src/kestrel/contracts/model-io.js";
 import { finalizeAnswerTool } from "../../tools/runtime/finalizeAnswer.js";
+import type { DevProcessRetainInput, DevShellServicePort } from "../../src/devshell/contracts.js";
 
 test("FinalizeAnswer preserves console artifact content as presentation metadata", async () => {
   const handler = finalizeAnswerTool.createHandler({} as never);
@@ -43,4 +44,36 @@ test("FinalizeAnswer preserves console artifact content as presentation metadata
     truncated: true,
     toolContext: { processId: "process-1", command: "false" },
   });
+});
+
+test("FinalizeAnswer establishes a fixed standalone lease for an unleased retained process", async () => {
+  const retained: DevProcessRetainInput[] = [];
+  const now = Date.now;
+  Date.now = () => Date.parse("2026-08-12T12:00:00.000Z");
+  try {
+    const handler = finalizeAnswerTool.createHandler({
+      runtime: { runId: "run-1", sessionId: "session-1" },
+      devShellService: {
+        async retainProcess(input: DevProcessRetainInput) {
+          retained.push(input);
+          return { status: "active" as const, processId: input.processId, lifecycle: "retained" as const, leases: [] };
+        },
+      } as unknown as DevShellServicePort,
+    });
+
+    await handler({
+      message: "The app remains available.",
+      data: { keepRunningSessionIds: ["process-1"] },
+    });
+
+    assert.deepEqual(retained, [{
+      processId: "process-1",
+      leaseId: "finalize:run-1:process-1",
+      kind: "standalone",
+      expiresAt: "2026-08-12T12:30:00.000Z",
+      ifUnleased: true,
+    }]);
+  } finally {
+    Date.now = now;
+  }
 });

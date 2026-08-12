@@ -1,4 +1,4 @@
-import type { SharedToolModule } from "../contracts.js";
+import type { SharedToolContext, SharedToolModule } from "../contracts.js";
 import { createToolInputError, parseObjectInput } from "../helpers.js";
 
 export const finalizeAnswerTool: SharedToolModule = {
@@ -30,6 +30,7 @@ export const finalizeAnswerTool: SharedToolModule = {
       if (context.strictFinalizeProvenance === true) {
         assertFinalizeProvenance(input);
       }
+      await retainFinalizedProcesses(context, input);
 
       const output = context.onFinalize !== undefined
         ? await context.onFinalize(input)
@@ -56,6 +57,39 @@ export const finalizeAnswerTool: SharedToolModule = {
     };
   },
 };
+
+const STANDALONE_RETENTION_MS = 30 * 60_000;
+
+async function retainFinalizedProcesses(context: SharedToolContext, input: unknown): Promise<void> {
+  const sessionIds = readKeepRunningSessionIds(input);
+  if (sessionIds.length === 0) return;
+  const retain = context.devShellService?.retainProcess;
+  if (retain === undefined) {
+    throw createToolInputError(
+      "FinalizeAnswer",
+      "Finalization cannot retain the requested process sessions because process retention is unavailable.",
+    );
+  }
+  const expiresAt = new Date(Date.now() + STANDALONE_RETENTION_MS).toISOString();
+  for (const processId of sessionIds) {
+    await retain.call(context.devShellService, {
+      processId,
+      leaseId: `finalize:${context.runtime?.runId ?? "run"}:${processId}`,
+      kind: "standalone",
+      expiresAt,
+      ifUnleased: true,
+    });
+  }
+}
+
+function readKeepRunningSessionIds(input: unknown): string[] {
+  const data = asRecord(asRecord(input)?.data);
+  return Array.isArray(data?.keepRunningSessionIds)
+    ? data.keepRunningSessionIds.filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+      )
+    : [];
+}
 
 function readFinalizePresentation(input: unknown) {
   const root = asRecord(input);

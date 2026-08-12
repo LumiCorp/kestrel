@@ -1,5 +1,6 @@
 import type { SqlExecutor } from "../store/PostgresSessionStore.js";
 import type {
+  DevShellProcessLifecycle,
   DevShellProcessRecord,
   DevShellProcessStatus,
   DevShellProcessStore,
@@ -15,10 +16,10 @@ export class PostgresDevShellStore implements DevShellProcessStore {
          (process_id, command_text, status, workspace_root, cwd, shell_path, idle_timeout_ms, max_read_bytes,
           readiness_json, requested_tools_json, env_names_json, transcript_path, output_cursor,
           submitted_at, started_at, updated_at, expires_at, completed_at, exit_code, stop_signal, failure_reason,
-          source_write_guard_json)
+          source_write_guard_json, lifecycle, retention_leases_json)
        VALUES
          ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, $13,
-          $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb)
+          $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, $23, $24::jsonb)
        ON CONFLICT (process_id) DO UPDATE
        SET command_text = EXCLUDED.command_text,
            status = EXCLUDED.status,
@@ -40,7 +41,9 @@ export class PostgresDevShellStore implements DevShellProcessStore {
            exit_code = EXCLUDED.exit_code,
            stop_signal = EXCLUDED.stop_signal,
            failure_reason = EXCLUDED.failure_reason,
-           source_write_guard_json = EXCLUDED.source_write_guard_json`,
+           source_write_guard_json = EXCLUDED.source_write_guard_json,
+           lifecycle = EXCLUDED.lifecycle,
+           retention_leases_json = EXCLUDED.retention_leases_json`,
       [
         record.processId,
         record.command,
@@ -64,6 +67,8 @@ export class PostgresDevShellStore implements DevShellProcessStore {
         record.stopSignal ?? null,
         record.failureReason ?? null,
         JSON.stringify(record.sourceWriteGuard ?? null),
+        record.lifecycle,
+        JSON.stringify(record.retentionLeases),
       ],
     );
   }
@@ -73,7 +78,8 @@ export class PostgresDevShellStore implements DevShellProcessStore {
       `SELECT process_id, command_text, status, workspace_root, cwd, shell_path, idle_timeout_ms,
               max_read_bytes, readiness_json, requested_tools_json, env_names_json, transcript_path,
               output_cursor, submitted_at, started_at, updated_at, expires_at, completed_at,
-              exit_code, stop_signal, failure_reason, source_write_guard_json
+              exit_code, stop_signal, failure_reason, source_write_guard_json, lifecycle,
+              retention_leases_json
          FROM dev_shell_processes
         WHERE process_id = $1`,
       [processId],
@@ -95,7 +101,8 @@ export class PostgresDevShellStore implements DevShellProcessStore {
       `SELECT process_id, command_text, status, workspace_root, cwd, shell_path, idle_timeout_ms,
               max_read_bytes, readiness_json, requested_tools_json, env_names_json, transcript_path,
               output_cursor, submitted_at, started_at, updated_at, expires_at, completed_at,
-              exit_code, stop_signal, failure_reason, source_write_guard_json
+              exit_code, stop_signal, failure_reason, source_write_guard_json, lifecycle,
+              retention_leases_json
          FROM dev_shell_processes
          ${where}
         ORDER BY updated_at DESC`,
@@ -128,6 +135,8 @@ interface DevShellProcessRow extends Record<string, unknown> {
   stop_signal: string | null;
   failure_reason: string | null;
   source_write_guard_json: Record<string, unknown> | null;
+  lifecycle: DevShellProcessLifecycle | null;
+  retention_leases_json: unknown;
 }
 
 function mapProcessRow(row: DevShellProcessRow): DevShellProcessRecord {
@@ -160,6 +169,10 @@ function mapProcessRow(row: DevShellProcessRow): DevShellProcessRecord {
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     expiresAt: row.expires_at,
+    lifecycle: row.lifecycle === "retained" ? "retained" : "interactive",
+    retentionLeases: Array.isArray(row.retention_leases_json)
+      ? row.retention_leases_json.filter(isRetentionLease)
+      : [],
     ...(typeof row.completed_at === "string" ? { completedAt: row.completed_at } : {}),
     ...(typeof row.exit_code === "number" ? { exitCode: row.exit_code } : {}),
     ...(typeof row.stop_signal === "string" ? { stopSignal: row.stop_signal } : {}),
@@ -168,4 +181,15 @@ function mapProcessRow(row: DevShellProcessRow): DevShellProcessRecord {
       ? { sourceWriteGuard: row.source_write_guard_json as unknown as DevShellProcessRecord["sourceWriteGuard"] }
       : {}),
   };
+}
+
+function isRetentionLease(value: unknown): value is DevShellProcessRecord["retentionLeases"][number] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.leaseId === "string" &&
+    (record.kind === "workspace_preview" || record.kind === "standalone") &&
+    typeof record.expiresAt === "string" &&
+    Number.isFinite(new Date(record.expiresAt).getTime())
+  );
 }
