@@ -4,6 +4,7 @@ import {
   WORKSPACE_READINESS_TIMEOUT_MS,
 } from "@lumi/kestrel-environment-auth";
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { isGatewayCredentialReadyForRuntime } from "@/lib/ai/gateway-credential-health";
 import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
 import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -856,6 +857,12 @@ export async function activateEnvironmentModelGrant(input: {
         id: schema.aiGatewayModels.id,
         enabled: schema.aiGateways.enabled,
         deploymentId: schema.aiGateways.deploymentId,
+        provider: schema.aiGateways.provider,
+        apiKey: schema.aiGateways.apiKey,
+        providerConnectionId: schema.aiGateways.providerConnectionId,
+        credentialStatus: schema.aiGateways.credentialStatus,
+        credentialValidatedAt: schema.aiGateways.credentialValidatedAt,
+        credentialRevision: schema.aiGateways.credentialRevision,
       })
       .from(schema.aiGatewayModels)
       .innerJoin(
@@ -873,7 +880,17 @@ export async function activateEnvironmentModelGrant(input: {
       .for("share");
     if (
       !model?.enabled ||
-      model.deploymentId !== candidate.deploymentId
+      model.deploymentId !== candidate.deploymentId ||
+      !isGatewayCredentialReadyForRuntime({
+        provider: model.provider,
+        credentialStatus: model.credentialStatus,
+        credentialValidatedAt: model.credentialValidatedAt,
+        hasRequiredCredential:
+          model.provider === "ollama" ||
+          Boolean(model.apiKey?.trim()) ||
+          Boolean(model.providerConnectionId) ||
+          Boolean(model.deploymentId),
+      })
     ) {
       throw new Error("Environment model grant gateway model is unavailable.");
     }
@@ -882,6 +899,7 @@ export async function activateEnvironmentModelGrant(input: {
       .values({
         ...input,
         gatewayModelId: model.id,
+        gatewayCredentialRevision: model.credentialRevision,
         status: "active",
         createdAt: now,
         updatedAt: now,
@@ -894,6 +912,7 @@ export async function activateEnvironmentModelGrant(input: {
         ),
         set: {
           gatewayModelId: model.id,
+          gatewayCredentialRevision: model.credentialRevision,
           status: "active",
           closedAt: null,
           updatedAt: now,

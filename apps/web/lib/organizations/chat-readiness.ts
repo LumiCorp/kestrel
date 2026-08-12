@@ -1,11 +1,17 @@
 import "server-only";
 
 import { and, eq, isNull, notInArray } from "drizzle-orm";
+import {
+  isGatewayCredentialReadyForRuntime,
+  type GatewayCredentialStatus,
+} from "@/lib/ai/gateway-credential-health";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
+import type { GatewayProtocolProvider } from "@/lib/ai/gateway-utils";
 import { getHostedEnvironmentsRollout } from "@/lib/environments/config";
 import { getFlyProviderConnection } from "@/lib/environments/fly-connection";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { isPersonalOrganizationSlug } from "@/lib/personal-workspace-shared";
+import { isSignupOnboardingProvider } from "@/lib/signup-onboarding-provider-policy";
 
 export type OrganizationSetupNextStep =
   | "model_access"
@@ -50,11 +56,16 @@ export type OrganizationChatReadiness = {
 
 export type OrganizationChatReadinessInput = {
   personal: boolean;
+  personalRequiresSetup?: boolean;
+  enforceSignupProviderPolicy?: boolean;
   model: {
     gatewayId: string;
     gatewayName: string;
     modelId: string;
     modelName: string;
+    gatewayProvider: GatewayProtocolProvider;
+    credentialStatus: GatewayCredentialStatus;
+    credentialValidatedAt: Date | string | null;
     hasRequiredCredential: boolean;
   } | null;
   fly: {
@@ -92,9 +103,9 @@ function notApplicableCheck(): OrganizationReadinessCheck {
 }
 
 export function deriveOrganizationChatReadiness(
-  input: OrganizationChatReadinessInput
+  input: OrganizationChatReadinessInput,
 ): OrganizationChatReadiness {
-  if (input.personal) {
+  if (input.personal && !input.personalRequiresSetup) {
     const check = notApplicableCheck();
     return {
       applicable: false,
@@ -129,35 +140,72 @@ export function deriveOrganizationChatReadiness(
     };
   }
 
-  const modelAccess: OrganizationChatReadiness["modelAccess"] = input.model
-    ? input.model.hasRequiredCredential
-      ? {
-          ready: true,
-          status: "ready",
-          detail: `${input.model.modelName} is approved and set as default.`,
-          gatewayId: input.model.gatewayId,
-          gatewayName: input.model.gatewayName,
-          modelId: input.model.modelId,
-          modelName: input.model.modelName,
-        }
-      : {
-          ready: false,
-          status: "missing_credential",
-          detail: "The default model provider is missing its stored credential.",
-          gatewayId: input.model.gatewayId,
-          gatewayName: input.model.gatewayName,
-          modelId: input.model.modelId,
-          modelName: input.model.modelName,
-        }
-    : {
+  let modelAccess: OrganizationChatReadiness["modelAccess"];
+  if (input.model) {
+    const identity = {
+      gatewayId: input.model.gatewayId,
+      gatewayName: input.model.gatewayName,
+      modelId: input.model.modelId,
+      modelName: input.model.modelName,
+    };
+    if (
+      input.enforceSignupProviderPolicy &&
+      !isSignupOnboardingProvider(input.model.gatewayProvider)
+    ) {
+      modelAccess = {
+        ...identity,
         ready: false,
-        status: "missing_default_model",
-        detail: "Select an approved default language model.",
-        gatewayId: null,
-        gatewayName: null,
-        modelId: null,
-        modelName: null,
+        status: "unsupported_provider",
+        detail:
+          "Choose OpenAI, Anthropic, or OpenRouter for signup onboarding.",
       };
+    } else if (!input.model.hasRequiredCredential) {
+      modelAccess = {
+        ...identity,
+        ready: false,
+        status: "missing_credential",
+        detail: "The default model provider is missing its stored credential.",
+      };
+    } else if (input.model.credentialStatus === "invalid") {
+      modelAccess = {
+        ...identity,
+        ready: false,
+        status: "invalid_credential",
+        detail: "The default model provider rejected its stored credential.",
+      };
+    } else if (
+      isGatewayCredentialReadyForRuntime({
+        provider: input.model.gatewayProvider,
+        credentialStatus: input.model.credentialStatus,
+        credentialValidatedAt: input.model.credentialValidatedAt,
+        hasRequiredCredential: input.model.hasRequiredCredential,
+      })
+    ) {
+      modelAccess = {
+        ...identity,
+        ready: true,
+        status: "ready",
+        detail: `${input.model.modelName} is approved and set as default.`,
+      };
+    } else {
+      modelAccess = {
+        ...identity,
+        ready: false,
+        status: "unverified_credential",
+        detail: "Validate the default model provider credential before use.",
+      };
+    }
+  } else {
+    modelAccess = {
+      ready: false,
+      status: "missing_default_model",
+      detail: "Select an approved default language model.",
+      gatewayId: null,
+      gatewayName: null,
+      modelId: null,
+      modelName: null,
+    };
+  }
 
   let workspaceStatus = "missing_connection";
   let workspaceDetail = "Connect and verify a Fly workspace provider.";
@@ -167,7 +215,8 @@ export function deriveOrganizationChatReadiness(
       workspaceDetail = "The Fly workspace provider is disabled.";
     } else if (!(input.fly.hasApiToken && input.fly.organizationSlug.trim())) {
       workspaceStatus = "missing_credential";
-      workspaceDetail = "Fly requires an organization slug and stored API token.";
+      workspaceDetail =
+        "Fly requires an organization slug and stored API token.";
     } else if (input.fly.status === "degraded") {
       workspaceStatus = "degraded";
       workspaceDetail = "The last Fly connection test failed.";
@@ -222,26 +271,33 @@ export function deriveOrganizationChatReadiness(
       input.environment.failureMessage ||
       "The default Environment needs attention in Environment operations.";
   }
-  const environmentExecution: OrganizationChatReadiness["environmentExecution"] = {
-    ready: input.rollout.effectiveEnabled && input.environment?.status === "ready",
-    status: executionStatus,
-    detail: executionDetail,
-    deploymentEnabled: input.rollout.deploymentEnabled,
-    organizationEnabled: input.rollout.organizationEnabled,
-    environmentId: input.environment?.id ?? null,
-    environmentName: input.environment?.name ?? null,
-    environmentStatus: input.environment?.status ?? null,
-    operationId: input.operation?.id ?? null,
-    operationStatus: input.operation?.status ?? null,
-    operationStage: input.operation?.stage ?? null,
-    failureMessage:
-      input.environment?.failureMessage ?? input.operation?.errorMessage ?? null,
-  };
+  const environmentExecution: OrganizationChatReadiness["environmentExecution"] =
+    {
+      ready:
+        input.rollout.effectiveEnabled && input.environment?.status === "ready",
+      status: executionStatus,
+      detail: executionDetail,
+      deploymentEnabled: input.rollout.deploymentEnabled,
+      organizationEnabled: input.rollout.organizationEnabled,
+      environmentId: input.environment?.id ?? null,
+      environmentName: input.environment?.name ?? null,
+      environmentStatus: input.environment?.status ?? null,
+      operationId: input.operation?.id ?? null,
+      operationStatus: input.operation?.status ?? null,
+      operationStage: input.operation?.stage ?? null,
+      failureMessage:
+        input.environment?.failureMessage ??
+        input.operation?.errorMessage ??
+        null,
+    };
 
   const nextStep: OrganizationSetupNextStep = modelAccess.ready
     ? workspaceCompute.ready
       ? environmentExecution.ready
-        ? null : "environment_execution" : "workspace_compute" : "model_access";
+        ? null
+        : "environment_execution"
+      : "workspace_compute"
+    : "model_access";
 
   return {
     applicable: true,
@@ -254,7 +310,7 @@ export function deriveOrganizationChatReadiness(
 }
 
 export async function getOrganizationChatReadiness(
-  organizationId: string
+  organizationId: string,
 ): Promise<OrganizationChatReadiness> {
   const [organization, environment, rollout, fly] = await Promise.all([
     knowledgeDb.query.organizations.findFirst({
@@ -266,7 +322,7 @@ export async function getOrganizationChatReadiness(
         eq(schema.environments.organizationId, organizationId),
         eq(schema.environments.isDefault, true),
         isNull(schema.environments.archivedAt),
-        notInArray(schema.environments.status, ["deleting", "deleted"])
+        notInArray(schema.environments.status, ["deleting", "deleted"]),
       ),
       columns: {
         id: true,
@@ -279,6 +335,38 @@ export async function getOrganizationChatReadiness(
     getFlyProviderConnection(organizationId),
   ]);
 
+  const personal = isPersonalOrganizationSlug(organization?.slug);
+  const [signupRedemption] = personal
+    ? await knowledgeDb
+        .select({
+          onboardingCompletedAt:
+            schema.signupAccessCodeRedemptions.onboardingCompletedAt,
+        })
+        .from(schema.users)
+        .innerJoin(
+          schema.signupAccessCodeRedemptions,
+          eq(
+            schema.signupAccessCodeRedemptions.id,
+            schema.users.signupAccessCodeRedemptionId,
+          ),
+        )
+        .innerJoin(
+          schema.members,
+          eq(schema.members.userId, schema.users.id),
+        )
+        .where(
+          and(
+            eq(schema.members.organizationId, organizationId),
+            eq(schema.members.role, "owner"),
+          ),
+        )
+        .limit(1)
+    : [];
+  const personalRequiresSetup = Boolean(signupRedemption);
+  const enforceSignupProviderPolicy = Boolean(
+    signupRedemption && !signupRedemption.onboardingCompletedAt,
+  );
+
   const [resolvedModel, operation] = await Promise.all([
     getResolvedKestrelRuntimeExecutionModel({
       organizationId,
@@ -289,7 +377,7 @@ export async function getOrganizationChatReadiness(
           where: and(
             eq(schema.environmentOperations.organizationId, organizationId),
             eq(schema.environmentOperations.environmentId, environment.id),
-            eq(schema.environmentOperations.type, "environment.provision")
+            eq(schema.environmentOperations.type, "environment.provision"),
           ),
           orderBy: (table, { desc }) => [desc(table.createdAt)],
           columns: {
@@ -309,32 +397,37 @@ export async function getOrganizationChatReadiness(
         where: and(
           eq(
             schema.aiProviderConnections.id,
-            resolvedModel.gateway.providerConnectionId
+            resolvedModel.gateway.providerConnectionId,
           ),
-          eq(schema.aiProviderConnections.organizationId, organizationId)
+          eq(schema.aiProviderConnections.organizationId, organizationId),
         ),
         columns: { apiKey: true, enabled: true },
       });
     providerConnectionHasCredential = Boolean(
-      providerConnection?.enabled && providerConnection.apiKey?.trim()
+      providerConnection?.enabled && providerConnection.apiKey?.trim(),
     );
   }
 
   const flyMetadata = (fly?.metadata ?? {}) as { organizationSlug?: string };
   return deriveOrganizationChatReadiness({
-    personal: isPersonalOrganizationSlug(organization?.slug),
+    personal,
+    personalRequiresSetup,
     model: resolvedModel
       ? {
           gatewayId: resolvedModel.gateway.id,
           gatewayName: resolvedModel.gateway.displayName,
+          gatewayProvider: resolvedModel.gateway.provider,
           modelId: resolvedModel.model.gatewayModelId,
           modelName: resolvedModel.model.name,
+          credentialStatus: resolvedModel.gateway.credentialStatus,
+          credentialValidatedAt: resolvedModel.gateway.credentialValidatedAt,
           hasRequiredCredential:
             resolvedModel.gateway.provider === "ollama" ||
             Boolean(resolvedModel.gateway.apiKey?.trim()) ||
             providerConnectionHasCredential,
         }
       : null,
+    enforceSignupProviderPolicy,
     fly: fly
       ? {
           enabled: fly.enabled,

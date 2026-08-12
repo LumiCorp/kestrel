@@ -8,7 +8,7 @@ import {
 } from "./chat-readiness";
 
 function readyInput(
-  overrides: Partial<OrganizationChatReadinessInput> = {}
+  overrides: Partial<OrganizationChatReadinessInput> = {},
 ): OrganizationChatReadinessInput {
   return {
     personal: false,
@@ -17,6 +17,9 @@ function readyInput(
       gatewayName: "Lumi",
       modelId: "model-1",
       modelName: "Kestrel",
+      gatewayProvider: "lumi",
+      credentialStatus: "ready",
+      credentialValidatedAt: "2026-07-22T12:00:00.000Z",
       hasRequiredCredential: true,
     },
     fly: {
@@ -49,20 +52,20 @@ function readyInput(
 
 test("organization readiness uses the fixed next-step order", () => {
   const missingEverything = deriveOrganizationChatReadiness(
-    readyInput({ model: null, fly: null, environment: null })
+    readyInput({ model: null, fly: null, environment: null }),
   );
   assert.equal(missingEverything.nextStep, "model_access");
   assert.equal(
     deriveOrganizationChatReadiness(readyInput({ fly: null })).nextStep,
-    "workspace_compute"
+    "workspace_compute",
   );
   assert.equal(
     deriveOrganizationChatReadiness(
       readyInput({
         environment: { ...readyInput().environment!, status: "provisioning" },
-      })
+      }),
     ).nextStep,
-    "environment_execution"
+    "environment_execution",
   );
 });
 
@@ -70,10 +73,61 @@ test("model readiness requires a default model credential", () => {
   const noCredential = deriveOrganizationChatReadiness(
     readyInput({
       model: { ...readyInput().model!, hasRequiredCredential: false },
-    })
+    }),
   );
   assert.equal(noCredential.modelAccess.status, "missing_credential");
   assert.equal(noCredential.ready, false);
+});
+
+test("model readiness rejects invalid and unverified credentials", () => {
+  const invalid = deriveOrganizationChatReadiness(
+    readyInput({
+      model: {
+        ...readyInput().model!,
+        credentialStatus: "invalid",
+        credentialValidatedAt: null,
+      },
+    }),
+  );
+  assert.equal(invalid.modelAccess.status, "invalid_credential");
+  assert.equal(invalid.nextStep, "model_access");
+
+  const unverified = deriveOrganizationChatReadiness(
+    readyInput({
+      model: {
+        ...readyInput().model!,
+        credentialStatus: "unverified",
+        credentialValidatedAt: null,
+      },
+    }),
+  );
+  assert.equal(unverified.modelAccess.status, "unverified_credential");
+  assert.equal(unverified.ready, false);
+});
+
+test("incomplete signup onboarding only accepts its three keyed providers", () => {
+  const unsupported = deriveOrganizationChatReadiness(
+    readyInput({
+      personal: true,
+      personalRequiresSetup: true,
+      enforceSignupProviderPolicy: true,
+    }),
+  );
+  assert.equal(unsupported.modelAccess.status, "unsupported_provider");
+  assert.equal(unsupported.ready, false);
+
+  const openAi = deriveOrganizationChatReadiness(
+    readyInput({
+      personal: true,
+      personalRequiresSetup: true,
+      enforceSignupProviderPolicy: true,
+      model: {
+        ...readyInput().model!,
+        gatewayProvider: "openai",
+      },
+    }),
+  );
+  assert.equal(openAi.modelAccess.status, "ready");
 });
 
 test("Fly readiness distinguishes untested and degraded credentials", () => {
@@ -83,15 +137,15 @@ test("Fly readiness distinguishes untested and degraded credentials", () => {
         ...readyInput().fly!,
         hasApiToken: false,
       },
-    })
+    }),
   );
   assert.equal(missingCredential.workspaceCompute.status, "missing_credential");
   const untested = deriveOrganizationChatReadiness(
-    readyInput({ fly: { ...readyInput().fly!, status: "not_configured" } })
+    readyInput({ fly: { ...readyInput().fly!, status: "not_configured" } }),
   );
   assert.equal(untested.workspaceCompute.status, "untested");
   const degraded = deriveOrganizationChatReadiness(
-    readyInput({ fly: { ...readyInput().fly!, status: "degraded" } })
+    readyInput({ fly: { ...readyInput().fly!, status: "degraded" } }),
   );
   assert.equal(degraded.workspaceCompute.status, "degraded");
 });
@@ -104,11 +158,11 @@ test("execution readiness reports rollout and terminal environment states", () =
         organizationEnabled: true,
         effectiveEnabled: false,
       },
-    })
+    }),
   );
   assert.equal(
     deploymentDisabled.environmentExecution.status,
-    "deployment_disabled"
+    "deployment_disabled",
   );
 
   const disabled = deriveOrganizationChatReadiness(
@@ -118,7 +172,7 @@ test("execution readiness reports rollout and terminal environment states", () =
         organizationEnabled: false,
         effectiveEnabled: false,
       },
-    })
+    }),
   );
   assert.equal(disabled.environmentExecution.status, "rollout_disabled");
 
@@ -129,10 +183,13 @@ test("execution readiness reports rollout and terminal environment states", () =
         status: "failed",
         failureMessage: "Provisioning stopped safely.",
       },
-    })
+    }),
   );
   assert.equal(failed.environmentExecution.status, "failed");
-  assert.equal(failed.environmentExecution.failureMessage, "Provisioning stopped safely.");
+  assert.equal(
+    failed.environmentExecution.failureMessage,
+    "Provisioning stopped safely.",
+  );
 
   const retrying = deriveOrganizationChatReadiness(
     readyInput({
@@ -145,7 +202,7 @@ test("execution readiness reports rollout and terminal environment states", () =
         ...readyInput().operation!,
         status: "queued",
       },
-    })
+    }),
   );
   assert.equal(retrying.environmentExecution.status, "provisioning");
   assert.equal(retrying.nextStep, "environment_execution");
@@ -160,9 +217,24 @@ test("fully configured team organizations are ready", () => {
 
 test("personal organizations remain outside onboarding", () => {
   const readiness = deriveOrganizationChatReadiness(
-    readyInput({ personal: true, model: null, fly: null, environment: null })
+    readyInput({ personal: true, model: null, fly: null, environment: null }),
   );
   assert.equal(readiness.applicable, false);
   assert.equal(readiness.ready, true);
   assert.equal(readiness.nextStep, null);
+});
+
+test("code-created personal organizations use the full readiness contract", () => {
+  const readiness = deriveOrganizationChatReadiness(
+    readyInput({
+      personal: true,
+      personalRequiresSetup: true,
+      model: null,
+      fly: null,
+      environment: null,
+    }),
+  );
+  assert.equal(readiness.applicable, true);
+  assert.equal(readiness.ready, false);
+  assert.equal(readiness.nextStep, "model_access");
 });

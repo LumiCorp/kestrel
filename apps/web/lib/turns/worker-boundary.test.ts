@@ -109,6 +109,32 @@ test(
 );
 
 test(
+  "model authentication failures retain their normalized durable code",
+  async () => {
+    const [runtimeSource, storeSource] = await Promise.all([
+      readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
+      readFile(new URL("./store.ts", import.meta.url), "utf8"),
+    ]);
+
+    assert.match(
+      runtimeSource,
+      /terminal\.errorCode === "MODEL_AUTH_ERROR"/u
+    );
+    assert.match(runtimeSource, /errorCode === "MODEL_AUTH_ERROR"/u);
+    assert.match(
+      storeSource,
+      /invalidateTurnGatewayCredentialForAuthFailure/u
+    );
+    assert.match(
+      storeSource,
+      /schema\.environmentModelGrants\.gatewayCredentialRevision/u
+    );
+    assert.match(storeSource, /schema\.adminEventLogs/u);
+    assert.match(storeSource, /gateway\.credential\.invalidated/u);
+  }
+);
+
+test(
   "runtime execution binding is part of execution creation",
   async () => {
     const routeSource = await readFile(

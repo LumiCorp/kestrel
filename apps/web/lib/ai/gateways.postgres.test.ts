@@ -100,6 +100,152 @@ test(
 );
 
 test(
+  "gateway credential health is revision guarded across sync outcomes",
+  async (context) => {
+    assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.POSTGRES_URL = databaseUrl;
+    const previousKeyId = process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID;
+    const previousKeys = process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS;
+    const previousFetch = globalThis.fetch;
+    process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID = "test";
+    process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS = JSON.stringify({
+      test: Buffer.alloc(32, 23).toString("base64"),
+    });
+    const [
+      { resetDbRuntimeForTests },
+      { createGateway, syncGatewayModels, updateGateway },
+    ] = await Promise.all([
+      import("@/lib/db/runtime"),
+      import("./gateways"),
+    ]);
+    const sql = postgres(databaseUrl, { max: 2 });
+    const suffix = crypto.randomUUID();
+    const organizationId = `credential-health-org-${suffix}`;
+    const now = new Date();
+
+    context.after(async () => {
+      globalThis.fetch = previousFetch;
+      await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+      if (previousKeyId === undefined) {
+        Reflect.deleteProperty(
+          process.env,
+          "KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID"
+        );
+      } else {
+        process.env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID = previousKeyId;
+      }
+      if (previousKeys === undefined) {
+        Reflect.deleteProperty(
+          process.env,
+          "KESTREL_GATEWAY_CREDENTIAL_KEYS"
+        );
+      } else {
+        process.env.KESTREL_GATEWAY_CREDENTIAL_KEYS = previousKeys;
+      }
+      await resetDbRuntimeForTests();
+      await sql.end({ timeout: 0 });
+    });
+
+    await sql`
+      INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+      VALUES (
+        ${organizationId}, 'Credential Health Org',
+        ${`credential-health-${suffix}`}, ${now}
+      )
+    `;
+    const gateway = await createGateway({
+      organizationId,
+      provider: "openai",
+      apiKey: "first-secret",
+    });
+    assert.equal(gateway.credentialStatus, "unverified");
+    assert.equal(gateway.credentialRevision, 1);
+
+    globalThis.fetch = (async () =>
+      new Response("unauthorized", { status: 401 })) as unknown as typeof fetch;
+    await assert.rejects(
+      syncGatewayModels(organizationId, gateway.id),
+      /Gateway model sync failed \(401\)/u
+    );
+    const readHealth = async () => {
+      const [health] = await sql<
+        Array<{
+          credentialStatus: string;
+          credentialValidatedAt: Date | null;
+          credentialRevision: number;
+        }>
+      >`
+        SELECT
+          "credential_status" AS "credentialStatus",
+          "credential_validated_at" AS "credentialValidatedAt",
+          "credential_revision" AS "credentialRevision"
+        FROM "ai_gateways"
+        WHERE "id" = ${gateway.id}
+      `;
+      return health;
+    };
+    assert.deepEqual(await readHealth(), {
+      credentialStatus: "invalid",
+      credentialValidatedAt: null,
+      credentialRevision: 1,
+    });
+
+    await updateGateway(organizationId, gateway.id, {
+      apiKey: "second-secret",
+    });
+    let resolveFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      resolveFetchStarted = resolve;
+    });
+    let resolveStaleFetch!: (response: Response) => void;
+    const staleFetch = new Promise<Response>((resolve) => {
+      resolveStaleFetch = resolve;
+    });
+    globalThis.fetch = (async () => {
+      resolveFetchStarted();
+      return staleFetch;
+    }) as unknown as typeof fetch;
+    const staleSync = syncGatewayModels(organizationId, gateway.id);
+    await fetchStarted;
+    await updateGateway(organizationId, gateway.id, {
+      apiKey: "third-secret",
+    });
+    resolveStaleFetch(
+      Response.json({ data: [{ id: "gpt-test", object: "model" }] })
+    );
+    await assert.rejects(staleSync, /credential changed during model sync/u);
+    assert.deepEqual(await readHealth(), {
+      credentialStatus: "unverified",
+      credentialValidatedAt: null,
+      credentialRevision: 3,
+    });
+
+    globalThis.fetch = (async () =>
+      new Response("unavailable", { status: 503 })) as unknown as typeof fetch;
+    await assert.rejects(
+      syncGatewayModels(organizationId, gateway.id),
+      /Gateway model sync failed \(503\)/u
+    );
+    assert.deepEqual(await readHealth(), {
+      credentialStatus: "unverified",
+      credentialValidatedAt: null,
+      credentialRevision: 3,
+    });
+
+    globalThis.fetch = (async () =>
+      Response.json({
+        data: [{ id: "gpt-test", object: "model" }],
+      })) as unknown as typeof fetch;
+    await syncGatewayModels(organizationId, gateway.id);
+    const ready = await readHealth();
+    assert.equal(ready?.credentialStatus, "ready");
+    assert.ok(ready?.credentialValidatedAt instanceof Date);
+    assert.equal(ready?.credentialRevision, 3);
+  }
+);
+
+test(
   "closed model grants retain evidence while live gateway resources are deleted",
   async (context) => {
     assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
@@ -170,9 +316,11 @@ test(
       `;
       await transaction`
         INSERT INTO "ai_gateways" (
-          "id", "organization_id", "environment_id", "provider", "display_name"
+          "id", "organization_id", "environment_id", "provider", "display_name",
+          "api_key", "credential_status", "credential_validated_at"
         ) VALUES (
-          ${gatewayId}, ${organizationId}, ${environmentId}, 'openai', 'Grant Gateway'
+          ${gatewayId}, ${organizationId}, ${environmentId}, 'openai', 'Grant Gateway',
+          'encrypted-test-key', 'ready', now()
         )
       `;
       await transaction`
@@ -233,14 +381,20 @@ test(
       rawModelId: "grant-model",
     });
     const [reactivated] = await sql<
-      Array<{ gatewayModelId: string | null; status: string }>
+      Array<{
+        gatewayModelId: string | null;
+        gatewayCredentialRevision: number | null;
+        status: string;
+      }>
     >`
-      SELECT "gateway_model_id" AS "gatewayModelId", "status"
+      SELECT "gateway_model_id" AS "gatewayModelId",
+        "gateway_credential_revision" AS "gatewayCredentialRevision", "status"
       FROM "environment_model_grants"
       WHERE "run_id" = ${executionId}
     `;
     assert.deepEqual(reactivated, {
       gatewayModelId: modelId,
+      gatewayCredentialRevision: 1,
       status: "active",
     });
     await sql`
