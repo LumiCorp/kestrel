@@ -9,13 +9,13 @@ import {
   sql,
 } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import {
-  ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION,
-} from "@lumi/kestrel-environment-auth";
+import { ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION } from "@lumi/kestrel-environment-auth";
 import {
   assertFlyImageMatchesRole,
+  countResolvedFlyImageReleaseTargets,
   evaluateFlyImageReleaseAdmission,
   evaluateFlyImageForwardRecoveryEligibility,
+  evaluateFlyImageMigrationAcknowledgementEligibility,
   selectFlyImageRollbackTargets,
   FLY_IMAGE_RELEASE_DEPLOYABLE_ENVIRONMENT_STATUSES,
   FLY_IMAGE_ROLES,
@@ -120,9 +120,7 @@ export async function registerFlyImageReleaseCandidate(
           role === "environment-router" &&
           base.environmentGatewayAcceptedVersions
             ? {
-                acceptedVersions: [
-                  ...base.environmentGatewayAcceptedVersions,
-                ],
+                acceptedVersions: [...base.environmentGatewayAcceptedVersions],
               }
             : undefined,
         changed: false,
@@ -139,9 +137,7 @@ export async function registerFlyImageReleaseCandidate(
       );
     }
     if (
-      !acceptedVersions.includes(
-        manifest.environmentGateway.producedVersion,
-      )
+      !acceptedVersions.includes(manifest.environmentGateway.producedVersion)
     ) {
       throw new FlyImageReleaseError(
         "RELEASE_COMPATIBILITY_BLOCKED",
@@ -305,23 +301,33 @@ export async function listFlyImageReleases(limit = 25) {
       const releaseComponents = components.filter(
         (component) => component.releaseId === release.id,
       );
-      const admission =
-        ["candidate", "approved", "deploying", "paused"].includes(
-          release.status,
-        )
-          ? servingRevision
-            ? evaluateStoredReleaseAdmission(release, releaseComponents)
-            : {
-                ok: false as const,
-                code: "RELEASE_BUILD_REVISION_MISMATCH",
-                message: "The serving Kestrel build revision is unavailable.",
-              }
-          : { ok: true as const };
+      const releaseTargets = targets.filter(
+        (target) => target.releaseId === release.id,
+      );
+      const admission = [
+        "candidate",
+        "approved",
+        "deploying",
+        "paused",
+      ].includes(release.status)
+        ? servingRevision
+          ? evaluateStoredReleaseAdmission(release, releaseComponents)
+          : {
+              ok: false as const,
+              code: "RELEASE_BUILD_REVISION_MISMATCH",
+              message: "The serving Kestrel build revision is unavailable.",
+            }
+        : { ok: true as const };
       return {
         ...release,
         components: releaseComponents,
-        targets: targets.filter((target) => target.releaseId === release.id),
+        targets: releaseTargets,
+        resolvedTargetCount:
+          countResolvedFlyImageReleaseTargets(releaseTargets),
+        totalTargetCount: releaseTargets.length,
         admission,
+        migrationAcknowledgementEligibility:
+          evaluateFlyImageMigrationAcknowledgementEligibility(release),
         recoveryEligibility:
           release.status === "candidate"
             ? evaluateFlyImageForwardRecoveryEligibility({
@@ -721,7 +727,10 @@ export async function recoverFlyImageReleaseForward(input: {
         "This candidate changes database migrations and requires the migration runbook before recovery.",
       );
     }
-    await requireFlyImageReleaseCanary(transaction, settings.canaryEnvironmentId);
+    await requireFlyImageReleaseCanary(
+      transaction,
+      settings.canaryEnvironmentId,
+    );
     const components = await transaction
       .select()
       .from(schema.flyImageReleaseComponents)
@@ -775,11 +784,7 @@ async function promoteFlyImageReleaseCandidate(input: {
             ),
           )
       : [];
-  const globalRoles = [
-    "preview-edge",
-    "turn-worker",
-    "runpod-worker",
-  ] as const;
+  const globalRoles = ["preview-edge", "turn-worker", "runpod-worker"] as const;
   const targets = [
     ...globalRoles
       .filter((role) => changedRoles.has(role))
@@ -1133,16 +1138,17 @@ function evaluateStoredReleaseAdmission(
     currentBuildRevision: currentBuildRevision(),
     currentProducedVersion: ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION,
     releaseProducedVersion: release.environmentGatewayConfigVersion,
-    routerAcceptedVersions:
-      router?.environmentGatewayAcceptedVersions ?? null,
+    routerAcceptedVersions: router?.environmentGatewayAcceptedVersions ?? null,
   });
 }
 
 function assertRollbackCompatibility(
   components: Array<typeof schema.flyImageReleaseComponents.$inferSelect>,
 ) {
-  const accepted = requireComponent(components, "environment-router")
-    .environmentGatewayAcceptedVersions;
+  const accepted = requireComponent(
+    components,
+    "environment-router",
+  ).environmentGatewayAcceptedVersions;
   if (!accepted) {
     throw new FlyImageReleaseError(
       "RELEASE_COMPATIBILITY_UNKNOWN",
@@ -1157,9 +1163,7 @@ function assertRollbackCompatibility(
   }
 }
 
-export async function getFlyImageReleaseExecutionAdmission(
-  releaseId: string,
-) {
+export async function getFlyImageReleaseExecutionAdmission(releaseId: string) {
   const [release, components] = await Promise.all([
     knowledgeDb.query.flyImageReleases.findFirst({
       where: eq(schema.flyImageReleases.id, releaseId),

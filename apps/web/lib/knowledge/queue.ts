@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { ENVIRONMENT_RECONCILE_CRON } from "@/lib/environments/reconcile-schedule";
 import {
@@ -204,7 +204,6 @@ function environmentOperationJobOptions(
   retryLimit = ENVIRONMENT_OPERATION_RETRY_LIMIT,
 ) {
   return {
-    id: operationId,
     retryLimit,
     retryDelay: ENVIRONMENT_OPERATION_RETRY_DELAY_SECONDS,
     retryBackoff: true,
@@ -218,36 +217,39 @@ export async function enqueueEnvironmentOperation(
   operationId: string,
   options: {
     retryLimit?: number | undefined;
-    retryTerminal?: boolean | undefined;
   } = {},
 ) {
-  const boss = await getKnowledgeBossProducer();
-  const jobId = await boss.send(
-    ENVIRONMENT_OPERATION_QUEUE,
-    { operationId },
-    environmentOperationJobOptions(operationId, options.retryLimit),
-  );
-  if (jobId) return;
-  const existingJobs = await boss.findJobs<{ operationId?: unknown }>(
-    ENVIRONMENT_OPERATION_QUEUE,
-    { id: operationId },
-  );
-  const existingJob = existingJobs[0];
-  if (existingJob && NONTERMINAL_JOB_STATES.has(existingJob.state)) return;
-  if (options.retryTerminal && existingJob?.state === "failed") {
-    await boss.retry(ENVIRONMENT_OPERATION_QUEUE, operationId);
+  const { prepareWorkspaceProvisionAdmission } =
+    await import("@/lib/environments/dependency");
+  if ((await prepareWorkspaceProvisionAdmission(operationId)) === "parked") {
     return;
   }
-  if (options.retryTerminal && existingJob) {
-    await boss.deleteJob(ENVIRONMENT_OPERATION_QUEUE, operationId);
-    const replacementJobId = await boss.send(
+  const boss = await getKnowledgeBossProducer();
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`environment-operation-queue:${operationId}`}, 0))`,
+    );
+    const existingJobs = await findEnvironmentOperationJobs(boss, operationId);
+    if (existingJobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state))) {
+      return;
+    }
+    const jobId = await boss.send(
       ENVIRONMENT_OPERATION_QUEUE,
       { operationId },
       environmentOperationJobOptions(operationId, options.retryLimit),
     );
-    if (replacementJobId) return;
-  }
-  throw new Error("The Environment operation queue rejected the job.");
+    if (jobId) return;
+    const concurrentJobs = await findEnvironmentOperationJobs(
+      boss,
+      operationId,
+    );
+    if (
+      concurrentJobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state))
+    ) {
+      return;
+    }
+    throw new Error("The Environment operation queue rejected the job.");
+  });
 }
 
 export async function enqueueFlyImageRelease(
@@ -299,6 +301,7 @@ async function deferEnvironmentOperation(boss: PgBoss, operationId: string) {
       retryBackoff: true,
       expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
       heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+      singletonKey: `${operationId}:deferred:${crypto.randomUUID()}`,
       startAfter: environmentOperationNextAttemptAt(operation.result),
     },
   );

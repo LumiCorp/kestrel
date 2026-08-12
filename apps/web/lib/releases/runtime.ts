@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { FlyMachinesClient } from "@/lib/environments/providers/fly-machines";
 import { EnvironmentProviderError } from "@/lib/environments/providers/contracts";
+import type { EnvironmentProviderMachine } from "@/lib/environments/providers/contracts";
 import { releaseRetryNextAttemptAt } from "@/lib/environments/provisioner";
 import { environmentLifecycleLockKey } from "@/lib/environments/lifecycle-lock";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -225,6 +226,7 @@ async function applyGlobalAppTarget(
   const client = createPlatformFlyClient();
   const before = await client.listAppMachines({ appName });
   if (!before.length) throw new Error(`Fly App '${appName}' has no Machines.`);
+  validateGlobalAppMachineTopology(before);
   await knowledgeDb
     .update(schema.flyImageReleaseTargets)
     .set({
@@ -232,42 +234,17 @@ async function applyGlobalAppTarget(
       stage: "global_app.updating",
       priorImage: before[0]?.image ?? null,
       startedAt: target.startedAt ?? new Date(),
-      result: { machineIds: before.map((machine) => machine.id) },
+      result: buildGlobalAppApplyingResult(target.result, before),
       updatedAt: new Date(),
     })
     .where(eq(schema.flyImageReleaseTargets.id, target.id));
-  for (const machine of before) {
-    const updated = await client.updateMachineImage({
-      appName,
-      machineId: machine.id,
-      runtimeImage: target.desiredImage,
-    });
-    if (updated.state !== "started") {
-      await client.waitForMachine({
-        appName,
-        machineId: machine.id,
-        state: "started",
-        timeoutSeconds: 120,
-      });
-    }
-    if (role === "preview-edge") {
-      await client.waitForMachineHealth({
-        appName,
-        machineId: machine.id,
-        checkName: "preview_edge",
-        timeoutSeconds: 120,
-      });
-    }
-    const verified = await client.getMachine({
-      appName,
-      machineId: machine.id,
-    });
-    if (!isFlyImageReleaseMachineVerified(verified, target.desiredImage)) {
-      throw new Error(
-        `Fly Machine '${machine.id}' was not running on the release digest.`,
-      );
-    }
-  }
+  await updateGlobalAppMachines({
+    appName,
+    client,
+    desiredImage: target.desiredImage,
+    machines: before,
+    role,
+  });
   await knowledgeDb
     .update(schema.flyImageReleaseTargets)
     .set({
@@ -277,6 +254,144 @@ async function applyGlobalAppTarget(
       updatedAt: new Date(),
     })
     .where(eq(schema.flyImageReleaseTargets.id, target.id));
+}
+
+type GlobalAppMachineClient = Pick<
+  FlyMachinesClient,
+  | "getMachine"
+  | "updateMachineImage"
+  | "waitForMachine"
+  | "waitForMachineHealth"
+>;
+
+export function buildGlobalAppApplyingResult(
+  existing: Record<string, unknown> | null,
+  machines: EnvironmentProviderMachine[],
+) {
+  return {
+    ...(existing ?? {}),
+    machineIds: machines.map((machine) => machine.id),
+  };
+}
+
+export function validateGlobalAppMachineTopology(
+  machines: EnvironmentProviderMachine[],
+) {
+  const byId = new Map(
+    machines.map((machine) => [machine.id, machine] as const),
+  );
+  if (byId.size !== machines.length) {
+    throw new Error("Fly App Machine inventory contains duplicate identities.");
+  }
+  const referencedBy = new Map<string, EnvironmentProviderMachine[]>();
+  for (const machine of machines) {
+    if (!Array.isArray(machine.standbyForMachineIds)) {
+      throw new Error(
+        `Fly Machine '${machine.id}' is missing standby relationship metadata.`,
+      );
+    }
+    if (machine.standbyForMachineIds.length > 1) {
+      throw new Error(
+        `Fly Machine '${machine.id}' has an ambiguous standby relationship.`,
+      );
+    }
+    const primaryId = machine.standbyForMachineIds[0];
+    if (!primaryId) continue;
+    if (primaryId === machine.id || !byId.has(primaryId)) {
+      throw new Error(
+        `Fly Machine '${machine.id}' has a malformed standby relationship.`,
+      );
+    }
+    const standbys = referencedBy.get(primaryId) ?? [];
+    standbys.push(machine);
+    referencedBy.set(primaryId, standbys);
+  }
+
+  const paired = new Set<string>();
+  for (const [primaryId, standbys] of referencedBy) {
+    const primary = byId.get(primaryId)!;
+    if (
+      standbys.length !== 1 ||
+      !Array.isArray(primary.standbyForMachineIds) ||
+      primary.standbyForMachineIds.length > 0
+    ) {
+      throw new Error(
+        `Fly Machine '${primaryId}' has an ambiguous standby relationship.`,
+      );
+    }
+    const standby = standbys[0]!;
+    const states = [primary.state, standby.state].sort();
+    if (states[0] !== "started" || states[1] !== "stopped") {
+      throw new Error(
+        `Fly Machine pair '${primary.id}'/'${standby.id}' must contain exactly one started Machine and one stopped standby.`,
+      );
+    }
+    paired.add(primary.id);
+    paired.add(standby.id);
+  }
+
+  for (const machine of machines) {
+    if (!paired.has(machine.id) && machine.state !== "started") {
+      throw new Error(
+        `Fly App inventory contains unrelated non-running Machine '${machine.id}'.`,
+      );
+    }
+  }
+  return machines.map((machine) => ({
+    machine,
+    expectedState: machine.state as "started" | "stopped",
+  }));
+}
+
+export async function updateGlobalAppMachines(input: {
+  appName: string;
+  client: GlobalAppMachineClient;
+  desiredImage: string;
+  machines: EnvironmentProviderMachine[];
+  role: FlyImageRole;
+}) {
+  const plan = validateGlobalAppMachineTopology(input.machines);
+  const verifiedMachines: EnvironmentProviderMachine[] = [];
+  for (const { machine, expectedState } of plan) {
+    const updated = await input.client.updateMachineImage({
+      appName: input.appName,
+      machineId: machine.id,
+      runtimeImage: input.desiredImage,
+    });
+    if (updated.state !== expectedState) {
+      await input.client.waitForMachine({
+        appName: input.appName,
+        machineId: machine.id,
+        state: expectedState,
+        timeoutSeconds: 120,
+      });
+    }
+    if (input.role === "preview-edge" && expectedState === "started") {
+      await input.client.waitForMachineHealth({
+        appName: input.appName,
+        machineId: machine.id,
+        checkName: "preview_edge",
+        timeoutSeconds: 120,
+      });
+    }
+    const verified = await input.client.getMachine({
+      appName: input.appName,
+      machineId: machine.id,
+    });
+    if (
+      !isFlyImageReleaseMachineVerified(
+        verified,
+        input.desiredImage,
+        expectedState,
+      )
+    ) {
+      throw new Error(
+        `Fly Machine '${machine.id}' did not remain ${expectedState} on the release digest.`,
+      );
+    }
+    verifiedMachines.push(verified!);
+  }
+  validateGlobalAppMachineTopology(verifiedMachines);
 }
 
 async function applyEnvironmentTarget(input: {

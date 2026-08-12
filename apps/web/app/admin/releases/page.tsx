@@ -45,6 +45,10 @@ export default async function AdminReleasesPage() {
             release.environmentGatewayConfigVersion,
           admission: release.admission,
           recoveryEligibility: release.recoveryEligibility,
+          migrationAcknowledgementEligibility:
+            release.migrationAcknowledgementEligibility,
+          resolvedTargetCount: release.resolvedTargetCount,
+          totalTargetCount: release.totalTargetCount,
           components: release.components.map((component) => ({
             role: component.role,
             image: component.image,

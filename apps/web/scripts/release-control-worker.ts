@@ -9,6 +9,7 @@ import {
   LEGACY_RELEASE_CONTROLLER_QUEUES,
   RELEASE_CONTROLLER_CONTRACT_REVISION,
 } from "@/lib/releases/controller-contract";
+import { restoreControlWorkerMachine } from "./control-worker-machine";
 
 const app = "kestrel-one-control-worker";
 const vercelProject = "one";
@@ -125,40 +126,6 @@ export function selectControlWorkerSecrets(source: Record<string, string>) {
     );
   }
   return selected;
-}
-
-export function hasSingleRunningMachine(inventory: unknown) {
-  if (!Array.isArray(inventory)) return false;
-  return (
-    inventory.filter((machine) => {
-      if (!(machine && typeof machine === "object")) return false;
-      const record = machine as Record<string, unknown>;
-      return (record.state ?? record.State) === "started";
-    }).length === 1
-  );
-}
-
-function verifySingleRunningMachine() {
-  const parsed: unknown = JSON.parse(
-    run("fly", ["machine", "list", "--app", app, "--json"], {
-      quiet: true,
-    }),
-  );
-  if (!Array.isArray(parsed)) {
-    throw new Error("Fly did not return the control worker Machine inventory.");
-  }
-  if (!hasSingleRunningMachine(parsed)) {
-    const runningCount = parsed.filter(
-      (machine) =>
-        machine &&
-        typeof machine === "object" &&
-        ((machine as Record<string, unknown>).state ??
-          (machine as Record<string, unknown>).State) === "started",
-    ).length;
-    throw new Error(
-      `Control worker requires exactly one running Machine; found ${runningCount} running of ${parsed.length}.`,
-    );
-  }
 }
 
 async function assertLegacyQueuesIdle(databaseUrl: string) {
@@ -287,6 +254,12 @@ async function main() {
       "--build-arg",
       `KESTREL_GIT_SHA=${revision}`,
     ]);
+    await restoreControlWorkerMachine({
+      app,
+      expectedRevision: revision,
+      flyCommand: "fly",
+      accessToken: secrets.get("FLY_API_TOKEN")!,
+    });
     run("fly", [
       "ssh",
       "console",
@@ -295,7 +268,6 @@ async function main() {
       "--command",
       `grep -q release-controller-v${RELEASE_CONTROLLER_CONTRACT_REVISION} /tmp/kestrel-control-worker-ready`,
     ]);
-    verifySingleRunningMachine();
     await verifyHeartbeat(databaseUrl);
     process.stdout.write(
       `Control worker release passed for ${revision} (release-controller-v${RELEASE_CONTROLLER_CONTRACT_REVISION}).\n`,

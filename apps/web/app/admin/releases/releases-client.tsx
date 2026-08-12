@@ -25,6 +25,13 @@ type Release = {
   environmentGatewayConfigVersion: number | null;
   admission: { ok: boolean; code?: string; message?: string };
   recoveryEligibility: { ok: boolean; code?: string; message?: string };
+  migrationAcknowledgementEligibility: {
+    ok: boolean;
+    code?: string;
+    message?: string;
+  };
+  resolvedTargetCount: number;
+  totalTargetCount: number;
   createdAt: string;
   components: Array<{
     role: string;
@@ -231,7 +238,8 @@ export function ReleasesClient({
                 </div>
                 <CardDescription>
                   Published {new Date(release.createdAt).toLocaleString()} ·
-                  producer v{release.environmentGatewayConfigVersion ?? "unknown"}
+                  producer v
+                  {release.environmentGatewayConfigVersion ?? "unknown"}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -257,7 +265,9 @@ export function ReleasesClient({
                       {component.environmentGatewayAcceptedVersions ? (
                         <div className="mt-1 text-muted-foreground text-xs">
                           Accepts gateway config v
-                          {component.environmentGatewayAcceptedVersions.join(", v")}
+                          {component.environmentGatewayAcceptedVersions.join(
+                            ", v",
+                          )}
                         </div>
                       ) : null}
                     </div>
@@ -266,12 +276,8 @@ export function ReleasesClient({
                 {release.targets.length ? (
                   <div className="space-y-2 text-sm">
                     <div className="text-muted-foreground">
-                      {
-                        release.targets.filter(
-                          (target) => target.status === "completed",
-                        ).length
-                      }{" "}
-                      / {release.targets.length} targets complete
+                      {release.resolvedTargetCount} / {release.totalTargetCount}{" "}
+                      targets resolved
                     </div>
                     {release.targets
                       .filter((target) => target.stage.endsWith("retrying"))
@@ -316,7 +322,10 @@ export function ReleasesClient({
                       {release.migrationChanged &&
                       !release.migrationApprovedAt ? (
                         <Button
-                          disabled={pending || Boolean(active)}
+                          disabled={
+                            pending ||
+                            !release.migrationAcknowledgementEligibility.ok
+                          }
                           onClick={() =>
                             act({
                               action: "migration_ready",
@@ -392,7 +401,8 @@ export function ReleasesClient({
                       </Button>
                       {rollbackEligibility.ok ? null : (
                         <div className="basis-full text-destructive text-sm">
-                          {rollbackEligibility.code}: {rollbackEligibility.message}
+                          {rollbackEligibility.code}:{" "}
+                          {rollbackEligibility.message}
                         </div>
                       )}
                     </>

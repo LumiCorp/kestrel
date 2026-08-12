@@ -38,6 +38,7 @@ export type EnvironmentProviderMachine = {
   id: string;
   state: string;
   region: string;
+  standbyForMachineIds?: string[] | undefined;
   cpuKind?: string | undefined;
   cpus?: number | undefined;
   memoryMb?: number | undefined;
@@ -114,7 +115,7 @@ export interface EnvironmentInfrastructureProvider {
     region: string;
   }): Promise<EnvironmentProviderVolume>;
   ensureWorkspaceMachine(
-    input: WorkspaceMachineProvisioningInput
+    input: WorkspaceMachineProvisioningInput,
   ): Promise<EnvironmentProviderMachine>;
   createReplacementWorkspaceVolume(input: {
     appName: string;
@@ -130,7 +131,7 @@ export interface EnvironmentInfrastructureProvider {
     snapshotId: string;
   }): Promise<boolean>;
   createReplacementWorkspaceMachine(
-    input: WorkspaceMachineProvisioningInput & { replacementId: string }
+    input: WorkspaceMachineProvisioningInput & { replacementId: string },
   ): Promise<EnvironmentProviderMachine>;
   getMachine(input: {
     appName: string;
@@ -186,7 +187,7 @@ export class EnvironmentProviderError extends Error {
   constructor(
     code: EnvironmentProviderError["code"],
     message: string,
-    status?: number
+    status?: number,
   ) {
     super(message);
     this.name = "EnvironmentProviderError";

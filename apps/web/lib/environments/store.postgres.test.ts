@@ -198,6 +198,7 @@ test(
         "stage" = 'environment.activation.failed',
         "error_code" = 'FLY_MACHINE_UNHEALTHY',
         "error_message" = 'Workspace health check failed.',
+        "result" = '{"retryState":{"attempt":20,"firstFailureAt":"2020-01-01T00:00:00.000Z"}}'::jsonb,
         "completed_at" = now()
       WHERE "workspace_id" = ${projectBinding.workspace.id}
         AND "type" = 'workspace.provision'
@@ -214,6 +215,7 @@ test(
       retriedProvision?.stage,
       "environment.activation.requested"
     );
+    assert.equal(retriedProvision?.result, null);
     const repeatedProvisionRetry =
       await environmentStore.requestFailedWorkspaceProvisionRetry({
         organizationId: organizationA,

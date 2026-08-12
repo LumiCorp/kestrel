@@ -1007,7 +1007,7 @@ test("a superseded provisioning failure cannot overwrite newer lifecycle state",
   ]);
 });
 
-test("Workspace provisioning defers without poisoning state until its Environment is ready", async () => {
+test("Workspace provisioning fails when its Environment cannot become ready", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.provision",
     "workspace-id"
@@ -1024,10 +1024,104 @@ test("Workspace provisioning defers without poisoning state until its Environmen
     idleTimeoutMinutes: 15,
   });
   const provisioner = createProvisioner(repository, provider);
-  assert.equal(await provisioner.process("operation-id"), "deferred");
+  assert.equal(await provisioner.process("operation-id"), "processed");
   assert.deepEqual(calls, [
-    "operation:deferred:Environment must be ready before its Workspace can be provisioned.",
+    "workspace:failed:ENVIRONMENT_DEPENDENCY_UNAVAILABLE",
+    "operation:failed:ENVIRONMENT_DEPENDENCY_UNAVAILABLE",
   ]);
+});
+
+test("ordinary provider retries exhaust the shared one-hour budget", async () => {
+  const { repository, provider, calls } = fixture(
+    "workspace.provision",
+    "workspace-id",
+    null,
+    {
+      retryState: {
+        attempt: 10,
+        firstFailureAt: "2020-01-01T00:00:00.000Z",
+      },
+    },
+  );
+  provider.ensureWorkspaceVolume = async () => {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_UNAVAILABLE",
+      "Fly is temporarily unavailable.",
+    );
+  };
+
+  assert.equal(
+    await createProvisioner(repository, provider).process("operation-id"),
+    "processed",
+  );
+  assert.deepEqual(calls.slice(-2), [
+    "workspace:failed:ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
+    "operation:failed:ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
+  ]);
+});
+
+test("control-plane persistence retries exhaust the shared one-hour budget", async () => {
+  const { repository, provider, calls } = fixture(
+    "environment.provision",
+    null,
+    null,
+    {
+      retryState: {
+        attempt: 10,
+        firstFailureAt: "2020-01-01T00:00:00.000Z",
+      },
+    },
+  );
+  repository.stageEnvironmentGatewayIdentity = async () => {
+    throw new Error("database response was not persisted");
+  };
+
+  assert.equal(
+    await createProvisioner(repository, provider).process("operation-id"),
+    "processed",
+  );
+  assert.deepEqual(calls.slice(-2), [
+    "environment:failed:ENVIRONMENT_CONTROL_PLANE_RETRY_EXHAUSTED",
+    "operation:failed:ENVIRONMENT_CONTROL_PLANE_RETRY_EXHAUSTED",
+  ]);
+});
+
+test("Fly 409 and 412 retries still require authoritative state", async () => {
+  for (const status of [409, 412]) {
+    const retryable = fixture("environment.provision");
+    retryable.provider.ensureEnvironmentApp = async () => {
+      throw Object.assign(
+        new EnvironmentProviderError(
+          "FLY_PROVIDER_REJECTED",
+          `Fly Machines API rejected the request (${status}).`,
+          status,
+        ),
+        { authoritativeState: { state: "stopped" } },
+      );
+    };
+    assert.equal(
+      await createProvisioner(
+        retryable.repository,
+        retryable.provider,
+      ).process("operation-id"),
+      "deferred",
+    );
+
+    const rejected = fixture("environment.provision");
+    rejected.provider.ensureEnvironmentApp = async () => {
+      throw new EnvironmentProviderError(
+        "FLY_PROVIDER_REJECTED",
+        `Fly Machines API rejected the request (${status}).`,
+        status,
+      );
+    };
+    assert.equal(
+      await createProvisioner(rejected.repository, rejected.provider).process(
+        "operation-id",
+      ),
+      "processed",
+    );
+  }
 });
 
 test("Workspace start wakes the existing Machine without reprovisioning storage", async () => {

@@ -102,7 +102,10 @@ test("release admission rejects stale publication and forward recovery atomicall
     `;
   });
 
-  const manifest = manifestFor(liveRevision, now);
+  const manifest = {
+    ...manifestFor(liveRevision, now),
+    migrationChanged: true,
+  };
   const staleRevision = "b".repeat(40);
   await assert.rejects(
     releases.registerFlyImageReleaseCandidate({
@@ -114,7 +117,10 @@ test("release admission rejects stale publication and forward recovery atomicall
       })),
     }),
     (error: unknown) => {
-      assert.equal((error as { code?: string }).code, "RELEASE_BUILD_REVISION_MISMATCH");
+      assert.equal(
+        (error as { code?: string }).code,
+        "RELEASE_BUILD_REVISION_MISMATCH",
+      );
       return true;
     },
   );
@@ -125,6 +131,27 @@ test("release admission rejects stale publication and forward recovery atomicall
   assert.equal(staleCount?.count, 0);
 
   const candidate = await releases.registerFlyImageReleaseCandidate(manifest);
+  const listedCandidate = (await releases.listFlyImageReleases()).releases.find(
+    (release) => release.id === candidate.id,
+  );
+  assert.deepEqual(listedCandidate?.migrationAcknowledgementEligibility, {
+    ok: true,
+  });
+  const acknowledged = await releases.acknowledgeFlyImageReleaseMigration({
+    releaseId: candidate.id,
+    actorUserId: userId,
+  });
+  assert.ok(acknowledged?.migrationApprovedAt);
+  await assert.rejects(
+    releases.acknowledgeFlyImageReleaseMigration({
+      releaseId: stableId,
+      actorUserId: userId,
+    }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "RELEASE_STATE_INVALID");
+      return true;
+    },
+  );
   const recovered = await releases.recoverFlyImageReleaseForward({
     releaseId: candidate.id,
     actorUserId: userId,

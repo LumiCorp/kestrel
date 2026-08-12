@@ -32,6 +32,7 @@ export type WorkspaceStatus = z.infer<typeof workspaceStatusSchema>;
 
 export const environmentActivationStageSchema = z.enum([
   "environment.activation.requested",
+  "environment.dependency.waiting",
   "environment.machine.starting",
   "environment.runtime.connecting",
   "environment.workspace.mounting",

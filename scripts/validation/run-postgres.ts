@@ -8,6 +8,7 @@ const files = execFileSync(
   .split("\0")
   .filter(Boolean)
   .concat(
+    "apps/web/lib/knowledge/queue.postgres.test.ts",
     "apps/web/lib/ai/managed-runpod-lifecycle.postgres.test.ts",
     "apps/web/lib/costs/store.postgres.test.ts",
     "apps/web/lib/environments/authorization-renewal.postgres.test.ts",
@@ -80,7 +81,9 @@ const groups = [
       "lib/environments/store.postgres.test.ts",
       "lib/environments/workspace-backup-revision.postgres.test.ts",
       "lib/integrations/github-action-approvals.postgres.test.ts",
+      "lib/knowledge/queue.postgres.test.ts",
       "lib/projects/skills.postgres.test.ts",
+      "lib/releases/deployment-preflight.postgres.test.ts",
       "lib/releases/store.postgres.test.ts",
     ],
   },

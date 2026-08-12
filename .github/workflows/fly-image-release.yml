@@ -42,7 +42,10 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl auth docker
+      - name: Wait for the exact Kestrel One production revision
+        run: pnpm tsx scripts/wait-for-kestrel-production-revision.ts ${{ github.sha }}
       - name: Deploy the release controller
+        id: deploy-release-controller
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: >-
@@ -52,14 +55,20 @@ jobs:
           --dockerfile deploy/fly/kestrel-one-control-worker/Dockerfile
           --remote-only
           --build-arg KESTREL_GIT_SHA=${{ github.sha }}
+      - name: Restore one release controller Machine
+        id: restore-release-controller
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: pnpm tsx apps/web/scripts/restore-control-worker-machine.ts ${{ github.sha }}
       - name: Verify the release controller contract
+        id: verify-release-controller
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           for attempt in $(seq 1 45); do
             if flyctl ssh console \
               --app kestrel-one-control-worker \
-              --command "grep -q release-controller-v1 /tmp/kestrel-control-worker-ready"
+              --command "pnpm --filter @kestrel/kestrel-one tsx scripts/verify-control-worker-readiness.ts ${{ github.sha }}"
             then
               exit 0
             fi
@@ -67,8 +76,24 @@ jobs:
           done
           echo "Release controller did not become ready within 90 seconds." >&2
           exit 1
-      - name: Wait for the exact Kestrel One production revision
-        run: pnpm tsx scripts/wait-for-kestrel-production-revision.ts ${{ github.sha }}
+      - name: Capture release controller failure evidence
+        if: ${{ failure() && (steps.deploy-release-controller.outcome == 'failure' || steps.restore-release-controller.outcome == 'failure' || steps.verify-release-controller.outcome == 'failure') }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl status --app kestrel-one-control-worker || true
+          inventory="$(flyctl machine list --app kestrel-one-control-worker --json 2>/dev/null || printf '[]')"
+          printf '%s\n' "$inventory" | jq '[.[] | {
+            id: (.id // .ID),
+            state: (.state // .State),
+            region: (.region // .Region),
+            standbys: (.config.standbys // .Config.Standbys // []),
+            imageRevision: (.image_ref.labels["org.opencontainers.image.revision"] // .ImageRef.Labels["org.opencontainers.image.revision"])
+          }]'
+          printf '%s\n' "$inventory" | jq -r '.[] | (.id // .ID)' | while read -r machine_id; do
+            flyctl machine status "$machine_id" --app kestrel-one-control-worker || true
+          done
+          flyctl logs --app kestrel-one-control-worker --no-tail 2>&1 | tail -n 200 || true
       - name: Build, smoke, and publish candidate images
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
