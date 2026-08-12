@@ -6,7 +6,11 @@ import path from "node:path";
 import test from "node:test";
 
 import { runHydraCandidateSmoke } from "../../scripts/hydra-smoke-candidate.js";
-import { validateHydraSmokeEvidence } from "../../scripts/hydra-smoke-contract.js";
+import {
+  HYDRA_CANDIDATE_SCENARIOS,
+  HYDRA_LOCAL_SCENARIOS,
+  validateHydraSmokeEvidence,
+} from "../../scripts/hydra-smoke-contract.js";
 import { runHydraLocalSmoke } from "../../scripts/hydra-smoke-local.js";
 
 const sourceSha = "a".repeat(40);
@@ -23,7 +27,8 @@ function evidence() {
     ...(local
       ? { nativeVersion: "test", authenticationSource: "native-login" }
       : {}),
-    scenarios: [{ id: "turn", status: "passed", durationMs: 1 }],
+    scenarios: (local ? HYDRA_LOCAL_SCENARIOS : HYDRA_CANDIDATE_SCENARIOS)
+      .map((id) => ({ id, status: "passed", durationMs: 1 })),
   });
   return {
     version: "hydra_smoke_evidence_v1",
@@ -72,12 +77,39 @@ test("Hydra smoke evidence rejects private Runtime correlation", () => {
   );
 });
 
+test("Hydra smoke evidence requires exact scenarios and exact deployment revision", () => {
+  const wrongOrder = evidence();
+  wrongOrder.local.runtimes[0]!.scenarios.reverse();
+  assert.throws(
+    () => validateHydraSmokeEvidence(wrongOrder),
+    /exact checked-in contract/u,
+  );
+
+  const stale = evidence();
+  stale.candidate.deploymentRevision = "b".repeat(40);
+  assert.throws(
+    () => validateHydraSmokeEvidence(stale),
+    /must match the smoke source SHA/u,
+  );
+
+  const absolutePath = { ...evidence(), debug: "/tmp/private-config" };
+  assert.throws(
+    () => validateHydraSmokeEvidence(absolutePath),
+    /absolute filesystem path/u,
+  );
+});
+
 test("Hydra candidate smoke fences revision, proves immutable Runtimes, and cleans Threads", async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "hydra-candidate-test-"));
   const storageState = path.join(temporary, "storage-state.json");
   await writeFile(storageState, JSON.stringify({ cookies: [], origins: [] }));
-  const threads = new Map<string, { runtimeId: string; response: string }>();
+  const threads = new Map<string, {
+    runtimeId: string;
+    response: string;
+    marker?: string;
+  }>();
   const deleted = new Set<string>();
+  let failDelete = false;
   const server = createServer((request, response) => {
     void (async () => {
       const body = await readJsonBody(request);
@@ -103,16 +135,30 @@ test("Hydra candidate smoke fences revision, proves immutable Runtimes, and clea
         const thread = threads.get(id);
         if (!thread) return sendJson(response, 404, { code: "NOT_FOUND" });
         if (match[2] === "turns" && request.method === "POST") {
+          if (body.runtimeId !== thread.runtimeId) {
+            return sendJson(response, 409, { code: "RUNTIME_BINDING_IMMUTABLE" });
+          }
           const text = String((body.message as { parts?: Array<{ text?: string }> })?.parts?.[0]?.text ?? "");
-          const marker = /CONTINUITY_OK:HYDRA_[A-Z0-9]+/u.exec(text)?.[0];
-          thread.response = marker ?? "FIRST_OK";
+          const firstMarker = /HYDRA_[A-Z0-9]+/u.exec(text)?.[0];
+          if (firstMarker) {
+            thread.marker = firstMarker;
+            thread.response = "FIRST_OK";
+          } else {
+            assert.ok(thread.marker, "continuity Turn ran without a stored marker");
+            assert.equal(text.includes(thread.marker), false, "continuity prompt leaked the marker");
+            thread.response = `CONTINUITY_OK:${thread.marker}`;
+          }
           return sendJson(response, 202, { accepted: true });
         }
         if (request.method === "GET") {
           return sendJson(response, 200, {
             runtimeId: thread.runtimeId,
             turns: [{ status: "completed" }],
-            assistantText: thread.response,
+            messages: [{
+              id: `assistant-${id}`,
+              role: "assistant",
+              parts: [{ type: "text", text: thread.response }],
+            }],
           });
         }
         if (request.method === "POST") {
@@ -120,6 +166,9 @@ test("Hydra candidate smoke fences revision, proves immutable Runtimes, and clea
         }
         if (request.method === "PATCH") return sendJson(response, 200, { archived: true });
         if (request.method === "DELETE") {
+          if (failDelete) {
+            return sendJson(response, 503, { code: "TEST_DELETE_FAILED" });
+          }
           deleted.add(id);
           return sendJson(response, 204, undefined);
         }
@@ -150,7 +199,19 @@ test("Hydra candidate smoke fences revision, proves immutable Runtimes, and clea
     const result = await runHydraCandidateSmoke({ sourceSha });
     assert.equal(result.status, "passed");
     assert.deepEqual(result.runtimes.map((runtime) => runtime.runtimeId), ["codex", "claude"]);
+    assert.deepEqual(
+      result.runtimes[0]!.scenarios.map((scenario) => scenario.id),
+      HYDRA_CANDIDATE_SCENARIOS,
+    );
     assert.equal(deleted.size, 2);
+
+    failDelete = true;
+    const failedCleanup = await runHydraCandidateSmoke({ sourceSha });
+    assert.equal(failedCleanup.status, "failed");
+    assert.ok(failedCleanup.runtimes.every((runtime) =>
+      runtime.scenarios.at(-1)?.id === "cleanup" &&
+      runtime.scenarios.at(-1)?.status === "failed"
+    ));
   } finally {
     restoreEnvironment("KESTREL_HYDRA_CANDIDATE_URL", previous.url);
     restoreEnvironment("KESTREL_HYDRA_CANDIDATE_STORAGE_STATE", previous.state);

@@ -28,6 +28,13 @@ The binding points at an organization-scoped runtime participant. Changing a
 Runtime therefore creates or duplicates a Thread; it never mutates the identity
 of an existing conversation.
 
+Kestrel One persists this authority with the product Thread. Desktop persists
+the equivalent binding in Local Core, keyed by the canonical Desktop Thread;
+renderer state is never an admission authority. Binding state advances only
+from active to degraded to released, while native state advances from
+uninitialized to ready to degraded to released. Neither an incoming command
+nor a process restart can move either lifecycle backwards.
+
 The portable adapter contract is `RuntimeAdapterV1`. Runtime-specific SDK or
 protocol payloads stay inside the adapter. The shared boundary carries only:
 
@@ -56,6 +63,13 @@ the live request received the response. Replayed answers are idempotent. A lost
 live request fails visibly with `RUNTIME_LIVE_WAIT_LOST`; retry belongs on a new
 Thread rather than silently reconstructing native state.
 
+The product consumer commits interaction acknowledgement before advancing the
+durable Runner cursor. A product-database failure detaches the stream while the
+execution remains reattachable; maintenance replays the journal event from the
+last committed cursor. It never resends the native answer. Missing or foreign
+correlation remains an operational reconciliation failure rather than proof
+that the native connection was lost.
+
 ## Product surfaces
 
 Desktop and Kestrel One expose Runtime selection before the first Turn and show
@@ -78,12 +92,25 @@ Browser readiness is presentation state only; Kestrel One and Desktop probe
 again at the authoritative admission boundary before creating a binding or
 starting the first Turn.
 
+Hosted descriptor probes use the direct Runner route. Desktop-backed Kestrel
+One Environments use an independent signed connector queue that creates no
+Thread, binding, or execution and consumes no normal run capacity. The result
+names the actual Environment identity; an Environment preset is configuration,
+not identity.
+
 Foreign Runtime child processes receive an explicit, provider-specific
 environment assembled from the selected local profile or tenant-scoped gateway
 lease. The host process environment is never inherited wholesale. Native
 session identifiers remain in the Environment-owned Runtime store, and the
 durable binding records only its lifecycle marker: `uninitialized`, `ready`,
 `degraded`, or `released`.
+
+Codex app-server homes remain scoped to the selected authentication
+fingerprint. Kestrel checkpoints only the binding's owned Codex rollout under
+the Environment state root, then materializes that rollout into a refreshed
+home before `thread/resume`. Authentication files and unrelated Codex state are
+never copied. Claude transcript deletion is serialized with SDK writes so a
+late callback cannot recreate released state.
 
 Permanent deletion and recovery cleanup first write a non-secret Runtime
 release outbox record. Hosted Environments receive `runtime.release` through
@@ -103,6 +130,13 @@ proves exact-revision admission, deployed routing, native continuation, and
 immutable binding. The sanitized `.artifacts/hydra/<sha>/evidence.json` digest
 is mandatory in unified release evidence. There are no automatic model retries
 or single-provider waivers.
+
+The evidence checker requires the checked-in scenario order, exactly one Codex
+and one Claude result, and a candidate deployment revision equal to the source
+SHA. Continuity prompts include the marker only on the first Turn and compare
+only the latest assistant response on the second. Candidate cleanup is itself
+a required scenario; a Thread that cannot be permanently deleted fails the
+qualification.
 
 Recovery-fork policies remain deterministic product gates: native-session loss
 offers a new Kestrel Thread; live-wait loss offers a new Thread using the same

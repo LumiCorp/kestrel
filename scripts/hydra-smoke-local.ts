@@ -25,6 +25,7 @@ import type {
   HydraRuntimeId,
   HydraScenarioEvidence,
 } from "./hydra-smoke-contract.js";
+import { HYDRA_LOCAL_SCENARIOS } from "./hydra-smoke-contract.js";
 
 const DESCRIPTOR_TIMEOUT_MS = 30_000;
 const TURN_TIMEOUT_MS = 180_000;
@@ -141,8 +142,18 @@ async function runRuntime(
     throw new Error(`Approved ${runtimeId} native login directory is required.`);
   }
   let nativeVersion = "unknown";
+  let blocked = false;
   const record = async (id: string, action: () => Promise<void>) => {
     const started = Date.now();
+    if (blocked) {
+      scenarios.push({
+        id,
+        status: "failed",
+        durationMs: 0,
+        failureCode: "HYDRA_SCENARIO_PREREQUISITE_FAILED",
+      });
+      return false;
+    }
     try {
       await action();
       scenarios.push({ id, status: "passed", durationMs: Date.now() - started });
@@ -153,11 +164,12 @@ async function runRuntime(
         durationMs: Date.now() - started,
         failureCode: errorCode(error),
       });
-      throw error;
+      blocked = true;
+      return false;
     }
+    return true;
   };
-  try {
-    await record("descriptor", async () => {
+  await record("descriptor", async () => {
       const descriptor = await deadline(
         describeThroughLocalCore(currentClient(), runtimeId, modelId),
         DESCRIPTOR_TIMEOUT_MS,
@@ -170,9 +182,9 @@ async function runRuntime(
       assert.equal(descriptor.capabilities.interactionRecovery, "connection_bound");
       nativeVersion = descriptor.nativeVersion;
       profileId = await resolveExecutionProfile(currentClient(), runtimeId, modelId);
-    });
-    const nonce = `HYDRA_${randomUUID().replaceAll("-", "").toUpperCase()}`;
-    await record("first-turn-attachments", async () => {
+  });
+  const nonce = `HYDRA_${randomUUID().replaceAll("-", "").toUpperCase()}`;
+  await record("first-turn-attachments", async () => {
       const text = "Hydra authenticated smoke text attachment.";
       const execution = await execute(currentClient(), profileId, binding, {
         sessionId: binding.threadId,
@@ -200,13 +212,13 @@ async function runRuntime(
         "First Turn did not establish durable native session state.",
       );
       binding.nativeSessionState = "ready";
-    });
-    await record("ordinary-resume", async () => {
-      const result = await execute(currentClient(), profileId, binding, ordinaryTurn(binding, continuityPrompt(nonce), workspaceRoot));
+  });
+  await record("ordinary-resume", async () => {
+      const result = await execute(currentClient(), profileId, binding, ordinaryTurn(binding, continuityPrompt(), workspaceRoot));
       assertCompleted(result);
       assert.match(result.assistantText, new RegExp(`CONTINUITY_OK:${nonce}`, "u"));
-    });
-    await record("native-interaction", async () => {
+  });
+  await record("native-interaction", async () => {
       const waiting = await execute(currentClient(), profileId, binding, {
         ...ordinaryTurn(binding, INTERACTION_PROMPT, workspaceRoot),
         interactionMode: "build",
@@ -237,8 +249,8 @@ async function runRuntime(
         ),
         "Native interaction continuation lacked delivery acknowledgement.",
       );
-    });
-    await record("cancellation", async () => {
+  });
+  await record("cancellation", async () => {
       const turn = ordinaryTurn(binding, CANCELLATION_PROMPT, workspaceRoot);
       const started = deferred<void>();
       const pending = execute(
@@ -255,19 +267,19 @@ async function runRuntime(
       const result = await pending;
       assert.equal(result.terminalType, "run.cancelled");
       assert.equal(result.outputStatus, "ABORTED");
-    });
-    await record("process-restart-resume", async () => {
+  });
+  await record("process-restart-resume", async () => {
       await restartLocalCore();
       profileId = await resolveExecutionProfile(currentClient(), runtimeId, modelId);
       assertCompleted(await execute(currentClient(), profileId, binding, ordinaryTurn(binding, "Reply exactly RESTART_OK", workspaceRoot)));
-    });
-    await record("configuration-generation-rotation", async () => {
+  });
+  await record("configuration-generation-rotation", async () => {
       const settings = await currentClient().desktopSettings();
       await currentClient().patchDesktopSettings({ modelPolicy: settings.modelPolicy });
       profileId = await resolveExecutionProfile(currentClient(), runtimeId, modelId);
       assertCompleted(await execute(currentClient(), profileId, binding, ordinaryTurn(binding, "Reply exactly ROTATION_OK", workspaceRoot)));
-    });
-    await record("missing-native-session", async () => {
+  });
+  await record("missing-native-session", async () => {
       const coreHome = resolveKestrelCoreHome({ KESTREL_CORE_HOME: coreProductRoot }, process.platform);
       const nativeStore = new FileRuntimeNativeSessionStore(
         path.join(coreHome.homePath, "runtime", "native-runtimes"),
@@ -276,12 +288,7 @@ async function runRuntime(
       const result = await execute(currentClient(), profileId, binding, ordinaryTurn(binding, "This must fail closed", workspaceRoot));
       assert.equal(result.terminalType, "run.failed");
       assert.equal(result.failureCode, "RUNTIME_NATIVE_SESSION_LOST");
-    });
-  } catch {
-    // The scenario ledger carries the sanitized failure. Both Runtimes still run.
-  } finally {
-    // Local Core owns native process disposal and durable state cleanup.
-  }
+  });
   return { runtimeId, nativeVersion, modelId, authenticationSource, scenarios };
 }
 
@@ -453,7 +460,10 @@ function errorCode(error: unknown): string {
 }
 
 function runtimePassed(runtime: HydraRuntimeEvidence): boolean {
-  return runtime.scenarios.length === 8 && runtime.scenarios.every((scenario) => scenario.status === "passed");
+  return runtime.scenarios.every((scenario) => scenario.status === "passed") &&
+    runtime.scenarios.map((scenario) => scenario.id).every(
+      (id, index) => id === HYDRA_LOCAL_SCENARIOS[index],
+    ) && runtime.scenarios.length === HYDRA_LOCAL_SCENARIOS.length;
 }
 
 async function describeThroughLocalCore(

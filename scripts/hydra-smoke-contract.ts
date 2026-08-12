@@ -5,6 +5,24 @@ import { readFile } from "node:fs/promises";
 export const HYDRA_SMOKE_VERSION = "hydra_smoke_evidence_v1" as const;
 export const HYDRA_RUNTIME_IDS = ["codex", "claude"] as const;
 export type HydraRuntimeId = (typeof HYDRA_RUNTIME_IDS)[number];
+export const HYDRA_LOCAL_SCENARIOS = [
+  "descriptor",
+  "first-turn-attachments",
+  "ordinary-resume",
+  "native-interaction",
+  "cancellation",
+  "process-restart-resume",
+  "configuration-generation-rotation",
+  "missing-native-session",
+] as const;
+export const HYDRA_CANDIDATE_SCENARIOS = [
+  "descriptor",
+  "fresh-admission",
+  "first-turn",
+  "ordinary-resume",
+  "immutable-runtime",
+  "cleanup",
+] as const;
 
 export interface HydraScenarioEvidence {
   id: string;
@@ -47,16 +65,40 @@ export function validateHydraSmokeEvidence(
   options: { requirePassed?: boolean | undefined } = {},
 ): asserts value is HydraSmokeEvidenceV1 {
   assertRecord(value, "Hydra smoke evidence");
+  assertNoForbiddenKeys(value);
+  assertExactKeys(
+    value,
+    ["version", "sourceSha", "startedAt", "completedAt", "status", "local", "candidate"],
+    "Hydra smoke evidence",
+  );
   assert.equal(value.version, HYDRA_SMOKE_VERSION);
   assert.match(requireText(value.sourceSha, "sourceSha"), SHA);
   assertTimestamp(value.startedAt, "startedAt");
   assertTimestamp(value.completedAt, "completedAt");
+  assert.ok(
+    Date.parse(String(value.completedAt)) >= Date.parse(String(value.startedAt)),
+    "Hydra smoke completion must not precede its start",
+  );
   assertStatus(value.status, "status");
   assertRecord(value.local, "local");
   assertRecord(value.candidate, "candidate");
-  validateSection(value.local, "local", true);
-  validateSection(value.candidate, "candidate", false);
-  assertNoForbiddenKeys(value);
+  validateSection(value.local, "local", HYDRA_LOCAL_SCENARIOS, true);
+  validateSection(
+    value.candidate,
+    "candidate",
+    HYDRA_CANDIDATE_SCENARIOS,
+    false,
+  );
+  assert.equal(
+    value.candidate.deploymentRevision,
+    value.sourceSha,
+    "Hydra candidate revision must match the smoke source SHA",
+  );
+  assert.equal(
+    value.status === "passed",
+    value.local.status === "passed" && value.candidate.status === "passed",
+    "Hydra overall status must match its local and candidate sections",
+  );
   if (options.requirePassed === true) {
     assert.equal(value.status, "passed", "Hydra smoke must pass");
     assert.equal(value.local.status, "passed", "Hydra local smoke must pass");
@@ -72,8 +114,20 @@ export async function sha256File(filePath: string): Promise<string> {
   return createHash("sha256").update(await readFile(filePath)).digest("hex");
 }
 
-function validateSection(value: unknown, label: string, local: boolean): void {
+function validateSection(
+  value: unknown,
+  label: string,
+  expectedScenarios: readonly string[],
+  local: boolean,
+): void {
   assertRecord(value, label);
+  assertExactKeys(
+    value,
+    local
+      ? ["status", "runtimes"]
+      : ["status", "origin", "deploymentRevision", "runtimes"],
+    label,
+  );
   assertStatus(value.status, `${label}.status`);
   if (!local) {
     requireText(value.origin, `${label}.origin`);
@@ -93,6 +147,13 @@ function validateSection(value: unknown, label: string, local: boolean): void {
   );
   for (const runtime of value.runtimes) {
     assertRecord(runtime, `${label}.runtime`);
+    assertExactKeys(
+      runtime,
+      local
+        ? ["runtimeId", "nativeVersion", "modelId", "authenticationSource", "scenarios"]
+        : ["runtimeId", "modelId", "scenarios"],
+      `${label}.runtime`,
+    );
     requireText(runtime.modelId, `${label}.runtime.modelId`);
     if (local) {
       requireText(runtime.nativeVersion, `${label}.runtime.nativeVersion`);
@@ -102,13 +163,23 @@ function validateSection(value: unknown, label: string, local: boolean): void {
         `${label}.runtime.authenticationSource is invalid`,
       );
     }
-    assert.ok(
-      Array.isArray(runtime.scenarios) && runtime.scenarios.length > 0,
-      `${label}.runtime.scenarios must not be empty`,
+    assert.ok(Array.isArray(runtime.scenarios), `${label}.runtime.scenarios must be an array`);
+    assert.deepEqual(
+      runtime.scenarios.map((scenario) => {
+        assertRecord(scenario, `${label}.scenario`);
+        return requireText(scenario.id, `${label}.scenario.id`);
+      }),
+      expectedScenarios,
+      `${label}.runtime.scenarios must match the exact checked-in contract`,
     );
     const ids = new Set<string>();
     for (const scenario of runtime.scenarios) {
       assertRecord(scenario, `${label}.scenario`);
+      assertExactKeys(
+        scenario,
+        ["id", "status", "durationMs", "failureCode"],
+        `${label}.scenario`,
+      );
       const id = requireText(scenario.id, `${label}.scenario.id`);
       assert.equal(ids.has(id), false, `${label} scenario '${id}' is duplicated`);
       ids.add(id);
@@ -127,11 +198,42 @@ function validateSection(value: unknown, label: string, local: boolean): void {
       }
     }
   }
+  assert.equal(
+    value.status === "passed",
+    value.runtimes.every((runtime) =>
+      (runtime as { scenarios: Array<{ status: unknown }> }).scenarios.every(
+        (scenario) => scenario.status === "passed",
+      )
+    ),
+    `${label}.status must match all Runtime scenarios`,
+  );
+}
+
+function assertExactKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  label: string,
+): void {
+  const unexpected = Object.keys(value).filter((key) => !allowed.includes(key));
+  assert.deepEqual(unexpected, [], `${label} contains unexpected fields`);
 }
 
 function assertNoForbiddenKeys(value: unknown, path = "evidence"): void {
   if (Array.isArray(value)) {
     value.forEach((item, index) => assertNoForbiddenKeys(item, `${path}[${index}]`));
+    return;
+  }
+  if (typeof value === "string") {
+    assert.equal(
+      /^(?:\/|[A-Za-z]:[\\/])/u.test(value),
+      false,
+      `${path} must not contain an absolute filesystem path`,
+    );
+    assert.equal(
+      /(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+\S+|BEGIN PRIVATE KEY)/u.test(value),
+      false,
+      `${path} contains prohibited secret material`,
+    );
     return;
   }
   if (typeof value !== "object" || value === null) return;

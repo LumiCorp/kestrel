@@ -22,8 +22,7 @@ async function main(): Promise<void> {
   );
   const { stdout: status } = await execFileAsync("git", ["status", "--porcelain"]);
   assert.equal(status.trim(), "", "Hydra smoke requires a clean worktree.");
-  const { stdout: revision } = await execFileAsync("git", ["rev-parse", "HEAD"]);
-  const sourceSha = revision.trim().toLowerCase();
+  const sourceSha = await currentSourceSha();
   assert.match(sourceSha, /^[a-f0-9]{40}$/u);
   const startedAt = new Date().toISOString();
   const requestedPhase = process.argv.includes("--local")
@@ -35,6 +34,7 @@ async function main(): Promise<void> {
   await mkdir(artifactRoot, { recursive: true });
 
   if (requestedPhase === "local") {
+    await assertCurrentSourceSha(sourceSha);
     const local = await runHydraLocalSmoke({ sourceSha });
     await writeSanitized(path.join(artifactRoot, "local.json"), {
       version: HYDRA_SMOKE_VERSION,
@@ -47,6 +47,7 @@ async function main(): Promise<void> {
     return;
   }
   if (requestedPhase === "candidate") {
+    await assertCurrentSourceSha(sourceSha);
     const candidate = await runHydraCandidateSmoke({ sourceSha });
     await writeSanitized(path.join(artifactRoot, "candidate.json"), {
       version: HYDRA_SMOKE_VERSION,
@@ -59,8 +60,11 @@ async function main(): Promise<void> {
     return;
   }
 
+  await assertCurrentSourceSha(sourceSha);
   const local = await runHydraLocalSmoke({ sourceSha });
+  await assertCurrentSourceSha(sourceSha);
   const candidate = await runHydraCandidateSmoke({ sourceSha });
+  await assertCurrentSourceSha(sourceSha);
   const evidence: HydraSmokeEvidenceV1 = {
     version: HYDRA_SMOKE_VERSION,
     sourceSha,
@@ -78,6 +82,21 @@ async function main(): Promise<void> {
   await writeSanitized(evidencePath, evidence);
   process.stdout.write(`[hydra-smoke] ${evidence.status}: ${evidencePath}\n`);
   assert.equal(evidence.status, "passed", "Hydra smoke failed.");
+}
+
+async function currentSourceSha(): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"]);
+  const sourceSha = stdout.trim().toLowerCase();
+  assert.match(sourceSha, /^[a-f0-9]{40}$/u);
+  return sourceSha;
+}
+
+async function assertCurrentSourceSha(expected: string): Promise<void> {
+  assert.equal(
+    await currentSourceSha(),
+    expected,
+    "Hydra smoke source revision changed while qualification was running.",
+  );
 }
 
 async function writeSanitized(filePath: string, value: unknown): Promise<void> {

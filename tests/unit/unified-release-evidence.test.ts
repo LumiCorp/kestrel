@@ -5,6 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { validateUnifiedReleaseEvidence } from "../../scripts/check-unified-release-evidence.js";
+import {
+  HYDRA_CANDIDATE_SCENARIOS,
+  HYDRA_LOCAL_SCENARIOS,
+} from "../../scripts/hydra-smoke-contract.js";
 
 const sourceSha = "a".repeat(40);
 const checksum = "b".repeat(64);
@@ -41,7 +45,11 @@ const hydraBytes = Buffer.from(JSON.stringify({
       nativeVersion: "test",
       modelId: `${runtimeId}-model`,
       authenticationSource: "native-login",
-      scenarios: [{ id: "local", status: "passed", durationMs: 1 }],
+      scenarios: HYDRA_LOCAL_SCENARIOS.map((id) => ({
+        id,
+        status: "passed",
+        durationMs: 1,
+      })),
     })),
   },
   candidate: {
@@ -51,7 +59,11 @@ const hydraBytes = Buffer.from(JSON.stringify({
     runtimes: ["codex", "claude"].map((runtimeId) => ({
       runtimeId,
       modelId: `${runtimeId}-model`,
-      scenarios: [{ id: "candidate", status: "passed", durationMs: 1 }],
+      scenarios: HYDRA_CANDIDATE_SCENARIOS.map((id) => ({
+        id,
+        status: "passed",
+        durationMs: 1,
+      })),
     })),
   },
 }));

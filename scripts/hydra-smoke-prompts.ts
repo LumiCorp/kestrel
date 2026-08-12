@@ -4,8 +4,8 @@ export function firstTurnPrompt(nonce: string): string {
   return `Remember the exact marker ${nonce}. Read both attached files and reply with ATTACHMENTS_OK.`;
 }
 
-export function continuityPrompt(nonce: string): string {
-  return `Reply with exactly CONTINUITY_OK:${nonce} using the marker from the previous turn.`;
+export function continuityPrompt(): string {
+  return "Reply with CONTINUITY_OK: followed immediately by the exact marker from the previous turn. Do not add any other text.";
 }
 
 export const INTERACTION_PROMPT =

@@ -8,6 +8,7 @@ import type {
   HydraRuntimeEvidence,
   HydraRuntimeId,
 } from "./hydra-smoke-contract.js";
+import { continuityPrompt } from "./hydra-smoke-prompts.js";
 
 const TURN_TIMEOUT_MS = 180_000;
 
@@ -44,7 +45,7 @@ export async function runHydraCandidateSmoke(input: {
     }
     return {
       status: runtimes.every((runtime) =>
-        runtime.scenarios.length === 5 &&
+        runtime.scenarios.length === 6 &&
         runtime.scenarios.every((scenario) => scenario.status === "passed"),
       ) ? "passed" : "failed",
       origin: new URL(origin).origin,
@@ -66,6 +67,7 @@ async function runCandidateRuntime(
   );
   const scenarios: HydraRuntimeEvidence["scenarios"] = [];
   const threadId = randomUUID();
+  let threadCreated = false;
   const record = async (id: string, action: () => Promise<void>) => {
     const started = Date.now();
     try {
@@ -78,70 +80,87 @@ async function runCandidateRuntime(
         durationMs: Date.now() - started,
         failureCode: failureCode(error),
       });
-      throw error;
+      return false;
     }
+    return true;
   };
-  try {
-    await record("descriptor", async () => {
-      const response = await api.post("/api/runtimes/describe", {
-        data: { runtimeId, modelId, projectId },
-      });
-      assert.equal(response.ok(), true, await response.text());
-      const body = await response.json() as {
-        resolution?: { descriptor?: { availability?: string; runtimeId?: string } };
-      };
-      assert.equal(body.resolution?.descriptor?.availability, "ready");
-      assert.equal(body.resolution?.descriptor?.runtimeId, runtimeId);
+  await record("descriptor", async () => {
+    const response = await api.post("/api/runtimes/describe", {
+      data: { runtimeId, modelId, projectId },
     });
-    await record("fresh-admission", async () => {
-      const response = await api.post("/api/threads", {
-        data: { id: threadId, projectId, runtimeId },
-      });
-      assert.equal(response.status(), 201, await response.text());
-      const thread = await response.json() as { runtimeId?: string };
-      assert.equal(thread.runtimeId, runtimeId);
+    assert.equal(response.ok(), true, await response.text());
+    const body = await response.json() as {
+      resolution?: { descriptor?: { availability?: string; runtimeId?: string } };
+    };
+    assert.equal(body.resolution?.descriptor?.availability, "ready");
+    assert.equal(body.resolution?.descriptor?.runtimeId, runtimeId);
+  });
+  await record("fresh-admission", async () => {
+    const response = await api.post("/api/threads", {
+      data: { id: threadId, projectId, runtimeId, modelId },
     });
-    const nonce = `HYDRA_${randomUUID().replaceAll("-", "").toUpperCase()}`;
-    await record("first-turn", async () => {
-      await submitAndAwait(api, threadId, modelId, `Remember ${nonce}. Reply exactly FIRST_OK.`);
-    });
-    await record("ordinary-resume", async () => {
-      const snapshot = await submitAndAwait(
-        api,
-        threadId,
-        modelId,
-        `Reply exactly CONTINUITY_OK:${nonce} using the prior marker.`,
-      );
-      assert.match(JSON.stringify(snapshot), new RegExp(`CONTINUITY_OK:${nonce}`, "u"));
-    });
-    await record("immutable-runtime", async () => {
-      const other = runtimeId === "codex" ? "claude" : "codex";
-      const response = await api.post(`/api/threads/${threadId}`, {
-        data: {
-          runtimeId: other,
-          model: modelId,
-          message: {
-            id: randomUUID(),
-            role: "user",
-            parts: [{ type: "text", text: "This must be rejected." }],
-          },
+    assert.equal(response.status(), 201, await response.text());
+    const thread = await response.json() as { runtimeId?: string };
+    assert.equal(thread.runtimeId, runtimeId);
+    threadCreated = true;
+  });
+  const nonce = `HYDRA_${randomUUID().replaceAll("-", "").toUpperCase()}`;
+  await record("first-turn", async () => {
+    assert.equal(threadCreated, true, "Fresh Runtime admission did not create a Thread.");
+    const snapshot = await submitAndAwait(
+      api,
+      runtimeId,
+      threadId,
+      modelId,
+      `Remember the exact marker ${nonce}. Reply exactly FIRST_OK.`,
+    );
+    assert.equal(latestAssistantText(snapshot), "FIRST_OK");
+  });
+  await record("ordinary-resume", async () => {
+    assert.equal(threadCreated, true, "Fresh Runtime admission did not create a Thread.");
+    const snapshot = await submitAndAwait(
+      api,
+      runtimeId,
+      threadId,
+      modelId,
+      continuityPrompt(),
+    );
+    assert.equal(latestAssistantText(snapshot), `CONTINUITY_OK:${nonce}`);
+  });
+  await record("immutable-runtime", async () => {
+    assert.equal(threadCreated, true, "Fresh Runtime admission did not create a Thread.");
+    const other = runtimeId === "codex" ? "claude" : "codex";
+    const response = await api.post(`/api/threads/${threadId}/turns`, {
+      data: {
+        runtimeId: other,
+        model: modelId,
+        message: {
+          id: randomUUID(),
+          role: "user",
+          parts: [{ type: "text", text: "This must be rejected." }],
         },
-      });
-      assert.equal(response.status(), 409, await response.text());
-      const body = await response.json() as { code?: string };
-      assert.equal(body.code, "RUNTIME_BINDING_IMMUTABLE");
+      },
+      headers: { "idempotency-key": randomUUID() },
     });
-  } catch {
-    // Preserve the sanitized scenario result and continue to cleanup.
-  } finally {
-    await api.patch(`/api/threads/${threadId}`, { data: { archived: true } }).catch(() => undefined);
-    await api.delete(`/api/threads/${threadId}`).catch(() => undefined);
-  }
+    assert.equal(response.status(), 409, await response.text());
+    const body = await response.json() as { code?: string };
+    assert.equal(body.code, "RUNTIME_BINDING_IMMUTABLE");
+  });
+  await record("cleanup", async () => {
+    if (!threadCreated) return;
+    const archived = await api.patch(`/api/threads/${threadId}`, {
+      data: { archived: true },
+    });
+    assert.equal(archived.ok(), true, await archived.text());
+    const deleted = await api.delete(`/api/threads/${threadId}`);
+    assert.equal(deleted.ok(), true, await deleted.text());
+  });
   return { runtimeId, modelId, scenarios };
 }
 
 async function submitAndAwait(
   api: Awaited<ReturnType<typeof playwrightRequest.newContext>>,
+  runtimeId: HydraRuntimeId,
   threadId: string,
   modelId: string,
   text: string,
@@ -149,6 +168,7 @@ async function submitAndAwait(
   const response = await api.post(`/api/threads/${threadId}/turns`, {
     data: {
       model: modelId,
+      runtimeId,
       interactionMode: "chat",
       message: {
         id: randomUUID(),
@@ -177,6 +197,25 @@ async function submitAndAwait(
   throw Object.assign(new Error("Candidate Turn timed out."), {
     code: "HYDRA_SMOKE_TIMEOUT",
   });
+}
+
+function latestAssistantText(snapshot: unknown): string {
+  assert.ok(typeof snapshot === "object" && snapshot !== null && !Array.isArray(snapshot));
+  const messages = (snapshot as { messages?: unknown }).messages;
+  assert.ok(Array.isArray(messages), "Candidate Thread snapshot did not include messages.");
+  const assistant = [...messages].reverse().find((message) =>
+    typeof message === "object" &&
+    message !== null &&
+    !Array.isArray(message) &&
+    (message as { role?: unknown }).role === "assistant"
+  ) as { parts?: unknown } | undefined;
+  assert.ok(assistant && Array.isArray(assistant.parts), "Candidate snapshot lacks an assistant message.");
+  return assistant.parts.map((part) => {
+    if (typeof part !== "object" || part === null || Array.isArray(part)) return "";
+    return typeof (part as { text?: unknown }).text === "string"
+      ? (part as { text: string }).text
+      : "";
+  }).join("");
 }
 
 function requiredEnvironment(name: string): string {
