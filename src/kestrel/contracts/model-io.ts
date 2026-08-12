@@ -137,6 +137,8 @@ export type ModelGatewayEventSink = (
 
 export interface ModelGatewayCallOptions {
   signal?: AbortSignal | undefined;
+  /** Overrides the gateway retry count for this logical model call. */
+  retryCount?: number | undefined;
   /** Awaited only to enqueue the event; consumers must do expensive work asynchronously. */
   onEvent?: ModelGatewayEventSink | undefined;
 }

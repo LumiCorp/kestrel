@@ -14,6 +14,7 @@ test("web demo profile resolves to the balanced web preset by default", () => {
   assert.equal(profile.shellKind, "web");
   assert.equal(profile.presetId, "web_balanced");
   assert.deepEqual(profile.capabilityPacks, ["balanced"]);
+  assert.equal(profile.guardrails?.maxMaintenanceModelCallsPerRun, 8);
   for (const toolName of FILESYSTEM_TOOL_NAMES) {
     assert.equal(profile.toolAllowlist?.includes(toolName), false);
   }

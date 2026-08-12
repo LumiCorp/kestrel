@@ -26,6 +26,26 @@ class StartRunFailureStore extends InMemorySessionStore {
   }
 }
 
+test("every Kestrel engine fixes the maintenance model-call budget at eight", () => {
+  const kestrel = new Kestrel({
+    store: new InMemorySessionStore(),
+    toolGateway: adaptLegacyTestToolGateway({
+      call: async () => null as never,
+    }),
+    modelGateway: new RetryingModelGateway(async <T>() => ({ ok: true } as T)),
+    guardrails: { maxMaintenanceModelCallsPerRun: 99 },
+  });
+  const engine = (
+    kestrel as unknown as {
+      engine: {
+        guardrailConfig: { maxMaintenanceModelCallsPerRun?: number };
+      };
+    }
+  ).engine;
+
+  assert.equal(engine.guardrailConfig.maxMaintenanceModelCallsPerRun, 8);
+});
+
 test("ExecutionEngine preserves startRun failures without flushing lifecycle buffers", async () => {
   const store = new StartRunFailureStore();
   const kestrel = new Kestrel({

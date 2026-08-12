@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
+  assertKestrelExecutionProfileEconomicsAdmission,
+  KESTREL_HARNESS_ECONOMICS,
+  KESTREL_POLICY_ID,
+  KESTREL_POLICY_VERSION,
   KESTREL_PROFILE_DEFINITION,
+  KESTREL_PROMPT_POLICY_ID,
   composeKestrelOneProfile,
   composeKestrelProfile,
   createKestrelEnvironmentBindingFromOverlay,
@@ -219,6 +225,72 @@ test("canonical composition binds the selected model to the exact environment ro
   assert.equal(composed.profile.modelCapabilities?.visionInputEnabled, true);
 });
 
+test("canonical hosted composition hydrates templates while execution preflight admits only exact routes", () => {
+  for (const binding of [
+    createKestrelEnvironmentBindingFromOverlay({
+      environmentPresetId: "workspace_hosted",
+    }),
+    createKestrelEnvironmentBindingFromOverlay({
+      environmentPresetId: "workspace_hosted",
+      overlay: {
+        modelProvider: "openrouter",
+        model: "openai/gpt-5.6-luna-20260709",
+      },
+    }),
+  ]) {
+    const composed = composeKestrelProfile({
+      definition: structuredClone(KESTREL_PROFILE_DEFINITION),
+      environmentBinding: binding,
+    });
+    assert.throws(
+      () =>
+        assertKestrelExecutionProfileEconomicsAdmission({
+          profile: composed.profile,
+          environmentPresetId: "workspace_hosted",
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { code?: string }).code,
+          "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED",
+        );
+        return true;
+      },
+    );
+  }
+
+  const binding = createKestrelEnvironmentBindingFromOverlay({
+    environmentPresetId: "workspace_hosted",
+    overlay: {
+      modelProvider: "openrouter",
+      model: "openai/gpt-5.6-luna",
+    },
+  });
+  const composed = composeKestrelProfile({
+    definition: structuredClone(KESTREL_PROFILE_DEFINITION),
+    environmentBinding: binding,
+  });
+  assert.equal(composed.profile.model, "openai/gpt-5.6-luna");
+  assert.doesNotThrow(() =>
+    assertKestrelExecutionProfileEconomicsAdmission({
+      profile: composed.profile,
+      environmentPresetId: "workspace_hosted",
+    }),
+  );
+
+  const expectedFingerprint = digestCanonical({
+    policyId: KESTREL_POLICY_ID,
+    policyVersion: KESTREL_POLICY_VERSION,
+    promptPolicyId: KESTREL_PROMPT_POLICY_ID,
+    harnessEconomicsControlVersion: KESTREL_HARNESS_ECONOMICS.version,
+    harnessEconomicsPolicyId: KESTREL_HARNESS_ECONOMICS.policy.policyId,
+    harnessEconomicsPolicyVersion: KESTREL_HARNESS_ECONOMICS.policy.version,
+    profileDefinitionRevision: KESTREL_PROFILE_DEFINITION.revision,
+    environmentBindingRevision: binding.revision,
+    toolAllowlist: composed.profile.toolAllowlist,
+  });
+  assert.equal(composed.provenance.fingerprint, expectedFingerprint);
+});
+
 test("canonical composition rebinds evaluation to the exact selected route", () => {
   const hashA = `sha256:${"a".repeat(64)}`;
   const hashB = `sha256:${"b".repeat(64)}`;
@@ -315,3 +387,20 @@ test("legacy first-party aliases canonicalize without admitting custom profiles"
     /non-canonical profile/iu,
   );
 });
+
+function digestCanonical(value: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(sortJsonValue(value)))
+    .digest("hex");
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, sortJsonValue(entry)]),
+  );
+}

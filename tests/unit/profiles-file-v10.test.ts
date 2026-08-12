@@ -224,6 +224,27 @@ test("ProfileStore activates V10 and exposes only the canonical Kestrel profile"
   assert.equal(profiles[0]?.agent, "kestrel");
 });
 
+test("ProfileStore hydrates a hosted runtime-configuration template before executable route resolution", async () => {
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profiles-v10-hosted-template-"),
+  );
+  const store = new ProfileStore(tempDir, {
+    managedEnvironmentPresetId: "workspace_hosted",
+  });
+
+  const [profile] = await store.load();
+  const persisted = parseProfilesFileV10(
+    await readFile(path.join(tempDir, "profiles.json"), "utf8"),
+  );
+
+  assert.equal(
+    persisted.environmentBindings.workspace_hosted?.modelRoute.kind,
+    "runtime_configuration",
+  );
+  assert.equal(profile?.presetId, "workspace_hosted");
+  assert.equal(profile?.agentProfileId, "kestrel");
+});
+
 test("ProfileStore save preserves every existing V10 environment binding", async () => {
   const tempDir = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-profiles-v10-save-"),

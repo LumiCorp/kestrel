@@ -22,6 +22,7 @@ import {
   type ProtocolTransport,
 } from "../src/internal/ProtocolClient.js";
 import { RemoteRunnerTransport } from "../src/internal/RemoteRunnerTransport.js";
+import { RUNNER_RUN_STREAM_EVENT_TYPES } from "@kestrel-agents/protocol";
 
 
 const profile: RunnerProfile = {
@@ -939,6 +940,26 @@ test("KestrelClient reattaches a durable run from the last accepted event withou
   const transportEvents: Array<{ type: string; attempt?: number; delayMs?: number }> = [];
   let tokenSequence = 0;
   let reattachCalls = 0;
+  const journalEvents = [
+    {
+      id: "evt-durable-operator-run",
+      type: "operator.run",
+      ts: new Date().toISOString(),
+      commandId: "operator-inspection-command",
+      sessionId: "session-durable",
+      runId: "run-durable",
+      payload: { view: { runId: "run-durable" } },
+    },
+    {
+      id: "evt-durable-completed",
+      type: "run.completed",
+      ts: new Date().toISOString(),
+      commandId: "original-command",
+      sessionId: "session-durable",
+      runId: "run-durable",
+      payload: { result: completedResult("session-durable", "run-durable") },
+    },
+  ];
   const client = createRemoteClient({
     baseUrl: "http://runner.internal",
     authTokenProvider: async () => `token-${++tokenSequence}`,
@@ -968,22 +989,29 @@ test("KestrelClient reattaches a durable run from the last accepted event withou
       assert.equal(url.pathname, "/events/stream");
       reattachCalls += 1;
       const subscription = JSON.parse(String(init?.body)) as {
-        filter: { sinceEventId?: string };
+        filter: {
+          sessionId?: string;
+          runId?: string;
+          sinceEventId?: string;
+          eventTypes?: string[];
+        };
       };
-      assert.equal(subscription.filter.sinceEventId, "evt-durable-started");
+      assert.deepEqual(subscription.filter, {
+        sessionId: "session-durable",
+        runId: "run-durable",
+        sinceEventId: "evt-durable-started",
+        eventTypes: [...RUNNER_RUN_STREAM_EVENT_TYPES],
+      });
       if (reattachCalls === 1) {
         return new Response("temporarily unavailable", { status: 503 });
       }
+      const visibleEvents = journalEvents.filter((event) =>
+        subscription.filter.eventTypes?.includes(event.type) ?? true
+      );
       return new Response(
-        `event: run.completed\ndata: ${JSON.stringify({
-          id: "evt-durable-completed",
-          type: "run.completed",
-          ts: new Date().toISOString(),
-          commandId: "original-command",
-          sessionId: "session-durable",
-          runId: "run-durable",
-          payload: { result: completedResult("session-durable", "run-durable") },
-        })}\n\n`,
+        visibleEvents.map((event) =>
+          `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
+        ).join(""),
         { status: 200, headers: { "content-type": "text/event-stream" } },
       );
     },
@@ -1031,12 +1059,18 @@ test("KestrelClient accepts authoritative terminal reconciliation for an unknown
     fetchImpl: async (input, init) => {
       assert.equal(new URL(String(input)).pathname, "/events/stream");
       const subscription = JSON.parse(String(init?.body)) as {
-        filter: { sessionId?: string; runId?: string; sinceEventId?: string };
+        filter: {
+          sessionId?: string;
+          runId?: string;
+          sinceEventId?: string;
+          eventTypes?: string[];
+        };
       };
       assert.deepEqual(subscription.filter, {
         sessionId: "session-reconciled",
         runId: "run-reconciled",
         sinceEventId: "expired-cursor",
+        eventTypes: [...RUNNER_RUN_STREAM_EVENT_TYPES],
       });
       return new Response(
         `event: run.completed\ndata: ${JSON.stringify({

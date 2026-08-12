@@ -84,7 +84,7 @@ test("Guardrails count maintenance model calls separately from action calls", ()
     maxToolCallsPerRun: 5,
     maxModelCallsPerRun: 1,
     maxStepVisits: 2,
-    maxMaintenanceModelCallsPerRun: 4,
+    maxMaintenanceModelCallsPerRun: 8,
     maxConcurrentToolJobsPerRun: 2,
     maxConcurrentToolJobsGlobal: 4,
     maxQueuedToolJobsPerRun: 10,
@@ -92,25 +92,26 @@ test("Guardrails count maintenance model calls separately from action calls", ()
     toolCallRetryCount: 1,
   });
 
-  guardrails.onModelCall("maintenance");
-  guardrails.onModelCall("maintenance");
-  guardrails.onModelCall("maintenance");
-  guardrails.onModelCall("maintenance");
+  for (let count = 0; count < 8; count += 1) {
+    guardrails.onModelCall("maintenance");
+  }
   guardrails.onModelCall("action");
 
   const telemetry = guardrails.telemetry();
-  assert.equal(telemetry.modelCalls, 5);
+  assert.equal(telemetry.modelCalls, 9);
   assert.equal(telemetry.actionModelCalls, 1);
-  assert.equal(telemetry.maintenanceModelCalls, 4);
+  assert.equal(telemetry.maintenanceModelCalls, 8);
   assert.throws(
     () => guardrails.onModelCall("action"),
     (error) => error instanceof GuardrailViolationError && error.code === "MAX_MODEL_CALLS_EXCEEDED",
   );
+  const telemetryAfterActionRejection = guardrails.telemetry();
   assert.throws(
     () => guardrails.onModelCall("maintenance"),
     (error) =>
       error instanceof GuardrailViolationError && error.code === "MAX_MAINTENANCE_MODEL_CALLS_EXCEEDED",
   );
+  assert.deepEqual(guardrails.telemetry(), telemetryAfterActionRejection);
 });
 
 test("Guardrails leave repeated-step intervention to the loop coordinator", () => {
