@@ -1,5 +1,3 @@
-import { RUNNER_BUILT_IN_TOOL_NAMES } from "@kestrel-agents/protocol";
-
 import type {
   ComposedManagedKestrelProfile,
   ComposeManagedKestrelProfileInput,
@@ -13,6 +11,7 @@ import type {
   ManagedKestrelProfileOverlay,
   ManagedRuntimeEvaluationPolicy,
 } from "./contracts.js";
+import { parseManagedRuntimeEvaluationPolicy } from "./evaluationPolicy.js";
 import { fingerprintCanonicalValue } from "./stable.js";
 
 export const KESTREL_POLICY_ID = "kestrel" as const;
@@ -25,6 +24,20 @@ export const KESTREL_DIALOG_TOOL_NAMES = Object.freeze([
   "dialog.open",
   "dialog.send",
   "dialog.close",
+] as const);
+
+/**
+ * Snapshot of the protocol-owned, no-credential built-in tools used by managed
+ * profile composition. The package contract test pins this list to the public
+ * protocol while keeping the shipped private package free of runtime workspace
+ * dependencies.
+ */
+export const KESTREL_RUNNER_BUILT_IN_TOOL_NAMES = Object.freeze([
+  "free.weather.current",
+  "free.weather.forecast",
+  "free.time.current",
+  "free.geocode.lookup",
+  "free.exchange.rate",
 ] as const);
 
 export const KESTREL_ENVIRONMENT_PRESETS = Object.freeze({
@@ -125,7 +138,7 @@ const DEFAULT_DEV_SHELL: ManagedDevShellProfileConfig = {
 };
 
 const BALANCED_TOOL_NAMES = [
-  ...RUNNER_BUILT_IN_TOOL_NAMES,
+  ...KESTREL_RUNNER_BUILT_IN_TOOL_NAMES,
   "internet.search",
   "internet.search_advanced",
   "internet.news",
@@ -401,7 +414,7 @@ function resolveEvaluationPolicy(
   profile: ManagedKestrelProfile,
 ): ManagedKestrelProfile {
   if (profile.evaluationPolicy === undefined) return profile;
-  const policy = structuredClone(profile.evaluationPolicy);
+  const policy = parseManagedRuntimeEvaluationPolicy(profile.evaluationPolicy);
   if (
     profile.modelProvider !== policy.judge.provider ||
     profile.model !== policy.judge.model

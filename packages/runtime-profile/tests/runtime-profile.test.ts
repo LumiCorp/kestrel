@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { RUNNER_BUILT_IN_TOOL_NAMES } from "@kestrel-agents/protocol";
+
 import {
   assertRequiredManagedKestrelTools,
   composeManagedKestrelProfile,
   fingerprintResolvedProfile,
   KESTREL_EXECUTION_BOUNDARY_POLICY_REVISION,
+  KESTREL_RUNNER_BUILT_IN_TOOL_NAMES,
 } from "../src/index.js";
 
 const GOLDEN_PRESETS = {
@@ -53,6 +56,13 @@ test("managed profiles preserve the pre-extraction golden identities", () => {
     );
     assert.equal(fingerprintResolvedProfile(composed.profile), golden.resolved);
   }
+});
+
+test("managed built-in tool snapshot matches the public protocol", () => {
+  assert.deepEqual(
+    KESTREL_RUNNER_BUILT_IN_TOOL_NAMES,
+    RUNNER_BUILT_IN_TOOL_NAMES,
+  );
 });
 
 test("managed profile composition preserves product environment behavior", () => {

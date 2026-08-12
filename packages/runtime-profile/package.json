@@ -28,10 +28,8 @@
     "typecheck:self": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test tests/*.test.ts"
   },
-  "dependencies": {
-    "@kestrel-agents/protocol": "workspace:*"
-  },
   "devDependencies": {
+    "@kestrel-agents/protocol": "workspace:*",
     "@types/node": "^22.13.10",
     "typescript": "^5.8.2"
   }

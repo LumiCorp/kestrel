@@ -3,6 +3,12 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 import {
+  composeManagedKestrelProfile,
+  KESTREL_EXECUTION_BOUNDARY_POLICY_REVISION,
+  parseManagedRuntimeEvaluationPolicy,
+} from "@kestrel/runtime-profile";
+
+import {
   assertKestrelExecutionProfileEconomicsAdmission,
   assertRequiredKestrelOneTools,
   composeKestrelOneProfile,
@@ -12,11 +18,16 @@ import {
   KESTREL_ONE_POLICY,
   KESTREL_POLICY_VERSION,
 } from "../../src/profile/kestrelOnePolicy.js";
-import {
-  composeManagedKestrelProfile,
-  KESTREL_EXECUTION_BOUNDARY_POLICY_REVISION,
-} from "@kestrel/runtime-profile";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
+import {
+  createRuntimeEvaluationPolicyV1,
+  LEAN_RUNTIME_EVALUATION_BUDGET_V1,
+  parseRuntimeEvaluationPolicyV1,
+  RUNTIME_EVALUATION_THRESHOLDS_V1,
+} from "../../src/kestrel/contracts/evaluation.js";
+
+const EVALUATION_HASH_A = `sha256:${"a".repeat(64)}`;
+const EVALUATION_HASH_B = `sha256:${"b".repeat(64)}`;
 
 const LUNA_ROUTE = {
   modelProvider: "openrouter" as const,
@@ -544,4 +555,95 @@ test("shared resolved fingerprint revision matches the canonical root policy", (
     KESTREL_EXECUTION_BOUNDARY_POLICY_REVISION,
     KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
   );
+});
+
+test("shared managed evaluation policy parsing matches the canonical contract", () => {
+  const policy = createRuntimeEvaluationPolicyV1({
+    policyId: "evaluation:managed-parity",
+    evaluator: {
+      evaluatorId: "completion-evidence",
+      evaluatorVersion: "1.0.0",
+    },
+    assets: {
+      bundleId: "evaluation-assets",
+      revision: EVALUATION_HASH_A,
+      rubricRevision: EVALUATION_HASH_A,
+      assertionsRevision: EVALUATION_HASH_A,
+      promptRevision: EVALUATION_HASH_A,
+      schemaRevision: EVALUATION_HASH_A,
+      calibrationDatasetRevision: EVALUATION_HASH_A,
+      evaluatorCodeRevision: EVALUATION_HASH_A,
+    },
+    judge: {
+      route: "profile_primary",
+      provider: "openai",
+      model: "gpt-managed-parity",
+      modelRegistrationRevision: EVALUATION_HASH_A,
+      capabilities: {
+        visionInputEnabled: false,
+        toolCallingEnabled: true,
+        structuredOutputEnabled: true,
+        reasoningModes: ["off", "summary", "provider_visible"],
+      },
+      pricing: {
+        priceRevision: EVALUATION_HASH_B,
+        inputUsdPerMillionTokens: 2,
+        outputUsdPerMillionTokens: 8,
+      },
+    },
+    calibration: {
+      recordId: "evaluation-calibration",
+      recordRevision: EVALUATION_HASH_A,
+    },
+    hooks: [
+      {
+        kind: "after_tool",
+        mode: "advisory",
+        selectorIds: ["code.execute"],
+      },
+      { kind: "pre_delivery", mode: "blocking", selectorIds: [] },
+    ],
+    budget: LEAN_RUNTIME_EVALUATION_BUDGET_V1,
+    thresholds: RUNTIME_EVALUATION_THRESHOLDS_V1,
+    actions: {
+      revisionHandlerId: "evaluation.revise",
+      reviewOptionIds: [
+        "evaluation.accept_once",
+        "evaluation.revise",
+        "terminal.fail",
+      ],
+    },
+  });
+  assert.deepEqual(parseManagedRuntimeEvaluationPolicy(policy), policy);
+
+  const malformedPolicies = [
+    { ...policy, unexpected: true },
+    {
+      ...policy,
+      budget: { ...policy.budget, maxEvaluationsPerRun: 5 },
+    },
+    {
+      ...policy,
+      hooks: [
+        ...policy.hooks,
+        { kind: "after_tool", mode: "advisory", selectorIds: [] },
+      ],
+    },
+    { ...policy, revision: EVALUATION_HASH_B },
+  ];
+  for (const malformed of malformedPolicies) {
+    assert.throws(() => parseRuntimeEvaluationPolicyV1(malformed));
+    assert.throws(() => parseManagedRuntimeEvaluationPolicy(malformed));
+    assert.throws(() =>
+      composeManagedKestrelProfile({
+        environmentPresetId: "workspace_hosted",
+        overlay: {
+          modelProvider: "openai",
+          model: "gpt-managed-parity",
+          modelCapabilities: { visionInputEnabled: false },
+          evaluationPolicy: malformed as never,
+        },
+      }),
+    );
+  }
 });
