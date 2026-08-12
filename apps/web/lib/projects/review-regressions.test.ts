@@ -298,7 +298,7 @@ test(
     );
     assert.match(source, /await resolveProjectRuntimeContext\(/);
     assert.match(source, /await resolveThreadEnvironment\(/);
-    assert.match(source, /await createDurableThreadTurn\(/);
+    assert.match(source, /await admitDurableThreadTurn\(/);
     assert.match(
       source,
       /projectContextRevisionId:[\s\S]*contextRevision\.id/u,

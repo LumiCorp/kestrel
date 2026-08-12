@@ -220,6 +220,18 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
       "/api/runtime/desktop-environments/:connectionId/commands/:commandId/complete",
     ],
     [
+      "app/api/runtime/desktop-environments/[connectionId]/runtime-descriptor-probes/claim/route.ts",
+      "/api/runtime/desktop-environments/:connectionId/runtime-descriptor-probes/claim",
+    ],
+    [
+      "app/api/runtime/desktop-environments/[connectionId]/runtime-descriptor-probes/[probeId]/lease/route.ts",
+      "/api/runtime/desktop-environments/:connectionId/runtime-descriptor-probes/:probeId/lease",
+    ],
+    [
+      "app/api/runtime/desktop-environments/[connectionId]/runtime-descriptor-probes/[probeId]/complete/route.ts",
+      "/api/runtime/desktop-environments/:connectionId/runtime-descriptor-probes/:probeId/complete",
+    ],
+    [
       "app/api/runtime/desktop-environments/[connectionId]/runtime-releases/claim/route.ts",
       "/api/runtime/desktop-environments/:connectionId/runtime-releases/claim",
     ],
