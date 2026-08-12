@@ -47,8 +47,17 @@ The candidate endpoint accepts only a GitHub Actions OIDC token for the exact
 main-branch release workflow and commit SHA. It also requires a fresh controller
 heartbeat at the manifest's declared contract revision. The workflow deploys
 and checks the controller, then waits for `/api/health` to report the exact
-production commit before publishing the candidate. No long-lived publisher
-secret is shared with Kestrel One.
+production commit before publishing the candidate. A candidate is accepted and
+promoted only while its bundle revision still equals the serving Kestrel One
+revision. Newer main revisions cancel obsolete image builds. No long-lived
+publisher secret is shared with Kestrel One.
+
+Every manifest records the gateway configuration version emitted by Kestrel
+One and the versions accepted by the Environment Router. Change this contract
+in two releases: first expand and stabilize router acceptance while the producer
+continues emitting the old version; only then change the producer. Rollback is
+available only when the stable router explicitly accepts the live producer
+version.
 
 ## Controller release gate
 
@@ -79,8 +88,10 @@ pull-request CI.
    migration.
 4. Approve the release.
 
-Promotion updates Preview Edge and the RunPod worker, then the canary, then all
-other active Fly Environments sequentially, and finally the turn worker. New
+When Environment images change, promotion updates the canary first, then
+Preview Edge, the RunPod worker, all other active Fly Environments sequentially,
+and finally the turn worker. Global-only bundles retain Preview Edge, RunPod,
+then turn-worker order. New
 executions are blocked for the Environment currently draining. A drain that
 still has active executions after 30 minutes pauses the release.
 
@@ -107,5 +118,15 @@ Promotion pauses immediately for non-retryable failures, contradictory provider
 state, or failed health checks, and pauses when the retry budget is exhausted.
 Only then is **Retry failed target** available. There is no automatic rollback.
 Choose **Roll back to stable** only when the active release is paused; rollback
-creates a new coordinated release using the prior stable digests and follows the
-same canary-first rollout.
+creates a new coordinated release for targets the failed release may already
+have mutated and follows the same canary-first rollout. Rollback is blocked when
+the stable router has unknown or incompatible gateway evidence.
+
+When a legacy stable bundle lacks compatibility metadata, deploy the repair with
+`KESTREL_RELEASE_COMPATIBILITY_BOOTSTRAP=allow-legacy-stable`. This literal is a
+one-time bridge: Kestrel rejects it after a metadata-bearing stable bundle
+exists. While the legacy rollback remains paused, publish the exact repair
+candidate and choose **Recover forward**. Forward recovery supersedes the paused
+release atomically and starts with the saved canary. Remove the bridge and
+redeploy the same revision immediately after the recovered release becomes
+stable.

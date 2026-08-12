@@ -10,7 +10,10 @@ import {
   isFlyImageReleaseMachineVerified,
   type FlyImageRole,
 } from "./contracts";
-import { completeFlyImageReleaseIfReady } from "./store";
+import {
+  completeFlyImageReleaseIfReady,
+  getFlyImageReleaseExecutionAdmission,
+} from "./store";
 
 const RELEASE_DRAIN_TIMEOUT_MS = 30 * 60 * 1000;
 const GLOBAL_APP_BY_ROLE = {
@@ -32,6 +35,11 @@ export async function processFlyImageRelease(
     where: eq(schema.flyImageReleaseSettings.id, "platform"),
   });
   if (settings?.activeReleaseId !== release.id) return "not_claimed";
+  const admission = await getFlyImageReleaseExecutionAdmission(release.id);
+  if (!admission.ok) {
+    await pauseRelease(release.id, admission.code, admission.message);
+    return "not_claimed";
+  }
   if (release.status === "approved") {
     await knowledgeDb
       .update(schema.flyImageReleases)
@@ -52,7 +60,7 @@ export async function processFlyImageRelease(
     .select()
     .from(schema.flyImageReleaseTargets)
     .where(eq(schema.flyImageReleaseTargets.releaseId, release.id));
-  const target = orderReleaseTargets(
+  const target = orderFlyImageReleaseTargets(
     targets,
     settings.canaryEnvironmentId,
   ).find(
@@ -503,20 +511,29 @@ function componentImage(
   return image;
 }
 
-function orderReleaseTargets<
-  T extends typeof schema.flyImageReleaseTargets.$inferSelect,
+export function orderFlyImageReleaseTargets<
+  T extends {
+    targetKind: string;
+    componentRole: string | null;
+    environmentId: string | null;
+    targetKey: string;
+  },
 >(targets: T[], canaryEnvironmentId: string | null) {
+  const hasEnvironmentTargets = targets.some(
+    (target) => target.targetKind === "environment",
+  );
   const rank = (target: T) => {
-    if (target.targetKind === "global_app") {
-      if (target.componentRole === "preview-edge") return 0;
-      if (target.componentRole === "runpod-worker") return 1;
-      if (target.componentRole === "turn-worker") return 4;
-    }
     if (
+      hasEnvironmentTargets &&
       target.targetKind === "environment" &&
       target.environmentId === canaryEnvironmentId
     ) {
-      return 2;
+      return 0;
+    }
+    if (target.targetKind === "global_app") {
+      if (target.componentRole === "preview-edge") return 1;
+      if (target.componentRole === "runpod-worker") return 2;
+      if (target.componentRole === "turn-worker") return 4;
     }
     if (target.targetKind === "environment") return 3;
     return 5;

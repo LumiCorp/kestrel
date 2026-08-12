@@ -8,6 +8,8 @@ import {
   inspectHostedEnvironmentCutoverReadiness,
   inspectHostedEnvironmentSchemaReadiness,
 } from "../lib/environments/cutover-readiness";
+import { ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION } from "@lumi/kestrel-environment-auth";
+import { inspectFlyReleaseDeploymentReadiness } from "../lib/releases/deployment-preflight";
 
 async function main() {
   const unknownArguments = process.argv
@@ -67,6 +69,22 @@ async function main() {
     throw new Error(
       `Hosted Environment migrations are incomplete: ${schema.missingRelations.join(", ")}.`
     );
+  }
+
+  if (phase !== "prepare") {
+    const releaseReadiness = await inspectFlyReleaseDeploymentReadiness({
+      databaseUrl,
+      producedVersion: ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION,
+      bootstrap: process.env.KESTREL_RELEASE_COMPATIBILITY_BOOTSTRAP,
+    });
+    if (!releaseReadiness.ready) {
+      throw new Error(
+        `${releaseReadiness.code}: ${releaseReadiness.message}`,
+      );
+    }
+    if (releaseReadiness.warning) {
+      process.stderr.write(`${releaseReadiness.warning}\n`);
+    }
   }
 
   if (phase === "prepare") {
