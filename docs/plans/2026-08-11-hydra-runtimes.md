@@ -119,7 +119,11 @@ the signed Desktop connector after reconnecting; this cleanup queue is
 independent of live Thread executions and does not consume Desktop run
 capacity. Only an exactly correlated durable `runtime.released` event settles
 the outbox. Expired claims are safely reissued because release is idempotent by
-binding identity.
+binding identity. Desktop-local recovery uses a separate Local Core outbox;
+its lifecycle worker drains cleanup through the local Runner transport and
+recovers unfinished delivery after restart. The renderer submits recovery
+intent only. Local Core resolves the configured model route, probes readiness,
+and persists the resulting Environment and capability digest.
 
 The gate remains off until one clean revision passes `pnpm hydra:smoke`. Its
 local authenticated matrix covers both Runtimes, two ordinary Turns, a live
@@ -135,7 +139,8 @@ The evidence checker requires the checked-in scenario order, exactly one Codex
 and one Claude result, and a candidate deployment revision equal to the source
 SHA. Continuity prompts include the marker only on the first Turn and compare
 only the latest assistant response on the second. Candidate cleanup is itself
-a required scenario; a Thread that cannot be permanently deleted fails the
+a required scenario; every created Thread is offered permanent deletion even
+when an earlier canary step fails, and any deletion failure fails the
 qualification.
 
 Recovery-fork policies remain deterministic product gates: native-session loss

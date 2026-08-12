@@ -7,13 +7,13 @@ import path from "node:path";
 import {
   parseRunnerEventV2,
   type RunnerEvent,
-  type RunnerRuntimeDescriptorV1,
   type RunnerTurnInput,
 } from "@kestrel-agents/protocol";
-import { LocalCoreClient, startLocalCoreApiServer } from "../src/localCore/index.js";
-import { resolveKestrelCoreHome } from "../src/localCore/home.js";
-import { FileRuntimeNativeSessionStore } from "../src/runtimes/FileRuntimeStateStore.js";
-import type { RuntimeBindingV1 } from "../src/runtimes/contracts.js";
+import {
+  LocalCoreClient,
+  startLocalCoreApiServer,
+  type LocalCoreRuntimeBindingResponse,
+} from "../src/localCore/index.js";
 import {
   CANCELLATION_PROMPT,
   continuityPrompt,
@@ -84,8 +84,8 @@ export async function runHydraLocalSmoke(input: {
       return await deadline(
         (async () => {
           const runtimes = [
-            await runRuntime("codex", temporary, coreProductRoot, currentClient, restart),
-            await runRuntime("claude", temporary, coreProductRoot, currentClient, restart),
+            await runRuntime("codex", temporary, currentClient, restart),
+            await runRuntime("claude", temporary, currentClient, restart),
           ];
           return {
             status: runtimes.every(runtimePassed) ? "passed" as const : "failed" as const,
@@ -108,7 +108,6 @@ export async function runHydraLocalSmoke(input: {
 async function runRuntime(
   runtimeId: HydraRuntimeId,
   rootPath: string,
-  coreProductRoot: string,
   currentClient: () => LocalCoreClient,
   restartLocalCore: () => Promise<void>,
 ): Promise<HydraRuntimeEvidence> {
@@ -122,18 +121,9 @@ async function runRuntime(
     ? "profile-credential" as const
     : "native-login" as const;
   let profileId = "";
-  const binding: RuntimeBindingV1 = {
-    version: "runtime_binding_v1",
-    bindingId: `binding-${runtimeId}-${randomUUID()}`,
-    threadId: `thread-${runtimeId}-${randomUUID()}`,
-    participantId: `runtime:${runtimeId}`,
-    runtimeId,
-    environmentId: "hydra-smoke-local",
-    adapterContractVersion: 1,
-    capabilityDigest: "hydra-smoke",
-    status: "ready",
-    nativeSessionState: "uninitialized",
-  };
+  const canonicalThreadId = `thread-${runtimeId}-${randomUUID()}`;
+  const runnerSessionId = `session-${runtimeId}-${randomUUID()}`;
+  let binding: LocalCoreRuntimeBindingResponse | undefined;
   const scenarios: HydraScenarioEvidence[] = [];
   const approvedNativeRoot = runtimeId === "codex"
     ? process.env.KESTREL_HYDRA_CODEX_HOME ?? process.env.CODEX_HOME
@@ -170,24 +160,42 @@ async function runRuntime(
     return true;
   };
   await record("descriptor", async () => {
-      const descriptor = await deadline(
+      const environmentId = await currentClient().runtimeEnvironmentIdentity();
+      const resolution = await deadline(
         describeThroughLocalCore(currentClient(), runtimeId, modelId),
         DESCRIPTOR_TIMEOUT_MS,
         "Descriptor timed out",
       );
+      const descriptor = resolution.descriptor;
       assert.equal(descriptor.availability, "ready", descriptor.unavailableReason);
       assert.equal(descriptor.runtimeId, runtimeId);
       assert.deepEqual(descriptor.capabilities.attachments, ["text", "image"]);
       assert.equal(descriptor.capabilities.conversationPersistence, "native_resume");
       assert.equal(descriptor.capabilities.interactionRecovery, "connection_bound");
       nativeVersion = descriptor.nativeVersion;
-      profileId = await resolveExecutionProfile(currentClient(), runtimeId, modelId);
+      const resolvedProfile = await resolveExecutionProfileDetails(
+        currentClient(),
+        runtimeId,
+        modelId,
+      );
+      profileId = resolvedProfile.profileId;
+      binding = await currentClient().admitRuntimeBinding({
+        canonicalThreadId,
+        runnerSessionId,
+        runtimeId,
+        capabilityDigest: resolution.capabilityDigest,
+        modelProvider: resolvedProfile.modelProvider,
+        modelId: resolvedProfile.modelId,
+        environmentId,
+      });
   });
   const nonce = `HYDRA_${randomUUID().replaceAll("-", "").toUpperCase()}`;
   await record("first-turn-attachments", async () => {
+      const activeBinding = requireBinding(binding);
       const text = "Hydra authenticated smoke text attachment.";
-      const execution = await execute(currentClient(), profileId, binding, {
-        sessionId: binding.threadId,
+      const execution = await execute(currentClient(), profileId, activeBinding, {
+        sessionId: activeBinding.runnerSessionId,
+        runtimeId,
         runId: randomUUID(),
         eventType: "user.message",
         message: firstTurnPrompt(nonce),
@@ -195,12 +203,12 @@ async function runRuntime(
         workspace: { workspaceId: "hydra-smoke", workspaceRoot },
         attachments: [
           {
-            attachmentId: randomUUID(), threadId: binding.threadId, filename: "hydra.txt",
+            attachmentId: randomUUID(), threadId: activeBinding.runnerSessionId, filename: "hydra.txt",
             mimeType: "text/plain", kind: "text", text,
             sizeBytes: Buffer.byteLength(text), sha256: digest(Buffer.from(text)),
           },
           {
-            attachmentId: randomUUID(), threadId: binding.threadId, filename: "hydra.png",
+            attachmentId: randomUUID(), threadId: activeBinding.runnerSessionId, filename: "hydra.png",
             mimeType: "image/png", kind: "image", data: ONE_PIXEL_PNG.toString("base64"),
             sizeBytes: ONE_PIXEL_PNG.length, sha256: digest(ONE_PIXEL_PNG),
           },
@@ -211,16 +219,19 @@ async function runRuntime(
         execution.events.some((event) => event.type === "run.native_session.established"),
         "First Turn did not establish durable native session state.",
       );
-      binding.nativeSessionState = "ready";
+      binding = await currentClient().getRuntimeBinding(canonicalThreadId);
+      assert.equal(binding?.nativeSessionState, "ready");
   });
   await record("ordinary-resume", async () => {
-      const result = await execute(currentClient(), profileId, binding, ordinaryTurn(binding, continuityPrompt(), workspaceRoot));
+      const activeBinding = requireBinding(binding);
+      const result = await execute(currentClient(), profileId, activeBinding, ordinaryTurn(activeBinding, continuityPrompt(), workspaceRoot));
       assertCompleted(result);
       assert.match(result.assistantText, new RegExp(`CONTINUITY_OK:${nonce}`, "u"));
   });
   await record("native-interaction", async () => {
-      const waiting = await execute(currentClient(), profileId, binding, {
-        ...ordinaryTurn(binding, INTERACTION_PROMPT, workspaceRoot),
+      const activeBinding = requireBinding(binding);
+      const waiting = await execute(currentClient(), profileId, activeBinding, {
+        ...ordinaryTurn(activeBinding, INTERACTION_PROMPT, workspaceRoot),
         interactionMode: "build",
       });
       assert.equal(waiting.outputStatus, "WAITING", "Native interaction was not requested");
@@ -229,8 +240,8 @@ async function runRuntime(
       const answers = interaction.inputSchema && typeof interaction.inputSchema === "object"
         ? buildFirstSchemaAnswer(interaction.inputSchema as Record<string, unknown>)
         : undefined;
-      const continued = await execute(currentClient(), profileId, binding, {
-        ...ordinaryTurn(binding, "Approved", workspaceRoot),
+      const continued = await execute(currentClient(), profileId, activeBinding, {
+        ...ordinaryTurn(activeBinding, "Approved", workspaceRoot),
         resumeBlockedRun: true,
         resumeRequestId: interaction.requestId,
         interactionResponse: {
@@ -251,19 +262,20 @@ async function runRuntime(
       );
   });
   await record("cancellation", async () => {
-      const turn = ordinaryTurn(binding, CANCELLATION_PROMPT, workspaceRoot);
+      const activeBinding = requireBinding(binding);
+      const turn = ordinaryTurn(activeBinding, CANCELLATION_PROMPT, workspaceRoot);
       const started = deferred<void>();
       const pending = execute(
         currentClient(),
         profileId,
-        binding,
+        activeBinding,
         { ...turn, interactionMode: "build" },
         (event) => {
           if (event.type === "run.started") started.resolve();
         },
       );
       await deadline(started.promise, TURN_TIMEOUT_MS, "Cancellation Turn did not start");
-      await cancelThroughLocalCore(currentClient(), binding.threadId, turn.runId!);
+      await cancelThroughLocalCore(currentClient(), activeBinding.runnerSessionId, turn.runId!);
       const result = await pending;
       assert.equal(result.terminalType, "run.cancelled");
       assert.equal(result.outputStatus, "ABORTED");
@@ -271,30 +283,38 @@ async function runRuntime(
   await record("process-restart-resume", async () => {
       await restartLocalCore();
       profileId = await resolveExecutionProfile(currentClient(), runtimeId, modelId);
-      assertCompleted(await execute(currentClient(), profileId, binding, ordinaryTurn(binding, "Reply exactly RESTART_OK", workspaceRoot)));
+      binding = await currentClient().getRuntimeBinding(canonicalThreadId);
+      const activeBinding = requireBinding(binding);
+      assertCompleted(await execute(currentClient(), profileId, activeBinding, ordinaryTurn(activeBinding, "Reply exactly RESTART_OK", workspaceRoot)));
   });
   await record("configuration-generation-rotation", async () => {
       const settings = await currentClient().desktopSettings();
       await currentClient().patchDesktopSettings({ modelPolicy: settings.modelPolicy });
       profileId = await resolveExecutionProfile(currentClient(), runtimeId, modelId);
-      assertCompleted(await execute(currentClient(), profileId, binding, ordinaryTurn(binding, "Reply exactly ROTATION_OK", workspaceRoot)));
+      binding = await currentClient().getRuntimeBinding(canonicalThreadId);
+      const activeBinding = requireBinding(binding);
+      assertCompleted(await execute(currentClient(), profileId, activeBinding, ordinaryTurn(activeBinding, "Reply exactly ROTATION_OK", workspaceRoot)));
   });
   await record("missing-native-session", async () => {
-      const coreHome = resolveKestrelCoreHome({ KESTREL_CORE_HOME: coreProductRoot }, process.platform);
-      const nativeStore = new FileRuntimeNativeSessionStore(
-        path.join(coreHome.homePath, "runtime", "native-runtimes"),
-      );
-      await nativeStore.release(binding.bindingId);
-      const result = await execute(currentClient(), profileId, binding, ordinaryTurn(binding, "This must fail closed", workspaceRoot));
+      const activeBinding = requireBinding(binding);
+      await currentClient().removeRuntimeNativeSessionForSmoke({
+        canonicalThreadId: activeBinding.canonicalThreadId,
+        bindingId: activeBinding.bindingId,
+        participantId: activeBinding.participantId,
+        runtimeId: activeBinding.runtimeId,
+        environmentId: activeBinding.environmentId,
+      });
+      const result = await execute(currentClient(), profileId, activeBinding, ordinaryTurn(activeBinding, "This must fail closed", workspaceRoot));
       assert.equal(result.terminalType, "run.failed");
       assert.equal(result.failureCode, "RUNTIME_NATIVE_SESSION_LOST");
   });
   return { runtimeId, nativeVersion, modelId, authenticationSource, scenarios };
 }
 
-function ordinaryTurn(binding: RuntimeBindingV1, message: string, workspaceRoot: string): RunnerTurnInput {
+function ordinaryTurn(binding: LocalCoreRuntimeBindingResponse, message: string, workspaceRoot: string): RunnerTurnInput {
   return {
-    sessionId: binding.threadId,
+    sessionId: binding.runnerSessionId,
+    runtimeId: binding.runtimeId,
     runId: randomUUID(),
     runtimeBindingId: binding.bindingId,
     runtimeBindingStatus: binding.status,
@@ -322,7 +342,7 @@ interface RunnerExecutionResult {
 async function execute(
   client: LocalCoreClient,
   profileId: string,
-  binding: RuntimeBindingV1,
+  binding: LocalCoreRuntimeBindingResponse,
   turn: RunnerTurnInput,
   onEvent?: ((event: RunnerEvent) => void) | undefined,
 ): Promise<RunnerExecutionResult> {
@@ -471,33 +491,13 @@ async function describeThroughLocalCore(
   runtimeId: HydraRuntimeId,
   modelId: string,
 ) {
-  const commandId = randomUUID();
-  let descriptor: RunnerRuntimeDescriptorV1 | undefined;
-  await client.sendRunnerCommand(
-    JSON.stringify({
-      version: "runner_command_v2",
-      id: commandId,
-      type: "runtime.describe",
-      payload: {
-        environmentPresetId: "desktop_dev_local",
-        managedConfiguration: {
-          runtimeId,
-          modelProvider: runtimeId === "codex" ? "openai" : "anthropic",
-          model: modelId,
-        },
-      },
-    }),
-    {
-      onLine(line) {
-        const event = parseRunnerEventV2(JSON.parse(line) as unknown);
-        if (event.type === "runtime.described" && event.commandId === commandId) {
-          descriptor = event.payload.descriptor;
-        }
-      },
-    },
-  );
-  assert.ok(descriptor, "Local Core did not return a Runtime descriptor.");
-  return descriptor;
+  return await client.describeRuntime({
+    client: "web",
+    runtimeId,
+    modelProvider: runtimeId === "codex" ? "openai" : "anthropic",
+    model: modelId,
+    environmentId: await client.runtimeEnvironmentIdentity(),
+  });
 }
 
 async function resolveExecutionProfile(
@@ -505,8 +505,18 @@ async function resolveExecutionProfile(
   runtimeId: HydraRuntimeId,
   modelId: string,
 ): Promise<string> {
+  return (await resolveExecutionProfileDetails(client, runtimeId, modelId)).profileId;
+}
+
+async function resolveExecutionProfileDetails(
+  client: LocalCoreClient,
+  runtimeId: HydraRuntimeId,
+  modelId: string,
+): Promise<{ profileId: string; modelProvider: string; modelId: string }> {
   const commandId = randomUUID();
-  let profileId: string | undefined;
+  let resolved:
+    | { profileId: string; modelProvider: string; modelId: string }
+    | undefined;
   await client.sendRunnerCommand(
     JSON.stringify({
       version: "runner_command_v2",
@@ -526,13 +536,28 @@ async function resolveExecutionProfile(
       onLine(line) {
         const event = parseRunnerEventV2(JSON.parse(line) as unknown);
         if (event.type === "execution-profile.resolved" && event.commandId === commandId) {
-          profileId = event.payload.profileId;
+          const modelProvider = event.payload.resolvedProfile.modelProvider;
+          const resolvedModelId = event.payload.resolvedProfile.model;
+          assert.ok(modelProvider, "Resolved Hydra profile is missing its provider.");
+          assert.ok(resolvedModelId, "Resolved Hydra profile is missing its model.");
+          resolved = {
+            profileId: event.payload.profileId,
+            modelProvider,
+            modelId: resolvedModelId,
+          };
         }
       },
     },
   );
-  assert.ok(profileId, "Local Core did not register the Hydra execution profile.");
-  return profileId;
+  assert.ok(resolved, "Local Core did not register the Hydra execution profile.");
+  return resolved;
+}
+
+function requireBinding(
+  binding: LocalCoreRuntimeBindingResponse | undefined,
+): LocalCoreRuntimeBindingResponse {
+  assert.ok(binding, "Local Core did not persist the Hydra Runtime binding.");
+  return binding;
 }
 
 function smokeMetadata() {

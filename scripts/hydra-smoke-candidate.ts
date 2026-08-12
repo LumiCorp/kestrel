@@ -84,7 +84,8 @@ async function runCandidateRuntime(
     }
     return true;
   };
-  await record("descriptor", async () => {
+  try {
+    await record("descriptor", async () => {
     const response = await api.post("/api/runtimes/describe", {
       data: { runtimeId, modelId, projectId },
     });
@@ -95,7 +96,7 @@ async function runCandidateRuntime(
     assert.equal(body.resolution?.descriptor?.availability, "ready");
     assert.equal(body.resolution?.descriptor?.runtimeId, runtimeId);
   });
-  await record("fresh-admission", async () => {
+    await record("fresh-admission", async () => {
     const response = await api.post("/api/threads", {
       data: { id: threadId, projectId, runtimeId, modelId },
     });
@@ -104,8 +105,8 @@ async function runCandidateRuntime(
     assert.equal(thread.runtimeId, runtimeId);
     threadCreated = true;
   });
-  const nonce = `HYDRA_${randomUUID().replaceAll("-", "").toUpperCase()}`;
-  await record("first-turn", async () => {
+    const nonce = `HYDRA_${randomUUID().replaceAll("-", "").toUpperCase()}`;
+    await record("first-turn", async () => {
     assert.equal(threadCreated, true, "Fresh Runtime admission did not create a Thread.");
     const snapshot = await submitAndAwait(
       api,
@@ -116,7 +117,7 @@ async function runCandidateRuntime(
     );
     assert.equal(latestAssistantText(snapshot), "FIRST_OK");
   });
-  await record("ordinary-resume", async () => {
+    await record("ordinary-resume", async () => {
     assert.equal(threadCreated, true, "Fresh Runtime admission did not create a Thread.");
     const snapshot = await submitAndAwait(
       api,
@@ -127,7 +128,7 @@ async function runCandidateRuntime(
     );
     assert.equal(latestAssistantText(snapshot), `CONTINUITY_OK:${nonce}`);
   });
-  await record("immutable-runtime", async () => {
+    await record("immutable-runtime", async () => {
     assert.equal(threadCreated, true, "Fresh Runtime admission did not create a Thread.");
     const other = runtimeId === "codex" ? "claude" : "codex";
     const response = await api.post(`/api/threads/${threadId}/turns`, {
@@ -146,15 +147,23 @@ async function runCandidateRuntime(
     const body = await response.json() as { code?: string };
     assert.equal(body.code, "RUNTIME_BINDING_IMMUTABLE");
   });
-  await record("cleanup", async () => {
-    if (!threadCreated) return;
-    const archived = await api.patch(`/api/threads/${threadId}`, {
-      data: { archived: true },
+  } finally {
+    await record("cleanup", async () => {
+      if (!threadCreated) return;
+      let archiveFailure: Error | undefined;
+      const archived = await api.patch(`/api/threads/${threadId}`, {
+        data: { archived: true },
+      });
+      if (!archived.ok()) {
+        archiveFailure = new Error(await archived.text());
+      }
+      // Permanent deletion is attempted even if the archival preparation
+      // failed, so cleanup evidence cannot hide an orphaned canary Thread.
+      const deleted = await api.delete(`/api/threads/${threadId}`);
+      assert.equal(deleted.ok(), true, await deleted.text());
+      if (archiveFailure) throw archiveFailure;
     });
-    assert.equal(archived.ok(), true, await archived.text());
-    const deleted = await api.delete(`/api/threads/${threadId}`);
-    assert.equal(deleted.ok(), true, await deleted.text());
-  });
+  }
   return { runtimeId, modelId, scenarios };
 }
 
