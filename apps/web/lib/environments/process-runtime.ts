@@ -39,6 +39,14 @@ export async function processEnvironmentOperation(
             }),
         });
       }
+      if (operation.type === "workspace.provision") {
+        const { settleWorkspaceProvisionDependency } =
+          await import("./dependency");
+        const dependency =
+          await settleWorkspaceProvisionDependency(operationId);
+        if (dependency === "blocked") return "blocked" as const;
+        if (dependency === "terminal") return "processed" as const;
+      }
       const { getStableFlyEnvironmentImages } =
         await import("@/lib/releases/store");
       const stableImages = await getStableFlyEnvironmentImages();

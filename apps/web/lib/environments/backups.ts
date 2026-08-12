@@ -444,6 +444,7 @@ export async function retryFailedDailyWorkspaceBackup(input: {
         status: "queued",
         stage: "workspace.backup.queued",
         attempt: 0,
+        result: null,
         errorCode: null,
         errorMessage: null,
         completedAt: null,
@@ -469,7 +470,6 @@ export async function retryFailedDailyWorkspaceBackup(input: {
   const { enqueueEnvironmentOperation } = await import("@/lib/knowledge/queue");
   await enqueueEnvironmentOperation(backup.operation.id, {
     retryLimit: DAILY_BACKUP_RETRY_LIMIT,
-    retryTerminal: true,
   });
   return {
     backupId: backup.backup.id,

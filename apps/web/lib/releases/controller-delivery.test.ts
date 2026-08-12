@@ -7,9 +7,9 @@ import {
 } from "./controller-contract";
 import {
   CONTROL_WORKER_SECRET_ALLOWLIST,
-  hasSingleRunningMachine,
   selectControlWorkerSecrets,
 } from "../../scripts/release-control-worker";
+import { selectControlWorkerMachineAction } from "../../scripts/control-worker-machine";
 
 const root = new URL("../../../../", import.meta.url);
 
@@ -49,20 +49,121 @@ test("control worker secrets are explicitly allowlisted and fail closed", () => 
   );
 });
 
-test("control worker ownership permits stopped standby Machines only", () => {
-  assert.equal(
-    hasSingleRunningMachine([
-      { state: "started" },
-      { state: "stopped", role: "standby" },
-    ]),
-    true,
+const revision = "a".repeat(40);
+
+function machine(input: {
+  id: string;
+  state: string;
+  standbys?: string[] | undefined;
+  imageRevision?: string | undefined;
+}) {
+  return {
+    id: input.id,
+    state: input.state,
+    config: { standbys: input.standbys ?? [] },
+    image_ref: {
+      labels: {
+        "org.opencontainers.image.revision": input.imageRevision ?? revision,
+      },
+    },
+  };
+}
+
+test("control worker restoration starts a stopped primary and not its standby", () => {
+  assert.deepEqual(
+    selectControlWorkerMachineAction({
+      expectedRevision: revision,
+      inventory: [
+        machine({ id: "primary", state: "stopped" }),
+        machine({ id: "standby", state: "stopped", standbys: ["primary"] }),
+      ],
+    }),
+    { action: "start", machineId: "primary" },
   );
-  assert.equal(
-    hasSingleRunningMachine([{ state: "started" }, { State: "started" }]),
-    false,
+});
+
+test("control worker restoration keeps the only running primary", () => {
+  assert.deepEqual(
+    selectControlWorkerMachineAction({
+      expectedRevision: revision,
+      inventory: [
+        machine({ id: "primary", state: "started" }),
+        machine({ id: "standby", state: "stopped", standbys: ["primary"] }),
+      ],
+    }),
+    { action: "use", machineId: "primary" },
   );
-  assert.equal(hasSingleRunningMachine([{ state: "stopped" }]), false);
-  assert.equal(hasSingleRunningMachine({ state: "started" }), false);
+});
+
+test("control worker restoration keeps a promoted standby", () => {
+  assert.deepEqual(
+    selectControlWorkerMachineAction({
+      expectedRevision: revision,
+      inventory: [
+        machine({ id: "primary", state: "stopped" }),
+        machine({ id: "standby", state: "started", standbys: ["primary"] }),
+      ],
+    }),
+    { action: "use", machineId: "standby" },
+  );
+});
+
+test("control worker restoration fails closed on ambiguous or unrelated inventory", () => {
+  assert.throws(
+    () =>
+      selectControlWorkerMachineAction({
+        expectedRevision: revision,
+        inventory: [
+          machine({ id: "primary-a", state: "stopped" }),
+          machine({ id: "primary-b", state: "stopped" }),
+        ],
+      }),
+    /one unique primary Machine/u,
+  );
+  assert.throws(
+    () =>
+      selectControlWorkerMachineAction({
+        expectedRevision: revision,
+        inventory: [
+          machine({ id: "primary", state: "started" }),
+          machine({ id: "other", state: "stopped", standbys: ["missing"] }),
+        ],
+      }),
+    /unrelated Machines/u,
+  );
+});
+
+test("control worker restoration rejects two running Machines", () => {
+  assert.throws(
+    () =>
+      selectControlWorkerMachineAction({
+        expectedRevision: revision,
+        inventory: [
+          machine({ id: "primary", state: "started" }),
+          machine({ id: "standby", state: "started", standbys: ["primary"] }),
+        ],
+      }),
+    /at most one running Machine/u,
+  );
+});
+
+test("control worker restoration rejects revision drift", () => {
+  assert.throws(
+    () =>
+      selectControlWorkerMachineAction({
+        expectedRevision: revision,
+        inventory: [
+          machine({ id: "primary", state: "started" }),
+          machine({
+            id: "standby",
+            state: "stopped",
+            standbys: ["primary"],
+            imageRevision: "b".repeat(40),
+          }),
+        ],
+      }),
+    /revision mismatch/u,
+  );
 });
 
 test("release workflow waits for exact production identity before controller deployment and publication", async () => {
@@ -102,12 +203,43 @@ test("release workflow bounds controller readiness polling", async () => {
   assert.match(workflow, /for attempt in \$\(seq 1 45\); do/u);
   assert.match(
     workflow,
-    /grep -q release-controller-v1 \/tmp\/kestrel-control-worker-ready/u,
+    /verify-control-worker-readiness\.ts \$\{\{ github\.sha \}\}/u,
   );
   assert.match(workflow, /did not become ready within 90 seconds/u);
-  assert.match(workflow, /flyctl logs --app kestrel-one-control-worker --no-tail/u);
+  assert.match(workflow, /flyctl logs --app kestrel-one-control-worker --no-tail 2>&1 \| tail -n 200/u);
+  assert.doesNotMatch(workflow, /machine status[^\n]*--json/u);
   assert.match(
     workflow,
-    /if: steps\.verify-release-controller\.outcome == 'failure'/u,
+    /if: \$\{\{ failure\(\) && \(steps\.deploy-release-controller\.outcome == 'failure' \|\| steps\.restore-release-controller\.outcome == 'failure' \|\| steps\.verify-release-controller\.outcome == 'failure'\) \}\}/u,
   );
+});
+
+test("release workflow restores one controller before readiness and image publication", async () => {
+  const workflow = await readFile(
+    new URL(".github/workflows/fly-image-release.yml", root),
+    "utf8",
+  );
+  const deploy = workflow.indexOf("id: deploy-release-controller");
+  const restore = workflow.indexOf("id: restore-release-controller");
+  const verify = workflow.indexOf("id: verify-release-controller");
+  const publish = workflow.indexOf("Build, smoke, and publish candidate images");
+  assert.ok(deploy >= 0);
+  assert.ok(restore > deploy);
+  assert.ok(verify > restore);
+  assert.ok(publish > verify);
+});
+
+test("controller startup reconciles Environment operations before reporting readiness", async () => {
+  const controller = await readFile(
+    new URL("apps/web/scripts/control-worker.ts", root),
+    "utf8",
+  );
+  const reconcile = controller.indexOf(
+    "await startEnvironmentLifecycleWorker()",
+  );
+  const heartbeat = controller.indexOf("await heartbeat()", reconcile);
+  const ready = controller.indexOf("await markReady()", heartbeat);
+  assert.ok(reconcile >= 0);
+  assert.ok(heartbeat > reconcile);
+  assert.ok(ready > heartbeat);
 });

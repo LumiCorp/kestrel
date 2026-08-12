@@ -33,6 +33,8 @@ const WORKSPACE_OPERATION_TYPES = new Set([
 const STAGE_DETAILS: Record<string, string> = {
   requested: "Waiting for Kestrel One to start this operation.",
   "environment.activation.requested": "Preparing the Environment…",
+  "environment.dependency.waiting":
+    "Waiting for the parent Environment to become ready…",
   "environment.runtime.connecting": "Creating the private Environment runtime…",
   "environment.workspace.mounting": "Attaching persistent Workspace storage…",
   "environment.health.checking": "Checking runtime health…",
@@ -96,6 +98,7 @@ export function describeEnvironmentOperation(
       detail:
         input.errorMessage?.trim() ||
         (input.stage === "environment.activation.reconciling" ||
+        input.stage === "environment.dependency.waiting" ||
         input.stage === "workspace.backup.waiting_for_execution"
           ? STAGE_DETAILS[input.stage]
           : undefined) ||
