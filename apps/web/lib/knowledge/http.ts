@@ -12,6 +12,13 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
   let details: unknown;
   const dbError = classifyDbError(error);
 
+  if (code === "TICKET_EXPIRED") {
+    return NextResponse.json(
+      { error: { code: "EXECUTION_AUTH_EXPIRED" } },
+      { status: 401, headers: { "cache-control": "no-store" } },
+    );
+  }
+
   if (error instanceof ZodError) {
     status = 400;
     details = error.flatten();

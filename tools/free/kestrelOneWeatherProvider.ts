@@ -7,6 +7,7 @@ import {
   createVisualCrossingWeatherAdapterFromTransport,
   type VisualCrossingWeatherAdapter,
 } from "./visualCrossingWeather.js";
+import { throwIfExecutionAuthorizationRejected } from "../kestrelOne/authorizationError.js";
 
 const CAPABILITY_RUNTIME_NAMES = {
   getWeather: "free.weather.current",
@@ -51,6 +52,10 @@ export function createKestrelOneVisualCrossingWeatherAdapter(input: {
           timezone: request.timezone,
         }),
         ...(request.signal !== undefined ? { signal: request.signal } : {}),
+      });
+      await throwIfExecutionAuthorizationRejected({
+        response,
+        toolName: request.toolName,
       });
       ensureFetchOk(request.toolName, "visual-crossing", response, {
         latitude: request.latitude,

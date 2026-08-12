@@ -53,6 +53,23 @@ test("Workspace service revalidates the signed tenant boundary", () => {
   }));
 });
 
+test("Workspace service exposes the typed execution expiry", () => {
+  assert.throws(
+    () => authorizeWorkspaceRequest({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      workspaceId: "workspace-1",
+      organizationId: "org-1",
+      environmentId: "env-1",
+      machineId: "machine-1",
+      now: 1301,
+    }),
+    (error: unknown) =>
+      error instanceof WorkspaceRequestError &&
+      error.code === "EXECUTION_AUTH_EXPIRED",
+  );
+});
+
 test("Workspace paths cannot escape the mounted volume", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-workspace-security-"));
   try {

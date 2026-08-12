@@ -14,7 +14,12 @@ import type {
 } from "@tavily/core";
 
 import { isLowValueInternetResultUrl } from "../../src/shared/internetResultHygiene.js";
+import {
+  createRuntimeFailure,
+  RuntimeFailure,
+} from "../../src/runtime/RuntimeFailure.js";
 import { createToolProviderError } from "../helpers.js";
+import { throwIfExecutionAuthorizationRejected } from "../kestrelOne/authorizationError.js";
 import type {
   InternetAdvancedSearchInput,
   InternetCrawlInput,
@@ -523,6 +528,24 @@ async function invokeSdkRequest<TResponse>(
       response: await request(),
     };
   } catch (error) {
+    if (
+      error instanceof RuntimeFailure &&
+      error.code === "EXECUTION_AUTH_EXPIRED"
+    ) {
+      throw error;
+    }
+    if (isExecutionAuthorizationExpired(error)) {
+      throw createRuntimeFailure(
+        "EXECUTION_AUTH_EXPIRED",
+        "Execution authorization expired before provider dispatch.",
+        {
+          subsystem: "tooling",
+          toolName: requestOptions.toolName,
+          classification: "authorization",
+          recoverable: true,
+        },
+      );
+    }
     const recoverable = classifyRecoverableSdkFailure(error);
     if (recoverable !== undefined) {
       return {
@@ -548,6 +571,15 @@ async function invokeSdkRequest<TResponse>(
       },
     );
   }
+}
+
+function isExecutionAuthorizationExpired(error: unknown): boolean {
+  if (extractStatusCode(error) !== 401) return false;
+  const response = readResponseRecord(error);
+  const data = asPlainObject(response?.data);
+  const nested = asPlainObject(data?.error);
+  if (nested?.code === "EXECUTION_AUTH_EXPIRED") return true;
+  return (extractSdkErrorMessage(error) ?? "").includes("EXECUTION_AUTH_EXPIRED");
 }
 
 function readResponseMetadata(response: unknown): {
@@ -639,6 +671,10 @@ async function fetchUsage(
     },
   });
   if (response.ok === false) {
+    await throwIfExecutionAuthorizationRejected({
+      response,
+      toolName: "internet.usage",
+    });
     throw createToolProviderError("internet.usage", "tavily", `Provider request failed with status ${response.status}.`, {
       sdkMethod: "usage",
       status: response.status,

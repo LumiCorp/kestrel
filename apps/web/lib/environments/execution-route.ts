@@ -8,6 +8,7 @@ import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
 import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
+import { resolveKestrelAppUrl } from "@/lib/app-url";
 import { resolveHostedMcpRunPolicy } from "@/lib/mcp/grant-service";
 import {
   getHostedEnvironmentRuntimeMode,
@@ -27,6 +28,10 @@ import {
   environmentLifecycleLockKey,
   workspaceLifecycleLockKey,
 } from "./lifecycle-lock";
+import {
+  createExecutionAuthorizationRenewalToken,
+  EXECUTION_AUTHORIZATION_RENEWAL_VERSION,
+} from "./authorization-renewal";
 
 export type EnvironmentActivationProgress = {
   stage:
@@ -82,6 +87,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
   agentId?: string | undefined;
   recordExecution?: {
     projectContextRevisionId?: string | undefined;
+    projectContextGrantId?: string | undefined;
     durableTurnId?: string | undefined;
   };
   owningLifecycleOperationIds?: readonly string[] | undefined;
@@ -220,6 +226,9 @@ export async function resolveEnvironmentExecutionRoute(input: {
     projectId: authorization.projectId,
     effectiveCapabilities: authorization.effectiveCapabilities,
     reasoningPolicy: authorization.reasoningPolicy,
+    ...(authorization.authorizationRenewal
+      ? { authorizationRenewal: authorization.authorizationRenewal }
+      : {}),
     ...(mcpPolicy ? { mcpPolicy } : {}),
   };
 }
@@ -231,6 +240,7 @@ async function resolveDesktopEnvironmentExecutionRoute(input: {
   agentId?: string | undefined;
   recordExecution?: {
     projectContextRevisionId?: string | undefined;
+    projectContextGrantId?: string | undefined;
     durableTurnId?: string | undefined;
   };
   onProgress?: (progress: EnvironmentActivationProgress) => void;
@@ -311,6 +321,7 @@ async function resolveDesktopEnvironmentExecutionRoute(input: {
       effectiveCapabilities,
       reasoningPolicy,
       projectContextRevisionId: input.recordExecution.projectContextRevisionId,
+      projectContextGrantId: input.recordExecution.projectContextGrantId,
       durableTurnId: input.recordExecution.durableTurnId,
     });
     mcpPolicy = await resolveHostedMcpRunPolicy({
@@ -366,6 +377,7 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
   recordExecution?:
     | {
         projectContextRevisionId?: string | undefined;
+        projectContextGrantId?: string | undefined;
         durableTurnId?: string | undefined;
       }
     | undefined;
@@ -447,6 +459,9 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
       return null;
     }
 
+    const renewal = input.recordExecution
+      ? createExecutionAuthorizationRenewalToken()
+      : undefined;
     const projectId = input.recordExecution
       ? await recordEnvironmentExecutionInTransaction(transaction, {
           id: input.runId,
@@ -461,6 +476,8 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
           reasoningPolicy: input.reasoningPolicy,
           projectContextRevisionId:
             input.recordExecution.projectContextRevisionId,
+          projectContextGrantId: input.recordExecution.projectContextGrantId,
+          authorizationRenewalTokenHash: renewal?.tokenHash,
           durableTurnId: input.recordExecution.durableTurnId,
         })
       : undefined;
@@ -498,6 +515,18 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
       projectId,
       effectiveCapabilities: input.effectiveCapabilities,
       reasoningPolicy: input.reasoningPolicy,
+      ...(renewal
+        ? {
+            authorizationRenewal: {
+              version: EXECUTION_AUTHORIZATION_RENEWAL_VERSION,
+              endpoint: new URL(
+                `/api/runtime/executions/${encodeURIComponent(input.runId)}/authorization/renew`,
+                resolveKestrelAppUrl(process.env),
+              ).toString(),
+              token: renewal.token,
+            },
+          }
+        : {}),
     };
   });
 }
@@ -510,6 +539,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
   agentId?: string | undefined;
   recordExecution?: {
     projectContextRevisionId?: string | undefined;
+    projectContextGrantId?: string | undefined;
     durableTurnId?: string | undefined;
   };
   onProgress?: (progress: EnvironmentActivationProgress) => void;
@@ -1038,6 +1068,8 @@ type EnvironmentExecutionRecordInput = {
   routeCapabilities: string[];
   effectiveCapabilities: string[];
   projectContextRevisionId?: string | undefined;
+  projectContextGrantId?: string | undefined;
+  authorizationRenewalTokenHash?: string | undefined;
   durableTurnId?: string | undefined;
   reasoningPolicy: {
     request: {
@@ -1095,6 +1127,9 @@ async function recordEnvironmentExecutionInTransaction(
     threadId: input.threadId,
     projectId: thread.projectId,
     projectContextRevisionId: input.projectContextRevisionId ?? null,
+    projectContextGrantId: input.projectContextGrantId ?? null,
+    authorizationRenewalTokenHash:
+      input.authorizationRenewalTokenHash ?? null,
     actorId: input.actorId,
     runtimeImage: input.runtimeImage,
     effectiveCapabilities: [

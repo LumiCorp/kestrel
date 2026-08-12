@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { RuntimeFailure, createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolModule } from "../contracts.js";
 import { parseObjectInput, readString } from "../helpers.js";
+import { throwIfExecutionAuthorizationRejected } from "./authorizationError.js";
 
 const execFileAsync = promisify(execFile);
 const TOOL_NAME = "kestrel_one.github_push_agent_branch";
@@ -89,6 +90,11 @@ export const kestrelOneGitHubPushAgentBranchTool: SharedToolModule = {
         `${TOOL_NAME} credential response`,
         await credentialResponse.json().catch(() => ({}))
       );
+      await throwIfExecutionAuthorizationRejected({
+        response: credentialResponse,
+        body: credential,
+        toolName: TOOL_NAME,
+      });
       const credentialToken = readString(credential, "token");
       if (!(credentialResponse.ok && credentialToken)) {
         throw new RuntimeFailure(

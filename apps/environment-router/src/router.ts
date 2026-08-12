@@ -148,7 +148,9 @@ function verifyBearer(input: {
       status: 401,
       code:
         error instanceof EnvironmentTicketError
-          ? error.code
+          ? error.code === "TICKET_EXPIRED"
+            ? "EXECUTION_AUTH_EXPIRED"
+            : error.code
           : "TICKET_INVALID",
     };
   }

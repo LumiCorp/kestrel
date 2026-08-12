@@ -18,6 +18,7 @@ import {
   signPreviewEdgeRouteTicket,
   signPreviewRelayTicket,
   verifyEnvironmentExecutionTicket,
+  verifyEnvironmentExecutionTicketForRenewal,
   verifyEnvironmentToolCredential,
   verifyPreviewEdgeRouteTicket,
   verifyPreviewRelayTicket,
@@ -89,6 +90,24 @@ test("execution tickets bind the complete routing identity", () => {
   assert.deepEqual(
     verifyEnvironmentExecutionTicket({ token, publicKey, now: 1100 }),
     ticket,
+  );
+});
+
+test("renewal verification accepts an expired signed ticket but not a malformed one", () => {
+  const token = signEnvironmentExecutionTicket({ ticket, privateKey });
+  assert.throws(
+    () => verifyEnvironmentExecutionTicket({ token, publicKey, now: 1300 }),
+    /expired/u,
+  );
+  assert.deepEqual(
+    verifyEnvironmentExecutionTicketForRenewal({ token, publicKey }),
+    ticket,
+  );
+  assert.throws(() =>
+    verifyEnvironmentExecutionTicketForRenewal({
+      token: `${token}x`,
+      publicKey,
+    }),
   );
 });
 

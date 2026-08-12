@@ -32,8 +32,11 @@ export async function authorizeMcpRequest(input: {
       now: Math.floor(now.getTime() / 1000),
     });
   } catch (error) {
-    const code =
-      error instanceof EnvironmentTicketError ? error.code : "TICKET_INVALID";
+    const code = error instanceof EnvironmentTicketError
+      ? error.code === "TICKET_EXPIRED"
+        ? "EXECUTION_AUTH_EXPIRED"
+        : error.code
+      : "TICKET_INVALID";
     return { ok: false, status: 401, code };
   }
   const grant = await input.grantStore.activateGrant({

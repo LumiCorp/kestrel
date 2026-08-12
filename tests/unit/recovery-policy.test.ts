@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  assertRecoveryReviewInteractionV1,
+  buildRecoveryReviewInteractionV1,
   createRecoveryPolicyV1,
   parseRecoveryDecisionV1,
   parseRecoveryModelCredentialReferenceV1,
@@ -299,4 +301,31 @@ test("RecoveryDecisionV1 and RecoveryReviewBindingV1 parse immutable identities"
   });
   assert.equal(binding.expiresAt, undefined);
   assert.equal("toolAuthority" in binding, false);
+
+  const interaction = buildRecoveryReviewInteractionV1({
+    binding,
+    reason: "recovery_review",
+    prompt: "Choose how this run should continue.",
+  });
+  assert.equal(interaction.requestId, binding.bindingId);
+  const interactionSchema = interaction.inputSchema;
+  assert.ok(interactionSchema);
+  assert.deepEqual(
+    (interactionSchema.properties as Record<string, { enum: string[] }>).recoveryOptionId?.enum,
+    binding.allowedOptionIds,
+  );
+  assert.deepEqual(interaction.metadata?.recoveryReviewBinding, binding);
+  assert.doesNotThrow(() => assertRecoveryReviewInteractionV1({
+    interaction,
+    binding,
+    reason: "recovery_review",
+  }));
+  assert.throws(() => assertRecoveryReviewInteractionV1({
+    interaction: {
+      ...interaction,
+      requestId: "free-text-request",
+    },
+    binding,
+    reason: "recovery_review",
+  }), /does not match/u);
 });

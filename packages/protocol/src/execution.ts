@@ -448,6 +448,13 @@ export interface RunnerMcpContext {
 
 export interface RunnerMcpAuthorization {
   executionTicket: string;
+  renewal?: RunnerExecutionAuthorizationRenewalV1 | undefined;
+}
+
+export interface RunnerExecutionAuthorizationRenewalV1 {
+  version: "execution-authorization-renewal-v1";
+  endpoint: string;
+  token: string;
 }
 
 export type RunnerAutoCompactionState =

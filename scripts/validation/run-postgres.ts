@@ -10,6 +10,7 @@ const files = execFileSync(
   .concat(
     "apps/web/lib/ai/managed-runpod-lifecycle.postgres.test.ts",
     "apps/web/lib/costs/store.postgres.test.ts",
+    "apps/web/lib/environments/authorization-renewal.postgres.test.ts",
     "apps/web/lib/environments/desktop.postgres.test.ts",
     "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
     "apps/web/lib/environments/release-target-execution-guard.postgres.test.ts",
@@ -68,6 +69,7 @@ const groups = [
       "lib/ai/managed-runpod-lifecycle.postgres.test.ts",
       "lib/costs/store.postgres.test.ts",
       "lib/email/config.postgres.test.ts",
+      "lib/environments/authorization-renewal.postgres.test.ts",
       "lib/environments/backup-execution-guard.postgres.test.ts",
       "lib/environments/cutover-readiness.postgres.test.ts",
       "lib/environments/desktop.postgres.test.ts",

@@ -45,6 +45,14 @@ async function callTool(
   });
 }
 
+function unsignedExecutionTicket(expiresAt: number, nonce: string) {
+  return [
+    "header",
+    Buffer.from(JSON.stringify({ expiresAt, nonce }), "utf8").toString("base64url"),
+    "signature",
+  ].join(".");
+}
+
 async function validateToolInput(
   registry: UnifiedToolRegistry,
   toolName: string,
@@ -682,6 +690,94 @@ test("UnifiedToolRegistry routes a direct Environment App through scoped executi
     ["execution-ticket:run-environment-app"],
   );
   registry.clearRuntimeTurnAuthorization("run-environment-app");
+  assert.deepEqual(sensitiveValueRegistry.registeredValueDigests(), []);
+});
+
+test("UnifiedToolRegistry renews and retries exactly once after a pre-dispatch expiry", async () => {
+  const now = Date.now();
+  const initialTicket = unsignedExecutionTicket(
+    Math.floor(now / 1000) + 300,
+    "initial",
+  );
+  const renewedTicket = unsignedExecutionTicket(
+    Math.floor(now / 1000) + 600,
+    "renewed",
+  );
+  let renewalRequests = 0;
+  let capabilityRequests = 0;
+  let providerDispatches = 0;
+  const sensitiveValueRegistry = new SensitiveValueRegistry();
+  const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url) === "https://kestrel.example/renew") {
+      renewalRequests += 1;
+      return Response.json({
+        version: "execution-authorization-renewal-v1",
+        executionTicket: renewedTicket,
+        expiresAt: new Date(now + 600_000).toISOString(),
+        renewAfter: new Date(now + 540_000).toISOString(),
+      });
+    }
+    capabilityRequests += 1;
+    const authorization = String(
+      (init?.headers as Record<string, string> | undefined)?.Authorization,
+    );
+    if (authorization === `Bearer ${initialTicket}`) {
+      return Response.json(
+        { error: { code: "EXECUTION_AUTH_EXPIRED" } },
+        { status: 401 },
+      );
+    }
+    assert.equal(authorization, `Bearer ${renewedTicket}`);
+    providerDispatches += 1;
+    return Response.json({ key: { usage: 1 } });
+  }) as unknown as typeof fetch;
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["internet.usage"],
+    fetchImpl,
+    context: {
+      kestrelOne: {
+        appUrl: "https://kestrel.example",
+        appApprovalModes: { "internet.usage": "auto" },
+      },
+      fetchImpl,
+    },
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+    sensitiveValueRegistry,
+  });
+  await registry.refreshForRuntimeTurn({
+    runId: "run-expiry-retry",
+    sessionId: "session-expiry-retry",
+    mcpAuthorization: {
+      executionTicket: initialTicket,
+      renewal: {
+        version: "execution-authorization-renewal-v1",
+        endpoint: "https://kestrel.example/renew",
+        token: "opaque-renewal-token",
+      },
+    },
+  });
+
+  const result = await callTool(registry, "internet.usage", {}, {
+    runContext: createToolRunContext({
+      runId: "run-expiry-retry",
+      sessionId: "session-expiry-retry",
+    }),
+  });
+
+  assert.equal(result.outcome.kind, "success", JSON.stringify(result));
+  assert.equal(renewalRequests, 1);
+  assert.equal(capabilityRequests, 2);
+  assert.equal(providerDispatches, 1);
+  assert.deepEqual(
+    sensitiveValueRegistry.registeredValueDigests().map((entry) => entry.referenceId).sort(),
+    ["execution-renewal-token:run-expiry-retry", "execution-ticket:run-expiry-retry"],
+  );
+  registry.clearRuntimeTurnAuthorization("run-expiry-retry");
   assert.deepEqual(sensitiveValueRegistry.registeredValueDigests(), []);
 });
 

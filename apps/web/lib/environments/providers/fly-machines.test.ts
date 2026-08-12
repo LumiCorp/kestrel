@@ -934,7 +934,7 @@ test("Environment gateway rejects invalid desired ticket keys before Fly access"
       fetchImpl: (async () => {
         requests += 1;
         return Response.json({});
-      }) as typeof fetch,
+      }) as unknown as typeof fetch,
     });
 
     await assert.rejects(

@@ -138,6 +138,24 @@ export function verifyEnvironmentExecutionTicket(input: {
   publicKey: string;
   now?: number;
 }): EnvironmentExecutionTicket {
+  const ticket = decodeEnvironmentExecutionTicket(input);
+  validateTicket(ticket, input.now ?? Math.floor(Date.now() / 1000));
+  return ticket;
+}
+
+export function verifyEnvironmentExecutionTicketForRenewal(input: {
+  token: string;
+  publicKey: string;
+}): EnvironmentExecutionTicket {
+  const ticket = decodeEnvironmentExecutionTicket(input);
+  validateTicketLifetime(ticket);
+  return ticket;
+}
+
+function decodeEnvironmentExecutionTicket(input: {
+  token: string;
+  publicKey: string;
+}): EnvironmentExecutionTicket {
   const publicKey = requireKey(input.publicKey, "public");
   const parts = input.token.split(".");
   if (parts.length !== 3) throw invalidTicket();
@@ -163,7 +181,6 @@ export function verifyEnvironmentExecutionTicket(input: {
     throw invalidTicket();
   }
   const ticket = parseTicket(decodeJson(payload));
-  validateTicket(ticket, input.now ?? Math.floor(Date.now() / 1000));
   return ticket;
 }
 
@@ -222,17 +239,8 @@ export function verifyEnvironmentToolCredential(input: {
 }
 
 function validateTicket(ticket: EnvironmentExecutionTicket, now: number) {
-  if (ticket.audience !== ENVIRONMENT_ROUTER_AUDIENCE) {
-    throw new EnvironmentTicketError(
-      "TICKET_AUDIENCE_INVALID",
-      "Execution ticket audience is invalid.",
-    );
-  }
-  if (
-    ticket.expiresAt <= ticket.issuedAt ||
-    ticket.expiresAt - ticket.issuedAt > ENVIRONMENT_TICKET_MAX_TTL_SECONDS ||
-    ticket.issuedAt > now + 30
-  ) {
+  validateTicketLifetime(ticket);
+  if (ticket.issuedAt > now + 30) {
     throw new EnvironmentTicketError(
       "TICKET_TTL_INVALID",
       "Execution ticket lifetime is invalid.",
@@ -242,6 +250,24 @@ function validateTicket(ticket: EnvironmentExecutionTicket, now: number) {
     throw new EnvironmentTicketError(
       "TICKET_EXPIRED",
       "Execution ticket has expired.",
+    );
+  }
+}
+
+function validateTicketLifetime(ticket: EnvironmentExecutionTicket) {
+  if (ticket.audience !== ENVIRONMENT_ROUTER_AUDIENCE) {
+    throw new EnvironmentTicketError(
+      "TICKET_AUDIENCE_INVALID",
+      "Execution ticket audience is invalid.",
+    );
+  }
+  if (
+    ticket.expiresAt <= ticket.issuedAt ||
+    ticket.expiresAt - ticket.issuedAt > ENVIRONMENT_TICKET_MAX_TTL_SECONDS
+  ) {
+    throw new EnvironmentTicketError(
+      "TICKET_TTL_INVALID",
+      "Execution ticket lifetime is invalid.",
     );
   }
 }

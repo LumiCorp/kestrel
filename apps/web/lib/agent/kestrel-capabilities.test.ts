@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
+  EnvironmentTicketError,
   signEnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
 import {
@@ -160,7 +161,7 @@ test("parseRunnerKnowledgeCapabilityRequest accepts a tenant-bound Environment t
   );
 });
 
-test("parseRunnerKnowledgeCapabilityRequest rejects missing or invalid token", () => {
+test("parseRunnerKnowledgeCapabilityRequest preserves typed ticket failures", () => {
   assert.throws(
     () =>
       parseRunnerKnowledgeCapabilityRequest({
@@ -176,7 +177,8 @@ test("parseRunnerKnowledgeCapabilityRequest rejects missing or invalid token", (
           }
         ),
       }),
-    /Unauthorized/
+    (error: unknown) =>
+      error instanceof EnvironmentTicketError && error.code === "TICKET_INVALID",
   );
 
   assert.throws(
@@ -194,7 +196,8 @@ test("parseRunnerKnowledgeCapabilityRequest rejects missing or invalid token", (
           }
         ),
       }),
-    /Unauthorized/
+    (error: unknown) =>
+      error instanceof EnvironmentTicketError && error.code === "TICKET_INVALID",
   );
 });
 

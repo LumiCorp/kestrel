@@ -466,7 +466,8 @@ function PureMultimodalInput({
       ? composerPolicy.interaction
       : null;
   const composerBlockedByInteraction =
-    composerPolicy.mode === "blocked_interaction";
+    composerPolicy.mode === "blocked_interaction" ||
+    composerPolicy.mode === "select_recovery_option";
   const composerBlockedBySetup = Boolean(
     newTurnDisabledReason && !composerRuntimeQuestion
   );
@@ -478,7 +479,8 @@ function PureMultimodalInput({
   const shouldQueueSubmission = composerPolicy.mode === "queue_turn";
   const pendingInteraction =
     composerPolicy.mode === "answer_interaction" ||
-    composerPolicy.mode === "blocked_interaction"
+    composerPolicy.mode === "blocked_interaction" ||
+    composerPolicy.mode === "select_recovery_option"
       ? composerPolicy.interaction
       : null;
 

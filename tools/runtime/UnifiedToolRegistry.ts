@@ -38,7 +38,7 @@ import {
   type PinnedToolExecutionV1,
 } from "../../src/io/ToolInvocationSupport.js";
 import {
-  parseExecutionTicketAuthorization,
+  parseHostedExecutionAuthorization,
   parseHostedMcpContext,
   parseHostedMcpRuntimeConnection,
 } from "../../src/mcp/hosted-contracts.js";
@@ -51,6 +51,7 @@ import {
   createRuntimeFailure,
   RuntimeFailure,
 } from "../../src/runtime/RuntimeFailure.js";
+import { ExecutionAuthorizationProvider } from "../../src/runtime/ExecutionAuthorizationProvider.js";
 import { defaultToolCatalog } from "../catalog.js";
 import type {
   RuntimeToolRunContext,
@@ -113,6 +114,7 @@ type HostedMcpScope = {
   snapshot: McpStatusSnapshot;
   executionTicket: string;
   lastUsedAt: number;
+  runId: string;
 };
 
 type PinnedExecutionSource = {
@@ -149,6 +151,14 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   // internal run ID for tool calls. Do not assume those IDs are equal or
   // replace the session index with a single run-ID lookup.
   private readonly executionTicketsByRun = new Map<string, string>();
+  private readonly authorizationProvidersByRun = new Map<
+    string,
+    ExecutionAuthorizationProvider
+  >();
+  private readonly authorizationProvidersBySession = new Map<
+    string,
+    Map<string, ExecutionAuthorizationProvider>
+  >();
   private readonly releaseExecutionTicketRegistrationByRun = new Map<
     string,
     () => void
@@ -186,11 +196,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   };
   private initialized = false;
   private readonly sensitiveValueRegistry: SensitiveValueRegistry | undefined;
+  private readonly fetchImpl: typeof fetch | undefined;
 
   constructor(options: UnifiedToolRegistryOptions) {
     this.defaultAllowlist = new Set(options.allowlist);
     this.builtInContext = withDefaultFileSystemPolicy(options.context);
     this.sensitiveValueRegistry = options.sensitiveValueRegistry;
+    this.fetchImpl = options.fetchImpl;
 
     const builtInNames = defaultToolCatalog.list().map((tool) => tool.name);
     this.builtInDescriptors = new Map(
@@ -246,20 +258,48 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       await this.refresh();
     }
     if (input.mcpAuthorization !== undefined && input.runId !== undefined) {
-      const executionTicket = parseExecutionTicketAuthorization(
-        input.mcpAuthorization,
-      );
-      this.releaseExecutionTicketRegistrationByRun.get(input.runId)?.();
-      this.releaseExecutionTicketRegistrationByRun.set(
-        input.runId,
-        this.sensitiveValueRegistry?.register({
-          reference: {
-            referenceId: `execution-ticket:${input.runId}`,
-            kind: "credential",
-            scope: "tool",
+      const authorization = parseHostedExecutionAuthorization(input.mcpAuthorization);
+      const executionTicket = authorization.executionTicket;
+      this.authorizationProvidersByRun.get(input.runId)?.close();
+      this.authorizationProvidersByRun.delete(input.runId);
+      for (const [sessionId, providers] of this.authorizationProvidersBySession) {
+        providers.delete(input.runId);
+        if (providers.size === 0) this.authorizationProvidersBySession.delete(sessionId);
+      }
+      if (authorization.renewal !== undefined) {
+        const provider = new ExecutionAuthorizationProvider({
+          authorization,
+          fetchImpl: this.fetchImpl,
+          onRenew: async (ticket) => {
+            this.registerSensitiveExecutionAuthorization(
+              input.runId!,
+              ticket,
+              authorization.renewal!.token,
+            );
+            this.executionTicketsByRun.set(input.runId!, ticket);
+            if (input.sessionId !== undefined) {
+              this.executionTicketsBySession.get(input.sessionId)?.set(input.runId!, ticket);
+            }
+            if (input.mcpContext !== undefined) {
+              await this.replaceHostedMcpScope(
+                parseHostedMcpContext(input.mcpContext),
+                ticket,
+                input.runId!,
+              );
+            }
           },
-          value: executionTicket,
-        }) ?? (() => {}),
+        });
+        this.authorizationProvidersByRun.set(input.runId, provider);
+        if (input.sessionId !== undefined) {
+          const providers = this.authorizationProvidersBySession.get(input.sessionId) ?? new Map();
+          providers.set(input.runId, provider);
+          this.authorizationProvidersBySession.set(input.sessionId, providers);
+        }
+      }
+      this.registerSensitiveExecutionAuthorization(
+        input.runId,
+        executionTicket,
+        authorization.renewal?.token,
       );
       this.executionTicketsByRun.set(input.runId, executionTicket);
       if (input.sessionId !== undefined) {
@@ -305,6 +345,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     const manager = new McpClientManager({
       servers: [],
       hostedGateway: connection,
+      fetchImpl: this.fetchImpl,
     });
     const snapshot = compileMcpStatusSnapshotV1(await manager.refresh());
     this.assertHostedToolNamesSafe(snapshot);
@@ -313,6 +354,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       snapshot,
       executionTicket: connection.executionTicket,
       lastUsedAt: Date.now(),
+      runId: input.runId ?? context.threadId,
     });
     if (existing !== undefined) {
       this.retiredHostedMcpManagers.add(existing.manager);
@@ -329,6 +371,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     // Clear both indexes together. Leaving the session entry behind could
     // authorize a later internal engine run with a completed turn's ticket.
     this.executionTicketsByRun.delete(runId);
+    this.authorizationProvidersByRun.get(runId)?.close();
+    this.authorizationProvidersByRun.delete(runId);
     this.releaseExecutionTicketRegistrationByRun.get(runId)?.();
     this.releaseExecutionTicketRegistrationByRun.delete(runId);
     for (const key of this.workspaceSkillReadProgress.keys()) {
@@ -341,9 +385,14 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         : [sessionId];
     for (const id of sessionIds) {
       const tickets = this.executionTicketsBySession.get(id);
+      const providers = this.authorizationProvidersBySession.get(id);
       tickets?.delete(runId);
+      providers?.delete(runId);
       if (tickets?.size === 0) {
         this.executionTicketsBySession.delete(id);
+      }
+      if (providers?.size === 0) {
+        this.authorizationProvidersBySession.delete(id);
       }
     }
   }
@@ -404,6 +453,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   async createToolSurfaceSnapshot(
     options: ToolGatewayCallOptions = {},
   ): Promise<ToolSurfaceSnapshotV1> {
+    await this.ensureExecutionAuthorization(options.runContext);
     if (this.initialized === false) {
       await this.refreshRuntime();
     }
@@ -477,6 +527,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     input: Parameters<ToolGateway["prepareToolCall"]>[0],
     options: ToolGatewayCallOptions = {},
   ): Promise<PreparedToolCallV1> {
+    const authorizationProvider = await this.ensureExecutionAuthorization(
+      options.runContext,
+    );
     const snapshotSource = input.origin.kind === "model"
       ? this.toolSurfaceExecutions
           .get(input.origin.snapshotId)
@@ -494,6 +547,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           toolName: input.activation.descriptor.toolId,
           registryGeneration: input.activation.registryGeneration,
         },
+      );
+    }
+    if (authorizationProvider !== undefined && options.runContext !== undefined) {
+      source = this.createPinnedExecutionSource(
+        source.pinned.descriptor,
+        input.activation,
+        options.runContext,
       );
     }
     let retainedSnapshotReference = false;
@@ -605,7 +665,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       );
     }
     try {
-      const result = await executePinnedToolCallV1({
+      let result = await executePinnedToolCallV1({
         prepared,
         pinned: {
           ...source.pinned,
@@ -613,6 +673,35 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         },
         signal: options.signal,
       });
+      if (
+        result.outcome.kind === "failure" &&
+        result.outcome.normalizedFailureCode === "EXECUTION_AUTH_EXPIRED" &&
+        options.runContext !== undefined
+      ) {
+        const provider = this.resolveExecutionAuthorizationProvider(
+          options.runContext,
+        );
+        if (provider !== undefined) {
+          await provider.getTicket({ forceRenew: true });
+          const retrySource = this.createPinnedExecutionSource(
+            source.pinned.descriptor,
+            prepared.activation,
+            options.runContext,
+          );
+          try {
+            result = await executePinnedToolCallV1({
+              prepared,
+              pinned: {
+                ...retrySource.pinned,
+                handler: retrySource.createHandler(options),
+              },
+              signal: options.signal,
+            });
+          } finally {
+            await retrySource.release?.();
+          }
+        }
+      }
       return await annotateWorkspaceSkillRead({
         toolName: result.toolName,
         input: prepared.effectiveInput,
@@ -847,6 +936,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       release();
     }
     this.releaseExecutionTicketRegistrationByRun.clear();
+    for (const provider of this.authorizationProvidersByRun.values()) provider.close();
+    this.authorizationProvidersByRun.clear();
+    this.authorizationProvidersBySession.clear();
     this.toolSurfaceSnapshots.clear();
     this.toolSurfaceExecutions.clear();
     this.toolSurfaceRunIds.clear();
@@ -1149,6 +1241,90 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     }));
     for (const [grantId] of stale) {
       this.hostedMcpScopes.delete(grantId);
+    }
+  }
+
+  private async ensureExecutionAuthorization(
+    runContext: ToolRunContext | undefined,
+  ): Promise<ExecutionAuthorizationProvider | undefined> {
+    if (runContext === undefined) return;
+    const provider = this.resolveExecutionAuthorizationProvider(runContext);
+    if (!provider) return;
+    await provider.getTicket();
+    return provider;
+  }
+
+  private resolveExecutionAuthorizationProvider(
+    runContext: ToolRunContext,
+  ): ExecutionAuthorizationProvider | undefined {
+    return this.authorizationProvidersByRun.get(runContext.runId) ??
+      this.resolveUnambiguousSessionAuthorizationProvider(runContext.sessionId);
+  }
+
+  private registerSensitiveExecutionAuthorization(
+    runId: string,
+    executionTicket: string,
+    renewalToken?: string | undefined,
+  ) {
+    this.releaseExecutionTicketRegistrationByRun.get(runId)?.();
+    const releases = [
+      this.sensitiveValueRegistry?.register({
+        reference: {
+          referenceId: `execution-ticket:${runId}`,
+          kind: "credential",
+          scope: "tool",
+        },
+        value: executionTicket,
+      }),
+      ...(renewalToken === undefined
+        ? []
+        : [this.sensitiveValueRegistry?.register({
+            reference: {
+              referenceId: `execution-renewal-token:${runId}`,
+              kind: "credential",
+              scope: "tool",
+            },
+            value: renewalToken,
+          })]),
+    ].filter((release): release is () => void => release !== undefined);
+    this.releaseExecutionTicketRegistrationByRun.set(
+      runId,
+      () => releases.forEach((release) => release()),
+    );
+  }
+
+  private resolveUnambiguousSessionAuthorizationProvider(
+    sessionId: string,
+  ): ExecutionAuthorizationProvider | undefined {
+    const providers = this.authorizationProvidersBySession.get(sessionId);
+    if (providers?.size !== 1) return;
+    return providers.values().next().value;
+  }
+
+  private async replaceHostedMcpScope(
+    context: ReturnType<typeof parseHostedMcpContext>,
+    executionTicket: string,
+    runId: string,
+  ) {
+    const existing = this.hostedMcpScopes.get(context.grantId);
+    if (existing?.executionTicket === executionTicket) return;
+    const manager = new McpClientManager({
+      servers: [],
+      hostedGateway: { context, executionTicket },
+      fetchImpl: this.fetchImpl,
+    });
+    const snapshot = compileMcpStatusSnapshotV1(await manager.refresh());
+    this.assertHostedToolNamesSafe(snapshot);
+    this.hostedMcpScopes.set(context.grantId, {
+      manager,
+      snapshot,
+      executionTicket,
+      lastUsedAt: Date.now(),
+      runId,
+    });
+    if (existing) {
+      this.retiredHostedMcpManagers.add(existing.manager);
+      await existing.manager.retire();
     }
   }
 

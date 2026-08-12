@@ -330,6 +330,7 @@ function createModelAwareKestrelOneAgent(input: {
   actorUserId: string;
   durableTurnId?: string | undefined;
   projectContextRevisionId?: string | undefined;
+  projectContextGrantId?: string | undefined;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
 }): KestrelOneAgent {
   const clients = new Set<KestrelOneRunnerClient>();
@@ -369,6 +370,7 @@ function createModelAwareKestrelOneAgent(input: {
             agentId: hostedAgentId,
             recordExecution: {
               projectContextRevisionId: input.projectContextRevisionId,
+              projectContextGrantId: input.projectContextGrantId,
               durableTurnId: input.durableTurnId,
             },
             onProgress: (progress) =>
@@ -498,6 +500,9 @@ function createModelAwareKestrelOneAgent(input: {
               ? {
                   mcpAuthorization: {
                     executionTicket: route.executionTicket,
+                    ...(route.authorizationRenewal
+                      ? { renewal: route.authorizationRenewal }
+                      : {}),
                   },
                 }
               : {}),
@@ -890,6 +895,9 @@ export async function generateKestrelOneExternalReply(input: {
         ? {
             mcpAuthorization: {
               executionTicket: route.executionTicket,
+              ...(route.authorizationRenewal
+                ? { renewal: route.authorizationRenewal }
+                : {}),
             },
           }
         : {}),
@@ -955,6 +963,7 @@ export async function createKestrelOneAgentResponse(
         actorUserId: input.session.user.id,
         durableTurnId: input.durableTurnId,
         projectContextRevisionId: input.projectContext?.contextRevisionId,
+        projectContextGrantId: input.projectContext?.grantId,
         onExecutionRouted: input.onExecutionRouted,
       });
 

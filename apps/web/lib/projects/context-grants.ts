@@ -55,11 +55,32 @@ export async function issueProjectContextGrant(
     ...input,
     expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
   };
+  await writeProjectContextGrant(grantId, grant, ttlSeconds);
+  return { grantId, grant };
+}
+
+export async function refreshProjectContextGrant(input: {
+  grantId: string;
+  grant: Omit<ProjectContextGrant, "expiresAt">;
+}) {
+  const ttlSeconds = readGrantTtlSeconds();
+  const grant: ProjectContextGrant = {
+    ...input.grant,
+    expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+  };
+  await writeProjectContextGrant(input.grantId, grant, ttlSeconds);
+  return grant;
+}
+
+async function writeProjectContextGrant(
+  grantId: string,
+  grant: ProjectContextGrant,
+  ttlSeconds: number,
+) {
   const redis = await getContextGrantRedis();
   await redis.set(`${GRANT_PREFIX}${grantId}`, JSON.stringify(grant), {
     EX: ttlSeconds,
   });
-  return { grantId, grant };
 }
 
 export async function resolveProjectContextGrant(grantId: string) {

@@ -259,6 +259,16 @@ test("router authorizes Workspace HTTP APIs by exact method and path", () => {
   }).status, 403);
 });
 
+test("router exposes the typed execution expiry before forwarding", () => {
+  assert.deepEqual(authorizeEnvironmentHttpRequest({
+    authorization: `Bearer ${token}`,
+    publicKey,
+    now: 1301,
+    method: "GET",
+    pathname: "/v1/tree",
+  }), { status: 401, code: "EXECUTION_AUTH_EXPIRED" });
+});
+
 test("router authorizes backup preparation and export with the backup capability", () => {
   for (const [method, pathname] of [
     ["POST", "/v1/backups/prepare"],

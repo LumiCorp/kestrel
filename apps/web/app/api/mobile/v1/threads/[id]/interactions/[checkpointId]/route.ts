@@ -10,13 +10,19 @@ import {
   listThreadInteractionsForUser,
   resolveDurableRuntimeInteraction,
 } from "@/lib/turns/store";
+import {
+  isRecoveryReviewRequest,
+  readRecoveryReviewEnvelope,
+  recoveryOptionLabel,
+} from "@/lib/turns/recovery-review";
 
 const paramsSchema = z.object({
   id: routeIdSchema,
   checkpointId: routeIdSchema,
 });
 const bodySchema = z.object({
-  decision: z.enum(["approve", "deny"]),
+  decision: z.enum(["approve", "deny"]).optional(),
+  recoveryOptionId: z.string().trim().min(1).max(256).optional(),
   content: z
     .record(
       z.string(),
@@ -24,7 +30,7 @@ const bodySchema = z.object({
     )
     .optional(),
   message: z.string().trim().min(1).max(20_000).optional(),
-});
+}).strict();
 
 export async function POST(
   request: Request,
@@ -46,14 +52,59 @@ export async function POST(
       throw new Error("Pending interaction not found.");
     }
     if (pending.source === "runtime") {
+      const recoveryReview = readRecoveryReviewEnvelope(
+        pending.requestEnvelope,
+      );
+      const recoveryReviewDeclared = isRecoveryReviewRequest(
+        pending.requestEnvelope,
+      );
+      const answer = typeof body.content?.answer === "string"
+        ? body.content.answer.trim() || undefined
+        : undefined;
+      if (pending.kind === "approval" && body.decision === undefined) {
+        throw new Error("An approval interaction requires a decision.");
+      }
+      if (
+        recoveryReviewDeclared &&
+        (recoveryReview === null ||
+          body.recoveryOptionId === undefined ||
+          recoveryReview.bindingId !== pending.requestId ||
+          recoveryReview.allowedOptionIds.includes(body.recoveryOptionId) === false)
+      ) {
+        const snapshot = await getMobileThreadSnapshotForRequest(request, {
+          threadId: params.id,
+          organizationId,
+          userId: session.user.id,
+        });
+        return NextResponse.json(
+          {
+            error: {
+              code: "RECOVERY_OPTION_CONFLICT",
+              message: "Select one exact allowed recovery option.",
+            },
+            snapshot,
+          },
+          { status: 409 },
+        );
+      }
+      if (
+        pending.kind !== "approval" &&
+        recoveryReview === null &&
+        body.message === undefined &&
+        answer === undefined
+      ) {
+        throw new Error("A question interaction requires a message or answer.");
+      }
       const message =
-        body.message ??
+        body.recoveryOptionId !== undefined
+          ? recoveryOptionLabel(body.recoveryOptionId)
+          : body.message ??
         (pending.kind === "approval"
           ? body.decision === "approve"
             ? "Approved"
             : "Denied"
-          : typeof body.content?.answer === "string"
-            ? body.content.answer
+          : answer !== undefined
+            ? answer
             : JSON.stringify(body.content ?? {}));
       const resumed = await resolveDurableRuntimeInteraction({
         organizationId,
@@ -65,6 +116,9 @@ export async function POST(
         ...(pending.kind === "approval"
           ? { approved: body.decision === "approve" }
           : {}),
+        ...(body.recoveryOptionId !== undefined
+          ? { recoveryOptionId: body.recoveryOptionId }
+          : {}),
         messageId: crypto.randomUUID(),
         source: "mobile",
       });
@@ -75,12 +129,16 @@ export async function POST(
       if (!pending.sourceCheckpointId) {
         throw new Error("MCP interaction checkpoint is missing.");
       }
+      if (body.decision === undefined) {
+        throw new Error("An App interaction requires a decision.");
+      }
       await resolveMcpInteraction({
         organizationId,
         threadId: params.id,
         userId: session.user.id,
         checkpointId: pending.sourceCheckpointId,
         ...body,
+        decision: body.decision,
       });
     }
     const snapshot = await getMobileThreadSnapshotForRequest(request, {

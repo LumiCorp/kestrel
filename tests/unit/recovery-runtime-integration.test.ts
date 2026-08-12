@@ -386,82 +386,39 @@ test("RECOVERY_EXHAUSTED is emitted only after an applicable workflow fails", as
   assert.equal(harness.events.includes("recovery.action.completed"), false);
 });
 
-test("generic recovery review is not created and the original failure remains terminal", async () => {
-  const primary = modelCandidate("primary", "openai", "primary-model");
-  const policy = createRecoveryPolicyV1({
-    policyId: "recovery:review-integration",
-    primaryModel: primary,
-    stages: [
-      {
-        stageId: "run.review",
-        scope: "run",
-        failureCodes: ["RECOVERY_EXHAUSTED"],
-        action: "human_review",
-        optionIds: ["retry.primary", "terminal.fail"],
-      },
-      {
-        stageId: "run.terminal",
-        scope: "run",
-        failureCodes: ["RECOVERY_EXHAUSTED"],
-        action: "terminal_failure",
-        terminalCode: "RECOVERY_EXHAUSTED",
-      },
-    ],
-  });
-  const gateway: ModelGateway = { call: async <T>() => ({}) as T };
-  const modelRegistry = new RecoveryModelRegistry();
-  modelRegistry.register({ candidate: primary, policyRevision: policy.revision, gateway });
-  const store = new InMemorySessionStore();
-  const executionBoundaryRuntime = new ExecutionBoundaryPolicyRuntime();
-  executionBoundaryRuntime.sensitiveValues.register({
-    reference: {
-      referenceId: "credential:recovery-review-test",
-      kind: "credential",
-      scope: "runtime",
-    },
-    value: "recovery-review-secret",
-  });
-  const kestrel = new Kestrel({
-    store,
-    modelGateway: gateway,
-    toolGateway: createTestToolGateway({}),
-    executionBoundaryRuntime,
-    recoveryRuntime: {
-      policy,
-      executionProfileFingerprint: "c".repeat(64),
-      modelRegistry,
-      toolAdapterRegistry: new RecoveryToolAdapterRegistry(),
-      toolResultNormalizerRegistry: createDefaultRecoveryToolResultNormalizers(),
-      workflowHandlerRegistry: new RecoveryWorkflowHandlerRegistry(),
-    },
-  });
-  kestrel.registerStep("recovery.review", async () => {
-    const error = new Error(
-      `terminal test failure using recovery-review-secret at https://alice:secret@provider.example/path ${"additional context. ".repeat(60)}`,
-    ) as Error & { code: string };
-    error.code = "UNRECOVERABLE_TEST";
-    throw error;
-  });
-
-  const waiting = await kestrel.run({
+test("generic recovery review requires the same exact-option interaction contract", async () => {
+  const harness = createWorkflowOutcomeHarness({
+    status: "failed",
+    failureCode: "CONTINUATION_REPAIR_FAILED",
+  }, true);
+  const waiting = await harness.kestrel.run({
     id: "event-recovery-review",
     type: "user.message",
     sessionId: "session-recovery-review",
-    stepAgent: "recovery.review",
+    stepAgent: "recovery.loop",
     payload: {
-      message: "fail",
+      message: "loop",
       metadata: {
         threadId: "thread-review",
         actor: { actorId: "user-1", actorType: "end_user", tenantId: "tenant-1" },
       },
     },
   });
-  assert.equal(waiting.status, "FAILED");
-  assert.equal(waiting.waitFor, undefined);
-  assert.equal(waiting.errors.some((error) => error.code === "UNRECOVERABLE_TEST"), true);
-  const waitingSession = await store.getSession("session-recovery-review");
+  assert.equal(waiting.status, "WAITING");
+  assert.equal(waiting.waitFor?.metadata?.reason, "recovery_review");
+  const interaction = waiting.waitFor?.interaction;
+  assert.ok(interaction);
+  assert.equal(interaction.requestId, waiting.waitFor?.metadata?.recoveryReviewBinding &&
+    (waiting.waitFor.metadata.recoveryReviewBinding as { bindingId: string }).bindingId);
+  const interactionSchema = interaction.inputSchema;
+  assert.ok(interactionSchema);
+  assert.deepEqual(
+    (interactionSchema.properties as Record<string, { enum: string[] }>).recoveryOptionId?.enum,
+    ["retry.primary", "terminal.fail"],
+  );
+  const waitingSession = await harness.store.getSession("session-recovery-review");
   const review = ((waitingSession?.state.agent as Record<string, unknown>)?.recovery as Record<string, unknown> | undefined)?.review;
-  assert.equal(review, undefined);
+  assert.ok(review);
 });
 
 function modelCandidate(
@@ -485,7 +442,7 @@ function modelCandidate(
 function createWorkflowOutcomeHarness(outcome:
   | { status: "not_applicable"; reason: string }
   | { status: "failed"; failureCode: string }
-) {
+, includeReview = false) {
   const primary = modelCandidate("primary", "openai", "primary-model");
   const policy = createRecoveryPolicyV1({
     policyId: `recovery:workflow-outcome:${outcome.status}`,
@@ -498,6 +455,15 @@ function createWorkflowOutcomeHarness(outcome:
         action: "deterministic_workflow",
         handlerIds: ["run.continuation"],
       },
+      ...(includeReview
+        ? [{
+            stageId: "run.review",
+            scope: "run" as const,
+            failureCodes: ["RECOVERY_EXHAUSTED"],
+            action: "human_review" as const,
+            optionIds: ["retry.primary", "terminal.fail"],
+          }]
+        : []),
       {
         stageId: "run.terminal",
         scope: "run",
@@ -536,5 +502,5 @@ function createWorkflowOutcomeHarness(outcome:
     nextStepAgent: "recovery.loop",
     statePatch: { progress: "unchanged" },
   }));
-  return { kestrel, events };
+  return { kestrel, events, store };
 }

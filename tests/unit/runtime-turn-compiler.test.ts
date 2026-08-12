@@ -182,7 +182,14 @@ test("compileRuntimeTurn carries hosted MCP grant context into the kernel payloa
       message: "use the environment tools",
       eventType: "user.message",
       mcpContext,
-      mcpAuthorization: { executionTicket: "signed-run-ticket" },
+      mcpAuthorization: {
+        executionTicket: "signed-run-ticket",
+        renewal: {
+          version: "execution-authorization-renewal-v1",
+          endpoint: "https://kestrel.example/renew",
+          token: "opaque-renewal-token",
+        },
+      },
     },
     { toolBatchCheckpointSize: 5 }
   );
@@ -190,6 +197,10 @@ test("compileRuntimeTurn carries hosted MCP grant context into the kernel payloa
   assert.deepEqual(compiled.payload.mcpContext, mcpContext);
   assert.equal("mcpAuthorization" in compiled.payload, false);
   assert.equal("mcpAuthorization" in compiled.metadata, false);
+  assert.doesNotMatch(
+    JSON.stringify({ payload: compiled.payload, metadata: compiled.metadata }),
+    /signed-run-ticket|opaque-renewal-token/u,
+  );
 });
 
 test("compileRuntimeTurn emits legacy migration metadata when mode system v2 is forced", () => {

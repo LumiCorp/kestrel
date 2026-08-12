@@ -15,6 +15,20 @@ import {
 
 
 test("buildOperatorSessionProjection reads canonical user waits from session state", async () => {
+  const interaction = {
+    version: "v1" as const,
+    requestId: "recovery-binding-1",
+    kind: "user_input" as const,
+    eventType: "user.reply",
+    prompt: "Which recovery option?",
+    inputSchema: {
+      type: "object" as const,
+      required: ["recoveryOptionId"],
+      properties: {
+        recoveryOptionId: { type: "string", enum: ["retry.primary", "terminal.fail"] },
+      },
+    },
+  };
   const runtime = new FakeProjectionRuntime({
     mainThread: buildThread("thread-main", { sessionId: "session-wait" }),
     statuses: [
@@ -38,6 +52,7 @@ test("buildOperatorSessionProjection reads canonical user waits from session sta
             metadata: {
               prompt: "Which file should change?",
             },
+            interaction,
           },
         },
       },
@@ -51,6 +66,7 @@ test("buildOperatorSessionProjection reads canonical user waits from session sta
     metadata: {
       prompt: "Which file should change?",
     },
+    interaction,
   });
   assert.equal(projection.threadId, "thread-main");
   assert.equal(projection.focusedThreadId, "thread-main");

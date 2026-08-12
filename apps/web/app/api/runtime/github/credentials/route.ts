@@ -54,7 +54,9 @@ export async function POST(request: Request) {
       executionTicket.expiresAt
     );
     if (expiresAt <= issuedAt) {
-      throw new GitHubPolicyError("GITHUB_EXECUTION_TICKET_EXPIRED", 401);
+      throw Object.assign(new Error("Execution authorization expired."), {
+        code: "TICKET_EXPIRED",
+      });
     }
     const token = signEnvironmentToolCredential({
       privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",

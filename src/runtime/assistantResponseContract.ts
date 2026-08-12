@@ -16,6 +16,10 @@ import type {
 } from "../security/ExecutionBoundaryPolicy.js";
 import { createRuntimeFailure } from "./RuntimeFailure.js";
 import { extractUserReplyQuestion, extractWaitPrompt } from "./waitForPrompt.js";
+import {
+  assertRecoveryReviewInteractionV1,
+  parseRecoveryReviewBindingV1,
+} from "../kestrel/contracts/recovery.js";
 
 export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   waitFor: T,
@@ -38,6 +42,25 @@ export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   }
 
   const metadata = asRecord(waitFor.metadata);
+  const reviewReason = metadata?.reason;
+  if (reviewReason === "recovery_review" || reviewReason === "evaluation_review") {
+    try {
+      const binding = parseRecoveryReviewBindingV1(
+        metadata?.recoveryReviewBinding,
+      );
+      assertRecoveryReviewInteractionV1({
+        interaction: waitFor.interaction,
+        binding,
+        reason: reviewReason,
+      });
+    } catch {
+      throw createRuntimeFailure(
+        "RUNTIME_INTERACTION_CONTRACT_VIOLATION",
+        "Recovery review wait must provide an exact-option interaction matching its binding.",
+        { eventType: waitFor.eventType, reviewReason },
+      );
+    }
+  }
   const requestId =
     readNonEmptyString(options.requestId) ??
     readNonEmptyString(waitFor.interaction?.requestId) ??
