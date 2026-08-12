@@ -54,7 +54,7 @@ test(
             version: 1,
             profileId: `kestrel:workspace_hosted:${"a".repeat(64)}`,
             fingerprint: "a".repeat(64),
-            policy: { id: "kestrel", version: 2 },
+            policy: { id: "kestrel", version: 3 },
             environmentPreset: { id: "workspace_hosted", version: 1 },
             resolvedProfile: {
               id: `kestrel:workspace_hosted:${"a".repeat(64)}`,
@@ -163,12 +163,12 @@ test(
           calls.push({ input, context: requestContext });
           return {
             version: 1,
-            profileId: `kestrel:workspace_hosted:${"b".repeat(64)}`,
+            profileId: `kestrel:cli_dev_local:${"b".repeat(64)}`,
             fingerprint: "b".repeat(64),
-            policy: { id: "kestrel", version: 2 },
-            environmentPreset: { id: "workspace_hosted", version: 1 },
+            policy: { id: "kestrel", version: 3 },
+            environmentPreset: { id: "cli_dev_local", version: 1 },
             resolvedProfile: {
-              id: `kestrel:workspace_hosted:${"b".repeat(64)}`,
+              id: `kestrel:cli_dev_local:${"b".repeat(64)}`,
               label: "Kestrel One",
               agent: "reference-react",
               sessionPrefix: "kestrel",
@@ -196,6 +196,7 @@ test(
     });
 
     assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.input.environmentPresetId, "cli_dev_local");
     assert.deepEqual(calls[0]?.input.managedConfiguration, {
       label: "Kestrel One",
       additionalToolNames: [],
@@ -209,5 +210,74 @@ test(
       },
       default: false,
     });
+  },
+);
+
+test(
+  "hosted Kestrel maps economics admission into a clear preflight failure",
+  async () => {
+    const serviceFailure = Object.assign(
+      new Error("runtime economics profile missing"),
+      {
+        code: "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED",
+        details: {
+          runtimeCode: "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED",
+          provider: "openrouter",
+          model: "openai/gpt-5.6-luna-alias",
+          preset: "workspace_hosted",
+          reason: "model_profile_not_found",
+        },
+      },
+    );
+
+    await assert.rejects(
+      () =>
+        resolveHostedKestrelExecutionProfile({
+          client: {
+            async resolveExecutionProfile() {
+              throw serviceFailure;
+            },
+          },
+          context: {
+            tenantId: "org_123",
+            actor: {
+              actorId: "user_123",
+              actorType: "end_user",
+              tenantId: "org_123",
+            },
+          },
+          route: {
+            runId: "exec_123",
+            environmentId: "env_123",
+            effectiveCapabilities: [],
+          },
+          runtimeModels: [
+            {
+              id: "gateway_model_123",
+              provider: "openrouter",
+              model: "openai/gpt-5.6-luna-alias",
+              gatewayId: "gateway_123",
+              organizationId: "org_123",
+              environmentId: "env_123",
+            },
+          ],
+        }),
+      (error: unknown) => {
+        const mapped = error as Error & {
+          code?: string;
+          details?: Record<string, unknown>;
+        };
+        assert.equal(
+          mapped.code,
+          "HARNESS_ECONOMICS_MODEL_PROFILE_REQUIRED",
+        );
+        assert.equal(mapped.details, serviceFailure.details);
+        assert.match(
+          mapped.message,
+          /openrouter\/openai\/gpt-5\.6-luna-alias.*exact hosted model.*economics profile/iu,
+        );
+        return true;
+      },
+    );
   },
 );

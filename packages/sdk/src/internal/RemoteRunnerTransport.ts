@@ -4,6 +4,7 @@ import {
   isRunnerStreamingCommandType,
   isRunnerTerminalResponseEvent,
   parseRunnerCommandV2,
+  RUNNER_RUN_STREAM_EVENT_TYPES,
 } from "@kestrel-agents/protocol";
 
 import type {
@@ -354,6 +355,7 @@ export class RemoteRunnerTransport implements ProtocolTransport {
               sessionId: scope.sessionId,
               runId: scope.runId,
               sinceEventId: scope.cursor,
+              eventTypes: [...RUNNER_RUN_STREAM_EVENT_TYPES],
             },
             metadata: command.metadata,
           }),

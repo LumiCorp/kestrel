@@ -6,6 +6,7 @@ import {
 } from "../../models/index.js";
 import type {
   ModelGateway,
+  ModelGatewayCallOptions,
   ModelRequest,
 } from "../../src/kestrel/contracts/model-io.js";
 import type { TuiProfile } from "../contracts.js";
@@ -229,14 +230,14 @@ export class BrokeredModelGateway implements ModelGateway {
 
   async call<T>(
     request: ModelRequest,
-    options: { signal?: AbortSignal | undefined } = {},
+    options: ModelGatewayCallOptions = {},
   ): Promise<T> {
     const lease = await this.cache.get(this.reference);
     const governedRequest = { ...request, model: lease.rawModelId };
     try {
       return await this.getProvider(lease).call<T>(governedRequest, options);
     } catch (error) {
-      throw toSecretFreeProviderError(error);
+      throw toSecretFreeProviderError(error, this.reference.provider);
     }
   }
 
@@ -478,7 +479,10 @@ function credentialCacheKey(reference: GatewayCredentialReference) {
   return `${reference.organizationId}\u0000${reference.environmentId}\u0000${reference.runId}\u0000${reference.gatewayId}\u0000${reference.rawModelId}`;
 }
 
-function toSecretFreeProviderError(error: unknown): Error {
+function toSecretFreeProviderError(
+  error: unknown,
+  provider: GatewayCredentialReference["provider"],
+): Error {
   const candidate = asRecord(error);
   const code = asNonEmptyString(candidate?.code);
   if (
@@ -498,9 +502,21 @@ function toSecretFreeProviderError(error: unknown): Error {
       : "request failed";
   return new GatewayCredentialBrokerError(
     normalizedCode,
-    `Gateway-managed provider ${action}${status ? ` (${status})` : ""}.`,
+    `${providerDisplayName(provider)} provider ${action}${status ? ` (${status})` : ""}.`,
     status,
   );
+}
+
+function providerDisplayName(
+  provider: GatewayCredentialReference["provider"],
+): string {
+  return provider === "openrouter"
+    ? "OpenRouter"
+    : provider === "openai"
+      ? "OpenAI"
+      : provider === "ollama"
+        ? "Ollama"
+        : "Anthropic";
 }
 
 function missingLeaseCredential(lease: GatewayCredentialLease) {

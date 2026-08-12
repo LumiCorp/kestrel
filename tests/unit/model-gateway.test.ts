@@ -89,6 +89,56 @@ test("RetryingModelGateway retries transient provider 502 failures", async () =>
   assert.equal(calls, 3);
 });
 
+test("RetryingModelGateway honors a zero per-call retry override without changing the default", async () => {
+  let calls = 0;
+  const gateway = new RetryingModelGateway(
+    async <T>() => {
+      calls += 1;
+      if (calls < 3) {
+        throw Object.assign(new Error("rate limited"), {
+          code: "MODEL_RATE_LIMITED",
+          status: 429,
+          retryAfterMs: 1,
+        });
+      }
+      return { ok: true } as T;
+    },
+    { retryCount: 2 },
+  );
+
+  await assert.rejects(
+    () => gateway.call({ input: "maintenance" }, { retryCount: 0 }),
+    (error: unknown) => {
+      const details = (error as { details?: Record<string, unknown> }).details;
+      assert.equal(calls, 1);
+      assert.equal(details?.gatewayAttempts, 1);
+      assert.equal(details?.gatewayMaxAttempts, 1);
+      return true;
+    },
+  );
+
+  calls = 0;
+  const response = await gateway.call<{ ok: boolean }>({ input: "action" });
+  assert.equal(response.ok, true);
+  assert.equal(calls, 3);
+});
+
+test("RetryingModelGateway rejects invalid per-call retry counts before dispatch", async () => {
+  let calls = 0;
+  const gateway = new RetryingModelGateway(async <T>() => {
+    calls += 1;
+    return { ok: true } as T;
+  });
+
+  for (const retryCount of [-1, 0.5, Number.POSITIVE_INFINITY]) {
+    await assert.rejects(
+      () => gateway.call({ input: "invalid retries" }, { retryCount }),
+      RangeError,
+    );
+  }
+  assert.equal(calls, 0);
+});
+
 test("RetryingModelGateway retries HTTP 408 three total attempts and preserves the timeout", async () => {
   let calls = 0;
   const gateway = new RetryingModelGateway(

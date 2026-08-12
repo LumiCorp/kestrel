@@ -224,6 +224,7 @@ export class RuntimeIO {
       typeof requestMetadata.modelRole === "string" && requestMetadata.modelRole.trim().length > 0
         ? requestMetadata.modelRole
         : undefined;
+    const lifecycleMetadata = readModelLifecycleMetadata(requestMetadata);
     await this.options.emitProgressFromSequence({
       runId: progress.runId,
       sessionId: progress.sessionId,
@@ -367,6 +368,7 @@ export class RuntimeIO {
       ...(requestedProvider !== undefined ? { provider: requestedProvider } : {}),
       ...(modelRole !== undefined ? { modelRole } : {}),
       modelBudgetClass,
+      ...lifecycleMetadata,
       responseFormat: request.responseFormat,
       schemaName: readModelRequestSchemaName(request),
       providerPayloadHash,
@@ -420,7 +422,9 @@ export class RuntimeIO {
       ...(assemblyId !== undefined ? { assemblyId } : {}),
       metadata: {
         promptRetention: "hash_only",
+        ...(modelRole !== undefined ? { modelRole } : {}),
         modelBudgetClass,
+        ...lifecycleMetadata,
         messageCount: Array.isArray(request.messages) ? request.messages.length : 0,
         toolCount: Array.isArray(request.tools) ? request.tools.length : 0,
         ...(toolSurfaceSnapshot === undefined
@@ -441,7 +445,9 @@ export class RuntimeIO {
         providerPayloadHash,
         componentHash,
         promptRetention: "hash_only",
+        ...(modelRole !== undefined ? { modelRole } : {}),
         modelBudgetClass,
+        ...lifecycleMetadata,
         ...(promptDump !== undefined ? { promptDump } : {}),
         ...(turnId !== undefined ? { turnId } : {}),
         ...(threadId !== undefined ? { threadId } : {}),
@@ -574,7 +580,9 @@ export class RuntimeIO {
         latencyMs,
         metadata: {
           promptRetention: "hash_only",
+          ...(modelRole !== undefined ? { modelRole } : {}),
           modelBudgetClass,
+          ...lifecycleMetadata,
           ...(promptDump !== undefined ? { promptDump } : {}),
           ...(modelUsage !== undefined ? { usage: modelUsage } : {}),
         },
@@ -611,6 +619,7 @@ export class RuntimeIO {
           ...(requestedProvider !== undefined ? { provider: requestedProvider } : {}),
           ...(modelRole !== undefined ? { modelRole } : {}),
           modelBudgetClass,
+          ...lifecycleMetadata,
           ...(modelMetadata ?? {}),
           ...(modelUsage !== undefined ? { usage: modelUsage } : {}),
         },
@@ -668,7 +677,9 @@ export class RuntimeIO {
         latencyMs,
         metadata: {
           promptRetention: "hash_only",
+          ...(modelRole !== undefined ? { modelRole } : {}),
           modelBudgetClass,
+          ...lifecycleMetadata,
           ...(promptDump !== undefined ? { promptDump } : {}),
           error: mappedError.code,
         },
@@ -711,6 +722,9 @@ export class RuntimeIO {
     return this.options.deps.modelGateway.call<T>(input.request, {
       ...(this.options.progress.signal !== undefined
         ? { signal: this.options.progress.signal }
+        : {}),
+      ...(readModelBudgetClass(input.request) === "maintenance"
+        ? { retryCount: 0 }
         : {}),
       onEvent: async (event) => {
         await this.emitModelGatewayEvent(event, {
@@ -1904,6 +1918,58 @@ function readProviderReasoningRetention(value: unknown): ProviderReasoningRetent
     throw new Error("Invalid provider reasoning retention policy");
   }
   return { mode, days };
+}
+
+function readModelLifecycleMetadata(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  const lifecycle: Record<string, unknown> = {};
+  const contextBuilder = readBoundedMetadataString(metadata.contextBuilder);
+  if (contextBuilder !== undefined) {
+    lifecycle.contextBuilder = contextBuilder;
+  }
+  const contextBuilderVersion = metadata.contextBuilderVersion;
+  if (
+    typeof contextBuilderVersion === "number" &&
+    Number.isSafeInteger(contextBuilderVersion) &&
+    contextBuilderVersion >= 0
+  ) {
+    lifecycle.contextBuilderVersion = contextBuilderVersion;
+  }
+  const compactionAttempt = readPositiveMetadataInteger(metadata.compactionAttempt);
+  if (compactionAttempt !== undefined) {
+    lifecycle.compactionAttempt = compactionAttempt;
+  }
+  const maxSummaryAttempts = readPositiveMetadataInteger(metadata.maxSummaryAttempts);
+  if (maxSummaryAttempts !== undefined) {
+    lifecycle.maxSummaryAttempts = maxSummaryAttempts;
+  }
+  if (
+    metadata.compactionAttemptKind === "initial" ||
+    metadata.compactionAttemptKind === "correction"
+  ) {
+    lifecycle.compactionAttemptKind = metadata.compactionAttemptKind;
+  }
+  return lifecycle;
+}
+
+function readBoundedMetadataString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= 128
+    ? normalized
+    : undefined;
+}
+
+function readPositiveMetadataInteger(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value > 0 &&
+    value <= 100
+    ? value
+    : undefined;
 }
 
 function readHarnessEconomicsControl(

@@ -158,6 +158,11 @@ test("filesystem read_text enforces first-page and continuation revision contrac
     String((firstPageRevision.auditRecord.error as { message?: unknown }).message),
     /first page.*omit expectedRevision/iu,
   );
+  assert.match(firstPageRevision.modelContext.text, /- offsetBytes: 0/u);
+  assert.match(
+    firstPageRevision.modelContext.text,
+    /- nextSuggestedAction: Retry at offsetBytes 0 without expectedRevision\./u,
+  );
 
   const missingContinuationRevision = await failedToolResult(handlers["fs.read_text"]({
     path: "paged.txt",
@@ -167,6 +172,38 @@ test("filesystem read_text enforces first-page and continuation revision contrac
   assert.match(
     String((missingContinuationRevision.auditRecord.error as { message?: unknown }).message),
     /continuation.*requires expectedRevision/iu,
+  );
+  assert.match(missingContinuationRevision.modelContext.text, /- offsetBytes: 5/u);
+  assert.match(
+    missingContinuationRevision.modelContext.text,
+    /- nextSuggestedAction: Copy the exact revision returned by the first page\./u,
+  );
+
+  const firstPage = await rawToolOutput<{
+    revision: string;
+    nextOffsetBytes: number;
+  }>(handlers["fs.read_text"]({
+    path: "paged.txt",
+    maxBytes: 5,
+  }));
+  await writeFile(
+    path.join(policyRoots.workspaceRoot, "paged.txt"),
+    "changed-file",
+    "utf8",
+  );
+  const staleContinuation = await failedToolResult(handlers["fs.read_text"]({
+    path: "paged.txt",
+    offsetBytes: firstPage.nextOffsetBytes,
+    expectedRevision: firstPage.revision,
+  }));
+  assert.match(
+    staleContinuation.modelContext.text,
+    new RegExp(`- expectedRevision: ${escapeRegExp(firstPage.revision)}`, "u"),
+  );
+  assert.match(staleContinuation.modelContext.text, /- actualRevision: sha256:[a-f0-9]+/u);
+  assert.match(
+    staleContinuation.modelContext.text,
+    /- nextSuggestedAction: Restart the read at offsetBytes 0\./u,
   );
 });
 
@@ -1155,6 +1192,10 @@ async function failedToolResult(resultPromise: Promise<unknown>): Promise<AgentT
   assert.equal(isAgentToolResult(result), true);
   assert.equal((result as AgentToolResult).status, "FAILED");
   return result as AgentToolResult;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 async function createFsHarness(): Promise<{

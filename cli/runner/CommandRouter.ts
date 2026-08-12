@@ -9,6 +9,9 @@ import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/eval
 import { parseKestrelManagedConfiguration } from "../config/ProfileStore.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
 import { asRuntimeError } from "../../src/runtime/RuntimeFailure.js";
+import {
+  KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE,
+} from "../../src/profile/kestrelOnePolicy.js";
 import { parseJobInputV1 } from "../job/contracts.js";
 import { readDatabaseUrlSource } from "../localCoreEnv.js";
 import type {
@@ -543,10 +546,18 @@ export class CommandRouter {
       ...(runtimeError.details !== undefined ? runtimeError.details : {}),
       ...(normalizedFailure?.details ?? {}),
     };
+    const preserveRuntimeCode =
+      runtimeError.code ===
+      KESTREL_HOSTED_MODEL_ECONOMICS_PROFILE_REQUIRED_CODE;
+    const code =
+      normalizedFailure?.code ??
+      (preserveRuntimeCode
+        ? runtimeError.code
+        : "RUNNER_RUNTIME_ERROR");
     this.writer.emit(
       "runner.error",
       {
-        code: normalizedFailure?.code ?? "RUNNER_RUNTIME_ERROR",
+        code,
         message: normalizedFailure?.message ?? runtimeError.message,
         details,
       },

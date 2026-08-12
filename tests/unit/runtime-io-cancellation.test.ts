@@ -15,6 +15,7 @@ import type {
 import type { ModelGatewayCallOptions, ModelRequest, ModelUsage, ToolGateway } from "../../src/kestrel/contracts/model-io.js";
 import type { AgentToolResultV2 } from "../../src/kestrel/contracts/tool-invocation.js";
 import type { RuntimeStore } from "../../src/kestrel/contracts/store.js";
+import type { ModelCallProvenanceRecord } from "../../src/kestrel/contracts/orchestration.js";
 import { buildAgentToolFailedOutputResult } from "../../tools/toolResult.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
@@ -77,6 +78,88 @@ test("RuntimeIO.model does not emit completion when aborted after provider retur
   assert.ok(emitted.includes("MODEL_CALL_FAILED"));
   assert.equal(emitted.includes("model.completed"), false);
   assert.equal(emitted.includes("MODEL_CALL_DONE"), false);
+});
+
+test("RuntimeIO disables gateway retries for maintenance calls only", async () => {
+  const observedOptions: ModelGatewayCallOptions[] = [];
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    modelCall: async (options) => {
+      observedOptions.push(options ?? {});
+      return { ok: true };
+    },
+  });
+
+  await io.model({
+    input: "compact",
+    metadata: { modelBudgetClass: "maintenance" },
+  });
+  await io.model({
+    input: "act",
+    metadata: { modelBudgetClass: "action" },
+  });
+
+  assert.equal(observedOptions[0]?.retryCount, 0);
+  assert.equal(observedOptions[1]?.retryCount, undefined);
+});
+
+test("RuntimeIO persists bounded compaction lifecycle metadata", async () => {
+  const runEvents: RunEvent[] = [];
+  const provenanceRecords: ModelCallProvenanceRecord[] = [];
+  const provenanceUpdates: Array<
+    Parameters<NonNullable<RuntimeStore["updateModelCallProvenance"]>>[0]
+  > = [];
+  const io = createRuntimeIO({
+    signal: new AbortController().signal,
+    emitted: [],
+    runEvents,
+    provenanceRecords,
+    provenanceUpdates,
+  });
+
+  await io.model({
+    input: "compact",
+    metadata: {
+      phase: "agent.compaction",
+      modelRole: "compaction",
+      modelBudgetClass: "maintenance",
+      contextBuilder: "kestrel-agent-context",
+      contextBuilderVersion: 2,
+      compactionAttempt: 2,
+      maxSummaryAttempts: 2,
+      compactionAttemptKind: "correction",
+      unapprovedMetadata: "must-not-persist",
+    },
+  });
+
+  const expected = {
+    modelRole: "compaction",
+    modelBudgetClass: "maintenance",
+    contextBuilder: "kestrel-agent-context",
+    contextBuilderVersion: 2,
+    compactionAttempt: 2,
+    maxSummaryAttempts: 2,
+    compactionAttemptKind: "correction",
+  };
+  for (const eventType of ["model.requested", "model.provenance", "model.completed"] as const) {
+    const metadata = runEvents.find((event) => event.type === eventType)?.metadata;
+    assert.deepEqual(
+      Object.fromEntries(Object.keys(expected).map((key) => [key, metadata?.[key]])),
+      expected,
+    );
+    assert.equal(metadata?.unapprovedMetadata, undefined);
+  }
+  assert.deepEqual(
+    Object.fromEntries(Object.keys(expected).map((key) => [key, provenanceRecords[0]?.metadata?.[key]])),
+    expected,
+  );
+  assert.deepEqual(
+    Object.fromEntries(Object.keys(expected).map((key) => [key, provenanceUpdates[0]?.metadata?.[key]])),
+    expected,
+  );
+  assert.equal(provenanceRecords[0]?.metadata?.unapprovedMetadata, undefined);
+  assert.equal(provenanceUpdates[0]?.metadata?.unapprovedMetadata, undefined);
 });
 
 test("RuntimeIO persists provider-boundary decisions and redacts requests and responses", async () => {
@@ -745,11 +828,21 @@ function createRuntimeIO(input: {
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
   appendRunEvent?: ((type: RunEventType) => Promise<void>) | undefined;
   afterToolResult?: (() => Promise<void>) | undefined;
+  provenanceRecords?: ModelCallProvenanceRecord[] | undefined;
+  provenanceUpdates?: Array<
+    Parameters<NonNullable<RuntimeStore["updateModelCallProvenance"]>>[0]
+  > | undefined;
 }): RuntimeIO {
   let seq = 0;
   const store = {
-    appendModelCallProvenance: async () => {},
-    updateModelCallProvenance: async () => {},
+    appendModelCallProvenance: async (record: ModelCallProvenanceRecord) => {
+      input.provenanceRecords?.push(structuredClone(record));
+    },
+    updateModelCallProvenance: async (
+      update: Parameters<NonNullable<RuntimeStore["updateModelCallProvenance"]>>[0],
+    ) => {
+      input.provenanceUpdates?.push(structuredClone(update));
+    },
   } as unknown as RuntimeStore;
   const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
     call: async <T>() => {
