@@ -96,6 +96,37 @@ test("Runtime release tombstones an exactly registered binding before native ses
   );
 });
 
+test("Runtime release tombstones an authorized binding that never materialized locally", async () => {
+  const sessions = new InMemoryRuntimeNativeSessionStore();
+  const correlations = new InMemoryRuntimeBindingCorrelationStore();
+  const checkpoints: string[] = [];
+  const coordinator = new RuntimeBindingReleaseCoordinator(
+    sessions,
+    undefined,
+    {
+      async capture() {},
+      async materialize() { return "missing"; },
+      async release(bindingId) { checkpoints.push(bindingId); },
+    },
+    correlations,
+  );
+
+  await coordinator.release(payload());
+
+  assert.equal(
+    (await correlations.load(binding.bindingId))?.status,
+    "released",
+  );
+  assert.equal(await sessions.load(binding.bindingId), undefined);
+  assert.deepEqual(checkpoints, [binding.bindingId]);
+
+  await coordinator.release(payload());
+  await assert.rejects(
+    () => coordinator.release(payload({ participantId: "runtime:foreign" })),
+    /correlation/u,
+  );
+});
+
 test("inactive Runtime release fails closed on foreign or legacy correlation", async () => {
   const sessions = new InMemoryRuntimeNativeSessionStore();
   await sessions.save({

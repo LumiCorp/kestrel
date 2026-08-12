@@ -71,7 +71,15 @@ export class RuntimeBindingReleaseCoordinator {
       correlation = await this.correlations.load(input.bindingId);
     }
     if (correlation === undefined) {
-      throw new Error("Runtime release binding correlation was not found.");
+      // RunnerHost authorizes Runtime release Environment correlation before
+      // this coordinator receives the command. The original run may never
+      // have reached this process, so preserve the trusted identity as a
+      // released tombstone instead of requiring materialized native state.
+      await this.correlations.register(binding);
+      correlation = await this.correlations.load(input.bindingId);
+    }
+    if (correlation === undefined) {
+      throw new Error("Runtime release binding correlation could not be recorded.");
     }
     assertReleaseCorrelation(bindingFromCorrelation(correlation), input);
 

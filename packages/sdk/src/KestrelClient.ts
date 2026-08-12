@@ -213,8 +213,16 @@ export class KestrelClient {
   async releaseRuntime(
     input: RunnerCommandPayloadByType["runtime.release"],
     context: KestrelRequestContext,
+    options: { commandId?: string | undefined } = {},
   ): Promise<RunnerResponseByCommandType["runtime.release"]> {
-    return this.sendCommand("runtime.release", input, context);
+    return options.commandId === undefined
+      ? this.sendCommand("runtime.release", input, context)
+      : this.sendCommandWithId(
+          options.commandId,
+          "runtime.release",
+          input,
+          context,
+        );
   }
 
   async run(
@@ -680,6 +688,20 @@ export class KestrelClient {
     context: KestrelRequestContext,
   ): Promise<RunnerResponseByCommandType[TType]> {
     return this.client.sendCommand(type, payload, toCommandMetadata(context));
+  }
+
+  async sendCommandWithId<TType extends RunnerCommandType>(
+    commandId: string,
+    type: TType,
+    payload: RunnerCommandPayloadByType[TType],
+    context: KestrelRequestContext,
+  ): Promise<RunnerResponseByCommandType[TType]> {
+    return this.client.sendCommandWithId(
+      commandId,
+      type,
+      payload,
+      toCommandMetadata(context),
+    );
   }
 
   async close(): Promise<void> {

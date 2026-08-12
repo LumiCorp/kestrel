@@ -172,6 +172,7 @@ export async function deliverRuntimeBindingRelease(
           orgRole: "org_admin",
         },
       },
+      { commandId: input.outboxId },
     );
   } finally {
     await client.close();

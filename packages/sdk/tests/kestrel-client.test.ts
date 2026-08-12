@@ -259,6 +259,48 @@ test("KestrelClient lists profiles and runs using profileId", async () => {
   await client.close();
 });
 
+test("KestrelClient releaseRuntime preserves an explicit command ID without changing the default", async () => {
+  const commandIds: string[] = [];
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      const command = JSON.parse(String(init?.body)) as {
+        id: string;
+        type: string;
+        payload: Record<string, unknown>;
+      };
+      commandIds.push(command.id);
+      return Response.json({
+        id: `event-${commandIds.length}`,
+        type: "runtime.released",
+        ts: new Date().toISOString(),
+        commandId: command.id,
+        sessionId: command.payload.threadId,
+        threadId: command.payload.threadId,
+        payload: command.payload,
+      });
+    },
+  });
+  const release = {
+    runtimeId: "codex" as const,
+    bindingId: "binding-sdk-release",
+    participantId: "runtime:codex",
+    threadId: "thread-sdk-release",
+    environmentId: "environment-sdk-release",
+  };
+
+  const explicit = await client.releaseRuntime(release, context, {
+    commandId: "outbox-sdk-release",
+  });
+  const generated = await client.releaseRuntime(release, context);
+
+  assert.equal(explicit.commandId, "outbox-sdk-release");
+  assert.equal(commandIds[0], "outbox-sdk-release");
+  assert.notEqual(commandIds[1], "outbox-sdk-release");
+  assert.equal(generated.commandId, commandIds[1]);
+  await client.close();
+});
+
 test("KestrelClient streams jobs and exposes operator run and promotion undo commands", async () => {
   const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
   const replay = {
