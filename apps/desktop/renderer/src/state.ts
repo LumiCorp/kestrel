@@ -940,6 +940,24 @@ function collectThreads(store: {
         rawState.diffView === "side-by-side"
           ? ("side-by-side" as const)
           : ("unified" as const);
+      const runtimeBindingStatus: RendererThread["runtimeBindingStatus"] =
+        rawState.runtimeBindingStatus === "ready" ||
+        rawState.runtimeBindingStatus === "degraded" ||
+        rawState.runtimeBindingStatus === "released"
+          ? rawState.runtimeBindingStatus
+          : undefined;
+      const runtimeNativeSessionState: RendererThread["runtimeNativeSessionState"] =
+        rawState.runtimeNativeSessionState === "uninitialized" ||
+        rawState.runtimeNativeSessionState === "ready" ||
+        rawState.runtimeNativeSessionState === "degraded" ||
+        rawState.runtimeNativeSessionState === "released"
+          ? rawState.runtimeNativeSessionState
+          : undefined;
+      const latestRuntimeLossCode: RendererThread["latestRuntimeLossCode"] =
+        rawState.latestRuntimeLossCode === "RUNTIME_NATIVE_SESSION_LOST" ||
+        rawState.latestRuntimeLossCode === "RUNTIME_LIVE_WAIT_LOST"
+          ? rawState.latestRuntimeLossCode
+          : undefined;
       return [
         {
           id,
@@ -990,21 +1008,9 @@ function collectThreads(store: {
               ? rawState.modelConfigurationRevision
               : defaults.modelConfigurationRevision ?? 1,
           runtimeId: isRuntimeId(rawState.runtimeId) ? rawState.runtimeId : "kestrel",
-          ...(rawState.runtimeBindingStatus === "ready" ||
-          rawState.runtimeBindingStatus === "degraded" ||
-          rawState.runtimeBindingStatus === "released"
-            ? { runtimeBindingStatus: rawState.runtimeBindingStatus }
-            : {}),
-          ...(rawState.runtimeNativeSessionState === "uninitialized" ||
-          rawState.runtimeNativeSessionState === "ready" ||
-          rawState.runtimeNativeSessionState === "degraded" ||
-          rawState.runtimeNativeSessionState === "released"
-            ? { runtimeNativeSessionState: rawState.runtimeNativeSessionState }
-            : {}),
-          ...(rawState.latestRuntimeLossCode === "RUNTIME_NATIVE_SESSION_LOST" ||
-          rawState.latestRuntimeLossCode === "RUNTIME_LIVE_WAIT_LOST"
-            ? { latestRuntimeLossCode: rawState.latestRuntimeLossCode }
-            : {}),
+          runtimeBindingStatus,
+          runtimeNativeSessionState,
+          latestRuntimeLossCode,
           enabledAppIds: Array.isArray(rawState.enabledAppIds)
             ? [...new Set(rawState.enabledAppIds.flatMap((appId) =>
                 typeof appId === "string" ? [normalizeDesktopAppId(appId)] : []
