@@ -472,6 +472,22 @@ export interface ReplayTurnReport {
   segments: ConversationTurnSegmentRecord[];
 }
 
+interface ReplayModelProvenanceMetadata {
+  modelRole?: string | undefined;
+  modelBudgetClass?: "action" | "maintenance" | undefined;
+  contextBuilder?: string | undefined;
+  contextBuilderVersion?: number | undefined;
+  compactionAttempt?: number | undefined;
+  maxSummaryAttempts?: number | undefined;
+  compactionAttemptKind?: "initial" | "correction" | undefined;
+  droppedSections?: unknown[] | undefined;
+  summaryArtifactId?: string | undefined;
+  freshness?: Record<string, unknown> | undefined;
+  promptDump?: {
+    jsonPath?: string | undefined;
+  } | undefined;
+}
+
 export interface ReplayModelProvenanceSummary {
   retention: "hash_only";
   callCount: number;
@@ -488,15 +504,7 @@ export interface ReplayModelProvenanceSummary {
 	    providerPayloadHash: string;
 	    componentHash: string;
 	    sourceBucketHashes?: Record<string, string> | undefined;
-	    metadata?: {
-	      modelBudgetClass?: "action" | "maintenance" | undefined;
-	      droppedSections?: unknown[] | undefined;
-	      summaryArtifactId?: string | undefined;
-	      freshness?: Record<string, unknown> | undefined;
-	      promptDump?: {
-	        jsonPath?: string | undefined;
-	      } | undefined;
-	    } | undefined;
+	    metadata?: ReplayModelProvenanceMetadata | undefined;
     status: ModelCallProvenanceRecord["status"];
     latencyMs?: number | undefined;
   }>;
@@ -1226,8 +1234,8 @@ export class RunReplayService {
         callId: readString(metadata.callId) ?? "unknown",
         runId: input.query.runId ?? readString(metadata.runId) ?? "",
         ...(readString(metadata.turnId) !== undefined ? { turnId: readString(metadata.turnId) } : {}),
-        ...(readModelBudgetClassFromMetadata(metadata) !== undefined
-          ? { metadata: { modelBudgetClass: readModelBudgetClassFromMetadata(metadata) } }
+        ...(sanitizeModelProvenanceMetadata(metadata) !== undefined
+          ? { metadata: sanitizeModelProvenanceMetadata(metadata) }
           : {}),
         providerPayloadHash: readString(metadata.providerPayloadHash) ?? "",
         componentHash: readString(metadata.componentHash) ?? "",
@@ -2825,14 +2833,14 @@ function summarizeReasoningMessage(value: string): string {
 }
 
 function readModelBudgetClassFromMetadata(
-  value: Record<string, unknown> | undefined,
+  value: { modelBudgetClass?: unknown } | undefined,
 ): "action" | "maintenance" | undefined {
   return value?.modelBudgetClass === "maintenance" ? "maintenance" : value?.modelBudgetClass === "action" ? "action" : undefined;
 }
 
 function readModelBudgetClassFromReplayCall(call: {
   phase?: string | undefined;
-  metadata?: { modelBudgetClass?: "action" | "maintenance" | undefined } | undefined;
+  metadata?: ReplayModelProvenanceMetadata | undefined;
 }): "action" | "maintenance" {
   const explicit = readModelBudgetClassFromMetadata(call.metadata);
   if (explicit !== undefined) {
@@ -2841,15 +2849,9 @@ function readModelBudgetClassFromReplayCall(call: {
   return call.phase === "agent.compaction" ? "maintenance" : "action";
 }
 
-function sanitizeModelProvenanceMetadata(value: Record<string, unknown> | undefined): {
-  modelBudgetClass?: "action" | "maintenance" | undefined;
-  droppedSections?: unknown[] | undefined;
-  summaryArtifactId?: string | undefined;
-  freshness?: Record<string, unknown> | undefined;
-  promptDump?: {
-    jsonPath?: string | undefined;
-  } | undefined;
-} | undefined {
+function sanitizeModelProvenanceMetadata(
+  value: Record<string, unknown> | undefined,
+): ReplayModelProvenanceMetadata | undefined {
   if (value === undefined) {
     return ;
   }
@@ -2857,9 +2859,44 @@ function sanitizeModelProvenanceMetadata(value: Record<string, unknown> | undefi
   const sanitizedPromptDump = {
     ...(readString(promptDump?.jsonPath) !== undefined ? { jsonPath: readString(promptDump?.jsonPath) } : {}),
   };
-  const sanitized = {
+  const sanitized: ReplayModelProvenanceMetadata = {
+    ...(readBoundedReplayMetadataString(value.modelRole) !== undefined
+      ? { modelRole: readBoundedReplayMetadataString(value.modelRole) }
+      : {}),
     ...(readModelBudgetClassFromMetadata(value) !== undefined
       ? { modelBudgetClass: readModelBudgetClassFromMetadata(value) }
+      : {}),
+    ...(readBoundedReplayMetadataString(value.contextBuilder) !== undefined
+      ? {
+          contextBuilder: readBoundedReplayMetadataString(
+            value.contextBuilder,
+          ),
+        }
+      : {}),
+    ...(readReplayContextBuilderVersion(value.contextBuilderVersion) !== undefined
+      ? {
+          contextBuilderVersion: readReplayContextBuilderVersion(
+            value.contextBuilderVersion,
+          ),
+        }
+      : {}),
+    ...(readReplayPositiveMetadataInteger(value.compactionAttempt) !== undefined
+      ? {
+          compactionAttempt: readReplayPositiveMetadataInteger(
+            value.compactionAttempt,
+          ),
+        }
+      : {}),
+    ...(readReplayPositiveMetadataInteger(value.maxSummaryAttempts) !== undefined
+      ? {
+          maxSummaryAttempts: readReplayPositiveMetadataInteger(
+            value.maxSummaryAttempts,
+          ),
+        }
+      : {}),
+    ...(value.compactionAttemptKind === "initial" ||
+    value.compactionAttemptKind === "correction"
+      ? { compactionAttemptKind: value.compactionAttemptKind }
       : {}),
     ...(Array.isArray(value.droppedSections) ? { droppedSections: value.droppedSections } : {}),
     ...(readString(value.summaryArtifactId) !== undefined
@@ -2869,6 +2906,33 @@ function sanitizeModelProvenanceMetadata(value: Record<string, unknown> | undefi
     ...(Object.keys(sanitizedPromptDump).length > 0 ? { promptDump: sanitizedPromptDump } : {}),
   };
   return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+}
+
+function readBoundedReplayMetadataString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return ;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= 128
+    ? normalized
+    : undefined;
+}
+
+function readReplayContextBuilderVersion(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0
+    ? value
+    : undefined;
+}
+
+function readReplayPositiveMetadataInteger(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value > 0 &&
+    value <= 100
+    ? value
+    : undefined;
 }
 
 function dedupeDelegations(records: DelegationRecord[]): DelegationRecord[] {

@@ -94,6 +94,117 @@ test("fs.read_text keeps empty and clipping annotations outside exact content de
   assert.match(clipped.modelContext.text, /- omittedContentChars: 50/u);
 });
 
+test("filesystem failures keep bounded correction details model-visible", () => {
+  const firstPage = buildAgentToolFailedOutputResult({
+    toolName: "fs.read_text",
+    input: {
+      path: "src/file.ts",
+      offsetBytes: 0,
+      expectedRevision: "initial",
+    },
+    output: { status: "FAILED" },
+    error: createRuntimeFailure(
+      "TOOL_INPUT_INVALID",
+      "The first page must omit expectedRevision.",
+      {
+        path: "src/file.ts",
+        offsetBytes: 0,
+        field: "expectedRevision",
+        nextSuggestedAction: "Retry at offsetBytes 0 without expectedRevision.",
+        internalDiagnostic: "must-not-be-model-visible",
+      },
+    ),
+  });
+
+  assert.match(firstPage.modelContext.text, /- errorCode: TOOL_INPUT_INVALID/u);
+  assert.match(firstPage.modelContext.text, /- path: src\/file\.ts/u);
+  assert.match(firstPage.modelContext.text, /- offsetBytes: 0/u);
+  assert.match(firstPage.modelContext.text, /- field: expectedRevision/u);
+  assert.match(
+    firstPage.modelContext.text,
+    /- nextSuggestedAction: Retry at offsetBytes 0 without expectedRevision\./u,
+  );
+  assert.doesNotMatch(firstPage.modelContext.text, /must-not-be-model-visible/u);
+
+  const staleRevision = buildAgentToolFailedOutputResult({
+    toolName: "fs.read_text",
+    input: { path: "src/file.ts", offsetBytes: 8192 },
+    output: { status: "FAILED" },
+    error: createRuntimeFailure(
+      "TOOL_INPUT_INVALID",
+      "File revision changed before continuation.",
+      {
+        expectedRevision: "sha256:old",
+        actualRevision: "sha256:new",
+        nextSuggestedAction: "Restart the read at offsetBytes 0.",
+      },
+    ),
+  });
+
+  assert.match(staleRevision.modelContext.text, /- expectedRevision: sha256:old/u);
+  assert.match(staleRevision.modelContext.text, /- actualRevision: sha256:new/u);
+  assert.match(
+    staleRevision.modelContext.text,
+    /- nextSuggestedAction: Restart the read at offsetBytes 0\./u,
+  );
+});
+
+test("model-visible error correction fields reject nested and out-of-range values", () => {
+  const nestedMarker = "must-not-render-nested-error-detail";
+  const invalid = buildAgentToolFailedOutputResult({
+    toolName: "custom.failure",
+    input: {},
+    output: { status: "FAILED" },
+    error: createRuntimeFailure("TOOL_INPUT_INVALID", "Invalid input.", {
+      path: { internalDiagnostic: nestedMarker },
+      offsetBytes: -1,
+      expectedRevision: [nestedMarker],
+      actualRevision: { value: nestedMarker },
+      field: { name: nestedMarker },
+      nextSuggestedAction: { internalDiagnostic: nestedMarker },
+    }),
+  });
+
+  assert.doesNotMatch(invalid.modelContext.text, new RegExp(nestedMarker, "u"));
+  for (const label of [
+    "path",
+    "offsetBytes",
+    "expectedRevision",
+    "actualRevision",
+    "field",
+    "nextSuggestedAction",
+  ]) {
+    assert.doesNotMatch(invalid.modelContext.text, new RegExp(`- ${label}:`, "u"));
+  }
+
+  const overlongMarker = "must-not-render-overlong-error-detail";
+  const overlong = buildAgentToolFailedOutputResult({
+    toolName: "custom.failure",
+    input: {},
+    output: { status: "FAILED" },
+    error: createRuntimeFailure("TOOL_INPUT_INVALID", "Invalid input.", {
+      path: `${"p".repeat(4096)}${overlongMarker}`,
+      offsetBytes: Number.MAX_SAFE_INTEGER + 1,
+      expectedRevision: `${"r".repeat(256)}${overlongMarker}`,
+      actualRevision: `${"r".repeat(256)}${overlongMarker}`,
+      field: `${"f".repeat(128)}${overlongMarker}`,
+      nextSuggestedAction: `${"a".repeat(1000)}${overlongMarker}`,
+    }),
+  });
+
+  assert.doesNotMatch(overlong.modelContext.text, new RegExp(overlongMarker, "u"));
+  for (const label of [
+    "path",
+    "offsetBytes",
+    "expectedRevision",
+    "actualRevision",
+    "field",
+    "nextSuggestedAction",
+  ]) {
+    assert.doesNotMatch(overlong.modelContext.text, new RegExp(`- ${label}:`, "u"));
+  }
+});
+
 test("model-facing mutation feedback names changed files and stale validation only for observed changes", () => {
   const changed = buildAgentToolSuccessResult({
     toolName: "exec_command",

@@ -1369,6 +1369,7 @@ async function compactContextRequestTokenAware(
   const maxSummaryAttempts =
     runtimeEconomics.policy?.compaction.maxSummaryAttempts ?? 1;
   let contextRequest = input.contextRequest;
+  let maintenanceUnavailableFailureCode: string | undefined;
 
   while (true) {
     const contextTokens = totalContextTokens(contextRequest);
@@ -1450,7 +1451,7 @@ async function compactContextRequestTokenAware(
     let fallbackFailureCode: string | undefined =
       sourceTokens > budget.maxMaintenanceSourceTokens
         ? "HARNESS_ECONOMICS_COMPACTION_SOURCE_OVERSIZED"
-        : undefined;
+        : maintenanceUnavailableFailureCode;
     let correction: KestrelAgentCompactionCorrectionV1 | undefined;
 
     if (fallbackFailureCode === undefined) {
@@ -1496,7 +1497,11 @@ async function compactContextRequestTokenAware(
           if (isRunCancellation(error)) {
             throw error;
           }
-          fallbackFailureCode = "COMPACTION_MAINTENANCE_PROVIDER_FAILED";
+          fallbackFailureCode = readMaintenanceFailureCode(
+            error,
+            "COMPACTION_MAINTENANCE_PROVIDER_FAILED",
+          );
+          maintenanceUnavailableFailureCode = fallbackFailureCode;
           break;
         }
 
@@ -1557,6 +1562,8 @@ async function compactContextRequestTokenAware(
                 modelBudgetClass: "maintenance",
                 reasoningRetentionScope:
                   input.config.reasoningRetentionScope ?? "default",
+                contextBuilder: contextRequest.metadata.builder,
+                contextBuilderVersion: contextRequest.metadata.version,
                 compactionAttempt,
                 maxSummaryAttempts,
                 compactionAttemptKind,
@@ -1567,7 +1574,11 @@ async function compactContextRequestTokenAware(
               throw error;
             }
             acceptedSummary = undefined;
-            fallbackFailureCode = "COMPACTION_VERIFIER_PROVIDER_FAILED";
+            fallbackFailureCode = readMaintenanceFailureCode(
+              error,
+              "COMPACTION_VERIFIER_PROVIDER_FAILED",
+            );
+            maintenanceUnavailableFailureCode = fallbackFailureCode;
             break;
           }
           try {
@@ -1601,6 +1612,9 @@ async function compactContextRequestTokenAware(
           }
         }
         break;
+      }
+      if (acceptedSummary === undefined && fallbackFailureCode !== undefined) {
+        maintenanceUnavailableFailureCode = fallbackFailureCode;
       }
     }
 
@@ -1637,6 +1651,8 @@ async function compactContextRequestTokenAware(
       acceptedSummary !== undefined &&
       totalContextTokens(nextContextRequest) >= contextTokens
     ) {
+      maintenanceUnavailableFailureCode =
+        "HARNESS_ECONOMICS_COMPACTION_NON_REDUCING";
       compactedTranscript = buildKestrelAgentCompactedTranscript({
         transcript: contextRequest.transcript,
         plan,
@@ -1647,7 +1663,7 @@ async function compactContextRequestTokenAware(
           actionTokenCounter,
         ),
         summarySource: "runtime_fallback",
-        failureCode: "HARNESS_ECONOMICS_COMPACTION_NON_REDUCING",
+        failureCode: maintenanceUnavailableFailureCode,
       });
       nextContextRequest = rebuildCompactedContextRequest(
         input,
@@ -2242,6 +2258,16 @@ function readCompactionFailure(error: unknown): RuntimeFailure | undefined {
     error.code === "HARNESS_ECONOMICS_COMPACTION_SUMMARY_INVALID"
     ? error
     : undefined;
+}
+
+function readMaintenanceFailureCode(
+  error: unknown,
+  fallback: string,
+): string {
+  if (error instanceof RuntimeFailure) {
+    return error.code;
+  }
+  return asString(asRecord(error)?.code) ?? fallback;
 }
 
 function readVerifierCategories(

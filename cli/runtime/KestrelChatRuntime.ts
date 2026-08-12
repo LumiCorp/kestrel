@@ -93,6 +93,7 @@ import {
 } from "./gateway-credential-broker.js";
 import type {
   ModelGateway,
+  ModelGatewayCallOptions,
   ModelRequest,
   ModelResponse,
 } from "../../src/kestrel/contracts/model-io.js";
@@ -240,6 +241,7 @@ interface RuntimeBootstrap {
 
 const DEFAULT_KCHAT_GUARDRAILS: Partial<GuardrailConfig> = {
   maxStepVisits: 80,
+  maxMaintenanceModelCallsPerRun: 8,
   maxConcurrentToolJobsPerRun: 8,
   maxConcurrentToolJobsGlobal: 24,
   maxQueuedToolJobsPerRun: 50,
@@ -3403,6 +3405,7 @@ function createRuntimeWithStore(
     guardrails: {
       ...DEFAULT_KCHAT_GUARDRAILS,
       ...(profile.guardrails ?? {}),
+      maxMaintenanceModelCallsPerRun: 8,
       ...(profile.toolQueue?.perRunConcurrency !== undefined
         ? { maxConcurrentToolJobsPerRun: profile.toolQueue.perRunConcurrency }
         : {}),
@@ -3806,7 +3809,7 @@ function createLazyModelGateway(factory: () => ModelGateway): ModelGateway {
   return {
     async call<T>(
       request: ModelRequest,
-      options?: { signal?: AbortSignal | undefined },
+      options?: ModelGatewayCallOptions,
     ): Promise<T> {
       delegate ??= factory();
       return await delegate.call<T>(request, options);

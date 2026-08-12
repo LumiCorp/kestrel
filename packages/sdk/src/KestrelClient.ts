@@ -79,6 +79,7 @@ import {
   isRunnerRunTerminalEvent,
   parseRunnerHealthV1,
   RUNNER_JOB_STREAM_EVENT_TYPES,
+  RUNNER_RUN_STREAM_EVENT_TYPES,
   type RunnerHealthV1,
 } from "@kestrel-agents/protocol";
 
@@ -921,6 +922,7 @@ export class KestrelClient {
             sessionId: input.sessionId,
             runId: input.runId,
             sinceEventId: cursor,
+            eventTypes: [...RUNNER_RUN_STREAM_EVENT_TYPES],
           },
           input.context,
           controller,

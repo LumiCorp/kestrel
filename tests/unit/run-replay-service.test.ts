@@ -182,7 +182,13 @@ test("RunReplayService reports action and maintenance model call counts", async 
     providerPayloadHash: "hash-maintenance",
     componentHash: "component-maintenance",
     metadata: {
+      modelRole: "compaction",
       modelBudgetClass: "maintenance",
+      contextBuilder: "kestrel-agent-context",
+      contextBuilderVersion: 2,
+      compactionAttempt: 2,
+      maxSummaryAttempts: 2,
+      compactionAttemptKind: "correction",
       promptRetention: "hash_only",
     },
     createdAt: "2026-02-26T00:00:02.000Z",
@@ -197,10 +203,59 @@ test("RunReplayService reports action and maintenance model call counts", async 
   assert.equal(replay.modelProvenance.maintenanceCallCount, 1);
   assert.equal(doctor.modelProvenance?.actionCallCount, 1);
   assert.equal(doctor.modelProvenance?.maintenanceCallCount, 1);
+  assert.deepEqual(replay.modelProvenance.calls[1]?.metadata, {
+    modelRole: "compaction",
+    modelBudgetClass: "maintenance",
+    contextBuilder: "kestrel-agent-context",
+    contextBuilderVersion: 2,
+    compactionAttempt: 2,
+    maxSummaryAttempts: 2,
+    compactionAttemptKind: "correction",
+  });
   assert.equal(
     replay.modelProvenance.calls[0]?.metadata?.promptDump?.jsonPath,
     "/tmp/kestrel/model-prompts/action.json",
   );
+});
+
+test("RunReplayService preserves compaction lifecycle metadata from event-only provenance", async () => {
+  const store = new InMemorySessionStore();
+  await store.appendRunEvent({
+    runId: "run-event-provenance",
+    sessionId: "session-event-provenance",
+    type: "model.provenance",
+    level: "INFO",
+    timestamp: "2026-02-26T00:00:00.000Z",
+    metadata: {
+      callId: "call-event-maintenance",
+      providerPayloadHash: "hash-event-maintenance",
+      componentHash: "component-event-maintenance",
+      modelRole: "compaction_sufficiency",
+      modelBudgetClass: "maintenance",
+      contextBuilder: "kestrel-agent-context",
+      contextBuilderVersion: 2,
+      compactionAttempt: 1,
+      maxSummaryAttempts: 2,
+      compactionAttemptKind: "initial",
+      unapprovedMetadata: "must-not-replay",
+    },
+  });
+
+  const replay = await new RunReplayService(store).replay({
+    runId: "run-event-provenance",
+  });
+
+  assert.equal(replay.modelProvenance.callCount, 1);
+  assert.equal(replay.modelProvenance.maintenanceCallCount, 1);
+  assert.deepEqual(replay.modelProvenance.calls[0]?.metadata, {
+    modelRole: "compaction_sufficiency",
+    modelBudgetClass: "maintenance",
+    contextBuilder: "kestrel-agent-context",
+    contextBuilderVersion: 2,
+    compactionAttempt: 1,
+    maxSummaryAttempts: 2,
+    compactionAttemptKind: "initial",
+  });
 });
 
 test("RunReplayService includes thread/delegation lineage and orchestration milestones", async () => {

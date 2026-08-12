@@ -62,6 +62,7 @@ export function createWebDemoProfile(shellKind: ShellKind = "web"): TuiProfile {
     },
     guardrails: {
       maxStepVisits: 80,
+      maxMaintenanceModelCallsPerRun: 8,
     },
     codeMode: resolved.codeMode,
     devShell: resolved.devShell,

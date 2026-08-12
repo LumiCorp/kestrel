@@ -65,6 +65,10 @@ export type KestrelAgentCannotSatisfyReasonCode =
 const MODEL_CONTEXT_TEXT_LIMIT = 12_000;
 const GENERIC_VALUE_PREVIEW_CHARS = 2000;
 const LEGACY_READ_TEXT_CONTENT_LIMIT = 10_000;
+const ERROR_PATH_MAX_CHARS = 4096;
+const ERROR_REVISION_MAX_CHARS = 256;
+const ERROR_FIELD_MAX_CHARS = 128;
+const ERROR_NEXT_SUGGESTED_ACTION_MAX_CHARS = 1000;
 const LIST_ENTRY_LIMIT = 80;
 const SEARCH_MATCH_LIMIT = 40;
 const WEATHER_DAILY_ENTRY_LIMIT = 10;
@@ -1016,10 +1020,84 @@ function renderErrorFacts(error: unknown): string[] {
   if (record === undefined) {
     return [];
   }
+  const details = asRecord(record.details);
   return [
     ...field("errorCode", record.code),
     ...field("errorMessage", record.message),
+    ...field(
+      "path",
+      readFirstBoundedErrorString(
+        ERROR_PATH_MAX_CHARS,
+        details?.path,
+        record.path,
+      ),
+    ),
+    ...field(
+      "offsetBytes",
+      readFirstErrorOffsetBytes(details?.offsetBytes, record.offsetBytes),
+    ),
+    ...field(
+      "expectedRevision",
+      readFirstBoundedErrorString(
+        ERROR_REVISION_MAX_CHARS,
+        details?.expectedRevision,
+        record.expectedRevision,
+      ),
+    ),
+    ...field(
+      "actualRevision",
+      readFirstBoundedErrorString(
+        ERROR_REVISION_MAX_CHARS,
+        details?.actualRevision,
+        record.actualRevision,
+      ),
+    ),
+    ...field(
+      "field",
+      readFirstBoundedErrorString(
+        ERROR_FIELD_MAX_CHARS,
+        details?.field,
+        record.field,
+      ),
+    ),
+    ...field(
+      "nextSuggestedAction",
+      readFirstBoundedErrorString(
+        ERROR_NEXT_SUGGESTED_ACTION_MAX_CHARS,
+        details?.nextSuggestedAction,
+        record.nextSuggestedAction,
+      ),
+    ),
   ];
+}
+
+function readFirstBoundedErrorString(
+  maxChars: number,
+  ...values: unknown[]
+): string | undefined {
+  for (const value of values) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const normalized = value.trim();
+    if (normalized.length > 0 && normalized.length <= maxChars) {
+      return normalized;
+    }
+  }
+  return ;
+}
+
+function readFirstErrorOffsetBytes(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (
+      typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value >= 0
+    ) {
+      return value;
+    }
+  }
+  return ;
 }
 
 function toToolAliasEntry(

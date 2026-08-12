@@ -250,19 +250,24 @@ test("managed evaluation composition is deterministic and tenant-bound credentia
     gatewayId: "gateway-1",
     organizationId: "org-a",
     environmentId: "environment-1",
-    rawModelId: "gpt-5.4-2026-03-05",
-    provider: "openai" as const,
+    rawModelId: "openai/gpt-5.6-luna",
+    provider: "openrouter" as const,
   };
   const base = policy();
   const managedPolicy = createRuntimeEvaluationPolicyV1({
     ...base,
-    judge: { ...base.judge, credentialReference: credential },
+    judge: {
+      ...base.judge,
+      provider: "openrouter",
+      model: "openai/gpt-5.6-luna",
+      credentialReference: credential,
+    },
   });
   const input = {
     environmentPresetId: "workspace_hosted" as const,
     overlay: {
-      modelProvider: "openai" as const,
-      model: "gpt-5.4-2026-03-05",
+      modelProvider: "openrouter" as const,
+      model: "openai/gpt-5.6-luna",
       modelCredential: credential,
       evaluationPolicy: managedPolicy,
     },

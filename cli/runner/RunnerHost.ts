@@ -127,6 +127,7 @@ import {
   type ExecutionProfileRevisionProvenance,
 } from "../../src/localCore/executionProfileRegistry.js";
 import {
+  assertKestrelExecutionProfileEconomicsAdmission,
   composeKestrelProfile,
   KESTREL_ONE_ENVIRONMENT_PRESETS,
   KESTREL_POLICY_ID,
@@ -652,6 +653,10 @@ export class RunnerHost {
     }
     const resolution =
       await this.profileProvider.resolveExecutionProfile(payload);
+    assertKestrelExecutionProfileEconomicsAdmission({
+      profile: resolution.resolvedProfile,
+      environmentPresetId: payload.environmentPresetId,
+    });
     this.writer.emit("execution-profile.resolved", resolution, { commandId });
   }
 
@@ -3427,6 +3432,10 @@ function createDefaultProfileProvider(): RunnerProfileProvider {
         store,
         payload,
       );
+      assertKestrelExecutionProfileEconomicsAdmission({
+        profile,
+        environmentPresetId: payload.environmentPresetId,
+      });
       const provenance = buildDefaultExecutionProfileProvenance(
         profile,
         payload,

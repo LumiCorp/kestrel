@@ -2162,7 +2162,7 @@ test("Local Core registers a Core-owned Desktop execution profile resolved from 
       /^kestrel:desktop_safe_local:[a-f0-9]{64}$/u,
     );
     assert.equal(resolved.policy.id, "kestrel");
-    assert.equal(resolved.policy.version, 2);
+    assert.equal(resolved.policy.version, 3);
     assert.equal(resolved.environmentPreset.id, "desktop_safe_local");
     assert.equal(resolved.resolvedProfile.agentProfileId, "kestrel");
     assert.equal(resolved.resolvedProfile.modelProvider, "ollama");

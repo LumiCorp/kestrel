@@ -12,7 +12,11 @@ import {
   type GatewayCredentialLease,
   GatewayCredentialLeaseCache,
 } from "../../cli/runtime/gateway-credential-broker.js";
-import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
+import type {
+  ModelGateway,
+  ModelGatewayCallOptions,
+  ModelRequest,
+} from "../../src/kestrel/contracts/model-io.js";
 
 const reference = {
   source: "kestrel-one" as const,
@@ -400,6 +404,57 @@ test(
     );
     assert.equal(loads, 1);
     assert.equal(providerCalls, 1);
+  },
+);
+
+test(
+  "brokered OpenRouter failures retain provider attribution and public call options",
+  async () => {
+    const cache = new GatewayCredentialLeaseCache({
+      random: () => 0,
+      load: async () =>
+        lease({
+          leaseId: "lease-rate-limited",
+          expiresAtMs: Date.now() + GATEWAY_CREDENTIAL_CACHE_TTL_MS,
+        }),
+    });
+    let observedOptions: ModelGatewayCallOptions | undefined;
+    const gateway = new BrokeredModelGateway({
+      reference,
+      cache,
+      createProvider: () => ({
+        async call<T>(
+          _request: ModelRequest,
+          options?: ModelGatewayCallOptions,
+        ): Promise<T> {
+          observedOptions = options;
+          throw Object.assign(new Error("provider detail"), {
+            code: "MODEL_RATE_LIMITED",
+            status: 429,
+          });
+        },
+      }),
+    });
+    const onEvent = async () => {};
+
+    await assert.rejects(
+      gateway.call(
+        { input: "maintenance" },
+        { retryCount: 0, onEvent },
+      ),
+      (error: unknown) => {
+        assert.equal(
+          (error as { code?: unknown }).code,
+          "MODEL_RATE_LIMITED",
+        );
+        assert.equal((error as { status?: unknown }).status, 429);
+        assert.match(String(error), /OpenRouter provider request failed \(429\)/u);
+        assert.doesNotMatch(String(error), /provider detail/u);
+        return true;
+      },
+    );
+    assert.equal(observedOptions?.retryCount, 0);
+    assert.equal(observedOptions?.onEvent, onEvent);
   },
 );
 
