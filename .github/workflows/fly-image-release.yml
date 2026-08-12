@@ -42,6 +42,8 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl auth docker
+      - name: Wait for the exact Kestrel One production revision
+        run: pnpm tsx scripts/wait-for-kestrel-production-revision.ts ${{ github.sha }}
       - name: Deploy the release controller
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
@@ -53,6 +55,7 @@ jobs:
           --remote-only
           --build-arg KESTREL_GIT_SHA=${{ github.sha }}
       - name: Verify the release controller contract
+        id: verify-release-controller
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
@@ -67,8 +70,14 @@ jobs:
           done
           echo "Release controller did not become ready within 90 seconds." >&2
           exit 1
-      - name: Wait for the exact Kestrel One production revision
-        run: pnpm tsx scripts/wait-for-kestrel-production-revision.ts ${{ github.sha }}
+      - name: Capture release controller failure evidence
+        if: steps.verify-release-controller.outcome == 'failure'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl status --app kestrel-one-control-worker --json || true
+          flyctl machine list --app kestrel-one-control-worker --json || true
+          flyctl logs --app kestrel-one-control-worker --no-tail || true
       - name: Build, smoke, and publish candidate images
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

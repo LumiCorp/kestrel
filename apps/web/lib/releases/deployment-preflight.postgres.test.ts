@@ -3,6 +3,7 @@ import postgres from "postgres";
 import test from "node:test";
 import {
   inspectFlyReleaseDeploymentReadiness,
+  inspectFlyReleaseCompatibilitySchema,
   LEGACY_RELEASE_COMPATIBILITY_BOOTSTRAP,
 } from "./deployment-preflight";
 
@@ -54,6 +55,10 @@ test("production preflight treats the pre-compatibility schema as legacy metadat
 
   const scopedUrl = new URL(databaseUrl);
   scopedUrl.searchParams.set("options", `-csearch_path=${schemaName}`);
+  assert.equal(
+    (await inspectFlyReleaseCompatibilitySchema(scopedUrl.toString())).ready,
+    false,
+  );
   const result = await inspectFlyReleaseDeploymentReadiness({
     databaseUrl: scopedUrl.toString(),
     producedVersion: 3,
@@ -62,4 +67,12 @@ test("production preflight treats the pre-compatibility schema as legacy metadat
 
   assert.equal(result.ready, true);
   if (result.ready) assert.equal(result.mode, "legacy_bridge");
+});
+
+test("production compatibility schema reports ready after migration", async () => {
+  assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
+  assert.deepEqual(await inspectFlyReleaseCompatibilitySchema(databaseUrl), {
+    ready: true,
+    missingColumns: [],
+  });
 });

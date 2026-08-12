@@ -18,16 +18,20 @@ while (Date.now() < deadline) {
     const body = (await response.json()) as {
       revision?: unknown;
       status?: unknown;
+      checks?: {
+        releaseCompatibilitySchema?: { ready?: unknown };
+      };
     };
     lastObserved =
       typeof body.revision === "string" ? body.revision : "missing";
     if (
       response.ok &&
       body.status === "healthy" &&
-      body.revision === expectedRevision
+      body.revision === expectedRevision &&
+      body.checks?.releaseCompatibilitySchema?.ready === true
     ) {
       process.stdout.write(
-        `Kestrel One production is healthy at ${expectedRevision}.\n`,
+        `Kestrel One production and release schema are healthy at ${expectedRevision}.\n`,
       );
       process.exit(0);
     }
