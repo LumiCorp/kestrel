@@ -22,7 +22,7 @@ export function AdminDataTable({
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border">
+    <div className="overflow-x-auto border-y">
       <Table>
         <TableHeader>
           <TableRow>

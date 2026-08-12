@@ -42,8 +42,8 @@ test("Email exposes its organization configuration surface", () => {
   const email = getCoreAppDefinition("email");
   assert.ok(email);
   assert.equal(email.connectionModel, "organization");
-  assert.equal(email.configurationPath, "/settings/organization/email");
-  assert.equal(email.metadata.configurationPath, "/settings/organization/email");
+  assert.equal(email.configurationPath, "/organization/email");
+  assert.equal(email.metadata.configurationPath, "/organization/email");
 });
 
 test("Atlassian is a standard App with Jira and Confluence packs", () => {

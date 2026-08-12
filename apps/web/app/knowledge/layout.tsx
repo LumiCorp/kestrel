@@ -1,4 +1,5 @@
 import { AuthenticatedAppShell } from "@/components/authenticated-app-shell";
+import { AppPage } from "@/components/app-page";
 import { requireAuthenticatedShell } from "@/lib/knowledge/auth";
 
 export default async function KnowledgeLayout({
@@ -20,7 +21,7 @@ export default async function KnowledgeLayout({
       sectionLabel="Knowledge"
       session={session}
     >
-      {children}
+      <AppPage>{children}</AppPage>
     </AuthenticatedAppShell>
   );
 }

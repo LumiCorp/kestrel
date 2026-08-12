@@ -9,9 +9,9 @@ test.beforeEach(async ({ page, request }) => {
     },
   });
   expect(signInResponse.ok()).toBe(true);
-  await page.goto("/settings/organization/email");
+  await page.goto("/organization/email");
   await expect(
-    page.getByRole("heading", { level: 2, name: "Organization email" }),
+    page.getByRole("heading", { level: 1, name: "Organization email" }),
   ).toBeVisible();
 });
 
@@ -34,7 +34,7 @@ test(
     expect(installation).toMatchObject({ ok: true, status: 200 });
 
     await page.goto(
-      `/settings/organization/environments/${environmentId}/apps/email`,
+      `/organization/environments/${environmentId}/apps/email`,
     );
     await expect(
       page.getByRole("link", { name: "Configure Email" }),
@@ -46,7 +46,7 @@ test(
       page.getByText("Add a connection to make this App available to Projects."),
     ).toHaveCount(0);
     await page.getByRole("link", { name: "Configure Email" }).click();
-    await expect(page).toHaveURL(/\/settings\/organization\/email$/u);
+    await expect(page).toHaveURL(/\/organization\/email$/u);
 
     const response = await page.evaluate(async () => {
       const result = await fetch("/api/organization/email", {
@@ -90,7 +90,7 @@ test(
     );
     expect(emailApp).toMatchObject({
       connectionCount: 1,
-      configurationPath: "/settings/organization/email",
+      configurationPath: "/organization/email",
     });
 
     await page.reload();

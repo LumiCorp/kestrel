@@ -570,10 +570,11 @@ export function EnvironmentAppSettings({
           </div>
         }
         appKey={configuration.app.key}
-        backHref={`/settings/organization/environments/${environmentId}/apps`}
+        backHref={`/organization/environments/${environmentId}/apps`}
         backLabel="Environment Apps"
         description={configuration.app.description}
         icon={configuration.app.icon}
+        headingLevel={2}
         name={configuration.app.displayName}
         status={
           configuration.app.readiness === "ready"

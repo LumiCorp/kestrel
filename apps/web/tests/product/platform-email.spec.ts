@@ -11,7 +11,7 @@ test.beforeEach(async ({ page, request }) => {
   expect(signInResponse.ok()).toBe(true);
   await page.goto("/settings/platform/email");
   await expect(
-    page.getByRole("heading", { level: 2, name: "System email" }),
+    page.getByRole("heading", { level: 1, name: "System email" }),
   ).toBeVisible();
 });
 
@@ -41,9 +41,11 @@ test(
     });
 
     await page.reload();
-    await expect(
-      page.getByText("RESEND_API_KEY is unavailable to this deployment."),
-    ).toBeVisible();
+    const missingCredentialNotice = page.getByText(
+      "RESEND_API_KEY is unavailable to this deployment.",
+    );
+    await expect(missingCredentialNotice).toHaveCount(1, { timeout: 10_000 });
+    await expect(missingCredentialNotice).toBeVisible({ timeout: 10_000 });
     await expect(
       page.getByRole("button", { name: "Send test email" }),
     ).toBeDisabled();

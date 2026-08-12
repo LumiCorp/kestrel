@@ -1,6 +1,7 @@
 import { Archive, Plus } from "lucide-react";
 import Link from "next/link";
 import { AppPage } from "@/components/app-page";
+import { PageHeader } from "@/components/page-header";
 import { ProjectsIndexClient } from "@/components/projects/projects-index-client";
 import { Button } from "@/components/ui/button";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
@@ -33,30 +34,29 @@ export default async function ProjectsPage({
     : rows;
   return (
     <AppPage>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="font-semibold text-3xl">Projects</h1>
-          <p className="mt-1 text-muted-foreground">
-            Shared workspaces with revisioned instructions, private files, and
-            collaborative Threads.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button asChild variant="outline">
-            <Link href={showArchived ? "/projects" : "/projects?archived=true"}>
-              <Archive className="size-4" />
-              {showArchived ? "Active" : "Archived"}
-            </Link>
-          </Button>
-          {showArchived ? null : (
-            <Button asChild>
-              <Link href={createHref}>
-                <Plus className="size-4" /> New Project
+      <PageHeader
+        actions={
+          <>
+            <Button asChild variant="outline">
+              <Link
+                href={showArchived ? "/projects" : "/projects?archived=true"}
+              >
+                <Archive className="size-4" />
+                {showArchived ? "Active" : "Archived"}
               </Link>
             </Button>
-          )}
-        </div>
-      </div>
+            {showArchived ? null : (
+              <Button asChild>
+                <Link href={createHref}>
+                  <Plus className="size-4" /> New Project
+                </Link>
+              </Button>
+            )}
+          </>
+        }
+        description="Shared workspaces with revisioned instructions, private files, and collaborative Threads."
+        title="Projects"
+      />
       <ProjectsIndexClient
         projects={visibleRows.map(({ project, role }) => ({
           id: project.id,

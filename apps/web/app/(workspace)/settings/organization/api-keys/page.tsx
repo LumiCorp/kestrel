@@ -1,7 +1,5 @@
-import { ApiKeysAdminClient } from "@/components/settings/organization-api-keys-client";
-import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import { permanentRedirect } from "next/navigation";
 
-export default async function OrganizationApiKeysSettingsPage() {
-  await requireOrganizationAdmin();
-  return <ApiKeysAdminClient />;
+export default function LegacyOrganizationApiKeysPage() {
+  permanentRedirect("/organization/api-keys");
 }

@@ -396,6 +396,34 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin-denied",
   ),
   page(
+    "app/(workspace)/organization/setup/page.tsx",
+    "/organization/setup",
+    "models",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/agent-defaults/page.tsx",
+    "/organization/agent-defaults",
+    "agent-config",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/inference/page.tsx",
+    "/organization/inference",
+    "models",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/usage/page.tsx",
+    "/organization/usage",
+    "costs",
+    "admin",
+    "admin-denied",
+  ),
+  page(
     "app/(workspace)/organization/systems/page.tsx",
     "/organization/systems",
     "admin",
@@ -447,6 +475,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   page(
     "app/(workspace)/organization/environments/[id]/apps/page.tsx",
     "/organization/environments/:id/apps",
+    "apps",
+    "admin",
+    "admin-denied",
+  ),
+  page(
+    "app/(workspace)/organization/environments/[id]/apps/[appKey]/page.tsx",
+    "/organization/environments/:id/apps/:appKey",
     "apps",
     "admin",
     "admin-denied",
@@ -599,6 +634,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   page(
     "app/admin/billing/page.tsx",
     "/admin/billing",
+    ADMIN_PAGE.owner,
+    ADMIN_PAGE.access,
+    ADMIN_PAGE.unauthorized,
+  ),
+  page(
+    "app/admin/users/page.tsx",
+    "/admin/users",
     ADMIN_PAGE.owner,
     ADMIN_PAGE.access,
     ADMIN_PAGE.unauthorized,

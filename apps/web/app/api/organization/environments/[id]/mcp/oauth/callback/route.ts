@@ -23,7 +23,7 @@ export async function GET(
     });
     return NextResponse.redirect(
       new URL(
-        "/settings/organization/environments?mcp_oauth=connected",
+        "/organization?mcp_oauth=connected",
         url.origin
       )
     );

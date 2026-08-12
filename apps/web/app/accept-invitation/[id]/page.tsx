@@ -4,6 +4,7 @@ import { CheckIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { PageContainer } from "@/components/app-page";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -277,10 +278,13 @@ export default function InvitationPage() {
 
 function InvitationFrame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-[80vh] items-center justify-center px-4">
+    <PageContainer
+      className="flex min-h-[80vh] items-center"
+      contentClassName="flex max-w-md justify-center"
+    >
       <div className="mask-[radial-gradient(ellipse_at_center,transparent_20%,black)] pointer-events-none absolute inset-0 flex items-center justify-center bg-white dark:bg-black" />
       {children}
-    </div>
+    </PageContainer>
   );
 }
 

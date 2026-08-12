@@ -1,20 +1,10 @@
 "use client";
 
 import {
-  Activity,
-  Bot,
-  Building2,
-  CloudCog,
-  CreditCard,
-  HardDrive,
   KeyRound,
   Mail,
   Palette,
   PlugZap,
-  ScrollText,
-  Server,
-  Sparkles,
-  ShieldCheck,
   User,
   Users,
 } from "lucide-react";
@@ -41,65 +31,6 @@ const personalItems: SettingsItem[] = [
   { href: "/apps?view=connections", icon: PlugZap, label: "Connections" },
 ];
 
-const organizationItems: SettingsItem[] = [
-  {
-    href: "/settings/organization/setup",
-    icon: Sparkles,
-    label: "Setup",
-  },
-  {
-    href: "/organization/people",
-    icon: Building2,
-    label: "Members",
-  },
-  {
-    href: "/organization/billing",
-    icon: CreditCard,
-    label: "Billing",
-  },
-  {
-    href: "/organization/connections",
-    icon: Bot,
-    label: "Agent defaults",
-  },
-  {
-    href: "/organization/connections",
-    icon: CloudCog,
-    label: "AI providers",
-  },
-  {
-    href: "/organization",
-    icon: HardDrive,
-    label: "Environments",
-  },
-  {
-    href: "/organization/connections",
-    icon: Server,
-    label: "Inference",
-  },
-  {
-    href: "/organization/email",
-    icon: Mail,
-    label: "Email",
-  },
-  {
-    href: "/organization/api-keys",
-    icon: KeyRound,
-    label: "API keys",
-  },
-  {
-    href: "/organization/billing",
-    icon: Activity,
-    label: "Costs & usage",
-  },
-  {
-    href: "/organization/audit",
-    icon: ScrollText,
-    label: "Audit",
-  },
-  { href: "/apps", icon: PlugZap, label: "Apps" },
-];
-
 const platformItems: SettingsItem[] = [
   {
     href: "/settings/platform/users",
@@ -111,12 +42,6 @@ const platformItems: SettingsItem[] = [
     icon: Mail,
     label: "System email",
   },
-  {
-    href: "/admin/environments",
-    icon: ShieldCheck,
-    label: "Operations",
-  },
-  { href: "/admin/releases", icon: Server, label: "Releases" },
 ];
 
 function isItemActive(pathname: string, href: string) {
@@ -125,30 +50,14 @@ function isItemActive(pathname: string, href: string) {
 }
 
 export function SettingsNavigation({
-  canManageOrganization,
   isAppAdmin,
-  showOrganizationSetup,
 }: {
-  canManageOrganization: boolean;
   isAppAdmin: boolean;
-  showOrganizationSetup: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const groups: SettingsGroup[] = [
     { label: "Personal", items: personalItems },
-    ...(canManageOrganization
-      ? [
-          {
-            label: "Organization",
-            items: showOrganizationSetup
-              ? organizationItems
-              : organizationItems.filter(
-                  (item) => item.href !== "/settings/organization/setup",
-                ),
-          },
-        ]
-      : []),
     ...(isAppAdmin ? [{ label: "Platform", items: platformItems }] : []),
   ];
   const selectedHref =
@@ -159,7 +68,7 @@ export function SettingsNavigation({
 
   return (
     <>
-      <div className="border-b px-4 py-4 lg:hidden">
+      <div className="border-b py-4 lg:hidden">
         <label
           className="mb-1.5 block font-medium text-muted-foreground text-xs"
           htmlFor="settings-section"
@@ -183,7 +92,7 @@ export function SettingsNavigation({
           ))}
         </select>
       </div>
-      <aside className="hidden w-64 shrink-0 border-r px-4 py-6 lg:block">
+      <aside className="hidden w-56 shrink-0 border-r py-6 pr-6 lg:block">
         <div className="sticky top-6 space-y-6">
           {groups.map((group) => (
             <nav aria-label={`${group.label} settings`} key={group.label}>
@@ -197,13 +106,13 @@ export function SettingsNavigation({
                     <Link
                       aria-current={active ? "page" : undefined}
                       className={cn(
-                        "flex items-center gap-2 rounded-md px-2 py-2 font-medium text-muted-foreground text-sm transition-colors hover:bg-muted hover:text-foreground",
+                        "flex min-h-10 items-center gap-2 rounded-md px-2 py-2 font-medium text-muted-foreground text-sm transition-colors hover:bg-muted hover:text-foreground",
                         active && "bg-muted text-foreground",
                       )}
                       href={item.href}
                       key={item.href}
                     >
-                      <item.icon className="size-4" />
+                      <item.icon className="size-4 shrink-0" />
                       {item.label}
                     </Link>
                   );

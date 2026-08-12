@@ -1,4 +1,6 @@
 import { AuthenticatedAppShell } from "@/components/authenticated-app-shell";
+import { AppPage } from "@/components/app-page";
+import { AdminNavigation } from "@/components/admin/admin-navigation";
 import { requireAuthenticatedShell } from "@/lib/knowledge/auth";
 
 export default async function AdminLayout({
@@ -21,7 +23,10 @@ export default async function AdminLayout({
       sectionLabel="Admin"
       session={session}
     >
-      {children}
+      <AppPage>
+        <AdminNavigation />
+        {children}
+      </AppPage>
     </AuthenticatedAppShell>
   );
 }

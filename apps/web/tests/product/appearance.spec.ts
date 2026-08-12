@@ -5,7 +5,7 @@ test.setTimeout(60_000);
 test.beforeEach(async ({ page }) => {
   await page.goto("/settings/appearance");
   await expect(
-    page.getByRole("heading", { level: 2, name: "Appearance" })
+    page.getByRole("heading", { level: 1, name: "Appearance" })
   ).toBeVisible();
 });
 
@@ -76,7 +76,7 @@ test(
     const secondPage = await page.context().newPage();
     await secondPage.goto("/settings/appearance");
     await expect(
-      secondPage.getByRole("heading", { level: 2, name: "Appearance" })
+      secondPage.getByRole("heading", { level: 1, name: "Appearance" })
     ).toBeVisible();
 
     await page

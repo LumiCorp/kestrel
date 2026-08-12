@@ -51,7 +51,7 @@ export function EnvironmentDeleteAction({
       }
       toast.success("Environment deletion requested.");
       setOpen(false);
-      router.push("/settings/organization/environments");
+      router.push("/organization");
       router.refresh();
     } catch (error) {
       toast.error(

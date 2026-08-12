@@ -83,40 +83,44 @@ test(
 );
 
 test(
-  "Project header owns Environment choice and Thread actions",
+  "Project header owns its primary Thread action while Workspace owns binding",
   () => {
     const projectHome = readAppSource(
       "components/projects/project-home-client.tsx",
     );
-    const headerIndex = projectHome.indexOf("<header");
+    const headerIndex = projectHome.indexOf("<PageHeader");
     const overviewIndex = projectHome.indexOf('<TabsContent value="overview">');
 
     assert.ok(headerIndex >= 0);
     assert.ok(overviewIndex > headerIndex);
     const header = projectHome.slice(headerIndex, overviewIndex);
-    assert.match(header, /Environment/u);
-    assert.match(header, /Project Environment/u);
     assert.match(header, /New Thread/u);
-    assert.match(header, /Archive project/u);
+    assert.match(header, /Configure Workspace/u);
+    assert.doesNotMatch(header, /Project Environment/u);
+    assert.match(projectHome, /Archive Project/u);
     assert.match(projectHome, /\/duplicate/u);
-    assert.match(projectHome, /Archive thread/u);
+    assert.match(projectHome, /Archive Thread/u);
   },
 );
 
 test(
-  "Desktop Environment selection rolls back to the committed Project binding",
+  "Workspace setup owns Environment and source selection with rollback",
   () => {
-    const projectHome = readAppSource(
-      "components/projects/project-home-client.tsx",
+    const workspaceSetup = readAppSource(
+      "app/(workspace)/projects/[id]/workspace/workspace-client.tsx",
     );
-    assert.match(projectHome, /const committedBindingRef = useRef/u);
+    assert.match(workspaceSetup, /Project Environment/u);
     assert.match(
-      projectHome,
-      /catch \(error\) \{\s+restoreCommittedBinding\(\);\s+toast\.error/u,
+      workspaceSetup,
+      /source:[\s\S]*\{ type: "desktop", catalogId: resourceId \}/u,
     );
     assert.match(
-      projectHome,
-      /committedBindingRef\.current = \{\s+environmentId: nextEnvironmentId,\s+desktopCatalogId: catalogId/u,
+      workspaceSetup,
+      /rollbackProjectEnvironment/u,
+    );
+    assert.match(
+      workspaceSetup,
+      /\/api\/projects\/\$\{projectId\}\/environment/u,
     );
   },
 );
@@ -143,12 +147,14 @@ test(
 test(
   "Desktop workspace projections are scoped to the Project Environment",
   () => {
-    const projectPage = readAppSource("app/(workspace)/projects/[id]/page.tsx");
+    const projectWorkspaceRoute = readAppSource(
+      "app/api/projects/[id]/workspace/route.ts",
+    );
     const desktopAccount = readAppSource("lib/desktop-account.ts");
 
     assert.match(
-      projectPage,
-      /eq\(table\.environmentId, detail\.project\.environmentId\)/u,
+      projectWorkspaceRoute,
+      /listVisibleProjectDesktopWorkspaceCatalog/u,
     );
     assert.match(
       desktopAccount,
@@ -230,7 +236,7 @@ test(
     );
     assert.match(
       workspaceRail,
-      /mutateThreads\(\{ threads: \[\] \}, \{ revalidate: true \}\)/u,
+      /mutateThreads\(undefined, \{ revalidate: true \}\)/u,
     );
     assert.match(
       workspaceRail,

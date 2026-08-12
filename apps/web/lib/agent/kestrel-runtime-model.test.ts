@@ -151,7 +151,10 @@ test("ordered runtime models select only the explicit primary route", () => {
 
   assert.equal(profile.modelProvider, "openai");
   assert.equal(profile.model, "gpt-5.4");
-  assert.equal(profile.modelCredential?.gatewayId, "gateway-primary");
+  assert.equal(
+    (profile.modelCredential as { gatewayId?: string } | undefined)?.gatewayId,
+    "gateway-primary",
+  );
   assert.equal("recoveryModelCandidates" in profile, false);
 });
 

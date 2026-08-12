@@ -616,7 +616,7 @@ export function OrganizationSetupClient({
                 {readiness.environmentExecution.environmentId ? (
                   <Button asChild size="sm" variant="ghost">
                     <Link
-                      href={`/settings/organization/environments/${readiness.environmentExecution.environmentId}/activity`}
+                      href={`/organization/environments/${readiness.environmentExecution.environmentId}/activity`}
                     >
                       View Environment operations
                     </Link>

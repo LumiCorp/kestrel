@@ -1,7 +1,5 @@
-import { GatewayAdminClient } from "@/components/settings/ai-providers-client";
-import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import { permanentRedirect } from "next/navigation";
 
-export default async function AiProvidersSettingsPage() {
-  await requireOrganizationAdmin();
-  return <GatewayAdminClient />;
+export default function LegacyOrganizationAiProvidersPage() {
+  permanentRedirect("/organization/connections");
 }

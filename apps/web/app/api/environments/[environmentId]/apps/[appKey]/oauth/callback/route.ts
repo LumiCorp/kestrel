@@ -17,8 +17,8 @@ function returnUrl(input: {
 }) {
   const path =
     input.environmentId && input.appKey
-      ? `/settings/environments/${encodeURIComponent(input.environmentId)}/apps/${encodeURIComponent(input.appKey)}`
-      : "/settings/environments";
+      ? `/organization/environments/${encodeURIComponent(input.environmentId)}/apps/${encodeURIComponent(input.appKey)}`
+      : "/organization";
   const url = new URL(path, input.origin);
   url.searchParams.set("app_connection", input.status);
   return url;

@@ -1,13 +1,5 @@
-import { OrganizationManagementHome } from "@/components/organization/organization-management-home";
-import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
-import { getOrganizationManagementSnapshot } from "@/lib/organizations/management";
+import { permanentRedirect } from "next/navigation";
 
-export default async function OrganizationEnvironmentsPage() {
-  const { organizationId, session } = await requireOrganizationAdmin();
-  const snapshot = await getOrganizationManagementSnapshot({
-    organizationId,
-    userId: session.user.id,
-  });
-  if (!snapshot) return null;
-  return <OrganizationManagementHome {...snapshot} />;
+export default function OrganizationEnvironmentsPage() {
+  permanentRedirect("/organization");
 }

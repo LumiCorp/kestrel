@@ -1,1 +1,7 @@
-export { default } from "@/app/(workspace)/settings/organization/ai-providers/page";
+import { GatewayAdminClient } from "@/components/settings/ai-providers-client";
+import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+
+export default async function OrganizationConnectionsPage() {
+  await requireOrganizationAdmin();
+  return <GatewayAdminClient />;
+}

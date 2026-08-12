@@ -1,6 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 
 type Entry = {
@@ -15,6 +24,9 @@ type Entry = {
 export function RetainedReasoningInspector({ runId }: { runId: string }) {
   const [entries, setEntries] = useState<Entry[]>();
   const [status, setStatus] = useState<string>();
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string>();
 
   async function read() {
     setStatus("Loading…");
@@ -29,13 +41,28 @@ export function RetainedReasoningInspector({ runId }: { runId: string }) {
   }
 
   async function remove() {
-    const response = await fetch(`/api/organization/runs/${runId}/reasoning`, { method: "DELETE" });
-    if (!response.ok) {
-      setStatus("Could not delete retained reasoning.");
-      return;
+    setDeleteBusy(true);
+    setDeleteError(undefined);
+    try {
+      const response = await fetch(
+        `/api/organization/runs/${runId}/reasoning`,
+        { method: "DELETE" },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setDeleteError(
+          payload.error ?? "Could not delete retained reasoning.",
+        );
+        return;
+      }
+      setEntries([]);
+      setStatus("Retained reasoning deleted.");
+      setDeleteDialogOpen(false);
+    } catch {
+      setDeleteError("Could not delete retained reasoning.");
+    } finally {
+      setDeleteBusy(false);
     }
-    setEntries([]);
-    setStatus("Retained reasoning deleted.");
   }
 
   return (
@@ -43,7 +70,17 @@ export function RetainedReasoningInspector({ runId }: { runId: string }) {
       <div className="flex gap-2">
         <Button size="sm" variant="outline" type="button" onClick={read}>Inspect retained reasoning</Button>
         {entries && entries.length > 0 ? (
-          <Button size="sm" variant="destructive" type="button" onClick={remove}>Delete retained reasoning</Button>
+          <Button
+            onClick={() => {
+              setDeleteError(undefined);
+              setDeleteDialogOpen(true);
+            }}
+            size="sm"
+            type="button"
+            variant="destructive"
+          >
+            Delete retained reasoning
+          </Button>
         ) : null}
       </div>
       {status ? <p className="text-muted-foreground text-xs">{status}</p> : null}
@@ -56,6 +93,43 @@ export function RetainedReasoningInspector({ runId }: { runId: string }) {
           <div className="mt-2 text-muted-foreground text-xs">Expires {new Date(entry.expiresAt).toLocaleString()}</div>
         </div>
       ))}
+      <AlertDialog
+        onOpenChange={(open) => {
+          if (deleteBusy) return;
+          setDeleteDialogOpen(open);
+          if (!open) setDeleteError(undefined);
+        }}
+        open={deleteDialogOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete retained reasoning for this run?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes the provider-visible reasoning retained
+              for inspection. Run evidence and output remain available.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteError ? (
+            <p className="text-destructive text-sm" role="alert">
+              {deleteError}
+            </p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteBusy}>
+              Cancel
+            </AlertDialogCancel>
+            <Button
+              disabled={deleteBusy}
+              onClick={() => void remove()}
+              variant="destructive"
+            >
+              {deleteBusy ? "Deleting…" : "Delete permanently"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

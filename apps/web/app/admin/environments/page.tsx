@@ -1,211 +1,273 @@
+import Link from "next/link";
+import type { ReactNode } from "react";
 import { AdminDataTable } from "@/components/admin/admin-data-table";
 import { AdminEmptyState } from "@/components/admin/admin-empty-state";
-import { AdminPageHeader } from "@/components/admin/admin-page-header";
-import { AdminStatCard } from "@/components/admin/admin-stat-card";
-import { AdminStatusBanner } from "@/components/admin/admin-status-banner";
+import { PageHeader } from "@/components/page-header";
+import {
+  SettingsMetric,
+  SettingsMetricStrip,
+  SettingsStatusNotice,
+} from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { TimeText } from "@/components/ui/time-text";
+import { describeEnvironmentOperation } from "@/lib/environments/operation-presentation";
 import { getPlatformEnvironmentOperationDiagnostics } from "@/lib/admin/environment-operations";
+import {
+  getPlatformOperationsSummary,
+  resolveEnvironmentOperationsView,
+} from "@/lib/admin/environment-operations-presentation";
 import { requireAdmin } from "@/lib/knowledge/auth";
+import { cn } from "@/lib/utils";
 
-export default async function AdminEnvironmentOperationsPage() {
+export default async function AdminEnvironmentOperationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string | string[] }>;
+}) {
   await requireAdmin();
   const diagnostics = await getPlatformEnvironmentOperationDiagnostics();
+  const params = await searchParams;
   const invariantViolationCount = diagnostics.duplicateDailyBackups.length;
+  const view = resolveEnvironmentOperationsView(params.view);
+  const summary = getPlatformOperationsSummary({
+    failedCount: diagnostics.failedCount,
+    duplicateDailyBackupCount: invariantViolationCount,
+  });
 
   return (
-    <div className="space-y-6">
-      <AdminPageHeader
-        description="Cross-organization worker state, terminal failures, and deterministic daily-backup invariant violations."
-        eyebrow="Platform operations"
-        title="Environment Operations"
+    <div className="space-y-8">
+      <PageHeader
+        description="Cross-organization Environment work, failures, and invariant evidence."
+        eyebrow="Platform"
+        status={
+          summary.needsAttention ? (
+            <SettingsStatusNotice
+              description={summary.description}
+              title="Review required"
+              tone="warning"
+            />
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              {summary.description}
+            </p>
+          )
+        }
+        title="Environment operations"
       />
 
-      {invariantViolationCount > 0 ? (
-        <AdminStatusBanner
-          description={`${invariantViolationCount} Workspace/day group${invariantViolationCount === 1 ? "" : "s"} contain more than one daily-backup operation. The records remain visible below for diagnosis.`}
-          title="Daily backup invariant violated"
-          variant="error"
-        />
-      ) : diagnostics.failedCount > 0 ? (
-        <AdminStatusBanner
-          description="Terminal worker failures are retained with their validated error code and latest message."
-          title="Environment worker failures require review"
-          variant="warning"
+      <SettingsMetricStrip>
+        <SettingsMetric label="Requires attention" value={summary.attentionCount} />
+        <SettingsMetric label="Active" value={diagnostics.activeCount} />
+        <SettingsMetric label="Failed" value={diagnostics.failedCount} />
+        <SettingsMetric label="Backup violations" value={invariantViolationCount} />
+      </SettingsMetricStrip>
+
+      <nav aria-label="Environment operation views" className="flex gap-1 border-b">
+        <ViewLink active={view === "attention"} href="/admin/environments">
+          Requires attention
+        </ViewLink>
+        <ViewLink active={view === "active"} href="/admin/environments?view=active">
+          Active
+        </ViewLink>
+        <ViewLink active={view === "history"} href="/admin/environments?view=history">
+          History
+        </ViewLink>
+      </nav>
+
+      {view === "attention" ? (
+        <AttentionView diagnostics={diagnostics} />
+      ) : view === "active" ? (
+        <OperationTable
+          emptyDescription="No Environment operation is queued or running."
+          emptyTitle="No active operations"
+          operations={diagnostics.activeOperations}
         />
       ) : (
-        <AdminStatusBanner
-          description="No deterministic daily-backup violations or terminal Environment worker failures are recorded."
-          title="Environment operation boundary is healthy"
-          variant="success"
+        <OperationTable
+          emptyDescription="No completed or cancelled Environment operations are recorded."
+          emptyTitle="No operation history"
+          operations={diagnostics.historyOperations}
         />
       )}
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <AdminStatCard
-          detail="Queued or running across every organization"
-          title="Active operations"
-          value={diagnostics.activeCount}
-        />
-        <AdminStatCard
-          detail="Terminal failures retained for platform diagnosis"
-          title="Failed operations"
-          value={diagnostics.failedCount}
-        />
-        <AdminStatCard
-          detail="Workspace/day groups with more than one daily operation"
-          title="Backup invariant violations"
-          value={invariantViolationCount}
-        />
-      </div>
-
-      <section className="space-y-3">
-        <div>
-          <h2 className="font-semibold text-xl">Daily backup violations</h2>
-          <p className="text-muted-foreground text-sm">
-            One row is expected per Workspace and UTC day.
-          </p>
-        </div>
-        <AdminDataTable
-          columns={[
-            { key: "organization", label: "Organization" },
-            { key: "environment", label: "Environment" },
-            { key: "workspace", label: "Workspace" },
-            { key: "day", label: "UTC day" },
-            { key: "count", label: "Operations" },
-          ]}
-          empty={
-            <AdminEmptyState
-              description="Every recorded Workspace/day has at most one daily-backup operation."
-              title="No daily backup violations"
-            />
-          }
-          rows={diagnostics.duplicateDailyBackups.map((row) => ({
-            organization: row.organizationName,
-            environment: row.environmentName,
-            workspace: (
-              <div>
-                <div className="font-medium">{row.workspaceName}</div>
-                <div className="font-mono text-muted-foreground text-xs">
-                  {row.workspaceId}
-                </div>
-              </div>
-            ),
-            day: row.day,
-            count: <Badge variant="destructive">{row.operationCount}</Badge>,
-          }))}
-        />
-      </section>
-
-      <section className="space-y-3">
-        <div>
-          <h2 className="font-semibold text-xl">Latest failures</h2>
-          <p className="text-muted-foreground text-sm">
-            The latest 100 terminal Environment operation failures.
-          </p>
-        </div>
-        <AdminDataTable
-          columns={[
-            { key: "scope", label: "Scope" },
-            { key: "operation", label: "Operation" },
-            { key: "failure", label: "Failure" },
-            { key: "attempt", label: "Attempt" },
-            { key: "updated", label: "Updated" },
-          ]}
-          empty={
-            <AdminEmptyState
-              description="No Environment operation has reached a terminal failure."
-              title="No worker failures"
-            />
-          }
-          rows={diagnostics.failedOperations.map((row) => ({
-            scope: (
-              <div>
-                <div className="font-medium">
-                  {row.organizationName} / {row.environmentName}
-                </div>
-                <div className="text-muted-foreground text-xs">
-                  {row.workspaceName ?? "Environment"}
-                </div>
-              </div>
-            ),
-            operation: (
-              <div>
-                <div>{row.type}</div>
-                <div className="font-mono text-muted-foreground text-xs">
-                  {row.id}
-                </div>
-              </div>
-            ),
-            failure: (
-              <div className="max-w-xl">
-                <div className="font-mono text-xs">
-                  {row.errorCode ?? "UNCLASSIFIED_OPERATION_FAILURE"}
-                </div>
-                <div className="text-muted-foreground text-sm">
-                  {row.errorMessage ?? row.stage}
-                </div>
-              </div>
-            ),
-            attempt: row.attempt,
-            updated: <TimeText mode="datetime" value={row.updatedAt} />,
-          }))}
-        />
-      </section>
-
-      <section className="space-y-3">
-        <div>
-          <h2 className="font-semibold text-xl">Active operations</h2>
-          <p className="text-muted-foreground text-sm">
-            The latest 100 queued or running operations, including retry state.
-          </p>
-        </div>
-        <AdminDataTable
-          columns={[
-            { key: "scope", label: "Scope" },
-            { key: "operation", label: "Operation" },
-            { key: "state", label: "State" },
-            { key: "attempt", label: "Attempt" },
-            { key: "updated", label: "Updated" },
-          ]}
-          empty={
-            <AdminEmptyState
-              description="No Environment operation is queued or running."
-              title="No active operations"
-            />
-          }
-          rows={diagnostics.activeOperations.map((row) => ({
-            scope: (
-              <div>
-                <div className="font-medium">
-                  {row.organizationName} / {row.environmentName}
-                </div>
-                <div className="text-muted-foreground text-xs">
-                  {row.workspaceName ?? "Environment"}
-                </div>
-              </div>
-            ),
-            operation: (
-              <div>
-                <div>{row.type}</div>
-                <div className="font-mono text-muted-foreground text-xs">
-                  {row.id}
-                </div>
-              </div>
-            ),
-            state: (
-              <div>
-                <Badge variant="outline">{row.status}</Badge>
-                <div className="mt-1 text-muted-foreground text-xs">
-                  {row.errorMessage ?? row.stage}
-                </div>
-              </div>
-            ),
-            attempt: row.attempt,
-            updated: <TimeText mode="datetime" value={row.updatedAt} />,
-          }))}
-        />
-      </section>
     </div>
   );
+}
+
+function ViewLink({
+  active,
+  children,
+  href,
+}: {
+  active: boolean;
+  children: ReactNode;
+  href: string;
+}) {
+  return (
+    <Link
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "border-transparent border-b-2 px-3 py-2 font-medium text-muted-foreground text-sm",
+        active && "border-foreground text-foreground"
+      )}
+      href={href}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function AttentionView({
+  diagnostics,
+}: {
+  diagnostics: Awaited<ReturnType<typeof getPlatformEnvironmentOperationDiagnostics>>;
+}) {
+  if (
+    diagnostics.failedOperations.length === 0 &&
+    diagnostics.duplicateDailyBackups.length === 0
+  ) {
+    return (
+      <AdminEmptyState
+        description="The operation boundary has no terminal failures or deterministic daily-backup violations."
+        title="Nothing requires attention"
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      {diagnostics.failedOperations.length > 0 ? (
+        <section className="space-y-3">
+          <SectionHeading
+            description="Latest terminal failures across every organization."
+            title="Failed operations"
+          />
+          <OperationTable operations={diagnostics.failedOperations} />
+        </section>
+      ) : null}
+
+      {diagnostics.duplicateDailyBackups.length > 0 ? (
+        <section className="space-y-3">
+          <SectionHeading
+            description="More than one daily backup exists for the same Workspace and UTC day."
+            title="Backup invariant violations"
+          />
+          <AdminDataTable
+            columns={[
+              { key: "scope", label: "Scope" },
+              { key: "day", label: "UTC day" },
+              { key: "count", label: "Operations" },
+            ]}
+            rows={diagnostics.duplicateDailyBackups.map((row) => ({
+              scope: (
+                <div>
+                  <div className="font-medium">
+                    {row.organizationName} / {row.environmentName}
+                  </div>
+                  <div className="text-muted-foreground text-xs">{row.workspaceName}</div>
+                  <details className="mt-1 text-xs">
+                    <summary className="cursor-pointer text-muted-foreground">Technical details</summary>
+                    <div className="mt-1 break-all font-mono">{row.workspaceId}</div>
+                  </details>
+                </div>
+              ),
+              day: row.day,
+              count: <Badge variant="destructive">{row.operationCount}</Badge>,
+            }))}
+          />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function OperationTable({
+  operations,
+  emptyTitle = "No failed operations",
+  emptyDescription = "No Environment operation has reached a terminal failure.",
+}: {
+  operations: Array<{
+    id: string;
+    organizationName: string;
+    environmentName: string;
+    workspaceName: string | null;
+    type: string;
+    status?: string;
+    stage: string;
+    attempt: number;
+    errorCode: string | null;
+    errorMessage: string | null;
+    updatedAt: Date;
+  }>;
+  emptyTitle?: string;
+  emptyDescription?: string;
+}) {
+  return (
+    <AdminDataTable
+      columns={[
+        { key: "scope", label: "Scope" },
+        { key: "operation", label: "Operation" },
+        { key: "state", label: "State" },
+        { key: "updated", label: "Updated" },
+      ]}
+      empty={<AdminEmptyState description={emptyDescription} title={emptyTitle} />}
+      rows={operations.map((row) => {
+        const presentation = describeEnvironmentOperation({
+          errorMessage: row.errorMessage,
+          stage: row.stage,
+          status: row.status ?? "failed",
+          type: row.type,
+        });
+        return {
+          scope: (
+            <div>
+              <div className="font-medium">
+                {row.organizationName} / {row.environmentName}
+              </div>
+              <div className="text-muted-foreground text-xs">
+                {row.workspaceName ?? "Environment"}
+              </div>
+            </div>
+          ),
+          operation: (
+            <div>
+              <div>{presentation.label}</div>
+              <details className="mt-1 text-xs">
+                <summary className="cursor-pointer text-muted-foreground">Technical details</summary>
+                <dl className="mt-1 grid gap-1 font-mono text-xs">
+                  <div className="break-all">ID: {row.id}</div>
+                  <div>Stage: {row.stage}</div>
+                  <div>Attempt: {row.attempt}</div>
+                </dl>
+              </details>
+            </div>
+          ),
+          state: (
+            <div className="max-w-xl">
+              <Badge variant={(row.status ?? "failed") === "failed" ? "destructive" : "outline"}>
+                {humanStatus(row.status ?? "failed")}
+              </Badge>
+              <div className="mt-1 text-muted-foreground text-sm">{presentation.detail}</div>
+              {row.errorCode ? (
+                <div className="mt-1 font-mono text-muted-foreground text-xs">{row.errorCode}</div>
+              ) : null}
+            </div>
+          ),
+          updated: <TimeText mode="relative" value={row.updatedAt} />,
+        };
+      })}
+    />
+  );
+}
+
+function SectionHeading({ title, description }: { title: string; description: string }) {
+  return (
+    <div>
+      <h2 className="font-semibold text-base">{title}</h2>
+      <p className="text-muted-foreground text-sm">{description}</p>
+    </div>
+  );
+}
+
+function humanStatus(status: string) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
 }

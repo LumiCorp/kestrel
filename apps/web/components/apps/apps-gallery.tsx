@@ -77,7 +77,7 @@ export function AppsGallery({ initial }: { initial: AppsOverview }) {
         </div>
         {initial.canCreateCustomApp ? (
           <Button asChild>
-            <Link href="/settings/organization/environments">
+            <Link href="/organization">
               <Plus className="size-4" />
               Create Custom App
             </Link>
