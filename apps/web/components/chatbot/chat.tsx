@@ -941,6 +941,7 @@ export function Chat({
     id,
     messages: initialMessages,
     resume: Boolean(streamedTurnIdRef.current),
+    experimental_throttle: 50,
     generateId: generateUUID,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
     transport: chatTransport,
