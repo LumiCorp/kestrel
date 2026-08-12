@@ -72,11 +72,11 @@ test(
       `;
       await transaction`
         INSERT INTO "environment_workspaces" (
-          "id", "organization_id", "environment_id", "standalone_thread_id",
+          "id", "organization_id", "environment_id", "personal_owner_user_id",
           "created_by_user_id", "name", "kind", "status", "fly_machine_id",
           "fly_volume_id", "runtime_image", "failure_code", "failure_message"
         ) VALUES (
-          ${workspaceId}, ${organizationId}, ${environmentId}, ${threadId},
+          ${workspaceId}, ${organizationId}, ${environmentId}, ${userId},
           ${userId}, 'Reconciliation Workspace', 'scratch', 'starting',
           ${`machine-${suffix}`}, ${`volume-${suffix}`},
           'registry.example/workspace@sha256:test',

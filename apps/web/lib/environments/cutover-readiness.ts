@@ -14,6 +14,7 @@ const REQUIRED_HOSTED_ENVIRONMENT_RELATIONS = [
 const REQUIRED_HOSTED_ENVIRONMENT_COLUMNS = [
   ["environments", "gateway_service_token_hash"],
   ["environment_workspaces", "service_token_hash"],
+  ["environment_workspaces", "personal_owner_user_id"],
 ] as const;
 
 const REQUIRED_PREVIEW_CAPABILITIES = [
@@ -238,7 +239,10 @@ export async function inspectHostedEnvironmentCutoverReadiness(input: {
             OR workspace."status" IN ('deleting', 'deleted', 'failed')
             OR (
               thread."project_id" IS NULL
-              AND workspace."standalone_thread_id" IS DISTINCT FROM thread."id"
+              AND (
+                workspace."personal_owner_user_id" IS DISTINCT FROM thread."created_by_user_id"
+                OR workspace."standalone_thread_id" IS NOT NULL
+              )
             )
             OR (
               thread."project_id" IS NOT NULL

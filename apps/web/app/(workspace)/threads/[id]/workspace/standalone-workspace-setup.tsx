@@ -48,14 +48,14 @@ export function StandaloneWorkspaceSetup({
     void fetch(`/api/threads/${threadId}/workspace`, { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error("Thread Workspace setup is unavailable.");
+          throw new Error("Personal Workspace setup is unavailable.");
         }
         const payload = (await response.json()) as WorkspaceSetup;
         if (cancelled) return;
         if (
           payload.workspace &&
           (payload.workspace.status !== "requested" ||
-            payload.binding?.source === "thread")
+            payload.binding !== null)
         ) {
           onConfigured();
           return;
@@ -74,7 +74,7 @@ export function StandaloneWorkspaceSetup({
           toast.error(
             error instanceof Error
               ? error.message
-              : "Thread Workspace setup is unavailable."
+              : "Personal Workspace setup is unavailable."
           );
         }
       });
@@ -122,15 +122,15 @@ export function StandaloneWorkspaceSetup({
           typeof payload.error === "string"
             ? payload.error
             : payload.error?.message;
-        throw new Error(message ?? "Thread Workspace setup failed.");
+        throw new Error(message ?? "Personal Workspace setup failed.");
       }
-      toast.success("Thread Workspace provisioning requested.");
+      toast.success("Personal Workspace provisioning requested.");
       onConfigured();
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Thread Workspace setup failed."
+          : "Personal Workspace setup failed."
       );
     } finally {
       setSaving(false);
@@ -148,10 +148,11 @@ export function StandaloneWorkspaceSetup({
         </Button>
         <Card>
           <CardHeader>
-            <CardTitle>Configure this Thread Workspace</CardTitle>
+            <CardTitle>Configure your Personal Workspace</CardTitle>
             <p className="text-muted-foreground text-sm">
               Choose the organization Environment and optional GitHub repository
-              before Kestrel creates this Thread&apos;s persistent Workspace.
+              before Kestrel creates the persistent Workspace shared by your
+              standalone Threads.
             </p>
           </CardHeader>
           <CardContent className="space-y-5">

@@ -64,11 +64,11 @@ test("concurrent backup revision claims converge on one active artifact", async 
     `;
     await transaction`
       INSERT INTO "environment_workspaces" (
-        "id", "organization_id", "environment_id", "standalone_thread_id",
+        "id", "organization_id", "environment_id", "personal_owner_user_id",
         "created_by_user_id", "name", "kind", "status", "fly_machine_id",
         "fly_volume_id", "runtime_image"
       ) VALUES (
-        ${workspaceId}, ${organizationId}, ${environmentId}, ${threadId},
+        ${workspaceId}, ${organizationId}, ${environmentId}, ${userId},
         ${userId}, 'Backup Revision Workspace', 'scratch', 'ready',
         ${`machine-${suffix}`}, ${`volume-${suffix}`},
         'registry.example/workspace@sha256:test'

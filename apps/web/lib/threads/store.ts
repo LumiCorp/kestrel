@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { meterPersistedModelMessages } from "@/lib/costs/metering";
+import { threadEnvironmentBindingLockKey } from "@/lib/environments/lifecycle-lock";
 import type { DbThread, DbThreadMessage } from "@/lib/knowledge/db-types";
 import {
   getProjectAccess,
@@ -735,16 +736,38 @@ export async function assignStandaloneThreadToProject(input: {
     organizationId: input.organizationId,
     userId: input.userId,
   });
-  const [thread] = await knowledgeDb
-    .update(schema.threads)
-    .set({
-      projectId: input.projectId,
-      isPublic: false,
-      shareToken: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(schema.threads.id, input.id))
-    .returning();
+  const thread = await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${threadEnvironmentBindingLockKey(input.id)}, 0))`
+    );
+    const current = await transaction.query.threads.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.id, input.id),
+          eq(table.organizationId, input.organizationId),
+          eq(table.createdByUserId, input.userId),
+          isNull(table.projectId),
+          isNull(table.archivedAt)
+        ),
+    });
+    if (!current || current.mode === "admin" || current.origin !== "web") {
+      return null;
+    }
+    await transaction
+      .delete(schema.threadExecutionBindings)
+      .where(eq(schema.threadExecutionBindings.threadId, current.id));
+    const [updated] = await transaction
+      .update(schema.threads)
+      .set({
+        projectId: input.projectId,
+        isPublic: false,
+        shareToken: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.threads.id, current.id))
+      .returning();
+    return updated ?? null;
+  });
   if (thread) {
     await recordProjectAuditEvent({
       projectId: input.projectId,

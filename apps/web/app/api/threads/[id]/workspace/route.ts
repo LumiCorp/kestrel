@@ -51,10 +51,8 @@ export async function GET(
     if (!access) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
-    const environments = await listOrganizationEnvironments(
-      access.organizationId
-    );
-    const [binding, workspace, repositories, grants] = await Promise.all([
+    const [environments, binding] = await Promise.all([
+      listOrganizationEnvironments(access.organizationId),
       knowledgeDb.query.threadExecutionBindings.findFirst({
         where: (table, { and, eq }) =>
           and(
@@ -62,11 +60,15 @@ export async function GET(
             eq(table.organizationId, access.organizationId)
           ),
       }),
+    ]);
+    const [workspace, repositories, grants] = await Promise.all([
       knowledgeDb.query.environmentWorkspaces.findFirst({
         where: (table, { and, eq, isNull }) =>
           and(
             eq(table.organizationId, access.organizationId),
-            eq(table.standaloneThreadId, access.threadId),
+            binding
+              ? eq(table.id, binding.workspaceId)
+              : eq(table.personalOwnerUserId, access.session.user.id),
             isNull(table.deletedAt)
           ),
       }),

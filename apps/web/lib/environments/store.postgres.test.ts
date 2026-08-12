@@ -47,6 +47,7 @@ test(
       githubPolicy,
       { databaseEnvironmentProvisioningRepository },
       lifecycleLocks,
+      threadStore,
     ] = await Promise.all([
       import("@/lib/db/runtime"),
       import("./store"),
@@ -55,6 +56,7 @@ test(
       import("@/lib/integrations/github-policy"),
       import("./provisioner"),
       import("./lifecycle-lock"),
+      import("@/lib/threads/store"),
     ]);
     const sql = postgres(databaseUrl, { max: 1 });
     context.after(async () => {
@@ -250,7 +252,8 @@ test(
       });
     assert.equal(scratchBinding.created, true);
     assert.equal(scratchBinding.binding.threadId, scratchThreadId);
-    assert.equal(scratchBinding.workspace.standaloneThreadId, scratchThreadId);
+    assert.equal(scratchBinding.workspace.standaloneThreadId, null);
+    assert.equal(scratchBinding.workspace.personalOwnerUserId, userA);
     assert.equal(scratchBinding.workspace.kind, "scratch");
 
     await sql`
@@ -833,10 +836,18 @@ test(
       configuredScratchWorkspace.binding.threadId,
       configuredScratchThreadId
     );
-    assert.equal(configuredScratchWorkspace.binding.source, "thread");
+    assert.equal(configuredScratchWorkspace.binding.source, "organization");
     assert.equal(
       configuredScratchWorkspace.workspace.standaloneThreadId,
-      configuredScratchThreadId
+      null
+    );
+    assert.equal(
+      configuredScratchWorkspace.workspace.personalOwnerUserId,
+      userA
+    );
+    assert.equal(
+      configuredScratchWorkspace.workspace.id,
+      scratchBinding.workspace.id
     );
     assert.equal(configuredScratchWorkspace.workspace.sourceType, "github");
     assert.equal(
@@ -863,6 +874,35 @@ test(
       resolvedConfiguredScratch.workspace.id,
       configuredScratchWorkspace.workspace.id
     );
+    const promotedThread = await threadStore.assignStandaloneThreadToProject({
+      id: configuredScratchThreadId,
+      projectId,
+      userId: userA,
+      organizationId: organizationA,
+      disclosureAccepted: true,
+    });
+    assert.equal(promotedThread?.projectId, projectId);
+    const [personalWorkspaceBinding] = await sql<
+      Array<{ threadId: string; workspaceId: string }>
+    >`
+      SELECT
+        "thread_id" AS "threadId",
+        "workspace_id" AS "workspaceId"
+      FROM "thread_execution_bindings"
+      WHERE "workspace_id" = ${scratchBinding.workspace.id}
+    `;
+    assert.deepEqual(personalWorkspaceBinding, {
+      threadId: scratchThreadId,
+      workspaceId: scratchBinding.workspace.id,
+    });
+    const promotedBinding =
+      await environmentStore.resolveOrCreateThreadExecutionBinding({
+        organizationId: organizationA,
+        threadId: configuredScratchThreadId,
+        userId: userA,
+      });
+    assert.equal(promotedBinding.binding.source, "project");
+    assert.equal(promotedBinding.workspace.id, projectBinding.workspace.id);
     await sql`
       INSERT INTO "project_app_capability_policies" (
         "project_id", "app_key", "capability_key", "enabled",
