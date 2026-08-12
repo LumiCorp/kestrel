@@ -10,6 +10,7 @@ import {
   type ExecutionProfileResolveCommandPayload,
   type ExecutionProfileResolvedEventPayload,
   type RunnerProfile,
+  type RunnerEvent,
   type RunnerRunStreamEvent,
   type RunnerRunTerminalEvent,
   type RunnerStream,
@@ -68,6 +69,12 @@ type RuntimeId = "kestrel" | "codex" | "claude";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
 
 class KestrelOneRunnerClient extends KestrelClient {
+  protected override projectRunnerEvent<TEvent extends RunnerEvent>(
+    event: TEvent,
+  ): TEvent {
+    return event;
+  }
+
   readRetainedReasoning(
     runId: string,
     sessionId: string,

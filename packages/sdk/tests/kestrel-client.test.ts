@@ -570,6 +570,72 @@ test("KestrelClient streamRun stays request-scoped", async () => {
   await client.close();
 });
 
+test("KestrelClient omits private Runtime metadata from public stream projections", async () => {
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(
+        `event: run.completed\ndata: ${JSON.stringify({
+          id: "evt-private-runtime-metadata",
+          type: "run.completed",
+          ts: new Date().toISOString(),
+          commandId: body.id,
+          runId: "run-private-runtime-metadata",
+          sessionId: "session-private-runtime-metadata",
+          payload: {
+            result: {
+              assistantText: "Which workspace?",
+              output: {
+                status: "WAITING",
+                sessionId: "session-private-runtime-metadata",
+                runId: "run-private-runtime-metadata",
+                errors: [],
+                waitFor: {
+                  kind: "user",
+                  eventType: "user.reply",
+                  interaction: {
+                    version: "v1",
+                    requestId: "request-public",
+                    kind: "user_input",
+                    eventType: "user.reply",
+                    prompt: "Which workspace?",
+                    privateRuntimeMetadata: {
+                      nativeRequestId: "native-secret-correlation",
+                    },
+                  },
+                },
+              },
+            },
+          },
+        })}\n\n`,
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+
+  const stream = client.streamRun(
+    {
+      profileId: "kestrel",
+      turn: {
+        sessionId: "session-private-runtime-metadata",
+        message: "pause for input",
+        eventType: "user.message",
+      },
+    },
+    context,
+  );
+  const events = [];
+  for await (const event of stream) events.push(event);
+  const terminal = await stream.result;
+
+  assert.equal(JSON.stringify(events).includes("privateRuntimeMetadata"), false);
+  assert.equal(JSON.stringify(terminal).includes("privateRuntimeMetadata"), false);
+  assert.equal(JSON.stringify(terminal).includes("native-secret-correlation"), false);
+  assert.equal(terminal.type, "run.completed");
+  await client.close();
+});
+
 test("KestrelClient exposes workspace checkpoint helpers", async () => {
   const requests: Array<Record<string, unknown>> = [];
   const client = createRemoteClient({

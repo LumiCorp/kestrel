@@ -687,7 +687,12 @@ export class KestrelClient {
     payload: RunnerCommandPayloadByType[TType],
     context: KestrelRequestContext,
   ): Promise<RunnerResponseByCommandType[TType]> {
-    return this.client.sendCommand(type, payload, toCommandMetadata(context));
+    const event = await this.client.sendCommand(
+      type,
+      payload,
+      toCommandMetadata(context),
+    );
+    return this.projectRunnerEvent(event) as RunnerResponseByCommandType[TType];
   }
 
   async sendCommandWithId<TType extends RunnerCommandType>(
@@ -696,12 +701,22 @@ export class KestrelClient {
     payload: RunnerCommandPayloadByType[TType],
     context: KestrelRequestContext,
   ): Promise<RunnerResponseByCommandType[TType]> {
-    return this.client.sendCommandWithId(
+    const event = await this.client.sendCommandWithId(
       commandId,
       type,
       payload,
       toCommandMetadata(context),
     );
+    return this.projectRunnerEvent(event) as RunnerResponseByCommandType[TType];
+  }
+
+  /**
+   * Public SDK results omit Environment-private Runtime correlation. Trusted
+   * server integrations may retain the raw event while persisting it into a
+   * private product boundary.
+   */
+  protected projectRunnerEvent<TEvent extends RunnerEvent>(event: TEvent): TEvent {
+    return stripPrivateRuntimeMetadata(event) as TEvent;
   }
 
   async close(): Promise<void> {
@@ -746,12 +761,13 @@ export class KestrelClient {
       if (options.isStreamEvent(event) === false) {
         return;
       }
-      if (event.runId !== undefined) {
-        latestRunId = event.runId;
+      const projectedEvent = this.projectRunnerEvent(event);
+      if (projectedEvent.runId !== undefined) {
+        latestRunId = projectedEvent.runId;
       }
-      latestEventId = event.id;
-      stream.push(event);
-      if (options.isTerminalEvent(event)) {
+      latestEventId = projectedEvent.id;
+      stream.push(projectedEvent);
+      if (options.isTerminalEvent(projectedEvent)) {
         settled = true;
         unsubscribe();
         stream.finish();
@@ -770,6 +786,7 @@ export class KestrelClient {
     options.signal?.addEventListener("abort", abortHandler, { once: true });
 
     const result = this.client.sendCommandWithId(commandId, type, payload, toCommandMetadata(context))
+      .then((event) => this.projectRunnerEvent(event))
       .catch(async (error: unknown) => {
         if (
           type !== "run.start" ||
@@ -841,7 +858,7 @@ export class KestrelClient {
           filter,
           toCommandMetadata(context),
           controller,
-          onEvent,
+          (event) => onEvent(this.projectRunnerEvent(event)),
           onReady,
         );
       } catch (error) {
@@ -915,7 +932,7 @@ export class KestrelClient {
         if (event.type === "runner.error") {
           throw toKestrelError(event.payload);
         }
-        onEvent(event);
+        onEvent(this.projectRunnerEvent(event));
       });
     } catch (error) {
       if (controller.signal.aborted) {
@@ -1076,6 +1093,20 @@ function validateSubscriptionFilter(filter: RunnerEventSubscriptionFilter): void
     return;
   }
   throw new KestrelProtocolError("subscribe requires sessionId, threadId, or runId.");
+}
+
+function stripPrivateRuntimeMetadata(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripPrivateRuntimeMetadata(entry));
+  }
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "privateRuntimeMetadata")
+      .map(([key, entry]) => [key, stripPrivateRuntimeMetadata(entry)]),
+  );
 }
 
 function createAbortedRunnerStream<TEvent, TTerminal>(): RunnerStream<TEvent, TTerminal> {
