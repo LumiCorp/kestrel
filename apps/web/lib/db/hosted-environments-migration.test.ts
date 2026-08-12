@@ -51,7 +51,7 @@ test("Standalone Threads converge on one personal Workspace per organization mem
   const personalWorkspaceMigration = fs.readFileSync(
     path.join(
       path.dirname(fileURLToPath(import.meta.url)),
-      "migrations/0063_personal_standalone_workspaces.sql"
+      "migrations/0064_personal_standalone_workspaces.sql"
     ),
     "utf8"
   );

@@ -24,7 +24,11 @@ test("runtime continuity migration adds a nullable cursor and typed preview insp
 });
 
 test("runtime continuity migration is registered after the previous migration", () => {
-  assert.deepEqual(journal.entries.find((entry) => entry.idx === 62), {
+  const index = journal.entries.findIndex(
+    (entry) => entry.tag === "0062_runtime_event_cursor",
+  );
+  assert.equal(journal.entries[index - 1]?.tag, "0061_run_scoped_authorization");
+  assert.deepEqual(journal.entries[index], {
     idx: 62,
     version: "7",
     when: 1_786_467_600_000,

@@ -22,8 +22,16 @@ type Release = {
   migrationChanged: boolean;
   migrationApprovedAt: string | null;
   failureMessage: string | null;
+  environmentGatewayConfigVersion: number | null;
+  admission: { ok: boolean; code?: string; message?: string };
+  recoveryEligibility: { ok: boolean; code?: string; message?: string };
   createdAt: string;
-  components: Array<{ role: string; image: string; changed: boolean }>;
+  components: Array<{
+    role: string;
+    image: string;
+    changed: boolean;
+    environmentGatewayAcceptedVersions: number[] | null;
+  }>;
   targets: Array<{
     targetKey: string;
     status: string;
@@ -36,6 +44,9 @@ export function ReleasesClient({
   initialReleases,
   initialSettings,
   canaries,
+  currentBuildRevision,
+  compatibilityMode,
+  rollbackEligibility,
 }: {
   initialReleases: Release[];
   initialSettings: {
@@ -49,6 +60,9 @@ export function ReleasesClient({
     organizationName: string;
     status: string;
   }>;
+  currentBuildRevision: string | null;
+  compatibilityMode: "enforced" | "legacy_bridge";
+  rollbackEligibility: { ok: boolean; code?: string; message?: string };
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -91,6 +105,11 @@ export function ReleasesClient({
 
   return (
     <div className="space-y-6">
+      <AdminStatusBanner
+        description={`Serving ${currentBuildRevision?.slice(0, 12) ?? "unknown"}; release compatibility is ${compatibilityMode === "enforced" ? "enforced" : "using the one-time legacy bridge"}.`}
+        title="Release compatibility"
+        variant={compatibilityMode === "enforced" ? "success" : "warning"}
+      />
       {error ? (
         <AdminStatusBanner
           description={error}
@@ -211,7 +230,8 @@ export function ReleasesClient({
                   ) : null}
                 </div>
                 <CardDescription>
-                  Published {new Date(release.createdAt).toLocaleString()}
+                  Published {new Date(release.createdAt).toLocaleString()} ·
+                  producer v{release.environmentGatewayConfigVersion ?? "unknown"}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -234,6 +254,12 @@ export function ReleasesClient({
                       >
                         {component.image}
                       </div>
+                      {component.environmentGatewayAcceptedVersions ? (
+                        <div className="mt-1 text-muted-foreground text-xs">
+                          Accepts gateway config v
+                          {component.environmentGatewayAcceptedVersions.join(", v")}
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -308,7 +334,8 @@ export function ReleasesClient({
                           Boolean(active) ||
                           !savedCanaryId ||
                           (release.migrationChanged &&
-                            !release.migrationApprovedAt)
+                            !release.migrationApprovedAt) ||
+                          !release.admission.ok
                         }
                         onClick={() =>
                           act({ action: "approve", releaseId: release.id })
@@ -316,12 +343,38 @@ export function ReleasesClient({
                       >
                         Approve release
                       </Button>
+                      {release.recoveryEligibility.ok ? (
+                        <Button
+                          disabled={pending}
+                          onClick={() =>
+                            act({
+                              action: "recover_forward",
+                              releaseId: release.id,
+                            })
+                          }
+                          variant="destructive"
+                        >
+                          Recover forward
+                        </Button>
+                      ) : null}
+                      {active?.status === "paused" &&
+                      !release.recoveryEligibility.ok ? (
+                        <div className="basis-full text-destructive text-sm">
+                          {release.recoveryEligibility.code}:{" "}
+                          {release.recoveryEligibility.message}
+                        </div>
+                      ) : null}
+                      {release.admission.ok ? null : (
+                        <div className="basis-full text-destructive text-sm">
+                          {release.admission.code}: {release.admission.message}
+                        </div>
+                      )}
                     </>
                   ) : null}
                   {release.status === "paused" && release.id === active?.id ? (
                     <>
                       <Button
-                        disabled={pending}
+                        disabled={pending || !release.admission.ok}
                         onClick={() =>
                           act({ action: "retry", releaseId: release.id })
                         }
@@ -329,7 +382,7 @@ export function ReleasesClient({
                         Retry failed target
                       </Button>
                       <Button
-                        disabled={pending}
+                        disabled={pending || !rollbackEligibility.ok}
                         onClick={() =>
                           act({ action: "rollback", releaseId: release.id })
                         }
@@ -337,6 +390,11 @@ export function ReleasesClient({
                       >
                         Roll back to stable
                       </Button>
+                      {rollbackEligibility.ok ? null : (
+                        <div className="basis-full text-destructive text-sm">
+                          {rollbackEligibility.code}: {rollbackEligibility.message}
+                        </div>
+                      )}
                     </>
                   ) : null}
                 </div>

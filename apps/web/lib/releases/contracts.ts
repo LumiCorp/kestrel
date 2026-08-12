@@ -21,6 +21,142 @@ export const flyImageReleaseStatusSchema = z.enum([
 ]);
 export type FlyImageReleaseStatus = z.infer<typeof flyImageReleaseStatusSchema>;
 
+export type FlyImageReleaseAdmissionFailureCode =
+  | "RELEASE_BUILD_REVISION_MISMATCH"
+  | "RELEASE_COMPATIBILITY_BLOCKED"
+  | "RELEASE_COMPATIBILITY_UNKNOWN";
+
+export function evaluateFlyImageForwardRecoveryEligibility(input: {
+  activeStatus: string | null;
+  admission:
+    | { ok: true }
+    | { ok: false; code: string; message: string };
+  migrationReady: boolean;
+  canaryValid: boolean;
+}):
+  | { ok: true }
+  | { ok: false; code: string; message: string } {
+  if (input.activeStatus !== "paused") {
+    return {
+      ok: false,
+      code: "RELEASE_STATE_INVALID",
+      message: "Forward recovery requires an active paused release.",
+    };
+  }
+  if (!input.admission.ok) return input.admission;
+  if (!input.migrationReady) {
+    return {
+      ok: false,
+      code: "RELEASE_MIGRATION_BLOCKED",
+      message: "Complete the migration runbook before forward recovery.",
+    };
+  }
+  if (!input.canaryValid) {
+    return {
+      ok: false,
+      code: "RELEASE_CANARY_REQUIRED",
+      message: "Choose an active Fly Environment canary before recovery.",
+    };
+  }
+  return { ok: true };
+}
+
+export function evaluateFlyImageReleaseAdmission(input: {
+  trigger: string;
+  bundleRevision: string;
+  currentBuildRevision: string;
+  currentProducedVersion: number;
+  releaseProducedVersion: number | null;
+  routerAcceptedVersions: number[] | null;
+}):
+  | { ok: true }
+  | {
+      ok: false;
+      code: FlyImageReleaseAdmissionFailureCode;
+      message: string;
+    } {
+  if (
+    input.trigger !== "rollback" &&
+    input.bundleRevision !== input.currentBuildRevision
+  ) {
+    return {
+      ok: false,
+      code: "RELEASE_BUILD_REVISION_MISMATCH",
+      message: "Release revision does not match the serving Kestrel revision.",
+    };
+  }
+  if (
+    input.releaseProducedVersion === null ||
+    input.routerAcceptedVersions === null
+  ) {
+    return {
+      ok: false,
+      code: "RELEASE_COMPATIBILITY_UNKNOWN",
+      message: "Release gateway compatibility evidence is unavailable.",
+    };
+  }
+  if (
+    input.trigger !== "rollback" &&
+    input.releaseProducedVersion !== input.currentProducedVersion
+  ) {
+    return {
+      ok: false,
+      code: "RELEASE_COMPATIBILITY_BLOCKED",
+      message:
+        "Release producer version does not match the serving control plane.",
+    };
+  }
+  if (!input.routerAcceptedVersions.includes(input.currentProducedVersion)) {
+    return {
+      ok: false,
+      code: "RELEASE_COMPATIBILITY_BLOCKED",
+      message:
+        "The release Environment Router does not accept the serving gateway configuration version.",
+    };
+  }
+  return { ok: true };
+}
+
+export function selectFlyImageRollbackTargets(
+  targets: Array<{
+    targetKind: string;
+    componentRole: string | null;
+    environmentId: string | null;
+    status: string;
+    startedAt: Date | null;
+    result: unknown;
+  }>,
+) {
+  const globalRoles = new Set<FlyImageRole>();
+  const environmentIds = new Set<string>();
+  for (const target of targets) {
+    if (
+      target.targetKind === "global_app" &&
+      target.componentRole &&
+      FLY_IMAGE_ROLES.some((role) => role === target.componentRole) &&
+      target.startedAt
+    ) {
+      globalRoles.add(target.componentRole as FlyImageRole);
+    }
+    const result =
+      target.result && typeof target.result === "object"
+        ? (target.result as Record<string, unknown>)
+        : null;
+    if (
+      target.targetKind === "environment" &&
+      target.environmentId &&
+      (target.status === "completed" ||
+        typeof result?.operationId === "string")
+    ) {
+      environmentIds.add(target.environmentId);
+    }
+  }
+  return {
+    globalRoles: [...globalRoles],
+    environmentIds: [...environmentIds],
+  };
+}
+
 export const flyImageReleaseTargetStatusSchema = z.enum([
   "pending",
   "draining",
@@ -87,25 +223,73 @@ const sha256Schema = z
   .trim()
   .regex(/^sha256:[a-f0-9]{64}$/u, "Expected a sha256 digest.");
 
-export const flyImageReleaseComponentSchema = z.object({
-  role: flyImageRoleSchema,
-  image: immutableFlyImageSchema,
-  sourceRevision: gitRevisionSchema,
-  inputFingerprint: sha256Schema,
-  smoke: z.object({
-    status: z.literal("passed"),
-    command: z.string().trim().min(1).max(500),
-    completedAt: z.string().datetime(),
-  }),
-});
+const acceptedGatewayVersionsSchema = z
+  .array(z.number().int().positive())
+  .min(1)
+  .max(10)
+  .superRefine((versions, context) => {
+    for (let index = 0; index < versions.length; index += 1) {
+      if (index > 0 && versions[index - 1]! >= versions[index]!) {
+        context.addIssue({
+          code: "custom",
+          message:
+            "Accepted gateway versions must be unique and sorted ascending.",
+        });
+        return;
+      }
+    }
+  });
 
-export const flyImageReleaseManifestV1Schema = z
+export const flyImageReleaseComponentSchema = z
   .object({
-    version: z.literal(1),
+    role: flyImageRoleSchema,
+    image: immutableFlyImageSchema,
+    sourceRevision: gitRevisionSchema,
+    inputFingerprint: sha256Schema,
+    smoke: z.object({
+      status: z.literal("passed"),
+      command: z.string().trim().min(1).max(500),
+      completedAt: z.string().datetime(),
+    }),
+    environmentGateway: z
+      .object({ acceptedVersions: acceptedGatewayVersionsSchema })
+      .optional(),
+  })
+  .superRefine((component, context) => {
+    if (
+      component.role === "environment-router" &&
+      !component.environmentGateway
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "The environment-router component must declare accepted gateway versions.",
+        path: ["environmentGateway"],
+      });
+    }
+    if (
+      component.role !== "environment-router" &&
+      component.environmentGateway
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Only the environment-router component may declare gateway compatibility.",
+        path: ["environmentGateway"],
+      });
+    }
+  });
+
+export const flyImageReleaseManifestV2Schema = z
+  .object({
+    version: z.literal(2),
     controllerContractRevision: z.number().int().positive(),
     bundleRevision: gitRevisionSchema,
     trigger: z.enum(["main", "scheduled", "manual"]),
     migrationChanged: z.boolean(),
+    environmentGateway: z.object({
+      producedVersion: z.number().int().positive(),
+    }),
     validation: z.object({
       status: z.literal("passed"),
       commands: z.array(z.string().trim().min(1).max(300)).min(1).max(20),
@@ -134,8 +318,8 @@ export const flyImageReleaseManifestV1Schema = z
     }
   });
 
-export type FlyImageReleaseManifestV1 = z.infer<
-  typeof flyImageReleaseManifestV1Schema
+export type FlyImageReleaseManifestV2 = z.infer<
+  typeof flyImageReleaseManifestV2Schema
 >;
 
 const ROLE_REGISTRY_APPS: Record<FlyImageRole, string> = {

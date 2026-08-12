@@ -1,4 +1,8 @@
 import { readFile } from "node:fs/promises";
+import {
+  ENVIRONMENT_GATEWAY_CONFIG_ACCEPTED_VERSIONS,
+  ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION,
+} from "@lumi/kestrel-environment-auth";
 import { z } from "zod";
 import {
   fingerprintImageInputs,
@@ -120,16 +124,28 @@ export async function publishFlyImages(
         command: `${image.smoke} ${immutableImage}`,
         completedAt: dependencies.now().toISOString(),
       },
+      ...(image.role === "environment-router"
+        ? {
+            environmentGateway: {
+              acceptedVersions: [
+                ...ENVIRONMENT_GATEWAY_CONFIG_ACCEPTED_VERSIONS,
+              ],
+            },
+          }
+        : {}),
     });
   }
 
   const validationCommands = parseValidationCommands(env);
   const manifest = {
-    version: 1 as const,
+    version: 2 as const,
     controllerContractRevision: 1,
     bundleRevision: revision,
     trigger,
     migrationChanged: flyMigrationChanged(changedPaths),
+    environmentGateway: {
+      producedVersion: ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION,
+    },
     validation: {
       status: "passed" as const,
       commands: validationCommands,

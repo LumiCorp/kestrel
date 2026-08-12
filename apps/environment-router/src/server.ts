@@ -63,13 +63,15 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (request.method === "GET" && request.url === "/health") {
-    response.writeHead(gatewayConfig.snapshot ? 200 : 503, { "content-type": "application/json" });
+    const gatewayHealth = gatewayConfig.health;
+    response.writeHead(gatewayHealth.ready ? 200 : 503, { "content-type": "application/json" });
     response.end(
       JSON.stringify({
-        ok: true,
+        ok: gatewayHealth.ready,
         service: "environment-router",
         runtimeContractRevision: ENVIRONMENT_GATEWAY_CONTRACT_REVISION,
-        configurationReady: gatewayConfig.snapshot !== null,
+        configurationReady: gatewayHealth.ready,
+        gatewayConfig: gatewayHealth,
       })
     );
     return;

@@ -6,6 +6,7 @@ import { createServer, request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import {
   ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+  EnvironmentGatewayConfigParseError,
   type EnvironmentGatewayConfig,
   PREVIEW_EDGE_AUTHORIZATION_HEADER,
   PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
@@ -205,8 +206,16 @@ test(
     versionTwoClient.stop();
 
     const retiredProviderField = ["n", "g", "r", "o", "k"].join("");
+    const unsupportedClient = clientFor({ ...baseConfig, version: 1 });
+    await assert.rejects(unsupportedClient.refresh(), (error: unknown) => {
+      assert.ok(error instanceof EnvironmentGatewayConfigParseError);
+      assert.equal(error.code, "UNSUPPORTED_VERSION");
+      assert.equal(error.receivedVersion, 1);
+      return true;
+    });
+    unsupportedClient.stop();
+
     for (const [label, invalid] of [
-      ["version 1", { ...baseConfig, version: 1 }],
       [
         "retired provider block",
         { ...baseConfig, [retiredProviderField]: null },

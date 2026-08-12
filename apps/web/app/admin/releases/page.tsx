@@ -28,6 +28,9 @@ export default async function AdminReleasesPage() {
       />
       <ReleasesClient
         canaries={canaries}
+        compatibilityMode={releaseData.compatibilityMode}
+        currentBuildRevision={releaseData.currentBuildRevision}
+        rollbackEligibility={releaseData.rollbackEligibility}
         initialReleases={releaseData.releases.map((release) => ({
           id: release.id,
           bundleRevision: release.bundleRevision,
@@ -38,10 +41,16 @@ export default async function AdminReleasesPage() {
             release.migrationApprovedAt?.toISOString() ?? null,
           failureMessage: release.failureMessage,
           createdAt: release.createdAt.toISOString(),
+          environmentGatewayConfigVersion:
+            release.environmentGatewayConfigVersion,
+          admission: release.admission,
+          recoveryEligibility: release.recoveryEligibility,
           components: release.components.map((component) => ({
             role: component.role,
             image: component.image,
             changed: component.changed,
+            environmentGatewayAcceptedVersions:
+              component.environmentGatewayAcceptedVersions,
           })),
           targets: release.targets.map((target) => ({
             targetKey: target.targetKey,

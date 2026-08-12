@@ -1820,7 +1820,11 @@ export const flyImageReleases = pgTable(
         completedAt: string;
       }>()
       .notNull(),
+    environmentGatewayConfigVersion: integer(
+      "environment_gateway_config_version",
+    ),
     baseReleaseId: text("base_release_id"),
+    recoveryOfReleaseId: text("recovery_of_release_id"),
     approvedByUserId: text("approved_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -1880,6 +1884,9 @@ export const flyImageReleaseComponents = pgTable(
     smoke: jsonb("smoke")
       .$type<{ status: "passed"; command: string; completedAt: string }>()
       .notNull(),
+    environmentGatewayAcceptedVersions: integer(
+      "environment_gateway_accepted_versions",
+    ).array(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

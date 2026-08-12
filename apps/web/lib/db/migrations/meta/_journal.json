@@ -446,8 +446,15 @@
     {
       "idx": 63,
       "version": "7",
+      "when": 1786550400000,
+      "tag": "0063_fly_release_compatibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
       "when": 1786554000000,
-      "tag": "0063_personal_standalone_workspaces",
+      "tag": "0064_personal_standalone_workspaces",
       "breakpoints": true
     }
   ]
