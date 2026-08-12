@@ -16,6 +16,9 @@ import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { enqueueManagedRunPodRun } from "@/lib/knowledge/queue";
 import { routeIdSchema } from "@/lib/knowledge/validation";
+import {
+  signupOnboardingSetupMutationGuard,
+} from "@/lib/signup-onboarding-mutation-guard";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 const bodySchema = z.discriminatedUnion("kind", [
@@ -59,6 +62,13 @@ export async function POST(
   try {
     assertEnvironmentPrivateInferenceEnabled();
     const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const { id: environmentId } = paramsSchema.parse(await context.params);
     const body = bodySchema.parse(await request.json());
     if (body.kind === "connected") {

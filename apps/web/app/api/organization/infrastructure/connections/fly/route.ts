@@ -7,6 +7,9 @@ import {
   testFlyProviderConnection,
 } from "@/lib/environments/fly-connection";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import {
+  signupOnboardingSetupMutationGuard,
+} from "@/lib/signup-onboarding-mutation-guard";
 
 const bodySchema = z.discriminatedUnion("action", [
   z.object({
@@ -36,7 +39,14 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { organizationId } = await requireOrganizationAdmin();
+    const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const body = bodySchema.parse(await request.json());
     const connection =
       body.action === "test"

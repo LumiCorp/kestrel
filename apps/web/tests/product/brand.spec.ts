@@ -41,7 +41,7 @@ test(
     await page.getByRole("tab", { name: "Sign Up" }).click();
     await expect(
       page.getByText(
-        "Kestrel One accounts are created from an organization invitation.",
+        "New Kestrel One accounts require an invite code.",
       ),
     ).toBeVisible();
     await expect(page.getByRole("img", { name: "Kestrel One" })).toHaveCount(1);

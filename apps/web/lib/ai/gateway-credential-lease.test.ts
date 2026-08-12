@@ -29,7 +29,11 @@ test("credential broker authentication uses a dedicated bearer token", () => {
 
 test("credential lease eligibility rejects disabled and unapproved gateway models", () => {
   const approved = {
-    gateway: { enabled: true, provider: "openai" as const },
+    gateway: {
+      enabled: true,
+      provider: "openai" as const,
+      credentialStatus: "ready" as const,
+    },
     model: { approved: true, modality: "language" },
   };
   assert.doesNotThrow(() => assertGatewayCredentialLeaseEligible(approved));
@@ -48,7 +52,11 @@ test("credential lease eligibility rejects disabled and unapproved gateway model
     },
     {
       ...approved,
-      gateway: { enabled: true, provider: "replicate" as const },
+      gateway: {
+        enabled: true,
+        provider: "replicate" as const,
+        credentialStatus: "ready" as const,
+      },
     },
   ]) {
     assert.throws(
@@ -159,7 +167,11 @@ test("RunPod lease eligibility requires server-owned validation evidence", () =>
   assert.throws(
     () =>
       assertGatewayCredentialLeaseEligible({
-        gateway: { enabled: true, provider: "runpod" },
+        gateway: {
+          enabled: true,
+          provider: "runpod",
+          credentialStatus: "ready",
+        },
         model: { approved: true, modality: "language", metadata: null },
       }),
     (error: unknown) =>
@@ -173,6 +185,7 @@ test("RunPod lease eligibility binds validation to model and endpoint", () => {
     gateway: {
       enabled: true,
       provider: "runpod" as const,
+      credentialStatus: "ready" as const,
       baseUrl: "https://api.runpod.ai/v2/endpoint_123/openai/v1",
     },
     model: {
@@ -209,4 +222,38 @@ test("RunPod lease eligibility binds validation to model and endpoint", () => {
         error.code === "GATEWAY_MODEL_NOT_VALIDATED"
     );
   }
+});
+
+test("credential leases reject invalid and unverified gateway credentials", () => {
+  const input = {
+    gateway: {
+      enabled: true,
+      provider: "openai" as const,
+      credentialStatus: "ready" as const,
+    },
+    model: { approved: true, modality: "language" },
+  };
+  for (const credentialStatus of ["unverified", "invalid"] as const) {
+    assert.throws(
+      () =>
+        assertGatewayCredentialLeaseEligible({
+          ...input,
+          gateway: { ...input.gateway, credentialStatus },
+        }),
+      (error: unknown) =>
+        error instanceof GatewayCredentialLeaseError &&
+        error.code === "GATEWAY_CREDENTIAL_NOT_READY" &&
+        error.status === 409
+    );
+  }
+  assert.doesNotThrow(() =>
+    assertGatewayCredentialLeaseEligible({
+      ...input,
+      gateway: {
+        enabled: true,
+        provider: "ollama",
+        credentialStatus: "not_required",
+      },
+    })
+  );
 });

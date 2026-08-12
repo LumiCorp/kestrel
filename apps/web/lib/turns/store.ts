@@ -16,6 +16,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import { shouldInvalidateGatewayCredential } from "@/lib/ai/gateway-credential-health";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { meterPersistedModelMessages } from "@/lib/costs/metering";
 import type { DbThreadTurn, DbThreadTurnEvent } from "@/lib/knowledge/db-types";
@@ -1853,6 +1854,94 @@ async function terminalizeTurnEnvironmentExecution(
     );
 }
 
+async function invalidateTurnGatewayCredentialForAuthFailure(
+  tx: TurnTransaction,
+  turn: {
+    environmentExecutionId: string | null;
+    organizationId: string;
+  },
+  failureCode: string | null | undefined,
+  now: Date
+) {
+  if (!(turn.environmentExecutionId && failureCode === "MODEL_AUTH_ERROR")) {
+    return;
+  }
+  const [leased] = await tx
+    .select({
+      gatewayId: schema.environmentModelGrants.gatewayId,
+      grantCredentialRevision:
+        schema.environmentModelGrants.gatewayCredentialRevision,
+      gatewayCredentialRevision: schema.aiGateways.credentialRevision,
+    })
+    .from(schema.environmentModelGrants)
+    .innerJoin(
+      schema.aiGateways,
+      eq(schema.aiGateways.id, schema.environmentModelGrants.gatewayId)
+    )
+    .where(
+      and(
+        eq(
+          schema.environmentModelGrants.runId,
+          turn.environmentExecutionId
+        ),
+        eq(
+          schema.environmentModelGrants.organizationId,
+          turn.organizationId
+        ),
+        eq(schema.environmentModelGrants.status, "active")
+      )
+    )
+    .limit(1);
+  if (
+    !(
+      leased &&
+      shouldInvalidateGatewayCredential({
+        failureCode,
+        grantCredentialRevision: leased.grantCredentialRevision,
+        gatewayCredentialRevision: leased.gatewayCredentialRevision,
+      })
+    )
+  ) {
+    return;
+  }
+  const [invalidated] = await tx
+    .update(schema.aiGateways)
+    .set({
+      credentialStatus: "invalid",
+      credentialValidatedAt: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.aiGateways.id, leased.gatewayId),
+        eq(schema.aiGateways.organizationId, turn.organizationId),
+        eq(
+          schema.aiGateways.credentialRevision,
+          leased.grantCredentialRevision!
+        )
+      )
+    )
+    .returning({ id: schema.aiGateways.id });
+  if (invalidated) {
+    await tx.insert(schema.adminEventLogs).values({
+      id: crypto.randomUUID(),
+      organizationId: turn.organizationId,
+      actorUserId: null,
+      level: "warn",
+      category: "ai_gateway",
+      action: "gateway.credential.invalidated",
+      targetType: "ai_gateway",
+      targetId: invalidated.id,
+      message: "Invalidated an AI gateway credential after a model authentication failure.",
+      metadata: {
+        failureCode: "MODEL_AUTH_ERROR",
+        credentialRevision: leased.grantCredentialRevision,
+      },
+      createdAt: now,
+    });
+  }
+}
+
 export async function completeDurableThreadTurn(input: {
   turnId: string;
   status: ThreadTurnTerminalStatus;
@@ -1915,6 +2004,14 @@ export async function completeDurableThreadTurn(input: {
       })
       .where(eq(schema.threadTurns.id, turn.id))
       .returning();
+    if (input.status === "failed") {
+      await invalidateTurnGatewayCredentialForAuthFailure(
+        tx,
+        turn,
+        input.failureCode,
+        now
+      );
+    }
     await terminalizeTurnEnvironmentExecution(tx, turn, input.status, now);
     await appendDurableReplayChunks(tx, turn.id, input.replayChunks ?? []);
     await appendTurnEvent(tx, {

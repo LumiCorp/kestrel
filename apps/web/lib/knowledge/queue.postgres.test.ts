@@ -44,6 +44,7 @@ test(
 
     const suffix = crypto.randomUUID();
     const userId = `queue-user-${suffix}`;
+    const degradedOwnerUserId = `queue-degraded-owner-${suffix}`;
     const organizationId = `queue-org-${suffix}`;
     const waitingEnvironmentId = `queue-waiting-env-${suffix}`;
     const degradedEnvironmentId = `queue-degraded-env-${suffix}`;
@@ -68,7 +69,10 @@ test(
         )
       `;
       await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
-      await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await sql`
+        DELETE FROM "user"
+        WHERE "id" IN (${userId}, ${degradedOwnerUserId})
+      `;
       await resetDbRuntimeForTests();
       await sql.end({ timeout: 0 });
     });
@@ -77,9 +81,14 @@ test(
       await transaction`
         INSERT INTO "user" (
           "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
-        ) VALUES (
-          ${userId}, 'Queue User', ${`${userId}@example.test`}, true, now(), now()
-        )
+        ) VALUES
+          (
+            ${userId}, 'Queue User', ${`${userId}@example.test`}, true, now(), now()
+          ),
+          (
+            ${degradedOwnerUserId}, 'Degraded Owner',
+            ${`${degradedOwnerUserId}@example.test`}, true, now(), now()
+          )
       `;
       await transaction`
         INSERT INTO "organization" ("id", "name", "slug", "createdAt")
@@ -108,16 +117,16 @@ test(
       `;
       await transaction`
         INSERT INTO "environment_workspaces" (
-          "id", "organization_id", "environment_id", "standalone_thread_id",
+          "id", "organization_id", "environment_id", "personal_owner_user_id",
           "created_by_user_id", "name", "kind", "status"
         ) VALUES
           (
             ${waitingWorkspaceId}, ${organizationId}, ${waitingEnvironmentId},
-            ${waitingThreadId}, ${userId}, 'Waiting Workspace', 'scratch', 'requested'
+            ${userId}, ${userId}, 'Waiting Workspace', 'scratch', 'requested'
           ),
           (
             ${degradedWorkspaceId}, ${organizationId}, ${degradedEnvironmentId},
-            ${degradedThreadId}, ${userId}, 'Degraded Workspace', 'scratch', 'requested'
+            ${degradedOwnerUserId}, ${userId}, 'Degraded Workspace', 'scratch', 'requested'
           )
       `;
       await transaction`

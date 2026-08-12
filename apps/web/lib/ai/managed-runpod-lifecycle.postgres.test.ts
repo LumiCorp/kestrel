@@ -110,10 +110,11 @@ test(
       await transaction`
         INSERT INTO "ai_gateways" (
           "id", "organization_id", "environment_id", "deployment_id",
-          "provider", "display_name", "enabled"
+          "provider", "display_name", "enabled", "credential_status",
+          "credential_validated_at"
         ) VALUES (
           ${gatewayId}, ${organizationId}, ${environmentId}, ${deploymentId},
-          'runpod', 'Delete Test Gateway', true
+          'runpod', 'Delete Test Gateway', true, 'ready', now()
         )
       `;
       await transaction`

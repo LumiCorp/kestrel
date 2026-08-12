@@ -8,6 +8,9 @@ import {
   syncGatewayModels,
 } from "@/lib/ai/gateways";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import {
+  signupOnboardingSetupMutationGuard,
+} from "@/lib/signup-onboarding-mutation-guard";
 
 function safeErrorResponse(error: unknown, fallbackStatus?: number) {
   const result = getSafeGatewayAdminError(error, fallbackStatus);
@@ -48,7 +51,14 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { organizationId } = await requireOrganizationAdmin();
+    const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const body = bodySchema.parse(await request.json());
     const gateway = await createGateway({ ...body, organizationId });
     try {

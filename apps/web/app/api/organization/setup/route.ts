@@ -4,6 +4,9 @@ import { recoverAdminDefaultEnvironment } from "@/lib/admin/environments";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { getOrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
+import {
+  signupOnboardingSetupMutationGuard,
+} from "@/lib/signup-onboarding-mutation-guard";
 
 const bodySchema = z.object({
   action: z.literal("retry-default-environment"),
@@ -23,6 +26,13 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     bodySchema.parse(await request.json());
     const readinessBeforeRecovery =
       await getOrganizationChatReadiness(organizationId);

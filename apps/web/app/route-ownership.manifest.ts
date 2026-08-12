@@ -260,6 +260,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     PUBLIC_AUTH_PAGE.unauthorized,
   ),
   page(
+    "app/(auth)/sign-up/page.tsx",
+    "/sign-up",
+    PUBLIC_AUTH_PAGE.owner,
+    PUBLIC_AUTH_PAGE.access,
+    PUBLIC_AUTH_PAGE.unauthorized,
+  ),
+  page(
+    "app/onboarding/page.tsx",
+    "/onboarding",
+    "auth",
+    "authenticated",
+    "redirect-sign-in",
+  ),
+  page(
     "app/(auth)/two-factor/otp/page.tsx",
     "/two-factor/otp",
     PUBLIC_AUTH_PAGE.owner,
@@ -1167,6 +1181,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_API.unauthorized,
   ),
   api(
+    "app/api/admin/signup-codes/route.ts",
+    "/api/admin/signup-codes",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/admin/signup-codes/[id]/route.ts",
+    "/api/admin/signup-codes/:id",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
     "app/api/admin/releases/route.ts",
     "/api/admin/releases",
     ADMIN_API.owner,
@@ -2044,6 +2072,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin-denied",
   ),
   page(
+    "app/(workspace)/settings/platform/signup-codes/page.tsx",
+    "/settings/platform/signup-codes",
+    "admin",
+    "admin",
+    "admin-denied",
+  ),
+  page(
     "app/(workspace)/settings/platform/email/page.tsx",
     "/settings/platform/email",
     "email-delivery",
@@ -2070,6 +2105,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "models",
     "admin",
     "admin-denied",
+  ),
+  api(
+    "app/api/onboarding/route.ts",
+    "/api/onboarding",
+    "auth",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
   ),
   api(
     "app/api/organization/infrastructure/connections/fly/route.ts",

@@ -5,6 +5,11 @@ import {
   Mail,
   Palette,
   PlugZap,
+  ScrollText,
+  Server,
+  Sparkles,
+  ShieldCheck,
+  TicketCheck,
   User,
   Users,
 } from "lucide-react";
@@ -32,6 +37,11 @@ const personalItems: SettingsItem[] = [
 ];
 
 const platformItems: SettingsItem[] = [
+  {
+    href: "/settings/platform/signup-codes",
+    icon: TicketCheck,
+    label: "Signup codes",
+  },
   {
     href: "/settings/platform/users",
     icon: Users,

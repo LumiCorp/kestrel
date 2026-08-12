@@ -6,6 +6,7 @@ import { getProjectDetail } from "@/lib/projects/store";
 import { listThreadsForUser } from "@/lib/threads/store";
 import { createMetadata } from "@/lib/metadata";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
+import { getSignupOnboardingState } from "@/lib/signup-onboarding";
 import { auth } from "../(auth)/auth";
 
 export const metadata = createMetadata({
@@ -64,6 +65,17 @@ export default async function Page() {
   const session = await auth();
 
   if (session?.user) {
+    const onboarding = await getSignupOnboardingState({
+      userId: session.user.id,
+      email: session.user.email,
+      emailVerified: session.user.emailVerified,
+    });
+    if (
+      onboarding.state !== "not_applicable" &&
+      onboarding.state !== "complete"
+    ) {
+      redirect("/onboarding");
+    }
     await redirectAuthenticatedUser();
   }
 

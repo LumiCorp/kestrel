@@ -58,7 +58,7 @@ test(
     assert.match(landingSource, /SDK 0\.8/u);
     assert.match(landingSource, /@kestrel-agents\/kestrel@0\.8\.2/u);
     assert.match(landingSource, /corrected Runtime npm package is 0\.8\.2/u);
-    assert.match(landingSource, /invitation-only/u);
+    assert.match(landingSource, /requires an invite code/u);
     assert.match(
       landingSource,
       /Kestrel is maintained and supported by Lumi\./u,

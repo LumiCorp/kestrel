@@ -222,6 +222,7 @@ test("mobile responses, snapshots, message parts, errors, and SSE are concrete",
       properties: {
         code: { enum: string[] };
         nextStep: { enum: string[] };
+        settingsPath: { enum: string[] };
       };
     };
   };
@@ -234,6 +235,10 @@ test("mobile responses, snapshots, message parts, errors, and SSE are concrete",
     "model_access",
     "workspace_compute",
     "environment_execution",
+  ]);
+  assert.deepEqual(mobileError.error.properties.settingsPath.enum, [
+    "/settings/organization/ai-providers",
+    "/settings/organization/setup",
   ]);
   assert.deepEqual(
     (

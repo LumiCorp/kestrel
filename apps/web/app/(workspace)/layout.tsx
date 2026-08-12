@@ -12,6 +12,7 @@ import {
   getActiveOrganizationSnapshot,
 } from "@/lib/knowledge/auth";
 import { getOrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
+import { getSignupOnboardingState } from "@/lib/signup-onboarding";
 import { auth } from "../(auth)/auth";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -34,6 +35,14 @@ async function SidebarWrapper({ children }: { children: React.ReactNode }) {
   const session = await auth();
   if (!session?.user) {
     redirect("/sign-in");
+  }
+  const onboarding = await getSignupOnboardingState({
+    userId: session.user.id,
+    email: session.user.email,
+    emailVerified: session.user.emailVerified,
+  });
+  if (onboarding.state !== "not_applicable" && onboarding.state !== "complete") {
+    redirect("/onboarding");
   }
   const activeOrganization = await getActiveOrganizationSnapshot(session);
   const [readiness, canManageActiveOrganization] = activeOrganization

@@ -7,6 +7,8 @@ import { knowledgeDb } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { requireMobileSession } from "@/lib/mobile/session";
 import { ensurePersonalOrganizationByUserId } from "@/lib/personal-workspace";
+import { shouldDeferPersonalEnvironmentCreation } from "@/lib/signup-access-codes";
+import { getSignupOnboardingState } from "@/lib/signup-onboarding";
 
 type SessionLike = Session | null;
 type SessionWithOrg = SessionLike & {
@@ -112,12 +114,18 @@ export async function requireActiveOrganization(request?: Request) {
     });
   }
 
-  const ensuredEnvironment = await ensureOrganizationDefaultEnvironment({
+  const deferEnvironment = await shouldDeferPersonalEnvironmentCreation({
     organizationId,
     userId: session.user.id,
   });
-  if (ensuredEnvironment.operation) {
-    await enqueueEnvironmentOperation(ensuredEnvironment.operation.id);
+  if (!deferEnvironment) {
+    const ensuredEnvironment = await ensureOrganizationDefaultEnvironment({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (ensuredEnvironment.operation) {
+      await enqueueEnvironmentOperation(ensuredEnvironment.operation.id);
+    }
   }
 
   return {
@@ -150,7 +158,14 @@ export async function getActiveOrganizationSnapshot(
     return null;
   }
 
-  if (requestedOrganization?.lifecycleState !== "deleting") {
+  const deferEnvironment = await shouldDeferPersonalEnvironmentCreation({
+    organizationId,
+    userId: session.user.id,
+  });
+  if (
+    requestedOrganization?.lifecycleState !== "deleting" &&
+    !deferEnvironment
+  ) {
     const ensuredEnvironment = await ensureOrganizationDefaultEnvironment({
       organizationId,
       userId: session.user.id,
@@ -275,6 +290,15 @@ export async function requireAuthenticatedShell(input?: {
 
   if (!session?.user) {
     unauthorized();
+  }
+
+  const onboarding = await getSignupOnboardingState({
+    userId: session.user.id,
+    email: session.user.email,
+    emailVerified: session.user.emailVerified,
+  });
+  if (onboarding.state !== "not_applicable" && onboarding.state !== "complete") {
+    redirect("/onboarding");
   }
 
   const isAdmin = isAdminUser(session.user);

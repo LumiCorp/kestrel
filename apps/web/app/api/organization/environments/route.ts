@@ -8,6 +8,9 @@ import {
 import { createEnvironmentInputSchema } from "@/lib/environments/contracts";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
+import {
+  signupOnboardingSetupMutationGuard,
+} from "@/lib/signup-onboarding-mutation-guard";
 
 export async function GET() {
   try {
@@ -24,6 +27,13 @@ export async function GET() {
 export async function PATCH(request: Request) {
   try {
     const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const payload = (await request.json()) as { enabled?: unknown };
     if (typeof payload.enabled !== "boolean") {
       return NextResponse.json(
@@ -46,6 +56,13 @@ export async function PATCH(request: Request) {
 export async function POST(request: Request) {
   try {
     const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const environment = createEnvironmentInputSchema.parse(
       await request.json()
     );
