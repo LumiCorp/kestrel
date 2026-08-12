@@ -16,14 +16,14 @@ import {
   KESTREL_WORKSPACE_STOP_CONFIG,
   KESTREL_WORKSPACE_VOLUME_GB,
   type EnvironmentProviderMachineStopConfig,
-  type WorkspaceMachineProvisioningInput
+  type WorkspaceMachineProvisioningInput,
 } from "./contracts";
 
 const appDetailsSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   network: z.string().min(1).optional(),
-  organization: z.object({ slug: z.string().min(1) })
+  organization: z.object({ slug: z.string().min(1) }),
 });
 
 const appCreateSchema = z.object({ id: z.string().min(1) });
@@ -33,11 +33,11 @@ const appListSchema = z.object({ apps: z.array(appDetailsSchema) });
 const ipAssignmentSchema = z.object({
   ip: z.string().min(1),
   shared: z.boolean().optional(),
-  service_name: z.string().nullable().optional()
+  service_name: z.string().nullable().optional(),
 });
 
 const ipAssignmentsSchema = z.object({
-  ips: z.array(ipAssignmentSchema)
+  ips: z.array(ipAssignmentSchema),
 });
 
 const volumeSchema = z.object({
@@ -47,19 +47,19 @@ const volumeSchema = z.object({
   size_gb: z.number().int().positive(),
   encrypted: z.boolean(),
   state: z.string().min(1).optional(),
-  attached_machine_id: z.string().min(1).nullable().optional()
+  attached_machine_id: z.string().min(1).nullable().optional(),
 });
 
 const volumeSnapshotSchema = z.object({
   id: z.string().min(1),
   status: z.string().min(1).optional(),
-  state: z.string().min(1).optional()
+  state: z.string().min(1).optional(),
 });
 
 const volumeSnapshotsSchema = z
   .union([
     z.array(volumeSnapshotSchema),
-    z.object({ snapshots: z.array(volumeSnapshotSchema) })
+    z.object({ snapshots: z.array(volumeSnapshotSchema) }),
   ])
   .transform((value) => (Array.isArray(value) ? value : value.snapshots));
 
@@ -67,7 +67,7 @@ const machineMountSchema = z
   .object({
     volume: z.string().min(1),
     name: z.string().min(1).optional(),
-    path: z.string().min(1)
+    path: z.string().min(1),
   })
   .passthrough();
 
@@ -82,8 +82,8 @@ const machineSchema = z.object({
         name: z.string().min(1),
         status: z.string().min(1),
         output: z.string().optional(),
-        updated_at: z.string().optional()
-      })
+        updated_at: z.string().optional(),
+      }),
     )
     .optional(),
   config: z
@@ -91,6 +91,7 @@ const machineSchema = z.object({
       image: z.string().min(1).optional(),
       env: z.record(z.string(), z.string()).optional(),
       metadata: z.record(z.string(), z.string()).optional(),
+      standbys: z.array(z.string().min(1)).optional(),
       mounts: z.array(machineMountSchema).optional(),
       services: z.array(z.unknown()).optional(),
       stop_config: z
@@ -101,8 +102,8 @@ const machineSchema = z.object({
               typeof value === "string"
                 ? (parseFlyDurationNanoseconds(value) ?? value)
                 : value,
-            z.number().int().nonnegative()
-          )
+            z.number().int().nonnegative(),
+          ),
         })
         .passthrough()
         .nullable()
@@ -111,18 +112,18 @@ const machineSchema = z.object({
         .object({
           cpu_kind: z.string().min(1).optional(),
           cpus: z.number().int().positive().optional(),
-          memory_mb: z.number().int().positive().optional()
+          memory_mb: z.number().int().positive().optional(),
         })
         .passthrough()
-        .optional()
+        .optional(),
     })
     .passthrough()
-    .optional()
+    .optional(),
 });
 
 const machineCreateResponseSchema = z
   .object({
-    id: z.string().min(1)
+    id: z.string().min(1),
   })
   .passthrough();
 
@@ -131,9 +132,9 @@ const snapshotResponseSchema = z.object({
     backup: z.object({
       id: z.union([z.string(), z.number()]).transform(String),
       graph_id: z.string().optional(),
-      state: z.string()
-    })
-  })
+      state: z.string(),
+    }),
+  }),
 });
 
 const MACHINE_START_RETRY_INTERVAL_MS = 1000;
@@ -158,11 +159,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     this.token = requireConfigured(input.token, "Fly API token");
     this.organizationSlug = requireConfigured(
       input.organizationSlug,
-      "Fly organization slug"
+      "Fly organization slug",
     );
     this.apiBaseUrl = (input.apiBaseUrl ?? FLY_MACHINES_API_BASE_URL).replace(
       /\/+$/u,
-      ""
+      "",
     );
     this.fetchImpl = input.fetchImpl ?? fetch;
     this.healthPollIntervalMs = input.healthPollIntervalMs ?? 1000;
@@ -174,8 +175,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       appListSchema,
       await this.request(
         `/apps?org_slug=${encodeURIComponent(this.organizationSlug)}`,
-        { method: "GET" }
-      )
+        { method: "GET" },
+      ),
     );
   }
 
@@ -186,7 +187,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const existing = await this.request(
       `/apps/${encodeURIComponent(input.appName)}`,
       { method: "GET" },
-      { allowNotFound: true }
+      { allowNotFound: true },
     );
     if (existing !== null) {
       const parsed = parseResponse(appDetailsSchema, existing);
@@ -194,11 +195,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         appListSchema,
         await this.request(
           `/apps?org_slug=${encodeURIComponent(this.organizationSlug)}`,
-          { method: "GET" }
-        )
+          { method: "GET" },
+        ),
       );
       const belongsToConfiguredOrganization = organizationApps.apps.some(
-        (app) => app.id === parsed.id && app.name === parsed.name
+        (app) => app.id === parsed.id && app.name === parsed.name,
       );
       if (
         !belongsToConfiguredOrganization ||
@@ -207,14 +208,14 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       ) {
         throw new EnvironmentProviderError(
           "FLY_RESOURCE_CONFLICT",
-          "Fly App name is already owned by a different organization or network."
+          "Fly App name is already owned by a different organization or network.",
         );
       }
       return {
         id: parsed.id,
         name: parsed.name,
         organizationSlug: parsed.organization.slug,
-        network: parsed.network ?? input.networkName
+        network: parsed.network ?? input.networkName,
       };
     }
 
@@ -225,15 +226,15 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         body: jsonBody({
           app_name: input.appName,
           org_slug: this.organizationSlug,
-          network: input.networkName
-        })
-      })
+          network: input.networkName,
+        }),
+      }),
     );
     return {
       id: created.id,
       name: input.appName,
       organizationSlug: this.organizationSlug,
-      network: input.networkName
+      network: input.networkName,
     };
   }
 
@@ -247,20 +248,20 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     serviceToken?: string | undefined;
   }): Promise<EnvironmentProviderGateway> {
     const ticketPublicKey = canonicalEnvironmentTicketPublicKey(
-      input.ticketPublicKey
+      input.ticketPublicKey,
     );
     const sharedIp = await this.ensureEnvironmentSharedIp(input.appName);
     const listed = parseResponse(
       z.array(machineSchema),
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/machines?metadata.kestrel_environment_gateway=true`,
-        { method: "GET" }
-      )
+        { method: "GET" },
+      ),
     );
     const existing = listed.find(
       (machine) =>
         machine.config?.metadata?.kestrel_environment_gateway === "true" &&
-        machine.config.metadata.kestrel_environment_id === input.environmentId
+        machine.config.metadata.kestrel_environment_id === input.environmentId,
     );
     const serviceToken =
       input.serviceToken ??
@@ -272,13 +273,13 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       (existing.config?.image !== input.runtimeImage ||
         existing.config.env?.KESTREL_ENVIRONMENT_APP_NAME !== input.appName ||
         canonicalExistingEnvironmentTicketPublicKey(
-          existing.config.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY
+          existing.config.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY,
         ) !== ticketPublicKey ||
         !existing.config.services?.length)
     ) {
       throw new EnvironmentProviderError(
         "FLY_RESOURCE_CONFLICT",
-        "Existing Environment gateway Machine does not satisfy the immutable ingress contract."
+        "Existing Environment gateway Machine does not satisfy the immutable ingress contract.",
       );
     }
     const identityChanged =
@@ -295,10 +296,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
             {
               method: "POST",
               body: jsonBody({
-                config: environmentGatewayMachineConfig(gatewayConfigInput)
-              })
-            }
-          )
+                config: environmentGatewayMachineConfig(gatewayConfigInput),
+              }),
+            },
+          ),
         )
       : existing;
     const machine = reconciled
@@ -314,16 +315,16 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
                   name: environmentGatewayMachineName(input.environmentId),
                   region: input.region,
                   skip_launch: false,
-                  config: environmentGatewayMachineConfig(gatewayConfigInput)
-                })
-              }
-            )
-          )
+                  config: environmentGatewayMachineConfig(gatewayConfigInput),
+                }),
+              },
+            ),
+          ),
         );
     if (machine.region !== input.region) {
       throw new EnvironmentProviderError(
         "FLY_RESOURCE_CONFLICT",
-        "Existing Environment gateway Machine is in a different region."
+        "Existing Environment gateway Machine is in a different region.",
       );
     }
     return {
@@ -332,7 +333,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       region: machine.region,
       routerUrl: `https://${input.appName}.fly.dev`,
       sharedIp,
-      serviceToken
+      serviceToken,
     };
   }
 
@@ -340,18 +341,18 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const path = `/apps/${encodeURIComponent(appName)}/ip_assignments`;
     const assignments = parseResponse(
       ipAssignmentsSchema,
-      await this.request(path, { method: "GET" })
+      await this.request(path, { method: "GET" }),
     );
     const existing = assignments.ips.find(
-      (assignment) => assignment.shared === true
+      (assignment) => assignment.shared === true,
     );
     if (existing) return existing.ip;
     return parseResponse(
       ipAssignmentSchema,
       await this.request(path, {
         method: "POST",
-        body: jsonBody({ type: "shared_v4" })
-      })
+        body: jsonBody({ type: "shared_v4" }),
+      }),
     ).ip;
   }
 
@@ -364,85 +365,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const listed = parseResponse(
       z.array(volumeSchema),
       await this.request(`/apps/${encodeURIComponent(input.appName)}/volumes`, {
-        method: "GET"
-      })
-    );
-    const existing = listed.find((volume) => volume.name === name);
-    const volume =
-      existing ??
-      parseResponse(
-        volumeSchema,
-        await this.request(
-          `/apps/${encodeURIComponent(input.appName)}/volumes`,
-          {
-            method: "POST",
-            body: jsonBody({
-              name,
-              region: input.region,
-              size_gb: KESTREL_WORKSPACE_VOLUME_GB,
-              encrypted: true,
-              snapshot_retention: 14,
-              auto_backup_enabled: false,
-              require_unique_zone: false
-            })
-          }
-        )
-      );
-    if (
-      volume.region !== input.region ||
-      volume.size_gb < KESTREL_WORKSPACE_VOLUME_GB ||
-      volume.encrypted !== true
-    ) {
-      throw new EnvironmentProviderError(
-        "FLY_RESOURCE_CONFLICT",
-        "Existing Fly Volume does not satisfy the Workspace storage contract."
-      );
-    }
-    return {
-      id: volume.id,
-      name: volume.name,
-      region: volume.region,
-      sizeGb: volume.size_gb,
-      encrypted: true
-    };
-  }
-
-  async createReplacementWorkspaceVolume(input: {
-    appName: string;
-    workspaceId: string;
-    region: string;
-    replacementId: string;
-    snapshotId?: string | undefined;
-    sourceVolumeId?: string | undefined;
-  }): Promise<EnvironmentProviderVolume> {
-    if (input.snapshotId) {
-      if (!input.sourceVolumeId) {
-        throw new EnvironmentProviderError(
-          "FLY_RESPONSE_INVALID",
-          "A source Fly Volume is required for snapshot restoration."
-        );
-      }
-      const usable = await this.isWorkspaceSnapshotUsable({
-        appName: input.appName,
-        sourceVolumeId: input.sourceVolumeId,
-        snapshotId: input.snapshotId
-      });
-      if (!usable) {
-        throw new EnvironmentProviderError(
-          "FLY_RESOURCE_CONFLICT",
-          "The requested Fly snapshot does not belong to the source Volume or is not ready for restoration."
-        );
-      }
-    }
-    const name = replacementWorkspaceVolumeName(
-      input.workspaceId,
-      input.replacementId
-    );
-    const listed = parseResponse(
-      z.array(volumeSchema),
-      await this.request(`/apps/${encodeURIComponent(input.appName)}/volumes`, {
-        method: "GET"
-      })
+        method: "GET",
+      }),
     );
     const existing = listed.find((volume) => volume.name === name);
     const volume =
@@ -461,10 +385,87 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
               snapshot_retention: 14,
               auto_backup_enabled: false,
               require_unique_zone: false,
-              ...(input.snapshotId ? { snapshot_id: input.snapshotId } : {})
-            })
-          }
-        )
+            }),
+          },
+        ),
+      );
+    if (
+      volume.region !== input.region ||
+      volume.size_gb < KESTREL_WORKSPACE_VOLUME_GB ||
+      volume.encrypted !== true
+    ) {
+      throw new EnvironmentProviderError(
+        "FLY_RESOURCE_CONFLICT",
+        "Existing Fly Volume does not satisfy the Workspace storage contract.",
+      );
+    }
+    return {
+      id: volume.id,
+      name: volume.name,
+      region: volume.region,
+      sizeGb: volume.size_gb,
+      encrypted: true,
+    };
+  }
+
+  async createReplacementWorkspaceVolume(input: {
+    appName: string;
+    workspaceId: string;
+    region: string;
+    replacementId: string;
+    snapshotId?: string | undefined;
+    sourceVolumeId?: string | undefined;
+  }): Promise<EnvironmentProviderVolume> {
+    if (input.snapshotId) {
+      if (!input.sourceVolumeId) {
+        throw new EnvironmentProviderError(
+          "FLY_RESPONSE_INVALID",
+          "A source Fly Volume is required for snapshot restoration.",
+        );
+      }
+      const usable = await this.isWorkspaceSnapshotUsable({
+        appName: input.appName,
+        sourceVolumeId: input.sourceVolumeId,
+        snapshotId: input.snapshotId,
+      });
+      if (!usable) {
+        throw new EnvironmentProviderError(
+          "FLY_RESOURCE_CONFLICT",
+          "The requested Fly snapshot does not belong to the source Volume or is not ready for restoration.",
+        );
+      }
+    }
+    const name = replacementWorkspaceVolumeName(
+      input.workspaceId,
+      input.replacementId,
+    );
+    const listed = parseResponse(
+      z.array(volumeSchema),
+      await this.request(`/apps/${encodeURIComponent(input.appName)}/volumes`, {
+        method: "GET",
+      }),
+    );
+    const existing = listed.find((volume) => volume.name === name);
+    const volume =
+      existing ??
+      parseResponse(
+        volumeSchema,
+        await this.request(
+          `/apps/${encodeURIComponent(input.appName)}/volumes`,
+          {
+            method: "POST",
+            body: jsonBody({
+              name,
+              region: input.region,
+              size_gb: KESTREL_WORKSPACE_VOLUME_GB,
+              encrypted: true,
+              snapshot_retention: 14,
+              auto_backup_enabled: false,
+              require_unique_zone: false,
+              ...(input.snapshotId ? { snapshot_id: input.snapshotId } : {}),
+            }),
+          },
+        ),
       );
     const createdVolume =
       volume.state && volume.state !== "created"
@@ -482,11 +483,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       volumeSnapshotsSchema,
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.sourceVolumeId)}/snapshots`,
-        { method: "GET" }
-      )
+        { method: "GET" },
+      ),
     );
     const snapshot = snapshots.find(
-      (candidate) => candidate.id === input.snapshotId
+      (candidate) => candidate.id === input.snapshotId,
     );
     return (snapshot?.status ?? snapshot?.state) === "created";
   }
@@ -499,15 +500,15 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         await this.request(
           `/apps/${encodeURIComponent(appName)}/volumes/${encodeURIComponent(volumeId)}`,
           {
-            method: "GET"
-          }
-        )
+            method: "GET",
+          },
+        ),
       );
       if (!volume.state || volume.state === "created") return volume;
       if (Date.now() >= deadline) {
         throw new EnvironmentProviderError(
           "FLY_PROVIDER_UNAVAILABLE",
-          "Fly replacement Volume was not created before the readiness deadline."
+          "Fly replacement Volume was not created before the readiness deadline.",
         );
       }
       await this.sleepImpl(this.healthPollIntervalMs);
@@ -515,77 +516,77 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }
 
   async ensureWorkspaceMachine(
-    input: WorkspaceMachineProvisioningInput
+    input: WorkspaceMachineProvisioningInput,
   ): Promise<EnvironmentProviderMachine> {
     const listed = parseResponse(
       z.array(machineSchema),
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/machines?metadata.kestrel_workspace_id=${encodeURIComponent(input.workspaceId)}`,
-        { method: "GET" }
-      )
+        { method: "GET" },
+      ),
     );
     const existing = listed.find(
       (machine) =>
         machine.config?.metadata?.kestrel_workspace_id === input.workspaceId &&
-        machine.config.metadata.kestrel_replacement_id === undefined
+        machine.config.metadata.kestrel_replacement_id === undefined,
     );
     if (existing) {
       if (existing.region !== input.region) {
         throw new EnvironmentProviderError(
           "FLY_RESOURCE_CONFLICT",
-          "Existing Workspace Machine is in a different region."
+          "Existing Workspace Machine is in a different region.",
         );
       }
       return toMachine(
         await this.reconcileWorkspaceServiceToken({
           appName: input.appName,
           machine: existing,
-          serviceToken: input.serviceToken
-        })
+          serviceToken: input.serviceToken,
+        }),
       );
     }
 
     return this.createWorkspaceMachine(
       input,
-      workspaceMachineName(input.workspaceId)
+      workspaceMachineName(input.workspaceId),
     );
   }
 
   async createReplacementWorkspaceMachine(
-    input: WorkspaceMachineProvisioningInput & { replacementId: string }
+    input: WorkspaceMachineProvisioningInput & { replacementId: string },
   ): Promise<EnvironmentProviderMachine> {
     const listed = parseResponse(
       z.array(machineSchema),
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/machines?metadata.kestrel_replacement_id=${encodeURIComponent(input.replacementId)}`,
-        { method: "GET" }
-      )
+        { method: "GET" },
+      ),
     );
     const existing = listed.find(
       (machine) =>
         machine.config?.metadata?.kestrel_workspace_id === input.workspaceId &&
-        machine.config.metadata.kestrel_replacement_id === input.replacementId
+        machine.config.metadata.kestrel_replacement_id === input.replacementId,
     );
     if (existing) {
       return toMachine(
         await this.reconcileWorkspaceServiceToken({
           appName: input.appName,
           machine: existing,
-          serviceToken: input.serviceToken
-        })
+          serviceToken: input.serviceToken,
+        }),
       );
     }
     return this.createWorkspaceMachine(
       input,
       replacementWorkspaceMachineName(input.workspaceId, input.replacementId),
-      input.replacementId
+      input.replacementId,
     );
   }
 
   private async createWorkspaceMachine(
     input: WorkspaceMachineProvisioningInput,
     name: string,
-    replacementId?: string
+    replacementId?: string,
   ) {
     const machine = parseResponse(
       machineCreateResponseSchema,
@@ -597,15 +598,15 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
             name,
             region: input.region,
             skip_launch: false,
-            config: workspaceMachineConfig(input, replacementId)
-          })
-        }
-      )
+            config: workspaceMachineConfig(input, replacementId),
+          }),
+        },
+      ),
     );
     return {
       id: machine.id,
       state: "created",
-      region: input.region
+      region: input.region,
     };
   }
 
@@ -623,7 +624,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     if (!input.machine.config) {
       throw new EnvironmentProviderError(
         "FLY_RESOURCE_CONFLICT",
-        "Existing Workspace Machine configuration is unavailable for service identity rotation."
+        "Existing Workspace Machine configuration is unavailable for service identity rotation.",
       );
     }
     return parseResponse(
@@ -637,12 +638,12 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
               ...input.machine.config,
               env: {
                 ...input.machine.config.env,
-                KESTREL_WORKSPACE_SERVICE_TOKEN: input.serviceToken
-              }
-            }
-          })
-        }
-      )
+                KESTREL_WORKSPACE_SERVICE_TOKEN: input.serviceToken,
+              },
+            },
+          }),
+        },
+      ),
     );
   }
 
@@ -653,7 +654,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const response = await this.request(
       `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
       { method: "GET" },
-      { allowNotFound: true }
+      { allowNotFound: true },
     );
     return response === null
       ? null
@@ -692,10 +693,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           state: machine?.state ?? "unavailable",
           image: machine?.image,
         };
-        if (
-          error.code === "FLY_PROVIDER_UNAVAILABLE" ||
-          error.status === 408
-        ) {
+        if (error.code === "FLY_PROVIDER_UNAVAILABLE" || error.status === 408) {
           Object.assign(error, { authoritativeState });
           throw error;
         }
@@ -703,7 +701,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           await this.waitForMachine({
             ...input,
             state: "stopped",
-            timeoutSeconds: 60
+            timeoutSeconds: 60,
           });
         } else if (
           machine?.state !== "stopped" &&
@@ -712,7 +710,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           throw new EnvironmentProviderError(
             "FLY_PROVIDER_REJECTED",
             `Fly Machine start was rejected while the authoritative Machine state was ${machine?.state ?? "unavailable"}.`,
-            412
+            412,
           );
         }
         if (retriesRemaining === 0) {
@@ -734,7 +732,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   async stopMachine(input: { appName: string; machineId: string }) {
     await this.request(
       `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}/stop`,
-      { method: "POST", body: jsonBody({}) }
+      { method: "POST", body: jsonBody({}) },
     );
   }
 
@@ -742,7 +740,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     await this.request(
       `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}?force=true`,
       { method: "DELETE" },
-      { allowNotFound: true }
+      { allowNotFound: true },
     );
   }
 
@@ -750,7 +748,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     await this.request(
       `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.volumeId)}`,
       { method: "DELETE" },
-      { allowNotFound: true }
+      { allowNotFound: true },
     );
   }
 
@@ -764,9 +762,9 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         method: "PUT",
         body: jsonBody({
           auto_backup_enabled: false,
-          snapshot_retention: 14
-        })
-      }
+          snapshot_retention: 14,
+        }),
+      },
     );
   }
 
@@ -774,7 +772,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     await this.request(
       `/apps/${encodeURIComponent(input.appName)}`,
       { method: "DELETE" },
-      { allowNotFound: true }
+      { allowNotFound: true },
     );
   }
 
@@ -783,11 +781,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }): Promise<EnvironmentProviderInventory> {
     const [machines, volumes] = await Promise.all([
       this.request(`/apps/${encodeURIComponent(input.appName)}/machines`, {
-        method: "GET"
+        method: "GET",
       }),
       this.request(`/apps/${encodeURIComponent(input.appName)}/volumes`, {
-        method: "GET"
-      })
+        method: "GET",
+      }),
     ]);
     return {
       machines: parseResponse(z.array(machineSchema), machines).map(
@@ -799,16 +797,16 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           replacementId:
             machine.config?.metadata?.kestrel_replacement_id ?? null,
           mountedVolumeIds:
-            machine.config?.mounts?.map((mount) => mount.volume) ?? []
-        })
+            machine.config?.mounts?.map((mount) => mount.volume) ?? [],
+        }),
       ),
       volumes: parseResponse(z.array(volumeSchema), volumes).map((volume) => ({
         id: volume.id,
         name: volume.name,
         region: volume.region,
         sizeGb: volume.size_gb,
-        attachedMachineId: volume.attached_machine_id ?? null
-      }))
+        attachedMachineId: volume.attached_machine_id ?? null,
+      })),
     };
   }
 
@@ -817,8 +815,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       z.array(machineSchema),
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/machines`,
-        { method: "GET" }
-      )
+        { method: "GET" },
+      ),
     );
     return machines.map(toMachine);
   }
@@ -835,25 +833,25 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
             machineSchema,
             await this.request(
               `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
-              { method: "GET" }
-            )
+              { method: "GET" },
+            ),
           ).instance_id
         : undefined;
     const deadline = Date.now() + (input.timeoutSeconds ?? 60) * 1000;
     while (true) {
       const remainingSeconds = Math.max(
         1,
-        Math.ceil((deadline - Date.now()) / 1000)
+        Math.ceil((deadline - Date.now()) / 1000),
       );
       const query = new URLSearchParams({
         state: input.state,
-        timeout: String(Math.min(remainingSeconds, 60))
+        timeout: String(Math.min(remainingSeconds, 60)),
       });
       if (instanceId) query.set("instance_id", instanceId);
       try {
         await this.request(
           `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}/wait?${query.toString()}`,
-          { method: "GET" }
+          { method: "GET" },
         );
         return;
       } catch (error) {
@@ -885,7 +883,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }) {
     const checkName = requireConfigured(
       input.checkName,
-      "Fly health check name"
+      "Fly health check name",
     );
     const deadline = Date.now() + (input.timeoutSeconds ?? 60) * 1000;
     while (true) {
@@ -893,22 +891,22 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         machineSchema,
         await this.request(
           `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
-          { method: "GET" }
-        )
+          { method: "GET" },
+        ),
       );
       const check = machine.checks?.find(
-        (candidate) => candidate.name === checkName
+        (candidate) => candidate.name === checkName,
       );
       if (check?.status === "passing") return;
       if (Date.now() >= deadline) {
         const output = sanitizeHealthCheckOutput(check?.output);
         throw new EnvironmentProviderError(
           "FLY_MACHINE_UNHEALTHY",
-          `Fly Machine ${machine.id} was ${machine.state}; health check ${checkName} was ${check?.status ?? "missing"} before the readiness deadline${output ? `: ${output}` : "."}`
+          `Fly Machine ${machine.id} was ${machine.state}; health check ${checkName} was ${check?.status ?? "missing"} before the readiness deadline${output ? `: ${output}` : "."}`,
         );
       }
       await new Promise((resolve) =>
-        setTimeout(resolve, this.healthPollIntervalMs)
+        setTimeout(resolve, this.healthPollIntervalMs),
       );
     }
   }
@@ -918,12 +916,12 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       snapshotResponseSchema,
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.volumeId)}/snapshots`,
-        { method: "POST", body: jsonBody({}) }
-      )
+        { method: "POST", body: jsonBody({}) },
+      ),
     );
     return {
       id: response.Msg.backup.graph_id ?? response.Msg.backup.id,
-      state: response.Msg.backup.state
+      state: response.Msg.backup.state,
     };
   }
 
@@ -939,19 +937,19 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       await this.request(
         `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
         {
-          method: "GET"
-        }
-      )
+          method: "GET",
+        },
+      ),
     );
     if (!current.config) {
       throw new EnvironmentProviderError(
         "FLY_RESPONSE_INVALID",
-        "Fly Machine configuration is unavailable for image update."
+        "Fly Machine configuration is unavailable for image update.",
       );
     }
     const nextEnvironment = applyEnvironmentPatch(
       current.config.env ?? {},
-      input.envPatch
+      input.envPatch,
     );
     if (
       sameImageDigest(current.config.image, input.runtimeImage) &&
@@ -973,13 +971,13 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
                 ...current.config,
                 image: input.runtimeImage,
                 env: nextEnvironment,
-                ...(input.stopConfig ? { stop_config: input.stopConfig } : {})
+                ...(input.stopConfig ? { stop_config: input.stopConfig } : {}),
               },
               current_version: current.instance_id,
-              skip_launch: current.state !== "started"
-            })
-          }
-        )
+              skip_launch: current.state !== "started",
+            }),
+          },
+        ),
       );
     } catch (error) {
       if (
@@ -995,14 +993,14 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         machineSchema,
         await this.request(
           `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
-          { method: "GET" }
-        )
+          { method: "GET" },
+        ),
       );
       if (
         !machineConfigurationMatches(authoritative.config, {
           runtimeImage: input.runtimeImage,
           environment: nextEnvironment,
-          stopConfig: input.stopConfig
+          stopConfig: input.stopConfig,
         })
       ) {
         Object.assign(error, {
@@ -1010,8 +1008,8 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
             machineId: authoritative.id,
             state: authoritative.state,
             image: authoritative.config?.image,
-            instanceId: authoritative.instance_id
-          }
+            instanceId: authoritative.instance_id,
+          },
         });
         throw error;
       }
@@ -1020,7 +1018,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const applied = machineConfigurationMatches(updated.config, {
       runtimeImage: input.runtimeImage,
       environment: nextEnvironment,
-      stopConfig: input.stopConfig
+      stopConfig: input.stopConfig,
     })
       ? updated
       : await this.waitForMachineConfiguration({
@@ -1028,7 +1026,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           machineId: input.machineId,
           runtimeImage: input.runtimeImage,
           environment: nextEnvironment,
-          stopConfig: input.stopConfig
+          stopConfig: input.stopConfig,
         });
     return toMachine(applied);
   }
@@ -1046,14 +1044,14 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         machineSchema,
         await this.request(
           `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
-          { method: "GET" }
-        )
+          { method: "GET" },
+        ),
       );
       if (
         machineConfigurationMatches(machine.config, {
           runtimeImage: input.runtimeImage,
           environment: input.environment,
-          stopConfig: input.stopConfig
+          stopConfig: input.stopConfig,
         })
       ) {
         return machine;
@@ -1061,7 +1059,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       if (Date.now() >= deadline) {
         throw new EnvironmentProviderError(
           "FLY_RESOURCE_CONFLICT",
-          "Fly Machine did not persist the requested runtime configuration before the readiness deadline."
+          "Fly Machine did not persist the requested runtime configuration before the readiness deadline.",
         );
       }
       await this.sleepImpl(this.healthPollIntervalMs);
@@ -1071,7 +1069,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   private async request(
     path: string,
     init: RequestInit,
-    options: { allowNotFound?: boolean } = {}
+    options: { allowNotFound?: boolean } = {},
   ): Promise<unknown | null> {
     let response: Response;
     try {
@@ -1081,13 +1079,13 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           accept: "application/json",
           authorization: `Bearer ${this.token}`,
           "content-type": "application/json",
-          ...init.headers
-        }
+          ...init.headers,
+        },
       });
     } catch {
       throw new EnvironmentProviderError(
         "FLY_PROVIDER_UNAVAILABLE",
-        "Fly Machines API request failed."
+        "Fly Machines API request failed.",
       );
     }
     if (response.status === 404 && options.allowNotFound) {
@@ -1097,7 +1095,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       throw new EnvironmentProviderError(
         "FLY_PROVIDER_REJECTED",
         `Fly Machines API rejected the request (${response.status}).`,
-        response.status
+        response.status,
       );
     }
     if (response.status === 204) {
@@ -1112,7 +1110,7 @@ function sanitizeHealthCheckOutput(value: string | undefined) {
   return value
     .replace(
       /(authorization|token|secret|password)\s*[:=]\s*\S+/giu,
-      "$1=[redacted]"
+      "$1=[redacted]",
     )
     .replace(/[\r\n\t]+/gu, " ")
     .trim()
@@ -1133,7 +1131,7 @@ export function flyEnvironmentNetworkName(environmentId: string): string {
 
 function workspaceMachineConfig(
   input: WorkspaceMachineProvisioningInput,
-  replacementId?: string
+  replacementId?: string,
 ) {
   return {
     image: input.runtimeImage,
@@ -1163,21 +1161,21 @@ function workspaceMachineConfig(
         : {}),
       ...(input.source.defaultBranch
         ? {
-            KESTREL_WORKSPACE_SOURCE_DEFAULT_BRANCH: input.source.defaultBranch
+            KESTREL_WORKSPACE_SOURCE_DEFAULT_BRANCH: input.source.defaultBranch,
           }
         : {}),
-      KESTREL_IDLE_TIMEOUT_MINUTES: String(input.idleTimeoutMinutes)
+      KESTREL_IDLE_TIMEOUT_MINUTES: String(input.idleTimeoutMinutes),
     },
     metadata: {
       kestrel_environment_id: input.environmentId,
       kestrel_organization_id: input.organizationId,
       kestrel_workspace_id: input.workspaceId,
-      ...(replacementId ? { kestrel_replacement_id: replacementId } : {})
+      ...(replacementId ? { kestrel_replacement_id: replacementId } : {}),
     },
     guest: {
       cpu_kind: "shared",
       cpus: KESTREL_WORKSPACE_CPUS,
-      memory_mb: KESTREL_WORKSPACE_MEMORY_MB
+      memory_mb: KESTREL_WORKSPACE_MEMORY_MB,
     },
     mounts: [{ volume: input.volumeId, path: "/workspace" }],
     restart: { policy: "on-failure", max_retries: 3 },
@@ -1190,9 +1188,9 @@ function workspaceMachineConfig(
         path: "/health",
         interval: "15s",
         timeout: "10s",
-        grace_period: "30s"
-      }
-    }
+        grace_period: "30s",
+      },
+    },
   };
 }
 
@@ -1213,11 +1211,11 @@ function environmentGatewayMachineConfig(input: {
       KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY: input.ticketPublicKey,
       KESTREL_CONTROL_PLANE_URL: input.controlPlaneUrl,
       KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN: input.serviceToken,
-      PORT: "8080"
+      PORT: "8080",
     },
     metadata: {
       kestrel_environment_gateway: "true",
-      kestrel_environment_id: input.environmentId
+      kestrel_environment_id: input.environmentId,
     },
     guest: { cpu_kind: "shared", cpus: 1, memory_mb: 512 },
     restart: { policy: "on-failure", max_retries: 3 },
@@ -1230,10 +1228,10 @@ function environmentGatewayMachineConfig(input: {
         min_machines_running: 1,
         ports: [
           { port: 80, handlers: ["http"] },
-          { port: 443, handlers: ["tls", "http"] }
+          { port: 443, handlers: ["tls", "http"] },
         ],
-        concurrency: { type: "requests", soft_limit: 50, hard_limit: 100 }
-      }
+        concurrency: { type: "requests", soft_limit: 50, hard_limit: 100 },
+      },
     ],
     checks: {
       gateway: {
@@ -1243,15 +1241,15 @@ function environmentGatewayMachineConfig(input: {
         path: "/health",
         interval: "15s",
         timeout: "10s",
-        grace_period: "15s"
-      }
-    }
+        grace_period: "15s",
+      },
+    },
   };
 }
 
 function checkedVolume(
   volume: z.infer<typeof volumeSchema>,
-  region: string
+  region: string,
 ): EnvironmentProviderVolume {
   if (
     volume.region !== region ||
@@ -1260,7 +1258,7 @@ function checkedVolume(
   ) {
     throw new EnvironmentProviderError(
       "FLY_RESOURCE_CONFLICT",
-      "Fly Volume does not satisfy the Workspace storage contract."
+      "Fly Volume does not satisfy the Workspace storage contract.",
     );
   }
   return {
@@ -1268,7 +1266,7 @@ function checkedVolume(
     name: volume.name,
     region: volume.region,
     sizeGb: volume.size_gb,
-    encrypted: true
+    encrypted: true,
   };
 }
 
@@ -1292,13 +1290,13 @@ function canonicalEnvironmentTicketPublicKey(value: string) {
   } catch {
     throw new EnvironmentProviderError(
       "FLY_PROVIDER_REJECTED",
-      "Environment ticket public key must be a valid Ed25519 public key."
+      "Environment ticket public key must be a valid Ed25519 public key.",
     );
   }
 }
 
 function canonicalExistingEnvironmentTicketPublicKey(
-  value: string | undefined
+  value: string | undefined,
 ) {
   if (!value) return null;
   try {
@@ -1310,14 +1308,14 @@ function canonicalExistingEnvironmentTicketPublicKey(
 
 function replacementWorkspaceVolumeName(
   workspaceId: string,
-  replacementId: string
+  replacementId: string,
 ) {
   return `ws_${compactId(workspaceId, 14)}_r_${compactId(replacementId, 8)}`;
 }
 
 function replacementWorkspaceMachineName(
   workspaceId: string,
-  replacementId: string
+  replacementId: string,
 ) {
   return `ws-${compactId(workspaceId, 14)}-r-${compactId(replacementId, 8)}`;
 }
@@ -1327,19 +1325,20 @@ function compactId(value: string, length: number): string {
   if (!compact) {
     throw new EnvironmentProviderError(
       "FLY_RESPONSE_INVALID",
-      "Provider resource identifier is invalid."
+      "Provider resource identifier is invalid.",
     );
   }
   return compact.slice(0, length);
 }
 
 function toMachine(
-  machine: z.infer<typeof machineSchema>
+  machine: z.infer<typeof machineSchema>,
 ): EnvironmentProviderMachine {
   return {
     id: machine.id,
     state: machine.state,
     region: machine.region,
+    standbyForMachineIds: machine.config?.standbys ?? [],
     ...(machine.config?.guest?.cpu_kind
       ? { cpuKind: machine.config.guest.cpu_kind }
       : {}),
@@ -1356,8 +1355,8 @@ function toMachine(
       machine.config?.mounts?.map((mount) => ({
         volumeId: mount.volume,
         ...(mount.name ? { name: mount.name } : {}),
-        path: mount.path
-      })) ?? []
+        path: mount.path,
+      })) ?? [],
   };
 }
 
@@ -1366,13 +1365,13 @@ function sameImageDigest(current: string | undefined, requested: string) {
   const currentDigest = current?.match(/@?(sha256:[a-f0-9]{64})$/u)?.[1];
   const requestedDigest = requested.match(/@?(sha256:[a-f0-9]{64})$/u)?.[1];
   return Boolean(
-    currentDigest && requestedDigest && currentDigest === requestedDigest
+    currentDigest && requestedDigest && currentDigest === requestedDigest,
   );
 }
 
 function applyEnvironmentPatch(
   current: Record<string, string>,
-  patch: Record<string, string | undefined> | undefined
+  patch: Record<string, string | undefined> | undefined,
 ) {
   const next = { ...current };
   for (const [name, value] of Object.entries(patch ?? {})) {
@@ -1384,13 +1383,13 @@ function applyEnvironmentPatch(
 
 function environmentsEqual(
   left: Record<string, string>,
-  right: Record<string, string>
+  right: Record<string, string>,
 ) {
   const leftEntries = Object.entries(left).sort(([a], [b]) =>
-    a.localeCompare(b)
+    a.localeCompare(b),
   );
   const rightEntries = Object.entries(right).sort(([a], [b]) =>
-    a.localeCompare(b)
+    a.localeCompare(b),
   );
   return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
 }
@@ -1404,7 +1403,7 @@ function parseFlyDurationNanoseconds(value: string) {
     ms: 1_000_000,
     s: 1_000_000_000,
     m: 60_000_000_000,
-    h: 3_600_000_000_000
+    h: 3_600_000_000_000,
   };
   const components = value.matchAll(/(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/gu);
   let cursor = 0;
@@ -1422,7 +1421,7 @@ function parseFlyDurationNanoseconds(value: string) {
 
 function stopConfigsEqual(
   current: { signal: string; timeout: number } | null | undefined,
-  requested: EnvironmentProviderMachineStopConfig | undefined
+  requested: EnvironmentProviderMachineStopConfig | undefined,
 ) {
   return (
     !requested ||
@@ -1443,13 +1442,13 @@ function machineConfigurationMatches(
     runtimeImage: string;
     environment: Record<string, string>;
     stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
-  }
+  },
 ) {
   return Boolean(
     current?.image &&
     sameImageDigest(current.image, requested.runtimeImage) &&
     environmentsEqual(current.env ?? {}, requested.environment) &&
-    stopConfigsEqual(current.stop_config, requested.stopConfig)
+    stopConfigsEqual(current.stop_config, requested.stopConfig),
   );
 }
 
@@ -1460,7 +1459,7 @@ function parseResponse<T>(schema: z.ZodType<T>, value: unknown): T {
     const path = issue?.path.length ? issue.path.join(".") : "root";
     throw new EnvironmentProviderError(
       "FLY_RESPONSE_INVALID",
-      `Fly Machines API returned an invalid response at ${path} (${issue?.code ?? "unknown"}).`
+      `Fly Machines API returned an invalid response at ${path} (${issue?.code ?? "unknown"}).`,
     );
   }
   return parsed.data;
@@ -1475,7 +1474,7 @@ function requireConfigured(value: string, label: string): string {
   if (!normalized) {
     throw new EnvironmentProviderError(
       "FLY_PROVIDER_NOT_CONFIGURED",
-      `${label} is not configured.`
+      `${label} is not configured.`,
     );
   }
   return normalized;

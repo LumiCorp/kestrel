@@ -4,7 +4,9 @@ import {
   evaluateFlyImageForwardRecoveryEligibility,
   assertFlyImageMatchesRole,
   classifyFlyImageReleaseEnvironment,
+  countResolvedFlyImageReleaseTargets,
   evaluateFlyImageReleaseAdmission,
+  evaluateFlyImageMigrationAcknowledgementEligibility,
   flyImageReleaseManifestV2Schema,
   isFlyImageReleaseMachineVerified,
   selectFlyImageRollbackTargets,
@@ -37,6 +39,44 @@ test("forward recovery eligibility is fully server-derived", () => {
       canaryValid: false,
     }).ok,
     false,
+  );
+});
+
+test("migration acknowledgement eligibility follows the endpoint contract", () => {
+  assert.deepEqual(
+    evaluateFlyImageMigrationAcknowledgementEligibility({
+      status: "candidate",
+      migrationChanged: true,
+      migrationApprovedAt: null,
+    }),
+    { ok: true },
+  );
+  assert.equal(
+    evaluateFlyImageMigrationAcknowledgementEligibility({
+      status: "paused",
+      migrationChanged: true,
+      migrationApprovedAt: null,
+    }).ok,
+    false,
+  );
+  assert.equal(
+    evaluateFlyImageMigrationAcknowledgementEligibility({
+      status: "candidate",
+      migrationChanged: false,
+      migrationApprovedAt: null,
+    }).ok,
+    false,
+  );
+});
+
+test("release progress counts configured stopped Workspaces as resolved", () => {
+  assert.equal(
+    countResolvedFlyImageReleaseTargets([
+      { status: "completed" },
+      { status: "configured_unverified" },
+      { status: "applying" },
+    ]),
+    2,
   );
 });
 
@@ -278,20 +318,37 @@ test("release environment classification waits only for provisionable environmen
   );
 });
 
-test("global release verification requires the requested digest on a running Machine", () => {
+test("global release verification requires the requested digest and expected state", () => {
   const image = `registry.fly.io/kestrel-one-turn-worker@sha256:${digest}`;
   assert.equal(
-    isFlyImageReleaseMachineVerified({ state: "started", image }, image),
+    isFlyImageReleaseMachineVerified(
+      { state: "started", image },
+      image,
+      "started",
+    ),
     true,
   );
   assert.equal(
-    isFlyImageReleaseMachineVerified({ state: "stopped", image }, image),
-    false,
+    isFlyImageReleaseMachineVerified(
+      { state: "stopped", image },
+      image,
+      "stopped",
+    ),
+    true,
   );
   assert.equal(
     isFlyImageReleaseMachineVerified(
       { state: "started", image },
       `registry.fly.io/kestrel-one-turn-worker@sha256:${"d".repeat(64)}`,
+      "started",
+    ),
+    false,
+  );
+  assert.equal(
+    isFlyImageReleaseMachineVerified(
+      { state: "stopped", image },
+      image,
+      "started",
     ),
     false,
   );

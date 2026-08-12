@@ -28,14 +28,10 @@ export type FlyImageReleaseAdmissionFailureCode =
 
 export function evaluateFlyImageForwardRecoveryEligibility(input: {
   activeStatus: string | null;
-  admission:
-    | { ok: true }
-    | { ok: false; code: string; message: string };
+  admission: { ok: true } | { ok: false; code: string; message: string };
   migrationReady: boolean;
   canaryValid: boolean;
-}):
-  | { ok: true }
-  | { ok: false; code: string; message: string } {
+}): { ok: true } | { ok: false; code: string; message: string } {
   if (input.activeStatus !== "paused") {
     return {
       ok: false,
@@ -59,6 +55,37 @@ export function evaluateFlyImageForwardRecoveryEligibility(input: {
     };
   }
   return { ok: true };
+}
+
+export function evaluateFlyImageMigrationAcknowledgementEligibility(input: {
+  status: string;
+  migrationChanged: boolean;
+  migrationApprovedAt: Date | null;
+}): { ok: true } | { ok: false; code: string; message: string } {
+  if (input.status !== "candidate" || !input.migrationChanged) {
+    return {
+      ok: false,
+      code: "RELEASE_STATE_INVALID",
+      message:
+        "Only a migration-bearing candidate can complete the migration runbook.",
+    };
+  }
+  if (input.migrationApprovedAt) {
+    return {
+      ok: false,
+      code: "RELEASE_MIGRATION_ALREADY_ACKNOWLEDGED",
+      message: "The migration runbook is already complete.",
+    };
+  }
+  return { ok: true };
+}
+
+export function countResolvedFlyImageReleaseTargets(
+  targets: Array<{ status: string }>,
+) {
+  return targets.filter((target) =>
+    ["completed", "configured_unverified"].includes(target.status),
+  ).length;
 }
 
 export function evaluateFlyImageReleaseAdmission(input: {
@@ -145,8 +172,7 @@ export function selectFlyImageRollbackTargets(
     if (
       target.targetKind === "environment" &&
       target.environmentId &&
-      (target.status === "completed" ||
-        typeof result?.operationId === "string")
+      (target.status === "completed" || typeof result?.operationId === "string")
     ) {
       environmentIds.add(target.environmentId);
     }
@@ -346,8 +372,9 @@ export function assertFlyImageMatchesRole(
 export function isFlyImageReleaseMachineVerified(
   machine: { state: string; image?: string | undefined } | null,
   requestedImage: string,
+  expectedState: "started" | "stopped",
 ) {
-  if (machine?.state !== "started") return false;
+  if (machine?.state !== expectedState) return false;
   const currentDigest = machine.image?.match(/sha256:[a-f0-9]{64}$/u)?.[0];
   const requestedDigest = requestedImage.match(/sha256:[a-f0-9]{64}$/u)?.[0];
   return Boolean(
