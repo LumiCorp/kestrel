@@ -13,7 +13,8 @@ test(
       readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
     ]);
 
-    assert.match(queueSource, /id:\s*operationId/u);
+    assert.doesNotMatch(queueSource, /id:\s*operationId/u);
+    assert.match(queueSource, /data:\s*\{ operationId \}/u);
     assert.match(queueSource, /singletonKey:\s*operationId/u);
     assert.match(queueSource, /retryCount:\s*job\.retryCount/u);
     assert.match(queueSource, /retryLimit:\s*job\.retryLimit/u);

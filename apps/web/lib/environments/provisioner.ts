@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { classifyDbError } from "@/lib/db/runtime";
 import {
   assertEnvironmentTransition,
   assertWorkspaceTransition,
@@ -320,35 +321,24 @@ export class EnvironmentProvisioner {
       }
       return "processed";
     } catch (error) {
-      if (
+      const environmentPersistenceFailure =
         operation.type === "environment.provision" &&
-        error instanceof EnvironmentProvisioningPersistenceError
-      ) {
-        await this.repository.deferOperation({
-          operationId: operation.id,
-          attempt: operation.attempt,
-          stage: "environment.activation.reconciling",
-          code: error.code,
-          message: error.message,
-        });
-        return "deferred";
-      }
-      const failure = safeFailure(error);
-      if (failure.code === "ENVIRONMENT_NOT_READY") {
-        await this.repository.deferOperation({
-          operationId: operation.id,
-          attempt: operation.attempt,
-          stage: "environment.runtime.connecting",
-          code: failure.code,
-          message: failure.message,
-        });
-        return "deferred";
-      }
+        error instanceof EnvironmentProvisioningPersistenceError;
+      const controlPlaneFailure =
+        environmentPersistenceFailure ||
+        (!(error instanceof EnvironmentProviderError) &&
+          classifyDbError(error).retryable);
+      const failure = controlPlaneFailure
+        ? {
+            code: "ENVIRONMENT_CONTROL_PLANE_RETRYING",
+            message:
+              error instanceof EnvironmentProvisioningPersistenceError
+                ? error.message
+                : "Kestrel could not persist Environment operation state. Retrying.",
+            retryable: true,
+          }
+        : safeFailure(error);
       if (failure.retryable) {
-        const releaseTargetId = readInputString(
-          operation.input,
-          "releaseTargetId",
-        );
         const previousRetry = asRecord(operation.result)?.retryState;
         const firstFailureAt =
           readInputString(asRecord(previousRetry), "firstFailureAt") ??
@@ -359,37 +349,31 @@ export class EnvironmentProvisioner {
           firstFailureAt,
           retryAttempt,
         );
-        if (releaseTargetId && !nextAttemptAt) {
-          await this.repository.failOperation({
-            operationId: operation.id,
-            stage: "environment.provider.retry_exhausted",
-            code: "ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
-            message: `Automatic provider retries were exhausted after one hour. Last response: ${failure.message}`,
+        if (!nextAttemptAt) {
+          await this.terminalizeRetryExhaustion({
+            operation,
+            code: controlPlaneFailure
+              ? "ENVIRONMENT_CONTROL_PLANE_RETRY_EXHAUSTED"
+              : "ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
+            message: controlPlaneFailure
+              ? `Automatic control-plane retries were exhausted after one hour. Last failure: ${failure.message}`
+              : `Automatic provider retries were exhausted after one hour. Last response: ${failure.message}`,
           });
-          if (operation.workspaceId) {
-            await this.repository.failWorkspace({
-              workspaceId: operation.workspaceId,
-              code: "ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED",
-              message: failure.message,
-            });
-          }
           return "processed";
         }
         await this.repository.deferOperation({
           operationId: operation.id,
           attempt: operation.attempt,
-          stage: "environment.provider.retrying",
+          stage: controlPlaneFailure
+            ? "environment.activation.reconciling"
+            : "environment.provider.retrying",
           code: failure.code,
           message: failure.message,
           retryState: {
             attempt: retryAttempt,
             firstFailureAt,
             lastError: { code: failure.code, message: failure.message },
-            nextAttemptAt:
-              nextAttemptAt ??
-              new Date(
-                Date.now() + releaseRetryDelaySeconds(retryAttempt) * 1000,
-              ).toISOString(),
+            nextAttemptAt,
             authoritativeState: readAuthoritativeState(error),
           },
         });
@@ -439,6 +423,54 @@ export class EnvironmentProvisioner {
       });
       return "processed";
     }
+  }
+
+  private async terminalizeRetryExhaustion(input: {
+    operation: ProvisioningOperation;
+    code:
+      | "ENVIRONMENT_PROVIDER_RETRY_EXHAUSTED"
+      | "ENVIRONMENT_CONTROL_PLANE_RETRY_EXHAUSTED";
+    message: string;
+  }) {
+    const { operation, code, message } = input;
+    if (operation.type === "environment.provision") {
+      await this.repository.failEnvironmentProvision({
+        environmentId: operation.environmentId,
+        operationId: operation.id,
+        attempt: operation.attempt,
+        code,
+        message,
+      });
+      return;
+    }
+    if (operation.workspaceId) {
+      await this.repository.failWorkspace({
+        workspaceId: operation.workspaceId,
+        code,
+        message,
+      });
+    } else if (operation.type === "environment.update") {
+      await this.repository.degradeEnvironment({
+        environmentId: operation.environmentId,
+        code,
+        message,
+      });
+    } else {
+      await this.repository.failEnvironment({
+        environmentId: operation.environmentId,
+        code,
+        message,
+      });
+    }
+    await this.repository.failOperation({
+      operationId: operation.id,
+      stage:
+        code === "ENVIRONMENT_CONTROL_PLANE_RETRY_EXHAUSTED"
+          ? "environment.control_plane.retry_exhausted"
+          : "environment.provider.retry_exhausted",
+      code,
+      message,
+    });
   }
 
   private async provisionEnvironment(operation: ProvisioningOperation) {
@@ -962,8 +994,8 @@ export class EnvironmentProvisioner {
     }
     if (environment.status !== "ready" || !environment.flyAppName) {
       throw operationError(
-        "ENVIRONMENT_NOT_READY",
-        "Environment must be ready before its Workspace can be provisioned.",
+        "ENVIRONMENT_DEPENDENCY_UNAVAILABLE",
+        "The parent Environment is unavailable for Workspace provisioning.",
       );
     }
     assertWorkspaceOperationTransition(

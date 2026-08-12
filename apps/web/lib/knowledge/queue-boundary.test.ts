@@ -48,12 +48,15 @@ test("knowledge queue status does not eagerly load worker runtimes", async () =>
   );
   assert.match(
     queueSource,
-    /options\.retryTerminal && existingJob[\s\S]*deleteJob\(ENVIRONMENT_OPERATION_QUEUE, operationId\)[\s\S]*replacementJobId/u,
+    /findEnvironmentOperationJobs\(boss, operationId\)[\s\S]*NONTERMINAL_JOB_STATES/u,
   );
   assert.match(
-    environmentAdminSource,
-    /enqueueEnvironmentOperation\(operation\.id, \{ retryTerminal: true \}\)/u,
+    queueSource,
+    /pg_advisory_xact_lock\(hashtextextended\([\s\S]*environment-operation-queue:/u,
   );
+  assert.doesNotMatch(queueSource, /id: operationId/u);
+  assert.doesNotMatch(queueSource, /deleteJob\(ENVIRONMENT_OPERATION_QUEUE/u);
+  assert.doesNotMatch(environmentAdminSource, /retryTerminal/u);
   assert.doesNotMatch(documentRuntimeSource, /documents\/process-runtime/u);
   assert.doesNotMatch(documentRuntimeSource, /from ["']\.\/extract["']/u);
   assert.match(processRuntimeSource, /from ["']\.\/extract["']/u);

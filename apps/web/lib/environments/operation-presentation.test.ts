@@ -133,6 +133,21 @@ test("queued Environment persistence recovery explains the retry", () => {
   );
 });
 
+test("parked Workspace provisioning explains its Environment dependency", () => {
+  assert.deepEqual(
+    describeEnvironmentOperation({
+      type: "workspace.provision",
+      status: "queued",
+      stage: "environment.dependency.waiting",
+    }),
+    {
+      label: "Workspace provisioning",
+      detail: "Waiting for the parent Environment to become ready…",
+      tone: "neutral",
+    },
+  );
+});
+
 test("Environment updates expose the durable rollout stage", () => {
   assert.deepEqual(
     describeEnvironmentOperation({
