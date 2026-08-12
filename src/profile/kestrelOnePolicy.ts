@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
 
+import {
+  composeManagedKestrelProfile,
+  fingerprintResolvedProfile as fingerprintSharedResolvedProfile,
+  KESTREL_DIALOG_TOOL_NAMES,
+  KESTREL_ENVIRONMENT_PRESETS,
+  KESTREL_HARNESS_ECONOMICS as SHARED_KESTREL_HARNESS_ECONOMICS,
+} from "@kestrel/runtime-profile";
+
 import type { TuiProfile } from "../../cli/contracts.js";
 import {
   createKestrelEnvironmentBindingV1,
@@ -55,11 +63,7 @@ export interface KestrelOnePolicyDefinition {
 
 export type KestrelPolicyDefinition = KestrelOnePolicyDefinition;
 
-export const KESTREL_ONE_DIALOG_TOOL_NAMES = Object.freeze([
-  "dialog.open",
-  "dialog.send",
-  "dialog.close",
-] as const);
+export const KESTREL_ONE_DIALOG_TOOL_NAMES = KESTREL_DIALOG_TOOL_NAMES;
 
 export const KESTREL_ONE_POLICY: Readonly<KestrelOnePolicyDefinition> =
   Object.freeze({
@@ -133,74 +137,8 @@ export const KESTREL_ONE_WORKSPACE_TOOL_NAMES = Object.freeze([
   "kestrel_one.vercel_deployment_events",
 ] as const);
 
-export const KESTREL_HARNESS_ECONOMICS = Object.freeze({
-  version: 1,
-  policy: {
-    version: 1,
-    policyId: "economics:kestrel:v2",
-    mode: "observe",
-    counting: {
-      estimatorVersion: "utf8-byte-upper-bound:v1",
-      allowEstimatedEnforcement: false,
-    },
-    context: {
-      outputReserveTokens: 8_000,
-      safetyReserveTokens: 2_000,
-      sections: [
-        { id: "active-task", priority: "required" },
-        { id: "transcript", priority: "required" },
-      ],
-    },
-    compaction: {
-      requireStructuredAnchors: true,
-      maxSummaryAttempts: 2,
-    },
-    tools: {
-      exposure: "assembly_allowlist",
-      modelContextMaxTokens: 4_000,
-      allowedFamiliesByPhase: {},
-    },
-    cache: {
-      mode: "provider_default",
-    },
-  },
-  modelProfiles: [
-    {
-      version: 1,
-      profileId: "openrouter:z-ai/glm-5.2:v1",
-      provider: "openrouter",
-      model: "z-ai/glm-5.2",
-      contextWindowTokens: 1_000_000,
-      maxOutputTokens: 64_000,
-      counting: {
-        counter: "utf8-byte-upper-bound",
-        counterVersion: "1",
-        method: "conservative_estimate",
-        confidence: "conservative",
-      },
-      cache: {
-        behavior: "provider_automatic",
-      },
-    },
-    {
-      version: 1,
-      profileId: "openrouter:openai/gpt-5.6-luna:v1",
-      provider: "openrouter",
-      model: "openai/gpt-5.6-luna",
-      contextWindowTokens: 1_050_000,
-      maxOutputTokens: 128_000,
-      counting: {
-        counter: "utf8-byte-upper-bound",
-        counterVersion: "1",
-        method: "conservative_estimate",
-        confidence: "conservative",
-      },
-      cache: {
-        behavior: "provider_automatic",
-      },
-    },
-  ],
-} satisfies HarnessEconomicsControlV1);
+export const KESTREL_HARNESS_ECONOMICS =
+  SHARED_KESTREL_HARNESS_ECONOMICS satisfies HarnessEconomicsControlV1;
 
 /** @deprecated Use KESTREL_HARNESS_ECONOMICS. */
 export const KESTREL_ONE_HOSTED_HARNESS_ECONOMICS = KESTREL_HARNESS_ECONOMICS;
@@ -232,19 +170,7 @@ export const KESTREL_ONE_ENVIRONMENT_PRESETS: Readonly<
     KestrelOneEnvironmentPresetDefinition["id"],
     Readonly<KestrelOneEnvironmentPresetDefinition>
   >
-> = Object.freeze({
-  cli_safe_local: Object.freeze({ id: "cli_safe_local", version: 1 }),
-  cli_dev_local: Object.freeze({ id: "cli_dev_local", version: 1 }),
-  desktop_safe_local: Object.freeze({
-    id: "desktop_safe_local",
-    version: 1,
-  }),
-  desktop_dev_local: Object.freeze({
-    id: "desktop_dev_local",
-    version: 1,
-  }),
-  workspace_hosted: Object.freeze({ id: "workspace_hosted", version: 1 }),
-});
+> = KESTREL_ENVIRONMENT_PRESETS;
 
 export interface KestrelOneProfileOverlay {
   runtimeId?: TuiProfile["runtimeId"] | undefined;
@@ -314,144 +240,9 @@ export function composeKestrelOneProfile(
 function composeLegacyKestrelOneProfile(
   input: ComposeKestrelOneProfileInput,
 ): ComposedKestrelOneProfile {
-  assertNoPolicyControlledOverlay(input.overlay);
-  const environmentPreset =
-    KESTREL_ONE_ENVIRONMENT_PRESETS[input.environmentPresetId];
-  const shellKind = shellKindForPreset(input.environmentPresetId);
-  const resolvedEnvironment = resolveRuntimeProfileSelection({
-    shellKind,
-    presetId: input.environmentPresetId,
-    codeMode: input.overlay?.codeMode,
-    devShell: input.overlay?.devShell,
-  });
-  const runtimeIdentity = buildRuntimeIdentityMetadata({
-    agentProfileId: KESTREL_POLICY_ID,
-    agentProfileLabel: KESTREL_ONE_POLICY_LABEL,
-    shellKind,
-    presetId: input.environmentPresetId,
-    capabilityPacks: resolvedEnvironment.capabilityPacks,
-  });
-  const additionalToolNames = [...(input.overlay?.additionalToolNames ?? [])];
-  const toolAllowlist = normalizeKestrelOneToolAllowlist([
-    ...resolvedEnvironment.toolAllowlist,
-    ...additionalToolNames,
-    ...KESTREL_ONE_DIALOG_TOOL_NAMES,
-  ]);
-  assertRequiredKestrelOneTools(toolAllowlist);
-
-  const fingerprint = fingerprintKestrelOneComposition({
-    ...kestrelPolicyFingerprintRevision(),
-    environmentPresetId: input.environmentPresetId,
-    environmentPresetVersion: environmentPreset.version,
-    environmentCapabilityPacks: resolvedEnvironment.capabilityPacks,
-    overlay: input.overlay ?? {},
-    toolAllowlist,
-  });
-  const profileId =
-    input.resolvedProfileId ??
-    `${KESTREL_POLICY_ID}:${input.environmentPresetId}:${fingerprint}`;
-  const delegationLimits = input.overlay?.delegationLimits;
-  const profile: TuiProfile = {
-    id: profileId,
-    label: input.overlay?.label ?? KESTREL_ONE_POLICY_LABEL,
-    agent: "kestrel",
-    sessionPrefix: KESTREL_ONE_POLICY_ID,
-    runtimeId: input.overlay?.runtimeId ?? "kestrel",
-    agentProfileId: runtimeIdentity.agentProfileId,
-    agentProfileLabel: runtimeIdentity.agentProfileLabel,
-    shellKind,
-    presetId: input.environmentPresetId,
-    capabilityPacks: [...resolvedEnvironment.capabilityPacks],
-    environmentShellKind: runtimeIdentity.environmentShellKind,
-    environmentPresetId: runtimeIdentity.environmentPresetId,
-    environmentCapabilityPackIds: [
-      ...runtimeIdentity.environmentCapabilityPackIds,
-    ],
-    modelProvider: input.overlay?.modelProvider ?? "openrouter",
-    ...(input.overlay?.model !== undefined
-      ? { model: input.overlay.model }
-      : {}),
-    ...(input.overlay?.modelCredential !== undefined
-      ? { modelCredential: input.overlay.modelCredential }
-      : {}),
-    ...(input.overlay?.evaluationPolicy !== undefined
-      ? { evaluationPolicy: input.overlay.evaluationPolicy }
-      : {}),
-    ...(input.overlay?.modelCapabilities !== undefined
-      ? { modelCapabilities: input.overlay.modelCapabilities }
-      : {}),
-    harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
-    ...(input.overlay?.agentStageConfig !== undefined
-      ? { agentStageConfig: input.overlay.agentStageConfig }
-      : {}),
-    ...(input.overlay?.modelTimeoutMs !== undefined
-      ? { modelTimeoutMs: input.overlay.modelTimeoutMs }
-      : {}),
-    storeDriver: input.overlay?.storeDriver ?? "auto",
-    approvalPolicyPackId: input.overlay?.approvalPolicyPackId ?? "dev",
-    modeSystemV2Enabled: true,
-    defaultInteractionMode: DEFAULT_INTERACTION_MODE,
-    defaultActSubmode: DEFAULT_ACT_SUBMODE,
-    toolAllowlist,
-    ...(input.overlay?.kestrelOneAppApprovalModes !== undefined
-      ? {
-          kestrelOneAppApprovalModes: input.overlay.kestrelOneAppApprovalModes,
-        }
-      : {}),
-    mcpServers: input.overlay?.mcpServers ?? [],
-    ...(input.overlay?.ociMcpEgressBindings !== undefined
-      ? {
-          ociMcpEgressBindings: structuredClone(
-            input.overlay.ociMcpEgressBindings,
-          ),
-        }
-      : {}),
-    toolQueue: {
-      ...DEFAULT_TOOL_QUEUE,
-      ...(input.overlay?.toolQueue ?? {}),
-    },
-    guardrails: {
-      maxStepVisits: 80,
-      maxMaintenanceModelCallsPerRun: 8,
-    },
-    codeMode: resolvedEnvironment.codeMode,
-    devShell: resolvedEnvironment.devShell,
-    delegation: {
-      allowAgentSpawn: true,
-      maxConcurrentChildSessions: normalizePositiveInteger(
-        delegationLimits?.maxConcurrentChildSessions,
-        2,
-      ),
-      // This remains a compatibility/runtime budget. dialog.open separately
-      // rejects collaborator contexts, so nested collaborator creation stays
-      // prohibited regardless of this value.
-      maxDepth: normalizePositiveInteger(delegationLimits?.maxDepth, 2),
-    },
-    reasoning: input.overlay?.reasoning ?? {
-      request: { mode: "provider_visible" },
-      retention: { mode: "live_only", days: 7 },
-    },
-    ...(input.overlay?.theme !== undefined
-      ? { theme: input.overlay.theme }
-      : {}),
-    ...(input.overlay?.default !== undefined
-      ? { default: input.overlay.default }
-      : {}),
-  };
-
-  const resolvedProfile = resolveProfileWithEvaluationPolicy(profile);
-
-  return {
-    profile: resolvedProfile,
-    provenance: {
-      policyId: KESTREL_ONE_POLICY_ID,
-      policyVersion: KESTREL_ONE_POLICY_VERSION,
-      promptPolicyId: KESTREL_ONE_PROMPT_POLICY_ID,
-      environmentPresetId: input.environmentPresetId,
-      environmentPresetVersion: environmentPreset.version,
-      fingerprint,
-    },
-  };
+  return composeManagedKestrelProfile(
+    input as unknown as Parameters<typeof composeManagedKestrelProfile>[0],
+  ) as unknown as ComposedKestrelOneProfile;
 }
 
 export function composeKestrelProfile(
@@ -658,8 +449,7 @@ export function createKestrelEnvironmentBindingFromOverlay(input: {
         ? input.overlay?.modelCredential !== undefined
           ? {
               scope: "hosted",
-              organizationId:
-                input.overlay.modelCredential.organizationId,
+              organizationId: input.overlay.modelCredential.organizationId,
               environmentId: input.overlay.modelCredential.environmentId,
             }
           : {
@@ -708,9 +498,7 @@ function bindDefinitionPoliciesToEnvironment(
   binding: KestrelEnvironmentBindingV1,
 ): TuiProfile {
   if (binding.modelRoute.kind !== "pinned") {
-    if (
-      definition.evaluationPolicy !== undefined
-    ) {
+    if (definition.evaluationPolicy !== undefined) {
       throw new Error(
         "Route-bound Kestrel evaluation policies require a pinned environment model route.",
       );
@@ -726,8 +514,7 @@ function bindDefinitionPoliciesToEnvironment(
       ...structuredClone(definition.evaluationPolicy.judge),
       provider: binding.modelRoute.provider,
       model: binding.modelRoute.model,
-      modelRegistrationRevision:
-        binding.modelRoute.modelRegistrationRevision,
+      modelRegistrationRevision: binding.modelRoute.modelRegistrationRevision,
       capabilities: structuredClone(binding.modelRoute.capabilities),
       ...(binding.modelRoute.credentialReference !== undefined
         ? {
@@ -779,18 +566,7 @@ export function fingerprintResolvedProfile(
   profile: TuiProfile,
   revisionProvenance?: unknown,
 ): string {
-  return createHash("sha256")
-    .update(
-      stableJson(
-        {
-          profile,
-          executionBoundaryPolicyRevision:
-            KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
-          ...(revisionProvenance !== undefined ? { revisionProvenance } : {}),
-        },
-      ),
-    )
-    .digest("hex");
+  return fingerprintSharedResolvedProfile(profile, revisionProvenance);
 }
 
 function fingerprintKestrelOneComposition(value: unknown): string {

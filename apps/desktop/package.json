@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.9",
+    "@kestrel/runtime-profile": "workspace:*",
     "@lumi/kestrel-environment-auth": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@tavily/core": "^0.7.2",

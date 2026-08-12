@@ -10,6 +10,7 @@
     "@electric-sql/pglite": "^0.4.6",
     "@kestrel-agents/protocol": "workspace:*",
     "@kestrel-agents/workspace-skills": "workspace:*",
+    "@kestrel/runtime-profile": "workspace:*",
     "@lumi/kestrel-environment-auth": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@tavily/core": "^0.7.2",

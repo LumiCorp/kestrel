@@ -97,6 +97,7 @@
     "@kestrel-agents/sdk": "0.8.0",
     "@kestrel-agents/workspace-skills": "0.8.0",
     "@kestrel/mcp-security": "workspace:*",
+    "@kestrel/runtime-profile": "workspace:*",
     "@lumi/kestrel-environment-auth": "workspace:*",
     "@napi-rs/canvas": "0.1.80",
     "@octokit/auth-app": "^8.2.0",

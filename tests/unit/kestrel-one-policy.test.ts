@@ -12,6 +12,11 @@ import {
   KESTREL_ONE_POLICY,
   KESTREL_POLICY_VERSION,
 } from "../../src/profile/kestrelOnePolicy.js";
+import {
+  composeManagedKestrelProfile,
+  KESTREL_EXECUTION_BOUNDARY_POLICY_REVISION,
+} from "@kestrel/runtime-profile";
+import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
 
 const LUNA_ROUTE = {
   modelProvider: "openrouter" as const,
@@ -51,13 +56,7 @@ test("canonical Kestrel policy composes parity across product environments", () 
     overlay: LUNA_ROUTE,
   });
 
-  for (const composed of [
-    cliSafe,
-    cliDev,
-    desktopSafe,
-    desktopDev,
-    hosted,
-  ]) {
+  for (const composed of [cliSafe, cliDev, desktopSafe, desktopDev, hosted]) {
     assert.equal(composed.profile.agentProfileId, "kestrel");
     assert.equal(composed.provenance.policyId, "kestrel");
     assert.equal(composed.provenance.policyVersion, 3);
@@ -65,14 +64,12 @@ test("canonical Kestrel policy composes parity across product environments", () 
     assert.equal(composed.provenance.promptPolicyId, "kestrel");
     assert.equal(
       composed.provenance.environmentPresetVersion,
-      KESTREL_ONE_ENVIRONMENT_PRESETS[
-        composed.provenance.environmentPresetId
-      ].version,
+      KESTREL_ONE_ENVIRONMENT_PRESETS[composed.provenance.environmentPresetId]
+        .version,
     );
     assert.equal(composed.profile.delegation?.allowAgentSpawn, true);
     assert.equal(
-      composed.profile.harnessEconomics?.policy.compaction
-        .maxSummaryAttempts,
+      composed.profile.harnessEconomics?.policy.compaction.maxSummaryAttempts,
       2,
     );
     assert.equal(
@@ -100,7 +97,10 @@ test("canonical Kestrel policy composes parity across product environments", () 
   assert.deepEqual(cliDev.profile.codeMode, hosted.profile.codeMode);
   assert.deepEqual(cliDev.profile.devShell, hosted.profile.devShell);
 
-  assert.equal(cliSafe.profile.toolAllowlist?.includes("desktop.host.open"), false);
+  assert.equal(
+    cliSafe.profile.toolAllowlist?.includes("desktop.host.open"),
+    false,
+  );
   assert.equal(
     cliSafe.profile.toolAllowlist?.includes(
       "kestrel_one.search_knowledge_documents",
@@ -131,7 +131,10 @@ test("canonical Kestrel policy composes parity across product environments", () 
 
 test("canonical Kestrel One policy and presets are immutable versioned definitions", () => {
   assert.equal(Object.isFrozen(KESTREL_ONE_POLICY), true);
-  assert.equal(Object.isFrozen(KESTREL_ONE_POLICY.requiredModelToolNames), true);
+  assert.equal(
+    Object.isFrozen(KESTREL_ONE_POLICY.requiredModelToolNames),
+    true,
+  );
   assert.equal(Object.isFrozen(KESTREL_ONE_ENVIRONMENT_PRESETS), true);
   assert.equal(Object.isFrozen(KESTREL_HARNESS_ECONOMICS), true);
   assert.equal(
@@ -503,3 +506,42 @@ function sortJsonValue(value: unknown): unknown {
       .map(([key, entry]) => [key, sortJsonValue(entry)]),
   );
 }
+
+test("root managed profile facade remains byte-for-byte equal to the shared package", () => {
+  const inputs = [
+    { environmentPresetId: "cli_safe_local" as const },
+    { environmentPresetId: "cli_dev_local" as const },
+    { environmentPresetId: "desktop_safe_local" as const },
+    {
+      environmentPresetId: "desktop_dev_local" as const,
+      overlay: {
+        runtimeId: "codex" as const,
+        modelProvider: "openai" as const,
+        model: "gpt-parity",
+        additionalToolNames: ["free.weather.current", "dialog.open"],
+        delegationLimits: { maxConcurrentChildSessions: 4, maxDepth: 3 },
+      },
+      resolvedProfileId: "managed-parity",
+    },
+    {
+      environmentPresetId: "workspace_hosted" as const,
+      overlay: {
+        additionalToolNames: ["kestrel_one.search_knowledge_documents"],
+      },
+    },
+  ];
+
+  for (const input of inputs) {
+    assert.deepEqual(
+      composeKestrelOneProfile(input),
+      composeManagedKestrelProfile(input),
+    );
+  }
+});
+
+test("shared resolved fingerprint revision matches the canonical root policy", () => {
+  assert.equal(
+    KESTREL_EXECUTION_BOUNDARY_POLICY_REVISION,
+    KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+  );
+});
