@@ -773,12 +773,14 @@ export async function processDurableThreadTurn(
       replayChunks: terminal.replayChunks,
       failureCode:
         completionStatus === "failed"
-          ? (terminal.errorCode ??
-            (workerInterrupted
-              ? "TURN_WORKER_INTERRUPTED"
-              : terminal.status === "contract_failure"
-                ? "PRESENTATION_CONTRACT_FAILURE"
-                : "RUNTIME_FAILED"))
+          ? terminal.errorCode === "MODEL_AUTH_ERROR"
+            ? terminal.errorCode
+            : (terminal.errorCode ??
+              (workerInterrupted
+                ? "TURN_WORKER_INTERRUPTED"
+                : terminal.status === "contract_failure"
+                  ? "PRESENTATION_CONTRACT_FAILURE"
+                  : "RUNTIME_FAILED"))
           : null,
       failureMessage: terminal.error,
     });
