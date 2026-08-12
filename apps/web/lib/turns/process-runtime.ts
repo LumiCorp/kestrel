@@ -38,6 +38,7 @@ import { DURABLE_TURN_STOP_GRACE_MS } from "@/lib/turns/contracts";
 import {
   appendDurableTurnEvent,
   acknowledgeDurableRuntimeInteractionDelivery,
+  bindDurableRuntimeInteractionDeliveryExecution,
   markRuntimeNativeSessionEstablished,
   failDurableRuntimeInteractionDelivery,
   claimDurableThreadTurn,
@@ -461,6 +462,7 @@ export async function processDurableThreadTurn(
       durableTurnId: turn.id,
       runtimeId: turn.runtimeId,
       runtimeBindingId: turn.runtimeBindingId ?? undefined,
+      runtimeBindingStatus: turn.runtimeBindingStatus,
       runtimeNativeSessionState: turn.runtimeNativeSessionState,
       participantId: turn.participantId,
       messages,
@@ -522,11 +524,28 @@ export async function processDurableThreadTurn(
         ) {
           runtimeTerminalObserved = true;
         }
+        if (cancellationRequested && isSafeInterruptBoundary(event.type)) {
+          cancellation.abort(
+            new Error("The user interrupted this turn at a safe boundary."),
+          );
+        }
         eventWrites = eventWrites.then(async () => {
           if (event.type === "run.interaction.delivered") {
+            if (
+              !environmentExecutionId ||
+              !event.runId ||
+              event.payload.runId !== event.runId
+            ) {
+              throw new Error(
+                "Runtime delivery acknowledgement is missing execution correlation.",
+              );
+            }
             await acknowledgeDurableRuntimeInteractionDelivery({
               turnId: turn.id,
               requestId: event.payload.requestId,
+              bindingId: event.payload.bindingId,
+              environmentExecutionId,
+              runtimeRunId: event.runId,
               acknowledgementEventId: event.id,
             });
             return;
@@ -538,6 +557,23 @@ export async function processDurableThreadTurn(
               runtimeId: event.payload.runtimeId,
             });
             return;
+          }
+          if (
+            event.type === "run.started" &&
+            turn.interactionResponse?.requestId
+          ) {
+            if (!(environmentExecutionId && event.runId && turn.runtimeBindingId)) {
+              throw new Error(
+                "Runtime delivery execution is missing start correlation.",
+              );
+            }
+            await bindDurableRuntimeInteractionDeliveryExecution({
+              turnId: turn.id,
+              requestId: turn.interactionResponse.requestId,
+              bindingId: turn.runtimeBindingId,
+              environmentExecutionId,
+              runtimeRunId: event.runId,
+            });
           }
           try {
             if (event.type === "run.started") {
@@ -564,12 +600,15 @@ export async function processDurableThreadTurn(
           } catch {
             // Runtime telemetry is best effort and must not fail the turn.
           }
+        }).catch((cause: unknown) => {
+          const error = new Error(
+            "A critical Runtime event could not be persisted.",
+            { cause },
+          ) as Error & { code: string };
+          error.code = "RUNTIME_EVENT_PERSISTENCE_FAILED";
+          throw error;
         });
-        if (cancellationRequested && isSafeInterruptBoundary(event.type)) {
-          cancellation.abort(
-            new Error("The user interrupted this turn at a safe boundary."),
-          );
-        }
+        return eventWrites;
       },
       onUiChunk(chunk) {
         if (workerInterrupted) {
@@ -714,6 +753,17 @@ export async function processDurableThreadTurn(
     return { processed: true, nextTurnId: completion.nextTurnId };
   } catch (error) {
     await eventWrites.catch(() => {});
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "RUNTIME_EVENT_PERSISTENCE_FAILED"
+    ) {
+      // The Runner has already durably journaled this event. Keep the product
+      // Turn active so the next worker lease reattaches from the last cursor
+      // committed only after the product transaction succeeded.
+      throw error;
+    }
     if (
       workerInterrupted &&
       environmentExecutionId &&

@@ -35,6 +35,7 @@ import type {
   ProjectReviewGetCommandPayload,
   ProjectSnapshotGetCommandPayload,
   RunCancelCommandPayload,
+  RuntimeReleaseCommandPayload,
   RunnerCommand,
   RunnerPingCommandPayload,
   RunStartCommandPayload,
@@ -166,6 +167,15 @@ export class CommandRouter {
       if (command.type === "runtime.describe") {
         const payload = validateExecutionProfileResolvePayload(command.payload);
         await this.host.runtimeDescribe(command.id, payload);
+        return;
+      }
+
+      if (command.type === "runtime.release") {
+        await this.host.runtimeRelease(
+          command.id,
+          command.payload as RuntimeReleaseCommandPayload,
+          command.metadata,
+        );
         return;
       }
 

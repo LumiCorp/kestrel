@@ -125,3 +125,32 @@ test("foreign Runtime readiness is re-probed after authentication becomes availa
 
   assert.equal(describeCount, 2);
 });
+
+test("foreign Runtime execution fails closed for degraded and released bindings", async () => {
+  let executed = false;
+  const adapter: RuntimeAdapterV1 = {
+    async describe() {
+      return descriptor();
+    },
+    async execute() {
+      executed = true;
+      return {} as RuntimeTurnResult;
+    },
+    async cancel() {},
+    async release() {},
+    async dispose() {},
+  };
+
+  for (const status of ["degraded", "released"] as const) {
+    const runtime = new RuntimeAdapterChatRuntime("codex", adapter);
+    await assert.rejects(
+      () => runtime.runTurn(turn({ runtimeBindingStatus: status })),
+      (error: unknown) =>
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "RUNTIME_BINDING_DEGRADED",
+    );
+  }
+  assert.equal(executed, false);
+});

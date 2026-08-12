@@ -183,6 +183,14 @@ export interface ExecutionProfileResolveCommandPayload {
 
 export type RuntimeDescribeCommandPayload = ExecutionProfileResolveCommandPayload;
 
+export interface RuntimeReleaseCommandPayload {
+  runtimeId: "kestrel" | "codex" | "claude";
+  bindingId: string;
+  participantId: string;
+  threadId: string;
+  environmentId: string;
+}
+
 export interface RunCancelCommandPayload {
   sessionId: string;
   runId?: string | undefined;
@@ -493,6 +501,7 @@ export interface RunnerCommandPayloadByType {
   "profile.get": ProfileGetCommandPayload;
   "execution-profile.resolve": ExecutionProfileResolveCommandPayload;
   "runtime.describe": RuntimeDescribeCommandPayload;
+  "runtime.release": RuntimeReleaseCommandPayload;
   "job.run": JobRunCommandPayload;
   "run.start": RunStartCommandPayload;
   "run.cancel": RunCancelCommandPayload;
@@ -591,6 +600,7 @@ export interface RunStartedEventPayload {
   runId?: string | undefined;
   runtimeId?: "kestrel" | "codex" | "claude" | undefined;
   runtimeBindingId?: string | undefined;
+  runtimeBindingStatus?: "ready" | "degraded" | "released" | undefined;
   runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
   participantId?: string | undefined;
   eventType: string;
@@ -974,6 +984,7 @@ export interface RunnerEventPayloadByType {
   "profile.loaded": ProfileLoadedEventPayload;
   "execution-profile.resolved": ExecutionProfileResolvedEventPayload;
   "runtime.described": RuntimeDescriptorResolutionV1;
+  "runtime.released": RuntimeReleaseCommandPayload;
   "job.started": JobStartedEventPayload;
   "job.progress": JobProgressEventPayload;
   "job.completed": JobCompletedEventPayload;

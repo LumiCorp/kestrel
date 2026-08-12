@@ -62,6 +62,9 @@ export function composeHydraRuntime(input: {
       if (property === "cancelActiveRun") {
         return execution.cancelActiveRun.bind(execution);
       }
+      if (property === "releaseRuntimeBinding") {
+        return execution.releaseRuntimeBinding.bind(execution);
+      }
       if (property === "recoverOrphanedActiveRun") return undefined;
       if (property === "close") {
         return async () => {

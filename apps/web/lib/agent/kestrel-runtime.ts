@@ -296,6 +296,7 @@ export type KestrelOneAgentResponseInput = {
   durableTurnId?: string | undefined;
   runtimeId?: RuntimeId | undefined;
   runtimeBindingId?: string | undefined;
+  runtimeBindingStatus?: "ready" | "degraded" | "released" | undefined;
   runtimeNativeSessionState?:
     | "uninitialized"
     | "ready"
@@ -336,7 +337,7 @@ export type KestrelOneAgentResponseInput = {
   abortBehavior?: "cancel" | "detach" | undefined;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
   onUiChunk?: (chunk: KestrelUiStreamChunk) => void;
-  onRuntimeEvent?: (event: RunnerRunStreamEvent) => void;
+  onRuntimeEvent?: (event: RunnerRunStreamEvent) => void | Promise<void>;
   onFinishPersist?: (
     messages: UIMessage[],
     meta: KestrelOneAgentResponsePersistMeta,
@@ -353,6 +354,7 @@ function createModelAwareKestrelOneAgent(input: {
   projectContextRevisionId?: string | undefined;
   projectContextGrantId?: string | undefined;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
+  onRuntimeEvent?: (event: RunnerRunStreamEvent) => void | Promise<void>;
 }): KestrelOneAgent {
   const clients = new Set<KestrelOneRunnerClient>();
   return {
@@ -523,6 +525,7 @@ function createModelAwareKestrelOneAgent(input: {
             : undefined;
           const normalizedTurn = {
             ...turn,
+            runId: route.runId,
             eventType,
             ...(projectSkills
               ? { workspaceSkills: projectSkills.catalog }
@@ -573,6 +576,7 @@ function createModelAwareKestrelOneAgent(input: {
               });
               observedRuntimeIdentity = true;
             }
+            await input.onRuntimeEvent?.(event);
             await updateEnvironmentExecutionRuntimeCursor({
               organizationId: input.organizationId,
               executionId: route.runId,
@@ -918,6 +922,7 @@ export async function generateKestrelOneExternalReply(input: {
               profileId: resolvedProfile.profileId,
               turn: {
                 ...turn,
+                runId: route.runId,
                 eventType: turn.eventType || "user.message",
               },
             },
@@ -1076,6 +1081,7 @@ export async function createKestrelOneAgentResponse(
         projectContextRevisionId: input.projectContext?.contextRevisionId,
         projectContextGrantId: input.projectContext?.grantId,
         onExecutionRouted: input.onExecutionRouted,
+        onRuntimeEvent: input.onRuntimeEvent,
       });
 
   return createKestrelOneAgentResponseFromAgent({
@@ -1088,6 +1094,7 @@ export async function createKestrelOneAgentResponse(
     threadId: input.threadId,
     durableTurnId: input.durableTurnId,
     runtimeBindingId: input.runtimeBindingId,
+    runtimeBindingStatus: input.runtimeBindingStatus,
     runtimeNativeSessionState: input.runtimeNativeSessionState,
     participantId: input.participantId,
     runtimeId: input.runtimeId ?? "kestrel",
@@ -1101,7 +1108,6 @@ export async function createKestrelOneAgentResponse(
     transientTitle: input.transientTitle,
     signal: input.signal,
     onUiChunk: input.onUiChunk,
-    onRuntimeEvent: input.onRuntimeEvent,
     onFinishPersist: input.onFinishPersist,
   });
 }
@@ -1196,7 +1202,8 @@ export async function createKestrelOneReattachmentResponse(
     transientTitle: null,
     signal: input.signal,
     onUiChunk: input.onUiChunk,
-    onRuntimeEvent: (event) => {
+    onRuntimeEvent: async (event) => {
+      await input.onRuntimeEvent?.(event);
       cursorWrites = cursorWrites.then(() =>
         updateEnvironmentExecutionRuntimeCursor({
           organizationId: input.organizationId,
@@ -1204,8 +1211,7 @@ export async function createKestrelOneReattachmentResponse(
           eventId: event.id,
         }),
       );
-      void cursorWrites.catch(() => {});
-      input.onRuntimeEvent?.(event);
+      await cursorWrites;
     },
     onFinishPersist: async (messages, meta) => {
       await cursorWrites;

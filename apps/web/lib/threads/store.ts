@@ -275,6 +275,11 @@ export async function getThreadWithMessagesForUser(
           .where(inArray(schema.users.id, authorIds))
       : [];
   const authorsById = new Map(authors.map((author) => [author.id, author]));
+  const runtimeBinding = access.thread.runtimeBindingId
+    ? await knowledgeDb.query.runtimeBindings.findFirst({
+        where: (table, { eq }) => eq(table.id, access.thread.runtimeBindingId!),
+      })
+    : null;
   return {
     ...access.thread,
     messages: messages.map((message) => ({
@@ -287,6 +292,7 @@ export async function getThreadWithMessagesForUser(
         : null,
     })),
     access,
+    runtimeBinding: runtimeBinding ?? null,
   };
 }
 
@@ -740,11 +746,93 @@ export async function permanentlyDeleteThreadForUser(input: {
   if (!(access?.canManage && access.thread.archivedAt)) {
     return null;
   }
-  const [thread] = await knowledgeDb
-    .delete(schema.threads)
-    .where(eq(schema.threads.id, input.id))
-    .returning();
-  return thread ?? null;
+  return await knowledgeDb.transaction(async (tx) => {
+    const binding = access.thread.runtimeBindingId
+      ? await tx.query.runtimeBindings.findFirst({
+          where: eq(schema.runtimeBindings.id, access.thread.runtimeBindingId),
+        })
+      : undefined;
+    if (
+      binding &&
+      (binding.runtimeId === "codex" || binding.runtimeId === "claude")
+    ) {
+      const execution = await tx.query.environmentRunExecutions.findFirst({
+        where: eq(schema.environmentRunExecutions.threadId, input.id),
+        orderBy: [desc(schema.environmentRunExecutions.createdAt)],
+      });
+      if (execution) {
+        const now = new Date();
+        await tx
+          .insert(schema.runtimeBindingReleaseOutbox)
+          .values({
+            id: crypto.randomUUID(),
+            organizationId: input.organizationId,
+            runtimeId: binding.runtimeId,
+            bindingId: binding.id,
+            participantId: binding.participantId,
+            threadId: input.id,
+            environmentId: execution.environmentId,
+            workspaceId: execution.workspaceId,
+            actorUserId: execution.actorId,
+            idempotencyKey: `runtime-release:${binding.id}`,
+            state: "pending",
+            attempts: 0,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .onConflictDoNothing({
+            target: schema.runtimeBindingReleaseOutbox.idempotencyKey,
+          });
+      }
+    }
+    const [thread] = await tx
+      .delete(schema.threads)
+      .where(eq(schema.threads.id, input.id))
+      .returning();
+    return thread ?? null;
+  });
+}
+
+export async function enqueueRuntimeBindingReleaseForThread(input: {
+  threadId: string;
+  organizationId: string;
+}): Promise<boolean> {
+  return await knowledgeDb.transaction(async (tx) => {
+    const binding = await tx.query.runtimeBindings.findFirst({
+      where: eq(schema.runtimeBindings.threadId, input.threadId),
+    });
+    if (!binding || (binding.runtimeId !== "codex" && binding.runtimeId !== "claude")) {
+      return false;
+    }
+    const execution = await tx.query.environmentRunExecutions.findFirst({
+      where: eq(schema.environmentRunExecutions.threadId, input.threadId),
+      orderBy: [desc(schema.environmentRunExecutions.createdAt)],
+    });
+    if (!execution) return false;
+    const now = new Date();
+    await tx
+      .insert(schema.runtimeBindingReleaseOutbox)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: input.organizationId,
+        runtimeId: binding.runtimeId,
+        bindingId: binding.id,
+        participantId: binding.participantId,
+        threadId: input.threadId,
+        environmentId: execution.environmentId,
+        workspaceId: execution.workspaceId,
+        actorUserId: execution.actorId,
+        idempotencyKey: `runtime-release:${binding.id}`,
+        state: "pending",
+        attempts: 0,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({
+        target: schema.runtimeBindingReleaseOutbox.idempotencyKey,
+      });
+    return true;
+  });
 }
 
 export async function assignStandaloneThreadToProject(input: {

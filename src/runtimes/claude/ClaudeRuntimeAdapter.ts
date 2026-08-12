@@ -29,6 +29,7 @@ const CLAUDE_AGENT_SDK_VERSION = "0.3.228";
 
 interface PendingClaudeInteraction {
   requestId: string;
+  nativeRequestId: string;
   toolName: string;
   toolUseId: string;
   input: Record<string, unknown>;
@@ -67,8 +68,13 @@ interface ClaudeSessionState {
   nativeActivitySequence: number;
   initialized: boolean;
   initialization: Promise<void>;
+  credentialFingerprint: string;
   settled?: ClaudeCompletion | undefined;
 }
+
+type ReleasableClaudeSessionStore = SessionStore & {
+  releaseSession?(sessionId: string): Promise<void>;
+};
 
 export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
   private readonly sessions = new Map<string, ClaudeSessionState>();
@@ -76,10 +82,10 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
   constructor(
     private readonly profile: TuiProfile,
     private readonly callbacks: RuntimeAdapterCallbacksV1 = {},
-    private readonly env: RuntimeEnvironmentMap = process.env,
+    private readonly env: RuntimeEnvironmentMap = {},
     private readonly nativeSessions: RuntimeNativeSessionStore =
       new InMemoryRuntimeNativeSessionStore(),
-    private readonly sessionStore?: SessionStore,
+    private readonly sessionStore?: ReleasableClaudeSessionStore,
     private readonly resolveEnvironment?: RuntimeEnvironmentResolver,
     private readonly runQuery: typeof query = query,
   ) {}
@@ -104,9 +110,8 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
         probe.supportedModels(),
       ]);
       const authenticated =
-        Object.keys(account).length > 0 ||
-        Object.keys(initialization.account).length > 0 ||
-        Boolean(runtimeEnv.ANTHROPIC_API_KEY?.trim());
+        hasStructuredClaudeAuthentication(account) ||
+        hasStructuredClaudeAuthentication(initialization.account);
       if (!authenticated) {
         return claudeDescriptor(
           "auth_required",
@@ -152,7 +157,8 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
       if (
         code === "RUNTIME_ATTACHMENT_UNSUPPORTED" ||
         code === "RUNTIME_NATIVE_SESSION_LOST" ||
-        code === "RUNTIME_LIVE_WAIT_LOST"
+        code === "RUNTIME_LIVE_WAIT_LOST" ||
+        code === "RUNTIME_BINDING_DEGRADED"
       ) {
         return failed(input.turn, code, error instanceof Error ? error.message : String(error));
       }
@@ -177,10 +183,14 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
   }
 
   async release(binding: RuntimeBindingV1): Promise<void> {
+    const persisted = await this.nativeSessions.load(binding.bindingId);
     const state = this.sessions.get(binding.threadId);
     if (state !== undefined && state.binding.bindingId === binding.bindingId) {
       await this.cancel({ binding, sessionId: binding.threadId });
       this.sessions.delete(binding.threadId);
+    }
+    if (persisted?.nativeSessionId) {
+      await this.sessionStore?.releaseSession?.(persisted.nativeSessionId);
     }
     await this.nativeSessions.release(binding.bindingId);
   }
@@ -199,6 +209,7 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
     turn: RuntimeTurnInput,
     signal?: AbortSignal,
   ): Promise<RuntimeTurnResult> {
+    assertBindingUsable(binding);
     if (this.sessions.has(turn.sessionId)) {
       return failed(turn, "RUNTIME_TURN_ALREADY_ACTIVE", "Claude already has an active Turn for this Thread.");
     }
@@ -221,14 +232,16 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
       throw nativeSessionLost("The Runtime binding contains incompatible native state.");
     }
     const nativeSessionId = persisted?.nativeSessionId ?? randomUUID();
-    const runtimeEnv = this.resolveEnvironment === undefined
-      ? this.env
-      : (await this.resolveEnvironment("claude")).env;
+    const environmentSnapshot = this.resolveEnvironment === undefined
+      ? { env: this.env, credentialFingerprint: "static" }
+      : await this.resolveEnvironment("claude");
+    const runtimeEnv = environmentSnapshot.env;
     const segment = deferred<PendingClaudeInteraction>();
     let state!: ClaudeSessionState;
     const canUseTool: CanUseTool = async (toolName, toolInput, permission) => {
       const pending: PendingClaudeInteraction = {
-        requestId: permission.requestId,
+        requestId: randomUUID(),
+        nativeRequestId: permission.requestId,
         toolName,
         toolUseId: permission.toolUseID,
         input: toolInput,
@@ -289,6 +302,7 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
       nativeActivitySequence: 0,
       initialized: false,
       initialization: Promise.resolve(),
+      credentialFingerprint: environmentSnapshot.credentialFingerprint,
     };
     state.initialization = runtimeQuery.initializationResult().then(async () => {
       state.initialized = true;
@@ -345,10 +359,17 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
         state.settled.error?.message ?? "The Claude live interaction connection was lost.",
       );
     }
+    assertBindingUsable(binding);
     if (signal !== undefined) pipeAbort(signal, state.abortController);
     if (this.resolveEnvironment !== undefined) {
       try {
-        await this.resolveEnvironment("claude");
+        const fresh = await this.resolveEnvironment("claude");
+        if (
+          fresh.credentialFingerprint !== state.credentialFingerprint ||
+          (fresh.expiresAt !== undefined && Date.parse(fresh.expiresAt) <= Date.now())
+        ) {
+          throw new Error("Claude credentials rotated or expired.");
+        }
       } catch {
         settleClaudePending(
           state,
@@ -403,8 +424,11 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
             eventType: "runtime.interaction.response",
             prompt: pending.prompt,
             ...(pending.toolName === "AskUserQuestion"
-              ? claudeQuestionContract(pending.input)
+              ? claudeQuestionContract(pending.input, pending.nativeRequestId)
               : {
+                  privateRuntimeMetadata: {
+                    nativeRequestId: pending.nativeRequestId,
+                  },
                   approval: {
                     toolCallId: pending.toolUseId,
                     toolName: pending.toolName,
@@ -485,9 +509,12 @@ export class ClaudeRuntimeAdapter implements RuntimeAdapterV1 {
   }
 }
 
-function claudeQuestionContract(input: Record<string, unknown>): {
+function claudeQuestionContract(
+  input: Record<string, unknown>,
+  nativeRequestId: string,
+): {
   inputSchema: Record<string, unknown>;
-  metadata: Record<string, unknown>;
+  privateRuntimeMetadata: Record<string, unknown>;
 } {
   const questions = Array.isArray(input.questions) ? input.questions : [];
   const properties: Record<string, unknown> = {};
@@ -523,7 +550,7 @@ function claudeQuestionContract(input: Record<string, unknown>): {
       required,
       additionalProperties: false,
     },
-    metadata: { nativeQuestions },
+    privateRuntimeMetadata: { nativeRequestId, nativeQuestions },
   };
 }
 
@@ -533,6 +560,27 @@ function stringEnvironment(env: RuntimeEnvironmentMap): Record<string, string> {
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
+}
+
+function hasStructuredClaudeAuthentication(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of [
+    "apiKeySource",
+    "tokenSource",
+    "apiProvider",
+    "accountId",
+    "organizationId",
+    "email",
+  ]) {
+    const candidate = record[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function claudeDescriptor(
@@ -740,6 +788,20 @@ function emptyClaudePrompt(): AsyncIterable<SDKUserMessage> {
 
 function nativeSessionLost(message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code: "RUNTIME_NATIVE_SESSION_LOST" });
+}
+
+function assertBindingUsable(binding: RuntimeBindingV1): void {
+  if (
+    binding.status === "degraded" ||
+    binding.status === "released" ||
+    binding.nativeSessionState === "degraded" ||
+    binding.nativeSessionState === "released"
+  ) {
+    throw Object.assign(
+      new Error("This Claude Runtime binding is read-only and requires recovery."),
+      { code: "RUNTIME_BINDING_DEGRADED" },
+    );
+  }
 }
 
 function readErrorCode(error: unknown): string | undefined {

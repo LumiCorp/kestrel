@@ -6,6 +6,17 @@ import {
 } from "@/lib/ai/gateway-utils";
 
 type RunnerModelProvider = NonNullable<RunnerProfile["modelProvider"]>;
+type KestrelOneRunnerProfile = RunnerProfile & {
+  modelCredential?: {
+    source: "kestrel-one";
+    runId: string;
+    gatewayId: string;
+    organizationId: string;
+    environmentId: string;
+    rawModelId: string;
+    provider: RunnerModelProvider;
+  } | undefined;
+};
 
 export type KestrelOneRuntimeModelSelection = {
   id: string;
@@ -74,12 +85,12 @@ export function applyKestrelOneModelsToProfile(
     ...EnvironmentRuntimeModelSelection[],
   ],
   runId: string
-): RunnerProfile {
+): KestrelOneRunnerProfile {
   const selection = selections[0];
   const agentStageConfig = asRecord(profile.agentStageConfig);
   const modelByStage = asRecord(agentStageConfig.modelByStage);
 
-  const selected: RunnerProfile = {
+  const selected: KestrelOneRunnerProfile = {
     ...profile,
     id: `${profile.id}:model:${encodeURIComponent(selection.id)}:run:${encodeURIComponent(runId)}`,
     label: `${profile.label} · ${selection.id}`,

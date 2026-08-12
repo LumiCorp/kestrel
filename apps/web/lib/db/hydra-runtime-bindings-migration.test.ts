@@ -3,15 +3,15 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const migrationUrl = new URL(
-  "./migrations/0060_hydra_runtime_bindings.sql",
+  "./migrations/0068_hydra_runtime_bindings.sql",
   import.meta.url,
 );
 const deliveryMigrationUrl = new URL(
-  "./migrations/0061_hydra_runtime_delivery_ledger.sql",
+  "./migrations/0069_hydra_runtime_delivery_ledger.sql",
   import.meta.url,
 );
 const correctnessMigrationUrl = new URL(
-  "./migrations/0062_hydra_runtime_correctness.sql",
+  "./migrations/0070_hydra_runtime_correctness.sql",
   import.meta.url,
 );
 

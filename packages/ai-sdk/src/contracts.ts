@@ -93,6 +93,8 @@ export interface KestrelInteractionPresentation {
   prompt: string;
   inputSchema?: Record<string, unknown> | undefined;
   metadata?: Record<string, unknown> | undefined;
+  /** Internal-only correlation; never include this field in UI message parts. */
+  privateRuntimeMetadata?: Record<string, unknown> | undefined;
   approval?: RunnerInteractionRequestV1["approval"];
   source?: "runtime" | "mcp" | undefined;
   status: "pending" | "resolved" | "cancelled";

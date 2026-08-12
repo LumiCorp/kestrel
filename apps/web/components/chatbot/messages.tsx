@@ -76,14 +76,16 @@ function PureMessages({
   const [ttsAvailable, setTtsAvailable] = useState<boolean | null>(null);
   const [forkingLostSession, setForkingLostSession] = useState(false);
   const [lostSessionForkError, setLostSessionForkError] = useState<string | null>(null);
-  const nativeSessionLost = conversationState.turns.some(
-    (turn) =>
-      turn.status === "failed" && turn.failureCode === "RUNTIME_NATIVE_SESSION_LOST"
-  );
-  const liveWaitLost = conversationState.turns.some(
-    (turn) =>
-      turn.status === "failed" && turn.failureCode === "RUNTIME_LIVE_WAIT_LOST"
-  );
+  const latestRuntimeLoss = [...conversationState.turns]
+    .reverse()
+    .find(
+      (turn) =>
+        turn.status === "failed" &&
+        (turn.failureCode === "RUNTIME_NATIVE_SESSION_LOST" ||
+          turn.failureCode === "RUNTIME_LIVE_WAIT_LOST"),
+    )?.failureCode;
+  const nativeSessionLost = latestRuntimeLoss === "RUNTIME_NATIVE_SESSION_LOST";
+  const liveWaitLost = latestRuntimeLoss === "RUNTIME_LIVE_WAIT_LOST";
 
   async function forkRuntimeRecovery() {
     setForkingLostSession(true);

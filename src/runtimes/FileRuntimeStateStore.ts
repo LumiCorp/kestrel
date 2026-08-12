@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -79,9 +79,19 @@ export class FileClaudeSessionStore implements SessionStore {
     return value === undefined ? null : asSessionEntries(value);
   }
 
+  async releaseSession(sessionId: string): Promise<void> {
+    const directory = path.join(this.rootPath, "claude", digest(sessionId));
+    await rm(directory, { recursive: true, force: true });
+  }
+
   private filePath(key: SessionKey): string {
-    const scope = `${key.projectKey}\0${key.sessionId}\0${key.subpath ?? ""}`;
-    return path.join(this.rootPath, "claude", `${digest(scope)}.json`);
+    const scope = `${key.projectKey}\0${key.subpath ?? ""}`;
+    return path.join(
+      this.rootPath,
+      "claude",
+      digest(key.sessionId),
+      `${digest(scope)}.json`,
+    );
   }
 }
 

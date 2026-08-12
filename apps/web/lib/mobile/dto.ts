@@ -163,7 +163,10 @@ const elicitationSchema = z.object({
 export function mobileInteractionDto(
   interaction:
     | typeof schema.mcpInteractionCheckpoints.$inferSelect
-    | typeof schema.threadInteractions.$inferSelect
+    | Omit<
+        typeof schema.threadInteractions.$inferSelect,
+        "privateRuntimeMetadata"
+      >
 ) {
   const isShared = "source" in interaction;
   const id = isShared ? interaction.requestId : interaction.id;

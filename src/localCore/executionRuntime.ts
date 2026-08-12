@@ -31,6 +31,7 @@ export interface LocalCoreRunnerRuntimeFactoryOptions {
   runtimeEnvironmentResolver?: LocalCoreRuntimeEnvironmentResolver | undefined;
   homePath?: string | undefined;
   credentialStore?: LocalCoreCredentialStore | undefined;
+  configurationGeneration?: number | undefined;
 }
 
 /**
@@ -139,8 +140,32 @@ export function createLocalCoreRunnerRuntimeFactory(
         const nativeLoginRoot = runtimeId === "codex"
           ? process.env.CODEX_HOME
           : process.env.CLAUDE_CONFIG_DIR;
+        const authenticationSource = hasManagedCredential
+          ? "profile-credential"
+          : "native-login";
+        const environmentWithoutConfiguration = buildRuntimeChildEnvironment({
+          runtimeId,
+          baseEnvironment: process.env,
+          runtimeEnvironment: selectedEnvironment,
+        });
+        const fingerprint = fingerprintRuntimeEnvironment({
+          runtimeId,
+          environment: environmentWithoutConfiguration,
+          scope: [
+            profile.id,
+            String(options.configurationGeneration ?? 0),
+            authenticationSource,
+            profile.modelProvider ?? "",
+            profile.model ?? "",
+          ],
+        });
         const configurationDirectory = hasManagedCredential
-          ? path.join(nativeStateRoot, "credentials", runtimeId)
+          ? path.join(
+              nativeStateRoot,
+              "credentials",
+              runtimeId,
+              fingerprint,
+            )
           : nativeLoginRoot;
         const env = buildRuntimeChildEnvironment({
           runtimeId,
@@ -149,11 +174,6 @@ export function createLocalCoreRunnerRuntimeFactory(
           ...(configurationDirectory !== undefined
             ? { configurationDirectory }
             : {}),
-        });
-        const fingerprint = fingerprintRuntimeEnvironment({
-          runtimeId,
-          environment: env,
-          scope: [profile.id, profile.model ?? "", hasManagedCredential ? "managed" : "native-login"],
         });
         return { env, credentialFingerprint: fingerprint };
       },

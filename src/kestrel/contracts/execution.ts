@@ -57,6 +57,8 @@ export interface RuntimeInteractionRequestV1 extends Record<string, unknown> {
   prompt: string;
   inputSchema?: Record<string, unknown> | undefined;
   metadata?: Record<string, unknown> | undefined;
+  /** Environment-private native correlation. Product serializers must omit it. */
+  privateRuntimeMetadata?: Record<string, unknown> | undefined;
   approval?: {
     toolCallId: string;
     toolName: string;

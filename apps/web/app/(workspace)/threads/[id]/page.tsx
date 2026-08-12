@@ -141,7 +141,13 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
         initialVisibilityType={chat?.isPublic ? "public" : "private"}
         isReadonly={Boolean(chat?.archivedAt)}
         newTurnDisabledReason={
-          readiness.applicable && !readiness.ready
+          chat?.runtimeBinding &&
+          (chat.runtimeBinding.status === "degraded" ||
+            chat.runtimeBinding.status === "released" ||
+            chat.runtimeBinding.nativeSessionState === "degraded" ||
+            chat.runtimeBinding.nativeSessionState === "released")
+            ? "This Runtime binding is read-only. Use the recovery action to continue in a new Thread."
+          : readiness.applicable && !readiness.ready
             ? "Finish organization setup before starting a new agent turn."
             : undefined
         }

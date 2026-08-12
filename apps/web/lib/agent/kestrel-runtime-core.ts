@@ -136,6 +136,7 @@ export type KestrelOneAgentResponseInput = {
   threadId: string;
   durableTurnId?: string | undefined;
   runtimeBindingId?: string | undefined;
+  runtimeBindingStatus?: "ready" | "degraded" | "released" | undefined;
   runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
   participantId?: string | undefined;
   runtimeId?: "kestrel" | "codex" | "claude" | undefined;
@@ -172,7 +173,7 @@ export type KestrelOneAgentResponseInput = {
   signal?: AbortSignal;
   abortBehavior?: "cancel" | "detach" | undefined;
   onUiChunk?: (chunk: KestrelUiStreamChunk) => void;
-  onRuntimeEvent?: (event: RunnerRunStreamEvent) => void;
+  onRuntimeEvent?: (event: RunnerRunStreamEvent) => void | Promise<void>;
   onFinishPersist?: (
     messages: UIMessage[],
     meta: KestrelOneAgentResponsePersistMeta
@@ -267,6 +268,9 @@ export function createKestrelOneAgentResponseFromAgent(
               sessionId: input.threadId,
               ...(input.runtimeBindingId !== undefined
                 ? { runtimeBindingId: input.runtimeBindingId }
+                : {}),
+              ...(input.runtimeBindingStatus !== undefined
+                ? { runtimeBindingStatus: input.runtimeBindingStatus }
                 : {}),
               ...(input.runtimeNativeSessionState !== undefined
                 ? { runtimeNativeSessionState: input.runtimeNativeSessionState }

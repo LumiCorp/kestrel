@@ -1002,8 +1002,21 @@ export async function claimDurableThreadTurn(
     if (!(isInitialClaim || interaction || isRunningResume)) {
       return null;
     }
+    const binding = lockedThread.runtimeBindingId
+      ? await tx.query.runtimeBindings.findFirst({
+          where: eq(schema.runtimeBindings.id, lockedThread.runtimeBindingId),
+        })
+      : null;
     if (isRunningResume) {
-      return { ...turn, interactionResponse: null };
+      return {
+        ...turn,
+        runtimeId: lockedThread.runtimeId,
+        runtimeBindingId: lockedThread.runtimeBindingId,
+        runtimeBindingStatus: binding?.status ?? "ready",
+        runtimeNativeSessionState: binding?.nativeSessionState ?? "uninitialized",
+        participantId: `runtime:${lockedThread.organizationId}:${lockedThread.runtimeId}`,
+        interactionResponse: null,
+      };
     }
     assertThreadTurnTransition(turn.status, "running");
     const now = new Date();
@@ -1030,16 +1043,12 @@ export async function claimDurableThreadTurn(
       now,
     });
     const response = interaction?.responseEnvelope;
-    const binding = lockedThread.runtimeBindingId
-      ? await tx.query.runtimeBindings.findFirst({
-          where: eq(schema.runtimeBindings.id, lockedThread.runtimeBindingId),
-        })
-      : null;
     return running
       ? {
           ...running,
           runtimeId: lockedThread.runtimeId,
           runtimeBindingId: lockedThread.runtimeBindingId,
+          runtimeBindingStatus: binding?.status ?? "ready",
           runtimeNativeSessionState: binding?.nativeSessionState ?? "uninitialized",
           participantId: `runtime:${lockedThread.organizationId}:${lockedThread.runtimeId}`,
           interactionResponse:
@@ -1358,6 +1367,7 @@ export async function persistDurableAssistantOutcome(input: {
         prompt: input.interaction.prompt,
         status: "pending",
         requestEnvelope,
+        privateRuntimeMetadata: input.interaction.privateRuntimeMetadata ?? null,
         createdAt: requestConflict?.createdAt ?? now,
         updatedAt: now,
       })
@@ -1367,6 +1377,7 @@ export async function persistDurableAssistantOutcome(input: {
           assistantMessageId,
           prompt: input.interaction.prompt,
           requestEnvelope,
+          privateRuntimeMetadata: input.interaction.privateRuntimeMetadata ?? null,
           updatedAt: now,
         },
       })
@@ -1659,7 +1670,7 @@ export async function resolveDurableRuntimeInteraction(input: {
       ? validateRuntimeInteractionAnswers({
           inputSchema: inputContract,
           answers: input.answers,
-          legacyMessage: input.message,
+          legacyMessage: input.recoveryOptionId ?? input.message,
         })
       : input.answers;
     const properties = readPlainRecord(inputContract?.properties);
@@ -1749,6 +1760,24 @@ export async function resolveDurableRuntimeInteraction(input: {
         "The Thread Runtime binding is missing.",
       );
     }
+    if (!turn.environmentExecutionId) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime interaction is missing its environment execution.",
+      );
+    }
+    const [environmentExecution] = await tx
+      .select({ runtimeRunId: schema.environmentRunExecutions.runtimeRunId })
+      .from(schema.environmentRunExecutions)
+      .where(eq(schema.environmentRunExecutions.id, turn.environmentExecutionId))
+      .limit(1)
+      .for("update");
+    if (!environmentExecution?.runtimeRunId) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime interaction is missing its native run correlation.",
+      );
+    }
     const strategy =
       lockedThread.runtimeId === "codex"
         ? "live_connection"
@@ -1763,8 +1792,10 @@ export async function resolveDurableRuntimeInteraction(input: {
         turnId: turn.id,
         bindingId: lockedThread.runtimeBindingId,
         requestId: input.requestId,
+        environmentExecutionId: turn.environmentExecutionId,
+        runtimeRunId: environmentExecution.runtimeRunId,
         strategy,
-        nativeCorrelation: { requestId: input.requestId },
+        nativeCorrelation: interaction.privateRuntimeMetadata ?? {},
         attempt: 1,
         idempotencyKey: `${interaction.id}:1`,
         state: "delivering",
@@ -1830,6 +1861,9 @@ export async function resolveDurableRuntimeInteraction(input: {
 export async function acknowledgeDurableRuntimeInteractionDelivery(input: {
   turnId: string;
   requestId: string;
+  bindingId: string;
+  environmentExecutionId: string;
+  runtimeRunId: string;
   acknowledgementEventId: string;
 }) {
   return knowledgeDb.transaction(async (tx) => {
@@ -1846,7 +1880,39 @@ export async function acknowledgeDurableRuntimeInteractionDelivery(input: {
       .limit(1)
       .for("update");
     if (!interaction) return null;
-    if (interaction.status === "resolved") return interaction;
+    const [delivery] = await tx
+      .select()
+      .from(schema.runtimeInteractionDeliveries)
+      .where(eq(schema.runtimeInteractionDeliveries.interactionId, interaction.id))
+      .limit(1)
+      .for("update");
+    if (!delivery) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime interaction delivery ledger is missing.",
+      );
+    }
+    const correlationMatches =
+      delivery.turnId === input.turnId &&
+      delivery.requestId === input.requestId &&
+      delivery.bindingId === input.bindingId &&
+      delivery.environmentExecutionId === input.environmentExecutionId &&
+      delivery.runtimeRunId === input.runtimeRunId;
+    if (!correlationMatches) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime acknowledgement correlation does not match the pending delivery.",
+      );
+    }
+    if (interaction.status === "resolved" || delivery.state === "delivered") {
+      if (delivery.acknowledgementEventId === input.acknowledgementEventId) {
+        return interaction;
+      }
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "A different Runtime event already acknowledged this delivery.",
+      );
+    }
     if (interaction.status !== "processing") {
       throw new DurableTurnError(
         "TURN_CONFLICT",
@@ -1905,6 +1971,69 @@ export async function acknowledgeDurableRuntimeInteractionDelivery(input: {
       },
     });
     return resolved ?? null;
+  });
+}
+
+export async function bindDurableRuntimeInteractionDeliveryExecution(input: {
+  turnId: string;
+  requestId: string;
+  bindingId: string;
+  environmentExecutionId: string;
+  runtimeRunId: string;
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    const [interaction] = await tx
+      .select({ id: schema.threadInteractions.id })
+      .from(schema.threadInteractions)
+      .where(
+        and(
+          eq(schema.threadInteractions.turnId, input.turnId),
+          eq(schema.threadInteractions.requestId, input.requestId),
+          eq(schema.threadInteractions.source, "runtime"),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!interaction) return null;
+    const [delivery] = await tx
+      .select()
+      .from(schema.runtimeInteractionDeliveries)
+      .where(eq(schema.runtimeInteractionDeliveries.interactionId, interaction.id))
+      .limit(1)
+      .for("update");
+    if (!delivery || delivery.bindingId !== input.bindingId) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime delivery execution does not match the pending binding.",
+      );
+    }
+    const sameExecution =
+      delivery.environmentExecutionId === input.environmentExecutionId &&
+      delivery.runtimeRunId === input.runtimeRunId;
+    if (delivery.state === "delivered") {
+      if (sameExecution) return delivery;
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "A delivered Runtime response cannot be rebound to another execution.",
+      );
+    }
+    if (delivery.state !== "delivering") {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime response is not awaiting delivery.",
+      );
+    }
+    if (sameExecution) return delivery;
+    const [updated] = await tx
+      .update(schema.runtimeInteractionDeliveries)
+      .set({
+        environmentExecutionId: input.environmentExecutionId,
+        runtimeRunId: input.runtimeRunId,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.runtimeInteractionDeliveries.id, delivery.id))
+      .returning();
+    return updated ?? null;
   });
 }
 
@@ -1982,9 +2111,12 @@ function validateRuntimeInteractionAnswers(input: {
         (value): value is string => typeof value === "string",
       )
     : [];
+  const legacyQuestionId = input.answers === undefined && required.length === 1
+    ? required[0]
+    : undefined;
   const answers = input.answers ??
-    (required.length === 1
-      ? { [required[0]!]: [input.legacyMessage] }
+    (legacyQuestionId !== undefined
+      ? { [legacyQuestionId]: [input.legacyMessage] }
       : undefined);
   if (answers === undefined) {
     throw new DurableTurnError(
@@ -2001,7 +2133,14 @@ function validateRuntimeInteractionAnswers(input: {
       "The runtime question contains an invalid answer contract.",
     );
   }
-  if (!validate(answers)) {
+  const properties = readPlainRecord(input.inputSchema.properties);
+  const legacyQuestionSchema = legacyQuestionId === undefined
+    ? null
+    : readPlainRecord(properties?.[legacyQuestionId]);
+  const schemaValue = legacyQuestionId !== undefined && legacyQuestionSchema?.type === "string"
+    ? { [legacyQuestionId]: input.legacyMessage }
+    : answers;
+  if (!validate(schemaValue)) {
     throw new DurableTurnError(
       "TURN_CONFLICT",
       "The interaction response does not match the pending runtime question.",
@@ -2164,13 +2303,17 @@ export async function listThreadInteractionsForUser(input: {
       }
     }
     return interactions.map((interaction) => {
+      const {
+        privateRuntimeMetadata: _privateRuntimeMetadata,
+        ...publicInteraction
+      } = interaction;
       const responseEnvelope = interaction.responseEnvelope;
       const envelopeMessageId =
         responseEnvelope && typeof responseEnvelope.messageId === "string"
           ? responseEnvelope.messageId
           : null;
       return {
-        ...interaction,
+        ...publicInteraction,
         responseMessageId:
           envelopeMessageId ??
           responseMessageIds.get(interaction.requestId) ??
@@ -2395,7 +2538,7 @@ export async function completeDurableThreadTurn(input: {
         columns: { runtimeBindingId: true },
       });
       if (owningThread?.runtimeBindingId) {
-        await tx
+        const [binding] = await tx
           .update(schema.runtimeBindings)
           .set({
             status: "degraded",
@@ -2404,7 +2547,40 @@ export async function completeDurableThreadTurn(input: {
               : {}),
             updatedAt: now,
           })
-          .where(eq(schema.runtimeBindings.id, owningThread.runtimeBindingId));
+          .where(eq(schema.runtimeBindings.id, owningThread.runtimeBindingId))
+          .returning();
+        if (
+          binding &&
+          (binding.runtimeId === "codex" || binding.runtimeId === "claude") &&
+          turn.environmentExecutionId
+        ) {
+          const execution = await tx.query.environmentRunExecutions.findFirst({
+            where: eq(schema.environmentRunExecutions.id, turn.environmentExecutionId),
+          });
+          if (execution) {
+            await tx
+              .insert(schema.runtimeBindingReleaseOutbox)
+              .values({
+                id: crypto.randomUUID(),
+                organizationId: turn.organizationId,
+                runtimeId: binding.runtimeId,
+                bindingId: binding.id,
+                participantId: binding.participantId,
+                threadId: turn.threadId,
+                environmentId: execution.environmentId,
+                workspaceId: execution.workspaceId,
+                actorUserId: execution.actorId,
+                idempotencyKey: `runtime-release:${binding.id}`,
+                state: "pending",
+                attempts: 0,
+                createdAt: now,
+                updatedAt: now,
+              })
+              .onConflictDoNothing({
+                target: schema.runtimeBindingReleaseOutbox.idempotencyKey,
+              });
+          }
+        }
       }
     }
     await terminalizeTurnEnvironmentExecution(tx, turn, input.status, now);

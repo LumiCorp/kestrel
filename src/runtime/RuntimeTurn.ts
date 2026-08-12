@@ -56,6 +56,7 @@ export interface RuntimeTurnInput {
   sessionId: string;
   runId?: string | undefined;
   runtimeBindingId?: string | undefined;
+  runtimeBindingStatus?: "ready" | "degraded" | "released" | undefined;
   runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
   participantId?: string | undefined;
   eventId?: string | undefined;

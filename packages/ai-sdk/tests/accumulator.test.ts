@@ -119,10 +119,21 @@ test("waiting output persists one assistant prompt and its exact durable interac
   assert.equal(snapshot.terminalStatus, "waiting");
   assert.equal(snapshot.assistantText, "Which workspace should I inspect?");
   assert.equal(snapshot.interaction?.requestId, "request-workspace");
+  assert.deepEqual(snapshot.interaction?.privateRuntimeMetadata, {
+    nativeRequestId: "native-request-workspace",
+  });
   assert.equal(snapshot.message.metadata?.kestrelRequestId, "request-workspace");
   assert.equal(
     snapshot.message.parts.some((part) => part.type === "data-kestrel-interaction"),
     true,
+  );
+  const visibleInteraction = snapshot.message.parts.find(
+    (part) => part.type === "data-kestrel-interaction",
+  );
+  assert.equal(
+    visibleInteraction?.type === "data-kestrel-interaction" &&
+      "privateRuntimeMetadata" in visibleInteraction.data,
+    false,
   );
 });
 
@@ -419,6 +430,9 @@ function waitingEvent(): RunnerRunTerminalEvent {
               kind: "user_input",
               eventType: "user.reply",
               prompt: "Which workspace should I inspect?",
+              privateRuntimeMetadata: {
+                nativeRequestId: "native-request-workspace",
+              },
             },
           },
         },

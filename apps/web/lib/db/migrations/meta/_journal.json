@@ -470,6 +470,34 @@
       "when": 1786561200000,
       "tag": "0066_signup_access_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1786561201000,
+      "tag": "0067_hydra_runtime_interaction_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1786561202000,
+      "tag": "0068_hydra_runtime_bindings",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1786561203000,
+      "tag": "0069_hydra_runtime_delivery_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1786561204000,
+      "tag": "0070_hydra_runtime_correctness",
+      "breakpoints": true
     }
   ]
 }

@@ -105,6 +105,7 @@ test("RunnerHost emits execution profile resolution from provider", async () => 
             agent: "reference-react",
             sessionPrefix: "kestrel",
             agentProfileId: "kestrel",
+            runtimeId: "codex",
             modelProvider: "openrouter",
             model: "openai/gpt-5.6-luna",
             agentStageConfig: {

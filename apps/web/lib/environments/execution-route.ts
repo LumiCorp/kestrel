@@ -60,6 +60,7 @@ export const ENVIRONMENT_EXECUTION_ROUTE_CAPABILITIES = [
   "profile.read",
   "run.stream",
   "run.cancel",
+  "runtime.release",
   "session.read",
   "events.subscribe",
   "workspace.files.read",

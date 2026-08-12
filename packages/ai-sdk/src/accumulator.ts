@@ -314,7 +314,7 @@ export function createKestrelPresentationAccumulator(input: {
               "run.completed.payload.result.assistantText",
             );
             terminalStatus = "completed";
-            errorCode = null;
+            errorCode = undefined;
             errorMessage = null;
           } else if (result.output.status === "WAITING") {
             const waitingAssistantText = requireNonEmptyString(
@@ -329,12 +329,12 @@ export function createKestrelPresentationAccumulator(input: {
             }
             assistantText = waitingAssistantText;
             terminalStatus = "waiting";
-            errorCode = null;
+            errorCode = undefined;
             errorMessage = null;
             appendPart({
               type: "data-kestrel-interaction",
               id: `interaction:${interaction.requestId}`,
-              data: interaction,
+              data: publicInteraction(interaction),
             });
           } else {
             throw new KestrelPresentationContractError(
@@ -450,6 +450,13 @@ function requireInteraction(value: unknown): RunnerInteractionRequestV1 & { requ
     eventType: requireNonEmptyString(interaction.eventType, "interaction.eventType"),
     prompt: requireNonEmptyString(interaction.prompt, "interaction.prompt"),
   } as RunnerInteractionRequestV1 & { requestId: string };
+}
+
+function publicInteraction(
+  interaction: KestrelInteractionPresentation,
+): KestrelInteractionPresentation {
+  const { privateRuntimeMetadata: _privateRuntimeMetadata, ...visible } = interaction;
+  return visible;
 }
 
 function decodeCitations(value: unknown): KestrelCitationPresentation[] {

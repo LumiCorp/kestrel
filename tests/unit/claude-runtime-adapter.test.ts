@@ -53,6 +53,55 @@ function completedQuery(): Query {
   }) as unknown as Query;
 }
 
+function readinessQuery(input: {
+  initialization?: Record<string, unknown>;
+  account?: Record<string, unknown>;
+  models?: Array<{ value: string }>;
+}): Query {
+  const iterator = (async function* () {})();
+  return Object.assign(iterator, {
+    close() {},
+    initializationResult: async () => input.initialization ?? {},
+    accountInfo: async () => input.account ?? {},
+    supportedModels: async () => input.models ?? [{ value: "claude-sonnet-4-5" }],
+  }) as unknown as Query;
+}
+
+test("Claude readiness requires structured authentication evidence", async () => {
+  const unauthenticated = new ClaudeRuntimeAdapter(
+    profile,
+    {},
+    { ANTHROPIC_API_KEY: "present-but-unproven" },
+    new InMemoryRuntimeNativeSessionStore(),
+    undefined,
+    undefined,
+    (() => readinessQuery({})) as typeof import("@anthropic-ai/claude-agent-sdk").query,
+  );
+  assert.equal((await unauthenticated.describe()).availability, "auth_required");
+
+  const nativeLogin = new ClaudeRuntimeAdapter(
+    profile,
+    {},
+    {},
+    new InMemoryRuntimeNativeSessionStore(),
+    undefined,
+    undefined,
+    (() => readinessQuery({ account: { email: "native@example.com" } })) as typeof import("@anthropic-ai/claude-agent-sdk").query,
+  );
+  assert.equal((await nativeLogin.describe()).availability, "ready");
+
+  const apiCredential = new ClaudeRuntimeAdapter(
+    profile,
+    {},
+    {},
+    new InMemoryRuntimeNativeSessionStore(),
+    undefined,
+    undefined,
+    (() => readinessQuery({ initialization: { account: { apiKeySource: "environment" } } })) as typeof import("@anthropic-ai/claude-agent-sdk").query,
+  );
+  assert.equal((await apiCredential.describe()).availability, "ready");
+});
+
 test("Claude resumes the persisted native session on an ordinary later turn", async () => {
   binding.nativeSessionState = "uninitialized";
   const store = new InMemoryRuntimeNativeSessionStore();
@@ -133,6 +182,13 @@ test("Claude maps structured question answers and acknowledges after callback re
     turn: { sessionId: binding.threadId, eventType: "user.message", message: "work" },
   });
   assert.equal(waiting.output.status, "WAITING");
+  const requestId = waiting.output.waitFor?.interaction?.requestId;
+  assert.equal(typeof requestId, "string");
+  assert.notEqual(requestId, "request-1");
+  assert.deepEqual(waiting.output.waitFor?.interaction?.privateRuntimeMetadata, {
+    nativeRequestId: "request-1",
+    nativeQuestions: { "question-1": "Which workspace?" },
+  });
   const completed = await adapter.execute({
     kind: "continue",
     binding,
@@ -141,9 +197,9 @@ test("Claude maps structured question answers and acknowledges after callback re
       eventType: "runtime.interaction.response",
       message: "A",
       resumeBlockedRun: true,
-      resumeRequestId: "request-1",
+      resumeRequestId: requestId,
       interactionResponse: {
-        requestId: "request-1",
+        requestId: requestId!,
         eventType: "runtime.interaction.response",
         message: "A",
         answers: { "question-1": ["A"] },
@@ -164,4 +220,73 @@ test("Claude maps structured question answers and acknowledges after callback re
       answers: { "Which workspace?": ["A"] },
     },
   );
+});
+
+test("Claude credential rotation fails a live wait before resolving its callback", async () => {
+  binding.nativeSessionState = "uninitialized";
+  let permissionResolved = false;
+  const runQuery = ((input: { options?: Options }) => {
+    const iterator = (async function* () {
+      await input.options!.canUseTool!(
+        "Bash",
+        { command: "pnpm test" },
+        {
+          signal: new AbortController().signal,
+          suggestions: [],
+          toolUseID: "tool-rotation",
+          title: "Run tests",
+          description: "Run tests",
+          requestId: "native-rotation",
+        },
+      );
+      permissionResolved = true;
+    })();
+    return Object.assign(iterator, {
+      close() {},
+      initializationResult: async () => ({}),
+      accountInfo: async () => ({ email: "test@example.com" }),
+      supportedModels: async () => [{ value: "claude-sonnet-4-5" }],
+    }) as unknown as Query;
+  }) as typeof import("@anthropic-ai/claude-agent-sdk").query;
+  let resolution = 0;
+  const adapter = new ClaudeRuntimeAdapter(
+    profile,
+    {},
+    {},
+    new InMemoryRuntimeNativeSessionStore(),
+    undefined,
+    async () => ({
+      env: { ANTHROPIC_API_KEY: "private" },
+      credentialFingerprint: ++resolution === 1 ? "fingerprint-1" : "fingerprint-2",
+    }),
+    runQuery,
+  );
+  const waiting = await adapter.execute({
+    kind: "start",
+    binding,
+    turn: { sessionId: binding.threadId, eventType: "user.message", message: "work" },
+  });
+  const requestId = waiting.output.waitFor?.interaction?.requestId;
+  assert.equal(typeof requestId, "string");
+  const result = await adapter.execute({
+    kind: "continue",
+    binding,
+    turn: {
+      sessionId: binding.threadId,
+      eventType: "runtime.interaction.response",
+      message: "Approve",
+      resumeBlockedRun: true,
+      resumeRequestId: requestId,
+      interactionResponse: {
+        requestId: requestId!,
+        eventType: "runtime.interaction.response",
+        message: "Approve",
+        approved: true,
+      },
+    },
+  });
+  assert.equal(result.output.status, "FAILED");
+  assert.equal(result.output.errors[0]?.code, "RUNTIME_LIVE_WAIT_LOST");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(permissionResolved, true);
 });

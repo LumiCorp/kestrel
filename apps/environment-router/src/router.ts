@@ -39,6 +39,7 @@ const COMMAND_CAPABILITIES: Readonly<Record<string, string>> = {
   "profile.get": "profile.read",
   "execution-profile.resolve": "profile.read",
   "runtime.describe": "profile.read",
+  "runtime.release": "runtime.release",
   "run.start": "run.stream",
   "run.cancel": "run.cancel",
   "session.describe": "session.read",

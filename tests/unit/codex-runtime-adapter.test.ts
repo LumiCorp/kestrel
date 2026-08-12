@@ -167,6 +167,12 @@ test("Codex fails a lost live wait without restarting or answering an obsolete r
     turn: { sessionId: "thread-1", eventType: "user.message", message: "work" },
   });
   assert.equal(waiting.output.status, "WAITING");
+  const requestId = waiting.output.waitFor?.interaction?.requestId;
+  assert.equal(typeof requestId, "string");
+  assert.notEqual(requestId, "41");
+  assert.deepEqual(waiting.output.waitFor?.interaction?.privateRuntimeMetadata, {
+    nativeRequestId: "41",
+  });
   client!.exit();
 
   const resumed = await adapter.execute({
@@ -177,9 +183,9 @@ test("Codex fails a lost live wait without restarting or answering an obsolete r
       eventType: "runtime.interaction.response",
       message: "Approved",
       resumeBlockedRun: true,
-      resumeRequestId: "41",
+      resumeRequestId: requestId,
       interactionResponse: {
-        requestId: "41",
+        requestId: requestId!,
         eventType: "runtime.interaction.response",
         message: "Approved",
         approved: true,

@@ -807,6 +807,37 @@ export const runtimeBindings = pgTable(
   ],
 );
 
+export const runtimeBindingReleaseOutbox = pgTable(
+  "runtime_binding_release_outbox",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    runtimeId: text("runtime_id", { enum: ["codex", "claude"] }).notNull(),
+    bindingId: text("binding_id").notNull(),
+    participantId: text("participant_id").notNull(),
+    threadId: text("thread_id").notNull(),
+    environmentId: text("environment_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    state: text("state", {
+      enum: ["pending", "delivering", "released", "failed"],
+    }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    acknowledgedAt: timestamp("acknowledged_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("runtime_binding_release_outbox_idempotency_idx").on(table.idempotencyKey),
+    index("runtime_binding_release_outbox_state_idx").on(table.state, table.createdAt),
+  ],
+);
+
 export const threadDialogs = pgTable(
   "thread_dialogs",
   {
@@ -4607,6 +4638,8 @@ export const threadInteractions = pgTable(
     requestEnvelope: jsonb("request_envelope")
       .$type<Record<string, unknown>>()
       .notNull(),
+    privateRuntimeMetadata:
+      jsonb("private_runtime_metadata").$type<Record<string, unknown>>(),
     responseEnvelope:
       jsonb("response_envelope").$type<Record<string, unknown>>(),
     resolvedByUserId: text("resolved_by_user_id").references(() => users.id, {
@@ -4659,6 +4692,10 @@ export const runtimeInteractionDeliveries = pgTable(
       .notNull()
       .references(() => runtimeBindings.id, { onDelete: "cascade" }),
     requestId: text("request_id").notNull(),
+    environmentExecutionId: text("environment_execution_id")
+      .notNull()
+      .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
+    runtimeRunId: text("runtime_run_id").notNull(),
     strategy: text("strategy", {
       enum: ["kestrel_continuation", "live_connection", "live_callback"],
     }).notNull(),

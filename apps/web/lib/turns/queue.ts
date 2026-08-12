@@ -29,6 +29,14 @@ async function drainMobilePushOutbox() {
   await reconcileMobilePushReceipts();
 }
 
+async function drainRuntimeBindingReleaseOutbox() {
+  const {
+    deliverRuntimeBindingRelease,
+    processRuntimeBindingReleaseOutbox,
+  } = await import("@/lib/runtimes/release-outbox");
+  await processRuntimeBindingReleaseOutbox(deliverRuntimeBindingRelease);
+}
+
 function reportPushFailure(error: unknown) {
   console.error("Kestrel One mobile push delivery failed.", {
     message: error instanceof Error ? error.message : "Unknown push error",
@@ -225,9 +233,20 @@ async function runWorkerMaintenance(boss: PgBoss) {
   try {
     await reconcileDurableThreadTurnQueueWithBoss(boss);
     await drainMobilePushOutbox().catch(reportPushFailure);
+    await drainRuntimeBindingReleaseOutbox().catch(reportRuntimeReleaseFailure);
   } finally {
     maintenanceRunning = false;
   }
+}
+
+function reportRuntimeReleaseFailure(error: unknown) {
+  console.error("Kestrel One Runtime release reconciliation failed.", {
+    code:
+      error && typeof error === "object" && "code" in error &&
+      typeof error.code === "string"
+        ? error.code
+        : "RUNTIME_RELEASE_RECONCILIATION_FAILED",
+  });
 }
 
 export async function startDurableThreadTurnWorker() {
@@ -258,6 +277,7 @@ export async function startDurableThreadTurnWorker() {
               await dispatchTurnOrReconcile(boss, result.nextTurnId);
             }
             await drainMobilePushOutbox().catch(reportPushFailure);
+            await drainRuntimeBindingReleaseOutbox().catch(reportRuntimeReleaseFailure);
           } catch (error) {
             await finalizeExhaustedDurableTurnJob({
               turnId,
@@ -271,6 +291,7 @@ export async function startDurableThreadTurnWorker() {
     );
     await reconcileDurableThreadTurnQueueWithBoss(boss);
     await drainMobilePushOutbox().catch(reportPushFailure);
+    await drainRuntimeBindingReleaseOutbox().catch(reportRuntimeReleaseFailure);
     maintenanceTimer = setInterval(() => {
       void runWorkerMaintenance(boss).catch((error) => {
         console.error("Kestrel One worker maintenance failed.", {

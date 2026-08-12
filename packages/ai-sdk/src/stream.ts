@@ -18,7 +18,7 @@ export async function writeKestrelRunnerStreamToUIMessage(input: {
   textPartId: string;
   turnId?: string | undefined;
   onPart?: ((part: KestrelPresentationPart) => void) | undefined;
-  onEvent?: ((event: RunnerRunStreamEvent) => void) | undefined;
+  onEvent?: ((event: RunnerRunStreamEvent) => void | Promise<void>) | undefined;
 }): Promise<KestrelPresentationSnapshot> {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: input.assistantMessageId,
@@ -51,10 +51,18 @@ export async function writeKestrelRunnerStreamToUIMessage(input: {
 
   try {
     for await (const event of input.events) {
-      input.onEvent?.(event);
+      await input.onEvent?.(event);
       writeParts(accumulator.append(event));
     }
   } catch (error) {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "RUNTIME_EVENT_PERSISTENCE_FAILED"
+    ) {
+      throw error;
+    }
     writeParts(accumulator.fail(error));
   }
 

@@ -210,6 +210,14 @@ export class KestrelClient {
     return event.payload;
   }
 
+  async releaseRuntime(
+    input: RunnerCommandPayloadByType["runtime.release"],
+    context: KestrelRequestContext,
+  ): Promise<RunnerResponseByCommandType["runtime.release"]["payload"]> {
+    const event = await this.sendCommand("runtime.release", input, context);
+    return event.payload;
+  }
+
   async run(
     input: KestrelRunRequest,
     context: KestrelRequestContext,

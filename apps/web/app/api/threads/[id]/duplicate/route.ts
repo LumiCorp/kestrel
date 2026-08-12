@@ -9,6 +9,7 @@ import { assertRuntimeAdmissionReady } from "@/lib/runtimes/descriptor-service";
 import { and, desc, eq } from "drizzle-orm";
 import {
   createThreadForUser,
+  enqueueRuntimeBindingReleaseForThread,
   getThreadWithMessagesForUser,
   saveThreadMessages
 } from "@/lib/threads/store";
@@ -83,6 +84,10 @@ export async function POST(
           .update(schema.runtimeBindings)
           .set({ status: "degraded", nativeSessionState: "degraded", updatedAt: new Date() })
           .where(eq(schema.runtimeBindings.id, source.runtimeBindingId));
+        await enqueueRuntimeBindingReleaseForThread({
+          threadId: source.id,
+          organizationId,
+        });
       }
     }
     assertRuntimeReleased(targetRuntimeId);

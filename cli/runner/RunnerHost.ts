@@ -55,6 +55,7 @@ import type {
   ExecutionProfileResolveCommandPayload,
   ExecutionProfileResolvedEventPayload,
   RuntimeDescribeCommandPayload,
+  RuntimeReleaseCommandPayload,
   RuntimeDescriptorResolutionV1,
   McpRefreshCommandPayload,
   McpStatusCommandPayload,
@@ -178,6 +179,7 @@ export type RunnerProfileSourcePolicy = "inline-or-registered" | "registered-onl
 
 export interface RunnerRuntime {
   describeRuntime?: (() => Promise<RuntimeDescriptorV1>) | undefined;
+  releaseRuntimeBinding?: ((input: RuntimeReleaseCommandPayload) => Promise<void>) | undefined;
   runTurn(input: RunTurnInput, options?: { signal?: AbortSignal | undefined }): Promise<RunTurnResult>;
   cancelActiveRun?: ((sessionId: string) => Promise<{ runId?: string | undefined }>) | undefined;
   recoverOrphanedActiveRun?: ((sessionId: string) => Promise<{ runId?: string | undefined }>) | undefined;
@@ -244,7 +246,6 @@ export interface RunnerRuntime {
         import("../../src/orchestration/contracts.js").OperatorRunView | null
       >)
     | undefined;
-  getOperatorRunView?: ((runId: string) => Promise<import("../../src/orchestration/contracts.js").OperatorRunView | null>) | undefined;
   getRetainedProviderReasoning?:
     | ((input: { runId: string; sessionId: string; actorRole: string; actorId?: string | undefined }) => Promise<
         Array<{
@@ -591,8 +592,9 @@ export class RunnerHost {
       profile: resolution.resolvedProfile,
       environmentPresetId: payload.environmentPresetId,
     });
-    const runtime = this.getRuntime(resolution.resolvedProfile);
-    const runtimeDescriptor = runtime.describeRuntime === undefined ? undefined : await runtime.describeRuntime();
+    const runtimeDescriptor = (resolution.resolvedProfile.runtimeId ?? "kestrel") === "kestrel"
+      ? undefined
+      : await this.getRuntime(resolution.resolvedProfile).describeRuntime?.();
     this.writer.emit(
       "execution-profile.resolved",
       {
@@ -640,6 +642,27 @@ export class RunnerHost {
     }
   }
 
+  async runtimeRelease(
+    commandId: string,
+    payload: RuntimeReleaseCommandPayload,
+    metadata?: RunnerCommandMetadata,
+  ): Promise<void> {
+    if (payload.runtimeId !== "kestrel") {
+      const runtime = this.selectRuntimes(metadata).find(
+        (candidate) => candidate.releaseRuntimeBinding !== undefined,
+      );
+      if (runtime?.releaseRuntimeBinding === undefined) {
+        throw new Error("The selected Runtime does not support binding release.");
+      }
+      await runtime.releaseRuntimeBinding(payload);
+    }
+    this.writer.emit("runtime.released", payload, {
+      commandId,
+      sessionId: payload.threadId,
+      threadId: payload.threadId,
+    });
+  }
+
   runStart(
     commandId: string,
     payload: {
@@ -673,26 +696,6 @@ export class RunnerHost {
       }
       if (profile.modelCredential.organizationId !== tenantId) {
         throw new Error("Gateway-managed execution credential does not belong to the authenticated tenant.");
-      }
-    }
-    for (const stage of profile.recoveryPolicy?.stages ?? []) {
-      if (stage.action !== "alternate_model") continue;
-      for (const candidate of stage.candidates) {
-        const reference = candidate.credentialReference;
-        if (reference === undefined) continue;
-        if (!tenantId) {
-          throw new Error("Gateway-managed recovery candidates require an authenticated tenant context.");
-        }
-        if (reference.organizationId !== tenantId) {
-          throw new Error(`Recovery candidate '${candidate.candidateId}' does not belong to the authenticated tenant.`);
-        }
-        const expectedRunId = profile.modelCredential?.runId ?? payload.turn.runId;
-        if (expectedRunId === undefined || reference.runId !== expectedRunId) {
-          throw new Error(`Recovery candidate '${candidate.candidateId}' does not belong to this run.`);
-        }
-        if (profile.modelCredential !== undefined && reference.environmentId !== profile.modelCredential.environmentId) {
-          throw new Error(`Recovery candidate '${candidate.candidateId}' does not belong to this environment.`);
-        }
       }
     }
     const turn: RunTurnInput = {

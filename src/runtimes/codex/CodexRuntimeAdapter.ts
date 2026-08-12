@@ -136,7 +136,8 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       if (
         code === "RUNTIME_ATTACHMENT_UNSUPPORTED" ||
         code === "RUNTIME_NATIVE_SESSION_LOST" ||
-        code === "RUNTIME_LIVE_WAIT_LOST"
+        code === "RUNTIME_LIVE_WAIT_LOST" ||
+        code === "RUNTIME_BINDING_DEGRADED"
       ) {
         return failed(input.turn, code, error instanceof Error ? error.message : String(error));
       }
@@ -214,6 +215,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
     turn: RuntimeTurnInput,
     signal?: AbortSignal,
   ): Promise<RuntimeTurnResult> {
+    assertBindingUsable(binding);
     if (this.sessions.has(turn.sessionId)) {
       return failed(turn, "RUNTIME_TURN_ALREADY_ACTIVE", "Codex already has an active Turn for this Thread.");
     }
@@ -371,6 +373,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
         "The Codex live interaction connection was lost.",
       );
     }
+    assertBindingUsable(binding);
     try {
       await this.ensureClient();
     } catch {
@@ -445,6 +448,9 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
             ...(outcome.pending.method === "item/tool/requestUserInput"
               ? codexQuestionContract(outcome.pending)
               : {
+                  privateRuntimeMetadata: {
+                    nativeRequestId: String(outcome.pending.nativeRequestId),
+                  },
                   approval: {
                     toolCallId: outcome.pending.toolCallId,
                     toolName: outcome.pending.toolName,
@@ -491,7 +497,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       });
       return;
     }
-    const requestId = String(request.id);
+    const requestId = randomUUID();
     const pending: PendingCodexInteraction = {
       requestId,
       nativeRequestId: request.id,
@@ -518,12 +524,15 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       const state = this.sessionByNativeThread.get(notification.params.threadId);
       if (
         state?.pending !== undefined &&
-        String(notification.params.requestId) === state.pending.requestId
+        String(notification.params.requestId) === String(state.pending.nativeRequestId)
       ) {
         state.pending.resolved.resolve(true);
       } else {
         for (const candidate of this.sessionByNativeThread.values()) {
-          if (String(notification.params.requestId) === candidate.pending?.requestId) {
+          if (
+            candidate.pending !== undefined &&
+            String(notification.params.requestId) === String(candidate.pending.nativeRequestId)
+          ) {
             candidate.pending.resolved.resolve(true);
           }
         }
@@ -621,7 +630,10 @@ function descriptor(
 
 function codexQuestionContract(
   pending: PendingCodexInteraction,
-): { inputSchema: Record<string, unknown>; metadata: Record<string, unknown> } {
+): {
+  inputSchema: Record<string, unknown>;
+  privateRuntimeMetadata: Record<string, unknown>;
+} {
   const questions = (
     pending.input as {
       questions?: Array<{
@@ -659,7 +671,10 @@ function codexQuestionContract(
       required,
       additionalProperties: false,
     },
-    metadata: { nativeQuestionIds: required },
+    privateRuntimeMetadata: {
+      nativeRequestId: String(pending.nativeRequestId),
+      nativeQuestionIds: required,
+    },
   };
 }
 
@@ -746,6 +761,20 @@ export interface CodexClient {
 
 function nativeSessionLost(message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code: "RUNTIME_NATIVE_SESSION_LOST" });
+}
+
+function assertBindingUsable(binding: RuntimeBindingV1): void {
+  if (
+    binding.status === "degraded" ||
+    binding.status === "released" ||
+    binding.nativeSessionState === "degraded" ||
+    binding.nativeSessionState === "released"
+  ) {
+    throw Object.assign(
+      new Error("This Codex Runtime binding is read-only and requires recovery."),
+      { code: "RUNTIME_BINDING_DEGRADED" },
+    );
+  }
 }
 
 function readErrorCode(error: unknown): string | undefined {

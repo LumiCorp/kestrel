@@ -94,6 +94,12 @@ export async function GET(
       archivedAt: thread.archivedAt,
       createdAt: thread.createdAt,
       updatedAt: thread.updatedAt,
+      runtimeBinding: thread.runtimeBinding
+        ? {
+            status: thread.runtimeBinding.status,
+            nativeSessionState: thread.runtimeBinding.nativeSessionState,
+          }
+        : null,
       permissions: {
         canManage: thread.access.canManage,
         canPublish: thread.access.canPublish,
@@ -144,6 +150,21 @@ export async function POST(
         {
           code: "RUNTIME_BINDING_IMMUTABLE",
           error: "The Runtime for an existing Thread cannot be changed.",
+        },
+        { status: 409 },
+      );
+    }
+    if (
+      thread?.runtimeBinding &&
+      (thread.runtimeBinding.status === "degraded" ||
+        thread.runtimeBinding.status === "released" ||
+        thread.runtimeBinding.nativeSessionState === "degraded" ||
+        thread.runtimeBinding.nativeSessionState === "released")
+    ) {
+      return NextResponse.json(
+        {
+          code: "RUNTIME_BINDING_DEGRADED",
+          error: "This Thread is read-only. Create the offered recovery fork to continue.",
         },
         { status: 409 },
       );

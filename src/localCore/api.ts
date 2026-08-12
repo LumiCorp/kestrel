@@ -960,6 +960,7 @@ async function createExecutionBundle(input: {
     runtimeFactory = createLocalCoreRunnerRuntimeFactory(storeHandle.store, {
       runtimeEnvironmentResolver,
       homePath: input.status.home.homePath,
+      configurationGeneration: runtimeConfiguration.generation,
       ...(input.options.credentialStore !== undefined
         ? { credentialStore: input.options.credentialStore }
         : {}),

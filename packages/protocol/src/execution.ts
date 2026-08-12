@@ -52,6 +52,7 @@ export const RUNNER_COMMAND_TYPES = [
   "profile.get",
   "execution-profile.resolve",
   "runtime.describe",
+  "runtime.release",
   "job.run",
   "run.start",
   "run.cancel",
@@ -174,6 +175,7 @@ export const RUNNER_EVENT_TYPES = [
   "profile.loaded",
   "execution-profile.resolved",
   "runtime.described",
+  "runtime.released",
   "job.started",
   "job.progress",
   "job.completed",
@@ -488,6 +490,7 @@ export interface RunnerTurnInput {
   sessionId: string;
   runId?: string | undefined;
   runtimeBindingId?: string | undefined;
+  runtimeBindingStatus?: "ready" | "degraded" | "released" | undefined;
   runtimeNativeSessionState?: "uninitialized" | "ready" | "degraded" | "released" | undefined;
   participantId?: string | undefined;
   message: string;
@@ -1109,6 +1112,14 @@ export interface ExecutionProfileResolveCommandPayload {
 
 export type RuntimeDescribeCommandPayload = ExecutionProfileResolveCommandPayload;
 
+export interface RuntimeReleaseCommandPayload {
+  runtimeId: "kestrel" | "codex" | "claude";
+  bindingId: string;
+  participantId: string;
+  threadId: string;
+  environmentId: string;
+}
+
 export type RunnerProfileReference =
   | {
       profile: RunnerProfile;
@@ -1492,6 +1503,7 @@ export interface RunnerCommandPayloadByType {
   "profile.get": ProfileGetCommandPayload;
   "execution-profile.resolve": ExecutionProfileResolveCommandPayload;
   "runtime.describe": RuntimeDescribeCommandPayload;
+  "runtime.release": RuntimeReleaseCommandPayload;
   "job.run": JobRunCommandPayload;
   "run.start": RunStartCommandPayload;
   "run.cancel": RunCancelCommandPayload;
@@ -2063,6 +2075,7 @@ export interface RunnerEventPayloadByType {
   "profile.loaded": ProfileLoadedEventPayload;
   "execution-profile.resolved": ExecutionProfileResolvedEventPayload;
   "runtime.described": RuntimeDescriptorResolutionV1;
+  "runtime.released": RuntimeReleaseCommandPayload;
   "job.started": JobStartedEventPayload;
   "job.progress": JobProgressEventPayload;
   "job.completed": JobCompletedEventPayload;
@@ -2144,6 +2157,7 @@ export interface RunnerResponseByCommandType {
   "profile.get": RunnerEventEnvelope<"profile.loaded">;
   "execution-profile.resolve": RunnerEventEnvelope<"execution-profile.resolved">;
   "runtime.describe": RunnerEventEnvelope<"runtime.described">;
+  "runtime.release": RunnerEventEnvelope<"runtime.released">;
   "job.run": RunnerEventEnvelope<"job.completed"> | RunnerEventEnvelope<"job.failed">;
   "run.start": RunnerRunTerminalEvent;
   "run.cancel": RunnerEventEnvelope<"run.cancelled">;
@@ -2211,6 +2225,7 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "profile.get": ["profile.loaded"],
   "execution-profile.resolve": ["execution-profile.resolved"],
   "runtime.describe": ["runtime.described"],
+  "runtime.release": ["runtime.released"],
   "job.run": ["job.completed", "job.failed"],
   "run.start": ["run.completed", "run.failed", "run.cancelled"],
   "run.cancel": ["run.cancelled"],
@@ -2514,6 +2529,13 @@ function parseRunnerCommandPayloadV2(
         requireRecord(payload.managedConfiguration, `${label}.managedConfiguration`);
       }
       validateOptionalNonEmptyString(payload.authoringProfileId, `${label}.authoringProfileId`);
+      break;
+    case "runtime.release":
+      validateEnum(payload.runtimeId, `${label}.runtimeId`, ["kestrel", "codex", "claude"]);
+      requireNonEmptyString(payload.bindingId, `${label}.bindingId`);
+      requireNonEmptyString(payload.participantId, `${label}.participantId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      requireNonEmptyString(payload.environmentId, `${label}.environmentId`);
       break;
     case "job.run": {
       validateOptionalProfile(payload.profile, `${label}.profile`);
@@ -2967,6 +2989,13 @@ function parseRunnerEventPayloadV2(
         requireIsoTimestamp(payload.readinessExpiresAt, `${label}.readinessExpiresAt`);
       }
       break;
+    case "runtime.released":
+      validateEnum(payload.runtimeId, `${label}.runtimeId`, ["kestrel", "codex", "claude"]);
+      requireNonEmptyString(payload.bindingId, `${label}.bindingId`);
+      requireNonEmptyString(payload.participantId, `${label}.participantId`);
+      requireNonEmptyString(payload.threadId, `${label}.threadId`);
+      requireNonEmptyString(payload.environmentId, `${label}.environmentId`);
+      break;
     case "job.started":
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       requireNonEmptyString(payload.threadId, `${label}.threadId`);
@@ -3363,6 +3392,13 @@ function validateRunTurn(value: unknown, label: string): void {
   requireNonEmptyString(turn.sessionId, `${label}.sessionId`);
   validateOptionalNonEmptyString(turn.runId, `${label}.runId`);
   validateOptionalNonEmptyString(turn.runtimeBindingId, `${label}.runtimeBindingId`);
+  if (
+    turn.runtimeBindingStatus !== undefined &&
+    (typeof turn.runtimeBindingStatus !== "string" ||
+      !["ready", "degraded", "released"].includes(turn.runtimeBindingStatus))
+  ) {
+    throw new Error(`${label}.runtimeBindingStatus must be a valid binding state.`);
+  }
   if (
     turn.runtimeNativeSessionState !== undefined &&
     (typeof turn.runtimeNativeSessionState !== "string" ||

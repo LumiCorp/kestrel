@@ -374,6 +374,23 @@ test(
 
     const waiting = await createTurn(interactionThreadId, "waiting");
     assert.ok(await store.claimDurableThreadTurn(waiting.turn.id));
+    const interactionExecutionId = `turn-interaction-execution-${suffix}`;
+    const interactionRuntimeRunId = `turn-interaction-runtime-run-${suffix}`;
+    await sql`
+      INSERT INTO "environment_run_executions" (
+        "id", "organization_id", "environment_id", "workspace_id", "thread_id",
+        "actor_id", "runtime_image", "effective_capabilities", "runtime_run_id", "status"
+      ) VALUES (
+        ${interactionExecutionId}, ${organizationId}, ${environmentId}, ${workspaceId},
+        ${interactionThreadId}, ${userId}, 'runtime:test', '[]'::jsonb,
+        ${interactionRuntimeRunId}, 'running'
+      )
+    `;
+    await sql`
+      UPDATE "thread_turns"
+      SET "environment_execution_id" = ${interactionExecutionId}
+      WHERE "id" = ${waiting.turn.id}
+    `;
     const requestId = `opaque-request-${suffix}`;
     const assistantMessageId = `assistant-waiting-${suffix}`;
     await store.persistDurableAssistantOutcome({
@@ -538,20 +555,28 @@ test(
       turnStatus: "waiting_for_input",
     });
     const [pendingDelivery] = await sql<
-      Array<{ state: string; acknowledgedAt: Date | null; attempt: number }>
+      Array<{
+        state: string;
+        acknowledgedAt: Date | null;
+        attempt: number;
+        bindingId: string;
+        environmentExecutionId: string;
+        runtimeRunId: string;
+      }>
     >`
       SELECT
         "state",
         "acknowledged_at" AS "acknowledgedAt",
-        "attempt"
+        "attempt",
+        "binding_id" AS "bindingId",
+        "environment_execution_id" AS "environmentExecutionId",
+        "runtime_run_id" AS "runtimeRunId"
       FROM "runtime_interaction_deliveries"
       WHERE "request_id" = ${requestId}
     `;
-    assert.deepEqual(pendingDelivery, {
-      state: "delivering",
-      acknowledgedAt: null,
-      attempt: 1,
-    });
+    assert.equal(pendingDelivery?.state, "delivering");
+    assert.equal(pendingDelivery?.acknowledgedAt, null);
+    assert.equal(pendingDelivery?.attempt, 1);
 
     // Simulate process death after the answer transaction commits but before
     // the route enqueues the worker that delivers it to the native runtime.
@@ -586,11 +611,51 @@ test(
       message: "Workspace A",
       answers: { workspace: ["Workspace A"] },
     });
-    await store.acknowledgeDurableRuntimeInteractionDelivery({
+    const resumedExecutionId = `turn-interaction-resume-execution-${suffix}`;
+    const resumedRuntimeRunId = `turn-interaction-resume-runtime-run-${suffix}`;
+    await sql`
+      INSERT INTO "environment_run_executions" (
+        "id", "organization_id", "environment_id", "workspace_id", "thread_id",
+        "actor_id", "runtime_image", "effective_capabilities", "runtime_run_id", "status"
+      ) VALUES (
+        ${resumedExecutionId}, ${organizationId}, ${environmentId}, ${workspaceId},
+        ${interactionThreadId}, ${userId}, 'runtime:test', '[]'::jsonb,
+        ${resumedRuntimeRunId}, 'running'
+      )
+    `;
+    await store.bindDurableRuntimeInteractionDeliveryExecution({
       turnId: waiting.turn.id,
       requestId,
-      acknowledgementEventId: `event-${suffix}`,
+      bindingId: pendingDelivery!.bindingId,
+      environmentExecutionId: resumedExecutionId,
+      runtimeRunId: resumedRuntimeRunId,
     });
+    const acknowledgement = {
+      turnId: waiting.turn.id,
+      requestId,
+      bindingId: pendingDelivery!.bindingId,
+      environmentExecutionId: resumedExecutionId,
+      runtimeRunId: resumedRuntimeRunId,
+      acknowledgementEventId: `event-${suffix}`,
+    };
+    await assert.rejects(
+      () => store.acknowledgeDurableRuntimeInteractionDelivery({
+        ...acknowledgement,
+        runtimeRunId: `foreign-run-${suffix}`,
+      }),
+      (error: unknown) =>
+        error instanceof store.DurableTurnError && error.code === "TURN_CONFLICT",
+    );
+    await store.acknowledgeDurableRuntimeInteractionDelivery(acknowledgement);
+    await store.acknowledgeDurableRuntimeInteractionDelivery(acknowledgement);
+    await assert.rejects(
+      () => store.acknowledgeDurableRuntimeInteractionDelivery({
+        ...acknowledgement,
+        acknowledgementEventId: `different-event-${suffix}`,
+      }),
+      (error: unknown) =>
+        error instanceof store.DurableTurnError && error.code === "TURN_CONFLICT",
+    );
     const [acknowledgedDelivery] = await sql<
       Array<{ state: string; acknowledgedAt: Date | null }>
     >`
@@ -624,6 +689,22 @@ test(
       "structured-review",
     );
     assert.ok(await store.claimDurableThreadTurn(reviewTurn.turn.id));
+    const reviewExecutionId = `turn-review-execution-${suffix}`;
+    await sql`
+      INSERT INTO "environment_run_executions" (
+        "id", "organization_id", "environment_id", "workspace_id", "thread_id",
+        "actor_id", "runtime_image", "effective_capabilities", "runtime_run_id", "status"
+      ) VALUES (
+        ${reviewExecutionId}, ${organizationId}, ${environmentId}, ${workspaceId},
+        ${structuredReviewThreadId}, ${userId}, 'runtime:test', '[]'::jsonb,
+        ${`turn-review-runtime-run-${suffix}`}, 'running'
+      )
+    `;
+    await sql`
+      UPDATE "thread_turns"
+      SET "environment_execution_id" = ${reviewExecutionId}
+      WHERE "id" = ${reviewTurn.turn.id}
+    `;
     const reviewRequestId = `structured-review-${suffix}`;
     const reviewEnvelope = {
       ...structuredClone(evaluationReviewInteractionFixture),

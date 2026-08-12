@@ -50,6 +50,7 @@ const DESKTOP_ROUTE_CAPABILITIES = [
   "profile.read",
   "run.stream",
   "run.cancel",
+  "runtime.release",
   "events.subscribe",
   "session.read",
 ] as const;

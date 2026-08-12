@@ -237,6 +237,13 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
     environmentPresetId: "workspace_hosted",
     managedConfiguration: { runtimeId: "codex", model: "gpt-5" },
   },
+  "runtime.release": {
+    runtimeId: "codex",
+    bindingId: "binding-1",
+    participantId: "participant-1",
+    threadId: "thread-1",
+    environmentId: "environment-1",
+  },
   "job.run": {
     profileId: "kestrel",
     input: {
@@ -488,6 +495,13 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
     capabilityDigest: "b".repeat(64),
     environmentId: "workspace_hosted",
     observedAt: "2026-08-12T00:00:00.000Z",
+  },
+  "runtime.released": {
+    runtimeId: "codex",
+    bindingId: "binding-1",
+    participantId: "participant-1",
+    threadId: "thread-1",
+    environmentId: "environment-1",
   },
   "job.started": {
     sessionId: "session-1",
