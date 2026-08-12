@@ -468,6 +468,41 @@ test(
     });
     assert.ok(execution?.effectiveCapabilities.includes("route:run.stream"));
 
+    await executionRoute.settleEnvironmentExecutionRuntimeEvent({
+      organizationId: organizationA,
+      executionId: route.runId,
+      eventId: "event-progress",
+    });
+    await Promise.all([
+      executionRoute.settleEnvironmentExecutionRuntimeEvent({
+        organizationId: organizationA,
+        executionId: route.runId,
+        eventId: "event-cancelled",
+        terminalStatus: "cancelled",
+      }),
+      executionRoute.settleEnvironmentExecutionRuntimeEvent({
+        organizationId: organizationA,
+        executionId: route.runId,
+        eventId: "event-cancelled",
+        terminalStatus: "cancelled",
+      }),
+    ]);
+    const [cancelledExecution] = await sql<
+      Array<{
+        status: string;
+        lastRuntimeEventId: string | null;
+        completedAt: Date | null;
+      }>
+    >`
+      SELECT "status", "last_runtime_event_id" AS "lastRuntimeEventId",
+             "completed_at" AS "completedAt"
+      FROM "environment_run_executions"
+      WHERE "id" = ${route.runId}
+    `;
+    assert.equal(cancelledExecution?.status, "cancelled");
+    assert.equal(cancelledExecution?.lastRuntimeEventId, "event-cancelled");
+    assert.ok(cancelledExecution?.completedAt instanceof Date);
+
     const authorizationRaceOperationId = `authorization-race-${suffix}`;
     const authorizationRaceRunId = `authorization-race-run-${suffix}`;
     let lifecycleLockHeld!: () => void;

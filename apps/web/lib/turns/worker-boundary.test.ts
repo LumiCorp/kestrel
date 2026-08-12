@@ -180,6 +180,25 @@ test(
   },
 );
 
+test("cancellation acknowledgement cannot manufacture terminal turn completion", async () => {
+  const runtimeSource = await readFile(
+    new URL("./process-runtime.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    runtimeSource,
+    /stopped && !runtimeTerminalObserved && environmentExecutionId/u,
+  );
+  assert.doesNotMatch(
+    runtimeSource,
+    /false && stopped && !runtimeTerminalObserved && environmentExecutionId/u,
+  );
+  assert.match(
+    runtimeSource,
+    /Preserve the\s+\/\/ active turn so the next worker can reattach/u,
+  );
+});
+
 test(
   "terminal pg-boss jobs cannot block durable turn recovery",
   async () => {

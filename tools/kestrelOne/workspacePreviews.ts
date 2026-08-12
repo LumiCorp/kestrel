@@ -75,7 +75,7 @@ export const workspacePreviewListTool: SharedToolModule = {
   definition: {
     name: "workspace.preview.list",
     description:
-      "List active public preview URLs for local HTTP ports in this Workspace, including availability and expiration.",
+      "List public preview URL lease state separately from current application liveness and backing process retention. A valid URL can remain leased while its application is temporarily not listening.",
     inputSchema: {
       type: "object",
       properties: {},
@@ -195,7 +195,7 @@ export const workspacePreviewCloseTool: SharedToolModule = {
   definition: {
     name: "workspace.preview.close",
     description:
-      "Permanently close a Workspace public preview URL without stopping the local application.",
+      "Permanently close a Workspace public preview URL and release its process retention lease. The local application stops when no other process lease remains.",
     inputSchema: {
       type: "object",
       properties: { previewId: { type: "string", minLength: 1 } },

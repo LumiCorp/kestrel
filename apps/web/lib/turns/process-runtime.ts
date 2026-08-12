@@ -162,8 +162,7 @@ function buildFailurePresentation(input: {
       turnId: input.turn.id,
       status: input.status,
       text: assistantText(message),
-      errorMessage:
-        input.status === "failed" ? input.errorMessage : null,
+      errorMessage: input.status === "failed" ? input.errorMessage : null,
       includeStart: input.assistantMessageId === null,
       includeTextStart: input.textPartId === null,
     }) as DurableReplayChunk[],
@@ -272,7 +271,7 @@ export async function processDurableThreadTurn(
     });
     if (interrupted?.status === "running") {
       if (interrupted.cancelRequestedAt && interrupted.environmentExecutionId) {
-        await cancelInterruptedKestrelOneExecution({
+        const confirmed = await cancelInterruptedKestrelOneExecution({
           organizationId: interrupted.organizationId,
           executionId: interrupted.environmentExecutionId,
         }).catch((error) => {
@@ -285,6 +284,11 @@ export async function processDurableThreadTurn(
             },
           );
         });
+        if (confirmed !== true) {
+          throw new Error(
+            "Interrupted cancellation remains active pending terminal runtime confirmation.",
+          );
+        }
       }
       const stopped = Boolean(interrupted.cancelRequestedAt);
       if (!stopped && interrupted.environmentExecutionId) {
@@ -294,7 +298,8 @@ export async function processDurableThreadTurn(
           type: "turn.activity",
           data: {
             stage: "runtime.reconnecting",
-            message: "Connection interrupted; reconnecting to the running agent.",
+            message:
+              "Connection interrupted; reconnecting to the running agent.",
             executionId: reattachExecutionId,
           },
         });
@@ -704,12 +709,19 @@ export async function processDurableThreadTurn(
     const message =
       error instanceof Error ? error.message : "Durable turn execution failed.";
     const errorCode =
-      error instanceof Error && "code" in error && typeof error.code === "string"
+      error instanceof Error &&
+      "code" in error &&
+      typeof error.code === "string"
         ? error.code
         : null;
     const stopped =
       cancellationRequested ||
       (await isDurableTurnCancellationRequested(turn.id).catch(() => false));
+    if (stopped && !runtimeTerminalObserved && environmentExecutionId) {
+      // Cancellation acknowledgement is not terminal authority. Preserve the
+      // active turn so the next worker can reattach from the durable cursor.
+      throw error;
+    }
     const failurePresentation = buildFailurePresentation({
       errorMessage: message,
       status: stopped ? "cancelled" : "failed",
