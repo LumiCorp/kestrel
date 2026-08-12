@@ -25,6 +25,7 @@ import {
   parseRuntimeEvaluationPolicyV1,
   RUNTIME_EVALUATION_THRESHOLDS_V1,
 } from "../../src/kestrel/contracts/evaluation.js";
+import { resolveRuntimeProfileSelection } from "../../src/profile/runtimeProfile.js";
 
 const EVALUATION_HASH_A = `sha256:${"a".repeat(64)}`;
 const EVALUATION_HASH_B = `sha256:${"b".repeat(64)}`;
@@ -547,6 +548,31 @@ test("root managed profile facade remains byte-for-byte equal to the shared pack
       composeKestrelOneProfile(input),
       composeManagedKestrelProfile(input),
     );
+  }
+});
+
+test("shared managed environment snapshots match canonical Runtime selections", () => {
+  for (const environmentPresetId of [
+    "cli_safe_local",
+    "cli_dev_local",
+    "desktop_safe_local",
+    "desktop_dev_local",
+    "workspace_hosted",
+  ] as const) {
+    const managed = composeManagedKestrelProfile({
+      environmentPresetId,
+    }).profile;
+    const canonical = resolveRuntimeProfileSelection({
+      shellKind: managed.shellKind,
+      presetId: environmentPresetId,
+    });
+    assert.deepEqual(managed.capabilityPacks, canonical.capabilityPacks);
+    assert.deepEqual(managed.toolAllowlist, [
+      ...canonical.toolAllowlist,
+      ...KESTREL_ONE_DIALOG_TOOL_NAMES,
+    ]);
+    assert.deepEqual(managed.codeMode, canonical.codeMode);
+    assert.deepEqual(managed.devShell, canonical.devShell);
   }
 });
 
