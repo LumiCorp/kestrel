@@ -623,6 +623,10 @@ test(
         ${resumedRuntimeRunId}, 'running'
       )
     `;
+    await store.bindDurableTurnExecution({
+      turnId: waiting.turn.id,
+      executionId: resumedExecutionId,
+    });
     await store.bindDurableRuntimeInteractionDeliveryExecution({
       turnId: waiting.turn.id,
       requestId,

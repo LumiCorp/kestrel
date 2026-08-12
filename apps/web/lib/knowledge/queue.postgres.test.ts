@@ -48,8 +48,6 @@ test(
     const organizationId = `queue-org-${suffix}`;
     const waitingEnvironmentId = `queue-waiting-env-${suffix}`;
     const degradedEnvironmentId = `queue-degraded-env-${suffix}`;
-    const waitingThreadId = `queue-waiting-thread-${suffix}`;
-    const degradedThreadId = `queue-degraded-thread-${suffix}`;
     const waitingWorkspaceId = crypto.randomUUID();
     const degradedWorkspaceId = crypto.randomUUID();
     const parentOperationId = crypto.randomUUID();
@@ -93,13 +91,6 @@ test(
       await transaction`
         INSERT INTO "organization" ("id", "name", "slug", "createdAt")
         VALUES (${organizationId}, 'Queue Org', ${`queue-org-${suffix}`}, now())
-      `;
-      await transaction`
-        INSERT INTO "threads" (
-          "id", "title", "created_by_user_id", "organization_id", "origin"
-        ) VALUES
-          (${waitingThreadId}, 'Waiting', ${userId}, ${organizationId}, 'web'),
-          (${degradedThreadId}, 'Degraded', ${userId}, ${organizationId}, 'web')
       `;
       await transaction`
         INSERT INTO "environments" (
