@@ -106,6 +106,67 @@ class MissingResumeCodexClient extends FakeCodexClient {
   }
 }
 
+class CorrelatedCodexClient implements CodexClient {
+  readonly rejectedRequestIds: Array<string | number> = [];
+  constructor(private readonly options: CodexAppServerClientOptions) {}
+  async start() {}
+  async request<TResult>(method: string): Promise<TResult> {
+    if (method === "thread/start") {
+      return { thread: { id: "native-thread-correlated" } } as TResult;
+    }
+    if (method === "turn/start") {
+      setImmediate(() => {
+        this.options.onServerRequest?.({
+          method: "item/commandExecution/requestApproval",
+          id: "stale-request",
+          params: {
+            threadId: "native-thread-correlated",
+            turnId: "stale-turn",
+            itemId: "stale-item",
+          },
+        });
+        this.options.onNotification?.({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "native-thread-correlated",
+            turnId: "stale-turn",
+            itemId: "stale-item",
+            delta: "stale",
+          },
+        });
+        this.options.onNotification?.({
+          method: "turn/completed",
+          params: {
+            threadId: "native-thread-correlated",
+            turn: { id: "stale-turn", status: "completed", error: null },
+          },
+        });
+        this.options.onNotification?.({
+          method: "item/agentMessage/delta",
+          params: {
+            threadId: "native-thread-correlated",
+            turnId: "active-turn",
+            itemId: "active-item",
+            delta: "current",
+          },
+        });
+        this.options.onNotification?.({
+          method: "turn/completed",
+          params: {
+            threadId: "native-thread-correlated",
+            turn: { id: "active-turn", status: "completed", error: null },
+          },
+        });
+      });
+      return { turn: { id: "active-turn" } } as TResult;
+    }
+    return {} as TResult;
+  }
+  respond() {}
+  respondError(id: string | number) { this.rejectedRequestIds.push(id); }
+  close() {}
+}
+
 const profile: TuiProfile = {
   id: "codex",
   label: "Codex",
@@ -343,6 +404,39 @@ test("Codex preserves CODEX_PROTOCOL_INVALID for app-server validation failure",
   });
   assert.equal(result.output.status, "FAILED");
   assert.equal(result.output.errors[0]?.code, "CODEX_PROTOCOL_INVALID");
+});
+
+test("Codex rejects stale same-Thread native events from an earlier Turn", async () => {
+  const correlatedBinding = {
+    ...binding,
+    status: "ready" as const,
+    nativeSessionState: "uninitialized" as const,
+  };
+  let client: CorrelatedCodexClient | undefined;
+  const adapter = new CodexRuntimeAdapter(
+    profile,
+    {},
+    {},
+    new InMemoryRuntimeNativeSessionStore(),
+    undefined,
+    (options) => {
+      client = new CorrelatedCodexClient(options);
+      return client;
+    },
+  );
+  const result = await adapter.execute({
+    kind: "start",
+    binding: correlatedBinding,
+    turn: {
+      sessionId: correlatedBinding.threadId,
+      eventType: "user.message",
+      message: "correlate this turn",
+    },
+  });
+
+  assert.equal(result.output.status, "COMPLETED");
+  assert.equal(result.assistantText, "current");
+  assert.deepEqual(client?.rejectedRequestIds, ["stale-request"]);
 });
 
 test("Codex maps a failed native resume without a checkpoint to native-session loss", async () => {

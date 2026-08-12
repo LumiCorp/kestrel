@@ -51,6 +51,10 @@ interface CodexSessionState {
   binding: RuntimeBindingV1;
   nativeThreadId: string;
   nativeTurnId: string;
+  bufferedNativeMessages: Array<
+    | { kind: "request"; value: CodexAnyServerRequest }
+    | { kind: "notification"; value: CodexServerNotification }
+  >;
   startedAt: number;
   assistantParts: string[];
   toolCalls: number;
@@ -378,6 +382,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       binding,
       nativeThreadId,
       nativeTurnId: "pending",
+      bufferedNativeMessages: [],
       startedAt: Date.now(),
       assistantParts: [],
       toolCalls: 0,
@@ -399,6 +404,7 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
         approvalPolicy: "on-request",
       });
       state.nativeTurnId = started.turn.id;
+      this.flushBufferedNativeMessages(state);
     } catch (error) {
       await this.teardownState(state, true);
       throw error;
@@ -592,6 +598,17 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       });
       return;
     }
+    if (state.nativeTurnId === "pending") {
+      state.bufferedNativeMessages.push({ kind: "request", value: request });
+      return;
+    }
+    if (request.params.turnId !== state.nativeTurnId) {
+      this.client?.respondError(request.id, {
+        code: -32000,
+        message: "The Codex request does not belong to the active native Turn.",
+      });
+      return;
+    }
     const requestId = randomUUID();
     const pending: PendingCodexInteraction = {
       requestId,
@@ -610,9 +627,14 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
 
   private onNotification(notification: CodexServerNotification): void {
     if (notification.method === "item/agentMessage/delta") {
-      this.sessionByNativeThread
-        .get(notification.params.threadId)
-        ?.assistantParts.push(notification.params.delta);
+      const state = this.sessionByNativeThread.get(notification.params.threadId);
+      if (state?.nativeTurnId === "pending") {
+        state.bufferedNativeMessages.push({ kind: "notification", value: notification });
+        return;
+      }
+      if (state?.nativeTurnId === notification.params.turnId) {
+        state.assistantParts.push(notification.params.delta);
+      }
       return;
     }
     if (notification.method === "serverRequest/resolved") {
@@ -627,7 +649,11 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
     }
     if (notification.method === "turn/completed") {
       const state = this.sessionByNativeThread.get(notification.params.threadId);
-      if (state === undefined) return;
+      if (state?.nativeTurnId === "pending") {
+        state.bufferedNativeMessages.push({ kind: "notification", value: notification });
+        return;
+      }
+      if (state === undefined || state.nativeTurnId !== notification.params.turn.id) return;
       const status = notification.params.turn.status;
       state.completion.resolve({
         status:
@@ -647,6 +673,14 @@ export class CodexRuntimeAdapter implements RuntimeAdapterV1 {
       });
       void cleanupCodexInput(state);
       void this.teardownState(state, false);
+    }
+  }
+
+  private flushBufferedNativeMessages(state: CodexSessionState): void {
+    const buffered = state.bufferedNativeMessages.splice(0);
+    for (const message of buffered) {
+      if (message.kind === "request") this.onServerRequest(message.value);
+      else this.onNotification(message.value);
     }
   }
 
