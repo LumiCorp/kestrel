@@ -1,14 +1,18 @@
 export type KestrelRuntimeId = "kestrel" | "codex" | "claude";
 
+export type HydraReleaseEnvironment = Readonly<
+  Record<string, string | undefined>
+>;
+
 export function isHydraRuntimesEnabled(
-  env: NodeJS.ProcessEnv = process.env,
+  env: HydraReleaseEnvironment = process.env,
 ): boolean {
   return env.KESTREL_HYDRA_RUNTIMES_ENABLED === "1";
 }
 
 export function assertRuntimeReleased(
   runtimeId: KestrelRuntimeId,
-  env: NodeJS.ProcessEnv = process.env,
+  env: HydraReleaseEnvironment = process.env,
 ): void {
   if (runtimeId === "kestrel" || isHydraRuntimesEnabled(env)) {
     return;

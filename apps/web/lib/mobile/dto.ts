@@ -62,6 +62,7 @@ export async function mobileThreadDtos(threads: DbThread[]) {
       .select({
         threadId: rankedTurns.threadId,
         status: rankedTurns.status,
+        failureCode: rankedTurns.failureCode,
       })
       .from(rankedTurns)
       .where(eq(rankedTurns.rank, 1)),
