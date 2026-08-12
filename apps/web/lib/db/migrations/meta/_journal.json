@@ -442,6 +442,13 @@
       "when": 1786467600000,
       "tag": "0062_runtime_event_cursor",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1786550400000,
+      "tag": "0063_fly_release_compatibility",
+      "breakpoints": true
     }
   ]
 }

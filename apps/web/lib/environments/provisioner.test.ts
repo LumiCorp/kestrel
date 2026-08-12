@@ -5,12 +5,63 @@ import {
   EnvironmentProviderError,
 } from "./providers/contracts";
 import {
+  classifyEnvironmentGatewayHealthFailure,
   EnvironmentProvisioner,
   releaseRetryDelaySeconds,
   releaseRetryNextAttemptAt,
   type EnvironmentProvisioningRepository,
   type ProvisioningOperation,
 } from "./provisioner";
+
+test("gateway health classification exposes only semantic version evidence", async () => {
+  const original = new EnvironmentProviderError(
+    "FLY_MACHINE_UNHEALTHY",
+    "connection refused",
+  );
+  const classified = await classifyEnvironmentGatewayHealthFailure({
+    error: original,
+    routerUrl: "https://router.example.test",
+    fetchImpl: (async () =>
+      Response.json(
+        {
+          service: "environment-router",
+          gatewayConfig: {
+            acceptedVersions: [2, 3],
+            activeVersion: null,
+            lastFailure: {
+              code: "UNSUPPORTED_VERSION",
+              receivedVersion: 4,
+              occurredAt: "2026-08-12T00:00:00.000Z",
+              token: "must-not-survive",
+            },
+          },
+        },
+        { status: 503 },
+      )) as unknown as typeof fetch,
+  });
+  assert.notEqual(classified, original);
+  assert.equal(
+    (classified as Error & { code?: string }).code,
+    "ENVIRONMENT_GATEWAY_CONFIGURATION_UNREADY",
+  );
+  assert.doesNotMatch((classified as Error).message, /must-not-survive/u);
+});
+
+test("gateway health classification preserves unrecognized Fly failures", async () => {
+  const original = new EnvironmentProviderError(
+    "FLY_MACHINE_UNHEALTHY",
+    "connection refused",
+  );
+  assert.equal(
+    await classifyEnvironmentGatewayHealthFailure({
+      error: original,
+      routerUrl: "https://router.example.test",
+      fetchImpl: (async () =>
+        Response.json({ service: "other" })) as unknown as typeof fetch,
+    }),
+    original,
+  );
+});
 
 test("managed release retries use the bounded fixed schedule", () => {
   assert.deepEqual(

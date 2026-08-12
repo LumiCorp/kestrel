@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { flyImageReleaseManifestV1Schema } from "@/lib/releases/contracts";
+import { flyImageReleaseManifestV2Schema } from "@/lib/releases/contracts";
 import { verifyGithubActionsReleaseToken } from "@/lib/releases/github-oidc";
 import {
   FlyImageReleaseError,
@@ -44,9 +44,15 @@ export async function POST(request: Request) {
     if (!token) {
       return response("RELEASE_PUBLISH_UNAUTHORIZED", 401);
     }
-    const manifest = flyImageReleaseManifestV1Schema.parse(
-      await request.json(),
-    );
+    const body = await request.json();
+    if (
+      !body ||
+      typeof body !== "object" ||
+      (body as { version?: unknown }).version !== 2
+    ) {
+      return response("RELEASE_COMPATIBILITY_UNKNOWN", 409);
+    }
+    const manifest = flyImageReleaseManifestV2Schema.parse(body);
     try {
       await verifyGithubActionsReleaseToken({
         token,

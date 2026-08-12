@@ -81,6 +81,7 @@ const groups = [
       "lib/environments/workspace-backup-revision.postgres.test.ts",
       "lib/integrations/github-action-approvals.postgres.test.ts",
       "lib/projects/skills.postgres.test.ts",
+      "lib/releases/store.postgres.test.ts",
     ],
   },
   {

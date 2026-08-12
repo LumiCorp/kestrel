@@ -47,6 +47,7 @@ export interface EnvironmentProvisioningRepository {
     status: string;
     flyAppName: string | null;
     flyGatewayMachineId: string | null;
+    routerUrl?: string | null;
     routerImage: string | null;
     runtimeImage: string | null;
     idleTimeoutMinutes: number;
@@ -632,6 +633,10 @@ export class EnvironmentProvisioner {
           timeoutSeconds: 90,
         });
       } catch (error) {
+        const classifiedError = await classifyEnvironmentGatewayHealthFailure({
+          error,
+          routerUrl: environment.routerUrl ?? null,
+        });
         if (
           automaticRollback &&
           environment.routerImage &&
@@ -667,7 +672,7 @@ export class EnvironmentProvisioner {
             })
             .catch(() => {});
         }
-        throw error;
+        throw classifiedError;
       }
       await this.repository.completeEnvironmentGatewayUpdate({
         environmentId: environment.id,
@@ -1399,6 +1404,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             status: true,
             flyAppName: true,
             flyGatewayMachineId: true,
+            routerUrl: true,
             routerImage: true,
             runtimeImage: true,
             idleTimeoutMinutes: true,
@@ -2190,6 +2196,66 @@ function safeFailure(error: unknown): {
     message: "Environment provisioning failed.",
     retryable: false,
   };
+}
+
+export async function classifyEnvironmentGatewayHealthFailure(input: {
+  error: unknown;
+  routerUrl: string | null;
+  fetchImpl?: typeof fetch | undefined;
+}) {
+  if (
+    !(input.error instanceof EnvironmentProviderError) ||
+    input.error.code !== "FLY_MACHINE_UNHEALTHY" ||
+    !input.routerUrl
+  ) {
+    return input.error;
+  }
+  try {
+    const response = await (input.fetchImpl ?? fetch)(
+      new URL("/health", input.routerUrl),
+      {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(3000),
+      },
+    );
+    const health = (await response.json()) as {
+      service?: unknown;
+      gatewayConfig?: {
+        acceptedVersions?: unknown;
+        activeVersion?: unknown;
+        lastFailure?: { code?: unknown; receivedVersion?: unknown } | null;
+      };
+    };
+    const failure = health.gatewayConfig?.lastFailure;
+    if (
+      health.service !== "environment-router" ||
+      (failure?.code !== "UNSUPPORTED_VERSION" &&
+        failure?.code !== "INVALID_CONFIG")
+    ) {
+      return input.error;
+    }
+    const accepted = Array.isArray(health.gatewayConfig?.acceptedVersions)
+      ? health.gatewayConfig.acceptedVersions.filter(Number.isInteger)
+      : [];
+    const received = Number.isInteger(failure.receivedVersion)
+      ? failure.receivedVersion
+      : null;
+    return Object.assign(
+      new Error(
+        `Environment Router configuration is unready (${failure.code}; received version ${received ?? "unknown"}; accepts [${accepted.join(", ")}]).`,
+      ),
+      {
+        code: "ENVIRONMENT_GATEWAY_CONFIGURATION_UNREADY",
+        gatewayConfig: {
+          code: failure.code,
+          receivedVersion: received,
+          acceptedVersions: accepted,
+        },
+      },
+    );
+  } catch {
+    return input.error;
+  }
 }
 
 function hasErrorCode(error: unknown, code: string) {

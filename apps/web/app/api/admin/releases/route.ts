@@ -9,6 +9,7 @@ import {
   createFlyImageRollback,
   listFlyImageReleaseCanaries,
   listFlyImageReleases,
+  recoverFlyImageReleaseForward,
   retryFlyImageRelease,
   setFlyImageReleaseCanary,
 } from "@/lib/releases/store";
@@ -25,6 +26,7 @@ const actionSchema = z.discriminatedUnion("action", [
   }),
   z.object({ action: z.literal("retry"), releaseId: z.string().uuid() }),
   z.object({ action: z.literal("rollback"), releaseId: z.string().uuid() }),
+  z.object({ action: z.literal("recover_forward"), releaseId: z.string().uuid() }),
 ]);
 
 export async function GET() {
@@ -62,6 +64,11 @@ export async function POST(request: Request) {
           })
         : input.action === "retry"
           ? await retryFlyImageRelease(input.releaseId)
+          : input.action === "recover_forward"
+            ? await recoverFlyImageReleaseForward({
+                releaseId: input.releaseId,
+                actorUserId: session.user.id,
+              })
           : await createFlyImageRollback({
               failedReleaseId: input.releaseId,
               actorUserId: session.user.id,

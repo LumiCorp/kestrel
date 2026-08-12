@@ -7,7 +7,7 @@ import {
   pullPublishedImage,
   type FlyImagePublisherDependencies,
 } from "../../scripts/fly-image-publisher.js";
-import { flyImageReleaseManifestV1Schema } from "../../apps/web/lib/releases/contracts.js";
+import { flyImageReleaseManifestV2Schema } from "../../apps/web/lib/releases/contracts.js";
 
 const revision = "a".repeat(40);
 const roles = [
@@ -157,7 +157,7 @@ function publisherHarness(input: {
       const authorization = new Headers(init?.headers).get("authorization");
       if (init?.method === "POST") {
         publicationAuthorization = authorization;
-        publishedManifest = flyImageReleaseManifestV1Schema.parse(
+        publishedManifest = flyImageReleaseManifestV2Schema.parse(
           JSON.parse(String(init.body)),
         );
         if (input.publicationFailureCode) {

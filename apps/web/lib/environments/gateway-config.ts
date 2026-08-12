@@ -1,7 +1,7 @@
 import type { EnvironmentGatewayConfigV3 } from "@lumi/kestrel-environment-auth";
-import { ENVIRONMENT_GATEWAY_CONFIG_VERSION } from "@lumi/kestrel-environment-auth";
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
+  serializeEnvironmentGatewayConfig,
   signEnvironmentExecutionTicket,
   PREVIEW_RELAY_TICKET_AUDIENCE,
   PREVIEW_RELAY_TICKET_VERSION,
@@ -161,8 +161,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
     })
   );
 
-  return {
-    version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+  return serializeEnvironmentGatewayConfig({
     environmentId: environment.id,
     revision: now.toISOString(),
     workspaces: workspaces.flatMap((workspace) =>
@@ -215,7 +214,7 @@ export async function resolveEnvironmentGatewayConfig(input: {
     }),
     modelGrants: resolvedModelGrants,
     appGrants,
-  };
+  });
 }
 
 function readBearer(value: string | null) {
