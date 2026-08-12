@@ -32,23 +32,26 @@ export async function handlePreviewLifecycle(input: {
             body: await input.request.json().catch(() => null),
           }),
         },
-        { status: 201 }
+        { status: 201 },
       );
     case "list":
-      return NextResponse.json({ previews: await listPreviews(input.ticket) });
+      return NextResponse.json({
+        previews: await listPreviews(input.ticket, input.authorization),
+      });
     case "inspect":
       return NextResponse.json(
         await inspectPreviewPort({
           ticket: input.ticket,
           authorization: input.authorization,
           port: parsePreviewPort(input.path[1]),
-        })
+        }),
       );
     case "renew":
       return NextResponse.json({
         preview: await renewPreview({
           previewId: input.path[1] ?? "",
           ticket: input.ticket,
+          authorization: input.authorization,
           body: await input.request.json().catch(() => null),
         }),
       });
@@ -80,8 +83,8 @@ async function publishPreview(input: {
   const expiresAt = new Date(
     Math.min(
       now.getTime() + body.ttlMinutes * 60_000,
-      maximumExpiresAt.getTime()
-    )
+      maximumExpiresAt.getTime(),
+    ),
   );
   const hostname = `p-${randomBytes(16).toString("hex")}.${input.hostSuffix}`;
   const projectId = await requireProjectId(input.ticket.threadId);
@@ -90,34 +93,56 @@ async function publishPreview(input: {
     lease = await knowledgeDb.transaction(async (transaction) => {
       const lockKey = `kestrel:workspace:previews:${input.ticket.workspaceId}`;
       await transaction.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
       );
       await transaction
         .update(schema.workspacePreviewLeases)
         .set({ status: "expired", closedAt: now, updatedAt: now })
         .where(
           and(
-            eq(schema.workspacePreviewLeases.workspaceId, input.ticket.workspaceId),
-            inArray(schema.workspacePreviewLeases.status, ["provisioning", "active"]),
-            lt(schema.workspacePreviewLeases.expiresAt, now)
-          )
+            eq(
+              schema.workspacePreviewLeases.workspaceId,
+              input.ticket.workspaceId,
+            ),
+            inArray(schema.workspacePreviewLeases.status, [
+              "provisioning",
+              "active",
+            ]),
+            lt(schema.workspacePreviewLeases.expiresAt, now),
+          ),
         );
-      const existing = await transaction.query.workspacePreviewLeases.findFirst({
+      const existing = await transaction.query.workspacePreviewLeases.findFirst(
+        {
         where: and(
-          eq(schema.workspacePreviewLeases.workspaceId, input.ticket.workspaceId),
+            eq(
+              schema.workspacePreviewLeases.workspaceId,
+              input.ticket.workspaceId,
+            ),
           eq(schema.workspacePreviewLeases.port, body.port),
-          inArray(schema.workspacePreviewLeases.status, ["provisioning", "active", "closing"])
+            inArray(schema.workspacePreviewLeases.status, [
+              "provisioning",
+              "active",
+              "closing",
+            ]),
         ),
-      });
+        },
+      );
       if (existing) return existing;
       const [{ value: activeCount }] = await transaction
         .select({ value: count() })
         .from(schema.workspacePreviewLeases)
         .where(
           and(
-            eq(schema.workspacePreviewLeases.workspaceId, input.ticket.workspaceId),
-            inArray(schema.workspacePreviewLeases.status, ["provisioning", "active", "closing"])
-          )
+            eq(
+              schema.workspacePreviewLeases.workspaceId,
+              input.ticket.workspaceId,
+            ),
+            inArray(schema.workspacePreviewLeases.status, [
+              "provisioning",
+              "active",
+              "closing",
+            ]),
+          ),
         );
       if (Number(activeCount) >= MAX_ACTIVE_PREVIEWS) {
         throw new AppRuntimeError("WORKSPACE_PREVIEW_LIMIT_REACHED", 409);
@@ -147,29 +172,38 @@ async function publishPreview(input: {
     });
   } catch (error) {
     if (error instanceof AppRuntimeError) throw error;
-    const concurrent = await knowledgeDb.query.workspacePreviewLeases.findFirst({
+    const concurrent = await knowledgeDb.query.workspacePreviewLeases.findFirst(
+      {
       where: and(
-        eq(schema.workspacePreviewLeases.workspaceId, input.ticket.workspaceId),
+          eq(
+            schema.workspacePreviewLeases.workspaceId,
+            input.ticket.workspaceId,
+          ),
         eq(schema.workspacePreviewLeases.port, body.port),
-        inArray(schema.workspacePreviewLeases.status, ["provisioning", "active", "closing"])
+          inArray(schema.workspacePreviewLeases.status, [
+            "provisioning",
+            "active",
+            "closing",
+          ]),
       ),
-    });
+      },
+    );
     if (concurrent) {
       return concurrent.status === "provisioning"
         ? activateLease(concurrent, input.ticket)
-        : describe(concurrent);
+        : describe(concurrent, "listening");
     }
     throw error;
   }
   if (!lease) throw new Error("Workspace preview lease was not created.");
   return lease.status === "provisioning"
     ? activateLease(lease, input.ticket)
-    : describe(lease);
+    : describe(lease, "listening");
 }
 
 async function activateLease(
   lease: typeof schema.workspacePreviewLeases.$inferSelect,
-  ticket: EnvironmentExecutionTicket
+  ticket: EnvironmentExecutionTicket,
 ) {
   try {
     await refreshGateway(ticket);
@@ -202,29 +236,49 @@ async function activateLease(
     )
     .returning();
   if (!active) {
-    const concurrent = await knowledgeDb.query.workspacePreviewLeases.findFirst({
+    const concurrent = await knowledgeDb.query.workspacePreviewLeases.findFirst(
+      {
       where: eq(schema.workspacePreviewLeases.id, lease.id),
-    });
+      },
+    );
     if (concurrent?.status === "active") {
-      return describe(concurrent);
+      return describe(concurrent, "listening");
     }
     throw new AppRuntimeError("WORKSPACE_PREVIEW_GATEWAY_UNAVAILABLE", 503);
   }
-  return describe(active);
+  return describe(active, "listening");
 }
 
-async function listPreviews(ticket: EnvironmentExecutionTicket) {
+async function listPreviews(
+  ticket: EnvironmentExecutionTicket,
+  authorization: string,
+) {
   const now = new Date();
   await expireWorkspacePreviews(ticket.workspaceId, now);
-  return (
-    await knowledgeDb.query.workspacePreviewLeases.findMany({
+  const leases = await knowledgeDb.query.workspacePreviewLeases.findMany({
       where: and(
         eq(schema.workspacePreviewLeases.workspaceId, ticket.workspaceId),
-        inArray(schema.workspacePreviewLeases.status, ["provisioning", "active"])
+      inArray(schema.workspacePreviewLeases.status, ["provisioning", "active"]),
       ),
       orderBy: (table, { asc }) => [asc(table.createdAt)],
-    })
-  ).map(describe);
+  });
+  return Promise.all(
+    leases.map(async (lease, index) => {
+      if (lease.status !== "active" || index >= MAX_ACTIVE_PREVIEWS) {
+        return describe(lease, "unknown");
+      }
+      try {
+        const inspection = await inspectPreviewPort({
+          ticket,
+          authorization,
+          port: lease.port,
+        });
+        return describe(lease, inspection.status);
+      } catch {
+        return describe(lease, "unknown");
+      }
+    }),
+  );
 }
 
 async function expireWorkspacePreviews(workspaceId: string, now: Date) {
@@ -234,29 +288,41 @@ async function expireWorkspacePreviews(workspaceId: string, now: Date) {
     .where(
       and(
         eq(schema.workspacePreviewLeases.workspaceId, workspaceId),
-        inArray(schema.workspacePreviewLeases.status, ["provisioning", "active"]),
-        lt(schema.workspacePreviewLeases.expiresAt, now)
-      )
+        inArray(schema.workspacePreviewLeases.status, [
+          "provisioning",
+          "active",
+        ]),
+        lt(schema.workspacePreviewLeases.expiresAt, now),
+      ),
     );
 }
 
 async function renewPreview(input: {
   previewId: string;
   ticket: EnvironmentExecutionTicket;
+  authorization: string;
   body: unknown;
 }) {
   const ttlMinutes = parseTtl(input.body, true);
   const now = new Date();
   await expireWorkspacePreviews(input.ticket.workspaceId, now);
   const lease = await requireActiveLease(input.previewId, input.ticket);
+  await assertPortListening({
+    ticket: input.ticket,
+    authorization: input.authorization,
+    port: lease.port,
+  });
   const expiresAt = new Date(
     Math.min(
       now.getTime() + ttlMinutes * 60_000,
-      lease.maximumExpiresAt.getTime()
-    )
+      lease.maximumExpiresAt.getTime(),
+    ),
   );
   if (expiresAt <= now) {
-    throw new AppRuntimeError("WORKSPACE_PREVIEW_MAXIMUM_LIFETIME_REACHED", 409);
+    throw new AppRuntimeError(
+      "WORKSPACE_PREVIEW_MAXIMUM_LIFETIME_REACHED",
+      409,
+    );
   }
   const [updated] = await knowledgeDb
     .update(schema.workspacePreviewLeases)
@@ -264,7 +330,7 @@ async function renewPreview(input: {
     .where(eq(schema.workspacePreviewLeases.id, lease.id))
     .returning();
   await refreshGateway(input.ticket);
-  return describe(updated ?? lease);
+  return describe(updated ?? lease, "listening");
 }
 
 async function closePreview(input: {
@@ -287,26 +353,42 @@ async function closePreview(input: {
     .where(eq(schema.workspacePreviewLeases.id, lease.id));
 }
 
-async function requireClosableLease(id: string, ticket: EnvironmentExecutionTicket) {
+async function requireClosableLease(
+  id: string,
+  ticket: EnvironmentExecutionTicket,
+) {
   const lease = await knowledgeDb.query.workspacePreviewLeases.findFirst({
     where: and(
       eq(schema.workspacePreviewLeases.id, id),
       eq(schema.workspacePreviewLeases.workspaceId, ticket.workspaceId),
-      eq(schema.workspacePreviewLeases.projectId, await requireProjectId(ticket.threadId)),
-      inArray(schema.workspacePreviewLeases.status, ["provisioning", "active", "closing"])
+      eq(
+        schema.workspacePreviewLeases.projectId,
+        await requireProjectId(ticket.threadId),
+      ),
+      inArray(schema.workspacePreviewLeases.status, [
+        "provisioning",
+        "active",
+        "closing",
+      ]),
     ),
   });
   if (!lease) throw new AppRuntimeError("WORKSPACE_PREVIEW_NOT_FOUND", 404);
   return lease;
 }
 
-async function requireActiveLease(id: string, ticket: EnvironmentExecutionTicket) {
+async function requireActiveLease(
+  id: string,
+  ticket: EnvironmentExecutionTicket,
+) {
   const lease = await knowledgeDb.query.workspacePreviewLeases.findFirst({
     where: and(
       eq(schema.workspacePreviewLeases.id, id),
       eq(schema.workspacePreviewLeases.workspaceId, ticket.workspaceId),
-      eq(schema.workspacePreviewLeases.projectId, await requireProjectId(ticket.threadId)),
-      inArray(schema.workspacePreviewLeases.status, ["provisioning", "active"])
+      eq(
+        schema.workspacePreviewLeases.projectId,
+        await requireProjectId(ticket.threadId),
+      ),
+      inArray(schema.workspacePreviewLeases.status, ["provisioning", "active"]),
     ),
   });
   if (!lease) throw new AppRuntimeError("WORKSPACE_PREVIEW_NOT_FOUND", 404);
@@ -318,7 +400,8 @@ async function requireProjectId(threadId: string) {
     where: (table, { eq: equals }) => equals(table.id, threadId),
     columns: { projectId: true },
   });
-  if (!thread?.projectId) throw new AppRuntimeError("WORKSPACE_PREVIEW_PROJECT_REQUIRED");
+  if (!thread?.projectId)
+    throw new AppRuntimeError("WORKSPACE_PREVIEW_PROJECT_REQUIRED");
   return thread.projectId;
 }
 
@@ -339,7 +422,8 @@ async function inspectPreviewPort(input: {
   port: number;
 }): Promise<{ port: number; status: "listening" | "not_listening" }> {
   const environment = await knowledgeDb.query.environments.findFirst({
-    where: (table, { eq: equals }) => equals(table.id, input.ticket.environmentId),
+    where: (table, { eq: equals }) =>
+      equals(table.id, input.ticket.environmentId),
     columns: { routerUrl: true },
   });
   if (!environment?.routerUrl) {
@@ -347,7 +431,7 @@ async function inspectPreviewPort(input: {
   }
   const response = await fetch(
     new URL(`/v1/preview-ports/${input.port}`, environment.routerUrl),
-    { headers: { authorization: input.authorization }, cache: "no-store" }
+    { headers: { authorization: input.authorization }, cache: "no-store" },
   );
   if (!response.ok) {
     if (response.status === 409) {
@@ -366,9 +450,7 @@ function parsePreviewPort(value: string | undefined) {
   return port;
 }
 
-async function refreshGateway(
-  ticket: EnvironmentExecutionTicket
-) {
+async function refreshGateway(ticket: EnvironmentExecutionTicket) {
   try {
     await refreshEnvironmentGateway({
       organizationId: ticket.organizationId,
@@ -395,7 +477,8 @@ function parsePublishBody(value: unknown) {
 }
 
 function parseTtl(value: unknown, required: boolean) {
-  if (!isRecord(value)) throw new AppRuntimeError("WORKSPACE_PREVIEW_INPUT_INVALID", 400);
+  if (!isRecord(value))
+    throw new AppRuntimeError("WORKSPACE_PREVIEW_INPUT_INVALID", 400);
   if (value.ttlMinutes === undefined && !required) return DEFAULT_TTL_MINUTES;
   if (
     !Number.isSafeInteger(value.ttlMinutes) ||
@@ -407,19 +490,39 @@ function parseTtl(value: unknown, required: boolean) {
   return value.ttlMinutes as number;
 }
 
-function describe(lease: typeof schema.workspacePreviewLeases.$inferSelect) {
+function describe(
+  lease: typeof schema.workspacePreviewLeases.$inferSelect,
+  applicationStatus: "listening" | "not_listening" | "unknown",
+) {
+  const leaseStatus = lease.status;
+  const status = summarizePreviewStatus(lease.status, applicationStatus);
   return {
     id: lease.id,
     name: lease.name,
     port: lease.port,
     protocol: "http" as const,
     url: `https://${lease.hostname}`,
-    status: lease.status === "active" ? "available" : lease.status,
+    leaseStatus,
+    applicationStatus,
+    status,
     createdAt: lease.createdAt.toISOString(),
     expiresAt: lease.expiresAt.toISOString(),
     maximumExpiresAt: lease.maximumExpiresAt.toISOString(),
     publicAccess: "anonymous_bearer_url" as const,
   };
+}
+
+export function summarizePreviewStatus(
+  leaseStatus: string,
+  applicationStatus: "listening" | "not_listening" | "unknown",
+) {
+  return leaseStatus === "provisioning"
+    ? ("provisioning" as const)
+    : applicationStatus === "listening"
+      ? ("available" as const)
+      : applicationStatus === "not_listening"
+        ? ("unavailable" as const)
+        : ("unknown" as const);
 }
 
 function edgePreviewHostSuffix() {
