@@ -9,7 +9,7 @@ import { getMobileThreadSnapshotForRequest } from "@/lib/mobile/snapshot";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
-import { createDurableThreadTurn } from "@/lib/turns/store";
+import { admitDurableThreadTurn } from "@/lib/turns/admission";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 const bodySchema = z
@@ -62,7 +62,7 @@ export async function POST(
     if (!environment) {
       throw new Error("No Environment is available for this Thread.");
     }
-    const durable = await createDurableThreadTurn({
+    const durable = await admitDurableThreadTurn({
       threadId: thread.id,
       organizationId,
       authorUserId: session.user.id,
@@ -72,6 +72,7 @@ export async function POST(
       idempotencyKey,
       projectContextRevisionId: projectContext?.contextRevision.id ?? null,
       requestedModelId: null,
+      requestedRuntimeId: thread.runtimeId,
       source: "mobile",
     });
     if (durable.shouldDispatch) {

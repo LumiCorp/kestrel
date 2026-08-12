@@ -40,9 +40,12 @@ import {
   acknowledgeDurableRuntimeInteractionDelivery,
   bindDurableRuntimeInteractionDeliveryExecution,
   markRuntimeNativeSessionEstablished,
+  markRuntimeEventReconciliationPending,
+  clearRuntimeEventReconciliation,
   failDurableRuntimeInteractionDelivery,
   claimDurableThreadTurn,
   completeDurableThreadTurn,
+  DurableTurnError,
   type DurableAssistantOutcomeMessage,
   type DurableReplayChunk,
   getDurableTurn,
@@ -260,20 +263,32 @@ export async function processDurableThreadTurn(
   options: { retryCount?: number; workerSignal?: AbortSignal } = {},
 ) {
   let reattachExecutionId: string | null = null;
-  if ((options.retryCount ?? 0) > 0) {
-    const interrupted = await knowledgeDb.query.threadTurns.findFirst({
-      where: eq(schema.threadTurns.id, turnId),
-      columns: {
-        status: true,
-        organizationId: true,
-        environmentExecutionId: true,
-        cancelRequestedAt: true,
-        projectContextRevisionId: true,
-        requestedModelId: true,
-        source: true,
-      },
-    });
-    if (interrupted?.status === "running") {
+  const interrupted = await knowledgeDb.query.threadTurns.findFirst({
+    where: eq(schema.threadTurns.id, turnId),
+    columns: {
+      status: true,
+      organizationId: true,
+      environmentExecutionId: true,
+      cancelRequestedAt: true,
+      projectContextRevisionId: true,
+      requestedModelId: true,
+      source: true,
+    },
+  });
+  const interruptedExecution = interrupted?.environmentExecutionId
+    ? await knowledgeDb.query.environmentRunExecutions.findFirst({
+        where: eq(
+          schema.environmentRunExecutions.id,
+          interrupted.environmentExecutionId,
+        ),
+        columns: { runtimeEventReconciliationState: true },
+      })
+    : null;
+  const shouldReattachRunningTurn =
+    interrupted?.status === "running" &&
+    ((options.retryCount ?? 0) > 0 ||
+      interruptedExecution?.runtimeEventReconciliationState === "pending");
+  if (shouldReattachRunningTurn && interrupted) {
       if (interrupted.cancelRequestedAt && interrupted.environmentExecutionId) {
         await cancelInterruptedKestrelOneExecution({
           organizationId: interrupted.organizationId,
@@ -332,7 +347,6 @@ export async function processDurableThreadTurn(
         });
         return { processed: true, nextTurnId: completion.nextTurnId };
       }
-    }
   }
   const turn = reattachExecutionId
     ? await claimDurableThreadTurn(turnId, { resumeRunning: true })
@@ -532,11 +546,11 @@ export async function processDurableThreadTurn(
         eventWrites = eventWrites.then(async () => {
           if (event.type === "run.interaction.delivered") {
             if (
-              !environmentExecutionId ||
-              !event.runId ||
+              !(environmentExecutionId && event.runId) ||
               event.payload.runId !== event.runId
             ) {
-              throw new Error(
+              throw new DurableTurnError(
+                "TURN_CONFLICT",
                 "Runtime delivery acknowledgement is missing execution correlation.",
               );
             }
@@ -548,6 +562,7 @@ export async function processDurableThreadTurn(
               runtimeRunId: event.runId,
               acknowledgementEventId: event.id,
             });
+            await clearRuntimeEventReconciliation({ environmentExecutionId });
             return;
           }
           if (event.type === "run.native_session.established") {
@@ -556,15 +571,31 @@ export async function processDurableThreadTurn(
               bindingId: event.payload.bindingId,
               runtimeId: event.payload.runtimeId,
             });
+            if (environmentExecutionId) {
+              await clearRuntimeEventReconciliation({ environmentExecutionId });
+            }
             return;
           }
           if (
             event.type === "run.started" &&
             turn.interactionResponse?.requestId
           ) {
-            if (!(environmentExecutionId && event.runId && turn.runtimeBindingId)) {
-              throw new Error(
-                "Runtime delivery execution is missing start correlation.",
+            if (
+              !(
+                environmentExecutionId &&
+                event.runId &&
+                turn.runtimeBindingId &&
+                turn.participantId
+              ) ||
+              event.payload.sessionId !== turn.threadId ||
+              event.payload.runId !== event.runId ||
+              event.payload.runtimeId !== turn.runtimeId ||
+              event.payload.runtimeBindingId !== turn.runtimeBindingId ||
+              event.payload.participantId !== turn.participantId
+            ) {
+              throw new DurableTurnError(
+                "TURN_CONFLICT",
+                "Runtime delivery execution does not match its authoritative start event.",
               );
             }
             await bindDurableRuntimeInteractionDeliveryExecution({
@@ -601,6 +632,7 @@ export async function processDurableThreadTurn(
             // Runtime telemetry is best effort and must not fail the turn.
           }
         }).catch((cause: unknown) => {
+          if (cause instanceof DurableTurnError) throw cause;
           const error = new Error(
             "A critical Runtime event could not be persisted.",
             { cause },
@@ -762,6 +794,7 @@ export async function processDurableThreadTurn(
       // The Runner has already durably journaled this event. Keep the product
       // Turn active so the next worker lease reattaches from the last cursor
       // committed only after the product transaction succeeded.
+      await markRuntimeEventReconciliationPending({ turnId: turn.id });
       throw error;
     }
     if (

@@ -238,6 +238,10 @@ function useSharedChatState(
   }, [currentModelId]);
 
   useEffect(() => {
+    setCurrentModelId(initialChatModel);
+  }, [initialChatModel, threadId]);
+
+  useEffect(() => {
     interactionModeRef.current = interactionMode;
   }, [interactionMode]);
 
@@ -586,6 +590,7 @@ function ChatShell({
               setInput={setInput}
               setMessages={setMessages}
               status={status}
+              threadExists={threadExists}
               threadId={threadId}
             />
           )}

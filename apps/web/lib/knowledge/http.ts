@@ -71,6 +71,9 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     code === "APP_POLICY_WIDENS_ENVIRONMENT" ||
     code === "MCP_INTERACTION_CONFLICT" ||
     code === "TURN_CONFLICT" ||
+    code === "RUNTIME_BINDING_IMMUTABLE" ||
+    code === "RUNTIME_BINDING_DEGRADED" ||
+    code === "RUNTIME_RECOVERY_UNAVAILABLE" ||
     code === "RUNTIME_UNAVAILABLE" ||
     code === "QUEUE_PAUSED" ||
     message === "MCP capability snapshot has already been reviewed."
@@ -122,7 +125,18 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
           : status;
   }
 
-  const body = details ? { error: message, details } : { error: message };
+  const body: Record<string, unknown> = details
+    ? { error: message, details }
+    : { error: message };
+
+  if (
+    code === "RUNTIME_BINDING_IMMUTABLE" ||
+    code === "RUNTIME_BINDING_DEGRADED" ||
+    code === "RUNTIME_RECOVERY_UNAVAILABLE" ||
+    code === "RUNTIME_UNAVAILABLE"
+  ) {
+    body.code = code;
+  }
 
   if (dbError.category !== "unknown") {
     Object.assign(body, { category: dbError.category });

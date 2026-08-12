@@ -46,8 +46,12 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
       : getDefaultOrganizationEnvironment(organizationId),
   ]);
   const chatModelFromCookie = cookieStore.get("chat-model");
+  const persistedRuntimeModelId =
+    chat?.runtimeId !== "kestrel"
+      ? chat?.runtimeBinding?.selectedModelId
+      : undefined;
   const initialChatModel = await resolvePreferredLanguageModelId(
-    chatModelFromCookie?.value,
+    persistedRuntimeModelId ?? chatModelFromCookie?.value,
     null,
     organizationId,
     environment?.id

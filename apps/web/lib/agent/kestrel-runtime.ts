@@ -316,7 +316,7 @@ export type KestrelOneAgentResponseInput = {
     | {
         requestId: string;
         eventType: string;
-        message: string;
+        message?: string | undefined;
         answers?: Record<string, string[]> | undefined;
         approved?: boolean | undefined;
         reason?: string | undefined;
@@ -619,7 +619,10 @@ function createModelAwareKestrelOneAgent(input: {
         } catch (error) {
           if (
             executionId
-            && readRuntimeErrorCode(error) !== "RUNNER_TRANSPORT_DETACHED"
+            && ![
+              "RUNNER_TRANSPORT_DETACHED",
+              "RUNTIME_EVENT_PERSISTENCE_FAILED",
+            ].includes(readRuntimeErrorCode(error) ?? "")
           ) {
             await updateEnvironmentExecutionStatus({
               organizationId: input.organizationId,

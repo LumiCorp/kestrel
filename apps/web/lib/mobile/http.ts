@@ -52,6 +52,10 @@ export function mobileErrorResponse(error: unknown, fallbackStatus = 500) {
     code = "NOT_FOUND";
   } else if (
     internalCode === "TURN_CONFLICT" ||
+    internalCode === "RUNTIME_BINDING_IMMUTABLE" ||
+    internalCode === "RUNTIME_BINDING_DEGRADED" ||
+    internalCode === "RUNTIME_RECOVERY_UNAVAILABLE" ||
+    internalCode === "RUNTIME_UNAVAILABLE" ||
     internalCode === "QUEUE_PAUSED" ||
     internalCode?.endsWith("_CONFLICT")
   ) {

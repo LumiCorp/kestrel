@@ -152,7 +152,7 @@ export type KestrelOneAgentResponseInput = {
     | {
         requestId: string;
         eventType: string;
-        message: string;
+        message?: string | undefined;
         answers?: Record<string, string[]> | undefined;
         approved?: boolean | undefined;
         reason?: string | undefined;
@@ -266,6 +266,7 @@ export function createKestrelOneAgentResponseFromAgent(
           const runStream = await input.agent.stream(
             {
               sessionId: input.threadId,
+              runtimeId: input.runtimeId ?? "kestrel",
               ...(input.runtimeBindingId !== undefined
                 ? { runtimeBindingId: input.runtimeBindingId }
                 : {}),

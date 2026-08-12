@@ -784,6 +784,15 @@ export const runtimeBindings = pgTable(
       .notNull()
       .default(1),
     capabilityDigest: text("capability_digest"),
+    environmentId: text("environment_id").references(() => environments.id, {
+      onDelete: "restrict",
+    }),
+    selectedModelId: text("selected_model_id"),
+    recoverySourceBindingId: text("recovery_source_binding_id"),
+    recoveryFailureCode: text("recovery_failure_code", {
+      enum: ["RUNTIME_NATIVE_SESSION_LOST", "RUNTIME_LIVE_WAIT_LOST"],
+    }),
+    recoverySourceTurnId: text("recovery_source_turn_id"),
     status: text("status", {
       enum: ["ready", "degraded", "released"],
     })
@@ -804,6 +813,9 @@ export const runtimeBindings = pgTable(
   (table) => [
     uniqueIndex("runtime_bindings_thread_idx").on(table.threadId),
     index("runtime_bindings_participant_idx").on(table.participantId),
+    uniqueIndex("runtime_bindings_recovery_source_loss_idx")
+      .on(table.recoverySourceBindingId, table.recoveryFailureCode)
+      .where(sql`${table.recoverySourceBindingId} is not null`),
   ],
 );
 
@@ -2304,6 +2316,21 @@ export const environmentRunExecutions = pgTable(
       .notNull(),
     runtimeRunId: text("runtime_run_id"),
     lastRuntimeEventId: text("last_runtime_event_id"),
+    runtimeEventReconciliationState: text("runtime_event_reconciliation_state", {
+      enum: ["idle", "pending"],
+    })
+      .notNull()
+      .default("idle"),
+    runtimeEventReconciliationAttempts: integer(
+      "runtime_event_reconciliation_attempts",
+    )
+      .notNull()
+      .default(0),
+    runtimeEventReconciliationCode: text("runtime_event_reconciliation_code"),
+    runtimeEventReconciliationAttemptedAt: timestamp(
+      "runtime_event_reconciliation_attempted_at",
+      { withTimezone: true },
+    ),
     reasoningPolicySnapshot: jsonb("reasoning_policy_snapshot").$type<{
       request: {
         mode: "off" | "summary" | "provider_visible";
@@ -2421,6 +2448,56 @@ export const desktopEnvironmentCommandEvents = pgTable(
     check(
       "desktop_environment_command_events_sequence_check",
       sql`${table.sequence} > 0`,
+    ),
+  ],
+);
+
+export const desktopRuntimeDescriptorProbes = pgTable(
+  "desktop_runtime_descriptor_probes",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    runtimeId: text("runtime_id", { enum: ["codex", "claude"] }).notNull(),
+    requestedModelId: text("requested_model_id").notNull(),
+    request: jsonb("request").$type<Record<string, unknown>>().notNull(),
+    state: text("state", {
+      enum: ["pending", "delivering", "resolved", "failed", "expired"],
+    })
+      .notNull()
+      .default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    claimTokenHash: text("claim_token_hash"),
+    claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    acknowledgementEventId: text("acknowledgement_event_id"),
+    resolution: jsonb("resolution").$type<Record<string, unknown>>(),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("desktop_runtime_descriptor_probes_claim_idx").on(
+      table.environmentId,
+      table.state,
+      table.createdAt,
+    ),
+    uniqueIndex("desktop_runtime_descriptor_probes_ack_event_idx")
+      .on(table.acknowledgementEventId)
+      .where(sql`${table.acknowledgementEventId} is not null`),
+    index("desktop_runtime_descriptor_probes_expiry_idx").on(
+      table.state,
+      table.expiresAt,
     ),
   ],
 );
@@ -4708,6 +4785,9 @@ export const runtimeInteractionDeliveries = pgTable(
       .notNull()
       .references(() => environmentRunExecutions.id, { onDelete: "cascade" }),
     runtimeRunId: text("runtime_run_id").notNull(),
+    dispatchExecutionBoundAt: timestamp("dispatch_execution_bound_at", {
+      withTimezone: true,
+    }),
     strategy: text("strategy", {
       enum: ["kestrel_continuation", "live_connection", "live_callback"],
     }).notNull(),

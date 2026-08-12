@@ -11,6 +11,7 @@ import { toKestrelOneRuntimeModelSelection } from "@/lib/agent/kestrel-runtime-m
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { requireProjectRole } from "@/lib/projects/access";
+import { requestDesktopRuntimeDescriptorProbe } from "@/lib/runtimes/desktop-descriptor-probes";
 
 export async function describeRuntimeForAdmission(input: {
   organizationId: string;
@@ -45,10 +46,27 @@ export async function describeRuntimeForAdmission(input: {
     ),
   });
   if (!environment) throw new Error("No ready Environment is available for this Runtime.");
-  if (environment.provider !== "fly") {
-    throw new Error(
-      "Kestrel One cannot perform a read-only Runtime probe through this Desktop Environment connection.",
-    );
+  if (environment.provider === "desktop") {
+    const model = await resolveDesktopDescriptorModel({
+      organizationId: input.organizationId,
+      environmentId: environment.id,
+      modelId: input.modelId,
+    });
+    const resolution = await requestDesktopRuntimeDescriptorProbe({
+      organizationId: input.organizationId,
+      environmentId: environment.id,
+      actorUserId: input.userId,
+      runtimeId: input.runtimeId,
+      requestedModelId: model.id,
+      request: {
+        client: "web",
+        runtimeId: input.runtimeId,
+        modelProvider: model.provider,
+        model: model.model,
+        environmentId: environment.id,
+      },
+    });
+    return { ...resolution, selectedModelId: model.id };
   }
   const workspace = await knowledgeDb.query.environmentWorkspaces.findFirst({
     where: and(
@@ -111,9 +129,10 @@ export async function describeRuntimeForAdmission(input: {
     target: { kind: "remote", baseUrl: environment.routerUrl, authToken: ticket },
   });
   try {
-    return await client.describeRuntime(
+    const resolution = await client.describeRuntime(
       {
         environmentPresetId: "workspace_hosted",
+        environmentId: environment.id,
         managedConfiguration: {
           runtimeId: input.runtimeId,
           label: input.runtimeId === "codex" ? "Codex" : "Claude Code",
@@ -135,9 +154,53 @@ export async function describeRuntimeForAdmission(input: {
         tenantId: input.organizationId,
       },
     );
+    return { ...resolution, selectedModelId: model.id };
   } finally {
     await client.close();
   }
+}
+
+async function resolveDesktopDescriptorModel(input: {
+  organizationId: string;
+  environmentId: string;
+  modelId?: string | undefined;
+}) {
+  const match = input.modelId?.match(
+    /^desktop-local:(openai|openrouter|anthropic|ollama|lmstudio):(.+)$/u,
+  );
+  if (!(input.modelId && match?.[1] && match[2])) {
+    throw new Error("A Desktop-local model is required for this Runtime probe.");
+  }
+  let model: string;
+  try {
+    model = decodeURIComponent(match[2]);
+  } catch {
+    throw new Error("The selected Desktop-local model ID is invalid.");
+  }
+  if (!model || model.length > 200 || encodeURIComponent(model) !== match[2]) {
+    throw new Error("The selected Desktop-local model ID is invalid.");
+  }
+  const provider = match[1] as
+    | "openai"
+    | "openrouter"
+    | "anthropic"
+    | "ollama"
+    | "lmstudio";
+  const connection = await knowledgeDb.query.desktopEnvironmentConnections.findFirst({
+    where: and(
+      eq(schema.desktopEnvironmentConnections.organizationId, input.organizationId),
+      eq(schema.desktopEnvironmentConnections.environmentId, input.environmentId),
+      eq(schema.desktopEnvironmentConnections.status, "active"),
+    ),
+    columns: { advertisedModels: true },
+  });
+  if (!connection?.advertisedModels.some(
+    (candidate) => candidate.provider === provider &&
+      candidate.model === model && candidate.health === "ready",
+  )) {
+    throw new Error("The selected Desktop-local Runtime model is unavailable.");
+  }
+  return { id: input.modelId, provider, model };
 }
 
 export async function assertRuntimeAdmissionReady(

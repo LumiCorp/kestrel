@@ -26,6 +26,12 @@ test(
     const rolledBackThreadId = `mobile-store-rollback-${suffix}`;
     const queueThreadId = `mobile-store-queue-${suffix}`;
     const retryThreadId = `mobile-store-retry-${suffix}`;
+    const foreignParentThreadId = `mobile-store-foreign-parent-${suffix}`;
+    const foreignBranchThreadId = `mobile-store-foreign-branch-${suffix}`;
+    const foreignParentBindingId = `binding:${foreignParentThreadId}`;
+    const foreignParticipantId = `runtime:${organizationId}:codex`;
+    const foreignAnchorMessageId = `message-foreign-anchor-${suffix}`;
+    const foreignModelId = `desktop-local:openai:codex-${suffix}`;
     const now = new Date();
 
     context.after(async () => {
@@ -73,6 +79,100 @@ test(
           ${organizationId}, 'mobile'
         )
       `;
+      await transaction`
+        INSERT INTO "runtime_participants" (
+          "id", "organization_id", "runtime_id", "display_name", "created_at"
+        ) VALUES (
+          ${foreignParticipantId}, ${organizationId}, 'codex', 'Codex', ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "threads" (
+          "id", "title", "created_by_user_id", "organization_id", "origin",
+          "runtime_id", "runtime_binding_id"
+        ) VALUES (
+          ${foreignParentThreadId}, 'Foreign Parent', ${userId},
+          ${organizationId}, 'web', 'codex', ${foreignParentBindingId}
+        )
+      `;
+      await transaction`
+        INSERT INTO "runtime_bindings" (
+          "id", "thread_id", "participant_id", "runtime_id",
+          "capability_digest", "environment_id", "selected_model_id",
+          "status", "native_session_state", "created_at", "updated_at"
+        ) VALUES (
+          ${foreignParentBindingId}, ${foreignParentThreadId},
+          ${foreignParticipantId}, 'codex', 'parent-capability-digest',
+          ${environmentId}, ${foreignModelId}, 'ready', 'ready', ${now}, ${now}
+        )
+      `;
+      await transaction`
+        INSERT INTO "thread_messages" (
+          "id", "thread_id", "role", "author_user_id", "parts", "source",
+          "created_at"
+        ) VALUES (
+          ${foreignAnchorMessageId}, ${foreignParentThreadId}, 'user', ${userId},
+          ${JSON.stringify([{ type: "text", text: "Foreign branch anchor" }])}::jsonb,
+          'web', ${now}
+        )
+      `;
+    });
+
+    const foreignBranchInput = {
+      threadId: foreignBranchThreadId,
+      parentThreadId: foreignParentThreadId,
+      anchorMessageId: foreignAnchorMessageId,
+      projectId: null,
+      organizationId,
+      authorUserId: userId,
+      requestedEnvironmentId: environmentId,
+      messageId: `message-foreign-branch-${suffix}`,
+      messageParts: [{ type: "text", text: "Continue in the branch" }],
+      idempotencyKey: `idempotency-foreign-branch-${suffix}`,
+      requestedModelId: foreignModelId,
+      requestedRuntimeId: "codex" as const,
+      runtimeAdmission: {
+        runtimeId: "codex" as const,
+        environmentId,
+        capabilityDigest: "fresh-branch-capability-digest",
+        selectedModelId: foreignModelId,
+        observedAt: new Date().toISOString(),
+        readinessExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+      source: "mobile" as const,
+    };
+    const foreignBranch = await store.createMobileThreadBranchWithFirstTurn(
+      foreignBranchInput,
+    );
+    const duplicateForeignBranch =
+      await store.createMobileThreadBranchWithFirstTurn(foreignBranchInput);
+    assert.equal(foreignBranch.created, true);
+    assert.equal(duplicateForeignBranch.created, false);
+    assert.equal(duplicateForeignBranch.turn.id, foreignBranch.turn.id);
+    const [foreignBinding] = await sql<
+      Array<{
+        capabilityDigest: string | null;
+        environmentId: string | null;
+        nativeSessionState: string;
+        runtimeId: string;
+        selectedModelId: string | null;
+      }>
+    >`
+      SELECT
+        "runtime_id" AS "runtimeId",
+        "capability_digest" AS "capabilityDigest",
+        "environment_id" AS "environmentId",
+        "selected_model_id" AS "selectedModelId",
+        "native_session_state" AS "nativeSessionState"
+      FROM "runtime_bindings"
+      WHERE "thread_id" = ${foreignBranchThreadId}
+    `;
+    assert.deepEqual(foreignBinding, {
+      capabilityDigest: "fresh-branch-capability-digest",
+      environmentId,
+      nativeSessionState: "uninitialized",
+      runtimeId: "codex",
+      selectedModelId: foreignModelId,
     });
 
     const atomicInput = {

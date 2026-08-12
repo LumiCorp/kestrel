@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createKestrelRuntimeDescriptorV1 } from "@kestrel-agents/protocol";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -22,24 +23,7 @@ export async function POST(request: Request) {
     const input = requestSchema.parse(await request.json());
     assertRuntimeReleased(input.runtimeId);
     if (input.runtimeId === "kestrel") {
-      const descriptor = {
-        version: "runtime_descriptor_v1" as const,
-        runtimeId: "kestrel" as const,
-        displayName: "Kestrel",
-        adapterContractVersion: 1,
-        nativeVersion: "0.7.0",
-        availability: "ready" as const,
-        interactionStrategies: ["deferred_session" as const],
-        capabilities: {
-          modes: ["chat" as const, "plan" as const, "build" as const],
-          continuation: true,
-          cancellation: true,
-          usage: true,
-          attachments: ["image" as const, "text" as const],
-          conversationPersistence: "native_resume" as const,
-          interactionRecovery: "durable_resume" as const,
-        },
-      };
+      const descriptor = createKestrelRuntimeDescriptorV1();
       return NextResponse.json({
         resolution: {
           version: "runtime_descriptor_resolution_v1",

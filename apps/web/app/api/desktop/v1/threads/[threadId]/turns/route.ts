@@ -7,15 +7,17 @@ import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
 import { KESTREL_ONE_INTERACTION_MODES } from "@/lib/turns/interaction-mode";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
-import { createDurableThreadTurn } from "@/lib/turns/store";
+import { admitDurableThreadTurn } from "@/lib/turns/admission";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { knowledgeDb } from "@/lib/knowledge/db";
+import { errorResponse } from "@/lib/knowledge/http";
 
 const bodySchema = z.object({
   messageId: routeIdSchema,
   text: z.string().trim().min(1).max(100_000),
   interactionMode: z.enum(KESTREL_ONE_INTERACTION_MODES).default("chat"),
   model: z.string().trim().min(1).max(200).optional(),
+  runtimeId: z.enum(["kestrel", "codex", "claude"]).optional().default("kestrel"),
 });
 
 export async function POST(
@@ -57,7 +59,7 @@ export async function POST(
       }),
     ]);
     if (!environment) throw new Error("No Environment is available.");
-    const durable = await createDurableThreadTurn({
+    const durable = await admitDurableThreadTurn({
       threadId,
       organizationId: candidate.organizationId,
       authorUserId: user.id,
@@ -68,6 +70,7 @@ export async function POST(
         request.headers.get("idempotency-key")?.trim() || body.messageId,
       projectContextRevisionId: projectContext?.contextRevision.id ?? null,
       requestedModelId: body.model ?? null,
+      requestedRuntimeId: body.runtimeId,
       requestedInteractionMode: body.interactionMode,
       source: "api",
     });
@@ -84,7 +87,7 @@ export async function POST(
       },
       { status: durable.created ? 202 : 200 },
     );
-  } catch {
-    return NextResponse.json({ error: "invalid_request" }, { status: 400 });
+  } catch (error) {
+    return errorResponse(error, 400);
   }
 }

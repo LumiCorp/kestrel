@@ -51,6 +51,8 @@ export class DurableTurnError extends Error {
     | "TURN_NOT_FOUND"
     | "TURN_FORBIDDEN"
     | "TURN_CONFLICT"
+    | "RUNTIME_BINDING_IMMUTABLE"
+    | "RUNTIME_BINDING_DEGRADED"
     | "QUEUE_PAUSED"
     | "INVALID_CONTEXT_REVISION";
 
@@ -313,7 +315,16 @@ async function findNextQueuedTurn(
   return turn ?? null;
 }
 
-type DurableThreadTurnInput = {
+export type RuntimeAdmissionProof = {
+  runtimeId: "codex" | "claude";
+  environmentId: string;
+  capabilityDigest: string;
+  selectedModelId: string;
+  observedAt: string;
+  readinessExpiresAt?: string | undefined;
+};
+
+export type DurableThreadTurnInput = {
   threadId: string;
   organizationId: string;
   authorUserId: string;
@@ -321,6 +332,8 @@ type DurableThreadTurnInput = {
   requestedEnvironmentId: string;
   projectContextRevisionId?: string | null;
   requestedModelId?: string | null;
+  requestedRuntimeId?: "kestrel" | "codex" | "claude" | undefined;
+  runtimeAdmission?: RuntimeAdmissionProof | undefined;
   requestedInteractionMode?: KestrelOneInteractionMode;
   source: ThreadTurnSource;
 } & (
@@ -347,6 +360,58 @@ export async function createDurableThreadTurn(input: DurableThreadTurnInput) {
   );
 }
 
+async function readExistingDurableTurn(
+  tx: TurnTransaction,
+  input: Pick<DurableThreadTurnInput, "threadId" | "idempotencyKey">,
+) {
+  const [existing] = await tx
+    .select()
+    .from(schema.threadTurns)
+    .where(and(
+      eq(schema.threadTurns.threadId, input.threadId),
+      eq(schema.threadTurns.idempotencyKey, input.idempotencyKey),
+    ))
+    .limit(1);
+  if (!existing) return null;
+  const queueState = await tx.query.threadTurnQueueState.findFirst({
+    where: eq(schema.threadTurnQueueState.threadId, input.threadId),
+  });
+  const shouldDispatch = existing.status === "queued" &&
+    queueState?.state === "running" && queueState.activeTurnId === existing.id;
+  return {
+    turn: existing,
+    created: false,
+    shouldDispatch,
+    dispatchTurnId: shouldDispatch ? existing.id : null,
+  };
+}
+
+export async function getExistingDurableThreadTurnForAdmission(input: {
+  threadId: string;
+  organizationId: string;
+  authorUserId: string;
+  idempotencyKey: string;
+  requestedRuntimeId: "kestrel" | "codex" | "claude";
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(input.threadId)}, 0))`,
+    );
+    const thread = await lockAccessibleThread(tx, {
+      threadId: input.threadId,
+      organizationId: input.organizationId,
+      userId: input.authorUserId,
+    });
+    if (thread.runtimeId !== input.requestedRuntimeId) {
+      throw new DurableTurnError(
+        "RUNTIME_BINDING_IMMUTABLE",
+        "The Runtime for an existing Thread cannot be changed.",
+      );
+    }
+    return readExistingDurableTurn(tx, input);
+  });
+}
+
 async function createDurableThreadTurnInTransaction(
   tx: TurnTransaction,
   input: DurableThreadTurnInput,
@@ -359,6 +424,15 @@ async function createDurableThreadTurnInTransaction(
     organizationId: input.organizationId,
     userId: input.authorUserId,
   });
+  const requestedRuntimeId = input.requestedRuntimeId ?? "kestrel";
+  if (thread.runtimeId !== requestedRuntimeId) {
+    throw new DurableTurnError(
+      "RUNTIME_BINDING_IMMUTABLE",
+      "The Runtime for an existing Thread cannot be changed.",
+    );
+  }
+  const existingTurn = await readExistingDurableTurn(tx, input);
+  if (existingTurn) return existingTurn;
   if (!thread.runtimeBindingId) {
     const now = new Date();
     const runtimeId = thread.runtimeId ?? "kestrel";
@@ -387,7 +461,20 @@ async function createDurableThreadTurnInTransaction(
         participantId,
         runtimeId,
         adapterContractVersion: 1,
+        capabilityDigest:
+          input.runtimeAdmission?.runtimeId === runtimeId
+            ? input.runtimeAdmission.capabilityDigest
+            : null,
+        environmentId:
+          input.runtimeAdmission?.runtimeId === runtimeId
+            ? input.runtimeAdmission.environmentId
+            : input.requestedEnvironmentId,
+        selectedModelId:
+          input.runtimeAdmission?.runtimeId === runtimeId
+            ? input.runtimeAdmission.selectedModelId
+            : input.requestedModelId ?? null,
         status: "ready",
+        nativeSessionState: runtimeId === "kestrel" ? "ready" : "uninitialized",
         createdAt: now,
         updatedAt: now,
       })
@@ -413,30 +500,88 @@ async function createDurableThreadTurnInTransaction(
     }
     thread = updatedThread;
   }
-  const [existing] = await tx
+  const [runtimeBinding] = await tx
     .select()
-    .from(schema.threadTurns)
-    .where(
-      and(
-        eq(schema.threadTurns.threadId, input.threadId),
-        eq(schema.threadTurns.idempotencyKey, input.idempotencyKey),
-      ),
-    )
-    .limit(1);
-  if (existing) {
-    const queueState = await tx.query.threadTurnQueueState.findFirst({
-      where: eq(schema.threadTurnQueueState.threadId, input.threadId),
-    });
-    const shouldDispatch =
-      existing.status === "queued" &&
-      queueState?.state === "running" &&
-      queueState.activeTurnId === existing.id;
-    return {
-      turn: existing,
-      created: false,
-      shouldDispatch,
-      dispatchTurnId: shouldDispatch ? existing.id : null,
-    };
+    .from(schema.runtimeBindings)
+    .where(eq(schema.runtimeBindings.threadId, thread.id))
+    .limit(1)
+    .for("update");
+  if (!runtimeBinding || runtimeBinding.runtimeId !== requestedRuntimeId) {
+    throw new DurableTurnError(
+      "RUNTIME_BINDING_IMMUTABLE",
+      "The Thread Runtime binding does not match the requested Runtime.",
+    );
+  }
+  if (
+    runtimeBinding.environmentId !== null &&
+    runtimeBinding.environmentId !== input.requestedEnvironmentId
+  ) {
+    throw new DurableTurnError(
+      "RUNTIME_BINDING_IMMUTABLE",
+      "The Environment for an existing Runtime binding cannot be changed.",
+    );
+  }
+  if (
+    runtimeBinding.selectedModelId !== null &&
+    runtimeBinding.selectedModelId !== (input.requestedModelId ?? null)
+  ) {
+    throw new DurableTurnError(
+      "RUNTIME_BINDING_IMMUTABLE",
+      "The model route for an existing Runtime binding cannot be changed.",
+    );
+  }
+  if (
+    runtimeBinding.status === "degraded" ||
+    runtimeBinding.status === "released" ||
+    runtimeBinding.nativeSessionState === "degraded" ||
+    runtimeBinding.nativeSessionState === "released"
+  ) {
+    throw new DurableTurnError(
+      "RUNTIME_BINDING_DEGRADED",
+      "This Thread is read-only. Create the offered recovery fork to continue.",
+    );
+  }
+  if (requestedRuntimeId !== "kestrel" && runtimeBinding.nativeSessionState === "uninitialized") {
+    const proof = input.runtimeAdmission;
+    const observedAt = proof ? Date.parse(proof.observedAt) : Number.NaN;
+    const expiresAt = proof?.readinessExpiresAt
+      ? Date.parse(proof.readinessExpiresAt)
+      : Number.POSITIVE_INFINITY;
+    if (
+      !proof ||
+      proof.runtimeId !== requestedRuntimeId ||
+      proof.environmentId !== input.requestedEnvironmentId ||
+      proof.selectedModelId !== input.requestedModelId ||
+      !Number.isFinite(observedAt) ||
+      observedAt < Date.now() - 60_000 ||
+      observedAt > Date.now() + 60_000 ||
+      expiresAt <= Date.now()
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "A fresh matching Runtime readiness proof is required for the first Turn.",
+      );
+    }
+    if (
+      runtimeBinding.capabilityDigest !== null &&
+      runtimeBinding.capabilityDigest !== proof.capabilityDigest
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "Runtime readiness changed after this Thread was bound.",
+      );
+    }
+    if (runtimeBinding.capabilityDigest === null) {
+      await tx
+        .update(schema.runtimeBindings)
+        .set({
+          capabilityDigest: proof.capabilityDigest,
+          environmentId: proof.environmentId,
+          selectedModelId: proof.selectedModelId,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.runtimeBindings.id, runtimeBinding.id));
+    }
   }
   if (input.projectContextRevisionId) {
     const [revision] = await tx
@@ -710,6 +855,116 @@ export async function createMobileThreadWithFirstTurn(
   });
 }
 
+export async function createWebThreadWithFirstTurn(
+  input: DurableThreadTurnInput & { projectId: string | null },
+) {
+  return knowledgeDb.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(input.threadId)}, 0))`,
+    );
+    const requestedRuntimeId = input.requestedRuntimeId ?? "kestrel";
+    const existing = await tx.query.threads.findFirst({
+      where: eq(schema.threads.id, input.threadId),
+    });
+    if (existing) {
+      if (
+        existing.organizationId !== input.organizationId ||
+        existing.createdByUserId !== input.authorUserId ||
+        existing.origin !== "web" ||
+        existing.mode !== "chat" ||
+        existing.projectId !== input.projectId ||
+        existing.runtimeId !== requestedRuntimeId
+      ) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The Thread ID is already in use.",
+        );
+      }
+      return createDurableThreadTurnInTransaction(tx, input);
+    }
+    if (
+      requestedRuntimeId !== "kestrel" &&
+      (!input.runtimeAdmission ||
+        input.runtimeAdmission.runtimeId !== requestedRuntimeId ||
+        input.runtimeAdmission.environmentId !== input.requestedEnvironmentId ||
+        input.runtimeAdmission.selectedModelId !== input.requestedModelId)
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "A fresh matching Runtime readiness proof is required before Thread creation.",
+      );
+    }
+    const now = new Date();
+    const participantId = `runtime:${input.organizationId}:${requestedRuntimeId}`;
+    const runtimeBindingId = `binding:${input.threadId}`;
+    await tx
+      .insert(schema.runtimeParticipants)
+      .values({
+        id: participantId,
+        organizationId: input.organizationId,
+        runtimeId: requestedRuntimeId,
+        displayName:
+          requestedRuntimeId === "kestrel"
+            ? "Kestrel"
+            : requestedRuntimeId === "codex"
+              ? "Codex"
+              : "Claude Code",
+        createdAt: now,
+      })
+      .onConflictDoNothing();
+    const [thread] = await tx
+      .insert(schema.threads)
+      .values({
+        id: input.threadId,
+        createdByUserId: input.authorUserId,
+        organizationId: input.organizationId,
+        projectId: input.projectId,
+        mode: "chat",
+        origin: "web",
+        runtimeId: requestedRuntimeId,
+        runtimeBindingId,
+        activeStreamId: null,
+        title: "",
+        isPublic: false,
+        shareToken: null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!thread) throw new Error("Thread creation failed.");
+    await tx.insert(schema.runtimeBindings).values({
+      id: runtimeBindingId,
+      threadId: thread.id,
+      participantId,
+      runtimeId: requestedRuntimeId,
+      adapterContractVersion: 1,
+      capabilityDigest: input.runtimeAdmission?.capabilityDigest ?? null,
+      environmentId: input.requestedEnvironmentId,
+      selectedModelId:
+        requestedRuntimeId === "kestrel"
+          ? null
+          : input.requestedModelId ?? null,
+      status: "ready",
+      nativeSessionState:
+        requestedRuntimeId === "kestrel" ? "ready" : "uninitialized",
+      createdAt: now,
+      updatedAt: now,
+    });
+    if (input.projectId) {
+      await tx.insert(schema.projectAuditEvents).values({
+        id: crypto.randomUUID(),
+        projectId: input.projectId,
+        actorUserId: input.authorUserId,
+        action: "thread.created",
+        targetType: "thread",
+        targetId: input.threadId,
+        createdAt: now,
+      });
+    }
+    return createDurableThreadTurnInTransaction(tx, input);
+  });
+}
+
 async function runMobileThreadTransaction<T>(
   callback: (tx: TurnTransaction) => Promise<T>,
 ): Promise<T> {
@@ -748,6 +1003,49 @@ export async function createMobileThreadBranchWithFirstTurn(
     });
     if (parent.mode !== "chat" || parent.projectId !== input.projectId) {
       throw new DurableTurnError("TURN_CONFLICT", "Branch context changed.");
+    }
+    const requestedRuntimeId = input.requestedRuntimeId ?? "kestrel";
+    const [parentBinding] = parent.runtimeBindingId
+      ? await tx
+          .select()
+          .from(schema.runtimeBindings)
+          .where(
+            and(
+              eq(schema.runtimeBindings.id, parent.runtimeBindingId),
+              eq(schema.runtimeBindings.threadId, parent.id),
+              eq(schema.runtimeBindings.runtimeId, parent.runtimeId),
+            ),
+          )
+          .limit(1)
+          .for("update")
+      : [];
+    if (!parentBinding) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The parent Thread Runtime binding is unavailable.",
+      );
+    }
+    if (
+      parentBinding.status === "degraded" ||
+      parentBinding.status === "released" ||
+      parentBinding.nativeSessionState === "degraded" ||
+      parentBinding.nativeSessionState === "released"
+    ) {
+      throw new DurableTurnError(
+        "RUNTIME_BINDING_DEGRADED",
+        "This Thread is read-only. Create the offered recovery fork to continue.",
+      );
+    }
+    if (
+      requestedRuntimeId !== parent.runtimeId ||
+      (parent.runtimeId !== "kestrel" &&
+        (parentBinding.environmentId !== input.requestedEnvironmentId ||
+          parentBinding.selectedModelId !== input.requestedModelId))
+    ) {
+      throw new DurableTurnError(
+        "RUNTIME_BINDING_IMMUTABLE",
+        "The branch Runtime route must match its parent Thread.",
+      );
     }
     const [anchor] = await tx
       .select()
@@ -826,7 +1124,13 @@ export async function createMobileThreadBranchWithFirstTurn(
       participantId,
       runtimeId: parent.runtimeId,
       adapterContractVersion: 1,
+      capabilityDigest: input.runtimeAdmission?.capabilityDigest ?? null,
+      environmentId:
+        input.runtimeAdmission?.environmentId ?? input.requestedEnvironmentId,
+      selectedModelId:
+        input.runtimeAdmission?.selectedModelId ?? input.requestedModelId ?? null,
       status: "ready",
+      nativeSessionState: parent.runtimeId === "kestrel" ? "ready" : "uninitialized",
       createdAt: now,
       updatedAt: now,
     });
@@ -1054,11 +1358,14 @@ export async function claimDurableThreadTurn(
           interactionResponse:
             response &&
             typeof response.eventType === "string" &&
-            typeof response.message === "string"
+            (typeof response.message === "string" ||
+              readAnswerMap(response.answers) !== undefined)
               ? {
                   requestId: interaction.requestId,
                   eventType: response.eventType,
-                  message: response.message,
+                  ...(typeof response.message === "string"
+                    ? { message: response.message }
+                    : {}),
                   ...(readAnswerMap(response.answers) !== undefined
                     ? { answers: readAnswerMap(response.answers)! }
                     : {}),
@@ -1567,7 +1874,7 @@ export async function resolveDurableRuntimeInteraction(input: {
   userId: string;
   requestId: string;
   eventType: string;
-  message: string;
+  message?: string | undefined;
   answers?: Record<string, string[]> | undefined;
   approved?: boolean | undefined;
   reason?: string | undefined;
@@ -1719,7 +2026,7 @@ export async function resolveDurableRuntimeInteraction(input: {
     const responseEnvelope = {
       requestId: input.requestId,
       eventType: input.eventType,
-      message: input.message,
+      ...(input.message !== undefined ? { message: input.message } : {}),
       messageId: input.messageId,
       ...(normalizedAnswers !== undefined
         ? { answers: normalizedAnswers }
@@ -1739,8 +2046,11 @@ export async function resolveDurableRuntimeInteraction(input: {
       role: "user",
       authorUserId: input.userId,
       projectContextRevisionId: turn.projectContextRevisionId,
-      parts: [{ type: "text", text: input.message }],
-      searchText: input.message,
+      parts: [{
+        type: "text",
+        text: input.message ?? formatStructuredRuntimeAnswers(normalizedAnswers),
+      }],
+      searchText: input.message ?? formatStructuredRuntimeAnswers(normalizedAnswers),
       source: input.source,
       createdAt: now,
     });
@@ -1879,7 +2189,12 @@ export async function acknowledgeDurableRuntimeInteractionDelivery(input: {
       )
       .limit(1)
       .for("update");
-    if (!interaction) return null;
+    if (!interaction) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime acknowledgement does not match a durable interaction.",
+      );
+    }
     const [delivery] = await tx
       .select()
       .from(schema.runtimeInteractionDeliveries)
@@ -1994,7 +2309,12 @@ export async function bindDurableRuntimeInteractionDeliveryExecution(input: {
       )
       .limit(1)
       .for("update");
-    if (!interaction) return null;
+    if (!interaction) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime delivery execution does not match a durable interaction.",
+      );
+    }
     const [delivery] = await tx
       .select()
       .from(schema.runtimeInteractionDeliveries)
@@ -2023,17 +2343,71 @@ export async function bindDurableRuntimeInteractionDeliveryExecution(input: {
         "The Runtime response is not awaiting delivery.",
       );
     }
-    if (sameExecution) return delivery;
+    if (delivery.dispatchExecutionBoundAt !== null) {
+      if (sameExecution) return delivery;
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "A Runtime response cannot be rebound to another execution.",
+      );
+    }
+    const [correlation] = await tx
+      .select({
+        threadId: schema.threadTurns.threadId,
+        organizationId: schema.threadTurns.organizationId,
+        requestedEnvironmentId: schema.threadTurns.requestedEnvironmentId,
+        currentExecutionId: schema.threadTurns.environmentExecutionId,
+        runtimeBindingId: schema.threads.runtimeBindingId,
+        executionThreadId: schema.environmentRunExecutions.threadId,
+        executionOrganizationId: schema.environmentRunExecutions.organizationId,
+        executionEnvironmentId: schema.environmentRunExecutions.environmentId,
+        executionRuntimeRunId: schema.environmentRunExecutions.runtimeRunId,
+      })
+      .from(schema.threadTurns)
+      .innerJoin(
+        schema.threads,
+        eq(schema.threads.id, schema.threadTurns.threadId),
+      )
+      .innerJoin(
+        schema.environmentRunExecutions,
+        eq(schema.environmentRunExecutions.id, input.environmentExecutionId),
+      )
+      .where(eq(schema.threadTurns.id, input.turnId))
+      .limit(1)
+      .for("update");
+    if (
+      !correlation ||
+      correlation.runtimeBindingId !== input.bindingId ||
+      correlation.currentExecutionId !== input.environmentExecutionId ||
+      correlation.executionOrganizationId !== correlation.organizationId ||
+      correlation.executionThreadId !== correlation.threadId ||
+      correlation.executionEnvironmentId !== correlation.requestedEnvironmentId ||
+      correlation.executionRuntimeRunId !== input.runtimeRunId
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime delivery execution does not match the active Turn authority.",
+      );
+    }
     const [updated] = await tx
       .update(schema.runtimeInteractionDeliveries)
       .set({
         environmentExecutionId: input.environmentExecutionId,
         runtimeRunId: input.runtimeRunId,
+        dispatchExecutionBoundAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(schema.runtimeInteractionDeliveries.id, delivery.id))
+      .where(and(
+        eq(schema.runtimeInteractionDeliveries.id, delivery.id),
+        isNull(schema.runtimeInteractionDeliveries.dispatchExecutionBoundAt),
+      ))
       .returning();
-    return updated ?? null;
+    if (!updated) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime delivery execution was already bound.",
+      );
+    }
+    return updated;
   });
 }
 
@@ -2042,18 +2416,50 @@ export async function markRuntimeNativeSessionEstablished(input: {
   bindingId: string;
   runtimeId: "codex" | "claude";
 }) {
-  const [binding] = await knowledgeDb
-    .update(schema.runtimeBindings)
-    .set({ nativeSessionState: "ready", updatedAt: new Date() })
-    .where(
-      and(
+  return knowledgeDb.transaction(async (tx) => {
+    const [binding] = await tx
+      .select()
+      .from(schema.runtimeBindings)
+      .where(and(
         eq(schema.runtimeBindings.id, input.bindingId),
         eq(schema.runtimeBindings.threadId, input.threadId),
         eq(schema.runtimeBindings.runtimeId, input.runtimeId),
-      ),
-    )
-    .returning();
-  return binding ?? null;
+      ))
+      .limit(1)
+      .for("update");
+    if (!binding) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime native session does not match a durable binding.",
+      );
+    }
+    if (
+      binding.status !== "ready" ||
+      binding.nativeSessionState === "degraded" ||
+      binding.nativeSessionState === "released"
+    ) {
+      throw new DurableTurnError(
+        "RUNTIME_BINDING_DEGRADED",
+        "A degraded or released Runtime binding cannot be re-established.",
+      );
+    }
+    if (binding.nativeSessionState === "ready") return binding;
+    const [updated] = await tx
+      .update(schema.runtimeBindings)
+      .set({ nativeSessionState: "ready", updatedAt: new Date() })
+      .where(and(
+        eq(schema.runtimeBindings.id, binding.id),
+        eq(schema.runtimeBindings.nativeSessionState, "uninitialized"),
+      ))
+      .returning();
+    if (!updated) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime native session lifecycle changed concurrently.",
+      );
+    }
+    return updated;
+  });
 }
 
 export async function failDurableRuntimeInteractionDelivery(input: {
@@ -2075,7 +2481,37 @@ export async function failDurableRuntimeInteractionDelivery(input: {
       )
       .limit(1)
       .for("update");
-    if (!interaction || interaction.status !== "processing") return null;
+    if (!interaction) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The lost Runtime wait does not match a durable interaction.",
+      );
+    }
+    const [delivery] = await tx
+      .select()
+      .from(schema.runtimeInteractionDeliveries)
+      .where(eq(schema.runtimeInteractionDeliveries.interactionId, interaction.id))
+      .limit(1)
+      .for("update");
+    if (!delivery) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The lost Runtime wait is missing its durable delivery ledger.",
+      );
+    }
+    if (interaction.status === "failed" && delivery.state === "failed") {
+      if (delivery.failureCode === input.code) return interaction;
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "A different failure already settled this Runtime delivery.",
+      );
+    }
+    if (interaction.status !== "processing" || delivery.state !== "delivering") {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The Runtime interaction is not awaiting native delivery proof.",
+      );
+    }
     const now = new Date();
     await tx
       .update(schema.runtimeInteractionDeliveries)
@@ -2098,7 +2534,7 @@ export async function failDurableRuntimeInteractionDelivery(input: {
 function validateRuntimeInteractionAnswers(input: {
   inputSchema: Record<string, unknown> | null;
   answers?: Record<string, string[]> | undefined;
-  legacyMessage: string;
+  legacyMessage?: string | undefined;
 }): Record<string, string[]> {
   if (input.inputSchema === null) {
     throw new DurableTurnError(
@@ -2111,17 +2547,38 @@ function validateRuntimeInteractionAnswers(input: {
         (value): value is string => typeof value === "string",
       )
     : [];
-  const legacyQuestionId = input.answers === undefined && required.length === 1
+  const properties = readPlainRecord(input.inputSchema.properties);
+  const propertyIds = properties ? Object.keys(properties) : [];
+  const legacyQuestionId = input.answers === undefined &&
+      input.legacyMessage !== undefined &&
+      required.length === 1 &&
+      propertyIds.length === 1 &&
+      propertyIds[0] === required[0]
     ? required[0]
     : undefined;
   const answers = input.answers ??
-    (legacyQuestionId !== undefined
+    (legacyQuestionId !== undefined && input.legacyMessage !== undefined
       ? { [legacyQuestionId]: [input.legacyMessage] }
       : undefined);
   if (answers === undefined) {
     throw new DurableTurnError(
       "TURN_CONFLICT",
       "This runtime question requires structured answers for every question.",
+    );
+  }
+  if (
+    Object.keys(answers).some((questionId) => !propertyIds.includes(questionId)) ||
+    required.some((questionId) => !(questionId in answers)) ||
+    Object.values(answers).some(
+      (selections) =>
+        !Array.isArray(selections) ||
+        selections.length === 0 ||
+        selections.some((selection) => typeof selection !== "string"),
+    )
+  ) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The interaction response does not match the pending runtime question.",
     );
   }
   let validate;
@@ -2133,7 +2590,6 @@ function validateRuntimeInteractionAnswers(input: {
       "The runtime question contains an invalid answer contract.",
     );
   }
-  const properties = readPlainRecord(input.inputSchema.properties);
   const legacyQuestionSchema = legacyQuestionId === undefined
     ? null
     : readPlainRecord(properties?.[legacyQuestionId]);
@@ -2149,6 +2605,15 @@ function validateRuntimeInteractionAnswers(input: {
   return answers;
 }
 
+function formatStructuredRuntimeAnswers(
+  answers: Record<string, string[]> | undefined,
+): string {
+  if (!answers) return "Interaction response submitted.";
+  return Object.entries(answers)
+    .map(([questionId, selections]) => `${questionId}: ${selections.join(", ")}`)
+    .join("\n");
+}
+
 function readPlainRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -2157,7 +2622,7 @@ function readPlainRecord(value: unknown): Record<string, unknown> | null {
 
 function readAnswerMap(value: unknown): Record<string, string[]> | undefined {
   const record = readPlainRecord(value);
-  if (record === null) return undefined;
+  if (record === null) return;
   const answers: Record<string, string[]> = {};
   for (const [questionId, selections] of Object.entries(record)) {
     if (
@@ -2166,7 +2631,7 @@ function readAnswerMap(value: unknown): Record<string, string[]> | undefined {
       selections.length === 0 ||
       selections.some((selection) => typeof selection !== "string")
     ) {
-      return undefined;
+      return;
     }
     answers[questionId] = selections as string[];
   }
@@ -2886,6 +3351,69 @@ export async function getDurableTurn(turnId: string) {
       where: eq(schema.threadTurns.id, turnId),
     })) ?? null
   );
+}
+
+export async function markRuntimeEventReconciliationPending(input: {
+  turnId: string;
+  code?: string | undefined;
+}) {
+  const [turn] = await knowledgeDb
+    .select({ environmentExecutionId: schema.threadTurns.environmentExecutionId })
+    .from(schema.threadTurns)
+    .where(eq(schema.threadTurns.id, input.turnId))
+    .limit(1);
+  if (!turn?.environmentExecutionId) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The Runtime event cannot be reconciled without an Environment execution.",
+    );
+  }
+  const [updated] = await knowledgeDb
+    .update(schema.environmentRunExecutions)
+    .set({
+      runtimeEventReconciliationState: "pending",
+      runtimeEventReconciliationAttempts:
+        sql`${schema.environmentRunExecutions.runtimeEventReconciliationAttempts} + 1`,
+      runtimeEventReconciliationCode:
+        input.code ?? "RUNTIME_EVENT_PERSISTENCE_FAILED",
+      runtimeEventReconciliationAttemptedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(schema.environmentRunExecutions.id, turn.environmentExecutionId),
+      inArray(schema.environmentRunExecutions.status, ["routed", "running"]),
+    ))
+    .returning({ id: schema.environmentRunExecutions.id });
+  if (!updated) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The Runtime event reconciliation execution is no longer active.",
+    );
+  }
+  return true;
+}
+
+export async function clearRuntimeEventReconciliation(input: {
+  environmentExecutionId: string;
+}) {
+  const [updated] = await knowledgeDb
+    .update(schema.environmentRunExecutions)
+    .set({
+      runtimeEventReconciliationState: "idle",
+      runtimeEventReconciliationCode: null,
+      updatedAt: new Date(),
+    })
+    .where(and(
+      eq(schema.environmentRunExecutions.id, input.environmentExecutionId),
+      inArray(schema.environmentRunExecutions.status, ["routed", "running"]),
+    ))
+    .returning({ id: schema.environmentRunExecutions.id });
+  if (!updated) {
+    throw new DurableTurnError(
+      "TURN_CONFLICT",
+      "The Runtime event reconciliation execution is no longer active.",
+    );
+  }
 }
 
 export async function getActiveDurableTurnForThread(threadId: string) {

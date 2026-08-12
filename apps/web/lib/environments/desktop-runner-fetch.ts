@@ -9,6 +9,14 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueDesktopEnvironmentCommand } from "./desktop";
+import {
+  composeKestrelOneProfile,
+  fingerprintResolvedProfile,
+  KESTREL_ONE_POLICY_ID,
+  KESTREL_ONE_POLICY_VERSION,
+  KESTREL_ONE_ENVIRONMENT_PRESETS,
+  type KestrelOneProfileOverlay,
+} from "../../../../src/profile/kestrelOnePolicy";
 
 const POLL_INTERVAL_MS = 250;
 const DEFAULT_DESKTOP_PROFILE: RunnerProfile = {
@@ -26,6 +34,7 @@ export function createDesktopEnvironmentRunnerFetch(input: {
   executionId: string;
   actorUserId: string;
 }): typeof fetch {
+  const resolvedProfiles = new Map<string, RunnerProfile>();
   const runnerFetch = async (_url: RequestInfo | URL, init?: RequestInit) => {
     let command: RunnerCommand;
     try {
@@ -45,7 +54,10 @@ export function createDesktopEnvironmentRunnerFetch(input: {
     }
 
     if (command.type === "profile.get") {
-      if (command.payload.profileId !== DEFAULT_DESKTOP_PROFILE.id) {
+      const profile = command.payload.profileId === DEFAULT_DESKTOP_PROFILE.id
+        ? DEFAULT_DESKTOP_PROFILE
+        : resolvedProfiles.get(command.payload.profileId);
+      if (profile === undefined) {
         return jsonResponse(
           runnerErrorEvent({
             commandId: command.id,
@@ -62,7 +74,7 @@ export function createDesktopEnvironmentRunnerFetch(input: {
           ts: new Date().toISOString(),
           commandId: command.id,
           payload: {
-            profile: DEFAULT_DESKTOP_PROFILE,
+            profile,
           },
         }),
       );
@@ -74,9 +86,66 @@ export function createDesktopEnvironmentRunnerFetch(input: {
           type: "profile.listed",
           ts: new Date().toISOString(),
           commandId: command.id,
-          payload: { profiles: [DEFAULT_DESKTOP_PROFILE] },
+          payload: { profiles: [DEFAULT_DESKTOP_PROFILE, ...resolvedProfiles.values()] },
         }),
       );
+    }
+    if (command.type === "execution-profile.resolve") {
+      if (
+        command.payload.environmentPresetId !== "workspace_hosted" ||
+        command.payload.authoringProfileId !== undefined
+      ) {
+        return jsonResponse(
+          runnerErrorEvent({
+            commandId: command.id,
+            code: "DESKTOP_EXECUTION_PROFILE_INVALID",
+            message: "Desktop Environment accepts only server-managed workspace profiles.",
+          }),
+          400,
+        );
+      }
+      try {
+        const composed = composeKestrelOneProfile({
+          environmentPresetId: "workspace_hosted",
+          overlay: command.payload.managedConfiguration as
+            | KestrelOneProfileOverlay
+            | undefined,
+        });
+        const fingerprint = fingerprintResolvedProfile(composed.profile);
+        const profile = structuredClone(composed.profile) as RunnerProfile;
+        resolvedProfiles.set(profile.id, profile);
+        return jsonResponse(
+          parseRunnerEventV2({
+            id: crypto.randomUUID(),
+            type: "execution-profile.resolved",
+            ts: new Date().toISOString(),
+            commandId: command.id,
+            payload: {
+              version: 1,
+              profileId: profile.id,
+              fingerprint,
+              policy: {
+                id: KESTREL_ONE_POLICY_ID,
+                version: KESTREL_ONE_POLICY_VERSION,
+              },
+              environmentPreset: {
+                id: "workspace_hosted",
+                version: KESTREL_ONE_ENVIRONMENT_PRESETS.workspace_hosted.version,
+              },
+              resolvedProfile: profile,
+            },
+          }),
+        );
+      } catch (error) {
+        return jsonResponse(
+          runnerErrorEvent({
+            commandId: command.id,
+            code: "DESKTOP_EXECUTION_PROFILE_INVALID",
+            message: errorMessage(error),
+          }),
+          400,
+        );
+      }
     }
     if (command.type === "run.cancel") {
       await requestDesktopExecutionCancellation({
@@ -117,13 +186,29 @@ export function createDesktopEnvironmentRunnerFetch(input: {
       );
     }
 
+    let authoritativeCommand: Extract<RunnerCommand, { type: "run.start" }>;
+    try {
+      authoritativeCommand = materializeDesktopRunStartProfile(
+        command,
+        resolvedProfiles,
+      );
+    } catch (error) {
+      return jsonResponse(
+        runnerErrorEvent({
+          commandId: command.id,
+          code: "DESKTOP_EXECUTION_PROFILE_INVALID",
+          message: errorMessage(error),
+        }),
+        400,
+      );
+    }
     const queued = await enqueueDesktopEnvironmentCommand({
       id: command.id,
       organizationId: input.organizationId,
       environmentId: input.environmentId,
       workspaceId: input.workspaceId,
       executionId: input.executionId,
-      payload: command as unknown as Record<string, unknown>,
+      payload: authoritativeCommand as unknown as Record<string, unknown>,
     });
     if (!queued) {
       return jsonResponse(
@@ -138,6 +223,28 @@ export function createDesktopEnvironmentRunnerFetch(input: {
     return streamDesktopCommand(command, input.executionId);
   };
   return runnerFetch as typeof fetch;
+}
+
+export function materializeDesktopRunStartProfile(
+  command: Extract<RunnerCommand, { type: "run.start" }>,
+  resolvedProfiles: ReadonlyMap<string, RunnerProfile>,
+): Extract<RunnerCommand, { type: "run.start" }> {
+  if (command.payload.profile !== undefined) {
+    throw new Error("Desktop run.start requires a server-resolved profile identity.");
+  }
+  const profile = resolvedProfiles.get(command.payload.profileId);
+  if (profile === undefined) {
+    throw new Error(
+      `Desktop execution profile '${command.payload.profileId}' was not resolved for this execution.`,
+    );
+  }
+  return parseRunnerCommandV2({
+    ...command,
+    payload: {
+      profile: structuredClone(profile),
+      turn: command.payload.turn,
+    },
+  }) as Extract<RunnerCommand, { type: "run.start" }>;
 }
 
 async function requestDesktopExecutionCancellation(input: {

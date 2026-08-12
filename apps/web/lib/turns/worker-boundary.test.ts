@@ -73,6 +73,33 @@ test(
 );
 
 test(
+  "Runtime event persistence reconciliation survives queue retry exhaustion",
+  async () => {
+    const [queueSource, runtimeSource] = await Promise.all([
+      readFile(new URL("./queue.ts", import.meta.url), "utf8"),
+      readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
+    ]);
+
+    assert.match(
+      queueSource,
+      /runtimeEventReconciliationState === "pending"[\s\S]*return false/u,
+    );
+    assert.match(
+      queueSource,
+      /turn\.runtimeEventReconciliationState === "pending"[\s\S]*dispatchTurnOrReconcile/u,
+    );
+    assert.match(
+      runtimeSource,
+      /interruptedExecution\?\.runtimeEventReconciliationState === "pending"/u,
+    );
+    assert.match(
+      runtimeSource,
+      /markRuntimeEventReconciliationPending\(\{ turnId: turn\.id \}\)/u,
+    );
+  },
+);
+
+test(
   "durable turns use a long lease with worker heartbeats",
   async () => {
     const queueSource = await readFile(

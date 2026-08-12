@@ -16,3 +16,18 @@ test("protected route authentication failures return 401", async () => {
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { error: "Unauthorized" });
 });
+
+test("Runtime admission failures preserve their public conflict code", async () => {
+  const response = errorResponse(
+    Object.assign(new Error("The Runtime binding is read-only."), {
+      code: "RUNTIME_BINDING_DEGRADED",
+    }),
+    400,
+  );
+
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: "The Runtime binding is read-only.",
+    code: "RUNTIME_BINDING_DEGRADED",
+  });
+});

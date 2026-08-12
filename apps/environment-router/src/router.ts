@@ -111,6 +111,25 @@ export function authorizeEnvironmentRequest(input: {
   if (!(requiredCapability && ticket.capabilities.includes(requiredCapability))) {
     return { status: 403, code: "ENVIRONMENT_CAPABILITY_DENIED" };
   }
+  if (
+    command.type === "runtime.describe" &&
+    command.environmentId !== ticket.environmentId
+  ) {
+    return { status: 403, code: "ENVIRONMENT_ID_MISMATCH" };
+  }
+  if (
+    command.type === "runtime.release" &&
+    (command.environmentId !== ticket.environmentId ||
+      command.threadId !== ticket.threadId)
+  ) {
+    return {
+      status: 403,
+      code:
+        command.environmentId !== ticket.environmentId
+          ? "ENVIRONMENT_ID_MISMATCH"
+          : "ENVIRONMENT_THREAD_MISMATCH",
+    };
+  }
   if (command.sessionId && command.sessionId !== ticket.threadId) {
     return { status: 403, code: "ENVIRONMENT_THREAD_MISMATCH" };
   }
@@ -239,6 +258,8 @@ function parseCommand(value: unknown): {
   tenantId: string | undefined;
   sessionId: string | undefined;
   action: string | undefined;
+  environmentId: string | undefined;
+  threadId: string | undefined;
 } | null {
   if (!isRecord(value) || typeof value.type !== "string") return null;
   const metadata = isRecord(value.metadata) ? value.metadata : null;
@@ -247,6 +268,14 @@ function parseCommand(value: unknown): {
   return {
     type: value.type,
     action: payload && typeof payload.action === "string" ? payload.action : undefined,
+    environmentId:
+      payload && typeof payload.environmentId === "string"
+        ? payload.environmentId
+        : undefined,
+    threadId:
+      payload && typeof payload.threadId === "string"
+        ? payload.threadId
+        : undefined,
     tenantId:
       metadata && typeof metadata.tenantId === "string"
         ? metadata.tenantId

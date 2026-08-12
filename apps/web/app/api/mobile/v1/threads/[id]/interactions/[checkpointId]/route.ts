@@ -4,6 +4,7 @@ import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { resolveMcpInteraction } from "@/lib/mcp/interactions";
 import { mobileErrorResponse } from "@/lib/mobile/http";
+import { normalizeMobileRuntimeAnswers } from "@/lib/mobile/runtime-answers";
 import { getMobileThreadSnapshotForRequest } from "@/lib/mobile/snapshot";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
 import {
@@ -28,6 +29,9 @@ const bodySchema = z.object({
       z.string(),
       z.union([z.string(), z.number(), z.boolean(), z.array(z.string())])
     )
+    .optional(),
+  answers: z
+    .record(z.string(), z.array(z.string()).min(1).max(100))
     .optional(),
   message: z.string().trim().min(1).max(20_000).optional(),
 }).strict();
@@ -61,6 +65,7 @@ export async function POST(
       const answer = typeof body.content?.answer === "string"
         ? body.content.answer.trim() || undefined
         : undefined;
+      const answers = body.answers ?? normalizeMobileRuntimeAnswers(body.content);
       if (pending.kind === "approval" && body.decision === undefined) {
         throw new Error("An approval interaction requires a decision.");
       }
@@ -91,11 +96,12 @@ export async function POST(
         pending.kind !== "approval" &&
         recoveryReview === null &&
         body.message === undefined &&
-        answer === undefined
+        answer === undefined &&
+        answers === undefined
       ) {
         throw new Error("A question interaction requires a message or answer.");
       }
-      const message =
+      const message: string | undefined =
         body.recoveryOptionId !== undefined
           ? recoveryOptionLabel(body.recoveryOptionId)
           : body.message ??
@@ -105,14 +111,17 @@ export async function POST(
             : "Denied"
           : answer !== undefined
             ? answer
-            : JSON.stringify(body.content ?? {}));
+            : undefined);
       const resumed = await resolveDurableRuntimeInteraction({
         organizationId,
         threadId: params.id,
         userId: session.user.id,
         requestId: pending.requestId,
         eventType: pending.eventType,
-        message,
+        ...(message !== undefined ? { message } : {}),
+        ...(pending.kind === "user_input" && answers !== undefined
+          ? { answers }
+          : {}),
         ...(pending.kind === "approval"
           ? { approved: body.decision === "approve" }
           : {}),

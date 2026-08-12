@@ -16,6 +16,7 @@ import {
 } from "@lumi/kestrel-environment-auth";
 import { KestrelClient } from "@kestrel-agents/sdk/runner";
 import type {
+  RunnerEventEnvelope,
   RunnerProfile,
   RuntimeReleaseCommandPayload,
 } from "@kestrel-agents/protocol";
@@ -29,7 +30,7 @@ export type RuntimeReleaseDelivery = (
     workspaceId: string;
     actorUserId: string;
   },
-) => Promise<void>;
+) => Promise<RunnerEventEnvelope<"runtime.released">>;
 
 /**
  * Delivers a bounded batch of durable native-binding cleanup jobs. Failed
@@ -85,7 +86,7 @@ export async function processRuntimeBindingReleaseOutbox(
       .returning();
     if (!claimed) continue;
     try {
-      await deliver({
+      const acknowledgement = await deliver({
         outboxId: claimed.id,
         organizationId: claimed.organizationId,
         runtimeId: claimed.runtimeId,
@@ -96,10 +97,12 @@ export async function processRuntimeBindingReleaseOutbox(
         workspaceId: claimed.workspaceId,
         actorUserId: claimed.actorUserId,
       });
+      assertRuntimeReleaseAcknowledgement(claimed, acknowledgement);
       await knowledgeDb
         .update(schema.runtimeBindingReleaseOutbox)
         .set({
           state: "released",
+          acknowledgementEventId: acknowledgement.id,
           acknowledgedAt: new Date(),
           updatedAt: new Date(),
         })
@@ -133,7 +136,7 @@ export async function deliverRuntimeBindingRelease(
     workspaceId: string;
     actorUserId: string;
   },
-): Promise<void> {
+): Promise<RunnerEventEnvelope<"runtime.released">> {
   const route = await resolveRuntimeBindingReleaseRoute(input);
   const profile: RunnerProfile = {
     id: `runtime-release-${input.runtimeId}`,
@@ -151,7 +154,7 @@ export async function deliverRuntimeBindingRelease(
     },
   });
   try {
-    await client.releaseRuntime(
+    return await client.releaseRuntime(
       {
         runtimeId: input.runtimeId,
         bindingId: input.bindingId,
@@ -172,6 +175,25 @@ export async function deliverRuntimeBindingRelease(
     );
   } finally {
     await client.close();
+  }
+}
+
+function assertRuntimeReleaseAcknowledgement(
+  release: RuntimeReleaseCommandPayload & { outboxId?: string; id?: string },
+  event: RunnerEventEnvelope<"runtime.released">,
+): void {
+  if (
+    event.type !== "runtime.released" ||
+    event.commandId !== (release.outboxId ?? release.id) ||
+    event.payload.runtimeId !== release.runtimeId ||
+    event.payload.bindingId !== release.bindingId ||
+    event.payload.participantId !== release.participantId ||
+    event.payload.threadId !== release.threadId ||
+    event.payload.environmentId !== release.environmentId
+  ) {
+    throw Object.assign(new Error("Runtime release acknowledgement did not match its outbox command."), {
+      code: "RUNTIME_RELEASE_ACK_INVALID",
+    });
   }
 }
 

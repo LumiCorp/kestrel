@@ -33,7 +33,7 @@ export const threadTurnBodySchema = z
         // Runtime request IDs are opaque protocol identities, not database IDs.
         requestId: z.string().trim().min(1).max(200),
         eventType: z.string().trim().min(1).max(200),
-        message: z.string().trim().min(1).max(20_000),
+        message: z.string().trim().min(1).max(20_000).optional(),
         answers: z
           .record(
             z.string().trim().min(1).max(200),
@@ -46,6 +46,10 @@ export const threadTurnBodySchema = z
         messageId: routeIdSchema.optional(),
       })
       .strict()
+      .refine(
+        (response) => response.message !== undefined || response.answers !== undefined,
+        { message: "An interaction response must include a message or structured answers." },
+      )
       .optional(),
   })
   .strict()

@@ -120,6 +120,10 @@ export async function finalizeExhaustedDurableTurnJob(input: {
   if (input.retryCount < input.retryLimit) {
     return false;
   }
+  const dispatchState = await readDurableDispatchState(input.turnId);
+  if (dispatchState?.runtimeEventReconciliationState === "pending") {
+    return false;
+  }
   await completeDurableThreadTurn({
     turnId: input.turnId,
     status: "failed",
@@ -144,11 +148,17 @@ async function readDurableDispatchState(turnId: string) {
       activeTurnId: schema.threadTurnQueueState.activeTurnId,
       queueState: schema.threadTurnQueueState.state,
       status: schema.threadTurns.status,
+      runtimeEventReconciliationState:
+        schema.environmentRunExecutions.runtimeEventReconciliationState,
     })
     .from(schema.threadTurns)
     .innerJoin(
       schema.threadTurnQueueState,
       eq(schema.threadTurnQueueState.threadId, schema.threadTurns.threadId),
+    )
+    .leftJoin(
+      schema.environmentRunExecutions,
+      eq(schema.environmentRunExecutions.id, schema.threadTurns.environmentExecutionId),
     )
     .where(eq(schema.threadTurns.id, turnId))
     .limit(1);
@@ -174,11 +184,17 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
       queueState: schema.threadTurnQueueState.state,
       status: schema.threadTurns.status,
       turnId: schema.threadTurnQueueState.activeTurnId,
+      runtimeEventReconciliationState:
+        schema.environmentRunExecutions.runtimeEventReconciliationState,
     })
     .from(schema.threadTurnQueueState)
     .innerJoin(
       schema.threadTurns,
       eq(schema.threadTurns.id, schema.threadTurnQueueState.activeTurnId),
+    )
+    .leftJoin(
+      schema.environmentRunExecutions,
+      eq(schema.environmentRunExecutions.id, schema.threadTurns.environmentExecutionId),
     )
     .where(
       and(
@@ -210,6 +226,10 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
       continue;
     }
     if (turn.status === "running") {
+      if (turn.runtimeEventReconciliationState === "pending") {
+        await dispatchTurnOrReconcile(boss, turn.turnId);
+        continue;
+      }
       await completeDurableThreadTurn({
         turnId: turn.turnId,
         status: "failed",

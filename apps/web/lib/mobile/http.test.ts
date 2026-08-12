@@ -45,3 +45,19 @@ test("organization failures have distinct public responses", async () => {
     "ORGANIZATION_CONFIGURATION_ERROR"
   );
 });
+
+test("Runtime binding admission failures remain conflicts", async () => {
+  for (const code of [
+    "RUNTIME_BINDING_IMMUTABLE",
+    "RUNTIME_BINDING_DEGRADED",
+    "RUNTIME_RECOVERY_UNAVAILABLE",
+    "RUNTIME_UNAVAILABLE",
+  ]) {
+    const response = mobileErrorResponse(
+      Object.assign(new Error("Runtime admission rejected."), { code }),
+      400,
+    );
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error.code, "CONFLICT");
+  }
+});

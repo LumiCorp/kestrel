@@ -3,7 +3,11 @@ import { z } from "zod";
 import { decideAppOperationApprovalIfPresent } from "@/lib/apps/app-operation-approvals";
 import { threadTurnBodySchema } from "@/lib/chat/thread-turn-request-contract";
 import { applySubmittedToolApproval } from "@/lib/chat/tool-approval-response";
-import { resolveThreadEnvironment } from "@/lib/environments/store";
+import {
+  getDefaultOrganizationEnvironment,
+  getOrganizationEnvironment,
+  resolveThreadEnvironment,
+} from "@/lib/environments/store";
 import { decideGitHubActionApproval } from "@/lib/integrations/github-action-approvals";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
@@ -13,7 +17,6 @@ import { organizationSetupRequiredTurnResponse } from "@/lib/organizations/turn-
 import {
   archiveThreadForUser,
   assignStandaloneThreadToProject,
-  createThreadForUser,
   getThreadWithMessagesForUser,
   permanentlyDeleteThreadForUser,
   saveThreadMessages,
@@ -26,11 +29,16 @@ import { createDurableTurnReplayResponse } from "@/lib/turns/replay-response";
 import { assertRuntimeReleased } from "@/lib/runtimes/release-gate";
 import { assertRuntimeAdmissionReady } from "@/lib/runtimes/descriptor-service";
 import {
-  createDurableThreadTurn,
+  createWebThreadWithFirstTurn,
+  getExistingDurableThreadTurnForAdmission,
   listDurableThreadQueueForUser,
   listThreadInteractionsForUser,
   resolveDurableRuntimeInteraction,
 } from "@/lib/turns/store";
+import {
+  admitDurableThreadTurn,
+  resolveFreshForeignRuntimeAdmission,
+} from "@/lib/turns/admission";
 import { convertToUIMessages } from "@/lib/utils";
 
 const paramsSchema = z.object({ id: routeIdSchema });
@@ -89,6 +97,7 @@ export async function GET(
       mode: thread.mode,
       interactionMode: thread.interactionMode,
       origin: thread.origin,
+      runtimeId: thread.runtimeId,
       visibility: thread.isPublic ? "public" : "private",
       shareToken: thread.shareToken,
       archivedAt: thread.archivedAt,
@@ -98,6 +107,7 @@ export async function GET(
         ? {
             status: thread.runtimeBinding.status,
             nativeSessionState: thread.runtimeBinding.nativeSessionState,
+            selectedModelId: thread.runtimeBinding.selectedModelId,
           }
         : null,
       permissions: {
@@ -125,7 +135,7 @@ export async function POST(
     const body = threadTurnBodySchema.parse(await request.json());
     const user = session.user as { id: string; role?: string | null };
 
-    let thread = await getThreadWithMessagesForUser(
+    const thread = await getThreadWithMessagesForUser(
       params.id,
       user.id,
       organizationId
@@ -133,7 +143,32 @@ export async function POST(
     if (!(thread || body.message)) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
-    const requestedRuntimeId = body.runtimeId ?? thread?.runtimeId ?? "kestrel";
+    const requestedRuntimeId = body.runtimeId ?? "kestrel";
+    const submittedIdempotencyKey =
+      request.headers.get("idempotency-key")?.trim() ||
+      (body.approvalResponse
+        ? `approval:${body.approvalResponse.approvalId}`
+        : body.message?.id);
+    if (thread && !body.interactionResponse && submittedIdempotencyKey) {
+      const existing = await getExistingDurableThreadTurnForAdmission({
+        threadId: thread.id,
+        organizationId,
+        authorUserId: user.id,
+        idempotencyKey: submittedIdempotencyKey,
+        requestedRuntimeId,
+      });
+      if (existing) {
+        if (existing.shouldDispatch) {
+          await enqueueDurableThreadTurn(
+            existing.dispatchTurnId ?? existing.turn.id,
+          );
+        }
+        return createDurableTurnReplayResponse({
+          turnId: existing.turn.id,
+          signal: request.signal,
+        });
+      }
+    }
     try {
       assertRuntimeReleased(requestedRuntimeId);
     } catch (error) {
@@ -176,32 +211,91 @@ export async function POST(
           organizationId,
           userId: user.id,
           runtimeId: requestedRuntimeId,
-          modelId: body.model,
+          modelId: thread?.runtimeBinding?.selectedModelId ?? body.model,
           projectId: thread?.projectId ?? body.projectId,
         })
       : undefined;
     if (!thread) {
-      const createdThread = await createThreadForUser({
-        id: params.id,
-        userId: user.id,
-        organizationId,
-        projectId: body.projectId,
-        mode: "chat",
-        runtimeId: body.runtimeId,
-        runtimeCapabilityDigest: runtimeResolution?.capabilityDigest,
-        title: "",
-      });
-      if (!createdThread) {
-        throw new Error("Thread creation failed.");
+      if (!body.message || body.approvalResponse || body.interactionResponse) {
+        return NextResponse.json(
+          { error: "A new Thread requires one ordinary user message." },
+          { status: 400 },
+        );
       }
-      thread = await getThreadWithMessagesForUser(
-        createdThread.id,
-        user.id,
-        organizationId
-      );
-    }
-    if (!thread) {
-      return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+      const setupRequired =
+        await organizationSetupRequiredTurnResponse(organizationId);
+      if (setupRequired) return setupRequired;
+      const projectContext = await resolveProjectRuntimeContext({
+        projectId: body.projectId ?? null,
+        organizationId,
+        userId: user.id,
+      });
+      const environment = projectContext
+        ? await getOrganizationEnvironment({
+            organizationId,
+            environmentId: projectContext.project.environmentId,
+          })
+        : await getDefaultOrganizationEnvironment(organizationId);
+      if (!environment) {
+        throw new Error("No Environment is available for this Thread.");
+      }
+      const firstTurnResolution = requestedRuntimeId === "kestrel"
+        ? undefined
+        : await resolveFreshForeignRuntimeAdmission({
+            organizationId,
+            userId: user.id,
+            runtimeId: requestedRuntimeId,
+            modelId: body.model,
+            projectId: body.projectId,
+          });
+      if (
+        runtimeResolution &&
+        firstTurnResolution &&
+        (runtimeResolution.environmentId !== firstTurnResolution.environmentId ||
+          runtimeResolution.selectedModelId !== firstTurnResolution.selectedModelId ||
+          runtimeResolution.capabilityDigest !== firstTurnResolution.capabilityDigest)
+      ) {
+        throw new Error("Runtime readiness changed before Thread admission.");
+      }
+      if (
+        firstTurnResolution &&
+        firstTurnResolution.environmentId !== environment.id
+      ) {
+        throw new Error("Runtime readiness does not match the selected Environment.");
+      }
+      const idempotencyKey = submittedIdempotencyKey;
+      if (!idempotencyKey) {
+        return NextResponse.json(
+          { error: "An idempotency key is required." },
+          { status: 400 },
+        );
+      }
+      const durable = await createWebThreadWithFirstTurn({
+        threadId: params.id,
+        projectId: body.projectId ?? null,
+        organizationId,
+        authorUserId: user.id,
+        requestedEnvironmentId: environment.id,
+        messageId: body.message.id,
+        messageParts: body.message.parts,
+        idempotencyKey,
+        projectContextRevisionId: projectContext?.contextRevision.id ?? null,
+        requestedModelId:
+          firstTurnResolution?.selectedModelId ?? body.model ?? null,
+        requestedRuntimeId,
+        runtimeAdmission: firstTurnResolution,
+        requestedInteractionMode: body.interactionMode,
+        source: "web",
+      });
+      if (durable.shouldDispatch) {
+        await enqueueDurableThreadTurn(
+          durable.dispatchTurnId ?? durable.turn.id,
+        );
+      }
+      return createDurableTurnReplayResponse({
+        turnId: durable.turn.id,
+        signal: request.signal,
+      });
     }
     if (thread.mode === "admin" && user.role !== "admin") {
       return NextResponse.json(
@@ -217,7 +311,9 @@ export async function POST(
         userId: user.id,
         requestId: body.interactionResponse.requestId,
         eventType: body.interactionResponse.eventType,
-        message: body.interactionResponse.message,
+        ...(body.interactionResponse.message !== undefined
+          ? { message: body.interactionResponse.message }
+          : {}),
         answers: body.interactionResponse.answers,
         approved: body.interactionResponse.approved,
         reason: body.interactionResponse.reason,
@@ -303,11 +399,7 @@ export async function POST(
       ]);
     }
 
-    const idempotencyKey =
-      request.headers.get("idempotency-key")?.trim() ||
-      (approvalResponse
-        ? `approval:${approvalResponse.approvalId}`
-        : newUserMessage?.id);
+    const idempotencyKey = submittedIdempotencyKey;
     if (!idempotencyKey) {
       return NextResponse.json(
         { error: "An idempotency key is required." },
@@ -316,7 +408,7 @@ export async function POST(
     }
     let durable;
     if (approvalResponse) {
-      durable = await createDurableThreadTurn({
+      durable = await admitDurableThreadTurn({
         threadId: thread.id,
         organizationId,
         authorUserId: user.id,
@@ -332,6 +424,7 @@ export async function POST(
         requestedEnvironmentId: environment.id,
         projectContextRevisionId: projectContext?.contextRevision.id ?? null,
         requestedModelId: body.model ?? null,
+        requestedRuntimeId,
         requestedInteractionMode: body.interactionMode,
         source: "web",
       });
@@ -342,7 +435,7 @@ export async function POST(
           { status: 400 }
         );
       }
-      durable = await createDurableThreadTurn({
+      durable = await admitDurableThreadTurn({
         threadId: thread.id,
         organizationId,
         authorUserId: user.id,
@@ -352,6 +445,7 @@ export async function POST(
         requestedEnvironmentId: environment.id,
         projectContextRevisionId: projectContext?.contextRevision.id ?? null,
         requestedModelId: body.model ?? null,
+        requestedRuntimeId,
         requestedInteractionMode: body.interactionMode,
         source: "web",
       });

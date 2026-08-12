@@ -19,6 +19,7 @@ const createBodySchema = z.object({
   projectId: routeIdSchema.nullable().optional(),
   mode: z.enum(["chat", "admin"]).optional().default("chat"),
   runtimeId: z.enum(["kestrel", "codex", "claude"]).optional().default("kestrel"),
+  modelId: z.string().trim().min(1).max(200).optional(),
   message: (uiMessageSchema as z.ZodType<UIMessage>).optional(),
 });
 
@@ -95,6 +96,7 @@ export async function POST(request: NextRequest) {
           organizationId,
           userId: user.id,
           runtimeId: body.runtimeId,
+          modelId: body.modelId,
           projectId: body.projectId,
         });
     const thread = await createThreadForUser({
@@ -105,6 +107,8 @@ export async function POST(request: NextRequest) {
       mode: body.mode,
       runtimeId: body.runtimeId,
       runtimeCapabilityDigest: runtimeResolution?.capabilityDigest,
+      runtimeEnvironmentId: runtimeResolution?.environmentId,
+      runtimeSelectedModelId: runtimeResolution?.selectedModelId,
       title: "",
     });
     if (!thread) {

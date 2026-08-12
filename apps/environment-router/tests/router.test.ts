@@ -64,6 +64,26 @@ const terminalToken = signEnvironmentExecutionTicket({
     nonce: "nonce-2",
   },
 });
+const runtimeReleaseToken = signEnvironmentExecutionTicket({
+  privateKey,
+  ticket: {
+    version: 1,
+    audience: ENVIRONMENT_ROUTER_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    workspaceId: "workspace-1",
+    threadId: "thread-1",
+    runId: "runtime-release-1",
+    actorId: "user-1",
+    agentId: "kestrel-one-runtime-release-worker",
+    flyAppName: "kestrel-env-1",
+    flyMachineId: "machine-1",
+    capabilities: ["runtime.release"],
+    issuedAt: 1000,
+    expiresAt: 1300,
+    nonce: "nonce-runtime-release-1",
+  },
+});
 const promotionToken = signEnvironmentExecutionTicket({
   privateKey,
   ticket: {
@@ -402,6 +422,101 @@ test("router authorizes execution profile resolution with profile read", () => {
       body: command,
     }).status,
     403
+  );
+});
+
+test("router binds Runtime descriptor probes to the signed Environment", () => {
+  const command = {
+    type: "runtime.describe",
+    metadata: { tenantId: "org-1" },
+    payload: {
+      environmentPresetId: "workspace_hosted",
+      environmentId: "env-1",
+      managedConfiguration: {},
+    },
+  };
+  assert.equal(
+    authorizeEnvironmentRequest({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      now: 1100,
+      body: command,
+    }).status,
+    200,
+  );
+  assert.deepEqual(
+    authorizeEnvironmentRequest({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      now: 1100,
+      body: {
+        ...command,
+        payload: { ...command.payload, environmentId: "env-2" },
+      },
+    }),
+    { status: 403, code: "ENVIRONMENT_ID_MISMATCH" },
+  );
+  assert.deepEqual(
+    authorizeEnvironmentRequest({
+      authorization: `Bearer ${token}`,
+      publicKey,
+      now: 1100,
+      body: {
+        ...command,
+        payload: {
+          environmentPresetId: "workspace_hosted",
+          managedConfiguration: {},
+        },
+      },
+    }),
+    { status: 403, code: "ENVIRONMENT_ID_MISMATCH" },
+  );
+});
+
+test("router binds Runtime release to the signed Environment and Thread", () => {
+  const command = {
+    type: "runtime.release",
+    metadata: { tenantId: "org-1" },
+    payload: {
+      runtimeId: "codex",
+      bindingId: "binding-1",
+      participantId: "participant-1",
+      threadId: "thread-1",
+      environmentId: "env-1",
+    },
+  };
+  assert.equal(
+    authorizeEnvironmentRequest({
+      authorization: `Bearer ${runtimeReleaseToken}`,
+      publicKey,
+      now: 1100,
+      body: command,
+    }).status,
+    200,
+  );
+  assert.deepEqual(
+    authorizeEnvironmentRequest({
+      authorization: `Bearer ${runtimeReleaseToken}`,
+      publicKey,
+      now: 1100,
+      body: {
+        ...command,
+        payload: { ...command.payload, environmentId: "env-2" },
+      },
+    }),
+    { status: 403, code: "ENVIRONMENT_ID_MISMATCH" },
+  );
+  assert.deepEqual(
+    authorizeEnvironmentRequest({
+      authorization: `Bearer ${runtimeReleaseToken}`,
+      publicKey,
+      now: 1100,
+      body: {
+        ...command,
+        payload: { ...command.payload, threadId: "thread-2" },
+      },
+    }),
+    { status: 403, code: "ENVIRONMENT_THREAD_MISMATCH" },
   );
 });
 

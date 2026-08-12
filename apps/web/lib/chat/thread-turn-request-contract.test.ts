@@ -33,6 +33,25 @@ test("Thread turn boundary accepts exactly one explicit action", () => {
     }).success,
     true,
   );
+  assert.equal(
+    threadTurnBodySchema.safeParse({
+      interactionResponse: {
+        requestId: "request-2",
+        eventType: "user_input",
+        answers: { "question-1": ["Option A"] },
+      },
+    }).success,
+    true,
+  );
+  assert.equal(
+    threadTurnBodySchema.safeParse({
+      interactionResponse: {
+        requestId: "request-3",
+        eventType: "user_input",
+      },
+    }).success,
+    false,
+  );
 });
 
 test("Thread turn boundary rejects history replay and ambiguous actions", () => {

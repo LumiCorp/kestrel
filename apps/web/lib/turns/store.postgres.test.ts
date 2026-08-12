@@ -630,6 +630,24 @@ test(
       environmentExecutionId: resumedExecutionId,
       runtimeRunId: resumedRuntimeRunId,
     });
+    await store.bindDurableRuntimeInteractionDeliveryExecution({
+      turnId: waiting.turn.id,
+      requestId,
+      bindingId: pendingDelivery!.bindingId,
+      environmentExecutionId: resumedExecutionId,
+      runtimeRunId: resumedRuntimeRunId,
+    });
+    await assert.rejects(
+      () => store.bindDurableRuntimeInteractionDeliveryExecution({
+        turnId: waiting.turn.id,
+        requestId,
+        bindingId: pendingDelivery!.bindingId,
+        environmentExecutionId: pendingDelivery!.environmentExecutionId,
+        runtimeRunId: pendingDelivery!.runtimeRunId,
+      }),
+      (error: unknown) =>
+        error instanceof store.DurableTurnError && error.code === "TURN_CONFLICT",
+    );
     const acknowledgement = {
       turnId: waiting.turn.id,
       requestId,

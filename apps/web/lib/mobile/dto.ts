@@ -38,6 +38,7 @@ export async function mobileThreadDtos(threads: DbThread[]) {
     .select({
       threadId: schema.threadTurns.threadId,
       status: schema.threadTurns.status,
+      failureCode: schema.threadTurns.failureCode,
       rank: sql<number>`row_number() over (
         partition by ${schema.threadTurns.threadId}
         order by ${schema.threadTurns.createdAt} desc, ${schema.threadTurns.id} desc
@@ -49,7 +50,7 @@ export async function mobileThreadDtos(threads: DbThread[]) {
   const projectIds = threads
     .map((thread) => thread.projectId)
     .filter((id): id is string => Boolean(id));
-  const [messages, turns, projects] = await Promise.all([
+  const [messages, turns, projects, bindings] = await Promise.all([
     knowledgeDb
       .select({
         threadId: rankedMessages.threadId,
@@ -70,6 +71,16 @@ export async function mobileThreadDtos(threads: DbThread[]) {
           .from(schema.projects)
           .where(inArray(schema.projects.id, projectIds))
       : Promise.resolve([]),
+    knowledgeDb
+      .select({
+        threadId: schema.runtimeBindings.threadId,
+        runtimeId: schema.runtimeBindings.runtimeId,
+        status: schema.runtimeBindings.status,
+        nativeSessionState: schema.runtimeBindings.nativeSessionState,
+        selectedModelId: schema.runtimeBindings.selectedModelId,
+      })
+      .from(schema.runtimeBindings)
+      .where(inArray(schema.runtimeBindings.threadId, threadIds)),
   ]);
   const previews = new Map<string, string>();
   for (const message of messages) {
@@ -77,29 +88,70 @@ export async function mobileThreadDtos(threads: DbThread[]) {
       previews.set(message.threadId, message.searchText);
     }
   }
-  const statuses = new Map<string, string>();
+  const statuses = new Map<
+    string,
+    { status: string; failureCode: string | null }
+  >();
   for (const turn of turns) {
     if (!statuses.has(turn.threadId)) {
-      statuses.set(turn.threadId, turn.status);
+      statuses.set(turn.threadId, {
+        status: turn.status,
+        failureCode: turn.failureCode,
+      });
     }
   }
+  const bindingsByThread = new Map(
+    bindings.map((binding) => [binding.threadId, binding]),
+  );
   const projectNames = new Map(
     projects.map((project) => [project.id, project.name])
   );
-  return threads.map((thread) => ({
-    id: thread.id,
-    title: thread.title || "New thread",
-    project: thread.projectId
-      ? {
-          id: thread.projectId,
-          name: projectNames.get(thread.projectId) ?? "Project",
-        }
-      : null,
-    preview: previews.get(thread.id) ?? "",
-    runStatus: statuses.get(thread.id) ?? null,
-    createdAt: thread.createdAt.toISOString(),
-    updatedAt: thread.updatedAt.toISOString(),
-  }));
+  return threads.map((thread) => {
+    const binding = bindingsByThread.get(thread.id);
+    const latestTurn = statuses.get(thread.id);
+    const readOnly =
+      binding?.status === "degraded" ||
+      binding?.status === "released" ||
+      binding?.nativeSessionState === "degraded" ||
+      binding?.nativeSessionState === "released";
+    const recoveryFailureCode =
+      latestTurn?.failureCode === "RUNTIME_NATIVE_SESSION_LOST" ||
+      latestTurn?.failureCode === "RUNTIME_LIVE_WAIT_LOST"
+        ? latestTurn.failureCode
+        : null;
+    return {
+      id: thread.id,
+      title: thread.title || "New thread",
+      project: thread.projectId
+        ? {
+            id: thread.projectId,
+            name: projectNames.get(thread.projectId) ?? "Project",
+          }
+        : null,
+      preview: previews.get(thread.id) ?? "",
+      runStatus: latestTurn?.status ?? null,
+      runtime: {
+        id: thread.runtimeId,
+        bindingStatus: binding?.status ?? null,
+        nativeSessionState: binding?.nativeSessionState ?? null,
+        selectedModelId: binding?.selectedModelId ?? null,
+        readOnly,
+        recoveryAction:
+          readOnly && recoveryFailureCode
+            ? {
+                failureCode: recoveryFailureCode,
+                targetRuntimeId:
+                  recoveryFailureCode === "RUNTIME_NATIVE_SESSION_LOST"
+                    ? "kestrel"
+                    : thread.runtimeId,
+                endpoint: `/api/threads/${encodeURIComponent(thread.id)}/duplicate`,
+              }
+            : null,
+      },
+      createdAt: thread.createdAt.toISOString(),
+      updatedAt: thread.updatedAt.toISOString(),
+    };
+  });
 }
 
 export function mobileTurnDto(turn: typeof schema.threadTurns.$inferSelect) {
@@ -124,6 +176,19 @@ function mobileTurnFailure(
   internalCode: string | null
 ) {
   if (internalCode === "TURN_REMOVED" || status === "completed") return null;
+  if (
+    internalCode === "RUNTIME_NATIVE_SESSION_LOST" ||
+    internalCode === "RUNTIME_LIVE_WAIT_LOST"
+  ) {
+    return {
+      code: internalCode,
+      message:
+        internalCode === "RUNTIME_NATIVE_SESSION_LOST"
+          ? "The native Runtime session was lost. Create the offered Kestrel recovery fork to continue."
+          : "The live Runtime wait was lost. Create the offered same-Runtime recovery fork to continue.",
+      retryable: false,
+    };
+  }
   if (status === "failed") {
     return {
       code: "AGENT_RUN_FAILED" as const,
@@ -271,9 +336,15 @@ function fieldsFromJsonSchema(schema: Record<string, unknown> | null) {
   );
   return Object.entries(properties).map(([name, raw]) => {
     const field = asRecord(raw);
-    const options = Array.isArray(field?.enum)
-      ? field.enum.filter((value): value is string => typeof value === "string")
-      : undefined;
+    const items = asRecord(field?.items);
+    const rawOptions = Array.isArray(field?.enum)
+      ? field.enum
+      : Array.isArray(items?.enum)
+        ? items.enum
+        : undefined;
+    const options = rawOptions?.filter(
+      (value): value is string => typeof value === "string",
+    );
     return {
       name,
       label:
@@ -281,7 +352,9 @@ function fieldsFromJsonSchema(schema: Record<string, unknown> | null) {
         (typeof field?.description === "string" && field.description) ||
         name,
       type: options
-        ? ("select" as const)
+        ? field?.type === "array" && field?.maxItems !== 1
+          ? ("multi_select" as const)
+          : ("select" as const)
         : field?.type === "number" || field?.type === "integer"
           ? ("number" as const)
           : field?.type === "boolean"

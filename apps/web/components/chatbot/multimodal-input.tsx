@@ -197,6 +197,7 @@ function PureMultimodalInput({
   modelScopeQuery,
   newTurnDisabledReason,
   hydraEnabled,
+  threadExists,
 }: {
   threadId: string;
   input: string;
@@ -229,6 +230,7 @@ function PureMultimodalInput({
   modelScopeQuery?: string;
   newTurnDisabledReason?: string;
   hydraEnabled: boolean;
+  threadExists: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
@@ -243,7 +245,7 @@ function PureMultimodalInput({
   const runtimeReadinessRequest = useRef(0);
 
   useEffect(() => {
-    if (!hydraEnabled || messages.length > 0) return;
+    if (!hydraEnabled || threadExists) return;
     const controller = new AbortController();
     const projectId = new URLSearchParams(
       modelScopeQuery?.replace(/^&/u, "") ?? "",
@@ -305,7 +307,7 @@ function PureMultimodalInput({
       controller.abort();
       window.removeEventListener("focus", load);
     };
-  }, [hydraEnabled, messages.length, modelScopeQuery, selectedModelId]);
+  }, [hydraEnabled, modelScopeQuery, selectedModelId, threadExists]);
 
   const hasAutoFocused = useRef(false);
   useEffect(() => {
@@ -1067,6 +1069,7 @@ function PureMultimodalInput({
             <ModelSelectorCompact
               availableModels={availableModels}
               className="w-full max-w-[140px] sm:max-w-[200px] lg:w-[200px]"
+              disabled={threadExists && runtimeId !== "kestrel"}
               onModelChange={onModelChange}
               selectedModelId={selectedModelId}
             />
@@ -1083,7 +1086,7 @@ function PureMultimodalInput({
               setMessages={setMessages}
             />
           }
-          runtimeDisabled={messages.length > 0 || status !== "ready"}
+          runtimeDisabled={threadExists || status !== "ready"}
           runtimeId={runtimeId}
           hydraEnabled={hydraEnabled}
           runtimeReadiness={runtimeReadiness}
@@ -1290,6 +1293,7 @@ export const MultimodalInput = memo(
       prevProps.activeEnvironmentName !== nextProps.activeEnvironmentName ||
       prevProps.modelScopeQuery !== nextProps.modelScopeQuery ||
       prevProps.newTurnDisabledReason !== nextProps.newTurnDisabledReason ||
+      prevProps.threadExists !== nextProps.threadExists ||
       prevProps.threadId !== nextProps.threadId
     ) {
       return false;
@@ -1345,11 +1349,13 @@ const AttachmentsButton = memo(PureAttachmentsButton);
 function PureModelSelectorCompact({
   availableModels,
   className,
+  disabled = false,
   selectedModelId,
   onModelChange,
 }: {
   availableModels: ScopedChatModel[];
   className?: string;
+  disabled?: boolean;
   selectedModelId: string;
   onModelChange?: (modelId: string) => void;
 }) {
@@ -1402,6 +1408,7 @@ function PureModelSelectorCompact({
         <Button
           className={cn("h-8 w-[200px] justify-between px-2", className)}
           data-testid="model-selector-trigger"
+          disabled={disabled}
           type="button"
           variant="ghost"
         >
@@ -1427,6 +1434,7 @@ function PureModelSelectorCompact({
                   <ModelSelectorItem
                     key={model.id}
                     onSelect={() => {
+                      if (disabled) return;
                       onModelChange?.(model.id);
                       setCookie("chat-model", model.id);
                       setOpen(false);

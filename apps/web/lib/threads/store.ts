@@ -359,6 +359,15 @@ export async function createThreadForUser(input: {
   interactionMode?: "chat" | "plan" | "build";
   runtimeId?: "kestrel" | "codex" | "claude";
   runtimeCapabilityDigest?: string | undefined;
+  runtimeEnvironmentId?: string | undefined;
+  runtimeSelectedModelId?: string | undefined;
+  parentThreadId?: string | undefined;
+  recoverySourceBindingId?: string | undefined;
+  recoveryFailureCode?:
+    | "RUNTIME_NATIVE_SESSION_LOST"
+    | "RUNTIME_LIVE_WAIT_LOST"
+    | undefined;
+  recoverySourceTurnId?: string | undefined;
 }) {
   const mode = input.mode ?? "chat";
   const origin = input.origin ?? "web";
@@ -400,6 +409,7 @@ export async function createThreadForUser(input: {
         createdByUserId: input.userId,
         organizationId: input.organizationId,
         projectId: projectId ?? null,
+        parentThreadId: input.parentThreadId ?? null,
         mode,
         origin,
         externalThreadId: input.externalThreadId ?? null,
@@ -422,6 +432,11 @@ export async function createThreadForUser(input: {
       runtimeId,
       adapterContractVersion: 1,
       capabilityDigest: input.runtimeCapabilityDigest ?? null,
+      environmentId: input.runtimeEnvironmentId ?? null,
+      selectedModelId: input.runtimeSelectedModelId ?? null,
+      recoverySourceBindingId: input.recoverySourceBindingId ?? null,
+      recoveryFailureCode: input.recoveryFailureCode ?? null,
+      recoverySourceTurnId: input.recoverySourceTurnId ?? null,
       status: "ready",
       nativeSessionState: runtimeId === "kestrel" ? "ready" : "uninitialized",
       createdAt: now,

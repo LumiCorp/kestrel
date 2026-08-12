@@ -40,6 +40,11 @@ test("Hydra delivery migration separates answered from native acknowledgement", 
 test("Hydra correctness migration persists native lifecycle and acknowledgement identity", async () => {
   const migration = await readFile(correctnessMigrationUrl, "utf8");
   assert.match(migration, /"native_session_state" text NOT NULL DEFAULT 'ready'/u);
+  assert.match(migration, /"environment_id" text/u);
+  assert.match(migration, /"selected_model_id" text/u);
+  assert.match(migration, /"recovery_source_binding_id" text/u);
+  assert.match(migration, /"recovery_source_turn_id" text/u);
+  assert.match(migration, /runtime_bindings_recovery_source_loss_idx/u);
   assert.match(migration, /'uninitialized', 'ready', 'degraded', 'released'/u);
   assert.match(migration, /"acknowledgement_event_id" text/u);
   assert.match(migration, /runtime_interaction_deliveries_ack_event_idx/u);
@@ -49,4 +54,8 @@ test("Hydra correctness migration persists native lifecycle and acknowledgement 
   assert.match(migration, /"claimed_at" timestamp with time zone/u);
   assert.match(migration, /runtime_binding_release_outbox_ack_event_idx/u);
   assert.match(migration, /runtime_binding_release_outbox_claim_idx/u);
+  assert.match(migration, /"runtime_event_reconciliation_state" text/u);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS "desktop_runtime_descriptor_probes"/u);
+  assert.match(migration, /desktop_runtime_descriptor_probes_claim_idx/u);
+  assert.match(migration, /desktop_runtime_descriptor_probes_ack_event_idx/u);
 });
