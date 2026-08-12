@@ -21,13 +21,50 @@ const nonEd25519PublicKey = generateKeyPairSync("x25519")
   .publicKey.export({ type: "spki", format: "pem" })
   .toString();
 
-
 test("Fly resource names are deterministic and provider-safe", () => {
   const id = "123e4567-e89b-12d3-a456-426614174000";
   assert.equal(flyEnvironmentAppName(id), "kestrel-env-123e4567e89b12d3a456");
   assert.equal(
     flyEnvironmentNetworkName(id),
-    "kestrel-123e4567e89b12d3a4564266-network"
+    "kestrel-123e4567e89b12d3a4564266-network",
+  );
+});
+
+test("Fly Machine inventory preserves authoritative standby relationships", async () => {
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async () =>
+      Response.json([
+        {
+          id: "primary-1",
+          state: "started",
+          region: "iad",
+          config: { image: "registry.fly.io/example@sha256:abc" },
+        },
+        {
+          id: "standby-1",
+          state: "stopped",
+          region: "iad",
+          config: {
+            image: "registry.fly.io/example@sha256:abc",
+            standbys: ["primary-1"],
+          },
+        },
+      ])) as unknown as typeof fetch,
+  });
+
+  const machines = await client.listAppMachines({ appName: "app-1" });
+
+  assert.deepEqual(
+    machines.map((machine) => ({
+      id: machine.id,
+      standbyForMachineIds: machine.standbyForMachineIds,
+    })),
+    [
+      { id: "primary-1", standbyForMachineIds: [] },
+      { id: "standby-1", standbyForMachineIds: ["primary-1"] },
+    ],
   );
 });
 
@@ -39,7 +76,8 @@ test("Fly waits split long deadlines into accepted request windows", async () =>
     fetchImpl: (async (url: string | URL | Request) => {
       requests.push(String(url));
       if (String(url).includes("/wait?")) {
-        return requests.filter((request) => request.includes("/wait?")).length === 1
+        return requests.filter((request) => request.includes("/wait?"))
+          .length === 1
           ? new Response(null, { status: 408 })
           : Response.json({});
       }
@@ -211,7 +249,7 @@ test("Fly start is idempotent when another request already started the Machine",
   });
   assert.deepEqual(
     requests.map((request) => request.method),
-    ["POST", "GET"]
+    ["POST", "GET"],
   );
 });
 
@@ -300,7 +338,7 @@ test("Fly start waits out an in-progress stop before issuing the start", async (
   });
   assert.deepEqual(
     requests.map((request) => request.method),
-    ["POST", "GET", "GET", "GET", "POST"]
+    ["POST", "GET", "GET", "GET", "POST"],
   );
   assert.match(requests[3]?.url ?? "", /[?&]state=stopped(?:&|$)/u);
 });
@@ -339,7 +377,7 @@ test("Fly start retries a transient stopped-state rejection once per interval", 
 
   assert.deepEqual(
     requests.map((request) => request.method),
-    ["POST", "GET", "POST"]
+    ["POST", "GET", "POST"],
   );
   assert.deepEqual(sleeps, [1000]);
 });
@@ -378,7 +416,7 @@ test("Fly start retries while a replacement Machine is created", async () => {
 
   assert.deepEqual(
     requests.map((request) => request.method),
-    ["POST", "GET", "POST"]
+    ["POST", "GET", "POST"],
   );
   assert.deepEqual(sleeps, [1000]);
 });
@@ -412,20 +450,20 @@ test("Fly start fails closed after ten stopped-state retries", async () => {
       appName: "kestrel-env-abc",
       machineId: "machine-1",
     }),
-    /remained stopped after 10 bounded start retries/u
+    /remained stopped after 10 bounded start retries/u,
   );
 
   assert.equal(
     requests.filter((request) => request.method === "POST").length,
-    11
+    11,
   );
   assert.equal(
     requests.filter((request) => request.method === "GET").length,
-    11
+    11,
   );
   assert.deepEqual(
     sleeps,
-    Array.from({ length: 10 }, () => 1000)
+    Array.from({ length: 10 }, () => 1000),
   );
 });
 
@@ -451,7 +489,7 @@ test("Fly start fails closed when the authoritative state cannot be retried", as
       appName: "kestrel-env-abc",
       machineId: "machine-1",
     }),
-    /authoritative Machine state was suspended/u
+    /authoritative Machine state was suspended/u,
   );
 });
 
@@ -500,11 +538,13 @@ test("Fly readiness fails closed when the named Machine check never passes", asy
         id: "machine-1",
         state: "started",
         region: "iad",
-        checks: [{
-          name: "workspace",
-          status: "critical",
-          output: "token=super-secret\nprocess exited with status 1",
-        }],
+        checks: [
+          {
+            name: "workspace",
+            status: "critical",
+            output: "token=super-secret\nprocess exited with status 1",
+          },
+        ],
       })) as unknown as typeof fetch,
   });
 
@@ -522,7 +562,7 @@ test("Fly readiness fails closed when the named Machine check never passes", asy
       assert.match(error.message, /token=\[redacted\]/u);
       assert.doesNotMatch(error.message, /super-secret/u);
       return true;
-    }
+    },
   );
 });
 
@@ -631,11 +671,11 @@ test("Workspace provisioning requests encrypted storage and a private runtime Ma
   });
   const volumeCreate = requests.find(
     (request) =>
-      request.url.endsWith("/volumes") && request.init.method === "POST"
+      request.url.endsWith("/volumes") && request.init.method === "POST",
   );
   const machineCreate = requests.find(
     (request) =>
-      request.url.endsWith("/machines") && request.init.method === "POST"
+      request.url.endsWith("/machines") && request.init.method === "POST",
   );
   const volumeBody = JSON.parse(String(volumeCreate?.init.body));
   const machineBody = JSON.parse(String(machineCreate?.init.body));
@@ -651,32 +691,32 @@ test("Workspace provisioning requests encrypted storage and a private runtime Ma
   assert.equal(machineBody.config.env.KESTREL_REQUIRE_MANAGED_WORKTREE, "true");
   assert.equal(
     machineBody.config.env.KESTREL_MANAGED_WORKTREE_ISOLATION,
-    "session"
+    "session",
   );
   assert.equal(machineBody.config.env.FLY_API_TOKEN, undefined);
   assert.equal(
     machineBody.config.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY,
-    undefined
+    undefined,
   );
   assert.match(
     machineBody.config.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY,
-    /PUBLIC KEY/u
+    /PUBLIC KEY/u,
   );
   assert.equal(
     machineBody.config.env.KESTREL_ONE_APP_URL,
-    "https://kestrel.example"
+    "https://kestrel.example",
   );
   assert.equal(
     machineBody.config.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN,
-    undefined
+    undefined,
   );
   assert.equal(
     machineBody.config.env.KESTREL_WORKSPACE_PREVIEWS_ENABLED,
-    undefined
+    undefined,
   );
   assert.equal(
     machineBody.config.env.KESTREL_WORKSPACE_SERVICE_TOKEN,
-    "workspace-service-token"
+    "workspace-service-token",
   );
   assert.equal(machineBody.config.env.OPENAI_API_KEY, undefined);
   assert.equal(machineBody.config.env.ANTHROPIC_API_KEY, undefined);
@@ -752,13 +792,14 @@ test("Environment gateway owns public ingress while Workspace Machines remain pr
   assert.equal(gateway.routerUrl, "https://kestrel-env-abc.fly.dev");
   assert.equal(gateway.sharedIp, "203.0.113.1");
   const ipCreate = requests.find(
-    ({ url, init }) => url.endsWith("/ip_assignments") && init.method === "POST"
+    ({ url, init }) =>
+      url.endsWith("/ip_assignments") && init.method === "POST",
   );
   assert.deepEqual(JSON.parse(String(ipCreate?.init.body)), {
     type: "shared_v4",
   });
   const machineCreate = requests.find(
-    ({ url, init }) => url.endsWith("/machines") && init.method === "POST"
+    ({ url, init }) => url.endsWith("/machines") && init.method === "POST",
   );
   const machineBody = JSON.parse(String(machineCreate?.init.body));
   assert.equal(machineBody.config.image, "registry.fly.io/router@sha256:abc");
@@ -766,11 +807,11 @@ test("Environment gateway owns public ingress while Workspace Machines remain pr
   assert.equal(machineBody.config.services[0].min_machines_running, 1);
   assert.equal(
     machineBody.config.env.KESTREL_ENVIRONMENT_APP_NAME,
-    "kestrel-env-abc"
+    "kestrel-env-abc",
   );
   assert.equal(
     machineBody.config.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY,
-    environmentTicketPublicKey
+    environmentTicketPublicKey,
   );
 });
 
@@ -815,7 +856,7 @@ test("Environment gateway rejects an existing Machine with stale immutable confi
       ticketPublicKey: environmentTicketPublicKey,
       controlPlaneUrl: "https://kestrel.example",
     }),
-    /immutable ingress contract/u
+    /immutable ingress contract/u,
   );
 });
 
@@ -841,8 +882,7 @@ test("Environment gateway reuses semantically identical canonical ticket keys", 
             image: "registry.fly.io/router@sha256:current",
             env: {
               KESTREL_ENVIRONMENT_APP_NAME: "kestrel-env-abc",
-              KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:
-                environmentTicketPublicKey,
+              KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY: environmentTicketPublicKey,
               KESTREL_CONTROL_PLANE_URL: "https://kestrel.example",
               KESTREL_ENVIRONMENT_GATEWAY_SERVICE_TOKEN: "service-token",
             },
@@ -868,7 +908,7 @@ test("Environment gateway reuses semantically identical canonical ticket keys", 
 
   assert.deepEqual(
     requests.map(({ method }) => method),
-    ["GET", "GET"]
+    ["GET", "GET"],
   );
 });
 
@@ -895,8 +935,7 @@ test("Environment gateway rejects different or invalid existing ticket keys", as
               image: "registry.fly.io/router@sha256:current",
               env: {
                 KESTREL_ENVIRONMENT_APP_NAME: "kestrel-env-abc",
-                KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:
-                  existingTicketPublicKey,
+                KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY: existingTicketPublicKey,
               },
               metadata: {
                 kestrel_environment_gateway: "true",
@@ -920,7 +959,7 @@ test("Environment gateway rejects different or invalid existing ticket keys", as
       }),
       (error: unknown) =>
         error instanceof EnvironmentProviderError &&
-        error.code === "FLY_RESOURCE_CONFLICT"
+        error.code === "FLY_RESOURCE_CONFLICT",
     );
   }
 });
@@ -948,7 +987,7 @@ test("Environment gateway rejects invalid desired ticket keys before Fly access"
       }),
       (error: unknown) =>
         error instanceof EnvironmentProviderError &&
-        error.code === "FLY_PROVIDER_REJECTED"
+        error.code === "FLY_PROVIDER_REJECTED",
     );
     assert.equal(requests, 0);
   }
@@ -970,7 +1009,7 @@ test("Fly rejection discards provider response bodies", async () => {
         networkName: "kestrel-abc-network",
       }),
     (error: unknown) =>
-      error instanceof Error && !error.message.includes("reflected-secret")
+      error instanceof Error && !error.message.includes("reflected-secret"),
   );
 });
 
@@ -994,7 +1033,7 @@ test("Fly on-demand snapshots use the Workspace volume endpoint", async () => {
   });
   assert.deepEqual(
     await client.createVolumeSnapshot({ appName: "app-1", volumeId: "vol-1" }),
-    { id: "snapshot-1", state: "prepare" }
+    { id: "snapshot-1", state: "prepare" },
   );
   assert.match(requestedUrl, /\/apps\/app-1\/volumes\/vol-1\/snapshots$/u);
 });
@@ -1025,7 +1064,7 @@ test("Fly image updates are idempotent across tag aliases of the same digest", a
   assert.equal(machine.image?.endsWith(digest), true);
   assert.deepEqual(
     requests.map((request) => request.method),
-    ["GET"]
+    ["GET"],
   );
 });
 
@@ -1040,7 +1079,8 @@ test("Fly Workspace image updates repair missing graceful stop configuration", a
     token: "test-token",
     organizationSlug: "kestrel-test",
     fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
-      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      const body =
+        typeof init?.body === "string" ? JSON.parse(init.body) : null;
       requests.push({ method: init?.method ?? "GET", body });
       return Response.json({
         id: "machine-1",
@@ -1059,14 +1099,14 @@ test("Fly Workspace image updates repair missing graceful stop configuration", a
     stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
   });
 
-  assert.deepEqual(requests.map(({ method }) => method), ["GET", "POST"]);
+  assert.deepEqual(
+    requests.map(({ method }) => method),
+    ["GET", "POST"],
+  );
   const update = requests[1]?.body as {
     config?: { stop_config?: unknown };
   };
-  assert.deepEqual(
-    update.config?.stop_config,
-    KESTREL_WORKSPACE_STOP_CONFIG,
-  );
+  assert.deepEqual(update.config?.stop_config, KESTREL_WORKSPACE_STOP_CONFIG);
 });
 
 test("Fly image updates accept authoritative configuration after an ambiguous timeout", async () => {
@@ -1165,7 +1205,8 @@ test("Fly Workspace image updates accept canonical graceful stop durations", asy
     token: "test-token",
     organizationSlug: "kestrel-test",
     fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
-      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      const body =
+        typeof init?.body === "string" ? JSON.parse(init.body) : null;
       requests.push({ method: init?.method ?? "GET", body });
       return Response.json({
         id: "machine-1",
@@ -1191,7 +1232,10 @@ test("Fly Workspace image updates accept canonical graceful stop durations", asy
     stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
   });
 
-  assert.deepEqual(requests.map(({ method }) => method), ["GET"]);
+  assert.deepEqual(
+    requests.map(({ method }) => method),
+    ["GET"],
+  );
 });
 
 test("Fly workspace updates reconcile environment values without replacing unrelated configuration", async () => {
@@ -1209,7 +1253,8 @@ test("Fly workspace updates reconcile environment values without replacing unrel
     token: "test-token",
     organizationSlug: "kestrel-test",
     fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
-      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      const body =
+        typeof init?.body === "string" ? JSON.parse(init.body) : null;
       requests.push({ method: init?.method ?? "GET", body });
       return Response.json({
         id: "machine-1",
@@ -1231,7 +1276,10 @@ test("Fly workspace updates reconcile environment values without replacing unrel
     },
   });
 
-  assert.deepEqual(requests.map(({ method }) => method), ["GET", "POST"]);
+  assert.deepEqual(
+    requests.map(({ method }) => method),
+    ["GET", "POST"],
+  );
   const update = requests[1]?.body as {
     config?: { env?: Record<string, string> };
   };
@@ -1277,12 +1325,13 @@ test("Fly idempotent Workspace provisioning rotates the scoped service identity"
     token: "test-token",
     organizationSlug: "kestrel-test",
     fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
-      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      const body =
+        typeof init?.body === "string" ? JSON.parse(init.body) : null;
       requests.push({ method: init?.method ?? "GET", body });
       return Response.json(
         init?.method === "POST"
           ? { ...current, config: body.config }
-          : [current]
+          : [current],
       );
     }) as typeof fetch,
   });
@@ -1294,14 +1343,20 @@ test("Fly idempotent Workspace provisioning rotates the scoped service identity"
     volumeId: "volume-1",
     region: "iad",
     runtimeImage: "registry.fly.io/runtime@sha256:abc",
-    ticketPublicKey: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+    ticketPublicKey:
+      "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
     controlPlaneUrl: "https://kestrel.example",
     serviceToken: "new-token",
     source: { type: "blank" },
     idleTimeoutMinutes: 15,
   });
-  assert.deepEqual(requests.map(({ method }) => method), ["GET", "POST"]);
-  const update = requests[1]?.body as { config?: { env?: Record<string, string> } };
+  assert.deepEqual(
+    requests.map(({ method }) => method),
+    ["GET", "POST"],
+  );
+  const update = requests[1]?.body as {
+    config?: { env?: Record<string, string> };
+  };
   assert.deepEqual(update.config?.env, {
     KESTREL_WORKSPACE_ID: "workspace-1",
     KESTREL_WORKSPACE_SERVICE_TOKEN: "new-token",
@@ -1330,7 +1385,7 @@ test("Fly deletion operations are idempotent on missing resources", async () => 
       ["/v1/apps/app-1/machines/machine-1?force=true", "DELETE"],
       ["/v1/apps/app-1/volumes/volume-1", "DELETE"],
       ["/v1/apps/app-1", "DELETE"],
-    ]
+    ],
   );
 });
 
@@ -1398,17 +1453,17 @@ test("replacement resources are idempotently namespaced away from the active Wor
     replacementId: "restore-operation-1",
   });
   const volumeCreate = requests.find(
-    ({ url, init }) => url.endsWith("/volumes") && init.method === "POST"
+    ({ url, init }) => url.endsWith("/volumes") && init.method === "POST",
   );
   const machineCreate = requests.find(
-    ({ url, init }) => url.endsWith("/machines") && init.method === "POST"
+    ({ url, init }) => url.endsWith("/machines") && init.method === "POST",
   );
   const volumeBody = JSON.parse(String(volumeCreate?.init.body));
   const machineBody = JSON.parse(String(machineCreate?.init.body));
   assert.match(volumeBody.name, /_r_/u);
   assert.equal(
     machineBody.config.metadata.kestrel_replacement_id,
-    "restore-operation-1"
+    "restore-operation-1",
   );
   assert.equal(machineBody.config.mounts[0].volume, "replacement-volume-id");
   assert.deepEqual(
@@ -1427,13 +1482,12 @@ test("Fly snapshot replacement volumes validate ownership and wait until created
     fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
       const requestUrl = String(url);
       const method = init?.method ?? "GET";
-      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      const body =
+        typeof init?.body === "string" ? JSON.parse(init.body) : null;
       requests.push({ url: requestUrl, method, body });
       const pathname = new URL(requestUrl).pathname;
       if (pathname.endsWith("/volumes/source-volume/snapshots")) {
-        return Response.json([
-          { id: "snapshot-created", status: "created" },
-        ]);
+        return Response.json([{ id: "snapshot-created", status: "created" }]);
       }
       if (pathname.endsWith("/volumes") && method === "GET") {
         return Response.json([]);
@@ -1583,7 +1637,7 @@ test("Fly inventory preserves exact Workspace ownership metadata", async () => {
           attachedMachineId: "machine-1",
         },
       ],
-    }
+    },
   );
 });
 
@@ -1615,6 +1669,7 @@ test("Fly Machine lookup preserves exact Workspace mount evidence", async () => 
       id: "machine-1",
       state: "stopped",
       region: "iad",
+      standbyForMachineIds: [],
       cpuKind: "shared",
       cpus: 2,
       memoryMb: 4096,
@@ -1626,6 +1681,6 @@ test("Fly Machine lookup preserves exact Workspace mount evidence", async () => 
           path: "/workspace",
         },
       ],
-    }
+    },
   );
 });
