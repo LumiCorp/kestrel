@@ -65,7 +65,7 @@ test("control worker ownership permits stopped standby Machines only", () => {
   assert.equal(hasSingleRunningMachine({ state: "started" }), false);
 });
 
-test("release workflow waits for exact production identity before publication", async () => {
+test("release workflow waits for exact production identity before controller deployment and publication", async () => {
   const workflow = await readFile(
     new URL(".github/workflows/fly-image-release.yml", root),
     "utf8",
@@ -73,14 +73,24 @@ test("release workflow waits for exact production identity before publication", 
   const wait = workflow.indexOf(
     "Wait for the exact Kestrel One production revision",
   );
+  const deployController = workflow.indexOf("Deploy the release controller");
   const publish = workflow.indexOf(
     "Build, smoke, and publish candidate images",
   );
   assert.ok(wait >= 0);
-  assert.ok(publish > wait);
+  assert.ok(deployController > wait);
+  assert.ok(publish > deployController);
   assert.match(
     workflow,
     /wait-for-kestrel-production-revision\.ts \$\{\{ github\.sha \}\}/u,
+  );
+  const waitScript = await readFile(
+    new URL("scripts/wait-for-kestrel-production-revision.ts", root),
+    "utf8",
+  );
+  assert.match(
+    waitScript,
+    /releaseCompatibilitySchema\?\.ready === true/u,
   );
 });
 
@@ -95,4 +105,9 @@ test("release workflow bounds controller readiness polling", async () => {
     /grep -q release-controller-v1 \/tmp\/kestrel-control-worker-ready/u,
   );
   assert.match(workflow, /did not become ready within 90 seconds/u);
+  assert.match(workflow, /flyctl logs --app kestrel-one-control-worker --no-tail/u);
+  assert.match(
+    workflow,
+    /if: steps\.verify-release-controller\.outcome == 'failure'/u,
+  );
 });

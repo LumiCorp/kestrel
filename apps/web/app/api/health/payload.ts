@@ -25,6 +25,7 @@ function isDatabasePressureHigh(databaseHealth: DbHealthResult) {
 export function buildHealthResponsePayload(input: {
   databaseHealth: DbHealthResult;
   credentialAuthorityHealth?: { ok: boolean; code: string | null } | undefined;
+  releaseCompatibilitySchemaHealth?: { ready: boolean } | undefined;
   environment?: string;
   responseTimeMs: number;
   uptimeSeconds: number;
@@ -64,6 +65,12 @@ export function buildHealthResponsePayload(input: {
                 ready: input.credentialAuthorityHealth.ok,
                 code: input.credentialAuthorityHealth.code,
               },
+            }
+          : {}),
+        ...(input.releaseCompatibilitySchemaHealth
+          ? {
+              releaseCompatibilitySchema:
+                input.releaseCompatibilitySchemaHealth,
             }
           : {}),
       },

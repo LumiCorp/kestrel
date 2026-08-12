@@ -36,6 +36,7 @@ test("health payload reports healthy database state", () => {
         },
       },
     },
+    releaseCompatibilitySchemaHealth: { ready: true },
     environment: "test",
     responseTimeMs: 5,
     uptimeSeconds: 10,
@@ -46,6 +47,7 @@ test("health payload reports healthy database state", () => {
   assert.equal(statusCode, 200);
   assert.equal(body.status, "healthy");
   assert.equal(body.checks.database.connected, true);
+  assert.equal(body.checks.releaseCompatibilitySchema?.ready, true);
   assert.equal(body.environment, "test");
   assert.equal(body.version, "1.2.3");
   assert.equal(body.revision, "abc123");
