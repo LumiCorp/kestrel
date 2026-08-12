@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { KESTREL_HARNESS_ECONOMICS } from "../../src/profile/kestrelOnePolicy.js";
 
 const runner = readFileSync(
   new URL("../../scripts/validate.mjs", import.meta.url),
@@ -33,6 +34,13 @@ const productStack = readFileSync(
 );
 const productPlaywright = readFileSync(
   new URL("../../apps/web/playwright.product.config.ts", import.meta.url),
+  "utf8",
+);
+const productGatewaySeed = readFileSync(
+  new URL(
+    "../../apps/web/scripts/seed-product-contract-gateway.ts",
+    import.meta.url,
+  ),
   "utf8",
 );
 const productBrowserProof = readFileSync(
@@ -159,6 +167,30 @@ test("portable validation harnesses do not enforce wall-clock correctness gates"
   assert.match(productPlaywright, /expect:\s*\{ timeout:\s*0 \}/u);
   assert.match(productPlaywright, /KESTREL_ENVIRONMENT_GATEWAY_URL/u);
   assert.match(productPlaywright, /KESTREL_WORKSPACE_SERVICE_TOKEN/u);
+});
+
+test("product validation provisions the exact economics-admitted model it runs", () => {
+  const agentModel = productPlaywright.match(
+    /AI_AGENT_MODEL:\s*"([^"]+)"/u,
+  )?.[1];
+  const openRouterModel = productPlaywright.match(
+    /OPENROUTER_MODEL:\s*"([^"]+)"/u,
+  )?.[1];
+
+  assert.ok(agentModel);
+  assert.equal(openRouterModel, agentModel);
+  assert.ok(
+    KESTREL_HARNESS_ECONOMICS.modelProfiles.some(
+      (profile) =>
+        profile.provider === "openrouter" && profile.model === agentModel,
+    ),
+    `product validation model '${agentModel}' must have an exact Kestrel economics profile`,
+  );
+  assert.match(
+    productGatewaySeed,
+    /const rawModelId = process\.env\.AI_AGENT_MODEL\?\.trim\(\)/u,
+  );
+  assert.match(productGatewaySeed, /rawModelId,/u);
 });
 
 test("required pull-request validation is the minimal portable gate", () => {
