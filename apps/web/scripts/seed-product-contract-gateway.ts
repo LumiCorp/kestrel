@@ -1,4 +1,8 @@
-import { createGateway, saveGatewayModel } from "@/lib/ai/gateways";
+import {
+  createGateway,
+  saveGatewayModel,
+  syncGatewayModels,
+} from "@/lib/ai/gateways";
 import { resetDbRuntimeForTests } from "@/lib/db/runtime";
 
 const baseUrl = process.env.AI_AGENT_BASE_URL?.trim();
@@ -8,21 +12,23 @@ const apiKey = process.env.OPENROUTER_API_KEY?.trim();
 if (!organizationId)
   throw new Error("KESTREL_SEED_ORGANIZATION_ID is required.");
 if (!apiKey) throw new Error("OPENROUTER_API_KEY is required.");
+const providerBaseUrl = `${baseUrl.replace(/\/+$/u, "")}/api`;
 
 const gateway = await createGateway({
   organizationId,
   provider: "openrouter",
   displayName: "Product contract fake OpenRouter",
-  baseUrl,
+  baseUrl: providerBaseUrl,
   apiKey,
   enabled: true,
   supportedModalities: ["language"],
 });
+await syncGatewayModels(organizationId, gateway.id);
 await saveGatewayModel({
   organizationId,
   gatewayId: gateway.id,
   gatewayProvider: "openrouter",
-  gatewayBaseUrl: baseUrl,
+  gatewayBaseUrl: providerBaseUrl,
   rawModelId: "gpt-5-mini",
   modality: "language",
   approved: true,

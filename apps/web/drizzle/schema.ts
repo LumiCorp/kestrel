@@ -9,6 +9,7 @@
 
 import { type InferSelectModel, sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   check,
@@ -40,25 +41,38 @@ import type {
 /** =========================
  *  user
  *  ========================= */
-export const users = pgTable("user", {
-  id: text("id").primaryKey().notNull(),
-  name: text("name").notNull(),
-  email: text("email").notNull().unique(),
-  emailVerified: boolean("emailVerified").notNull(),
-  image: text("image"),
-  createdAt: timestamp("createdAt", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  updatedAt: timestamp("updatedAt", { withTimezone: true })
-    .defaultNow()
-    .notNull(),
-  twoFactorEnabled: boolean("twoFactorEnabled"),
-  role: text("role"),
-  banned: boolean("banned"),
-  banReason: text("banReason"),
-  banExpires: timestamp("banExpires", { withTimezone: true }),
-  stripeCustomerId: text("stripeCustomerId"),
-});
+export const users = pgTable(
+  "user",
+  {
+    id: text("id").primaryKey().notNull(),
+    name: text("name").notNull(),
+    email: text("email").notNull().unique(),
+    emailVerified: boolean("emailVerified").notNull(),
+    image: text("image"),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updatedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    twoFactorEnabled: boolean("twoFactorEnabled"),
+    role: text("role"),
+    banned: boolean("banned"),
+    banReason: text("banReason"),
+    banExpires: timestamp("banExpires", { withTimezone: true }),
+    stripeCustomerId: text("stripeCustomerId"),
+    signupAccessCodeRedemptionId: text(
+      "signup_access_code_redemption_id",
+    ).references((): AnyPgColumn => signupAccessCodeRedemptions.id, {
+      onDelete: "restrict",
+    }),
+  },
+  (table) => [
+    uniqueIndex("user_signup_access_code_redemption_idx")
+      .on(table.signupAccessCodeRedemptionId)
+      .where(sql`${table.signupAccessCodeRedemptionId} IS NOT NULL`),
+  ],
+);
 
 /** =========================
  *  session
@@ -493,6 +507,83 @@ export const invitations = pgTable("invitation", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
 });
+
+/** =========================
+ *  signup access codes
+ *  ========================= */
+export const signupAccessCodes = pgTable(
+  "signup_access_codes",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    codeHash: text("code_hash").notNull(),
+    codeHint: text("code_hint").notNull(),
+    label: text("label").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    maxRedemptions: integer("max_redemptions").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("signup_access_codes_hash_idx").on(table.codeHash),
+    index("signup_access_codes_enabled_idx").on(table.enabled, table.expiresAt),
+    check(
+      "signup_access_codes_max_redemptions_check",
+      sql`${table.maxRedemptions} > 0`,
+    ),
+  ],
+);
+
+export const signupAccessCodeRedemptions = pgTable(
+  "signup_access_code_redemptions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    accessCodeId: text("access_code_id")
+      .notNull()
+      .references(() => signupAccessCodes.id, { onDelete: "restrict" }),
+    normalizedEmail: text("normalized_email").notNull(),
+    userId: text("user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    reservationExpiresAt: timestamp("reservation_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
+    onboardingCompletedAt: timestamp("onboarding_completed_at", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("signup_access_code_redemptions_email_idx").on(
+      table.normalizedEmail,
+    ),
+    uniqueIndex("signup_access_code_redemptions_user_idx")
+      .on(table.userId)
+      .where(sql`${table.userId} IS NOT NULL`),
+    index("signup_access_code_redemptions_code_idx").on(
+      table.accessCodeId,
+      table.redeemedAt,
+      table.reservationExpiresAt,
+    ),
+  ],
+);
 
 /** =========================
  *  twoFactor
@@ -2534,7 +2625,9 @@ export const releaseControllerHeartbeats = pgTable(
     heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
   },
-  (table) => [index("release_controller_heartbeats_age_idx").on(table.heartbeatAt)],
+  (table) => [
+    index("release_controller_heartbeats_age_idx").on(table.heartbeatAt),
+  ],
 );
 
 export const workspaceBackupProtections = pgTable(
@@ -4735,6 +4828,15 @@ export const aiGateways = pgTable(
     baseUrl: text("base_url"),
     apiKeyEnvVar: text("api_key_env_var"),
     apiKey: text("api_key"),
+    credentialStatus: text("credential_status", {
+      enum: ["unverified", "ready", "invalid", "not_required"],
+    })
+      .notNull()
+      .default("unverified"),
+    credentialValidatedAt: timestamp("credential_validated_at", {
+      withTimezone: true,
+    }),
+    credentialRevision: integer("credential_revision").notNull().default(1),
     enabled: boolean("enabled").notNull().default(true),
     supportedModalities: jsonb("supported_modalities")
       .$type<Array<"language" | "image" | "speech" | "video" | "embedding">>()
@@ -4773,6 +4875,18 @@ export const aiGateways = pgTable(
     check(
       "ai_gateways_environment_scope_check",
       sql`${table.environmentId} IS NULL OR ${table.organizationId} IS NOT NULL`,
+    ),
+    check(
+      "ai_gateways_credential_revision_check",
+      sql`${table.credentialRevision} > 0`,
+    ),
+    check(
+      "ai_gateways_credential_status_check",
+      sql`${table.credentialStatus} IN ('unverified', 'ready', 'invalid', 'not_required')`,
+    ),
+    check(
+      "ai_gateways_credential_validation_check",
+      sql`${table.credentialStatus} <> 'ready' OR ${table.credentialValidatedAt} IS NOT NULL`,
     ),
   ],
 );
@@ -4841,6 +4955,7 @@ export const environmentModelGrants = pgTable(
       () => aiGatewayModels.id,
       { onDelete: "set null" },
     ),
+    gatewayCredentialRevision: integer("gateway_credential_revision"),
     status: text("status", { enum: ["active", "closed"] })
       .notNull()
       .default("active"),
@@ -4861,6 +4976,10 @@ export const environmentModelGrants = pgTable(
     check(
       "environment_model_grants_active_model_check",
       sql`${table.status} <> 'active' OR ${table.gatewayModelId} IS NOT NULL`,
+    ),
+    check(
+      "environment_model_grants_active_credential_revision_check",
+      sql`${table.status} <> 'active' OR ${table.gatewayCredentialRevision} IS NOT NULL`,
     ),
     index("environment_model_grants_environment_status_idx").on(
       table.environmentId,
@@ -5913,6 +6032,10 @@ export type OrganizationFeatureFlag = InferSelectModel<
 >;
 export type Member = InferSelectModel<typeof members>;
 export type Invitation = InferSelectModel<typeof invitations>;
+export type SignupAccessCode = InferSelectModel<typeof signupAccessCodes>;
+export type SignupAccessCodeRedemption = InferSelectModel<
+  typeof signupAccessCodeRedemptions
+>;
 export type Subscription = InferSelectModel<typeof subscriptions>;
 export type Project = InferSelectModel<typeof projects>;
 export type ProjectMember = InferSelectModel<typeof projectMembers>;

@@ -7,6 +7,9 @@ import {
   updateGateway,
 } from "@/lib/ai/gateways";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
+import {
+  signupOnboardingSetupMutationGuard,
+} from "@/lib/signup-onboarding-mutation-guard";
 
 function safeErrorResponse(error: unknown) {
   const result = getSafeGatewayAdminError(error);
@@ -44,7 +47,14 @@ export async function PUT(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId } = await requireOrganizationAdmin();
+    const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const params = paramsSchema.parse(await context.params);
     const body = bodySchema.parse(await request.json());
     const gateway = await updateGateway(organizationId, params.id, body);
@@ -62,7 +72,14 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { organizationId } = await requireOrganizationAdmin();
+    const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const params = paramsSchema.parse(await context.params);
     const gateway = await deleteGateway(organizationId, params.id);
     if (!gateway) {

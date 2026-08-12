@@ -21,6 +21,7 @@ import {
 } from "better-auth/plugins";
 import { PostgresDialect } from "kysely";
 import { Stripe } from "stripe";
+import { logAdminEvent } from "@/lib/admin/logs";
 import { canUserManageOrganizationBilling } from "@/lib/billing/access";
 import { getStripeBillingConfigStatus } from "@/lib/billing/config";
 import { deliverTransactionalEmail } from "@/lib/email/service";
@@ -31,6 +32,17 @@ import {
   assertInvitationSignupFromHeaders,
   INVITATION_EXPIRY_SECONDS,
 } from "./invitations";
+import {
+  reserveSignupAccessCodeFromHeaders,
+} from "./signup-access-codes";
+import {
+  isSignupAccessCodePolicyError,
+  signupAccessCodeTemporarilyUnavailableMessage,
+  signupAccessCodeUnavailableMessage,
+} from "./signup-access-code-policy";
+import { SIGNUP_ACCESS_CODE_HEADER } from "./signup-access-code-shared";
+import { resolveSignupAuthority } from "./signup-authority";
+import { INVITATION_SIGNUP_HEADER } from "./invitation-shared";
 import { invitationOrigin } from "./invitation-origin";
 import { pool } from "./db-client";
 import { reactInvitationEmail } from "./email/invitation";
@@ -49,6 +61,26 @@ const configuredAppUrl = resolveKestrelAppUrl(process.env);
 const baseURL: string | undefined =
   process.env.VERCEL === "1" ? configuredAppUrl : undefined;
 const authSecurityPolicy = resolveAuthSecurityPolicy(process.env);
+
+function throwPublicSignupAccessCodeError(error: unknown): never {
+  if (isSignupAccessCodePolicyError(error)) {
+    throw new APIError("BAD_REQUEST", {
+      message: signupAccessCodeUnavailableMessage(),
+    });
+  }
+  void logAdminEvent({
+    level: "error",
+    category: "signup_onboarding",
+    action: "signup_code_reservation_failed",
+    message: "Signup access code reservation failed.",
+    metadata: {
+      errorType: error instanceof Error ? error.name : typeof error,
+    },
+  }).catch(() => {});
+  throw new APIError("SERVICE_UNAVAILABLE", {
+    message: signupAccessCodeTemporarilyUnavailableMessage(),
+  });
+}
 
 const adminUserIds = (process.env.ADMIN_USER_IDS ?? "")
   .split(",")
@@ -74,6 +106,17 @@ export const auth = betterAuth({
   database: {
     dialect,
     type: "postgres",
+  },
+  user: {
+    additionalFields: {
+      signupAccessCodeRedemptionId: {
+        type: "string",
+        required: false,
+        input: false,
+        returned: false,
+        fieldName: "signup_access_code_redemption_id",
+      },
+    },
   },
   rateLimit: {
     enabled: process.env.KESTREL_PRODUCT_CONTRACT !== "true",
@@ -141,12 +184,58 @@ export const auth = betterAuth({
         });
       }
       if (context.path === "/sign-up/email") {
+        const invitationId = context.headers?.get(INVITATION_SIGNUP_HEADER);
+        const signupCode = context.headers?.get(SIGNUP_ACCESS_CODE_HEADER);
+        let authority;
+        try {
+          authority = resolveSignupAuthority({ invitationId, signupCode });
+        } catch (error) {
+          throw new APIError("BAD_REQUEST", {
+            message:
+              error instanceof Error
+                ? error.message
+                : "A valid signup method is required.",
+          });
+        }
+
+        const email = (context.body as { email?: unknown } | undefined)?.email;
+        if (authority.kind === "signup_code") {
+          return;
+        }
         await assertInvitationSignupFromHeaders({
           headers: context.headers,
-          email: (context.body as { email?: unknown } | undefined)?.email,
+          email,
         });
       }
     }),
+  },
+  databaseHooks: {
+    user: {
+      create: {
+        async before(user, context) {
+          if (context?.path !== "/sign-up/email") {
+            return;
+          }
+          const signupCode = context.headers?.get(SIGNUP_ACCESS_CODE_HEADER);
+          if (!signupCode) {
+            return;
+          }
+          try {
+            const reservation = await reserveSignupAccessCodeFromHeaders({
+              headers: context.headers,
+              email: user.email,
+            });
+            return {
+              data: {
+                signupAccessCodeRedemptionId: reservation.id,
+              },
+            };
+          } catch (error) {
+            return throwPublicSignupAccessCodeError(error);
+          }
+        },
+      },
+    },
   },
   emailAndPassword: {
     enabled: true,

@@ -10,6 +10,9 @@ import { assertEnvironmentPrivateInferenceEnabled } from "@/lib/ai/managed-runpo
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
+import {
+  signupOnboardingSetupMutationGuard,
+} from "@/lib/signup-onboarding-mutation-guard";
 
 const paramsSchema = z.object({ id: routeIdSchema, gatewayId: routeIdSchema });
 const actionSchema = z.discriminatedUnion("action", [
@@ -28,6 +31,13 @@ export async function POST(
   try {
     assertEnvironmentPrivateInferenceEnabled();
     const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const { id: environmentId, gatewayId } = paramsSchema.parse(
       await context.params
     );
@@ -72,7 +82,14 @@ export async function DELETE(
 ) {
   try {
     assertEnvironmentPrivateInferenceEnabled();
-    const { organizationId } = await requireOrganizationAdmin();
+    const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const { id: environmentId, gatewayId } = paramsSchema.parse(
       await context.params
     );

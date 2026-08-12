@@ -5,6 +5,9 @@ import { assertEnvironmentPrivateInferenceEnabled } from "@/lib/ai/managed-runpo
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
+import {
+  signupOnboardingSetupMutationGuard,
+} from "@/lib/signup-onboarding-mutation-guard";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 const bodySchema = z.object({ modelId: routeIdSchema });
@@ -16,6 +19,13 @@ export async function PUT(
   try {
     assertEnvironmentPrivateInferenceEnabled();
     const { organizationId, session } = await requireOrganizationAdmin();
+    const setupRequired = await signupOnboardingSetupMutationGuard({
+      organizationId,
+      userId: session.user.id,
+    });
+    if (setupRequired) {
+      return setupRequired;
+    }
     const { id: environmentId } = paramsSchema.parse(await context.params);
     const body = bodySchema.parse(await request.json());
     return NextResponse.json({

@@ -21,6 +21,11 @@ import {
   decryptGatewayCredential,
   encryptGatewayCredential,
 } from "./gateway-credential-crypto";
+import {
+  GatewayModelSyncHttpError,
+  initialGatewayCredentialStatus,
+  isGatewayModelSyncAuthenticationFailure,
+} from "./gateway-credential-health";
 import { GatewayModelInUseError } from "./gateway-lifecycle-error";
 import {
   normalizeGatewayStoredCredential,
@@ -179,7 +184,7 @@ async function fetchProviderJson<T>(
   const json = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(`Gateway model sync failed (${response.status}).`);
+    throw new GatewayModelSyncHttpError(response.status);
   }
 
   return json as T;
@@ -449,6 +454,64 @@ function sanitizeGateway(gateway: GatewayRecord) {
   };
 }
 
+async function markGatewayCredentialInvalidIfCurrent(input: {
+  organizationId: string;
+  gatewayId: string;
+  credentialRevision: number;
+}) {
+  const [invalidated] = await knowledgeDb
+    .update(schema.aiGateways)
+    .set({
+      credentialStatus: "invalid",
+      credentialValidatedAt: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.aiGateways.id, input.gatewayId),
+        eq(schema.aiGateways.organizationId, input.organizationId),
+        eq(schema.aiGateways.credentialRevision, input.credentialRevision)
+      )
+    )
+    .returning({ id: schema.aiGateways.id });
+  if (invalidated) {
+    console.warn("AI gateway credential invalidated.", {
+      organizationId: input.organizationId,
+      gatewayId: invalidated.id,
+      credentialRevision: input.credentialRevision,
+      reason: "provider_auth_rejection",
+    });
+  }
+}
+
+async function markGatewayCredentialReadyIfCurrent(input: {
+  organizationId: string;
+  gatewayId: string;
+  credentialRevision: number;
+  supportedModalities?: GatewayModality[];
+}) {
+  const now = new Date();
+  const [gateway] = await knowledgeDb
+    .update(schema.aiGateways)
+    .set({
+      credentialStatus: "ready",
+      credentialValidatedAt: now,
+      ...(input.supportedModalities
+        ? { supportedModalities: input.supportedModalities }
+        : {}),
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.aiGateways.id, input.gatewayId),
+        eq(schema.aiGateways.organizationId, input.organizationId),
+        eq(schema.aiGateways.credentialRevision, input.credentialRevision)
+      )
+    )
+    .returning();
+  return gateway ?? null;
+}
+
 export async function listAIGatewaysWithModels(organizationId: string) {
   const [gateways, models] = await Promise.all([
     knowledgeDb
@@ -697,6 +760,9 @@ export async function createGateway(input: {
           plaintext: apiKey,
         })
       : null,
+    credentialStatus: initialGatewayCredentialStatus(input.provider),
+    credentialValidatedAt: null,
+    credentialRevision: 1,
     enabled: input.enabled ?? true,
     supportedModalities:
       input.supportedModalities || getProviderSupportedModalities(input.provider),
@@ -767,6 +833,11 @@ export async function updateGateway(
                     plaintext: apiKey,
                   })
                 : null,
+              credentialStatus:
+                sql`CASE WHEN ${schema.aiGateways.provider} = 'ollama' THEN 'not_required' ELSE 'unverified' END`,
+              credentialValidatedAt: null,
+              credentialRevision:
+                sql`${schema.aiGateways.credentialRevision} + 1`,
             }
           : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
@@ -803,10 +874,23 @@ export async function syncGatewayModels(
     throw new Error("Gateway not found");
   }
 
-  const [syncedModels, existingModels] = await Promise.all([
-    fetchGatewayModels(gateway),
-    listModelsForGateway(organizationId, gatewayId),
-  ]);
+  let syncedModels: SyncedGatewayModel[];
+  let existingModels: GatewayModelRecord[];
+  try {
+    [syncedModels, existingModels] = await Promise.all([
+      fetchGatewayModels(gateway),
+      listModelsForGateway(organizationId, gatewayId),
+    ]);
+  } catch (error) {
+    if (isGatewayModelSyncAuthenticationFailure(error)) {
+      await markGatewayCredentialInvalidIfCurrent({
+        organizationId,
+        gatewayId,
+        credentialRevision: gateway.credentialRevision,
+      });
+    }
+    throw error;
+  }
 
   const existingByRawModelId = new Map(
     existingModels.map((model) => [model.rawModelId, model] as const)
@@ -849,26 +933,45 @@ export async function syncGatewayModels(
     new Set(savedModels.map((model) => model.modality as GatewayModality))
   );
 
-  await knowledgeDb
-    .update(schema.aiGateways)
-    .set({
-      supportedModalities:
-        discoveredModalities.length > 0
-          ? discoveredModalities
-          : getProviderSupportedModalities(gateway.provider),
-      updatedAt: new Date(),
-    })
-    .where(eq(schema.aiGateways.id, gatewayId));
+  const supportedModalities =
+    discoveredModalities.length > 0
+      ? discoveredModalities
+      : getProviderSupportedModalities(gateway.provider);
+  const updatedGateway =
+    gateway.provider === "ollama"
+      ? (
+          await knowledgeDb
+            .update(schema.aiGateways)
+            .set({
+              credentialStatus: "not_required",
+              credentialValidatedAt: null,
+              supportedModalities,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(schema.aiGateways.id, gatewayId),
+                eq(schema.aiGateways.organizationId, organizationId),
+                eq(
+                  schema.aiGateways.credentialRevision,
+                  gateway.credentialRevision
+                )
+              )
+            )
+            .returning()
+        )[0]
+      : await markGatewayCredentialReadyIfCurrent({
+          organizationId,
+          gatewayId,
+          credentialRevision: gateway.credentialRevision,
+          supportedModalities,
+        });
+  if (!updatedGateway) {
+    throw new Error("Gateway credential changed during model sync. Retry sync.");
+  }
 
   return {
-    gateway: sanitizeGateway({
-      ...gateway,
-      supportedModalities:
-        discoveredModalities.length > 0
-          ? discoveredModalities
-          : getProviderSupportedModalities(gateway.provider),
-      updatedAt: new Date(),
-    }),
+    gateway: sanitizeGateway(updatedGateway),
     models: savedModels,
     syncedCount: savedModels.length,
   };
@@ -1104,6 +1207,14 @@ export async function validateRunPodGatewayModel(input: {
     .returning();
   if (!updated) {
     throw new Error("Gateway model changed during RunPod validation.");
+  }
+  const credential = await markGatewayCredentialReadyIfCurrent({
+    organizationId: input.organizationId,
+    gatewayId: input.gatewayId,
+    credentialRevision: selected.gateway.credentialRevision,
+  });
+  if (!credential) {
+    throw new Error("Gateway credential changed during RunPod validation.");
   }
   return { model: updated, validation: evidence };
 }

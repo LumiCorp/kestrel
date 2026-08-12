@@ -6,6 +6,17 @@ import { getOrganizationChatReadiness } from "./chat-readiness";
 const setupRequiredMessage =
   "Organization setup must be completed before starting a new agent turn.";
 
+export function settingsPathForOrganizationSetup(
+  nextStep: Exclude<
+    Awaited<ReturnType<typeof getOrganizationChatReadiness>>["nextStep"],
+    null
+  >
+) {
+  return nextStep === "model_access"
+    ? "/settings/organization/ai-providers"
+    : "/settings/organization/setup";
+}
+
 export async function organizationSetupRequiredTurnResponse(
   organizationId: string
 ) {
@@ -18,6 +29,7 @@ export async function organizationSetupRequiredTurnResponse(
       code: "ORGANIZATION_SETUP_REQUIRED",
       error: setupRequiredMessage,
       nextStep: readiness.nextStep,
+      settingsPath: settingsPathForOrganizationSetup(readiness.nextStep),
     },
     { status: 409 }
   );
@@ -37,6 +49,7 @@ export async function mobileOrganizationSetupRequiredTurnResponse(
         message: setupRequiredMessage,
         retryable: false,
         nextStep: readiness.nextStep,
+        settingsPath: settingsPathForOrganizationSetup(readiness.nextStep),
       },
     },
     { status: 409 }

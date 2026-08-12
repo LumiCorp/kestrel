@@ -668,6 +668,8 @@ export async function processDurableThreadTurn(
         completionStatus === "failed"
           ? workerInterrupted
             ? "TURN_WORKER_INTERRUPTED"
+            : terminal.errorCode === "MODEL_AUTH_ERROR"
+              ? terminal.errorCode
             : terminal.errorCode === "AGENT_CONNECTION_INTERRUPTED"
               ? "AGENT_CONNECTION_INTERRUPTED"
             : terminal.errorCode === "RUNNER_EVENT_CURSOR_EXPIRED" ||
@@ -722,8 +724,10 @@ export async function processDurableThreadTurn(
       replayChunks: failurePresentation.replayChunks,
       failureCode: stopped
         ? "TURN_STOPPED"
-        : workerInterrupted
+          : workerInterrupted
           ? "TURN_WORKER_INTERRUPTED"
+          : errorCode === "MODEL_AUTH_ERROR"
+            ? errorCode
           : errorCode === "AGENT_CONNECTION_INTERRUPTED"
             ? "AGENT_CONNECTION_INTERRUPTED"
           : errorCode === "RUNNER_EVENT_CURSOR_EXPIRED" ||

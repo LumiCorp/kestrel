@@ -6,6 +6,7 @@ import {
   isRunPodServerlessBaseUrl,
 } from "./gateway-utils";
 import { getMatchingRunPodValidationEvidence } from "./runpod-connection-test";
+import type { GatewayCredentialStatus } from "./gateway-credential-health";
 
 export const GATEWAY_CREDENTIAL_LEASE_VERSION =
   "gateway-credential-lease-v3" as const;
@@ -49,6 +50,7 @@ export function assertGatewayCredentialLeaseEligible(input: {
   gateway: {
     enabled: boolean;
     provider: GatewayProtocolProvider;
+    credentialStatus: GatewayCredentialStatus;
     baseUrl?: string | null;
   };
   model: {
@@ -58,6 +60,19 @@ export function assertGatewayCredentialLeaseEligible(input: {
     metadata?: unknown;
   };
 }) {
+  if (
+    input.gateway.credentialStatus !== "ready" &&
+    !(
+      input.gateway.provider === "ollama" &&
+      input.gateway.credentialStatus === "not_required"
+    )
+  ) {
+    throw new GatewayCredentialLeaseError(
+      "GATEWAY_CREDENTIAL_NOT_READY",
+      "The requested gateway credential must be validated before use.",
+      409
+    );
+  }
   if (
     !input.gateway.enabled ||
     input.gateway.provider === "replicate" ||

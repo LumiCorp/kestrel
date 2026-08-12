@@ -2,6 +2,7 @@
 
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { BrandLockup } from "@/components/brand";
 import SignIn from "@/components/sign-in";
 import { SignUp } from "@/components/sign-up";
@@ -53,8 +54,10 @@ function AuthPage() {
                 <SignUp />
               ) : (
                 <p className="rounded border p-4 text-muted-foreground text-sm">
-                  Kestrel One accounts are created from an organization
-                  invitation.
+                  New Kestrel One accounts require an invite code.{" "}
+                  <Link className="underline" href="/sign-up">
+                    Create an account
+                  </Link>
                 </p>
               )}
             </TabsContent>

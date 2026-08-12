@@ -176,9 +176,11 @@ test(
       `;
       await transaction`
         INSERT INTO "ai_gateways" (
-          "id", "organization_id", "environment_id", "provider", "display_name"
+          "id", "organization_id", "environment_id", "provider", "display_name",
+          "credential_status", "credential_validated_at"
         ) VALUES (
-          ${gatewayId}, ${organizationId}, ${environmentId}, 'openai', 'Turn Gateway'
+          ${gatewayId}, ${organizationId}, ${environmentId}, 'openai', 'Turn Gateway',
+          'ready', now()
         )
       `;
       await transaction`
@@ -205,10 +207,11 @@ test(
       await transaction`
         INSERT INTO "environment_model_grants" (
           "run_id", "organization_id", "environment_id", "workspace_id",
-          "thread_id", "gateway_id", "raw_model_id", "gateway_model_id", "status"
+          "thread_id", "gateway_id", "raw_model_id", "gateway_model_id",
+          "gateway_credential_revision", "status"
         ) VALUES (
           ${executionId}, ${organizationId}, ${environmentId}, ${workspaceId},
-          ${successfulThreadId}, ${gatewayId}, 'turn-model', ${modelId}, 'active'
+          ${successfulThreadId}, ${gatewayId}, 'turn-model', ${modelId}, 1, 'active'
         )
       `;
       await transaction`
@@ -307,6 +310,66 @@ test(
     assert.deepEqual(successfulQueue, {
       activeTurnId: null,
       state: "running",
+    });
+
+    const credentialFailure = await createTurn(
+      successfulThreadId,
+      "credential-failure"
+    );
+    assert.ok(await store.claimDurableThreadTurn(credentialFailure.turn.id));
+    const credentialFailureExecutionId = `turn-auth-execution-${suffix}`;
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "environment_run_executions" (
+          "id", "organization_id", "environment_id", "workspace_id", "thread_id",
+          "actor_id", "runtime_image", "effective_capabilities", "status"
+        ) VALUES (
+          ${credentialFailureExecutionId}, ${organizationId}, ${environmentId},
+          ${workspaceId}, ${successfulThreadId}, ${userId}, 'runtime:test',
+          '[]'::jsonb, 'running'
+        )
+      `;
+      await transaction`
+        UPDATE "thread_turns"
+        SET "environment_execution_id" = ${credentialFailureExecutionId}
+        WHERE "id" = ${credentialFailure.turn.id}
+      `;
+      await transaction`
+        INSERT INTO "environment_model_grants" (
+          "run_id", "organization_id", "environment_id", "workspace_id",
+          "thread_id", "gateway_id", "raw_model_id", "gateway_model_id",
+          "gateway_credential_revision", "status"
+        ) VALUES (
+          ${credentialFailureExecutionId}, ${organizationId}, ${environmentId},
+          ${workspaceId}, ${successfulThreadId}, ${gatewayId}, 'turn-model',
+          ${modelId}, 1, 'active'
+        )
+      `;
+    });
+    await store.completeDurableThreadTurn({
+      turnId: credentialFailure.turn.id,
+      status: "failed",
+      failureCode: "MODEL_AUTH_ERROR",
+      failureMessage: "The provider rejected the credential.",
+    });
+    const [invalidatedCredential] = await sql<
+      Array<{
+        credentialStatus: string;
+        credentialValidatedAt: Date | null;
+        credentialRevision: number;
+      }>
+    >`
+      SELECT
+        "credential_status" AS "credentialStatus",
+        "credential_validated_at" AS "credentialValidatedAt",
+        "credential_revision" AS "credentialRevision"
+      FROM "ai_gateways"
+      WHERE "id" = ${gatewayId}
+    `;
+    assert.deepEqual(invalidatedCredential, {
+      credentialStatus: "invalid",
+      credentialValidatedAt: null,
+      credentialRevision: 1,
     });
 
     const waiting = await createTurn(interactionThreadId, "waiting");

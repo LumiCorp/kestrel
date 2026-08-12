@@ -1100,6 +1100,13 @@
                   "workspace_compute",
                   "environment_execution"
                 ]
+              },
+              "settingsPath": {
+                "type": "string",
+                "enum": [
+                  "/settings/organization/ai-providers",
+                  "/settings/organization/setup"
+                ]
               }
             },
             "additionalProperties": false
