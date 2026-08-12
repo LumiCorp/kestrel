@@ -29,7 +29,7 @@ await saveGatewayModel({
   gatewayId: gateway.id,
   gatewayProvider: "openrouter",
   gatewayBaseUrl: providerBaseUrl,
-  rawModelId: "gpt-5-mini",
+  rawModelId: "openai/gpt-5.6-luna",
   modality: "language",
   approved: true,
   isDefault: true,
