@@ -45,12 +45,14 @@ first release becomes stable. Postgres is authoritative after that point.
 
 The candidate endpoint accepts only a GitHub Actions OIDC token for the exact
 main-branch release workflow and commit SHA. It also requires a fresh controller
-heartbeat at the manifest's declared contract revision. The workflow deploys
-and checks the controller, then waits for `/api/health` to report the exact
-production commit before publishing the candidate. A candidate is accepted and
-promoted only while its bundle revision still equals the serving Kestrel One
-revision. Newer main revisions cancel obsolete image builds. No long-lived
-publisher secret is shared with Kestrel One.
+heartbeat at the manifest's declared contract revision. The workflow waits for
+`/api/health` to report the exact production commit, then deploys or verifies
+the controller before publishing the candidate. The controller step skips the
+image build only when the running controller heartbeat is fresh and every
+controller Machine already carries the current controller input fingerprint.
+A candidate is accepted and promoted only while its bundle revision still equals
+the serving Kestrel One revision. Newer main revisions cancel obsolete image
+builds. No long-lived publisher secret is shared with Kestrel One.
 
 Every manifest records the gateway configuration version emitted by Kestrel
 One and the versions accepted by the Environment Router. Change this contract
@@ -74,6 +76,17 @@ standard input, and refuses the cutover while a legacy release or Environment
 lifecycle queue has nonterminal work. It deploys the exact local commit and
 verifies the readiness file and database heartbeat. Do not run this command in
 pull-request CI.
+
+The main release workflow uses a narrower controller path. It computes a
+fingerprint from the controller Dockerfile, Fly config, controller scripts,
+the bundled worker and readiness artifacts, lockfile, package manifests, schema,
+and database migrations. When the fingerprint or controller contract is stale,
+it builds and pushes an image containing only the bundled artifacts, resolves
+and smokes the immutable Fly registry digest, updates the stopped standby by a
+unique tag without starting it, verifies Fly resolved the expected digest,
+updates the single running Machine, and verifies the fresh contract heartbeat.
+If the fingerprint and heartbeat are already current, it skips the build and
+Machine update.
 
 ## Promotion
 

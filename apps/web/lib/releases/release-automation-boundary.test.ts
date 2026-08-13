@@ -45,11 +45,15 @@ test("Fly image release automation covers every managed image and authenticates 
   assert.match(workflow, /publish-candidate:\n\s+environment: Production/u);
   assert.match(workflow, /pnpm validate/u);
   assert.match(workflow, /run: flyctl auth docker/u);
+  assert.match(workflow, /deploy-control-worker-candidate\.ts \$\{\{ github\.sha \}\}/u);
   assert.doesNotMatch(workflow, /run: fly auth docker/u);
   assert.match(publisherRuntime, /--build-only/u);
   assert.match(publisherRuntime, /--push/u);
+  assert.match(publisherRuntime, /Promise\.all/u);
+  assert.match(publisherRuntime, /runFlyImageBuild/u);
+  assert.match(publisherRuntime, /appBuildQueues/u);
   assert.match(publisher, /publishFlyImages/u);
-  assert.match(publisherRuntime, /dependencies\.run\("flyctl", \[/u);
+  assert.match(publisherRuntime, /dependencies\.run\("flyctl", args\)/u);
   assert.doesNotMatch(publisher, /await run\("fly", \[/u);
   assert.match(publisherRuntime, /"image",\s*"inspect"/u);
   assert.doesNotMatch(publisherRuntime, /"image", "show"/u);

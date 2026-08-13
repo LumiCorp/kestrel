@@ -9,7 +9,9 @@ import {
   LEGACY_RELEASE_CONTROLLER_QUEUES,
   RELEASE_CONTROLLER_CONTRACT_REVISION,
 } from "@/lib/releases/controller-contract";
+import { buildControlWorkerArtifact } from "./control-worker-artifact";
 import { restoreControlWorkerMachine } from "./control-worker-machine";
+import { publishControlWorkerImage } from "./deploy-control-worker-candidate";
 
 const app = "kestrel-one-control-worker";
 const vercelProject = "one";
@@ -76,11 +78,17 @@ const REQUIRED_CONTROL_WORKER_SECRETS = [
 function run(
   command: string,
   args: string[],
-  options: { cwd?: string; input?: string; quiet?: boolean } = {},
+  options: {
+    cwd?: string;
+    environment?: NodeJS.ProcessEnv;
+    input?: string;
+    quiet?: boolean;
+  } = {},
 ) {
   const result = spawnSync(command, args, {
     cwd: options.cwd ?? repositoryRoot,
     encoding: "utf8",
+    env: options.environment ?? process.env,
     input: options.input,
     stdio: options.quiet ? ["pipe", "pipe", "pipe"] : "inherit",
   });
@@ -241,19 +249,39 @@ async function main() {
       input: `${secretInput}\n`,
       quiet: true,
     });
-    run("fly", [
-      "deploy",
-      ".",
-      "--app",
-      app,
-      "--config",
-      "deploy/fly/kestrel-one-control-worker/fly.toml",
-      "--dockerfile",
-      "deploy/fly/kestrel-one-control-worker/Dockerfile",
-      "--remote-only",
-      "--build-arg",
-      `KESTREL_GIT_SHA=${revision}`,
-    ]);
+    run("fly", ["auth", "docker"]);
+    run("pnpm", ["run", "build:shared"]);
+    const artifact = await buildControlWorkerArtifact();
+    try {
+      const published = await publishControlWorkerImage({
+        appName: app,
+        artifact,
+        flyCommand: "fly",
+        revision,
+        dependencies: {
+          capture: async (command, args) =>
+            run(command, args, { quiet: true }).trimEnd(),
+          run: async (command, args, environment) => {
+            run(command, args, { environment });
+          },
+          wait: (milliseconds) =>
+            new Promise((resolveWait) => setTimeout(resolveWait, milliseconds)),
+        },
+      });
+      run("fly", [
+        "deploy",
+        ".",
+        "--app",
+        app,
+        "--config",
+        "deploy/fly/kestrel-one-control-worker/fly.toml",
+        "--image",
+        published.taggedImage,
+        "--remote-only",
+      ]);
+    } finally {
+      await artifact.dispose();
+    }
     await restoreControlWorkerMachine({
       app,
       expectedRevision: revision,

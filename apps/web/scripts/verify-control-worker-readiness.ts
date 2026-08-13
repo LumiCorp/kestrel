@@ -4,8 +4,14 @@ import { RELEASE_CONTROLLER_CONTRACT_REVISION } from "@/lib/releases/controller-
 
 async function main() {
   const expectedRevision = process.argv[2]?.trim();
-  if (!expectedRevision) throw new Error("Expected controller revision is required.");
-  if (process.env.KESTREL_BUILD_REVISION?.trim() !== expectedRevision) {
+  const contractOnly = expectedRevision === "--contract-only";
+  if (!contractOnly && !expectedRevision) {
+    throw new Error("Expected controller revision is required.");
+  }
+  if (
+    !contractOnly &&
+    process.env.KESTREL_BUILD_REVISION?.trim() !== expectedRevision
+  ) {
     throw new Error("The running controller revision does not match the release revision.");
   }
   const readyFile = process.env.KESTREL_CONTROL_WORKER_READY_FILE?.trim();
