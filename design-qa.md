@@ -1,3 +1,57 @@
+# Kestrel One signup provisioning design QA
+
+**Comparison Target**
+
+- Source visual truth: `~/.codex/generated_images/019ffbb7-de96-7082-8453-3f332be0d893/exec-9e301bcd-147d-46a7-a78d-d57f6712b8b1.png`
+- Rendered implementation: `~/.codex/visualizations/2026/08/13/019ffbb7-de96-7082-8453-3f332be0d893/kestrel-onboarding-implementation.png`
+- Combined comparison: `~/.codex/visualizations/2026/08/13/019ffbb7-de96-7082-8453-3f332be0d893/kestrel-onboarding-comparison.png`
+- Route and state: `/onboarding`, light theme, model and Fly ready, Environment operation running at `environment.machine.starting`.
+- Viewport: requested CSS viewport `1586 x 992`; device pixel ratio `1`.
+- Dimensions: source `1586 x 992`; browser capture `1571 x 983`. The capture was centered on a white `1586 x 992` canvas (15 horizontal and 9 vertical pixels of total padding) before the side-by-side comparison. No scaling or density resampling was used.
+
+**Findings**
+
+- No actionable P0, P1, or P2 differences remain.
+- Typography uses the product's existing sans-serif stack, weights, and tracking. The provisioning header receives the larger display treatment from the selected visual while the receipt and milestone text retain existing settings typography.
+- Spacing and layout now match the source's wide two-column grid, contiguous section dividers, and milestone rhythm at the normalized viewport.
+- Colors use the existing background, foreground, border, muted, emerald success, and accent progress tokens. Contrast and semantic status use remain consistent with the current application.
+- Image and asset fidelity is not applicable: neither visual contains photography, illustration, a logo image, or non-standard iconography. Status and disclosure icons use the application's existing Lucide dependency.
+- Copy intentionally differs where the generated visual was not operationally truthful. The implementation shows the recorded Environment gateway stage and opening the first blank Thread instead of claiming that onboarding attaches Workspace storage.
+
+**Focused Region Comparison**
+
+- A separate crop was not needed. The full-resolution side-by-side comparison keeps the header, receipt rows, all milestone labels, status icons, disclosure, and footer legible. There are no dense controls or image details that require magnification.
+
+**Interaction Evidence**
+
+- The Technical details disclosure expands and exposes the current durable stage.
+- The active milestone is marked with `aria-current="step"` and an `aria-live` progress explanation.
+- Browser console errors checked: none.
+
+**Comparison History**
+
+1. Initial comparison found a P1 composition mismatch: the implementation was about ten percent narrower, the heading lacked the selected visual's hierarchy, and generic settings gaps made the three setup sections too tall and disconnected.
+2. Fixed by widening the onboarding canvas to `70rem`, adding the larger reusable page-header size, removing inter-section gaps during signup provisioning, and restoring the source's continuous divider rhythm.
+3. The second comparison found a P2 timeline-density mismatch: later milestones and Technical details ended too high relative to the source.
+4. Fixed by increasing milestone row padding and tightening the disclosure offset. The post-fix comparison aligns the final milestone, disclosure, and blank-Thread footer with the source while preserving truthful stage copy.
+
+**Implementation Checklist**
+
+- [x] Match the selected wide layout and header hierarchy.
+- [x] Preserve completed model and Fly receipts.
+- [x] Drive milestones from durable operation stages.
+- [x] Keep the user in onboarding until Environment readiness is complete.
+- [x] Open a new blank Thread after completion.
+- [x] Verify the disclosure interaction and browser console.
+
+**Follow-up Polish**
+
+- No blocking polish remains. Additional provisioning states should reuse this same milestone surface rather than introduce estimated percentages.
+
+final result: passed
+
+---
+
 # Desktop navigation and title bar design QA
 
 **Source visual truth**

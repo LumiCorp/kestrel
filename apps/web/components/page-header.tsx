@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 export function PageHeader({
   eyebrow,
@@ -7,6 +8,7 @@ export function PageHeader({
   status,
   actions,
   headingLevel = 1,
+  size = "default",
 }: {
   eyebrow?: string;
   title: string;
@@ -14,6 +16,7 @@ export function PageHeader({
   status?: ReactNode;
   actions?: ReactNode;
   headingLevel?: 1 | 2;
+  size?: "default" | "large";
 }) {
   return (
     <header className="flex w-full min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -25,11 +28,21 @@ export function PageHeader({
         ) : null}
         <div className="space-y-1">
           {headingLevel === 1 ? (
-            <h1 className="font-semibold text-2xl tracking-tight sm:text-3xl">
+            <h1
+              className={cn(
+                "font-semibold tracking-tight",
+                size === "large" ? "text-3xl sm:text-4xl" : "text-2xl sm:text-3xl"
+              )}
+            >
               {title}
             </h1>
           ) : (
-            <h2 className="font-semibold text-2xl tracking-tight sm:text-3xl">
+            <h2
+              className={cn(
+                "font-semibold tracking-tight",
+                size === "large" ? "text-3xl sm:text-4xl" : "text-2xl sm:text-3xl"
+              )}
+            >
               {title}
             </h2>
           )}

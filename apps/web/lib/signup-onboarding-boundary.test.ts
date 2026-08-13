@@ -26,6 +26,10 @@ test("signup onboarding has no skip and limits AI providers", async () => {
   assert.match(setupSource, /mode !== "signup" \|\| option\.key !== "lumi"/u);
   assert.match(setupSource, /Approve and use default/u);
   assert.match(setupSource, /Save, test, and continue/u);
+  assert.match(setupSource, /Your workspace is taking shape/u);
+  assert.match(setupSource, /Environment setup progress/u);
+  assert.match(setupSource, /A new blank Thread will open/u);
+  assert.match(setupSource, /getSignupEnvironmentExperience/u);
   assert.match(onboardingSource, /Resend verification email/u);
   assert.match(onboardingSource, /I have verified my email/u);
   assert.match(onboardingSource, /if \(result\.error\)/u);
@@ -42,6 +46,7 @@ test("signup onboarding has no skip and limits AI providers", async () => {
     assert.match(routeSource, new RegExp(`z\\.literal\\("${action}"\\)`, "u"));
   }
   assert.match(setupSource, /fetch\("\/api\/onboarding"/u);
+  assert.match(routeSource, /startOrRecoverSignupEnvironment/u);
   assert.doesNotMatch(routeSource, /x-active-organization-id|x-organization-id/u);
   assert.doesNotMatch(`${setupSource}\n${onboardingSource}`, />Skip</u);
 });

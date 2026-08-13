@@ -24,8 +24,8 @@ export default async function OnboardingPage({
   }
 
   return (
-    <main className="min-h-dvh bg-background px-4 py-10 sm:px-6">
-      <div className="mx-auto max-w-5xl">
+    <main className="min-h-dvh bg-background px-4 py-14 sm:px-6">
+      <div className="mx-auto max-w-[70rem]">
         <SignupOnboardingClient
           email={session.user.email}
           initialCanComplete={snapshot.canComplete}
