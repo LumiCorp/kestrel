@@ -995,6 +995,12 @@ export function DesktopApp(props: {
         sessionId: activeRun.sessionId,
         ...(activeRun.runId !== undefined ? { runId: activeRun.runId } : {}),
       });
+      if (result.status === "finalizing") {
+        clearThreadError(cancelledThread.id);
+        setThreadActivity(cancelledThread.id, "Finalizing");
+        await refreshThreadAuthority(cancelledThread);
+        return;
+      }
       if (result.status === "run_changed") {
         setActiveRuns((current) => ({
           ...current,

@@ -221,6 +221,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
     threadId: string;
     completedAfter?: { completedAt: string; turnId: string } | undefined;
     limit: number;
+    includeFinalizedPayload?: boolean | undefined;
   }): Promise<Array<{
     messageId: string;
     turnId: string;
@@ -228,7 +229,11 @@ export class ThreadRuntime implements ThreadRuntimePort {
     sessionId: string;
     runId: string;
     completedAt: string;
-    result: { assistantText: string; output: NormalizedOutput };
+    result: {
+      assistantText: string;
+      output: NormalizedOutput;
+      finalizedPayload?: unknown | undefined;
+    };
   }>> {
     const turns = await this.listConversationTurns({
       threadId: input.threadId,
@@ -237,15 +242,23 @@ export class ThreadRuntime implements ThreadRuntimePort {
       ...(input.completedAfter !== undefined ? { completedAfter: input.completedAfter } : {}),
       limit: input.limit,
     });
-    return turns.flatMap((turn) => {
+    const messages = await Promise.all(turns.map(async (turn) => {
       const envelope = readTerminalEnvelope(turn.metadata?.terminalEnvelope);
       if (
         turn.completedAt === undefined
         || envelope?.status !== "COMPLETED"
         || envelope.handoff.state !== "delivered"
         || envelope.output === undefined
-      ) return [];
-      return [{
+      ) return null;
+      const finalizedPayload =
+        input.includeFinalizedPayload === true &&
+        envelope.handoff.finalizedPayload !== undefined
+          ? await this.readFinalizedPayload(
+              turn.sessionId,
+              envelope.handoff.finalizedPayload,
+            )
+          : undefined;
+      return {
         messageId: `terminal:${envelope.runId}`,
         turnId: turn.turnId,
         threadId: turn.threadId,
@@ -255,9 +268,13 @@ export class ThreadRuntime implements ThreadRuntimePort {
         result: {
           assistantText: envelope.handoff.assistantText,
           output: envelope.output,
+          ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
         },
-      }];
-    });
+      };
+    }));
+    return messages.filter((message): message is NonNullable<typeof message> =>
+      message !== null
+    );
   }
 
   async startThread(input: {

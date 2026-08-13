@@ -851,6 +851,19 @@ test("TuiRunController cancelActiveRun preserves run.cancel payload shape", asyn
   });
 });
 
+test("TuiRunController keeps a finalizing run active when cancellation is rejected", async () => {
+  const harness = createRunHarness({
+    sendCommand: async () => {
+      throw Object.assign(new Error("The run is finalizing."), {
+        code: "RUN_ALREADY_FINALIZING",
+      });
+    },
+  });
+
+  await assert.doesNotReject(harness.controller.cancelActiveRun());
+  assert.equal(harness.uiStore.getState().activeSession.sessionId, "session-1");
+});
+
 test("TuiRunController separates operational progress, provider reasoning, and agent progress", () => {
   const harness = createRunHarness();
 

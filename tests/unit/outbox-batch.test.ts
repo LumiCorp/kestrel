@@ -69,9 +69,14 @@ test("InlineOutbox batches delivery status updates", async () => {
     },
   });
 
-  await outbox.dispatchInline("run-1");
+  const outcome = await outbox.dispatchInline("run-1");
 
   assert.deepEqual(dispatched, ["test.ok", "test.fail"]);
+  assert.deepEqual(outcome, {
+    attemptedCount: 2,
+    deliveredCount: 1,
+    failedCount: 1,
+  });
   assert.equal(store.deliveredBatchCalls, 1);
   assert.equal(store.failedBatchCalls, 1);
 

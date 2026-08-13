@@ -54,6 +54,8 @@ test(
     const recoveryThreadId = `turn-recovery-${suffix}`;
     const retriedThreadId = `turn-retried-${suffix}`;
     const retriedStoppedThreadId = `turn-retried-stopped-${suffix}`;
+    const retriedTerminalStoppedThreadId =
+      `turn-retried-terminal-stopped-${suffix}`;
     const resumedThreadId = `turn-resumed-${suffix}`;
     const interactionThreadId = `turn-interaction-${suffix}`;
     const structuredReviewThreadId = `turn-structured-review-${suffix}`;
@@ -119,6 +121,11 @@ test(
           (
             ${retriedStoppedThreadId}, 'Retried Stopped Turn', ${userId},
             ${organizationId}, 'mobile'
+          ),
+          (
+            ${retriedTerminalStoppedThreadId},
+            'Retried Terminal Stopped Turn', ${userId}, ${organizationId},
+            'mobile'
           ),
           (
             ${resumedThreadId}, 'Resumed Turn', ${userId},
@@ -756,6 +763,48 @@ test(
     const cancelledRetry = await store.getDurableTurn(retriedStopped.turn.id);
     assert.equal(cancelledRetry?.status, "cancelled");
     assert.equal(cancelledRetry?.failureCode, "TURN_STOPPED");
+
+    const retriedTerminalStopped = await createTurn(
+      retriedTerminalStoppedThreadId,
+      "retried-terminal-stopped",
+    );
+    assert.ok(
+      await store.claimDurableThreadTurn(retriedTerminalStopped.turn.id),
+    );
+    const terminalStoppedExecutionId =
+      `turn-terminal-stopped-execution-${suffix}`;
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "environment_run_executions" (
+          "id", "organization_id", "environment_id", "workspace_id", "thread_id",
+          "actor_id", "runtime_image", "effective_capabilities", "status",
+          "completed_at"
+        ) VALUES (
+          ${terminalStoppedExecutionId}, ${organizationId}, ${environmentId},
+          ${workspaceId}, ${retriedTerminalStoppedThreadId}, ${userId},
+          'runtime:test', '[]'::jsonb, 'cancelled', now()
+        )
+      `;
+      await transaction`
+        UPDATE "thread_turns"
+        SET "environment_execution_id" = ${terminalStoppedExecutionId}
+        WHERE "id" = ${retriedTerminalStopped.turn.id}
+      `;
+    });
+    await store.requestDurableTurnStop({
+      turnId: retriedTerminalStopped.turn.id,
+      organizationId,
+      userId,
+    });
+    await processRuntime.processDurableThreadTurn(
+      retriedTerminalStopped.turn.id,
+      { retryCount: 1 },
+    );
+    const cancelledTerminalRetry = await store.getDurableTurn(
+      retriedTerminalStopped.turn.id,
+    );
+    assert.equal(cancelledTerminalRetry?.status, "cancelled");
+    assert.equal(cancelledTerminalRetry?.failureCode, "TURN_STOPPED");
 
     const recovery = await createTurn(recoveryThreadId, "recovery");
     assert.equal(recovery.shouldDispatch, true);

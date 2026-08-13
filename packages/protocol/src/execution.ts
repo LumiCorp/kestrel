@@ -1163,6 +1163,7 @@ export interface ConversationMessagesListCommandPayload {
   threadId: string;
   afterCursor?: string | undefined;
   limit?: number | undefined;
+  includeFinalizedPayload?: boolean | undefined;
 }
 
 export interface RunnerConversationMessage {
@@ -1175,6 +1176,7 @@ export interface RunnerConversationMessage {
   result: {
     assistantText: string;
     output: unknown;
+    finalizedPayload?: unknown | undefined;
   };
 }
 
@@ -2068,7 +2070,7 @@ export interface RunnerResponseByCommandType {
   "execution-profile.resolve": RunnerEventEnvelope<"execution-profile.resolved">;
   "job.run": RunnerEventEnvelope<"job.completed"> | RunnerEventEnvelope<"job.failed">;
   "run.start": RunnerRunTerminalEvent;
-  "run.cancel": RunnerEventEnvelope<"run.cancelled">;
+  "run.cancel": RunnerEventEnvelope<"run.cancelled"> | RunnerEventEnvelope<"runner.error">;
   "session.describe": RunnerEventEnvelope<"session.described">;
   "session.state": RunnerEventEnvelope<"session.state">;
   "operator.inbox": RunnerEventEnvelope<"operator.inbox">;
@@ -2134,7 +2136,7 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "execution-profile.resolve": ["execution-profile.resolved"],
   "job.run": ["job.completed", "job.failed"],
   "run.start": ["run.completed", "run.failed", "run.cancelled"],
-  "run.cancel": ["run.cancelled"],
+  "run.cancel": ["run.cancelled", "runner.error"],
   "session.describe": ["session.described"],
   "session.state": ["session.state"],
   "operator.inbox": ["operator.inbox"],
@@ -2515,12 +2517,21 @@ function parseRunnerCommandPayloadV2(
       requireNonEmptyString(payload.threadId, `${label}.threadId`);
       break;
     case "conversation.messages.list":
-      rejectUnknownFields(payload, label, ["threadId", "afterCursor", "limit"]);
+      rejectUnknownFields(payload, label, [
+        "threadId",
+        "afterCursor",
+        "limit",
+        "includeFinalizedPayload",
+      ]);
       requireNonEmptyString(payload.threadId, `${label}.threadId`);
       if (payload.afterCursor !== undefined) {
         parseConversationMessageCursor(payload.afterCursor, `${label}.afterCursor`);
       }
       validateOptionalIntegerRange(payload.limit, `${label}.limit`, 1, 500);
+      validateOptionalBoolean(
+        payload.includeFinalizedPayload,
+        `${label}.includeFinalizedPayload`,
+      );
       break;
     case "operator.runs":
       rejectUnknownFields(payload, label, ["sessionId", "status", "limit"]);

@@ -79,7 +79,7 @@ export type MissionControlExecutionAction =
     })
   | (AttemptActionBase & {
       type: "execution.stop_rejected";
-      outcome: "already_stopped" | "run_changed";
+      outcome: "already_stopped" | "run_changed" | "finalizing";
       activeRunId?: string | undefined;
       activeCommandId?: string | undefined;
     })
@@ -701,6 +701,14 @@ export function reduceMissionControlExecutionAction(
       if (action.outcome === "already_stopped") {
         return unchanged(current, action, revision, "noop");
       }
+      if (action.outcome === "finalizing") {
+        return updateAttempt(current, item, attempt, action, revision, {
+          ...attempt,
+          status: "running",
+          version: attempt.version + 1,
+          updatedAt: action.actionTs,
+        });
+      }
       return finishAttempt(current, item, attempt, action, revision, {
         status: "orphaned",
         attentionReason: "runtime_authority_changed",
@@ -1282,9 +1290,13 @@ function requirePendingKind(
 
 function requireStopRejectionOutcome(
   value: unknown,
-): "already_stopped" | "run_changed" {
-  if (value !== "already_stopped" && value !== "run_changed") {
-    throw new Error("outcome must be already_stopped or run_changed.");
+): "already_stopped" | "run_changed" | "finalizing" {
+  if (
+    value !== "already_stopped" &&
+    value !== "run_changed" &&
+    value !== "finalizing"
+  ) {
+    throw new Error("outcome must be already_stopped, run_changed, or finalizing.");
   }
   return value;
 }

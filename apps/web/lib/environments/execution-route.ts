@@ -961,6 +961,40 @@ export async function updateEnvironmentExecutionRuntimeCursor(input: {
   await settleEnvironmentExecutionRuntimeEvent(input);
 }
 
+export async function readEnvironmentExecutionTerminalStatus(input: {
+  organizationId: string;
+  executionId: string;
+}) {
+  const execution = await knowledgeDb.query.environmentRunExecutions.findFirst({
+    where: and(
+      eq(schema.environmentRunExecutions.id, input.executionId),
+      eq(schema.environmentRunExecutions.organizationId, input.organizationId),
+      inArray(schema.environmentRunExecutions.status, [
+        "completed",
+        "failed",
+        "cancelled",
+      ]),
+    ),
+    columns: {
+      status: true,
+      lastRuntimeEventId: true,
+      completedAt: true,
+    },
+  });
+  if (
+    !(
+      execution &&
+      ["completed", "failed", "cancelled"].includes(execution.status)
+    )
+  ) {
+    return null;
+  }
+  return {
+    ...execution,
+    status: execution.status as "completed" | "failed" | "cancelled",
+  };
+}
+
 export async function settleEnvironmentExecutionRuntimeEvent(input: {
   organizationId: string;
   executionId: string;
@@ -1048,14 +1082,40 @@ export async function resolveEnvironmentExecutionAuthorizationRoute(input: {
   organizationId: string;
   executionId: string;
 }) {
+  return resolvePersistedEnvironmentExecutionRoute({
+    ...input,
+    statuses: ["routed", "running"],
+    capabilities: ROUTE_CAPABILITIES,
+  });
+}
+
+export async function resolveEnvironmentExecutionRecoveryRoute(input: {
+  organizationId: string;
+  executionId: string;
+}) {
+  return resolvePersistedEnvironmentExecutionRoute({
+    ...input,
+    statuses: ["completed"],
+    capabilities: ["session.read"],
+  });
+}
+
+async function resolvePersistedEnvironmentExecutionRoute(input: {
+  organizationId: string;
+  executionId: string;
+  statuses: Array<"routed" | "running" | "completed">;
+  capabilities: readonly string[];
+}) {
   const [route] = await knowledgeDb
     .select({
+      status: schema.environmentRunExecutions.status,
       environmentId: schema.environmentRunExecutions.environmentId,
       workspaceId: schema.environmentRunExecutions.workspaceId,
       threadId: schema.environmentRunExecutions.threadId,
       actorId: schema.environmentRunExecutions.actorId,
       runtimeRunId: schema.environmentRunExecutions.runtimeRunId,
       lastRuntimeEventId: schema.environmentRunExecutions.lastRuntimeEventId,
+      completedAt: schema.environmentRunExecutions.completedAt,
       flyAppName: schema.environments.flyAppName,
       routerUrl: schema.environments.routerUrl,
       flyMachineId: schema.environmentWorkspaces.flyMachineId,
@@ -1079,7 +1139,7 @@ export async function resolveEnvironmentExecutionAuthorizationRoute(input: {
           schema.environmentRunExecutions.organizationId,
           input.organizationId,
         ),
-        inArray(schema.environmentRunExecutions.status, ["routed", "running"]),
+        inArray(schema.environmentRunExecutions.status, input.statuses),
       ),
     )
     .limit(1);
@@ -1105,7 +1165,7 @@ export async function resolveEnvironmentExecutionAuthorizationRoute(input: {
         appName: route.flyAppName,
         machineId: route.flyMachineId,
       },
-      capabilities: [...ROUTE_CAPABILITIES],
+      capabilities: [...input.capabilities],
       issuedAt: now,
       expiresAt: now + 300,
       nonce: crypto.randomUUID(),
@@ -1116,6 +1176,8 @@ export async function resolveEnvironmentExecutionAuthorizationRoute(input: {
     authToken,
     runtimeRunId: route.runtimeRunId,
     lastRuntimeEventId: route.lastRuntimeEventId,
+    status: route.status,
+    completedAt: route.completedAt,
     sessionId: route.threadId,
     actorId: route.actorId,
   };

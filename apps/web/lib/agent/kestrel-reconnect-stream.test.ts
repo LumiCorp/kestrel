@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { RunnerRunStreamEvent } from "@kestrel-agents/sdk";
-import { writeKestrelReconnectStreamToUi } from "@/lib/agent/kestrel-reconnect-stream";
+import {
+  createRecoveredKestrelOneCompletion,
+  writeKestrelReconnectStreamToUi,
+} from "@/lib/agent/kestrel-reconnect-stream";
+import { readRequestedInteractionMode } from "@/lib/agent/kestrel-runtime-core";
 
 
 test("writeKestrelReconnectStreamToUi keeps runner error as fallback until terminal text arrives", async () => {
@@ -57,6 +61,63 @@ test("writeKestrelReconnectStreamToUi emits runner error fallback when no termin
   const output = JSON.stringify(writer.chunks);
 
   assert.equal(countOccurrences(output, "Runner boundary failed."), 1);
+});
+
+test("completed conversation recovery preserves the exact run's preview answer", () => {
+  const previewAnswer = "Preview: https://example.test/preview/recovered";
+  const terminal = createRecoveredKestrelOneCompletion({
+    runtimeRunId: "run-recovered",
+    sessionId: "session-recovered",
+    terminalEventId: "event-recovered-completed",
+    completedAt: "2026-05-06T00:00:01.000Z",
+    messages: [
+      {
+        messageId: "terminal:run-other",
+        turnId: "turn-other",
+        threadId: "session-recovered",
+        sessionId: "session-recovered",
+        runId: "run-other",
+        completedAt: "2026-05-06T00:00:00.000Z",
+        result: {
+          assistantText: "Wrong answer",
+          output: {
+            status: "COMPLETED",
+            sessionId: "session-recovered",
+            runId: "run-other",
+            errors: [],
+          },
+        },
+      },
+      {
+        messageId: "terminal:run-recovered",
+        turnId: "turn-recovered",
+        threadId: "session-recovered",
+        sessionId: "session-recovered",
+        runId: "run-recovered",
+        completedAt: "2026-05-06T00:00:01.000Z",
+        result: {
+          assistantText: previewAnswer,
+          finalizedPayload: {
+            payload: { data: { modeSwitch: { mode: "build" } } },
+          },
+          output: {
+            status: "COMPLETED",
+            sessionId: "session-recovered",
+            runId: "run-recovered",
+            errors: [],
+          },
+        },
+      },
+    ],
+  });
+
+  assert.equal(terminal.type, "run.completed");
+  assert.equal(terminal.payload.result.assistantText, previewAnswer);
+  assert.equal(terminal.payload.result.output.runId, "run-recovered");
+  assert.equal(
+    readRequestedInteractionMode(terminal.payload.result.finalizedPayload),
+    "build",
+  );
 });
 
 function createChunkWriter() {

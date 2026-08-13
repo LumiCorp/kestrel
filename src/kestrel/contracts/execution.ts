@@ -172,6 +172,7 @@ export interface Transition {
   nextStepAgent?: string | undefined;
   statePatch?: Record<string, unknown> | undefined;
   status: TransitionStatus;
+  outboxDelivery?: "inline" | "after_terminal" | undefined;
   effects?: Effect[] | undefined;
   emitEvents?: RuntimeEventIntent[] | undefined;
   waitFor?: WaitForMatcher | undefined;
@@ -365,7 +366,11 @@ export interface EffectRunner {
 }
 
 export interface Outbox {
-  dispatchInline(runId: string): Promise<void>;
+  dispatchInline(runId: string): Promise<{
+    attemptedCount: number;
+    deliveredCount: number;
+    failedCount: number;
+  }>;
 }
 
 export interface RunLogger {

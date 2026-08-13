@@ -522,6 +522,7 @@ test("createReferenceReactFinalizeCheckpoint records processor-owned finalizatio
   const workingPlan = react.workingPlan as Record<string, unknown>;
 
   assert.equal(transition.status, "COMPLETED");
+  assert.equal(transition.outboxDelivery, "after_terminal");
   assert.equal(transition.emitEvents?.[0]?.type, "agent.completed");
   assert.deepEqual(react.finalOutput, { message: "done" });
   assert.equal(react.finalized, true);

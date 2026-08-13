@@ -82,7 +82,15 @@ export class TuiRunController {
     const state = this.context.uiStore.getState();
     const cancelled = await this.context.client.sendCommand("run.cancel", {
       sessionId: state.activeSession.sessionId,
-    }, this.context.getActiveRunnerMetadata());
+    }, this.context.getActiveRunnerMetadata()).catch((error: unknown) => {
+      if (runnerErrorCode(error) === "RUN_ALREADY_FINALIZING") {
+        return undefined;
+      }
+      throw error;
+    });
+    if (cancelled === undefined) {
+      return;
+    }
     if (cancelled.type !== "run.cancelled") {
       throw new Error(`Unexpected run cancellation response '${cancelled.type}'`);
     }
@@ -800,6 +808,13 @@ export class TuiRunController {
       details: JSON.stringify(input.details, null, 2),
     });
   }
+}
+
+function runnerErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return;
+  }
+  return typeof error.code === "string" ? error.code : undefined;
 }
 
 function getEntryStepAgent(profile: TuiProfile): string {

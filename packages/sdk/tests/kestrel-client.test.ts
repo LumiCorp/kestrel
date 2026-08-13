@@ -777,6 +777,196 @@ test("KestrelClient cancel resolves the run stream with run.cancelled", async ()
   await client.close();
 });
 
+test("KestrelClient cancelRun surfaces a finalizing runner error", async () => {
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          id: "evt-run-cancel-finalizing",
+          type: "runner.error",
+          ts: new Date().toISOString(),
+          commandId: body.id,
+          sessionId: "session-sdk-finalizing",
+          runId: "run-sdk-finalizing",
+          payload: {
+            code: "RUN_ALREADY_FINALIZING",
+            message: "The run has accepted final assistant output and is no longer cancellable.",
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    },
+  });
+
+  await assert.rejects(
+    client.cancelRun(
+      { sessionId: "session-sdk-finalizing", runId: "run-sdk-finalizing" },
+      context,
+    ),
+    (error: unknown) => {
+      assert.equal(
+        (error as { code?: string }).code,
+        "RUN_ALREADY_FINALIZING",
+      );
+      return true;
+    },
+  );
+  await client.close();
+});
+
+test("a rejected finalizing cancellation does not replace the run stream result", async () => {
+  let runController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let runCommandId = "";
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as {
+        id: string;
+        type: string;
+      };
+      if (body.type === "run.cancel") {
+        return Response.json({
+          id: "evt-finalizing-cancel-rejected",
+          type: "runner.error",
+          ts: new Date().toISOString(),
+          commandId: body.id,
+          sessionId: "session-sdk-finalizing-stream",
+          runId: "run-sdk-finalizing-stream",
+          payload: {
+            code: "RUN_ALREADY_FINALIZING",
+            message: "The run is finalizing.",
+          },
+        });
+      }
+      runCommandId = body.id;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          runController = controller;
+          controller.enqueue(new TextEncoder().encode(
+            `event: run.started\ndata: ${JSON.stringify({
+              id: "evt-finalizing-stream-started",
+              type: "run.started",
+              ts: new Date().toISOString(),
+              commandId: body.id,
+              sessionId: "session-sdk-finalizing-stream",
+              runId: "run-sdk-finalizing-stream",
+              payload: {
+                sessionId: "session-sdk-finalizing-stream",
+                runId: "run-sdk-finalizing-stream",
+                eventType: "user.message",
+              },
+            })}\n\n`,
+          ));
+        },
+      }), {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  });
+  const stream = client.streamRun({
+    profileId: "kestrel",
+    turn: {
+      sessionId: "session-sdk-finalizing-stream",
+      message: "finish",
+      eventType: "user.message",
+    },
+  }, context);
+  const iterator = stream[Symbol.asyncIterator]();
+  assert.equal((await iterator.next()).value?.type, "run.started");
+
+  await assert.rejects(
+    stream.cancel(),
+    (error: unknown) =>
+      (error as { code?: string }).code === "RUN_ALREADY_FINALIZING",
+  );
+  runController?.enqueue(new TextEncoder().encode(
+    `event: run.completed\ndata: ${JSON.stringify({
+      id: "evt-finalizing-stream-completed",
+      type: "run.completed",
+      ts: new Date().toISOString(),
+      commandId: runCommandId,
+      sessionId: "session-sdk-finalizing-stream",
+      runId: "run-sdk-finalizing-stream",
+      payload: {
+        result: completedResult(
+          "session-sdk-finalizing-stream",
+          "run-sdk-finalizing-stream",
+        ),
+      },
+    })}\n\n`,
+  ));
+  runController?.close();
+
+  assert.equal((await iterator.next()).value?.type, "run.completed");
+  assert.equal((await stream.result).type, "run.completed");
+  await client.close();
+});
+
+test("a rejected finalizing cancellation keeps an attached run observable", async () => {
+  let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/commands") {
+        const command = JSON.parse(String(init?.body)) as { id: string };
+        return Response.json({
+          id: "evt-reattach-cancel-rejected",
+          type: "runner.error",
+          ts: new Date().toISOString(),
+          commandId: command.id,
+          sessionId: "session-sdk-finalizing-reattach",
+          runId: "run-sdk-finalizing-reattach",
+          payload: {
+            code: "RUN_ALREADY_FINALIZING",
+            message: "The run is finalizing.",
+          },
+        });
+      }
+      assert.equal(url.pathname, "/events/stream");
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          eventController = controller;
+        },
+      }), {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  });
+  const stream = client.reattachRun({
+    sessionId: "session-sdk-finalizing-reattach",
+    runId: "run-sdk-finalizing-reattach",
+    sinceEventId: "evt-finalizer-completed",
+  }, context);
+
+  await assert.rejects(
+    stream.cancel(),
+    (error: unknown) =>
+      (error as { code?: string }).code === "RUN_ALREADY_FINALIZING",
+  );
+  eventController?.enqueue(new TextEncoder().encode(
+    `event: run.completed\ndata: ${JSON.stringify({
+      id: "evt-finalizing-reattach-completed",
+      type: "run.completed",
+      ts: new Date().toISOString(),
+      sessionId: "session-sdk-finalizing-reattach",
+      runId: "run-sdk-finalizing-reattach",
+      payload: {
+        result: completedResult(
+          "session-sdk-finalizing-reattach",
+          "run-sdk-finalizing-reattach",
+        ),
+      },
+    })}\n\n`,
+  ));
+  eventController?.close();
+
+  assert.equal((await stream.result).type, "run.completed");
+  await client.close();
+});
+
 test("KestrelClient cancel includes runId after the stream learns it", async () => {
   const requests: Array<Record<string, unknown>> = [];
   let runController: ReadableStreamDefaultController<Uint8Array> | undefined;

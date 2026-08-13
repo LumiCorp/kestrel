@@ -170,6 +170,7 @@ interface ActiveRunEntry {
   abortController: AbortController;
   runId?: string | undefined;
   cancelRequested?: boolean | undefined;
+  finalizingAnswer?: boolean | undefined;
 }
 
 export interface RunnerProfileProvider {
@@ -247,6 +248,7 @@ export interface RunnerRuntime {
     threadId: string;
     completedAfter?: { completedAt: string; turnId: string } | undefined;
     limit: number;
+    includeFinalizedPayload?: boolean | undefined;
   }) => Promise<Array<{
     messageId: string;
     turnId: string;
@@ -254,7 +256,11 @@ export interface RunnerRuntime {
     sessionId: string;
     runId: string;
     completedAt: string;
-    result: { assistantText: string; output: RunTurnResult["output"] };
+    result: {
+      assistantText: string;
+      output: RunTurnResult["output"];
+      finalizedPayload?: unknown | undefined;
+    };
   }>>) | undefined;
   submitConversationMessage?: ((input: import("../../src/orchestration/contracts.js").SubmitConversationMessageInput) => Promise<
     import("../../src/orchestration/contracts.js").ConversationMessageRouteResult
@@ -1320,6 +1326,27 @@ export class RunnerHost {
         if (active.runId === undefined && payload.runId !== undefined) {
           active.runId = payload.runId;
         }
+        if (active.finalizingAnswer === true) {
+          this.writer.emit(
+            "runner.error",
+            {
+              code: "RUN_ALREADY_FINALIZING",
+              message:
+                "The run has accepted final assistant output and is no longer cancellable.",
+              details: {
+                sessionId: payload.sessionId,
+                ...(active.runId !== undefined ? { runId: active.runId } : {}),
+                activeCommandId: active.commandId,
+              },
+            },
+            {
+              commandId,
+              sessionId: payload.sessionId,
+              ...(active.runId !== undefined ? { runId: active.runId } : {}),
+            }
+          );
+          return;
+        }
         active.cancelRequested = true;
         active.abortController.abort();
         cancelledRunId = active.runId;
@@ -1532,6 +1559,9 @@ export class RunnerHost {
         threadId: payload.threadId,
         ...(completedAfter !== undefined ? { completedAfter } : {}),
         limit: limit + 1,
+        ...(payload.includeFinalizedPayload === true
+          ? { includeFinalizedPayload: true }
+          : {}),
       });
       const hasMore = payload.afterCursor !== undefined && page.length > limit;
       const messages = page.slice(0, limit);
@@ -3136,6 +3166,15 @@ export class RunnerHost {
 
   private emitToolUpdate(update: RunToolUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
+    if (
+      normalizedUpdate.phase === "completed" &&
+      normalizedUpdate.toolName === "FinalizeAnswer"
+    ) {
+      const active = this.activeRuns.get(normalizedUpdate.sessionId);
+      if (active !== undefined) {
+        active.finalizingAnswer = true;
+      }
+    }
     const commandId = this.commandBySession.get(normalizedUpdate.sessionId);
     const threadId =
       this.threadIdBySession.get(normalizedUpdate.sessionId) ??

@@ -38,6 +38,21 @@ test("Desktop cancellation reconciles an already-finished run", async () => {
   assert.deepEqual(result, { status: "already_stopped" });
 });
 
+test("Desktop cancellation treats finalized runs as still completing", async () => {
+  const error = Object.assign(
+    new Error("The run has accepted final assistant output and is no longer cancellable."),
+    {
+      code: "RUN_ALREADY_FINALIZING",
+    },
+  );
+  const result = await cancelDesktopRun({
+    adapter: { async sendControl() { throw error; } },
+    request: { sessionId: "session-1", runId: "run-1" },
+    context,
+  });
+  assert.deepEqual(result, { status: "finalizing" });
+});
+
 test("Desktop cancellation preserves a newer active run target", async () => {
   const error = Object.assign(new Error("No matching cancellable run was found."), {
     code: "RUN_CANCEL_NOT_FOUND",

@@ -363,6 +363,7 @@ export type DesktopShellCommand =
 
 export type DesktopRunCancellationResult =
   | { status: "cancelled"; event: DesktopRunnerEvent }
+  | { status: "finalizing" }
   | { status: "already_stopped" }
   | {
       status: "run_changed";

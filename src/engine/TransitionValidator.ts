@@ -14,6 +14,29 @@ const VALID_FAILURE_POLICIES: ReadonlySet<EffectFailurePolicy> = new Set([
 ]);
 
 export function validateTransition(transition: StepTransition): void {
+  if (
+    transition.outboxDelivery !== undefined &&
+    transition.outboxDelivery !== "inline" &&
+    transition.outboxDelivery !== "after_terminal"
+  ) {
+    throwTransitionValidationError(
+      `Unsupported transition outboxDelivery: ${String(transition.outboxDelivery)}.`,
+      "transition.outboxDelivery",
+      transition.status,
+    );
+  }
+
+  if (
+    transition.outboxDelivery === "after_terminal" &&
+    transition.status !== "COMPLETED"
+  ) {
+    throwTransitionValidationError(
+      "after_terminal outbox delivery is only valid for COMPLETED transitions.",
+      "transition.outboxDelivery",
+      transition.status,
+    );
+  }
+
   if (transition.nextStepAgent !== undefined) {
     validateRequiredString(
       transition.nextStepAgent,

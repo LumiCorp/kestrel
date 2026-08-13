@@ -2,15 +2,45 @@ import {
   writeKestrelRunnerStreamToUIMessage,
   type KestrelUIMessage,
 } from "@kestrel-agents/ai-sdk";
-import type {
-  RunnerRunStreamEvent,
-  RunnerRunTerminalEvent,
+import {
+  parseRunnerEventV2,
+  type RunnerConversationMessage,
+  type RunnerRunStreamEvent,
+  type RunnerRunTerminalEvent,
 } from "@kestrel-agents/sdk";
 import type { InferUIMessageChunk, UIMessageStreamWriter } from "ai";
 import type { ChatMessage } from "@/lib/types";
 
 interface KestrelUiStreamWriter {
   write(chunk: InferUIMessageChunk<ChatMessage>): void;
+}
+
+export function createRecoveredKestrelOneCompletion(input: {
+  runtimeRunId: string;
+  sessionId: string;
+  terminalEventId: string;
+  completedAt: string;
+  messages: RunnerConversationMessage[];
+}): RunnerRunTerminalEvent {
+  const message = input.messages.find(
+    (candidate) => candidate.runId === input.runtimeRunId,
+  );
+  if (!message) {
+    throw new Error("The completed agent message is unavailable for recovery.");
+  }
+  const event = parseRunnerEventV2({
+    id: input.terminalEventId,
+    type: "run.completed",
+    ts: input.completedAt,
+    runId: input.runtimeRunId,
+    sessionId: input.sessionId,
+    threadId: input.sessionId,
+    payload: { result: message.result },
+  });
+  if (event.type !== "run.completed") {
+    throw new Error("Recovered runner completion was invalid.");
+  }
+  return event;
 }
 
 export async function writeKestrelReconnectStreamToUi(input: {

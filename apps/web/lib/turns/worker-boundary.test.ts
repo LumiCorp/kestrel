@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import {
+  clearDurableTurnCancellationDeadline,
+  isFinalizeAnswerCompletedEvent,
+  shouldInterruptDurableTurnAtRuntimeEvent,
+} from "./runtime-cancellation";
 
 test(
   "the durable turn image builds workspace runtime dependencies",
@@ -196,12 +201,49 @@ test(
 
     assert.match(runtimeSource, /DURABLE_TURN_STOP_GRACE_MS/u);
     assert.match(runtimeSource, /scheduleCancellationDeadline/u);
-    assert.match(runtimeSource, /isSafeInterruptBoundary/u);
+    assert.match(runtimeSource, /shouldInterruptDurableTurnAtRuntimeEvent/u);
     assert.match(runtimeSource, /status: stopped \? "cancelled" : "failed"/u);
     assert.match(storeSource, /interruptMode: "safe_boundary_deadline"/u);
     assert.match(storeSource, /interruptDeadlineAt:/u);
   },
 );
+
+test("FinalizeAnswer completion protects the durable turn from safe-boundary interruption", () => {
+  const finalizerCompleted = {
+    type: "run.tool.completed",
+    payload: { update: { toolName: "FinalizeAnswer" } },
+  };
+  assert.equal(isFinalizeAnswerCompletedEvent(finalizerCompleted), true);
+  assert.equal(
+    shouldInterruptDurableTurnAtRuntimeEvent({
+      cancellationRequested: true,
+      finalizeAnswerCompleted: true,
+      eventType: finalizerCompleted.type,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldInterruptDurableTurnAtRuntimeEvent({
+      cancellationRequested: true,
+      finalizeAnswerCompleted: false,
+      eventType: "run.tool.completed",
+    }),
+    true,
+  );
+});
+
+test("FinalizeAnswer completion disarms an existing Stop deadline", async () => {
+  let deadlineFired = false;
+  let deadline: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    deadlineFired = true;
+  }, 10);
+
+  deadline = clearDurableTurnCancellationDeadline(deadline);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(deadline, null);
+  assert.equal(deadlineFired, false);
+});
 
 test(
   "project context Redis failures stay inside the worker boundary",
@@ -222,10 +264,12 @@ test("cancellation acknowledgement cannot manufacture terminal turn completion",
     new URL("./process-runtime.ts", import.meta.url),
     "utf8",
   );
+  assert.match(runtimeSource, /readEnvironmentExecutionTerminalStatus/u);
   assert.match(
     runtimeSource,
     /stopped && !runtimeTerminalObserved && environmentExecutionId/u,
   );
+  assert.match(runtimeSource, /terminalExecution\?\.status !== "cancelled"/u);
   assert.doesNotMatch(
     runtimeSource,
     /false && stopped && !runtimeTerminalObserved && environmentExecutionId/u,
