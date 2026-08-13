@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { recoverAdminDefaultEnvironment, setAdminEnvironmentRollout } from "@/lib/admin/environments";
+import {
+  recoverAdminDefaultEnvironment,
+  setAdminEnvironmentRollout,
+} from "@/lib/admin/environments";
 import { getSafeGatewayAdminError } from "@/lib/ai/gateway-admin-error";
 import { GatewayModelSyncHttpError } from "@/lib/ai/gateway-credential-health";
 import {
@@ -11,12 +14,14 @@ import {
   updateGateway,
 } from "@/lib/ai/gateways";
 import { getHostedEnvironmentsRollout } from "@/lib/environments/config";
+import { ensureOrganizationDefaultEnvironment } from "@/lib/environments/store";
 import {
   configureFlyProviderConnection,
   testFlyProviderConnection,
 } from "@/lib/environments/fly-connection";
 import { EnvironmentProviderError } from "@/lib/environments/providers/contracts";
 import { requireSession } from "@/lib/knowledge/auth";
+import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import {
   isSignupAccessCodePolicyError,
   signupAccessCodeTemporarilyUnavailableMessage,
@@ -33,10 +38,19 @@ import {
   requireSignupOnboardingWorkspace,
   SignupOnboardingGuardError,
 } from "@/lib/signup-onboarding";
+import { startOrRecoverSignupEnvironment } from "@/lib/signup-onboarding-environment";
 import {
   isSignupOnboardingProvider,
   SIGNUP_ONBOARDING_PROVIDERS,
 } from "@/lib/signup-onboarding-provider-policy";
+
+const signupEnvironmentDependencies = {
+  getRollout: getHostedEnvironmentsRollout,
+  enableRollout: setAdminEnvironmentRollout,
+  ensureDefault: ensureOrganizationDefaultEnvironment,
+  enqueue: enqueueEnvironmentOperation,
+  recoverDefault: recoverAdminDefaultEnvironment,
+};
 
 const actionSchema = z.discriminatedUnion("action", [
   z.object({
@@ -245,29 +259,6 @@ async function selectDefaultModel(input: {
   throw new SignupOnboardingResourceNotFoundError();
 }
 
-async function startOrRecoverEnvironment(input: {
-  organizationId: string;
-  userId: string;
-}) {
-  const rollout = await getHostedEnvironmentsRollout({
-    organizationId: input.organizationId,
-  });
-  if (!rollout.deploymentEnabled) {
-    return;
-  }
-  if (!rollout.organizationEnabled) {
-    await setAdminEnvironmentRollout({
-      organizationId: input.organizationId,
-      actorUserId: input.userId,
-      enabled: true,
-    });
-  }
-  await recoverAdminDefaultEnvironment({
-    organizationId: input.organizationId,
-    actorUserId: input.userId,
-  });
-}
-
 export async function GET() {
   try {
     const session = await requireSession();
@@ -344,10 +335,10 @@ export async function POST(request: Request) {
         enabled: true,
       });
       await testFlyProviderConnection(organization.id);
-      await startOrRecoverEnvironment({
+      await startOrRecoverSignupEnvironment({
         organizationId: organization.id,
         userId: session.user.id,
-      });
+      }, signupEnvironmentDependencies);
     } else if (body.action === "retry-default-environment") {
       const current = await assertModelReady(session.user.id);
       if (!current.onboarding.readiness?.workspaceCompute.ready) {
@@ -355,10 +346,10 @@ export async function POST(request: Request) {
           "Verify the Fly workspace provider before retrying the default Environment.",
         );
       }
-      await startOrRecoverEnvironment({
+      await startOrRecoverSignupEnvironment({
         organizationId: organization.id,
         userId: session.user.id,
-      });
+      }, signupEnvironmentDependencies);
     } else {
       const rollout = await getHostedEnvironmentsRollout({
         organizationId: organization.id,
