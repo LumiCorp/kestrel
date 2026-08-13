@@ -34,6 +34,13 @@ import { useArtifact, useArtifactSelector } from "@/hooks/use-artifact";
 import { useChatVisibility } from "@/hooks/use-chat-visibility";
 import { CompatibleChatTransport } from "@/lib/chat/compatible-chat-transport";
 import {
+  assertMatchingResumeTurnId,
+  claimResumeRequest,
+  RESUME_WARNING_MESSAGE,
+  type ResumeCoordinator,
+  synchronizeResumeCoordinator,
+} from "@/lib/chat/resume-coordinator";
+import {
   clearChatFirstTurnHandoff,
   readChatFirstTurnHandoff,
   writeChatFirstTurnHandoff,
@@ -98,7 +105,19 @@ function createChatTransport(
   return new CompatibleChatTransport<ChatMessage>({
     api: "/api/threads",
     fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const expectedTurnId = resumeTurnIdRef.current;
       const response = await fetchWithErrorHandlers(input, init);
+      if (expectedTurnId) {
+        const returnedTurnId = response.headers
+          .get("x-kestrel-turn-id")
+          ?.trim();
+        try {
+          assertMatchingResumeTurnId(expectedTurnId, returnedTurnId ?? null);
+        } catch (error) {
+          await response.body?.cancel().catch(() => {});
+          throw error;
+        }
+      }
       onSuccessfulResponse?.(response);
       return response;
     }) as typeof fetch,
@@ -390,6 +409,20 @@ function useChatCallbacks(input: {
           type: "error",
           description: error.message,
         });
+        return;
+      }
+
+      if (
+        error instanceof Error &&
+        error.message === RESUME_WARNING_MESSAGE
+      ) {
+        if (
+          input.hasShownResumeWarningRef &&
+          !input.hasShownResumeWarningRef.current
+        ) {
+          input.hasShownResumeWarningRef.current = true;
+          toast({ type: "warning", description: RESUME_WARNING_MESSAGE });
+        }
         return;
       }
 
@@ -811,13 +844,10 @@ export function Chat({
   const [liveRuntimePresentation, setLiveRuntimePresentation] =
     useState<LiveRuntimePresentation | null>(null);
   const resumeTurnIdRef = useRef<string | null>(null);
-  const streamedTurnIdRef = useRef<string | null>(
-    initialConversationState.turns.find(
-      (turn) =>
-        turn.id === initialConversationState.queue.activeTurnId &&
-        (turn.status === "queued" || turn.status === "running")
-    )?.id ?? null
-  );
+  const resumeCoordinatorRef = useRef<ResumeCoordinator>({
+    activeTurnId: null,
+    requested: false,
+  });
   const [handoff, setHandoff] = useState<
     ChatFirstTurnHandoff | null | undefined
   >(undefined);
@@ -877,7 +907,7 @@ export function Chat({
     }
     const nextState = threadConversationStateSchema.parse(payload);
     setConversationState((current) =>
-      nextState.queue.version >= current.queue.version ? nextState : current
+      nextState.queue.version > current.queue.version ? nextState : current
     );
   }, [chatExists, id]);
 
@@ -931,7 +961,12 @@ export function Chat({
         (response) => {
           setChatExists(true);
           const turnId = response.headers.get("x-kestrel-turn-id")?.trim();
-          if (turnId) streamedTurnIdRef.current = turnId;
+          if (turnId) {
+            resumeCoordinatorRef.current = {
+              activeTurnId: turnId,
+              requested: true,
+            };
+          }
         }
       ),
     [shared.currentModelIdRef, shared.interactionModeRef]
@@ -940,7 +975,7 @@ export function Chat({
   const controller = useChat<ChatMessage>({
     id,
     messages: initialMessages,
-    resume: Boolean(streamedTurnIdRef.current),
+    resume: false,
     experimental_throttle: 50,
     generateId: generateUUID,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
@@ -979,7 +1014,6 @@ export function Chat({
       const turnId = conversationState.interactions.find(
         (candidate) => candidate.requestId === interaction.requestId
       )?.turnId;
-      if (turnId) streamedTurnIdRef.current = turnId;
       await controller.sendMessage(
         {
           id: messageId,
@@ -1094,28 +1128,37 @@ export function Chat({
   );
 
   useEffect(() => {
-    const nextQueued = queuedMessages[0];
-    if (
-      resumeTurnIdRef.current ||
-      controller.status !== "ready" ||
-      !nextQueued?.turnId ||
-      nextQueued.message.metadata?.deliveryState !== "queued"
-    ) {
-      return;
-    }
+    const activeTurnId = conversationState.queue.activeTurnId;
+    const activeTurn = conversationState.turns.find(
+      (turn) => turn.id === activeTurnId
+    );
+    resumeCoordinatorRef.current = synchronizeResumeCoordinator(
+      resumeCoordinatorRef.current,
+      activeTurnId,
+      activeTurn?.status,
+    );
+    if (controller.status !== "ready") return;
+    const claim = claimResumeRequest(resumeCoordinatorRef.current);
+    resumeCoordinatorRef.current = claim.coordinator;
+    if (!claim.turnId) return;
 
-    const { deliveryState: _deliveryState, ...metadata } =
-      nextQueued.message.metadata ?? {};
-    resumeTurnIdRef.current = nextQueued.turnId;
-    streamedTurnIdRef.current = nextQueued.turnId;
-    setLiveRuntimePresentation(null);
-    controller.setMessages((current) => [
-      ...current,
-      { ...nextQueued.message, metadata },
-    ]);
-    setQueuedMessages((current) => current.slice(1));
+    resumeTurnIdRef.current = claim.turnId;
+    const promoted = queuedMessages.find((item) => item.turnId === claim.turnId);
+    if (promoted?.message.metadata?.deliveryState === "queued") {
+      const { deliveryState: _deliveryState, ...metadata } =
+        promoted.message.metadata;
+      setLiveRuntimePresentation(null);
+      controller.setMessages((current) =>
+        current.some((message) => message.id === promoted.message.id)
+          ? current
+          : [...current, { ...promoted.message, metadata }]
+      );
+      setQueuedMessages((current) =>
+        current.filter((item) => item.message.id !== promoted.message.id)
+      );
+    }
     void controller.resumeStream().finally(() => {
-      if (resumeTurnIdRef.current === nextQueued.turnId) {
+      if (resumeTurnIdRef.current === claim.turnId) {
         resumeTurnIdRef.current = null;
       }
     });
@@ -1123,42 +1166,9 @@ export function Chat({
     controller.resumeStream,
     controller.setMessages,
     controller.status,
-    queuedMessages,
-  ]);
-
-  useEffect(() => {
-    const activeTurn = conversationState.turns.find(
-      (turn) => turn.id === conversationState.queue.activeTurnId
-    );
-    if (!activeTurn) {
-      streamedTurnIdRef.current = null;
-      return;
-    }
-    if (activeTurn.status === "waiting_for_input") {
-      // The waiting assistant message is complete. A subsequent exact
-      // interaction response resumes this same turn with a new stream.
-      streamedTurnIdRef.current = null;
-      return;
-    }
-    if (
-      controller.status !== "ready" ||
-      (activeTurn.status !== "queued" && activeTurn.status !== "running") ||
-      streamedTurnIdRef.current === activeTurn.id
-    ) {
-      return;
-    }
-    resumeTurnIdRef.current = activeTurn.id;
-    streamedTurnIdRef.current = activeTurn.id;
-    void controller.resumeStream().finally(() => {
-      if (resumeTurnIdRef.current === activeTurn.id) {
-        resumeTurnIdRef.current = null;
-      }
-    });
-  }, [
-    controller.resumeStream,
-    controller.status,
     conversationState.queue.activeTurnId,
     conversationState.turns,
+    queuedMessages,
   ]);
 
   const handoffMessage = useMemo(

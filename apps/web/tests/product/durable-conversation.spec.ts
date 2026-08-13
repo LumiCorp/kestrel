@@ -184,6 +184,70 @@ test("waiting prompt and request identity survive reload and resume exactly", as
   expect((await eventStreamPromise).length).toBeGreaterThan(0);
 });
 
+test("one coordinator resumes running and promoted queued turns without duplicate messages", async ({
+  page,
+}, testInfo) => {
+  const consoleErrors: string[] = [];
+  const resumeRequests = new Map<string, number>();
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith("/stream")) {
+      const turnId = url.searchParams.get("turnId");
+      if (turnId) resumeRequests.set(turnId, (resumeRequests.get(turnId) ?? 0) + 1);
+    }
+  });
+
+  const first = await createThread(
+    page,
+    testInfo,
+    "fake-openrouter-delay-resume-coordinator-first",
+  );
+  const secondMessageId = randomUUID();
+  const second = await postJson({
+    page,
+    testInfo,
+    path: `/api/mobile/v2/threads/${first.threadId}/turns`,
+    body: {
+      message: {
+        id: secondMessageId,
+        parts: [{ type: "text", text: "resume-coordinator-second" }],
+      },
+    },
+    headers: { "idempotency-key": secondMessageId },
+  });
+  const secondTurnId = second.acceptedTurnId as string;
+  await waitForTurn(page, first.threadId, first.turnId, ["queued", "running"]);
+
+  let delayReleased = false;
+  try {
+    await page.goto(`/threads/${first.threadId}`);
+    const visibleThreadShell = page.locator('[data-slot="thread-shell"]:visible');
+    await expect(visibleThreadShell).toHaveCount(1);
+    await releaseDelayedProvider(page, testInfo);
+    delayReleased = true;
+    await waitForTurn(page, first.threadId, first.turnId, ["completed"]);
+    await waitForTurn(page, first.threadId, secondTurnId, ["completed"]);
+
+    await expect(
+      visibleThreadShell.getByText(
+        "fake-openrouter-delay-resume-coordinator-first product contract",
+        { exact: true },
+      ),
+    ).toHaveCount(1);
+    await expect(
+      visibleThreadShell.getByText("resume-coordinator-second", { exact: true }),
+    ).toHaveCount(1);
+    expect(resumeRequests.get(first.turnId)).toBe(1);
+    expect(resumeRequests.get(secondTurnId)).toBe(1);
+    expect(consoleErrors.some((message) => message.includes("Minified React error #185"))).toBe(false);
+  } finally {
+    if (!delayReleased) await releaseDelayedProvider(page, testInfo);
+  }
+});
+
 async function createThread(page: Page, testInfo: TestInfo, marker: string) {
   const threadId = randomUUID();
   const messageId = randomUUID();
