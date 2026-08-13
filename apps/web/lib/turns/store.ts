@@ -706,6 +706,7 @@ export async function createMobileThreadBranchWithFirstTurn(
         branchAnchorMessageId: input.anchorMessageId,
         mode: "chat",
         origin: "mobile",
+        workspaceMode: parent.workspaceMode,
         activeStreamId: null,
         title: "",
         isPublic: false,

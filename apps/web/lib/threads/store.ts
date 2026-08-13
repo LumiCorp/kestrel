@@ -350,6 +350,9 @@ export async function createThreadForUser(input: {
   origin?: "web" | "mobile" | "github" | "discord" | "api";
   externalThreadId?: string | null;
   title?: string | null;
+  workspaceMode?: "primary" | "isolated" | "legacy";
+  parentThreadId?: string | null;
+  branchAnchorMessageId?: string | null;
 }) {
   const mode = input.mode ?? "chat";
   const origin = input.origin ?? "web";
@@ -375,6 +378,9 @@ export async function createThreadForUser(input: {
       mode,
       origin,
       externalThreadId: input.externalThreadId ?? null,
+      workspaceMode: input.workspaceMode ?? "primary",
+      parentThreadId: input.parentThreadId ?? null,
+      branchAnchorMessageId: input.branchAnchorMessageId ?? null,
       activeStreamId: null,
       title: input.title ?? "",
       isPublic: false,

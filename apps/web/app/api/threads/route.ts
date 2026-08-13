@@ -5,6 +5,7 @@ import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessageSchema } from "@/lib/knowledge/validation";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
+import { THREAD_WORKSPACE_MODES } from "@/lib/threads/workspace-mode";
 import {
   createThreadForUser,
   getThreadUnreadCountsForUser,
@@ -16,6 +17,7 @@ const createBodySchema = z.object({
   id: routeIdSchema,
   projectId: routeIdSchema.nullable().optional(),
   mode: z.enum(["chat", "admin"]).optional().default("chat"),
+  workspaceMode: z.enum(THREAD_WORKSPACE_MODES).optional().default("primary"),
   message: (uiMessageSchema as z.ZodType<UIMessage>).optional(),
 });
 
@@ -81,6 +83,7 @@ export async function POST(request: NextRequest) {
       organizationId,
       projectId: body.projectId,
       mode: body.mode,
+      workspaceMode: body.workspaceMode,
       title: "",
     });
     if (!thread) {

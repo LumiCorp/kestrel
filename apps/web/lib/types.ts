@@ -139,6 +139,7 @@ export type ChatFirstTurnHandoff = {
   messageParts: ChatMessage["parts"];
   modelId: string;
   interactionMode: KestrelOneInteractionMode;
+  workspaceMode: "primary" | "isolated";
   createdAt: number;
   pendingAssistant: boolean;
 };

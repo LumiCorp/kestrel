@@ -168,6 +168,86 @@ test("KestrelChatRuntime forces the Environment-managed Workspace when configure
   }
 });
 
+test("KestrelChatRuntime honors an explicit primary Workspace under the hosted policy", async () => {
+  const submittedTurns: SubmittedRuntimeTurn[] = [];
+  const original = {
+    required: process.env.KESTREL_REQUIRE_MANAGED_WORKTREE,
+    workspaceId: process.env.KESTREL_WORKSPACE_ID,
+    workspaceRoot: process.env.KESTREL_WORKSPACE_ROOT,
+    isolation: process.env.KESTREL_MANAGED_WORKTREE_ISOLATION,
+  };
+  process.env.KESTREL_REQUIRE_MANAGED_WORKTREE = "true";
+  process.env.KESTREL_WORKSPACE_ID = "environment-workspace";
+  process.env.KESTREL_WORKSPACE_ROOT = "/workspace";
+  process.env.KESTREL_MANAGED_WORKTREE_ISOLATION = "session";
+  try {
+    const runtime = new KestrelChatRuntime(profileWithDevShell, createRuntimeFactory({ activeTaskId: "task-active", submittedTurns }));
+    await runtime.runTurn({
+      sessionId: "thread-primary",
+      message: "build in the primary checkout",
+      eventType: "user.message",
+      interactionMode: "build",
+      workspace: {
+        workspaceId: "request-workspace",
+        workspaceRoot: "/request-workspace",
+        appRoot: ".",
+        commands: {},
+        managedWorktreeRequired: false,
+        managedWorktreeScope: "thread",
+      },
+    });
+    const workspace = submittedTurns[0]?.metadata?.workspace as Record<string, unknown> | undefined;
+    assert.equal(workspace?.workspaceRoot, "/workspace");
+    assert.equal(workspace?.managedWorktreeRequired, false);
+    assert.equal(workspace?.managedWorktreeScope, "thread");
+    assert.equal(workspace?.managedWorktreeIsolation, undefined);
+  } finally {
+    restoreEnv("KESTREL_REQUIRE_MANAGED_WORKTREE", original.required);
+    restoreEnv("KESTREL_WORKSPACE_ID", original.workspaceId);
+    restoreEnv("KESTREL_WORKSPACE_ROOT", original.workspaceRoot);
+    restoreEnv("KESTREL_MANAGED_WORKTREE_ISOLATION", original.isolation);
+  }
+});
+
+test("KestrelChatRuntime preserves explicit scoped isolation for a Thread worktree", async () => {
+  const submittedTurns: SubmittedRuntimeTurn[] = [];
+  const original = {
+    required: process.env.KESTREL_REQUIRE_MANAGED_WORKTREE,
+    workspaceId: process.env.KESTREL_WORKSPACE_ID,
+    workspaceRoot: process.env.KESTREL_WORKSPACE_ROOT,
+    isolation: process.env.KESTREL_MANAGED_WORKTREE_ISOLATION,
+  };
+  process.env.KESTREL_REQUIRE_MANAGED_WORKTREE = "true";
+  process.env.KESTREL_WORKSPACE_ID = "environment-workspace";
+  process.env.KESTREL_WORKSPACE_ROOT = "/workspace";
+  process.env.KESTREL_MANAGED_WORKTREE_ISOLATION = "session";
+  try {
+    const runtime = new KestrelChatRuntime(profileWithDevShell, createRuntimeFactory({ activeTaskId: "task-active", submittedTurns }));
+    await runtime.runTurn({
+      sessionId: "thread-isolated",
+      message: "build in my worktree",
+      eventType: "user.message",
+      interactionMode: "build",
+      workspace: {
+        workspaceId: "request-workspace",
+        workspaceRoot: "/request-workspace",
+        appRoot: ".",
+        commands: {},
+        managedWorktreeRequired: true,
+        managedWorktreeIsolation: "scoped",
+      },
+    });
+    const workspace = submittedTurns[0]?.metadata?.workspace as Record<string, unknown> | undefined;
+    assert.equal(workspace?.managedWorktreeRequired, true);
+    assert.equal(workspace?.managedWorktreeIsolation, "scoped");
+  } finally {
+    restoreEnv("KESTREL_REQUIRE_MANAGED_WORKTREE", original.required);
+    restoreEnv("KESTREL_WORKSPACE_ID", original.workspaceId);
+    restoreEnv("KESTREL_WORKSPACE_ROOT", original.workspaceRoot);
+    restoreEnv("KESTREL_MANAGED_WORKTREE_ISOLATION", original.isolation);
+  }
+});
+
 test("KestrelChatRuntime leaves plan-mode source workspaces read-only", async () => {
   const submittedTurns: Array<{ metadata?: Record<string, unknown> | undefined }> = [];
   const runtime = new KestrelChatRuntime(profileWithDevShell, createRuntimeFactory({

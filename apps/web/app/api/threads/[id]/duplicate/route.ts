@@ -34,6 +34,8 @@ export async function POST(
       organizationId,
       projectId: source.projectId,
       mode: source.mode,
+      workspaceMode: source.workspaceMode,
+      parentThreadId: source.id,
       title: `${source.title || "New thread"} copy`
     });
     if (!thread) throw new Error("Thread duplication failed.");

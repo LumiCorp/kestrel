@@ -438,10 +438,19 @@ export async function processDurableThreadTurn(
   };
   let waitingCommitted = false;
   try {
-    const [session, storedMessages] = await Promise.all([
+    const [session, storedMessages, thread] = await Promise.all([
       loadWorkerSession(turn.authorUserId),
       listMessagesForDurableTurn(turn.id),
+      knowledgeDb.query.threads.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.id, turn.threadId),
+            eq(table.organizationId, turn.organizationId),
+          ),
+        columns: { workspaceMode: true, parentThreadId: true },
+      }),
     ]);
+    if (!thread) throw new Error("Thread workspace mode is unavailable.");
     const messages = convertToUIMessages(storedMessages);
     const submittedUserMessage = [...messages]
       .reverse()
@@ -461,6 +470,8 @@ export async function processDurableThreadTurn(
       organizationId: turn.organizationId,
       environmentId: turn.requestedEnvironmentId,
       threadId: turn.threadId,
+      workspaceMode: thread.workspaceMode,
+      parentThreadId: thread.parentThreadId,
       durableTurnId: turn.id,
       messages,
       modelId: turn.requestedModelId ?? undefined,

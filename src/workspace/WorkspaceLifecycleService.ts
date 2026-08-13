@@ -72,6 +72,7 @@ export class WorkspaceLifecycleService {
       ...(input.taskId !== undefined ? { taskId: input.taskId } : {}),
       ...(input.taskKey !== undefined ? { taskKey: input.taskKey } : {}),
       ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
+      ...(input.parentThreadId !== undefined ? { parentThreadId: input.parentThreadId } : {}),
       ...(input.isolation !== undefined ? { isolation: input.isolation } : {}),
       triggeringTool: input.toolName,
       ...(input.approvalId !== undefined ? { approvalId: input.approvalId } : {}),
