@@ -6,7 +6,10 @@ import { PassThrough, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import tar from "tar-stream";
-import { materializePortableBackupPayload } from "./portable-worktree-backup.js";
+import {
+  materializePortableBackupPayload,
+  PortableWorkspaceBackupError,
+} from "./portable-worktree-backup.js";
 
 export const WORKSPACE_BACKUP_PREPARATION_VERSION = 2;
 export const WORKSPACE_BACKUP_PREPARATION_TTL_MS = 5 * 60 * 1000;
@@ -68,7 +71,18 @@ export class WorkspaceBackupPreparationRegistry {
   ) {}
 
   async prepare(): Promise<WorkspaceBackupPreparation> {
-    await materializePortableBackupPayload(this.workspaceRoot);
+    try {
+      await materializePortableBackupPayload(this.workspaceRoot);
+    } catch (error) {
+      if (error instanceof PortableWorkspaceBackupError) {
+        throw new WorkspaceBackupPreparationError(
+          error.code,
+          error.message,
+          409,
+        );
+      }
+      throw error;
+    }
     const maxLogicalBytes =
       this.options.maxLogicalBytes ??
       (await resolveWorkspaceBackupLogicalLimit(this.workspaceRoot));
@@ -333,8 +347,8 @@ export function isExcludedWorkspaceBackupPath(
     normalized.startsWith(".kestrel/runner/") ||
     normalized === ".kestrel/backup-imports" ||
     normalized.startsWith(".kestrel/backup-imports/") ||
-    normalized === ".git/worktrees" ||
-    normalized.startsWith(".git/worktrees/")
+    normalized === ".git" ||
+    normalized.startsWith(".git/")
   ) {
     return true;
   }

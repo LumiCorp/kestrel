@@ -143,7 +143,7 @@ export async function createWorkspaceBackup(input: {
         provider.isWorkspaceSnapshotUsable(snapshotInput),
       signal: input.signal,
     });
-    const exportReplacementId = `backup-${backupId}`;
+    const exportReplacementId = crypto.randomUUID();
     const exportVolume = await provider.createReplacementWorkspaceVolume({
       appName: environment.flyAppName,
       workspaceId: workspace.id,
@@ -1282,6 +1282,7 @@ export function isDeterministicBackupFailure(code: string) {
     "WORKSPACE_BACKUP_CHECKSUM_MISMATCH",
     "WORKSPACE_BACKUP_PREPARATION_UNAVAILABLE",
     "WORKSPACE_BACKUP_CAPACITY_INVALID",
+    "WORKSPACE_BACKUP_PORTABLE_STATE_INVALID",
     "ENVIRONMENT_ROUTE_FORBIDDEN",
     "ENVIRONMENT_ROUTE_UNAUTHORIZED",
   ]).has(code);

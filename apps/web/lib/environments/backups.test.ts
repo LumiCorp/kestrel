@@ -33,6 +33,10 @@ test("deterministic backup preparation failures are terminal", () => {
     true,
   );
   assert.equal(isDeterministicBackupFailure("FLY_PROVIDER_UNAVAILABLE"), false);
+  assert.equal(
+    isDeterministicBackupFailure("WORKSPACE_BACKUP_PORTABLE_STATE_INVALID"),
+    true,
+  );
 });
 
 test("KWB2 streams authenticate without buffering the archive", async () => {

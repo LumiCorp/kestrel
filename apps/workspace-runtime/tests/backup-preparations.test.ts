@@ -65,6 +65,12 @@ test("portable Workspace archives exclude runtime and reproducible directories",
   assert.equal(isExcludedWorkspaceBackupPath("src/index.ts", false), false);
 });
 
+test("portable Workspace archives use the Git bundle instead of duplicating .git storage", () => {
+  assert.equal(isExcludedWorkspaceBackupPath(".git", true), true);
+  assert.equal(isExcludedWorkspaceBackupPath(".git/objects/pack/data", false), true);
+  assert.equal(isExcludedWorkspaceBackupPath(".git/refs/heads/main", false), true);
+});
+
 test("Workspace backup export omits excluded runtime content", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-backup-"));
   await mkdir(path.join(root, ".kestrel", "runner", "store"), { recursive: true });

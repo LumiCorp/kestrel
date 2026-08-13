@@ -15,6 +15,15 @@ const execFileAsync = promisify(execFile);
 const PORTABLE_ROOT = ".kestrel/portable-backup";
 const MANIFEST_VERSION = 1;
 
+export class PortableWorkspaceBackupError extends Error {
+  readonly code = "WORKSPACE_BACKUP_PORTABLE_STATE_INVALID";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "PortableWorkspaceBackupError";
+  }
+}
+
 type PortableWorktree = {
   bindingKey: string;
   worktreeRoot: string;
@@ -168,7 +177,14 @@ async function collectPortableWorktrees(
   const worktrees: PortableWorktree[] = [];
   for (const bindingFile of bindingFiles) {
     const raw = await readFile(bindingFile, "utf8");
-    const metadata = JSON.parse(raw) as Record<string, unknown>;
+    let metadata: Record<string, unknown>;
+    try {
+      metadata = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      throw new PortableWorkspaceBackupError(
+        "Managed worktree backup metadata is invalid.",
+      );
+    }
     const bindingKey = requireSafeSegment(metadata.bindingKey, "bindingKey");
     const baseHead = requireCommit(metadata.baseHead, "baseHead");
     const worktreeRoot = requireWorktreeRoot(metadata.worktreeRoot, worktreesRoot);
@@ -286,26 +302,34 @@ function parseManifest(raw: string): PortableBackupManifest {
 
 function requireSafeSegment(value: unknown, field: string) {
   if (typeof value !== "string" || !/^[a-zA-Z0-9_-]+$/u.test(value)) {
-    throw new Error(`Portable Workspace ${field} is invalid.`);
+    throw new PortableWorkspaceBackupError(
+      `Portable Workspace ${field} is invalid.`,
+    );
   }
   return value;
 }
 
 function requireCommit(value: unknown, field: string) {
   if (typeof value !== "string" || !/^[a-f0-9]{40,64}$/u.test(value)) {
-    throw new Error(`Portable Workspace ${field} is invalid.`);
+    throw new PortableWorkspaceBackupError(
+      `Portable Workspace ${field} is invalid.`,
+    );
   }
   return value;
 }
 
 function requireWorktreeRoot(value: unknown, worktreesRoot: string) {
   if (typeof value !== "string") {
-    throw new Error("Portable Workspace worktreeRoot is invalid.");
+    throw new PortableWorkspaceBackupError(
+      "Portable Workspace worktreeRoot is invalid.",
+    );
   }
   const resolved = path.resolve(value);
   const relative = path.relative(worktreesRoot, resolved);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("Portable Workspace worktreeRoot is outside managed storage.");
+    throw new PortableWorkspaceBackupError(
+      "Portable Workspace worktreeRoot is outside managed storage.",
+    );
   }
   return resolved;
 }
@@ -318,7 +342,9 @@ function requireSafeRelativePath(value: string) {
     normalized.startsWith("../") ||
     path.isAbsolute(value)
   ) {
-    throw new Error("Portable Workspace untracked path is invalid.");
+    throw new PortableWorkspaceBackupError(
+      "Portable Workspace untracked path is invalid.",
+    );
   }
 }
 
