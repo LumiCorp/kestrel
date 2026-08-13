@@ -336,7 +336,6 @@ function useChatCallbacks(input: {
   currentModelIdRef: { current: string };
   hasShownResumeWarningRef?: { current: boolean };
   hasShownResumedToastRef?: { current: boolean };
-  hasShownStreamWarningRef?: { current: boolean };
   mutate: ReturnType<typeof useSWRConfig>["mutate"];
   refreshConversationState?: () => Promise<void>;
   setDataStream: Dispatch<SetStateAction<unknown[]>>;
@@ -386,17 +385,6 @@ function useChatCallbacks(input: {
       }
 
       if (dataPart.type === "data-stream-warning") {
-        if (
-          input.hasShownStreamWarningRef &&
-          !input.hasShownStreamWarningRef.current
-        ) {
-          input.hasShownStreamWarningRef.current = true;
-          toast({
-            type: "warning",
-            description:
-              "Some advanced stream details were skipped, but the response continued.",
-          });
-        }
         return;
       }
 
@@ -912,7 +900,6 @@ export function Chat({
   const shared = useSharedChatState(initialChatModel, id, initialInteractionMode);
   const hasShownResumeWarningRef = useRef(false);
   const hasShownResumedToastRef = useRef(false);
-  const hasShownStreamWarningRef = useRef(false);
   const hasStartedHandoffRequestRef = useRef(false);
   const [liveThreadTitle, setLiveThreadTitle] = useState(threadTitle);
   const [chatExists, setChatExists] = useState(initialChatExists);
@@ -954,7 +941,6 @@ export function Chat({
     hasStartedHandoffRequestRef.current = false;
     hasShownResumeWarningRef.current = false;
     hasShownResumedToastRef.current = false;
-    hasShownStreamWarningRef.current = false;
     resetArtifact();
     setMetadata(null);
     setDataStream([]);
@@ -1005,7 +991,6 @@ export function Chat({
     currentModelIdRef: shared.currentModelIdRef,
     hasShownResumeWarningRef,
     hasShownResumedToastRef,
-    hasShownStreamWarningRef,
     mutate,
     refreshConversationState,
     setDataStream: shared.setDataStream as Dispatch<SetStateAction<unknown[]>>,
