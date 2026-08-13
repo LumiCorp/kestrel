@@ -10,7 +10,7 @@ kill_timeout = 35
   KESTREL_CONTROL_WORKER_READY_FILE = "/tmp/kestrel-control-worker-ready"
 
 [processes]
-  worker = "pnpm --filter @kestrel/kestrel-one worker:control"
+  worker = "node /app/control-worker.cjs"
 
 [[vm]]
   processes = ["worker"]

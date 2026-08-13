@@ -103,6 +103,9 @@ importers:
       electron-builder:
         specifier: ^26.15.3
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)
+      esbuild:
+        specifier: 0.27.3
+        version: 0.27.3
       typescript:
         specifier: ^5.8.2
         version: 5.9.3
@@ -199,7 +202,7 @@ importers:
     devDependencies:
       '@electron-forge/cli':
         specifier: ^7.8.1
-        version: 7.11.1(encoding@0.1.13)
+        version: 7.11.1(encoding@0.1.13)(esbuild@0.27.3)
       '@electron-forge/maker-zip':
         specifier: ^7.8.1
         version: 7.11.1
@@ -286,13 +289,13 @@ importers:
         version: link:../../packages/protocol
       '@mdx-js/loader':
         specifier: ^3.1.0
-        version: 3.1.1(webpack@5.105.4)
+        version: 3.1.1(webpack@5.105.4(esbuild@0.27.3))
       '@mdx-js/react':
         specifier: ^3.1.0
         version: 3.1.1(@types/react@19.2.14)(react@19.2.4)
       '@next/mdx':
         specifier: ^15.5.19
-        version: 15.5.19(@mdx-js/loader@3.1.1(webpack@5.105.4))(@mdx-js/react@3.1.1(@types/react@19.2.14)(react@19.2.4))
+        version: 15.5.19(@mdx-js/loader@3.1.1(webpack@5.105.4(esbuild@0.27.3)))(@mdx-js/react@3.1.1(@types/react@19.2.14)(react@19.2.4))
       '@phosphor-icons/react':
         specifier: ^2.1.10
         version: 2.1.10(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -10969,9 +10972,9 @@ snapshots:
 
   '@electric-sql/pglite@0.4.6': {}
 
-  '@electron-forge/cli@7.11.1(encoding@0.1.13)':
+  '@electron-forge/cli@7.11.1(encoding@0.1.13)(esbuild@0.27.3)':
     dependencies:
-      '@electron-forge/core': 7.11.1(encoding@0.1.13)
+      '@electron-forge/core': 7.11.1(encoding@0.1.13)(esbuild@0.27.3)
       '@electron-forge/core-utils': 7.11.1
       '@electron-forge/shared-types': 7.11.1
       '@electron/get': 3.1.0
@@ -11009,7 +11012,7 @@ snapshots:
       - bluebird
       - supports-color
 
-  '@electron-forge/core@7.11.1(encoding@0.1.13)':
+  '@electron-forge/core@7.11.1(encoding@0.1.13)(esbuild@0.27.3)':
     dependencies:
       '@electron-forge/core-utils': 7.11.1
       '@electron-forge/maker-base': 7.11.1
@@ -11020,7 +11023,7 @@ snapshots:
       '@electron-forge/template-vite': 7.11.1
       '@electron-forge/template-vite-typescript': 7.11.1
       '@electron-forge/template-webpack': 7.11.1
-      '@electron-forge/template-webpack-typescript': 7.11.1
+      '@electron-forge/template-webpack-typescript': 7.11.1(esbuild@0.27.3)
       '@electron-forge/tracer': 7.11.1
       '@electron/get': 3.1.0
       '@electron/packager': 18.4.4
@@ -11129,13 +11132,13 @@ snapshots:
       - bluebird
       - supports-color
 
-  '@electron-forge/template-webpack-typescript@7.11.1':
+  '@electron-forge/template-webpack-typescript@7.11.1(esbuild@0.27.3)':
     dependencies:
       '@electron-forge/shared-types': 7.11.1
       '@electron-forge/template-base': 7.11.1
       fs-extra: 10.1.0
       typescript: 5.4.5
-      webpack: 5.105.4
+      webpack: 5.105.4(esbuild@0.27.3)
     transitivePeerDependencies:
       - '@swc/core'
       - bluebird
@@ -11871,12 +11874,12 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.2': {}
 
-  '@mdx-js/loader@3.1.1(webpack@5.105.4)':
+  '@mdx-js/loader@3.1.1(webpack@5.105.4(esbuild@0.27.3))':
     dependencies:
       '@mdx-js/mdx': 3.1.1
       source-map: 0.7.6
     optionalDependencies:
-      webpack: 5.105.4
+      webpack: 5.105.4(esbuild@0.27.3)
     transitivePeerDependencies:
       - supports-color
 
@@ -11994,11 +11997,11 @@ snapshots:
 
   '@next/env@16.0.10': {}
 
-  '@next/mdx@15.5.19(@mdx-js/loader@3.1.1(webpack@5.105.4))(@mdx-js/react@3.1.1(@types/react@19.2.14)(react@19.2.4))':
+  '@next/mdx@15.5.19(@mdx-js/loader@3.1.1(webpack@5.105.4(esbuild@0.27.3)))(@mdx-js/react@3.1.1(@types/react@19.2.14)(react@19.2.4))':
     dependencies:
       source-map: 0.7.6
     optionalDependencies:
-      '@mdx-js/loader': 3.1.1(webpack@5.105.4)
+      '@mdx-js/loader': 3.1.1(webpack@5.105.4(esbuild@0.27.3))
       '@mdx-js/react': 3.1.1(@types/react@19.2.14)(react@19.2.4)
 
   '@next/swc-darwin-arm64@15.5.19':
@@ -19689,13 +19692,15 @@ snapshots:
 
   terminal-size@4.0.1: {}
 
-  terser-webpack-plugin@5.4.0(webpack@5.105.4):
+  terser-webpack-plugin@5.4.0(esbuild@0.27.3)(webpack@5.105.4(esbuild@0.27.3)):
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       jest-worker: 27.5.1
       schema-utils: 4.3.3
       terser: 5.46.1
-      webpack: 5.105.4
+      webpack: 5.105.4(esbuild@0.27.3)
+    optionalDependencies:
+      esbuild: 0.27.3
 
   terser@5.46.1:
     dependencies:
@@ -20192,7 +20197,7 @@ snapshots:
 
   webpack-sources@3.3.4: {}
 
-  webpack@5.105.4:
+  webpack@5.105.4(esbuild@0.27.3):
     dependencies:
       '@types/eslint-scope': 3.7.7
       '@types/estree': 1.0.8
@@ -20216,7 +20221,7 @@ snapshots:
       neo-async: 2.6.2
       schema-utils: 4.3.3
       tapable: 2.3.0
-      terser-webpack-plugin: 5.4.0(webpack@5.105.4)
+      terser-webpack-plugin: 5.4.0(esbuild@0.27.3)(webpack@5.105.4(esbuild@0.27.3))
       watchpack: 2.5.1
       webpack-sources: 3.3.4
     transitivePeerDependencies:

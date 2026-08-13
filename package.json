@@ -227,6 +227,7 @@
     "@types/react": "^19.2.14",
     "@types/ws": "^8.18.1",
     "electron-builder": "^26.15.3",
+    "esbuild": "0.27.3",
     "typescript": "^5.8.2",
     "yaml": "^2.8.2"
   },

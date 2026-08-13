@@ -1,18 +1,33 @@
 import { execFileSync } from "node:child_process";
 
 const REVISION_LABEL = "org.opencontainers.image.revision";
+const FINGERPRINT_LABEL = "org.kestrel.control-worker.fingerprint";
 const RUNNING_STATE = "started";
+const STOPPED_STATE = "stopped";
 
-type MachineInventoryRecord = {
+export type MachineInventoryRecord = {
   id: string;
   state: string;
   revision: string;
+  fingerprint: string | null;
+  digest: string;
   standbys: string[];
 };
 
 export type ControlWorkerMachineAction =
   | { action: "use"; machineId: string }
   | { action: "start"; machineId: string };
+
+export type ControlWorkerMachineUpdate = {
+  machineId: string;
+  expectedState: "started" | "stopped";
+  skipStart: boolean;
+};
+
+export type ControlWorkerMachineUpdatePlan = {
+  runningMachineId: string | null;
+  updates: ControlWorkerMachineUpdate[];
+};
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -39,6 +54,8 @@ function parseMachine(value: unknown): MachineInventoryRecord {
   );
   const labels = asRecord(imageRef?.labels ?? imageRef?.Labels);
   const revision = labels ? readString(labels, REVISION_LABEL) : null;
+  const fingerprint = labels ? readString(labels, FINGERPRINT_LABEL) : null;
+  const digest = imageRef ? readString(imageRef, "digest", "Digest") : null;
   const rawStandbys = config?.standbys ?? config?.Standbys;
   const standbys =
     rawStandbys == null
@@ -47,32 +64,24 @@ function parseMachine(value: unknown): MachineInventoryRecord {
           rawStandbys.every((item) => typeof item === "string")
         ? rawStandbys
         : null;
-  if (!(id && state && revision && standbys)) {
+  if (!(id && state && revision && digest && standbys)) {
     throw new Error("Fly returned an incomplete control worker Machine record.");
   }
-  return { id, state, revision, standbys };
+  return { id, state, revision, fingerprint, digest, standbys };
 }
 
-export function selectControlWorkerMachineAction(input: {
-  inventory: unknown;
-  expectedRevision: string;
-}): ControlWorkerMachineAction {
-  if (!(Array.isArray(input.inventory) && input.inventory.length > 0)) {
+export function parseControlWorkerInventory(inventory: unknown) {
+  if (!(Array.isArray(inventory) && inventory.length > 0)) {
     throw new Error("Fly returned no control worker Machines.");
   }
-  const machines = input.inventory.map(parseMachine);
+  const machines = inventory.map(parseMachine);
+  if (machines.length > 2) {
+    throw new Error(
+      `Control worker requires at most one standby Machine; found ${machines.length - 1}.`,
+    );
+  }
   if (new Set(machines.map((machine) => machine.id)).size !== machines.length) {
     throw new Error("Fly returned duplicate control worker Machine identities.");
-  }
-  const mismatched = machines.filter(
-    (machine) => machine.revision !== input.expectedRevision,
-  );
-  if (mismatched.length > 0) {
-    throw new Error(
-      `Control worker Machine revision mismatch: ${mismatched
-        .map((machine) => machine.id)
-        .join(", ")}.`,
-    );
   }
   const primaries = machines.filter((machine) => machine.standbys.length === 0);
   if (primaries.length !== 1) {
@@ -99,12 +108,83 @@ export function selectControlWorkerMachineAction(input: {
       `Control worker requires at most one running Machine; found ${running.length}.`,
     );
   }
-  return running[0]
-    ? { action: "use", machineId: running[0].id }
+  return { machines, primary, running: running[0] ?? null };
+}
+
+export function findControlWorkerMachine(input: {
+  inventory: unknown;
+  machineId: string;
+}) {
+  const { machines } = parseControlWorkerInventory(input.inventory);
+  const machine = machines.find((candidate) => candidate.id === input.machineId);
+  if (!machine) {
+    throw new Error(`Fly did not return control worker Machine ${input.machineId}.`);
+  }
+  return machine;
+}
+
+export function selectControlWorkerMachineAction(input: {
+  inventory: unknown;
+  expectedRevision: string;
+}): ControlWorkerMachineAction {
+  const { machines, primary, running } = parseControlWorkerInventory(
+    input.inventory,
+  );
+  const mismatched = machines.filter(
+    (machine) => machine.revision !== input.expectedRevision,
+  );
+  if (mismatched.length > 0) {
+    throw new Error(
+      `Control worker Machine revision mismatch: ${mismatched
+        .map((machine) => machine.id)
+        .join(", ")}.`,
+    );
+  }
+  return running
+    ? { action: "use", machineId: running.id }
     : { action: "start", machineId: primary.id };
 }
 
-async function readInventory(app: string, accessToken: string) {
+export function selectControlWorkerMachineUpdatePlan(input: {
+  inventory: unknown;
+}): ControlWorkerMachineUpdatePlan {
+  const { machines, primary, running } = parseControlWorkerInventory(
+    input.inventory,
+  );
+  const machineToRun = running?.id ?? primary.id;
+  return {
+    runningMachineId: running?.id ?? null,
+    updates: machines
+      .map<ControlWorkerMachineUpdate>((machine) => {
+        const expectedState =
+          machine.id === machineToRun ? RUNNING_STATE : STOPPED_STATE;
+        return {
+          machineId: machine.id,
+          expectedState,
+          skipStart: expectedState === STOPPED_STATE,
+        };
+      })
+      .sort((left, right) => Number(right.skipStart) - Number(left.skipStart)),
+  };
+}
+
+export function canSkipControlWorkerMachineDeploy(input: {
+  inventory: unknown;
+  expectedFingerprint: string;
+}) {
+  const { machines, running } = parseControlWorkerInventory(input.inventory);
+  return (
+    Boolean(running) &&
+    machines.every(
+      (machine) => machine.fingerprint === input.expectedFingerprint,
+    )
+  );
+}
+
+export async function readControlWorkerInventory(
+  app: string,
+  accessToken: string,
+) {
   const response = await fetch(
     `https://api.machines.dev/v1/apps/${encodeURIComponent(app)}/machines`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -132,7 +212,7 @@ export async function restoreControlWorkerMachine(input: {
   const accessToken = input.accessToken ?? process.env.FLY_API_TOKEN?.trim();
   if (!accessToken) throw new Error("FLY_API_TOKEN is required.");
   const first = selectControlWorkerMachineAction({
-    inventory: await readInventory(input.app, accessToken),
+    inventory: await readControlWorkerInventory(input.app, accessToken),
     expectedRevision: input.expectedRevision,
   });
   if (first.action === "start") {
@@ -145,7 +225,7 @@ export async function restoreControlWorkerMachine(input: {
   const deadline = Date.now() + (input.timeoutMs ?? 90_000);
   while (Date.now() < deadline) {
     const current = selectControlWorkerMachineAction({
-      inventory: await readInventory(input.app, accessToken),
+      inventory: await readControlWorkerInventory(input.app, accessToken),
       expectedRevision: input.expectedRevision,
     });
     if (current.action === "use") return current.machineId;

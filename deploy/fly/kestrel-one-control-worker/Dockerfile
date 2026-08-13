@@ -1,21 +1,17 @@
 FROM node:22-bookworm-slim
 
 ARG KESTREL_GIT_SHA=unknown
+ARG KESTREL_CONTROL_WORKER_FINGERPRINT=unknown
+
 LABEL org.opencontainers.image.source="https://github.com/LumiCorp/kestrel"
 LABEL org.opencontainers.image.revision=$KESTREL_GIT_SHA
-
-ENV PNPM_HOME=/pnpm
-ENV PATH=$PNPM_HOME:$PATH
-
-RUN corepack enable
-
-WORKDIR /workspace
-COPY . .
-
-RUN pnpm install --frozen-lockfile --prod=false
-RUN pnpm run web:prepare
+LABEL org.kestrel.control-worker.fingerprint=$KESTREL_CONTROL_WORKER_FINGERPRINT
 
 ENV NODE_ENV=production
 ENV KESTREL_BUILD_REVISION=$KESTREL_GIT_SHA
 
-CMD ["pnpm", "--filter", "@kestrel/kestrel-one", "worker:control"]
+WORKDIR /app
+
+COPY control-worker.cjs verify-control-worker-readiness.cjs ./
+
+CMD ["node", "/app/control-worker.cjs"]

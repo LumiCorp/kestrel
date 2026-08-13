@@ -73,68 +73,73 @@ export async function publishFlyImages(
     .split("\n")
     .map((path) => path.trim())
     .filter(Boolean);
-  const components = [];
-  for (const image of impacted) {
-    const label = `${image.role}-${revision.slice(0, 12)}`;
-    const taggedImage = `registry.fly.io/${image.app}:${label}`;
-    const existingImage = await tryPullExistingImage(dependencies, taggedImage);
-    if (existingImage) {
-      dependencies.write(`Reusing published Fly image ${taggedImage}.\n`);
-    } else {
-      await dependencies.run("flyctl", [
-        "deploy",
-        ".",
-        "--app",
+  const appBuildQueues = new Map<string, Promise<void>>();
+  const components = await Promise.all(
+    impacted.map(async (image) => {
+      const label = `${image.role}-${revision.slice(0, 12)}`;
+      const taggedImage = `registry.fly.io/${image.app}:${label}`;
+      const existingImage = await tryPullExistingImage(
+        dependencies,
+        taggedImage,
+      );
+      if (existingImage) {
+        dependencies.write(`Reusing published Fly image ${taggedImage}.\n`);
+      } else {
+        await runFlyImageBuild(dependencies, appBuildQueues, image.app, [
+          "deploy",
+          ".",
+          "--app",
+          image.app,
+          "--config",
+          image.config,
+          "--dockerfile",
+          image.dockerfile,
+          "--build-only",
+          "--push",
+          "--remote-only",
+          "--image-label",
+          label,
+          "--build-arg",
+          `KESTREL_GIT_SHA=${revision}`,
+        ]);
+        await pullPublishedImage(dependencies, taggedImage);
+      }
+      const digest = await resolveLocalImageDigest(
+        dependencies,
+        taggedImage,
         image.app,
-        "--config",
-        image.config,
-        "--dockerfile",
-        image.dockerfile,
-        "--build-only",
-        "--push",
-        "--remote-only",
-        "--image-label",
-        label,
-        "--build-arg",
-        `KESTREL_GIT_SHA=${revision}`,
-      ]);
-      await pullPublishedImage(dependencies, taggedImage);
-    }
-    const digest = await resolveLocalImageDigest(
-      dependencies,
-      taggedImage,
-      image.app,
-    );
-    const immutableImage = `registry.fly.io/${image.app}@${digest}`;
-    await dependencies.run("bash", [image.smoke, immutableImage], {
-      ...env,
-      EXPECTED_GIT_SHA: revision,
-    });
-    components.push({
-      role: image.role,
-      image: immutableImage,
-      sourceRevision: revision,
-      inputFingerprint: await fingerprintImageInputs({
-        image,
-        trackedPaths,
-        root,
-      }),
-      smoke: {
-        status: "passed" as const,
-        command: `${image.smoke} ${immutableImage}`,
-        completedAt: dependencies.now().toISOString(),
-      },
-      ...(image.role === "environment-router"
-        ? {
-            environmentGateway: {
-              acceptedVersions: [
-                ...ENVIRONMENT_GATEWAY_CONFIG_ACCEPTED_VERSIONS,
-              ],
-            },
-          }
-        : {}),
-    });
-  }
+      );
+      const immutableImage = `registry.fly.io/${image.app}@${digest}`;
+      await dependencies.run("bash", [image.smoke, immutableImage], {
+        ...env,
+        EXPECTED_GIT_SHA: revision,
+      });
+      return {
+        role: image.role,
+        image: immutableImage,
+        sourceRevision: revision,
+        inputFingerprint: await fingerprintImageInputs({
+          image,
+          trackedPaths,
+          root,
+        }),
+        smoke: {
+          status: "passed" as const,
+          command: `${image.smoke} ${immutableImage}`,
+          completedAt: dependencies.now().toISOString(),
+        },
+        ...(image.role === "environment-router"
+          ? {
+              environmentGateway: {
+                acceptedVersions: [
+                  ...ENVIRONMENT_GATEWAY_CONFIG_ACCEPTED_VERSIONS,
+                ],
+              },
+            }
+          : {}),
+      };
+    }),
+  );
 
   const validationCommands = parseValidationCommands(env);
   const manifest = {
@@ -175,6 +180,28 @@ export async function publishFlyImages(
     `Published Fly image release candidate ${String(result.release?.id ?? "unknown")}.\n`,
   );
   return { published: true as const, components, manifest };
+}
+
+async function runFlyImageBuild(
+  dependencies: Pick<FlyImagePublisherDependencies, "run">,
+  queues: Map<string, Promise<void>>,
+  app: string,
+  args: string[],
+) {
+  const previous = queues.get(app) ?? Promise.resolve();
+  let releaseLane: () => void = () => {};
+  const current = new Promise<void>((resolve) => {
+    releaseLane = resolve;
+  });
+  const queued = previous.then(() => current);
+  queues.set(app, queued);
+  await previous;
+  try {
+    await dependencies.run("flyctl", args);
+  } finally {
+    releaseLane();
+    if (queues.get(app) === queued) queues.delete(app);
+  }
 }
 
 export async function tryPullExistingImage(

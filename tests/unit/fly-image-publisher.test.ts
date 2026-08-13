@@ -29,6 +29,8 @@ test("publisher exercises every image and survives Fly registry propagation", as
   );
   assert.equal(harness.flyBuilds.length, roles.length);
   assert.equal(harness.smokes.length, roles.length);
+  assert.equal(harness.maxActiveFlyBuilds, 4);
+  assert.equal(harness.concurrentBuildsSharedAnApp, false);
   assert.deepEqual(
     harness.waits,
     roles.map(() => FLY_REGISTRY_PULL_RETRY_DELAY_MS),
@@ -126,6 +128,10 @@ function publisherHarness(input: {
   const smokes: string[][] = [];
   const waits: number[] = [];
   const output: string[] = [];
+  let activeFlyBuilds = 0;
+  let maxActiveFlyBuilds = 0;
+  const activeFlyBuildApps = new Set<string>();
+  let concurrentBuildsSharedAnApp = false;
   let oidcRequests = 0;
   let preflightAuthorization: string | null = null;
   let publicationAuthorization: string | null = null;
@@ -201,10 +207,17 @@ function publisherHarness(input: {
     },
     run: async (command, args) => {
       if (command === "flyctl") {
-        flyBuilds.push(args);
         const app = args[args.indexOf("--app") + 1]!;
+        activeFlyBuilds += 1;
+        concurrentBuildsSharedAnApp ||= activeFlyBuildApps.has(app);
+        activeFlyBuildApps.add(app);
+        maxActiveFlyBuilds = Math.max(maxActiveFlyBuilds, activeFlyBuilds);
+        await Promise.resolve();
+        flyBuilds.push(args);
         const label = args[args.indexOf("--image-label") + 1]!;
         builtImages.add(`registry.fly.io/${app}:${label}`);
+        activeFlyBuildApps.delete(app);
+        activeFlyBuilds -= 1;
         return;
       }
       if (command === "bash") {
@@ -244,6 +257,12 @@ function publisherHarness(input: {
     },
     get publishedManifest() {
       return publishedManifest;
+    },
+    get maxActiveFlyBuilds() {
+      return maxActiveFlyBuilds;
+    },
+    get concurrentBuildsSharedAnApp() {
+      return concurrentBuildsSharedAnApp;
     },
   };
 }
