@@ -473,6 +473,13 @@ test(
       executionId: route.runId,
       eventId: "event-progress",
     });
+    assert.equal(
+      await executionRoute.readEnvironmentExecutionTerminalStatus({
+        organizationId: organizationA,
+        executionId: route.runId,
+      }),
+      null,
+    );
     await Promise.all([
       executionRoute.settleEnvironmentExecutionRuntimeEvent({
         organizationId: organizationA,
@@ -502,6 +509,23 @@ test(
     assert.equal(cancelledExecution?.status, "cancelled");
     assert.equal(cancelledExecution?.lastRuntimeEventId, "event-cancelled");
     assert.ok(cancelledExecution?.completedAt instanceof Date);
+    const terminalExecution =
+      await executionRoute.readEnvironmentExecutionTerminalStatus({
+        organizationId: organizationA,
+        executionId: route.runId,
+      });
+    assert.deepEqual(terminalExecution, {
+      status: "cancelled",
+      lastRuntimeEventId: "event-cancelled",
+      completedAt: cancelledExecution?.completedAt,
+    });
+    assert.equal(
+      await executionRoute.readEnvironmentExecutionTerminalStatus({
+        organizationId: organizationB,
+        executionId: route.runId,
+      }),
+      null,
+    );
 
     const authorizationRaceOperationId = `authorization-race-${suffix}`;
     const authorizationRaceRunId = `authorization-race-run-${suffix}`;

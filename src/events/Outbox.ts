@@ -11,7 +11,11 @@ export class InlineOutbox implements Outbox {
     this.dispatcher = dispatcher;
   }
 
-  async dispatchInline(runId: string): Promise<void> {
+  async dispatchInline(runId: string): Promise<{
+    attemptedCount: number;
+    deliveredCount: number;
+    failedCount: number;
+  }> {
     const pending = await this.store.listUndeliveredOutbox(100, runId);
     const deliveredIds: number[] = [];
     const failed: Array<{ id: number; error: string }> = [];
@@ -27,5 +31,10 @@ export class InlineOutbox implements Outbox {
 
     await this.store.markOutboxDeliveredBatch(deliveredIds);
     await this.store.markOutboxAttemptFailedBatch(failed);
+    return {
+      attemptedCount: pending.length,
+      deliveredCount: deliveredIds.length,
+      failedCount: failed.length,
+    };
   }
 }

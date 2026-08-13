@@ -464,6 +464,7 @@ export function createReferenceReactFinalizeCheckpoint(input: {
       : applyReferenceReactExecPatch(input.regionReactPatch ?? {}, input.regionExecPatch ?? {});
   return {
     status: "COMPLETED",
+    outboxDelivery: "after_terminal",
     emitEvents: input.emitEvents,
     statePatch: createReferenceReactStatePatch({
       reactPatch,

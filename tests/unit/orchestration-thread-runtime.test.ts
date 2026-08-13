@@ -4707,6 +4707,16 @@ test("ThreadRuntime replays a delivered terminal turn without executing it again
     },
   }]);
   assert.equal(Object.hasOwn(messages[0]?.result ?? {}, "finalizedPayload"), false);
+
+  const recoveryMessages = await runtime.listCompletedConversationMessages({
+    threadId: "thread-terminal-replay",
+    limit: 100,
+    includeFinalizedPayload: true,
+  });
+  assert.deepEqual(recoveryMessages[0]?.result.finalizedPayload, {
+    message: "A durable answer.",
+    source: "inline",
+  });
 });
 
 test("ThreadRuntime stores oversized finalized payloads as digest-validated artifacts", async () => {
@@ -4751,6 +4761,15 @@ test("ThreadRuntime stores oversized finalized payloads as digest-validated arti
   const replay = await runtime.submitTurn(input);
   assert.equal(executor.inputs.length, 1);
   assert.deepEqual(replay.finalizedPayload, oversizedPayload);
+  const recoveryMessages = await runtime.listCompletedConversationMessages({
+    threadId: "thread-artifact-replay",
+    limit: 100,
+    includeFinalizedPayload: true,
+  });
+  assert.deepEqual(
+    recoveryMessages[0]?.result.finalizedPayload,
+    oversizedPayload,
+  );
 });
 
 test("ThreadRuntime records and rethrows terminal handoff validation failure", async () => {

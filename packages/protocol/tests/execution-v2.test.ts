@@ -367,12 +367,19 @@ test("conversation message cursors and recovery pages are boundary validated", (
     completedAt: "2026-07-31T10:00:00.000Z",
     turnId: "turn:recovery/1",
   });
-  assert.equal(parseRunnerCommandV2({
+  const recoveryCommand = parseRunnerCommandV2({
     id: "messages-1",
     type: "conversation.messages.list",
-    payload: { threadId: "thread-1", afterCursor: cursor, limit: 500 },
-  }).type, "conversation.messages.list");
-  assert.equal(parseRunnerEventV2({
+    payload: {
+      threadId: "thread-1",
+      afterCursor: cursor,
+      limit: 500,
+      includeFinalizedPayload: true,
+    },
+  });
+  assert.equal(recoveryCommand.type, "conversation.messages.list");
+  assert.equal(recoveryCommand.payload.includeFinalizedPayload, true);
+  const recoveryEvent = parseRunnerEventV2({
     id: "messages-result-1",
     type: "conversation.messages",
     ts: "2026-07-31T10:01:00.000Z",
@@ -386,12 +393,31 @@ test("conversation message cursors and recovery pages are boundary validated", (
         sessionId: "session-1",
         runId: "run-1",
         completedAt: "2026-07-31T10:00:00.000Z",
-        result: { assistantText: "Recovered.", output: terminalResult.output },
+        result: {
+          assistantText: "Recovered.",
+          output: terminalResult.output,
+          finalizedPayload: {
+            payload: { data: { modeSwitch: { mode: "build" } } },
+          },
+        },
       }],
       nextCursor: cursor,
       hasMore: false,
     },
-  }).type, "conversation.messages");
+  });
+  assert.equal(recoveryEvent.type, "conversation.messages");
+  if (recoveryEvent.type !== "conversation.messages") {
+    throw new Error("Expected conversation.messages recovery event.");
+  }
+  assert.deepEqual(
+    recoveryEvent.payload.messages[0]?.result.finalizedPayload,
+    { payload: { data: { modeSwitch: { mode: "build" } } } },
+  );
+  assert.throws(() => parseRunnerCommandV2({
+    id: "messages-invalid-finalized-payload",
+    type: "conversation.messages.list",
+    payload: { threadId: "thread-1", includeFinalizedPayload: "yes" },
+  }), /includeFinalizedPayload must be a boolean/u);
   assert.throws(() => parseRunnerCommandV2({
     id: "messages-invalid",
     type: "conversation.messages.list",
@@ -643,6 +669,21 @@ test("Execution Protocol v3 correlates command responses and shared workspace op
   assert.equal(isRunnerRunStreamEvent(runTerminal), true);
   assert.equal(isRunnerRunTerminalEvent(runTerminal), true);
   assert.equal(isRunnerRunStreamEvent(progress), false);
+
+  const cancelFinalizing = parseRunnerEventV2({
+    id: "event-run-cancel-finalizing",
+    type: "runner.error",
+    ts: "2026-07-13T12:00:00.000Z",
+    commandId: "command-cancel",
+    payload: {
+      code: "RUN_ALREADY_FINALIZING",
+      message: "The run has accepted final assistant output and is no longer cancellable.",
+    },
+  });
+  assert.equal(isRunnerExpectedResponseEvent("run.cancel", cancelFinalizing), true);
+  assert.equal(isRunnerEventAllowedForCommand("run.cancel", cancelFinalizing), true);
+  assert.equal(isRunnerEventAllowedForCommand("run.start", cancelFinalizing), true);
+  assert.equal(isRunnerTerminalResponseEvent(cancelFinalizing.type), true);
 });
 
 test("canonical command parser accepts every registered discriminant", () => {

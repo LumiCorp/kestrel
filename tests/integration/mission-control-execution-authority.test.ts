@@ -622,6 +622,52 @@ test(
       "operator_stopped",
     );
     stopped.runtime.close();
+
+    const finalizing = await startControlledAttempt("already-finalizing");
+    project = await finalizing.projects.getProject(PROJECT_ID);
+    attempt = currentAttempt(project)!;
+    const finalizingRun = attempt.runs.at(-1)!;
+    finalizing.runner.failCancel(
+      finalizingRun.runId,
+      {
+        sessionId: finalizingRun.sessionId,
+        runId: finalizingRun.runId,
+        activeCommandId: finalizingRun.commandId,
+      },
+      "RUN_ALREADY_FINALIZING",
+    );
+    await finalizing.runtime.execute({
+      type: "execution.stop",
+      projectId: PROJECT_ID,
+      actionId: "stop-already-finalizing",
+      actionTs: ACTION_TS,
+      expectedRevision: project.revision,
+      itemId: "work-1",
+      expectedItemVersion: project.document.items["work-1"]!.version,
+      attemptId: attempt.id,
+      expectedAttemptVersion: attempt.version,
+      runId: finalizingRun.runId,
+      commandId: finalizingRun.commandId,
+    });
+    await finalizing.runtime.dispatchPending(PROJECT_ID);
+    project = await finalizing.projects.getProject(PROJECT_ID);
+    assert.equal(currentAttempt(project)?.status, "running");
+    assert.equal(
+      (await finalizing.store.listMissionControlOutbox(PROJECT_ID)).find(
+        (entry) =>
+          entry.effectType === "mission-control.execution.cancel",
+      )?.status,
+      "DELIVERED",
+    );
+    finalizing.runner.emitTerminal(
+      finalizingRun.commandId,
+      finalizingRun.runId,
+      "run.completed",
+    );
+    await finalizing.runtime.reconcile(PROJECT_ID);
+    project = await finalizing.projects.getProject(PROJECT_ID);
+    assert.equal(currentAttempt(project)?.status, "completed");
+    finalizing.runtime.close();
   },
 );
 
@@ -728,7 +774,7 @@ class ControlledRunner implements MissionControlRunnerCommandClient {
   >();
   private readonly cancelFailures = new Map<
     string,
-    Record<string, unknown>
+    { code: string; details: Record<string, unknown> }
   >();
 
   onEvent(listener: (event: RunnerEvent) => void): () => void {
@@ -781,7 +827,7 @@ class ControlledRunner implements MissionControlRunnerCommandClient {
       const cancel = payload as RunnerCommandPayloadByType["run.cancel"];
       const forcedFailure = this.cancelFailures.get(cancel.runId!);
       if (forcedFailure !== undefined) {
-        throw runnerError("RUN_CANCEL_NOT_FOUND", forcedFailure);
+        throw runnerError(forcedFailure.code, forcedFailure.details);
       }
       const projection = this.projections.get(cancel.runId!);
       if (
@@ -873,8 +919,8 @@ class ControlledRunner implements MissionControlRunnerCommandClient {
     this.projections.delete(runId);
   }
 
-  failCancel(runId: string, details: Record<string, unknown>): void {
-    this.cancelFailures.set(runId, details);
+  failCancel(runId: string, details: Record<string, unknown>, code = "RUN_CANCEL_NOT_FOUND"): void {
+    this.cancelFailures.set(runId, { code, details });
   }
 
   setCancelled(runId: string): void {

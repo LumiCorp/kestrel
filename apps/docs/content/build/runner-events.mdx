@@ -37,6 +37,8 @@ Persist only events the protocol marks as durable and retain their canonical env
 
 Operational progress, provider reasoning, and agent progress may be useful to display, but they do not own the final answer. Provider deltas are live-only by default and should be discarded after the active run. Read `assistantText`, structured `output`, and any operator state from the terminal result.
 
+A completed `FinalizeAnswer` tool event is a terminalization fence: clients may display the tool activity, but cancellation after that point must not prevent the original run from delivering `run.completed`. A `run.cancel` command issued after the fence receives `runner.error` with code `RUN_ALREADY_FINALIZING`; continue following the original run to its terminal event.
+
 ## Reconnect rules
 
 Resume from the last committed cursor, tolerate duplicate delivery, and apply events idempotently. A reconnect must not manufacture a new run or another terminal event.

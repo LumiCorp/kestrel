@@ -308,11 +308,18 @@ export class KestrelClient {
     stream = new BufferedRunnerStream(
       result,
       async () => {
-        controller.abort();
-        await this.cancelRun(
-          { sessionId: input.sessionId, runId: input.runId },
-          context,
-        );
+        try {
+          await this.cancelRun(
+            { sessionId: input.sessionId, runId: input.runId },
+            context,
+          );
+          controller.abort();
+        } catch (error) {
+          if (readErrorCode(error) !== "RUN_ALREADY_FINALIZING") {
+            controller.abort();
+          }
+          throw error;
+        }
       },
     );
     return stream;
@@ -418,8 +425,11 @@ export class KestrelClient {
   async cancelRun(
     input: RunCancelCommandPayload,
     context: KestrelRequestContext,
-  ): Promise<RunnerResponseByCommandType["run.cancel"]["payload"]> {
+  ): Promise<Extract<RunnerResponseByCommandType["run.cancel"], { type: "run.cancelled" }>["payload"]> {
     const event = await this.sendCommand("run.cancel", input, context);
+    if (event.type === "runner.error") {
+      throw toKestrelError(event.payload);
+    }
     return event.payload;
   }
 
@@ -764,7 +774,13 @@ export class KestrelClient {
       .finally(async () => {
         try {
           if (cancellationPromise !== undefined) {
-            await cancellationPromise;
+            try {
+              await cancellationPromise;
+            } catch (error) {
+              if (readErrorCode(error) !== "RUN_ALREADY_FINALIZING") {
+                throw error;
+              }
+            }
           }
         } finally {
           settled = true;
@@ -781,9 +797,16 @@ export class KestrelClient {
           return;
         }
         cancelRequested = true;
-        recoveryController?.abort();
-        if (options.onCancel !== undefined) {
-          await options.onCancel(latestRunId, commandId);
+        try {
+          if (options.onCancel !== undefined) {
+            await options.onCancel(latestRunId, commandId);
+          }
+          recoveryController?.abort();
+        } catch (error) {
+          if (readErrorCode(error) !== "RUN_ALREADY_FINALIZING") {
+            recoveryController?.abort();
+          }
+          throw error;
         }
       },
     );

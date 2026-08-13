@@ -15,6 +15,10 @@ import {
 import type { Session } from "@/lib/auth-types";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneAgentResponsePersistMeta } from "@/lib/agent/kestrel-runtime-core";
+import {
+  isFinalizeAnswerCompletedEvent,
+  shouldInterruptDurableTurnAtRuntimeEvent,
+} from "@/lib/turns/runtime-cancellation";
 
 
 const session = {
@@ -237,6 +241,68 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
   assert.equal(typeof (persistedMeta as { assistantMessageId?: unknown })?.assistantMessageId, "string");
   assert.equal((persistedMeta as { runId?: unknown })?.runId, "run_123");
   assert.equal(persistedMeta?.selectedInteractionMode, null);
+});
+
+test("stop after FinalizeAnswer still persists the completed hosted turn", async () => {
+  const previewAnswer = "Preview: https://example.test/preview/finalized";
+  const cancellation = new AbortController();
+  const cancellationRequested = true;
+  let finalizeAnswerCompleted = false;
+  let persistedText = "";
+  let persistedTerminalStatus = "";
+  const terminal = completedTerminal(previewAnswer, { message: previewAnswer });
+  const response = createKestrelOneAgentResponseFromAgent({
+    request: new Request("http://example.test/api/chats/chat_finalizing", {
+      method: "POST",
+    }),
+    agent: fakeAgent({
+      terminal,
+      events: [finalizeAnswerCompletedEvent()],
+    }),
+    ownsAgent: false,
+    session,
+    organizationId: "org_123",
+    correlation: {
+      requestId: "req_finalizing",
+      correlationId: "req_finalizing",
+    },
+    threadId: "chat_finalizing",
+    interactionMode: "build",
+    signal: cancellation.signal,
+    abortBehavior: "detach",
+    messages: [{
+      id: "msg_user_finalizing",
+      role: "user",
+      parts: [{ type: "text", text: "Build and preview it." }],
+    }],
+    onRuntimeEvent(event) {
+      if (isFinalizeAnswerCompletedEvent(event)) {
+        finalizeAnswerCompleted = true;
+      }
+      if (shouldInterruptDurableTurnAtRuntimeEvent({
+        cancellationRequested,
+        finalizeAnswerCompleted,
+        eventType: event.type,
+      })) {
+        cancellation.abort();
+      }
+    },
+    onFinishPersist: async (messages, meta) => {
+      const textPart = messages[0]?.parts.find((part) => part.type === "text");
+      persistedText = textPart?.type === "text" ? textPart.text : "";
+      persistedTerminalStatus = meta.terminalStatus;
+    },
+  });
+
+  const body = await response.text();
+
+  assert.equal(finalizeAnswerCompleted, true);
+  assert.equal(cancellationRequested, true);
+  assert.equal(cancellation.signal.aborted, false);
+  assert.equal(persistedText, previewAnswer);
+  assert.equal(persistedTerminalStatus, "completed");
+  assert.match(body, /https:\/\/example\.test\/preview\/finalized/u);
+  assert.match(body, /finishReason/u);
 });
 
 test("runtime-owned mode switches are exposed to server persistence", async () => {
@@ -808,6 +874,28 @@ function agentProgressEvent(
         message,
         stepIndex: 1,
         stepAgent: "agent.loop",
+      },
+    },
+  };
+}
+
+function finalizeAnswerCompletedEvent(): KestrelOneRunnerStreamEvent {
+  return {
+    id: "evt_finalize_answer_completed",
+    type: "run.tool.completed",
+    ts: "2026-05-06T00:00:00.000Z",
+    runId: "run_123",
+    sessionId: "chat_finalizing",
+    payload: {
+      update: {
+        version: "v1",
+        runId: "run_123",
+        sessionId: "chat_finalizing",
+        ts: "2026-05-06T00:00:00.000Z",
+        seq: 1,
+        toolCallId: "tool_finalize_answer",
+        toolName: "FinalizeAnswer",
+        phase: "completed",
       },
     },
   };

@@ -1162,6 +1162,217 @@ test("run.start treats finalized assistant payload as completed under the accept
   await host.close();
 });
 
+test("run.cancel after FinalizeAnswer completion does not abort terminal delivery", async () => {
+  const previewAnswer = "Preview: https://example.test/preview/finalized";
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  let releaseTerminal!: () => void;
+  const terminalGate = new Promise<void>((resolve) => {
+    releaseTerminal = resolve;
+  });
+  let aborted = false;
+  const host = new RunnerHost(
+    writer,
+    (
+      _profile,
+      _onRunLog,
+      _onProgress,
+      _onConsole,
+      _onReasoning,
+      _onTaskUpdate,
+      onRunEvent
+    ) => ({
+      runTurn: async (input, options) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () => {
+            aborted = true;
+          },
+          { once: true }
+        );
+        onRunEvent(
+          buildPersistedRuntimeEventFromToolUpdate({
+            version: "v1",
+            runId: "run-runtime-finalizing",
+            sessionId: input.sessionId,
+            ts: "2026-06-15T21:00:00.000Z",
+            seq: 1,
+            toolCallId: "tool:run-runtime-finalizing:finalize",
+            toolName: "FinalizeAnswer",
+            phase: "completed",
+            stepIndex: 1,
+            stepAgent: "agent.exec.finalize",
+            displayName: "Finalize Answer",
+            toolFamily: "runtime",
+            provider: "kestrel",
+            input: { message: previewAnswer },
+            output: { message: previewAnswer },
+            durationMs: 1,
+          })
+        );
+        await terminalGate;
+        return {
+          assistantText: previewAnswer,
+          output: {
+            status: "COMPLETED",
+            sessionId: input.sessionId,
+            runId: "run-runtime-finalizing",
+            errors: [],
+            quality: {
+              citationCoverage: 1,
+              unresolvedClaims: 0,
+              reworkRate: 0,
+              thrashIndex: 0,
+            },
+            telemetry: {
+              stepsExecuted: 1,
+              toolCalls: 1,
+              modelCalls: 1,
+              durationMs: 1,
+            },
+          },
+          finalizedPayload: { message: previewAnswer },
+        };
+      },
+      close: async () => {},
+    })
+  );
+  const events: Array<{
+    commandId?: string | undefined;
+    type: string;
+    payload: Record<string, unknown>;
+  }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(
+      JSON.parse(line) as {
+        commandId?: string | undefined;
+        type: string;
+        payload: Record<string, unknown>;
+      }
+    );
+  });
+
+  const runPromise = host.runStart("cmd-run-finalizing", {
+    profile,
+    turn: {
+      sessionId: "session-cancel-after-finalize",
+      runId: "run-accepted-finalizing",
+      message: "hello",
+      eventType: "user.message",
+    },
+  });
+  await waitForCondition(
+    () => events.some((event) => event.type === "run.tool.completed"),
+    500
+  );
+  await host.runCancel("cmd-cancel-after-finalize", {
+    sessionId: "session-cancel-after-finalize",
+    runId: "run-accepted-finalizing",
+  });
+  assert.equal(aborted, false);
+  const cancelError = events.find(
+    (event) => event.commandId === "cmd-cancel-after-finalize"
+  );
+  assert.equal(cancelError?.type, "runner.error");
+  assert.equal(cancelError?.payload.code, "RUN_ALREADY_FINALIZING");
+
+  releaseTerminal();
+  await runPromise;
+  const completed = events.find((event) => event.type === "run.completed");
+  const completedResult = completed?.payload.result as
+    | RunTurnResult
+    | undefined;
+  assert.equal(completed?.commandId, "cmd-run-finalizing");
+  assert.equal(completedResult?.assistantText, previewAnswer);
+  const toolCompletedIndex = events.findIndex(
+    (event) => event.type === "run.tool.completed"
+  );
+  const cancelRejectedIndex = events.findIndex(
+    (event) =>
+      event.commandId === "cmd-cancel-after-finalize" &&
+      event.type === "runner.error"
+  );
+  const completedIndex = events.findIndex(
+    (event) => event.type === "run.completed"
+  );
+  assert.ok(toolCompletedIndex >= 0);
+  assert.ok(cancelRejectedIndex > toolCompletedIndex);
+  assert.ok(completedIndex > cancelRejectedIndex);
+  assert.equal(
+    events.some((event) => event.type === "run.cancelled"),
+    false
+  );
+  rl.close();
+  await host.close();
+});
+
+test("run.start emits run.failed when runtime fails after FinalizeAnswer completion", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(
+    writer,
+    (
+      _profile,
+      _onRunLog,
+      _onProgress,
+      _onConsole,
+      _onReasoning,
+      _onTaskUpdate,
+      onRunEvent
+    ) => ({
+      runTurn: async (input) => {
+        onRunEvent(
+          buildPersistedRuntimeEventFromToolUpdate({
+            version: "v1",
+            runId: "run-runtime-finalize-failure",
+            sessionId: input.sessionId,
+            ts: "2026-06-15T21:00:00.000Z",
+            seq: 1,
+            toolCallId: "tool:run-runtime-finalize-failure:finalize",
+            toolName: "FinalizeAnswer",
+            phase: "completed",
+            stepIndex: 1,
+            stepAgent: "agent.exec.finalize",
+            displayName: "Finalize Answer",
+            toolFamily: "runtime",
+            provider: "kestrel",
+            input: { message: "done" },
+            output: { message: "done" },
+            durationMs: 1,
+          })
+        );
+        throw Object.assign(new Error("terminal normalization failed"), {
+          code: "TERMINAL_NORMALIZATION_FAILED",
+        });
+      },
+      close: async () => {},
+    })
+  );
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+
+  await host.runStart("cmd-run-finalize-failure", {
+    profile,
+    turn: {
+      sessionId: "session-finalize-failure",
+      runId: "run-finalize-failure",
+      message: "hello",
+      eventType: "user.message",
+    },
+  });
+
+  assert.ok(events.some((event) => event.type === "run.tool.completed"));
+  assert.ok(events.some((event) => event.type === "run.failed"));
+  assert.equal(events.some((event) => event.type === "run.completed"), false);
+  assert.equal(events.some((event) => event.type === "run.cancelled"), false);
+  rl.close();
+  await host.close();
+});
+
 test("run.start emits a finalized answer when terminal diagnostics never settle", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
@@ -3157,6 +3368,9 @@ test("operator commands emit inbox, thread, run, and controlled responses", asyn
       completedAt: "2026-07-10T12:00:03.000Z",
       result: {
         assistantText: "Recovered answer.",
+        finalizedPayload: {
+          payload: { data: { modeSwitch: { mode: "build" } } },
+        },
         output: {
           status: "COMPLETED",
           sessionId: "session-main",
@@ -3311,7 +3525,11 @@ test("operator commands emit inbox, thread, run, and controlled responses", asyn
     JSON.stringify({
       id: "cmd-conversation-messages",
       type: "conversation.messages.list",
-      payload: { threadId: "thread-main", limit: 100 },
+      payload: {
+        threadId: "thread-main",
+        limit: 100,
+        includeFinalizedPayload: true,
+      },
     }),
   );
   await router.acceptLine(
@@ -3411,12 +3629,22 @@ test("operator commands emit inbox, thread, run, and controlled responses", asyn
   assert.equal(view?.nextAction?.kind, "switch_thread");
   const messagesEvent = events.find((event) => event.type === "conversation.messages");
   const messagesPayload = messagesEvent?.payload as {
-    messages?: Array<{ messageId?: string; result?: { assistantText?: string } }>;
+    messages?: Array<{
+      messageId?: string;
+      result?: {
+        assistantText?: string;
+        finalizedPayload?: unknown;
+      };
+    }>;
     hasMore?: boolean;
     nextCursor?: string;
   } | undefined;
   assert.equal(messagesPayload?.messages?.[0]?.messageId, "terminal:run-completed-1");
   assert.equal(messagesPayload?.messages?.[0]?.result?.assistantText, "Recovered answer.");
+  assert.deepEqual(
+    messagesPayload?.messages?.[0]?.result?.finalizedPayload,
+    { payload: { data: { modeSwitch: { mode: "build" } } } },
+  );
   assert.equal(messagesPayload?.hasMore, false);
   assert.match(messagesPayload?.nextCursor ?? "", /^v1:/u);
   const missingThreadEvent = events.find((event) => event.type === "runner.error");

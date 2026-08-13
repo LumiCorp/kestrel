@@ -526,7 +526,31 @@ export class MissionControlExecutionRuntime {
       return;
     }
 
-    if (context.kind === "cancel" && failure.code === "RUN_CANCEL_NOT_FOUND") {
+    if (
+      context.kind === "cancel" &&
+      (
+        failure.code === "RUN_CANCEL_NOT_FOUND" ||
+        failure.code === "RUN_ALREADY_FINALIZING"
+      )
+    ) {
+      if (failure.code === "RUN_ALREADY_FINALIZING") {
+        await this.applyAttemptAction(context, (state) => {
+          if (state.attempt.status !== "cancelling") {
+            return;
+          }
+          return {
+            type: "execution.stop_rejected",
+            outcome: "finalizing",
+          };
+        }, this.now(), `runner-rejection:${effect.effectId}`);
+        await this.store.markMissionControlOutboxDelivered(
+          effect.projectId,
+          effect.effectId,
+        );
+        this.contexts.delete(effect.effectId);
+        await this.reconcileProject(effect.projectId);
+        return;
+      }
       const activeRunId = optionalText(failure.details?.activeRunId);
       const activeCommandId = optionalText(failure.details?.activeCommandId);
       const outcome =

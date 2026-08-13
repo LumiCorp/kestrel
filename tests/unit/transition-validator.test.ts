@@ -48,6 +48,48 @@ test("accepts valid transition", () => {
   });
 });
 
+test("accepts after-terminal outbox delivery for completed transitions", () => {
+  assert.doesNotThrow(() => {
+    validateTransition({
+      status: "COMPLETED",
+      outboxDelivery: "after_terminal",
+    });
+  });
+});
+
+test("rejects after-terminal outbox delivery for non-completed transitions", () => {
+  const transitions: Transition[] = [
+    {
+      status: "RUNNING",
+      nextStepAgent: "next",
+      outboxDelivery: "after_terminal",
+    },
+    {
+      status: "WAITING",
+      waitFor: { kind: "user", eventType: "user.message" },
+      outboxDelivery: "after_terminal",
+    },
+    {
+      status: "FAILED",
+      outboxDelivery: "after_terminal",
+    },
+  ];
+
+  for (const transition of transitions) {
+    assert.throws(
+      () => validateTransition(transition),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "RUN_TRANSITION_INVALID");
+        assert.equal(
+          (error as { details?: { contractPath?: string } }).details?.contractPath,
+          "transition.outboxDelivery",
+        );
+        return true;
+      },
+    );
+  }
+});
+
 test("rejects invalid region ops payloads", () => {
   assert.throws(() => {
     validateTransition({

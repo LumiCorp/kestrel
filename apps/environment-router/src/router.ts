@@ -42,6 +42,7 @@ const COMMAND_CAPABILITIES: Readonly<Record<string, string>> = {
   "run.cancel": "run.cancel",
   "session.describe": "session.read",
   "session.state": "session.read",
+  "conversation.messages.list": "session.read",
 };
 
 export function authorizeEnvironmentSubscription(input: {
@@ -254,6 +255,8 @@ function parseCommand(value: unknown): {
         ? turn.sessionId
         : payload && typeof payload.sessionId === "string"
           ? payload.sessionId
+          : payload && typeof payload.threadId === "string"
+            ? payload.threadId
           : undefined,
   };
 }

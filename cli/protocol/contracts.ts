@@ -211,6 +211,7 @@ export interface ConversationMessagesListCommandPayload {
   threadId: string;
   afterCursor?: string | undefined;
   limit?: number | undefined;
+  includeFinalizedPayload?: boolean | undefined;
 }
 
 export interface OperatorRunsCommandPayload {
@@ -769,7 +770,11 @@ export interface ConversationMessagesEventPayload {
     sessionId: string;
     runId: string;
     completedAt: string;
-    result: { assistantText: string; output: RunTurnResult["output"] };
+    result: {
+      assistantText: string;
+      output: RunTurnResult["output"];
+      finalizedPayload?: unknown | undefined;
+    };
   }>;
   nextCursor?: string | undefined;
   hasMore: boolean;

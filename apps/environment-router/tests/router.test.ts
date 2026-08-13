@@ -38,6 +38,7 @@ const token = signEnvironmentExecutionTicket({
       "profile.read",
       "workspace.files.read",
       "events.subscribe",
+      "session.read",
     ],
     issuedAt: 1000,
     expiresAt: 1300,
@@ -239,6 +240,27 @@ test("router binds retained reasoning commands to action capability, tenant, and
     publicKey,
     now: 1100,
     body: command("read", "thread-2"),
+  }).status, 403);
+});
+
+test("router scopes conversation recovery to the execution Thread", () => {
+  const command = (threadId: string) => ({
+    id: "command-conversation-recovery",
+    type: "conversation.messages.list",
+    payload: { threadId, limit: 100 },
+    metadata: { tenantId: "org-1" },
+  });
+  assert.equal(authorizeEnvironmentRequest({
+    authorization: `Bearer ${token}`,
+    publicKey,
+    now: 1100,
+    body: command("thread-1"),
+  }).status, 200);
+  assert.equal(authorizeEnvironmentRequest({
+    authorization: `Bearer ${token}`,
+    publicKey,
+    now: 1100,
+    body: command("thread-2"),
   }).status, 403);
 });
 

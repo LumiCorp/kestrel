@@ -18,6 +18,9 @@ export async function cancelDesktopRun(input: {
     );
     return { status: "cancelled", event };
   } catch (error) {
+    if (runnerErrorCode(error) === "RUN_ALREADY_FINALIZING") {
+      return { status: "finalizing" };
+    }
     if (runnerErrorCode(error) === "RUN_CANCEL_NOT_FOUND") {
       const activeTarget = runnerActiveTarget(error);
       if (

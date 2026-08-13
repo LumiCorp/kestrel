@@ -17,6 +17,7 @@ import {
 } from "@kestrel-agents/sdk/runner";
 import type { InferUIMessageChunk, UIMessage } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
+import { createRecoveredKestrelOneCompletion } from "@/lib/agent/kestrel-reconnect-stream";
 import { recordEmailAppApprovalRequest } from "@/lib/apps/email-app-approvals";
 import { generateKestrelOneExternalReplyFromAgent } from "@/lib/agent/kestrel-external-runtime-core";
 import {
@@ -49,6 +50,7 @@ import {
   resolveEnvironmentExecutionRoute,
   resolveEnvironmentExecutionCancellationRoute,
   resolveEnvironmentExecutionAuthorizationRoute,
+  resolveEnvironmentExecutionRecoveryRoute,
   settleEnvironmentExecutionRuntimeEvent,
   updateEnvironmentExecutionRuntimeCursor,
   updateEnvironmentExecutionRuntimeIdentity,
@@ -1256,11 +1258,105 @@ export async function createKestrelOneReattachmentResponse(
   });
 }
 
+export async function createKestrelOneRecoveredCompletionResponse(
+  input: Omit<KestrelOneAgentResponseInput, "agent" | "onExecutionRouted"> & {
+    executionId: string;
+  },
+) {
+  const route = await resolveEnvironmentExecutionRecoveryRoute({
+    organizationId: input.organizationId,
+    executionId: input.executionId,
+  });
+  if (
+    !(
+      route?.runtimeRunId &&
+      route.lastRuntimeEventId &&
+      route.completedAt
+    )
+  ) {
+    throw connectionInterruptedError(
+      "The completed agent result is unavailable for durable recovery.",
+      "RUNNER_TERMINAL_RESULT_UNAVAILABLE",
+    );
+  }
+  const client = new KestrelOneRunnerClient({
+    target: {
+      kind: "remote",
+      baseUrl: route.baseUrl,
+      authToken: route.authToken,
+    },
+  });
+  let terminal: RunnerRunTerminalEvent;
+  try {
+    const event = await client.sendCommand(
+      "conversation.messages.list",
+      {
+        threadId: route.sessionId,
+        limit: 100,
+        includeFinalizedPayload: true,
+      },
+      {
+        tenantId: input.organizationId,
+        actor: {
+          actorId: route.actorId,
+          actorType: "operator",
+          tenantId: input.organizationId,
+          orgRole: "org_admin",
+        },
+      },
+    );
+    terminal = createRecoveredKestrelOneCompletion({
+      runtimeRunId: route.runtimeRunId,
+      sessionId: route.sessionId,
+      terminalEventId: route.lastRuntimeEventId,
+      completedAt: route.completedAt.toISOString(),
+      messages: event.payload.messages,
+    });
+  } finally {
+    await client.close();
+  }
+
+  const agent: KestrelOneAgent = {
+    stream() {
+      return {
+        ready: Promise.resolve(),
+        result: Promise.resolve(terminal),
+        cancel: async () => {},
+        async *[Symbol.asyncIterator]() {
+          yield terminal;
+        },
+      };
+    },
+    close: async () => {},
+  };
+  return createKestrelOneAgentResponseFromAgent({
+    request: input.request,
+    agent,
+    ownsAgent: true,
+    session: input.session,
+    organizationId: input.organizationId,
+    correlation: readRequestCorrelation(input.request),
+    threadId: input.threadId,
+    durableTurnId: input.durableTurnId,
+    messages: input.messages,
+    approvalDecision: input.approvalDecision,
+    interactionResponse: input.interactionResponse,
+    modelId: input.modelId ?? "kestrel",
+    interactionMode: input.interactionMode,
+    projectContext: input.projectContext,
+    transientTitle: null,
+    signal: input.signal,
+    onUiChunk: input.onUiChunk,
+    onRuntimeEvent: input.onRuntimeEvent,
+    onFinishPersist: input.onFinishPersist,
+  });
+}
+
 function runtimeTerminalStatus(eventType: string) {
   if (eventType === "run.completed") return "completed" as const;
   if (eventType === "run.failed") return "failed" as const;
   if (eventType === "run.cancelled") return "cancelled" as const;
-  return undefined;
+  return;
 }
 
 function connectionInterruptedError(message: string, detailCode: string) {

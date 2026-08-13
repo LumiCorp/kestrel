@@ -1129,10 +1129,13 @@ export class StepRunner {
       return terminalOutput;
     }
 
-    await this.deps.outbox.dispatchInline(input.runId);
-    await this.deps.appendRunEvent(input.runId, input.state.session.sessionId, "outbox.dispatched", "INFO", {
-      runId: input.runId,
-    }, input.state.stepIndex);
+    const dispatchAfterTerminal = transition.outboxDelivery === "after_terminal";
+    if (!dispatchAfterTerminal) {
+      await this.deps.outbox.dispatchInline(input.runId);
+      await this.deps.appendRunEvent(input.runId, input.state.session.sessionId, "outbox.dispatched", "INFO", {
+        runId: input.runId,
+      }, input.state.stepIndex);
+    }
 
     const terminalOutput = await this.deps.runLifecycleController.returnTerminal({
       runId: input.runId,
@@ -1145,13 +1148,80 @@ export class StepRunner {
       continuation: input.state.continuation,
     });
     if (terminalOutput !== undefined) {
+      if (dispatchAfterTerminal) {
+        this.dispatchOutboxAfterTerminal({
+          runId: input.runId,
+          sessionId: input.state.session.sessionId,
+          stepIndex: input.state.stepIndex,
+        });
+      }
       return terminalOutput;
+    }
+
+    if (dispatchAfterTerminal) {
+      throw createRuntimeFailure(
+        "RUN_TERMINALIZATION_INCOMPLETE",
+        "after_terminal outbox delivery did not produce terminal output.",
+        {
+          subsystem: "runtime",
+          classification: "runtime",
+          status: transition.status,
+          sessionId: input.state.session.sessionId,
+          stepAgent: input.state.currentStep,
+        },
+      );
     }
 
     input.state.currentStep = transition.nextStepAgent;
     input.state.lastStepAgent = stepName;
     input.state.stepIndex += 1;
     return ;
+  }
+
+  private dispatchOutboxAfterTerminal(input: {
+    runId: string;
+    sessionId: string;
+    stepIndex: number;
+  }): void {
+    void (async () => {
+      try {
+        const outcome = await this.deps.outbox.dispatchInline(input.runId);
+        if (outcome.failedCount > 0) {
+          await this.deps.logWarn({
+            runId: input.runId,
+            sessionId: input.sessionId,
+            stepIndex: input.stepIndex,
+            eventName: "terminal_outbox_dispatch_failed",
+            metadata: {
+              attemptedCount: outcome.attemptedCount,
+              deliveredCount: outcome.deliveredCount,
+              failedCount: outcome.failedCount,
+            },
+          }).catch(() => {});
+          return;
+        }
+        await this.deps.appendRunEvent(
+          input.runId,
+          input.sessionId,
+          "outbox.dispatched",
+          "INFO",
+          { runId: input.runId },
+          input.stepIndex,
+        );
+      } catch (error) {
+        await this.deps.logWarn({
+          runId: input.runId,
+          sessionId: input.sessionId,
+          stepIndex: input.stepIndex,
+          eventName: "terminal_outbox_dispatch_failed",
+          metadata: {
+            errorMessage: error instanceof Error
+              ? error.message
+              : "Terminal outbox dispatch failed",
+          },
+        }).catch(() => {});
+      }
+    })();
   }
 
   private async selectStep(input: {
