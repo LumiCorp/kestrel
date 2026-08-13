@@ -8,13 +8,16 @@ import {
 import { getDurableTurn, listDurableTurnEvents } from "@/lib/turns/store";
 import { isDurableTurnReplayComplete } from "@/lib/turns/replay-status";
 
-function waitForEvents(signal: AbortSignal) {
+export const DURABLE_TURN_REPLAY_RESPONSE_MAX_MS = 240_000;
+
+function waitForEvents(signal: AbortSignal, deadline: number) {
   return new Promise<void>((resolve) => {
     if (signal.aborted) {
       resolve();
       return;
     }
-    const timeout = setTimeout(finish, 250);
+    const timeoutMs = Math.min(250, Math.max(0, deadline - Date.now()));
+    const timeout = setTimeout(finish, timeoutMs);
     signal.addEventListener("abort", finish, { once: true });
     function finish() {
       clearTimeout(timeout);
@@ -32,7 +35,8 @@ export function createDurableTurnReplayResponse(input: {
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
       let sequence = input.afterSequence ?? 0;
-      while (!input.signal.aborted) {
+      const deadline = Date.now() + DURABLE_TURN_REPLAY_RESPONSE_MAX_MS;
+      while (!input.signal.aborted && Date.now() < deadline) {
         const events = await listDurableTurnEvents({
           turnId: input.turnId,
           afterSequence: sequence,
@@ -47,7 +51,7 @@ export function createDurableTurnReplayResponse(input: {
         if (!turn || isDurableTurnReplayComplete(turn.status)) {
           return;
         }
-        await waitForEvents(input.signal);
+        await waitForEvents(input.signal, deadline);
       }
     },
     onError: (error) =>

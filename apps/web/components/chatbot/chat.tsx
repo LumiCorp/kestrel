@@ -36,6 +36,7 @@ import { CompatibleChatTransport } from "@/lib/chat/compatible-chat-transport";
 import {
   assertMatchingResumeTurnId,
   claimResumeRequest,
+  releaseResumeRequest,
   RESUME_WARNING_MESSAGE,
   type ResumeCoordinator,
   synchronizeResumeCoordinator,
@@ -1278,6 +1279,10 @@ export function Chat({
       );
     }
     void controller.resumeStream().finally(() => {
+      resumeCoordinatorRef.current = releaseResumeRequest(
+        resumeCoordinatorRef.current,
+        claim.turnId,
+      );
       if (resumeTurnIdRef.current === claim.turnId) {
         resumeTurnIdRef.current = null;
       }

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   assertMatchingResumeTurnId,
   claimResumeRequest,
+  releaseResumeRequest,
   synchronizeResumeCoordinator,
 } from "./resume-coordinator";
 
@@ -26,6 +27,28 @@ test("resume coordination claims once per authoritative active turn", () => {
   assert.deepEqual(
     synchronizeResumeCoordinator(coordinator, null, undefined),
     { activeTurnId: null, requested: false },
+  );
+});
+
+test("bounded stream close can reattach a still-active turn", () => {
+  const synchronized = synchronizeResumeCoordinator(
+    { activeTurnId: "turn-running", requested: true },
+    "turn-running",
+    "running",
+  );
+  assert.deepEqual(synchronized, {
+    activeTurnId: "turn-running",
+    requested: true,
+  });
+  assert.equal(claimResumeRequest(synchronized).turnId, null);
+
+  const readyAfterBoundedClose = releaseResumeRequest(
+    synchronized,
+    "turn-running",
+  );
+  assert.equal(
+    claimResumeRequest(readyAfterBoundedClose).turnId,
+    "turn-running",
   );
 });
 

@@ -32,6 +32,15 @@ export function claimResumeRequest(current: ResumeCoordinator) {
   };
 }
 
+export function releaseResumeRequest(
+  current: ResumeCoordinator,
+  turnId: string,
+): ResumeCoordinator {
+  return current.activeTurnId === turnId
+    ? { ...current, requested: false }
+    : current;
+}
+
 export function assertMatchingResumeTurnId(
   expectedTurnId: string,
   returnedTurnId: string | null,
