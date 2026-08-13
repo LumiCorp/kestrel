@@ -184,13 +184,13 @@ test("Project runs reconcile skills before starting the runtime", () => {
   );
 });
 
-test("Organization changes refresh Project and Thread sidebar data", () => {
+test("Organization changes reload server authority and refresh workspace data", () => {
   const teamSwitcher = readAppSource("components/team-switcher.tsx");
   const workspaceRail = readAppSource("components/workspace-rail.tsx");
 
   assert.match(
     teamSwitcher,
-    /await organization\.setActive\([\s\S]*router\.refresh\(\)/u,
+    /await organization\.setActive\([\s\S]*window\.location\.reload\(\)/u,
   );
   assert.match(
     workspaceRail,

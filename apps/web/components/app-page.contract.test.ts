@@ -22,7 +22,6 @@ test("standard pages share one tight responsive container contract", () => {
 
 test("every application shell owns the standard page container", () => {
   const appPageLayouts = [
-    "app/admin/layout.tsx",
     "app/debug/layout.tsx",
     "app/knowledge/layout.tsx",
   ];
@@ -39,6 +38,10 @@ test("every application shell owns the standard page container", () => {
     read("app/(workspace)/organization/layout.tsx"),
     /<PageContainer/u,
   );
+  assert.match(read("app/(workspace)/platform/layout.tsx"), /<PageContainer/u);
+  const legacyAdminLayout = read("app/admin/layout.tsx");
+  assert.match(legacyAdminLayout, /requireAdmin: true/u);
+  assert.doesNotMatch(legacyAdminLayout, /Navigation/u);
   const organizationNavigation = read(
     "components/organization/organization-navigation.tsx",
   );

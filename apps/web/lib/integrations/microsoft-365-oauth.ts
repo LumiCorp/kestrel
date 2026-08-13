@@ -3,7 +3,10 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import * as schema from "@/drizzle/schema";
-import { ensureCoreAppCatalog } from "@/lib/apps/service";
+import {
+  disconnectPersonalAppConnection,
+  ensureCoreAppCatalog,
+} from "@/lib/apps/service";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import {
   MICROSOFT_365_AUTH_PROVIDER_ID,
@@ -174,4 +177,15 @@ export async function markMicrosoft365ConnectionDegraded(input: {
       updatedAt: new Date(),
     })
     .where(eq(schema.appConnections.id, input.connectionId));
+}
+
+export async function disconnectMicrosoft365Connection(input: {
+  organizationId: string;
+  userId: string;
+}) {
+  return disconnectPersonalAppConnection({
+    organizationId: input.organizationId,
+    userId: input.userId,
+    appKey: MICROSOFT_365_PROVIDER_KEY,
+  });
 }

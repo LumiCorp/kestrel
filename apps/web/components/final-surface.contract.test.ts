@@ -13,9 +13,11 @@ function read(relativePath: string) {
   return fs.readFileSync(path.join(webRoot, relativePath), "utf8");
 }
 
-test("Admin Releases and Billing lead with the next operational decision", () => {
-  const releases = read("app/admin/releases/releases-client.tsx");
-  const billing = read("app/admin/billing/page.tsx");
+test("Platform Releases and Billing lead with the next operational decision", () => {
+  const releases = read(
+    "app/(workspace)/platform/releases/releases-client.tsx",
+  );
+  const billing = read("app/(workspace)/platform/billing/page.tsx");
 
   assert.match(releases, /Active decision/u);
   assert.match(releases, /title="Release settings"/u);
@@ -29,9 +31,9 @@ test("Admin Releases and Billing lead with the next operational decision", () =>
   assert.doesNotMatch(billing, /\bCard\b/u);
 });
 
-test("Admin Docs use grouped navigation and a readable anchored document", () => {
-  const index = read("app/admin/docs/page.tsx");
-  const detail = read("app/admin/docs/[slug]/page.tsx");
+test("Platform Docs use grouped navigation and a readable anchored document", () => {
+  const index = read("app/(workspace)/platform/docs/page.tsx");
+  const detail = read("app/(workspace)/platform/docs/[slug]/page.tsx");
   const renderer = read("components/admin/admin-doc-content.tsx");
   const docs = read("lib/admin/docs.ts");
 

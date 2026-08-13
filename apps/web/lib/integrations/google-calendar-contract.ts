@@ -33,6 +33,10 @@ export const googleCalendarConnectionInputSchema = z.object({
   shareAvailability: z.boolean().default(false),
 });
 
+export const googleCalendarPersonalConnectionInputSchema = z.object({
+  calendar: z.literal(true),
+});
+
 export const googleCalendarSharingInputSchema = z.object({
   shareAvailability: z.boolean(),
 });

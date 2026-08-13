@@ -9,8 +9,6 @@ import {
   AppSettingsHeader,
   AppSettingsSection,
 } from "@/components/apps/app-settings-layout";
-import { GithubConnectionCard } from "@/components/apps/github-connection-card";
-import { Microsoft365ConnectionCard } from "@/components/apps/microsoft-365-connection-card";
 import {
   SettingsDisclosure,
   SettingsStatusNotice,
@@ -200,13 +198,6 @@ export function AppDetail({ app }: { app: AppDetailType }) {
         }
       />
 
-      {app.key === "github" && app.installationStatus === "installed" ? (
-        <GithubConnectionCard />
-      ) : null}
-      {app.key === "microsoft_365" && app.installationStatus === "installed" ? (
-        <Microsoft365ConnectionCard />
-      ) : null}
-
       <AppSettingsSection
         icon={<KeyRound className="size-4" />}
         title="Connections"
@@ -251,6 +242,12 @@ export function AppDetail({ app }: { app: AppDetailType }) {
                   : "This App is installed but still needs a connection."
                 : "Install this App before adding a connection."}
             </p>
+            {app.connectionModel === "personal" ||
+            app.connectionModel === "hybrid" ? (
+              <Button asChild size="sm" variant="outline">
+                <Link href="/settings/connections">Manage personal connections</Link>
+              </Button>
+            ) : null}
             {app.connectionModel === "environment" ||
             app.connectionModel === "hybrid" ? (
               <Button asChild size="sm" variant="outline">

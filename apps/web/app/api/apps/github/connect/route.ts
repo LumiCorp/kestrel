@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireInstalledAppForOrganization } from "@/lib/apps/service";
 import { auth } from "@/lib/auth";
 import { findGithubAuthAccount } from "@/lib/integrations/github-oauth";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
@@ -6,7 +7,11 @@ import { errorResponse } from "@/lib/knowledge/http";
 
 export async function POST(request: Request) {
   try {
-    const { session } = await requireActiveOrganization();
+    const { organizationId, session } = await requireActiveOrganization();
+    await requireInstalledAppForOrganization({
+      organizationId,
+      appKey: "github",
+    });
     if (!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET)) {
       throw new Error("GitHub OAuth is not configured.");
     }
@@ -20,8 +25,8 @@ export async function POST(request: Request) {
       body: {
         provider: "github",
         scopes: ["repo"],
-        callbackURL: `${origin}/apps/github?github=linked`,
-        errorCallbackURL: `${origin}/apps/github?github=error`,
+        callbackURL: `${origin}/settings/connections?github=linked#github`,
+        errorCallbackURL: `${origin}/settings/connections?github=error#github`,
         disableRedirect: true,
       },
     });

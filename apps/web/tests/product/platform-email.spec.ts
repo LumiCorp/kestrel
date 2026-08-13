@@ -9,7 +9,7 @@ test.beforeEach(async ({ page, request }) => {
     },
   });
   expect(signInResponse.ok()).toBe(true);
-  await page.goto("/settings/platform/email");
+  await page.goto("/platform/email");
   await expect(
     page.getByRole("heading", { level: 1, name: "System email" }),
   ).toBeVisible();

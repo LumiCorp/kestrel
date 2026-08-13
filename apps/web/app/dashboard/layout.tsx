@@ -8,6 +8,8 @@ export default async function DashboardLayout({
 }) {
   const {
     activeOrganization,
+    canManageActiveOrganization,
+    isAdmin,
     session,
   } =
     await requireAuthenticatedShell();
@@ -15,6 +17,8 @@ export default async function DashboardLayout({
   return (
     <AuthenticatedAppShell
       activeOrganization={activeOrganization}
+      canManageActiveOrganization={canManageActiveOrganization}
+      isPlatformAdmin={isAdmin}
       sectionLabel="Dashboard"
       session={session}
     >

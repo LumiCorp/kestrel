@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AppSettingsSection } from "@/components/apps/app-settings-layout";
+import { SettingsSection } from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -24,7 +24,11 @@ async function readJson<T>(response: Response): Promise<T> {
   return (await response.json().catch(() => ({}))) as T;
 }
 
-export function Microsoft365ConnectionCard() {
+export function Microsoft365ConnectionCard({
+  installed,
+}: {
+  installed: boolean;
+}) {
   const [status, setStatus] = useState<Status | null>(null);
   const [packs, setPacks] = useState<Microsoft365Pack[]>(["outlook"]);
   const [working, setWorking] = useState(false);
@@ -43,23 +47,6 @@ export function Microsoft365ConnectionCard() {
     };
   }, []);
 
-  useEffect(() => {
-    const query = new URLSearchParams(window.location.search);
-    if (query.get("microsoft365") !== "linked") return;
-    const callbackPacks = query
-      .get("packs")
-      ?.split(",")
-      .filter((pack): pack is Microsoft365Pack =>
-        PACK_KEYS.includes(pack as Microsoft365Pack)
-      );
-    if (!callbackPacks?.length) return;
-    const cleanUrl = new URL(window.location.href);
-    cleanUrl.searchParams.delete("microsoft365");
-    cleanUrl.searchParams.delete("packs");
-    window.history.replaceState({}, "", cleanUrl);
-    void connect(callbackPacks);
-  }, []);
-
   function togglePack(pack: Microsoft365Pack, enabled: boolean) {
     setPacks((current) =>
       enabled
@@ -68,45 +55,104 @@ export function Microsoft365ConnectionCard() {
     );
   }
 
-  async function connect(nextPacks = packs) {
+  const connect = useCallback(
+    async (nextPacks = packs) => {
+      setWorking(true);
+      try {
+        const response = await fetch("/api/apps/microsoft-365", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ packs: nextPacks }),
+        });
+        const body = await readJson<{
+          connected?: boolean;
+          packs?: Microsoft365Pack[];
+          url?: string;
+          error?: string | { message?: string };
+        }>(response);
+        if (!response.ok) {
+          const error =
+            typeof body.error === "string"
+              ? body.error
+              : body.error?.message ?? "Microsoft 365 could not be connected.";
+          throw new Error(error);
+        }
+        if (body.url) {
+          window.location.assign(body.url);
+          return;
+        }
+        if (!body.connected) {
+          throw new Error("Microsoft 365 connection was incomplete.");
+        }
+        const nextStatus = await readJson<Status>(
+          await fetch("/api/apps/microsoft-365"),
+        );
+        setStatus(nextStatus);
+        setPacks(body.packs ?? nextPacks);
+        toast.success("Microsoft 365 is connected", {
+          description: "Only the selected capability packs were authorized.",
+        });
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Microsoft 365 could not be connected.",
+        );
+      } finally {
+        setWorking(false);
+      }
+    },
+    [packs],
+  );
+
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    const result = query.get("microsoft365");
+    if (!result) return;
+    const callbackPacks = query
+      .get("packs")
+      ?.split(",")
+      .filter((pack): pack is Microsoft365Pack =>
+        PACK_KEYS.includes(pack as Microsoft365Pack),
+      );
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete("microsoft365");
+    cleanUrl.searchParams.delete("packs");
+    window.history.replaceState({}, "", cleanUrl);
+    if (result === "error") {
+      toast.error("Microsoft 365 authorization was not completed.");
+    } else if (result === "linked" && callbackPacks?.length) {
+      if (installed) {
+        void connect(callbackPacks);
+      } else {
+        toast.error(
+          "An organization admin must install Microsoft 365 before it can be connected.",
+        );
+      }
+    }
+  }, [connect, installed]);
+
+  async function disconnect() {
     setWorking(true);
     try {
       const response = await fetch("/api/apps/microsoft-365", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ packs: nextPacks }),
+        method: "DELETE",
       });
-      const body = await readJson<{
-        connected?: boolean;
-        packs?: Microsoft365Pack[];
-        url?: string;
-        error?: string | { message?: string };
-      }>(response);
+      const body = await readJson<{ error?: string }>(response);
       if (!response.ok) {
-        const error =
-          typeof body.error === "string"
-            ? body.error
-            : body.error?.message ?? "Microsoft 365 could not be connected.";
-        throw new Error(error);
+        throw new Error(body.error ?? "Microsoft 365 could not be disconnected.");
       }
-      if (body.url) {
-        window.location.assign(body.url);
-        return;
-      }
-      if (!body.connected) throw new Error("Microsoft 365 connection was incomplete.");
-      const nextStatus = await readJson<Status>(
-        await fetch("/api/apps/microsoft-365")
+      setStatus((current) =>
+        current
+          ? { ...current, connected: false, status: "disconnected" }
+          : current,
       );
-      setStatus(nextStatus);
-      setPacks(body.packs ?? nextPacks);
-      toast.success("Microsoft 365 is connected", {
-        description: "Only the selected capability packs were authorized.",
-      });
+      toast.success("Microsoft 365 disconnected.");
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Microsoft 365 could not be connected."
+          : "Microsoft 365 could not be disconnected.",
       );
     } finally {
       setWorking(false);
@@ -114,7 +160,7 @@ export function Microsoft365ConnectionCard() {
   }
 
   return (
-    <AppSettingsSection
+    <SettingsSection
       description="Choose the Microsoft 365 services Kestrel may use. Adding another service extends the same connection."
       title="Microsoft 365 connection"
     >
@@ -129,7 +175,7 @@ export function Microsoft365ConnectionCard() {
             >
               <Checkbox
                 checked={packs.includes(pack)}
-                disabled={working}
+                disabled={working || !installed}
                 id={`microsoft-365-${pack}`}
                 onCheckedChange={(checked) => togglePack(pack, checked === true)}
               />
@@ -149,23 +195,41 @@ export function Microsoft365ConnectionCard() {
             </Badge>
             {status?.label ? <span className="text-muted-foreground">{status.label}</span> : null}
           </div>
-          <Button
-            disabled={working || packs.length === 0 || status?.configured === false}
-            onClick={() => void connect()}
-          >
-            {working
-              ? "Connecting…"
-              : status?.connected
-                ? "Update capabilities"
-                : "Connect Microsoft 365"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {status?.connected ? (
+              <Button disabled={working} onClick={() => void disconnect()} variant="outline">
+                Disconnect
+              </Button>
+            ) : null}
+            <Button
+              disabled={
+                working ||
+                !installed ||
+                packs.length === 0 ||
+                status?.configured === false
+              }
+              onClick={() => void connect()}
+            >
+              {working
+                ? "Connecting…"
+                : status?.connected
+                  ? "Update capabilities"
+                  : "Connect Microsoft 365"}
+            </Button>
+          </div>
         </div>
         {status?.configured === false ? (
           <p className="text-destructive text-sm">
             Microsoft 365 has not been configured for this Kestrel deployment.
           </p>
         ) : null}
+        {installed ? null : (
+          <p className="text-muted-foreground text-sm">
+            An organization admin must install Microsoft 365 before you can
+            connect or update capabilities.
+          </p>
+        )}
       </div>
-    </AppSettingsSection>
+    </SettingsSection>
   );
 }

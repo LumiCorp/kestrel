@@ -3,8 +3,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { CalendarDays, Loader2, ShieldCheck, X } from "lucide-react";
 import Image from "next/image";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import useSWR from "swr";
 import { AppIcon } from "@/components/apps/app-icon";
@@ -86,9 +85,6 @@ export function ProjectApps({
   projectId: string;
   canEdit: boolean;
 }) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const statusUrl = `/api/projects/${projectId}/apps/google`;
   const { data, error, isLoading, mutate } = useSWR<GoogleConnectionStatus>(
     statusUrl,
@@ -105,7 +101,6 @@ export function ProjectApps({
   const [sharedAppKey, setSharedAppKey] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [shareOverride, setShareOverride] = useState<boolean | null>(null);
-  const handledCallback = useRef(false);
   const shareAvailability = shareOverride ?? data?.shareAvailability ?? false;
 
   const syncGoogle = useCallback(
@@ -142,29 +137,6 @@ export function ProjectApps({
     [mutate, statusUrl],
   );
 
-  useEffect(() => {
-    const googleResult = searchParams.get("google");
-    if (!googleResult || handledCallback.current) return;
-    handledCallback.current = true;
-    setGoogleOpen(true);
-    const cleanCallbackUrl = () => {
-      const next = new URLSearchParams(searchParams.toString());
-      next.delete("google");
-      next.delete("shareAvailability");
-      next.set("tab", "apps");
-      router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-    };
-    if (googleResult === "error") {
-      toast.error("Google Calendar authorization was not completed.");
-      cleanCallbackUrl();
-      return;
-    }
-    const shouldShare = searchParams.get("shareAvailability") === "1";
-    void syncGoogle(shouldShare)
-      .then(() => cleanCallbackUrl())
-      .catch(() => cleanCallbackUrl());
-  }, [pathname, router, searchParams, syncGoogle]);
-
   function chooseApp(configuration: ProjectAppConfiguration) {
     if (configuration.app.key === "google_workspace") {
       setGoogleOpen(true);
@@ -179,20 +151,12 @@ export function ProjectApps({
   }
 
   async function connectGoogle() {
+    if (!data?.linked) {
+      window.location.assign("/settings/connections#google-workspace");
+      return;
+    }
     setWorking(true);
     try {
-      const result = await requestJson<{ linked: boolean; url: string | null }>(
-        `${statusUrl}/connect`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ calendar: true, shareAvailability }),
-        },
-      );
-      if (result.url) {
-        window.location.assign(result.url);
-        return;
-      }
       await syncGoogle(shareAvailability);
     } catch (connectError) {
       toast.error(
@@ -396,10 +360,10 @@ export function ProjectApps({
                 <Dialog.Title className="font-semibold text-xl tracking-tight">
                   {data?.projectConnected
                     ? "Google Calendar"
-                    : "Connect Google Calendar"}
+                    : "Add Google Calendar"}
                 </Dialog.Title>
                 <Dialog.Description className="mt-1 text-muted-foreground text-sm">
-                  Connect your calendar to this Project for you and your agents.
+                  Choose how your personal Calendar connection is used in this Project.
                 </Dialog.Description>
               </div>
               <Dialog.Close asChild>
@@ -504,7 +468,7 @@ export function ProjectApps({
                   <ShieldCheck className="size-5" />
                 </span>
                 <p className="font-medium text-sm">
-                  Google will ask you to approve only Calendar permissions.
+                  Personal account authorization is managed in Settings.
                 </p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
@@ -521,7 +485,7 @@ export function ProjectApps({
                 ) : (
                   <Button
                     className="sm:min-w-44"
-                    disabled={working || isLoading || !data?.configured}
+                    disabled={working || isLoading}
                     onClick={() => void connectGoogle()}
                   >
                     {working ? (
@@ -529,11 +493,11 @@ export function ProjectApps({
                         <Loader2 className="size-4 animate-spin" /> Connecting…
                       </>
                     ) : data?.needsReconnect ? (
-                      "Reconnect Google"
+                      "Reconnect in Settings"
                     ) : data?.linked ? (
                       "Add to this Project"
                     ) : (
-                      "Continue to Google"
+                      "Connect in Settings"
                     )}
                   </Button>
                 )}

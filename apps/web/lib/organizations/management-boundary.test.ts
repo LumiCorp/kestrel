@@ -40,6 +40,12 @@ test(
   () => {
     assert.match(teamSwitcher, /Manage organization/u);
     assert.match(teamSwitcher, /href="\/organization"/u);
+    assert.match(teamSwitcher, /activeOrg && canManageDisplayedOrganization/u);
+    assert.match(teamSwitcher, /pendingOrgId === null/u);
+    assert.match(
+      teamSwitcher,
+      /activeOrg\?\.id === initialActiveOrganization\?\.id/u,
+    );
     assert.match(home, /requireOrganizationAdmin/u);
     assert.match(systemsMapPage, /requireOrganizationAdmin/u);
     assert.match(systemsMapRoute, /requireOrganizationAdmin/u);

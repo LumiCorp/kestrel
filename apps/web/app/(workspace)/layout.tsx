@@ -10,6 +10,7 @@ import { WorkspaceRail } from "@/components/workspace-rail";
 import {
   canManageOrganization,
   getActiveOrganizationSnapshot,
+  isAdminUser,
 } from "@/lib/knowledge/auth";
 import { getOrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
 import { getSignupOnboardingState } from "@/lib/signup-onboarding";
@@ -64,6 +65,8 @@ async function SidebarWrapper({ children }: { children: React.ReactNode }) {
     >
       <AppSidebar
         activeOrganization={activeOrganization}
+        canManageActiveOrganization={canManageActiveOrganization}
+        isPlatformAdmin={isAdminUser(session.user)}
         session={session}
       />
       <SidebarInset className="min-h-0 overflow-hidden">

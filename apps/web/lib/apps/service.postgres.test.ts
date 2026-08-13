@@ -76,12 +76,14 @@ test(
     const isolatedOrganizationId = `apps-isolated-org-${suffix}`;
     const isolatedUserId = `apps-isolated-user-${suffix}`;
     const isolatedMemberId = `apps-isolated-member-${suffix}`;
+    const crossTenantMemberId = `apps-cross-tenant-member-${suffix}`;
     const projectId = `apps-project-${suffix}`;
     const threadId = `apps-thread-${suffix}`;
     const workspaceId = `apps-workspace-${suffix}`;
     const runId = `apps-run-${suffix}`;
     const googleAuthAccountId = `apps-google-auth-${suffix}`;
     const googleProviderAccountId = `apps-google-provider-${suffix}`;
+    const isolatedGoogleConnectionId = `apps-isolated-google-${suffix}`;
     const githubAuthAccountId = `apps-github-auth-${suffix}`;
     const githubProviderAccountId = `apps-github-provider-${suffix}`;
     const microsoftAuthAccountId = `apps-microsoft-auth-${suffix}`;
@@ -167,6 +169,14 @@ test(
       ) VALUES (
         ${isolatedMemberId}, ${isolatedOrganizationId}, ${isolatedUserId},
         'owner', ${now}
+      )
+    `;
+    await sql`
+      INSERT INTO "member" (
+        "id", "organizationId", "userId", "role", "createdAt"
+      ) VALUES (
+        ${crossTenantMemberId}, ${isolatedOrganizationId}, ${userId},
+        'member', ${now}
       )
     `;
 
@@ -1043,11 +1053,24 @@ test(
     `;
     assert.equal(samePortRows[0]?.count, "1");
 
+    await assert.rejects(
+      appService.requireInstalledAppForOrganization({
+        organizationId,
+        appKey: googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY,
+      }),
+      (error: unknown) =>
+        error instanceof appService.AppServiceError &&
+        error.code === "APP_NOT_INSTALLED",
+    );
     await appService.setAppInstallation({
       organizationId,
       appKey: googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY,
       actorUserId: userId,
       installed: true,
+    });
+    await appService.requireInstalledAppForOrganization({
+      organizationId,
+      appKey: googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY,
     });
     for (const capabilityKey of googleContract.GOOGLE_CALENDAR_CAPABILITIES) {
       const approvalMode =
@@ -1082,15 +1105,28 @@ test(
     const googleConnection = await googleOauth.syncGoogleCalendarUserConnection(
       {
         organizationId,
-        projectId,
         userId,
         authAccountId: googleAuthAccountId,
         providerAccountId: googleProviderAccountId,
         accessToken: "google-access-token-not-persisted",
         scopes: [...googleContract.GOOGLE_CALENDAR_SCOPES],
-        shareAvailability: true,
       },
     );
+    assert.equal(
+      await projectAppService.resolveEffectiveProjectAppAccess({
+        organizationId,
+        projectId,
+        appKey: googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY,
+        userId,
+      }),
+      null,
+    );
+    await googleOauth.attachGoogleCalendarConnectionToProject({
+      organizationId,
+      projectId,
+      userId,
+      shareAvailability: true,
+    });
     const googleAccess =
       await projectAppService.resolveEffectiveProjectAppAccess({
         organizationId,
@@ -1135,9 +1171,21 @@ test(
       enabled: true,
       audience: "project",
     });
-    await googleOauth.disconnectGoogleCalendarFromProject({
+    await sql`
+      INSERT INTO "app_connections" (
+        "id", "organization_id", "app_key", "owner_type", "user_id",
+        "auth_account_id", "name", "status", "external_account_id",
+        "external_account_label", "scopes", "created_at", "updated_at"
+      ) VALUES (
+        ${isolatedGoogleConnectionId}, ${isolatedOrganizationId},
+        ${googleContract.GOOGLE_WORKSPACE_PROVIDER_KEY}, 'personal', ${userId},
+        ${googleAuthAccountId}, ${`${userId}@example.test`}, 'connected',
+        ${googleProviderAccountId}, ${`${userId}@example.test`},
+        ${sql.json([...googleContract.GOOGLE_CALENDAR_SCOPES])}, ${now}, ${now}
+      )
+    `;
+    await googleOauth.disconnectGoogleCalendarUserConnection({
       organizationId,
-      projectId,
       userId,
     });
     assert.equal(
@@ -1149,6 +1197,38 @@ test(
       }),
       null,
     );
+    const [googleDisconnectState] = await sql<
+      Array<{
+        accountCount: string;
+        capabilityCount: string;
+        connectionStatus: string;
+        isolatedStatus: string;
+        projectConnectionCount: string;
+        resourceCount: string;
+      }>
+    >`
+      SELECT
+        (SELECT count(*)::text FROM "account"
+          WHERE "id" = ${googleAuthAccountId}) AS "accountCount",
+        (SELECT count(*)::text FROM "project_app_user_capabilities"
+          WHERE "connection_id" = ${googleConnection.id}) AS "capabilityCount",
+        (SELECT "status" FROM "app_connections"
+          WHERE "id" = ${googleConnection.id}) AS "connectionStatus",
+        (SELECT "status" FROM "app_connections"
+          WHERE "id" = ${isolatedGoogleConnectionId}) AS "isolatedStatus",
+        (SELECT count(*)::text FROM "project_app_connections"
+          WHERE "connection_id" = ${googleConnection.id}) AS "projectConnectionCount",
+        (SELECT count(*)::text FROM "app_connection_resources"
+          WHERE "connection_id" = ${googleConnection.id}) AS "resourceCount"
+    `;
+    assert.deepEqual(googleDisconnectState, {
+      accountCount: "1",
+      capabilityCount: "0",
+      connectionStatus: "disconnected",
+      isolatedStatus: "connected",
+      projectConnectionCount: "0",
+      resourceCount: "0",
+    });
 
     await appService.setAppInstallation({
       organizationId,
@@ -1216,6 +1296,30 @@ test(
       microsoftAccess?.capabilities.map((capability) => capability.key).sort(),
       ["outlook.calendar.read", "outlook.mail.read", "outlook.mail.send"],
     );
+    await microsoftOauth.disconnectMicrosoft365Connection({
+      organizationId,
+      userId,
+    });
+    const [microsoftDisconnectState] = await sql<
+      Array<{
+        accountCount: string;
+        attachmentCount: string;
+        status: string;
+      }>
+    >`
+      SELECT
+        (SELECT count(*)::text FROM "account"
+          WHERE "id" = ${microsoftAuthAccountId}) AS "accountCount",
+        (SELECT count(*)::text FROM "project_app_connections"
+          WHERE "connection_id" = ${microsoftConnection.id}) AS "attachmentCount",
+        (SELECT "status" FROM "app_connections"
+          WHERE "id" = ${microsoftConnection.id}) AS "status"
+    `;
+    assert.deepEqual(microsoftDisconnectState, {
+      accountCount: "1",
+      attachmentCount: "0",
+      status: "disconnected",
+    });
 
     await appService.setAppInstallation({
       organizationId,
@@ -1750,12 +1854,26 @@ test(
       organizationId,
       userId,
     });
-    const githubDisconnected = await sql<Array<{ status: string }>>`
-      SELECT "status"
-      FROM "app_connections"
-      WHERE "id" = ${githubSync.connection.id}
+    const [githubDisconnected] = await sql<
+      Array<{
+        accountCount: string;
+        resourceCount: string;
+        status: string;
+      }>
+    >`
+      SELECT
+        (SELECT count(*)::text FROM "account"
+          WHERE "id" = ${githubAuthAccountId}) AS "accountCount",
+        (SELECT count(*)::text FROM "app_connection_resources"
+          WHERE "connection_id" = ${githubSync.connection.id}) AS "resourceCount",
+        (SELECT "status" FROM "app_connections"
+          WHERE "id" = ${githubSync.connection.id}) AS "status"
     `;
-    assert.equal(githubDisconnected[0]?.status, "disconnected");
+    assert.deepEqual(githubDisconnected, {
+      accountCount: "1",
+      resourceCount: "0",
+      status: "disconnected",
+    });
 
     await appService.disconnectEnvironmentAppConnection({
       organizationId,
