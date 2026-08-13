@@ -8,7 +8,9 @@ import {
 } from "./control-worker-artifact";
 import {
   canSkipControlWorkerMachineDeploy,
+  CONTROL_WORKER_STARTUP_COMMAND,
   findControlWorkerMachine,
+  isIncompleteControlWorkerMachineError,
   readControlWorkerInventory,
   selectControlWorkerMachineUpdatePlan,
 } from "./control-worker-machine";
@@ -177,6 +179,8 @@ async function updateControlWorkerMachines(input: {
       input.appName,
       "--image",
       input.taggedImage,
+      "--command",
+      CONTROL_WORKER_STARTUP_COMMAND,
       "--wait-timeout",
       "120",
       "--yes",
@@ -206,19 +210,24 @@ async function waitForMachinePostcondition(input: {
 }) {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    const machine = findControlWorkerMachine({
-      inventory: await input.dependencies.readInventory(
-        input.appName,
-        input.accessToken,
-      ),
-      machineId: input.machineId,
-    });
-    if (
-      machine.state === input.expectedState &&
-      machine.digest === input.expectedDigest &&
-      machine.fingerprint === input.expectedFingerprint
-    ) {
-      return;
+    try {
+      const machine = findControlWorkerMachine({
+        inventory: await input.dependencies.readInventory(
+          input.appName,
+          input.accessToken,
+        ),
+        machineId: input.machineId,
+      });
+      if (
+        machine.state === input.expectedState &&
+        machine.digest === input.expectedDigest &&
+        machine.fingerprint === input.expectedFingerprint &&
+        machine.startupCommand === CONTROL_WORKER_STARTUP_COMMAND
+      ) {
+        return;
+      }
+    } catch (error) {
+      if (!isIncompleteControlWorkerMachineError(error)) throw error;
     }
     await input.dependencies.wait(2_000);
   }

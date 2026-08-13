@@ -78,6 +78,7 @@ function machine(input: {
   id: string;
   state: string;
   standbys?: string[] | undefined;
+  command?: string[] | undefined;
   imageRevision?: string | undefined;
   fingerprint?: string | null | undefined;
   digest?: string | undefined;
@@ -85,7 +86,17 @@ function machine(input: {
   return {
     id: input.id,
     state: input.state,
-    config: { standbys: input.standbys ?? [] },
+    config: {
+      init: {
+        cmd: input.command ?? [
+          "pnpm",
+          "--filter",
+          "@kestrel/kestrel-one",
+          "worker:control",
+        ],
+      },
+      standbys: input.standbys ?? [],
+    },
     image_ref: {
       digest: input.digest ?? `sha256:${"1".repeat(64)}`,
       labels: {
@@ -249,8 +260,17 @@ test("control worker deploy skip requires matching fingerprint and a running Mac
     canSkipControlWorkerMachineDeploy({
       expectedFingerprint: "fingerprint-a",
       inventory: [
-        machine({ id: "primary", state: "started" }),
-        machine({ id: "standby", state: "stopped", standbys: ["primary"] }),
+        machine({
+          id: "primary",
+          state: "started",
+          command: ["node", "/app/control-worker.cjs"],
+        }),
+        machine({
+          id: "standby",
+          state: "stopped",
+          standbys: ["primary"],
+          command: ["node", "/app/control-worker.cjs"],
+        }),
       ],
     }),
     true,
@@ -267,6 +287,13 @@ test("control worker deploy skip requires matching fingerprint and a running Mac
           fingerprint: "fingerprint-b",
         }),
       ],
+    }),
+    false,
+  );
+  assert.equal(
+    canSkipControlWorkerMachineDeploy({
+      expectedFingerprint: "fingerprint-a",
+      inventory: [machine({ id: "primary", state: "started" })],
     }),
     false,
   );
@@ -330,6 +357,7 @@ test("controller deployment smokes the digest before stopped-first tagged update
         const target = inventory.find((item) => item.id === args[2]);
         assert.ok(target);
         target.state = args.includes("--skip-start") ? "stopped" : "started";
+        target.config.init.cmd = ["node", "/app/control-worker.cjs"];
         target.image_ref.digest = digest;
         target.image_ref.labels["org.kestrel.control-worker.fingerprint"] =
           fingerprint;
@@ -371,10 +399,70 @@ test("controller deployment smokes the digest before stopped-first tagged update
     const image = args[args.indexOf("--image") + 1]!;
     assert.equal(image.includes("@sha256:"), false);
     assert.match(image, /:control-worker-a{12}-f{12}$/u);
+    assert.equal(
+      args[args.indexOf("--command") + 1],
+      "node /app/control-worker.cjs",
+    );
   }
   assert.equal(updates[0]?.args.includes("--skip-start"), true);
   assert.equal(updates[1]?.args.includes("--skip-start"), false);
   assert.equal(disposed, true);
+});
+
+test("controller deployment retries incomplete post-update inventory", async () => {
+  const fingerprint = "f".repeat(64);
+  const digest = `sha256:${"2".repeat(64)}`;
+  const inventory = [
+    machine({ id: "primary", state: "started", fingerprint: "old" }),
+  ];
+  let inventoryReads = 0;
+  const waits: number[] = [];
+
+  await deployControlWorkerCandidate({
+    revision,
+    accessToken: "token",
+    dependencies: {
+      buildArtifact: async () => ({
+        contextDirectory: "/tmp/controller-context",
+        dockerfile: "/tmp/controller-context/Dockerfile",
+        fingerprint,
+        runtimeInputs: [],
+        workerBundle: "/tmp/controller-context/control-worker.cjs",
+        readinessBundle:
+          "/tmp/controller-context/verify-control-worker-readiness.cjs",
+        dispose: async () => {},
+      }),
+      capture: async () =>
+        JSON.stringify([
+          `registry.fly.io/kestrel-one-control-worker@${digest}`,
+        ]),
+      readInventory: async () => {
+        inventoryReads += 1;
+        if (inventoryReads === 3) {
+          const incomplete = structuredClone(inventory);
+          delete (incomplete[0] as { image_ref?: unknown }).image_ref;
+          return incomplete;
+        }
+        return structuredClone(inventory);
+      },
+      run: async (command, args) => {
+        if (command === "flyctl" && args[0] === "machine") {
+          inventory[0]!.config.init.cmd = ["node", "/app/control-worker.cjs"];
+          inventory[0]!.image_ref.digest = digest;
+          inventory[0]!.image_ref.labels[
+            "org.kestrel.control-worker.fingerprint"
+          ] = fingerprint;
+        }
+      },
+      wait: async (milliseconds) => {
+        waits.push(milliseconds);
+      },
+      write: () => {},
+    },
+  });
+
+  assert.equal(inventoryReads, 4);
+  assert.deepEqual(waits, [2_000]);
 });
 
 test("controller smoke failure prevents every Machine update", async () => {
@@ -443,7 +531,12 @@ test("matching controller fingerprint performs only the heartbeat verification",
       }),
       capture: async () => "",
       readInventory: async () => [
-        machine({ id: "primary", state: "started", fingerprint }),
+        machine({
+          id: "primary",
+          state: "started",
+          fingerprint,
+          command: ["node", "/app/control-worker.cjs"],
+        }),
       ],
       run: async (command, args) => {
         commands.push({ command, args });
@@ -498,6 +591,7 @@ test("controller deployment retries readiness while initialization completes", a
       readInventory: async () => structuredClone(inventory),
       run: async (command, args) => {
         if (command === "flyctl" && args[0] === "machine") {
+          inventory[0]!.config.init.cmd = ["node", "/app/control-worker.cjs"];
           inventory[0]!.image_ref.digest = digest;
           inventory[0]!.image_ref.labels[
             "org.kestrel.control-worker.fingerprint"
