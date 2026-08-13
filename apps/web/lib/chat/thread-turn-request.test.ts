@@ -135,6 +135,7 @@ test(
         interactionResponse: {
           requestId: "request-1",
           eventType: "user_input",
+          turnId: "turn-1",
           message: "Allow once",
         },
       },
@@ -144,6 +145,7 @@ test(
       interactionResponse: {
         requestId: "request-1",
         eventType: "user_input",
+        turnId: "turn-1",
         message: "Allow once",
       },
       model: "selected-model",

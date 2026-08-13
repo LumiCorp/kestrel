@@ -23,10 +23,9 @@ import {
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
 import { KESTREL_ONE_INTERACTION_MODES } from "@/lib/turns/interaction-mode";
 import { createDurableTurnReplayResponse } from "@/lib/turns/replay-response";
+import { readThreadConversationSnapshotForUser } from "@/lib/turns/conversation-snapshot.server";
 import {
   createDurableThreadTurn,
-  listDurableThreadQueueForUser,
-  listThreadInteractionsForUser,
   resolveDurableRuntimeInteraction,
 } from "@/lib/turns/store";
 import { convertToUIMessages } from "@/lib/utils";
@@ -55,29 +54,16 @@ export async function GET(
   try {
     const { session, organizationId } = await requireActiveOrganization();
     const params = paramsSchema.parse(await context.params);
-    const thread = await getThreadWithMessagesForUser(
-      params.id,
-      session.user.id,
+    const read = await readThreadConversationSnapshotForUser({
+      threadId: params.id,
+      userId: session.user.id,
       organizationId,
-      true
-    );
-    if (!thread) {
+      includeArchived: true,
+    });
+    if (!read) {
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
-    const [interactionLedger, durableQueue] = await Promise.all([
-      listThreadInteractionsForUser({
-        threadId: thread.id,
-        organizationId,
-        userId: session.user.id,
-        includeArchived: true,
-      }),
-      listDurableThreadQueueForUser({
-        threadId: thread.id,
-        organizationId,
-        userId: session.user.id,
-        includeArchived: true,
-      }),
-    ]);
+    const { thread, snapshot } = read;
     return NextResponse.json({
       id: thread.id,
       title: thread.title || "New thread",
@@ -97,10 +83,7 @@ export async function GET(
         canPublish: thread.access.canPublish,
         projectRole: thread.access.projectRole,
       },
-      messages: convertToUIMessages(thread.messages),
-      interactions: interactionLedger,
-      turns: durableQueue.turns,
-      queue: durableQueue.queue,
+      ...snapshot,
     });
   } catch (error) {
     return errorResponse(error);
@@ -160,6 +143,7 @@ export async function POST(
         userId: user.id,
         requestId: body.interactionResponse.requestId,
         eventType: body.interactionResponse.eventType,
+        turnId: body.interactionResponse.turnId,
         message: body.interactionResponse.message,
         approved: body.interactionResponse.approved,
         reason: body.interactionResponse.reason,

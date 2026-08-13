@@ -52,6 +52,9 @@ export async function POST(
       throw new Error("Pending interaction not found.");
     }
     if (pending.source === "runtime") {
+      if (!pending.turnId) {
+        throw new Error("Pending runtime interaction is not attached to a turn.");
+      }
       const recoveryReview = readRecoveryReviewEnvelope(
         pending.requestEnvelope,
       );
@@ -112,6 +115,7 @@ export async function POST(
         userId: session.user.id,
         requestId: pending.requestId,
         eventType: pending.eventType,
+        turnId: pending.turnId,
         message,
         ...(pending.kind === "approval"
           ? { approved: body.decision === "approve" }

@@ -165,22 +165,58 @@ test("waiting prompt and request identity survive reload and resume exactly", as
       exact: true,
     })
   ).toBeVisible();
+  await expect(visibleThreadShell.getByTestId("composer-state")).toHaveText(
+    "Waiting for your response",
+  );
+  await expect(visibleThreadShell.getByTestId("multimodal-input")).toHaveCount(1);
+  await expect(visibleThreadShell.getByRole("textbox")).toHaveCount(1);
 
-  await postStream(page, testInfo, `/api/threads/${created.threadId}`, {
-    interactionResponse: {
-      requestId: interaction.requestId,
-      eventType: interaction.eventType,
-      message: "workspace-alpha",
-      messageId: randomUUID(),
-    },
+  const responseRequest = page.waitForRequest((request) => {
+    if (
+      request.method() !== "POST" ||
+      new URL(request.url()).pathname !== `/api/threads/${created.threadId}`
+    ) {
+      return false;
+    }
+    const body = request.postDataJSON() as JsonRecord;
+    return body.interactionResponse?.requestId === interaction.requestId;
+  });
+  await visibleThreadShell.getByTestId("multimodal-input").fill("workspace-alpha");
+  await visibleThreadShell.getByTestId("send-button").click();
+  const responseBody = (await responseRequest).postDataJSON() as JsonRecord;
+  expect(responseBody.interactionResponse).toMatchObject({
+    requestId: interaction.requestId,
+    eventType: interaction.eventType,
+    turnId: created.turnId,
+    message: "workspace-alpha",
   });
   const completed = await waitForTurn(page, created.threadId, created.turnId, [
     "completed",
   ]);
   expect(completed.interactions).toEqual([]);
+  expect(completed.turns).toHaveLength(1);
   expect(assistantText(completed.messageWindow.items)).toContain(
     "Hello from the fake cross-surface model."
   );
+  await expect(
+    visibleThreadShell.getByText("workspace-alpha", { exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    visibleThreadShell.getByText("Hello from the fake cross-surface model.", {
+      exact: true,
+    }),
+  ).toHaveCount(1);
+  await page.reload();
+  await expect(
+    page
+      .locator('[data-slot="thread-shell"]:visible')
+      .getByText("workspace-alpha", { exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page
+      .locator('[data-slot="thread-shell"]:visible')
+      .getByText("Hello from the fake cross-surface model.", { exact: true }),
+  ).toHaveCount(1);
   expect((await eventStreamPromise).length).toBeGreaterThan(0);
 });
 

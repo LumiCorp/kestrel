@@ -50,9 +50,14 @@ import { buildThreadTurnRequestBody } from "@/lib/chat/thread-turn-request";
 import { ChatbotError } from "@/lib/errors";
 import {
   emptyThreadConversationState,
+  type ThreadConversationSnapshot,
   type ThreadConversationState,
-  threadConversationStateSchema,
+  threadConversationSnapshotSchema,
 } from "@/lib/turns/client-contract";
+import {
+  reconcileConversationMessages,
+  removeDurableQueuedMessages,
+} from "@/lib/turns/message-reconciliation";
 import {
   DEFAULT_KESTREL_ONE_INTERACTION_MODE,
   type KestrelOneInteractionMode,
@@ -859,7 +864,7 @@ export function Chat({
   initialVisibilityType,
   initialShareToken,
   initialChatExists,
-  initialConversationState,
+  initialConversationSnapshot,
   isReadonly,
   canPublish = true,
   canManage = false,
@@ -878,7 +883,7 @@ export function Chat({
   initialVisibilityType: VisibilityType;
   initialShareToken?: string | null;
   initialChatExists: boolean;
-  initialConversationState: ThreadConversationState;
+  initialConversationSnapshot: ThreadConversationSnapshot;
   isReadonly: boolean;
   canPublish?: boolean;
   canManage?: boolean;
@@ -905,9 +910,13 @@ export function Chat({
   const [liveThreadTitle, setLiveThreadTitle] = useState(threadTitle);
   const [chatExists, setChatExists] = useState(initialChatExists);
   const [queuedMessages, setQueuedMessages] = useState<QueuedUserMessage[]>([]);
-  const [conversationState, setConversationState] = useState(
-    initialConversationState
+  const [conversationSnapshot, setConversationSnapshot] = useState(
+    initialConversationSnapshot
   );
+  const conversationSnapshotRef = useRef(initialConversationSnapshot);
+  const setControllerMessagesRef = useRef<
+    ChatController["setMessages"] | null
+  >(null);
   const [liveEnvironmentProvisioningNotice, setLiveEnvironmentProvisioningNotice] =
     useState<EnvironmentProvisioningNotice | null>(
       environmentProvisioningNotice ?? null
@@ -925,13 +934,14 @@ export function Chat({
 
   useEffect(() => {
     setChatExists(initialChatExists);
-    setConversationState(initialConversationState);
+    conversationSnapshotRef.current = initialConversationSnapshot;
+    setConversationSnapshot(initialConversationSnapshot);
     setLiveEnvironmentProvisioningNotice(environmentProvisioningNotice ?? null);
   }, [
     id,
     environmentProvisioningNotice,
     initialChatExists,
-    initialConversationState,
+    initialConversationSnapshot,
   ]);
 
   useEffect(() => {
@@ -970,7 +980,7 @@ export function Chat({
 
   const refreshConversationState = useCallback(async () => {
     if (!chatExists) return;
-    const response = await fetch(`/api/threads/${id}/turns`, {
+    const response = await fetch(`/api/threads/${id}`, {
       cache: "no-store",
     });
     const payload = await response.json().catch(() => ({}));
@@ -981,9 +991,27 @@ export function Chat({
           : "Conversation state could not be refreshed."
       );
     }
-    const nextState = threadConversationStateSchema.parse(payload);
-    setConversationState((current) =>
-      nextState.queue.version > current.queue.version ? nextState : current
+    const nextSnapshot = threadConversationSnapshotSchema.parse(payload);
+    if (
+      nextSnapshot.queue.version <=
+      conversationSnapshotRef.current.queue.version
+    ) {
+      return;
+    }
+    conversationSnapshotRef.current = nextSnapshot;
+    setConversationSnapshot(nextSnapshot);
+    setControllerMessagesRef.current?.((current) =>
+      reconcileConversationMessages({
+        persistedMessages: nextSnapshot.messages,
+        liveMessages: current,
+        turns: nextSnapshot.turns,
+      }),
+    );
+    setQueuedMessages((current) =>
+      removeDurableQueuedMessages({
+        queuedMessages: current,
+        persistedMessages: nextSnapshot.messages,
+      }),
     );
   }, [chatExists, id]);
 
@@ -1057,6 +1085,9 @@ export function Chat({
     transport: chatTransport,
     ...callbacks,
   });
+  setControllerMessagesRef.current = controller.setMessages;
+
+  const conversationState: ThreadConversationState = conversationSnapshot;
 
   useEffect(() => {
     if (controller.status === "submitted") {
@@ -1375,11 +1406,29 @@ export function Chat({
   );
 
   const displayMessages = useMemo(
-    () => [
-      ...mergeMessagesWithHandoff(controller.messages, handoff),
-      ...queuedMessages.map((item) => item.message),
-    ],
-    [controller.messages, handoff, queuedMessages]
+    () => {
+      const durableAndLive = reconcileConversationMessages({
+        persistedMessages: conversationSnapshot.messages,
+        liveMessages: mergeMessagesWithHandoff(controller.messages, handoff),
+        turns: conversationSnapshot.turns,
+      });
+      const durableIds = new Set(
+        durableAndLive.map((message) => message.id),
+      );
+      return [
+        ...durableAndLive,
+        ...queuedMessages
+          .map((item) => item.message)
+          .filter((message) => !durableIds.has(message.id)),
+      ];
+    },
+    [
+      controller.messages,
+      conversationSnapshot.messages,
+      conversationSnapshot.turns,
+      handoff,
+      queuedMessages,
+    ]
   );
   const showPendingAssistant =
     (Boolean(handoff?.pendingAssistant) ||

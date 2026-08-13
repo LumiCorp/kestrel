@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { messageMetadataSchema, type ChatMessage } from "@/lib/types";
 
 export const threadInteractionViewSchema = z.object({
   id: z.string(),
@@ -52,10 +53,35 @@ export const threadConversationStateSchema = z.object({
   }),
 });
 
+const chatMessageSchema = z.custom<ChatMessage>(
+  (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return false;
+    }
+    const message = value as Record<string, unknown>;
+    return (
+      typeof message.id === "string" &&
+      ["user", "assistant", "system"].includes(String(message.role)) &&
+      Array.isArray(message.parts) &&
+      (message.metadata === undefined ||
+        messageMetadataSchema.safeParse(message.metadata).success)
+    );
+  },
+  { message: "Invalid persisted chat message." },
+);
+
+export const threadConversationSnapshotSchema =
+  threadConversationStateSchema.extend({
+    messages: z.array(chatMessageSchema),
+  });
+
 export type ThreadInteractionView = z.infer<typeof threadInteractionViewSchema>;
 export type ThreadTurnView = z.infer<typeof threadTurnViewSchema>;
 export type ThreadConversationState = z.infer<
   typeof threadConversationStateSchema
+>;
+export type ThreadConversationSnapshot = z.infer<
+  typeof threadConversationSnapshotSchema
 >;
 
 export const emptyThreadConversationState: ThreadConversationState = {
@@ -67,4 +93,9 @@ export const emptyThreadConversationState: ThreadConversationState = {
     activeTurnId: null,
     version: 0,
   },
+};
+
+export const emptyThreadConversationSnapshot: ThreadConversationSnapshot = {
+  ...emptyThreadConversationState,
+  messages: [],
 };
