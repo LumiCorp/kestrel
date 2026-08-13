@@ -136,6 +136,16 @@ export function selectControlWorkerSecrets(source: Record<string, string>) {
   return selected;
 }
 
+export function controlWorkerSecretSetArgs(secrets: Map<string, string>) {
+  return [
+    "secrets",
+    "set",
+    "--app",
+    app,
+    ...[...secrets].map(([key, value]) => `${key}=${value}`),
+  ];
+}
+
 async function assertLegacyQueuesIdle(databaseUrl: string) {
   const sql = postgres(databaseUrl, { max: 1 });
   try {
@@ -242,13 +252,7 @@ async function main() {
       throw new Error("Production database URL is unavailable.");
     await assertLegacyQueuesIdle(databaseUrl);
     await ensureApp(secrets.get("KESTREL_FLY_ORGANIZATION_SLUG")!);
-    const secretInput = [...secrets]
-      .map(([key, value]) => `${key}=${value}`)
-      .join("\n");
-    run("fly", ["secrets", "import", "--app", app], {
-      input: `${secretInput}\n`,
-      quiet: true,
-    });
+    run("fly", controlWorkerSecretSetArgs(secrets), { quiet: true });
     run("fly", ["auth", "docker"]);
     run("pnpm", ["run", "build:shared"]);
     const artifact = await buildControlWorkerArtifact();

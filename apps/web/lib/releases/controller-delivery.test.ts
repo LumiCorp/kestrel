@@ -10,6 +10,7 @@ import {
   RELEASE_CONTROLLER_QUEUES,
 } from "./controller-contract";
 import {
+  controlWorkerSecretSetArgs,
   CONTROL_WORKER_SECRET_ALLOWLIST,
   selectControlWorkerSecrets,
 } from "../../scripts/release-control-worker";
@@ -66,6 +67,29 @@ test("control worker secrets are explicitly allowlisted and fail closed", () => 
       }),
     /missing control worker secrets: DATABASE_URL or POSTGRES_URL/u,
   );
+});
+
+test("control worker secrets preserve multiline values as one Fly argument", () => {
+  const multilineValue = "line-one\nline-two\nline-three";
+  const args = controlWorkerSecretSetArgs(
+    new Map([
+      ["CRON_SECRET", "cron-secret"],
+      ["KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY", multilineValue],
+    ]),
+  );
+
+  assert.deepEqual(args.slice(0, 4), [
+    "secrets",
+    "set",
+    "--app",
+    "kestrel-one-control-worker",
+  ]);
+  assert.equal(args[4], "CRON_SECRET=cron-secret");
+  assert.equal(
+    args[5],
+    `KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY=${multilineValue}`,
+  );
+  assert.equal(args.length, 6);
 });
 
 const revision = "a".repeat(40);
