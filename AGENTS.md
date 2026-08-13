@@ -7,6 +7,7 @@ Guide Codex and engineers to ship reliable Kestrel runtime changes quickly with 
 - [Quality Score](./QUALITY_SCORE.md)
 - [Reliability](./RELIABILITY.md)
 - [Security](./SECURITY.md)
+- [Developer Onboarding](./docs/developer-onboarding/README.md)
 - [Docs Index](./docs/index.md)
 - [Plans](./docs/PLANS.md)
 

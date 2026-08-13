@@ -6,6 +6,12 @@ proportional to risk.
 
 ## Before You Start
 
+If Kestrel's product nouns, deployment forms, or ownership boundaries are new
+to you, begin with the
+[developer onboarding reader](docs/developer-onboarding/README.md). It connects
+the architecture to line-ranged owning sources and is intended to be read
+before navigating the monorepo by directory name alone.
+
 Choose the owner that matches your change:
 
 | Change | Start with |

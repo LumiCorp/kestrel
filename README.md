@@ -184,6 +184,7 @@ ownership.
 - [Compatibility matrix](https://docs.kestrelagents.dev/reference/compatibility)
 - [Lumi](https://www.lumicorp.ai)
 - [Architecture](ARCHITECTURE.md)
+- [Developer onboarding reader](docs/developer-onboarding/README.md)
 - [Security](SECURITY.md)
 - [Support](SUPPORT.md)
 
