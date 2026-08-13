@@ -7,6 +7,7 @@ import {
   countResolvedFlyImageReleaseTargets,
   evaluateFlyImageReleaseAdmission,
   evaluateFlyImageMigrationAcknowledgementEligibility,
+  flyImageReleaseCandidatePublicationResponseSchema,
   flyImageReleaseManifestV2Schema,
   isFlyImageReleaseMachineVerified,
   selectFlyImageRollbackTargets,
@@ -82,6 +83,31 @@ test("release progress counts configured stopped Workspaces as resolved", () => 
 
 const revision = "a".repeat(40);
 const digest = "b".repeat(64);
+
+test("candidate publication responses require a UUID and candidate status", () => {
+  const valid = {
+    release: {
+      id: "11111111-1111-4111-8111-111111111111",
+      status: "candidate",
+    },
+  };
+  assert.deepEqual(
+    flyImageReleaseCandidatePublicationResponseSchema.parse(valid),
+    valid,
+  );
+  for (const malformed of [
+    {},
+    { release: { status: "candidate" } },
+    { release: { id: "not-a-uuid", status: "candidate" } },
+    { release: { ...valid.release, status: "completed" } },
+  ]) {
+    assert.equal(
+      flyImageReleaseCandidatePublicationResponseSchema.safeParse(malformed)
+        .success,
+      false,
+    );
+  }
+});
 
 test("release manifests require unique changed roles from the bundle revision", () => {
   const component = {

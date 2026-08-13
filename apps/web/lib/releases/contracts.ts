@@ -21,6 +21,17 @@ export const flyImageReleaseStatusSchema = z.enum([
 ]);
 export type FlyImageReleaseStatus = z.infer<typeof flyImageReleaseStatusSchema>;
 
+export const flyImageReleaseCandidatePublicationResponseSchema = z
+  .object({
+    release: z
+      .object({
+        id: z.string().uuid(),
+        status: z.literal("candidate"),
+      })
+      .strict(),
+  })
+  .strict();
+
 export type FlyImageReleaseAdmissionFailureCode =
   | "RELEASE_BUILD_REVISION_MISMATCH"
   | "RELEASE_COMPATIBILITY_BLOCKED"

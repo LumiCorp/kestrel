@@ -20,6 +20,9 @@ async function clearReady() {
 }
 
 async function main() {
+  if (!(process.env.POSTGRES_URL || process.env.DATABASE_URL)) {
+    throw new Error("DATABASE_URL or POSTGRES_URL is required");
+  }
   const gatewayCredentialReadiness =
     await getGatewayCredentialAuthorityReadiness();
   if (!gatewayCredentialReadiness.ok) {

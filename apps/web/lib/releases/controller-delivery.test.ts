@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import {
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import test from "node:test";
@@ -32,6 +27,7 @@ import {
   deployControlWorkerCandidate,
   type ControlWorkerDeployDependencies,
 } from "../../scripts/deploy-control-worker-candidate";
+import { publishControlWorkerCandidate } from "../../scripts/publish-control-worker-candidate";
 
 const root = new URL("../../../../", import.meta.url);
 const execFileAsync = promisify(execFile);
@@ -309,9 +305,10 @@ test("control worker deploy skip requires matching fingerprint and a running Mac
   );
 });
 
-test("controller deployment smokes the digest before stopped-first tagged updates", async () => {
+test("controller deployment survives Fly manifest transcoding after stopped-first tagged updates", async () => {
   const fingerprint = "f".repeat(64);
   const digest = `sha256:${"2".repeat(64)}`;
+  const flyDeploymentDigest = `sha256:${"3".repeat(64)}`;
   const inventory = [
     machine({ id: "primary", state: "started", fingerprint: "old" }),
     machine({
@@ -358,7 +355,7 @@ test("controller deployment smokes the digest before stopped-first tagged update
         assert.ok(target);
         target.state = args.includes("--skip-start") ? "stopped" : "started";
         target.config.init.cmd = ["node", "/app/control-worker.cjs"];
-        target.image_ref.digest = digest;
+        target.image_ref.digest = flyDeploymentDigest;
         target.image_ref.labels["org.kestrel.control-worker.fingerprint"] =
           fingerprint;
       }
@@ -407,6 +404,51 @@ test("controller deployment smokes the digest before stopped-first tagged update
   assert.equal(updates[0]?.args.includes("--skip-start"), true);
   assert.equal(updates[1]?.args.includes("--skip-start"), false);
   assert.equal(disposed, true);
+});
+
+test("controller candidate publication builds, smokes, and disposes without Machine authority", async () => {
+  const fingerprint = "f".repeat(64);
+  let disposed = false;
+  let published = false;
+  const messages: string[] = [];
+  const result = await publishControlWorkerCandidate({
+    revision,
+    dependencies: {
+      buildArtifact: async () => ({
+        contextDirectory: "/tmp/controller-context",
+        dockerfile: "/tmp/controller-context/Dockerfile",
+        fingerprint,
+        runtimeInputs: [],
+        workerBundle: "/tmp/controller-context/control-worker.cjs",
+        readinessBundle:
+          "/tmp/controller-context/verify-control-worker-readiness.cjs",
+        dispose: async () => {
+          disposed = true;
+        },
+      }),
+      publishImage: async ({ appName, artifact, revision: inputRevision }) => {
+        published = true;
+        assert.equal(appName, "kestrel-one-control-worker");
+        assert.equal(artifact.fingerprint, fingerprint);
+        assert.equal(inputRevision, revision);
+        return {
+          digest: `sha256:${"2".repeat(64)}`,
+          immutableImage: `registry.fly.io/kestrel-one-control-worker@sha256:${"2".repeat(64)}`,
+          label: "candidate",
+          taggedImage: "registry.fly.io/kestrel-one-control-worker:candidate",
+        };
+      },
+      write: (message) => messages.push(message),
+    },
+  });
+
+  assert.equal(published, true);
+  assert.equal(disposed, true);
+  assert.equal(result.fingerprint, fingerprint);
+  assert.match(
+    messages.join(""),
+    /Published and smoked release controller candidate/u,
+  );
 });
 
 test("controller deployment retries incomplete post-update inventory", async () => {
@@ -613,7 +655,7 @@ test("controller deployment retries readiness while initialization completes", a
   assert.deepEqual(waits, [2_000, 2_000]);
 });
 
-test("release workflow waits for exact production identity before controller deployment and publication", async () => {
+test("release workflow waits for exact production identity before non-deploying candidate publication", async () => {
   const workflow = await readFile(
     new URL(".github/workflows/fly-image-release.yml", root),
     "utf8",
@@ -621,71 +663,67 @@ test("release workflow waits for exact production identity before controller dep
   const wait = workflow.indexOf(
     "Wait for the exact Kestrel One production revision",
   );
-  const deployController = workflow.indexOf(
-    "Deploy or verify the release controller",
+  const preflight = workflow.indexOf("Preflight release publication");
+  const controllerCandidate = workflow.indexOf(
+    "Build and smoke the release controller candidate",
   );
   const publish = workflow.indexOf(
     "Build, smoke, and publish candidate images",
   );
   assert.ok(wait >= 0);
-  assert.ok(deployController > wait);
-  assert.ok(publish > deployController);
+  assert.ok(preflight > wait);
+  assert.ok(controllerCandidate > preflight);
+  assert.ok(publish > controllerCandidate);
   assert.match(
     workflow,
     /wait-for-kestrel-production-revision\.ts \$\{\{ github\.sha \}\}/u,
   );
   assert.match(
     workflow,
-    /deploy-control-worker-candidate\.ts \$\{\{ github\.sha \}\}/u,
+    /publish-control-worker-candidate\.ts \$\{\{ github\.sha \}\}/u,
   );
   const waitScript = await readFile(
     new URL("scripts/wait-for-kestrel-production-revision.ts", root),
     "utf8",
   );
-  assert.match(
-    waitScript,
-    /releaseCompatibilitySchema\?\.ready === true/u,
-  );
+  assert.match(waitScript, /releaseCompatibilitySchema\?\.ready === true/u);
 });
 
-test("release workflow bounds controller readiness polling", async () => {
+test("release workflow publishes controller evidence without Machine mutation", async () => {
   const workflow = await readFile(
     new URL(".github/workflows/fly-image-release.yml", root),
     "utf8",
   );
-  const deployScript = await readFile(
-    new URL("apps/web/scripts/deploy-control-worker-candidate.ts", root),
+  const publisherScript = await readFile(
+    new URL("apps/web/scripts/publish-control-worker-candidate.ts", root),
     "utf8",
   );
   assert.doesNotMatch(workflow, /for attempt in \$\(seq 1 45\); do/u);
-  assert.match(
-    deployScript,
-    /verify-control-worker-readiness\.cjs --contract-only/u,
-  );
-  assert.match(deployScript, /"--build-only"/u);
-  assert.match(deployScript, /"--push"/u);
-  assert.match(deployScript, /"machine",\s*"update"/u);
-  assert.match(deployScript, /"--skip-start"/u);
-  assert.match(deployScript, /120_000/u);
-  assert.match(workflow, /flyctl logs --app kestrel-one-control-worker --no-tail 2>&1 \| tail -n 200/u);
-  assert.doesNotMatch(workflow, /machine status[^\n]*--json/u);
-  assert.match(
-    workflow,
-    /if: \$\{\{ failure\(\) && steps\.deploy-release-controller\.outcome == 'failure' \}\}/u,
-  );
+  assert.match(publisherScript, /publishControlWorkerImage/u);
+  assert.doesNotMatch(publisherScript, /deployControlWorkerCandidate/u);
+  assert.doesNotMatch(publisherScript, /readInventory|machine["',\s]+update/u);
+  assert.doesNotMatch(workflow, /deploy-control-worker-candidate/u);
+  assert.doesNotMatch(workflow, /machine (?:list|status|update)|flyctl logs/u);
 });
 
-test("release workflow deploys or skips controller before image publication", async () => {
+test("publish-candidate contains no controller deployment step", async () => {
   const workflow = await readFile(
     new URL(".github/workflows/fly-image-release.yml", root),
     "utf8",
   );
-  const deploy = workflow.indexOf("id: deploy-release-controller");
-  const publish = workflow.indexOf("Build, smoke, and publish candidate images");
-  assert.ok(deploy >= 0);
-  assert.equal(workflow.includes("id: restore-release-controller"), false);
-  assert.equal(workflow.includes("id: verify-release-controller"), false);
-  assert.ok(publish > deploy);
+  const controllerCandidate = workflow.indexOf(
+    "Build and smoke the release controller candidate",
+  );
+  const publish = workflow.indexOf(
+    "Build, smoke, and publish candidate images",
+  );
+  assert.ok(controllerCandidate >= 0);
+  assert.ok(publish > controllerCandidate);
+  assert.doesNotMatch(
+    workflow,
+    /id: (?:deploy|restore|verify)-release-controller/u,
+  );
+  assert.doesNotMatch(workflow, /release:control-worker/u);
 });
 
 test("controller image and Fly process use the bundled entrypoint", async () => {
@@ -701,7 +739,10 @@ test("controller image and Fly process use the bundled entrypoint", async () => 
   ]);
   assert.equal(dockerfile.match(/^FROM /gmu)?.length, 1);
   assert.match(dockerfile, /FROM node:22-bookworm-slim/u);
-  assert.match(dockerfile, /COPY control-worker\.cjs verify-control-worker-readiness\.cjs/u);
+  assert.match(
+    dockerfile,
+    /COPY control-worker\.cjs verify-control-worker-readiness\.cjs/u,
+  );
   assert.match(dockerfile, /CMD \["node", "\/app\/control-worker\.cjs"\]/u);
   assert.match(
     dockerfile,
@@ -766,13 +807,17 @@ test("controller bundles are deterministic and load their complete entrypoints",
 });
 
 test("controller fingerprint includes artifact bytes and migration inputs", async () => {
-  assert.ok(CONTROL_WORKER_FINGERPRINT_PATHS.includes("apps/web/lib/db/migrations"));
+  assert.ok(
+    CONTROL_WORKER_FINGERPRINT_PATHS.includes("apps/web/lib/db/migrations"),
+  );
   assert.ok(
     CONTROL_WORKER_FINGERPRINT_PATHS.includes(
       "apps/web/lib/db/contract-migrations",
     ),
   );
-  const directory = await mkdtemp(join(tmpdir(), "controller-fingerprint-test-"));
+  const directory = await mkdtemp(
+    join(tmpdir(), "controller-fingerprint-test-"),
+  );
   const worker = join(directory, "control-worker.cjs");
   const readiness = join(directory, "verify-control-worker-readiness.cjs");
   const migration = join(directory, "migration.sql");

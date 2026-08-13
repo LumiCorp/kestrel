@@ -4,6 +4,8 @@ import {
   ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION,
 } from "@lumi/kestrel-environment-auth";
 import { z } from "zod";
+import { RELEASE_CONTROLLER_CONTRACT_REVISION } from "../apps/web/lib/releases/controller-contract.js";
+import { flyImageReleaseCandidatePublicationResponseSchema } from "../apps/web/lib/releases/contracts.js";
 import {
   fingerprintImageInputs,
   flyImageCatalogSchema,
@@ -43,17 +45,10 @@ export async function publishFlyImages(
   const trigger = z
     .enum(["main", "scheduled", "manual"])
     .parse(env.KESTREL_RELEASE_TRIGGER ?? "manual");
-  const revision = await git(dependencies, ["rev-parse", "HEAD"]);
+  const { publicationState, publishUrl, revision } =
+    await preflightFlyImagePublication(dependencies);
   const requestedForceAll =
     trigger === "scheduled" || env.KESTREL_RELEASE_FORCE_ALL === "true";
-  const publishUrl = requireEnvironment(env, "KESTREL_RELEASE_PUBLISH_URL");
-  const preflightToken = await requestGithubOidcToken(dependencies);
-  const publicationState = await getReleasePublicationState(
-    dependencies,
-    publishUrl,
-    preflightToken,
-    revision,
-  );
   const forceAll = requestedForceAll || publicationState.requiresFullBundle;
   const catalog = flyImageCatalogSchema.parse(
     JSON.parse(await readFile(`${root}/deploy/fly/image-catalog.json`, "utf8")),
@@ -163,7 +158,7 @@ export async function publishFlyImages(
   const validationCommands = parseValidationCommands(env);
   const manifest = {
     version: 2 as const,
-    controllerContractRevision: 1,
+    controllerContractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
     bundleRevision: revision,
     trigger,
     migrationChanged: flyMigrationChanged(changedPaths),
@@ -194,11 +189,39 @@ export async function publishFlyImages(
       `Release candidate publication failed (${response.status}${await responseErrorSuffix(response)}).`,
     );
   }
-  const result = (await response.json()) as { release?: { id?: unknown } };
-  dependencies.write(
-    `Published Fly image release candidate ${String(result.release?.id ?? "unknown")}.\n`,
+  const result = flyImageReleaseCandidatePublicationResponseSchema.parse(
+    await response.json(),
   );
-  return { published: true as const, components, manifest };
+  dependencies.write(
+    `Published Fly image release candidate ${result.release.id}.\n`,
+  );
+  return {
+    published: true as const,
+    components,
+    manifest,
+    release: result.release,
+  };
+}
+
+export async function preflightFlyImagePublication(
+  dependencies: Pick<
+    FlyImagePublisherDependencies,
+    "capture" | "env" | "fetchImpl"
+  >,
+) {
+  const revision = await git(dependencies, ["rev-parse", "HEAD"]);
+  const publishUrl = requireEnvironment(
+    dependencies.env,
+    "KESTREL_RELEASE_PUBLISH_URL",
+  );
+  const preflightToken = await requestGithubOidcToken(dependencies);
+  const publicationState = await getReleasePublicationState(
+    dependencies,
+    publishUrl,
+    preflightToken,
+    revision,
+  );
+  return { publicationState, publishUrl, revision };
 }
 
 async function runFlyImageBuild(
@@ -339,7 +362,7 @@ async function listChangedPaths(
 }
 
 async function requestGithubOidcToken(
-  dependencies: FlyImagePublisherDependencies,
+  dependencies: Pick<FlyImagePublisherDependencies, "env" | "fetchImpl">,
 ) {
   const requestUrl = new URL(
     requireEnvironment(dependencies.env, "ACTIONS_ID_TOKEN_REQUEST_URL"),
@@ -362,7 +385,7 @@ async function requestGithubOidcToken(
 }
 
 async function getReleasePublicationState(
-  dependencies: FlyImagePublisherDependencies,
+  dependencies: Pick<FlyImagePublisherDependencies, "fetchImpl">,
   publishUrl: string,
   oidcToken: string,
   revision: string,
@@ -423,7 +446,7 @@ function requireEnvironment(env: NodeJS.ProcessEnv, name: string) {
 }
 
 async function git(
-  dependencies: FlyImagePublisherDependencies,
+  dependencies: Pick<FlyImagePublisherDependencies, "capture">,
   args: string[],
 ) {
   return dependencies.capture("git", args);

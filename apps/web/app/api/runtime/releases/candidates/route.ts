@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { flyImageReleaseManifestV2Schema } from "@/lib/releases/contracts";
+import {
+  flyImageReleaseCandidatePublicationResponseSchema,
+  flyImageReleaseManifestV2Schema,
+} from "@/lib/releases/contracts";
 import { verifyGithubActionsReleaseToken } from "@/lib/releases/github-oidc";
 import {
   FlyImageReleaseError,
@@ -32,10 +35,16 @@ export async function GET(request: Request) {
   } catch {
     return response("RELEASE_PUBLISH_UNAUTHORIZED", 401);
   }
-  return NextResponse.json(
-    await getFlyImageReleasePublicationState(),
-    { headers: NO_STORE_HEADERS },
-  );
+  try {
+    return NextResponse.json(await getFlyImageReleasePublicationState(), {
+      headers: NO_STORE_HEADERS,
+    });
+  } catch (error) {
+    if (error instanceof FlyImageReleaseError) {
+      return response(error.code, 409);
+    }
+    throw error;
+  }
 }
 
 export async function POST(request: Request) {
@@ -63,7 +72,9 @@ export async function POST(request: Request) {
     }
     const release = await registerFlyImageReleaseCandidate(manifest);
     return NextResponse.json(
-      { release: { id: release.id, status: release.status } },
+      flyImageReleaseCandidatePublicationResponseSchema.parse({
+        release: { id: release.id, status: release.status },
+      }),
       { status: 202, headers: NO_STORE_HEADERS },
     );
   } catch (error) {

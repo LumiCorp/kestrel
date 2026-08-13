@@ -1,16 +1,29 @@
 import assert from "node:assert/strict";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 import {
   FLY_REGISTRY_PULL_ATTEMPTS,
   FLY_REGISTRY_PULL_RETRY_DELAY_MS,
+  isFlyRegistryManifestUnavailable,
   publishFlyImages,
   pullPublishedImage,
   verifyAnonymousGhcrDigestPull,
   type FlyImagePublisherDependencies,
 } from "../../scripts/fly-image-publisher.js";
-import { flyImageReleaseManifestV2Schema } from "../../apps/web/lib/releases/contracts.js";
+import {
+  flyImageReleaseCandidatePublicationResponseSchema,
+  flyImageReleaseManifestV2Schema,
+} from "../../apps/web/lib/releases/contracts.js";
+import { RELEASE_CONTROLLER_CONTRACT_REVISION } from "../../apps/web/lib/releases/controller-contract.js";
+import {
+  captureStreamingCommand,
+  runStreamingCommand,
+  STREAMING_COMMAND_STDERR_TAIL_BYTES,
+  StreamingCommandError,
+} from "../../scripts/lib/streaming-command.js";
 
 const revision = "a".repeat(40);
+const releaseId = "11111111-1111-4111-8111-111111111111";
 const roles = [
   "workspace-runtime",
   "environment-router",
@@ -47,9 +60,14 @@ test("publisher exercises every image and survives Fly registry propagation", as
     ),
     roles,
   );
+  assert.equal(
+    harness.publishedManifest?.controllerContractRevision,
+    RELEASE_CONTROLLER_CONTRACT_REVISION,
+  );
+  assert.deepEqual(result.release, { id: releaseId, status: "candidate" });
   assert.match(
     harness.output.join(""),
-    /Published Fly image release candidate release-test/u,
+    new RegExp(`Published Fly image release candidate ${releaseId}`, "u"),
   );
 });
 
@@ -78,6 +96,104 @@ test("publisher reports the candidate API error code", async () => {
     publishFlyImages(harness.dependencies),
     /409: RELEASE_INCOMPLETE/u,
   );
+});
+
+test("publication preflight fails before any managed image command", async () => {
+  const harness = publisherHarness({
+    reusePublishedImages: false,
+    preflightFailureCode: "RELEASE_CONTROLLER_STALE",
+  });
+  await assert.rejects(
+    publishFlyImages(harness.dependencies),
+    /409: RELEASE_CONTROLLER_STALE/u,
+  );
+  assert.equal(harness.flyBuilds.length, 0);
+  assert.equal(harness.smokes.length, 0);
+  assert.equal(harness.oidcRequests, 1);
+  assert.equal(harness.publicationAuthorization, null);
+});
+
+test("publisher rejects malformed successful publication responses", async () => {
+  for (const publicationResponse of [
+    {},
+    { release: { status: "candidate" } },
+    { release: { id: "not-a-uuid", status: "candidate" } },
+    { release: { id: releaseId, status: "completed" } },
+  ]) {
+    const harness = publisherHarness({
+      reusePublishedImages: true,
+      publicationResponse,
+    });
+    await assert.rejects(publishFlyImages(harness.dependencies));
+  }
+  assert.deepEqual(
+    flyImageReleaseCandidatePublicationResponseSchema.parse({
+      release: { id: releaseId, status: "candidate" },
+    }),
+    { release: { id: releaseId, status: "candidate" } },
+  );
+});
+
+test("streaming commands have no output ceiling and retain bounded error evidence", async () => {
+  const stdout = new PassThrough();
+  let stdoutBytes = 0;
+  stdout.on("data", (chunk: Buffer) => {
+    stdoutBytes += chunk.length;
+  });
+  await runStreamingCommand(
+    process.execPath,
+    ["-e", 'process.stdout.write("x".repeat(3 * 1024 * 1024))'],
+    { cwd: process.cwd(), stdout },
+  );
+  assert.equal(stdoutBytes, 3 * 1024 * 1024);
+
+  const captured = await captureStreamingCommand(
+    process.execPath,
+    ["-e", 'process.stdout.write("y".repeat(3 * 1024 * 1024))'],
+    { cwd: process.cwd() },
+  );
+  assert.equal(Buffer.byteLength(captured), 3 * 1024 * 1024);
+
+  const stderr = new PassThrough();
+  stderr.resume();
+  let failure: unknown;
+  try {
+    await runStreamingCommand(
+      process.execPath,
+      [
+        "-e",
+        'process.stderr.end("discard-me" + "z".repeat(70 * 1024) + "manifest unknown", () => process.exit(7))',
+      ],
+      { cwd: process.cwd(), stderr },
+    );
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure instanceof StreamingCommandError);
+  assert.equal(failure.exitCode, 7);
+  assert.equal(failure.code, 7);
+  assert.equal(failure.signal, null);
+  assert.ok(
+    Buffer.byteLength(failure.stderr) <= STREAMING_COMMAND_STDERR_TAIL_BYTES,
+  );
+  assert.doesNotMatch(failure.stderr, /discard-me/u);
+  assert.match(failure.stderr, /manifest unknown/u);
+  assert.equal(isFlyRegistryManifestUnavailable(failure), true);
+
+  let signalFailure: unknown;
+  try {
+    await runStreamingCommand(
+      process.execPath,
+      ["-e", 'process.kill(process.pid, "SIGTERM")'],
+      { cwd: process.cwd(), stderr },
+    );
+  } catch (error) {
+    signalFailure = error;
+  }
+  assert.ok(signalFailure instanceof StreamingCommandError);
+  assert.equal(signalFailure.exitCode, null);
+  assert.equal(signalFailure.code, null);
+  assert.equal(signalFailure.signal, "SIGTERM");
 });
 
 test("registry retry is bounded and does not hide other Docker failures", async () => {
@@ -151,7 +267,9 @@ test("anonymous GHCR verification completes the bearer challenge without credent
 
 function publisherHarness(input: {
   reusePublishedImages: boolean;
+  preflightFailureCode?: string;
   publicationFailureCode?: string;
+  publicationResponse?: unknown;
 }) {
   const builtImages = new Set<string>();
   const postBuildPulls = new Map<string, number>();
@@ -169,6 +287,7 @@ function publisherHarness(input: {
   let preflightAuthorization: string | null = null;
   let publicationAuthorization: string | null = null;
   let publishedManifest: {
+    controllerContractRevision: number;
     components: Array<{ role: string }>;
   } | null = null;
 
@@ -209,11 +328,19 @@ function publisherHarness(input: {
           );
         }
         return Response.json(
-          { release: { id: "release-test", status: "candidate" } },
+          input.publicationResponse ?? {
+            release: { id: releaseId, status: "candidate" },
+          },
           { status: 202 },
         );
       }
       preflightAuthorization = authorization;
+      if (input.preflightFailureCode) {
+        return Response.json(
+          { error: { code: input.preflightFailureCode } },
+          { status: 409 },
+        );
+      }
       return Response.json({
         requiresFullBundle: true,
         stableBundleRevision: null,

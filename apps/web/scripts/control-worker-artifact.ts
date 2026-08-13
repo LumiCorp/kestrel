@@ -1,14 +1,15 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { build, type Metafile } from "esbuild";
+import { captureStreamingCommand } from "../../../scripts/lib/streaming-command";
 
-const execFileAsync = promisify(execFile);
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const repositoryRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../..",
+);
 const dockerfilePath = "deploy/fly/kestrel-one-control-worker/Dockerfile";
 
 export const CONTROL_WORKER_FINGERPRINT_PATHS = [
@@ -19,7 +20,9 @@ export const CONTROL_WORKER_FINGERPRINT_PATHS = [
   "apps/web/scripts/control-worker-artifact.ts",
   "apps/web/scripts/control-worker-machine.ts",
   "apps/web/scripts/deploy-control-worker-candidate.ts",
+  "apps/web/scripts/publish-control-worker-candidate.ts",
   "apps/web/scripts/release-control-worker.ts",
+  "scripts/lib/streaming-command.ts",
   "package.json",
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",
@@ -43,10 +46,12 @@ type ArtifactDependencies = {
   capture: (command: string, args: string[]) => Promise<string>;
 };
 
-export async function buildControlWorkerArtifact(input: {
-  root?: string;
-  dependencies?: ArtifactDependencies;
-} = {}): Promise<ControlWorkerArtifact> {
+export async function buildControlWorkerArtifact(
+  input: {
+    root?: string;
+    dependencies?: ArtifactDependencies;
+  } = {},
+): Promise<ControlWorkerArtifact> {
   const root = input.root ?? repositoryRoot;
   const dependencies = input.dependencies ?? { capture };
   const contextDirectory = await mkdtemp(
@@ -78,10 +83,12 @@ export async function buildControlWorkerArtifact(input: {
       dependencies,
       bundles: [workerBundle, readinessBundle],
     });
-    const runtimeInputs = [...new Set([
-      ...Object.keys(worker.inputs),
-      ...Object.keys(readiness.inputs),
-    ])].sort();
+    const runtimeInputs = [
+      ...new Set([
+        ...Object.keys(worker.inputs),
+        ...Object.keys(readiness.inputs),
+      ]),
+    ].sort();
     return {
       contextDirectory,
       dockerfile: stagedDockerfile,
@@ -115,7 +122,9 @@ async function bundle(input: {
     tsconfig: "apps/web/tsconfig.json",
   });
   if (!result.metafile) {
-    throw new Error("The control worker bundle did not produce dependency metadata.");
+    throw new Error(
+      "The control worker bundle did not produce dependency metadata.",
+    );
   }
   return result.metafile;
 }
@@ -144,7 +153,9 @@ export async function fingerprintControlWorkerArtifact(input: {
   }
   const hash = createHash("sha256");
   for (const bundlePath of input.bundles) {
-    hash.update(bundlePath.endsWith("control-worker.cjs") ? "worker" : "readiness");
+    hash.update(
+      bundlePath.endsWith("control-worker.cjs") ? "worker" : "readiness",
+    );
     hash.update("\0");
     hash.update(await readFile(bundlePath));
     hash.update("\0");
@@ -159,9 +170,7 @@ export async function fingerprintControlWorkerArtifact(input: {
 }
 
 async function capture(command: string, args: string[]) {
-  const result = await execFileAsync(command, args, {
-    cwd: repositoryRoot,
-    maxBuffer: 20 * 1024 * 1024,
-  });
-  return result.stdout.trimEnd();
+  return (
+    await captureStreamingCommand(command, args, { cwd: repositoryRoot })
+  ).trimEnd();
 }
