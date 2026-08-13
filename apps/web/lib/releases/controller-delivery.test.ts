@@ -7,7 +7,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import {
@@ -346,6 +346,16 @@ test("controller deployment smokes the digest before stopped-first tagged update
   });
 
   const smokeIndex = commands.findIndex(({ command }) => command === "bash");
+  const build = commands.find(
+    ({ command, args }) => command === "flyctl" && args[0] === "deploy",
+  );
+  assert.ok(build);
+  const configPath = build.args[build.args.indexOf("--config") + 1]!;
+  assert.equal(isAbsolute(configPath), true);
+  assert.equal(
+    configPath.endsWith("deploy/fly/kestrel-one-control-worker/fly.toml"),
+    true,
+  );
   const updates = commands.filter(
     ({ command, args }) => command === "flyctl" && args[0] === "machine",
   );
