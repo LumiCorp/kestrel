@@ -65,7 +65,9 @@ test("gateway health classification preserves unrecognized Fly failures", async 
 
 test("managed release retries use the bounded fixed schedule", () => {
   assert.deepEqual(
-    Array.from({ length: 8 }, (_, index) => releaseRetryDelaySeconds(index + 1)),
+    Array.from({ length: 8 }, (_, index) =>
+      releaseRetryDelaySeconds(index + 1),
+    ),
     [5, 10, 20, 40, 80, 120, 120, 120],
   );
 });
@@ -94,7 +96,6 @@ test("managed release retries stop exactly at the one-hour deadline", () => {
     null,
   );
 });
-
 
 function fixture(
   type: string,
@@ -319,7 +320,7 @@ function createProvisioner(
   provider: EnvironmentInfrastructureProvider,
   backupWorkspace?: ConstructorParameters<
     typeof EnvironmentProvisioner
-  >[0]["backupWorkspace"]
+  >[0]["backupWorkspace"],
 ) {
   return new EnvironmentProvisioner({
     repository,
@@ -354,8 +355,8 @@ test("Environment provisioning durably follows requested through ready", async (
 });
 
 test("Environment updates preserve Workspaces, update ingress, and verify runtimes", async () => {
-  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
-  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
@@ -370,7 +371,8 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
       runtimeImage,
     },
   ];
-  const machineUpdates: Parameters<typeof provider.updateMachineImage>[0][] = [];
+  const machineUpdates: Parameters<typeof provider.updateMachineImage>[0][] =
+    [];
   const awaitedStates: string[] = [];
   const backupInputs: Array<{
     parentReleaseTargetId?: string | undefined;
@@ -401,17 +403,17 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
     awaitedStates.push(input.state);
     calls.push("provider:wait");
   };
-  const provisioner = createProvisioner(
-    repository,
-    provider,
-    async (input) => {
-      backupInputs.push(input);
-      calls.push(`backup:${input.workspaceId}`);
-    }
-  );
+  const provisioner = createProvisioner(repository, provider, async (input) => {
+    backupInputs.push(input);
+    calls.push(`backup:${input.workspaceId}`);
+  });
   assert.equal(await provisioner.process("operation-id"), "processed");
-  assert.ok(calls.includes("operation:stage:environment.update.gateway_verified"));
-  assert.ok(calls.includes("operation:stage:environment.update.backups_skipped"));
+  assert.ok(
+    calls.includes("operation:stage:environment.update.gateway_verified"),
+  );
+  assert.ok(
+    calls.includes("operation:stage:environment.update.backups_skipped"),
+  );
   assert.ok(calls.includes("workspace:rebuilt"));
   assert.ok(calls.includes("operation:completed"));
   assert.equal(calls.includes("environment:gateway-token-staged"), false);
@@ -424,9 +426,27 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
   assert.equal(workspaceUpdate?.serviceTokenHash, undefined);
 });
 
+test("Environment updates reject tenant images from the wrong release repository", async () => {
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture("environment.update", null, {
+    runtimeImage,
+    routerImage,
+  });
+
+  assert.equal(
+    await createProvisioner(repository, provider).process("operation-id"),
+    "processed",
+  );
+  assert.deepEqual(calls, [
+    "environment:degraded:ENVIRONMENT_IMAGE_INVALID",
+    "operation:failed:ENVIRONMENT_IMAGE_INVALID",
+  ]);
+});
+
 test("Environment update retries resume after verified resources", async () => {
-  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
-  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture(
     "environment.update",
     null,
@@ -468,8 +488,8 @@ test("Environment update retries resume after verified resources", async () => {
 });
 
 test("Environment updates recover an incompatible stopped runtime from a pre-destructive snapshot", async () => {
-  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
-  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
@@ -498,19 +518,15 @@ test("Environment updates recover an incompatible stopped runtime from a pre-des
   const backupInputs: Array<{
     preDestructiveSnapshot?: { id: string; state: string } | undefined;
   }> = [];
-  const provisioner = createProvisioner(
-    repository,
-    provider,
-    async (input) => {
-      backupInputs.push(input);
-      calls.push(`backup:${input.workspaceId}`);
-      if (backupInputs.length === 1) {
-        throw Object.assign(new Error("Environment activation timed out."), {
-          code: "ENVIRONMENT_ACTIVATION_TIMEOUT",
-        });
-      }
+  const provisioner = createProvisioner(repository, provider, async (input) => {
+    backupInputs.push(input);
+    calls.push(`backup:${input.workspaceId}`);
+    if (backupInputs.length === 1) {
+      throw Object.assign(new Error("Environment activation timed out."), {
+        code: "ENVIRONMENT_ACTIVATION_TIMEOUT",
+      });
     }
-  );
+  });
 
   assert.equal(await provisioner.process("operation-id"), "processed");
   assert.deepEqual(backupInputs[1]?.preDestructiveSnapshot, {
@@ -530,8 +546,8 @@ test("Environment updates recover an incompatible stopped runtime from a pre-des
 });
 
 test("Environment updates repair failed Workspaces before routed backup", async () => {
-  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
-  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
@@ -560,14 +576,10 @@ test("Environment updates repair failed Workspaces before routed backup", async 
   const backupInputs: Array<{
     preDestructiveSnapshot?: { id: string; state: string } | undefined;
   }> = [];
-  const provisioner = createProvisioner(
-    repository,
-    provider,
-    async (input) => {
-      backupInputs.push(input);
-      calls.push(`backup:${input.workspaceId}`);
-    },
-  );
+  const provisioner = createProvisioner(repository, provider, async (input) => {
+    backupInputs.push(input);
+    calls.push(`backup:${input.workspaceId}`);
+  });
 
   assert.equal(await provisioner.process("operation-id"), "processed");
   assert.deepEqual(backupInputs, [
@@ -601,8 +613,8 @@ test("Environment updates repair failed Workspaces before routed backup", async 
 });
 
 test("an auxiliary pre-repair snapshot 408 does not pause a release", async () => {
-  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
-  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
@@ -627,13 +639,9 @@ test("an auxiliary pre-repair snapshot 408 does not pause a release", async () =
   };
   let backupCount = 0;
 
-  const outcome = await createProvisioner(
-    repository,
-    provider,
-    async () => {
-      backupCount += 1;
-    },
-  ).process("operation-id");
+  const outcome = await createProvisioner(repository, provider, async () => {
+    backupCount += 1;
+  }).process("operation-id");
 
   assert.equal(outcome, "processed");
   assert.equal(backupCount, 1);
@@ -646,8 +654,8 @@ test("an auxiliary pre-repair snapshot 408 does not pause a release", async () =
 });
 
 test("operator-authorized maintenance updates can skip Workspace retention", async () => {
-  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
-  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
@@ -672,13 +680,9 @@ test("operator-authorized maintenance updates can skip Workspace retention", asy
     completionResult = input.result;
     calls.push("operation:completed");
   };
-  const provisioner = createProvisioner(
-    repository,
-    provider,
-    async () => {
-      backupCount += 1;
-    },
-  );
+  const provisioner = createProvisioner(repository, provider, async () => {
+    backupCount += 1;
+  });
 
   assert.equal(await provisioner.process("operation-id"), "processed");
   assert.equal(backupCount, 0);
@@ -690,8 +694,8 @@ test("operator-authorized maintenance updates can skip Workspace retention", asy
 });
 
 test("managed releases reconfigure stopped Workspaces without launching them", async () => {
-  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
-  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
@@ -724,8 +728,7 @@ test("managed releases reconfigure stopped Workspaces without launching them", a
   };
   provider.updateMachineImage = async (input) => ({
     id: input.machineId,
-    state:
-      input.machineId === "workspace-machine-id" ? "replacing" : "started",
+    state: input.machineId === "workspace-machine-id" ? "replacing" : "started",
     region: "iad",
   });
   provider.waitForMachine = async (input) => {
@@ -741,9 +744,7 @@ test("managed releases reconfigure stopped Workspaces without launching them", a
 
   assert.equal(backupCount, 0);
   assert.equal(calls.includes("provider:start"), false);
-  assert.ok(
-    calls.includes("provider:wait:workspace-machine-id:stopped"),
-  );
+  assert.ok(calls.includes("provider:wait:workspace-machine-id:stopped"));
   assert.equal(
     calls.some((entry) => entry.startsWith("provider:snapshot:")),
     false,
@@ -756,8 +757,8 @@ test("managed releases reconfigure stopped Workspaces without launching them", a
 });
 
 test("Environment updates report Workspaces that require provisioning recovery", async () => {
-  const runtimeImage = `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`;
-  const routerImage = `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`;
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
@@ -794,7 +795,7 @@ test("Environment updates report Workspaces that require provisioning recovery",
   });
 
   await createProvisioner(repository, provider, async () => {}).process(
-    "operation-id"
+    "operation-id",
   );
 
   assert.equal(completion?.stage, "environment.update.recovery_required");
@@ -809,7 +810,7 @@ test("Environment updates report Workspaces that require provisioning recovery",
 test("Workspace provisioning persists provider resources only after readiness", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.provision",
-    "workspace-id"
+    "workspace-id",
   );
   const provisioner = createProvisioner(repository, provider);
   await provisioner.process("operation-id");
@@ -831,13 +832,13 @@ test("Workspace provisioning persists provider resources only after readiness", 
 test("Workspace provisioning removes provisional resources after readiness failure", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.provision",
-    "workspace-id"
+    "workspace-id",
   );
   provider.waitForMachineHealth = async () => {
     calls.push("provider:health");
     throw new EnvironmentProviderError(
       "FLY_MACHINE_UNHEALTHY",
-      "Workspace runtime contract did not become ready."
+      "Workspace runtime contract did not become ready.",
     );
   };
   provider.deleteMachine = async ({ machineId }) => {
@@ -880,7 +881,7 @@ test("transient Fly failures return the durable operation to its retry queue", a
   provider.ensureEnvironmentApp = async () => {
     throw new EnvironmentProviderError(
       "FLY_PROVIDER_UNAVAILABLE",
-      "Fly is temporarily unavailable."
+      "Fly is temporarily unavailable.",
     );
   };
   const provisioner = createProvisioner(repository, provider);
@@ -933,7 +934,9 @@ test("Environment app identity is staged before gateway Machine creation", async
     );
   };
   let failure:
-    | Parameters<EnvironmentProvisioningRepository["failEnvironmentProvision"]>[0]
+    | Parameters<
+        EnvironmentProvisioningRepository["failEnvironmentProvision"]
+      >[0]
     | undefined;
   repository.failEnvironmentProvision = async (input) => {
     failure = input;
@@ -1066,7 +1069,7 @@ test("a superseded provisioning failure cannot overwrite newer lifecycle state",
 test("Workspace provisioning fails when its Environment cannot become ready", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.provision",
-    "workspace-id"
+    "workspace-id",
   );
   repository.getEnvironment = async () => ({
     id: "environment-id",
@@ -1156,10 +1159,9 @@ test("Fly 409 and 412 retries still require authoritative state", async () => {
       );
     };
     assert.equal(
-      await createProvisioner(
-        retryable.repository,
-        retryable.provider,
-      ).process("operation-id"),
+      await createProvisioner(retryable.repository, retryable.provider).process(
+        "operation-id",
+      ),
       "deferred",
     );
 
@@ -1183,7 +1185,7 @@ test("Fly 409 and 412 retries still require authoritative state", async () => {
 test("Workspace start wakes the existing Machine without reprovisioning storage", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.start",
-    "workspace-id"
+    "workspace-id",
   );
   repository.getWorkspace = async () => ({
     id: "workspace-id",
@@ -1218,7 +1220,7 @@ test("Workspace start wakes the existing Machine without reprovisioning storage"
 test("Workspace stop retains its Machine and persistent volume", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.stop",
-    "workspace-id"
+    "workspace-id",
   );
   repository.getWorkspace = async () => ({
     id: "workspace-id",
@@ -1250,7 +1252,7 @@ test("Workspace stop retains its Machine and persistent volume", async () => {
 test("Workspace idle stop continues from the control-plane stopping state", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.stop",
-    "workspace-id"
+    "workspace-id",
   );
   repository.getWorkspace = async () => ({
     id: "workspace-id",
@@ -1281,7 +1283,7 @@ test("Workspace idle stop continues from the control-plane stopping state", asyn
 test("Workspace deletion removes the Machine before its volume", async () => {
   const { repository, provider, calls } = fixture(
     "workspace.delete",
-    "workspace-id"
+    "workspace-id",
   );
   repository.getWorkspace = async () => ({
     id: "workspace-id",
