@@ -148,6 +148,58 @@ type QueuedUserMessage = {
   turnId: string | null;
 };
 
+export type EnvironmentProvisioningNotice = {
+  detail: string;
+  environmentName: string;
+  environmentStatus: string;
+  stage: string;
+  workspaceStatus: string;
+};
+
+function parseEnvironmentProvisioningNotice(
+  payload: unknown
+): EnvironmentProvisioningNotice | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const candidate = payload as {
+    activation?: { detail?: unknown; stage?: unknown; status?: unknown };
+    environment?: { name?: unknown; status?: unknown };
+    workspace?: { status?: unknown };
+  };
+  if (
+    candidate.activation?.status !== "pending" ||
+    typeof candidate.activation.detail !== "string" ||
+    typeof candidate.activation.stage !== "string" ||
+    typeof candidate.environment?.name !== "string" ||
+    typeof candidate.environment?.status !== "string" ||
+    typeof candidate.workspace?.status !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    detail: candidate.activation.detail,
+    environmentName: candidate.environment.name,
+    environmentStatus: candidate.environment.status,
+    stage: candidate.activation.stage,
+    workspaceStatus: candidate.workspace.status,
+  };
+}
+
+function sameEnvironmentProvisioningNotice(
+  left: EnvironmentProvisioningNotice | null,
+  right: EnvironmentProvisioningNotice | null
+) {
+  return (
+    left?.detail === right?.detail &&
+    left?.environmentName === right?.environmentName &&
+    left?.environmentStatus === right?.environmentStatus &&
+    left?.stage === right?.stage &&
+    left?.workspaceStatus === right?.workspaceStatus
+  );
+}
+
 function buildFeedbackByMessageId(input: {
   threadId: string;
   feedbackOverrides: Record<string, "positive" | "negative" | null>;
@@ -473,6 +525,7 @@ function ChatShell({
   threadTitle,
   threadExists,
   newTurnDisabledReason,
+  environmentProvisioningNotice,
 }: {
   addToolApprovalResponse: ChatController["addToolApprovalResponse"];
   archived: boolean;
@@ -519,6 +572,7 @@ function ChatShell({
   threadTitle?: string;
   threadExists: boolean;
   newTurnDisabledReason?: string;
+  environmentProvisioningNotice?: EnvironmentProvisioningNotice | null;
 }) {
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
 
@@ -570,7 +624,30 @@ function ChatShell({
           />
         )}
 
-        <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
+        <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl flex-col gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
+          {environmentProvisioningNotice ? (
+            <div
+              aria-live="polite"
+              className="rounded-lg border border-accent/35 bg-accent/10 px-3 py-2 text-muted-foreground text-sm"
+              data-environment-status={
+                environmentProvisioningNotice.environmentStatus
+              }
+              data-stage={environmentProvisioningNotice.stage}
+              data-testid="environment-provisioning-notice"
+              data-workspace-status={
+                environmentProvisioningNotice.workspaceStatus
+              }
+              role="status"
+            >
+              <span className="font-medium text-foreground">
+                Preparing {environmentProvisioningNotice.environmentName}
+              </span>
+              <span className="ml-1">
+                {environmentProvisioningNotice.detail} The agent may take a
+                moment before it starts responding.
+              </span>
+            </div>
+          ) : null}
           {!isReadonly && (
             <MultimodalInput
               activeEnvironmentName={activeEnvironment?.name}
@@ -803,6 +880,7 @@ export function Chat({
   projects = [],
   threadTitle,
   newTurnDisabledReason,
+  environmentProvisioningNotice,
 }: {
   id: string;
   initialMessages: ChatMessage[];
@@ -821,6 +899,7 @@ export function Chat({
   projects?: Array<{ id: string; name: string }>;
   threadTitle?: string;
   newTurnDisabledReason?: string;
+  environmentProvisioningNotice?: EnvironmentProvisioningNotice | null;
 }) {
   const { resetArtifact, setMetadata } = useArtifact();
   const { setDataStream } = useDataStream(id);
@@ -841,6 +920,10 @@ export function Chat({
   const [conversationState, setConversationState] = useState(
     initialConversationState
   );
+  const [liveEnvironmentProvisioningNotice, setLiveEnvironmentProvisioningNotice] =
+    useState<EnvironmentProvisioningNotice | null>(
+      environmentProvisioningNotice ?? null
+    );
   const [liveRuntimePresentation, setLiveRuntimePresentation] =
     useState<LiveRuntimePresentation | null>(null);
   const resumeTurnIdRef = useRef<string | null>(null);
@@ -855,7 +938,13 @@ export function Chat({
   useEffect(() => {
     setChatExists(initialChatExists);
     setConversationState(initialConversationState);
-  }, [id, initialChatExists, initialConversationState]);
+    setLiveEnvironmentProvisioningNotice(environmentProvisioningNotice ?? null);
+  }, [
+    id,
+    environmentProvisioningNotice,
+    initialChatExists,
+    initialConversationState,
+  ]);
 
   useEffect(() => {
     setLiveThreadTitle(threadTitle);
@@ -990,6 +1079,27 @@ export function Chat({
   }, [controller.status]);
 
   const hasActiveWork = Boolean(conversationState.queue.activeTurnId);
+  const refreshEnvironmentProvisioningNotice = useCallback(async () => {
+    if (!chatExists) return;
+    const response = await fetch(`/api/threads/${id}/environment`, {
+      cache: "no-store",
+    });
+    if (response.status === 404) {
+      setLiveEnvironmentProvisioningNotice(null);
+      return;
+    }
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      return;
+    }
+    const nextNotice = parseEnvironmentProvisioningNotice(payload);
+    setLiveEnvironmentProvisioningNotice((current) =>
+      sameEnvironmentProvisioningNotice(current, nextNotice)
+        ? current
+        : nextNotice
+    );
+  }, [chatExists, id]);
+
   useEffect(() => {
     if (!chatExists) return;
     void refreshConversationState().catch(() => {});
@@ -1007,6 +1117,31 @@ export function Chat({
     }, 1000);
     return () => window.clearInterval(interval);
   }, [chatExists, controller.status, hasActiveWork, refreshConversationState]);
+
+  useEffect(() => {
+    if (!chatExists) return;
+    if (
+      !(
+        hasActiveWork ||
+        controller.status === "submitted" ||
+        controller.status === "streaming" ||
+        liveEnvironmentProvisioningNotice
+      )
+    ) {
+      return;
+    }
+    void refreshEnvironmentProvisioningNotice().catch(() => {});
+    const interval = window.setInterval(() => {
+      void refreshEnvironmentProvisioningNotice().catch(() => {});
+    }, 1500);
+    return () => window.clearInterval(interval);
+  }, [
+    chatExists,
+    controller.status,
+    hasActiveWork,
+    liveEnvironmentProvisioningNotice,
+    refreshEnvironmentProvisioningNotice,
+  ]);
 
   const respondToRuntimeInteraction = useCallback(
     async (interaction: RuntimeInteractionResponse) => {
@@ -1307,6 +1442,7 @@ export function Chat({
         messages={displayMessages}
         modelScopeQuery={`&threadId=${encodeURIComponent(id)}`}
         newTurnDisabledReason={newTurnDisabledReason}
+        environmentProvisioningNotice={liveEnvironmentProvisioningNotice}
         onFeedbackChange={(messageId, feedback) => {
           shared.setFeedbackOverrides((current) => ({
             ...current,
