@@ -13,6 +13,7 @@ import type {
   DevProcessReadInput,
   DevProcessReadResult,
   DevProcessRetainInput,
+  DevProcessRetentionPromoteInput,
   DevProcessRetentionInspectInput,
   DevProcessRetentionReleaseInput,
   DevProcessRetentionResult,
@@ -177,6 +178,16 @@ export class LocalDevShellService implements DevShellServicePort {
     return this.request(
       "POST",
       `/processes/${encodeURIComponent(input.processId)}/retention`,
+      input,
+    );
+  }
+
+  async promoteProcessRetention(
+    input: DevProcessRetentionPromoteInput,
+  ): Promise<DevProcessRetentionResult> {
+    return this.request(
+      "POST",
+      `/processes/${encodeURIComponent(input.processId)}/retention/promote`,
       input,
     );
   }
@@ -685,7 +696,8 @@ export function isCompatibleDevShellHealth(health: unknown): health is DevShellH
     capabilities !== null &&
     Array.isArray(capabilities) === false &&
     (capabilities as Record<string, unknown>).processWriteAndRead === true &&
-    (capabilities as Record<string, unknown>).processRetentionLeases === true
+    (capabilities as Record<string, unknown>).processRetentionLeases === true &&
+    (capabilities as Record<string, unknown>).processRetentionPromotion === true
   );
 }
 

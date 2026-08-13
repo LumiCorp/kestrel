@@ -359,6 +359,42 @@ test("handlers cannot replace the gateway-owned result envelope", async () => {
   assert.equal(result.outcome.kind === "failure" && result.outcome.normalizedFailureCode, "TOOL_RESULT_ENVELOPE_FORBIDDEN");
 });
 
+test("ordinary tool errors preserve structured cleanup evidence in the normalized result", async () => {
+  const module = createEmbeddedToolModuleV1({
+    ownerId: "kestrel.tests",
+    toolId: "test.cleanup-evidence",
+    description: "Cleanup evidence serialization test",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    capability: capability("external_side_effect"),
+    presentation: presentation("Cleanup evidence"),
+    handlerId: "test:cleanup-evidence:handler:v1",
+    resultNormalizerId: "test:cleanup-evidence:normalizer:v1",
+    handler: async () => {
+      const primary = new Error("promotion persistence failed");
+      Object.assign(primary, {
+        details: {
+          cleanupFailures: [{ operation: "release_provisional_retention", message: "release failed" }],
+        },
+      });
+      throw primary;
+    },
+  });
+
+  const result = await executeTestToolCall({
+    gateway: new AllowlistedToolGateway([module]),
+    toolName: "test.cleanup-evidence",
+    toolInput: {},
+  });
+
+  assert.equal(result.outcome.kind, "failure");
+  assert.deepEqual(
+    result.outcome.kind === "failure" ? result.outcome.error.details : undefined,
+    {
+      cleanupFailures: [{ operation: "release_provisional_retention", message: "release failed" }],
+    },
+  );
+});
+
 test("preparation rejects a forged descriptor reference under a valid revision", async () => {
   const module = createEmbeddedToolModuleV1({
     ownerId: "kestrel.tests",

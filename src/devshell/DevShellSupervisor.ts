@@ -5,7 +5,7 @@ import { delimiter, dirname, join, relative, resolve, sep } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { createRuntimeFailure, RuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { agentChildEnvironment } from "../runtime/agentChildEnvironment.js";
 import { normalizeDevShellExecCommand } from "./normalizeCommand.js";
 import {
@@ -18,6 +18,7 @@ import type {
   DevProcessReadInput,
   DevProcessReadResult,
   DevProcessRetainInput,
+  DevProcessRetentionPromoteInput,
   DevProcessRetentionInspectInput,
   DevProcessRetentionReleaseInput,
   DevProcessRetentionResult,
@@ -56,6 +57,7 @@ const TRANSCRIPT_TRUNCATED_MARKER =
 
 interface RunningProcess {
   record: DevShellProcessRecord;
+  recordMutation: Promise<void>;
   recordWrite: Promise<void>;
   settlement: Promise<void>;
   resolveSettlement: () => void;
@@ -360,6 +362,7 @@ export class DevShellSupervisor {
     });
     const running: RunningProcess = {
       record,
+      recordMutation: Promise.resolve(),
       recordWrite: Promise.resolve(),
       settlement,
       resolveSettlement,
@@ -435,12 +438,16 @@ export class DevShellSupervisor {
       const record = await this.requireProcessRecord(input.processId);
       return this.collectStoredProcessResultWithDeliveryCursor(record, input);
     }
-    running.stopRequested = true;
-    running.record = {
-      ...running.record,
-      lifecycle: "interactive",
-      retentionLeases: [],
-    };
+    await this.mutateLiveProcessRecord(running, async () => {
+      running.stopRequested = true;
+      running.record = {
+        ...running.record,
+        lifecycle: "interactive",
+        retentionLeases: [],
+        updatedAt: this.now().toISOString(),
+      };
+      await this.persistLiveProcessRecord(running);
+    });
     const signal = input.signal ?? "SIGTERM";
     signalProcessTree(running.child, signal);
     await waitForProcessExit(running.child, normalizePositiveInt(input.waitMs, DEFAULT_YIELD_TIME_MS));
@@ -449,16 +456,19 @@ export class DevShellSupervisor {
       await waitForProcessExit(running.child, 500);
     }
     if (isProcessRunning(running.child) === false && running.record.status === "RUNNING") {
-      const completedAt = this.now().toISOString();
-      running.record = {
-        ...running.record,
-        status: "STOPPED",
-        updatedAt: completedAt,
-        completedAt,
-        exitCode: running.child.exitCode ?? 0,
-        stopSignal: running.child.signalCode ?? signal,
-      };
-      await this.persistLiveProcessRecord(running);
+      await this.mutateLiveProcessRecord(running, async () => {
+        if (running.record.status !== "RUNNING") return;
+        const completedAt = this.now().toISOString();
+        running.record = {
+          ...running.record,
+          status: "STOPPED",
+          updatedAt: completedAt,
+          completedAt,
+          exitCode: running.child.exitCode ?? 0,
+          stopSignal: running.child.signalCode ?? signal,
+        };
+        await this.persistLiveProcessRecord(running);
+      });
       this.processes.delete(running.record.processId);
       await this.releaseManagedWorktreeProcessLease(running.record);
     }
@@ -468,25 +478,94 @@ export class DevShellSupervisor {
 
   async retainProcess(input: DevProcessRetainInput): Promise<DevProcessRetentionResult> {
     const running = await this.requireLiveProcess(input.processId);
-    const lease = normalizeRetentionLease(input, this.now());
-    const activeLeases = activeRetentionLeases(running.record.retentionLeases, this.now());
-    const leases = input.ifUnleased === true && activeLeases.length > 0
-      ? activeLeases
-      : [...activeLeases.filter((candidate) => candidate.leaseId !== lease.leaseId), lease]
-          .sort((left, right) => left.leaseId.localeCompare(right.leaseId));
-    if (running.wallTimeout !== undefined) {
-      clearTimeout(running.wallTimeout);
-      running.wallTimeout = undefined;
-    }
-    running.record = {
-      ...running.record,
-      lifecycle: "retained",
-      retentionLeases: leases,
-      expiresAt: latestLeaseExpiry(leases),
-      updatedAt: this.now().toISOString(),
-    };
-    await this.persistLiveProcessRecord(running);
-    return describeRetention(running.record);
+    return this.mutateLiveProcessRecord(running, async () => {
+      this.requireRetainableProcess(running);
+      const lease = normalizeRetentionLease(input, this.now());
+      const activeLeases = activeRetentionLeases(running.record.retentionLeases, this.now());
+      const leases = input.ifUnleased === true && activeLeases.length > 0
+        ? activeLeases
+        : [...activeLeases.filter((candidate) => candidate.leaseId !== lease.leaseId), lease]
+            .sort((left, right) => left.leaseId.localeCompare(right.leaseId));
+      if (running.wallTimeout !== undefined) {
+        clearTimeout(running.wallTimeout);
+        running.wallTimeout = undefined;
+      }
+      running.record = {
+        ...running.record,
+        lifecycle: "retained",
+        retentionLeases: leases,
+        expiresAt: latestLeaseExpiry(leases),
+        updatedAt: this.now().toISOString(),
+      };
+      await this.persistLiveProcessRecord(running);
+      return describeRetention(running.record);
+    });
+  }
+
+  async promoteProcessRetention(
+    input: DevProcessRetentionPromoteInput,
+  ): Promise<DevProcessRetentionResult> {
+    const running = await this.requireLiveProcess(input.processId);
+    return this.mutateLiveProcessRecord(running, async () => {
+      this.requireRetainableProcess(running);
+      const activeLeases = activeRetentionLeases(running.record.retentionLeases, this.now());
+      const sourceLease = activeLeases.find((lease) => lease.leaseId === input.fromLeaseId);
+      if (sourceLease?.kind !== "workspace_preview_provisional") {
+        throw createRuntimeFailure(
+          "DEV_SHELL_RETENTION_PROMOTION_SOURCE_MISSING",
+          "Process retention promotion requires an active provisional preview lease on the exact process.",
+          {
+            subsystem: "dev_shell",
+            processId: input.processId,
+            fromLeaseId: input.fromLeaseId,
+          },
+        );
+      }
+      const destination = normalizeRetentionLease(input, this.now());
+      if (destination.kind === "workspace_preview_provisional") {
+        throw createRuntimeFailure(
+          "DEV_SHELL_RETENTION_PROMOTION_DESTINATION_INVALID",
+          "Process retention promotion requires a non-provisional destination lease.",
+          { subsystem: "dev_shell", processId: input.processId },
+        );
+      }
+      const previousRetention = {
+        lifecycle: running.record.lifecycle,
+        retentionLeases: running.record.retentionLeases.map((lease) => ({ ...lease })),
+        expiresAt: running.record.expiresAt,
+      };
+      const leases = [
+        ...activeLeases.filter((lease) =>
+          lease.leaseId !== input.fromLeaseId && lease.leaseId !== destination.leaseId
+        ),
+        destination,
+      ].sort((left, right) => left.leaseId.localeCompare(right.leaseId));
+      running.record = {
+        ...running.record,
+        lifecycle: "retained",
+        retentionLeases: leases,
+        expiresAt: latestLeaseExpiry(leases),
+        updatedAt: this.now().toISOString(),
+      };
+      try {
+        await this.persistLiveProcessRecord(running);
+      } catch (error) {
+        running.record = {
+          ...running.record,
+          ...previousRetention,
+          updatedAt: this.now().toISOString(),
+        };
+        const cleanupFailures: Array<{ operation: string; message: string }> = [];
+        await this.persistLiveProcessRecord(running).catch((cleanupError) => {
+          cleanupFailures.push({
+            operation: "restore_provisional_retention",
+            message: errorMessage(cleanupError),
+          });
+        });
+        throw attachFailureEvidence(error, cleanupFailures);
+      }
+      return describeRetention(running.record);
+    });
   }
 
   async inspectProcessRetention(
@@ -526,24 +605,36 @@ export class DevShellSupervisor {
     if (running === undefined) {
       return { status: "missing", leases: [] };
     }
-    const leases = activeRetentionLeases(running.record.retentionLeases, this.now())
-      .filter((lease) => lease.leaseId !== input.leaseId);
-    running.record = {
-      ...running.record,
-      retentionLeases: leases,
-      updatedAt: this.now().toISOString(),
-      ...(leases.length > 0 ? { expiresAt: latestLeaseExpiry(leases) } : {}),
-    };
-    if (leases.length > 0) {
+    const mutation = await this.mutateLiveProcessRecord(running, async () => {
+      const activeLeases = activeRetentionLeases(running.record.retentionLeases, this.now());
+      if (activeLeases.some((lease) => lease.leaseId === input.leaseId) === false) {
+        return { stop: false, result: { status: "missing" as const, leases: [] } };
+      }
+      const leases = activeLeases.filter((lease) => lease.leaseId !== input.leaseId);
+      running.record = {
+        ...running.record,
+        lifecycle: leases.length > 0 ? "retained" : "interactive",
+        retentionLeases: leases,
+        updatedAt: this.now().toISOString(),
+        ...(leases.length > 0 ? { expiresAt: latestLeaseExpiry(leases) } : {}),
+      };
+      if (leases.length === 0) running.stopRequested = true;
       await this.persistLiveProcessRecord(running);
-      return describeRetention(running.record);
-    }
-    await this.stopRetainedProcess(running);
+      return {
+        stop: leases.length === 0,
+        result: leases.length > 0
+          ? describeRetention(running.record)
+          : {
+              status: "missing" as const,
+              processId: running.record.processId,
+              lifecycle: "interactive" as const,
+              leases: [],
+            },
+      };
+    });
+    if (mutation.stop) await this.stopRetainedProcess(running);
     return {
-      status: "missing",
-      processId: running.record.processId,
-      lifecycle: "interactive",
-      leases: [],
+      ...mutation.result,
     };
   }
 
@@ -567,16 +658,27 @@ export class DevShellSupervisor {
     channel: DevShellOutputChannel,
     chunk: Buffer,
   ): Promise<void> {
-    const writeChunk = this.boundTranscriptChunk(process, chunk);
-    const cursor = process.currentOffset;
-    process.currentOffset += writeChunk.byteLength;
-    const nextCursor = process.currentOffset;
-    process.record = {
-      ...process.record,
-      outputCursor: process.currentOffset,
-      updatedAt: this.now().toISOString(),
-    };
-    const transcriptPath = process.record.transcriptPath;
+    const state = await this.mutateLiveProcessRecord(process, () => {
+      const writeChunk = this.boundTranscriptChunk(process, chunk);
+      const cursor = process.currentOffset;
+      process.currentOffset += writeChunk.byteLength;
+      const nextCursor = process.currentOffset;
+      process.record = {
+        ...process.record,
+        outputCursor: process.currentOffset,
+        updatedAt: this.now().toISOString(),
+      };
+      return {
+        writeChunk,
+        cursor,
+        nextCursor,
+        transcriptPath: process.record.transcriptPath,
+        processId: process.record.processId,
+        command: process.record.command,
+        cwd: process.record.cwd,
+      };
+    });
+    const { writeChunk, cursor, nextCursor, transcriptPath } = state;
     const outputObserver = process.outputObserver;
     const observedChunk = outputObserver === undefined
       ? undefined
@@ -586,9 +688,9 @@ export class DevShellSupervisor {
           byteLength: writeChunk.byteLength,
           cursor,
           nextCursor,
-          processId: process.record.processId,
-          command: process.record.command,
-          cwd: process.record.cwd,
+          processId: state.processId,
+          command: state.command,
+          cwd: state.cwd,
         };
     if (writeChunk.byteLength > 0) {
       process.transcriptWrite = process.transcriptWrite.then(() => appendFile(transcriptPath, writeChunk));
@@ -634,37 +736,39 @@ export class DevShellSupervisor {
       process.wallTimeout = undefined;
     }
     await process.transcriptWrite.catch(() => {});
-    const completedAt = this.now().toISOString();
-    const status: DevShellProcessStatus =
-      process.forcedFailureReason !== undefined
-        ? "FAILED"
-        : process.stopRequested || signal !== null
-        ? "STOPPED"
-        : code === 0
-        ? "COMPLETED"
-        : "FAILED";
-    const exitCode = code ?? (process.forcedFailureReason !== undefined ? 124 : status === "STOPPED" ? 0 : 1);
-    const strictFailureReason =
-      status === "FAILED" && process.forcedFailureReason === undefined && process.record.strictModeApplied === true
-        ? `Strict multi-line shell command failed fast with exit code ${exitCode}.`
-        : undefined;
-    process.record = {
-      ...process.record,
-      status,
-      lifecycle: "interactive",
-      retentionLeases: [],
-      updatedAt: completedAt,
-      completedAt,
-      exitCode,
-      ...(signal !== null ? { stopSignal: signal } : {}),
-      ...(process.forcedFailureReason !== undefined
-        ? { failureReason: process.forcedFailureReason }
-        : strictFailureReason !== undefined
-          ? { failureReason: strictFailureReason }
-          : {}),
-      ...(status === "FAILED" ? { failurePhase: "command" as const } : {}),
-    };
-    await this.persistLiveProcessRecord(process);
+    await this.mutateLiveProcessRecord(process, async () => {
+      const completedAt = this.now().toISOString();
+      const status: DevShellProcessStatus =
+        process.forcedFailureReason !== undefined
+          ? "FAILED"
+          : process.stopRequested || signal !== null
+          ? "STOPPED"
+          : code === 0
+          ? "COMPLETED"
+          : "FAILED";
+      const exitCode = code ?? (process.forcedFailureReason !== undefined ? 124 : status === "STOPPED" ? 0 : 1);
+      const strictFailureReason =
+        status === "FAILED" && process.forcedFailureReason === undefined && process.record.strictModeApplied === true
+          ? `Strict multi-line shell command failed fast with exit code ${exitCode}.`
+          : undefined;
+      process.record = {
+        ...process.record,
+        status,
+        lifecycle: "interactive",
+        retentionLeases: [],
+        updatedAt: completedAt,
+        completedAt,
+        exitCode,
+        ...(signal !== null ? { stopSignal: signal } : {}),
+        ...(process.forcedFailureReason !== undefined
+          ? { failureReason: process.forcedFailureReason }
+          : strictFailureReason !== undefined
+            ? { failureReason: strictFailureReason }
+            : {}),
+        ...(status === "FAILED" ? { failurePhase: "command" as const } : {}),
+      };
+      await this.persistLiveProcessRecord(process);
+    });
     await this.enforceSourceWriteGuard(process);
     signalProcessTree(process.child, "SIGTERM");
     this.processes.delete(process.record.processId);
@@ -679,18 +783,20 @@ export class DevShellSupervisor {
       process.wallTimeout = undefined;
     }
     await process.transcriptWrite.catch(() => {});
-    const completedAt = this.now().toISOString();
-    process.record = {
-      ...process.record,
-      status: "FAILED",
-      lifecycle: "interactive",
-      retentionLeases: [],
-      updatedAt: completedAt,
-      completedAt,
-      exitCode: 1,
-      failureReason: error.message,
-    };
-    await this.persistLiveProcessRecord(process);
+    await this.mutateLiveProcessRecord(process, async () => {
+      const completedAt = this.now().toISOString();
+      process.record = {
+        ...process.record,
+        status: "FAILED",
+        lifecycle: "interactive",
+        retentionLeases: [],
+        updatedAt: completedAt,
+        completedAt,
+        exitCode: 1,
+        failureReason: error.message,
+      };
+      await this.persistLiveProcessRecord(process);
+    });
     this.processes.delete(process.record.processId);
     await this.releaseManagedWorktreeProcessLease(process.record);
     flushWaiters(process);
@@ -786,23 +892,22 @@ export class DevShellSupervisor {
     const cursor = normalizeNonNegativeInt(input.cursor, 0);
     const transcript = await readTranscriptChunk(record.transcriptPath, cursor, maxBytes);
     const live = this.processes.get(record.processId);
-    const authoritativeRecord = live === undefined
-      ? record
-      : preferSettledProcessRecord(record, live.record);
-    const updatedRecord: DevShellProcessRecord = {
-      ...authoritativeRecord,
-      outputCursor: Math.max(authoritativeRecord.outputCursor, transcript.size),
-      updatedAt: this.now().toISOString(),
-      ...(authoritativeRecord.lifecycle === "interactive"
-        ? { expiresAt: this.bumpExpiry(authoritativeRecord.expiresAt, authoritativeRecord.idleTimeoutMs) }
-        : {}),
-    };
-    if (live !== undefined) {
-      live.record = updatedRecord;
-      await this.persistLiveProcessRecord(live);
-    } else {
-      await this.store.upsertProcess(updatedRecord);
-    }
+    const updatedRecord = live === undefined
+      ? await this.updateStoredProcessRecord(record, transcript.size)
+      : await this.mutateLiveProcessRecord(live, async () => {
+          const authoritativeRecord = preferSettledProcessRecord(record, live.record);
+          const updated: DevShellProcessRecord = {
+            ...authoritativeRecord,
+            outputCursor: Math.max(authoritativeRecord.outputCursor, transcript.size),
+            updatedAt: this.now().toISOString(),
+            ...(authoritativeRecord.lifecycle === "interactive"
+              ? { expiresAt: this.bumpExpiry(authoritativeRecord.expiresAt, authoritativeRecord.idleTimeoutMs) }
+              : {}),
+          };
+          live.record = updated;
+          await this.persistLiveProcessRecord(live);
+          return updated;
+        });
     return {
       ...(updatedRecord.status === "RUNNING" ? { processId: updatedRecord.processId } : {}),
       status: updatedRecord.status,
@@ -875,16 +980,21 @@ export class DevShellSupervisor {
         signalProcessTree(process.child, "SIGKILL");
         await waitForProcessExit(process.child, 1000);
       }
-      const completedAt = this.now().toISOString();
-      process.record = {
-        ...process.record,
-        status: "FAILED",
-        updatedAt: completedAt,
-        completedAt,
-        exitCode: 126,
-        failureReason: process.forcedFailureReason,
-        sourceWriteGuard: finalizedResult,
-      };
+      await this.mutateLiveProcessRecord(process, async () => {
+        const completedAt = this.now().toISOString();
+        process.record = {
+          ...process.record,
+          status: "FAILED",
+          lifecycle: "interactive",
+          retentionLeases: [],
+          updatedAt: completedAt,
+          completedAt,
+          exitCode: 126,
+          failureReason: process.forcedFailureReason,
+          sourceWriteGuard: finalizedResult,
+        };
+        await this.persistLiveProcessRecord(process);
+      });
       this.processes.delete(process.record.processId);
     } else {
       const finalizedResult = {
@@ -892,12 +1002,14 @@ export class DevShellSupervisor {
         finalCheckCompleted: processStillRunning === false,
       };
       process.sourceWriteGuardChecked = processStillRunning === false;
-      process.record = {
-        ...process.record,
-        sourceWriteGuard: finalizedResult,
-      };
+      await this.mutateLiveProcessRecord(process, async () => {
+        process.record = {
+          ...process.record,
+          sourceWriteGuard: finalizedResult,
+        };
+        await this.persistLiveProcessRecord(process);
+      });
     }
-    await this.persistLiveProcessRecord(process);
   }
 
   hasActiveProcesses(): boolean {
@@ -955,6 +1067,24 @@ export class DevShellSupervisor {
       );
     }
     return process;
+  }
+
+  private requireRetainableProcess(process: RunningProcess): void {
+    if (
+      process.record.status !== "RUNNING" ||
+      process.stopRequested ||
+      isProcessRunning(process.child) === false
+    ) {
+      throw createRuntimeFailure(
+        "DEV_SHELL_PROCESS_NOT_RUNNING",
+        `Developer shell process '${process.record.processId}' is not running.`,
+        {
+          subsystem: "dev_shell",
+          processId: process.record.processId,
+          status: process.record.status,
+        },
+      );
+    }
   }
 
   private async requireProcessRecord(processId: string): Promise<DevShellProcessRecord> {
@@ -1036,37 +1166,46 @@ export class DevShellSupervisor {
   }
 
   private async touchProcess(process: RunningProcess): Promise<void> {
-    process.record = {
-      ...process.record,
-      updatedAt: this.now().toISOString(),
-      ...(process.record.lifecycle === "interactive"
-        ? { expiresAt: this.bumpExpiry(process.record.expiresAt, process.record.idleTimeoutMs) }
-        : {}),
-    };
-    await this.persistLiveProcessRecord(process);
+    await this.mutateLiveProcessRecord(process, async () => {
+      process.record = {
+        ...process.record,
+        updatedAt: this.now().toISOString(),
+        ...(process.record.lifecycle === "interactive"
+          ? { expiresAt: this.bumpExpiry(process.record.expiresAt, process.record.idleTimeoutMs) }
+          : {}),
+      };
+      await this.persistLiveProcessRecord(process);
+    });
   }
 
   private async pruneExpiredRetentionLeases(process: RunningProcess): Promise<void> {
-    if (process.record.lifecycle !== "retained") return;
-    const leases = activeRetentionLeases(process.record.retentionLeases, this.now());
-    if (leases.length === process.record.retentionLeases.length) return;
-    process.record = {
-      ...process.record,
-      retentionLeases: leases,
-      updatedAt: this.now().toISOString(),
-      ...(leases.length > 0 ? { expiresAt: latestLeaseExpiry(leases) } : {}),
-    };
-    await this.persistLiveProcessRecord(process);
+    await this.mutateLiveProcessRecord(process, async () => {
+      if (process.record.lifecycle !== "retained") return;
+      const leases = activeRetentionLeases(process.record.retentionLeases, this.now());
+      if (leases.length === process.record.retentionLeases.length) return;
+      process.record = {
+        ...process.record,
+        retentionLeases: leases,
+        updatedAt: this.now().toISOString(),
+        ...(leases.length > 0 ? { expiresAt: latestLeaseExpiry(leases) } : {}),
+      };
+      await this.persistLiveProcessRecord(process);
+    });
   }
 
   private async stopRetainedProcess(process: RunningProcess): Promise<void> {
-    process.stopRequested = true;
-    process.record = {
-      ...process.record,
-      lifecycle: "interactive",
-      retentionLeases: [],
-      updatedAt: this.now().toISOString(),
-    };
+    await this.mutateLiveProcessRecord(process, async () => {
+      if (process.stopRequested === false) {
+        process.stopRequested = true;
+        process.record = {
+          ...process.record,
+          lifecycle: "interactive",
+          retentionLeases: [],
+          updatedAt: this.now().toISOString(),
+        };
+        await this.persistLiveProcessRecord(process);
+      }
+    });
     signalProcessTree(process.child, "SIGTERM");
     await waitForProcessExit(process.child, 1500);
     if (isProcessRunning(process.child)) {
@@ -1077,8 +1216,35 @@ export class DevShellSupervisor {
   }
 
   private async persistLiveProcessRecord(process: RunningProcess): Promise<void> {
-    process.recordWrite = process.recordWrite.then(() => this.store.upsertProcess(process.record));
-    await process.recordWrite;
+    const snapshot = structuredClone(process.record);
+    const write = process.recordWrite.then(() => this.store.upsertProcess(snapshot));
+    process.recordWrite = write.catch(() => {});
+    await write;
+  }
+
+  private async updateStoredProcessRecord(
+    record: DevShellProcessRecord,
+    transcriptSize: number,
+  ): Promise<DevShellProcessRecord> {
+    const updated: DevShellProcessRecord = {
+      ...record,
+      outputCursor: Math.max(record.outputCursor, transcriptSize),
+      updatedAt: this.now().toISOString(),
+      ...(record.lifecycle === "interactive"
+        ? { expiresAt: this.bumpExpiry(record.expiresAt, record.idleTimeoutMs) }
+        : {}),
+    };
+    await this.store.upsertProcess(updated);
+    return updated;
+  }
+
+  private async mutateLiveProcessRecord<T>(
+    process: RunningProcess,
+    mutation: () => Promise<T> | T,
+  ): Promise<T> {
+    const result = process.recordMutation.then(mutation);
+    process.recordMutation = result.then(() => {}, () => {});
+    return result;
   }
 
   private bumpExpiry(current: string, fallbackMs: number): string {
@@ -1100,20 +1266,29 @@ function normalizeRetentionLease(
   input: DevProcessRetainInput,
   now: Date,
 ): DevShellProcessRecord["retentionLeases"][number] {
-  const leaseId = input.leaseId.trim();
-  const expiresAt = new Date(input.expiresAt);
+  const leaseId = typeof input.leaseId === "string" ? input.leaseId.trim() : "";
+  const expiresAt = new Date(
+    typeof input.expiresAt === "string" ? input.expiresAt : Number.NaN,
+  );
   if (
     leaseId.length === 0 ||
+    isRetentionKind(input.kind) === false ||
     Number.isFinite(expiresAt.getTime()) === false ||
     expiresAt <= now
   ) {
     throw createRuntimeFailure(
       "DEV_SHELL_RETENTION_INPUT_INVALID",
-      "Process retention requires a non-empty leaseId and a future expiresAt.",
+      "Process retention requires a non-empty leaseId, a supported kind, and a future expiresAt.",
       { subsystem: "dev_shell", processId: input.processId },
     );
   }
   return { leaseId, kind: input.kind, expiresAt: expiresAt.toISOString() };
+}
+
+function isRetentionKind(value: unknown): value is DevProcessRetainInput["kind"] {
+  return value === "workspace_preview" ||
+    value === "workspace_preview_provisional" ||
+    value === "standalone";
 }
 
 function activeRetentionLeases(
@@ -1137,6 +1312,70 @@ function describeRetention(record: DevShellProcessRecord): DevProcessRetentionRe
     lifecycle: record.lifecycle,
     leases: record.retentionLeases.map((lease) => ({ ...lease })),
   };
+}
+
+function attachFailureEvidence(
+  error: unknown,
+  cleanupFailures: Array<{ operation: string; message: string }>,
+): unknown {
+  if (cleanupFailures.length === 0) return error;
+  if (error instanceof RuntimeFailure) {
+    const combinedCleanupFailures = [
+      ...readCleanupFailures(error.details),
+      ...cleanupFailures,
+    ];
+    return new RuntimeFailure(error.code, error.message, {
+      ...(error.details ?? {}),
+      cleanupFailures: combinedCleanupFailures,
+    });
+  }
+  const wrapped = new Error(errorMessage(error), { cause: error });
+  const details = readErrorDetails(error);
+  const combinedCleanupFailures = [
+    ...readCleanupFailures(details),
+    ...cleanupFailures,
+  ];
+  wrapped.name = error instanceof Error ? error.name : wrapped.name;
+  Object.assign(wrapped, {
+    ...readErrorCode(error),
+    details: {
+      ...(details ?? {}),
+      cleanupFailures: combinedCleanupFailures,
+    },
+  });
+  return wrapped;
+}
+
+function readCleanupFailures(
+  details: Record<string, unknown> | undefined,
+): Array<{ operation: string; message: string }> {
+  if (!Array.isArray(details?.cleanupFailures)) return [];
+  return details.cleanupFailures.flatMap((value) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+    const record = value as Record<string, unknown>;
+    return typeof record.operation === "string" && typeof record.message === "string"
+      ? [{ operation: record.operation, message: record.message }]
+      : [];
+  });
+}
+
+function readErrorDetails(error: unknown): Record<string, unknown> | undefined {
+  if (typeof error !== "object" || error === null || Array.isArray(error)) return;
+  const details = (error as { details?: unknown }).details;
+  return typeof details === "object" && details !== null && !Array.isArray(details)
+    ? details as Record<string, unknown>
+    : undefined;
+}
+
+function readErrorCode(error: unknown): { code: string } | Record<string, never> {
+  const code = typeof error === "object" && error !== null
+    ? (error as { code?: unknown }).code
+    : undefined;
+  return typeof code === "string" ? { code } : {};
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function buildShellCommandExecutionPlan(input: {

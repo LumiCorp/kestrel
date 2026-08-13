@@ -9,6 +9,7 @@ import type {
   DevShellSourceWriteGuardResult,
   DevShellUnauthorizedSourceWrite,
 } from "../../src/devshell/contracts.js";
+import { DEV_SHELL_TIMEOUT_MS_MODEL_WARNING } from "../../src/devshell/contracts.js";
 import {
   findDevShellCommandSafetyIssue,
   normalizeDevShellExecCommand,
@@ -58,7 +59,7 @@ export const execCommandTool: SharedToolModule = {
   definition: {
     name: "exec_command",
     description:
-      "Start one Build-mode shell command and observe it briefly. Command shape: use command and do not include sessionId, stdin, or stop. Use desktop.host.open, not this tool, for explicitly requested Desktop application, file, or URL launches. In managed worktrees, commands run directly under the worktree checkpoint guard. Explicit direct-source workspaces run within their allowed roots. Read-only workspaces reject and restore source writes by default. For a formatter, generator, or codemod in a read-only workspace, set sourceMutation to capture; the command must settle in the initial observation window and returns a patchRef that must be committed with fs.apply_patch. If a command remains alive, the result has status running and a sessionId. Continue/read shape: only use sessionId returned by a running result, with optional stdin as raw input; include the newline a terminal user would press. Stop shape uses sessionId with stop=true. Never invent sessionId.",
+      `Start one Build-mode shell command and observe it briefly. Command shape: use command and do not include sessionId, stdin, or stop. yieldTimeMs controls only the initial observation window. ${DEV_SHELL_TIMEOUT_MS_MODEL_WARNING} Use desktop.host.open, not this tool, for explicitly requested Desktop application, file, or URL launches. In managed worktrees, commands run directly under the worktree checkpoint guard. Explicit direct-source workspaces run within their allowed roots. Read-only workspaces reject and restore source writes by default. For a formatter, generator, or codemod in a read-only workspace, set sourceMutation to capture; the command must settle in the initial observation window and returns a patchRef that must be committed with fs.apply_patch. If a command remains alive, the result has status running and a sessionId. Continue/read shape: only use sessionId returned by a running result, with optional stdin as raw input; include the newline a terminal user would press. Stop shape uses sessionId with stop=true. Never invent sessionId.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -88,8 +89,16 @@ export const execCommandTool: SharedToolModule = {
               type: "array",
               items: { type: "string", minLength: 1 },
             },
-            yieldTimeMs: { type: "number", minimum: 0 },
-            timeoutMs: { type: "number", minimum: 1 },
+            yieldTimeMs: {
+              type: "number",
+              minimum: 0,
+              description: "Initial observation window only; it does not limit process lifetime.",
+            },
+            timeoutMs: {
+              type: "number",
+              minimum: 1,
+              description: DEV_SHELL_TIMEOUT_MS_MODEL_WARNING,
+            },
             maxOutputBytes: { type: "number", minimum: 1 },
             envMode: {
               type: "string",
@@ -179,8 +188,16 @@ export const execCommandTool: SharedToolModule = {
           type: "array",
           items: { type: "string", minLength: 1 },
         },
-        yieldTimeMs: { type: "number", minimum: 0 },
-        timeoutMs: { type: "number", minimum: 1 },
+        yieldTimeMs: {
+          type: "number",
+          minimum: 0,
+          description: "Initial observation window only; it does not limit process lifetime.",
+        },
+        timeoutMs: {
+          type: "number",
+          minimum: 1,
+          description: DEV_SHELL_TIMEOUT_MS_MODEL_WARNING,
+        },
         maxOutputBytes: { type: "number", minimum: 1 },
         envMode: {
           type: "string",

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createRuntimeFailure, RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolContext, SharedToolModule } from "../contracts.js";
 import { parseObjectInput, readString } from "../helpers.js";
@@ -5,6 +6,7 @@ import { resolveKestrelOneAppRequest } from "./appTransport.js";
 
 const PUBLIC_WARNING =
   "This is an anonymous bearer URL. Anyone with the URL can access the application until the preview closes or expires.";
+const PREVIEW_PUBLICATION_LEASE_TTL_MS = 10 * 60_000;
 
 const sharedCapability = {
   freshnessClass: "live" as const,
@@ -44,7 +46,20 @@ export const workspacePreviewPublishTool: SharedToolModule = {
   createHandler: (context) => async (input) => {
     const body = parseObjectInput("workspace.preview.publish", input);
     const sessionId = requiredSessionId(body);
-    const payload = await requestPreview(context, "publish", ["previews"], {
+    const provisionalLeaseId = `workspace-preview-publish:${randomUUID()}`;
+    const provisionalExpiresAt = new Date(
+      Date.now() + PREVIEW_PUBLICATION_LEASE_TTL_MS,
+    ).toISOString();
+    let preview: ({ id: string; expiresAt: string } & Record<string, unknown>) | undefined;
+    let createdPreviewId: string | undefined;
+    let promotionCompleted = false;
+    try {
+      await retainPreviewPublicationProcess(context, {
+        processId: sessionId,
+        leaseId: provisionalLeaseId,
+        expiresAt: provisionalExpiresAt,
+      });
+      const payload = await requestPreview(context, "publish", ["previews"], {
         method: "POST",
         body: JSON.stringify({
           port: body.port,
@@ -52,22 +67,45 @@ export const workspacePreviewPublishTool: SharedToolModule = {
           ...(body.name !== undefined ? { name: body.name } : {}),
         }),
       });
-    const preview = requirePreview(payload);
-    try {
-      await retainPreviewProcess(context, {
+      createdPreviewId = previewIdFromPayload(payload);
+      preview = requirePreview(payload);
+      throwIfPreviewPublicationAborted(context.signal);
+      await promotePreviewProcess(context, {
         processId: sessionId,
+        fromLeaseId: provisionalLeaseId,
         previewId: preview.id,
         expiresAt: preview.expiresAt,
       });
+      promotionCompleted = true;
+      throwIfPreviewPublicationAborted(context.signal);
+      return withPublicWarning(withPreview(payload, {
+        ...preview,
+        sessionId,
+        retentionStatus: "active",
+      }));
     } catch (error) {
-      await closePreviewBestEffort(context, preview.id);
-      throw error;
+      const cleanupFailures: Array<{ operation: string; message: string }> = [];
+      if (createdPreviewId !== undefined) {
+        await closePreview(context, createdPreviewId).catch((cleanupError) => {
+          cleanupFailures.push({
+            operation: "close_preview",
+            message: errorMessage(cleanupError),
+          });
+        });
+      }
+      const retentionLeaseId = promotionCompleted && preview !== undefined
+        ? previewLeaseId(preview.id)
+        : provisionalLeaseId;
+      await releasePreviewRetention(context, retentionLeaseId).catch((cleanupError) => {
+        cleanupFailures.push({
+          operation: promotionCompleted
+            ? "release_preview_retention"
+            : "release_provisional_retention",
+          message: errorMessage(cleanupError),
+        });
+      });
+      throw withCleanupEvidence(error, cleanupFailures);
     }
-    return withPublicWarning(withPreview(payload, {
-      ...preview,
-      sessionId,
-      retentionStatus: "active",
-    }));
   },
 };
 
@@ -249,7 +287,8 @@ async function requestPreview(
   context: SharedToolContext,
   capability: "publish" | "list" | "inspect" | "renew" | "close",
   path: string[],
-  init: RequestInit = {}
+  init: RequestInit = {},
+  forwardContextSignal = true,
 ) {
   const runtimeName = `workspace.preview.${capability}`;
   const approval =
@@ -262,6 +301,9 @@ async function requestPreview(
   const transport = resolveKestrelOneAppRequest(context, pathname);
   const response = await (context.fetchImpl ?? fetch)(transport.url, {
     ...init,
+    ...(forwardContextSignal && init.signal === undefined && context.signal !== undefined
+      ? { signal: context.signal }
+      : {}),
     headers: {
       authorization: `Bearer ${transport.authorization}`,
       ...(init.body ? { "content-type": "application/json" } : {}),
@@ -330,6 +372,13 @@ function requirePreview(payload: unknown): { id: string; expiresAt: string } & R
   return preview as { id: string; expiresAt: string } & Record<string, unknown>;
 }
 
+function previewIdFromPayload(payload: unknown): string | undefined {
+  const preview = asRecord(asRecord(payload)?.preview);
+  return typeof preview?.id === "string" && preview.id.length > 0
+    ? preview.id
+    : undefined;
+}
+
 function withPreview(payload: unknown, preview: Record<string, unknown>) {
   return { ...(asRecord(payload) ?? {}), preview };
 }
@@ -352,6 +401,41 @@ async function retainPreviewProcess(
   });
 }
 
+async function retainPreviewPublicationProcess(
+  context: SharedToolContext,
+  input: { processId: string; leaseId: string; expiresAt: string },
+) {
+  const retain = requireRetentionService(context).retainProcess;
+  if (retain === undefined) throw retentionUnavailable();
+  return retain.call(context.devShellService, {
+    processId: input.processId,
+    leaseId: input.leaseId,
+    kind: "workspace_preview_provisional",
+    expiresAt: input.expiresAt,
+  });
+}
+
+async function promotePreviewProcess(
+  context: SharedToolContext,
+  input: { processId: string; fromLeaseId: string; previewId: string; expiresAt: string },
+) {
+  const promote = requireRetentionService(context).promoteProcessRetention;
+  if (promote === undefined) throw retentionUnavailable();
+  return promote.call(context.devShellService, {
+    processId: input.processId,
+    fromLeaseId: input.fromLeaseId,
+    leaseId: previewLeaseId(input.previewId),
+    kind: "workspace_preview",
+    expiresAt: input.expiresAt,
+  });
+}
+
+async function releasePreviewRetention(context: SharedToolContext, leaseId: string) {
+  const release = requireRetentionService(context).releaseProcessRetention;
+  if (release === undefined) throw retentionUnavailable();
+  return release.call(context.devShellService, { leaseId });
+}
+
 async function inspectPreviewRetention(context: SharedToolContext, previewId: string) {
   const inspect = requireRetentionService(context).inspectProcessRetention;
   if (inspect === undefined) throw retentionUnavailable();
@@ -371,8 +455,75 @@ function retentionUnavailable() {
   );
 }
 
-async function closePreviewBestEffort(context: SharedToolContext, previewId: string) {
-  await requestPreview(context, "close", ["previews", previewId], { method: "DELETE" }).catch(() => {});
+async function closePreview(context: SharedToolContext, previewId: string) {
+  await requestPreview(
+    context,
+    "close",
+    ["previews", previewId],
+    { method: "DELETE" },
+    false,
+  );
+}
+
+function withCleanupEvidence(
+  error: unknown,
+  cleanupFailures: Array<{ operation: string; message: string }>,
+): unknown {
+  if (cleanupFailures.length === 0) return error;
+  if (error instanceof RuntimeFailure) {
+    const combinedCleanupFailures = [
+      ...readCleanupFailures(error.details),
+      ...cleanupFailures,
+    ];
+    return new RuntimeFailure(error.code, error.message, {
+      ...(error.details ?? {}),
+      cleanupFailures: combinedCleanupFailures,
+    });
+  }
+  const wrapped = new Error(errorMessage(error), { cause: error });
+  const errorRecord = asRecord(error);
+  const existingDetails = asRecord(errorRecord?.details);
+  const combinedCleanupFailures = [
+    ...readCleanupFailures(existingDetails),
+    ...cleanupFailures,
+  ];
+  wrapped.name = error instanceof Error ? error.name : wrapped.name;
+  Object.assign(wrapped, {
+    ...(typeof errorRecord?.code === "string" ? { code: errorRecord.code } : {}),
+    details: {
+      ...(existingDetails ?? {}),
+      cleanupFailures: combinedCleanupFailures,
+    },
+    cleanupFailures: combinedCleanupFailures,
+  });
+  return wrapped;
+}
+
+function readCleanupFailures(
+  details: Record<string, unknown> | undefined,
+): Array<{ operation: string; message: string }> {
+  if (!Array.isArray(details?.cleanupFailures)) return [];
+  return details.cleanupFailures.flatMap((value) => {
+    const record = asRecord(value);
+    return typeof record?.operation === "string" && typeof record.message === "string"
+      ? [{ operation: record.operation, message: record.message }]
+      : [];
+  });
+}
+
+function throwIfPreviewPublicationAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted !== true) return;
+  throw signal.reason instanceof Error
+    ? signal.reason
+    : createRuntimeFailure(
+        "RUN_CANCELLED",
+        "Workspace preview publication was cancelled.",
+        { subsystem: "tooling" },
+      );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
