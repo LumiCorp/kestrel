@@ -6,8 +6,10 @@ import { ThreadRouteLoading } from "@/components/chatbot/thread-route-loading";
 import { DataStreamHandler } from "@/components/data-stream-handler";
 import { ThreadReadMarker } from "@/components/threads/thread-read-marker";
 import { resolvePreferredLanguageModelId } from "@/lib/ai/gateways";
+import { describeEnvironmentActivation } from "@/lib/environments/execution-route";
 import {
   getDefaultOrganizationEnvironment,
+  getThreadExecutionBindingState,
   resolveThreadEnvironment,
 } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
@@ -51,7 +53,14 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
     organizationId,
     environment?.id
   );
-  const [projectDetail, projectRows, durableState, interactions, readiness] =
+  const [
+    projectDetail,
+    projectRows,
+    durableState,
+    interactions,
+    readiness,
+    executionBindingState,
+  ] =
     await Promise.all([
       chat?.projectId
         ? getProjectDetail({
@@ -79,8 +88,23 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
           })
         : Promise.resolve([]),
       getOrganizationChatReadiness(organizationId),
+      chat
+        ? getThreadExecutionBindingState({
+            organizationId,
+            threadId: chat.id,
+          })
+        : Promise.resolve(null),
     ]);
   const uiMessages = chat ? convertToUIMessages(chat.messages) : [];
+  const environmentActivation = executionBindingState
+    ? describeEnvironmentActivation({
+        environmentStatus: executionBindingState.environment.status,
+        workspaceStatus: executionBindingState.workspace.status,
+        failureMessage:
+          executionBindingState.workspace.failureMessage ??
+          executionBindingState.environment.failureMessage,
+      })
+    : null;
 
   return (
     <>
@@ -89,6 +113,17 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
           environment
             ? { id: environment.id, name: environment.name }
             : undefined
+        }
+        environmentProvisioningNotice={
+          executionBindingState && environmentActivation?.status === "pending"
+            ? {
+                detail: environmentActivation.detail,
+                environmentName: executionBindingState.environment.name,
+                environmentStatus: executionBindingState.environment.status,
+                stage: environmentActivation.stage,
+                workspaceStatus: executionBindingState.workspace.status,
+              }
+            : null
         }
         archived={Boolean(chat?.archivedAt)}
         canManage={chat?.access.canManage ?? false}
