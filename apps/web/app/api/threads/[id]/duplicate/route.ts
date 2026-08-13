@@ -8,6 +8,7 @@ import {
   getThreadWithMessagesForUser,
   saveThreadMessages
 } from "@/lib/threads/store";
+import { readThreadWorkspaceHead } from "@/lib/threads/workspace-head";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 
@@ -28,12 +29,24 @@ export async function POST(
       return NextResponse.json({ error: "Thread not found" }, { status: 404 });
     }
 
+    const workspaceBaseRef =
+      source.workspaceMode === "isolated"
+        ? await readThreadWorkspaceHead({
+            organizationId,
+            threadId: source.id,
+            actorUserId: session.user.id,
+            unprovisionedBaseRef: source.workspaceBaseRef,
+          })
+        : null;
     const thread = await createThreadForUser({
       id: crypto.randomUUID(),
       userId: session.user.id,
       organizationId,
       projectId: source.projectId,
       mode: source.mode,
+      workspaceMode: source.workspaceMode,
+      workspaceBaseRef,
+      parentThreadId: source.id,
       title: `${source.title || "New thread"} copy`
     });
     if (!thread) throw new Error("Thread duplication failed.");

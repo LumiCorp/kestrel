@@ -21,6 +21,7 @@ export interface ManagedTaskWorktreeRequest {
   taskId?: string | undefined;
   taskKey?: string | undefined;
   threadId?: string | undefined;
+  parentThreadId?: string | undefined;
   isolation?: "scoped" | "session" | undefined;
   triggeringTool: string;
   approvalId?: string | undefined;
@@ -380,21 +381,34 @@ export class ManagedTaskWorktreeService {
     const sourceWorkspaceRoot = await resolveRealDirectory(input.sourceWorkspaceRoot, "sourceWorkspaceRoot");
     const sourceRepoRoot = await this.resolveSourceRepoRoot(sourceWorkspaceRoot, input.sourceRepoRoot);
     await this.ensureSourceHead(sourceRepoRoot);
-    const baseRefName = normalizeNonEmptyString(input.baseRef)
-      ?? await git(sourceRepoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "HEAD");
-    const baseHead = await git(sourceRepoRoot, ["rev-parse", "--verify", `${baseRefName}^{commit}`]).catch(() => {
-      throw createRuntimeFailure(
-        "MANAGED_WORKTREE_BASE_REF_INVALID",
-        `Managed worktree base ref '${baseRefName}' does not resolve to a commit.`,
-        { subsystem: "workspace", classification: "configuration", recoverable: true, sourceRepoRoot, baseRefName },
-      );
-    });
     const scope = resolveWorktreeScope(input);
     const setup = normalizeManagedWorktreeSetupSpec(input.setup);
     const worktreeRoot = await this.resolveCurrentWorktreeRoot({
       sourceRepoRoot,
       scope,
     });
+    const currentMetadata = await this.readMetadata({ worktreeRoot });
+    const reusableMetadata = currentMetadata?.sourceRepoRoot === sourceRepoRoot
+      && scopesEqual(currentMetadata.scope, scope)
+      ? currentMetadata
+      : undefined;
+    const parentHead =
+      !(reusableMetadata || normalizeNonEmptyString(input.baseRef)) &&
+      input.parentThreadId
+      ? await this.resolveThreadWorktreeHead(sourceRepoRoot, input.parentThreadId)
+      : undefined;
+    const baseRefName = reusableMetadata?.baseRefName
+      ?? normalizeNonEmptyString(input.baseRef)
+      ?? parentHead
+      ?? await git(sourceRepoRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "HEAD");
+    const baseHead = reusableMetadata?.baseHead
+      ?? await git(sourceRepoRoot, ["rev-parse", "--verify", `${baseRefName}^{commit}`]).catch(() => {
+        throw createRuntimeFailure(
+          "MANAGED_WORKTREE_BASE_REF_INVALID",
+          `Managed worktree base ref '${baseRefName}' does not resolve to a commit.`,
+          { subsystem: "workspace", classification: "configuration", recoverable: true, sourceRepoRoot, baseRefName },
+        );
+      });
 
     return {
       sessionId: input.sessionId,
@@ -1305,6 +1319,27 @@ export class ManagedTaskWorktreeService {
     return this.deriveBaseWorktreeRoot(input);
   }
 
+  private async resolveThreadWorktreeHead(sourceRepoRoot: string, threadId: string): Promise<string | undefined> {
+    const registry = await this.readBindingRegistry({
+      sourceRepoRoot,
+      scope: { kind: "threadId", value: threadId },
+    });
+    if (!registry?.currentWorktreeRoot) return;
+    return git(registry.currentWorktreeRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_PARENT_UNAVAILABLE",
+        "The parent Thread worktree HEAD is unavailable.",
+        {
+          subsystem: "workspace",
+          classification: "state",
+          recoverable: true,
+          parentThreadId: threadId,
+          parentWorktreeRoot: registry.currentWorktreeRoot,
+        },
+      );
+    });
+  }
+
   private async inspectExistingWorktree(
     proposal: ManagedTaskWorktreeProposal,
     leaseOwnerLookup?: ManagedTaskWorktreeLeaseOwnerLookup,
@@ -1327,10 +1362,6 @@ export class ManagedTaskWorktreeService {
     }
     if (metadata === undefined || metadataIdentityMatchesProposal(metadata, proposal) === false) {
       return { status: "invalid", reason: "metadata_mismatch" };
-    }
-    const targetHead = await git(proposal.worktreeRoot, ["rev-parse", "HEAD"]).catch(() => {});
-    if (targetHead !== metadata.baseHead) {
-      return { status: "recoverable", action: "rotate", reason: "metadata_mismatch" };
     }
     return { status: "valid", metadata };
   }

@@ -4107,7 +4107,8 @@ export function applyRequiredManagedWorkspacePolicy(
       "KESTREL_REQUIRE_MANAGED_WORKTREE requires KESTREL_WORKSPACE_ID and KESTREL_WORKSPACE_ROOT.",
     );
   }
-  const isolation = parseEnvString("KESTREL_MANAGED_WORKTREE_ISOLATION", env);
+  const isolation = workspace?.managedWorktreeIsolation
+    ?? parseEnvString("KESTREL_MANAGED_WORKTREE_ISOLATION", env);
   if (
     isolation !== undefined &&
     isolation !== "scoped" &&
@@ -4116,6 +4117,21 @@ export function applyRequiredManagedWorkspacePolicy(
     throw new Error(
       "KESTREL_MANAGED_WORKTREE_ISOLATION must be 'scoped' or 'session'.",
     );
+  }
+  if (
+    workspace?.managedWorktreeRequired === false &&
+    workspace.managedWorktreeScope === "thread"
+  ) {
+    return {
+      workspaceId,
+      workspaceRoot,
+      appRoot: ".",
+      commands: {},
+      ...(workspace.label !== undefined ? { label: workspace.label } : {}),
+      managedWorktreeRequired: false,
+      managedWorktreeScope: "thread",
+      sourceWorkspaceRoot: workspaceRoot,
+    };
   }
   return {
     workspaceId,
@@ -4126,6 +4142,12 @@ export function applyRequiredManagedWorkspacePolicy(
     managedWorktreeRequired: true,
     sourceWorkspaceRoot: workspaceRoot,
     ...(isolation !== undefined ? { managedWorktreeIsolation: isolation } : {}),
+    ...(workspace?.managedWorktreeScope !== undefined
+      ? { managedWorktreeScope: workspace.managedWorktreeScope }
+      : {}),
+    ...(workspace?.managedWorktreeParentThreadId !== undefined
+      ? { managedWorktreeParentThreadId: workspace.managedWorktreeParentThreadId }
+      : {}),
   };
 }
 

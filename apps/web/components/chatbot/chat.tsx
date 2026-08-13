@@ -10,6 +10,7 @@ import { formatISO } from "date-fns";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
   useCallback,
   useEffect,
@@ -32,6 +33,7 @@ import {
 } from "@/components/chatbot/ui/alert-dialog";
 import { useArtifact, useArtifactSelector } from "@/hooks/use-artifact";
 import { useChatVisibility } from "@/hooks/use-chat-visibility";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CompatibleChatTransport } from "@/lib/chat/compatible-chat-transport";
 import {
   assertMatchingResumeTurnId,
@@ -520,6 +522,7 @@ function ChatShell({
   threadExists,
   newTurnDisabledReason,
   environmentProvisioningNotice,
+  workspaceModeControl,
 }: {
   addToolApprovalResponse: ChatController["addToolApprovalResponse"];
   archived: boolean;
@@ -567,6 +570,7 @@ function ChatShell({
   threadExists: boolean;
   newTurnDisabledReason?: string;
   environmentProvisioningNotice?: EnvironmentProvisioningNotice | null;
+  workspaceModeControl?: ReactNode;
 }) {
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
 
@@ -643,7 +647,9 @@ function ChatShell({
             </div>
           ) : null}
           {!isReadonly && (
-            <MultimodalInput
+            <>
+              {workspaceModeControl}
+              <MultimodalInput
               activeEnvironmentName={activeEnvironment?.name}
               attachments={attachments}
               clearError={clearError}
@@ -666,7 +672,8 @@ function ChatShell({
               setMessages={setMessages}
               status={status}
               threadId={threadId}
-            />
+              />
+            </>
           )}
         </div>
       </div>
@@ -747,6 +754,7 @@ export function BootstrapChat({
   const searchParams = useSearchParams();
   const query = searchParams.get("query");
   const [hasAppendedQuery, setHasAppendedQuery] = useState(false);
+  const [startInNewWorktree, setStartInNewWorktree] = useState(false);
 
   useEffect(() => {
     resetArtifact();
@@ -785,6 +793,7 @@ export function BootstrapChat({
       messageParts: userMessage.parts,
       modelId: shared.currentModelIdRef.current,
       interactionMode: shared.interactionModeRef.current,
+      workspaceMode: startInNewWorktree ? "isolated" : "primary",
       createdAt: Date.now(),
       pendingAssistant: true,
     });
@@ -827,6 +836,22 @@ export function BootstrapChat({
           projectId ? `&projectId=${encodeURIComponent(projectId)}` : undefined
         }
         newTurnDisabledReason={newTurnDisabledReason}
+        workspaceModeControl={
+          <label
+            className="flex items-center gap-2 px-1 text-muted-foreground text-sm"
+            htmlFor="start-in-new-worktree"
+          >
+            <Checkbox
+              aria-label="Start in new worktree"
+              checked={startInNewWorktree}
+              id="start-in-new-worktree"
+              onCheckedChange={(checked) =>
+                setStartInNewWorktree(checked === true)
+              }
+            />
+            <span>Start in new worktree</span>
+          </label>
+        }
         onFeedbackChange={() => {}}
         onModelChange={shared.setCurrentModelId}
         onInteractionModeChange={shared.setInteractionMode}
@@ -1385,6 +1410,7 @@ export function Chat({
       body: {
         ...(handoff.projectId ? { projectId: handoff.projectId } : {}),
         interactionMode: handoff.interactionMode,
+        workspaceMode: handoff.workspaceMode,
       },
     });
   }, [

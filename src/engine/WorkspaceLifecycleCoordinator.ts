@@ -319,13 +319,29 @@ export class WorkspaceLifecycleCoordinator {
     const agent = asRecord(input.session.state.agent) ?? {};
     const sourceRepoRoot = asString(workspace?.sourceRepoRoot) ?? asString(workspace?.repoRoot);
     const baseRef = asString(workspace?.managedWorktreeBaseRef);
+    const parentThreadId = asString(workspace?.managedWorktreeParentThreadId);
+    const requestedScope = asString(workspace?.managedWorktreeScope);
+    if (requestedScope !== undefined && requestedScope !== "thread") {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_SCOPE_INVALID",
+        "Managed worktree scope must be 'thread' when provided.",
+        {
+          subsystem: "workspace",
+          classification: "contract",
+          recoverable: true,
+          requestedScope,
+        },
+      );
+    }
+    const threadScoped = requestedScope === "thread";
     const setup = parseManagedTaskWorktreeSetupSpec(workspace?.managedWorktreeSetup);
     const isolation = asManagedWorktreeIsolation(workspace?.managedWorktreeIsolation);
-    const taskId =
-      asString(asRecord(input.event.payload.orchestration)?.taskId) ??
-      asString(asRecord(input.event.payload.metadata)?.taskId);
+    const taskId = threadScoped
+      ? undefined
+      : asString(asRecord(input.event.payload.orchestration)?.taskId) ??
+        asString(asRecord(input.event.payload.metadata)?.taskId);
     const taskKey =
-      isolation === "session"
+      isolation === "session" || threadScoped
         ? undefined
         : asString(asRecord(input.event.payload.orchestration)?.taskKey) ??
           asString(asRecord(input.event.payload.metadata)?.taskKey) ??
@@ -337,6 +353,7 @@ export class WorkspaceLifecycleCoordinator {
       sourceWorkspaceRoot,
       ...(sourceRepoRoot !== undefined ? { sourceRepoRoot } : {}),
       ...(baseRef !== undefined ? { baseRef } : {}),
+      ...(parentThreadId !== undefined ? { parentThreadId } : {}),
       ...(setup !== undefined ? { setup } : {}),
       ...(taskId !== undefined ? { taskId } : {}),
       ...(taskKey !== undefined ? { taskKey } : {}),
@@ -352,6 +369,7 @@ export class WorkspaceLifecycleCoordinator {
         sourceWorkspaceRoot,
         ...(sourceRepoRoot !== undefined ? { sourceRepoRoot } : {}),
         ...(baseRef !== undefined ? { baseRef } : {}),
+        ...(parentThreadId !== undefined ? { parentThreadId } : {}),
         ...(setup !== undefined ? { setup } : {}),
         ...(taskId !== undefined ? { taskId } : {}),
         ...(taskKey !== undefined ? { taskKey } : {}),

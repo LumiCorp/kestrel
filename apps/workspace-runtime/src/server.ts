@@ -51,6 +51,7 @@ import {
   WorkspaceRequestError
 } from "./security.js";
 import { WorkspaceTerminalRegistry } from "./terminals.js";
+import { readThreadWorkspaceHead } from "./worktree-head.js";
 import {
   WorkspaceSkillManager,
   type WorkspaceSkillSource
@@ -178,6 +179,19 @@ const server = createServer(async (request, response) => {
         port: 43_105,
         path: request.url ?? url.pathname,
         authorization: `Bearer ${runnerToken}`
+      });
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      url.pathname === "/v1/worktrees/current-head"
+    ) {
+      requireCapability(ticket.capabilities, "workspace.files.read");
+      writeJson(response, 200, {
+        head: await readThreadWorkspaceHead(
+          config.workspaceRoot,
+          ticket.threadId,
+        ),
       });
       return;
     }

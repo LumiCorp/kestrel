@@ -115,6 +115,7 @@ export async function POST(
         organizationId,
         projectId: body.projectId,
         mode: "chat",
+        workspaceMode: body.workspaceMode ?? "primary",
         title: "",
       });
       if (!createdThread) {

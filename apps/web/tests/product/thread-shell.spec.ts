@@ -8,6 +8,67 @@ test.beforeEach(async ({ page }) => {
   await expect(page).toHaveURL("/dashboard");
 });
 
+test("new Threads default to primary and can explicitly start in a worktree", async ({
+  page,
+}) => {
+  let submittedBody: unknown;
+  await page.route("**/api/threads/*", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    submittedBody = route.request().postDataJSON();
+    await route.abort();
+  });
+  await page.goto("/threads/new");
+  const worktree = page.getByRole("checkbox", {
+    name: "Start in new worktree",
+  });
+  await expect(worktree).not.toBeChecked();
+  await worktree.check();
+  await page.getByRole("textbox", { name: "Send a message..." }).fill(
+    "Use an isolated checkout.",
+  );
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect.poll(() => submittedBody).toMatchObject({
+    workspaceMode: "isolated",
+  });
+});
+
+test("Thread duplication preserves primary mode and branches isolated mode", async ({
+  page,
+}) => {
+  const primaryId = randomUUID();
+  const primaryResponse = await page.context().request.post("/api/threads", {
+    data: { id: primaryId },
+  });
+  expect(primaryResponse.ok()).toBe(true);
+  expect(await primaryResponse.json()).toMatchObject({
+    id: primaryId,
+    workspaceMode: "primary",
+  });
+  const primaryCopy = await page.context().request.post(
+    `/api/threads/${primaryId}/duplicate`,
+  );
+  expect(primaryCopy.ok()).toBe(true);
+  expect(await primaryCopy.json()).toMatchObject({
+    thread: { parentThreadId: primaryId, workspaceMode: "primary" },
+  });
+
+  const isolatedId = randomUUID();
+  const isolatedResponse = await page.context().request.post("/api/threads", {
+    data: { id: isolatedId, workspaceMode: "isolated" },
+  });
+  expect(isolatedResponse.ok()).toBe(true);
+  const isolatedCopy = await page.context().request.post(
+    `/api/threads/${isolatedId}/duplicate`,
+  );
+  expect(isolatedCopy.ok()).toBe(true);
+  expect(await isolatedCopy.json()).toMatchObject({
+    thread: { parentThreadId: isolatedId, workspaceMode: "isolated" },
+  });
+});
+
 test("Thread shell keeps document fixed while the transcript scrolls", async ({
   page,
 }) => {

@@ -149,6 +149,8 @@ export interface WorkspaceRuntimeContext {
   managedWorktreeIsolation?: "scoped" | "session" | undefined;
   sourceWorkspaceRoot?: string | undefined;
   managedWorktreeBaseRef?: string | undefined;
+  managedWorktreeParentThreadId?: string | undefined;
+  managedWorktreeScope?: "thread" | undefined;
   managedWorktreeSetup?: ManagedTaskWorktreeSetupSpec | undefined;
 }
 

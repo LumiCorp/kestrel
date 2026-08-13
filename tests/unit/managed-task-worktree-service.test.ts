@@ -511,6 +511,90 @@ test("ManagedTaskWorktreeService reuses thread-scoped worktrees across sessions 
   assert.deepEqual(second.binding.scope, { kind: "threadId", value: "thread-main" });
 });
 
+test("ManagedTaskWorktreeService reuses a committed Thread worktree and branches a child from its HEAD", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-branch-"));
+  const repo = path.join(root, "repo");
+  const home = path.join(root, "home");
+  await initRepo(repo);
+  const service = new ManagedTaskWorktreeService({ homeDir: home });
+  const parent = await service.provision({
+    sessionId: "thread-parent",
+    runId: "run-parent",
+    sourceWorkspaceRoot: repo,
+    threadId: "thread-parent",
+    triggeringTool: "fs.write_text",
+  });
+  await writeFile(path.join(parent.binding.worktreeRoot, "branch.txt"), "parent head\n", "utf8");
+  await git(parent.binding.worktreeRoot, ["add", "branch.txt"]);
+  await git(parent.binding.worktreeRoot, ["commit", "-m", "parent head"]);
+  const parentHead = await git(parent.binding.worktreeRoot, ["rev-parse", "HEAD"]);
+  await service.releaseLease(parent.binding, { runId: "run-parent" });
+
+  const reusedParent = await service.provision({
+    sessionId: "thread-parent-next-turn",
+    runId: "run-parent-next-turn",
+    sourceWorkspaceRoot: repo,
+    threadId: "thread-parent",
+    triggeringTool: "dev.shell.run",
+  });
+  assert.equal(reusedParent.disposition, "reused");
+  assert.equal(reusedParent.binding.worktreeRoot, parent.binding.worktreeRoot);
+  assert.equal(await git(reusedParent.binding.worktreeRoot, ["rev-parse", "HEAD"]), parentHead);
+  await service.releaseLease(reusedParent.binding, { runId: "run-parent-next-turn" });
+
+  const child = await service.provision({
+    sessionId: "thread-child",
+    runId: "run-child",
+    sourceWorkspaceRoot: repo,
+    threadId: "thread-child",
+    parentThreadId: "thread-parent",
+    triggeringTool: "fs.write_text",
+  });
+  assert.equal(child.binding.baseHead, parentHead);
+  assert.equal(await readFile(path.join(child.binding.worktreeRoot, "branch.txt"), "utf8"), "parent head\n");
+});
+
+test("ManagedTaskWorktreeService reuses a child after its parent worktree is removed", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-parent-cleanup-"));
+  const repo = path.join(root, "repo");
+  const home = path.join(root, "home");
+  await initRepo(repo);
+  const service = new ManagedTaskWorktreeService({ homeDir: home });
+  const parent = await service.provision({
+    sessionId: "thread-parent",
+    runId: "run-parent",
+    sourceWorkspaceRoot: repo,
+    threadId: "thread-parent",
+    triggeringTool: "fs.write_text",
+  });
+  await service.releaseLease(parent.binding, { runId: "run-parent" });
+  const child = await service.provision({
+    sessionId: "thread-child",
+    runId: "run-child",
+    sourceWorkspaceRoot: repo,
+    threadId: "thread-child",
+    parentThreadId: "thread-parent",
+    baseRef: parent.binding.baseHead,
+    triggeringTool: "fs.write_text",
+  });
+  await service.releaseLease(child.binding, { runId: "run-child" });
+  await service.cleanupManagedWorktree(parent.binding, {
+    snapshotCheckpointId: "checkpoint-parent",
+  });
+
+  const reused = await service.provision({
+    sessionId: "thread-child-next",
+    runId: "run-child-next",
+    sourceWorkspaceRoot: repo,
+    threadId: "thread-child",
+    parentThreadId: "thread-parent",
+    baseRef: parent.binding.baseHead,
+    triggeringTool: "dev.shell.run",
+  });
+  assert.equal(reused.disposition, "reused");
+  assert.equal(reused.binding.worktreeRoot, child.binding.worktreeRoot);
+});
+
 test("ManagedTaskWorktreeService keeps different task scopes in one thread isolated", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-task-isolation-"));
   const repo = path.join(root, "repo");

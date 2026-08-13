@@ -60,6 +60,10 @@ import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import { synchronizeProjectSkills } from "@/lib/projects/skills";
 import { issueHostedMcpRunContext } from "@/lib/mcp/grant-service";
 import type { ResolvedOciMcpEgressBindingV1 } from "@kestrel/mcp-security";
+import {
+  resolveThreadRuntimeWorkspace,
+  type ThreadWorkspaceMode,
+} from "@/lib/threads/workspace-mode";
 
 const DEFAULT_PROFILE_ID = "kestrel";
 const DEFAULT_HOSTED_AGENT_ID = "kestrel-one";
@@ -329,6 +333,9 @@ export type KestrelOneAgentResponseInput = {
   organizationId: string;
   environmentId: string;
   threadId: string;
+  workspaceMode: ThreadWorkspaceMode;
+  workspaceBaseRef?: string | null;
+  parentThreadId?: string | null;
   durableTurnId?: string | undefined;
   messages: UIMessage[];
   approvalDecision?:
@@ -373,6 +380,9 @@ function createModelAwareKestrelOneAgent(input: {
   organizationId: string;
   environmentId: string;
   threadId: string;
+  workspaceMode: ThreadWorkspaceMode;
+  workspaceBaseRef?: string | null;
+  parentThreadId?: string | null;
   actorUserId: string;
   durableTurnId?: string | undefined;
   projectContextRevisionId?: string | undefined;
@@ -541,9 +551,15 @@ function createModelAwareKestrelOneAgent(input: {
                 resolvedPolicy: route.mcpPolicy,
               })
             : undefined;
+          const runtimeWorkspace = resolveThreadRuntimeWorkspace(
+            input.workspaceMode,
+            input.parentThreadId,
+            input.workspaceBaseRef,
+          );
           const normalizedTurn = {
             ...turn,
             eventType,
+            ...(runtimeWorkspace ? { workspace: runtimeWorkspace } : {}),
             ...(projectSkills
               ? { workspaceSkills: projectSkills.catalog }
               : {}),
@@ -828,6 +844,19 @@ export async function generateKestrelOneExternalReply(input: {
   prompt: string;
   actor: RunnerActorMetadata;
 }) {
+  const thread = await knowledgeDb.query.threads.findFirst({
+    where: (table, { and, eq }) =>
+      and(
+        eq(table.id, input.sessionId),
+        eq(table.organizationId, input.organizationId),
+      ),
+    columns: {
+      workspaceMode: true,
+      workspaceBaseRef: true,
+      parentThreadId: true,
+    },
+  });
+  if (!thread) throw new Error("Thread workspace mode is unavailable.");
   const route = await resolveEnvironmentExecutionRoute({
     organizationId: input.organizationId,
     threadId: input.sessionId,
@@ -930,6 +959,11 @@ export async function generateKestrelOneExternalReply(input: {
           resolvedPolicy: route.mcpPolicy,
         })
       : undefined;
+    const runtimeWorkspace = resolveThreadRuntimeWorkspace(
+      thread.workspaceMode,
+      thread.parentThreadId,
+      thread.workspaceBaseRef,
+    );
     const result = await generateKestrelOneExternalReplyFromAgent({
       agent: {
         run: (turn, requestContext) =>
@@ -939,6 +973,7 @@ export async function generateKestrelOneExternalReply(input: {
               turn: {
                 ...turn,
                 eventType: turn.eventType || "user.message",
+                ...(runtimeWorkspace ? { workspace: runtimeWorkspace } : {}),
               },
             },
             requestContext,
@@ -1072,6 +1107,9 @@ export async function createKestrelOneAgentResponse(
         organizationId: input.organizationId,
         environmentId: input.environmentId,
         threadId: input.threadId,
+        workspaceMode: input.workspaceMode,
+        workspaceBaseRef: input.workspaceBaseRef,
+        parentThreadId: input.parentThreadId,
         actorUserId: input.session.user.id,
         durableTurnId: input.durableTurnId,
         projectContextRevisionId: input.projectContext?.contextRevisionId,

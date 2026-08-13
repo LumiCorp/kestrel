@@ -8,6 +8,7 @@ import { getMobileV2ThreadSnapshot } from "@/lib/mobile/v2/snapshot";
 import { mobileOrganizationSetupRequiredTurnResponse } from "@/lib/organizations/turn-readiness";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
+import { readThreadWorkspaceHead } from "@/lib/threads/workspace-head";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
 import { createMobileThreadBranchWithFirstTurn } from "@/lib/turns/store";
 
@@ -40,11 +41,21 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       resolveThreadEnvironment({ organizationId, threadId: parent.id }),
     ]);
     if (!environment) return mobileErrorResponse(new Error("Environment unavailable"), 503);
+    const workspaceBaseRef =
+      parent.workspaceMode === "isolated"
+        ? await readThreadWorkspaceHead({
+            organizationId,
+            threadId: parent.id,
+            actorUserId: session.user.id,
+            unprovisionedBaseRef: parent.workspaceBaseRef,
+          })
+        : null;
     const durable = await createMobileThreadBranchWithFirstTurn({
       threadId: body.id,
       parentThreadId,
       anchorMessageId: body.anchorMessageId,
       projectId: parent.projectId,
+      workspaceBaseRef,
       organizationId,
       authorUserId: session.user.id,
       requestedEnvironmentId: environment.id,

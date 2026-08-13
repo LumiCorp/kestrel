@@ -51,6 +51,7 @@ function buildRecord(): ChatFirstTurnHandoff {
     ],
     modelId: "chat-model-1",
     interactionMode: "plan",
+    workspaceMode: "primary",
     createdAt: 1_700_000_000_000,
     pendingAssistant: true,
   };

@@ -29,6 +29,8 @@ function isValidRecord(value: unknown): value is ChatFirstTurnHandoff {
     ) &&
     typeof candidate.modelId === "string" &&
     isKestrelOneInteractionMode(candidate.interactionMode) &&
+    (candidate.workspaceMode === "primary" ||
+      candidate.workspaceMode === "isolated") &&
     typeof candidate.createdAt === "number" &&
     typeof candidate.pendingAssistant === "boolean"
   );
