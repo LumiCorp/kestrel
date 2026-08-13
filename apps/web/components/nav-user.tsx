@@ -3,7 +3,6 @@
 import {
   BadgeCheck,
   ChevronsUpDown,
-  CreditCard,
   LogOut,
   Palette,
 } from "lucide-react";
@@ -110,12 +109,6 @@ export function NavUser({ session }: { session: Session | null }) {
                 <Link href="/settings/profile">
                   <BadgeCheck />
                   Account
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/organization/billing">
-                  <CreditCard />
-                  Billing
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>

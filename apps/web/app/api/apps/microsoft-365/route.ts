@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
+import { requireInstalledAppForOrganization } from "@/lib/apps/service";
 import { auth } from "@/lib/auth";
 import {
   hasMicrosoft365PackScopes,
@@ -9,6 +10,7 @@ import {
   scopesForMicrosoft365Packs,
 } from "@/lib/integrations/microsoft-365-contract";
 import {
+  disconnectMicrosoft365Connection,
   findMicrosoft365Connection,
   findMicrosoftAuthAccount,
   packsFromMicrosoft365Connection,
@@ -45,6 +47,10 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const { organizationId, session } = await requireActiveOrganization();
+    await requireInstalledAppForOrganization({
+      organizationId,
+      appKey: "microsoft_365",
+    });
     if (!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET)) {
       throw new Error("Microsoft 365 connection is not configured for this deployment.");
     }
@@ -97,9 +103,10 @@ export async function POST(request: Request) {
     }
 
     const origin = new URL(request.url).origin;
-    const callback = new URL("/apps/microsoft_365", origin);
+    const callback = new URL("/settings/connections", origin);
     callback.searchParams.set("microsoft365", "linked");
     callback.searchParams.set("packs", packs.join(","));
+    callback.hash = "microsoft-365";
     const errorCallback = new URL(callback);
     errorCallback.searchParams.set("microsoft365", "error");
     const result = await auth.api.oAuth2LinkAccount({
@@ -112,6 +119,19 @@ export async function POST(request: Request) {
       },
     });
     return NextResponse.json(result);
+  } catch (error) {
+    return errorResponse(error, 400);
+  }
+}
+
+export async function DELETE() {
+  try {
+    const { organizationId, session } = await requireActiveOrganization();
+    const connection = await disconnectMicrosoft365Connection({
+      organizationId,
+      userId: session.user.id,
+    });
+    return NextResponse.json({ connection });
   } catch (error) {
     return errorResponse(error, 400);
   }

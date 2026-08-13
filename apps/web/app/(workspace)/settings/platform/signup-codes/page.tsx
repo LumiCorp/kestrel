@@ -1,8 +1,5 @@
-import { SignupCodesClient } from "@/components/settings/signup-codes-client";
-import { requireAuthenticatedShell } from "@/lib/knowledge/auth";
-import { listSignupAccessCodes } from "@/lib/signup-access-codes";
+import { permanentRedirect } from "next/navigation";
 
-export default async function SignupCodesPage() {
-  await requireAuthenticatedShell({ requireAdmin: true });
-  return <SignupCodesClient initialCodes={await listSignupAccessCodes()} />;
+export default function LegacyPlatformSignupCodesPage() {
+  permanentRedirect("/platform/signup-codes");
 }

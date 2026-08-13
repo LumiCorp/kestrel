@@ -10,12 +10,16 @@ import type { OrganizationSnapshot, Session } from "@/lib/auth-types";
 
 export function AuthenticatedAppShell({
   activeOrganization,
+  canManageActiveOrganization,
   children,
+  isPlatformAdmin,
   sectionLabel,
   session,
 }: {
   activeOrganization: OrganizationSnapshot | null;
+  canManageActiveOrganization: boolean;
   children: ReactNode;
+  isPlatformAdmin: boolean;
   sectionLabel: string;
   session: Session;
 }) {
@@ -23,6 +27,8 @@ export function AuthenticatedAppShell({
     <SidebarProvider>
       <AppSidebar
         activeOrganization={activeOrganization}
+        canManageActiveOrganization={canManageActiveOrganization}
+        isPlatformAdmin={isPlatformAdmin}
         session={session}
       />
       <SidebarInset className="min-h-0 min-w-0 overflow-hidden">

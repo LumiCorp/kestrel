@@ -31,7 +31,7 @@ export default function AdminEnvironmentOperationsError({
       <div className="flex gap-3">
         <Button onClick={() => reset()}>Try again</Button>
         <Button asChild variant="outline">
-          <Link href="/admin/docs">Open admin docs</Link>
+          <Link href="/platform/docs">Open platform docs</Link>
         </Button>
       </div>
     </div>

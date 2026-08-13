@@ -2,16 +2,9 @@
 
 import {
   KeyRound,
-  Mail,
   Palette,
   PlugZap,
-  ScrollText,
-  Server,
-  Sparkles,
-  ShieldCheck,
-  TicketCheck,
   User,
-  Users,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -33,25 +26,7 @@ const personalItems: SettingsItem[] = [
   { href: "/settings/profile", icon: User, label: "Profile" },
   { href: "/settings/appearance", icon: Palette, label: "Appearance" },
   { href: "/settings/api-keys", icon: KeyRound, label: "API keys" },
-  { href: "/apps?view=connections", icon: PlugZap, label: "Connections" },
-];
-
-const platformItems: SettingsItem[] = [
-  {
-    href: "/settings/platform/signup-codes",
-    icon: TicketCheck,
-    label: "Signup codes",
-  },
-  {
-    href: "/settings/platform/users",
-    icon: Users,
-    label: "Users",
-  },
-  {
-    href: "/settings/platform/email",
-    icon: Mail,
-    label: "System email",
-  },
+  { href: "/settings/connections", icon: PlugZap, label: "Connections" },
 ];
 
 function isItemActive(pathname: string, href: string) {
@@ -59,17 +34,10 @@ function isItemActive(pathname: string, href: string) {
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 
-export function SettingsNavigation({
-  isAppAdmin,
-}: {
-  isAppAdmin: boolean;
-}) {
+export function SettingsNavigation() {
   const pathname = usePathname();
   const router = useRouter();
-  const groups: SettingsGroup[] = [
-    { label: "Personal", items: personalItems },
-    ...(isAppAdmin ? [{ label: "Platform", items: platformItems }] : []),
-  ];
+  const groups: SettingsGroup[] = [{ label: "Personal", items: personalItems }];
   const selectedHref =
     groups
       .flatMap((group) => group.items)

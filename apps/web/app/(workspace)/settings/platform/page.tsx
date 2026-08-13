@@ -1,7 +1,5 @@
-import { redirect } from "next/navigation";
-import { requireAdmin } from "@/lib/knowledge/auth";
+import { permanentRedirect } from "next/navigation";
 
-export default async function PlatformSettingsPage() {
-  await requireAdmin();
-  redirect("/settings/platform/users");
+export default function PlatformSettingsPage() {
+  permanentRedirect("/platform/users");
 }

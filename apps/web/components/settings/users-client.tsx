@@ -32,7 +32,7 @@ import { TimeText } from "@/components/ui/time-text";
 import {
   deleteAdminUserAction,
   updateAdminUserRoleAction,
-} from "@/app/admin/users/actions";
+} from "@/app/(workspace)/platform/users/actions";
 
 type AdminUser = {
   id: string;
@@ -114,7 +114,7 @@ export function UsersAdminClient({
     <SettingsPage>
       <SettingsPageHeader
         description="Inspect account activity, review chat usage, and manage admin role assignment."
-        eyebrow="Admin"
+        eyebrow="Platform"
         title="Users"
       />
 

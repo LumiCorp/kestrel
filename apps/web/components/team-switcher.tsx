@@ -2,7 +2,6 @@
 
 import { Building2, ChevronsUpDown, Plus, Settings2 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -31,12 +30,15 @@ import { cn } from "@/lib/utils";
 import { CreateOrganizationDialog } from "./create-organization-dialog";
 
 export function TeamSwitcher({
+  canManageActiveOrganization,
   initialActiveOrganization = null,
+  onSwitchPendingChange,
 }: {
+  canManageActiveOrganization: boolean;
   initialActiveOrganization?: OrganizationSnapshot | null;
+  onSwitchPendingChange?: (pending: boolean) => void;
 }) {
   const { isMobile } = useSidebar();
-  const router = useRouter();
   const organizations = useListOrganizations();
   const activeOrgData = useActiveOrganization();
   const [activeOrgId, setActiveOrgId] = useState<string | null>(
@@ -69,6 +71,10 @@ export function TeamSwitcher({
       : null) ??
     personalOrg;
   const activeIsPersonal = isPersonalOrganization(activeOrg);
+  const canManageDisplayedOrganization =
+    pendingOrgId === null &&
+    activeOrg?.id === initialActiveOrganization?.id &&
+    canManageActiveOrganization;
 
   const handleSetActive = async (orgId: string) => {
     if (orgId === activeOrgId || pendingOrgId) {
@@ -77,6 +83,7 @@ export function TeamSwitcher({
     const previousOrgId = activeOrgId;
     setActiveOrgId(orgId);
     setPendingOrgId(orgId);
+    onSwitchPendingChange?.(true);
 
     try {
       const { data, error } = await organization.setActive({
@@ -85,12 +92,12 @@ export function TeamSwitcher({
       if (error || !data) {
         throw new Error(error?.message || "Organization switch failed");
       }
-      router.refresh();
+      window.location.reload();
     } catch {
       setActiveOrgId(previousOrgId);
-      toast.error("Organization could not be changed");
-    } finally {
       setPendingOrgId(null);
+      onSwitchPendingChange?.(false);
+      toast.error("Organization could not be changed");
     }
   };
 
@@ -161,7 +168,7 @@ export function TeamSwitcher({
                 )}
               </DropdownMenuItem>
             ))}
-            {activeOrg ? (
+            {activeOrg && canManageDisplayedOrganization ? (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>

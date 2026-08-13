@@ -34,7 +34,9 @@ test("pilot operation surfaces lead with attention and disclose evidence", () =>
   const environmentActivity = read(
     "app/(workspace)/organization/environments/[id]/activity/page.tsx"
   );
-  const platformOperations = read("app/admin/environments/page.tsx");
+  const platformOperations = read(
+    "app/(workspace)/platform/operations/page.tsx",
+  );
 
   assert.match(environmentActivity, /title="Activity"/u);
   assert.match(environmentActivity, /title="Operations"/u);
@@ -46,8 +48,8 @@ test("pilot operation surfaces lead with attention and disclose evidence", () =>
   assert.match(environmentActivity, /\{operation\.id\}/u);
 
   assert.match(platformOperations, /Requires attention/u);
-  assert.match(platformOperations, /href="\/admin\/environments\?view=active"/u);
-  assert.match(platformOperations, /href="\/admin\/environments\?view=history"/u);
+  assert.match(platformOperations, /href="\/platform\/operations\?view=active"/u);
+  assert.match(platformOperations, /href="\/platform\/operations\?view=history"/u);
   assert.match(platformOperations, /Technical details/u);
   assert.doesNotMatch(platformOperations, /AdminStatCard/u);
 });

@@ -37,12 +37,13 @@ test("linked App OAuth tokens remain inside Kestrel One broker routes", () => {
   const accessTokenConsumers = listTypeScriptFiles(webRoot)
     .filter((file) => !file.endsWith(".test.ts"))
     .filter((file) =>
-      fs.readFileSync(file, "utf8").includes("auth.api.getAccessToken")
+      /auth\.api\s*\.getAccessToken/u.test(fs.readFileSync(file, "utf8")),
     )
     .map((file) => path.relative(webRoot, file).replaceAll(path.sep, "/"));
   assert.deepEqual(accessTokenConsumers, [
     "app/api/apps/github/sync/route.ts",
-    "app/api/projects/[id]/apps/google/sync/route.ts",
+    "app/api/apps/google/route.ts",
+    "app/api/apps/microsoft-365/route.ts",
     "app/api/runtime/github/action/route.ts",
     "app/api/runtime/github/git/[resourceId]/[...gitPath]/route.ts",
     "app/api/runtime/github/push/route.ts",

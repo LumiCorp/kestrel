@@ -641,9 +641,6 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_PAGE.owner,
     ADMIN_PAGE.access,
     ADMIN_PAGE.unauthorized,
-    {
-      primaryNavigation: true,
-    },
   ),
   page(
     "app/admin/billing/page.tsx",
@@ -686,6 +683,38 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_PAGE.owner,
     ADMIN_PAGE.access,
     ADMIN_PAGE.unauthorized,
+  ),
+  page(
+    "app/(workspace)/platform/page.tsx",
+    "/platform",
+    ADMIN_PAGE.owner,
+    ADMIN_PAGE.access,
+    ADMIN_PAGE.unauthorized,
+    { primaryNavigation: true },
+  ),
+  ...[
+    ["app/(workspace)/platform/users/page.tsx", "/platform/users"],
+    [
+      "app/(workspace)/platform/signup-codes/page.tsx",
+      "/platform/signup-codes",
+    ],
+    ["app/(workspace)/platform/email/page.tsx", "/platform/email"],
+    [
+      "app/(workspace)/platform/operations/page.tsx",
+      "/platform/operations",
+    ],
+    ["app/(workspace)/platform/releases/page.tsx", "/platform/releases"],
+    ["app/(workspace)/platform/billing/page.tsx", "/platform/billing"],
+    ["app/(workspace)/platform/docs/page.tsx", "/platform/docs"],
+    ["app/(workspace)/platform/docs/[slug]/page.tsx", "/platform/docs/:slug"],
+  ].map(([file, route]) =>
+    page(
+      file!,
+      route!,
+      ADMIN_PAGE.owner,
+      ADMIN_PAGE.access,
+      ADMIN_PAGE.unauthorized,
+    ),
   ),
   page("app/debug/page.tsx", "/debug", "debug", "admin", "admin-denied"),
 
@@ -1242,6 +1271,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "apps",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/apps/google/route.ts",
+    "/api/apps/google",
+    "apps",
+    "authenticated",
+    "api-unauthorized",
   ),
   api(
     "app/api/environments/[environmentId]/apps/[appKey]/route.ts",
@@ -1977,6 +2013,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "app/(workspace)/settings/api-keys/page.tsx",
     "/settings/api-keys",
     "dashboard",
+    "authenticated",
+    "redirect-sign-in",
+  ),
+  page(
+    "app/(workspace)/settings/connections/page.tsx",
+    "/settings/connections",
+    "apps",
     "authenticated",
     "redirect-sign-in",
   ),

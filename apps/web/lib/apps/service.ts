@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { listCoreAppDefinitions } from "./catalog";
@@ -491,6 +491,96 @@ export async function getAppForOrganization(input: {
     ),
     metadata: record(definition.metadata),
   };
+}
+
+export async function disconnectPersonalAppConnection(input: {
+  organizationId: string;
+  userId: string;
+  appKey: string;
+}) {
+  const connection = await knowledgeDb.query.appConnections.findFirst({
+    where: (table, { and: all, eq: equals }) =>
+      all(
+        equals(table.organizationId, input.organizationId),
+        equals(table.appKey, input.appKey),
+        equals(table.ownerType, "personal"),
+        equals(table.userId, input.userId),
+      ),
+  });
+  if (!connection) return null;
+
+  const now = new Date();
+  return knowledgeDb.transaction(async (transaction) => {
+    const lockKey = `personal-app-connection:${connection.id}`;
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+    );
+    const lockedConnection = await transaction.query.appConnections.findFirst({
+      where: (table, { and: all, eq: equals }) =>
+        all(
+          equals(table.id, connection.id),
+          equals(table.organizationId, input.organizationId),
+          equals(table.appKey, input.appKey),
+          equals(table.ownerType, "personal"),
+          equals(table.userId, input.userId),
+        ),
+    });
+    if (!lockedConnection) return null;
+
+    await transaction
+      .delete(schema.projectAppUserCapabilities)
+      .where(
+        eq(schema.projectAppUserCapabilities.connectionId, lockedConnection.id),
+      );
+    await transaction
+      .delete(schema.projectAppConnections)
+      .where(eq(schema.projectAppConnections.connectionId, lockedConnection.id));
+    await transaction
+      .delete(schema.appConnectionResources)
+      .where(eq(schema.appConnectionResources.connectionId, lockedConnection.id));
+    const [updated] = await transaction
+      .update(schema.appConnections)
+      .set({
+        status: "disconnected",
+        disconnectedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(schema.appConnections.id, lockedConnection.id))
+      .returning();
+    return updated ?? null;
+  });
+}
+
+export async function requireInstalledAppForOrganization(input: {
+  organizationId: string;
+  appKey: string;
+}) {
+  await ensureCoreAppCatalog();
+  const [definition, installation] = await Promise.all([
+    knowledgeDb.query.appDefinitions.findFirst({
+      where: (table, { eq: equals }) => equals(table.key, input.appKey),
+    }),
+    knowledgeDb.query.appInstallations.findFirst({
+      where: (table, { and: all, eq: equals }) =>
+        all(
+          equals(table.organizationId, input.organizationId),
+          equals(table.appKey, input.appKey),
+        ),
+    }),
+  ]);
+  if (!definition) {
+    throw new AppServiceError("APP_NOT_FOUND", "App not found.");
+  }
+  if (
+    definition.installMode === "explicit" &&
+    installation?.status !== "installed"
+  ) {
+    throw new AppServiceError(
+      "APP_NOT_INSTALLED",
+      `Install ${definition.displayName} before connecting an account.`,
+    );
+  }
+  return definition;
 }
 
 export async function setAppInstallation(input: {

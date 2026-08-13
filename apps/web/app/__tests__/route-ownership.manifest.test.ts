@@ -76,7 +76,7 @@ test(
   () => {
     assert.deepEqual(
       PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES.map((entry) => entry.route).sort(),
-      ["/admin", "/apps", "/dashboard", "/knowledge", "/projects"],
+      ["/apps", "/dashboard", "/knowledge", "/platform", "/projects"],
     );
 
     for (const entry of PRIMARY_KESTREL_ONE_NAVIGATION_ROUTES) {

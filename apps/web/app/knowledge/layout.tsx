@@ -9,6 +9,8 @@ export default async function KnowledgeLayout({
 }) {
   const {
     activeOrganization,
+    canManageActiveOrganization,
+    isAdmin,
     session,
   } =
     await requireAuthenticatedShell({
@@ -18,6 +20,8 @@ export default async function KnowledgeLayout({
   return (
     <AuthenticatedAppShell
       activeOrganization={activeOrganization}
+      canManageActiveOrganization={canManageActiveOrganization}
+      isPlatformAdmin={isAdmin}
       sectionLabel="Knowledge"
       session={session}
     >

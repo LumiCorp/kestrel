@@ -96,3 +96,79 @@ test("GitHub App status and resources read the canonical App control plane", () 
   assert.match(workspaceRoute, /query\.environmentAppCapabilityGrants/u);
   assert.doesNotMatch(workspaceRoute, /userToolConnections/u);
 });
+
+test("personal App connections own OAuth and transactional disconnect cleanup", () => {
+  const githubConnect = readAppSource(
+    "app/api/apps/github/connect/route.ts",
+  );
+  const googleRoute = readAppSource("app/api/apps/google/route.ts");
+  const microsoftRoute = readAppSource(
+    "app/api/apps/microsoft-365/route.ts",
+  );
+  const githubOauth = readAppSource("lib/integrations/github-oauth.ts");
+  const projectService = readAppSource("lib/apps/project-service.ts");
+  const googleService = readAppSource(
+    "lib/integrations/google-calendar-oauth.ts",
+  );
+  const service = readAppSource("lib/apps/service.ts");
+
+  assert.match(
+    githubConnect,
+    /\/settings\/connections\?github=linked#github/u,
+  );
+  assert.match(googleRoute, /callback\.hash = "google-workspace"/u);
+  assert.match(microsoftRoute, /callback\.hash = "microsoft-365"/u);
+  assert.match(microsoftRoute, /export async function DELETE/u);
+  for (const oauthBoundary of [githubConnect, googleRoute, microsoftRoute]) {
+    assert.match(oauthBoundary, /requireInstalledAppForOrganization/u);
+  }
+  assert.match(githubOauth, /requireInstalledAppForOrganization/u);
+  assert.match(
+    googleRoute,
+    /getAccessToken[\s\S]*?\.catch\(\(\) => null\)/u,
+  );
+  assert.match(service, /disconnectPersonalAppConnection/u);
+  assert.match(service, /equals\(table\.organizationId, input\.organizationId\)/u);
+  assert.match(service, /equals\(table\.userId, input\.userId\)/u);
+  assert.match(service, /knowledgeDb\.transaction/u);
+  assert.match(service, /delete\(schema\.projectAppUserCapabilities\)/u);
+  assert.match(service, /delete\(schema\.projectAppConnections\)/u);
+  assert.match(service, /delete\(schema\.appConnectionResources\)/u);
+  assert.match(service, /personal-app-connection:/u);
+  assert.match(service, /pg_advisory_xact_lock/u);
+  assert.match(projectService, /personal-app-connection:/u);
+  assert.match(projectService, /transaction\.query\.appConnections\.findFirst/u);
+  assert.match(googleService, /personal-app-connection:/u);
+  assert.match(googleService, /equals\(table\.status, "connected"\)/u);
+  assert.doesNotMatch(service, /delete\(schema\.accounts\)/u);
+});
+
+test("Google Project routes attach an existing personal connection only", () => {
+  const googleService = readAppSource(
+    "lib/integrations/google-calendar-oauth.ts",
+  );
+  const personalRoute = readAppSource("app/api/apps/google/route.ts");
+
+  assert.match(personalRoute, /syncGoogleCalendarUserConnection/u);
+  assert.doesNotMatch(
+    personalRoute,
+    /attachGoogleCalendarConnectionToProject/u,
+  );
+
+  for (const route of [
+    "app/api/projects/[id]/apps/google/connect/route.ts",
+    "app/api/projects/[id]/apps/google/sync/route.ts",
+  ]) {
+    const source = readAppSource(route);
+    assert.match(source, /attachGoogleCalendarConnectionToProject/u);
+    assert.match(source, /PersonalConnectionRequiredError/u);
+    assert.match(source, /status: 409/u);
+    assert.doesNotMatch(source, /auth\.api\.getAccessToken/u);
+  }
+
+  assert.match(googleService, /code = "PERSONAL_CONNECTION_REQUIRED"/u);
+  assert.match(
+    googleService,
+    /settingsUrl = "\/settings\/connections#google-workspace"/u,
+  );
+});

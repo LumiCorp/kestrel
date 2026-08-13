@@ -1,7 +1,10 @@
 import { Octokit } from "@octokit/rest";
 import { eq } from "drizzle-orm";
 import * as schema from "@/drizzle/schema";
-import { ensureCoreAppCatalog } from "@/lib/apps/service";
+import {
+  disconnectPersonalAppConnection,
+  requireInstalledAppForOrganization,
+} from "@/lib/apps/service";
 import { knowledgeDb } from "@/lib/knowledge/db";
 
 export type GithubRepositoryAccess = {
@@ -65,7 +68,10 @@ export async function syncGithubUserConnection(input: {
   accessToken: string;
   scopes: string[];
 }) {
-  await ensureCoreAppCatalog();
+  await requireInstalledAppForOrganization({
+    organizationId: input.organizationId,
+    appKey: "github",
+  });
   const octokit = new Octokit({ auth: input.accessToken });
   const [viewer, repositories] = await Promise.all([
     octokit.rest.users.getAuthenticated(),
@@ -169,32 +175,9 @@ export async function disconnectGithubUserConnection(input: {
   organizationId: string;
   userId: string;
 }) {
-  const connection = await knowledgeDb.query.appConnections.findFirst({
-    where: (table, operators) =>
-      operators.and(
-        operators.eq(table.organizationId, input.organizationId),
-        operators.eq(table.appKey, "github"),
-        operators.eq(table.ownerType, "personal"),
-        operators.eq(table.userId, input.userId)
-      ),
-  });
-  if (!connection) {
-    return null;
-  }
-  const now = new Date();
-  return knowledgeDb.transaction(async (transaction) => {
-    await transaction
-      .delete(schema.appConnectionResources)
-      .where(eq(schema.appConnectionResources.connectionId, connection.id));
-    const [updated] = await transaction
-      .update(schema.appConnections)
-      .set({
-        status: "disconnected",
-        disconnectedAt: now,
-        updatedAt: now,
-      })
-      .where(eq(schema.appConnections.id, connection.id))
-      .returning();
-    return updated ?? null;
+  return disconnectPersonalAppConnection({
+    organizationId: input.organizationId,
+    userId: input.userId,
+    appKey: "github",
   });
 }

@@ -9,6 +9,8 @@ export default async function DebugLayout({
 }) {
   const {
     activeOrganization,
+    canManageActiveOrganization,
+    isAdmin,
     session,
   } =
     await requireAuthenticatedShell({
@@ -19,6 +21,8 @@ export default async function DebugLayout({
   return (
     <AuthenticatedAppShell
       activeOrganization={activeOrganization}
+      canManageActiveOrganization={canManageActiveOrganization}
+      isPlatformAdmin={isAdmin}
       sectionLabel="Debug"
       session={session}
     >

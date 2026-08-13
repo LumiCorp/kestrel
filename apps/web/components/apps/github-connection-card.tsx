@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { SettingsSection } from "@/components/settings/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { AppConnection } from "@/drizzle/schema";
 
 type GithubConnectionStatus = {
@@ -13,7 +13,7 @@ type GithubConnectionStatus = {
   connection: AppConnection | null;
 };
 
-export function GithubConnectionCard() {
+export function GithubConnectionCard({ installed }: { installed: boolean }) {
   const [status, setStatus] = useState<GithubConnectionStatus | null>(null);
   const [repositoryCount, setRepositoryCount] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -70,12 +70,23 @@ export function GithubConnectionCard() {
       )
     );
     const result = new URLSearchParams(window.location.search).get("github");
+    if (result) {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("github");
+      window.history.replaceState({}, "", cleanUrl);
+    }
     if (result === "linked") {
-      void synchronize();
+      if (installed) {
+        void synchronize();
+      } else {
+        toast.error(
+          "An organization admin must install GitHub before it can be connected.",
+        );
+      }
     } else if (result === "error") {
       toast.error("GitHub did not complete the account link.");
     }
-  }, [refresh, synchronize]);
+  }, [installed, refresh, synchronize]);
 
   async function connect() {
     setBusy(true);
@@ -128,29 +139,29 @@ export function GithubConnectionCard() {
   const connected = status?.connection?.status === "connected";
 
   return (
-    <Card>
-      <CardHeader className="flex-row items-start justify-between space-y-0">
-        <div>
-          <CardTitle>GitHub</CardTitle>
-          <p className="mt-1 text-muted-foreground text-sm">
-            Connect your GitHub account for repository reads and controlled
-            Kestrel agent branches.
+    <SettingsSection
+      description="Connect your GitHub account for repository reads and controlled Kestrel agent branches."
+      title="GitHub"
+    >
+      <div className="flex flex-wrap items-center gap-3 py-3">
+        <div className="mr-auto space-y-2">
+          <Badge variant={connected ? "default" : "outline"}>
+            {connected
+              ? "Connected"
+              : status?.linked
+                ? "Linked"
+                : "Not linked"}
+          </Badge>
+          <p className="text-muted-foreground text-sm">
+            {connected
+              ? `${status?.connection?.externalAccountLabel ?? status?.connection?.name} · ${repositoryCount} repositories`
+              : "GitHub is connected only for App capabilities. It is never used to sign into Kestrel."}
           </p>
-        </div>
-        <Badge variant={connected ? "default" : "outline"}>
-          {connected ? "Connected" : status?.linked ? "Linked" : "Not linked"}
-        </Badge>
-      </CardHeader>
-      <CardContent className="flex flex-wrap items-center gap-3">
-        <div className="mr-auto text-muted-foreground text-sm">
-          {connected
-            ? `${status?.connection?.externalAccountLabel ?? status?.connection?.name} · ${repositoryCount} repositories`
-            : "GitHub is connected only for App capabilities. It is never used to sign into Kestrel."}
         </div>
         {connected ? (
           <>
             <Button
-              disabled={busy}
+              disabled={busy || !installed}
               onClick={() => void synchronize()}
               variant="outline"
             >
@@ -166,13 +177,21 @@ export function GithubConnectionCard() {
           </>
         ) : (
           <Button
-            disabled={busy || status?.oauthConfigured === false}
+            disabled={
+              busy || !installed || status?.oauthConfigured === false
+            }
             onClick={() => void connect()}
           >
             Connect GitHub
           </Button>
         )}
-      </CardContent>
-    </Card>
+      </div>
+      {installed ? null : (
+        <p className="text-muted-foreground text-sm">
+          An organization admin must install GitHub before you can connect or
+          refresh an account.
+        </p>
+      )}
+    </SettingsSection>
   );
 }

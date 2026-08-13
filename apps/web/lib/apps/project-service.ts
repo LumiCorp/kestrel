@@ -675,7 +675,32 @@ export async function attachProjectAppConnection(input: {
   }
   const now = new Date();
   const lockKey = `project-app-default:${input.projectId}:${input.appKey}:${input.scope}:${validPersonal ? input.actorUserId : "shared"}`;
+  const connectionLockKey = `personal-app-connection:${connection.id}`;
   return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${connectionLockKey}, 0))`,
+    );
+    const lockedConnection =
+      await transaction.query.appConnections.findFirst({
+        where: (table, { and: all, eq: equals, inArray: among }) =>
+          all(
+            equals(table.id, connection.id),
+            equals(table.organizationId, input.organizationId),
+            equals(table.appKey, input.appKey),
+            among(
+              table.status,
+              definition.delivery === "lifecycle"
+                ? ["connected", "degraded"]
+                : ["connected"],
+            ),
+          ),
+      });
+    if (!lockedConnection) {
+      throw new ProjectAppError(
+        "APP_CONNECTION_NOT_FOUND",
+        "Available App connection not found.",
+      );
+    }
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
     );

@@ -1,7 +1,5 @@
-import { EmailIntegrationAdminClient } from "@/components/settings/email-client";
-import { requireAdmin } from "@/lib/knowledge/auth";
+import { permanentRedirect } from "next/navigation";
 
-export default async function PlatformEmailSettingsPage() {
-  await requireAdmin();
-  return <EmailIntegrationAdminClient />;
+export default function LegacyPlatformEmailPage() {
+  permanentRedirect("/platform/email");
 }
