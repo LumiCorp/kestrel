@@ -93,6 +93,7 @@ export function SettingsPageHeader({
   status,
   actions,
   headingLevel,
+  size,
 }: {
   eyebrow?: string;
   title: string;
@@ -100,6 +101,7 @@ export function SettingsPageHeader({
   status?: ReactNode;
   actions?: ReactNode;
   headingLevel?: 1 | 2;
+  size?: "default" | "large";
 }) {
   return (
     <PageHeader
@@ -107,6 +109,7 @@ export function SettingsPageHeader({
       description={description}
       eyebrow={eyebrow}
       headingLevel={headingLevel}
+      size={size}
       status={status}
       title={title}
     />

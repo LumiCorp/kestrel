@@ -7,12 +7,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   SettingsActionGroup,
+  SettingsDisclosure,
   SettingsPage,
   SettingsPageHeader,
   SettingsRow,
   SettingsRows,
   SettingsSection,
   SettingsStatusSummary,
+  SettingsStatusNotice,
 } from "@/components/settings/settings-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +27,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { OrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
+import {
+  getSignupEnvironmentExperience,
+  getSignupEnvironmentMilestones,
+} from "@/lib/signup-onboarding-progress";
 
 const SETUP_PROVIDERS = [
   { key: "lumi", label: "Lumi" },
@@ -93,6 +99,180 @@ function SetupStepIcon({ ready }: { ready: boolean }) {
     <CheckCircle2 aria-hidden="true" className="size-4 text-emerald-600" />
   ) : (
     <Circle aria-hidden="true" className="size-4 text-muted-foreground" />
+  );
+}
+
+function SignupSuccessReceipt({
+  detail,
+  status,
+}: {
+  detail: string;
+  status: string;
+}) {
+  return (
+    <div className="grid gap-2 py-4 sm:grid-cols-[auto_minmax(0,1fr)_minmax(12rem,auto)] sm:items-center sm:gap-5">
+      <CheckCircle2
+        aria-hidden="true"
+        className="size-5 text-emerald-600"
+      />
+      <span className="font-medium text-sm">{status}</span>
+      <span className="text-muted-foreground text-sm sm:text-right">
+        {detail}
+      </span>
+    </div>
+  );
+}
+
+function humanizeStatus(status: string | null) {
+  if (!status) return "Preparing";
+  return status.replaceAll("_", " ");
+}
+
+function SignupEnvironmentProgress({
+  completionFailed,
+  executionBusy,
+  onFinish,
+  onRetry,
+  readiness,
+}: {
+  completionFailed: boolean;
+  executionBusy: boolean;
+  onFinish: () => void;
+  onRetry: () => void;
+  readiness: OrganizationChatReadiness["environmentExecution"];
+}) {
+  const milestones = getSignupEnvironmentMilestones({
+    environmentReady: readiness.ready,
+    operationStage: readiness.operationStage,
+  });
+  const experience = getSignupEnvironmentExperience(readiness.status);
+
+  return (
+    <div>
+      {experience.kind !== "progress" ? (
+        <div className="border-y py-5">
+          <SettingsStatusNotice
+            description={readiness.detail}
+            title={experience.title}
+            tone={experience.kind === "action" ? "warning" : "error"}
+          />
+          {experience.kind === "action" ? (
+            <div className="mt-4">
+              <Button
+                disabled={executionBusy}
+                onClick={onRetry}
+                size="sm"
+                variant="outline"
+              >
+                {executionBusy ? experience.busyLabel : experience.actionLabel}
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <ol
+          aria-label="Environment setup progress"
+          className="relative border-y py-2 before:absolute before:top-7 before:bottom-7 before:left-[0.6875rem] before:border-border before:border-l"
+        >
+          {milestones.map((milestone) => {
+            const active = milestone.status === "active";
+            const completed = milestone.status === "completed";
+            return (
+              <li
+                aria-current={active ? "step" : undefined}
+                className="relative grid grid-cols-[1.5rem_minmax(0,1fr)_auto] gap-x-3 py-4"
+                key={milestone.id}
+              >
+                <span className="relative z-10 flex size-6 items-center justify-center bg-background">
+                  {completed ? (
+                    <CheckCircle2
+                      aria-hidden="true"
+                      className="size-5 text-emerald-600"
+                    />
+                  ) : active ? (
+                    <Loader2
+                      aria-hidden="true"
+                      className="size-5 animate-spin text-accent motion-reduce:animate-none"
+                    />
+                  ) : (
+                    <Circle
+                      aria-hidden="true"
+                      className="size-5 text-muted-foreground"
+                    />
+                  )}
+                </span>
+                <div className="min-w-0 pt-0.5">
+                  <p
+                    className={
+                      active
+                        ? "font-semibold text-sm"
+                        : completed
+                          ? "font-medium text-sm"
+                          : "text-muted-foreground text-sm"
+                    }
+                  >
+                    {milestone.label}
+                  </p>
+                  {active ? (
+                    <p
+                      aria-live="polite"
+                      className="mt-1 text-muted-foreground text-sm/6"
+                    >
+                      {readiness.ready
+                        ? "Your Environment is ready. Opening a new blank Thread."
+                        : "This first setup can take a little while. Your progress is saved."}
+                    </p>
+                  ) : null}
+                </div>
+                {completed ? (
+                  <span className="pt-0.5 text-muted-foreground text-sm">
+                    Completed
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+
+      {completionFailed ? (
+        <div className="mt-5">
+          <SettingsStatusNotice
+            description="Your Environment is ready, but onboarding could not open the new Thread."
+            title="Opening your Thread paused"
+            tone="error"
+          />
+          <Button className="mt-4" onClick={onFinish} size="sm">
+            Open first Thread
+          </Button>
+        </div>
+      ) : null}
+
+      <SettingsDisclosure className="mt-2.5" title="Technical details">
+        <dl className="grid gap-4 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-muted-foreground text-xs">Environment</dt>
+            <dd className="mt-1">{readiness.environmentName ?? "Default"}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground text-xs">Operation status</dt>
+            <dd className="mt-1 capitalize">
+              {humanizeStatus(readiness.operationStatus)}
+            </dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="text-muted-foreground text-xs">Current stage</dt>
+            <dd className="mt-1 break-all font-mono text-xs">
+              {readiness.operationStage ?? "environment.activation.requested"}
+            </dd>
+          </div>
+        </dl>
+      </SettingsDisclosure>
+
+      <p className="mt-5 text-muted-foreground text-sm">
+        A new blank Thread will open when your workspace is ready.
+      </p>
+    </div>
   );
 }
 
@@ -536,17 +716,23 @@ export function OrganizationSetupClient({
     }
   }, [canComplete, completeSignup, mode, readiness.ready]);
 
-  if (readiness.ready) {
+  const signupLaunchActive =
+    mode === "signup" &&
+    readiness.modelAccess.ready &&
+    readiness.workspaceCompute.ready;
+  const signupEnvironmentExperience = getSignupEnvironmentExperience(
+    readiness.environmentExecution.status,
+  );
+  const signupEnvironmentProgressing =
+    signupLaunchActive && signupEnvironmentExperience.kind === "progress";
+
+  if (readiness.ready && mode !== "signup") {
     return (
       <SettingsPage>
         <SettingsPageHeader
-          description={
-            mode === "signup"
-              ? "Your provider, model, Fly connection, and Environment are ready."
-              : "Your organization has the minimum configuration required to run agent chats."
-          }
-          eyebrow={mode === "signup" ? "Kestrel One" : "Organization"}
-          title={mode === "signup" ? "You're ready" : "Setup complete"}
+          description="Your organization has the minimum configuration required to run agent chats."
+          eyebrow="Organization"
+          title="Setup complete"
         />
         <SettingsSection
           description="Model access, workspace compute, and Environment execution are ready."
@@ -572,23 +758,9 @@ export function OrganizationSetupClient({
             </SettingsRow>
           </SettingsRows>
           <div className="mt-5">
-            {mode === "signup" ? (
-              <Button
-                disabled={completionState === "busy"}
-                onClick={() => void completeSignup()}
-              >
-                {completionState === "busy" ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : null}
-                {completionState === "failed"
-                  ? "Finish onboarding"
-                  : "Finishing onboarding…"}
-              </Button>
-            ) : (
-              <Button asChild>
-                <Link href="/threads/new">Start first chat</Link>
-              </Button>
-            )}
+            <Button asChild>
+              <Link href="/threads/new">Start first chat</Link>
+            </Button>
           </div>
         </SettingsSection>
       </SettingsPage>
@@ -596,22 +768,40 @@ export function OrganizationSetupClient({
   }
 
   return (
-    <SettingsPage>
+    <SettingsPage className={signupLaunchActive ? "space-y-0" : undefined}>
       <SettingsPageHeader
         description={
-          mode === "signup"
+          signupEnvironmentProgressing
+            ? "Your connections are ready. We’re creating the private Environment where Kestrel will work."
+            : signupLaunchActive
+              ? "Your connections are ready. Environment setup is paused, and your progress is saved."
+            : mode === "signup"
             ? "Your progress is saved as each connection is verified."
             : "Complete these three checks to let your team start agent chats. You can leave and return at any time."
         }
         eyebrow={mode === "signup" ? "Kestrel One" : "Organization"}
-        title={mode === "signup" ? "Finish your workspace" : "Finish setup"}
+        size={signupLaunchActive ? "large" : "default"}
+        title={
+          signupLaunchActive
+            ? "Your workspace is taking shape"
+            : mode === "signup"
+              ? "Finish your workspace"
+              : "Finish setup"
+        }
       />
 
       <SettingsSection
+        className={signupLaunchActive ? "mt-12" : undefined}
         description="Connect a provider, sync its catalog, then explicitly choose the default language model."
         title="1. Model access"
       >
         <SettingsRows>
+          {signupLaunchActive ? (
+            <SignupSuccessReceipt
+              detail={`${readiness.modelAccess.gatewayName ?? "Model provider"} · ${readiness.modelAccess.modelName ?? "Default model"}`}
+              status="Model connected"
+            />
+          ) : (
           <SettingsRow label="Readiness">
             <div className="flex items-center gap-2">
               <SetupStepIcon ready={readiness.modelAccess.ready} />
@@ -622,6 +812,7 @@ export function OrganizationSetupClient({
               />
             </div>
           </SettingsRow>
+          )}
           {readiness.modelAccess.ready ? null : (
             <>
               <div className="grid gap-4 py-5 sm:grid-cols-[12rem_minmax(0,1fr)_auto] sm:items-end">
@@ -700,6 +891,12 @@ export function OrganizationSetupClient({
         title="2. Workspace compute"
       >
         <SettingsRows>
+          {signupLaunchActive ? (
+            <SignupSuccessReceipt
+              detail="Fly credentials stored and verified."
+              status="Workspace compute verified"
+            />
+          ) : (
           <SettingsRow label="Readiness">
             <div className="flex items-center gap-2">
               <SetupStepIcon ready={readiness.workspaceCompute.ready} />
@@ -710,6 +907,7 @@ export function OrganizationSetupClient({
               />
             </div>
           </SettingsRow>
+          )}
           {readiness.workspaceCompute.ready ? null : (
             <div className="grid gap-4 py-5 sm:grid-cols-2">
               <div className="space-y-2">
@@ -756,9 +954,30 @@ export function OrganizationSetupClient({
 
       {mode !== "signup" || readiness.workspaceCompute.ready ? (
       <SettingsSection
-        description="The existing default Environment is provisioned automatically after Fly verification."
-        title="3. Environment execution"
+        description={
+          signupLaunchActive
+            ? signupEnvironmentProgressing
+              ? "The default Environment is provisioned automatically after Fly verification."
+              : "Review the Environment status below to continue onboarding."
+            : "The existing default Environment is provisioned automatically after Fly verification."
+        }
+        title={
+          signupLaunchActive
+            ? signupEnvironmentProgressing
+              ? "3. Preparing your Environment"
+              : "3. Environment setup"
+            : "3. Environment execution"
+        }
       >
+        {signupLaunchActive ? (
+          <SignupEnvironmentProgress
+            completionFailed={completionState === "failed"}
+            executionBusy={executionBusy}
+            onFinish={() => void completeSignup()}
+            onRetry={() => void retryExecution()}
+            readiness={readiness.environmentExecution}
+          />
+        ) : (
         <SettingsRows>
           <SettingsRow label="Readiness">
             <div className="flex items-center gap-2">
@@ -817,6 +1036,7 @@ export function OrganizationSetupClient({
             </SettingsRow>
           )}
         </SettingsRows>
+        )}
       </SettingsSection>
       ) : null}
     </SettingsPage>
