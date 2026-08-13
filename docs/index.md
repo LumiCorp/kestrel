@@ -3,11 +3,12 @@ id: docs-index
 domain: docs
 status: active
 owner: kestrel-quality
-last_verified_at: 2026-07-17
+last_verified_at: 2026-08-13
 depends_on:
   - ../AGENTS.md
   - ../ARCHITECTURE.md
   - ./PLANS.md
+  - ./developer-onboarding/README.md
 ---
 
 # Kestrel Documentation Map
@@ -53,6 +54,7 @@ task instead of reading the repository as one long manual.
 
 ### Change the Repository
 
+- [Developer onboarding reader](developer-onboarding/README.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Architecture](../ARCHITECTURE.md)
 - [Design principles](../DESIGN.md)
@@ -60,6 +62,19 @@ task instead of reading the repository as one long manual.
 - [Architecture decisions](decisions/0001-unified-suite-version-and-release-channels.md)
 - [CI validation](ci-validation.md)
 - [Contributor guardrails](../AGENTS.md)
+
+## Developer Onboarding
+
+The [developer onboarding reader](developer-onboarding/README.md) is the
+detailed internal path for engineers and agents that are new to the monorepo.
+Its 110 source-linked units explain the product nouns, architecture decisions,
+deployment forms, package flow, execution paths, persistence boundaries,
+security model, reliability contracts, and expected repository workflow.
+
+The reader is stored as portable HTML under `docs/developer-onboarding/`. It is
+designed to be read and searched rather than presented, and individual units
+can be opened in focused mode. It is an orientation and architecture-navigation
+artifact; linked owning sources remain authoritative.
 
 ## Root Truth Docs
 
@@ -80,6 +95,7 @@ Use the [Plans index](PLANS.md) as the canonical current delivery inventory.
 
 ### Reference material
 
+- [Developer onboarding reader](developer-onboarding/README.md)
 - [Architecture rules](references/architecture-rules.json)
 - [Heuristic hotspots](references/heuristic-hotspots.md)
 - [Tool Gateway 0.7 registration migration](references/tool-gateway-0.7-migration.md)
