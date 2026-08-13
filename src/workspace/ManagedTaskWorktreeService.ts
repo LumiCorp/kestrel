@@ -392,7 +392,9 @@ export class ManagedTaskWorktreeService {
       && scopesEqual(currentMetadata.scope, scope)
       ? currentMetadata
       : undefined;
-    const parentHead = input.parentThreadId
+    const parentHead =
+      !(reusableMetadata || normalizeNonEmptyString(input.baseRef)) &&
+      input.parentThreadId
       ? await this.resolveThreadWorktreeHead(sourceRepoRoot, input.parentThreadId)
       : undefined;
     const baseRefName = reusableMetadata?.baseRefName
@@ -1322,7 +1324,7 @@ export class ManagedTaskWorktreeService {
       sourceRepoRoot,
       scope: { kind: "threadId", value: threadId },
     });
-    if (!registry?.currentWorktreeRoot) return undefined;
+    if (!registry?.currentWorktreeRoot) return;
     return git(registry.currentWorktreeRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => {
       throw createRuntimeFailure(
         "MANAGED_WORKTREE_PARENT_UNAVAILABLE",

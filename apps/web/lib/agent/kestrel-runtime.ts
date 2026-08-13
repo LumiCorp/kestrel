@@ -334,6 +334,7 @@ export type KestrelOneAgentResponseInput = {
   environmentId: string;
   threadId: string;
   workspaceMode: ThreadWorkspaceMode;
+  workspaceBaseRef?: string | null;
   parentThreadId?: string | null;
   durableTurnId?: string | undefined;
   messages: UIMessage[];
@@ -380,6 +381,7 @@ function createModelAwareKestrelOneAgent(input: {
   environmentId: string;
   threadId: string;
   workspaceMode: ThreadWorkspaceMode;
+  workspaceBaseRef?: string | null;
   parentThreadId?: string | null;
   actorUserId: string;
   durableTurnId?: string | undefined;
@@ -552,6 +554,7 @@ function createModelAwareKestrelOneAgent(input: {
           const runtimeWorkspace = resolveThreadRuntimeWorkspace(
             input.workspaceMode,
             input.parentThreadId,
+            input.workspaceBaseRef,
           );
           const normalizedTurn = {
             ...turn,
@@ -847,7 +850,11 @@ export async function generateKestrelOneExternalReply(input: {
         eq(table.id, input.sessionId),
         eq(table.organizationId, input.organizationId),
       ),
-    columns: { workspaceMode: true, parentThreadId: true },
+    columns: {
+      workspaceMode: true,
+      workspaceBaseRef: true,
+      parentThreadId: true,
+    },
   });
   if (!thread) throw new Error("Thread workspace mode is unavailable.");
   const route = await resolveEnvironmentExecutionRoute({
@@ -955,6 +962,7 @@ export async function generateKestrelOneExternalReply(input: {
     const runtimeWorkspace = resolveThreadRuntimeWorkspace(
       thread.workspaceMode,
       thread.parentThreadId,
+      thread.workspaceBaseRef,
     );
     const result = await generateKestrelOneExternalReplyFromAgent({
       agent: {
@@ -1100,6 +1108,7 @@ export async function createKestrelOneAgentResponse(
         environmentId: input.environmentId,
         threadId: input.threadId,
         workspaceMode: input.workspaceMode,
+        workspaceBaseRef: input.workspaceBaseRef,
         parentThreadId: input.parentThreadId,
         actorUserId: input.session.user.id,
         durableTurnId: input.durableTurnId,

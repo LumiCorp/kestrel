@@ -447,7 +447,11 @@ export async function processDurableThreadTurn(
             eq(table.id, turn.threadId),
             eq(table.organizationId, turn.organizationId),
           ),
-        columns: { workspaceMode: true, parentThreadId: true },
+        columns: {
+          workspaceMode: true,
+          workspaceBaseRef: true,
+          parentThreadId: true,
+        },
       }),
     ]);
     if (!thread) throw new Error("Thread workspace mode is unavailable.");
@@ -471,6 +475,7 @@ export async function processDurableThreadTurn(
       environmentId: turn.requestedEnvironmentId,
       threadId: turn.threadId,
       workspaceMode: thread.workspaceMode,
+      workspaceBaseRef: thread.workspaceBaseRef,
       parentThreadId: thread.parentThreadId,
       durableTurnId: turn.id,
       messages,

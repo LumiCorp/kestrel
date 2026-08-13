@@ -17,4 +17,5 @@ test("existing Threads migrate to legacy before primary becomes the default", ()
   assert.ok(add >= 0);
   assert.ok(backfill > add);
   assert.ok(defaultPrimary > backfill);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS "workspace_base_ref" text/u);
 });
