@@ -9,6 +9,8 @@ export interface FakeOpenRouterServer {
 }
 
 interface FakeOpenRouterScenarioState {
+  delayReleased: boolean;
+  delayResolvers: Set<() => void>;
   failedAttempts: number;
   waitingCallId?: string | undefined;
 }
@@ -17,7 +19,11 @@ export async function startFakeOpenRouterServer(
   input: { port?: number | undefined } = {}
 ): Promise<FakeOpenRouterServer> {
   const requests: Array<{ schemaName: string; userMessage: string }> = [];
-  const scenarios: FakeOpenRouterScenarioState = { failedAttempts: 0 };
+  const scenarios: FakeOpenRouterScenarioState = {
+    delayReleased: false,
+    delayResolvers: new Set(),
+    failedAttempts: 0,
+  };
   const sockets = new Set<Socket>();
   const server = http.createServer((request, response) => {
     void handleFakeOpenRouterRequest(request, response, requests, scenarios);
@@ -108,8 +114,20 @@ async function handleFakeOpenRouterRequest(
   }
 
   if (request.url === "/test/reset" && request.method === "POST") {
+    for (const resolve of scenarios.delayResolvers) resolve();
+    scenarios.delayResolvers.clear();
+    scenarios.delayReleased = false;
     scenarios.failedAttempts = 0;
     delete scenarios.waitingCallId;
+    response.writeHead(204, { connection: "close" });
+    response.end();
+    return;
+  }
+
+  if (request.url === "/test/release-delay" && request.method === "POST") {
+    scenarios.delayReleased = true;
+    for (const resolve of scenarios.delayResolvers) resolve();
+    scenarios.delayResolvers.clear();
     response.writeHead(204, { connection: "close" });
     response.end();
     return;
@@ -256,7 +274,11 @@ async function handleFakeOpenRouterRequest(
   }
 
   if (modeSource.includes("fake-openrouter-delay")) {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    if (!scenarios.delayReleased) {
+      await new Promise<void>((resolve) => {
+        scenarios.delayResolvers.add(resolve);
+      });
+    }
   }
 
   if (toolMode) {

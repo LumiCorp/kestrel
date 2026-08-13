@@ -86,6 +86,45 @@ test("completed turn streams activity, persists one answer, and survives reload"
   ).toBeVisible();
 });
 
+test("active turn resumes without a React update-depth failure", async ({
+  page,
+}, testInfo) => {
+  const pageErrors: Error[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error));
+
+  const created = await createThread(page, testInfo, "fake-openrouter-delay");
+  await waitForTurn(page, created.threadId, created.turnId, ["running"]);
+
+  let delayReleased = false;
+  try {
+    await page.goto(`/threads/${created.threadId}`);
+    const visibleThreadShell = page.locator(
+      '[data-slot="thread-shell"]:visible'
+    );
+    await expect(visibleThreadShell).toHaveCount(1);
+    await waitForTurn(page, created.threadId, created.turnId, ["running"]);
+
+    await releaseDelayedProvider(page, testInfo);
+    delayReleased = true;
+    await waitForTurn(page, created.threadId, created.turnId, ["completed"]);
+    await expect(
+      visibleThreadShell.getByText("Hello from the fake cross-surface model.", {
+        exact: true,
+      })
+    ).toBeVisible();
+
+    await page.reload();
+    await expect(
+      page
+        .locator('[data-slot="thread-shell"]:visible')
+        .getByText("Hello from the fake cross-surface model.", { exact: true })
+    ).toBeVisible();
+    expect(pageErrors.map((error) => error.message)).toEqual([]);
+  } finally {
+    if (!delayReleased) await releaseDelayedProvider(page, testInfo);
+  }
+});
+
 test("waiting prompt and request identity survive reload and resume exactly", async ({
   page,
 }, testInfo) => {
@@ -163,6 +202,21 @@ async function createThread(page: Page, testInfo: TestInfo, marker: string) {
     headers: { "idempotency-key": messageId },
   });
   return { threadId, messageId, turnId: response.acceptedTurnId as string };
+}
+
+async function releaseDelayedProvider(page: Page, testInfo: TestInfo) {
+  const fakeOpenRouterUrl = testInfo.config.metadata.fakeOpenRouterUrl;
+  if (typeof fakeOpenRouterUrl !== "string" || fakeOpenRouterUrl.length === 0) {
+    throw new Error("Product contract requires fakeOpenRouterUrl metadata.");
+  }
+  const response = await page.context().request.post(
+    `${fakeOpenRouterUrl}/test/release-delay`
+  );
+  if (!response.ok()) {
+    throw new Error(
+      `Failed to release delayed fake OpenRouter response: ${response.status()} ${await response.text()}`
+    );
+  }
 }
 
 async function waitForTurn(
