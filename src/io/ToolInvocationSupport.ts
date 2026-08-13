@@ -444,6 +444,10 @@ function buildFailureResult(input: {
   const runtimeFailure = input.error instanceof RuntimeFailure
     ? input.error
     : undefined;
+  const genericFailureDetails = input.error instanceof Error
+    ? asRecord((input.error as Error & { details?: unknown }).details)
+    : undefined;
+  const failureDetails = runtimeFailure?.details ?? genericFailureDetails;
   const retryable =
     input.effectState !== "committed" &&
     input.effectState !== "unknown" &&
@@ -463,9 +467,9 @@ function buildFailureResult(input: {
     error: {
       message:
         input.error instanceof Error ? input.error.message : String(input.error),
-      ...(runtimeFailure?.details === undefined
+      ...(failureDetails === undefined
         ? {}
-        : { details: runtimeFailure.details }),
+        : { details: failureDetails }),
     },
   };
   return Object.freeze({

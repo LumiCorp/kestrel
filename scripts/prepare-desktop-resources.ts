@@ -53,15 +53,7 @@ export function prepareDesktopRuntimePayload(repoRoot: string): string {
   const payloadDir = path.join(repoRoot, "apps", "desktop-runtime", "payload");
   rmSync(payloadDir, { recursive: true, force: true });
   mkdirSync(payloadDir, { recursive: true });
-
-  for (const relativePath of DESKTOP_RESOURCE_DIRECTORIES) {
-    const sourcePath = path.join(repoRoot, relativePath);
-    if (!existsSync(sourcePath)) continue;
-    cpSync(sourcePath, path.join(payloadDir, relativePath), {
-      recursive: true,
-      filter: shouldCopyDesktopResourceEntry,
-    });
-  }
+  copyDesktopRuntimeResourceDirectories(repoRoot, payloadDir);
 
   const rootPackage = JSON.parse(
     readFileSync(path.join(repoRoot, "package.json"), "utf8"),
@@ -81,6 +73,20 @@ export function prepareDesktopRuntimePayload(repoRoot: string): string {
 
   console.log(`[desktop] prepared Local Core payload in ${payloadDir}`);
   return payloadDir;
+}
+
+export function copyDesktopRuntimeResourceDirectories(
+  repoRoot: string,
+  payloadDir: string,
+): void {
+  for (const relativePath of DESKTOP_RESOURCE_DIRECTORIES) {
+    const sourcePath = path.join(repoRoot, relativePath);
+    if (!existsSync(sourcePath)) continue;
+    cpSync(sourcePath, path.join(payloadDir, relativePath), {
+      recursive: true,
+      filter: shouldCopyDesktopResourceEntry,
+    });
+  }
 }
 
 function resolveRepoRoot(cwd: string): string {

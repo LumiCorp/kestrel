@@ -20,6 +20,7 @@ import type {
   DevShellHealth,
   DevProcessStartInput,
   DevProcessRetainInput,
+  DevProcessRetentionPromoteInput,
   DevProcessRetentionReleaseInput,
   DevProcessStopInput,
   DevProcessWriteAndReadInput,
@@ -148,6 +149,23 @@ async function handleRequest(
     return;
   }
 
+  const retentionPromotionMatch = url.pathname.match(
+    /^\/processes\/([^/]+)\/retention\/promote$/u,
+  );
+  if (method === "POST" && retentionPromotionMatch !== null) {
+    const processId = decodeURIComponent(retentionPromotionMatch[1]!);
+    const body = await readJson(request) as unknown as Omit<
+      DevProcessRetentionPromoteInput,
+      "processId"
+    >;
+    writeJson(
+      response,
+      200,
+      await supervisor.promoteProcessRetention({ ...body, processId }),
+    );
+    return;
+  }
+
   const retentionMatch = url.pathname.match(/^\/retentions\/([^/]+)$/u);
   if (method === "DELETE" && retentionMatch !== null) {
     const input: DevProcessRetentionReleaseInput = {
@@ -224,6 +242,7 @@ function createHealthPayload(): DevShellHealth {
     capabilities: {
       processWriteAndRead: true,
       processRetentionLeases: true,
+      processRetentionPromotion: true,
     },
   };
 }

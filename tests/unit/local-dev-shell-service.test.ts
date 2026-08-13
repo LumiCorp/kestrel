@@ -470,6 +470,7 @@ test("LocalDevShellService restarts a stale supervisor with legacy health", asyn
         capabilities: {
           processWriteAndRead: true,
           processRetentionLeases: true,
+          processRetentionPromotion: true,
         },
       };
     }
@@ -567,6 +568,7 @@ test("LocalDevShellService cleans up an incompatible supervisor socket recorded 
           capabilities: {
             processWriteAndRead: true,
             processRetentionLeases: true,
+            processRetentionPromotion: true,
           },
         };
       }
@@ -609,7 +611,45 @@ test("isCompatibleDevShellHealth requires the current process contract", () => {
       processWriteAndRead: true,
       processRetentionLeases: true,
     },
+  }), false);
+  assert.equal(isCompatibleDevShellHealth({
+    ok: true,
+    serviceProtocolVersion: DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+    capabilities: {
+      processWriteAndRead: true,
+      processRetentionLeases: true,
+      processRetentionPromotion: true,
+    },
   }), true);
+});
+
+test("LocalDevShellService sends retention promotion over the v4 process endpoint", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-service-"));
+  const service = new LocalDevShellService(baseDir, {
+    startupTimeoutMs: 20,
+    pollIntervalMs: 1,
+  }) as any;
+  const calls: unknown[][] = [];
+  service.request = async (...args: unknown[]) => {
+    calls.push(args);
+    return { status: "active", processId: "process-1", lifecycle: "retained", leases: [] };
+  };
+  const input = {
+    processId: "process-1",
+    fromLeaseId: "workspace-preview-publish:publication-1",
+    leaseId: "workspace-preview:preview-1",
+    kind: "workspace_preview" as const,
+    expiresAt: "2026-08-13T12:30:00.000Z",
+  };
+
+  const result = await service.promoteProcessRetention(input);
+
+  assert.equal(result.status, "active");
+  assert.deepEqual(calls, [[
+    "POST",
+    "/processes/process-1/retention/promote",
+    input,
+  ]]);
 });
 
 test("LocalDevShellService close terminates a spawned supervisor process", async () => {

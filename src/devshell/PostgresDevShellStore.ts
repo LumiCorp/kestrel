@@ -188,7 +188,9 @@ function isRetentionLease(value: unknown): value is DevShellProcessRecord["reten
   const record = value as Record<string, unknown>;
   return (
     typeof record.leaseId === "string" &&
-    (record.kind === "workspace_preview" || record.kind === "standalone") &&
+    (record.kind === "workspace_preview" ||
+      record.kind === "workspace_preview_provisional" ||
+      record.kind === "standalone") &&
     typeof record.expiresAt === "string" &&
     Number.isFinite(new Date(record.expiresAt).getTime())
   );

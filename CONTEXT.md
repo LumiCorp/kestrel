@@ -81,8 +81,14 @@ A developer-shell-owned, persisted claim that keeps one live process running unt
 **Preview Lease**
 A control-plane-owned public URL-routing lease for one Workspace preview. Its stable preview ID is also the identity of the corresponding developer-shell Process Retention Lease, but the authorities remain separate.
 
+**Preview Publication Lease**
+A developer-shell-owned provisional Process Retention Lease acquired before preview liveness and publication work. It has a fixed 10-minute expiry and is atomically promoted to the final preview-backed retention lease only after the preview service returns a valid ID and authoritative expiry. Failure releases it; a runner crash can retain the process for no longer than the provisional expiry.
+
 **Application Liveness**
 A current observation of whether an application is listening on its preview port. It is transient evidence, not URL-routing state and not process-retention authority.
+
+**Workspace Internal State**
+Kestrel-owned runtime data rooted at `/.kestrel/` or the legacy `/.local/share/kestrel/` namespace. Managed-worktree preparation excludes these paths from Kestrel-generated repository baselines and worktrees without changing an application's `.gitignore`; exact legacy Kestrel baselines are repaired additively while user-authored repository history is preserved.
 
 ## Current relationships
 
@@ -96,7 +102,9 @@ A current observation of whether an application is listening on its preview port
 - **Autopilot** acts through the same versioned Mission Control authority as an operator; it does not bypass Project revision, WIP, review, or acceptance rules.
 - Recovery resumes the exact pending runtime request. It does not directly rewrite the Mission Control Project.
 - A **Preview Lease** can remain valid while **Application Liveness** is temporarily unavailable, allowing the same public URL to recover after an application restart.
+- A **Preview Publication Lease** protects the backing process before Application Liveness or public URL work starts, then becomes the final preview-backed Process Retention Lease through one atomic promotion.
 - A preview-backed **Process Retention Lease** adopts the Preview Lease expiry. A finalized non-preview process receives a standalone 30-minute retention lease.
+- **Workspace Internal State** is operational data rather than application source and does not enter Kestrel-generated managed app worktrees.
 
 ## Legacy migration vocabulary
 
