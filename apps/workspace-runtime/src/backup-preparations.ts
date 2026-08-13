@@ -1,15 +1,27 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readdir, readlink } from "node:fs/promises";
+import { lstat, readdir, readlink, statfs } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import tar from "tar-stream";
+import { materializePortableBackupPayload } from "./portable-worktree-backup.js";
 
-export const WORKSPACE_BACKUP_PREPARATION_VERSION = 1;
-export const WORKSPACE_BACKUP_MAX_LOGICAL_BYTES = 2 * 1024 * 1024 * 1024;
+export const WORKSPACE_BACKUP_PREPARATION_VERSION = 2;
 export const WORKSPACE_BACKUP_PREPARATION_TTL_MS = 5 * 60 * 1000;
+
+const EXCLUDED_DIRECTORY_NAMES = new Set([
+  ".cache",
+  ".local",
+  ".npm",
+  ".pnpm-store",
+  ".yarn",
+  "logs",
+  "node_modules",
+  "temp",
+  "tmp",
+]);
 
 type PreparedEntry = {
   relativePath: string;
@@ -56,9 +68,13 @@ export class WorkspaceBackupPreparationRegistry {
   ) {}
 
   async prepare(): Promise<WorkspaceBackupPreparation> {
+    await materializePortableBackupPayload(this.workspaceRoot);
+    const maxLogicalBytes =
+      this.options.maxLogicalBytes ??
+      (await resolveWorkspaceBackupLogicalLimit(this.workspaceRoot));
     const entries = await inspectWorkspace(
       this.workspaceRoot,
-      this.options.maxLogicalBytes ?? WORKSPACE_BACKUP_MAX_LOGICAL_BYTES,
+      maxLogicalBytes,
     );
     const now = this.options.now?.() ?? new Date();
     const preparation: StoredPreparation = {
@@ -128,6 +144,7 @@ async function inspectWorkspace(root: string, maxLogicalBytes: number) {
       const metadata = await lstat(absolutePath);
       const mode = metadata.mode & 0o777;
       if (metadata.isDirectory()) {
+        if (isExcludedWorkspaceBackupPath(relativePath, true)) continue;
         entries.push({
           relativePath,
           type: "directory",
@@ -138,6 +155,7 @@ async function inspectWorkspace(root: string, maxLogicalBytes: number) {
         await visit(relativePath);
         continue;
       }
+      if (isExcludedWorkspaceBackupPath(relativePath, false)) continue;
       if (metadata.isSymbolicLink()) {
         const linkTarget = await readlink(absolutePath);
         entries.push({
@@ -263,9 +281,11 @@ async function inspectWorkspaceStructure(root: string) {
       const metadata = await lstat(absolutePath);
       const mode = metadata.mode & 0o777;
       if (metadata.isDirectory()) {
+        if (isExcludedWorkspaceBackupPath(relativePath, true)) continue;
         entries.push({ relativePath, type: "directory", mode, size: 0 });
         await visit(relativePath);
       } else if (metadata.isSymbolicLink()) {
+        if (isExcludedWorkspaceBackupPath(relativePath, false)) continue;
         entries.push({
           relativePath,
           type: "symlink",
@@ -274,6 +294,7 @@ async function inspectWorkspaceStructure(root: string) {
           linkTarget: await readlink(absolutePath),
         });
       } else if (metadata.isFile()) {
+        if (isExcludedWorkspaceBackupPath(relativePath, false)) continue;
         entries.push({
           relativePath,
           type: "file",
@@ -286,6 +307,41 @@ async function inspectWorkspaceStructure(root: string) {
 
   await visit("");
   return entries;
+}
+
+export async function resolveWorkspaceBackupLogicalLimit(root: string) {
+  const filesystem = await statfs(root, { bigint: true });
+  const capacity = filesystem.blocks * filesystem.bsize;
+  if (capacity <= 0n || capacity > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new WorkspaceBackupPreparationError(
+      "WORKSPACE_BACKUP_CAPACITY_INVALID",
+      "Workspace volume capacity is unavailable.",
+      500,
+    );
+  }
+  return Number(capacity);
+}
+
+export function isExcludedWorkspaceBackupPath(
+  relativePath: string,
+  directory: boolean,
+) {
+  const normalized = relativePath.replaceAll("\\", "/");
+  const segments = normalized.split("/");
+  if (
+    normalized === ".kestrel/runner" ||
+    normalized.startsWith(".kestrel/runner/") ||
+    normalized === ".kestrel/backup-imports" ||
+    normalized.startsWith(".kestrel/backup-imports/") ||
+    normalized === ".git/worktrees" ||
+    normalized.startsWith(".git/worktrees/")
+  ) {
+    return true;
+  }
+  if (segments.some((segment) => EXCLUDED_DIRECTORY_NAMES.has(segment))) {
+    return true;
+  }
+  return !directory && (normalized.endsWith(".log") || normalized.endsWith(".tmp"));
 }
 
 function writeEntry(

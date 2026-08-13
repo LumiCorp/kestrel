@@ -166,6 +166,20 @@ test(
       "a queued backup must not reserve Workspace execution",
     );
     await sql`
+      UPDATE "environment_operations"
+      SET "status" = 'running', "stage" = 'workspace.backup.exporting'
+      WHERE "id" = ${queuedBackupOperationId}
+    `;
+    assert.equal(
+      await findActiveWorkspaceLifecycleOperation(knowledgeDb, {
+        organizationId,
+        environmentId,
+        workspaceId,
+      }),
+      undefined,
+      "a running backup must not reserve Workspace execution",
+    );
+    await sql`
       DELETE FROM "environment_operations" WHERE "id" = ${queuedBackupOperationId}
     `;
 
