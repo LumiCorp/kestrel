@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -1070,6 +1070,14 @@ test("ManagedTaskWorktreeService blocks orphan reclaim while the previous run le
 test("ManagedTaskWorktreeService initializes missing Git repositories before preparing a worktree", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-nongit-"));
   await writeFile(path.join(root, "app.txt"), "new workspace\n", "utf8");
+  await mkdir(path.join(root, ".kestrel", "runner"), { recursive: true });
+  await writeFile(path.join(root, ".kestrel", "runner", "runtime.db"), "runtime\n", "utf8");
+  await mkdir(path.join(root, ".local", "share", "kestrel", "state"), { recursive: true });
+  await writeFile(
+    path.join(root, ".local", "share", "kestrel", "state", "legacy.db"),
+    "legacy\n",
+    "utf8",
+  );
   const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
 
   const provisioned = await service.provision({
@@ -1082,6 +1090,18 @@ test("ManagedTaskWorktreeService initializes missing Git repositories before pre
   assert.equal(await git(root, ["log", "-1", "--format=%s"]), "Kestrel workspace baseline");
   assert.equal(await readFile(path.join(provisioned.binding.worktreeRoot, "app.txt"), "utf8"), "new workspace\n");
   assert.equal(await git(provisioned.binding.worktreeRoot, ["rev-parse", "HEAD"]), provisioned.binding.baseHead);
+  assert.equal(await git(root, ["ls-files", ".kestrel", ".local/share/kestrel"]), "");
+  assert.equal(await readFile(path.join(root, ".kestrel", "runner", "runtime.db"), "utf8"), "runtime\n");
+  assert.equal(
+    await readFile(path.join(root, ".local", "share", "kestrel", "state", "legacy.db"), "utf8"),
+    "legacy\n",
+  );
+  await assert.rejects(lstat(path.join(provisioned.binding.worktreeRoot, ".kestrel")));
+  await assert.rejects(lstat(path.join(provisioned.binding.worktreeRoot, ".local", "share", "kestrel")));
+  const excludePath = await git(root, ["rev-parse", "--git-path", "info/exclude"]);
+  const excludes = await readFile(path.resolve(root, excludePath), "utf8");
+  assert.equal(excludes.match(/^\/.kestrel\/$/gmu)?.length, 1);
+  assert.equal(excludes.match(/^\/.local\/share\/kestrel\/$/gmu)?.length, 1);
 });
 
 test("ManagedTaskWorktreeService creates a baseline commit for initialized repositories without HEAD", async () => {
@@ -1112,6 +1132,218 @@ test("ManagedTaskWorktreeService creates a baseline commit for initialized repos
   });
   assert.equal(await readFile(path.join(provisioned.binding.worktreeRoot, "app.txt"), "utf8"), "unborn branch\n");
   assert.equal(await git(provisioned.binding.worktreeRoot, ["rev-parse", "HEAD"]), proposal.baseHead);
+});
+
+test("ManagedTaskWorktreeService lazily repairs tracked state from an exact legacy Kestrel baseline", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-legacy-baseline-"));
+  const repo = path.join(root, "repo");
+  await mkdir(path.join(repo, ".kestrel", "runner"), { recursive: true });
+  await mkdir(path.join(repo, ".local", "share", "kestrel", "state"), { recursive: true });
+  await writeFile(path.join(repo, "app.txt"), "clean\n", "utf8");
+  await writeFile(path.join(repo, ".kestrel", "runner", "runtime.db"), "runtime\n", "utf8");
+  await writeFile(
+    path.join(repo, ".local", "share", "kestrel", "state", "legacy.db"),
+    "legacy\n",
+    "utf8",
+  );
+  await createExactKestrelBaseline(repo);
+  await writeFile(path.join(repo, "unrelated-untracked.txt"), "keep\n", "utf8");
+  await writeFile(path.join(repo, "app.txt"), "unstaged\n", "utf8");
+
+  const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
+  const provisioned = await service.provision({
+    sessionId: "session-legacy",
+    sourceWorkspaceRoot: repo,
+    triggeringTool: "fs.write_text",
+  });
+
+  assert.equal(
+    await git(repo, ["log", "-1", "--format=%s"]),
+    "Kestrel: exclude internal workspace state",
+  );
+  assert.equal(await git(repo, ["ls-files", ".kestrel", ".local/share/kestrel"]), "");
+  assert.equal(await readFile(path.join(repo, ".kestrel", "runner", "runtime.db"), "utf8"), "runtime\n");
+  assert.equal(
+    await readFile(path.join(repo, ".local", "share", "kestrel", "state", "legacy.db"), "utf8"),
+    "legacy\n",
+  );
+  assert.equal(await readFile(path.join(repo, "app.txt"), "utf8"), "unstaged\n");
+  assert.equal(await readFile(path.join(repo, "unrelated-untracked.txt"), "utf8"), "keep\n");
+  assert.equal(await readFile(path.join(provisioned.binding.worktreeRoot, "app.txt"), "utf8"), "clean\n");
+  await assert.rejects(lstat(path.join(provisioned.binding.worktreeRoot, ".kestrel")));
+  await assert.rejects(lstat(path.join(provisioned.binding.worktreeRoot, ".local", "share", "kestrel")));
+});
+
+test("ManagedTaskWorktreeService repairs a sole Kestrel baseline root after descendant commits", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-descendant-baseline-"));
+  const repo = path.join(root, "repo");
+  await mkdir(path.join(repo, ".kestrel"), { recursive: true });
+  await writeFile(path.join(repo, "app.txt"), "baseline\n", "utf8");
+  await writeFile(path.join(repo, ".kestrel", "runtime.db"), "runtime\n", "utf8");
+  await createExactKestrelBaseline(repo);
+  await git(repo, ["config", "user.name", "Kestrel test"]);
+  await git(repo, ["config", "user.email", "kestrel-test@example.invalid"]);
+  await writeFile(path.join(repo, "app.txt"), "descendant\n", "utf8");
+  await git(repo, ["add", "app.txt"]);
+  await git(repo, ["commit", "-m", "Develop generated app"]);
+
+  const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
+  const provisioned = await service.provision({
+    sessionId: "session-descendant-baseline",
+    sourceWorkspaceRoot: repo,
+    triggeringTool: "fs.write_text",
+  });
+
+  assert.equal(await git(repo, ["log", "-1", "--format=%s"]), "Kestrel: exclude internal workspace state");
+  assert.equal(await git(repo, ["rev-list", "--count", "HEAD"]), "3");
+  assert.equal(await git(repo, ["ls-files", ".kestrel"]), "");
+  assert.equal(await readFile(path.join(repo, ".kestrel", "runtime.db"), "utf8"), "runtime\n");
+  await assert.rejects(lstat(path.join(provisioned.binding.worktreeRoot, ".kestrel")));
+});
+
+test("ManagedTaskWorktreeService skips automatic repair for ambiguous multi-root history", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-multi-root-"));
+  const repo = path.join(root, "repo");
+  await mkdir(path.join(repo, ".kestrel"), { recursive: true });
+  await writeFile(path.join(repo, "app.txt"), "baseline\n", "utf8");
+  await writeFile(path.join(repo, ".kestrel", "runtime.db"), "runtime\n", "utf8");
+  await createExactKestrelBaseline(repo);
+  await git(repo, ["config", "user.name", "Kestrel test"]);
+  await git(repo, ["config", "user.email", "kestrel-test@example.invalid"]);
+  const baselineBranch = await git(repo, ["branch", "--show-current"]);
+  await git(repo, ["switch", "--orphan", "unrelated-root"]);
+  await rm(path.join(repo, ".kestrel"), { recursive: true, force: true });
+  await rm(path.join(repo, "app.txt"), { force: true });
+  await writeFile(path.join(repo, "unrelated.txt"), "unrelated\n", "utf8");
+  await git(repo, ["add", "unrelated.txt"]);
+  await git(repo, ["commit", "-m", "Unrelated root"]);
+  await git(repo, ["switch", baselineBranch]);
+  await git(repo, ["merge", "--allow-unrelated-histories", "--no-edit", "unrelated-root"]);
+  const beforeHead = await git(repo, ["rev-parse", "HEAD"]);
+
+  const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
+  const provisioned = await service.provision({
+    sessionId: "session-multi-root",
+    sourceWorkspaceRoot: repo,
+    triggeringTool: "fs.write_text",
+  });
+
+  assert.equal(await git(repo, ["rev-parse", "HEAD"]), beforeHead);
+  assert.match(await git(repo, ["ls-files", ".kestrel"]), /^\.kestrel\/runtime\.db$/mu);
+  assert.equal(
+    await readFile(path.join(provisioned.binding.worktreeRoot, ".kestrel", "runtime.db"), "utf8"),
+    "runtime\n",
+  );
+});
+
+test("ManagedTaskWorktreeService restores protected index entries when the repair commit hook fails", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-repair-hook-"));
+  const repo = path.join(root, "repo");
+  await mkdir(path.join(repo, ".kestrel"), { recursive: true });
+  await writeFile(path.join(repo, "app.txt"), "baseline\n", "utf8");
+  await writeFile(path.join(repo, ".kestrel", "runtime.db"), "runtime\n", "utf8");
+  await createExactKestrelBaseline(repo);
+  const baselineHead = await git(repo, ["rev-parse", "HEAD"]);
+  const hookPath = path.join(repo, ".git", "hooks", "pre-commit");
+  await writeFile(hookPath, "#!/bin/sh\nexit 1\n", "utf8");
+  await chmod(hookPath, 0o755);
+
+  const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
+  await assert.rejects(
+    service.prepare({
+      sessionId: "session-repair-hook",
+      sourceWorkspaceRoot: repo,
+      triggeringTool: "fs.write_text",
+    }),
+    (error: unknown) => {
+      assert.equal(
+        (error as { code?: string }).code,
+        "MANAGED_WORKTREE_INTERNAL_STATE_REPAIR_COMMIT_FAILED",
+      );
+      return true;
+    },
+  );
+  assert.equal(await git(repo, ["rev-parse", "HEAD"]), baselineHead);
+  assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
+  assert.match(await git(repo, ["ls-files", ".kestrel"]), /^\.kestrel\/runtime\.db$/mu);
+  assert.equal(await readFile(path.join(repo, ".kestrel", "runtime.db"), "utf8"), "runtime\n");
+
+  await rm(hookPath);
+  await service.prepare({
+    sessionId: "session-repair-hook-retry",
+    sourceWorkspaceRoot: repo,
+    triggeringTool: "fs.write_text",
+  });
+  assert.equal(await git(repo, ["log", "-1", "--format=%s"]), "Kestrel: exclude internal workspace state");
+  assert.equal(await git(repo, ["diff", "--cached", "--name-only"]), "");
+});
+
+test("ManagedTaskWorktreeService refuses legacy baseline repair when unrelated index changes are staged", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-dirty-baseline-"));
+  const repo = path.join(root, "repo");
+  await mkdir(path.join(repo, ".kestrel"), { recursive: true });
+  await writeFile(path.join(repo, "app.txt"), "clean\n", "utf8");
+  await writeFile(path.join(repo, ".kestrel", "runtime.db"), "runtime\n", "utf8");
+  await createExactKestrelBaseline(repo);
+  const baselineHead = await git(repo, ["rev-parse", "HEAD"]);
+  await writeFile(path.join(repo, "staged.txt"), "user staged\n", "utf8");
+  await git(repo, ["add", "staged.txt"]);
+
+  const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
+  await assert.rejects(
+    service.prepare({
+      sessionId: "session-dirty-baseline",
+      sourceWorkspaceRoot: repo,
+      triggeringTool: "fs.write_text",
+    }),
+    (error: unknown) => {
+      const failure = error as { code?: string; details?: Record<string, unknown> };
+      assert.equal(failure.code, "MANAGED_WORKTREE_INTERNAL_STATE_REPAIR_INDEX_DIRTY");
+      assert.equal(failure.details?.classification, "boundary");
+      assert.equal(failure.details?.recoverable, true);
+      return true;
+    },
+  );
+  assert.equal(await git(repo, ["rev-parse", "HEAD"]), baselineHead);
+  assert.match(await git(repo, ["diff", "--cached", "--name-only"]), /^staged\.txt$/mu);
+  assert.match(await git(repo, ["ls-files", ".kestrel"]), /^\.kestrel\/runtime\.db$/mu);
+  assert.equal(await readFile(path.join(repo, ".kestrel", "runtime.db"), "utf8"), "runtime\n");
+});
+
+test("ManagedTaskWorktreeService preserves protected paths tracked by a user-authored repository", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-managed-worktree-user-state-"));
+  const repo = path.join(root, "repo");
+  await initRepo(repo);
+  await mkdir(path.join(repo, ".kestrel"), { recursive: true });
+  await mkdir(path.join(repo, ".local", "share", "kestrel"), { recursive: true });
+  await writeFile(path.join(repo, ".kestrel", "user-owned.txt"), "user\n", "utf8");
+  await writeFile(path.join(repo, ".local", "share", "kestrel", "user-owned.txt"), "user\n", "utf8");
+  await git(repo, ["add", "-f", ".kestrel", ".local/share/kestrel"]);
+  await git(repo, ["commit", "-m", "user tracks matching paths"]);
+
+  const service = new ManagedTaskWorktreeService({ homeDir: path.join(root, "home") });
+  const provisioned = await service.provision({
+    sessionId: "session-user-state",
+    sourceWorkspaceRoot: repo,
+    triggeringTool: "fs.write_text",
+  });
+
+  assert.match(await git(repo, ["ls-files", ".kestrel"]), /^\.kestrel\/user-owned\.txt$/mu);
+  assert.match(
+    await git(repo, ["ls-files", ".local/share/kestrel"]),
+    /^\.local\/share\/kestrel\/user-owned\.txt$/mu,
+  );
+  assert.equal(
+    await readFile(path.join(provisioned.binding.worktreeRoot, ".kestrel", "user-owned.txt"), "utf8"),
+    "user\n",
+  );
+  assert.equal(
+    await readFile(
+      path.join(provisioned.binding.worktreeRoot, ".local", "share", "kestrel", "user-owned.txt"),
+      "utf8",
+    ),
+    "user\n",
+  );
 });
 
 test("ManagedTaskWorktreeService reports live lifecycle state and storage", async () => {
@@ -1277,6 +1509,21 @@ async function initRepo(repo: string): Promise<void> {
   await writeFile(path.join(repo, "app.txt"), "clean\n", "utf8");
   await git(repo, ["add", "app.txt"]);
   await git(repo, ["commit", "-m", "initial"]);
+}
+
+async function createExactKestrelBaseline(repo: string): Promise<void> {
+  await git(repo, ["init"]);
+  await git(repo, ["add", "-A"]);
+  await execFileAsync("git", ["-C", repo, "commit", "-m", "Kestrel workspace baseline"], {
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Kestrel",
+      GIT_AUTHOR_EMAIL: "kestrel@example.invalid",
+      GIT_COMMITTER_NAME: "Kestrel",
+      GIT_COMMITTER_EMAIL: "kestrel@example.invalid",
+    },
+    maxBuffer: 10 * 1024 * 1024,
+  });
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {

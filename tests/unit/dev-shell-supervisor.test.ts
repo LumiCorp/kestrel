@@ -11,6 +11,9 @@ import { DevShellSupervisor } from "../../src/devshell/DevShellSupervisor.js";
 import {
   DEFAULT_DEV_SHELL_DISABLED_CONFIG,
   type DevShellOutputChunk,
+  type DevShellProcessRecord,
+  type DevShellProcessStatus,
+  type DevShellProcessStore,
 } from "../../src/devshell/contracts.js";
 
 
@@ -847,7 +850,7 @@ test("DevShellSupervisor keeps an explicit timeout active after startProcess ret
   }
 });
 
-test("DevShellSupervisor clears the original wall timeout when the first lease is acquired", async () => {
+test("DevShellSupervisor clears the original wall timeout when provisional preview retention is acquired", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
     const started = await supervisor.startProcess({
@@ -859,8 +862,8 @@ test("DevShellSupervisor clears the original wall timeout when the first lease i
     const processId = started.processId!;
     await supervisor.retainProcess({
       processId,
-      leaseId: "workspace-preview:preview-1",
-      kind: "workspace_preview",
+      leaseId: "workspace-preview-publish:publication-1",
+      kind: "workspace_preview_provisional",
       expiresAt: new Date(Date.now() + 10_000).toISOString(),
     });
 
@@ -869,11 +872,292 @@ test("DevShellSupervisor clears the original wall timeout when the first lease i
     assert.equal(stillRunning.status, "RUNNING");
 
     const released = await supervisor.releaseProcessRetention({
-      leaseId: "workspace-preview:preview-1",
+      leaseId: "workspace-preview-publish:publication-1",
     });
     assert.equal(released.status, "missing");
     const stopped = await supervisor.readProcess({ processId, waitMs: 0 });
     assert.equal(stopped.status, "STOPPED");
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor atomically promotes one provisional lease and preserves unrelated authorities", async () => {
+  const { supervisor, workspaceRoot } = await createSupervisor();
+  try {
+    const started = await supervisor.startProcess({ workspaceRoot, command: "sleep 30", yieldTimeMs: 10 });
+    const processId = started.processId!;
+    const provisionalExpiry = new Date(Date.now() + 600_000).toISOString();
+    const finalExpiry = new Date(Date.now() + 300_000).toISOString();
+    await supervisor.retainProcess({
+      processId,
+      leaseId: "workspace-preview-publish:publication-1",
+      kind: "workspace_preview_provisional",
+      expiresAt: provisionalExpiry,
+    });
+    await supervisor.retainProcess({
+      processId,
+      leaseId: "finalize:run-1:process-1",
+      kind: "standalone",
+      expiresAt: provisionalExpiry,
+    });
+
+    const promoted = await supervisor.promoteProcessRetention({
+      processId,
+      fromLeaseId: "workspace-preview-publish:publication-1",
+      leaseId: "workspace-preview:preview-1",
+      kind: "workspace_preview",
+      expiresAt: finalExpiry,
+    });
+
+    assert.deepEqual(promoted.leases, [
+      {
+        leaseId: "finalize:run-1:process-1",
+        kind: "standalone",
+        expiresAt: provisionalExpiry,
+      },
+      {
+        leaseId: "workspace-preview:preview-1",
+        kind: "workspace_preview",
+        expiresAt: finalExpiry,
+      },
+    ]);
+    assert.equal(
+      promoted.leases.some((lease) => lease.leaseId === "workspace-preview-publish:publication-1"),
+      false,
+    );
+    await supervisor.releaseProcessRetention({ leaseId: "workspace-preview:preview-1" });
+    assert.equal((await supervisor.readProcess({ processId, waitMs: 0 })).status, "RUNNING");
+    await supervisor.releaseProcessRetention({ leaseId: "finalize:run-1:process-1" });
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor rejects missing, expired, and mismatched promotion sources without mutation", async () => {
+  let now = new Date("2026-08-13T12:00:00.000Z");
+  const { supervisor, workspaceRoot, store } = await createSupervisor(() => now);
+  try {
+    const first = await supervisor.startProcess({ workspaceRoot, command: "sleep 30", yieldTimeMs: 10 });
+    const second = await supervisor.startProcess({ workspaceRoot, command: "sleep 30", yieldTimeMs: 10 });
+    const firstProcessId = first.processId!;
+    const secondProcessId = second.processId!;
+    await supervisor.retainProcess({
+      processId: firstProcessId,
+      leaseId: "workspace-preview-publish:publication-1",
+      kind: "workspace_preview_provisional",
+      expiresAt: "2026-08-13T12:10:00.000Z",
+    });
+    const beforeFirst = await store.getProcess(firstProcessId);
+    const beforeSecond = await store.getProcess(secondProcessId);
+
+    for (const input of [
+      {
+        processId: firstProcessId,
+        fromLeaseId: "workspace-preview-publish:missing",
+        leaseId: "workspace-preview:preview-1",
+        kind: "workspace_preview" as const,
+        expiresAt: "2026-08-13T12:05:00.000Z",
+      },
+      {
+        processId: secondProcessId,
+        fromLeaseId: "workspace-preview-publish:publication-1",
+        leaseId: "workspace-preview:preview-1",
+        kind: "workspace_preview" as const,
+        expiresAt: "2026-08-13T12:05:00.000Z",
+      },
+    ]) {
+      await assert.rejects(
+        supervisor.promoteProcessRetention(input),
+        (error: unknown) => {
+          assert.equal(
+            (error as { code?: string }).code,
+            "DEV_SHELL_RETENTION_PROMOTION_SOURCE_MISSING",
+          );
+          return true;
+        },
+      );
+    }
+    assert.deepEqual(await store.getProcess(firstProcessId), beforeFirst);
+    assert.deepEqual(await store.getProcess(secondProcessId), beforeSecond);
+
+    now = new Date("2026-08-13T12:10:00.000Z");
+    await assert.rejects(
+      supervisor.promoteProcessRetention({
+        processId: firstProcessId,
+        fromLeaseId: "workspace-preview-publish:publication-1",
+        leaseId: "workspace-preview:preview-1",
+        kind: "workspace_preview",
+        expiresAt: "2026-08-13T12:20:00.000Z",
+      }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { code?: string }).code,
+          "DEV_SHELL_RETENTION_PROMOTION_SOURCE_MISSING",
+        );
+        return true;
+      },
+    );
+    assert.deepEqual(await store.getProcess(firstProcessId), beforeFirst);
+
+    await assert.rejects(
+      supervisor.promoteProcessRetention({
+        processId: "missing-process",
+        fromLeaseId: "workspace-preview-publish:publication-1",
+        leaseId: "workspace-preview:preview-1",
+        kind: "workspace_preview",
+        expiresAt: "2026-08-13T12:20:00.000Z",
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "DEV_SHELL_PROCESS_NOT_FOUND");
+        return true;
+      },
+    );
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor rejects promotion after the process has settled", async () => {
+  const { supervisor, workspaceRoot, store } = await createSupervisor();
+  try {
+    const started = await supervisor.startProcess({
+      workspaceRoot,
+      command: "sleep 0.05",
+      yieldTimeMs: 5,
+    });
+    const processId = started.processId!;
+    await supervisor.retainProcess({
+      processId,
+      leaseId: "workspace-preview-publish:publication-1",
+      kind: "workspace_preview_provisional",
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const before = await store.getProcess(processId);
+    assert.notEqual(before?.status, "RUNNING");
+
+    await assert.rejects(
+      supervisor.promoteProcessRetention({
+        processId,
+        fromLeaseId: "workspace-preview-publish:publication-1",
+        leaseId: "workspace-preview:preview-1",
+        kind: "workspace_preview",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, "DEV_SHELL_PROCESS_NOT_RUNNING");
+        return true;
+      },
+    );
+    assert.deepEqual(await store.getProcess(processId), before);
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor restores provisional retention and keeps persistence usable after promotion storage failure", async () => {
+  for (const mode of ["before", "after"] as const) {
+    const baseDir = await mkdtemp(path.join(os.tmpdir(), `kestrel-promotion-${mode}-`));
+    const workspaceRootPath = path.join(baseDir, "workspace");
+    await mkdir(workspaceRootPath, { recursive: true });
+    const workspaceRoot = await realpath(workspaceRootPath);
+    const store = new FaultInjectingDevShellStore();
+    const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+    await supervisor.initialize();
+    try {
+      const started = await supervisor.startProcess({
+        workspaceRoot,
+        command: "sleep 30",
+        yieldTimeMs: 10,
+      });
+      const processId = started.processId!;
+      const provisionalLease = {
+        processId,
+        leaseId: `workspace-preview-publish:${mode}`,
+        kind: "workspace_preview_provisional" as const,
+        expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      };
+      await supervisor.retainProcess(provisionalLease);
+      store.failNextUpsert(mode);
+
+      await assert.rejects(
+        supervisor.promoteProcessRetention({
+          processId,
+          fromLeaseId: provisionalLease.leaseId,
+          leaseId: `workspace-preview:${mode}`,
+          kind: "workspace_preview",
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+        }),
+        /injected promotion persistence failure/u,
+      );
+
+      const retained = await supervisor.inspectProcessRetention({ processId });
+      assert.deepEqual(
+        retained.leases.map((lease) => [lease.leaseId, lease.kind]),
+        [[provisionalLease.leaseId, "workspace_preview_provisional"]],
+      );
+      assert.deepEqual(
+        (await store.getProcess(processId))?.retentionLeases.map((lease) => [lease.leaseId, lease.kind]),
+        [[provisionalLease.leaseId, "workspace_preview_provisional"]],
+      );
+
+      const retried = await supervisor.promoteProcessRetention({
+        processId,
+        fromLeaseId: provisionalLease.leaseId,
+        leaseId: `workspace-preview:${mode}`,
+        kind: "workspace_preview",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      });
+      assert.deepEqual(
+        retried.leases.map((lease) => lease.leaseId),
+        [`workspace-preview:${mode}`],
+      );
+      await supervisor.releaseProcessRetention({ leaseId: `workspace-preview:${mode}` });
+    } finally {
+      await supervisor.close();
+    }
+  }
+});
+
+test("DevShellSupervisor orders process exit behind a failing promotion without resurrecting retention", async () => {
+  const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-promotion-exit-"));
+  const workspaceRootPath = path.join(baseDir, "workspace");
+  await mkdir(workspaceRootPath, { recursive: true });
+  const workspaceRoot = await realpath(workspaceRootPath);
+  const store = new FaultInjectingDevShellStore();
+  const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"));
+  await supervisor.initialize();
+  try {
+    const started = await supervisor.startProcess({
+      workspaceRoot,
+      command: "sleep 0.08",
+      yieldTimeMs: 10,
+    });
+    const processId = started.processId!;
+    const provisionalLeaseId = "workspace-preview-publish:exit";
+    await supervisor.retainProcess({
+      processId,
+      leaseId: provisionalLeaseId,
+      kind: "workspace_preview_provisional",
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    });
+    store.delayAndFailNextUpsert(125);
+
+    await assert.rejects(
+      supervisor.promoteProcessRetention({
+        processId,
+        fromLeaseId: provisionalLeaseId,
+        leaseId: "workspace-preview:exit",
+        kind: "workspace_preview",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      }),
+      /injected delayed promotion persistence failure/u,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const record = await store.getProcess(processId);
+    assert.notEqual(record?.status, "RUNNING");
+    assert.deepEqual(record?.retentionLeases, []);
   } finally {
     await supervisor.close();
   }
@@ -936,6 +1220,31 @@ test("DevShellSupervisor stops a retained process when its final lease expires",
       expiresAt: "2026-08-12T12:01:00.000Z",
     });
     now = new Date("2026-08-12T12:01:00.000Z");
+    await (supervisor as unknown as { expireIdleProcesses(): Promise<void> }).expireIdleProcesses();
+    assert.equal((await supervisor.readProcess({ processId, waitMs: 0 })).status, "STOPPED");
+  } finally {
+    await supervisor.close();
+  }
+});
+
+test("DevShellSupervisor expires an orphaned provisional preview lease after ten minutes", async () => {
+  let now = new Date("2026-08-13T12:00:00.000Z");
+  const { supervisor, workspaceRoot } = await createSupervisor(() => now);
+  try {
+    const started = await supervisor.startProcess({ workspaceRoot, command: "sleep 30", yieldTimeMs: 10 });
+    const processId = started.processId!;
+    await supervisor.retainProcess({
+      processId,
+      leaseId: "workspace-preview-publish:publication-1",
+      kind: "workspace_preview_provisional",
+      expiresAt: "2026-08-13T12:10:00.000Z",
+    });
+
+    now = new Date("2026-08-13T12:09:59.999Z");
+    await (supervisor as unknown as { expireIdleProcesses(): Promise<void> }).expireIdleProcesses();
+    assert.equal((await supervisor.readProcess({ processId, waitMs: 0 })).status, "RUNNING");
+
+    now = new Date("2026-08-13T12:10:00.000Z");
     await (supervisor as unknown as { expireIdleProcesses(): Promise<void> }).expireIdleProcesses();
     assert.equal((await supervisor.readProcess({ processId, waitMs: 0 })).status, "STOPPED");
   } finally {
@@ -1399,6 +1708,50 @@ async function createSupervisor(now?: () => Date): Promise<{
   const supervisor = new DevShellSupervisor(store, path.join(baseDir, "state"), now);
   await supervisor.initialize();
   return { supervisor, workspaceRoot, baseDir, store };
+}
+
+class FaultInjectingDevShellStore implements DevShellProcessStore {
+  private readonly delegate = new InMemoryDevShellStore();
+  private failure:
+    | { mode: "before" | "after"; delayMs: number; message: string }
+    | undefined;
+
+  failNextUpsert(mode: "before" | "after"): void {
+    this.failure = {
+      mode,
+      delayMs: 0,
+      message: "injected promotion persistence failure",
+    };
+  }
+
+  delayAndFailNextUpsert(delayMs: number): void {
+    this.failure = {
+      mode: "before",
+      delayMs,
+      message: "injected delayed promotion persistence failure",
+    };
+  }
+
+  async upsertProcess(record: DevShellProcessRecord): Promise<void> {
+    const failure = this.failure;
+    this.failure = undefined;
+    if (failure !== undefined && failure.delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, failure.delayMs));
+    }
+    if (failure?.mode === "before") throw new Error(failure.message);
+    await this.delegate.upsertProcess(record);
+    if (failure?.mode === "after") throw new Error(failure.message);
+  }
+
+  getProcess(processId: string): Promise<DevShellProcessRecord | null> {
+    return this.delegate.getProcess(processId);
+  }
+
+  listProcesses(input?: {
+    status?: DevShellProcessStatus[] | undefined;
+  }): Promise<DevShellProcessRecord[]> {
+    return this.delegate.listProcesses(input);
+  }
 }
 
 function isPidRunning(pid: number): boolean {

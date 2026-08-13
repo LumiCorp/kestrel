@@ -12,6 +12,15 @@ import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import { resolveKestrelHomePath } from "../runtime/kestrelHome.js";
 
 const execFileAsync = promisify(execFile);
+const KESTREL_BASELINE_COMMIT_SUBJECT = "Kestrel workspace baseline";
+const KESTREL_INTERNAL_STATE_PATHS = [".kestrel", ".local/share/kestrel"] as const;
+const KESTREL_INTERNAL_STATE_EXCLUDES = ["/.kestrel/", "/.local/share/kestrel/"] as const;
+// The character class still matches the exact protected root, while preventing Git from
+// treating a negative pathspec for an already-ignored literal as an explicit ignored add.
+const KESTREL_INTERNAL_STATE_BASELINE_PATHSPECS = [
+  ":(exclude,top,glob).kest[r]el",
+  ":(exclude,top,glob).local/share/kest[r]el",
+] as const;
 
 export interface ManagedTaskWorktreeRequest {
   sessionId: string;
@@ -380,6 +389,7 @@ export class ManagedTaskWorktreeService {
   async prepare(input: ManagedTaskWorktreeRequest): Promise<ManagedTaskWorktreeProposal> {
     const sourceWorkspaceRoot = await resolveRealDirectory(input.sourceWorkspaceRoot, "sourceWorkspaceRoot");
     const sourceRepoRoot = await this.resolveSourceRepoRoot(sourceWorkspaceRoot, input.sourceRepoRoot);
+    await this.ensureWorkspaceInternalStateContainment(sourceRepoRoot);
     await this.ensureSourceHead(sourceRepoRoot);
     const scope = resolveWorktreeScope(input);
     const setup = normalizeManagedWorktreeSetupSpec(input.setup);
@@ -1285,7 +1295,13 @@ export class ManagedTaskWorktreeService {
       return existingHead;
     }
 
-    await git(sourceRepoRoot, ["add", "-A", "--", "."]);
+    await git(sourceRepoRoot, [
+      "add",
+      "-A",
+      "--",
+      ".",
+      ...KESTREL_INTERNAL_STATE_BASELINE_PATHSPECS,
+    ]);
     const staged = await git(sourceRepoRoot, ["diff", "--cached", "--quiet"])
       .then(() => false)
       .catch(() => true);
@@ -1294,6 +1310,92 @@ export class ManagedTaskWorktreeService {
       : ["commit", "--allow-empty", "-m", "Kestrel workspace baseline"];
     await git(sourceRepoRoot, commitArgs, baselineCommitEnv());
     return git(sourceRepoRoot, ["rev-parse", "--verify", "HEAD"]);
+  }
+
+  private async ensureWorkspaceInternalStateContainment(sourceRepoRoot: string): Promise<void> {
+    await ensureLocalGitExcludes(sourceRepoRoot);
+    const head = await git(sourceRepoRoot, ["rev-parse", "--verify", "HEAD"]).catch(() => {});
+    if (head === undefined || !(await isExactKestrelBaselineCommit(sourceRepoRoot))) return;
+
+    const tracked = parseGitPathList(await gitRaw(sourceRepoRoot, [
+      "ls-files",
+      "-z",
+      "--",
+      ...KESTREL_INTERNAL_STATE_PATHS,
+    ]));
+    if (tracked.length === 0) return;
+    if (await gitExitCode(sourceRepoRoot, ["diff", "--cached", "--quiet", "--"]) !== 0) {
+      throw createRuntimeFailure(
+        "MANAGED_WORKTREE_INTERNAL_STATE_REPAIR_INDEX_DIRTY",
+        "Kestrel internal workspace state cannot be removed from the baseline while the Git index contains unrelated staged changes.",
+        {
+          subsystem: "workspace",
+          classification: "boundary",
+          recoverable: true,
+          sourceRepoRoot,
+          protectedPaths: [...KESTREL_INTERNAL_STATE_PATHS],
+        },
+      );
+    }
+    await git(sourceRepoRoot, [
+      "rm",
+      "-r",
+      "--cached",
+      "--ignore-unmatch",
+      "--",
+      ...KESTREL_INTERNAL_STATE_PATHS,
+    ]);
+    try {
+      await git(
+        sourceRepoRoot,
+        ["commit", "-m", "Kestrel: exclude internal workspace state"],
+        baselineCommitEnv(),
+      );
+    } catch (error) {
+      const cleanupFailures: Array<{ operation: string; message: string }> = [];
+      await git(sourceRepoRoot, [
+        "reset",
+        "--quiet",
+        "HEAD",
+        "--",
+        ...KESTREL_INTERNAL_STATE_PATHS,
+      ]).catch((cleanupError) => {
+        cleanupFailures.push({
+          operation: "restore_internal_state_index",
+          message: errorMessage(cleanupError),
+        });
+      });
+      if (
+        cleanupFailures.length === 0 &&
+        await gitExitCode(sourceRepoRoot, [
+          "diff",
+          "--cached",
+          "--quiet",
+          "--",
+          ...KESTREL_INTERNAL_STATE_PATHS,
+        ]) !== 0
+      ) {
+        cleanupFailures.push({
+          operation: "verify_internal_state_index_restore",
+          message: "Protected Kestrel paths remain staged after repair rollback.",
+        });
+      }
+      const failure = createRuntimeFailure(
+        "MANAGED_WORKTREE_INTERNAL_STATE_REPAIR_COMMIT_FAILED",
+        "Kestrel internal workspace state could not be excluded because the additive repair commit failed.",
+        {
+          subsystem: "workspace",
+          classification: "boundary",
+          recoverable: true,
+          sourceRepoRoot,
+          protectedPaths: [...KESTREL_INTERNAL_STATE_PATHS],
+          primaryError: errorMessage(error),
+          ...(cleanupFailures.length > 0 ? { cleanupFailures } : {}),
+        },
+      );
+      Object.assign(failure, { cause: error });
+      throw failure;
+    }
   }
 
   private deriveWorktreeRoot(input: { sourceRepoRoot: string; scope: ManagedTaskWorktreeScope }): string {
@@ -2322,6 +2424,51 @@ function parseGitPathList(output: string): string[] {
     .filter((entry) => entry.length > 0);
 }
 
+async function ensureLocalGitExcludes(sourceRepoRoot: string): Promise<void> {
+  const gitExcludePath = await git(sourceRepoRoot, ["rev-parse", "--git-path", "info/exclude"]);
+  const absolutePath = path.isAbsolute(gitExcludePath)
+    ? gitExcludePath
+    : path.resolve(sourceRepoRoot, gitExcludePath);
+  const existing = await readFile(absolutePath, "utf8").catch(() => "");
+  const existingLines = new Set(existing.split(/\r?\n/u));
+  const additions = KESTREL_INTERNAL_STATE_EXCLUDES.filter((entry) => !existingLines.has(entry));
+  if (additions.length === 0) return;
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+  await writeFile(
+    absolutePath,
+    `${existing}${separator}${additions.join("\n")}\n`,
+    "utf8",
+  );
+}
+
+async function isExactKestrelBaselineCommit(sourceRepoRoot: string): Promise<boolean> {
+  const roots = (await git(sourceRepoRoot, [
+    "rev-list",
+    "--max-parents=0",
+    "HEAD",
+  ]).catch(() => ""))
+    .split(/\s+/u)
+    .filter((value) => value.length > 0);
+  if (roots.length !== 1) return false;
+  const identity = await git(sourceRepoRoot, [
+    "show",
+    "-s",
+    "--format=%P%x00%s%x00%an%x00%ae%x00%cn%x00%ce",
+    roots[0]!,
+  ]).catch(() => "");
+  const [parents, subject, authorName, authorEmail, committerName, committerEmail] =
+    identity.split("\u0000");
+  return (
+    parents === "" &&
+    subject === KESTREL_BASELINE_COMMIT_SUBJECT &&
+    authorName === "Kestrel" &&
+    authorEmail === "kestrel@example.invalid" &&
+    committerName === "Kestrel" &&
+    committerEmail === "kestrel@example.invalid"
+  );
+}
+
 function requireSafeRelativeGitPath(value: string): string {
   if (isSafeRelativeGitPath(value) === false) {
     throw createRuntimeFailure("MANAGED_WORKTREE_FAN_IN_PATH_INVALID", "Managed worktree fan-in path is invalid.", {
@@ -2707,6 +2854,10 @@ async function gitExitCode(cwd: string, args: string[]): Promise<number> {
     const code = (error as { code?: unknown }).code;
     return typeof code === "number" ? code : 1;
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function pathExists(absolutePath: string): Promise<boolean> {

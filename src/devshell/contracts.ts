@@ -7,7 +7,9 @@ export type DevShellProcessStatus =
 
 export const DEV_SHELL_BRIDGE_URL_ENV = "KESTREL_DEV_SHELL_BRIDGE_URL";
 export const DEV_SHELL_SOCKET_PATH_ENV = "KESTREL_DEV_SHELL_SOCKET_PATH";
-export const DEV_SHELL_SERVICE_PROTOCOL_VERSION = 3;
+export const DEV_SHELL_SERVICE_PROTOCOL_VERSION = 4;
+export const DEV_SHELL_TIMEOUT_MS_MODEL_WARNING =
+  "timeoutMs is a hard wall-clock process-lifetime deadline that kills the process even after status running is returned; omit timeoutMs for servers, watchers, REPLs, and other persistent processes.";
 
 export interface DevShellHealth {
   ok: boolean;
@@ -15,11 +17,15 @@ export interface DevShellHealth {
   capabilities: {
     processWriteAndRead: boolean;
     processRetentionLeases: boolean;
+    processRetentionPromotion: boolean;
   };
 }
 
 export type DevShellProcessLifecycle = "interactive" | "retained";
-export type DevShellProcessRetentionKind = "workspace_preview" | "standalone";
+export type DevShellProcessRetentionKind =
+  | "workspace_preview"
+  | "workspace_preview_provisional"
+  | "standalone";
 
 export interface DevShellProcessRetentionLease {
   leaseId: string;
@@ -168,6 +174,14 @@ export interface DevProcessRetentionInspectInput {
 
 export interface DevProcessRetentionReleaseInput {
   leaseId: string;
+}
+
+export interface DevProcessRetentionPromoteInput {
+  processId: string;
+  fromLeaseId: string;
+  leaseId: string;
+  kind: DevShellProcessRetentionKind;
+  expiresAt: string;
 }
 
 export interface DevProcessRetentionResult {
@@ -350,6 +364,7 @@ export interface DevShellServicePort {
   readProcess(input: DevProcessReadInput, options?: DevShellCommandOptions): Promise<DevProcessReadResult>;
   stopProcess(input: DevProcessStopInput, options?: DevShellCommandOptions): Promise<DevProcessStopResult>;
   retainProcess?(input: DevProcessRetainInput): Promise<DevProcessRetentionResult>;
+  promoteProcessRetention?(input: DevProcessRetentionPromoteInput): Promise<DevProcessRetentionResult>;
   inspectProcessRetention?(input: DevProcessRetentionInspectInput): Promise<DevProcessRetentionResult>;
   releaseProcessRetention?(input: DevProcessRetentionReleaseInput): Promise<DevProcessRetentionResult>;
 }

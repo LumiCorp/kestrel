@@ -303,6 +303,7 @@
         "tests/unit/code-execute-tool.test.ts",
         "tests/unit/deliberator-tool-surface.test.ts",
         "tests/unit/desktop-host-open-tool.test.ts",
+        "tests/unit/dev-shell-model-contract.test.ts",
         "tests/unit/devshell-tool-env-mode.test.ts",
         "tests/unit/evidence-extract-tool.test.ts",
         "tests/unit/exec-command-budget.test.ts",
