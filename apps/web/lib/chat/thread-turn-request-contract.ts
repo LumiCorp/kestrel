@@ -5,7 +5,7 @@ import {
   uiMessageSchema,
 } from "@/lib/knowledge/validation";
 import { KESTREL_ONE_INTERACTION_MODES } from "@/lib/turns/interaction-mode";
-import { THREAD_WORKSPACE_MODES } from "@/lib/threads/workspace-mode";
+import { NEW_THREAD_WORKSPACE_MODES } from "@/lib/threads/workspace-mode";
 
 const approvalResponseSchema = z
   .object({
@@ -21,7 +21,7 @@ export const threadTurnBodySchema = z
     model: z.string().min(1).max(200).optional(),
     interactionMode: z.enum(KESTREL_ONE_INTERACTION_MODES).default("chat"),
     projectId: routeIdSchema.nullable().optional(),
-    workspaceMode: z.enum(THREAD_WORKSPACE_MODES).optional(),
+    workspaceMode: z.enum(NEW_THREAD_WORKSPACE_MODES).optional(),
     message: (uiMessageSchema as z.ZodType<UIMessage>)
       .refine((message) => message.role === "user", {
         message: "A submitted Thread message must have the user role.",

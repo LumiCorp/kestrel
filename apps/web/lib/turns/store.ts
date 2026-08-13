@@ -652,6 +652,7 @@ export async function createMobileThreadBranchWithFirstTurn(
     projectId: string | null;
     parentThreadId: string;
     anchorMessageId: string;
+    workspaceBaseRef?: string | null;
   },
 ) {
   return knowledgeDb.transaction(async (tx) => {
@@ -707,6 +708,7 @@ export async function createMobileThreadBranchWithFirstTurn(
         mode: "chat",
         origin: "mobile",
         workspaceMode: parent.workspaceMode,
+        workspaceBaseRef: input.workspaceBaseRef ?? null,
         activeStreamId: null,
         title: "",
         isPublic: false,

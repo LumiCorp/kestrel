@@ -1,5 +1,6 @@
 ALTER TABLE "threads"
-  ADD COLUMN IF NOT EXISTS "workspace_mode" text;
+  ADD COLUMN IF NOT EXISTS "workspace_mode" text,
+  ADD COLUMN IF NOT EXISTS "workspace_base_ref" text;
 
 UPDATE "threads"
 SET "workspace_mode" = 'legacy'

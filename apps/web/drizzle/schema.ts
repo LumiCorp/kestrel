@@ -719,6 +719,7 @@ export const threads = pgTable(
     })
       .notNull()
       .default("primary"),
+    workspaceBaseRef: text("workspace_base_ref"),
     activeStreamId: text("active_stream_id"),
     isPublic: boolean("is_public").notNull().default(false),
     shareToken: text("share_token"),
