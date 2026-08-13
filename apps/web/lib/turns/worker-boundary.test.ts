@@ -90,6 +90,43 @@ test(
 );
 
 test(
+  "the turn worker runs exactly two one-job callbacks concurrently",
+  async () => {
+    const queueSource = await readFile(
+      new URL("./queue.ts", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(queueSource, /DURABLE_TURN_LOCAL_CONCURRENCY = 2/u);
+    assert.match(queueSource, /batchSize: 1,/u);
+    assert.match(
+      queueSource,
+      /localConcurrency: DURABLE_TURN_LOCAL_CONCURRENCY,/u,
+    );
+  },
+);
+
+test(
+  "job completion routes mobile delivery through guarded maintenance",
+  async () => {
+    const queueSource = await readFile(
+      new URL("./queue.ts", import.meta.url),
+      "utf8",
+    );
+    const directDrainCalls = queueSource.match(
+      /await drainMobilePushOutbox\(\)\.catch\(reportPushFailure\);/gu,
+    );
+
+    assert.equal(directDrainCalls?.length, 1);
+    assert.match(
+      queueSource,
+      /const runWorkerMaintenance = createWorkerMaintenance/u,
+    );
+    assert.match(queueSource, /await runWorkerMaintenance\(\);/u);
+  },
+);
+
+test(
   "a late worker lease signal cannot override a completed runtime outcome",
   async () => {
     const runtimeSource = await readFile(

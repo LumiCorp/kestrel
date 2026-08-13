@@ -3,18 +3,19 @@ import "server-only";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { createSingleFlightOperation } from "@/lib/turns/single-flight";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
 
 export const DURABLE_THREAD_TURN_QUEUE = "thread.turn.execute";
 export const DURABLE_TURN_EXPIRE_SECONDS = 12 * 60 * 60;
 export const DURABLE_TURN_HEARTBEAT_SECONDS = 60;
 export const DURABLE_TURN_HEARTBEAT_REFRESH_SECONDS = 30;
+export const DURABLE_TURN_LOCAL_CONCURRENCY = 2;
 
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL;
 let bossPromise: Promise<PgBoss> | null = null;
 let workerRegistered = false;
 let maintenanceTimer: ReturnType<typeof setInterval> | null = null;
-let maintenanceRunning = false;
 
 const NONTERMINAL_JOB_STATES = new Set(["active", "created", "retry"]);
 
@@ -217,27 +218,23 @@ export async function reconcileDurableThreadTurnQueue() {
   await reconcileDurableThreadTurnQueueWithBoss(await getTurnBoss());
 }
 
-async function runWorkerMaintenance(boss: PgBoss) {
-  if (maintenanceRunning) {
-    return;
-  }
-  maintenanceRunning = true;
-  try {
+function createWorkerMaintenance(boss: PgBoss) {
+  return createSingleFlightOperation(async () => {
     await reconcileDurableThreadTurnQueueWithBoss(boss);
     await drainMobilePushOutbox().catch(reportPushFailure);
-  } finally {
-    maintenanceRunning = false;
-  }
+  });
 }
 
 export async function startDurableThreadTurnWorker() {
   const boss = await getTurnBoss();
   if (!workerRegistered) {
     workerRegistered = true;
+    const runWorkerMaintenance = createWorkerMaintenance(boss);
     await boss.work(
       DURABLE_THREAD_TURN_QUEUE,
       {
         batchSize: 1,
+        localConcurrency: DURABLE_TURN_LOCAL_CONCURRENCY,
         includeMetadata: true,
         heartbeatRefreshSeconds: DURABLE_TURN_HEARTBEAT_REFRESH_SECONDS,
       },
@@ -257,7 +254,7 @@ export async function startDurableThreadTurnWorker() {
             if (result.nextTurnId) {
               await dispatchTurnOrReconcile(boss, result.nextTurnId);
             }
-            await drainMobilePushOutbox().catch(reportPushFailure);
+            await runWorkerMaintenance();
           } catch (error) {
             await finalizeExhaustedDurableTurnJob({
               turnId,
@@ -269,10 +266,9 @@ export async function startDurableThreadTurnWorker() {
         }
       },
     );
-    await reconcileDurableThreadTurnQueueWithBoss(boss);
-    await drainMobilePushOutbox().catch(reportPushFailure);
+    await runWorkerMaintenance();
     maintenanceTimer = setInterval(() => {
-      void runWorkerMaintenance(boss).catch((error) => {
+      void runWorkerMaintenance().catch((error) => {
         console.error("Kestrel One worker maintenance failed.", {
           message: error instanceof Error ? error.message : "Unknown error",
         });
