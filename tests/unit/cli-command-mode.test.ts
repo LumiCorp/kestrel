@@ -12,9 +12,15 @@ import {
   shouldRunCommandMode,
 } from "../../cli/commandMode.js";
 import { WorkspaceStore } from "../../cli/workspace/WorkspaceStore.js";
-import { formatCliLocalCoreDaemonInspection } from "../../cli/localCoreShell.js";
+import {
+  formatCliLocalCoreDaemonInspection,
+  type CliLocalCoreStatus,
+} from "../../cli/localCoreShell.js";
 import { resolveDefaultDevShellBaseDir } from "../../src/devshell/paths.js";
 
+const SKIP_LOCAL_CORE_PREPARATION = {
+  prepareLocalCore: () => Promise.resolve(),
+};
 
 test("shouldRunCommandMode recognizes command-mode entry commands", () => {
   assert.equal(shouldRunCommandMode(["model", "show"]), true);
@@ -31,8 +37,75 @@ test("shouldRunCommandMode recognizes command-mode entry commands", () => {
   assert.equal(shouldRunCommandMode(["--session", "default"]), false);
 });
 
+test("command mode routes readiness through explicit services", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-command-services-"),
+  );
+  const originalHome = process.env.KESTREL_HOME;
+  process.env.KESTREL_HOME = root;
+  let prepareCalls = 0;
+  let requireCalls = 0;
+  try {
+    await captureStdout(async () => {
+      await runCliCommand(["model", "show"], root, {
+        prepareLocalCore: () => {
+          prepareCalls += 1;
+          return Promise.resolve();
+        },
+      });
+    });
+    const status = await captureStdout(async () => {
+      await runCliCommand(["status"], root, {
+        requireLocalCore: () => {
+          requireCalls += 1;
+          return Promise.resolve({
+            state: "healthy",
+            summary: "ready",
+            home: {
+              productRootPath: root,
+              homePath: root,
+              stateEpoch: "0.6",
+              source: "explicit_core_home",
+              isolated: false,
+              platform: process.platform,
+            },
+            lock: {
+              state: "missing",
+              lockPath: path.join(root, "lock.json"),
+            },
+            dbMode: "pglite",
+            database: {
+              mode: "pglite",
+              state: "healthy",
+              summary: "ready",
+              managed: true,
+              initialized: true,
+              running: true,
+              identityVerified: true,
+            },
+            settingsReady: true,
+            workspaceRegistryReady: true,
+            diagnosticsPath: path.join(root, "diagnostics.json"),
+            logsPath: path.join(root, "logs"),
+          } satisfies CliLocalCoreStatus);
+        },
+      });
+    });
+
+    assert.equal(prepareCalls, 1);
+    assert.equal(requireCalls, 1);
+    assert.match(status, /Kestrel Local Core: healthy/u);
+  } finally {
+    if (originalHome === undefined) delete process.env.KESTREL_HOME;
+    else process.env.KESTREL_HOME = originalHome;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("command mode core status inspects without starting Local Core", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-core-status-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-command-core-status-"),
+  );
   const originalCoreHome = process.env.KESTREL_CORE_HOME;
   const originalHome = process.env.KESTREL_HOME;
   process.env.KESTREL_CORE_HOME = root;
@@ -45,7 +118,10 @@ test("command mode core status inspects without starting Local Core", async () =
     assert.match(output, /Build state: unknown/u);
     assert.match(output, /Expected build: sha256:[a-f0-9]{64}/u);
     assert.match(output, /run 'kestrel core restart' to start/u);
-    await assert.rejects(readFile(path.join(root, "state", "0.6", "core", "lock.json")), /ENOENT/u);
+    await assert.rejects(
+      readFile(path.join(root, "state", "0.6", "core", "lock.json")),
+      /ENOENT/u,
+    );
   } finally {
     if (originalCoreHome === undefined) delete process.env.KESTREL_CORE_HOME;
     else process.env.KESTREL_CORE_HOME = originalCoreHome;
@@ -150,30 +226,37 @@ test("command mode emits one resolved profile for profile-bearing jobs", () => {
     assert.equal(payload.profileId, registeredProfileId);
     assert.equal(payload.input.turn.eventType, "job.run");
     assert.equal(payload.input.turn.stepAgent, "agent.loop");
-    assert.doesNotThrow(() => parseRunnerCommandV2({
-      id: "command-job-profile",
-      type: "job.run",
-      payload,
-    }));
+    assert.doesNotThrow(() =>
+      parseRunnerCommandV2({
+        id: "command-job-profile",
+        type: "job.run",
+        payload,
+      }),
+    );
   }
 });
 
 test("command mode rejects job-owned persistence selection", () => {
   assert.throws(
-    () => buildResolvedJobRunCommandPayload({
-      version: "job_input_v1",
-      storeDriver: "sqlite",
-      turn: {
-        sessionId: "session-job-store",
-        message: "Run against a client-selected store",
-        eventType: "job.run",
-      },
-    }, {
-      id: "kestrel",
-      label: "Reference",
-      agent: "kestrel",
-      sessionPrefix: "kestrel",
-    }, `reference:cli_dev_local:${"a".repeat(64)}`),
+    () =>
+      buildResolvedJobRunCommandPayload(
+        {
+          version: "job_input_v1",
+          storeDriver: "sqlite",
+          turn: {
+            sessionId: "session-job-store",
+            message: "Run against a client-selected store",
+            eventType: "job.run",
+          },
+        },
+        {
+          id: "kestrel",
+          label: "Reference",
+          agent: "kestrel",
+          sessionPrefix: "kestrel",
+        },
+        `reference:cli_dev_local:${"a".repeat(64)}`,
+      ),
     /Local Core owns persistence/u,
   );
 });
@@ -197,14 +280,24 @@ test("command mode model show and set operate on shared model policy", async () 
     assert.match(initial, /Use kestrel model search <query> to browse/u);
 
     await captureStdout(async () => {
-      await runCliCommand(["model", "set-provider", "openai", "gpt-5.4-2026-03-05"], cwd);
+      await runCliCommand(
+        ["model", "set-provider", "openai", "gpt-5.4-2026-03-05"],
+        cwd,
+        SKIP_LOCAL_CORE_PREPARATION,
+      );
     });
     const updated = await captureStdout(async () => {
-      await runCliCommand(["model", "set", "gpt-5.4-2026-03-05"], cwd);
+      await runCliCommand(
+        ["model", "set", "gpt-5.4-2026-03-05"],
+        cwd,
+        SKIP_LOCAL_CORE_PREPARATION,
+      );
     });
     assert.match(updated, /provider=openai model=gpt-5\.4-2026-03-05/u);
 
-    const policy = JSON.parse(await readFile(path.join(home, "model-policy.json"), "utf8")) as {
+    const policy = JSON.parse(
+      await readFile(path.join(home, "model-policy.json"), "utf8"),
+    ) as {
       provider: string;
       model: string;
     };
@@ -220,7 +313,9 @@ test("command mode model show and set operate on shared model policy", async () 
 });
 
 test("command mode model show prefers the live OpenRouter catalog when available", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-live-openrouter-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-command-model-live-openrouter-"),
+  );
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
   await mkdir(cwd, { recursive: true });
@@ -251,7 +346,7 @@ test("command mode model show prefers the live OpenRouter catalog when available
 
   try {
     const output = await captureStdout(async () => {
-      await runCliCommand(["model", "show"], cwd);
+      await runCliCommand(["model", "show"], cwd, SKIP_LOCAL_CORE_PREPARATION);
     });
     assert.match(output, /modelCatalog=live/u);
     assert.match(output, /Recommended models for 'openrouter':/u);
@@ -273,7 +368,9 @@ test("command mode model show prefers the live OpenRouter catalog when available
 });
 
 test("command mode model search shows bounded matches for the current provider", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-search-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-command-model-search-"),
+  );
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
   await mkdir(cwd, { recursive: true });
@@ -297,12 +394,19 @@ test("command mode model search shows bounded matches for the current provider",
 
   try {
     const output = await captureStdout(async () => {
-      await runCliCommand(["model", "search", "gpt-5"], cwd);
+      await runCliCommand(
+        ["model", "search", "gpt-5"],
+        cwd,
+        SKIP_LOCAL_CORE_PREPARATION,
+      );
     });
     assert.match(output, /Model search results for 'gpt-5' \(openrouter\):/u);
     assert.match(output, /- openai\/gpt-5\.4-mini/u);
     assert.match(output, /- openai\/gpt-5\.2-chat/u);
-    assert.match(output, /Use kestrel model set <exact-model-id> to pick one of these models\./u);
+    assert.match(
+      output,
+      /Use kestrel model set <exact-model-id> to pick one of these models\./u,
+    );
   } finally {
     globalThis.fetch = originalFetch;
     if (originalHome === undefined) {
@@ -319,7 +423,9 @@ test("command mode model search shows bounded matches for the current provider",
 });
 
 test("command mode model set-provider accepts ollama", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-ollama-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-command-model-ollama-"),
+  );
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
   await mkdir(cwd, { recursive: true });
@@ -331,10 +437,7 @@ test("command mode model set-provider accepts ollama", async () => {
     assert.equal(String(input), "http://127.0.0.1:11434/api/tags");
     return new Response(
       JSON.stringify({
-        models: [
-          { model: "llama3.2:3b" },
-          { model: "qwen2.5-coder" },
-        ],
+        models: [{ model: "llama3.2:3b" }, { model: "qwen2.5-coder" }],
       }),
       {
         status: 200,
@@ -346,18 +449,29 @@ test("command mode model set-provider accepts ollama", async () => {
   }) as typeof fetch;
   try {
     await assert.rejects(
-      () => captureStdout(async () => {
-        await runCliCommand(["model", "set-provider", "ollama"], cwd);
-      }),
+      () =>
+        captureStdout(async () => {
+          await runCliCommand(
+            ["model", "set-provider", "ollama"],
+            cwd,
+            SKIP_LOCAL_CORE_PREPARATION,
+          );
+        }),
       /Selecting provider 'ollama' requires an explicit model\./u,
     );
 
     const updated = await captureStdout(async () => {
-      await runCliCommand(["model", "set-provider", "ollama", "llama3.2:3b"], cwd);
+      await runCliCommand(
+        ["model", "set-provider", "ollama", "llama3.2:3b"],
+        cwd,
+        SKIP_LOCAL_CORE_PREPARATION,
+      );
     });
     assert.match(updated, /provider=ollama model=llama3\.2:3b/u);
 
-    const policy = JSON.parse(await readFile(path.join(home, "model-policy.json"), "utf8")) as {
+    const policy = JSON.parse(
+      await readFile(path.join(home, "model-policy.json"), "utf8"),
+    ) as {
       provider: string;
       model: string;
     };
@@ -365,9 +479,14 @@ test("command mode model set-provider accepts ollama", async () => {
     assert.equal(policy.model, "llama3.2:3b");
 
     await assert.rejects(
-      () => captureStdout(async () => {
-        await runCliCommand(["model", "set", "gpt-5.2"], cwd);
-      }),
+      () =>
+        captureStdout(async () => {
+          await runCliCommand(
+            ["model", "set", "gpt-5.2"],
+            cwd,
+            SKIP_LOCAL_CORE_PREPARATION,
+          );
+        }),
       /Model 'gpt-5\.2' is not allowed for provider 'ollama'\./u,
     );
   } finally {
@@ -381,7 +500,9 @@ test("command mode model set-provider accepts ollama", async () => {
 });
 
 test("command mode model set-provider uses the live Ollama catalog when available", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-live-ollama-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-command-model-live-ollama-"),
+  );
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
   await mkdir(cwd, { recursive: true });
@@ -393,10 +514,7 @@ test("command mode model set-provider uses the live Ollama catalog when availabl
     assert.equal(String(input), "http://127.0.0.1:11434/api/tags");
     return new Response(
       JSON.stringify({
-        models: [
-          { model: "qwen2.5-coder" },
-          { model: "llama3.2:3b" },
-        ],
+        models: [{ model: "qwen2.5-coder" }, { model: "llama3.2:3b" }],
       }),
       {
         status: 200,
@@ -409,7 +527,11 @@ test("command mode model set-provider uses the live Ollama catalog when availabl
 
   try {
     const updated = await captureStdout(async () => {
-      await runCliCommand(["model", "set-provider", "ollama", "qwen2.5-coder"], cwd);
+      await runCliCommand(
+        ["model", "set-provider", "ollama", "qwen2.5-coder"],
+        cwd,
+        SKIP_LOCAL_CORE_PREPARATION,
+      );
     });
     assert.match(updated, /provider=ollama model=qwen2\.5-coder/u);
   } finally {
@@ -423,7 +545,9 @@ test("command mode model set-provider uses the live Ollama catalog when availabl
 });
 
 test("command mode model set-provider accepts lmstudio", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-lmstudio-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-command-model-lmstudio-"),
+  );
   const cwd = path.join(root, "workspace");
   const home = path.join(root, "home");
   await mkdir(cwd, { recursive: true });
@@ -432,11 +556,17 @@ test("command mode model set-provider accepts lmstudio", async () => {
   process.env.KESTREL_HOME = home;
   try {
     const updated = await captureStdout(async () => {
-      await runCliCommand(["model", "set-provider", "lmstudio", "local-model"], cwd);
+      await runCliCommand(
+        ["model", "set-provider", "lmstudio", "local-model"],
+        cwd,
+        SKIP_LOCAL_CORE_PREPARATION,
+      );
     });
     assert.match(updated, /provider=lmstudio model=local-model/u);
 
-    const policy = JSON.parse(await readFile(path.join(home, "model-policy.json"), "utf8")) as {
+    const policy = JSON.parse(
+      await readFile(path.join(home, "model-policy.json"), "utf8"),
+    ) as {
       provider: string;
       model: string;
     };
@@ -462,7 +592,11 @@ test("command mode workspace status registers cwd in the central catalog without
   process.env.KESTREL_HOME = home;
   try {
     await silenceStdout(async () => {
-      await runCliCommand(["workspace", "status"], cwd);
+      await runCliCommand(
+        ["workspace", "status"],
+        cwd,
+        SKIP_LOCAL_CORE_PREPARATION,
+      );
     });
 
     const workspaces = await new WorkspaceStore(home).load();
@@ -500,13 +634,19 @@ test("command mode expands ~/ KESTREL_HOME consistently with dev-shell defaults"
   process.env.KESTREL_HOME = relativeHome;
   try {
     await captureStdout(async () => {
-      await runCliCommand(["model", "show"], cwd);
+      await runCliCommand(["model", "show"], cwd, SKIP_LOCAL_CORE_PREPARATION);
     });
     await silenceStdout(async () => {
-      await runCliCommand(["workspace", "status"], cwd);
+      await runCliCommand(
+        ["workspace", "status"],
+        cwd,
+        SKIP_LOCAL_CORE_PREPARATION,
+      );
     });
 
-    const policy = JSON.parse(await readFile(path.join(expandedHome, "model-policy.json"), "utf8")) as {
+    const policy = JSON.parse(
+      await readFile(path.join(expandedHome, "model-policy.json"), "utf8"),
+    ) as {
       provider: string;
     };
     assert.equal(policy.provider, "openrouter");
@@ -514,7 +654,9 @@ test("command mode expands ~/ KESTREL_HOME consistently with dev-shell defaults"
     const workspaces = await new WorkspaceStore(expandedHome).load();
     assert.equal(workspaces.workspaces[0]?.rootPath, expectedCwd);
     assert.equal(
-      resolveDefaultDevShellBaseDir({ KESTREL_HOME: relativeHome } as NodeJS.ProcessEnv),
+      resolveDefaultDevShellBaseDir({
+        KESTREL_HOME: relativeHome,
+      } as NodeJS.ProcessEnv),
       path.join(expandedHome, "dev-shell"),
     );
   } finally {
@@ -542,36 +684,50 @@ test("command mode setup writes stable runtime defaults", async () => {
   process.env.KESTREL_HOME = home;
   try {
     await assert.rejects(
-      () => silenceStdout(async () => {
-        await runCliCommand(["setup", "--store", "sqlite"], cwd);
-      }),
+      () =>
+        silenceStdout(async () => {
+          await runCliCommand(
+            ["setup", "--store", "sqlite"],
+            cwd,
+            SKIP_LOCAL_CORE_PREPARATION,
+          );
+        }),
       /Local Core owns database configuration/u,
     );
     await assert.rejects(
-      () => silenceStdout(async () => {
-        await runCliCommand(["setup", "--store=sqlite"], cwd);
-      }),
+      () =>
+        silenceStdout(async () => {
+          await runCliCommand(
+            ["setup", "--store=sqlite"],
+            cwd,
+            SKIP_LOCAL_CORE_PREPARATION,
+          );
+        }),
       /Local Core owns database configuration/u,
     );
     await assert.rejects(
-      () => silenceStdout(async () => {
-        await runCliCommand(["setup", "--sqlite-path=runtime.db"], cwd);
-      }),
+      () =>
+        silenceStdout(async () => {
+          await runCliCommand(
+            ["setup", "--sqlite-path=runtime.db"],
+            cwd,
+            SKIP_LOCAL_CORE_PREPARATION,
+          );
+        }),
       /Local Core owns database configuration/u,
     );
     await silenceStdout(async () => {
       await runCliCommand(
-        [
-          "setup",
-          "--approval-pack",
-          "production",
-          "--full",
-        ],
+        ["setup", "--approval-pack", "production", "--full"],
         cwd,
+        SKIP_LOCAL_CORE_PREPARATION,
       );
     });
 
-    const settingsRaw = await readFile(path.join(home, "settings.json"), "utf8");
+    const settingsRaw = await readFile(
+      path.join(home, "settings.json"),
+      "utf8",
+    );
     const settings = JSON.parse(settingsRaw) as {
       version: number;
       defaults: {
@@ -617,7 +773,8 @@ async function captureStdout(operation: () => Promise<void>): Promise<string> {
   const originalLocalCoreDirect = process.env.KESTREL_LOCAL_CORE_DIRECT;
   let output = "";
   process.stdout.write = ((chunk: string | Uint8Array) => {
-    output += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    output +=
+      typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
     return true;
   }) as typeof process.stdout.write;
   process.env.KESTREL_LOCAL_CORE_DIRECT = "1";
