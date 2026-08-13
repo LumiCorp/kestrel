@@ -183,15 +183,32 @@ export class EnvironmentProviderError extends Error {
     | "FLY_RESPONSE_INVALID"
     | "FLY_MACHINE_UNHEALTHY";
   readonly status?: number | undefined;
+  readonly phase?: string | undefined;
+  readonly requestId?: string | undefined;
+  readonly providerDetail?: string | undefined;
 
   constructor(
     code: EnvironmentProviderError["code"],
     message: string,
-    status?: number,
+    evidence?:
+      | number
+      | {
+          status?: number | undefined;
+          phase?: string | undefined;
+          requestId?: string | undefined;
+          providerDetail?: string | undefined;
+        },
   ) {
     super(message);
     this.name = "EnvironmentProviderError";
     this.code = code;
-    this.status = status;
+    if (typeof evidence === "number") {
+      this.status = evidence;
+    } else {
+      this.status = evidence?.status;
+      this.phase = evidence?.phase;
+      this.requestId = evidence?.requestId;
+      this.providerDetail = evidence?.providerDetail;
+    }
   }
 }

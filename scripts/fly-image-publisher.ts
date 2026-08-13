@@ -77,13 +77,29 @@ export async function publishFlyImages(
   const components = await Promise.all(
     impacted.map(async (image) => {
       const label = `${image.role}-${revision.slice(0, 12)}`;
-      const taggedImage = `registry.fly.io/${image.app}:${label}`;
+      const taggedImage = `${image.repository}:${label}`;
       const existingImage = await tryPullExistingImage(
         dependencies,
         taggedImage,
       );
       if (existingImage) {
-        dependencies.write(`Reusing published Fly image ${taggedImage}.\n`);
+        dependencies.write(`Reusing published image ${taggedImage}.\n`);
+      } else if (image.publisher === "ghcr") {
+        await dependencies.run("docker", [
+          "buildx",
+          "build",
+          "--platform",
+          "linux/amd64",
+          "--file",
+          image.dockerfile,
+          "--tag",
+          taggedImage,
+          "--build-arg",
+          `KESTREL_GIT_SHA=${revision}`,
+          "--push",
+          ".",
+        ]);
+        await pullPublishedImage(dependencies, taggedImage);
       } else {
         await runFlyImageBuild(dependencies, appBuildQueues, image.app, [
           "deploy",
@@ -107,13 +123,16 @@ export async function publishFlyImages(
       const digest = await resolveLocalImageDigest(
         dependencies,
         taggedImage,
-        image.app,
+        image.repository,
       );
-      const immutableImage = `registry.fly.io/${image.app}@${digest}`;
+      const immutableImage = `${image.repository}@${digest}`;
       await dependencies.run("bash", [image.smoke, immutableImage], {
         ...env,
         EXPECTED_GIT_SHA: revision,
       });
+      if (image.publisher === "ghcr") {
+        await signAndVerifyPublicImage(dependencies, immutableImage);
+      }
       return {
         role: image.role,
         image: immutableImage,
@@ -243,6 +262,72 @@ export function isFlyRegistryManifestUnavailable(error: unknown) {
   return typeof stderr === "string" && stderr.includes("manifest unknown");
 }
 
+async function signAndVerifyPublicImage(
+  dependencies: FlyImagePublisherDependencies,
+  immutableImage: string,
+) {
+  const identity =
+    dependencies.env.KESTREL_COSIGN_CERTIFICATE_IDENTITY?.trim() ||
+    "https://github.com/LumiCorp/kestrel/.github/workflows/fly-image-release.yml@refs/heads/main";
+  await dependencies.run("cosign", ["sign", "--yes", immutableImage]);
+  await dependencies.run("cosign", [
+    "verify",
+    "--certificate-identity",
+    identity,
+    "--certificate-oidc-issuer",
+    "https://token.actions.githubusercontent.com",
+    immutableImage,
+  ]);
+  await verifyAnonymousGhcrDigestPull(dependencies.fetchImpl, immutableImage);
+}
+
+export async function verifyAnonymousGhcrDigestPull(
+  fetchImpl: FetchImplementation,
+  immutableImage: string,
+) {
+  const match = immutableImage.match(
+    /^ghcr\.io\/([^@]+)@(sha256:[a-f0-9]{64})$/u,
+  );
+  if (!match) throw new Error("Anonymous verification requires a GHCR digest.");
+  const [, repository, digest] = match;
+  const manifestUrl = `https://ghcr.io/v2/${repository}/manifests/${digest}`;
+  const headers = {
+    accept:
+      "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json",
+  };
+  let response = await fetchImpl(manifestUrl, { method: "HEAD", headers });
+  if (response.status === 401) {
+    const challenge = response.headers.get("www-authenticate") ?? "";
+    const realm = challenge.match(/realm="([^"]+)"/u)?.[1];
+    const service = challenge.match(/service="([^"]+)"/u)?.[1];
+    const scope = challenge.match(/scope="([^"]+)"/u)?.[1];
+    if (!(realm && service && scope)) {
+      throw new Error("GHCR did not provide an anonymous pull challenge.");
+    }
+    const tokenUrl = new URL(realm);
+    tokenUrl.searchParams.set("service", service);
+    tokenUrl.searchParams.set("scope", scope);
+    const tokenResponse = await fetchImpl(tokenUrl);
+    if (!tokenResponse.ok) {
+      throw new Error(
+        `GHCR anonymous token request failed (${tokenResponse.status}).`,
+      );
+    }
+    const token = z
+      .object({ token: z.string().min(1) })
+      .parse(await tokenResponse.json()).token;
+    response = await fetchImpl(manifestUrl, {
+      method: "HEAD",
+      headers: { ...headers, authorization: `Bearer ${token}` },
+    });
+  }
+  if (!response.ok) {
+    throw new Error(
+      `GHCR image is not anonymously pullable by digest (${response.status}).`,
+    );
+  }
+}
+
 async function listChangedPaths(
   dependencies: FlyImagePublisherDependencies,
   base: string,
@@ -298,7 +383,7 @@ async function getReleasePublicationState(
 async function resolveLocalImageDigest(
   dependencies: FlyImagePublisherDependencies,
   taggedImage: string,
-  app: string,
+  repository: string,
 ) {
   const repoDigests = z
     .array(z.string())
@@ -313,13 +398,13 @@ async function resolveLocalImageDigest(
         ]),
       ),
     );
-  const expectedPrefix = `registry.fly.io/${app}@`;
+  const expectedPrefix = `${repository}@`;
   const matches = repoDigests
     .filter((value) => value.startsWith(expectedPrefix))
     .map((value) => value.slice(expectedPrefix.length));
   if (matches.length !== 1 || !/^sha256:[a-f0-9]{64}$/u.test(matches[0]!)) {
     throw new Error(
-      "The pushed Fly image tag did not resolve to one immutable digest.",
+      "The pushed image tag did not resolve to one immutable digest.",
     );
   }
   return matches[0]!;

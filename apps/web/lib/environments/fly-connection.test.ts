@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 test(
-  "hosted Fly infrastructure uses team-owned authority with a personal fallback",
+  "hosted Fly infrastructure resolves only the tenant-owned connection",
   async () => {
     const [connectionSource, processSource, reconcileSource, environmentsSource] =
       await Promise.all([
@@ -22,8 +22,9 @@ test(
     assert.match(connectionSource, /aiProviderConnections/u);
     assert.match(connectionSource, /organizationSlug/u);
     assert.match(connectionSource, /status: "ready"/u);
-    assert.match(connectionSource, /isPersonalOrganizationSlug/u);
-    assert.match(connectionSource, /process\.env\.FLY_API_TOKEN/u);
+    assert.doesNotMatch(connectionSource, /isPersonalOrganizationSlug/u);
+    assert.doesNotMatch(connectionSource, /process\.env\.FLY_API_TOKEN/u);
+    assert.doesNotMatch(connectionSource, /KESTREL_FLY_ORGANIZATION_SLUG/u);
     assert.match(
       processSource,
       /createFlyProviderClient\(operation\.organizationId\)/u

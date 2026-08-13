@@ -6,7 +6,6 @@ import {
   encryptGatewayCredential,
 } from "@/lib/ai/gateway-credential-crypto";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { isPersonalOrganizationSlug } from "@/lib/personal-workspace-shared";
 import { FlyMachinesClient } from "./providers/fly-machines";
 
 const connectionIdFor = (organizationId: string) =>
@@ -132,18 +131,6 @@ export async function resolveFlyProviderAuthority(
 ): Promise<FlyProviderAuthority> {
   const connection = await getFlyProviderConnection(organizationId);
   if (connection) return resolveFlyProviderAuthorityFromConnection(connection);
-  const organization = await knowledgeDb.query.organizations.findFirst({
-    where: eq(schema.organizations.id, organizationId),
-    columns: { slug: true },
-  });
-  if (isPersonalOrganizationSlug(organization?.slug)) {
-    const token = process.env.FLY_API_TOKEN?.trim();
-    const organizationSlug =
-      process.env.KESTREL_FLY_ORGANIZATION_SLUG?.trim();
-    if (token && organizationSlug) {
-      return { token, organizationSlug };
-    }
-  }
   throw new Error("Fly provider connection is not configured.");
 }
 

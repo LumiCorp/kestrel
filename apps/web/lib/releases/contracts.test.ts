@@ -86,7 +86,7 @@ const digest = "b".repeat(64);
 test("release manifests require unique changed roles from the bundle revision", () => {
   const component = {
     role: "workspace-runtime" as const,
-    image: `registry.fly.io/kestrel-one-runner@sha256:${digest}`,
+    image: `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${digest}`,
     sourceRevision: revision,
     inputFingerprint: `sha256:${"c".repeat(64)}`,
     smoke: {
@@ -218,7 +218,7 @@ test("release admission rejects stale forward bundles and incompatible routers",
 test("release manifests bind gateway compatibility to the router component", () => {
   const router = {
     role: "environment-router" as const,
-    image: `registry.fly.io/kestrel-one-runner@sha256:${digest}`,
+    image: `ghcr.io/lumicorp/kestrel-environment-router@sha256:${digest}`,
     sourceRevision: revision,
     inputFingerprint: `sha256:${"c".repeat(64)}`,
     smoke: {
@@ -275,7 +275,19 @@ test("release manifests bind gateway compatibility to the router component", () 
   );
 });
 
-test("release images are bound to the registry app owned by their role", () => {
+test("release images are bound to the exact repository owned by their role", () => {
+  assert.doesNotThrow(() =>
+    assertFlyImageMatchesRole(
+      "workspace-runtime",
+      `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${digest}`,
+    ),
+  );
+  assert.doesNotThrow(() =>
+    assertFlyImageMatchesRole(
+      "environment-router",
+      `ghcr.io/lumicorp/kestrel-environment-router@sha256:${digest}`,
+    ),
+  );
   assert.doesNotThrow(() =>
     assertFlyImageMatchesRole(
       "preview-edge",
@@ -288,7 +300,19 @@ test("release images are bound to the registry app owned by their role", () => {
         "workspace-runtime",
         `registry.fly.io/kestrel-preview-edge@sha256:${digest}`,
       ),
-    /must use registry app 'kestrel-one-runner'/u,
+    /must use repository 'ghcr\.io\/lumicorp\/kestrel-workspace-runtime'/u,
+  );
+  assert.throws(() =>
+    assertFlyImageMatchesRole(
+      "workspace-runtime",
+      `ghcr.io/lumicorp/kestrel-environment-router@sha256:${digest}`,
+    ),
+  );
+  assert.throws(() =>
+    assertFlyImageMatchesRole(
+      "workspace-runtime",
+      "ghcr.io/lumicorp/kestrel-workspace-runtime:latest",
+    ),
   );
 });
 

@@ -993,14 +993,18 @@ test("Environment gateway rejects invalid desired ticket keys before Fly access"
   }
 });
 
-test("Fly rejection discards provider response bodies", async () => {
+test("Fly rejection retains only bounded, redacted provider evidence", async () => {
   const client = new FlyMachinesClient({
     token: "test-token",
     organizationSlug: "kestrel-test",
     fetchImpl: (async () =>
-      new Response("reflected-secret", {
-        status: 401,
-      })) as unknown as typeof fetch,
+      Response.json(
+        {
+          error: `Machine rejected token=FlyV1-secret ${"detail ".repeat(80)}`,
+          request_body: "must-never-be-stored",
+        },
+        { status: 400, headers: { "fly-request-id": "fly-request-123" } },
+      )) as unknown as typeof fetch,
   });
   await assert.rejects(
     () =>
@@ -1008,8 +1012,16 @@ test("Fly rejection discards provider response bodies", async () => {
         appName: "kestrel-env-abc",
         networkName: "kestrel-abc-network",
       }),
-    (error: unknown) =>
-      error instanceof Error && !error.message.includes("reflected-secret"),
+    (error: unknown) => {
+      assert.ok(error instanceof EnvironmentProviderError);
+      assert.equal(error.phase, "fly.environment.app.get");
+      assert.equal(error.status, 400);
+      assert.equal(error.requestId, "fly-request-123");
+      assert.ok((error.providerDetail?.length ?? 0) <= 300);
+      assert.match(error.providerDetail ?? "", /token=\[redacted\]/u);
+      assert.doesNotMatch(error.message, /FlyV1-secret|must-never-be-stored/u);
+      return true;
+    },
   );
 });
 

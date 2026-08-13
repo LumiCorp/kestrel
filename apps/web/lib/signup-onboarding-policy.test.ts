@@ -92,6 +92,7 @@ function readiness(input: {
       operationId: null,
       operationStatus: null,
       operationStage: null,
+      providerRequestId: null,
       failureMessage: null,
     },
   };

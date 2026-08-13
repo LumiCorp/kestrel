@@ -231,13 +231,15 @@ export function classifyFlyImageReleaseEnvironment(input: {
   return "skip";
 }
 
-export const immutableFlyImageSchema = z
+export const immutableOciImageSchema = z
   .string()
   .trim()
   .regex(
-    /^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u,
-    "Fly image must use an immutable registry.fly.io sha256 digest.",
+    /^(?:registry\.fly\.io|ghcr\.io)\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u,
+    "Image must use an immutable supported OCI repository and sha256 digest.",
   );
+
+export const immutableFlyImageSchema = immutableOciImageSchema;
 
 const gitRevisionSchema = z
   .string()
@@ -269,7 +271,7 @@ const acceptedGatewayVersionsSchema = z
 export const flyImageReleaseComponentSchema = z
   .object({
     role: flyImageRoleSchema,
-    image: immutableFlyImageSchema,
+    image: immutableOciImageSchema,
     sourceRevision: gitRevisionSchema,
     inputFingerprint: sha256Schema,
     smoke: z.object({
@@ -282,6 +284,15 @@ export const flyImageReleaseComponentSchema = z
       .optional(),
   })
   .superRefine((component, context) => {
+    try {
+      assertFlyImageMatchesRole(component.role, component.image);
+    } catch (error) {
+      context.addIssue({
+        code: "custom",
+        message: error instanceof Error ? error.message : "Invalid role image.",
+        path: ["image"],
+      });
+    }
     if (
       component.role === "environment-router" &&
       !component.environmentGateway
@@ -348,23 +359,24 @@ export type FlyImageReleaseManifestV2 = z.infer<
   typeof flyImageReleaseManifestV2Schema
 >;
 
-const ROLE_REGISTRY_APPS: Record<FlyImageRole, string> = {
-  "workspace-runtime": "kestrel-one-runner",
-  "environment-router": "kestrel-one-runner",
-  "preview-edge": "kestrel-preview-edge",
-  "turn-worker": "kestrel-one-turn-worker",
-  "runpod-worker": "kestrel-one-runpod-worker",
+export const ROLE_IMAGE_REPOSITORIES: Record<FlyImageRole, string> = {
+  "workspace-runtime": "ghcr.io/lumicorp/kestrel-workspace-runtime",
+  "environment-router": "ghcr.io/lumicorp/kestrel-environment-router",
+  "preview-edge": "registry.fly.io/kestrel-preview-edge",
+  "turn-worker": "registry.fly.io/kestrel-one-turn-worker",
+  "runpod-worker": "registry.fly.io/kestrel-one-runpod-worker",
 };
 
 export function assertFlyImageMatchesRole(
   role: FlyImageRole,
   image: string,
 ): void {
-  const parsed = immutableFlyImageSchema.parse(image);
-  const expectedPrefix = `registry.fly.io/${ROLE_REGISTRY_APPS[role]}@`;
+  const parsed = immutableOciImageSchema.parse(image);
+  const expectedRepository = ROLE_IMAGE_REPOSITORIES[role];
+  const expectedPrefix = `${expectedRepository}@`;
   if (!parsed.startsWith(expectedPrefix)) {
     throw new Error(
-      `Release image for '${role}' must use registry app '${ROLE_REGISTRY_APPS[role]}'.`,
+      `Release image for '${role}' must use repository '${expectedRepository}'.`,
     );
   }
 }

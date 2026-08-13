@@ -477,6 +477,13 @@
       "when": 1786622400000,
       "tag": "0067_thread_workspace_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1786626000000,
+      "tag": "0068_byo_fly_onboarding",
+      "breakpoints": true
     }
   ]
 }

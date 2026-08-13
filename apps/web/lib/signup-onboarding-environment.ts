@@ -1,6 +1,7 @@
 export type SignupEnvironmentDependencies = {
   getRollout(input: { organizationId: string }): Promise<{
     deploymentEnabled: boolean;
+    organizationConfigured: boolean;
     organizationEnabled: boolean;
   }>;
   enableRollout(input: {
@@ -32,7 +33,7 @@ export async function startOrRecoverSignupEnvironment(
   if (!rollout.deploymentEnabled) {
     return { action: "deployment_disabled" as const };
   }
-  if (!rollout.organizationEnabled) {
+  if (!(rollout.organizationConfigured && rollout.organizationEnabled)) {
     await dependencies.enableRollout({
       organizationId: input.organizationId,
       actorUserId: input.userId,

@@ -80,6 +80,13 @@ export interface EnvironmentProvisioningRepository {
     operationId: string;
     attempt: number;
   }): Promise<"prepared" | "superseded">;
+  stageEnvironmentAppIdentity(input: {
+    environmentId: string;
+    operationId: string;
+    attempt: number;
+    appName: string;
+    networkName: string;
+  }): Promise<"staged" | "superseded">;
   stageEnvironmentGatewayIdentity(input: {
     environmentId: string;
     operationId?: string | undefined;
@@ -114,6 +121,9 @@ export interface EnvironmentProvisioningRepository {
     attempt: number;
     code: string;
     message: string;
+    stage?: string | undefined;
+    providerRequestId?: string | undefined;
+    result?: Record<string, unknown> | undefined;
   }): Promise<"failed" | "superseded">;
   degradeEnvironment(input: {
     environmentId: string;
@@ -179,6 +189,8 @@ export interface EnvironmentProvisioningRepository {
     stage: string;
     code: string;
     message: string;
+    providerRequestId?: string | undefined;
+    result?: Record<string, unknown> | undefined;
   }): Promise<void>;
   deferOperation(input: {
     operationId: string;
@@ -186,6 +198,8 @@ export interface EnvironmentProvisioningRepository {
     stage: string;
     code?: string | undefined;
     message: string;
+    providerRequestId?: string | undefined;
+    providerFailure?: Record<string, unknown> | undefined;
     retryState?:
       | {
           attempt: number;
@@ -338,6 +352,7 @@ export class EnvironmentProvisioner {
             retryable: true,
           }
         : safeFailure(error);
+      const providerEvidence = readProviderFailureEvidence(error);
       if (failure.retryable) {
         const previousRetry = asRecord(operation.result)?.retryState;
         const firstFailureAt =
@@ -366,9 +381,13 @@ export class EnvironmentProvisioner {
           attempt: operation.attempt,
           stage: controlPlaneFailure
             ? "environment.activation.reconciling"
-            : "environment.provider.retrying",
+            : providerEvidence?.phase
+              ? `${providerEvidence.phase}.failed`
+              : "environment.provider.retrying",
           code: failure.code,
           message: failure.message,
+          providerRequestId: providerEvidence?.requestId,
+          providerFailure: providerEvidence,
           retryState: {
             attempt: retryAttempt,
             firstFailureAt,
@@ -396,6 +415,13 @@ export class EnvironmentProvisioner {
           environmentId: operation.environmentId,
           operationId: operation.id,
           attempt: operation.attempt,
+          stage: providerEvidence?.phase
+            ? `${providerEvidence.phase}.failed`
+            : undefined,
+          providerRequestId: providerEvidence?.requestId,
+          result: providerEvidence
+            ? { providerFailure: providerEvidence }
+            : undefined,
           ...failure,
         });
         return "processed";
@@ -418,7 +444,13 @@ export class EnvironmentProvisioner {
       }
       await this.repository.failOperation({
         operationId: operation.id,
-        stage: "environment.activation.failed",
+        stage: providerEvidence?.phase
+          ? `${providerEvidence.phase}.failed`
+          : "environment.activation.failed",
+        providerRequestId: providerEvidence?.requestId,
+        result: providerEvidence
+          ? { providerFailure: providerEvidence }
+          : undefined,
         ...failure,
       });
       return "processed";
@@ -509,6 +541,16 @@ export class EnvironmentProvisioner {
       }),
     );
     await this.provider.ensureEnvironmentApp({ appName, networkName });
+    const appStaged = await this.persistEnvironmentProvisioning(() =>
+      this.repository.stageEnvironmentAppIdentity({
+        environmentId: environment.id,
+        operationId: operation.id,
+        attempt: operation.attempt,
+        appName,
+        networkName,
+      }),
+    );
+    if (appStaged === "superseded") return;
     await this.persistEnvironmentProvisioning(() =>
       this.repository.updateOperationStage({
         operationId: operation.id,
@@ -1595,6 +1637,37 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         return environment ? ("staged" as const) : ("superseded" as const);
       });
     },
+    async stageEnvironmentAppIdentity(input) {
+      const now = new Date();
+      return knowledgeDb.transaction(async (transaction) => {
+        await transaction.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
+        );
+        const [operation] = await transaction
+          .update(schema.environmentOperations)
+          .set({ updatedAt: now })
+          .where(
+            and(
+              eq(schema.environmentOperations.id, input.operationId),
+              eq(schema.environmentOperations.environmentId, input.environmentId),
+              eq(schema.environmentOperations.status, "running"),
+              eq(schema.environmentOperations.attempt, input.attempt),
+            ),
+          )
+          .returning({ id: schema.environmentOperations.id });
+        if (!operation) return "superseded" as const;
+        const [environment] = await transaction
+          .update(schema.environments)
+          .set({
+            flyAppName: input.appName,
+            flyNetworkName: input.networkName,
+            updatedAt: now,
+          })
+          .where(eq(schema.environments.id, input.environmentId))
+          .returning({ id: schema.environments.id });
+        return environment ? ("staged" as const) : ("superseded" as const);
+      });
+    },
     async setEnvironmentDeleting(environmentId, options) {
       await knowledgeDb.transaction(async (transaction) => {
         await transaction.execute(
@@ -1749,7 +1822,10 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
               eq(schema.environmentOperations.attempt, input.attempt),
             ),
           )
-          .returning({ id: schema.environmentOperations.id });
+          .returning({
+            id: schema.environmentOperations.id,
+            result: schema.environmentOperations.result,
+          });
         if (!operation) return "superseded" as const;
         const [environment] = await transaction
           .update(schema.environments)
@@ -1766,7 +1842,13 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           .update(schema.environmentOperations)
           .set({
             status: "failed",
-            stage: "environment.activation.failed",
+            stage: input.stage ?? "environment.activation.failed",
+            ...(input.providerRequestId
+              ? { providerRequestId: input.providerRequestId }
+              : {}),
+            ...(input.result
+              ? { result: { ...(operation.result ?? {}), ...input.result } }
+              : {}),
             errorCode: input.code,
             errorMessage: input.message,
             completedAt: now,
@@ -2039,11 +2121,23 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
     },
     async failOperation(input) {
       const now = new Date();
+      const current = input.result
+        ? await knowledgeDb.query.environmentOperations.findFirst({
+            where: (table, { eq }) => eq(table.id, input.operationId),
+            columns: { result: true },
+          })
+        : null;
       await knowledgeDb
         .update(schema.environmentOperations)
         .set({
           status: "failed",
           stage: input.stage,
+          ...(input.providerRequestId
+            ? { providerRequestId: input.providerRequestId }
+            : {}),
+          ...(input.result
+            ? { result: { ...(current?.result ?? {}), ...input.result } }
+            : {}),
           errorCode: input.code,
           errorMessage: input.message,
           completedAt: now,
@@ -2066,11 +2160,17 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             stage: input.stage,
             errorCode: input.code ?? null,
             errorMessage: input.message,
+            ...(input.providerRequestId
+              ? { providerRequestId: input.providerRequestId }
+              : {}),
             ...(input.retryState
               ? {
                   result: {
                     ...(current?.result ?? {}),
                     retryState: input.retryState,
+                    ...(input.providerFailure
+                      ? { providerFailure: input.providerFailure }
+                      : {}),
                   },
                 }
               : {}),
@@ -2228,6 +2328,19 @@ function safeFailure(error: unknown): {
     message: "Environment provisioning failed.",
     retryable: false,
   };
+}
+
+function readProviderFailureEvidence(error: unknown) {
+  if (!(error instanceof EnvironmentProviderError)) return ;
+  const evidence = {
+    phase: error.phase,
+    status: error.status,
+    requestId: error.requestId,
+    detail: error.providerDetail,
+  };
+  return Object.values(evidence).some((value) => value !== undefined)
+    ? evidence
+    : undefined;
 }
 
 export async function classifyEnvironmentGatewayHealthFailure(input: {

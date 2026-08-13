@@ -5,6 +5,7 @@ import { startOrRecoverSignupEnvironment } from "./signup-onboarding-environment
 function dependencies(input?: {
   deploymentEnabled?: boolean;
   organizationEnabled?: boolean;
+  organizationConfigured?: boolean;
   operationId?: string | null;
 }) {
   const calls: string[] = [];
@@ -15,6 +16,7 @@ function dependencies(input?: {
         calls.push("rollout");
         return {
           deploymentEnabled: input?.deploymentEnabled ?? true,
+          organizationConfigured: input?.organizationConfigured ?? true,
           organizationEnabled: input?.organizationEnabled ?? true,
         };
       },
@@ -72,6 +74,20 @@ test("signup recovers an existing default Environment", async () => {
     action: "recovered",
     environmentId: "environment-1",
   });
+});
+
+test("signup persists explicit eligibility when the rollout row is missing", async () => {
+  const fixture = dependencies({ organizationConfigured: false });
+  await startOrRecoverSignupEnvironment(
+    { organizationId: "organization-1", userId: "user-1" },
+    fixture.value,
+  );
+  assert.deepEqual(fixture.calls, [
+    "rollout",
+    "enable",
+    "ensure",
+    "enqueue:operation-1",
+  ]);
 });
 
 test("signup leaves Environment state untouched when hosted execution is disabled", async () => {
