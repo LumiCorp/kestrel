@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   buildControlWorkerArtifact,
@@ -17,8 +19,15 @@ const pullAttempts = 13;
 const pullRetryDelayMs = 5_000;
 const readinessAttempts = 45;
 const readinessRetryDelayMs = 2_000;
-const smokeScript = "deploy/fly/kestrel-one-control-worker/smoke.sh";
-const flyConfig = "deploy/fly/kestrel-one-control-worker/fly.toml";
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const smokeScript = resolve(
+  repositoryRoot,
+  "deploy/fly/kestrel-one-control-worker/smoke.sh",
+);
+const flyConfig = resolve(
+  repositoryRoot,
+  "deploy/fly/kestrel-one-control-worker/fly.toml",
+);
 
 export type ControlWorkerDeployDependencies = {
   buildArtifact: () => Promise<ControlWorkerArtifact>;
