@@ -10,7 +10,7 @@ import { readThreadStructuredReview } from "../../lib/turns/structured-review";
 import {
   evaluationReviewInteractionFixture,
   legacyRecoveryReviewInteractionFixture,
-} from "../../../../tests/fixtures/structured-review-contract";
+} from "../../tests/fixtures/structured-review-contract";
 
 test("Web evaluation review reads only exact durable options and bounded disclosure", () => {
   const interaction = {

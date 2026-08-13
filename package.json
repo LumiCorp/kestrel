@@ -68,6 +68,7 @@
     "validate:node": "node --input-type=module -e \"const major = Number(process.versions.node.split('.')[0]); if (major !== 22) { console.error('Kestrel validation requires Node.js 22.x; received ' + process.versions.node + '.'); process.exit(1); }\"",
     "version:check": "node --import tsx scripts/check-suite-version.ts",
     "validate": "node scripts/validate.mjs",
+    "validate:lane": "node scripts/validate.mjs --lane",
     "validate:hermetic": "node scripts/validate.mjs --leaf hermetic all",
     "validate:process": "node scripts/validate.mjs --leaf process all",
     "validate:postgres": "node scripts/validate.mjs --leaf postgres all",
