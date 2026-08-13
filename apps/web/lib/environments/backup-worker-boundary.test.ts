@@ -28,16 +28,12 @@ test(
     );
     assert.match(processSource, /return provisioner\.process\(operationId\)/u);
     assert.match(backupSource, /workspace\.backup\.retrying/u);
-    assert.match(backupSource, /workspace\.backup\.waiting_for_execution/u);
-    assert.match(
+    assert.doesNotMatch(
       backupSource,
-      /inArray\(table\.status,\s*\["routed",\s*"running"\]\)/u,
+      /workspace\.backup\.waiting_for_execution/u,
     );
-    assert.match(backupSource, /threadTurnQueueState\.activeTurnId/u);
-    assert.match(
-      backupSource,
-      /inArray\(schema\.threadTurns\.status,\s*\["queued",\s*"running"\]\)/u,
-    );
+    assert.doesNotMatch(backupSource, /threadTurnQueueState\.activeTurnId/u);
+    assert.match(backupSource, /isDeterministicBackupFailure\(code\)/u);
     assert.match(backupSource, /input\.attempt\?\.canRetry === true/u);
     assert.match(reconcileSource, /workspaceDailyBackupIdempotencyKey/u);
     assert.match(reconcileSource, /gte\(table\.createdAt,\s*dayStart\)/u);

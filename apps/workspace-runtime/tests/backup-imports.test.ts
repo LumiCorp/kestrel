@@ -57,3 +57,21 @@ test("chunked backup import rejects out-of-order content", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("backup import size follows the Workspace capacity contract", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-import-test-"));
+  try {
+    const registry = new WorkspaceBackupImportRegistry(root, {
+      maxImportBytes: 4,
+    });
+    const created = await registry.create("a".repeat(64));
+    await assert.rejects(
+      registry.append(created.id, 0, Buffer.from("12345")),
+      (error: unknown) =>
+        error instanceof WorkspaceRequestError &&
+        error.code === "WORKSPACE_BACKUP_TOO_LARGE",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

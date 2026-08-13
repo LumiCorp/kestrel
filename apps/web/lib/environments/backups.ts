@@ -13,7 +13,6 @@ import {
   createWorkspaceBackupDecryptionStream,
   createWorkspaceBackupEncryptionStream,
 } from "./backup-crypto";
-import { createAuxiliaryVolumeSnapshot } from "./backup-snapshot";
 import { selectWorkspaceBackupRetention } from "./backup-retention";
 import {
   uploadBackupArchiveStream,
@@ -91,12 +90,17 @@ export async function createWorkspaceBackup(input: {
   if (
     !(
       environment?.flyAppName &&
+      environment.routerUrl &&
       workspace?.flyVolumeId &&
       workspace.flyMachineId &&
+      workspace.runtimeImage &&
       binding
     )
   ) {
     throw new Error("Workspace is not ready for backup.");
+  }
+  if (workspace.sourceType === "desktop") {
+    throw new Error("Desktop Workspaces use Desktop-owned backup recovery.");
   }
   const now = new Date();
   const expiresAt = new Date(
@@ -122,21 +126,83 @@ export async function createWorkspaceBackup(input: {
     };
   }
   const { operationId, backupId } = prepared;
+  const provider = await createFlyProviderClient(input.organizationId);
+  let exportMachineId: string | null = null;
+  let exportVolumeId: string | null = null;
   try {
     input.signal?.throwIfAborted();
-    const route = await resolveEnvironmentExecutionRoute({
+    const snapshot = await provider.createVolumeSnapshot({
+      appName: environment.flyAppName,
+      volumeId: workspace.flyVolumeId,
+    });
+    await waitForWorkspaceSnapshot({
+      snapshotId: snapshot.id,
+      sourceVolumeId: workspace.flyVolumeId,
+      appName: environment.flyAppName,
+      isUsable: (snapshotInput) =>
+        provider.isWorkspaceSnapshotUsable(snapshotInput),
+      signal: input.signal,
+    });
+    const exportReplacementId = `backup-${backupId}`;
+    const exportVolume = await provider.createReplacementWorkspaceVolume({
+      appName: environment.flyAppName,
+      workspaceId: workspace.id,
+      region: environment.region,
+      replacementId: exportReplacementId,
+      snapshotId: snapshot.id,
+      sourceVolumeId: workspace.flyVolumeId,
+    });
+    exportVolumeId = exportVolume.id;
+    const workspaceServiceToken = createEnvironmentServiceToken();
+    const exportMachine = await provider.createReplacementWorkspaceMachine({
+      appName: environment.flyAppName,
+      environmentId: environment.id,
       organizationId: input.organizationId,
+      workspaceId: workspace.id,
+      volumeId: exportVolume.id,
+      region: environment.region,
+      runtimeImage: workspace.runtimeImage,
+      ticketPublicKey:
+        process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
+      controlPlaneUrl: process.env.KESTREL_ONE_APP_URL ?? "",
+      serviceToken: workspaceServiceToken,
+      source: {
+        type: workspace.sourceType,
+        ...(workspace.sourceRepository
+          ? { repository: workspace.sourceRepository }
+          : {}),
+        ...(workspace.sourceDefaultBranch
+          ? { defaultBranch: workspace.sourceDefaultBranch }
+          : {}),
+      },
+      idleTimeoutMinutes: environment.idleTimeoutMinutes,
+      replacementId: exportReplacementId,
+    });
+    exportMachineId = exportMachine.id;
+    if (exportMachine.state !== "started") {
+      await provider.waitForMachine({
+        appName: environment.flyAppName,
+        machineId: exportMachine.id,
+        state: "started",
+        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+      });
+    }
+    await provider.waitForMachineHealth({
+      appName: environment.flyAppName,
+      machineId: exportMachine.id,
+      checkName: "workspace",
+      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+    });
+    const route = createEnvironmentMachineRoute({
+      organizationId: input.organizationId,
+      environmentId: environment.id,
+      workspaceId: workspace.id,
       threadId: binding.threadId,
-      actorUserId: input.actorUserId,
-      owningLifecycleOperationIds: [
-        operationId,
-        ...(input.parentLifecycleOperationId
-          ? [input.parentLifecycleOperationId]
-          : []),
-      ],
-      owningReleaseTargetIds: input.parentReleaseTargetId
-        ? [input.parentReleaseTargetId]
-        : undefined,
+      actorId: input.actorUserId,
+      flyAppName: environment.flyAppName,
+      flyMachineId: exportMachine.id,
+      routerUrl: environment.routerUrl,
+      capabilities: ["workspace.backups.export"],
     });
     const preparation = await prepareBackupExport(
       route.baseUrl,
@@ -164,14 +230,15 @@ export async function createWorkspaceBackup(input: {
           reusableBackupId: reusable.id,
           sourceRevision: preparation.sourceRevision,
           retainedUntil,
+          reusableManifest: reusable.manifest,
+          snapshotId: snapshot.id,
+          snapshotSourceVolumeId: workspace.flyVolumeId,
         });
         return {
           backupId: reusable.id,
           objectKey: reusable.objectKey,
-          snapshotId: readString(asRecord(reusable.manifest)?.flySnapshotId),
-          snapshotState:
-            readString(asRecord(reusable.manifest)?.flySnapshotState) ??
-            "not_requested",
+          snapshotId: snapshot.id,
+          snapshotState: "created",
           expiresAt: retainedUntil,
           status: "unchanged" as const,
         };
@@ -209,14 +276,15 @@ export async function createWorkspaceBackup(input: {
           reusableBackupId: concurrent.id,
           sourceRevision: preparation.sourceRevision,
           retainedUntil,
+          reusableManifest: concurrent.manifest,
+          snapshotId: snapshot.id,
+          snapshotSourceVolumeId: workspace.flyVolumeId,
         });
         return {
           backupId: concurrent.id,
           objectKey: concurrent.objectKey,
-          snapshotId: readString(asRecord(concurrent.manifest)?.flySnapshotId),
-          snapshotState:
-            readString(asRecord(concurrent.manifest)?.flySnapshotState) ??
-            "not_requested",
+          snapshotId: snapshot.id,
+          snapshotState: "created",
           expiresAt: retainedUntil,
           status: "unchanged" as const,
         };
@@ -259,14 +327,6 @@ export async function createWorkspaceBackup(input: {
     });
     const checksumSha256 = archiveHash.digest("hex");
     input.signal?.throwIfAborted();
-    const provider = await createFlyProviderClient(input.organizationId);
-    const snapshot = await createAuxiliaryVolumeSnapshot({
-      appName: environment.flyAppName,
-      volumeId: workspace.flyVolumeId,
-      createSnapshot: (snapshotInput) =>
-        provider.createVolumeSnapshot(snapshotInput),
-    });
-    input.signal?.throwIfAborted();
     const completedAt = new Date();
     await knowledgeDb.transaction(async (transaction) => {
       await transaction
@@ -284,7 +344,7 @@ export async function createWorkspaceBackup(input: {
             logicalBytes: preparation?.logicalBytes ?? null,
             entryCount: preparation?.entryCount ?? null,
             flySnapshotId: snapshot.id,
-            flySnapshotState: snapshot.state,
+            flySnapshotState: "created",
             flySnapshotSourceVolumeId: workspace.flyVolumeId,
             ...(input.preDestructiveSnapshot
               ? {
@@ -292,9 +352,6 @@ export async function createWorkspaceBackup(input: {
                   preDestructiveFlySnapshotState:
                     input.preDestructiveSnapshot.state,
                 }
-              : {}),
-            ...(snapshot.errorMessage
-              ? { flySnapshotError: snapshot.errorMessage }
               : {}),
           },
           updatedAt: completedAt,
@@ -309,7 +366,7 @@ export async function createWorkspaceBackup(input: {
             backupId,
             objectKey,
             flySnapshotId: snapshot.id,
-            flySnapshotState: snapshot.state,
+            flySnapshotState: "created",
           },
           completedAt,
           updatedAt: completedAt,
@@ -332,7 +389,7 @@ export async function createWorkspaceBackup(input: {
       backupId,
       objectKey,
       snapshotId: snapshot.id,
-      snapshotState: snapshot.state,
+      snapshotState: "created",
       expiresAt: retainedUntil,
     };
   } catch (error) {
@@ -356,6 +413,23 @@ export async function createWorkspaceBackup(input: {
       message: failure.message,
     });
     throw error;
+  } finally {
+    if (exportMachineId) {
+      await provider
+        .deleteMachine({
+          appName: environment.flyAppName,
+          machineId: exportMachineId,
+        })
+        .catch(() => {});
+    }
+    if (exportVolumeId) {
+      await provider
+        .deleteVolume({
+          appName: environment.flyAppName,
+          volumeId: exportVolumeId,
+        })
+        .catch(() => {});
+    }
   }
 }
 
@@ -545,7 +619,8 @@ export async function processQueuedWorkspaceBackup(input: {
     });
     return "processed" as const;
   } catch (error) {
-    if (asErrorCode(error) === "WORKSPACE_BACKUP_TOO_LARGE") {
+    const code = asErrorCode(error);
+    if (code === "WORKSPACE_BACKUP_TOO_LARGE") {
       console.info("Workspace backup lifecycle outcome.", {
         operationId: operation.id,
         workspaceId: backup.workspaceId,
@@ -558,6 +633,9 @@ export async function processQueuedWorkspaceBackup(input: {
       columns: { id: true },
     });
     if (deferred) return "deferred" as const;
+    if (code && isDeterministicBackupFailure(code)) {
+      return "processed" as const;
+    }
     throw error;
   }
 }
@@ -897,6 +975,9 @@ async function completeUnchangedWorkspaceBackup(input: {
   reusableBackupId: string;
   sourceRevision: string;
   retainedUntil: Date;
+  reusableManifest: unknown;
+  snapshotId: string;
+  snapshotSourceVolumeId: string;
 }) {
   const completedAt = new Date();
   await knowledgeDb.transaction(async (transaction) => {
@@ -918,6 +999,18 @@ async function completeUnchangedWorkspaceBackup(input: {
     await transaction
       .update(schema.workspaceBackups)
       .set({
+        manifest: {
+          ...asRecord(input.reusableManifest),
+          flySnapshotId: input.snapshotId,
+          flySnapshotState: "created",
+          flySnapshotSourceVolumeId: input.snapshotSourceVolumeId,
+        },
+        updatedAt: completedAt,
+      })
+      .where(eq(schema.workspaceBackups.id, input.reusableBackupId));
+    await transaction
+      .update(schema.workspaceBackups)
+      .set({
         status: "expired",
         sourceRevision: null,
         expiresAt: completedAt,
@@ -930,64 +1023,6 @@ async function completeUnchangedWorkspaceBackup(input: {
       })
       .where(eq(schema.workspaceBackups.id, input.duplicateBackupId));
   });
-}
-
-async function hasActiveWorkspaceExecutionOwnership(
-  transaction: WorkspaceBackupTransaction,
-  input: {
-    organizationId: string;
-    environmentId: string;
-    workspaceId: string;
-  },
-) {
-  const activeExecution =
-    await transaction.query.environmentRunExecutions.findFirst({
-      where: (table, { and, eq, inArray }) =>
-        and(
-          eq(table.organizationId, input.organizationId),
-          eq(table.environmentId, input.environmentId),
-          eq(table.workspaceId, input.workspaceId),
-          inArray(table.status, ["routed", "running"]),
-        ),
-      columns: { id: true },
-    });
-  if (activeExecution) return true;
-
-  const [activeTurn] = await transaction
-    .select({ id: schema.threadTurns.id })
-    .from(schema.threadTurns)
-    .innerJoin(
-      schema.threadExecutionBindings,
-      and(
-        eq(
-          schema.threadExecutionBindings.threadId,
-          schema.threadTurns.threadId,
-        ),
-        eq(
-          schema.threadExecutionBindings.organizationId,
-          schema.threadTurns.organizationId,
-        ),
-      ),
-    )
-    .innerJoin(
-      schema.threadTurnQueueState,
-      and(
-        eq(schema.threadTurnQueueState.threadId, schema.threadTurns.threadId),
-        eq(schema.threadTurnQueueState.activeTurnId, schema.threadTurns.id),
-        eq(schema.threadTurnQueueState.state, "running"),
-      ),
-    )
-    .where(
-      and(
-        eq(schema.threadTurns.organizationId, input.organizationId),
-        eq(schema.threadTurns.requestedEnvironmentId, input.environmentId),
-        inArray(schema.threadTurns.status, ["queued", "running"]),
-        eq(schema.threadExecutionBindings.environmentId, input.environmentId),
-        eq(schema.threadExecutionBindings.workspaceId, input.workspaceId),
-      ),
-    )
-    .limit(1);
-  return Boolean(activeTurn);
 }
 
 async function prepareWorkspaceBackup(input: {
@@ -1055,37 +1090,10 @@ async function prepareWorkspaceBackup(input: {
           backupId: existingBackup.id,
         };
       }
-      let deferredForExecution = false;
       await knowledgeDb.transaction(async (transaction) => {
         await transaction.execute(
           sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
         );
-        if (
-          input.executionOwnership === "queue" &&
-          input.initialStatus !== "queued" &&
-          (await hasActiveWorkspaceExecutionOwnership(transaction, {
-            organizationId: input.organizationId,
-            environmentId: input.environmentId,
-            workspaceId: input.workspaceId,
-          }))
-        ) {
-          deferredForExecution = true;
-          await transaction
-            .update(schema.environmentOperations)
-            .set({
-              status: "queued",
-              stage: "workspace.backup.waiting_for_execution",
-              startedAt: null,
-              completedAt: null,
-              updatedAt: input.now,
-            })
-            .where(eq(schema.environmentOperations.id, existingOperation.id));
-          await transaction
-            .update(schema.workspaceBackups)
-            .set({ status: "queued", updatedAt: input.now })
-            .where(eq(schema.workspaceBackups.id, existingBackup.id));
-          return;
-        }
         await transaction
           .update(schema.environmentOperations)
           .set({
@@ -1127,7 +1135,7 @@ async function prepareWorkspaceBackup(input: {
       return {
         available: null,
         failed: false,
-        deferred: deferredForExecution,
+        deferred: false,
         operationId: existingOperation.id,
         backupId: existingBackup.id,
       };
@@ -1267,15 +1275,53 @@ async function persistWorkspaceBackupAttemptFailure(input: {
   });
 }
 
-function isDeterministicBackupFailure(code: string) {
+export function isDeterministicBackupFailure(code: string) {
   return new Set([
     "WORKSPACE_BACKUP_TOO_LARGE",
     "WORKSPACE_CHANGED_DURING_BACKUP",
     "WORKSPACE_BACKUP_CHECKSUM_MISMATCH",
     "WORKSPACE_BACKUP_PREPARATION_UNAVAILABLE",
+    "WORKSPACE_BACKUP_CAPACITY_INVALID",
     "ENVIRONMENT_ROUTE_FORBIDDEN",
     "ENVIRONMENT_ROUTE_UNAUTHORIZED",
   ]).has(code);
+}
+
+export async function waitForWorkspaceSnapshot(input: {
+  appName: string;
+  sourceVolumeId: string;
+  snapshotId: string;
+  isUsable: (snapshotInput: {
+    appName: string;
+    sourceVolumeId: string;
+    snapshotId: string;
+  }) => Promise<boolean>;
+  signal?: AbortSignal | undefined;
+  timeoutMs?: number | undefined;
+  pollIntervalMs?: number | undefined;
+}) {
+  const deadline = Date.now() + (input.timeoutMs ?? 120_000);
+  while (true) {
+    input.signal?.throwIfAborted();
+    if (
+      await input.isUsable({
+        appName: input.appName,
+        sourceVolumeId: input.sourceVolumeId,
+        snapshotId: input.snapshotId,
+      })
+    ) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw Object.assign(
+        new Error("Fly Workspace snapshot was not ready for archive export."),
+        { code: "WORKSPACE_BACKUP_SNAPSHOT_NOT_READY" },
+      );
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, input.pollIntervalMs ?? 500),
+    );
+  }
 }
 
 function asErrorCode(error: unknown) {

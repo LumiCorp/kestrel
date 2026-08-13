@@ -4,7 +4,7 @@ import { test, type TestContext } from "node:test";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
-async function verifyBackupClaimDefers(
+async function verifyBackupDoesNotReserveExecution(
   context: TestContext,
   owner: "execution" | "activating_turn",
 ) {
@@ -12,10 +12,15 @@ async function verifyBackupClaimDefers(
     process.env.DATABASE_URL = databaseUrl;
     Reflect.deleteProperty(process.env, "POSTGRES_URL");
 
-    const [{ resetDbRuntimeForTests }, { processQueuedWorkspaceBackup }] =
+    const [
+      { resetDbRuntimeForTests },
+      { findActiveWorkspaceLifecycleOperation },
+      { knowledgeDb },
+    ] =
       await Promise.all([
         import("@/lib/db/runtime"),
-        import("./backups"),
+        import("./lifecycle-operations"),
+        import("@/lib/knowledge/db"),
       ]);
     const sql = postgres(databaseUrl, { max: 1 });
     const suffix = crypto.randomUUID();
@@ -156,16 +161,12 @@ async function verifyBackupClaimDefers(
     });
 
     assert.equal(
-      await processQueuedWorkspaceBackup({
-        operationId,
-        workerAttempt: {
-          attempt: 1,
-          canRetry: true,
-          retryCount: 0,
-          retryLimit: 4,
-        },
+      await findActiveWorkspaceLifecycleOperation(knowledgeDb, {
+        organizationId,
+        environmentId,
+        workspaceId,
       }),
-      "deferred",
+      undefined,
     );
 
     const [record] = await sql<
@@ -189,7 +190,7 @@ async function verifyBackupClaimDefers(
     `;
     assert.deepEqual(record, {
       operationStatus: "queued",
-      operationStage: "workspace.backup.waiting_for_execution",
+      operationStage: "workspace.backup.queued",
       operationAttempt: 0,
       operationStartedAt: null,
       backupStatus: "queued",
@@ -197,15 +198,15 @@ async function verifyBackupClaimDefers(
 }
 
 test(
-  "queued Workspace backup claim defers while an execution owns the Workspace",
+  "queued Workspace backup never reserves execution while a run is active",
   async (context) => {
-    await verifyBackupClaimDefers(context, "execution");
+    await verifyBackupDoesNotReserveExecution(context, "execution");
   },
 );
 
 test(
-  "queued Workspace backup claim defers while a durable turn is activating",
+  "queued Workspace backup never reserves execution while a turn is activating",
   async (context) => {
-    await verifyBackupClaimDefers(context, "activating_turn");
+    await verifyBackupDoesNotReserveExecution(context, "activating_turn");
   },
 );

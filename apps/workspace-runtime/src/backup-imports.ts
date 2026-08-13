@@ -1,14 +1,13 @@
 import { createHash, randomUUID, type Hash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { spawn } from "node:child_process";
 import { WorkspaceRequestError } from "./security.js";
-
-const MAX_IMPORT_BYTES = 256 * 1024 * 1024;
+import { restorePortableBackupPayload } from "./portable-worktree-backup.js";
+import { resolveWorkspaceBackupLogicalLimit } from "./backup-preparations.js";
 
 type BackupImport = {
   id: string;
@@ -17,19 +16,27 @@ type BackupImport = {
   hash: Hash;
   nextChunkIndex: number;
   size: number;
+  maxBytes: number;
 };
 
 export class WorkspaceBackupImportRegistry {
   private readonly imports = new Map<string, BackupImport>();
 
-  constructor(private readonly workspaceRoot: string) {}
+  constructor(
+    private readonly workspaceRoot: string,
+    private readonly options: { maxImportBytes?: number | undefined } = {},
+  ) {}
 
   async create(expectedSha256: string) {
     if (!/^[a-f0-9]{64}$/u.test(expectedSha256)) {
       throw new WorkspaceRequestError(400, "WORKSPACE_BACKUP_CHECKSUM_INVALID");
     }
     const id = randomUUID();
-    const root = path.join(os.tmpdir(), "kestrel-backup-imports");
+    const root = path.join(
+      this.workspaceRoot,
+      ".kestrel",
+      "backup-imports",
+    );
     await mkdir(root, { recursive: true });
     const archivePath = path.join(root, `${id}.tar.gz`);
     this.imports.set(id, {
@@ -39,6 +46,9 @@ export class WorkspaceBackupImportRegistry {
       hash: createHash("sha256"),
       nextChunkIndex: 0,
       size: 0,
+      maxBytes:
+        this.options.maxImportBytes ??
+        (await resolveWorkspaceBackupLogicalLimit(this.workspaceRoot)),
     });
     return { id };
   }
@@ -55,7 +65,7 @@ export class WorkspaceBackupImportRegistry {
       throw new WorkspaceRequestError(413, "WORKSPACE_BACKUP_CHUNK_INVALID");
     }
     current.size += content.length;
-    if (current.size > MAX_IMPORT_BYTES) {
+    if (current.size > current.maxBytes) {
       await this.abort(id);
       throw new WorkspaceRequestError(413, "WORKSPACE_BACKUP_TOO_LARGE");
     }
@@ -80,6 +90,7 @@ export class WorkspaceBackupImportRegistry {
     }
     try {
       await extractArchive(current.archivePath, this.workspaceRoot);
+      await restorePortableBackupPayload(this.workspaceRoot);
       this.imports.delete(id);
       await rm(current.archivePath, { force: true });
       return { checksumSha256, size: current.size };
