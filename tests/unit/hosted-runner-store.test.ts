@@ -36,6 +36,7 @@ test(
         "corrupt pglite path",
       );
       await store.store.ensureSession("hosted-runner-store-proof");
+      await store.eventJournal.ready();
     } finally {
       await store.close();
     }

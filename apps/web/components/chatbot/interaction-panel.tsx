@@ -16,6 +16,7 @@ import { readThreadStructuredReview } from "@/lib/turns/structured-review";
 export type RuntimeInteractionResponse = {
   requestId: string;
   eventType: string;
+  turnId: string;
   message: string;
   approved?: boolean | undefined;
   reason?: string | undefined;
@@ -66,12 +67,17 @@ export function InteractionPanel({
       setError("Enter a response before continuing.");
       return;
     }
+    if (!interaction.turnId) {
+      setError("The pending request is not attached to an active turn.");
+      return;
+    }
     setBusy(interaction.requestId);
     setError(null);
     try {
       await onRuntimeResponse({
         requestId: interaction.requestId,
         eventType: interaction.eventType,
+        turnId: interaction.turnId,
         message,
         ...(interaction.kind === "approval" ? { approved: decision } : {}),
         ...(recoveryOptionId !== undefined ? { recoveryOptionId } : {}),
@@ -198,10 +204,6 @@ export function InteractionPanel({
           interaction.kind === "mcp_elicitation"
             ? parseUrlElicitation(interaction.requestEnvelope)
             : null;
-        const isRuntimeQuestion =
-          interaction.source === "runtime" &&
-          interaction.kind === "user_input" &&
-          structuredReview.kind === "ordinary";
         return (
           <Card key={interaction.requestId}>
             <CardHeader className="pb-2">
@@ -266,29 +268,6 @@ export function InteractionPanel({
                     ) : null}
                   </div>
                 </details>
-              ) : null}
-              {isRuntimeQuestion ? (
-                <Textarea
-                  aria-label="Response to the agent"
-                  onChange={(event) =>
-                    setContent((current) => ({
-                      ...current,
-                      [interaction.requestId]: event.target.value,
-                    }))
-                  }
-                  onKeyDown={(event) => {
-                    if (
-                      (event.metaKey || event.ctrlKey) &&
-                      event.key === "Enter"
-                    ) {
-                      event.preventDefault();
-                      void resolveRuntime(interaction);
-                    }
-                  }}
-                  placeholder="Type your answer…"
-                  ref={index === 0 ? firstControlRef : undefined}
-                  value={content[interaction.requestId] ?? ""}
-                />
               ) : null}
               {urlElicitation ? (
                 <div className="space-y-2 text-sm">

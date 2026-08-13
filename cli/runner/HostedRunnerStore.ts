@@ -7,12 +7,14 @@ import {
   createSqlExecutorFromEnv,
   type SqlExecutorStoreHandle,
 } from "../../src/store/createSessionStore.js";
+import { LocalCoreProtocolEventJournal } from "../../src/localCore/protocolEventJournal.js";
 import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import { KestrelChatRuntime, createRuntimeFactoryWithStore } from "../runtime/KestrelChatRuntime.js";
 import {
   createLiveOnlyProgressListener,
   type RunnerHost,
 } from "./RunnerHost.js";
+import type { RunnerServiceEventJournal } from "./RunnerServiceEventJournal.js";
 
 type RunnerRuntimeFactory = NonNullable<
   ConstructorParameters<typeof RunnerHost>[1]
@@ -20,6 +22,7 @@ type RunnerRuntimeFactory = NonNullable<
 
 export interface HostedRunnerStore {
   store: SessionStore;
+  eventJournal: RunnerServiceEventJournal;
   sqlitePath: string;
   ready(): Promise<void>;
   probe(): Promise<void>;
@@ -119,6 +122,7 @@ async function initializeHostedRunnerStore(
     });
     await handle.executor.query("SELECT 1 AS ready");
     return {
+      eventJournal: new LocalCoreProtocolEventJournal(handle.executor),
       store: new PostgresSessionStore(handle.executor, {
         enforceSchemaV3: true,
       }),

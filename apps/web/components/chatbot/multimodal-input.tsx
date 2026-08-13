@@ -506,6 +506,10 @@ function PureMultimodalInput({
 
     if (composerRuntimeQuestion) {
       if (!onRuntimeInteractionResponse) return;
+      if (!composerRuntimeQuestion.turnId) {
+        toast.error("The pending request is not attached to an active turn.");
+        return;
+      }
       if (attachments.length > 0) {
         toast.error(
           "Attachments cannot be included in an interaction response."
@@ -519,6 +523,7 @@ function PureMultimodalInput({
         await onRuntimeInteractionResponse({
           requestId: composerRuntimeQuestion.requestId,
           eventType: composerRuntimeQuestion.eventType,
+          turnId: composerRuntimeQuestion.turnId,
           message: liveInputValue.trim(),
         });
       } catch (error) {

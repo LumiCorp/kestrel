@@ -575,7 +575,7 @@ export class RunnerHost {
   private readonly runtimeFactory: RunnerRuntimeFactory;
   private readonly profileProvider: RunnerProfileProvider;
   private readonly profileSourcePolicy: RunnerProfileSourcePolicy;
-  private readonly diagnosticsStore = new DiagnosticLogStore();
+  private readonly diagnosticsStore: Pick<DiagnosticLogStore, "append">;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly commandBySession = new Map<string, string>();
   private readonly commandTypeBySession = new Map<
@@ -603,6 +603,7 @@ export class RunnerHost {
     profileProvider: RunnerProfileProvider = createDefaultProfileProvider(),
     options: {
       profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
+      diagnosticsStore?: Pick<DiagnosticLogStore, "append"> | undefined;
     } = {},
   ) {
     this.writer = writer;
@@ -610,6 +611,7 @@ export class RunnerHost {
     this.profileProvider = profileProvider;
     this.profileSourcePolicy =
       options.profileSourcePolicy ?? "inline-or-registered";
+    this.diagnosticsStore = options.diagnosticsStore ?? new DiagnosticLogStore();
   }
 
   async profileList(
@@ -767,7 +769,7 @@ export class RunnerHost {
             sessionId: turn.sessionId,
           },
         );
-        await this.appendTerminalHandoffDiagnostic({
+        this.appendTerminalHandoffDiagnostic({
           scope: "terminal_handoff.runner_exception",
           summary: "Runner failed while reconciling persisted session ownership.",
           sessionId: turn.sessionId,
@@ -904,21 +906,6 @@ export class RunnerHost {
         return;
       }
       if (terminalResult.output.status === "FAILED") {
-        await this.appendTerminalHandoffDiagnostic({
-          scope: "terminal_handoff.runner_emit_failed",
-          summary: "Runner emitting run.failed.",
-          sessionId: turn.sessionId,
-          profileId: profile.id,
-          details: {
-            commandId,
-            runId: emittedRunId,
-            outputStatus: terminalResult.output.status,
-            finalizedPayloadPresent:
-              terminalResult.finalizedPayload !== undefined,
-            errorCode: terminalResult.output.errors[0]?.code,
-            errorMessage: terminalResult.output.errors[0]?.message,
-          },
-        });
         this.writer.emit(
           "run.failed",
           {
@@ -934,12 +921,36 @@ export class RunnerHost {
             sessionId: turn.sessionId,
           }
         );
+        this.appendTerminalHandoffDiagnostic({
+          scope: "terminal_handoff.runner_emit_failed",
+          summary: "Runner emitted run.failed.",
+          sessionId: turn.sessionId,
+          profileId: profile.id,
+          details: {
+            commandId,
+            runId: emittedRunId,
+            outputStatus: terminalResult.output.status,
+            finalizedPayloadPresent:
+              terminalResult.finalizedPayload !== undefined,
+            errorCode: terminalResult.output.errors[0]?.code,
+            errorMessage: terminalResult.output.errors[0]?.message,
+          },
+        });
         return;
       }
 
-      await this.appendTerminalHandoffDiagnostic({
+      this.writer.emit(
+        "run.completed",
+        { result: terminalResult },
+        {
+          commandId,
+          runId: emittedRunId,
+          sessionId: turn.sessionId,
+        }
+      );
+      this.appendTerminalHandoffDiagnostic({
         scope: "terminal_handoff.runner_emit_completed",
-        summary: "Runner emitting run.completed.",
+        summary: "Runner emitted run.completed.",
         sessionId: turn.sessionId,
         profileId: profile.id,
         details: {
@@ -950,15 +961,6 @@ export class RunnerHost {
             terminalResult.finalizedPayload !== undefined,
         },
       });
-      this.writer.emit(
-        "run.completed",
-        { result: terminalResult },
-        {
-          commandId,
-          runId: emittedRunId,
-          sessionId: turn.sessionId,
-        }
-      );
     } catch (error) {
       const active = this.activeRuns.get(turn.sessionId);
       if (
@@ -1009,7 +1011,7 @@ export class RunnerHost {
           sessionId: turn.sessionId,
         }
       );
-      await this.appendTerminalHandoffDiagnostic({
+      this.appendTerminalHandoffDiagnostic({
         scope: "terminal_handoff.runner_exception",
         summary: "Runner threw before emitting a terminal result payload.",
         sessionId: turn.sessionId,
@@ -3314,25 +3316,23 @@ export class RunnerHost {
     return undefined;
   }
 
-  private async appendTerminalHandoffDiagnostic(input: {
+  private appendTerminalHandoffDiagnostic(input: {
     scope: string;
     summary: string;
     sessionId: string;
     profileId: string;
     details: Record<string, unknown>;
-  }): Promise<void> {
-    try {
-      await this.diagnosticsStore.append({
-        scope: input.scope,
-        summary: input.summary,
-        sessionId: input.sessionId,
-        profileId: input.profileId,
-        cwd: process.cwd(),
-        details: JSON.stringify(input.details, null, 2),
-      });
-    } catch {
-      // Diagnostics must never change terminal handoff behavior.
-    }
+  }): void {
+    void this.diagnosticsStore.append({
+      scope: input.scope,
+      summary: input.summary,
+      sessionId: input.sessionId,
+      profileId: input.profileId,
+      cwd: process.cwd(),
+      details: JSON.stringify(input.details, null, 2),
+    }).catch(() => {
+        // Diagnostics must never change terminal handoff behavior.
+    });
   }
 }
 

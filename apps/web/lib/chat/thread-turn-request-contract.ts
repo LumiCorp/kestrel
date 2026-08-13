@@ -31,6 +31,7 @@ export const threadTurnBodySchema = z
         // Runtime request IDs are opaque protocol identities, not database IDs.
         requestId: z.string().trim().min(1).max(200),
         eventType: z.string().trim().min(1).max(200),
+        turnId: routeIdSchema,
         message: z.string().trim().min(1).max(20_000),
         approved: z.boolean().optional(),
         reason: z.string().trim().max(2000).optional(),

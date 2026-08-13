@@ -1162,6 +1162,67 @@ test("run.start treats finalized assistant payload as completed under the accept
   await host.close();
 });
 
+test("run.start emits a finalized answer when terminal diagnostics never settle", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+  const host = new RunnerHost(
+    writer,
+    () => ({
+      runTurn: async (input) => ({
+        assistantText: "final answer",
+        output: {
+          status: "COMPLETED",
+          sessionId: input.sessionId,
+          runId: input.runId ?? "run-terminal-diagnostic",
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 1,
+            modelCalls: 1,
+            durationMs: 1,
+          },
+        },
+        finalizedPayload: { message: "final answer" },
+      }),
+      close: async () => {},
+    }),
+    undefined,
+    {
+      diagnosticsStore: {
+        append: () => new Promise<void>(() => {}),
+      },
+    },
+  );
+
+  await host.runStart("cmd-terminal-diagnostic", {
+    profile,
+    turn: {
+      sessionId: "session-terminal-diagnostic",
+      runId: "run-terminal-diagnostic",
+      message: "hello",
+      eventType: "user.message",
+    },
+  });
+
+  const completed = events.find((event) => event.type === "run.completed");
+  const result = completed?.payload.result as RunTurnResult | undefined;
+  assert.equal(result?.assistantText, "final answer");
+  assert.deepEqual(result?.finalizedPayload, { message: "final answer" });
+  rl.close();
+  await host.close();
+});
+
 test("run.start forwards actor metadata into runtime turn input", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);

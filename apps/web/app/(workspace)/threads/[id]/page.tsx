@@ -15,12 +15,7 @@ import {
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { getOrganizationChatReadiness } from "@/lib/organizations/chat-readiness";
 import { getProjectDetail, listProjectsForUser } from "@/lib/projects/store";
-import { getThreadWithMessagesForUser } from "@/lib/threads/store";
-import {
-  listDurableThreadQueueForUser,
-  listThreadInteractionsForUser,
-} from "@/lib/turns/store";
-import { convertToUIMessages } from "@/lib/utils";
+import { readThreadConversationSnapshotForUser } from "@/lib/turns/conversation-snapshot.server";
 
 export default async function Page(props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
@@ -34,12 +29,13 @@ export default async function Page(props: { params: Promise<{ id: string }> }) {
 async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { session, organizationId } = await requireActiveOrganization();
-  const chat = await getThreadWithMessagesForUser(
-    id,
-    session.user.id,
+  const conversationRead = await readThreadConversationSnapshotForUser({
+    threadId: id,
+    userId: session.user.id,
     organizationId,
-    true
-  );
+    includeArchived: true,
+  });
+  const chat = conversationRead?.thread ?? null;
   const [cookieStore, environment] = await Promise.all([
     cookies(),
     chat
@@ -56,8 +52,6 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   const [
     projectDetail,
     projectRows,
-    durableState,
-    interactions,
     readiness,
     executionBindingState,
   ] =
@@ -71,22 +65,6 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
           })
         : Promise.resolve(null),
       listProjectsForUser({ organizationId, userId: session.user.id }),
-      chat
-        ? listDurableThreadQueueForUser({
-            threadId: chat.id,
-            organizationId,
-            userId: session.user.id,
-            includeArchived: true,
-          })
-        : Promise.resolve(null),
-      chat
-        ? listThreadInteractionsForUser({
-            threadId: chat.id,
-            organizationId,
-            userId: session.user.id,
-            includeArchived: true,
-          })
-        : Promise.resolve([]),
       getOrganizationChatReadiness(organizationId),
       chat
         ? getThreadExecutionBindingState({
@@ -95,7 +73,17 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
           })
         : Promise.resolve(null),
     ]);
-  const uiMessages = chat ? convertToUIMessages(chat.messages) : [];
+  const initialConversationSnapshot = conversationRead?.snapshot ?? {
+    messages: [],
+    interactions: [],
+    turns: [],
+    queue: {
+      state: "running" as const,
+      pauseReason: null,
+      activeTurnId: null,
+      version: 0,
+    },
+  };
   const environmentActivation = executionBindingState
     ? describeEnvironmentActivation({
         environmentStatus: executionBindingState.environment.status,
@@ -132,43 +120,8 @@ async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
         initialChatExists={Boolean(chat)}
         initialChatModel={initialChatModel}
         initialInteractionMode={chat?.interactionMode ?? "chat"}
-        initialConversationState={{
-          interactions: interactions.map((interaction) => ({
-            ...interaction,
-            createdAt: interaction.createdAt.toISOString(),
-            resolvedAt: interaction.resolvedAt?.toISOString() ?? null,
-          })),
-          turns: (durableState?.turns ?? []).map((turn) => ({
-            id: turn.id,
-            sequence: turn.sequence,
-            inputMessageId: turn.inputMessageId,
-            status: turn.status,
-            failureCode: turn.failureCode,
-            failureMessage: turn.failureMessage,
-            cancelRequestedAt: turn.cancelRequestedAt?.toISOString() ?? null,
-            startedAt: turn.startedAt?.toISOString() ?? null,
-            finishedAt: turn.finishedAt?.toISOString() ?? null,
-            createdAt: turn.createdAt.toISOString(),
-            updatedAt: turn.updatedAt.toISOString(),
-          })),
-          queue: durableState
-            ? {
-                ...durableState.queue,
-                pauseReason:
-                  durableState.queue.pauseReason === "turn_failed" ||
-                  durableState.queue.pauseReason === "turn_cancelled" ||
-                  durableState.queue.pauseReason === "interaction_required"
-                    ? durableState.queue.pauseReason
-                    : null,
-              }
-            : {
-                state: "running",
-                pauseReason: null,
-                activeTurnId: null,
-                version: 0,
-              },
-        }}
-        initialMessages={uiMessages}
+        initialConversationSnapshot={initialConversationSnapshot}
+        initialMessages={initialConversationSnapshot.messages}
         initialShareToken={chat?.shareToken ?? null}
         initialVisibilityType={chat?.isPublic ? "public" : "private"}
         isReadonly={Boolean(chat?.archivedAt)}

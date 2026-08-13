@@ -9,10 +9,9 @@ import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { getThreadForUser } from "@/lib/threads/store";
 import { KESTREL_ONE_INTERACTION_MODES } from "@/lib/turns/interaction-mode";
 import { enqueueDurableThreadTurn } from "@/lib/turns/queue";
+import { readThreadConversationSnapshotForUser } from "@/lib/turns/conversation-snapshot.server";
 import {
   createDurableThreadTurn,
-  listDurableThreadQueueForUser,
-  listThreadInteractionsForUser,
 } from "@/lib/turns/store";
 
 const paramsSchema = z.object({ id: routeIdSchema });
@@ -32,19 +31,15 @@ export async function GET(
   try {
     const { session, organizationId } = await requireActiveOrganization();
     const { id } = paramsSchema.parse(await context.params);
-    const [durable, interactions] = await Promise.all([
-      listDurableThreadQueueForUser({
-        threadId: id,
-        organizationId,
-        userId: session.user.id,
-      }),
-      listThreadInteractionsForUser({
-        threadId: id,
-        organizationId,
-        userId: session.user.id,
-      }),
-    ]);
-    return NextResponse.json({ ...durable, interactions });
+    const read = await readThreadConversationSnapshotForUser({
+      threadId: id,
+      organizationId,
+      userId: session.user.id,
+    });
+    if (!read) {
+      return NextResponse.json({ error: "Thread not found" }, { status: 404 });
+    }
+    return NextResponse.json(read.snapshot);
   } catch (error) {
     return errorResponse(error, 400);
   }

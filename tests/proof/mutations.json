@@ -2,6 +2,24 @@
   "version": 2,
   "mutations": [
     {
+      "id": "conversation-refresh-message-discard",
+      "target": "apps/web/lib/turns/message-reconciliation.ts",
+      "find": "return turnStatus === \"running\" ? live : persisted;",
+      "replace": "return live;",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "tsx", "--test", "lib/turns/message-reconciliation.test.ts"],
+      "testFiles": ["apps/web/lib/turns/message-reconciliation.test.ts"]
+    },
+    {
+      "id": "conversation-snapshot-orphan-interaction",
+      "target": "apps/web/lib/turns/conversation-snapshot.server.ts",
+      "find": "message?.role !== \"assistant\" ||",
+      "replace": "false ||",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "lib/turns/conversation-snapshot.postgres.test.ts"],
+      "testFiles": ["apps/web/lib/turns/conversation-snapshot.postgres.test.ts"]
+    },
+    {
       "id": "turn-retry-lineage-loss",
       "target": "apps/web/lib/turns/store.ts",
       "find": "sourceMessageId: input.sourceMessageId ?? null,",

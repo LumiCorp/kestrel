@@ -93,6 +93,7 @@ const groups = [
     name: "Turns",
     databaseUrl: required("KESTREL_TURN_DB_TEST_URL"),
     files: [
+      "lib/turns/conversation-snapshot.postgres.test.ts",
       "lib/turns/mobile-store.postgres.test.ts",
       "lib/turns/store.postgres.test.ts",
     ],

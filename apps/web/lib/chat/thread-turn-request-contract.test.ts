@@ -30,6 +30,7 @@ test(
         interactionResponse: {
           requestId: "request-1",
           eventType: "user_input",
+          turnId: "turn-1",
           message: "Continue",
         },
       }).success,

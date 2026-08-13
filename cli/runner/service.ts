@@ -29,6 +29,7 @@ async function main(): Promise<void> {
             probe: store.probe,
             close: store.close,
           },
+          eventJournal: store.eventJournal,
         }),
     profileSourcePolicy: "registered-only",
     onRuntimeStoreEvent: (event) => {

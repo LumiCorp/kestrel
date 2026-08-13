@@ -1435,6 +1435,7 @@ export async function resolveDurableRuntimeInteraction(input: {
   userId: string;
   requestId: string;
   eventType: string;
+  turnId: string;
   message: string;
   approved?: boolean | undefined;
   reason?: string | undefined;
@@ -1464,6 +1465,12 @@ export async function resolveDurableRuntimeInteraction(input: {
       throw new DurableTurnError(
         "TURN_NOT_FOUND",
         "Pending runtime interaction not found.",
+      );
+    }
+    if (interaction.turnId !== input.turnId) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The interaction response turn does not match the pending request.",
       );
     }
     if (interaction.eventType !== input.eventType) {
