@@ -174,6 +174,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     parseResponse(
       appListSchema,
       await this.request(
+        "fly.organization.apps.list",
         `/apps?org_slug=${encodeURIComponent(this.organizationSlug)}`,
         { method: "GET" },
       ),
@@ -185,6 +186,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     networkName: string;
   }): Promise<EnvironmentProviderApp> {
     const existing = await this.request(
+      "fly.environment.app.get",
       `/apps/${encodeURIComponent(input.appName)}`,
       { method: "GET" },
       { allowNotFound: true },
@@ -194,6 +196,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       const organizationApps = parseResponse(
         appListSchema,
         await this.request(
+          "fly.environment.apps.list",
           `/apps?org_slug=${encodeURIComponent(this.organizationSlug)}`,
           { method: "GET" },
         ),
@@ -221,7 +224,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
 
     const created = parseResponse(
       appCreateSchema,
-      await this.request("/apps", {
+      await this.request("fly.environment.app.create", "/apps", {
         method: "POST",
         body: jsonBody({
           app_name: input.appName,
@@ -254,6 +257,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const listed = parseResponse(
       z.array(machineSchema),
       await this.request(
+        "fly.environment.gateway.list",
         `/apps/${encodeURIComponent(input.appName)}/machines?metadata.kestrel_environment_gateway=true`,
         { method: "GET" },
       ),
@@ -292,6 +296,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       ? parseResponse(
           machineSchema,
           await this.request(
+            "fly.environment.gateway.update",
             `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(existing.id)}`,
             {
               method: "POST",
@@ -308,6 +313,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           parseResponse(
             machineSchema,
             await this.request(
+              "fly.environment.gateway.create",
               `/apps/${encodeURIComponent(input.appName)}/machines`,
               {
                 method: "POST",
@@ -341,7 +347,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const path = `/apps/${encodeURIComponent(appName)}/ip_assignments`;
     const assignments = parseResponse(
       ipAssignmentsSchema,
-      await this.request(path, { method: "GET" }),
+      await this.request("fly.environment.ip.list", path, { method: "GET" }),
     );
     const existing = assignments.ips.find(
       (assignment) => assignment.shared === true,
@@ -349,7 +355,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     if (existing) return existing.ip;
     return parseResponse(
       ipAssignmentSchema,
-      await this.request(path, {
+      await this.request("fly.environment.ip.create", path, {
         method: "POST",
         body: jsonBody({ type: "shared_v4" }),
       }),
@@ -364,9 +370,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const name = workspaceVolumeName(input.workspaceId);
     const listed = parseResponse(
       z.array(volumeSchema),
-      await this.request(`/apps/${encodeURIComponent(input.appName)}/volumes`, {
-        method: "GET",
-      }),
+      await this.request(
+        "fly.workspace.volume.list",
+        `/apps/${encodeURIComponent(input.appName)}/volumes`,
+        { method: "GET" },
+      ),
     );
     const existing = listed.find((volume) => volume.name === name);
     const volume =
@@ -374,6 +382,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       parseResponse(
         volumeSchema,
         await this.request(
+          "fly.workspace.volume.create",
           `/apps/${encodeURIComponent(input.appName)}/volumes`,
           {
             method: "POST",
@@ -441,9 +450,11 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     );
     const listed = parseResponse(
       z.array(volumeSchema),
-      await this.request(`/apps/${encodeURIComponent(input.appName)}/volumes`, {
-        method: "GET",
-      }),
+      await this.request(
+        "fly.workspace.replacement-volume.list",
+        `/apps/${encodeURIComponent(input.appName)}/volumes`,
+        { method: "GET" },
+      ),
     );
     const existing = listed.find((volume) => volume.name === name);
     const volume =
@@ -451,6 +462,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       parseResponse(
         volumeSchema,
         await this.request(
+          "fly.workspace.replacement-volume.create",
           `/apps/${encodeURIComponent(input.appName)}/volumes`,
           {
             method: "POST",
@@ -482,6 +494,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const snapshots = parseResponse(
       volumeSnapshotsSchema,
       await this.request(
+        "fly.workspace.snapshot.list",
         `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.sourceVolumeId)}/snapshots`,
         { method: "GET" },
       ),
@@ -498,6 +511,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       const volume = parseResponse(
         volumeSchema,
         await this.request(
+          "fly.workspace.replacement-volume.get",
           `/apps/${encodeURIComponent(appName)}/volumes/${encodeURIComponent(volumeId)}`,
           {
             method: "GET",
@@ -521,6 +535,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const listed = parseResponse(
       z.array(machineSchema),
       await this.request(
+        "fly.workspace.machine.list",
         `/apps/${encodeURIComponent(input.appName)}/machines?metadata.kestrel_workspace_id=${encodeURIComponent(input.workspaceId)}`,
         { method: "GET" },
       ),
@@ -558,6 +573,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const listed = parseResponse(
       z.array(machineSchema),
       await this.request(
+        "fly.workspace.replacement-machine.list",
         `/apps/${encodeURIComponent(input.appName)}/machines?metadata.kestrel_replacement_id=${encodeURIComponent(input.replacementId)}`,
         { method: "GET" },
       ),
@@ -591,6 +607,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const machine = parseResponse(
       machineCreateResponseSchema,
       await this.request(
+        "fly.workspace.machine.create",
         `/apps/${encodeURIComponent(input.appName)}/machines`,
         {
           method: "POST",
@@ -630,6 +647,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     return parseResponse(
       machineSchema,
       await this.request(
+        "fly.workspace.machine.identity.update",
         `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machine.id)}`,
         {
           method: "POST",
@@ -652,6 +670,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     machineId: string;
   }): Promise<EnvironmentProviderMachine | null> {
     const response = await this.request(
+      "fly.machine.get",
       `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
       { method: "GET" },
       { allowNotFound: true },
@@ -668,7 +687,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     let retriesRemaining = MACHINE_START_RETRY_ATTEMPTS;
     while (true) {
       try {
-        await this.request(startPath, { method: "POST" });
+        await this.request("fly.machine.start", startPath, { method: "POST" });
         return;
       } catch (error) {
         if (
@@ -731,6 +750,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
 
   async stopMachine(input: { appName: string; machineId: string }) {
     await this.request(
+      "fly.machine.stop",
       `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}/stop`,
       { method: "POST", body: jsonBody({}) },
     );
@@ -738,6 +758,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
 
   async deleteMachine(input: { appName: string; machineId: string }) {
     await this.request(
+      "fly.machine.delete",
       `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}?force=true`,
       { method: "DELETE" },
       { allowNotFound: true },
@@ -746,6 +767,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
 
   async deleteVolume(input: { appName: string; volumeId: string }) {
     await this.request(
+      "fly.volume.delete",
       `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.volumeId)}`,
       { method: "DELETE" },
       { allowNotFound: true },
@@ -757,6 +779,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     volumeId: string;
   }) {
     await this.request(
+      "fly.volume.backup-policy.update",
       `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.volumeId)}`,
       {
         method: "PUT",
@@ -770,6 +793,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
 
   async deleteEnvironmentApp(input: { appName: string }) {
     await this.request(
+      "fly.environment.app.delete",
       `/apps/${encodeURIComponent(input.appName)}`,
       { method: "DELETE" },
       { allowNotFound: true },
@@ -780,12 +804,16 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     appName: string;
   }): Promise<EnvironmentProviderInventory> {
     const [machines, volumes] = await Promise.all([
-      this.request(`/apps/${encodeURIComponent(input.appName)}/machines`, {
-        method: "GET",
-      }),
-      this.request(`/apps/${encodeURIComponent(input.appName)}/volumes`, {
-        method: "GET",
-      }),
+      this.request(
+        "fly.environment.machines.list",
+        `/apps/${encodeURIComponent(input.appName)}/machines`,
+        { method: "GET" },
+      ),
+      this.request(
+        "fly.environment.volumes.list",
+        `/apps/${encodeURIComponent(input.appName)}/volumes`,
+        { method: "GET" },
+      ),
     ]);
     return {
       machines: parseResponse(z.array(machineSchema), machines).map(
@@ -814,6 +842,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const machines = parseResponse(
       z.array(machineSchema),
       await this.request(
+        "fly.environment.machines.list",
         `/apps/${encodeURIComponent(input.appName)}/machines`,
         { method: "GET" },
       ),
@@ -832,6 +861,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         ? parseResponse(
             machineSchema,
             await this.request(
+              "fly.machine.get-before-wait",
               `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
               { method: "GET" },
             ),
@@ -850,6 +880,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       if (instanceId) query.set("instance_id", instanceId);
       try {
         await this.request(
+          "fly.machine.wait",
           `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}/wait?${query.toString()}`,
           { method: "GET" },
         );
@@ -890,6 +921,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       const machine = parseResponse(
         machineSchema,
         await this.request(
+          "fly.machine.health.get",
           `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
           { method: "GET" },
         ),
@@ -915,6 +947,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const response = parseResponse(
       snapshotResponseSchema,
       await this.request(
+        "fly.volume.snapshot.create",
         `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.volumeId)}/snapshots`,
         { method: "POST", body: jsonBody({}) },
       ),
@@ -935,6 +968,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const current = parseResponse(
       machineSchema,
       await this.request(
+        "fly.machine.image.get",
         `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
         {
           method: "GET",
@@ -963,6 +997,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       updated = parseResponse(
         machineSchema,
         await this.request(
+          "fly.machine.image.update",
           `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
           {
             method: "POST",
@@ -992,6 +1027,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       const authoritative = parseResponse(
         machineSchema,
         await this.request(
+          "fly.machine.image.reconcile",
           `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
           { method: "GET" },
         ),
@@ -1043,6 +1079,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       const machine = parseResponse(
         machineSchema,
         await this.request(
+          "fly.machine.configuration.wait",
           `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
           { method: "GET" },
         ),
@@ -1067,6 +1104,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }
 
   private async request(
+    phase: string,
     path: string,
     init: RequestInit,
     options: { allowNotFound?: boolean } = {},
@@ -1086,16 +1124,25 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       throw new EnvironmentProviderError(
         "FLY_PROVIDER_UNAVAILABLE",
         "Fly Machines API request failed.",
+        { phase },
       );
     }
     if (response.status === 404 && options.allowNotFound) {
       return null;
     }
     if (!response.ok) {
+      const providerDetail = await safeFlyProviderDetail(response);
+      const requestId =
+        response.headers.get("fly-request-id")?.trim() || undefined;
       throw new EnvironmentProviderError(
         "FLY_PROVIDER_REJECTED",
-        `Fly Machines API rejected the request (${response.status}).`,
-        response.status,
+        `Fly Machines API rejected ${phase} (${response.status})${providerDetail ? `: ${providerDetail}` : "."}`,
+        {
+          phase,
+          status: response.status,
+          requestId,
+          providerDetail,
+        },
       );
     }
     if (response.status === 204) {
@@ -1105,16 +1152,37 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }
 }
 
-function sanitizeHealthCheckOutput(value: string | undefined) {
-  if (!value) return "";
-  return value
+async function safeFlyProviderDetail(response: Response) {
+  try {
+    const text = (await response.text()).slice(0, 4096);
+    const payload = JSON.parse(text) as Record<string, unknown>;
+    const detail = [payload.error, payload.message, payload.detail].find(
+      (value): value is string =>
+        typeof value === "string" && Boolean(value.trim()),
+    );
+    return sanitizeProviderDetail(detail);
+  } catch {
+    return ;
+  }
+}
+
+export function sanitizeProviderDetail(value: string | undefined) {
+  if (!value) return ;
+  const sanitized = value
     .replace(
-      /(authorization|token|secret|password)\s*[:=]\s*\S+/giu,
+      /(authorization|api[-_ ]?key|access[-_ ]?token|token|secret|password)\s*[:=]\s*(?:bearer\s+)?[^\s,;]+/giu,
       "$1=[redacted]",
     )
+    .replace(/FlyV1\s+\S+/gu, "FlyV1 [redacted]")
     .replace(/[\r\n\t]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
     .trim()
     .slice(0, 300);
+  return sanitized || undefined;
+}
+
+function sanitizeHealthCheckOutput(value: string | undefined) {
+  return sanitizeProviderDetail(value) ?? "";
 }
 
 function sleep(milliseconds: number): Promise<void> {

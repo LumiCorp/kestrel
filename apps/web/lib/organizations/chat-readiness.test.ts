@@ -31,6 +31,7 @@ function readyInput(
     },
     rollout: {
       deploymentEnabled: true,
+      organizationConfigured: true,
       organizationEnabled: true,
       effectiveEnabled: true,
     },
@@ -44,6 +45,7 @@ function readyInput(
       id: "operation-1",
       status: "completed",
       stage: "environment.activation.ready",
+      providerRequestId: null,
       errorMessage: null,
     },
     ...overrides,
@@ -155,6 +157,7 @@ test("execution readiness reports rollout and terminal environment states", () =
     readyInput({
       rollout: {
         deploymentEnabled: false,
+        organizationConfigured: true,
         organizationEnabled: true,
         effectiveEnabled: false,
       },
@@ -169,6 +172,7 @@ test("execution readiness reports rollout and terminal environment states", () =
     readyInput({
       rollout: {
         deploymentEnabled: true,
+        organizationConfigured: true,
         organizationEnabled: false,
         effectiveEnabled: false,
       },

@@ -159,6 +159,9 @@ function fixture(
       calls.push("environment:provisioning");
       return "prepared";
     },
+    async stageEnvironmentAppIdentity() {
+      return "staged";
+    },
     async stageEnvironmentGatewayIdentity() {
       calls.push("environment:gateway-token-staged");
       return "staged";
@@ -905,6 +908,59 @@ test("Fly request timeouts return the durable operation to its retry queue", asy
     "operation:stage:environment.runtime.connecting",
     "operation:deferred:Fly Machines API rejected the request (408).",
   ]);
+});
+
+test("Environment app identity is staged before gateway Machine creation", async () => {
+  const { repository, provider, calls } = fixture("environment.provision");
+  let staged:
+    | { appName: string; networkName: string; operationId: string }
+    | undefined;
+  repository.stageEnvironmentAppIdentity = async (input) => {
+    staged = input;
+    calls.push("environment:app-identity-staged");
+    return "staged";
+  };
+  provider.ensureEnvironmentGateway = async () => {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_REJECTED",
+      "Fly rejected gateway creation.",
+      {
+        phase: "fly.environment.gateway.create",
+        status: 400,
+        requestId: "fly-request-123",
+        providerDetail: "invalid Machine config",
+      },
+    );
+  };
+  let failure:
+    | Parameters<EnvironmentProvisioningRepository["failEnvironmentProvision"]>[0]
+    | undefined;
+  repository.failEnvironmentProvision = async (input) => {
+    failure = input;
+    return "failed";
+  };
+
+  assert.equal(
+    await createProvisioner(repository, provider).process("operation-id"),
+    "processed",
+  );
+  assert.equal(staged?.operationId, "operation-id");
+  assert.match(staged?.appName ?? "", /^kestrel-env-/u);
+  assert.match(staged?.networkName ?? "", /^kestrel-/u);
+  assert.equal(failure?.stage, "fly.environment.gateway.create.failed");
+  assert.equal(failure?.providerRequestId, "fly-request-123");
+  assert.deepEqual(failure?.result, {
+    providerFailure: {
+      phase: "fly.environment.gateway.create",
+      status: 400,
+      requestId: "fly-request-123",
+      detail: "invalid Machine config",
+    },
+  });
+  assert.ok(
+    calls.indexOf("environment:app-identity-staged") <
+      calls.indexOf("operation:stage:environment.machine.starting"),
+  );
 });
 
 test("Environment persistence failures after provider creation defer without poisoning lifecycle state", async () => {

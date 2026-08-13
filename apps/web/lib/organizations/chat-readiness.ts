@@ -50,6 +50,7 @@ export type OrganizationChatReadiness = {
     operationId: string | null;
     operationStatus: string | null;
     operationStage: string | null;
+    providerRequestId: string | null;
     failureMessage: string | null;
   };
 };
@@ -77,6 +78,7 @@ export type OrganizationChatReadinessInput = {
   } | null;
   rollout: {
     deploymentEnabled: boolean;
+    organizationConfigured: boolean;
     organizationEnabled: boolean;
     effectiveEnabled: boolean;
   };
@@ -90,6 +92,7 @@ export type OrganizationChatReadinessInput = {
     id: string;
     status: string;
     stage: string;
+    providerRequestId: string | null;
     errorMessage: string | null;
   } | null;
 };
@@ -135,6 +138,7 @@ export function deriveOrganizationChatReadiness(
         operationId: input.operation?.id ?? null,
         operationStatus: input.operation?.status ?? null,
         operationStage: input.operation?.stage ?? null,
+        providerRequestId: input.operation?.providerRequestId ?? null,
         failureMessage: null,
       },
     };
@@ -225,7 +229,7 @@ export function deriveOrganizationChatReadiness(
       workspaceDetail = "Test the Fly connection before provisioning.";
     } else {
       workspaceStatus = "ready";
-      workspaceDetail = "Fly credentials are stored and verified.";
+      workspaceDetail = "Fly organization connected.";
     }
   }
   const workspaceCompute: OrganizationChatReadiness["workspaceCompute"] = {
@@ -285,6 +289,7 @@ export function deriveOrganizationChatReadiness(
       operationId: input.operation?.id ?? null,
       operationStatus: input.operation?.status ?? null,
       operationStage: input.operation?.stage ?? null,
+      providerRequestId: input.operation?.providerRequestId ?? null,
       failureMessage:
         input.environment?.failureMessage ??
         input.operation?.errorMessage ??
@@ -384,6 +389,7 @@ export async function getOrganizationChatReadiness(
             id: true,
             status: true,
             stage: true,
+            providerRequestId: true,
             errorMessage: true,
           },
         })

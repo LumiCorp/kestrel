@@ -265,7 +265,6 @@ export const organizationFeatureFlags = pgTable(
     key: text("key").notNull(),
     enabled: boolean("enabled").notNull().default(false),
     updatedByUserId: text("updated_by_user_id")
-      .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -1995,7 +1994,13 @@ export const flyImageReleaseComponents = pgTable(
     ),
     check(
       "fly_image_release_components_image_check",
-      sql`${table.image} ~ '^registry\\.fly\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$'`,
+      sql`(
+        (${table.role} = 'workspace-runtime' AND (${table.image} ~ '^ghcr\\.io/lumicorp/kestrel-workspace-runtime@sha256:[0-9a-f]{64}$' OR ${table.image} ~ '^registry\\.fly\\.io/kestrel-one-runner@sha256:[0-9a-f]{64}$'))
+        OR (${table.role} = 'environment-router' AND (${table.image} ~ '^ghcr\\.io/lumicorp/kestrel-environment-router@sha256:[0-9a-f]{64}$' OR ${table.image} ~ '^registry\\.fly\\.io/kestrel-one-runner@sha256:[0-9a-f]{64}$'))
+        OR (${table.role} = 'preview-edge' AND ${table.image} ~ '^registry\\.fly\\.io/kestrel-preview-edge@sha256:[0-9a-f]{64}$')
+        OR (${table.role} = 'turn-worker' AND ${table.image} ~ '^registry\\.fly\\.io/kestrel-one-turn-worker@sha256:[0-9a-f]{64}$')
+        OR (${table.role} = 'runpod-worker' AND ${table.image} ~ '^registry\\.fly\\.io/kestrel-one-runpod-worker@sha256:[0-9a-f]{64}$')
+      )`,
     ),
   ],
 );

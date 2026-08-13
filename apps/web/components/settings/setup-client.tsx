@@ -266,6 +266,14 @@ function SignupEnvironmentProgress({
               {readiness.operationStage ?? "environment.activation.requested"}
             </dd>
           </div>
+          {readiness.providerRequestId ? (
+            <div className="sm:col-span-2">
+              <dt className="text-muted-foreground text-xs">Fly request ID</dt>
+              <dd className="mt-1 break-all font-mono text-xs">
+                {readiness.providerRequestId}
+              </dd>
+            </div>
+          ) : null}
         </dl>
       </SettingsDisclosure>
 
@@ -893,8 +901,8 @@ export function OrganizationSetupClient({
         <SettingsRows>
           {signupLaunchActive ? (
             <SignupSuccessReceipt
-              detail="Fly credentials stored and verified."
-              status="Workspace compute verified"
+              detail="The saved organization and token passed Fly's read-only app-list check."
+              status="Fly organization connected"
             />
           ) : (
           <SettingsRow label="Readiness">
@@ -920,6 +928,14 @@ export function OrganizationSetupClient({
               </div>
               <div className="space-y-2">
                 <Label htmlFor="setup-fly-token">Fly API token</Label>
+                <p className="text-muted-foreground text-xs/5">
+                  Create an organization-scoped token with{" "}
+                  <code>
+                    fly tokens create org --org &lt;slug&gt; --name &quot;Kestrel
+                    One&quot; --expiry 8760h
+                  </code>
+                  .
+                </p>
                 <Input
                   autoComplete="off"
                   id="setup-fly-token"

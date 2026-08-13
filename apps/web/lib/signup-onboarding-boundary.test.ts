@@ -26,6 +26,12 @@ test("signup onboarding has no skip and limits AI providers", async () => {
   assert.match(setupSource, /mode !== "signup" \|\| option\.key !== "lumi"/u);
   assert.match(setupSource, /Approve and use default/u);
   assert.match(setupSource, /Save, test, and continue/u);
+  assert.match(setupSource, /Fly organization connected/u);
+  assert.match(
+    setupSource,
+    /fly tokens create org --org &lt;slug&gt; --name &quot;Kestrel[\s\S]*One&quot; --expiry 8760h/u,
+  );
+  assert.doesNotMatch(setupSource, /Workspace compute verified/u);
   assert.match(setupSource, /Your workspace is taking shape/u);
   assert.match(setupSource, /Environment setup progress/u);
   assert.match(setupSource, /A new blank Thread will open/u);

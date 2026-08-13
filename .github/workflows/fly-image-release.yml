@@ -15,6 +15,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  packages: write
 
 concurrency:
   group: fly-image-release
@@ -36,12 +37,17 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
       - name: Validate the release revision
         run: pnpm validate
       - name: Authenticate Docker to the Fly registry
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl auth docker
+      - name: Authenticate Docker to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
       - name: Wait for the exact Kestrel One production revision
         run: pnpm tsx scripts/wait-for-kestrel-production-revision.ts ${{ github.sha }}
       - name: Deploy or verify the release controller

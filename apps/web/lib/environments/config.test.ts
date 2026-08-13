@@ -145,8 +145,6 @@ function validEnvironment() {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   return {
     CRON_SECRET: "cron-secret",
-    FLY_API_TOKEN: "FlyV1 example",
-    KESTREL_FLY_ORGANIZATION_SLUG: "personal",
     KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: privateKey.export({
       format: "pem",
       type: "pkcs8",
@@ -155,8 +153,8 @@ function validEnvironment() {
       format: "pem",
       type: "spki",
     }) as string,
-    KESTREL_ENVIRONMENT_ROUTER_IMAGE: `registry.fly.io/kestrel-one-runner@sha256:${"a".repeat(64)}`,
-    KESTREL_WORKSPACE_RUNTIME_IMAGE: `registry.fly.io/kestrel-one-runner@sha256:${"b".repeat(64)}`,
+    KESTREL_ENVIRONMENT_ROUTER_IMAGE: `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"a".repeat(64)}`,
+    KESTREL_WORKSPACE_RUNTIME_IMAGE: `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"b".repeat(64)}`,
     KESTREL_WORKSPACE_BACKUP_KEY: randomBytes(32).toString("base64"),
     KESTREL_WORKSPACE_BACKUP_KEY_ID: "workspace-backup-v1",
     KESTREL_ONE_APP_URL: "https://kestrel-one.example",
@@ -169,7 +167,7 @@ function validEnvironment() {
   };
 }
 
-test("Environment rollout defaults on with explicit off switches", () => {
+test("Environment deployment defaults on while organization eligibility is explicit", () => {
   assert.equal(hostedEnvironmentsDeploymentEnabled({}), true);
   assert.equal(
     hostedEnvironmentsDeploymentEnabled({
@@ -201,8 +199,8 @@ test("Environment rollout defaults on with explicit off switches", () => {
     hostedEnvironmentsEnabled({ organizationEnabled: true, env: {} }),
     true
   );
-  assert.equal(hostedEnvironmentsOrganizationEnabled(undefined), true);
-  assert.equal(hostedEnvironmentsOrganizationEnabled(null), true);
+  assert.equal(hostedEnvironmentsOrganizationEnabled(undefined), false);
+  assert.equal(hostedEnvironmentsOrganizationEnabled(null), false);
   assert.equal(hostedEnvironmentsOrganizationEnabled(true), true);
   assert.equal(hostedEnvironmentsOrganizationEnabled(false), false);
 });
@@ -213,19 +211,9 @@ test("hosted cutover accepts complete immutable Environment configuration", () =
   );
 });
 
-test("hosted Environments require platform Fly authority", () => {
-  const missingToken = validEnvironment();
-  delete (missingToken as Partial<typeof missingToken>).FLY_API_TOKEN;
-  assert.throws(
-    () => assertHostedEnvironmentConfiguration(missingToken),
-    /FLY_API_TOKEN/u
-  );
-  const missingOrganization = validEnvironment();
-  delete (missingOrganization as Partial<typeof missingOrganization>)
-    .KESTREL_FLY_ORGANIZATION_SLUG;
-  assert.throws(
-    () => assertHostedEnvironmentConfiguration(missingOrganization),
-    /KESTREL_FLY_ORGANIZATION_SLUG/u
+test("tenant Environment readiness does not depend on platform Fly authority", () => {
+  assert.doesNotThrow(() =>
+    assertHostedEnvironmentConfiguration(validEnvironment())
   );
 });
 
@@ -271,9 +259,9 @@ test("hosted cutover rejects mutable images and mismatched ticket keys", () => {
       assertHostedEnvironmentConfiguration({
         ...validEnvironment(),
         KESTREL_ENVIRONMENT_ROUTER_IMAGE:
-          "registry.fly.io/kestrel-one-runner:latest",
+          "ghcr.io/lumicorp/kestrel-environment-router:latest",
       }),
-    /immutable registry\.fly\.io sha256 digest/u
+    /immutable ghcr\.io\/lumicorp\/kestrel-environment-router sha256 digest/u
   );
   const first = validEnvironment();
   const second = validEnvironment();

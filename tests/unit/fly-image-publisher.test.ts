@@ -5,6 +5,7 @@ import {
   FLY_REGISTRY_PULL_RETRY_DELAY_MS,
   publishFlyImages,
   pullPublishedImage,
+  verifyAnonymousGhcrDigestPull,
   type FlyImagePublisherDependencies,
 } from "../../scripts/fly-image-publisher.js";
 import { flyImageReleaseManifestV2Schema } from "../../apps/web/lib/releases/contracts.js";
@@ -27,9 +28,11 @@ test("publisher exercises every image and survives Fly registry propagation", as
     result.components.map((component) => component.role),
     roles,
   );
-  assert.equal(harness.flyBuilds.length, roles.length);
+  assert.equal(harness.flyBuilds.length, 3);
+  assert.equal(harness.ghcrBuilds.length, 2);
+  assert.equal(harness.cosignCommands.length, 4);
   assert.equal(harness.smokes.length, roles.length);
-  assert.equal(harness.maxActiveFlyBuilds, 4);
+  assert.equal(harness.maxActiveFlyBuilds, 3);
   assert.equal(harness.concurrentBuildsSharedAnApp, false);
   assert.deepEqual(
     harness.waits,
@@ -60,7 +63,7 @@ test("publisher reuses revision tags and still smokes every image", async () => 
   assert.equal(harness.waits.length, 0);
   assert.equal(
     harness.output.filter((message) =>
-      message.startsWith("Reusing published Fly image"),
+      message.startsWith("Reusing published image"),
     ).length,
     roles.length,
   );
@@ -118,6 +121,34 @@ test("registry retry is bounded and does not hide other Docker failures", async 
   assert.equal(waits.length, FLY_REGISTRY_PULL_ATTEMPTS - 1);
 });
 
+test("anonymous GHCR verification completes the bearer challenge without credentials", async () => {
+  const requests: Array<{ url: string; authorization: string | null }> = [];
+  await verifyAnonymousGhcrDigestPull(
+    async (request, init) => {
+      const url = String(request);
+      const authorization = new Headers(init?.headers).get("authorization");
+      requests.push({ url, authorization });
+      if (url.startsWith("https://ghcr.io/token")) {
+        return Response.json({ token: "anonymous-token" });
+      }
+      if (!authorization) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "www-authenticate":
+              'Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:lumicorp/kestrel-workspace-runtime:pull"',
+          },
+        });
+      }
+      return new Response(null, { status: 200 });
+    },
+    `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`,
+  );
+  assert.equal(requests.length, 3);
+  assert.equal(requests[0]?.authorization, null);
+  assert.equal(requests[2]?.authorization, "Bearer anonymous-token");
+});
+
 function publisherHarness(input: {
   reusePublishedImages: boolean;
   publicationFailureCode?: string;
@@ -125,6 +156,8 @@ function publisherHarness(input: {
   const builtImages = new Set<string>();
   const postBuildPulls = new Map<string, number>();
   const flyBuilds: string[][] = [];
+  const ghcrBuilds: string[][] = [];
+  const cosignCommands: string[][] = [];
   const smokes: string[][] = [];
   const waits: number[] = [];
   const output: string[] = [];
@@ -156,6 +189,9 @@ function publisherHarness(input: {
       if (url.hostname === "oidc.test") {
         oidcRequests += 1;
         return Response.json({ value: `oidc-token-${oidcRequests}` });
+      }
+      if (url.hostname === "ghcr.io") {
+        return new Response(null, { status: 200 });
       }
       if (url.hostname !== "publisher.test") {
         throw new Error(`Unexpected fetch URL '${url.href}'.`);
@@ -220,6 +256,15 @@ function publisherHarness(input: {
         activeFlyBuilds -= 1;
         return;
       }
+      if (command === "docker" && args[0] === "buildx") {
+        ghcrBuilds.push(args);
+        builtImages.add(args[args.indexOf("--tag") + 1]!);
+        return;
+      }
+      if (command === "cosign") {
+        cosignCommands.push(args);
+        return;
+      }
       if (command === "bash") {
         smokes.push(args);
         return;
@@ -243,6 +288,8 @@ function publisherHarness(input: {
   return {
     dependencies,
     flyBuilds,
+    ghcrBuilds,
+    cosignCommands,
     smokes,
     waits,
     output,

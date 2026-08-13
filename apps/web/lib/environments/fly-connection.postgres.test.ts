@@ -22,6 +22,8 @@ test(
     ]);
     const sql = postgres(databaseUrl, { max: 1 });
     context.after(async () => {
+      Reflect.deleteProperty(process.env, "FLY_API_TOKEN");
+      Reflect.deleteProperty(process.env, "KESTREL_FLY_ORGANIZATION_SLUG");
       await resetDbRuntimeForTests();
       await sql.end({ timeout: 0 });
     });
@@ -33,10 +35,17 @@ test(
       VALUES (${organizationId}, 'Fly Test Org', ${`fly-test-${suffix}`}, now())
     `;
 
+    process.env.FLY_API_TOKEN = "FlyV1 platform-secret";
+    process.env.KESTREL_FLY_ORGANIZATION_SLUG = "platform-org";
+    await assert.rejects(
+      flyConnection.resolveFlyProviderAuthority(organizationId),
+      /connection is not configured/u,
+    );
+
     const configured = await flyConnection.configureFlyProviderConnection({
       organizationId,
       apiToken: "FlyV1 organization-secret",
-      organizationSlug: "fly-test-org",
+      organizationSlug: "testorg-588",
       enabled: true,
     });
     assert.deepEqual(configured, {
@@ -46,7 +55,7 @@ test(
       enabled: true,
       status: "not_configured",
       hasApiToken: true,
-      organizationSlug: "fly-test-org",
+      organizationSlug: "testorg-588",
       lastTestedAt: null,
     });
 
@@ -64,7 +73,7 @@ test(
       await flyConnection.resolveFlyProviderAuthority(organizationId),
       {
         token: "FlyV1 organization-secret",
-        organizationSlug: "fly-test-org",
+        organizationSlug: "testorg-588",
       }
     );
 

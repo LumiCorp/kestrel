@@ -3,7 +3,7 @@ id: fly-image-releases
 domain: operations
 status: active
 owner: kestrel-one
-last_verified_at: 2026-08-05
+last_verified_at: 2026-08-13
 depends_on:
   - ../.github/workflows/fly-image-release.yml
   - ../deploy/fly/image-catalog.json
@@ -16,8 +16,11 @@ Kestrel publishes the Workspace Runtime, Environment Router, Preview Edge,
 turn worker, and RunPod worker as one coordinated release bundle. A main-branch
 change rebuilds only the images whose declared catalog inputs changed. The
 Monday 14:00 UTC schedule rebuilds all five images. Every candidate contains
-immutable Fly registry digests; unchanged roles are carried forward from the
-stable bundle. Incremental impact and migration detection are calculated from
+immutable OCI digests. Workspace Runtime and Environment Router are signed and
+published publicly at `ghcr.io/lumicorp/kestrel-workspace-runtime` and
+`ghcr.io/lumicorp/kestrel-environment-router`; platform services remain in
+their exact private Fly repositories. Unchanged roles are carried forward from
+the stable bundle. Incremental impact and migration detection are calculated from
 the stable bundle revision so consecutive unapproved candidates cannot drop an
 earlier main-branch change.
 
@@ -29,6 +32,12 @@ Configure the GitHub `Production` environment with:
 - variable `KESTREL_RELEASE_PUBLISH_URL`, set to the deployed Kestrel One
   `/api/runtime/releases/candidates` URL.
 
+The workflow's GitHub token needs `packages: write`. Both tenant-runtime GHCR
+packages must be public. Before accepting a candidate, the publisher resolves
+each pushed tag to a digest, runs its image smoke test, signs the digest with
+keyless Cosign, verifies the exact workflow identity, and proves an anonymous
+digest pull.
+
 The `publish-candidate` job must remain attached to that environment so GitHub
 Actions makes the release secret and URL available to the workflow.
 
@@ -39,6 +48,10 @@ The turn worker processes durable user turns only and is never a release queue
 owner. Controller-owned queue names include the controller contract revision;
 an older turn worker therefore cannot claim lifecycle work produced after the
 ownership cutover.
+Platform credentials are never a fallback for tenant provisioning. Each tenant
+Environment operation resolves only that Kestrel organization's encrypted Fly
+connection and creates resources only in the exact user-entered Fly organization.
+
 The existing `KESTREL_WORKSPACE_RUNTIME_IMAGE` and
 `KESTREL_ENVIRONMENT_ROUTER_IMAGE` values remain bootstrap fallbacks until the
 first release becomes stable. Postgres is authoritative after that point.

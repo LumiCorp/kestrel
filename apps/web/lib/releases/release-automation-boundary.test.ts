@@ -42,6 +42,9 @@ test("Fly image release automation covers every managed image and authenticates 
   );
   assert.match(workflow, /cron: "0 14 \* \* 1"/u);
   assert.match(workflow, /id-token: write/u);
+  assert.match(workflow, /packages: write/u);
+  assert.match(workflow, /docker login ghcr\.io/u);
+  assert.match(workflow, /sigstore\/cosign-installer@[a-f0-9]{40}/u);
   assert.match(workflow, /publish-candidate:\n\s+environment: Production/u);
   assert.match(workflow, /pnpm validate/u);
   assert.match(workflow, /run: flyctl auth docker/u);
@@ -58,6 +61,10 @@ test("Fly image release automation covers every managed image and authenticates 
   assert.match(publisherRuntime, /"image",\s*"inspect"/u);
   assert.doesNotMatch(publisherRuntime, /"image", "show"/u);
   assert.match(publisherRuntime, /EXPECTED_GIT_SHA/u);
+  assert.match(publisherRuntime, /"linux\/amd64"/u);
+  assert.match(publisherRuntime, /cosign", \["sign"/u);
+  assert.match(publisherRuntime, /"verify"/u);
+  assert.match(publisherRuntime, /verifyAnonymousGhcrDigestPull/u);
   assert.match(publisherRuntime, /pullPublishedImage/u);
   assert.match(publisherRuntime, /publicationToken/u);
   assert.match(oidc, /workflow_ref/u);

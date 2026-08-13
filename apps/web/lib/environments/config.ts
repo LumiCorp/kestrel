@@ -6,6 +6,7 @@ export const HOSTED_ENVIRONMENTS_FEATURE_KEY = "hosted_environments";
 
 export type HostedEnvironmentsRollout = {
   deploymentEnabled: boolean;
+  organizationConfigured: boolean;
   organizationEnabled: boolean;
   effectiveEnabled: boolean;
 };
@@ -50,8 +51,6 @@ const REQUIRED_HOSTED_ENVIRONMENT_VALUES = [
   "KESTREL_ONE_TOOL_TOKEN",
   "KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID",
   "KESTREL_GATEWAY_CREDENTIAL_KEYS",
-  "FLY_API_TOKEN",
-  "KESTREL_FLY_ORGANIZATION_SLUG",
 ] as const;
 
 const LEGACY_GLOBAL_RUNNER_VALUES = [
@@ -87,7 +86,7 @@ export function hostedEnvironmentsDeploymentEnabled(
 export function hostedEnvironmentsOrganizationEnabled(
   enabled: boolean | null | undefined
 ) {
-  return enabled !== false;
+  return enabled === true;
 }
 
 export function hostedEnvironmentsEnabled(input: {
@@ -155,13 +154,19 @@ export function assertHostedEnvironmentRuntimeConfiguration(
     "KESTREL_WORKSPACE_RUNTIME_IMAGE",
   ] as const) {
     const image = env[imageName]?.trim() ?? "";
+    const repository =
+      imageName === "KESTREL_ENVIRONMENT_ROUTER_IMAGE"
+        ? "ghcr.io/lumicorp/kestrel-environment-router"
+        : "ghcr.io/lumicorp/kestrel-workspace-runtime";
+    const prefix = `${repository}@sha256:`;
     if (
-      !/^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u.test(
-        image
+      !(
+        image.startsWith(prefix) &&
+        /^[a-f0-9]{64}$/u.test(image.slice(prefix.length))
       )
     ) {
       throw new Error(
-        `${imageName} must be an immutable registry.fly.io sha256 digest reference.`
+        `${imageName} must be an immutable ${repository} sha256 digest reference.`
       );
     }
   }
@@ -224,6 +229,7 @@ export async function getHostedEnvironmentsRollout(input: {
   );
   return {
     deploymentEnabled,
+    organizationConfigured: Boolean(flag),
     organizationEnabled,
     effectiveEnabled: deploymentEnabled && organizationEnabled,
   };

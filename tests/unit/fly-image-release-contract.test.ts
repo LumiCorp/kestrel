@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import {
+  flyImageCatalogSchema,
   flyImagePublicationStateSchema,
   flyMigrationChanged,
   impactedFlyImages,
@@ -65,6 +66,38 @@ test("catalog changes rebuild every managed image", () => {
     forceAll: false,
   });
   assert.equal(impacted.length, 5);
+});
+
+test("tenant runtime catalog roles publish from exact public GHCR repositories", async () => {
+  const releaseCatalog = flyImageCatalogSchema.parse(
+    JSON.parse(
+      await readFile(
+        path.join(process.cwd(), "deploy/fly/image-catalog.json"),
+        "utf8",
+      ),
+    ),
+  );
+  assert.deepEqual(
+    releaseCatalog.images
+      .filter((entry) => entry.rollout === "environment")
+      .map(({ role, publisher, repository }) => ({
+        role,
+        publisher,
+        repository,
+      })),
+    [
+      {
+        role: "workspace-runtime",
+        publisher: "ghcr",
+        repository: "ghcr.io/lumicorp/kestrel-workspace-runtime",
+      },
+      {
+        role: "environment-router",
+        publisher: "ghcr",
+        repository: "ghcr.io/lumicorp/kestrel-environment-router",
+      },
+    ],
+  );
 });
 
 test("Docker build-context changes rebuild every managed image", () => {
@@ -174,6 +207,16 @@ function image(
 ): FlyImageCatalog["images"][number] {
   return {
     role,
+    publisher:
+      role === "workspace-runtime" || role === "environment-router"
+        ? "ghcr"
+        : "fly",
+    repository:
+      role === "workspace-runtime"
+        ? "ghcr.io/lumicorp/kestrel-workspace-runtime"
+        : role === "environment-router"
+          ? "ghcr.io/lumicorp/kestrel-environment-router"
+          : `registry.fly.io/app-${role}`,
     app: `app-${role}`,
     config: `${role}/fly.toml`,
     dockerfile: `${role}/Dockerfile`,
