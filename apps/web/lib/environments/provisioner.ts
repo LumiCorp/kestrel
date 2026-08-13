@@ -25,6 +25,10 @@ import {
   hashEnvironmentServiceToken,
 } from "./service-tokens";
 import { createAuxiliaryVolumeSnapshot } from "./backup-snapshot";
+import {
+  assertFlyImageMatchesRole,
+  type FlyImageRole,
+} from "@/lib/releases/contracts";
 
 export type ProvisioningOperation = {
   id: string;
@@ -358,8 +362,7 @@ export class EnvironmentProvisioner {
         const firstFailureAt =
           readInputString(asRecord(previousRetry), "firstFailureAt") ??
           new Date().toISOString();
-        const retryAttempt =
-          Number(asRecord(previousRetry)?.attempt ?? 0) + 1;
+        const retryAttempt = Number(asRecord(previousRetry)?.attempt ?? 0) + 1;
         const nextAttemptAt = releaseRetryNextAttemptAt(
           firstFailureAt,
           retryAttempt,
@@ -649,10 +652,12 @@ export class EnvironmentProvisioner {
     const runtimeImage = readImmutableImage(
       operation.input?.runtimeImage,
       "Workspace runtime image",
+      "workspace-runtime",
     );
     const routerImage = readImmutableImage(
       operation.input?.routerImage,
       "Environment router image",
+      "environment-router",
     );
     const workspaceDataMigrationRevision = readInputString(
       operation.input,
@@ -755,9 +760,7 @@ export class EnvironmentProvisioner {
       checkpoint.gatewayVerified = true;
       await persistCheckpoint("environment.update.gateway_verified");
     }
-    const alreadyUpdatedWorkspaceIds = new Set(
-      checkpoint.verifiedWorkspaceIds,
-    );
+    const alreadyUpdatedWorkspaceIds = new Set(checkpoint.verifiedWorkspaceIds);
     if (skipWorkspaceBackups) {
       await persistCheckpoint("environment.update.backups_skipped");
     } else {
@@ -870,7 +873,10 @@ export class EnvironmentProvisioner {
         });
         configuredUnverifiedWorkspaceIds.push(workspace.id);
         checkpoint.configuredStoppedWorkspaceIds = [
-          ...new Set([...checkpoint.configuredStoppedWorkspaceIds, workspace.id]),
+          ...new Set([
+            ...checkpoint.configuredStoppedWorkspaceIds,
+            workspace.id,
+          ]),
         ];
         updatedWorkspaceCount += 1;
         await persistCheckpoint("environment.update.workspaces");
@@ -956,9 +962,7 @@ export class EnvironmentProvisioner {
       createSnapshot: (snapshotInput) =>
         this.provider.createVolumeSnapshot(snapshotInput),
     });
-    return snapshot.id
-      ? { id: snapshot.id, state: snapshot.state }
-      : undefined;
+    return snapshot.id ? { id: snapshot.id, state: snapshot.state } : undefined;
   }
 
   private async updateWorkspaceRuntime(input: {
@@ -1649,7 +1653,10 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           .where(
             and(
               eq(schema.environmentOperations.id, input.operationId),
-              eq(schema.environmentOperations.environmentId, input.environmentId),
+              eq(
+                schema.environmentOperations.environmentId,
+                input.environmentId,
+              ),
               eq(schema.environmentOperations.status, "running"),
               eq(schema.environmentOperations.attempt, input.attempt),
             ),
@@ -2271,16 +2278,19 @@ async function cleanupFailedWorkspaceProvisioning(input: {
   }
 }
 
-function readImmutableImage(value: unknown, label: string) {
-  if (
-    typeof value !== "string" ||
-    !/^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u.test(
-      value,
-    )
-  ) {
+function readImmutableImage(value: unknown, label: string, role: FlyImageRole) {
+  if (typeof value !== "string") {
     throw operationError(
       "ENVIRONMENT_IMAGE_INVALID",
-      `${label} must use an immutable registry.fly.io sha256 digest.`,
+      `${label} must use its exact immutable release repository and sha256 digest.`,
+    );
+  }
+  try {
+    assertFlyImageMatchesRole(role, value);
+  } catch {
+    throw operationError(
+      "ENVIRONMENT_IMAGE_INVALID",
+      `${label} must use its exact immutable release repository and sha256 digest.`,
     );
   }
   return value;
@@ -2331,7 +2341,7 @@ function safeFailure(error: unknown): {
 }
 
 function readProviderFailureEvidence(error: unknown) {
-  if (!(error instanceof EnvironmentProviderError)) return ;
+  if (!(error instanceof EnvironmentProviderError)) return;
   const evidence = {
     phase: error.phase,
     status: error.status,
@@ -2435,9 +2445,7 @@ function readEnvironmentUpdateCheckpoint(
   const checkpoint = asRecord(asRecord(result)?.environmentUpdateCheckpoint);
   return {
     gatewayVerified: checkpoint?.gatewayVerified === true,
-    backedUpWorkspaceIds: readStringArray(
-      checkpoint?.backedUpWorkspaceIds,
-    ),
+    backedUpWorkspaceIds: readStringArray(checkpoint?.backedUpWorkspaceIds),
     verifiedWorkspaceIds: readStringArray(checkpoint?.verifiedWorkspaceIds),
     configuredStoppedWorkspaceIds: readStringArray(
       checkpoint?.configuredStoppedWorkspaceIds,
@@ -2447,8 +2455,8 @@ function readEnvironmentUpdateCheckpoint(
 
 function readStringArray(value: unknown) {
   return Array.isArray(value)
-    ? value.filter((candidate): candidate is string =>
-        typeof candidate === "string",
+    ? value.filter(
+        (candidate): candidate is string => typeof candidate === "string",
       )
     : [];
 }

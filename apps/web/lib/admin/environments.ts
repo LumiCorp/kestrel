@@ -17,6 +17,7 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { getOrganizationInfrastructureSettings } from "@/lib/environments/organization-infrastructure-settings";
 import { environmentLifecycleLockKey } from "@/lib/environments/lifecycle-lock";
+import { assertFlyImageMatchesRole } from "@/lib/releases/contracts";
 
 export async function createAdminEnvironment(input: {
   organizationId: string;
@@ -24,10 +25,12 @@ export async function createAdminEnvironment(input: {
   environment: CreateEnvironmentInput;
 }) {
   const infrastructure = await getOrganizationInfrastructureSettings(
-    input.organizationId
+    input.organizationId,
   );
   if (!infrastructure.allowedRegions.includes(input.environment.region)) {
-    throw new Error("The selected region is not allowed by organization infrastructure settings.");
+    throw new Error(
+      "The selected region is not allowed by organization infrastructure settings.",
+    );
   }
   const created = await createOrganizationEnvironment({
     organizationId: input.organizationId,
@@ -63,10 +66,13 @@ async function recordEnvironmentCreationSideEffect(
   try {
     await run();
   } catch (error) {
-    console.error("Environment creation committed but post-commit work failed.", {
-      sideEffect,
-      message: error instanceof Error ? error.message : "Unknown error",
-    });
+    console.error(
+      "Environment creation committed but post-commit work failed.",
+      {
+        sideEffect,
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
+    );
   }
 }
 
@@ -192,22 +198,10 @@ export async function updateAdminEnvironmentRuntime(input: {
     environmentId: input.environmentId,
   });
   if (!environment) throw new Error("Environment not found.");
-  if (!/@sha256:[a-f0-9]{64}$/u.test(input.runtimeImage)) {
-    throw new Error(
-      "Workspace runtime image must use an immutable sha256 digest."
-    );
-  }
+  assertFlyImageMatchesRole("workspace-runtime", input.runtimeImage);
   const routerImage =
     process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE?.trim() ?? "";
-  if (
-    !/^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u.test(
-      routerImage
-    )
-  ) {
-    throw new Error(
-      "Environment router image must use an immutable registry.fly.io sha256 digest."
-    );
-  }
+  assertFlyImageMatchesRole("environment-router", routerImage);
   if (
     environment.runtimeImage === input.runtimeImage &&
     environment.routerImage === routerImage &&
@@ -230,7 +224,7 @@ export async function updateAdminEnvironmentRuntime(input: {
       where: (table, { and, eq }) =>
         and(
           eq(table.organizationId, input.organizationId),
-          eq(table.idempotencyKey, idempotencyKey)
+          eq(table.idempotencyKey, idempotencyKey),
         ),
     });
     if (existing) {
@@ -327,8 +321,8 @@ export async function updateAdminEnvironmentReasoningPolicy(input: {
     .where(
       and(
         eq(schema.environments.id, input.environmentId),
-        eq(schema.environments.organizationId, input.organizationId)
-      )
+        eq(schema.environments.organizationId, input.organizationId),
+      ),
     )
     .returning();
   if (environment === undefined) {
