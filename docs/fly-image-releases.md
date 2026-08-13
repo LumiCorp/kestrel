@@ -57,12 +57,21 @@ The existing `KESTREL_WORKSPACE_RUNTIME_IMAGE` and
 first release becomes stable. Postgres is authoritative after that point.
 
 The candidate endpoint accepts only a GitHub Actions OIDC token for the exact
-main-branch release workflow and commit SHA. It also requires a fresh controller
-heartbeat at the manifest's declared contract revision. The workflow waits for
-`/api/health` to report the exact production commit, then deploys or verifies
-the controller before publishing the candidate. The controller step skips the
-image build only when the running controller heartbeat is fresh and every
-controller Machine already carries the current controller input fingerprint.
+main-branch release workflow and commit SHA. Both authenticated preflight and
+the authoritative publication POST require a fresh controller heartbeat at the
+canonical contract revision. Missing, expired, or insufficient-revision
+heartbeats fail with `409 RELEASE_CONTROLLER_STALE`. A successful publication
+response is accepted only when it contains a UUID release ID and the literal
+status `candidate`; malformed 2xx responses fail the workflow.
+
+The `publish-candidate` job uses the setup action at its pinned commit and Fly
+CLI `0.4.82`. Its fail-fast order is fixed: validate the revision, authenticate
+the Fly registry, wait for `/api/health` to serve the exact commit, complete the
+authenticated publication preflight, build and smoke the non-deploying
+controller candidate, then build, smoke, and publish the managed image bundle.
+The final POST repeats the heartbeat check to close the race across long image
+builds. Controller deployment is a separate, explicit operation; candidate
+publication never changes the running or stopped controller Machines.
 A candidate is accepted and promoted only while its bundle revision still equals
 the serving Kestrel One revision. Newer main revisions cancel obsolete image
 builds. No long-lived publisher secret is shared with Kestrel One.
@@ -90,16 +99,26 @@ lifecycle queue has nonterminal work. It deploys the exact local commit and
 verifies the readiness file and database heartbeat. Do not run this command in
 pull-request CI.
 
-The main release workflow uses a narrower controller path. It computes a
-fingerprint from the controller Dockerfile, Fly config, controller scripts,
-the bundled worker and readiness artifacts, lockfile, package manifests, schema,
-and database migrations. When the fingerprint or controller contract is stale,
-it builds and pushes an image containing only the bundled artifacts, resolves
-and smokes the immutable Fly registry digest, updates the stopped standby by a
-unique tag without starting it, verifies Fly resolved the expected digest,
-updates the single running Machine, and verifies the fresh contract heartbeat.
-If the fingerprint and heartbeat are already current, it skips the build and
-Machine update.
+The main release workflow uses a non-deploying controller candidate path. It
+computes a fingerprint from the controller Dockerfile, Fly config, controller
+scripts, the bundled worker and readiness artifacts, lockfile, package
+manifests, schema, and database migrations. It builds and pushes an image
+containing only the bundled artifacts, resolves and smokes the immutable Fly
+registry digest, and records that evidence in the workflow log. It does not
+inspect or update the controller Machine topology.
+
+Every managed image smoke runs an executable image contract. In particular,
+the turn-worker smoke invokes the image's real default `CMD`, requires the exact
+missing-database startup failure, and verifies the immutable image's Git
+revision label. A source-file check or `tsx --version` is not sufficient release
+evidence.
+
+The explicit controller deployment path updates the stopped standby first and
+then the single running Machine. Fly may transcode an OCI manifest to its
+deployment manifest, so post-update verification binds the authoritative
+Machine state to the exact source revision, controller input fingerprint, and
+startup command instead of requiring the source manifest digest to survive that
+provider-owned representation change.
 
 ## Promotion
 
@@ -107,9 +126,10 @@ Machine update.
    Environment.
 2. Review the candidate's rebuilt and carried-forward components.
 3. If the candidate contains a Web database migration, apply it through the
-   normal Kestrel One deployment path, verify `pnpm --dir apps/web
-   db:migrate:deploy` completed against the production database, and verify the
-   control plane is healthy. Then mark the migration runbook complete. This
+   normal Kestrel One deployment path, verify
+   `pnpm --dir apps/web db:migrate:deploy` completed against the production
+   database, and verify the control plane is healthy. Then mark the migration
+   runbook complete. This
    acknowledgment records the administrator and time; it does not run a
    migration.
 4. Approve the release.

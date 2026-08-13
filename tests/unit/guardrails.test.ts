@@ -106,13 +106,35 @@ test("Guardrails count maintenance model calls separately from action calls", ()
     (error) => error instanceof GuardrailViolationError && error.code === "MAX_MODEL_CALLS_EXCEEDED",
   );
   const telemetryAfterActionRejection = guardrails.telemetry();
+  assert.equal(
+    telemetryAfterActionRejection.actionModelCalls,
+    (telemetry.actionModelCalls ?? 0) + 1,
+  );
+  assert.equal(
+    telemetryAfterActionRejection.modelCalls,
+    telemetry.modelCalls + 1,
+  );
+  assert.ok(telemetryAfterActionRejection.durationMs >= telemetry.durationMs);
   assert.throws(
     () => guardrails.onModelCall("maintenance"),
     (error) =>
       error instanceof GuardrailViolationError && error.code === "MAX_MAINTENANCE_MODEL_CALLS_EXCEEDED",
   );
-  assert.deepEqual(guardrails.telemetry(), telemetryAfterActionRejection);
+  const telemetryAfterMaintenanceRejection = guardrails.telemetry();
+  assert.deepEqual(
+    mutationCounters(telemetryAfterMaintenanceRejection),
+    mutationCounters(telemetryAfterActionRejection),
+  );
+  assert.ok(
+    telemetryAfterMaintenanceRejection.durationMs >=
+      telemetryAfterActionRejection.durationMs,
+  );
 });
+
+function mutationCounters(telemetry: ReturnType<Guardrails["telemetry"]>) {
+  const { durationMs: _durationMs, ...counters } = telemetry;
+  return counters;
+}
 
 test("Guardrails leave repeated-step intervention to the loop coordinator", () => {
   const guardrails = new Guardrails({

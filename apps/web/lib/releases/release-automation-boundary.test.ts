@@ -13,6 +13,14 @@ test("Fly image release automation covers every managed image and authenticates 
     oidc,
     runPodDockerfile,
     runPodSmoke,
+    turnWorkerSmoke,
+    candidateRoute,
+    releaseContracts,
+    streamingCommand,
+    preflightRuntime,
+    controllerCandidateRuntime,
+    controllerDeployRuntime,
+    controllerArtifactRuntime,
   ] = await Promise.all([
     read("deploy/fly/image-catalog.json"),
     read(".github/workflows/fly-image-release.yml"),
@@ -21,6 +29,14 @@ test("Fly image release automation covers every managed image and authenticates 
     read("apps/web/lib/releases/github-oidc.ts"),
     read("deploy/fly/kestrel-one-runpod-worker/Dockerfile"),
     read("deploy/fly/kestrel-one-runpod-worker/smoke.sh"),
+    read("deploy/fly/kestrel-one-turn-worker/smoke.sh"),
+    read("apps/web/app/api/runtime/releases/candidates/route.ts"),
+    read("apps/web/lib/releases/contracts.ts"),
+    read("scripts/lib/streaming-command.ts"),
+    read("scripts/preflight-fly-image-publication.ts"),
+    read("apps/web/scripts/publish-control-worker-candidate.ts"),
+    read("apps/web/scripts/deploy-control-worker-candidate.ts"),
+    read("apps/web/scripts/control-worker-artifact.ts"),
   ]);
   for (const role of [
     "workspace-runtime",
@@ -48,7 +64,12 @@ test("Fly image release automation covers every managed image and authenticates 
   assert.match(workflow, /publish-candidate:\n\s+environment: Production/u);
   assert.match(workflow, /pnpm validate/u);
   assert.match(workflow, /run: flyctl auth docker/u);
-  assert.match(workflow, /deploy-control-worker-candidate\.ts \$\{\{ github\.sha \}\}/u);
+  assert.match(
+    workflow,
+    /publish-control-worker-candidate\.ts \$\{\{ github\.sha \}\}/u,
+  );
+  assert.doesNotMatch(workflow, /deploy-control-worker-candidate/u);
+  assert.doesNotMatch(workflow, /machine (?:list|status|update)|flyctl logs/u);
   assert.doesNotMatch(workflow, /run: fly auth docker/u);
   assert.match(publisherRuntime, /--build-only/u);
   assert.match(publisherRuntime, /--push/u);
@@ -78,6 +99,10 @@ test("Fly image release automation covers every managed image and authenticates 
   assert.doesNotMatch(jobEnvironment, /FLY_API_TOKEN/u);
   assert.match(workflow, /FLY_API_TOKEN: \$\{\{ secrets\.FLY_API_TOKEN \}\}/u);
   assert.doesNotMatch(workflow, /setup-flyctl@master/u);
+  assert.match(
+    workflow,
+    /setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1\n\s+with:\n\s+version: 0\.4\.82/u,
+  );
   assert.match(publisherRuntime, /selectFlyImageDiffBase/u);
   assert.match(publisherRuntime, /const changedPaths = diffBase/u);
   assert.match(
@@ -89,6 +114,57 @@ test("Fly image release automation covers every managed image and authenticates 
   assert.doesNotMatch(
     runPodSmoke,
     /\.\/apps\/web\/scripts\/managed-runpod-worker\.ts/u,
+  );
+  assert.match(turnWorkerSmoke, /docker run --rm "\$image"/u);
+  assert.doesNotMatch(turnWorkerSmoke, /--entrypoint|tsx --version/u);
+  assert.match(
+    turnWorkerSmoke,
+    /Kestrel One durable turn worker failed to start: DATABASE_URL or POSTGRES_URL is required/u,
+  );
+  assert.match(turnWorkerSmoke, /org\.opencontainers\.image\.revision/u);
+  assert.match(publisherRuntime, /RELEASE_CONTROLLER_CONTRACT_REVISION/u);
+  assert.doesNotMatch(publisherRuntime, /controllerContractRevision:\s*1/u);
+  assert.match(
+    releaseContracts,
+    /flyImageReleaseCandidatePublicationResponseSchema/u,
+  );
+  assert.match(
+    candidateRoute,
+    /flyImageReleaseCandidatePublicationResponseSchema\.parse/u,
+  );
+  assert.match(
+    publisherRuntime,
+    /flyImageReleaseCandidatePublicationResponseSchema\.parse/u,
+  );
+  assert.match(streamingCommand, /spawn\(command, args/u);
+  assert.match(streamingCommand, /64 \* 1024/u);
+  for (const runtime of [
+    publisher,
+    preflightRuntime,
+    controllerCandidateRuntime,
+    controllerDeployRuntime,
+    controllerArtifactRuntime,
+  ]) {
+    assert.match(runtime, /(?:run|capture)StreamingCommand/u);
+    assert.doesNotMatch(runtime, /execFile|maxBuffer/u);
+  }
+
+  const orderedSteps = [
+    "Validate the release revision",
+    "Authenticate Docker to the Fly registry",
+    "Wait for the exact Kestrel One production revision",
+    "Preflight release publication",
+    "Build and smoke the release controller candidate",
+    "Build, smoke, and publish candidate images",
+  ].map((name) => workflow.indexOf(`- name: ${name}`));
+  assert.ok(orderedSteps.every((index) => index >= 0));
+  assert.deepEqual(
+    orderedSteps,
+    [...orderedSteps].sort((left, right) => left - right),
+  );
+  assert.match(
+    workflow,
+    /run: pnpm tsx scripts\/preflight-fly-image-publication\.ts/u,
   );
 });
 
@@ -137,6 +213,14 @@ test("promotion drains sequentially and preserves stopped Workspaces", async () 
   );
   assert.match(releaseStore, /attachActiveFlyImageReleaseTarget/u);
   assert.match(releaseStore, /mergePinnedFlyImageReleaseHistory/u);
+  assert.match(
+    releaseStore,
+    /registerFlyImageReleaseCandidate[\s\S]*?await assertReleaseControllerHealthy\(manifest\.controllerContractRevision\)/u,
+  );
+  assert.match(
+    releaseStore,
+    /getFlyImageReleasePublicationState\(\) \{\n\s+await assertReleaseControllerHealthy\(\)/u,
+  );
   assert.match(environmentStore, /attachActiveFlyImageReleaseTarget/u);
   assert.match(queue, /policy: "singleton"/u);
   assert.match(queue, /singletonKey: releaseId/u);

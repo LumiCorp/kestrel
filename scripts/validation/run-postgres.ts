@@ -74,6 +74,7 @@ const groups = [
       "lib/email/config.postgres.test.ts",
       "lib/environments/authorization-renewal.postgres.test.ts",
       "lib/environments/backup-execution-guard.postgres.test.ts",
+      "lib/environments/config.postgres.test.ts",
       "lib/environments/cutover-readiness.postgres.test.ts",
       "lib/environments/desktop.postgres.test.ts",
       "lib/environments/fly-connection.postgres.test.ts",

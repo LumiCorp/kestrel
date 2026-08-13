@@ -1,7 +1,9 @@
-import { execFile } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import {
+  captureStreamingCommand,
+  runStreamingCommand,
+} from "../../../scripts/lib/streaming-command";
 import {
   buildControlWorkerArtifact,
   type ControlWorkerArtifact,
@@ -15,13 +17,15 @@ import {
   selectControlWorkerMachineUpdatePlan,
 } from "./control-worker-machine";
 
-const execFileAsync = promisify(execFile);
 const defaultApp = "kestrel-one-control-worker";
 const pullAttempts = 13;
 const pullRetryDelayMs = 5_000;
 const readinessAttempts = 45;
 const readinessRetryDelayMs = 2_000;
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const repositoryRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../..",
+);
 const smokeScript = resolve(
   repositoryRoot,
   "deploy/fly/kestrel-one-control-worker/smoke.sh",
@@ -75,7 +79,10 @@ export async function deployControlWorkerCandidate(input: {
         input.dependencies.write(
           `Release controller already healthy for fingerprint ${artifact.fingerprint}.\n`,
         );
-        return { action: "skipped" as const, fingerprint: artifact.fingerprint };
+        return {
+          action: "skipped" as const,
+          fingerprint: artifact.fingerprint,
+        };
       } catch (error) {
         input.dependencies.write(
           `Release controller fingerprint matched but readiness failed; rebuilding (${error instanceof Error ? error.message : "unknown error"}).\n`,
@@ -93,9 +100,9 @@ export async function deployControlWorkerCandidate(input: {
       appName,
       accessToken: input.accessToken,
       dependencies: input.dependencies,
-      imageDigest: published.digest,
       taggedImage: published.taggedImage,
       fingerprint: artifact.fingerprint,
+      revision: input.revision,
     });
     await verifyControllerReadiness(input.dependencies, appName);
     input.dependencies.write(
@@ -161,9 +168,9 @@ async function updateControlWorkerMachines(input: {
   appName: string;
   accessToken: string;
   dependencies: ControlWorkerDeployDependencies;
-  imageDigest: string;
   taggedImage: string;
   fingerprint: string;
+  revision: string;
 }) {
   const inventory = await input.dependencies.readInventory(
     input.appName,
@@ -193,8 +200,8 @@ async function updateControlWorkerMachines(input: {
       dependencies: input.dependencies,
       machineId: update.machineId,
       expectedState: update.expectedState,
-      expectedDigest: input.imageDigest,
       expectedFingerprint: input.fingerprint,
+      expectedRevision: input.revision,
     });
   }
 }
@@ -205,8 +212,8 @@ async function waitForMachinePostcondition(input: {
   dependencies: Pick<ControlWorkerDeployDependencies, "readInventory" | "wait">;
   machineId: string;
   expectedState: "started" | "stopped";
-  expectedDigest: string;
   expectedFingerprint: string;
+  expectedRevision: string;
 }) {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
@@ -220,8 +227,8 @@ async function waitForMachinePostcondition(input: {
       });
       if (
         machine.state === input.expectedState &&
-        machine.digest === input.expectedDigest &&
         machine.fingerprint === input.expectedFingerprint &&
+        machine.revision === input.expectedRevision &&
         machine.startupCommand === CONTROL_WORKER_STARTUP_COMMAND
       ) {
         return;
@@ -232,7 +239,7 @@ async function waitForMachinePostcondition(input: {
     await input.dependencies.wait(2_000);
   }
   throw new Error(
-    `Control worker Machine ${input.machineId} did not reach ${input.expectedState} on digest ${input.expectedDigest}.`,
+    `Control worker Machine ${input.machineId} did not reach ${input.expectedState} on revision ${input.expectedRevision} with fingerprint ${input.expectedFingerprint}.`,
   );
 }
 
@@ -267,7 +274,10 @@ async function pullPublishedImage(
       await dependencies.run("docker", ["pull", taggedImage]);
       return;
     } catch (error) {
-      if (!isFlyRegistryManifestUnavailable(error) || attempt === pullAttempts) {
+      if (
+        !isFlyRegistryManifestUnavailable(error) ||
+        attempt === pullAttempts
+      ) {
         throw error;
       }
       await dependencies.wait(pullRetryDelayMs);
@@ -308,11 +318,9 @@ async function resolveLocalImageDigest(
 }
 
 async function capture(command: string, args: string[]) {
-  const result = await execFileAsync(command, args, {
-    cwd: process.cwd(),
-    maxBuffer: 20 * 1024 * 1024,
-  });
-  return result.stdout.trimEnd();
+  return (
+    await captureStreamingCommand(command, args, { cwd: process.cwd() })
+  ).trimEnd();
 }
 
 async function run(
@@ -320,22 +328,9 @@ async function run(
   args: string[],
   environment?: NodeJS.ProcessEnv,
 ) {
-  await new Promise<void>((resolve, reject) => {
-    const child = execFile(
-      command,
-      args,
-      { cwd: process.cwd(), env: environment ?? process.env },
-      (error, _stdout, stderr) => {
-        if (error) {
-          Object.assign(error, { stderr });
-          reject(error);
-        } else {
-          resolve();
-        }
-      },
-    );
-    child.stdout?.pipe(process.stdout);
-    child.stderr?.pipe(process.stderr);
+  await runStreamingCommand(command, args, {
+    cwd: process.cwd(),
+    env: environment ?? process.env,
   });
 }
 

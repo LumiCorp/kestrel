@@ -2,15 +2,23 @@ import assert from "node:assert/strict";
 import postgres from "postgres";
 import test from "node:test";
 import "../../scripts/register-server-only.mjs";
-import type { FlyImageReleaseManifestV2, FlyImageRole } from "./contracts";
+import {
+  ROLE_IMAGE_REPOSITORIES,
+  type FlyImageReleaseManifestV2,
+  type FlyImageRole,
+} from "./contracts";
+import {
+  RELEASE_CONTROLLER_CONTRACT_REVISION,
+  RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS,
+} from "./controller-contract";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
-const roles: Array<[FlyImageRole, string]> = [
-  ["workspace-runtime", "kestrel-one-runner"],
-  ["environment-router", "kestrel-one-runner"],
-  ["preview-edge", "kestrel-preview-edge"],
-  ["turn-worker", "kestrel-one-turn-worker"],
-  ["runpod-worker", "kestrel-one-runpod-worker"],
+const roles: FlyImageRole[] = [
+  "workspace-runtime",
+  "environment-router",
+  "preview-edge",
+  "turn-worker",
+  "runpod-worker",
 ];
 
 test("release admission rejects stale publication and forward recovery atomically replaces a paused release", async (context) => {
@@ -87,14 +95,6 @@ test("release admission rejects stale publication and forward recovery atomicall
       `;
     }
     await transaction`
-      INSERT INTO "release_controller_heartbeats" (
-        "id", "contract_revision", "heartbeat_at", "started_at"
-      ) VALUES ('platform', 1, ${now}, ${now})
-      ON CONFLICT ("id") DO UPDATE SET
-        "contract_revision" = 1, "heartbeat_at" = ${now},
-        "started_at" = ${now}
-    `;
-    await transaction`
       UPDATE "fly_image_release_settings"
       SET "stable_release_id" = ${stableId}, "active_release_id" = ${pausedId},
           "canary_environment_id" = ${environmentId}, "updated_at" = ${now}
@@ -106,6 +106,43 @@ test("release admission rejects stale publication and forward recovery atomicall
     ...manifestFor(liveRevision, now),
     migrationChanged: true,
   };
+  const assertBothControllerChecksReject = async () => {
+    await assert.rejects(
+      releases.getFlyImageReleasePublicationState(),
+      controllerStale,
+    );
+    await assert.rejects(
+      releases.registerFlyImageReleaseCandidate(manifest),
+      controllerStale,
+    );
+  };
+
+  await sql`DELETE FROM "release_controller_heartbeats" WHERE "id" = 'platform'`;
+  await assertBothControllerChecksReject();
+
+  const expiredHeartbeat = new Date(
+    now.getTime() - RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS - 1_000,
+  );
+  await setControllerHeartbeat(sql, {
+    contractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
+    heartbeatAt: expiredHeartbeat,
+  });
+  await assertBothControllerChecksReject();
+
+  await setControllerHeartbeat(sql, {
+    contractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION - 1,
+    heartbeatAt: new Date(),
+  });
+  await assertBothControllerChecksReject();
+
+  await setControllerHeartbeat(sql, {
+    contractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
+    heartbeatAt: new Date(),
+  });
+  assert.equal(
+    (await releases.getFlyImageReleasePublicationState()).stableBundleRevision,
+    "c".repeat(40),
+  );
   const staleRevision = "b".repeat(40);
   await assert.rejects(
     releases.registerFlyImageReleaseCandidate({
@@ -189,7 +226,7 @@ function manifestFor(
 ): FlyImageReleaseManifestV2 {
   return {
     version: 2,
-    controllerContractRevision: 1,
+    controllerContractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
     bundleRevision: revision,
     trigger: "manual",
     migrationChanged: false,
@@ -199,9 +236,9 @@ function manifestFor(
       commands: ["pnpm validate"],
       completedAt: completedAt.toISOString(),
     },
-    components: roles.map(([role, app], index) => ({
+    components: roles.map((role, index) => ({
       role,
-      image: `registry.fly.io/${app}@sha256:${String(index + 1).repeat(64)}`,
+      image: `${ROLE_IMAGE_REPOSITORIES[role]}@sha256:${String(index + 1).repeat(64)}`,
       sourceRevision: revision,
       inputFingerprint: `sha256:${String(index + 5).repeat(64)}`,
       smoke: {
@@ -214,4 +251,26 @@ function manifestFor(
         : {}),
     })),
   };
+}
+
+function controllerStale(error: unknown) {
+  assert.equal((error as { code?: string }).code, "RELEASE_CONTROLLER_STALE");
+  return true;
+}
+
+async function setControllerHeartbeat(
+  sql: postgres.Sql,
+  input: { contractRevision: number; heartbeatAt: Date },
+) {
+  await sql`
+    INSERT INTO "release_controller_heartbeats" (
+      "id", "contract_revision", "heartbeat_at", "started_at"
+    ) VALUES (
+      'platform', ${input.contractRevision}, ${input.heartbeatAt}, ${input.heartbeatAt}
+    )
+    ON CONFLICT ("id") DO UPDATE SET
+      "contract_revision" = ${input.contractRevision},
+      "heartbeat_at" = ${input.heartbeatAt},
+      "started_at" = ${input.heartbeatAt}
+  `;
 }

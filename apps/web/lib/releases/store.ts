@@ -26,7 +26,10 @@ import {
 } from "./contracts";
 import { digestCanonicalJson } from "./digest";
 import { mergePinnedFlyImageReleaseHistory } from "./history";
-import { RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS } from "./controller-contract";
+import {
+  RELEASE_CONTROLLER_CONTRACT_REVISION,
+  RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS,
+} from "./controller-contract";
 
 export const FLY_IMAGE_RELEASE_LOCK_KEY = "kestrel:fly-image-release";
 
@@ -54,6 +57,27 @@ export class FlyImageReleaseError extends Error {
   }
 }
 
+export async function assertReleaseControllerHealthy(
+  requiredRevision = RELEASE_CONTROLLER_CONTRACT_REVISION,
+) {
+  const controller =
+    await knowledgeDb.query.releaseControllerHeartbeats.findFirst({
+      where: eq(schema.releaseControllerHeartbeats.id, "platform"),
+    });
+  if (
+    !controller ||
+    controller.contractRevision < requiredRevision ||
+    Date.now() - controller.heartbeatAt.getTime() >
+      RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS
+  ) {
+    throw new FlyImageReleaseError(
+      "RELEASE_CONTROLLER_STALE",
+      `Release controller revision ${requiredRevision} is not healthy. Deploy and verify the control worker before publishing this candidate.`,
+    );
+  }
+  return controller;
+}
+
 export async function registerFlyImageReleaseCandidate(
   input: FlyImageReleaseManifestV2,
 ) {
@@ -62,21 +86,7 @@ export async function registerFlyImageReleaseCandidate(
   for (const component of manifest.components) {
     assertFlyImageMatchesRole(component.role, component.image);
   }
-  const controller =
-    await knowledgeDb.query.releaseControllerHeartbeats.findFirst({
-      where: eq(schema.releaseControllerHeartbeats.id, "platform"),
-    });
-  if (
-    !controller ||
-    controller.contractRevision < manifest.controllerContractRevision ||
-    Date.now() - controller.heartbeatAt.getTime() >
-      RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS
-  ) {
-    throw new FlyImageReleaseError(
-      "RELEASE_CONTROLLER_STALE",
-      `Release controller revision ${manifest.controllerContractRevision} is not healthy. Deploy and verify the control worker before publishing this candidate.`,
-    );
-  }
+  await assertReleaseControllerHealthy(manifest.controllerContractRevision);
 
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
@@ -378,6 +388,7 @@ export async function listFlyImageReleaseCanaries() {
 }
 
 export async function getFlyImageReleasePublicationState() {
+  await assertReleaseControllerHealthy();
   const settings = await knowledgeDb.query.flyImageReleaseSettings.findFirst({
     where: eq(schema.flyImageReleaseSettings.id, "platform"),
     columns: { stableReleaseId: true },
