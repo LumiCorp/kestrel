@@ -41,6 +41,14 @@ test(
       reconcileSource,
       /environmentRunExecutions\.findMany/u,
     );
+    assert.match(
+      reconcileSource,
+      /eq\(table\.type, "workspace\.backup"\)[\s\S]*inArray\(table\.status, \["queued", "running"\]\)[\s\S]*if \(activeBackup\) continue/u,
+    );
+    assert.match(
+      backupSource,
+      /const exportReplacementId = crypto\.randomUUID\(\)/u,
+    );
   },
 );
 

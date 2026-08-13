@@ -75,3 +75,29 @@ test("backup import size follows the Workspace capacity contract", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("backup import streams without staging a second archive on the Workspace volume", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-import-test-"));
+  const source = path.join(root, "source");
+  const target = path.join(root, "target");
+  const archivePath = path.join(root, "workspace.tar.gz");
+  try {
+    await mkdir(source);
+    await mkdir(target);
+    await writeFile(path.join(source, "large.txt"), "content".repeat(1000));
+    const tar = spawnSync("tar", ["-czf", archivePath, "-C", source, "."]);
+    assert.equal(tar.status, 0, tar.stderr.toString("utf8"));
+    const archive = await readFile(archivePath);
+    const checksumSha256 = createHash("sha256").update(archive).digest("hex");
+    const registry = new WorkspaceBackupImportRegistry(target);
+    const created = await registry.create(checksumSha256);
+    await registry.append(created.id, 0, archive);
+    await assert.rejects(
+      readFile(path.join(target, ".kestrel", "backup-imports", `${created.id}.tar.gz`)),
+    );
+    await registry.complete(created.id);
+    assert.equal(await readFile(path.join(target, "large.txt"), "utf8"), "content".repeat(1000));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
