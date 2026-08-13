@@ -4,6 +4,7 @@ const REVISION_LABEL = "org.opencontainers.image.revision";
 const FINGERPRINT_LABEL = "org.kestrel.control-worker.fingerprint";
 const RUNNING_STATE = "started";
 const STOPPED_STATE = "stopped";
+export const CONTROL_WORKER_STARTUP_COMMAND = "node /app/control-worker.cjs";
 
 export type MachineInventoryRecord = {
   id: string;
@@ -11,8 +12,20 @@ export type MachineInventoryRecord = {
   revision: string;
   fingerprint: string | null;
   digest: string;
+  startupCommand: string | null;
   standbys: string[];
 };
+
+class IncompleteControlWorkerMachineError extends Error {
+  constructor() {
+    super("Fly returned an incomplete control worker Machine record.");
+    this.name = "IncompleteControlWorkerMachineError";
+  }
+}
+
+export function isIncompleteControlWorkerMachineError(error: unknown) {
+  return error instanceof IncompleteControlWorkerMachineError;
+}
 
 export type ControlWorkerMachineAction =
   | { action: "use"; machineId: string }
@@ -49,6 +62,7 @@ function parseMachine(value: unknown): MachineInventoryRecord {
   const id = readString(record, "id", "ID");
   const state = readString(record, "state", "State");
   const config = asRecord(record.config ?? record.Config);
+  const init = asRecord(config?.init ?? config?.Init);
   const imageRef = asRecord(
     record.image_ref ?? record.imageRef ?? record.ImageRef,
   );
@@ -56,6 +70,13 @@ function parseMachine(value: unknown): MachineInventoryRecord {
   const revision = labels ? readString(labels, REVISION_LABEL) : null;
   const fingerprint = labels ? readString(labels, FINGERPRINT_LABEL) : null;
   const digest = imageRef ? readString(imageRef, "digest", "Digest") : null;
+  const rawCommand = init?.cmd ?? init?.Cmd;
+  const startupCommand =
+    Array.isArray(rawCommand) &&
+    rawCommand.length > 0 &&
+    rawCommand.every((item) => typeof item === "string" && item.trim())
+      ? rawCommand.join(" ")
+      : null;
   const rawStandbys = config?.standbys ?? config?.Standbys;
   const standbys =
     rawStandbys == null
@@ -65,9 +86,17 @@ function parseMachine(value: unknown): MachineInventoryRecord {
         ? rawStandbys
         : null;
   if (!(id && state && revision && digest && standbys)) {
-    throw new Error("Fly returned an incomplete control worker Machine record.");
+    throw new IncompleteControlWorkerMachineError();
   }
-  return { id, state, revision, fingerprint, digest, standbys };
+  return {
+    id,
+    state,
+    revision,
+    fingerprint,
+    digest,
+    startupCommand,
+    standbys,
+  };
 }
 
 export function parseControlWorkerInventory(inventory: unknown) {
@@ -176,7 +205,9 @@ export function canSkipControlWorkerMachineDeploy(input: {
   return (
     Boolean(running) &&
     machines.every(
-      (machine) => machine.fingerprint === input.expectedFingerprint,
+      (machine) =>
+        machine.fingerprint === input.expectedFingerprint &&
+        machine.startupCommand === CONTROL_WORKER_STARTUP_COMMAND,
     )
   );
 }
