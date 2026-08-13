@@ -1,44 +1,49 @@
 import { createHash, randomUUID, type Hash } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import { spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { WorkspaceRequestError } from "./security.js";
-
-const MAX_IMPORT_BYTES = 256 * 1024 * 1024;
+import { restorePortableBackupPayload } from "./portable-worktree-backup.js";
+import { resolveWorkspaceBackupLogicalLimit } from "./backup-preparations.js";
 
 type BackupImport = {
   id: string;
-  archivePath: string;
   expectedSha256: string;
   hash: Hash;
   nextChunkIndex: number;
   size: number;
+  maxBytes: number;
+  extractor: ChildProcessWithoutNullStreams;
+  extraction: Promise<void>;
 };
 
 export class WorkspaceBackupImportRegistry {
   private readonly imports = new Map<string, BackupImport>();
 
-  constructor(private readonly workspaceRoot: string) {}
+  constructor(
+    private readonly workspaceRoot: string,
+    private readonly options: { maxImportBytes?: number | undefined } = {},
+  ) {}
 
   async create(expectedSha256: string) {
     if (!/^[a-f0-9]{64}$/u.test(expectedSha256)) {
       throw new WorkspaceRequestError(400, "WORKSPACE_BACKUP_CHECKSUM_INVALID");
     }
     const id = randomUUID();
-    const root = path.join(os.tmpdir(), "kestrel-backup-imports");
-    await mkdir(root, { recursive: true });
-    const archivePath = path.join(root, `${id}.tar.gz`);
+    const maxBytes =
+      this.options.maxImportBytes ??
+      (await resolveWorkspaceBackupLogicalLimit(this.workspaceRoot));
+    const extractor = spawn("tar", ["-xzf", "-", "-C", this.workspaceRoot]);
+    extractor.stderr.resume();
+    const extraction = waitForExtraction(extractor);
+    void extraction.catch(() => {});
     this.imports.set(id, {
       id,
-      archivePath,
       expectedSha256,
       hash: createHash("sha256"),
       nextChunkIndex: 0,
       size: 0,
+      maxBytes,
+      extractor,
+      extraction,
     });
     return { id };
   }
@@ -55,15 +60,12 @@ export class WorkspaceBackupImportRegistry {
       throw new WorkspaceRequestError(413, "WORKSPACE_BACKUP_CHUNK_INVALID");
     }
     current.size += content.length;
-    if (current.size > MAX_IMPORT_BYTES) {
+    if (current.size > current.maxBytes) {
       await this.abort(id);
       throw new WorkspaceRequestError(413, "WORKSPACE_BACKUP_TOO_LARGE");
     }
     current.hash.update(content);
-    await pipeline(
-      Readable.from([content]),
-      createWriteStream(current.archivePath, { flags: "a" })
-    );
+    await writeExtractionChunk(current.extractor, content);
     current.nextChunkIndex += 1;
     return { nextChunkIndex: current.nextChunkIndex, size: current.size };
   }
@@ -79,9 +81,10 @@ export class WorkspaceBackupImportRegistry {
       );
     }
     try {
-      await extractArchive(current.archivePath, this.workspaceRoot);
+      current.extractor.stdin.end();
+      await current.extraction;
+      await restorePortableBackupPayload(this.workspaceRoot);
       this.imports.delete(id);
-      await rm(current.archivePath, { force: true });
       return { checksumSha256, size: current.size };
     } catch (error) {
       await this.abort(id);
@@ -92,7 +95,11 @@ export class WorkspaceBackupImportRegistry {
   async abort(id: string) {
     const current = this.imports.get(id);
     this.imports.delete(id);
-    if (current) await rm(current.archivePath, { force: true });
+    if (current) {
+      current.extractor.stdin.destroy();
+      current.extractor.kill("SIGKILL");
+      await current.extraction.catch(() => {});
+    }
   }
 
   async closeAll() {
@@ -108,13 +115,21 @@ export class WorkspaceBackupImportRegistry {
   }
 }
 
-function extractArchive(archivePath: string, workspaceRoot: string) {
+function waitForExtraction(child: ChildProcessWithoutNullStreams) {
   return new Promise<void>((resolve, reject) => {
-    const child = spawn("tar", ["-xzf", archivePath, "-C", workspaceRoot]);
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolve();
       else reject(new WorkspaceRequestError(400, "WORKSPACE_RESTORE_FAILED"));
     });
+  });
+}
+
+function writeExtractionChunk(
+  child: ChildProcessWithoutNullStreams,
+  content: Buffer,
+) {
+  return new Promise<void>((resolve, reject) => {
+    child.stdin.write(content, (error) => (error ? reject(error) : resolve()));
   });
 }

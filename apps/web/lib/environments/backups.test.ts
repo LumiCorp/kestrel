@@ -9,7 +9,11 @@ import {
   encryptWorkspaceBackup,
 } from "./backup-crypto";
 import { createAuxiliaryVolumeSnapshot } from "./backup-snapshot";
-import { shouldFallbackToLegacyBackupExport } from "./backups";
+import {
+  isDeterministicBackupFailure,
+  shouldFallbackToLegacyBackupExport,
+  waitForWorkspaceSnapshot,
+} from "./backups";
 
 
 test("Workspace object backups are authenticated and decryptable", () => {
@@ -20,6 +24,19 @@ test("Workspace object backups are authenticated and decryptable", () => {
   assert.deepEqual(decryptWorkspaceBackup(encrypted, key), archive);
   encrypted[encrypted.length - 1] ^= 1;
   assert.throws(() => decryptWorkspaceBackup(encrypted, key));
+});
+
+test("deterministic backup preparation failures are terminal", () => {
+  assert.equal(isDeterministicBackupFailure("WORKSPACE_BACKUP_TOO_LARGE"), true);
+  assert.equal(
+    isDeterministicBackupFailure("WORKSPACE_CHANGED_DURING_BACKUP"),
+    true,
+  );
+  assert.equal(isDeterministicBackupFailure("FLY_PROVIDER_UNAVAILABLE"), false);
+  assert.equal(
+    isDeterministicBackupFailure("WORKSPACE_BACKUP_PORTABLE_STATE_INVALID"),
+    true,
+  );
 });
 
 test("KWB2 streams authenticate without buffering the archive", async () => {
@@ -81,7 +98,7 @@ test("backup preparation falls back only for legacy router responses", () => {
   );
 });
 
-test("a rejected Fly snapshot does not reject the canonical archive backup", async () => {
+test("auxiliary snapshot callers retain bounded provider failure evidence", async () => {
   const snapshot = await createAuxiliaryVolumeSnapshot({
     appName: "kestrel-env-test",
     volumeId: "vol_test",
@@ -94,4 +111,19 @@ test("a rejected Fly snapshot does not reject the canonical archive backup", asy
     state: "failed",
     errorMessage: "Fly Machines API rejected the request (412).",
   });
+});
+
+test("portable export waits for the captured snapshot before archive preparation", async () => {
+  let attempts = 0;
+  await waitForWorkspaceSnapshot({
+    appName: "app-1",
+    sourceVolumeId: "volume-1",
+    snapshotId: "snapshot-1",
+    pollIntervalMs: 0,
+    isUsable: async () => {
+      attempts += 1;
+      return attempts === 2;
+    },
+  });
+  assert.equal(attempts, 2);
 });

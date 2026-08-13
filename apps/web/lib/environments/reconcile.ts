@@ -583,6 +583,17 @@ async function cleanupOrphanedEnvironmentResources(
   });
   for (const environment of environments) {
     if (!environment.flyAppName) continue;
+    const activeBackup =
+      await knowledgeDb.query.environmentOperations.findFirst({
+        where: (table, { and, eq, inArray }) =>
+          and(
+            eq(table.environmentId, environment.id),
+            eq(table.type, "workspace.backup"),
+            inArray(table.status, ["queued", "running"]),
+          ),
+        columns: { id: true },
+      });
+    if (activeBackup) continue;
     const activeOperation =
       await knowledgeDb.query.environmentOperations.findFirst({
         where: (table, { and, eq, inArray }) =>
