@@ -11,6 +11,13 @@ import {
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  RUNTIME_HERMETIC_LANE_IDS,
+  RUNTIME_HERMETIC_ISOLATION,
+  RUNTIME_HERMETIC_WORKERS,
+  validateRuntimeHermeticLaneManifest,
+} from "./validation/runtime-hermetic-lanes.mjs";
+import { runWeightedTaskQueue } from "./validation/weighted-task-queue.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PNPM = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -18,6 +25,18 @@ const REPORT_DIR = path.join(ROOT, "test-results", "validation");
 const REPORT_PATH = path.join(REPORT_DIR, "report.json");
 const PACKED_CONSUMER_DIR = path.join(REPORT_DIR, "packed-consumer");
 const TEMP_DIR = path.join(REPORT_DIR, "tmp");
+const NODE_TEST_GROUP_RUNNER = path.join(
+  ROOT,
+  "scripts/validation/run-node-test-group.mjs",
+);
+const HERMETIC_RESOURCE_BUDGET = 12;
+const HERMETIC_TASK_CONCURRENCY = 4;
+const RUNTIME_HERMETIC_LANE_MANIFEST = JSON.parse(
+  readFileSync(
+    path.join(ROOT, "scripts/validation/runtime-hermetic-lanes.json"),
+    "utf8",
+  ),
+);
 const startedAt = Date.now();
 const active = new Set();
 const measurements = [];
@@ -48,6 +67,8 @@ async function runValidation(validationRequest) {
   try {
     requireNode22();
     if (validationRequest.mode === "full") await runFullValidation();
+    else if (validationRequest.mode === "lane")
+      await runHermeticLane(validationRequest.lane);
     else await runLeaf(validationRequest.boundary, validationRequest.workspace);
     const elapsedMs = Date.now() - startedAt;
     writeReport("passed", undefined, validationRequest);
@@ -72,37 +93,58 @@ async function runFullValidation() {
   ]);
 
   buildInvocations += 1;
-  await phase("sharedBuild", [
-    task("shared artifacts", PNPM, ["run", "build:shared"]),
-    task("root artifact", PNPM, ["run", "build:self"]),
-    task("workspace type analysis", PNPM, [
-      "-r",
-      "--parallel",
-      "--if-present",
-      "--filter",
-      "@kestrel/desktop",
-      "--filter",
-      "@lumi/kestrel-environment-auth",
-      "--filter",
-      "@kestrel/mcp-security",
-      "--filter",
-      "@kestrel/environment-router",
-      "--filter",
-      "@kestrel/preview-edge",
-      "--filter",
-      "@kestrel/workspace-runtime",
-      "--filter",
-      "@kestrel/mcp-service",
-      "run",
-      "typecheck:self",
-    ]),
-  ]);
+  await phase(
+    "sharedBuild",
+    [
+      task("root artifact", PNPM, ["run", "build:self"]),
+      task("workspace type analysis", PNPM, [
+        "-r",
+        "--parallel",
+        "--if-present",
+        "--filter",
+        "@kestrel/desktop",
+        "--filter",
+        "@kestrel/environment-router",
+        "--filter",
+        "@kestrel/preview-edge",
+        "--filter",
+        "@kestrel/workspace-runtime",
+        "--filter",
+        "@kestrel/mcp-service",
+        "run",
+        "typecheck:self",
+      ]),
+    ],
+    {
+      setup: [task("shared artifacts", PNPM, ["run", "build:shared"])],
+      resourceBudget: 2,
+    },
+  );
 
-  await phase("hermetic", hermeticTasks());
+  await phase("hermetic", hermeticTasks(), {
+    resourceBudget: HERMETIC_RESOURCE_BUDGET,
+  });
 }
 
 function hermeticTasks() {
-  return testTasksForBoundary("hermetic");
+  return orderHermeticTasks(testTasksForBoundary("hermetic"));
+}
+
+function orderHermeticTasks(tasks) {
+  const priority = new Map([
+    ["Web hermetic", 0],
+    ["runtime/runtime-core hermetic", 1],
+    ["runtime/eval-replay hermetic", 2],
+    ["runtime/cli-command-mode hermetic", 3],
+    ["runtime/local-core-store hermetic", 4],
+    ["runtime/provider-tool-contracts hermetic", 5],
+    ["apps/desktop hermetic", 6],
+  ]);
+  return [...tasks].sort(
+    (a, b) =>
+      (priority.get(a.label) ?? 100) - (priority.get(b.label) ?? 100) ||
+      a.label.localeCompare(b.label),
+  );
 }
 
 function webProductionBuildTask() {
@@ -112,8 +154,7 @@ function webProductionBuildTask() {
     ["--filter", "@kestrel/kestrel-one", "run", "build:self"],
     {
       env: {
-        BETTER_AUTH_SECRET:
-          "kestrel-validation-build-secret-0000000000000000",
+        BETTER_AUTH_SECRET: "kestrel-validation-build-secret-0000000000000000",
         BETTER_AUTH_URL: "http://127.0.0.1:43103",
         DATABASE_URL:
           "postgresql://postgres:postgres@127.0.0.1:1/kestrel_build_guard",
@@ -149,6 +190,7 @@ function processSetupTasks() {
 
 function testTasksForBoundary(boundary) {
   const groups = new Map();
+  const rootHermeticFiles = [];
   for (const file of trackedTests([
     "tests/",
     "agents/",
@@ -166,22 +208,58 @@ function testTasksForBoundary(boundary) {
     if (testBoundary(file, source) !== boundary) continue;
     if (boundary === "process" && file === "tests/ops/tui/tui.ops.ts") continue;
     const execution = executionRoot(file);
+    if (boundary === "hermetic" && execution.label === "runtime") {
+      rootHermeticFiles.push(execution.relativeFile);
+      continue;
+    }
     const group = groups.get(execution.cwd) ?? { ...execution, files: [] };
     group.files.push(execution.relativeFile);
     groups.set(execution.cwd, group);
   }
+
+  if (boundary === "hermetic") {
+    const laneDefinitions = validateRuntimeHermeticLaneManifest(
+      RUNTIME_HERMETIC_LANE_MANIFEST,
+      rootHermeticFiles,
+    );
+    for (const lane of RUNTIME_HERMETIC_LANE_IDS) {
+      const definition = laneDefinitions[lane];
+      groups.set(`runtime/${lane}`, {
+        cwd: ROOT,
+        label: `runtime/${lane}`,
+        prefix: [],
+        files: definition.files,
+        isolation: definition.isolation,
+        workers: definition.workers,
+      });
+    }
+  }
+
   return [...groups.values()]
     .sort((a, b) => a.label.localeCompare(b.label))
     .flatMap((group) => {
       const files = group.files.sort();
       if (boundary !== "process") {
+        const sharedProcess =
+          group.label === "Web"
+            ? {
+                isolation: RUNTIME_HERMETIC_ISOLATION,
+                workers: RUNTIME_HERMETIC_WORKERS,
+              }
+            : group.isolation !== undefined
+              ? { isolation: group.isolation, workers: group.workers }
+              : {};
         return [
           nodeTests(
             `${group.label} ${boundary}`,
             group.cwd,
             files,
-            4,
+            HERMETIC_TASK_CONCURRENCY,
             group.prefix,
+            {
+              resourceCost: HERMETIC_TASK_CONCURRENCY,
+              ...sharedProcess,
+            },
           ),
         ];
       }
@@ -301,7 +379,11 @@ async function phase(name, tasks, options = {}) {
   const phaseStart = Date.now();
   process.stdout.write(`\n[validate:${name}]\n`);
   for (const item of options.setup ?? []) await runTask(name, item);
-  for (const item of tasks) await runTask(name, item);
+  await runWeightedTaskQueue(tasks, {
+    budget: options.resourceBudget ?? 1,
+    run: (item) => runTask(name, item),
+    onFailure: () => abortAll("SIGTERM"),
+  });
   const durationMs = Date.now() - phaseStart;
   measurements.push({ kind: "phase", name, durationMs });
   process.stdout.write(
@@ -358,8 +440,31 @@ function task(label, command, args, options = {}) {
   return { label, command, args, ...options };
 }
 
-function nodeTests(label, cwd, files, concurrency, prefix = []) {
+function nodeTests(label, cwd, files, concurrency, prefix = [], options = {}) {
   if (files.length === 0) throw new Error(`${label} discovered no tests`);
+  const { isolation, workers, ...taskOptions } = options;
+  if (isolation !== undefined) {
+    return task(
+      label,
+      process.execPath,
+      [
+        NODE_TEST_GROUP_RUNNER,
+        `--workers=${workers}`,
+        `--isolation=${isolation}`,
+        "--prefix",
+        ...prefix,
+        "--files",
+        ...files,
+      ],
+      {
+        cwd,
+        fileCount: files.length,
+        isolation,
+        workerCount: workers,
+        ...taskOptions,
+      },
+    );
+  }
   return task(
     label,
     process.execPath,
@@ -372,7 +477,7 @@ function nodeTests(label, cwd, files, concurrency, prefix = []) {
       "--test-reporter=spec",
       ...files,
     ],
-    { cwd },
+    { cwd, fileCount: files.length, ...taskOptions },
   );
 }
 
@@ -593,9 +698,52 @@ function writeReport(status, error, validationRequest) {
 }
 
 function printPlan() {
-  process.stdout.write(
-    "public boundary\nshared build and type analysis\nhermetic groups (sequential, test concurrency <= 4)\nfocused manual boundaries: process, postgres, chromium, audit\ndurations: recorded, never blocking\noperational watchdog: GitHub Actions job timeout\n",
+  const laneCounts = new Map(
+    hermeticTasks()
+      .filter((item) => item.label.startsWith("runtime/"))
+      .map((item) => [
+        item.label.slice("runtime/".length, -" hermetic".length),
+        item.fileCount,
+      ]),
   );
+  process.stdout.write(
+    [
+      "public boundary",
+      "shared artifacts, then root artifact + workspace type analysis (parallel budget 2)",
+      `hermetic groups (global resource budget ${HERMETIC_RESOURCE_BUDGET}, resource cost ${HERMETIC_TASK_CONCURRENCY})`,
+      `Web: ${RUNTIME_HERMETIC_WORKERS} shared-process shards`,
+      "root hermetic lanes:",
+      ...RUNTIME_HERMETIC_LANE_IDS.map(
+        (lane) =>
+          `  ${lane}: ${laneCounts.get(lane)} files, ${RUNTIME_HERMETIC_WORKERS} ${RUNTIME_HERMETIC_ISOLATION} shards`,
+      ),
+      "remaining hermetic groups: process-per-file isolation",
+      "focused manual boundaries: process, postgres, chromium, audit",
+      "durations: recorded, never blocking",
+      "operational watchdog: GitHub Actions job timeout",
+      "",
+    ].join("\n"),
+  );
+}
+
+async function runHermeticLane(lane) {
+  if (!RUNTIME_HERMETIC_LANE_IDS.includes(lane)) {
+    throw new Error(
+      `unknown runtime hermetic lane '${lane}'; expected one of ${RUNTIME_HERMETIC_LANE_IDS.join(", ")}`,
+    );
+  }
+  const expectedLabel = `runtime/${lane} hermetic`;
+  const selected = hermeticTasks().filter(
+    (item) => item.label === expectedLabel,
+  );
+  if (selected.length !== 1) {
+    throw new Error(
+      `runtime hermetic lane '${lane}' did not resolve exactly once`,
+    );
+  }
+  await phase("hermetic", selected, {
+    resourceBudget: HERMETIC_RESOURCE_BUDGET,
+  });
 }
 
 async function runLeaf(boundary, workspace) {
@@ -641,11 +789,13 @@ async function runLeaf(boundary, workspace) {
   }
   const allTasks = boundary === "hermetic" ? hermeticTasks() : processTasks();
   if (workspace === "all") {
-    await phase(
-      boundary,
-      allTasks,
-      boundary === "process" ? { setup: processSetupTasks() } : undefined,
-    );
+    const options =
+      boundary === "process"
+        ? { setup: processSetupTasks() }
+        : boundary === "hermetic"
+          ? { resourceBudget: HERMETIC_RESOURCE_BUDGET }
+          : undefined;
+    await phase(boundary, allTasks, options);
     return;
   }
   const expectedCwd = workspace === "." ? ROOT : path.join(ROOT, workspace);
@@ -656,16 +806,23 @@ async function runLeaf(boundary, workspace) {
     boundary === "process" && workspace === "."
       ? processSetupTasks()
       : undefined;
-  await phase(boundary, tasks, { setup });
+  await phase(boundary, tasks, {
+    setup,
+    resourceBudget:
+      boundary === "hermetic" ? HERMETIC_RESOURCE_BUDGET : undefined,
+  });
 }
 
 function parseRequest(args) {
   if (args.length === 0) return { mode: "full" };
   if (args.length === 1 && args[0] === "--plan") return { mode: "plan" };
+  if (args.length === 2 && args[0] === "--lane") {
+    return { mode: "lane", lane: args[1] };
+  }
   if (args.length === 3 && args[0] === "--leaf") {
     return { mode: "leaf", boundary: args[1], workspace: args[2] };
   }
   throw new Error(
-    "usage: node scripts/validate.mjs [--plan | --leaf <boundary> <workspace|all|.>]",
+    "usage: node scripts/validate.mjs [--plan | --lane <runtime-lane> | --leaf <boundary> <workspace|all|.>]",
   );
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { PgBoss } from "pg-boss";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
-import { evaluationReviewInteractionFixture } from "../../../../tests/fixtures/structured-review-contract";
+import { evaluationReviewInteractionFixture } from "../../tests/fixtures/structured-review-contract";
 
 
 const databaseUrl = process.env.KESTREL_TURN_DB_TEST_URL?.trim();

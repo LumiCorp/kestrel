@@ -21,3 +21,14 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Run the local validation contract
         run: pnpm validate
+      - name: Publish validation summary
+        if: always()
+        run: node scripts/summarize-validation-report.mjs
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: validation-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/validation/report.json
+          if-no-files-found: ignore
+          retention-days: 14

@@ -18,7 +18,11 @@ import { createConfiguredCliProtocolClient } from "./client/configuredClient.js"
 import { toCoreExecutionProfile } from "./client/coreExecutionProfile.js";
 import { COMMAND_MODE_COMMANDS } from "./contractMatrix.js";
 import { ProfileStore } from "./config/ProfileStore.js";
-import { readRuntimeSettings, writeRuntimeSettings, type RuntimeSettingsFile } from "./config/RuntimeSettings.js";
+import {
+  readRuntimeSettings,
+  writeRuntimeSettings,
+  type RuntimeSettingsFile,
+} from "./config/RuntimeSettings.js";
 import { resolveKestrelHome } from "./config/kestrelHome.js";
 import type { JobInputV1, JobOutputV1 } from "./job/contracts.js";
 import { parseJobInputV1 } from "./job/contracts.js";
@@ -28,11 +32,18 @@ import type {
   OperatorControlledEventPayload,
 } from "./protocol/contracts.js";
 import { extractWaitPrompt } from "../src/runtime/waitForPrompt.js";
-import { formatDoctorInspection, formatReplayInspection } from "./runtime/inspectionFormatting.js";
+import {
+  formatDoctorInspection,
+  formatReplayInspection,
+} from "./runtime/inspectionFormatting.js";
 import { runWebCommand } from "./webCommand.js";
 import { WorkspaceStore } from "./workspace/WorkspaceStore.js";
 import { resolveWorkspaceFromCwd } from "./workspace/WorkspaceResolver.js";
-import { ensureCliLocalCoreReady, formatCliLocalCoreStatus } from "./localCoreShell.js";
+import {
+  ensureCliLocalCoreReady,
+  formatCliLocalCoreStatus,
+  type CliLocalCoreStatus,
+} from "./localCoreShell.js";
 import {
   formatCliLocalCoreDaemonInspection,
   resolveCliLocalCoreDaemonOptions,
@@ -62,20 +73,37 @@ import {
   type KestrelUninstallPlanOptions,
 } from "../src/uninstall/contracts.js";
 
-export async function runCliCommand(args: string[], cwd = process.cwd()): Promise<void> {
+export interface CliCommandServices {
+  prepareLocalCore(): Promise<void>;
+  requireLocalCore(): Promise<CliLocalCoreStatus>;
+}
+
+const DEFAULT_CLI_COMMAND_SERVICES: CliCommandServices = {
+  prepareLocalCore: async () => {
+    await ensureCliLocalCoreReady();
+  },
+  requireLocalCore: ensureCliLocalCoreReady,
+};
+
+export async function runCliCommand(
+  args: string[],
+  cwd = process.cwd(),
+  serviceOverrides: Partial<CliCommandServices> = {},
+): Promise<void> {
+  const services = { ...DEFAULT_CLI_COMMAND_SERVICES, ...serviceOverrides };
   const [command, ...rest] = args;
   if (command === "model") {
-    await ensureCliLocalCoreReady();
+    await services.prepareLocalCore();
     await runModelCommand(rest, cwd);
     return;
   }
   if (command === "workspace") {
-    await ensureCliLocalCoreReady();
+    await services.prepareLocalCore();
     await runWorkspaceCommand(rest, cwd);
     return;
   }
   if (command === "status") {
-    await runStatusCommand();
+    await runStatusCommand(services);
     return;
   }
   if (command === "core") {
@@ -87,22 +115,22 @@ export async function runCliCommand(args: string[], cwd = process.cwd()): Promis
     return;
   }
   if (command === "job") {
-    await ensureCliLocalCoreReady();
+    await services.prepareLocalCore();
     await runJobCommand(rest, cwd);
     return;
   }
   if (command === "operator") {
-    const core = await ensureCliLocalCoreReady();
+    const core = await services.requireLocalCore();
     await runOperatorCommand(rest, cwd, core.client);
     return;
   }
   if (command === "setup") {
-    await ensureCliLocalCoreReady();
+    await services.prepareLocalCore();
     await runSetupCommand(rest, cwd);
     return;
   }
   if (command === "runtime") {
-    const core = await ensureCliLocalCoreReady();
+    const core = await services.requireLocalCore();
     await runRuntimeCommand(rest, cwd, core.client);
     return;
   }
@@ -116,11 +144,16 @@ export async function runCliCommand(args: string[], cwd = process.cwd()): Promis
 
 export function shouldRunCommandMode(args: string[]): boolean {
   const command = args[0];
-  return command !== undefined && COMMAND_MODE_COMMANDS.includes(command as (typeof COMMAND_MODE_COMMANDS)[number]);
+  return (
+    command !== undefined &&
+    COMMAND_MODE_COMMANDS.includes(
+      command as (typeof COMMAND_MODE_COMMANDS)[number],
+    )
+  );
 }
 
-async function runStatusCommand(): Promise<void> {
-  const status = await ensureCliLocalCoreReady();
+async function runStatusCommand(services: CliCommandServices): Promise<void> {
+  const status = await services.requireLocalCore();
   process.stdout.write(formatCliLocalCoreStatus(status));
 }
 
@@ -145,7 +178,9 @@ async function runCoreCommand(args: string[]): Promise<void> {
     const ready = await restartLocalCoreDaemon({ ...options, waitForIdle });
     process.stdout.write(
       `${before.state === "stopped" ? "Started" : "Restarted"} Kestrel Local Core pid=${
-        ready.status.lock.state === "live" ? ready.status.lock.lock.ownerPid : "unknown"
+        ready.status.lock.state === "live"
+          ? ready.status.lock.lock.ownerPid
+          : "unknown"
       } build=${(await ready.client?.buildIdentity())?.buildId ?? "unknown"}.\n`,
     );
     return;
@@ -225,7 +260,8 @@ function parseUninstallPlanArgs(args: string[]): {
   json: boolean;
   out?: string | undefined;
 } {
-  let scope: ReturnType<typeof parseKestrelUninstallScope> = "current_component";
+  let scope: ReturnType<typeof parseKestrelUninstallScope> =
+    "current_component";
   const options: KestrelUninstallPlanOptions = {};
   let json = false;
   let out: string | undefined;
@@ -346,7 +382,11 @@ async function runWorkspaceCommand(args: string[], cwd: string): Promise<void> {
           `automation=${workspace.automationEnabled ? "enabled" : "disabled"}`,
         ].join(" "),
       );
-    process.stdout.write(lines.length > 0 ? `${lines.join("\n")}\n` : "No workspaces in the catalog.\n");
+    process.stdout.write(
+      lines.length > 0
+        ? `${lines.join("\n")}\n`
+        : "No workspaces in the catalog.\n",
+    );
     return;
   }
 
@@ -358,13 +398,17 @@ async function runWorkspaceCommand(args: string[], cwd: string): Promise<void> {
     }
     const activeWorkspace = resolved.workspace;
     const workspaces = await workspaceStore.load();
-    const entry = workspaceStore.findById(workspaces, activeWorkspace.manifest.workspaceId);
+    const entry = workspaceStore.findById(
+      workspaces,
+      activeWorkspace.manifest.workspaceId,
+    );
     process.stdout.write(
       [
         `Workspace: ${activeWorkspace.manifest.workspaceId}`,
         `Root: ${activeWorkspace.rootPath}`,
         ...(activeWorkspace.runtimeContext.launchCwd !== undefined &&
-        path.resolve(activeWorkspace.runtimeContext.launchCwd) !== path.resolve(activeWorkspace.rootPath)
+        path.resolve(activeWorkspace.runtimeContext.launchCwd) !==
+          path.resolve(activeWorkspace.rootPath)
           ? [`Launch cwd: ${activeWorkspace.runtimeContext.launchCwd}`]
           : []),
         `Automation: ${entry?.automationEnabled === true ? "enabled" : "disabled"}`,
@@ -437,7 +481,9 @@ async function runModelCommand(args: string[], cwd: string): Promise<void> {
   if (subcommand === "set-provider") {
     const provider = rest[0];
     if (isSupportedModelSetProvider(provider) === false) {
-      throw new Error(`Usage: kestrel model set-provider ${MODEL_SET_PROVIDER_USAGE}`);
+      throw new Error(
+        `Usage: kestrel model set-provider ${MODEL_SET_PROVIDER_USAGE}`,
+      );
     }
     const catalog = await resolveProviderModelCatalog(provider);
     const model = rest.slice(1).join(" ").trim();
@@ -478,7 +524,9 @@ async function runModelCommand(args: string[], cwd: string): Promise<void> {
       provider,
       model,
     });
-    process.stdout.write(`model provider updated provider=${saved.provider} model=${saved.model}\n`);
+    process.stdout.write(
+      `model provider updated provider=${saved.provider} model=${saved.model}\n`,
+    );
     return;
   }
 
@@ -486,7 +534,10 @@ async function runModelCommand(args: string[], cwd: string): Promise<void> {
     const model = rest.join(" ").trim();
     const catalog = await resolveProviderModelCatalog(policy.provider);
     if (model.length === 0) {
-      const summary = buildPresentedProviderModelCatalog({ provider: policy.provider, catalog });
+      const summary = buildPresentedProviderModelCatalog({
+        provider: policy.provider,
+        catalog,
+      });
       throw new Error(
         [
           "Usage: kestrel model set <model>",
@@ -510,7 +561,10 @@ async function runModelCommand(args: string[], cwd: string): Promise<void> {
           ...(catalog.note !== undefined ? [catalog.note] : []),
           ...buildModelSummaryBlock({
             provider: policy.provider,
-            summary: buildPresentedProviderModelCatalog({ provider: policy.provider, catalog }),
+            summary: buildPresentedProviderModelCatalog({
+              provider: policy.provider,
+              catalog,
+            }),
             selectedModel: policy.model,
             searchCommand: "kestrel model search <query>",
             setCommand: "kestrel model set <exact-model-id>",
@@ -522,7 +576,9 @@ async function runModelCommand(args: string[], cwd: string): Promise<void> {
       ...policy,
       model,
     });
-    process.stdout.write(`model updated provider=${saved.provider} model=${saved.model}\n`);
+    process.stdout.write(
+      `model updated provider=${saved.provider} model=${saved.model}\n`,
+    );
     return;
   }
 
@@ -535,7 +591,7 @@ async function readCommandModeModelPolicy(
 ): Promise<ResolvedModelPolicy> {
   const core = resolveLocalCoreStoreClient(home);
   if (core !== undefined) {
-    const response = await core.client.getJson("/v1/settings") as {
+    const response = (await core.client.getJson("/v1/settings")) as {
       settings?: { modelPolicy?: unknown } | undefined;
     };
     if (response.settings?.modelPolicy !== undefined) {
@@ -552,7 +608,9 @@ async function writeCommandModeModelPolicy(
 ): Promise<ResolvedModelPolicy> {
   const core = resolveLocalCoreStoreClient(home);
   if (core !== undefined) {
-    const response = await core.client.patchJson("/v1/settings", { modelPolicy: policy }) as {
+    const response = (await core.client.patchJson("/v1/settings", {
+      modelPolicy: policy,
+    })) as {
       settings?: { modelPolicy?: unknown } | undefined;
     };
     if (response.settings?.modelPolicy !== undefined) {
@@ -565,7 +623,9 @@ async function writeCommandModeModelPolicy(
 async function runJobCommand(args: string[], cwd: string): Promise<void> {
   const [subcommand, ...rest] = args;
   if (subcommand !== "run") {
-    throw new Error("Usage: kestrel job run --json-in <file> --json-out <file> [--profile <id>]");
+    throw new Error(
+      "Usage: kestrel job run --json-in <file> --json-out <file> [--profile <id>]",
+    );
   }
   rejectClientOwnedStoreSelection(rest, "kestrel job run");
   const jsonIn = readRequiredFlag(rest, "--json-in");
@@ -628,8 +688,7 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
       {
         ...input,
         approvalPolicyPackId:
-          input.approvalPolicyPackId ??
-          settings.defaults.approvalPolicyPackId,
+          input.approvalPolicyPackId ?? settings.defaults.approvalPolicyPackId,
       },
       effectiveProfile,
       executionProfile.profileId,
@@ -652,7 +711,9 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
       `job ${response.type === "job.completed" ? "completed" : "failed"} session=${output.job.sessionId} thread=${output.job.threadId} run=${output.job.runId}\n`,
     );
     if (response.type === "job.failed") {
-      throw new Error(`${response.payload.error.code}: ${response.payload.error.message}`);
+      throw new Error(
+        `${response.payload.error.code}: ${response.payload.error.message}`,
+      );
     }
   } finally {
     unsubscribe?.();
@@ -677,7 +738,8 @@ export function buildResolvedJobRunCommandPayload(
       turn: {
         ...input.turn,
         eventType: input.turn.eventType ?? "job.run",
-        stepAgent: input.turn.stepAgent ?? resolveJobEntryStepAgent(effectiveProfile),
+        stepAgent:
+          input.turn.stepAgent ?? resolveJobEntryStepAgent(effectiveProfile),
       },
       ...(input.approvalPolicyPackId !== undefined
         ? { approvalPolicyPackId: input.approvalPolicyPackId }
@@ -734,7 +796,9 @@ async function runOperatorCommand(
       delegationId,
       message: "Retry delegation requested via operator quick path.",
     });
-    process.stdout.write(`retry-delegation dispatched thread=${threadId} delegation=${delegationId}\n`);
+    process.stdout.write(
+      `retry-delegation dispatched thread=${threadId} delegation=${delegationId}\n`,
+    );
     printOperatorTerminalResult(result);
     return;
   }
@@ -742,9 +806,14 @@ async function runOperatorCommand(
     const runId = readRequiredFlag(rest, "--run-id");
     const outPath = readRequiredFlag(rest, "--out");
     rejectClientOwnedStoreSelection(rest, "kestrel operator doctor-export");
-    const report = await requireLocalCoreClient(cwd, localCoreClient).runtimeDoctor({ runId });
+    const report = await requireLocalCoreClient(
+      cwd,
+      localCoreClient,
+    ).runtimeDoctor({ runId });
     await writeJson(resolveFromCwd(cwd, outPath), report);
-    process.stdout.write(`doctor report exported: ${outPath} status=${report.status}\n`);
+    process.stdout.write(
+      `doctor report exported: ${outPath} status=${report.status}\n`,
+    );
     return;
   }
   throw new Error(
@@ -753,7 +822,10 @@ async function runOperatorCommand(
 }
 
 async function runSetupCommand(args: string[], cwd: string): Promise<void> {
-  if (hasFlagOrAssignment(args, "--store") || hasFlagOrAssignment(args, "--sqlite-path")) {
+  if (
+    hasFlagOrAssignment(args, "--store") ||
+    hasFlagOrAssignment(args, "--sqlite-path")
+  ) {
     throw new Error(
       "kestrel setup no longer accepts --store or --sqlite-path; Local Core owns database configuration.",
     );
@@ -770,7 +842,8 @@ async function runSetupCommand(args: string[], cwd: string): Promise<void> {
   if (selectedProfile === undefined) {
     throw new Error(`Profile '${explicitProfileId}' not found.`);
   }
-  const approvalPolicyPackId = readOptionalApprovalPack(readFlag(args, "--approval-pack")) ?? "dev";
+  const approvalPolicyPackId =
+    readOptionalApprovalPack(readFlag(args, "--approval-pack")) ?? "dev";
   const minimalMode = args.includes("--full") ? false : true;
   const nextSettings: RuntimeSettingsFile = {
     version: 1,
@@ -800,7 +873,11 @@ async function runRuntimeCommand(
   localCoreClient?: LocalCoreClient | undefined,
 ): Promise<void> {
   const [subcommand, ...rest] = args;
-  if (subcommand !== "replay" && subcommand !== "doctor" && subcommand !== "bundle") {
+  if (
+    subcommand !== "replay" &&
+    subcommand !== "doctor" &&
+    subcommand !== "bundle"
+  ) {
     throw new Error(
       "Usage: kestrel runtime <replay|doctor> <query> [--json]; kestrel runtime bundle <query> --out <file>",
     );
@@ -854,7 +931,9 @@ async function sendOperatorControl(
   }
 }
 
-function printOperatorTerminalResult(payload: OperatorControlledEventPayload): void {
+function printOperatorTerminalResult(
+  payload: OperatorControlledEventPayload,
+): void {
   const result = payload.result;
   if (result === undefined) return;
   if (result.output.status === "WAITING") {
@@ -878,7 +957,8 @@ function resolveJobProfile(input: {
   if (input.inputProfile !== undefined) {
     return input.inputProfile;
   }
-  const profileId = input.explicitProfileId ?? input.inputProfileId ?? input.settingsProfileId;
+  const profileId =
+    input.explicitProfileId ?? input.inputProfileId ?? input.settingsProfileId;
   if (profileId !== undefined) {
     const found = input.profileStore.findById(input.profiles, profileId);
     if (found === undefined) {
@@ -895,8 +975,15 @@ function readReplayQueryFlags(args: string[]): ReplayQuery {
   const threadId = readFlag(args, "--thread-id");
   const delegationId = readFlag(args, "--delegation-id");
   const limit = readOptionalInteger(readFlag(args, "--limit"));
-  if (runId === undefined && sessionId === undefined && threadId === undefined && delegationId === undefined) {
-    throw new Error("Expected --run-id <id>, --session-id <id>, --thread-id <id>, or --delegation-id <id>");
+  if (
+    runId === undefined &&
+    sessionId === undefined &&
+    threadId === undefined &&
+    delegationId === undefined
+  ) {
+    throw new Error(
+      "Expected --run-id <id>, --session-id <id>, --thread-id <id>, or --delegation-id <id>",
+    );
   }
   return {
     ...(runId !== undefined ? { runId } : {}),
@@ -921,7 +1008,10 @@ function requireLocalCoreClient(
   return resolved.client;
 }
 
-function rejectClientOwnedStoreSelection(args: string[], command: string): void {
+function rejectClientOwnedStoreSelection(
+  args: string[],
+  command: string,
+): void {
   if (hasFlagOrAssignment(args, "--store")) {
     throw new Error(
       `${command} no longer accepts --store; Local Core owns persistence selection.`,
@@ -936,7 +1026,7 @@ function hasFlagOrAssignment(args: string[], flag: string): boolean {
 function readFlag(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   if (index === -1) {
-    return ;
+    return;
   }
   const value = args[index + 1];
   if (value === undefined || value.startsWith("--")) {
@@ -970,7 +1060,7 @@ function readMultiFlag(args: string[], name: string): string[] {
 
 function readOptionalInteger(value: string | undefined): number | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
   const parsed = Number.parseInt(value, 10);
   if (Number.isFinite(parsed) === false || parsed <= 0) {
@@ -979,14 +1069,18 @@ function readOptionalInteger(value: string | undefined): number | undefined {
   return parsed;
 }
 
-function readOptionalApprovalPack(value: string | undefined): "dev" | "ci_bot" | "production" | undefined {
+function readOptionalApprovalPack(
+  value: string | undefined,
+): "dev" | "ci_bot" | "production" | undefined {
   if (value === undefined) {
-    return ;
+    return;
   }
   if (value === "dev" || value === "ci_bot" || value === "production") {
     return value;
   }
-  throw new Error(`Unsupported approval pack '${value}'. Expected dev|ci_bot|production.`);
+  throw new Error(
+    `Unsupported approval pack '${value}'. Expected dev|ci_bot|production.`,
+  );
 }
 
 async function writeJson(targetPath: string, payload: unknown): Promise<void> {

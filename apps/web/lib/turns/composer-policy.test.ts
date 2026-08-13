@@ -5,7 +5,7 @@ import {
   type ComposerSubmissionPolicy,
   getComposerSubmissionPolicy,
 } from "@/lib/turns/composer-policy";
-import { legacyRecoveryReviewInteractionFixture } from "../../../../tests/fixtures/structured-review-contract";
+import { legacyRecoveryReviewInteractionFixture } from "../../tests/fixtures/structured-review-contract";
 
 
 const baseState: ThreadConversationState = {
