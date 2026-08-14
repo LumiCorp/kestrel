@@ -353,6 +353,14 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "redirect-sign-in",
   ),
   page(
+    "app/(workspace)/schedules/page.tsx",
+    "/schedules",
+    "projects",
+    "authenticated",
+    "redirect-sign-in",
+    { primaryNavigation: true },
+  ),
+  page(
     "app/(workspace)/apps/page.tsx",
     "/apps",
     "apps",
@@ -1851,6 +1859,20 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/projects/[id]/route.ts",
     "/api/projects/:id",
+    "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/schedules/route.ts",
+    "/api/projects/:id/schedules",
+    "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/schedules/[scheduleId]/route.ts",
+    "/api/projects/:id/schedules/:scheduleId",
     "projects",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,

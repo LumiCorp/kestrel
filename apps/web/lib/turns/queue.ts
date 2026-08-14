@@ -3,10 +3,20 @@ import "server-only";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import {
+  claimDueProjectPromptScheduleRuns,
+  failProjectPromptScheduleRun,
+  listQueuedProjectPromptScheduleRunIds,
+} from "@/lib/schedules/store";
 import { createSingleFlightOperation } from "@/lib/turns/single-flight";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
 
 export const DURABLE_THREAD_TURN_QUEUE = "thread.turn.execute";
+export const PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE =
+  "project.prompt-schedule.dispatch";
+export const PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE =
+  "project.prompt-schedule.execute";
+export const PROJECT_PROMPT_SCHEDULE_DISPATCH_CRON = "* * * * *";
 export const DURABLE_TURN_EXPIRE_SECONDS = 12 * 60 * 60;
 export const DURABLE_TURN_HEARTBEAT_SECONDS = 60;
 export const DURABLE_TURN_HEARTBEAT_REFRESH_SECONDS = 30;
@@ -50,6 +60,13 @@ async function createTurnBoss() {
     expireInSeconds: DURABLE_TURN_EXPIRE_SECONDS,
     heartbeatSeconds: DURABLE_TURN_HEARTBEAT_SECONDS,
   });
+  await boss.createQueue(PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE);
+  await boss.createQueue(PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE);
+  await boss.schedule(
+    PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE,
+    PROJECT_PROMPT_SCHEDULE_DISPATCH_CRON,
+    {},
+  );
   return boss;
 }
 
@@ -72,6 +89,17 @@ async function sendTurn(boss: PgBoss, turnId: string) {
   );
   if (!jobId) {
     throw new Error("The durable turn queue rejected the job.");
+  }
+}
+
+async function sendProjectPromptScheduleRun(boss: PgBoss, runId: string) {
+  const jobId = await boss.send(
+    PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE,
+    { runId },
+    { retryLimit: 3, retryDelay: 5, retryBackoff: true },
+  );
+  if (!jobId) {
+    throw new Error("The scheduled prompt queue rejected the occurrence.");
   }
 }
 
@@ -129,6 +157,33 @@ async function hasNonterminalJob(boss: PgBoss, turnId: string) {
     { data: { turnId } },
   );
   return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
+}
+
+async function hasNonterminalProjectPromptScheduleJob(
+  boss: PgBoss,
+  runId: string,
+) {
+  const jobs = await boss.findJobs<{ runId?: unknown }>(
+    PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE,
+    { data: { runId } },
+  );
+  return jobs.some((job) => NONTERMINAL_JOB_STATES.has(job.state));
+}
+
+async function dispatchDueProjectPromptSchedules(boss: PgBoss) {
+  const runIds = await claimDueProjectPromptScheduleRuns();
+  for (const runId of runIds) {
+    await sendProjectPromptScheduleRun(boss, runId);
+  }
+}
+
+async function recoverQueuedProjectPromptScheduleRuns(boss: PgBoss) {
+  const runIds = await listQueuedProjectPromptScheduleRunIds();
+  for (const runId of runIds) {
+    if (!(await hasNonterminalProjectPromptScheduleJob(boss, runId))) {
+      await sendProjectPromptScheduleRun(boss, runId);
+    }
+  }
 }
 
 async function readDurableDispatchState(turnId: string) {
@@ -220,6 +275,7 @@ export async function reconcileDurableThreadTurnQueue() {
 
 function createWorkerMaintenance(boss: PgBoss) {
   return createSingleFlightOperation(async () => {
+    await recoverQueuedProjectPromptScheduleRuns(boss);
     await reconcileDurableThreadTurnQueueWithBoss(boss);
     await drainMobilePushOutbox().catch(reportPushFailure);
   });
@@ -230,6 +286,47 @@ export async function startDurableThreadTurnWorker() {
   if (!workerRegistered) {
     workerRegistered = true;
     const runWorkerMaintenance = createWorkerMaintenance(boss);
+    await boss.work(PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE, async () => {
+      await dispatchDueProjectPromptSchedules(boss);
+    });
+    await boss.work(
+      PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE,
+      {
+        batchSize: 1,
+        localConcurrency: DURABLE_TURN_LOCAL_CONCURRENCY,
+        includeMetadata: true,
+      },
+      async (jobs: Array<JobWithMetadata<{ runId?: unknown }>>) => {
+        for (const job of jobs) {
+          const runId = job.data?.runId;
+          if (typeof runId !== "string") continue;
+          try {
+            const { materializeProjectPromptScheduleRun } =
+              await import("@/lib/schedules/runtime");
+            const turnId = await materializeProjectPromptScheduleRun(runId);
+            if (turnId) await dispatchTurnOrReconcile(boss, turnId);
+          } catch (error) {
+            if (job.retryCount >= job.retryLimit) {
+              await failProjectPromptScheduleRun({
+                runId,
+                code:
+                  error &&
+                  typeof error === "object" &&
+                  "code" in error &&
+                  typeof error.code === "string"
+                    ? error.code
+                    : "SCHEDULE_EXECUTION_FAILED",
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "The scheduled prompt could not start.",
+              });
+            }
+            throw error;
+          }
+        }
+      },
+    );
     await boss.work(
       DURABLE_THREAD_TURN_QUEUE,
       {

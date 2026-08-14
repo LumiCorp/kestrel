@@ -60,7 +60,7 @@ test("v3 release manifests require the controller and all five exact roles", () 
     trigger: "manual",
     migration: {
       changed: true,
-      head: "0069_unified_release_attempt",
+      head: "0070_project_prompt_schedules",
       historyLockHash: `sha256:${digest}`,
     },
     controller: {

@@ -1,6 +1,12 @@
 "use client";
 
-import { BookOpen, Bot, LayoutDashboard, PlugZap } from "lucide-react";
+import {
+  BookOpen,
+  Bot,
+  CalendarClock,
+  LayoutDashboard,
+  PlugZap,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -26,6 +32,13 @@ const modeItems = [
       pathname.startsWith("/threads") ||
       pathname.startsWith("/projects") ||
       pathname.startsWith("/search"),
+  },
+  {
+    title: "Schedules",
+    url: "/schedules",
+    icon: CalendarClock,
+    isActive: (pathname: string) =>
+      pathname === "/schedules" || pathname.startsWith("/schedules/"),
   },
   {
     title: "Knowledge",

@@ -14,7 +14,7 @@ import {
 } from "../apps/web/lib/releases/migration-identity.js";
 
 const migrationSql = await readFile(
-  "apps/web/lib/db/migrations/0069_unified_release_attempt.sql",
+  `apps/web/lib/db/migrations/${RELEASE_MIGRATION_HEAD}.sql`,
 );
 const migrationHistoryLock = await readFile(
   "apps/web/lib/db/migrations/meta/history-lock.json",

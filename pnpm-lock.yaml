@@ -675,6 +675,9 @@ importers:
       codemirror:
         specifier: ^6.0.1
         version: 6.0.2
+      cron-parser:
+        specifier: ^5.9.0
+        version: 5.9.0
       date-fns:
         specifier: ^4.1.0
         version: 4.1.0
@@ -5722,6 +5725,10 @@ packages:
 
   cron-parser@5.5.0:
     resolution: {integrity: sha512-oML4lKUXxizYswqmxuOCpgFS8BNUJpIu6k/2HVHyaL8Ynnf3wdf9tkns0yRdJLSIjkJ+b0DXHMZEHGpMwjnPww==}
+    engines: {node: '>=18'}
+
+  cron-parser@5.9.0:
+    resolution: {integrity: sha512-W42Tm/zNt2Z3HTXDoev3nrx+SF3eCaD1rFecnHx0zgwrzhO9I6EcKeB35XaV4FDX64wBXWFbhYLTPvQpvpR1lA==}
     engines: {node: '>=18'}
 
   cross-dirname@0.1.0:
@@ -15288,6 +15295,10 @@ snapshots:
     dependencies:
       luxon: 3.7.2
 
+  cron-parser@5.9.0:
+    dependencies:
+      luxon: 3.7.2
+
   cross-dirname@0.1.0: {}
 
   cross-spawn@6.0.6:
@@ -18291,7 +18302,7 @@ snapshots:
 
   pg-boss@12.18.2:
     dependencies:
-      cron-parser: 5.5.0
+      cron-parser: 5.9.0
       pg: 8.20.0
       serialize-error: 13.0.1
     transitivePeerDependencies:

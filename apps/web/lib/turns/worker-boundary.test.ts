@@ -77,6 +77,51 @@ test(
   },
 );
 
+test("the turn worker owns scheduled prompt dispatch, execution, and recovery", async () => {
+  const queueSource = await readFile(
+    new URL("./queue.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    queueSource,
+    /PROJECT_PROMPT_SCHEDULE_DISPATCH_CRON = "\* \* \* \* \*"/u,
+  );
+  assert.match(
+    queueSource,
+    /await boss\.work\(PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE/u,
+  );
+  assert.match(
+    queueSource,
+    /PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE/u,
+  );
+  assert.match(queueSource, /materializeProjectPromptScheduleRun/u);
+  assert.match(queueSource, /recoverQueuedProjectPromptScheduleRuns/u);
+  assert.match(queueSource, /hasNonterminalProjectPromptScheduleJob/u);
+  assert.match(queueSource, /failProjectPromptScheduleRun/u);
+});
+
+test("scheduled prompt materialization stays on its locked database transaction", async () => {
+  const [runtimeSource, turnStoreSource] = await Promise.all([
+    readFile(new URL("../schedules/runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("./store.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(runtimeSource, /async \(\{ tx, current, cancel, complete \}\)/u);
+  assert.match(
+    runtimeSource,
+    /createDurableThreadTurnInTransaction\(tx,/u,
+  );
+  assert.doesNotMatch(runtimeSource, /creatorCanExecuteProjectPromptSchedule/u);
+  assert.doesNotMatch(runtimeSource, /resolveProjectRuntimeContext/u);
+  assert.doesNotMatch(runtimeSource, /getOrganizationEnvironment/u);
+  assert.doesNotMatch(runtimeSource, /createThreadForUser/u);
+  assert.match(
+    turnStoreSource,
+    /export async function createDurableThreadTurnInTransaction/u,
+  );
+});
+
 test(
   "durable turns use a long lease with worker heartbeats",
   async () => {
