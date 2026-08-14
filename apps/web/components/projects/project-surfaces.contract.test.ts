@@ -79,6 +79,26 @@ test("Project tabs remain horizontally accessible without a visible scrollbar", 
   );
 });
 
+test("Schedules live in primary navigation under Work instead of Project tabs", () => {
+  const navigation = read("nav-main.tsx");
+  const schedules = read("schedules/schedules-client.tsx");
+  const projectTabs = read("../lib/projects/project-tabs.ts");
+
+  assert.ok(navigation.indexOf('title: "Schedules"') > navigation.indexOf('title: "Work"'));
+  assert.match(navigation, /title: "Schedules",[\s\S]*url: "\/schedules"/u);
+  assert.doesNotMatch(projectTabs, /"schedule"/u);
+  assert.match(schedules, /eyebrow="Work"/u);
+  assert.match(schedules, /title="Schedules"/u);
+  assert.match(schedules, /New schedule/u);
+  assert.match(schedules, /No schedules yet/u);
+  assert.match(schedules, /Next run:/u);
+  assert.match(schedules, /aria-describedby="schedule-next-run"/u);
+  assert.match(schedules, /schedule\.permissions\.canEdit/u);
+  assert.match(schedules, /schedule\.permissions\.canPause/u);
+  assert.match(schedules, /schedule\.permissions\.canDelete/u);
+  assert.match(schedules, /aria-label="Latest run failure"/u);
+});
+
 test("Project Workspace uses the standard page heading", () => {
   const source = read("../app/(workspace)/projects/[id]/workspace/workspace-client.tsx");
 

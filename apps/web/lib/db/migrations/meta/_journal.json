@@ -491,6 +491,13 @@
       "when": 1786669200000,
       "tag": "0069_unified_release_attempt",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1786672800000,
+      "tag": "0070_project_prompt_schedules",
+      "breakpoints": true
     }
   ]
 }

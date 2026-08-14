@@ -34,7 +34,7 @@ import {
 } from "@/lib/turns/contracts";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 
-type TurnTransaction = Parameters<
+export type TurnTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
 >[0];
 
@@ -339,7 +339,7 @@ export async function createDurableThreadTurn(input: DurableThreadTurnInput) {
   );
 }
 
-async function createDurableThreadTurnInTransaction(
+export async function createDurableThreadTurnInTransaction(
   tx: TurnTransaction,
   input: DurableThreadTurnInput,
 ) {

@@ -951,6 +951,97 @@ export const threadTurns = pgTable(
   ],
 );
 
+/** =========================
+ *  Project Prompt Schedules
+ *  ========================= */
+
+export const projectPromptSchedules = pgTable(
+  "project_prompt_schedules",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    cronExpression: text("cron_expression").notNull(),
+    timeZone: text("time_zone").notNull(),
+    prompt: text("prompt").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    pauseReason: text("pause_reason"),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.organizationId, table.projectId],
+      foreignColumns: [projects.organizationId, projects.id],
+      name: "project_prompt_schedules_organization_project_fk",
+    }).onDelete("cascade"),
+    index("project_prompt_schedules_project_idx").on(table.projectId),
+    index("project_prompt_schedules_creator_idx").on(table.createdByUserId),
+    index("project_prompt_schedules_due_idx").on(
+      table.enabled,
+      table.nextRunAt,
+    ),
+  ],
+);
+
+export const projectPromptScheduleRuns = pgTable(
+  "project_prompt_schedule_runs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    scheduleId: text("schedule_id")
+      .notNull()
+      .references(() => projectPromptSchedules.id, { onDelete: "cascade" }),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+    catchUpFrom: timestamp("catch_up_from", { withTimezone: true }),
+    promptSnapshot: text("prompt_snapshot").notNull(),
+    // Reserved when the occurrence is claimed, before the Thread exists.
+    threadId: text("thread_id"),
+    messageId: text("message_id").notNull(),
+    turnId: text("turn_id").references(() => threadTurns.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", {
+      enum: ["queued", "materialized", "failed", "cancelled"],
+    })
+      .notNull()
+      .default("queued"),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("project_prompt_schedule_runs_occurrence_idx").on(
+      table.scheduleId,
+      table.scheduledFor,
+    ),
+    index("project_prompt_schedule_runs_status_idx").on(table.status),
+    index("project_prompt_schedule_runs_thread_idx").on(table.threadId),
+    index("project_prompt_schedule_runs_turn_idx").on(table.turnId),
+  ],
+);
+
 export const threadTurnEvents = pgTable(
   "thread_turn_events",
   {

@@ -406,6 +406,14 @@ export async function removeProjectMember(input: {
   });
 
   return knowledgeDb.transaction(async (tx) => {
+    const member = await tx.query.members.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.id, input.organizationMemberId),
+          eq(table.organizationId, input.organizationId),
+        ),
+      columns: { userId: true },
+    });
     const [target] = await tx
       .select()
       .from(schema.projectMembers)
@@ -451,6 +459,41 @@ export async function removeProjectMember(input: {
         )
       )
       .returning();
+    if (member?.userId) {
+      const now = new Date();
+      const pausedSchedules = await tx
+        .update(schema.projectPromptSchedules)
+        .set({
+          enabled: false,
+          pauseReason: "creator_access_lost",
+          nextRunAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.projectPromptSchedules.projectId, input.projectId),
+            eq(
+              schema.projectPromptSchedules.createdByUserId,
+              member.userId,
+            ),
+          ),
+        )
+        .returning({ id: schema.projectPromptSchedules.id });
+      if (pausedSchedules.length > 0) {
+        await tx.insert(schema.projectAuditEvents).values(
+          pausedSchedules.map((schedule) => ({
+            id: crypto.randomUUID(),
+            projectId: input.projectId,
+            actorUserId: input.actorUserId,
+            action: "project.schedule.paused",
+            targetType: "project_prompt_schedule",
+            targetId: schedule.id,
+            metadata: { reason: "creator_access_lost" },
+            createdAt: now,
+          })),
+        );
+      }
+    }
     await tx.insert(schema.projectAuditEvents).values({
       id: crypto.randomUUID(),
       projectId: input.projectId,
@@ -500,6 +543,32 @@ export async function setProjectArchived(input: {
         updatedAt: now,
       })
       .where(eq(schema.threads.projectId, input.projectId));
+    if (input.archived) {
+      const pausedSchedules = await tx
+        .update(schema.projectPromptSchedules)
+        .set({
+          enabled: false,
+          pauseReason: "project_archived",
+          nextRunAt: null,
+          updatedAt: now,
+        })
+        .where(eq(schema.projectPromptSchedules.projectId, input.projectId))
+        .returning({ id: schema.projectPromptSchedules.id });
+      if (pausedSchedules.length > 0) {
+        await tx.insert(schema.projectAuditEvents).values(
+          pausedSchedules.map((schedule) => ({
+            id: crypto.randomUUID(),
+            projectId: input.projectId,
+            actorUserId: input.userId,
+            action: "project.schedule.paused",
+            targetType: "project_prompt_schedule",
+            targetId: schedule.id,
+            metadata: { reason: "project_archived" },
+            createdAt: now,
+          })),
+        );
+      }
+    }
     await tx.insert(schema.projectAuditEvents).values({
       id: crypto.randomUUID(),
       projectId: input.projectId,
