@@ -248,6 +248,102 @@ test(
   },
 );
 
+test(
+  "Kestrel One sign-in opens the canonical hosted app",
+  async () => {
+    const browser = new Window({
+      url: "http://localhost/#settings-connections",
+    });
+    const authorizationInputs: Array<{ baseUrl: string }> = [];
+    Object.assign(browser, {
+      kestrelDesktop: {
+        getCapabilities: async () => ({
+          capabilities: [],
+          credentialStore: { available: true, backend: "macos_keychain" },
+          refreshedAt: "2026-08-13T12:00:00.000Z",
+        }),
+        getKestrelOneEnvironments: async () => ({
+          enrollments: [],
+          environments: [],
+          globalCapacity: 1,
+          activeRuns: 0,
+          activity: [],
+        }),
+        getKestrelOneAccount: async () => ({ status: "signed_out" as const }),
+        startKestrelOneAuthorization: async (input: { baseUrl: string }) => {
+          authorizationInputs.push(input);
+          return {
+            sessionId: "desktop-authorization",
+            state: "awaiting_user" as const,
+            authorizationUrl:
+              `${input.baseUrl}/desktop/auth/authorize?state=fixture`,
+            expiresAt: "2026-08-13T12:10:00.000Z",
+          };
+        },
+        getPendingUninstallResult: async () => undefined,
+        getModelCatalog: async () => ({ models: [] }),
+      },
+    });
+    Object.assign(globalThis, {
+      React,
+      window: browser,
+      document: browser.document,
+      Node: browser.Node,
+      HTMLElement: browser.HTMLElement,
+      HTMLInputElement: browser.HTMLInputElement,
+      HTMLSelectElement: browser.HTMLSelectElement,
+      Event: browser.Event,
+      InputEvent: browser.InputEvent,
+      MouseEvent: browser.MouseEvent,
+      requestAnimationFrame: (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      },
+      cancelAnimationFrame: () => {},
+      IS_REACT_ACT_ENVIRONMENT: true,
+    });
+    const container = browser.document.createElement(
+      "div",
+    ) as unknown as HTMLDivElement;
+    browser.document.body.append(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <SettingsWorkspace
+          settings={toDesktopRendererSettings(createDefaultDesktopSettings())}
+          onSettings={async () =>
+            toDesktopRendererSettings(createDefaultDesktopSettings())}
+          onOpenMcp={() => {}}
+          onAddProject={async () => {}}
+          onCreateUninstallPlan={async () => {
+            throw new Error("not used");
+          }}
+          onApplyUninstallPlan={async () => {
+            throw new Error("not used");
+          }}
+          onRequestMicrophone={async () => {}}
+          onError={() => {}}
+        />,
+      );
+    });
+    await flush();
+
+    assert.equal(
+      controlInLabel<HTMLInputElement>(container, "Kestrel One URL").value,
+      "https://kestrelagents.dev",
+    );
+    await act(async () => button(container, "Sign in with Kestrel One").click());
+    await flush();
+
+    assert.deepEqual(authorizationInputs, [
+      { baseUrl: "https://kestrelagents.dev" },
+    ]);
+
+    await act(async () => root.unmount());
+  },
+);
+
 function uninstallPlan(input: {
   blockers: KestrelUninstallPlanV1["blockers"];
 }): KestrelUninstallPlanV1 {
