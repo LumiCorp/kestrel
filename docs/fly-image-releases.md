@@ -51,6 +51,10 @@ earlier main-branch migration.
 Configure the GitHub `Production` environment with:
 
 - secret `FLY_API_TOKEN`, authorized to build and push all catalog apps;
+- secret `POSTGRES_URL_NON_POOLING`, containing the authoritative direct Kestrel
+  One production database URL;
+- variable `KESTREL_RELEASE_DATABASE_TARGET_SHA256`, containing the approved
+  non-secret host, port, and database fingerprint for that URL;
 - variable `KESTREL_RELEASE_PUBLISH_URL`, set to the deployed Kestrel One
   `/api/runtime/releases/candidates` URL;
 - variable `KESTREL_RELEASE_PREPARE_URL`, set to the deployed Kestrel One
@@ -89,12 +93,18 @@ release ID and the literal status `candidate`; malformed 2xx responses fail the
 workflow.
 
 The `publish-candidate` job uses the setup action at its pinned commit and Fly
-CLI `0.4.82`. Its fail-fast order is fixed: validate the revision, authenticate
-the Fly and GHCR registries, wait for `/api/health` to serve the exact commit,
+CLI `0.4.82`. Its fail-fast order is fixed: validate the revision, verify or
+apply the bounded additive release-control schema bootstrap, authenticate the
+Fly and GHCR registries, wait for `/api/health` to serve the exact commit,
 complete the authenticated publication preflight, acquire the attempt, then
 build and smoke the controller and all five managed images before one manifest
-is published. Every artifact build is allowed to settle so a failed run reports
-all observed failures. Controller deployment is a separate, explicit
+is published. The bootstrap accepts only the direct production URL and its
+approved target fingerprint. It applies only `0069_unified_release_attempt`
+from exact predecessor `0068_byo_fly_onboarding`, records before/after ledger
+evidence, and otherwise fails without mutation. Once `0069` exists, the gate is
+verification-only and never applies later application migrations. Every
+artifact build is allowed to settle so a failed run reports all observed
+failures. Controller deployment is a separate, explicit
 preparation operation; candidate publication never changes controller Machines.
 Preparation injects the candidate's exact immutable Environment Router and
 Workspace Runtime digests into the controller Machine, so stale bootstrap values
@@ -103,6 +113,14 @@ A candidate is accepted and promoted only while its bundle revision still
 equals the serving Kestrel One revision. Workflow runs queue instead of
 cancelling one another, and the server-side attempt lease remains authoritative.
 No long-lived publisher secret is shared with Kestrel One.
+
+The release-control bootstrap exists only to make candidate publication's own
+persistence contract available. Candidate application migrations remain owned
+by the preparation and operator migration runbook: publishing a candidate does
+not apply them, acknowledge them, or weaken their compatibility checks. The
+authenticated publication preflight and every attempt mutation verify the
+complete `0069` schema and return `409 RELEASE_MIGRATION_BLOCKED` before ORM
+access when the bootstrap is absent or drifted.
 
 Every manifest records the gateway configuration version emitted by Kestrel
 One and the versions accepted by the Environment Router. Change this contract
