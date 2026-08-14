@@ -5,6 +5,10 @@ import {
 } from "@lumi/kestrel-environment-auth";
 import { z } from "zod";
 import { RELEASE_CONTROLLER_CONTRACT_REVISION } from "../apps/web/lib/releases/controller-contract.js";
+import {
+  RELEASE_MIGRATION_HEAD,
+  RELEASE_MIGRATION_HISTORY_LOCK_HASH,
+} from "../apps/web/lib/releases/migration-identity.js";
 import { flyImageReleaseCandidatePublicationResponseSchema } from "../apps/web/lib/releases/contracts.js";
 import {
   fingerprintImageInputs,
@@ -17,6 +21,7 @@ import {
 
 export const FLY_REGISTRY_PULL_ATTEMPTS = 13;
 export const FLY_REGISTRY_PULL_RETRY_DELAY_MS = 5_000;
+export const RELEASE_ATTEMPT_RENEW_INTERVAL_MS = 5 * 60_000;
 
 type FetchImplementation = (
   input: string | URL | Request,
@@ -36,6 +41,16 @@ export type FlyImagePublisherDependencies = {
     env?: NodeJS.ProcessEnv,
   ) => Promise<void>;
   write: (message: string) => void;
+  buildController: (input: {
+    revision: string;
+    attemptId: string;
+    forceAll: boolean;
+  }) => Promise<{
+    image: string;
+    fingerprint: string;
+    smokeCommand: string;
+    completedAt: string;
+  }>;
 };
 
 export async function publishFlyImages(
@@ -50,6 +65,19 @@ export async function publishFlyImages(
   const requestedForceAll =
     trigger === "scheduled" || env.KESTREL_RELEASE_FORCE_ALL === "true";
   const forceAll = requestedForceAll || publicationState.requiresFullBundle;
+  const githubRunId = requireEnvironment(env, "GITHUB_RUN_ID");
+  const githubRunAttempt = z.coerce
+    .number()
+    .int()
+    .positive()
+    .parse(requireEnvironment(env, "GITHUB_RUN_ATTEMPT"));
+  const attempt = await acquirePublicationAttempt(dependencies, publishUrl, {
+    sourceRevision: revision,
+    trigger,
+    forceAll,
+    githubRunId,
+    githubRunAttempt,
+  });
   const catalog = flyImageCatalogSchema.parse(
     JSON.parse(await readFile(`${root}/deploy/fly/image-catalog.json`, "utf8")),
   );
@@ -57,26 +85,41 @@ export async function publishFlyImages(
   const changedPaths = diffBase
     ? await listChangedPaths(dependencies, diffBase, revision)
     : [];
-  const impacted = impactedFlyImages({ catalog, changedPaths, forceAll });
-
-  if (impacted.length === 0) {
-    dependencies.write("No declared Fly image inputs changed.\n");
-    return { published: false as const, components: [] };
-  }
+  // A v3 candidate is complete by construction. Incremental publication may
+  // reuse exact-revision artifacts, but it still smokes and records all roles.
+  const impacted = impactedFlyImages({ catalog, changedPaths, forceAll: true });
 
   const trackedPaths = (await git(dependencies, ["ls-files"]))
     .split("\n")
     .map((path) => path.trim())
     .filter(Boolean);
   const appBuildQueues = new Map<string, Promise<void>>();
-  const components = await Promise.all(
-    impacted.map(async (image) => {
-      const label = `${image.role}-${revision.slice(0, 12)}`;
+  const attemptHeartbeat = startPublicationAttemptHeartbeat(
+    dependencies,
+    publishUrl,
+    attempt.id,
+    revision,
+  );
+  try {
+    await renewPublicationAttempt(
+      dependencies,
+      publishUrl,
+      attempt.id,
+      revision,
+    );
+    const controllerPromise = dependencies.buildController({
+      revision,
+      attemptId: attempt.id,
+      forceAll,
+    });
+    const componentPromises = impacted.map(async (image) => {
+      const label = forceAll
+        ? `${image.role}-${revision.slice(0, 12)}-${attempt.id.slice(0, 8)}`
+        : `${image.role}-${revision.slice(0, 12)}`;
       const taggedImage = `${image.repository}:${label}`;
-      const existingImage = await tryPullExistingImage(
-        dependencies,
-        taggedImage,
-      );
+      const existingImage = forceAll
+        ? false
+        : await tryPullExistingImage(dependencies, taggedImage);
       if (existingImage) {
         dependencies.write(`Reusing published image ${taggedImage}.\n`);
       } else if (image.publisher === "ghcr") {
@@ -152,55 +195,181 @@ export async function publishFlyImages(
             }
           : {}),
       };
-    }),
-  );
-
-  const validationCommands = parseValidationCommands(env);
-  const manifest = {
-    version: 2 as const,
-    controllerContractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
-    bundleRevision: revision,
-    trigger,
-    migrationChanged: flyMigrationChanged(changedPaths),
-    environmentGateway: {
-      producedVersion: ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION,
-    },
-    validation: {
-      status: "passed" as const,
-      commands: validationCommands,
-      completedAt: dependencies.now().toISOString(),
-    },
-    components,
-  };
-  // GitHub Actions OIDC tokens are deliberately short-lived. Image builds and
-  // smoke tests can take much longer than one token lifetime, so publication
-  // must use a token minted after all image work has completed.
-  const publicationToken = await requestGithubOidcToken(dependencies);
-  const response = await dependencies.fetchImpl(publishUrl, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${publicationToken}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(manifest),
-  });
-  if (!response.ok) {
-    throw new Error(
-      `Release candidate publication failed (${response.status}${await responseErrorSuffix(response)}).`,
+    });
+    const [controllerResult, ...componentResults] = await Promise.allSettled([
+      controllerPromise,
+      ...componentPromises,
+    ]);
+    attemptHeartbeat.assertHealthy();
+    const failures = [controllerResult, ...componentResults].flatMap(
+      (result, index) =>
+        result.status === "rejected"
+          ? [
+              {
+                role:
+                  index === 0
+                    ? "release-controller"
+                    : impacted[index - 1]!.role,
+                message:
+                  result.reason instanceof Error
+                    ? result.reason.message
+                    : String(result.reason),
+              },
+            ]
+          : [],
     );
+    if (failures.length > 0) {
+      throw new ReleaseArtifactAggregateError(failures);
+    }
+    const controllerBuild = (
+      controllerResult as PromiseFulfilledResult<
+        Awaited<ReturnType<typeof dependencies.buildController>>
+      >
+    ).value;
+    const components = componentResults.map(
+      (result) =>
+        (
+          result as PromiseFulfilledResult<
+            Awaited<(typeof componentPromises)[number]>
+          >
+        ).value,
+    );
+
+    const validationCommands = parseValidationCommands(env);
+    const migration = await readMigrationIdentity(root, changedPaths);
+    const manifest = {
+      version: 3 as const,
+      attempt: {
+        id: attempt.id,
+        githubRunId,
+        githubRunAttempt,
+        forceAll,
+      },
+      controllerContractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
+      bundleRevision: revision,
+      trigger,
+      migration,
+      controller: {
+        role: "release-controller" as const,
+        image: controllerBuild.image,
+        sourceRevision: revision,
+        inputFingerprint: `sha256:${controllerBuild.fingerprint}`,
+        smoke: {
+          status: "passed" as const,
+          command: controllerBuild.smokeCommand,
+          completedAt: controllerBuild.completedAt,
+        },
+      },
+      environmentGateway: {
+        producedVersion: ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION,
+      },
+      validation: {
+        status: "passed" as const,
+        commands: validationCommands,
+        completedAt: dependencies.now().toISOString(),
+      },
+      components,
+    };
+    // GitHub Actions OIDC tokens are deliberately short-lived. Image builds and
+    // smoke tests can take much longer than one token lifetime, so publication
+    // must use a token minted after all image work has completed.
+    await renewPublicationAttempt(
+      dependencies,
+      publishUrl,
+      attempt.id,
+      revision,
+    );
+    attemptHeartbeat.assertHealthy();
+    const publicationToken = await requestGithubOidcToken(dependencies);
+    const response = await dependencies.fetchImpl(publishUrl, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${publicationToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(manifest),
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Release candidate publication failed (${response.status}${await responseErrorSuffix(response)}).`,
+      );
+    }
+    const result = flyImageReleaseCandidatePublicationResponseSchema.parse(
+      await response.json(),
+    );
+    dependencies.write(
+      `Published Fly image release candidate ${result.release.id}.\n`,
+    );
+    return {
+      published: true as const,
+      components,
+      manifest,
+      release: result.release,
+    };
+  } catch (error) {
+    await failPublicationAttempt(
+      dependencies,
+      publishUrl,
+      attempt.id,
+      revision,
+      error,
+    );
+    throw error;
+  } finally {
+    await attemptHeartbeat.stop();
   }
-  const result = flyImageReleaseCandidatePublicationResponseSchema.parse(
-    await response.json(),
-  );
-  dependencies.write(
-    `Published Fly image release candidate ${result.release.id}.\n`,
-  );
+}
+
+function startPublicationAttemptHeartbeat(
+  dependencies: Pick<FlyImagePublisherDependencies, "env" | "fetchImpl">,
+  publishUrl: string,
+  attemptId: string,
+  sourceRevision: string,
+) {
+  let failure: unknown;
+  let stopped = false;
+  let pending = Promise.resolve();
+  const timer = setInterval(() => {
+    pending = pending.then(async () => {
+      if (stopped || failure) return;
+      try {
+        await renewPublicationAttempt(
+          dependencies,
+          publishUrl,
+          attemptId,
+          sourceRevision,
+        );
+      } catch (error) {
+        failure = error;
+      }
+    });
+  }, RELEASE_ATTEMPT_RENEW_INTERVAL_MS);
+  timer.unref();
   return {
-    published: true as const,
-    components,
-    manifest,
-    release: result.release,
+    assertHealthy() {
+      if (failure) {
+        throw new Error("Release attempt lease renewal failed.", {
+          cause: failure,
+        });
+      }
+    },
+    async stop() {
+      stopped = true;
+      clearInterval(timer);
+      await pending;
+    },
   };
+}
+
+export class ReleaseArtifactAggregateError extends Error {
+  constructor(readonly failures: Array<{ role: string; message: string }>) {
+    super(
+      `Release artifacts failed:\n${failures
+        .map((failure) => `- ${failure.role}: ${failure.message}`)
+        .join("\n")}`,
+    );
+    this.name = "ReleaseArtifactAggregateError";
+  }
 }
 
 export async function preflightFlyImagePublication(
@@ -401,6 +570,115 @@ async function getReleasePublicationState(
     );
   }
   return flyImagePublicationStateSchema.parse(await response.json());
+}
+
+const attemptResponseSchema = z
+  .object({
+    attempt: z.object({ id: z.string().uuid() }).passthrough(),
+  })
+  .strict();
+
+async function acquirePublicationAttempt(
+  dependencies: Pick<FlyImagePublisherDependencies, "env" | "fetchImpl">,
+  publishUrl: string,
+  input: {
+    sourceRevision: string;
+    trigger: "main" | "scheduled" | "manual";
+    forceAll: boolean;
+    githubRunId: string;
+    githubRunAttempt: number;
+  },
+) {
+  const token = await requestGithubOidcToken(dependencies);
+  const response = await dependencies.fetchImpl(publishUrl, {
+    method: "PUT",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Release attempt acquisition failed (${response.status}${await responseErrorSuffix(response)}).`,
+    );
+  }
+  return attemptResponseSchema.parse(await response.json()).attempt;
+}
+
+async function mutatePublicationAttempt(
+  dependencies: Pick<FlyImagePublisherDependencies, "env" | "fetchImpl">,
+  publishUrl: string,
+  body: Record<string, unknown>,
+) {
+  const token = await requestGithubOidcToken(dependencies);
+  const response = await dependencies.fetchImpl(publishUrl, {
+    method: "PATCH",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Release attempt checkpoint failed (${response.status}${await responseErrorSuffix(response)}).`,
+    );
+  }
+}
+
+async function renewPublicationAttempt(
+  dependencies: Pick<FlyImagePublisherDependencies, "env" | "fetchImpl">,
+  publishUrl: string,
+  attemptId: string,
+  sourceRevision: string,
+) {
+  await mutatePublicationAttempt(dependencies, publishUrl, {
+    action: "renew",
+    attemptId,
+    sourceRevision,
+  });
+}
+
+async function failPublicationAttempt(
+  dependencies: Pick<FlyImagePublisherDependencies, "env" | "fetchImpl">,
+  publishUrl: string,
+  attemptId: string,
+  sourceRevision: string,
+  error: unknown,
+) {
+  try {
+    await mutatePublicationAttempt(dependencies, publishUrl, {
+      action: "fail",
+      attemptId,
+      sourceRevision,
+      evidence: {
+        name: error instanceof Error ? error.name : "Error",
+        message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof ReleaseArtifactAggregateError
+          ? { failures: error.failures }
+          : {}),
+      },
+    });
+  } catch (cleanupError) {
+    if (error && typeof error === "object") {
+      Object.assign(error, {
+        cleanupFailure:
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError),
+      });
+    }
+  }
+}
+
+async function readMigrationIdentity(root: string, changedPaths: string[]) {
+  void root;
+  return {
+    changed: flyMigrationChanged(changedPaths),
+    head: RELEASE_MIGRATION_HEAD,
+    historyLockHash: RELEASE_MIGRATION_HISTORY_LOCK_HASH,
+  };
 }
 
 async function resolveLocalImageDigest(

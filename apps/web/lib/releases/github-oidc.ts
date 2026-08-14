@@ -10,8 +10,10 @@ const GITHUB_ACTIONS_JWKS = `${GITHUB_ACTIONS_ISSUER}/.well-known/jwks`;
 const GITHUB_ACTIONS_AUDIENCE = "kestrel-one-release-publisher";
 const GITHUB_REPOSITORY = "LumiCorp/kestrel";
 const GITHUB_REF = "refs/heads/main";
-const GITHUB_WORKFLOW_REF =
+export const RELEASE_PUBLICATION_WORKFLOW_REF =
   "LumiCorp/kestrel/.github/workflows/fly-image-release.yml@refs/heads/main";
+export const RELEASE_PREPARATION_WORKFLOW_REF =
+  "LumiCorp/kestrel/.github/workflows/prepare-release-candidate.yml@refs/heads/main";
 
 const jwtHeaderSchema = z.object({
   alg: z.literal("RS256"),
@@ -26,7 +28,9 @@ const jwtClaimsSchema = z.object({
   nbf: z.number().int().optional(),
   repository: z.literal(GITHUB_REPOSITORY),
   ref: z.literal(GITHUB_REF),
-  workflow_ref: z.literal(GITHUB_WORKFLOW_REF),
+  workflow_ref: z.string().trim().min(1),
+  run_id: z.string().regex(/^\d+$/u),
+  run_attempt: z.string().regex(/^[1-9]\d*$/u),
   sha: z.string().regex(/^[a-f0-9]{40}$/u),
   sub: z.string().trim().min(1),
 });
@@ -57,6 +61,9 @@ export async function verifyGithubActionsReleaseToken(input: {
   expectedSha: string;
   fetchImpl?: FetchImplementation;
   now?: Date;
+  expectedWorkflowRef?:
+    | typeof RELEASE_PUBLICATION_WORKFLOW_REF
+    | typeof RELEASE_PREPARATION_WORKFLOW_REF;
 }): Promise<GithubActionsOidcClaims> {
   const parts = input.token.split(".");
   if (parts.length !== 3)
@@ -80,6 +87,12 @@ export async function verifyGithubActionsReleaseToken(input: {
     throw new Error(
       "GitHub Actions OIDC token SHA does not match the release.",
     );
+  }
+  if (
+    claims.workflow_ref !==
+    (input.expectedWorkflowRef ?? RELEASE_PUBLICATION_WORKFLOW_REF)
+  ) {
+    throw new Error("GitHub Actions OIDC token has the wrong workflow.");
   }
 
   const response = await (input.fetchImpl ?? fetch)(GITHUB_ACTIONS_JWKS, {

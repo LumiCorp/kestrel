@@ -13,11 +13,25 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
 async function heartbeat() {
   const now = new Date();
+  const sourceRevision = process.env.KESTREL_BUILD_REVISION?.trim();
+  const image =
+    process.env.KESTREL_RELEASE_IMAGE?.trim() ||
+    process.env.FLY_IMAGE_REF?.trim();
+  const inputFingerprint =
+    process.env.KESTREL_CONTROL_WORKER_FINGERPRINT?.trim();
+  const machineId = process.env.FLY_MACHINE_ID?.trim();
+  if (!(sourceRevision && image && inputFingerprint && machineId)) {
+    throw new Error("Release controller runtime identity is incomplete.");
+  }
   await knowledgeDb
     .insert(schema.releaseControllerHeartbeats)
     .values({
       id: "platform",
       contractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
+      sourceRevision,
+      image,
+      inputFingerprint,
+      machineId,
       heartbeatAt: now,
       startedAt,
     })
@@ -25,6 +39,10 @@ async function heartbeat() {
       target: schema.releaseControllerHeartbeats.id,
       set: {
         contractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
+        sourceRevision,
+        image,
+        inputFingerprint,
+        machineId,
         heartbeatAt: now,
         startedAt,
       },

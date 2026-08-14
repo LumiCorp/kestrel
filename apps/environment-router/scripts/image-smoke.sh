@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/lib/image-smoke.sh"
 
 image="${1:?usage: image-smoke.sh IMAGE}"
 container="kestrel-environment-router-smoke-$$"
-port="${KESTREL_ENVIRONMENT_ROUTER_SMOKE_PORT:-18080}"
 health_file="/tmp/kestrel-environment-router-health-$$"
 fixture_file="/tmp/kestrel-environment-router-control-$$.mjs"
 
@@ -34,9 +34,9 @@ createServer((request, response) => {
 }).listen(18081, "127.0.0.1");
 EOF
 
-docker run --rm --detach \
+docker run --detach \
   --name "$container" \
-  --publish "127.0.0.1:${port}:8080" \
+  --publish "127.0.0.1::8080" \
   --volume "$fixture_file:/tmp/control-fixture.mjs:ro" \
   --env KESTREL_CONTROL_PLANE_URL=http://127.0.0.1:18081 \
   --env KESTREL_ENVIRONMENT_APP_NAME=environment-smoke-app \
@@ -44,15 +44,10 @@ docker run --rm --detach \
   --env KESTREL_ENVIRONMENT_ID=environment-smoke \
   --env KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY=gateway-smoke-public-key \
   --entrypoint /bin/sh \
-  "$image" -c 'node /tmp/control-fixture.mjs & exec node apps/environment-router/dist/server.js' >/dev/null
+  "$image" -c 'node /tmp/control-fixture.mjs & fixture=$!; for i in $(seq 1 50); do node -e '\''const net=require("node:net");const s=net.connect(18081,"127.0.0.1",()=>{s.end();process.exit(0)});s.on("error",()=>process.exit(1))'\'' && exec node apps/environment-router/dist/server.js; kill -0 "$fixture" 2>/dev/null || exit 1; sleep .1; done; exit 1' >/dev/null
 
-for _ in $(seq 1 30); do
-  status="$(curl --silent --output "$health_file" --write-out '%{http_code}' "http://127.0.0.1:${port}/health" || true)"
-  if [[ "$status" == "200" ]]; then
-    break
-  fi
-  sleep 1
-done
+port="$(smoke_container_port "$container" 8080)"
+smoke_wait_http "$container" "http://127.0.0.1:${port}/health" "$health_file"
 
 health="$(<"$health_file")"
 node -e '
@@ -64,7 +59,7 @@ node -e '
     health.gatewayConfig?.activeVersion !== 3 ||
     !health.gatewayConfig?.acceptedVersions?.includes(3)
   ) {
-    throw new Error("Environment Router health contract failed");
+    throw new Error(`Environment Router health contract failed: ${JSON.stringify(health)}`);
   }
 ' "$health"
 

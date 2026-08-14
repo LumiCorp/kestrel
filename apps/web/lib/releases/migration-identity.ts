@@ -1,0 +1,5 @@
+export const RELEASE_MIGRATION_HEAD = "0069_unified_release_attempt";
+export const RELEASE_MIGRATION_HEAD_SQL_HASH =
+  "2e657c68d3974a8b5827a66ae5861ce1c7291cbb4bb650fb75c45bbcc4f33c4b";
+export const RELEASE_MIGRATION_HISTORY_LOCK_HASH =
+  "sha256:afcc987b255d878dc9f1353129709fdeb1828f7286c5d9defb60e32c6eaf62ab";

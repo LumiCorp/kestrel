@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/lib/image-smoke.sh"
 
 image="${1:?usage: image-smoke.sh IMAGE}"
 container="kestrel-preview-edge-smoke-$$"
-public_port="${KESTREL_PREVIEW_EDGE_SMOKE_PORT:-18082}"
-health_port="${KESTREL_PREVIEW_EDGE_HEALTH_SMOKE_PORT:-18083}"
 health_file="/tmp/kestrel-preview-edge-health-$$"
 public_file="/tmp/kestrel-preview-edge-public-$$"
 
@@ -14,21 +13,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker run --rm --detach \
+docker run --detach \
   --name "$container" \
-  --publish "127.0.0.1:${public_port}:8080" \
-  --publish "127.0.0.1:${health_port}:8081" \
+  --publish "127.0.0.1::8080" \
+  --publish "127.0.0.1::8081" \
   --env KESTREL_CONTROL_PLANE_URL=https://127.0.0.1 \
   --env KESTREL_PREVIEW_EDGE_SERVICE_TOKEN=preview-edge-smoke-token \
   --env KESTREL_PREVIEW_HOST_SUFFIX=preview.kestrelagents.dev \
   "$image" >/dev/null
 
-for _ in $(seq 1 30); do
-  if curl --fail --silent "http://127.0.0.1:${health_port}/health" >"$health_file"; then
-    break
-  fi
-  sleep 1
-done
+public_port="$(smoke_container_port "$container" 8080)"
+health_port="$(smoke_container_port "$container" 8081)"
+smoke_wait_http "$container" "http://127.0.0.1:${health_port}/health" "$health_file"
 
 health="$(<"$health_file")"
 node -e '

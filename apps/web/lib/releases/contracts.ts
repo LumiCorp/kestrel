@@ -8,6 +8,11 @@ export const FLY_IMAGE_ROLES = [
   "runpod-worker",
 ] as const;
 
+export const RELEASE_ARTIFACT_ROLES = [
+  "release-controller",
+  ...FLY_IMAGE_ROLES,
+] as const;
+
 export const flyImageRoleSchema = z.enum(FLY_IMAGE_ROLES);
 export type FlyImageRole = z.infer<typeof flyImageRoleSchema>;
 
@@ -72,13 +77,18 @@ export function evaluateFlyImageMigrationAcknowledgementEligibility(input: {
   status: string;
   migrationChanged: boolean;
   migrationApprovedAt: Date | null;
+  migrationVerifiedAt: Date | null;
 }): { ok: true } | { ok: false; code: string; message: string } {
-  if (input.status !== "candidate" || !input.migrationChanged) {
+  if (
+    input.status !== "candidate" ||
+    !input.migrationChanged ||
+    !input.migrationVerifiedAt
+  ) {
     return {
       ok: false,
       code: "RELEASE_STATE_INVALID",
       message:
-        "Only a migration-bearing candidate can complete the migration runbook.",
+        "Only a migration-bearing candidate with verified ledger evidence can complete the migration runbook.",
     };
   }
   if (input.migrationApprovedAt) {
@@ -95,7 +105,7 @@ export function countResolvedFlyImageReleaseTargets(
   targets: Array<{ status: string }>,
 ) {
   return targets.filter((target) =>
-    ["completed", "configured_unverified"].includes(target.status),
+    target.status === "completed",
   ).length;
 }
 
@@ -262,6 +272,11 @@ const sha256Schema = z
   .trim()
   .regex(/^sha256:[a-f0-9]{64}$/u, "Expected a sha256 digest.");
 
+const githubRunIdentifierSchema = z
+  .string()
+  .trim()
+  .regex(/^\d+$/u, "Expected a GitHub Actions run identifier.");
+
 const acceptedGatewayVersionsSchema = z
   .array(z.number().int().positive())
   .min(1)
@@ -368,6 +383,99 @@ export const flyImageReleaseManifestV2Schema = z
 
 export type FlyImageReleaseManifestV2 = z.infer<
   typeof flyImageReleaseManifestV2Schema
+>;
+
+export const releaseControllerArtifactSchema = z
+  .object({
+    role: z.literal("release-controller"),
+    image: immutableOciImageSchema.refine(
+      (image) => image.startsWith("registry.fly.io/kestrel-one-control-worker@"),
+      "Release controller must use the Kestrel control-worker repository.",
+    ),
+    sourceRevision: gitRevisionSchema,
+    inputFingerprint: sha256Schema,
+    smoke: z.object({
+      status: z.literal("passed"),
+      command: z.string().trim().min(1).max(500),
+      completedAt: z.string().datetime(),
+    }),
+  })
+  .strict();
+
+export const flyImageReleaseManifestV3Schema = z
+  .object({
+    version: z.literal(3),
+    attempt: z
+      .object({
+        id: z.string().uuid(),
+        githubRunId: githubRunIdentifierSchema,
+        githubRunAttempt: z.number().int().positive(),
+        forceAll: z.boolean(),
+      })
+      .strict(),
+    controllerContractRevision: z.number().int().positive(),
+    bundleRevision: gitRevisionSchema,
+    trigger: z.enum(["main", "scheduled", "manual"]),
+    migration: z
+      .object({
+        changed: z.boolean(),
+        head: z.string().trim().min(1).max(160),
+        historyLockHash: sha256Schema,
+      })
+      .strict(),
+    environmentGateway: z
+      .object({ producedVersion: z.number().int().positive() })
+      .strict(),
+    validation: z
+      .object({
+        status: z.literal("passed"),
+        commands: z.array(z.string().trim().min(1).max(300)).min(1).max(20),
+        completedAt: z.string().datetime(),
+      })
+      .strict(),
+    controller: releaseControllerArtifactSchema,
+    components: z.array(flyImageReleaseComponentSchema).length(5),
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    if (manifest.controller.sourceRevision !== manifest.bundleRevision) {
+      context.addIssue({
+        code: "custom",
+        message: "Release controller must identify the bundle revision.",
+        path: ["controller", "sourceRevision"],
+      });
+    }
+    const roles = new Set<FlyImageRole>();
+    for (const component of manifest.components) {
+      if (roles.has(component.role)) {
+        context.addIssue({
+          code: "custom",
+          message: `Release component '${component.role}' is duplicated.`,
+          path: ["components"],
+        });
+      }
+      roles.add(component.role);
+      if (component.sourceRevision !== manifest.bundleRevision) {
+        context.addIssue({
+          code: "custom",
+          message: `Release component '${component.role}' must identify the bundle revision.`,
+          path: ["components"],
+        });
+      }
+    }
+    for (const role of FLY_IMAGE_ROLES) {
+      if (!roles.has(role)) {
+        context.addIssue({
+          code: "custom",
+          message: `Release component '${role}' is required.`,
+          path: ["components"],
+        });
+      }
+    }
+  });
+
+export type FlyImageReleaseManifestV3 = z.infer<
+  typeof flyImageReleaseManifestV3Schema
 >;
 
 export const ROLE_IMAGE_REPOSITORIES: Record<FlyImageRole, string> = {

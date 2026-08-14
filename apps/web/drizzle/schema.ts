@@ -264,8 +264,9 @@ export const organizationFeatureFlags = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     key: text("key").notNull(),
     enabled: boolean("enabled").notNull().default(false),
-    updatedByUserId: text("updated_by_user_id")
-      .references(() => users.id, { onDelete: "restrict" }),
+    updatedByUserId: text("updated_by_user_id").references(() => users.id, {
+      onDelete: "restrict",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -1878,12 +1879,70 @@ export const environmentWorkspaces = pgTable(
  *  Fly image releases
  *  ========================= */
 
+export const flyImageReleaseAttempts = pgTable(
+  "fly_image_release_attempts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    sourceRevision: text("source_revision").notNull(),
+    trigger: text("trigger", {
+      enum: ["main", "scheduled", "manual"],
+    }).notNull(),
+    forceAll: boolean("force_all").notNull(),
+    githubRunId: text("github_run_id").notNull(),
+    githubRunAttempt: integer("github_run_attempt").notNull(),
+    status: text("status", {
+      enum: ["acquired", "building", "candidate", "failed", "expired"],
+    })
+      .notNull()
+      .default("acquired"),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+    }).notNull(),
+    releaseId: text("release_id"),
+    failureEvidence: jsonb("failure_evidence").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("fly_image_release_attempts_github_run_idx").on(
+      table.githubRunId,
+      table.githubRunAttempt,
+    ),
+    index("fly_image_release_attempts_status_lease_idx").on(
+      table.status,
+      table.leaseExpiresAt,
+    ),
+    check(
+      "fly_image_release_attempts_source_revision_check",
+      sql`${table.sourceRevision} ~ '^[0-9a-f]{40}$'`,
+    ),
+    check(
+      "fly_image_release_attempts_run_id_check",
+      sql`${table.githubRunId} ~ '^[0-9]+$'`,
+    ),
+    check(
+      "fly_image_release_attempts_run_attempt_check",
+      sql`${table.githubRunAttempt} > 0`,
+    ),
+  ],
+);
+
 export const flyImageReleases = pgTable(
   "fly_image_releases",
   {
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
+    manifestVersion: integer("manifest_version").notNull().default(2),
+    attemptId: text("attempt_id").references(() => flyImageReleaseAttempts.id, {
+      onDelete: "restrict",
+    }),
     bundleRevision: text("bundle_revision").notNull(),
     manifestDigest: text("manifest_digest").notNull(),
     trigger: text("trigger", {
@@ -1907,6 +1966,19 @@ export const flyImageReleases = pgTable(
       { onDelete: "set null" },
     ),
     migrationApprovedAt: timestamp("migration_approved_at", {
+      withTimezone: true,
+    }),
+    migrationExpectedHead: text("migration_expected_head"),
+    migrationExpectedHistoryLockHash: text(
+      "migration_expected_history_lock_hash",
+    ),
+    migrationVerifiedAt: timestamp("migration_verified_at", {
+      withTimezone: true,
+    }),
+    controllerImage: text("controller_image"),
+    controllerInputFingerprint: text("controller_input_fingerprint"),
+    controllerContractRevision: integer("controller_contract_revision"),
+    controllerPreparedAt: timestamp("controller_prepared_at", {
       withTimezone: true,
     }),
     validation: jsonb("validation")
@@ -1940,6 +2012,9 @@ export const flyImageReleases = pgTable(
     uniqueIndex("fly_image_releases_manifest_digest_idx").on(
       table.manifestDigest,
     ),
+    uniqueIndex("fly_image_releases_attempt_idx")
+      .on(table.attemptId)
+      .where(sql`${table.attemptId} is not null`),
     index("fly_image_releases_status_created_idx").on(
       table.status,
       table.createdAt,
@@ -2633,11 +2708,39 @@ export const releaseControllerHeartbeats = pgTable(
   {
     id: text("id").primaryKey(),
     contractRevision: integer("contract_revision").notNull(),
+    sourceRevision: text("source_revision"),
+    image: text("image"),
+    inputFingerprint: text("input_fingerprint"),
+    machineId: text("machine_id"),
     heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
   },
   (table) => [
     index("release_controller_heartbeats_age_idx").on(table.heartbeatAt),
+  ],
+);
+
+export const releaseWorkerHeartbeats = pgTable(
+  "release_worker_heartbeats",
+  {
+    role: text("role", { enum: ["turn-worker", "runpod-worker"] }).notNull(),
+    sourceRevision: text("source_revision").notNull(),
+    image: text("image").notNull(),
+    machineId: text("machine_id").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.role, table.machineId] }),
+    index("release_worker_heartbeats_age_idx").on(table.heartbeatAt),
+    check(
+      "release_worker_heartbeats_revision_check",
+      sql`${table.sourceRevision} ~ '^[0-9a-f]{40}$'`,
+    ),
+    check(
+      "release_worker_heartbeats_image_check",
+      sql`${table.image} ~ '^registry\\.fly\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$'`,
+    ),
   ],
 );
 

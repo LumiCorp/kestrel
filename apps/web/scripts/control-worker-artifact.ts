@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, type Metafile } from "esbuild";
-import { captureStreamingCommand } from "../../../scripts/lib/streaming-command";
+import { captureStreamingCommand } from "./streaming-command";
 
 const repositoryRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),

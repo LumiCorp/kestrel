@@ -5,7 +5,9 @@ import {
   eq,
   inArray,
   isNull,
+  lte,
   notInArray,
+  gt,
   sql,
 } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -20,9 +22,9 @@ import {
   FLY_IMAGE_RELEASE_DEPLOYABLE_ENVIRONMENT_STATUSES,
   FLY_IMAGE_ROLES,
   FLY_IMAGE_RELEASE_TARGETABLE_ENVIRONMENT_STATUSES,
-  type FlyImageReleaseManifestV2,
+  type FlyImageReleaseManifestV3,
   type FlyImageRole,
-  flyImageReleaseManifestV2Schema,
+  flyImageReleaseManifestV3Schema,
 } from "./contracts";
 import { digestCanonicalJson } from "./digest";
 import { mergePinnedFlyImageReleaseHistory } from "./history";
@@ -30,8 +32,14 @@ import {
   RELEASE_CONTROLLER_CONTRACT_REVISION,
   RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS,
 } from "./controller-contract";
+import {
+  RELEASE_MIGRATION_HEAD,
+  RELEASE_MIGRATION_HEAD_SQL_HASH,
+  RELEASE_MIGRATION_HISTORY_LOCK_HASH,
+} from "./migration-identity";
 
 export const FLY_IMAGE_RELEASE_LOCK_KEY = "kestrel:fly-image-release";
+export const RELEASE_ATTEMPT_LEASE_MS = 15 * 60 * 1000;
 
 type KnowledgeTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -41,6 +49,8 @@ export class FlyImageReleaseError extends Error {
   constructor(
     readonly code:
       | "RELEASE_ACTIVE"
+      | "RELEASE_ATTEMPT_ACTIVE"
+      | "RELEASE_ATTEMPT_INVALID"
       | "RELEASE_CANARY_REQUIRED"
       | "RELEASE_BUILD_REVISION_MISMATCH"
       | "RELEASE_COMPATIBILITY_BLOCKED"
@@ -78,64 +88,322 @@ export async function assertReleaseControllerHealthy(
   return controller;
 }
 
+export async function getFlyImageReleasePreparation(releaseId: string) {
+  const [release, components] = await Promise.all([
+    knowledgeDb.query.flyImageReleases.findFirst({
+      where: eq(schema.flyImageReleases.id, releaseId),
+    }),
+    knowledgeDb
+      .select()
+      .from(schema.flyImageReleaseComponents)
+      .where(eq(schema.flyImageReleaseComponents.releaseId, releaseId)),
+  ]);
+  if (!release) {
+    throw new FlyImageReleaseError(
+      "RELEASE_NOT_FOUND",
+      "Fly image release not found.",
+    );
+  }
+  if (
+    release.status !== "candidate" ||
+    release.manifestVersion !== 3 ||
+    !release.controllerImage ||
+    !release.controllerInputFingerprint ||
+    !release.controllerContractRevision ||
+    !release.migrationExpectedHead ||
+    !release.migrationExpectedHistoryLockHash
+  ) {
+    throw new FlyImageReleaseError(
+      "RELEASE_STATE_INVALID",
+      "Only a complete v3 candidate can be prepared.",
+    );
+  }
+  const router = requireComponent(components, "environment-router");
+  const workspace = requireComponent(components, "workspace-runtime");
+  return {
+    releaseId: release.id,
+    bundleRevision: release.bundleRevision,
+    controller: {
+      image: release.controllerImage,
+      inputFingerprint: release.controllerInputFingerprint,
+      contractRevision: release.controllerContractRevision,
+    },
+    runtimeImages: {
+      router: router.image,
+      workspace: workspace.image,
+    },
+    migration: {
+      changed: release.migrationChanged,
+      head: release.migrationExpectedHead,
+      historyLockHash: release.migrationExpectedHistoryLockHash,
+    },
+  };
+}
+
+export async function completeFlyImageReleasePreparation(releaseId: string) {
+  return knowledgeDb.transaction(async (transaction) => {
+    await lockFlyImageReleases(transaction);
+    const release = await transaction.query.flyImageReleases.findFirst({
+      where: eq(schema.flyImageReleases.id, releaseId),
+    });
+    if (
+      !release ||
+      release.status !== "candidate" ||
+      release.manifestVersion !== 3 ||
+      !release.controllerImage ||
+      !release.controllerInputFingerprint ||
+      !release.controllerContractRevision
+    ) {
+      throw new FlyImageReleaseError(
+        "RELEASE_STATE_INVALID",
+        "Only a complete v3 candidate can record preparation.",
+      );
+    }
+    await assertReleaseMigrationLedger(transaction, release);
+    const controller =
+      await transaction.query.releaseControllerHeartbeats.findFirst({
+        where: eq(schema.releaseControllerHeartbeats.id, "platform"),
+      });
+    if (
+      !controller ||
+      controller.sourceRevision !== release.bundleRevision ||
+      imageDigest(controller.image) !== imageDigest(release.controllerImage) ||
+      controller.inputFingerprint !== release.controllerInputFingerprint ||
+      controller.contractRevision !== release.controllerContractRevision ||
+      !controller.machineId ||
+      Date.now() - controller.heartbeatAt.getTime() >
+        RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS
+    ) {
+      throw new FlyImageReleaseError(
+        "RELEASE_CONTROLLER_STALE",
+        "Release controller heartbeat does not match the exact candidate artifact.",
+      );
+    }
+    const now = new Date();
+    const [prepared] = await transaction
+      .update(schema.flyImageReleases)
+      .set({
+        migrationVerifiedAt: now,
+        controllerPreparedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(schema.flyImageReleases.id, release.id))
+      .returning();
+    return prepared!;
+  });
+}
+
+export async function acquireFlyImageReleaseAttempt(input: {
+  sourceRevision: string;
+  trigger: "main" | "scheduled" | "manual";
+  forceAll: boolean;
+  githubRunId: string;
+  githubRunAttempt: number;
+}) {
+  assertCurrentBuildRevision(input.sourceRevision);
+  return knowledgeDb.transaction(async (transaction) => {
+    await lockFlyImageReleases(transaction);
+    const now = new Date();
+    await transaction
+      .update(schema.flyImageReleaseAttempts)
+      .set({ status: "expired", updatedAt: now })
+      .where(
+        and(
+          inArray(schema.flyImageReleaseAttempts.status, [
+            "acquired",
+            "building",
+          ]),
+          lte(schema.flyImageReleaseAttempts.leaseExpiresAt, now),
+        ),
+      );
+    const existing = await transaction.query.flyImageReleaseAttempts.findFirst({
+      where: and(
+        eq(schema.flyImageReleaseAttempts.githubRunId, input.githubRunId),
+        eq(
+          schema.flyImageReleaseAttempts.githubRunAttempt,
+          input.githubRunAttempt,
+        ),
+      ),
+    });
+    if (existing) {
+      if (
+        existing.sourceRevision !== input.sourceRevision ||
+        existing.trigger !== input.trigger ||
+        existing.forceAll !== input.forceAll
+      ) {
+        throw new FlyImageReleaseError(
+          "RELEASE_ATTEMPT_INVALID",
+          "GitHub run identity is already bound to different release inputs.",
+        );
+      }
+      return existing;
+    }
+    const active = await transaction.query.flyImageReleaseAttempts.findFirst({
+      where: inArray(schema.flyImageReleaseAttempts.status, [
+        "acquired",
+        "building",
+      ]),
+    });
+    if (active) {
+      throw new FlyImageReleaseError(
+        "RELEASE_ATTEMPT_ACTIVE",
+        `Release publication attempt ${active.id} is already active.`,
+      );
+    }
+    const [attempt] = await transaction
+      .insert(schema.flyImageReleaseAttempts)
+      .values({
+        ...input,
+        status: "acquired",
+        leaseExpiresAt: new Date(now.getTime() + RELEASE_ATTEMPT_LEASE_MS),
+      })
+      .returning();
+    if (!attempt) throw new Error("Release attempt insert returned no row.");
+    return attempt;
+  });
+}
+
+export async function renewFlyImageReleaseAttempt(input: {
+  attemptId: string;
+  sourceRevision: string;
+  githubRunId: string;
+  githubRunAttempt: number;
+}) {
+  const now = new Date();
+  const [attempt] = await knowledgeDb
+    .update(schema.flyImageReleaseAttempts)
+    .set({
+      status: "building",
+      leaseExpiresAt: new Date(now.getTime() + RELEASE_ATTEMPT_LEASE_MS),
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(schema.flyImageReleaseAttempts.id, input.attemptId),
+        eq(schema.flyImageReleaseAttempts.sourceRevision, input.sourceRevision),
+        eq(schema.flyImageReleaseAttempts.githubRunId, input.githubRunId),
+        eq(
+          schema.flyImageReleaseAttempts.githubRunAttempt,
+          input.githubRunAttempt,
+        ),
+        inArray(schema.flyImageReleaseAttempts.status, [
+          "acquired",
+          "building",
+        ]),
+        gt(schema.flyImageReleaseAttempts.leaseExpiresAt, now),
+      ),
+    )
+    .returning();
+  if (!attempt) {
+    throw new FlyImageReleaseError(
+      "RELEASE_ATTEMPT_INVALID",
+      "Release publication attempt is missing, expired, or already settled.",
+    );
+  }
+  return attempt;
+}
+
+export async function failFlyImageReleaseAttempt(input: {
+  attemptId: string;
+  sourceRevision: string;
+  githubRunId: string;
+  githubRunAttempt: number;
+  evidence: Record<string, unknown>;
+}) {
+  return knowledgeDb.transaction(async (transaction) => {
+    await lockFlyImageReleases(transaction);
+    const [attempt] = await transaction
+      .update(schema.flyImageReleaseAttempts)
+      .set({
+        status: "failed",
+        failureEvidence: input.evidence,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(schema.flyImageReleaseAttempts.id, input.attemptId),
+          eq(
+            schema.flyImageReleaseAttempts.sourceRevision,
+            input.sourceRevision,
+          ),
+          eq(schema.flyImageReleaseAttempts.githubRunId, input.githubRunId),
+          eq(
+            schema.flyImageReleaseAttempts.githubRunAttempt,
+            input.githubRunAttempt,
+          ),
+          inArray(schema.flyImageReleaseAttempts.status, [
+            "acquired",
+            "building",
+          ]),
+        ),
+      )
+      .returning();
+    return attempt ?? null;
+  });
+}
+
 export async function registerFlyImageReleaseCandidate(
-  input: FlyImageReleaseManifestV2,
+  input: FlyImageReleaseManifestV3,
 ) {
-  const manifest = flyImageReleaseManifestV2Schema.parse(input);
+  const manifest = flyImageReleaseManifestV3Schema.parse(input);
   assertCurrentBuildRevision(manifest.bundleRevision);
+  if (
+    manifest.migration.head !== RELEASE_MIGRATION_HEAD ||
+    manifest.migration.historyLockHash !== RELEASE_MIGRATION_HISTORY_LOCK_HASH
+  ) {
+    throw new FlyImageReleaseError(
+      "RELEASE_MIGRATION_BLOCKED",
+      "Candidate migration identity does not match the serving release code.",
+    );
+  }
   for (const component of manifest.components) {
     assertFlyImageMatchesRole(component.role, component.image);
   }
-  await assertReleaseControllerHealthy(manifest.controllerContractRevision);
-
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${FLY_IMAGE_RELEASE_LOCK_KEY}, 0))`,
     );
     const settings = await ensureSettings(transaction);
-    const baseComponents = settings.stableReleaseId
-      ? await transaction
-          .select()
-          .from(schema.flyImageReleaseComponents)
-          .where(
-            eq(
-              schema.flyImageReleaseComponents.releaseId,
-              settings.stableReleaseId,
-            ),
-          )
-      : [];
-    const changedByRole = new Map(
-      manifest.components.map((component) => [component.role, component]),
-    );
-    const baseByRole = new Map(
-      baseComponents.map((component) => [component.role, component]),
-    );
-    const components = FLY_IMAGE_ROLES.map((role) => {
-      const changed = changedByRole.get(role);
-      if (changed) return { ...changed, changed: true };
-      const base = baseByRole.get(role);
-      if (!base) {
-        throw new FlyImageReleaseError(
-          "RELEASE_INCOMPLETE",
-          `The first Fly image release must publish '${role}'.`,
-        );
-      }
-      return {
-        role,
-        image: base.image,
-        sourceRevision: base.sourceRevision,
-        inputFingerprint: base.inputFingerprint,
-        smoke: base.smoke,
-        environmentGateway:
-          role === "environment-router" &&
-          base.environmentGatewayAcceptedVersions
-            ? {
-                acceptedVersions: [...base.environmentGatewayAcceptedVersions],
-              }
-            : undefined,
-        changed: false,
-      };
+    const now = new Date();
+    const attempt = await transaction.query.flyImageReleaseAttempts.findFirst({
+      where: and(
+        eq(schema.flyImageReleaseAttempts.id, manifest.attempt.id),
+        eq(
+          schema.flyImageReleaseAttempts.sourceRevision,
+          manifest.bundleRevision,
+        ),
+        eq(
+          schema.flyImageReleaseAttempts.githubRunId,
+          manifest.attempt.githubRunId,
+        ),
+        eq(
+          schema.flyImageReleaseAttempts.githubRunAttempt,
+          manifest.attempt.githubRunAttempt,
+        ),
+      ),
     });
+    if (
+      !attempt ||
+      !["acquired", "building", "candidate"].includes(attempt.status)
+    ) {
+      throw new FlyImageReleaseError(
+        "RELEASE_ATTEMPT_INVALID",
+        "Release candidate is not bound to an active publication attempt.",
+      );
+    }
+    if (
+      attempt.trigger !== manifest.trigger ||
+      attempt.forceAll !== manifest.attempt.forceAll
+    ) {
+      throw new FlyImageReleaseError(
+        "RELEASE_ATTEMPT_INVALID",
+        "Release manifest does not match its publication attempt inputs.",
+      );
+    }
+    const components = manifest.components.map((component) => ({
+      ...component,
+      changed: true,
+    }));
     const router = components.find(
       (component) => component.role === "environment-router",
     );
@@ -156,10 +424,12 @@ export async function registerFlyImageReleaseCandidate(
     }
     const manifestDigest = digestCanonicalJson({
       version: manifest.version,
+      attempt: manifest.attempt,
       controllerContractRevision: manifest.controllerContractRevision,
+      controller: manifest.controller,
       bundleRevision: manifest.bundleRevision,
       trigger: manifest.trigger,
-      migrationChanged: manifest.migrationChanged,
+      migration: manifest.migration,
       environmentGatewayConfigVersion:
         manifest.environmentGateway.producedVersion,
       validationStatus: manifest.validation.status,
@@ -174,11 +444,33 @@ export async function registerFlyImageReleaseCandidate(
           component.environmentGateway?.acceptedVersions ?? null,
       })),
     });
-    const existing = await transaction.query.flyImageReleases.findFirst({
-      where: eq(schema.flyImageReleases.manifestDigest, manifestDigest),
-    });
-    if (existing) return existing;
-
+    if (attempt.status === "candidate" && attempt.releaseId) {
+      const existing = await transaction.query.flyImageReleases.findFirst({
+        where: eq(schema.flyImageReleases.id, attempt.releaseId),
+      });
+      if (
+        existing?.status === "candidate" &&
+        existing.manifestDigest === manifestDigest
+      ) {
+        return existing;
+      }
+      if (existing?.status === "candidate") {
+        throw new FlyImageReleaseError(
+          "RELEASE_ATTEMPT_INVALID",
+          "Settled release attempt manifest does not match the registered candidate.",
+        );
+      }
+      throw new FlyImageReleaseError(
+        "RELEASE_STATE_INVALID",
+        `Release attempt already settled as ${existing?.status ?? "missing"}.`,
+      );
+    }
+    if (attempt.leaseExpiresAt <= now) {
+      throw new FlyImageReleaseError(
+        "RELEASE_ATTEMPT_INVALID",
+        "Release publication attempt expired before candidate registration.",
+      );
+    }
     await transaction
       .update(schema.flyImageReleases)
       .set({ status: "superseded", updatedAt: new Date() })
@@ -186,11 +478,18 @@ export async function registerFlyImageReleaseCandidate(
     const [release] = await transaction
       .insert(schema.flyImageReleases)
       .values({
+        manifestVersion: manifest.version,
+        attemptId: manifest.attempt.id,
         bundleRevision: manifest.bundleRevision,
         manifestDigest,
         trigger: manifest.trigger,
         status: "candidate",
-        migrationChanged: manifest.migrationChanged,
+        migrationChanged: manifest.migration.changed,
+        migrationExpectedHead: manifest.migration.head,
+        migrationExpectedHistoryLockHash: manifest.migration.historyLockHash,
+        controllerImage: manifest.controller.image,
+        controllerInputFingerprint: manifest.controller.inputFingerprint,
+        controllerContractRevision: manifest.controllerContractRevision,
         validation: manifest.validation,
         environmentGatewayConfigVersion:
           manifest.environmentGateway.producedVersion,
@@ -211,6 +510,25 @@ export async function registerFlyImageReleaseCandidate(
           component.environmentGateway?.acceptedVersions ?? null,
       })),
     );
+    const [settledAttempt] = await transaction
+      .update(schema.flyImageReleaseAttempts)
+      .set({ status: "candidate", releaseId: release.id, updatedAt: now })
+      .where(
+        and(
+          eq(schema.flyImageReleaseAttempts.id, manifest.attempt.id),
+          inArray(schema.flyImageReleaseAttempts.status, [
+            "acquired",
+            "building",
+          ]),
+        ),
+      )
+      .returning();
+    if (!settledAttempt) {
+      throw new FlyImageReleaseError(
+        "RELEASE_ATTEMPT_INVALID",
+        "Release publication attempt settled before candidate registration.",
+      );
+    }
     return release;
   });
 }
@@ -388,7 +706,6 @@ export async function listFlyImageReleaseCanaries() {
 }
 
 export async function getFlyImageReleasePublicationState() {
-  await assertReleaseControllerHealthy();
   const settings = await knowledgeDb.query.flyImageReleaseSettings.findFirst({
     where: eq(schema.flyImageReleaseSettings.id, "platform"),
     columns: { stableReleaseId: true },
@@ -479,10 +796,7 @@ export async function completeFlyImageReleaseIfReady(releaseId: string) {
       await transaction.query.flyImageReleaseTargets.findFirst({
         where: and(
           eq(schema.flyImageReleaseTargets.releaseId, releaseId),
-          notInArray(schema.flyImageReleaseTargets.status, [
-            "completed",
-            "configured_unverified",
-          ]),
+          notInArray(schema.flyImageReleaseTargets.status, ["completed"]),
         ),
         columns: { id: true },
       });
@@ -678,6 +992,7 @@ export async function approveFlyImageRelease(input: {
         "Only a candidate Fly image release can be approved.",
       );
     }
+    await assertV3ReleasePrepared(transaction, release);
     if (release.migrationChanged && !release.migrationApprovedAt) {
       throw new FlyImageReleaseError(
         "RELEASE_MIGRATION_BLOCKED",
@@ -732,6 +1047,7 @@ export async function recoverFlyImageReleaseForward(input: {
         "Forward recovery requires a candidate Fly image release.",
       );
     }
+    await assertV3ReleasePrepared(transaction, candidate);
     if (candidate.migrationChanged && !candidate.migrationApprovedAt) {
       throw new FlyImageReleaseError(
         "RELEASE_MIGRATION_BLOCKED",
@@ -894,10 +1210,14 @@ export async function acknowledgeFlyImageReleaseMigration(input: {
         "Fly image release not found.",
       );
     }
-    if (release.status !== "candidate" || !release.migrationChanged) {
+    if (
+      release.status !== "candidate" ||
+      !release.migrationChanged ||
+      !release.migrationVerifiedAt
+    ) {
       throw new FlyImageReleaseError(
         "RELEASE_STATE_INVALID",
-        "Only a migration-bearing candidate can complete the migration runbook.",
+        "Only a migration-bearing candidate with verified production ledger evidence can complete the migration runbook.",
       );
     }
     const now = new Date();
@@ -911,6 +1231,54 @@ export async function acknowledgeFlyImageReleaseMigration(input: {
       .where(eq(schema.flyImageReleases.id, release.id))
       .returning();
     return acknowledged;
+  });
+}
+
+export async function invalidateLegacyFlyImageRelease(releaseId: string) {
+  return knowledgeDb.transaction(async (transaction) => {
+    await lockFlyImageReleases(transaction);
+    const [release, settings] = await Promise.all([
+      transaction.query.flyImageReleases.findFirst({
+        where: eq(schema.flyImageReleases.id, releaseId),
+      }),
+      ensureSettings(transaction),
+    ]);
+    if (
+      !release ||
+      release.manifestVersion >= 3 ||
+      !["candidate", "paused"].includes(release.status)
+    ) {
+      throw new FlyImageReleaseError(
+        "RELEASE_STATE_INVALID",
+        "Only an unprepared legacy candidate or paused release can be invalidated.",
+      );
+    }
+    const mutatedTarget =
+      await transaction.query.flyImageReleaseTargets.findFirst({
+        where: and(
+          eq(schema.flyImageReleaseTargets.releaseId, release.id),
+          sql`(${schema.flyImageReleaseTargets.startedAt} is not null OR ${schema.flyImageReleaseTargets.status} <> 'pending')`,
+        ),
+      });
+    if (mutatedTarget) {
+      throw new FlyImageReleaseError(
+        "RELEASE_STATE_INVALID",
+        "Legacy release has target mutation evidence and cannot be invalidated.",
+      );
+    }
+    const now = new Date();
+    const [invalidated] = await transaction
+      .update(schema.flyImageReleases)
+      .set({ status: "superseded", updatedAt: now })
+      .where(eq(schema.flyImageReleases.id, release.id))
+      .returning();
+    if (settings.activeReleaseId === release.id) {
+      await transaction
+        .update(schema.flyImageReleaseSettings)
+        .set({ activeReleaseId: null, updatedAt: now })
+        .where(eq(schema.flyImageReleaseSettings.id, "platform"));
+    }
+    return invalidated!;
   });
 }
 
@@ -933,6 +1301,7 @@ export async function retryFlyImageRelease(releaseId: string) {
         "Only the currently paused Fly image release can be retried.",
       );
     }
+    await assertV3ReleasePrepared(transaction, release);
     const components = await transaction
       .select()
       .from(schema.flyImageReleaseComponents)
@@ -1208,10 +1577,81 @@ async function ensureSettings(transaction: KnowledgeTransaction) {
   );
 }
 
+async function assertV3ReleasePrepared(
+  transaction: KnowledgeTransaction,
+  release: typeof schema.flyImageReleases.$inferSelect,
+) {
+  if (
+    release.manifestVersion !== 3 ||
+    !release.controllerPreparedAt ||
+    !release.migrationVerifiedAt ||
+    !release.controllerImage ||
+    !release.controllerInputFingerprint ||
+    !release.controllerContractRevision
+  ) {
+    throw new FlyImageReleaseError(
+      "RELEASE_STATE_INVALID",
+      "Release requires complete v3 controller and migration preparation evidence.",
+    );
+  }
+  await assertReleaseMigrationLedger(transaction, release);
+  const heartbeat =
+    await transaction.query.releaseControllerHeartbeats.findFirst({
+      where: eq(schema.releaseControllerHeartbeats.id, "platform"),
+    });
+  if (
+    !heartbeat ||
+    heartbeat.sourceRevision !== release.bundleRevision ||
+    imageDigest(heartbeat.image) !== imageDigest(release.controllerImage) ||
+    heartbeat.inputFingerprint !== release.controllerInputFingerprint ||
+    heartbeat.contractRevision !== release.controllerContractRevision ||
+    !heartbeat.machineId ||
+    Date.now() - heartbeat.heartbeatAt.getTime() >
+      RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS
+  ) {
+    throw new FlyImageReleaseError(
+      "RELEASE_CONTROLLER_STALE",
+      "Prepared release controller is no longer authoritative for this candidate.",
+    );
+  }
+}
+
+async function assertReleaseMigrationLedger(
+  transaction: KnowledgeTransaction,
+  release: typeof schema.flyImageReleases.$inferSelect,
+) {
+  if (
+    release.migrationExpectedHead !== RELEASE_MIGRATION_HEAD ||
+    release.migrationExpectedHistoryLockHash !==
+      RELEASE_MIGRATION_HISTORY_LOCK_HASH
+  ) {
+    throw new FlyImageReleaseError(
+      "RELEASE_MIGRATION_BLOCKED",
+      "Candidate migration identity does not match the serving release code.",
+    );
+  }
+  const migrationRows = await transaction.execute<{ hash: string }>(sql`
+    SELECT hash
+    FROM drizzle.__drizzle_migrations
+    ORDER BY created_at DESC
+    LIMIT 1
+  `);
+  if (migrationRows[0]?.hash !== RELEASE_MIGRATION_HEAD_SQL_HASH) {
+    throw new FlyImageReleaseError(
+      "RELEASE_MIGRATION_BLOCKED",
+      "Production migration ledger does not match the candidate migration head.",
+    );
+  }
+}
+
 async function lockFlyImageReleases(transaction: KnowledgeTransaction) {
   await transaction.execute(
     sql`SELECT pg_advisory_xact_lock(hashtextextended(${FLY_IMAGE_RELEASE_LOCK_KEY}, 0))`,
   );
+}
+
+function imageDigest(image: string | null) {
+  return image?.match(/sha256:[a-f0-9]{64}$/u)?.[0] ?? null;
 }
 
 async function releaseChangesEnvironmentImages(

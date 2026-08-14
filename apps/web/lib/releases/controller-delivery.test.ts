@@ -16,6 +16,8 @@ import {
 } from "../../scripts/release-control-worker";
 import {
   canSkipControlWorkerMachineDeploy,
+  findControlWorkerMachine,
+  isControlWorkerMachinePostcondition,
   selectControlWorkerMachineAction,
   selectControlWorkerMachineUpdatePlan,
 } from "../../scripts/control-worker-machine";
@@ -26,6 +28,7 @@ import {
 } from "../../scripts/control-worker-artifact";
 import {
   deployControlWorkerCandidate,
+  deployStoredControlWorkerCandidate,
   type ControlWorkerDeployDependencies,
 } from "../../scripts/deploy-control-worker-candidate";
 import { publishControlWorkerCandidate } from "../../scripts/publish-control-worker-candidate";
@@ -102,6 +105,7 @@ function machine(input: {
   imageRevision?: string | undefined;
   fingerprint?: string | null | undefined;
   digest?: string | undefined;
+  environment?: Record<string, string> | undefined;
 }) {
   return {
     id: input.id,
@@ -116,6 +120,7 @@ function machine(input: {
         ],
       },
       standbys: input.standbys ?? [],
+      env: input.environment ?? {},
     },
     image_ref: {
       digest: input.digest ?? `sha256:${"1".repeat(64)}`,
@@ -329,6 +334,48 @@ test("control worker deploy skip requires matching fingerprint and a running Mac
   );
 });
 
+test("control worker postcondition requires exact persisted runtime images", () => {
+  const expectedEnvironment = {
+    KESTREL_ENVIRONMENT_ROUTER_IMAGE: `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"2".repeat(64)}`,
+    KESTREL_WORKSPACE_RUNTIME_IMAGE: `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"3".repeat(64)}`,
+  };
+  const current = findControlWorkerMachine({
+    inventory: [
+      machine({
+        id: "primary",
+        state: "started",
+        command: ["node", "/app/control-worker.cjs"],
+        environment: {
+          ...expectedEnvironment,
+          KESTREL_ENVIRONMENT_ROUTER_IMAGE: `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"4".repeat(64)}`,
+        },
+      }),
+    ],
+    machineId: "primary",
+  });
+  assert.equal(
+    isControlWorkerMachinePostcondition({
+      machine: current,
+      expectedState: "started",
+      expectedFingerprint: "fingerprint-a",
+      expectedRevision: revision,
+      expectedEnvironment,
+    }),
+    false,
+  );
+  current.environment = expectedEnvironment;
+  assert.equal(
+    isControlWorkerMachinePostcondition({
+      machine: current,
+      expectedState: "started",
+      expectedFingerprint: "fingerprint-a",
+      expectedRevision: revision,
+      expectedEnvironment,
+    }),
+    true,
+  );
+});
+
 test("controller deployment survives Fly manifest transcoding after stopped-first tagged updates", async () => {
   const fingerprint = "f".repeat(64);
   const digest = `sha256:${"2".repeat(64)}`;
@@ -424,10 +471,82 @@ test("controller deployment survives Fly manifest transcoding after stopped-firs
       args[args.indexOf("--command") + 1],
       "node /app/control-worker.cjs",
     );
+    assert.equal(
+      args[args.indexOf("--env") + 1],
+      `KESTREL_RELEASE_IMAGE=registry.fly.io/kestrel-one-control-worker@${digest}`,
+    );
   }
   assert.equal(updates[0]?.args.includes("--skip-start"), true);
   assert.equal(updates[1]?.args.includes("--skip-start"), false);
   assert.equal(disposed, true);
+});
+
+test("stored controller preparation injects the candidate runtime image digests", async () => {
+  const controllerDigest = `sha256:${"2".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"3".repeat(64)}`;
+  const workspaceImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"4".repeat(64)}`;
+  const inventory = [
+    machine({ id: "primary", state: "started", fingerprint: "old" }),
+  ];
+  const updates: string[][] = [];
+
+  await deployStoredControlWorkerCandidate({
+    revision,
+    image: `registry.fly.io/kestrel-one-control-worker@${controllerDigest}`,
+    fingerprint: `sha256:${"f".repeat(64)}`,
+    routerImage,
+    workspaceImage,
+    accessToken: "token",
+    dependencies: {
+      readInventory: async () => structuredClone(inventory),
+      run: async (command, args) => {
+        if (command === "flyctl" && args[0] === "machine") {
+          updates.push(args);
+          inventory[0]!.state = "started";
+          inventory[0]!.config.init.cmd = ["node", "/app/control-worker.cjs"];
+          inventory[0]!.image_ref.labels[
+            "org.kestrel.control-worker.fingerprint"
+          ] = "f".repeat(64);
+          inventory[0]!.image_ref.labels["org.opencontainers.image.revision"] =
+            revision;
+          for (let index = 0; index < args.length; index += 1) {
+            if (args[index] !== "--env") continue;
+            const [key, ...value] = args[index + 1]!.split("=");
+            inventory[0]!.config.env[key!] = value.join("=");
+          }
+        }
+      },
+      wait: async () => {},
+      write: () => {},
+    },
+  });
+
+  assert.equal(updates.length, 1);
+  assert.equal(
+    updates[0]!.includes(`KESTREL_ENVIRONMENT_ROUTER_IMAGE=${routerImage}`),
+    true,
+  );
+  assert.equal(
+    updates[0]!.includes(`KESTREL_WORKSPACE_RUNTIME_IMAGE=${workspaceImage}`),
+    true,
+  );
+  await assert.rejects(
+    deployStoredControlWorkerCandidate({
+      revision,
+      image: `registry.fly.io/kestrel-one-control-worker@${controllerDigest}`,
+      fingerprint: `sha256:${"f".repeat(64)}`,
+      routerImage: "registry.fly.io/kestrel-environment-router:latest",
+      workspaceImage,
+      accessToken: "token",
+      dependencies: {
+        readInventory: async () => structuredClone(inventory),
+        run: async () => assert.fail("invalid images must fail before mutation"),
+        wait: async () => {},
+        write: () => {},
+      },
+    }),
+    /candidate's immutable Environment Router and Workspace Runtime images/u,
+  );
 });
 
 test("controller candidate publication builds, smokes, and disposes without Machine authority", async () => {
@@ -688,24 +807,17 @@ test("release workflow waits for exact production identity before non-deploying 
     "Wait for the exact Kestrel One production revision",
   );
   const preflight = workflow.indexOf("Preflight release publication");
-  const controllerCandidate = workflow.indexOf(
-    "Build and smoke the release controller candidate",
-  );
   const publish = workflow.indexOf(
-    "Build, smoke, and publish candidate images",
+    "Build, smoke, and publish the complete candidate",
   );
   assert.ok(wait >= 0);
   assert.ok(preflight > wait);
-  assert.ok(controllerCandidate > preflight);
-  assert.ok(publish > controllerCandidate);
+  assert.ok(publish > preflight);
   assert.match(
     workflow,
     /wait-for-kestrel-production-revision\.ts \$\{\{ github\.sha \}\}/u,
   );
-  assert.match(
-    workflow,
-    /publish-control-worker-candidate\.ts \$\{\{ github\.sha \}\}/u,
-  );
+  assert.match(workflow, /run: pnpm release:fly-images/u);
   const waitScript = await readFile(
     new URL("scripts/wait-for-kestrel-production-revision.ts", root),
     "utf8",
@@ -735,14 +847,10 @@ test("publish-candidate contains no controller deployment step", async () => {
     new URL(".github/workflows/fly-image-release.yml", root),
     "utf8",
   );
-  const controllerCandidate = workflow.indexOf(
-    "Build and smoke the release controller candidate",
-  );
   const publish = workflow.indexOf(
-    "Build, smoke, and publish candidate images",
+    "Build, smoke, and publish the complete candidate",
   );
-  assert.ok(controllerCandidate >= 0);
-  assert.ok(publish > controllerCandidate);
+  assert.ok(publish >= 0);
   assert.doesNotMatch(
     workflow,
     /id: (?:deploy|restore|verify)-release-controller/u,

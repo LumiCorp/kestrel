@@ -14,6 +14,7 @@ export type MachineInventoryRecord = {
   digest: string;
   startupCommand: string | null;
   standbys: string[];
+  environment: Record<string, string>;
 };
 
 class IncompleteControlWorkerMachineError extends Error {
@@ -85,6 +86,12 @@ function parseMachine(value: unknown): MachineInventoryRecord {
           rawStandbys.every((item) => typeof item === "string")
         ? rawStandbys
         : null;
+  const rawEnvironment = asRecord(config?.env ?? config?.Env);
+  const environment = Object.fromEntries(
+    Object.entries(rawEnvironment ?? {}).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
   if (!(id && state && revision && digest && standbys)) {
     throw new IncompleteControlWorkerMachineError();
   }
@@ -96,7 +103,26 @@ function parseMachine(value: unknown): MachineInventoryRecord {
     digest,
     startupCommand,
     standbys,
+    environment,
   };
+}
+
+export function isControlWorkerMachinePostcondition(input: {
+  machine: MachineInventoryRecord;
+  expectedState: "started" | "stopped";
+  expectedFingerprint: string;
+  expectedRevision: string;
+  expectedEnvironment?: Record<string, string>;
+}) {
+  return (
+    input.machine.state === input.expectedState &&
+    input.machine.fingerprint === input.expectedFingerprint &&
+    input.machine.revision === input.expectedRevision &&
+    input.machine.startupCommand === CONTROL_WORKER_STARTUP_COMMAND &&
+    Object.entries(input.expectedEnvironment ?? {}).every(
+      ([key, value]) => input.machine.environment[key] === value,
+    )
+  );
 }
 
 export function parseControlWorkerInventory(inventory: unknown) {

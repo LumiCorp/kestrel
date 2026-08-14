@@ -12,7 +12,7 @@ import {
 } from "../../scripts/fly-image-publisher.js";
 import {
   flyImageReleaseCandidatePublicationResponseSchema,
-  flyImageReleaseManifestV2Schema,
+  flyImageReleaseManifestV3Schema,
 } from "../../apps/web/lib/releases/contracts.js";
 import { RELEASE_CONTROLLER_CONTRACT_REVISION } from "../../apps/web/lib/releases/controller-contract.js";
 import {
@@ -21,9 +21,11 @@ import {
   STREAMING_COMMAND_STDERR_TAIL_BYTES,
   StreamingCommandError,
 } from "../../scripts/lib/streaming-command.js";
+import { ReleaseArtifactAggregateError } from "../../scripts/fly-image-publisher.js";
 
 const revision = "a".repeat(40);
 const releaseId = "11111111-1111-4111-8111-111111111111";
+const attemptId = "22222222-2222-4222-8222-222222222222";
 const roles = [
   "workspace-runtime",
   "environment-router",
@@ -47,13 +49,16 @@ test("publisher exercises every image and survives Fly registry propagation", as
   assert.equal(harness.smokes.length, roles.length);
   assert.equal(harness.maxActiveFlyBuilds, 3);
   assert.equal(harness.concurrentBuildsSharedAnApp, false);
+  assert.deepEqual(harness.controllerBuildInputs, [
+    { revision, attemptId, forceAll: true },
+  ]);
   assert.deepEqual(
     harness.waits,
     roles.map(() => FLY_REGISTRY_PULL_RETRY_DELAY_MS),
   );
-  assert.equal(harness.oidcRequests, 2);
+  assert.equal(harness.oidcRequests, 5);
   assert.equal(harness.preflightAuthorization, "Bearer oidc-token-1");
-  assert.equal(harness.publicationAuthorization, "Bearer oidc-token-2");
+  assert.equal(harness.publicationAuthorization, "Bearer oidc-token-5");
   assert.deepEqual(
     harness.publishedManifest?.components.map(
       (component: { role: string }) => component.role,
@@ -79,6 +84,9 @@ test("publisher reuses revision tags and still smokes every image", async () => 
   assert.equal(harness.flyBuilds.length, 0);
   assert.equal(harness.smokes.length, roles.length);
   assert.equal(harness.waits.length, 0);
+  assert.deepEqual(harness.controllerBuildInputs, [
+    { revision, attemptId, forceAll: false },
+  ]);
   assert.equal(
     harness.output.filter((message) =>
       message.startsWith("Reusing published image"),
@@ -95,6 +103,49 @@ test("publisher reports the candidate API error code", async () => {
   await assert.rejects(
     publishFlyImages(harness.dependencies),
     /409: RELEASE_INCOMPLETE/u,
+  );
+});
+
+test("publisher waits for every artifact and reports all failures together", async () => {
+  const harness = publisherHarness({
+    reusePublishedImages: false,
+    failingSmokeRoles: ["environment-router", "turn-worker"],
+    controllerFailure: true,
+  });
+  await assert.rejects(
+    publishFlyImages(harness.dependencies),
+    (error: unknown) => {
+      assert.ok(error instanceof ReleaseArtifactAggregateError);
+      assert.deepEqual(error.failures.map((failure) => failure.role).sort(), [
+        "environment-router",
+        "release-controller",
+        "turn-worker",
+      ]);
+      assert.match(
+        error.message,
+        /release-controller: controller smoke failed/u,
+      );
+      assert.match(
+        error.message,
+        /environment-router: environment-router smoke failed/u,
+      );
+      assert.match(error.message, /turn-worker: turn-worker smoke failed/u);
+      return true;
+    },
+  );
+  assert.equal(harness.smokes.length, roles.length);
+  assert.equal(harness.attemptMutations.at(-1)?.action, "fail");
+  assert.deepEqual(
+    (harness.attemptMutations.at(-1)?.evidence as { failures?: unknown })
+      .failures,
+    [
+      { role: "release-controller", message: "controller smoke failed" },
+      {
+        role: "environment-router",
+        message: "environment-router smoke failed",
+      },
+      { role: "turn-worker", message: "turn-worker smoke failed" },
+    ],
   );
 });
 
@@ -270,6 +321,8 @@ function publisherHarness(input: {
   preflightFailureCode?: string;
   publicationFailureCode?: string;
   publicationResponse?: unknown;
+  failingSmokeRoles?: string[];
+  controllerFailure?: boolean;
 }) {
   const builtImages = new Set<string>();
   const postBuildPulls = new Map<string, number>();
@@ -279,6 +332,12 @@ function publisherHarness(input: {
   const smokes: string[][] = [];
   const waits: number[] = [];
   const output: string[] = [];
+  const attemptMutations: Array<Record<string, unknown>> = [];
+  const controllerBuildInputs: Array<{
+    revision: string;
+    attemptId: string;
+    forceAll: boolean;
+  }> = [];
   let activeFlyBuilds = 0;
   let maxActiveFlyBuilds = 0;
   const activeFlyBuildApps = new Set<string>();
@@ -296,7 +355,9 @@ function publisherHarness(input: {
     env: {
       ACTIONS_ID_TOKEN_REQUEST_URL: "https://oidc.test/token",
       ACTIONS_ID_TOKEN_REQUEST_TOKEN: "request-token",
-      KESTREL_RELEASE_FORCE_ALL: "true",
+      GITHUB_RUN_ATTEMPT: "1",
+      GITHUB_RUN_ID: "123456789",
+      KESTREL_RELEASE_FORCE_ALL: input.reusePublishedImages ? "false" : "true",
       KESTREL_RELEASE_PUBLISH_URL: "https://publisher.test/candidates",
       KESTREL_RELEASE_TRIGGER: "manual",
       KESTREL_RELEASE_VALIDATION_COMMANDS: '["pnpm validate"]',
@@ -316,9 +377,16 @@ function publisherHarness(input: {
         throw new Error(`Unexpected fetch URL '${url.href}'.`);
       }
       const authorization = new Headers(init?.headers).get("authorization");
+      if (init?.method === "PUT") {
+        return Response.json({ attempt: { id: attemptId } }, { status: 201 });
+      }
+      if (init?.method === "PATCH") {
+        attemptMutations.push(JSON.parse(String(init.body)));
+        return Response.json({ attempt: { id: attemptId } });
+      }
       if (init?.method === "POST") {
         publicationAuthorization = authorization;
-        publishedManifest = flyImageReleaseManifestV2Schema.parse(
+        publishedManifest = flyImageReleaseManifestV3Schema.parse(
           JSON.parse(String(init.body)),
         );
         if (input.publicationFailureCode) {
@@ -342,8 +410,8 @@ function publisherHarness(input: {
         );
       }
       return Response.json({
-        requiresFullBundle: true,
-        stableBundleRevision: null,
+        requiresFullBundle: !input.reusePublishedImages,
+        stableBundleRevision: input.reusePublishedImages ? revision : null,
       });
     },
     now: () => new Date("2026-08-04T12:00:00.000Z"),
@@ -356,6 +424,9 @@ function publisherHarness(input: {
       }
       if (command === "git" && args.join(" ") === "ls-files") {
         return "deploy/fly/image-catalog.json\npackage.json";
+      }
+      if (command === "git" && args[0] === "diff") {
+        return "";
       }
       if (command === "docker" && args[0] === "image") {
         const taggedImage = args[2]!;
@@ -394,6 +465,10 @@ function publisherHarness(input: {
       }
       if (command === "bash") {
         smokes.push(args);
+        const role = roles.find((candidate) => args[0]?.includes(candidate));
+        if (role && input.failingSmokeRoles?.includes(role)) {
+          throw new Error(`${role} smoke failed`);
+        }
         return;
       }
       if (command === "docker" && args[0] === "pull") {
@@ -409,6 +484,16 @@ function publisherHarness(input: {
       }
       throw new Error(`Unexpected run: ${command} ${args.join(" ")}`);
     },
+    buildController: async (controllerInput) => {
+      controllerBuildInputs.push(controllerInput);
+      if (input.controllerFailure) throw new Error("controller smoke failed");
+      return {
+        image: `registry.fly.io/kestrel-one-control-worker@sha256:${"6".repeat(64)}`,
+        fingerprint: "7".repeat(64),
+        smokeCommand: "control-worker-smoke",
+        completedAt: "2026-08-04T12:00:00.000Z",
+      };
+    },
     write: (message) => output.push(message),
   };
 
@@ -420,6 +505,8 @@ function publisherHarness(input: {
     smokes,
     waits,
     output,
+    attemptMutations,
+    controllerBuildInputs,
     get oidcRequests() {
       return oidcRequests;
     },

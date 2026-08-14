@@ -38,12 +38,13 @@ For a Kestrel One release-controller or lifecycle-queue change, add this release
 note:
 
 ```text
-Production release owner: run `pnpm --dir apps/web release:control-worker` after migration verification and before queue ownership changes.
+Production release owner: after candidate publication, dispatch `Prepare release candidate` for the candidate UUID from the exact release revision before approval.
 ```
 
-The controller release command refuses to proceed unless legacy lifecycle queues
-are idle, and verifies both the deployed readiness contract and database
-heartbeat.
+The preparation workflow deploys the candidate controller, preserves the
+primary/standby topology, and verifies the exact artifact and database
+heartbeat. Use `pnpm --dir apps/web release:control-worker` only for an explicit
+bootstrap or repair, not as the standard candidate release path.
 
 ## Notes
 

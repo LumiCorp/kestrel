@@ -76,8 +76,9 @@ fly deploy . \
 Record both registry digests reported by the publisher.
 `KESTREL_WORKSPACE_RUNTIME_IMAGE` must reference the Workspace Runtime digest,
 and `KESTREL_ENVIRONMENT_ROUTER_IMAGE` must reference the Environment Router
-digest. Both must use immutable `registry.fly.io/...@sha256:...` references,
-never a mutable tag or the same cross-role image.
+digest. Both must use their immutable
+`ghcr.io/lumicorp/kestrel-<role>@sha256:...` references, never a mutable tag,
+Fly registry reference, or the same cross-role image.
 
 ## Enter maintenance and cut over the control plane
 

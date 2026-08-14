@@ -7,6 +7,7 @@ LABEL org.opencontainers.image.revision=$KESTREL_GIT_SHA
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 ENV NODE_ENV=production
+ENV KESTREL_BUILD_REVISION=$KESTREL_GIT_SHA
 
 RUN corepack enable
 

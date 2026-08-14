@@ -14,8 +14,11 @@ type Release = {
   bundleRevision: string;
   trigger: string;
   status: string;
+  manifestVersion: number;
   migrationChanged: boolean;
   migrationApprovedAt: string | null;
+  migrationVerifiedAt: string | null;
+  controllerPreparedAt: string | null;
   failureMessage: string | null;
   environmentGatewayConfigVersion: number | null;
   admission: { ok: boolean; code?: string; message?: string };
@@ -38,6 +41,7 @@ type Release = {
     targetKey: string;
     status: string;
     stage: string;
+    startedAt: string | null;
     result: Record<string, unknown> | null;
   }>;
 };
@@ -113,6 +117,12 @@ export function ReleasesClient({
   };
 
   function releaseDetails(release: Release) {
+    const canInvalidateLegacy =
+      release.manifestVersion < 3 &&
+      ["candidate", "paused"].includes(release.status) &&
+      release.targets.every(
+        (target) => target.status === "pending" && !target.startedAt,
+      );
     return (
       <div className="space-y-5">
         {release.targets.length ? (
@@ -145,9 +155,22 @@ export function ReleasesClient({
           </div>
         ) : null}
         <div className="flex flex-wrap gap-2">
+          {canInvalidateLegacy ? (
+            <Button
+              disabled={pending}
+              onClick={() =>
+                act({ action: "invalidate_legacy", releaseId: release.id })
+              }
+              variant="destructive"
+            >
+              Invalidate legacy release
+            </Button>
+          ) : null}
           {release.status === "candidate" ? (
             <>
-              {release.migrationChanged && !release.migrationApprovedAt ? (
+              {release.manifestVersion === 3 &&
+              release.migrationChanged &&
+              !release.migrationApprovedAt ? (
                 <Button
                   disabled={
                     pending || !release.migrationAcknowledgementEligibility.ok
@@ -163,6 +186,9 @@ export function ReleasesClient({
               <Button
                 disabled={
                   pending ||
+                  release.manifestVersion !== 3 ||
+                  !release.controllerPreparedAt ||
+                  !release.migrationVerifiedAt ||
                   Boolean(active) ||
                   !savedCanaryId ||
                   (release.migrationChanged && !release.migrationApprovedAt) ||
@@ -174,6 +200,15 @@ export function ReleasesClient({
               >
                 Approve release
               </Button>
+              {release.manifestVersion === 3 &&
+              (!release.controllerPreparedAt ||
+                !release.migrationVerifiedAt) ? (
+                <SettingsStatusNotice
+                  description="Dispatch Prepare release candidate for this exact revision. Approval unlocks only after the controller heartbeat and production migration ledger are verified."
+                  title="Candidate preparation required"
+                  tone="warning"
+                />
+              ) : null}
               {release.recoveryEligibility.ok ? (
                 <Button
                   disabled={pending}
@@ -327,6 +362,14 @@ export function ReleasesClient({
               {decisionRelease.migrationChanged &&
               !decisionRelease.migrationApprovedAt ? (
                 <Badge variant="destructive">Migration runbook required</Badge>
+              ) : null}
+              {decisionRelease.manifestVersion === 3 &&
+              (!decisionRelease.controllerPreparedAt ||
+                !decisionRelease.migrationVerifiedAt) ? (
+                <Badge variant="destructive">Preparation required</Badge>
+              ) : null}
+              {decisionRelease.manifestVersion < 3 ? (
+                <Badge variant="destructive">Legacy manifest blocked</Badge>
               ) : null}
             </div>
             <p className="text-muted-foreground text-xs">

@@ -9,6 +9,9 @@ import {
   evaluateFlyImageMigrationAcknowledgementEligibility,
   flyImageReleaseCandidatePublicationResponseSchema,
   flyImageReleaseManifestV2Schema,
+  flyImageReleaseManifestV3Schema,
+  FLY_IMAGE_ROLES,
+  ROLE_IMAGE_REPOSITORIES,
   isFlyImageReleaseMachineVerified,
   selectFlyImageRollbackTargets,
 } from "./contracts";
@@ -43,12 +46,79 @@ test("forward recovery eligibility is fully server-derived", () => {
   );
 });
 
+test("v3 release manifests require the controller and all five exact roles", () => {
+  const base = flyImageReleaseManifestV3Schema.parse({
+    version: 3,
+    attempt: {
+      id: "11111111-1111-4111-8111-111111111111",
+      githubRunId: "123",
+      githubRunAttempt: 1,
+      forceAll: true,
+    },
+    controllerContractRevision: 1,
+    bundleRevision: revision,
+    trigger: "manual",
+    migration: {
+      changed: true,
+      head: "0069_unified_release_attempt",
+      historyLockHash: `sha256:${digest}`,
+    },
+    controller: {
+      role: "release-controller",
+      image: `registry.fly.io/kestrel-one-control-worker@sha256:${digest}`,
+      sourceRevision: revision,
+      inputFingerprint: `sha256:${digest}`,
+      smoke: {
+        status: "passed",
+        command: "smoke",
+        completedAt: "2026-08-13T00:00:00.000Z",
+      },
+    },
+    environmentGateway: { producedVersion: 3 },
+    validation: {
+      status: "passed",
+      commands: ["pnpm validate"],
+      completedAt: "2026-08-13T00:00:00.000Z",
+    },
+    components: FLY_IMAGE_ROLES.map((role) => ({
+      role,
+      image: `${ROLE_IMAGE_REPOSITORIES[role]}@sha256:${digest}`,
+      sourceRevision: revision,
+      inputFingerprint: `sha256:${digest}`,
+      smoke: {
+        status: "passed",
+        command: "smoke",
+        completedAt: "2026-08-13T00:00:00.000Z",
+      },
+      ...(role === "environment-router"
+        ? { environmentGateway: { acceptedVersions: [2, 3] } }
+        : {}),
+    })),
+  });
+  assert.equal(base.components.length, 5);
+  assert.equal(
+    flyImageReleaseManifestV3Schema.safeParse({
+      ...base,
+      components: base.components.slice(1),
+    }).success,
+    false,
+  );
+  assert.equal(
+    flyImageReleaseManifestV3Schema.safeParse({
+      ...base,
+      controller: { ...base.controller, sourceRevision: "b".repeat(40) },
+    }).success,
+    false,
+  );
+});
+
 test("migration acknowledgement eligibility follows the endpoint contract", () => {
   assert.deepEqual(
     evaluateFlyImageMigrationAcknowledgementEligibility({
       status: "candidate",
       migrationChanged: true,
       migrationApprovedAt: null,
+      migrationVerifiedAt: new Date(),
     }),
     { ok: true },
   );
@@ -57,6 +127,7 @@ test("migration acknowledgement eligibility follows the endpoint contract", () =
       status: "paused",
       migrationChanged: true,
       migrationApprovedAt: null,
+      migrationVerifiedAt: new Date(),
     }).ok,
     false,
   );
@@ -65,19 +136,20 @@ test("migration acknowledgement eligibility follows the endpoint contract", () =
       status: "candidate",
       migrationChanged: false,
       migrationApprovedAt: null,
+      migrationVerifiedAt: new Date(),
     }).ok,
     false,
   );
 });
 
-test("release progress counts configured stopped Workspaces as resolved", () => {
+test("release progress requires stopped Workspaces to verify on start", () => {
   assert.equal(
     countResolvedFlyImageReleaseTargets([
       { status: "completed" },
       { status: "configured_unverified" },
       { status: "applying" },
     ]),
-    2,
+    1,
   );
 });
 

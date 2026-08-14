@@ -17,10 +17,19 @@ test("Fly image release automation covers every managed image and authenticates 
     candidateRoute,
     releaseContracts,
     streamingCommand,
+    canonicalStreamingCommand,
     preflightRuntime,
     controllerCandidateRuntime,
     controllerDeployRuntime,
     controllerArtifactRuntime,
+    preparationWorkflow,
+    preparationRuntime,
+    smokeHarness,
+    routerSmoke,
+    previewSmoke,
+    workspaceSmoke,
+    manifestSmoke,
+    pullRequestTemplate,
   ] = await Promise.all([
     read("deploy/fly/image-catalog.json"),
     read(".github/workflows/fly-image-release.yml"),
@@ -33,10 +42,19 @@ test("Fly image release automation covers every managed image and authenticates 
     read("apps/web/app/api/runtime/releases/candidates/route.ts"),
     read("apps/web/lib/releases/contracts.ts"),
     read("scripts/lib/streaming-command.ts"),
+    read("apps/web/scripts/streaming-command.ts"),
     read("scripts/preflight-fly-image-publication.ts"),
     read("apps/web/scripts/publish-control-worker-candidate.ts"),
     read("apps/web/scripts/deploy-control-worker-candidate.ts"),
     read("apps/web/scripts/control-worker-artifact.ts"),
+    read(".github/workflows/prepare-release-candidate.yml"),
+    read("apps/web/scripts/prepare-release-candidate.ts"),
+    read("scripts/lib/image-smoke.sh"),
+    read("apps/environment-router/scripts/image-smoke.sh"),
+    read("apps/preview-edge/scripts/image-smoke.sh"),
+    read("apps/workspace-runtime/scripts/image-smoke.sh"),
+    read("scripts/smoke-release-manifest.ts"),
+    read(".github/pull_request_template.md"),
   ]);
   for (const role of [
     "workspace-runtime",
@@ -64,16 +82,19 @@ test("Fly image release automation covers every managed image and authenticates 
   assert.match(workflow, /publish-candidate:\n\s+environment: Production/u);
   assert.match(workflow, /pnpm validate/u);
   assert.match(workflow, /run: flyctl auth docker/u);
+  assert.match(workflow, /Build, smoke, and publish the complete candidate/u);
+  assert.match(workflow, /cancel-in-progress: false/u);
+  assert.match(pullRequestTemplate, /dispatch `Prepare release candidate`/u);
   assert.match(
-    workflow,
-    /publish-control-worker-candidate\.ts \$\{\{ github\.sha \}\}/u,
+    pullRequestTemplate,
+    /release:control-worker` only for an explicit\s+bootstrap or repair/u,
   );
   assert.doesNotMatch(workflow, /deploy-control-worker-candidate/u);
   assert.doesNotMatch(workflow, /machine (?:list|status|update)|flyctl logs/u);
   assert.doesNotMatch(workflow, /run: fly auth docker/u);
   assert.match(publisherRuntime, /--build-only/u);
   assert.match(publisherRuntime, /--push/u);
-  assert.match(publisherRuntime, /Promise\.all/u);
+  assert.match(publisherRuntime, /Promise\.allSettled/u);
   assert.match(publisherRuntime, /runFlyImageBuild/u);
   assert.match(publisherRuntime, /appBuildQueues/u);
   assert.match(publisher, /publishFlyImages/u);
@@ -89,6 +110,8 @@ test("Fly image release automation covers every managed image and authenticates 
   assert.match(publisherRuntime, /pullPublishedImage/u);
   assert.match(publisherRuntime, /publicationToken/u);
   assert.match(oidc, /workflow_ref/u);
+  assert.match(oidc, /run_id/u);
+  assert.match(oidc, /run_attempt/u);
   assert.doesNotMatch(oidc, /job_workflow_ref/u);
   assert.match(oidc, /refs\/heads\/main/u);
   assert.doesNotMatch(workflow, /FLY_API_TOKEN: \$\{\{ vars\./u);
@@ -105,10 +128,10 @@ test("Fly image release automation covers every managed image and authenticates 
   );
   assert.match(publisherRuntime, /selectFlyImageDiffBase/u);
   assert.match(publisherRuntime, /const changedPaths = diffBase/u);
-  assert.match(
-    publisherRuntime,
-    /impactedFlyImages\(\{ catalog, changedPaths, forceAll \}\)/u,
-  );
+  assert.match(publisherRuntime, /forceAll\s*\?\s*false/u);
+  assert.match(publisherRuntime, /attempt\.id\.slice/u);
+  assert.match(publisherRuntime, /RELEASE_ATTEMPT_RENEW_INTERVAL_MS/u);
+  assert.match(publisher, /labelSuffix: input\.forceAll/u);
   assert.match(runPodDockerfile, /WORKDIR \/workspace\/apps\/web/u);
   assert.match(runPodSmoke, /--import tsx scripts\/managed-runpod-worker\.ts/u);
   assert.doesNotMatch(
@@ -123,6 +146,9 @@ test("Fly image release automation covers every managed image and authenticates 
   );
   assert.match(turnWorkerSmoke, /org\.opencontainers\.image\.revision/u);
   assert.match(publisherRuntime, /RELEASE_CONTROLLER_CONTRACT_REVISION/u);
+  assert.match(publisherRuntime, /version: 3 as const/u);
+  assert.match(publisherRuntime, /ReleaseArtifactAggregateError/u);
+  assert.match(publisher, /publishControlWorkerImage/u);
   assert.doesNotMatch(publisherRuntime, /controllerContractRevision:\s*1/u);
   assert.match(
     releaseContracts,
@@ -132,12 +158,18 @@ test("Fly image release automation covers every managed image and authenticates 
     candidateRoute,
     /flyImageReleaseCandidatePublicationResponseSchema\.parse/u,
   );
+  assert.match(candidateRoute, /claims\.run_id !== input\.githubRunId/u);
+  assert.match(
+    candidateRoute,
+    /claims\.run_id !== manifest\.attempt\.githubRunId/u,
+  );
   assert.match(
     publisherRuntime,
     /flyImageReleaseCandidatePublicationResponseSchema\.parse/u,
   );
-  assert.match(streamingCommand, /spawn\(command, args/u);
-  assert.match(streamingCommand, /64 \* 1024/u);
+  assert.match(streamingCommand, /apps\/web\/scripts\/streaming-command/u);
+  assert.match(canonicalStreamingCommand, /spawn\(command, args/u);
+  assert.match(canonicalStreamingCommand, /64 \* 1024/u);
   for (const runtime of [
     publisher,
     preflightRuntime,
@@ -154,8 +186,7 @@ test("Fly image release automation covers every managed image and authenticates 
     "Authenticate Docker to the Fly registry",
     "Wait for the exact Kestrel One production revision",
     "Preflight release publication",
-    "Build and smoke the release controller candidate",
-    "Build, smoke, and publish candidate images",
+    "Build, smoke, and publish the complete candidate",
   ].map((name) => workflow.indexOf(`- name: ${name}`));
   assert.ok(orderedSteps.every((index) => index >= 0));
   assert.deepEqual(
@@ -166,6 +197,34 @@ test("Fly image release automation covers every managed image and authenticates 
     workflow,
     /run: pnpm tsx scripts\/preflight-fly-image-publication\.ts/u,
   );
+  assert.match(preparationWorkflow, /workflow_dispatch/u);
+  assert.match(preparationWorkflow, /cancel-in-progress: false/u);
+  assert.match(
+    preparationWorkflow,
+    /setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1\n\s+with:\n\s+version: 0\.4\.82/u,
+  );
+  assert.match(preparationRuntime, /deployStoredControlWorkerCandidate/u);
+  assert.doesNotMatch(preparationRuntime, /buildControlWorkerArtifact/u);
+  assert.match(preparationRuntime, /preparationCompletionSchema\.parse/u);
+  assert.match(controllerDeployRuntime, /KESTREL_RELEASE_IMAGE=/u);
+  assert.match(smokeHarness, /State\.Running/u);
+  assert.match(smokeHarness, /docker logs/u);
+  assert.match(routerSmoke, /smoke_container_port/u);
+  assert.match(routerSmoke, /kill -0 "\$fixture"/u);
+  for (const smoke of [routerSmoke, previewSmoke, workspaceSmoke]) {
+    assert.doesNotMatch(smoke, /docker run --rm --detach/u);
+  }
+  assert.match(manifestSmoke, /Promise\.allSettled/u);
+  assert.match(manifestSmoke, /kestrel-one-control-worker\/smoke\.sh/u);
+  for (const role of [
+    "workspace-runtime",
+    "environment-router",
+    "preview-edge",
+    "turn-worker",
+    "runpod-worker",
+  ]) {
+    assert.match(manifestSmoke, new RegExp(`"${role}"`, "u"));
+  }
 });
 
 test("promotion drains sequentially and preserves stopped Workspaces", async () => {
@@ -197,6 +256,10 @@ test("promotion drains sequentially and preserves stopped Workspaces", async () 
   assert.match(releaseStore, /acknowledgeFlyImageReleaseMigration/u);
   assert.match(releaseStore, /trigger: "rollback"/u);
   assert.match(runtime, /completeFlyImageReleaseIfReady/u);
+  assert.match(
+    runtime,
+    /workspace\.verified_on_start[\s\S]*?\.returning\(\{[\s\S]*?completeFlyImageReleaseIfReady/u,
+  );
   assert.match(runtime, /environment\.awaiting_provisioning/u);
   assert.match(runtime, /environment\.skipped_unavailable/u);
   assert.match(runtime, /environment\.removed_before_deploy/u);
@@ -213,14 +276,9 @@ test("promotion drains sequentially and preserves stopped Workspaces", async () 
   );
   assert.match(releaseStore, /attachActiveFlyImageReleaseTarget/u);
   assert.match(releaseStore, /mergePinnedFlyImageReleaseHistory/u);
-  assert.match(
-    releaseStore,
-    /registerFlyImageReleaseCandidate[\s\S]*?await assertReleaseControllerHealthy\(manifest\.controllerContractRevision\)/u,
-  );
-  assert.match(
-    releaseStore,
-    /getFlyImageReleasePublicationState\(\) \{\n\s+await assertReleaseControllerHealthy\(\)/u,
-  );
+  assert.match(releaseStore, /acquireFlyImageReleaseAttempt/u);
+  assert.match(releaseStore, /completeFlyImageReleasePreparation/u);
+  assert.match(releaseStore, /assertV3ReleasePrepared/u);
   assert.match(environmentStore, /attachActiveFlyImageReleaseTarget/u);
   assert.match(queue, /policy: "singleton"/u);
   assert.match(queue, /singletonKey: releaseId/u);

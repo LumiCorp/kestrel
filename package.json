@@ -132,6 +132,8 @@
     "desktop:test": "pnpm --filter @kestrel/desktop test",
     "test-proofs:mutations": "node scripts/validation/audit-mutations.mjs",
     "release:fly-images": "node --import tsx scripts/publish-fly-images.ts",
+    "release:verify-pipeline": "node --import tsx scripts/verify-release-pipeline.ts && node --import tsx --test tests/unit/fly-image-publisher.test.ts && pnpm --dir apps/web exec tsx --test lib/releases/contracts.test.ts lib/releases/controller-delivery.test.ts lib/releases/release-automation-boundary.test.ts lib/releases/runtime-global.test.ts",
+    "release:smoke-manifest": "node --import tsx scripts/smoke-release-manifest.ts",
     "release:evidence:check": "node --import tsx scripts/check-unified-release-evidence.ts",
     "check:docs": "node --import tsx scripts/check-docs.ts",
     "check:agents": "node --import tsx scripts/check-agents.ts",

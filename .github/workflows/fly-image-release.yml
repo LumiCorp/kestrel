@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: fly-image-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish-candidate:
@@ -54,11 +54,7 @@ jobs:
         run: pnpm tsx scripts/wait-for-kestrel-production-revision.ts ${{ github.sha }}
       - name: Preflight release publication
         run: pnpm tsx scripts/preflight-fly-image-publication.ts
-      - name: Build and smoke the release controller candidate
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: pnpm tsx apps/web/scripts/publish-control-worker-candidate.ts ${{ github.sha }}
-      - name: Build, smoke, and publish candidate images
+      - name: Build, smoke, and publish the complete candidate
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: pnpm release:fly-images

@@ -18,5 +18,6 @@ RUN pnpm install --frozen-lockfile --prod=false
 RUN pnpm run web:prepare
 
 ENV NODE_ENV=production
+ENV KESTREL_BUILD_REVISION=$KESTREL_GIT_SHA
 
 CMD ["pnpm", "--filter", "@kestrel/kestrel-one", "worker:turns"]
