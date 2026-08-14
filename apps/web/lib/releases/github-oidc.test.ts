@@ -20,6 +20,8 @@ test("GitHub release OIDC accepts only the exact main release workflow", async (
     fetchImpl: oidcFetch,
   });
   assert.equal(claims.sha, revision);
+  assert.equal(claims.run_id, "123456789");
+  assert.equal(claims.run_attempt, "2");
 
   await assert.rejects(
     verifyGithubActionsReleaseToken({
@@ -55,6 +57,25 @@ test("GitHub release OIDC rejects another workflow or audience", async () => {
   );
 });
 
+test("GitHub release OIDC requires signed run identity claims", async () => {
+  await assert.rejects(
+    verifyGithubActionsReleaseToken({
+      token: tokenFor({ run_id: undefined }),
+      expectedSha: revision,
+      now,
+      fetchImpl: oidcFetch,
+    }),
+  );
+  await assert.rejects(
+    verifyGithubActionsReleaseToken({
+      token: tokenFor({ run_attempt: "0" }),
+      expectedSha: revision,
+      now,
+      fetchImpl: oidcFetch,
+    }),
+  );
+});
+
 function tokenFor(overrides: Record<string, unknown>) {
   const header = encode({ alg: "RS256", kid: "test-key", typ: "JWT" });
   const claims = encode({
@@ -66,6 +87,8 @@ function tokenFor(overrides: Record<string, unknown>) {
     ref: "refs/heads/main",
     workflow_ref:
       "LumiCorp/kestrel/.github/workflows/fly-image-release.yml@refs/heads/main",
+    run_id: "123456789",
+    run_attempt: "2",
     sha: revision,
     sub: "repo:LumiCorp/kestrel:ref:refs/heads/main",
     ...overrides,

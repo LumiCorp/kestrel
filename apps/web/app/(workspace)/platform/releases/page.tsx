@@ -29,9 +29,14 @@ export default async function AdminReleasesPage() {
           bundleRevision: release.bundleRevision,
           trigger: release.trigger,
           status: release.status,
+          manifestVersion: release.manifestVersion,
           migrationChanged: release.migrationChanged,
           migrationApprovedAt:
             release.migrationApprovedAt?.toISOString() ?? null,
+          migrationVerifiedAt:
+            release.migrationVerifiedAt?.toISOString() ?? null,
+          controllerPreparedAt:
+            release.controllerPreparedAt?.toISOString() ?? null,
           failureMessage: release.failureMessage,
           createdAt: release.createdAt.toISOString(),
           environmentGatewayConfigVersion:
@@ -53,6 +58,7 @@ export default async function AdminReleasesPage() {
             targetKey: target.targetKey,
             status: target.status,
             stage: target.stage,
+            startedAt: target.startedAt?.toISOString() ?? null,
             result: target.result,
           })),
         }))}

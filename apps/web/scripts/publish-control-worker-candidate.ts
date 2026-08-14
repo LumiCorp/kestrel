@@ -1,7 +1,7 @@
 import {
   captureStreamingCommand,
   runStreamingCommand,
-} from "../../../scripts/lib/streaming-command";
+} from "./streaming-command";
 import {
   buildControlWorkerArtifact,
   type ControlWorkerArtifact,

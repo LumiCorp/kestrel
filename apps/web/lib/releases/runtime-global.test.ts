@@ -3,6 +3,7 @@ import test from "node:test";
 import type { EnvironmentProviderMachine } from "@/lib/environments/providers/contracts";
 import {
   buildGlobalAppApplyingResult,
+  isReleaseWorkerHeartbeatReady,
   updateGlobalAppMachines,
   validateGlobalAppMachineTopology,
 } from "./runtime";
@@ -115,6 +116,8 @@ test("production-shaped global update preserves the stopped standby without a st
     desiredImage,
     machines: before,
     role: "turn-worker",
+    sourceRevision: "a".repeat(40),
+    waitForWorkerReadiness: async () => {},
   });
 
   assert.deepEqual(updates, ["080e9e56c72d08", "185d33ec3e5628"]);
@@ -148,6 +151,8 @@ test("global update waits for each Machine's pre-update state", async () => {
     desiredImage,
     machines: before,
     role: "turn-worker",
+    sourceRevision: "a".repeat(40),
+    waitForWorkerReadiness: async () => {},
   });
 
   assert.deepEqual(waits, [
@@ -186,8 +191,94 @@ test("global update rejects a persisted digest mismatch", async () => {
       desiredImage,
       machines: before,
       role: "turn-worker",
+      sourceRevision: "a".repeat(40),
+      waitForWorkerReadiness: async () => {},
     }),
     /did not remain started on the release digest/u,
+  );
+});
+
+test("worker update requires readiness only for the started Machine", async () => {
+  const before = [
+    machine("primary", "started"),
+    machine("standby", "stopped", ["primary"]),
+  ];
+  const readiness: string[] = [];
+  const updates: Array<{
+    machineId: string;
+    envPatch?: Record<string, string | undefined>;
+  }> = [];
+  const client = {
+    async updateMachineImage(input: {
+      machineId: string;
+      envPatch?: Record<string, string | undefined>;
+    }) {
+      updates.push(input);
+      const current = before.find((item) => item.id === input.machineId)!;
+      return { ...current, image: desiredImage };
+    },
+    async waitForMachine() {},
+    async waitForMachineHealth() {},
+    async getMachine(input: { machineId: string }) {
+      const current = before.find((item) => item.id === input.machineId)!;
+      return { ...current, image: desiredImage };
+    },
+  };
+  await updateGlobalAppMachines({
+    appName: "kestrel-one-turn-worker",
+    client,
+    desiredImage,
+    machines: before,
+    role: "turn-worker",
+    sourceRevision: "a".repeat(40),
+    waitForWorkerReadiness: async (input) => {
+      readiness.push(input.machineId);
+    },
+  });
+  assert.deepEqual(readiness, ["primary"]);
+  assert.deepEqual(
+    updates.map(({ machineId, envPatch }) => ({ machineId, envPatch })),
+    [
+      {
+        machineId: "primary",
+        envPatch: { KESTREL_RELEASE_IMAGE: desiredImage },
+      },
+      {
+        machineId: "standby",
+        envPatch: { KESTREL_RELEASE_IMAGE: desiredImage },
+      },
+    ],
+  );
+});
+
+test("worker readiness rejects a fresh matching heartbeat from before the update", () => {
+  const notBefore = new Date("2026-08-13T12:00:00.000Z");
+  const heartbeat = {
+    sourceRevision: "a".repeat(40),
+    image: desiredImage,
+    startedAt: new Date("2026-08-13T11:59:59.999Z"),
+    heartbeatAt: new Date("2026-08-13T12:00:01.000Z"),
+  };
+  assert.equal(
+    isReleaseWorkerHeartbeatReady({
+      heartbeat,
+      sourceRevision: heartbeat.sourceRevision,
+      expectedDigest: `sha256:${"b".repeat(64)}`,
+      notBefore,
+      now: heartbeat.heartbeatAt,
+    }),
+    false,
+  );
+  heartbeat.startedAt = notBefore;
+  assert.equal(
+    isReleaseWorkerHeartbeatReady({
+      heartbeat,
+      sourceRevision: heartbeat.sourceRevision,
+      expectedDigest: `sha256:${"b".repeat(64)}`,
+      notBefore,
+      now: heartbeat.heartbeatAt,
+    }),
+    true,
   );
 });
 

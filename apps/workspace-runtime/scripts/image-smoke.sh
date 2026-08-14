@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/lib/image-smoke.sh"
 
 image="${1:?usage: image-smoke.sh IMAGE}"
 container="kestrel-workspace-runtime-smoke-$$"
-port="${KESTREL_WORKSPACE_RUNTIME_SMOKE_PORT:-18104}"
+health_file="/tmp/kestrel-workspace-runtime-health-$$"
 
 cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
+  rm -f "$health_file"
 }
 trap cleanup EXIT
 
-docker run --rm --detach \
+docker run --detach \
   --name "$container" \
-  --publish "127.0.0.1:${port}:43104" \
+  --publish "127.0.0.1::43104" \
   --env FLY_MACHINE_ID=workspace-smoke-machine \
   --env KESTREL_CONTROL_PLANE_URL=https://control.invalid \
   --env KESTREL_ENVIRONMENT_GATEWAY_URL=https://gateway.invalid \
@@ -23,14 +25,9 @@ docker run --rm --detach \
   --env KESTREL_WORKSPACE_SERVICE_TOKEN=workspace-smoke-token \
   "$image" >/dev/null
 
-for _ in $(seq 1 30); do
-  if curl --fail --silent "http://127.0.0.1:${port}/health" >/dev/null; then
-    break
-  fi
-  sleep 1
-done
-
-health="$(curl --fail --silent "http://127.0.0.1:${port}/health")"
+port="$(smoke_container_port "$container" 43104)"
+smoke_wait_http "$container" "http://127.0.0.1:${port}/health" "$health_file"
+health="$(<"$health_file")"
 node -e '
   const health = JSON.parse(process.argv[1]);
   if (health.ok !== true || health.runtimeContractRevision !== 3) {

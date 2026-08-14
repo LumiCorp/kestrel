@@ -7,6 +7,7 @@ import {
   acknowledgeFlyImageReleaseMigration,
   approveFlyImageRelease,
   createFlyImageRollback,
+  invalidateLegacyFlyImageRelease,
   listFlyImageReleaseCanaries,
   listFlyImageReleases,
   recoverFlyImageReleaseForward,
@@ -27,6 +28,7 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("retry"), releaseId: z.string().uuid() }),
   z.object({ action: z.literal("rollback"), releaseId: z.string().uuid() }),
   z.object({ action: z.literal("recover_forward"), releaseId: z.string().uuid() }),
+  z.object({ action: z.literal("invalidate_legacy"), releaseId: z.string().uuid() }),
 ]);
 
 export async function GET() {
@@ -49,6 +51,11 @@ export async function POST(request: Request) {
     if (input.action === "set_canary") {
       return NextResponse.json({
         settings: await setFlyImageReleaseCanary(input.environmentId),
+      });
+    }
+    if (input.action === "invalidate_legacy") {
+      return NextResponse.json({
+        release: await invalidateLegacyFlyImageRelease(input.releaseId),
       });
     }
     const release =

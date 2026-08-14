@@ -12,17 +12,39 @@ depends_on:
 
 # Fly image releases
 
+## Unified release attempts
+
+Candidate publication is one serialized, non-cancelling release attempt. The
+attempt owns the exact Git revision, GitHub run identity, controller artifact,
+five managed images, migration head, and all smoke evidence. Publication uses
+aggregate failure reporting and never mutates production.
+
+Every new candidate uses manifest v3. Older candidates are not promotable and
+must be safely invalidated and republished. `force_all=true` builds every
+artifact with an attempt-unique tag and does not reuse revision tags.
+
+After publication, dispatch `Prepare release candidate` with the candidate
+UUID. That authenticated workflow deploys the controller digest stored in the
+candidate; it never rebuilds it. Preparation succeeds only after the exact
+controller identity is visible in its heartbeat and the production migration
+ledger matches the candidate head and history-lock hash.
+
+Approval remains blocked until preparation, migration verification and
+operator migration signoff are complete. Promotion rechecks those conditions
+and requires role-specific readiness for Preview Edge, the turn worker and the
+RunPod worker before a target or release can complete.
+
 Kestrel publishes the Workspace Runtime, Environment Router, Preview Edge,
-turn worker, and RunPod worker as one coordinated release bundle. A main-branch
-change rebuilds only the images whose declared catalog inputs changed. The
-Monday 14:00 UTC schedule rebuilds all five images. Every candidate contains
+turn worker, and RunPod worker as one coordinated release bundle. Every
+candidate proves all five images plus the release controller. A normal run may
+reuse an exact-revision image that already exists; the Monday 14:00 UTC schedule
+and `force_all=true` rebuild every artifact under attempt-unique tags. Every candidate contains
 immutable OCI digests. Workspace Runtime and Environment Router are signed and
 published publicly at `ghcr.io/lumicorp/kestrel-workspace-runtime` and
 `ghcr.io/lumicorp/kestrel-environment-router`; platform services remain in
-their exact private Fly repositories. Unchanged roles are carried forward from
-the stable bundle. Incremental impact and migration detection are calculated from
-the stable bundle revision so consecutive unapproved candidates cannot drop an
-earlier main-branch change.
+their exact private Fly repositories. Migration detection is calculated from
+the stable bundle revision so consecutive unapproved candidates cannot hide an
+earlier main-branch migration.
 
 ## Required configuration
 
@@ -30,7 +52,9 @@ Configure the GitHub `Production` environment with:
 
 - secret `FLY_API_TOKEN`, authorized to build and push all catalog apps;
 - variable `KESTREL_RELEASE_PUBLISH_URL`, set to the deployed Kestrel One
-  `/api/runtime/releases/candidates` URL.
+  `/api/runtime/releases/candidates` URL;
+- variable `KESTREL_RELEASE_PREPARE_URL`, set to the deployed Kestrel One
+  `/api/runtime/releases/candidates/prepare` URL.
 
 The workflow's GitHub token needs `packages: write`. Both tenant-runtime GHCR
 packages must be public. Before accepting a candidate, the publisher resolves
@@ -57,24 +81,28 @@ The existing `KESTREL_WORKSPACE_RUNTIME_IMAGE` and
 first release becomes stable. Postgres is authoritative after that point.
 
 The candidate endpoint accepts only a GitHub Actions OIDC token for the exact
-main-branch release workflow and commit SHA. Both authenticated preflight and
-the authoritative publication POST require a fresh controller heartbeat at the
-canonical contract revision. Missing, expired, or insufficient-revision
-heartbeats fail with `409 RELEASE_CONTROLLER_STALE`. A successful publication
-response is accepted only when it contains a UUID release ID and the literal
-status `candidate`; malformed 2xx responses fail the workflow.
+main-branch release workflow and commit SHA. Its preflight rejects an
+incompatible serving revision before any artifact build. The authoritative
+attempt lease serializes publication and is renewed throughout long builds. A
+successful publication response is accepted only when it contains a UUID
+release ID and the literal status `candidate`; malformed 2xx responses fail the
+workflow.
 
 The `publish-candidate` job uses the setup action at its pinned commit and Fly
 CLI `0.4.82`. Its fail-fast order is fixed: validate the revision, authenticate
-the Fly registry, wait for `/api/health` to serve the exact commit, complete the
-authenticated publication preflight, build and smoke the non-deploying
-controller candidate, then build, smoke, and publish the managed image bundle.
-The final POST repeats the heartbeat check to close the race across long image
-builds. Controller deployment is a separate, explicit operation; candidate
-publication never changes the running or stopped controller Machines.
-A candidate is accepted and promoted only while its bundle revision still equals
-the serving Kestrel One revision. Newer main revisions cancel obsolete image
-builds. No long-lived publisher secret is shared with Kestrel One.
+the Fly and GHCR registries, wait for `/api/health` to serve the exact commit,
+complete the authenticated publication preflight, acquire the attempt, then
+build and smoke the controller and all five managed images before one manifest
+is published. Every artifact build is allowed to settle so a failed run reports
+all observed failures. Controller deployment is a separate, explicit
+preparation operation; candidate publication never changes controller Machines.
+Preparation injects the candidate's exact immutable Environment Router and
+Workspace Runtime digests into the controller Machine, so stale bootstrap values
+cannot prevent startup or weaken artifact identity.
+A candidate is accepted and promoted only while its bundle revision still
+equals the serving Kestrel One revision. Workflow runs queue instead of
+cancelling one another, and the server-side attempt lease remains authoritative.
+No long-lived publisher secret is shared with Kestrel One.
 
 Every manifest records the gateway configuration version emitted by Kestrel
 One and the versions accepted by the Environment Router. Change this contract
@@ -85,8 +113,16 @@ version.
 
 ## Controller release gate
 
-Bootstrap or deliberately repair the production controller from a clean,
-committed revision with:
+The standard release path is the pinned `Prepare release candidate` workflow.
+It reads the immutable controller image and fingerprint from the stored v3
+manifest, updates the stopped standby and then the primary, and accepts
+preparation only after the exact machine identity appears in the canonical
+controller heartbeat. It also verifies the production Drizzle ledger against
+the candidate's migration head and history-lock hash.
+
+The following command remains an explicit bootstrap or repair tool only; it is
+not candidate preparation and must not be used to substitute a rebuilt image
+for the digest recorded in a candidate:
 
 ```bash
 pnpm --dir apps/web release:control-worker
@@ -99,7 +135,7 @@ lifecycle queue has nonterminal work. It deploys the exact local commit and
 verifies the readiness file and database heartbeat. Do not run this command in
 pull-request CI.
 
-The main release workflow uses a non-deploying controller candidate path. It
+Candidate publication uses a non-deploying controller build path. It
 computes a fingerprint from the controller Dockerfile, Fly config, controller
 scripts, the bundled worker and readiness artifacts, lockfile, package
 manifests, schema, and database migrations. It builds and pushes an image
@@ -113,6 +149,13 @@ missing-database startup failure, and verifies the immutable image's Git
 revision label. A source-file check or `tsx --version` is not sufficient release
 evidence.
 
+Before rollout, an operator can rerun the complete local contract journey with
+`pnpm release:verify-pipeline`. Given a captured v3 manifest, run
+`pnpm release:smoke-manifest MANIFEST.json` to execute all six real Docker
+smokes against the exact immutable candidate digests after authenticating the
+local Docker client to Fly and GHCR. The latter command
+settles every smoke and reports all observed role failures together.
+
 The explicit controller deployment path updates the stopped standby first and
 then the single running Machine. Fly may transcode an OCI manifest to its
 deployment manifest, so post-update verification binds the authoritative
@@ -124,15 +167,14 @@ provider-owned representation change.
 
 1. Open Kestrel Admin, choose **Releases**, and select a dedicated Fly canary
    Environment.
-2. Review the candidate's rebuilt and carried-forward components.
-3. If the candidate contains a Web database migration, apply it through the
-   normal Kestrel One deployment path, verify
-   `pnpm --dir apps/web db:migrate:deploy` completed against the production
-   database, and verify the control plane is healthy. Then mark the migration
-   runbook complete. This
-   acknowledgment records the administrator and time; it does not run a
-   migration.
-4. Approve the release.
+2. Review the candidate's six exact immutable artifacts and smoke evidence.
+3. Dispatch `Prepare release candidate` for that candidate UUID from the exact
+   candidate revision. Do not approve until preparation records the exact
+   controller heartbeat and migration-ledger proof.
+4. If the candidate contains a Web database migration, review the verified
+   ledger evidence and mark the migration runbook complete. This acknowledgment
+   records the administrator and time; it does not run a migration.
+5. Approve the release.
 
 When Environment images change, promotion updates the canary first, then
 Preview Edge, the RunPod worker, all other active Fly Environments sequentially,

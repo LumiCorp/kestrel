@@ -227,6 +227,11 @@ async function applyGlobalAppTarget(
   const before = await client.listAppMachines({ appName });
   if (!before.length) throw new Error(`Fly App '${appName}' has no Machines.`);
   validateGlobalAppMachineTopology(before);
+  const release = await knowledgeDb.query.flyImageReleases.findFirst({
+    where: eq(schema.flyImageReleases.id, target.releaseId),
+    columns: { bundleRevision: true },
+  });
+  if (!release) throw new Error("Global Fly image release disappeared.");
   await knowledgeDb
     .update(schema.flyImageReleaseTargets)
     .set({
@@ -244,6 +249,8 @@ async function applyGlobalAppTarget(
     desiredImage: target.desiredImage,
     machines: before,
     role,
+    sourceRevision: release.bundleRevision,
+    waitForWorkerReadiness,
   });
   await knowledgeDb
     .update(schema.flyImageReleaseTargets)
@@ -349,14 +356,21 @@ export async function updateGlobalAppMachines(input: {
   desiredImage: string;
   machines: EnvironmentProviderMachine[];
   role: FlyImageRole;
+  sourceRevision: string;
+  waitForWorkerReadiness: typeof waitForWorkerReadiness;
 }) {
   const plan = validateGlobalAppMachineTopology(input.machines);
   const verifiedMachines: EnvironmentProviderMachine[] = [];
   for (const { machine, expectedState } of plan) {
+    const updateStartedAt = new Date();
     const updated = await input.client.updateMachineImage({
       appName: input.appName,
       machineId: machine.id,
       runtimeImage: input.desiredImage,
+      envPatch:
+        input.role === "turn-worker" || input.role === "runpod-worker"
+          ? { KESTREL_RELEASE_IMAGE: input.desiredImage }
+          : undefined,
     });
     if (updated.state !== expectedState) {
       await input.client.waitForMachine({
@@ -389,9 +403,80 @@ export async function updateGlobalAppMachines(input: {
         `Fly Machine '${machine.id}' did not remain ${expectedState} on the release digest.`,
       );
     }
+    if (
+      expectedState === "started" &&
+      (input.role === "turn-worker" || input.role === "runpod-worker")
+    ) {
+      await input.waitForWorkerReadiness({
+        role: input.role,
+        machineId: machine.id,
+        sourceRevision: input.sourceRevision,
+        image: input.desiredImage,
+        notBefore: updateStartedAt,
+      });
+    }
     verifiedMachines.push(verified!);
   }
   validateGlobalAppMachineTopology(verifiedMachines);
+}
+
+export async function waitForWorkerReadiness(input: {
+  role: "turn-worker" | "runpod-worker";
+  machineId: string;
+  sourceRevision: string;
+  image: string;
+  notBefore: Date;
+}) {
+  const deadline = Date.now() + 120_000;
+  const expectedDigest = input.image.match(/sha256:[a-f0-9]{64}$/u)?.[0];
+  while (Date.now() < deadline) {
+    const heartbeat = await knowledgeDb.query.releaseWorkerHeartbeats.findFirst(
+      {
+        where: and(
+          eq(schema.releaseWorkerHeartbeats.role, input.role),
+          eq(schema.releaseWorkerHeartbeats.machineId, input.machineId),
+        ),
+      },
+    );
+    if (
+      isReleaseWorkerHeartbeatReady({
+        heartbeat,
+        sourceRevision: input.sourceRevision,
+        expectedDigest,
+        notBefore: input.notBefore,
+      })
+    ) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  throw new Error(
+    `${input.role} did not publish an authoritative startup heartbeat for ${input.machineId}.`,
+  );
+}
+
+export function isReleaseWorkerHeartbeatReady(input: {
+  heartbeat: {
+    sourceRevision: string;
+    image: string;
+    startedAt: Date;
+    heartbeatAt: Date;
+  } | null | undefined;
+  sourceRevision: string;
+  expectedDigest: string | undefined;
+  notBefore: Date;
+  now?: Date;
+}) {
+  const heartbeatDigest =
+    input.heartbeat?.image.match(/sha256:[a-f0-9]{64}$/u)?.[0];
+  return Boolean(
+    input.heartbeat?.sourceRevision === input.sourceRevision &&
+      heartbeatDigest === input.expectedDigest &&
+      input.heartbeat.startedAt >= input.notBefore &&
+      (input.now ?? new Date()).getTime() -
+        input.heartbeat.heartbeatAt.getTime() <=
+        90_000,
+  );
 }
 
 async function applyEnvironmentTarget(input: {
@@ -591,7 +676,7 @@ export async function markWorkspaceReleaseVerified(input: {
   workspaceId: string;
   runtimeImage: string;
 }) {
-  await knowledgeDb
+  const verified = await knowledgeDb
     .update(schema.flyImageReleaseTargets)
     .set({
       status: "completed",
@@ -605,7 +690,11 @@ export async function markWorkspaceReleaseVerified(input: {
         eq(schema.flyImageReleaseTargets.desiredImage, input.runtimeImage),
         eq(schema.flyImageReleaseTargets.status, "configured_unverified"),
       ),
-    );
+    )
+    .returning({ releaseId: schema.flyImageReleaseTargets.releaseId });
+  for (const releaseId of new Set(verified.map((target) => target.releaseId))) {
+    await completeFlyImageReleaseIfReady(releaseId);
+  }
 }
 
 function createPlatformFlyClient() {

@@ -4,15 +4,19 @@ import test from "node:test";
 import "../../scripts/register-server-only.mjs";
 import {
   ROLE_IMAGE_REPOSITORIES,
-  type FlyImageReleaseManifestV2,
+  type FlyImageReleaseManifestV3,
   type FlyImageRole,
 } from "./contracts";
+import { RELEASE_CONTROLLER_CONTRACT_REVISION } from "./controller-contract";
 import {
-  RELEASE_CONTROLLER_CONTRACT_REVISION,
-  RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS,
-} from "./controller-contract";
+  RELEASE_MIGRATION_HEAD,
+  RELEASE_MIGRATION_HISTORY_LOCK_HASH,
+} from "./migration-identity";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
+const revision = "a".repeat(40);
+const controllerImage = `registry.fly.io/kestrel-one-control-worker@sha256:${"9".repeat(64)}`;
+const controllerFingerprint = `sha256:${"8".repeat(64)}`;
 const roles: FlyImageRole[] = [
   "workspace-runtime",
   "environment-router",
@@ -21,13 +25,12 @@ const roles: FlyImageRole[] = [
   "runpod-worker",
 ];
 
-test("release admission rejects stale publication and forward recovery atomically replaces a paused release", async (context) => {
+test("v3 release attempts serialize publication and require exact preparation proof", async (context) => {
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
   process.env.DATABASE_URL = databaseUrl;
   Reflect.deleteProperty(process.env, "POSTGRES_URL");
-  const liveRevision = "a".repeat(40);
-  const previousBuildRevision = process.env.KESTREL_BUILD_REVISION;
-  process.env.KESTREL_BUILD_REVISION = liveRevision;
+  const previousRevision = process.env.KESTREL_BUILD_REVISION;
+  process.env.KESTREL_BUILD_REVISION = revision;
   const [{ resetDbRuntimeForTests }, releases] = await Promise.all([
     import("@/lib/db/runtime"),
     import("./store"),
@@ -37,25 +40,26 @@ test("release admission rejects stale publication and forward recovery atomicall
   const userId = `release-user-${suffix}`;
   const organizationId = `release-org-${suffix}`;
   const environmentId = `release-environment-${suffix}`;
-  const stableId = `release-stable-${suffix}`;
-  const pausedId = `release-paused-${suffix}`;
   const now = new Date();
 
   context.after(async () => {
     await sql`
-      UPDATE "fly_image_release_settings"
-      SET "stable_release_id" = NULL, "active_release_id" = NULL,
-          "canary_environment_id" = NULL, "updated_at" = now()
-      WHERE "id" = 'platform'
+      UPDATE fly_image_release_settings
+      SET stable_release_id = NULL, active_release_id = NULL,
+          canary_environment_id = NULL, updated_at = now()
+      WHERE id = 'platform'
     `;
-    await sql`DELETE FROM "fly_image_releases" WHERE "id" IN (${stableId}, ${pausedId}) OR "bundle_revision" IN (${liveRevision}, ${"b".repeat(40)})`;
-    await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
-    await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
-    if (previousBuildRevision === undefined) {
+    await sql`DELETE FROM fly_image_release_targets WHERE release_id IN (SELECT id FROM fly_image_releases WHERE bundle_revision = ${revision})`;
+    await sql`DELETE FROM fly_image_release_components WHERE release_id IN (SELECT id FROM fly_image_releases WHERE bundle_revision = ${revision})`;
+    await sql`DELETE FROM fly_image_releases WHERE bundle_revision = ${revision}`;
+    await sql`DELETE FROM fly_image_release_attempts WHERE source_revision = ${revision}`;
+    await sql`DELETE FROM release_controller_heartbeats WHERE id = 'platform'`;
+    await sql`DELETE FROM environments WHERE id = ${environmentId}`;
+    await sql`DELETE FROM organization WHERE id = ${organizationId}`;
+    await sql`DELETE FROM "user" WHERE id = ${userId}`;
+    if (previousRevision === undefined)
       Reflect.deleteProperty(process.env, "KESTREL_BUILD_REVISION");
-    } else {
-      process.env.KESTREL_BUILD_REVISION = previousBuildRevision;
-    }
+    else process.env.KESTREL_BUILD_REVISION = previousRevision;
     await resetDbRuntimeForTests();
     await sql.end({ timeout: 0 });
   });
@@ -66,170 +70,259 @@ test("release admission rejects stale publication and forward recovery atomicall
       VALUES (${userId}, 'Release User', ${`${userId}@example.test`}, true, ${now}, ${now})
     `;
     await transaction`
-      INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+      INSERT INTO organization (id, name, slug, "createdAt")
       VALUES (${organizationId}, 'Release Org', ${`release-org-${suffix}`}, ${now})
     `;
     await transaction`
-      INSERT INTO "environments" (
-        "id", "organization_id", "created_by_user_id", "name", "slug",
-        "provider", "region", "status", "fly_app_name", "router_url"
+      INSERT INTO environments (
+        id, organization_id, created_by_user_id, name, slug, provider, region,
+        status, fly_app_name, router_url
       ) VALUES (
         ${environmentId}, ${organizationId}, ${userId}, 'Release Canary',
         ${`release-canary-${suffix}`}, 'fly', 'iad', 'ready',
         ${`release-canary-${suffix}`}, 'https://router.example.test'
       )
     `;
-    for (const [id, status, digest] of [
-      [stableId, "completed", "c"],
-      [pausedId, "paused", "d"],
-    ] as const) {
-      await transaction`
-        INSERT INTO "fly_image_releases" (
-          "id", "bundle_revision", "manifest_digest", "trigger", "status",
-          "validation", "created_at", "updated_at"
-        ) VALUES (
-          ${id}, ${"c".repeat(40)}, ${`sha256:${digest.repeat(64)}`},
-          'manual', ${status}, ${transaction.json({ status: "passed", commands: ["seed"], completedAt: now.toISOString() })},
-          ${now}, ${now}
-        )
-      `;
-    }
     await transaction`
-      UPDATE "fly_image_release_settings"
-      SET "stable_release_id" = ${stableId}, "active_release_id" = ${pausedId},
-          "canary_environment_id" = ${environmentId}, "updated_at" = ${now}
-      WHERE "id" = 'platform'
+      UPDATE fly_image_release_settings
+      SET stable_release_id = NULL, active_release_id = NULL,
+          canary_environment_id = ${environmentId}, updated_at = ${now}
+      WHERE id = 'platform'
     `;
   });
 
-  const manifest = {
-    ...manifestFor(liveRevision, now),
-    migrationChanged: true,
-  };
-  const assertBothControllerChecksReject = async () => {
-    await assert.rejects(
-      releases.getFlyImageReleasePublicationState(),
-      controllerStale,
-    );
-    await assert.rejects(
-      releases.registerFlyImageReleaseCandidate(manifest),
-      controllerStale,
-    );
-  };
-
-  await sql`DELETE FROM "release_controller_heartbeats" WHERE "id" = 'platform'`;
-  await assertBothControllerChecksReject();
-
-  const expiredHeartbeat = new Date(
-    now.getTime() - RELEASE_CONTROLLER_HEARTBEAT_MAX_AGE_MS - 1_000,
-  );
-  await setControllerHeartbeat(sql, {
-    contractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
-    heartbeatAt: expiredHeartbeat,
-  });
-  await assertBothControllerChecksReject();
-
-  await setControllerHeartbeat(sql, {
-    contractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION - 1,
-    heartbeatAt: new Date(),
-  });
-  await assertBothControllerChecksReject();
-
-  await setControllerHeartbeat(sql, {
-    contractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
-    heartbeatAt: new Date(),
+  const attempt = await releases.acquireFlyImageReleaseAttempt({
+    sourceRevision: revision,
+    trigger: "manual",
+    forceAll: true,
+    githubRunId: "1001",
+    githubRunAttempt: 1,
   });
   assert.equal(
-    (await releases.getFlyImageReleasePublicationState()).stableBundleRevision,
-    "c".repeat(40),
+    (
+      await releases.acquireFlyImageReleaseAttempt({
+        sourceRevision: revision,
+        trigger: "manual",
+        forceAll: true,
+        githubRunId: "1001",
+        githubRunAttempt: 1,
+      })
+    ).id,
+    attempt.id,
   );
-  const staleRevision = "b".repeat(40);
   await assert.rejects(
-    releases.registerFlyImageReleaseCandidate({
-      ...manifest,
-      bundleRevision: staleRevision,
-      components: manifest.components.map((component) => ({
-        ...component,
-        sourceRevision: staleRevision,
-      })),
+    releases.acquireFlyImageReleaseAttempt({
+      sourceRevision: revision,
+      trigger: "manual",
+      forceAll: true,
+      githubRunId: "1002",
+      githubRunAttempt: 1,
     }),
-    (error: unknown) => {
-      assert.equal(
-        (error as { code?: string }).code,
-        "RELEASE_BUILD_REVISION_MISMATCH",
-      );
-      return true;
-    },
+    (error: unknown) =>
+      (error as { code?: string }).code === "RELEASE_ATTEMPT_ACTIVE",
   );
-  const [staleCount] = await sql`
-    SELECT count(*)::int AS count FROM "fly_image_releases"
-    WHERE "bundle_revision" = ${staleRevision}
-  `;
-  assert.equal(staleCount?.count, 0);
-
-  const candidate = await releases.registerFlyImageReleaseCandidate(manifest);
-  const listedCandidate = (await releases.listFlyImageReleases()).releases.find(
-    (release) => release.id === candidate.id,
+  await assert.rejects(
+    releases.renewFlyImageReleaseAttempt({
+      attemptId: attempt.id,
+      sourceRevision: revision,
+      githubRunId: "9999",
+      githubRunAttempt: 1,
+    }),
+    (error: unknown) =>
+      (error as { code?: string }).code === "RELEASE_ATTEMPT_INVALID",
   );
-  assert.deepEqual(listedCandidate?.migrationAcknowledgementEligibility, {
-    ok: true,
+  await releases.renewFlyImageReleaseAttempt({
+    attemptId: attempt.id,
+    sourceRevision: revision,
+    githubRunId: "1001",
+    githubRunAttempt: 1,
   });
+  const candidate = await releases.registerFlyImageReleaseCandidate(
+    manifestFor(attempt.id, now),
+  );
+  const preparation = await releases.getFlyImageReleasePreparation(candidate.id);
+  assert.equal(
+    preparation.runtimeImages.workspace,
+    `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"1".repeat(64)}`,
+  );
+  assert.equal(
+    preparation.runtimeImages.router,
+    `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"2".repeat(64)}`,
+  );
+  await assert.rejects(
+    releases.acknowledgeFlyImageReleaseMigration({
+      releaseId: candidate.id,
+      actorUserId: userId,
+    }),
+    (error: unknown) =>
+      (error as { code?: string }).code === "RELEASE_STATE_INVALID",
+  );
+
+  await sql`
+    INSERT INTO release_controller_heartbeats (
+      id, contract_revision, source_revision, image, input_fingerprint,
+      machine_id, heartbeat_at, started_at
+    ) VALUES (
+      'platform', ${RELEASE_CONTROLLER_CONTRACT_REVISION}, ${revision},
+      ${controllerImage}, ${controllerFingerprint}, 'controller-machine', ${now}, ${now}
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      contract_revision = excluded.contract_revision,
+      source_revision = excluded.source_revision,
+      image = excluded.image,
+      input_fingerprint = excluded.input_fingerprint,
+      machine_id = excluded.machine_id,
+      heartbeat_at = excluded.heartbeat_at,
+      started_at = excluded.started_at
+  `;
+  const prepared = await releases.completeFlyImageReleasePreparation(
+    candidate.id,
+  );
+  assert.ok(prepared.controllerPreparedAt);
+  assert.ok(prepared.migrationVerifiedAt);
   const acknowledged = await releases.acknowledgeFlyImageReleaseMigration({
     releaseId: candidate.id,
     actorUserId: userId,
   });
-  assert.ok(acknowledged?.migrationApprovedAt);
+  assert.ok(acknowledged.migrationApprovedAt);
+  await sql`
+    UPDATE fly_image_releases
+    SET migration_expected_history_lock_hash = ${`sha256:${"0".repeat(64)}`}
+    WHERE id = ${candidate.id}
+  `;
   await assert.rejects(
-    releases.acknowledgeFlyImageReleaseMigration({
-      releaseId: stableId,
+    releases.approveFlyImageRelease({
+      releaseId: candidate.id,
       actorUserId: userId,
     }),
-    (error: unknown) => {
-      assert.equal((error as { code?: string }).code, "RELEASE_STATE_INVALID");
-      return true;
-    },
+    (error: unknown) =>
+      (error as { code?: string }).code === "RELEASE_MIGRATION_BLOCKED",
   );
-  const recovered = await releases.recoverFlyImageReleaseForward({
+  await sql`
+    UPDATE fly_image_releases
+    SET migration_expected_history_lock_hash = ${RELEASE_MIGRATION_HISTORY_LOCK_HASH}
+    WHERE id = ${candidate.id}
+  `;
+  const approved = await releases.approveFlyImageRelease({
     releaseId: candidate.id,
     actorUserId: userId,
   });
-  assert.equal(recovered?.status, "approved");
-  assert.equal(recovered?.recoveryOfReleaseId, pausedId);
+  assert.equal(approved?.status, "approved");
 
-  const [state] = await sql`
-    SELECT settings.active_release_id, paused.status AS paused_status,
-           candidate.recovery_of_release_id
-    FROM "fly_image_release_settings" settings
-    JOIN "fly_image_releases" paused ON paused.id = ${pausedId}
-    JOIN "fly_image_releases" candidate ON candidate.id = ${candidate.id}
-    WHERE settings.id = 'platform'
-  `;
-  assert.equal(state?.active_release_id, candidate.id);
-  assert.equal(state?.paused_status, "superseded");
-  assert.equal(state?.recovery_of_release_id, pausedId);
-  const targets = await sql`
-    SELECT "target_kind", "environment_id" FROM "fly_image_release_targets"
-    WHERE "release_id" = ${candidate.id}
-  `;
-  assert.ok(
-    targets.some(
-      (target) =>
-        target.target_kind === "environment" &&
-        target.environment_id === environmentId,
-    ),
+  const failedAttempt = await releases.acquireFlyImageReleaseAttempt({
+    sourceRevision: revision,
+    trigger: "manual",
+    forceAll: true,
+    githubRunId: "1002",
+    githubRunAttempt: 1,
+  });
+  assert.equal(
+    await releases.failFlyImageReleaseAttempt({
+      attemptId: failedAttempt.id,
+      sourceRevision: revision,
+      githubRunId: "9999",
+      githubRunAttempt: 1,
+      evidence: { message: "wrong run must not settle attempt" },
+    }),
+    null,
   );
+  await releases.failFlyImageReleaseAttempt({
+    attemptId: failedAttempt.id,
+    sourceRevision: revision,
+    githubRunId: "1002",
+    githubRunAttempt: 1,
+    evidence: { message: "publication failed" },
+  });
+  await assert.rejects(
+    releases.registerFlyImageReleaseCandidate(
+      manifestFor(failedAttempt.id, now, "1002"),
+    ),
+    (error: unknown) =>
+      (error as { code?: string }).code === "RELEASE_ATTEMPT_INVALID",
+  );
+
+  const settledAttempt = await releases.acquireFlyImageReleaseAttempt({
+    sourceRevision: revision,
+    trigger: "manual",
+    forceAll: true,
+    githubRunId: "1003",
+    githubRunAttempt: 1,
+  });
+  const mismatchedManifest = manifestFor(settledAttempt.id, now, "1003");
+  mismatchedManifest.attempt.forceAll = false;
+  await assert.rejects(
+    releases.registerFlyImageReleaseCandidate(mismatchedManifest),
+    (error: unknown) =>
+      (error as { code?: string }).code === "RELEASE_ATTEMPT_INVALID",
+  );
+  const settledCandidate = await releases.registerFlyImageReleaseCandidate(
+    manifestFor(settledAttempt.id, now, "1003"),
+  );
+  assert.equal(
+    (
+      await releases.registerFlyImageReleaseCandidate(
+        manifestFor(settledAttempt.id, now, "1003"),
+      )
+    ).id,
+    settledCandidate.id,
+  );
+  const replayWithDifferentArtifact = manifestFor(
+    settledAttempt.id,
+    now,
+    "1003",
+  );
+  replayWithDifferentArtifact.components[0]!.image =
+    `${ROLE_IMAGE_REPOSITORIES[replayWithDifferentArtifact.components[0]!.role]}@sha256:${"f".repeat(64)}`;
+  await assert.rejects(
+    releases.registerFlyImageReleaseCandidate(replayWithDifferentArtifact),
+    (error: unknown) =>
+      (error as { code?: string }).code === "RELEASE_ATTEMPT_INVALID",
+  );
+  assert.equal(
+    await releases.failFlyImageReleaseAttempt({
+      attemptId: settledAttempt.id,
+      sourceRevision: revision,
+      githubRunId: "1003",
+      githubRunAttempt: 1,
+      evidence: { message: "ambiguous client timeout" },
+    }),
+    null,
+  );
+  assert.equal(settledCandidate.status, "candidate");
 });
 
 function manifestFor(
-  revision: string,
+  attemptId: string,
   completedAt: Date,
-): FlyImageReleaseManifestV2 {
+  githubRunId = "1001",
+): FlyImageReleaseManifestV3 {
   return {
-    version: 2,
+    version: 3,
+    attempt: {
+      id: attemptId,
+      githubRunId,
+      githubRunAttempt: 1,
+      forceAll: true,
+    },
     controllerContractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
     bundleRevision: revision,
     trigger: "manual",
-    migrationChanged: false,
+    migration: {
+      changed: true,
+      head: RELEASE_MIGRATION_HEAD,
+      historyLockHash: RELEASE_MIGRATION_HISTORY_LOCK_HASH,
+    },
+    controller: {
+      role: "release-controller",
+      image: controllerImage,
+      sourceRevision: revision,
+      inputFingerprint: controllerFingerprint,
+      smoke: {
+        status: "passed",
+        command: "smoke release-controller",
+        completedAt: completedAt.toISOString(),
+      },
+    },
     environmentGateway: { producedVersion: 3 },
     validation: {
       status: "passed",
@@ -240,7 +333,7 @@ function manifestFor(
       role,
       image: `${ROLE_IMAGE_REPOSITORIES[role]}@sha256:${String(index + 1).repeat(64)}`,
       sourceRevision: revision,
-      inputFingerprint: `sha256:${String(index + 5).repeat(64)}`,
+      inputFingerprint: `sha256:${String(index + 2).repeat(64)}`,
       smoke: {
         status: "passed",
         command: `smoke ${role}`,
@@ -251,26 +344,4 @@ function manifestFor(
         : {}),
     })),
   };
-}
-
-function controllerStale(error: unknown) {
-  assert.equal((error as { code?: string }).code, "RELEASE_CONTROLLER_STALE");
-  return true;
-}
-
-async function setControllerHeartbeat(
-  sql: postgres.Sql,
-  input: { contractRevision: number; heartbeatAt: Date },
-) {
-  await sql`
-    INSERT INTO "release_controller_heartbeats" (
-      "id", "contract_revision", "heartbeat_at", "started_at"
-    ) VALUES (
-      'platform', ${input.contractRevision}, ${input.heartbeatAt}, ${input.heartbeatAt}
-    )
-    ON CONFLICT ("id") DO UPDATE SET
-      "contract_revision" = ${input.contractRevision},
-      "heartbeat_at" = ${input.heartbeatAt},
-      "started_at" = ${input.heartbeatAt}
-  `;
 }
