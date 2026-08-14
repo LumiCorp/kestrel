@@ -42,8 +42,6 @@ const REQUIRED_HOSTED_ENVIRONMENT_VALUES = [
   "CRON_SECRET",
   "KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY",
   "KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY",
-  "KESTREL_ENVIRONMENT_ROUTER_IMAGE",
-  "KESTREL_WORKSPACE_RUNTIME_IMAGE",
   "KESTREL_WORKSPACE_BACKUP_KEY",
   "KESTREL_WORKSPACE_BACKUP_KEY_ID",
   "KESTREL_ONE_APP_URL",
@@ -148,27 +146,6 @@ export function assertHostedEnvironmentRuntimeConfiguration(
     throw new Error(
       `Hosted Environment configuration is incomplete: ${missing.join(", ")}.`
     );
-  }
-  for (const imageName of [
-    "KESTREL_ENVIRONMENT_ROUTER_IMAGE",
-    "KESTREL_WORKSPACE_RUNTIME_IMAGE",
-  ] as const) {
-    const image = env[imageName]?.trim() ?? "";
-    const repository =
-      imageName === "KESTREL_ENVIRONMENT_ROUTER_IMAGE"
-        ? "ghcr.io/lumicorp/kestrel-environment-router"
-        : "ghcr.io/lumicorp/kestrel-workspace-runtime";
-    const prefix = `${repository}@sha256:`;
-    if (
-      !(
-        image.startsWith(prefix) &&
-        /^[a-f0-9]{64}$/u.test(image.slice(prefix.length))
-      )
-    ) {
-      throw new Error(
-        `${imageName} must be an immutable ${repository} sha256 digest reference.`
-      );
-    }
   }
   const backupKey = Buffer.from(
     env.KESTREL_WORKSPACE_BACKUP_KEY ?? "",
@@ -282,6 +259,5 @@ export async function requireHostedEnvironmentsEnabled(input: {
       "Hosted Environments are not enabled for this organization."
     );
   }
-  assertHostedEnvironmentConfiguration(input.env);
   return rollout;
 }

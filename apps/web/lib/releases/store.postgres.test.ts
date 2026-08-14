@@ -140,7 +140,16 @@ test("v3 release attempts serialize publication and require exact preparation pr
   const candidate = await releases.registerFlyImageReleaseCandidate(
     manifestFor(attempt.id, now),
   );
-  const preparation = await releases.getFlyImageReleasePreparation(candidate.id);
+  const listedCandidate = (await releases.listFlyImageReleases()).releases.find(
+    (release) => release.id === candidate.id,
+  );
+  assert.equal(
+    listedCandidate?.turnWorkerConfigurationAcknowledgementRequired,
+    true,
+  );
+  const preparation = await releases.getFlyImageReleasePreparation(
+    candidate.id,
+  );
   assert.equal(
     preparation.runtimeImages.workspace,
     `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"1".repeat(64)}`,
@@ -203,6 +212,21 @@ test("v3 release attempts serialize publication and require exact preparation pr
     SET migration_expected_history_lock_hash = ${RELEASE_MIGRATION_HISTORY_LOCK_HASH}
     WHERE id = ${candidate.id}
   `;
+  await assert.rejects(
+    releases.approveFlyImageRelease({
+      releaseId: candidate.id,
+      actorUserId: userId,
+    }),
+    (error: unknown) =>
+      (error as { code?: string }).code ===
+      "RELEASE_TURN_WORKER_CONFIG_BLOCKED",
+  );
+  const configurationAcknowledged =
+    await releases.acknowledgeTurnWorkerConfiguration({
+      releaseId: candidate.id,
+      actorUserId: userId,
+    });
+  assert.ok(configurationAcknowledged?.turnWorkerConfigurationApprovedAt);
   const approved = await releases.approveFlyImageRelease({
     releaseId: candidate.id,
     actorUserId: userId,
@@ -271,8 +295,7 @@ test("v3 release attempts serialize publication and require exact preparation pr
     now,
     "1003",
   );
-  replayWithDifferentArtifact.components[0]!.image =
-    `${ROLE_IMAGE_REPOSITORIES[replayWithDifferentArtifact.components[0]!.role]}@sha256:${"f".repeat(64)}`;
+  replayWithDifferentArtifact.components[0]!.image = `${ROLE_IMAGE_REPOSITORIES[replayWithDifferentArtifact.components[0]!.role]}@sha256:${"f".repeat(64)}`;
   await assert.rejects(
     releases.registerFlyImageReleaseCandidate(replayWithDifferentArtifact),
     (error: unknown) =>
@@ -341,6 +364,9 @@ function manifestFor(
       },
       ...(role === "environment-router"
         ? { environmentGateway: { acceptedVersions: [2, 3] } }
+        : {}),
+      ...(role === "turn-worker"
+        ? { configurationContractFingerprint: `sha256:${"f".repeat(64)}` }
         : {}),
     })),
   };

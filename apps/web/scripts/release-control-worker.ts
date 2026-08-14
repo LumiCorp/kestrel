@@ -12,6 +12,7 @@ import {
 import { buildControlWorkerArtifact } from "./control-worker-artifact";
 import { restoreControlWorkerMachine } from "./control-worker-machine";
 import { publishControlWorkerImage } from "./deploy-control-worker-candidate";
+import { assertControlWorkerProcessConfiguration } from "../lib/runtime/process-contracts";
 
 const app = "kestrel-one-control-worker";
 const vercelProject = "one";
@@ -22,15 +23,12 @@ export const CONTROL_WORKER_SECRET_ALLOWLIST = [
   "CRON_SECRET",
   "DATABASE_URL",
   "POSTGRES_URL",
-  "FLY_API_TOKEN",
   "KESTREL_APP_CREDENTIAL_ACTIVE_KEY_ID",
   "KESTREL_APP_CREDENTIAL_KEYS",
   "KESTREL_ENVIRONMENTS_ENABLED",
   "KESTREL_ENVIRONMENT_DEFAULT_REGION",
-  "KESTREL_ENVIRONMENT_ROUTER_IMAGE",
   "KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY",
   "KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY",
-  "KESTREL_FLY_ORGANIZATION_SLUG",
   "KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID",
   "KESTREL_GATEWAY_CREDENTIAL_KEYS",
   "KESTREL_ONE_APP_URL",
@@ -42,7 +40,6 @@ export const CONTROL_WORKER_SECRET_ALLOWLIST = [
   "KESTREL_PREVIEW_HOST_SUFFIX",
   "KESTREL_WORKSPACE_BACKUP_KEY",
   "KESTREL_WORKSPACE_BACKUP_KEY_ID",
-  "KESTREL_WORKSPACE_RUNTIME_IMAGE",
   "STORAGE_ACCESS_KEY_ID",
   "STORAGE_BUCKET",
   "STORAGE_ENDPOINT",
@@ -55,11 +52,8 @@ export const CONTROL_WORKER_SECRET_ALLOWLIST = [
 
 const REQUIRED_CONTROL_WORKER_SECRETS = [
   "CRON_SECRET",
-  "FLY_API_TOKEN",
-  "KESTREL_ENVIRONMENT_ROUTER_IMAGE",
   "KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY",
   "KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY",
-  "KESTREL_FLY_ORGANIZATION_SLUG",
   "KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID",
   "KESTREL_GATEWAY_CREDENTIAL_KEYS",
   "KESTREL_ONE_APP_URL",
@@ -67,12 +61,16 @@ const REQUIRED_CONTROL_WORKER_SECRETS = [
   "KESTREL_ONE_TOOL_TOKEN",
   "KESTREL_WORKSPACE_BACKUP_KEY",
   "KESTREL_WORKSPACE_BACKUP_KEY_ID",
-  "KESTREL_WORKSPACE_RUNTIME_IMAGE",
   "STORAGE_ACCESS_KEY_ID",
   "STORAGE_BUCKET",
   "STORAGE_ENDPOINT",
   "STORAGE_PROVIDER",
   "STORAGE_SECRET_ACCESS_KEY",
+] as const;
+
+const PRESERVED_PLATFORM_FLY_SECRET_NAMES = [
+  "FLY_API_TOKEN",
+  "KESTREL_FLY_ORGANIZATION_SLUG",
 ] as const;
 
 function run(
@@ -133,6 +131,11 @@ export function selectControlWorkerSecrets(source: Record<string, string>) {
       `Vercel production is missing control worker secrets: ${missing.join(", ")}.`,
     );
   }
+  assertControlWorkerProcessConfiguration({
+    ...Object.fromEntries(selected),
+    FLY_API_TOKEN: "preserved-on-control-worker",
+    KESTREL_FLY_ORGANIZATION_SLUG: "preserved-on-control-worker",
+  });
   return selected;
 }
 
@@ -144,6 +147,23 @@ export function controlWorkerSecretSetArgs(secrets: Map<string, string>) {
     app,
     ...[...secrets].map(([key, value]) => `${key}=${value}`),
   ];
+}
+
+export function assertPreservedPlatformFlyAuthority(secretListJson: string) {
+  const rows = JSON.parse(secretListJson) as Array<Record<string, unknown>>;
+  const names = new Set(
+    rows
+      .map((row) => row.Name ?? row.name)
+      .filter((name): name is string => typeof name === "string"),
+  );
+  const missing = PRESERVED_PLATFORM_FLY_SECRET_NAMES.filter(
+    (name) => !names.has(name),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `The control-worker Fly app is missing preserved platform authority: ${missing.join(", ")}. Configure it directly on the control-worker app before release.`,
+    );
+  }
 }
 
 async function assertLegacyQueuesIdle(databaseUrl: string) {
@@ -251,7 +271,25 @@ async function main() {
     if (!databaseUrl)
       throw new Error("Production database URL is unavailable.");
     await assertLegacyQueuesIdle(databaseUrl);
-    await ensureApp(secrets.get("KESTREL_FLY_ORGANIZATION_SLUG")!);
+    const operatorOrganization = process.env.KESTREL_FLY_ORGANIZATION_SLUG?.trim();
+    const appStatus = spawnSync("fly", ["status", "--app", app, "--json"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (appStatus.status !== 0) {
+      if (!operatorOrganization) {
+        throw new Error(
+          "Creating the control-worker app requires operator KESTREL_FLY_ORGANIZATION_SLUG configuration.",
+        );
+      }
+      await ensureApp(operatorOrganization);
+    }
+    assertPreservedPlatformFlyAuthority(
+      run("fly", ["secrets", "list", "--app", app, "--json"], {
+        quiet: true,
+      }),
+    );
     run("fly", controlWorkerSecretSetArgs(secrets), { quiet: true });
     run("fly", ["auth", "docker"]);
     run("pnpm", ["run", "build:shared"]);

@@ -7,6 +7,7 @@ import {
   countResolvedFlyImageReleaseTargets,
   evaluateFlyImageReleaseAdmission,
   evaluateFlyImageMigrationAcknowledgementEligibility,
+  evaluateTurnWorkerConfigurationAcknowledgementEligibility,
   flyImageReleaseCandidatePublicationResponseSchema,
   flyImageReleaseManifestV2Schema,
   flyImageReleaseManifestV3Schema,
@@ -60,7 +61,7 @@ test("v3 release manifests require the controller and all five exact roles", () 
     trigger: "manual",
     migration: {
       changed: true,
-      head: "0070_project_prompt_schedules",
+      head: "0071_durable_runtime_image_authority",
       historyLockHash: `sha256:${digest}`,
     },
     controller: {
@@ -139,6 +140,38 @@ test("migration acknowledgement eligibility follows the endpoint contract", () =
       migrationVerifiedAt: new Date(),
     }).ok,
     false,
+  );
+});
+
+test("turn-worker configuration acknowledgement is required only for a changed candidate contract", () => {
+  assert.deepEqual(
+    evaluateTurnWorkerConfigurationAcknowledgementEligibility({
+      status: "candidate",
+      acknowledgementRequired: true,
+      acknowledgedAt: null,
+    }),
+    { ok: true },
+  );
+  assert.equal(
+    evaluateTurnWorkerConfigurationAcknowledgementEligibility({
+      status: "candidate",
+      acknowledgementRequired: false,
+      acknowledgedAt: null,
+    }).ok,
+    false,
+  );
+});
+
+test("fleetless forward recovery does not require a canary", () => {
+  assert.deepEqual(
+    evaluateFlyImageForwardRecoveryEligibility({
+      activeStatus: "paused",
+      admission: { ok: true },
+      migrationReady: true,
+      canaryValid: false,
+      canaryRequired: false,
+    }),
+    { ok: true },
   );
 });
 

@@ -18,6 +18,7 @@ import {
   evaluateFlyImageReleaseAdmission,
   evaluateFlyImageForwardRecoveryEligibility,
   evaluateFlyImageMigrationAcknowledgementEligibility,
+  evaluateTurnWorkerConfigurationAcknowledgementEligibility,
   selectFlyImageRollbackTargets,
   FLY_IMAGE_RELEASE_DEPLOYABLE_ENVIRONMENT_STATUSES,
   FLY_IMAGE_ROLES,
@@ -58,8 +59,10 @@ export class FlyImageReleaseError extends Error {
       | "RELEASE_CONTROLLER_STALE"
       | "RELEASE_INCOMPLETE"
       | "RELEASE_MIGRATION_BLOCKED"
+      | "RELEASE_TURN_WORKER_CONFIG_BLOCKED"
       | "RELEASE_NOT_FOUND"
-      | "RELEASE_STATE_INVALID",
+      | "RELEASE_STATE_INVALID"
+      | "STABLE_FLY_RUNTIME_BUNDLE_UNAVAILABLE",
     message: string,
   ) {
     super(message);
@@ -438,6 +441,8 @@ export async function registerFlyImageReleaseCandidate(
         image: component.image,
         sourceRevision: component.sourceRevision,
         inputFingerprint: component.inputFingerprint,
+        configurationContractFingerprint:
+          component.configurationContractFingerprint ?? null,
         changed: component.changed,
         smokeStatus: component.smoke.status,
         environmentGatewayAcceptedVersions:
@@ -504,6 +509,8 @@ export async function registerFlyImageReleaseCandidate(
         image: component.image,
         sourceRevision: component.sourceRevision,
         inputFingerprint: component.inputFingerprint,
+        configurationContractFingerprint:
+          component.configurationContractFingerprint ?? null,
         changed: component.changed,
         smoke: component.smoke,
         environmentGatewayAcceptedVersions:
@@ -535,7 +542,7 @@ export async function registerFlyImageReleaseCandidate(
 
 export async function listFlyImageReleases(limit = 25) {
   const normalizedLimit = Math.max(1, Math.min(limit, 100));
-  const [recentReleases, settings] = await Promise.all([
+  const [recentReleases, settings, liveFleetEnvironment] = await Promise.all([
     knowledgeDb
       .select()
       .from(schema.flyImageReleases)
@@ -544,7 +551,16 @@ export async function listFlyImageReleases(limit = 25) {
     knowledgeDb.query.flyImageReleaseSettings.findFirst({
       where: eq(schema.flyImageReleaseSettings.id, "platform"),
     }),
+    knowledgeDb.query.environments.findFirst({
+      where: and(
+        eq(schema.environments.provider, "fly"),
+        isNull(schema.environments.archivedAt),
+        notInArray(schema.environments.status, ["deleted"]),
+      ),
+      columns: { id: true },
+    }),
   ]);
+  const canaryRequired = Boolean(liveFleetEnvironment);
   const recentIds = new Set(recentReleases.map((release) => release.id));
   const pinnedIds = [
     settings?.activeReleaseId,
@@ -602,6 +618,11 @@ export async function listFlyImageReleases(limit = 25) {
       component.releaseId === settings?.stableReleaseId &&
       component.role === "environment-router",
   );
+  const stableTurnWorkerFingerprint = components.find(
+    (component) =>
+      component.releaseId === settings?.stableReleaseId &&
+      component.role === "turn-worker",
+  )?.configurationContractFingerprint;
   const rollbackEligibility = stableRouter?.environmentGatewayAcceptedVersions
     ? stableRouter.environmentGatewayAcceptedVersions.includes(
         ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION,
@@ -625,6 +646,10 @@ export async function listFlyImageReleases(limit = 25) {
       ? ("enforced" as const)
       : ("legacy_bridge" as const),
     rollbackEligibility,
+    canaryRequired,
+    canaryRequirementReason: canaryRequired
+      ? "A live Fly Environment fleet requires an explicitly selected canary."
+      : "No live Fly Environments exist, so this release may promote fleetless.",
     releases: releases.map((release) => {
       const releaseComponents = components.filter(
         (component) => component.releaseId === release.id,
@@ -646,6 +671,12 @@ export async function listFlyImageReleases(limit = 25) {
               message: "The serving Kestrel build revision is unavailable.",
             }
         : { ok: true as const };
+      const turnWorkerFingerprint = releaseComponents.find(
+        (component) => component.role === "turn-worker",
+      )?.configurationContractFingerprint;
+      const turnWorkerConfigurationAcknowledgementRequired =
+        Boolean(turnWorkerFingerprint) &&
+        turnWorkerFingerprint !== stableTurnWorkerFingerprint;
       return {
         ...release,
         components: releaseComponents,
@@ -656,6 +687,14 @@ export async function listFlyImageReleases(limit = 25) {
         admission,
         migrationAcknowledgementEligibility:
           evaluateFlyImageMigrationAcknowledgementEligibility(release),
+        turnWorkerConfigurationAcknowledgementRequired,
+        turnWorkerConfigurationAcknowledgementEligibility:
+          evaluateTurnWorkerConfigurationAcknowledgementEligibility({
+            status: release.status,
+            acknowledgementRequired:
+              turnWorkerConfigurationAcknowledgementRequired,
+            acknowledgedAt: release.turnWorkerConfigurationApprovedAt,
+          }),
         recoveryEligibility:
           release.status === "candidate"
             ? evaluateFlyImageForwardRecoveryEligibility({
@@ -668,6 +707,7 @@ export async function listFlyImageReleases(limit = 25) {
                   !release.migrationChanged ||
                   release.migrationApprovedAt !== null,
                 canaryValid: Boolean(canary),
+                canaryRequired,
               })
             : {
                 ok: false as const,
@@ -741,6 +781,15 @@ export async function attachActiveFlyImageReleaseTarget(
     columns: { activeReleaseId: true },
   });
   if (!settings?.activeReleaseId) return false;
+  const activeRelease = await transaction.query.flyImageReleases.findFirst({
+    where: eq(schema.flyImageReleases.id, settings.activeReleaseId),
+    columns: { status: true },
+  });
+  if (
+    !(activeRelease && ["approved", "deploying"].includes(activeRelease.status))
+  ) {
+    return false;
+  }
   if (
     !(await releaseChangesEnvironmentImages(
       transaction,
@@ -753,6 +802,40 @@ export async function attachActiveFlyImageReleaseTarget(
     environmentId,
   ]);
   return true;
+}
+
+export async function assertFlyEnvironmentCreationAllowed(
+  transaction: KnowledgeTransaction,
+) {
+  await lockFlyImageReleases(transaction);
+  const settings = await transaction.query.flyImageReleaseSettings.findFirst({
+    where: eq(schema.flyImageReleaseSettings.id, "platform"),
+    columns: { activeReleaseId: true },
+  });
+  if (!settings?.activeReleaseId) return;
+  const activeRelease = await transaction.query.flyImageReleases.findFirst({
+    where: eq(schema.flyImageReleases.id, settings.activeReleaseId),
+    columns: { status: true },
+  });
+  if (
+    !(activeRelease && ["approved", "deploying"].includes(activeRelease.status))
+  ) {
+    return;
+  }
+  const existingFleet = await transaction.query.environments.findFirst({
+    where: and(
+      eq(schema.environments.provider, "fly"),
+      isNull(schema.environments.archivedAt),
+      notInArray(schema.environments.status, ["deleted"]),
+    ),
+    columns: { id: true },
+  });
+  if (!existingFleet) {
+    throw new FlyImageReleaseError(
+      "RELEASE_ACTIVE",
+      "The first Fly Environment cannot be created while a fleetless release is deploying.",
+    );
+  }
 }
 
 export async function completeFlyImageReleaseIfReady(releaseId: string) {
@@ -872,6 +955,53 @@ export async function getStableFlyEnvironmentImages() {
   return runtimeImage && routerImage ? { runtimeImage, routerImage } : null;
 }
 
+export async function requireStableFlyEnvironmentImages(
+  database: Pick<typeof knowledgeDb, "query" | "select"> = knowledgeDb,
+) {
+  const settings = await database.query.flyImageReleaseSettings.findFirst({
+    where: eq(schema.flyImageReleaseSettings.id, "platform"),
+    columns: { stableReleaseId: true },
+  });
+  if (!settings?.stableReleaseId) {
+    throw new FlyImageReleaseError(
+      "STABLE_FLY_RUNTIME_BUNDLE_UNAVAILABLE",
+      "Hosted provisioning requires a signed stable Fly runtime bundle.",
+    );
+  }
+  const components = await database
+    .select()
+    .from(schema.flyImageReleaseComponents)
+    .where(
+      and(
+        eq(
+          schema.flyImageReleaseComponents.releaseId,
+          settings.stableReleaseId,
+        ),
+        inArray(schema.flyImageReleaseComponents.role, [
+          "workspace-runtime",
+          "environment-router",
+        ]),
+      ),
+    );
+  const runtimeImage = components.find(
+    (component) => component.role === "workspace-runtime",
+  )?.image;
+  const routerImage = components.find(
+    (component) => component.role === "environment-router",
+  )?.image;
+  try {
+    if (!(runtimeImage && routerImage)) throw new Error("incomplete");
+    assertFlyImageMatchesRole("workspace-runtime", runtimeImage);
+    assertFlyImageMatchesRole("environment-router", routerImage);
+  } catch {
+    throw new FlyImageReleaseError(
+      "STABLE_FLY_RUNTIME_BUNDLE_UNAVAILABLE",
+      "The signed stable release does not contain the required public Fly runtime bundle.",
+    );
+  }
+  return { releaseId: settings.stableReleaseId, runtimeImage, routerImage };
+}
+
 export async function getEnvironmentFlyImageReleaseStatus(
   environmentId: string,
 ) {
@@ -953,25 +1083,28 @@ export async function approveFlyImageRelease(input: {
         "Another Fly image release is already active.",
       );
     }
-    if (!settings.canaryEnvironmentId) {
+    const canaryRequired = await hasLiveFlyEnvironmentFleet(transaction);
+    if (canaryRequired && !settings.canaryEnvironmentId) {
       throw new FlyImageReleaseError(
         "RELEASE_CANARY_REQUIRED",
         "Choose a canary Fly Environment before approval.",
       );
     }
-    const canary = await transaction.query.environments.findFirst({
-      where: and(
-        eq(schema.environments.id, settings.canaryEnvironmentId),
-        eq(schema.environments.provider, "fly"),
-        isNull(schema.environments.archivedAt),
-        inArray(
-          schema.environments.status,
-          FLY_IMAGE_RELEASE_DEPLOYABLE_ENVIRONMENT_STATUSES,
-        ),
-      ),
-      columns: { id: true },
-    });
-    if (!canary) {
+    const canary = settings.canaryEnvironmentId
+      ? await transaction.query.environments.findFirst({
+          where: and(
+            eq(schema.environments.id, settings.canaryEnvironmentId),
+            eq(schema.environments.provider, "fly"),
+            isNull(schema.environments.archivedAt),
+            inArray(
+              schema.environments.status,
+              FLY_IMAGE_RELEASE_DEPLOYABLE_ENVIRONMENT_STATUSES,
+            ),
+          ),
+          columns: { id: true },
+        })
+      : null;
+    if (canaryRequired && !canary) {
       throw new FlyImageReleaseError(
         "RELEASE_CANARY_REQUIRED",
         "Choose an active canary Fly Environment before approval.",
@@ -1003,6 +1136,19 @@ export async function approveFlyImageRelease(input: {
       .select()
       .from(schema.flyImageReleaseComponents)
       .where(eq(schema.flyImageReleaseComponents.releaseId, release.id));
+    if (
+      (await turnWorkerConfigurationAcknowledgementRequired(
+        transaction,
+        settings.stableReleaseId,
+        components,
+      )) &&
+      !release.turnWorkerConfigurationApprovedAt
+    ) {
+      throw new FlyImageReleaseError(
+        "RELEASE_TURN_WORKER_CONFIG_BLOCKED",
+        "Stage and acknowledge the candidate turn-worker configuration before approval.",
+      );
+    }
     assertStoredReleaseAdmission(release, components);
     return promoteFlyImageReleaseCandidate({
       transaction,
@@ -1054,14 +1200,29 @@ export async function recoverFlyImageReleaseForward(input: {
         "This candidate changes database migrations and requires the migration runbook before recovery.",
       );
     }
-    await requireFlyImageReleaseCanary(
-      transaction,
-      settings.canaryEnvironmentId,
-    );
+    if (await hasLiveFlyEnvironmentFleet(transaction)) {
+      await requireFlyImageReleaseCanary(
+        transaction,
+        settings.canaryEnvironmentId,
+      );
+    }
     const components = await transaction
       .select()
       .from(schema.flyImageReleaseComponents)
       .where(eq(schema.flyImageReleaseComponents.releaseId, candidate.id));
+    if (
+      (await turnWorkerConfigurationAcknowledgementRequired(
+        transaction,
+        settings.stableReleaseId,
+        components,
+      )) &&
+      !candidate.turnWorkerConfigurationApprovedAt
+    ) {
+      throw new FlyImageReleaseError(
+        "RELEASE_TURN_WORKER_CONFIG_BLOCKED",
+        "Stage and acknowledge the candidate turn-worker configuration before recovery.",
+      );
+    }
     assertStoredReleaseAdmission(candidate, components);
     const now = new Date();
     await transaction
@@ -1114,7 +1275,7 @@ async function promoteFlyImageReleaseCandidate(input: {
   const globalRoles = ["preview-edge", "turn-worker", "runpod-worker"] as const;
   const targets = [
     ...globalRoles
-      .filter((role) => changedRoles.has(role))
+      .filter((role) => role === "turn-worker" || changedRoles.has(role))
       .map((role) => {
         const component = requireComponent(input.components, role);
         return {
@@ -1282,6 +1443,57 @@ export async function invalidateLegacyFlyImageRelease(releaseId: string) {
   });
 }
 
+export async function acknowledgeTurnWorkerConfiguration(input: {
+  releaseId: string;
+  actorUserId: string;
+}) {
+  return knowledgeDb.transaction(async (transaction) => {
+    await lockFlyImageReleases(transaction);
+    const settings = await ensureSettings(transaction);
+    const release = await transaction.query.flyImageReleases.findFirst({
+      where: eq(schema.flyImageReleases.id, input.releaseId),
+    });
+    if (!release) {
+      throw new FlyImageReleaseError(
+        "RELEASE_NOT_FOUND",
+        "Fly image release not found.",
+      );
+    }
+    const components = await transaction
+      .select()
+      .from(schema.flyImageReleaseComponents)
+      .where(eq(schema.flyImageReleaseComponents.releaseId, release.id));
+    const required = await turnWorkerConfigurationAcknowledgementRequired(
+      transaction,
+      settings.stableReleaseId,
+      components,
+    );
+    const eligibility =
+      evaluateTurnWorkerConfigurationAcknowledgementEligibility({
+        status: release.status,
+        acknowledgementRequired: required,
+        acknowledgedAt: release.turnWorkerConfigurationApprovedAt,
+      });
+    if (!eligibility.ok) {
+      throw new FlyImageReleaseError(
+        "RELEASE_STATE_INVALID",
+        eligibility.message,
+      );
+    }
+    const now = new Date();
+    const [acknowledged] = await transaction
+      .update(schema.flyImageReleases)
+      .set({
+        turnWorkerConfigurationApprovedByUserId: input.actorUserId,
+        turnWorkerConfigurationApprovedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(schema.flyImageReleases.id, release.id))
+      .returning();
+    return acknowledged;
+  });
+}
+
 export async function retryFlyImageRelease(releaseId: string) {
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
@@ -1351,10 +1563,16 @@ export async function createFlyImageRollback(input: {
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${FLY_IMAGE_RELEASE_LOCK_KEY}, 0))`,
     );
     const settings = await ensureSettings(transaction);
-    if (!(settings.stableReleaseId && settings.canaryEnvironmentId)) {
+    if (!settings.stableReleaseId) {
       throw new FlyImageReleaseError(
         "RELEASE_STATE_INVALID",
-        "A stable release and canary Environment are required for rollback.",
+        "A stable release is required for rollback.",
+      );
+    }
+    if (await hasLiveFlyEnvironmentFleet(transaction)) {
+      await requireFlyImageReleaseCanary(
+        transaction,
+        settings.canaryEnvironmentId,
       );
     }
     const failed = await transaction.query.flyImageReleases.findFirst({
@@ -1424,6 +1642,8 @@ export async function createFlyImageRollback(input: {
         image: component.image,
         sourceRevision: component.sourceRevision,
         inputFingerprint: component.inputFingerprint,
+        configurationContractFingerprint:
+          component.configurationContractFingerprint,
         changed: true,
         smoke: component.smoke,
         environmentGatewayAcceptedVersions:
@@ -1652,6 +1872,43 @@ async function lockFlyImageReleases(transaction: KnowledgeTransaction) {
 
 function imageDigest(image: string | null) {
   return image?.match(/sha256:[a-f0-9]{64}$/u)?.[0] ?? null;
+}
+
+async function hasLiveFlyEnvironmentFleet(transaction: KnowledgeTransaction) {
+  const environment = await transaction.query.environments.findFirst({
+    where: and(
+      eq(schema.environments.provider, "fly"),
+      isNull(schema.environments.archivedAt),
+      notInArray(schema.environments.status, ["deleted"]),
+    ),
+    columns: { id: true },
+  });
+  return Boolean(environment);
+}
+
+async function turnWorkerConfigurationAcknowledgementRequired(
+  transaction: KnowledgeTransaction,
+  stableReleaseId: string | null,
+  candidateComponents: Array<
+    typeof schema.flyImageReleaseComponents.$inferSelect
+  >,
+) {
+  const candidateFingerprint = candidateComponents.find(
+    (component) => component.role === "turn-worker",
+  )?.configurationContractFingerprint;
+  if (!candidateFingerprint) return false;
+  const stableFingerprint = stableReleaseId
+    ? (
+        await transaction.query.flyImageReleaseComponents.findFirst({
+          where: and(
+            eq(schema.flyImageReleaseComponents.releaseId, stableReleaseId),
+            eq(schema.flyImageReleaseComponents.role, "turn-worker"),
+          ),
+          columns: { configurationContractFingerprint: true },
+        })
+      )?.configurationContractFingerprint
+    : null;
+  return candidateFingerprint !== stableFingerprint;
 }
 
 async function releaseChangesEnvironmentImages(

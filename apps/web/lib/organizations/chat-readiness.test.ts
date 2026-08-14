@@ -180,6 +180,22 @@ test("execution readiness reports rollout and terminal environment states", () =
   );
   assert.equal(disabled.environmentExecution.status, "rollout_disabled");
 
+  const missingStableBundle = deriveOrganizationChatReadiness(
+    readyInput({
+      stableRuntimeBundleAvailable: false,
+      environment: null,
+      operation: null,
+    }),
+  );
+  assert.equal(
+    missingStableBundle.environmentExecution.status,
+    "stable_runtime_bundle_unavailable",
+  );
+  assert.match(
+    missingStableBundle.environmentExecution.detail,
+    /signed stable runtime release/u,
+  );
+
   const failed = deriveOrganizationChatReadiness(
     readyInput({
       environment: {

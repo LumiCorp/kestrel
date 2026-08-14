@@ -5,6 +5,7 @@ import { errorResponse } from "@/lib/knowledge/http";
 import { enqueueFlyImageRelease } from "@/lib/knowledge/queue";
 import {
   acknowledgeFlyImageReleaseMigration,
+  acknowledgeTurnWorkerConfiguration,
   approveFlyImageRelease,
   createFlyImageRollback,
   invalidateLegacyFlyImageRelease,
@@ -23,6 +24,10 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("approve"), releaseId: z.string().uuid() }),
   z.object({
     action: z.literal("migration_ready"),
+    releaseId: z.string().uuid(),
+  }),
+  z.object({
+    action: z.literal("turn_worker_configuration_ready"),
     releaseId: z.string().uuid(),
   }),
   z.object({ action: z.literal("retry"), releaseId: z.string().uuid() }),
@@ -64,6 +69,11 @@ export async function POST(request: Request) {
             releaseId: input.releaseId,
             actorUserId: session.user.id,
           })
+        : input.action === "turn_worker_configuration_ready"
+          ? await acknowledgeTurnWorkerConfiguration({
+              releaseId: input.releaseId,
+              actorUserId: session.user.id,
+            })
         : input.action === "approve"
         ? await approveFlyImageRelease({
             releaseId: input.releaseId,
@@ -80,12 +90,15 @@ export async function POST(request: Request) {
               failedReleaseId: input.releaseId,
               actorUserId: session.user.id,
             });
-    if (release && input.action !== "migration_ready") {
+    const acknowledgement =
+      input.action === "migration_ready" ||
+      input.action === "turn_worker_configuration_ready";
+    if (release && !acknowledgement) {
       await enqueueFlyImageRelease(release.id);
     }
     return NextResponse.json(
       { release },
-      { status: input.action === "migration_ready" ? 200 : 202 },
+      { status: acknowledgement ? 200 : 202 },
     );
   } catch (error) {
     return errorResponse(error, 409);

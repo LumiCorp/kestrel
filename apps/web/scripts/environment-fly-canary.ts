@@ -14,8 +14,11 @@ import {
 const execFileAsync = promisify(execFile);
 const token = required("FLY_API_TOKEN");
 const organizationSlug = required("KESTREL_FLY_ORGANIZATION_SLUG");
-const routerImage = immutableImage("KESTREL_ENVIRONMENT_ROUTER_IMAGE");
-const workspaceImage = immutableImage("KESTREL_WORKSPACE_RUNTIME_IMAGE");
+const routerImage = immutableImage(argument("--router-image"), "--router-image");
+const workspaceImage = immutableImage(
+  argument("--workspace-image"),
+  "--workspace-image",
+);
 const region = process.env.KESTREL_FLY_CANARY_REGION?.trim() || "iad";
 const apiBaseUrl = "https://api.machines.dev/v1";
 const provider = new FlyMachinesClient({ token, organizationSlug });
@@ -470,11 +473,17 @@ function summarize(environment: CanaryEnvironment) {
   };
 }
 
-function immutableImage(name: string) {
-  const value = required(name);
+function immutableImage(value: string, name: string) {
   if (!/@sha256:[a-f0-9]{64}$/u.test(value)) {
     throw new Error(`${name} must be an immutable sha256 image reference.`);
   }
+  return value;
+}
+
+function argument(name: string) {
+  const index = process.argv.indexOf(name);
+  const value = process.argv[index + 1]?.trim();
+  if (!(index >= 0 && value)) throw new Error(`${name} is required.`);
   return value;
 }
 

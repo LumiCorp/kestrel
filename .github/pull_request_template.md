@@ -25,14 +25,14 @@ List any focused process, PostgreSQL, Chromium, mutation, documentation,
 Desktop, Ruhroh, or release checks separately when the change touches those
 surfaces.
 
-For a Kestrel One turn-worker or gateway-keyring change, add this release note:
+For a Kestrel One turn-worker configuration-contract change, add this release note:
 
 ```text
-Production release owner: run `pnpm --dir apps/web release:turn-worker` after approval.
+Production release owner: run `pnpm --dir apps/web stage:turn-worker-config -- --release <release-id>` before approval.
 ```
 
-Do not run that command in PR CI: it synchronizes production keyring secrets
-from Vercel to Fly before deploying the worker.
+Do not run that command in PR CI: it stages production role configuration from
+Vercel to Fly without touching the existing Machines.
 
 For a Kestrel One release-controller or lifecycle-queue change, add this release
 note:

@@ -4,6 +4,7 @@ import type { EnvironmentProviderMachine } from "@/lib/environments/providers/co
 import {
   buildGlobalAppApplyingResult,
   isReleaseWorkerHeartbeatReady,
+  isMatchingTurnWorkerHeartbeat,
   updateGlobalAppMachines,
   validateGlobalAppMachineTopology,
 } from "./runtime";
@@ -120,8 +121,55 @@ test("production-shaped global update preserves the stopped standby without a st
     waitForWorkerReadiness: async () => {},
   });
 
-  assert.deepEqual(updates, ["080e9e56c72d08", "185d33ec3e5628"]);
+  assert.deepEqual(updates, ["185d33ec3e5628", "080e9e56c72d08"]);
   assert.deepEqual(waits, []);
+});
+
+test("turn-worker readiness rejects stale, wrong-revision, and wrong-fingerprint heartbeats", () => {
+  const now = new Date("2026-08-13T12:00:30.000Z");
+  const expected = {
+    machineIds: ["primary"],
+    sourceRevision: "a".repeat(40),
+    configurationFingerprint: `sha256:${"b".repeat(64)}`,
+    notBefore: new Date("2026-08-13T12:00:00.000Z"),
+    now,
+  };
+  const heartbeat = {
+    machineId: "primary",
+    sourceRevision: expected.sourceRevision,
+    configurationFingerprint: expected.configurationFingerprint,
+    contractRevision: 1,
+    processStartedAt: new Date("2026-08-13T12:00:01.000Z"),
+    heartbeatAt: new Date("2026-08-13T12:00:29.000Z"),
+  };
+  assert.equal(isMatchingTurnWorkerHeartbeat(heartbeat, expected), true);
+  assert.equal(
+    isMatchingTurnWorkerHeartbeat(
+      { ...heartbeat, sourceRevision: "c".repeat(40) },
+      expected,
+    ),
+    false,
+  );
+  assert.equal(
+    isMatchingTurnWorkerHeartbeat(
+      {
+        ...heartbeat,
+        configurationFingerprint: `sha256:${"d".repeat(64)}`,
+      },
+      expected,
+    ),
+    false,
+  );
+  assert.equal(
+    isMatchingTurnWorkerHeartbeat(
+      {
+        ...heartbeat,
+        processStartedAt: new Date("2026-08-13T11:59:00.000Z"),
+      },
+      expected,
+    ),
+    false,
+  );
 });
 
 test("global update waits for each Machine's pre-update state", async () => {
@@ -198,7 +246,7 @@ test("global update rejects a persisted digest mismatch", async () => {
   );
 });
 
-test("worker update requires readiness only for the started Machine", async () => {
+test("runpod worker update requires image readiness only for the started Machine", async () => {
   const before = [
     machine("primary", "started"),
     machine("standby", "stopped", ["primary"]),
@@ -225,11 +273,11 @@ test("worker update requires readiness only for the started Machine", async () =
     },
   };
   await updateGlobalAppMachines({
-    appName: "kestrel-one-turn-worker",
+    appName: "kestrel-one-runpod-worker",
     client,
     desiredImage,
     machines: before,
-    role: "turn-worker",
+    role: "runpod-worker",
     sourceRevision: "a".repeat(40),
     waitForWorkerReadiness: async (input) => {
       readiness.push(input.machineId);
@@ -240,11 +288,11 @@ test("worker update requires readiness only for the started Machine", async () =
     updates.map(({ machineId, envPatch }) => ({ machineId, envPatch })),
     [
       {
-        machineId: "primary",
+        machineId: "standby",
         envPatch: { KESTREL_RELEASE_IMAGE: desiredImage },
       },
       {
-        machineId: "standby",
+        machineId: "primary",
         envPatch: { KESTREL_RELEASE_IMAGE: desiredImage },
       },
     ],

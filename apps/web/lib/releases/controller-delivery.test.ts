@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -10,6 +11,7 @@ import {
   RELEASE_CONTROLLER_QUEUES,
 } from "./controller-contract";
 import {
+  assertPreservedPlatformFlyAuthority,
   controlWorkerSecretSetArgs,
   CONTROL_WORKER_SECRET_ALLOWLIST,
   selectControlWorkerSecrets,
@@ -52,6 +54,13 @@ test("control worker secrets are explicitly allowlisted and fail closed", () => 
   const source = Object.fromEntries(
     CONTROL_WORKER_SECRET_ALLOWLIST.map((key) => [key, `${key}-value`]),
   );
+  const ticketKeys = generateKeyPairSync("ed25519");
+  source.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = ticketKeys.privateKey
+    .export({ type: "pkcs8", format: "pem" })
+    .toString();
+  source.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY = ticketKeys.publicKey
+    .export({ type: "spki", format: "pem" })
+    .toString();
   source.UNRELATED_SECRET = "must-not-cross-boundary";
   const selected = selectControlWorkerSecrets(source);
 
@@ -93,6 +102,24 @@ test("control worker secrets preserve multiline values as one Fly argument", () 
     `KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY=${multilineValue}`,
   );
   assert.equal(args.length, 6);
+});
+
+test("control worker release requires platform Fly authority to remain on the app", () => {
+  assert.doesNotThrow(() =>
+    assertPreservedPlatformFlyAuthority(
+      JSON.stringify([
+        { Name: "FLY_API_TOKEN" },
+        { name: "KESTREL_FLY_ORGANIZATION_SLUG" },
+      ]),
+    ),
+  );
+  assert.throws(
+    () =>
+      assertPreservedPlatformFlyAuthority(
+        JSON.stringify([{ Name: "FLY_API_TOKEN" }]),
+      ),
+    /missing preserved platform authority: KESTREL_FLY_ORGANIZATION_SLUG/u,
+  );
 });
 
 const revision = "a".repeat(40);
@@ -647,7 +674,7 @@ test("controller deployment retries incomplete post-update inventory", async () 
   });
 
   assert.equal(inventoryReads, 4);
-  assert.deepEqual(waits, [2_000]);
+  assert.deepEqual(waits, [2000]);
 });
 
 test("controller smoke failure prevents every Machine update", async () => {
@@ -795,7 +822,7 @@ test("controller deployment retries readiness while initialization completes", a
   });
 
   assert.equal(readinessChecks, 3);
-  assert.deepEqual(waits, [2_000, 2_000]);
+  assert.deepEqual(waits, [2000, 2000]);
 });
 
 test("release workflow waits for exact production identity before non-deploying candidate publication", async () => {
@@ -927,7 +954,7 @@ test("controller bundles are deterministic and load their complete entrypoints",
     );
     await assert.rejects(
       execFileAsync("node", [first.workerBundle]),
-      /Hosted Environment configuration is incomplete/u,
+      /control-worker configuration is incomplete/u,
     );
     await assert.rejects(
       execFileAsync("node", [first.readinessBundle]),

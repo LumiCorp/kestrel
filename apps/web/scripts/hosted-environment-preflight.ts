@@ -10,6 +10,7 @@ import {
 } from "../lib/environments/cutover-readiness";
 import { ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION } from "@lumi/kestrel-environment-auth";
 import { inspectFlyReleaseDeploymentReadiness } from "../lib/releases/deployment-preflight";
+import { assertWebProcessConfiguration } from "../lib/runtime/process-contracts";
 
 async function main() {
   const unknownArguments = process.argv
@@ -31,6 +32,7 @@ async function main() {
   }
   const phase = selectedPhases[0] ?? "cutover";
   assertHostedEnvironmentRuntimeConfiguration(process.env);
+  assertWebProcessConfiguration(process.env);
 
   for (const name of [
     "GITHUB_CLIENT_ID",

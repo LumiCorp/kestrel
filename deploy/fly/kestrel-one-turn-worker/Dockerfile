@@ -11,6 +11,7 @@ RUN corepack enable
 
 WORKDIR /workspace
 COPY . .
+RUN printf '%s\n' "$KESTREL_GIT_SHA" > /workspace/.kestrel-source-revision
 
 # The worker runs TypeScript directly so the image intentionally includes the
 # web package development toolchain. It contains no public HTTP service.

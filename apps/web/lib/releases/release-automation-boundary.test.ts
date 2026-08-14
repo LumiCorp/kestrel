@@ -142,8 +142,9 @@ test("Fly image release automation covers every managed image and authenticates 
   assert.doesNotMatch(turnWorkerSmoke, /--entrypoint|tsx --version/u);
   assert.match(
     turnWorkerSmoke,
-    /Kestrel One durable turn worker failed to start: DATABASE_URL or POSTGRES_URL is required/u,
+    /Kestrel One durable turn worker failed to start: turn-worker configuration is incomplete/u,
   );
+  assert.match(turnWorkerSmoke, /\.kestrel-source-revision/u);
   assert.match(turnWorkerSmoke, /org\.opencontainers\.image\.revision/u);
   assert.match(publisherRuntime, /RELEASE_CONTROLLER_CONTRACT_REVISION/u);
   assert.match(publisherRuntime, /version: 3 as const/u);

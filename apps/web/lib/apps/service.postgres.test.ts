@@ -6,6 +6,7 @@ import {
   verifyEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
 import postgres from "postgres";
+import { installTestStableRuntimeBundle } from "@/lib/releases/test-stable-runtime-bundle";
 
 const databaseUrl = process.env.KESTREL_APPS_DB_TEST_URL?.trim();
 
@@ -93,6 +94,10 @@ test(
     const linearSnapshotId = crypto.randomUUID();
     const linearCapabilityId = crypto.randomUUID();
     const now = new Date();
+    const removeStableRuntimeBundle = await installTestStableRuntimeBundle(
+      sql,
+      suffix,
+    );
 
     context.after(async () => {
       globalThis.fetch = originalFetch;
@@ -100,6 +105,7 @@ test(
       await sql`DELETE FROM "user" WHERE "id" = ${isolatedUserId}`;
       await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
       await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await removeStableRuntimeBundle();
       await resetDbRuntimeForTests();
       await sql.end({ timeout: 0 });
     });
