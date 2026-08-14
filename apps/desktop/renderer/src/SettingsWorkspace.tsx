@@ -68,6 +68,8 @@ const SETTINGS_PAGE_DESCRIPTIONS: Record<SettingsPage, string> = {
   permissions: "Operating-system access used by Desktop features.",
 };
 
+const DEFAULT_KESTREL_ONE_URL = "https://kestrelagents.dev";
+
 interface SettingsWorkspaceProps {
   settings: DesktopRendererSettings;
   initialCapabilityId?: DesktopCapabilityId | undefined;
@@ -156,7 +158,7 @@ export function SettingsWorkspace({
     "chat" | "plan" | "build"
   >("chat");
   const [kestrelOneModelId, setKestrelOneModelId] = useState("");
-  const [kestrelOneUrl, setKestrelOneUrl] = useState("https://kestrel.one");
+  const [kestrelOneUrl, setKestrelOneUrl] = useState(DEFAULT_KESTREL_ONE_URL);
   const [desktopName, setDesktopName] = useState("Kestrel Desktop");
   const [kestrelOneBusy, setKestrelOneBusy] = useState(false);
   const dialogRef = useRef<HTMLFormElement>(null);
