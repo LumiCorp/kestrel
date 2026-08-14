@@ -258,6 +258,7 @@ export class EnvironmentProvisioner {
     provider: EnvironmentInfrastructureProvider;
     runtimeImage: string;
     routerImage: string;
+    requireRuntimeImages?: boolean | undefined;
     ticketPublicKey: string;
     controlPlaneUrl: string;
     backupWorkspace?:
@@ -282,11 +283,12 @@ export class EnvironmentProvisioner {
       ticketPublicKey,
       controlPlaneUrl,
       backupWorkspace,
+      requireRuntimeImages = true,
     } = input;
-    if (!runtimeImage.trim()) {
+    if (requireRuntimeImages && !runtimeImage.trim()) {
       throw new Error("Workspace runtime image is not configured.");
     }
-    if (!routerImage.trim()) {
+    if (requireRuntimeImages && !routerImage.trim()) {
       throw new Error("Environment router image is not configured.");
     }
     if (!ticketPublicKey.includes("BEGIN PUBLIC KEY")) {
@@ -649,16 +651,21 @@ export class EnvironmentProvisioner {
         "Environment update target is unavailable.",
       );
     }
-    const runtimeImage = readImmutableImage(
-      operation.input?.runtimeImage,
-      "Workspace runtime image",
-      "workspace-runtime",
-    );
-    const routerImage = readImmutableImage(
-      operation.input?.routerImage,
-      "Environment router image",
-      "environment-router",
-    );
+    const releaseTargetId = readInputString(operation.input, "releaseTargetId");
+    const runtimeImage = releaseTargetId
+      ? readImmutableImage(
+          operation.input?.runtimeImage,
+          "Workspace runtime image",
+          "workspace-runtime",
+        )
+      : this.runtimeImage;
+    const routerImage = releaseTargetId
+      ? readImmutableImage(
+          operation.input?.routerImage,
+          "Environment router image",
+          "environment-router",
+        )
+      : this.routerImage;
     const workspaceDataMigrationRevision = readInputString(
       operation.input,
       "workspaceDataMigrationRevision",

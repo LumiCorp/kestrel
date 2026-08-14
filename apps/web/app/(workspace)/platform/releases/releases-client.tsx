@@ -41,6 +41,7 @@ type Release = {
   components: Array<{
     role: string;
     image: string;
+    sourceRevision: string;
     changed: boolean;
     environmentGatewayAcceptedVersions: number[] | null;
   }>;
@@ -97,7 +98,10 @@ export function ReleasesClient({
   const candidate = initialReleases.find(
     (release) => release.status === "candidate",
   );
-  const decisionRelease = active ?? candidate ?? null;
+  const decisionRelease =
+    active?.status === "paused" && candidate
+      ? candidate
+      : (active ?? candidate ?? null);
   const history = initialReleases.filter(
     (release) => release.id !== decisionRelease?.id,
   );
@@ -169,7 +173,11 @@ export function ReleasesClient({
         release.turnWorkerConfigurationAcknowledgementRequired &&
         !release.turnWorkerConfigurationApprovedAt ? (
           <SettingsStatusNotice
-            description={`Run pnpm --dir apps/web stage:turn-worker-config -- --release ${release.id}, verify Fly reports the changes as staged, then acknowledge this gate.`}
+            description={
+              release.trigger === "rollback"
+                ? `Check out the stable turn-worker revision ${release.components.find((component) => component.role === "turn-worker")?.sourceRevision ?? "shown below"}, run pnpm --dir apps/web stage:turn-worker-config -- --release ${release.id}, verify Fly reports the stable configuration as staged, then acknowledge this gate.`
+                : `Run pnpm --dir apps/web stage:turn-worker-config -- --release ${release.id}, verify Fly reports the changes as staged, then acknowledge this gate.`
+            }
             title="Turn-worker configuration staging required"
             tone="warning"
           />
@@ -258,7 +266,9 @@ export function ReleasesClient({
                   }
                   variant="destructive"
                 >
-                  Recover forward
+                  {release.trigger === "rollback"
+                    ? "Activate rollback"
+                    : "Recover forward"}
                 </Button>
               ) : null}
               {active?.status === "paused" &&

@@ -73,6 +73,11 @@ const PRESERVED_PLATFORM_FLY_SECRET_NAMES = [
   "KESTREL_FLY_ORGANIZATION_SLUG",
 ] as const;
 
+export const CONTROL_WORKER_KNOWN_REMOVALS = [
+  "KESTREL_ENVIRONMENT_ROUTER_IMAGE",
+  "KESTREL_WORKSPACE_RUNTIME_IMAGE",
+] as const;
+
 function run(
   command: string,
   args: string[],
@@ -143,10 +148,21 @@ export function controlWorkerSecretSetArgs(secrets: Map<string, string>) {
   return [
     "secrets",
     "set",
+    "--stage",
     "--app",
     app,
     ...[...secrets].map(([key, value]) => `${key}=${value}`),
   ];
+}
+
+export function controlWorkerSecretRemovalNames(secretListJson: string) {
+  const rows = JSON.parse(secretListJson) as Array<Record<string, unknown>>;
+  const names = new Set(
+    rows
+      .map((row) => row.Name ?? row.name)
+      .filter((name): name is string => typeof name === "string"),
+  );
+  return CONTROL_WORKER_KNOWN_REMOVALS.filter((name) => names.has(name));
 }
 
 export function assertPreservedPlatformFlyAuthority(secretListJson: string) {
@@ -285,12 +301,21 @@ async function main() {
       }
       await ensureApp(operatorOrganization);
     }
-    assertPreservedPlatformFlyAuthority(
-      run("fly", ["secrets", "list", "--app", app, "--json"], {
-        quiet: true,
-      }),
+    const existingSecrets = run(
+      "fly",
+      ["secrets", "list", "--app", app, "--json"],
+      { quiet: true },
     );
+    assertPreservedPlatformFlyAuthority(existingSecrets);
     run("fly", controlWorkerSecretSetArgs(secrets), { quiet: true });
+    const removals = controlWorkerSecretRemovalNames(existingSecrets);
+    if (removals.length) {
+      run(
+        "fly",
+        ["secrets", "unset", "--stage", "--app", app, ...removals],
+        { quiet: true },
+      );
+    }
     run("fly", ["auth", "docker"]);
     run("pnpm", ["run", "build:shared"]);
     const artifact = await buildControlWorkerArtifact();

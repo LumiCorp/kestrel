@@ -40,6 +40,7 @@ test("v3 release attempts serialize publication and require exact preparation pr
   const userId = `release-user-${suffix}`;
   const organizationId = `release-org-${suffix}`;
   const environmentId = `release-environment-${suffix}`;
+  const stableId = `release-stable-${suffix}`;
   const now = new Date();
 
   context.after(async () => {
@@ -53,6 +54,7 @@ test("v3 release attempts serialize publication and require exact preparation pr
     await sql`DELETE FROM fly_image_release_components WHERE release_id IN (SELECT id FROM fly_image_releases WHERE bundle_revision = ${revision})`;
     await sql`DELETE FROM fly_image_releases WHERE bundle_revision = ${revision}`;
     await sql`DELETE FROM fly_image_release_attempts WHERE source_revision = ${revision}`;
+    await sql`DELETE FROM fly_image_releases WHERE id = ${stableId}`;
     await sql`DELETE FROM release_controller_heartbeats WHERE id = 'platform'`;
     await sql`DELETE FROM environments WHERE id = ${environmentId}`;
     await sql`DELETE FROM organization WHERE id = ${organizationId}`;
@@ -84,8 +86,36 @@ test("v3 release attempts serialize publication and require exact preparation pr
       )
     `;
     await transaction`
+      INSERT INTO "fly_image_releases" (
+        "id", "bundle_revision", "manifest_digest", "trigger", "status",
+        "validation", "created_at", "updated_at"
+      ) VALUES (
+        ${stableId}, ${"c".repeat(40)}, ${`sha256:${"c".repeat(64)}`},
+        'manual', 'completed',
+        ${transaction.json({ status: "passed", commands: ["seed"], completedAt: now.toISOString() })},
+        ${now}, ${now}
+      )
+    `;
+    for (const [index, role] of roles.entries()) {
+      await transaction`
+        INSERT INTO "fly_image_release_components" (
+          "release_id", "role", "image", "source_revision",
+          "input_fingerprint", "configuration_contract_fingerprint",
+          "changed", "smoke", "environment_gateway_accepted_versions"
+        ) VALUES (
+          ${stableId}, ${role},
+          ${`${ROLE_IMAGE_REPOSITORIES[role]}@sha256:${String(index + 1).repeat(64)}`},
+          ${"c".repeat(40)}, ${`sha256:${String(index + 5).repeat(64)}`},
+          ${role === "turn-worker" ? `sha256:${"e".repeat(64)}` : null},
+          false,
+          ${transaction.json({ status: "passed", command: `stable ${role}`, completedAt: now.toISOString() })},
+          ${role === "environment-router" ? transaction.array([2, 3]) : null}::integer[]
+        )
+      `;
+    }
+    await transaction`
       UPDATE fly_image_release_settings
-      SET stable_release_id = NULL, active_release_id = NULL,
+      SET stable_release_id = ${stableId}, active_release_id = NULL,
           canary_environment_id = ${environmentId}, updated_at = ${now}
       WHERE id = 'platform'
     `;
@@ -150,14 +180,7 @@ test("v3 release attempts serialize publication and require exact preparation pr
   const preparation = await releases.getFlyImageReleasePreparation(
     candidate.id,
   );
-  assert.equal(
-    preparation.runtimeImages.workspace,
-    `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"1".repeat(64)}`,
-  );
-  assert.equal(
-    preparation.runtimeImages.router,
-    `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"2".repeat(64)}`,
-  );
+  assert.equal("runtimeImages" in preparation, false);
   await assert.rejects(
     releases.acknowledgeFlyImageReleaseMigration({
       releaseId: candidate.id,
@@ -312,6 +335,47 @@ test("v3 release attempts serialize publication and require exact preparation pr
     null,
   );
   assert.equal(settledCandidate.status, "candidate");
+
+  await sql`
+    UPDATE "fly_image_releases"
+    SET "status" = 'paused', "failure_code" = 'TURN_WORKER_READINESS_TIMEOUT',
+        "failure_message" = 'Candidate worker did not become ready',
+        "updated_at" = now()
+    WHERE "id" = ${candidate.id}
+  `;
+  const rollback = await releases.createFlyImageRollback({
+    failedReleaseId: candidate.id,
+    actorUserId: userId,
+  });
+  assert.equal(rollback?.status, "candidate");
+  const [preparedState] = await sql`
+    SELECT "active_release_id" FROM "fly_image_release_settings"
+    WHERE "id" = 'platform'
+  `;
+  assert.equal(preparedState?.active_release_id, candidate.id);
+
+  const listedRollback = (await releases.listFlyImageReleases()).releases.find(
+    (release) => release.id === rollback?.id,
+  );
+  assert.equal(
+    listedRollback?.turnWorkerConfigurationAcknowledgementRequired,
+    true,
+  );
+  assert.equal(listedRollback?.recoveryEligibility.ok, false);
+  assert.equal(
+    listedRollback?.recoveryEligibility.code,
+    "RELEASE_TURN_WORKER_CONFIG_BLOCKED",
+  );
+  await releases.acknowledgeTurnWorkerConfiguration({
+    releaseId: rollback!.id,
+    actorUserId: userId,
+  });
+  const activatedRollback = await releases.recoverFlyImageReleaseForward({
+    releaseId: rollback!.id,
+    actorUserId: userId,
+  });
+  assert.equal(activatedRollback?.status, "approved");
+  assert.equal(activatedRollback?.recoveryOfReleaseId, candidate.id);
 });
 
 function manifestFor(

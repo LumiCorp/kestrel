@@ -12,14 +12,13 @@ import {
 } from "./controller-contract";
 import {
   assertPreservedPlatformFlyAuthority,
+  controlWorkerSecretRemovalNames,
   controlWorkerSecretSetArgs,
   CONTROL_WORKER_SECRET_ALLOWLIST,
   selectControlWorkerSecrets,
 } from "../../scripts/release-control-worker";
 import {
   canSkipControlWorkerMachineDeploy,
-  findControlWorkerMachine,
-  isControlWorkerMachinePostcondition,
   selectControlWorkerMachineAction,
   selectControlWorkerMachineUpdatePlan,
 } from "../../scripts/control-worker-machine";
@@ -61,6 +60,13 @@ test("control worker secrets are explicitly allowlisted and fail closed", () => 
   source.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY = ticketKeys.publicKey
     .export({ type: "spki", format: "pem" })
     .toString();
+  const encryptionKey = Buffer.alloc(32, 9).toString("base64");
+  source.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID = "primary";
+  source.KESTREL_GATEWAY_CREDENTIAL_KEYS = JSON.stringify({
+    primary: encryptionKey,
+  });
+  source.KESTREL_ONE_APP_URL = "https://kestrelagents.dev";
+  source.KESTREL_WORKSPACE_BACKUP_KEY = encryptionKey;
   source.UNRELATED_SECRET = "must-not-cross-boundary";
   const selected = selectControlWorkerSecrets(source);
 
@@ -90,18 +96,32 @@ test("control worker secrets preserve multiline values as one Fly argument", () 
     ]),
   );
 
-  assert.deepEqual(args.slice(0, 4), [
+  assert.equal(args[5], "CRON_SECRET=cron-secret");
+  assert.equal(
+    args[6],
+    `KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY=${multilineValue}`,
+  );
+  assert.deepEqual(args.slice(0, 5), [
     "secrets",
     "set",
+    "--stage",
     "--app",
     "kestrel-one-control-worker",
   ]);
-  assert.equal(args[4], "CRON_SECRET=cron-secret");
-  assert.equal(
-    args[5],
-    `KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY=${multilineValue}`,
+  assert.equal(args.length, 7);
+});
+
+test("control worker release stages removal of legacy tenant image secrets", () => {
+  assert.deepEqual(
+    controlWorkerSecretRemovalNames(
+      JSON.stringify([
+        { Name: "FLY_API_TOKEN" },
+        { Name: "KESTREL_ENVIRONMENT_ROUTER_IMAGE" },
+        { name: "KESTREL_WORKSPACE_RUNTIME_IMAGE" },
+      ]),
+    ),
+    ["KESTREL_ENVIRONMENT_ROUTER_IMAGE", "KESTREL_WORKSPACE_RUNTIME_IMAGE"],
   );
-  assert.equal(args.length, 6);
 });
 
 test("control worker release requires platform Fly authority to remain on the app", () => {
@@ -361,48 +381,6 @@ test("control worker deploy skip requires matching fingerprint and a running Mac
   );
 });
 
-test("control worker postcondition requires exact persisted runtime images", () => {
-  const expectedEnvironment = {
-    KESTREL_ENVIRONMENT_ROUTER_IMAGE: `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"2".repeat(64)}`,
-    KESTREL_WORKSPACE_RUNTIME_IMAGE: `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"3".repeat(64)}`,
-  };
-  const current = findControlWorkerMachine({
-    inventory: [
-      machine({
-        id: "primary",
-        state: "started",
-        command: ["node", "/app/control-worker.cjs"],
-        environment: {
-          ...expectedEnvironment,
-          KESTREL_ENVIRONMENT_ROUTER_IMAGE: `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"4".repeat(64)}`,
-        },
-      }),
-    ],
-    machineId: "primary",
-  });
-  assert.equal(
-    isControlWorkerMachinePostcondition({
-      machine: current,
-      expectedState: "started",
-      expectedFingerprint: "fingerprint-a",
-      expectedRevision: revision,
-      expectedEnvironment,
-    }),
-    false,
-  );
-  current.environment = expectedEnvironment;
-  assert.equal(
-    isControlWorkerMachinePostcondition({
-      machine: current,
-      expectedState: "started",
-      expectedFingerprint: "fingerprint-a",
-      expectedRevision: revision,
-      expectedEnvironment,
-    }),
-    true,
-  );
-});
-
 test("controller deployment survives Fly manifest transcoding after stopped-first tagged updates", async () => {
   const fingerprint = "f".repeat(64);
   const digest = `sha256:${"2".repeat(64)}`;
@@ -508,10 +486,8 @@ test("controller deployment survives Fly manifest transcoding after stopped-firs
   assert.equal(disposed, true);
 });
 
-test("stored controller preparation injects the candidate runtime image digests", async () => {
+test("stored controller preparation does not copy tenant runtime image authority", async () => {
   const controllerDigest = `sha256:${"2".repeat(64)}`;
-  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"3".repeat(64)}`;
-  const workspaceImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"4".repeat(64)}`;
   const inventory = [
     machine({ id: "primary", state: "started", fingerprint: "old" }),
   ];
@@ -521,8 +497,6 @@ test("stored controller preparation injects the candidate runtime image digests"
     revision,
     image: `registry.fly.io/kestrel-one-control-worker@${controllerDigest}`,
     fingerprint: `sha256:${"f".repeat(64)}`,
-    routerImage,
-    workspaceImage,
     accessToken: "token",
     dependencies: {
       readInventory: async () => structuredClone(inventory),
@@ -550,29 +524,16 @@ test("stored controller preparation injects the candidate runtime image digests"
 
   assert.equal(updates.length, 1);
   assert.equal(
-    updates[0]!.includes(`KESTREL_ENVIRONMENT_ROUTER_IMAGE=${routerImage}`),
-    true,
+    updates[0]!.some((argument) =>
+      argument.startsWith("KESTREL_ENVIRONMENT_ROUTER_IMAGE="),
+    ),
+    false,
   );
   assert.equal(
-    updates[0]!.includes(`KESTREL_WORKSPACE_RUNTIME_IMAGE=${workspaceImage}`),
-    true,
-  );
-  await assert.rejects(
-    deployStoredControlWorkerCandidate({
-      revision,
-      image: `registry.fly.io/kestrel-one-control-worker@${controllerDigest}`,
-      fingerprint: `sha256:${"f".repeat(64)}`,
-      routerImage: "registry.fly.io/kestrel-environment-router:latest",
-      workspaceImage,
-      accessToken: "token",
-      dependencies: {
-        readInventory: async () => structuredClone(inventory),
-        run: async () => assert.fail("invalid images must fail before mutation"),
-        wait: async () => {},
-        write: () => {},
-      },
-    }),
-    /candidate's immutable Environment Router and Workspace Runtime images/u,
+    updates[0]!.some((argument) =>
+      argument.startsWith("KESTREL_WORKSPACE_RUNTIME_IMAGE="),
+    ),
+    false,
   );
 });
 

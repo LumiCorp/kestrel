@@ -94,6 +94,9 @@ test("v3 release manifests require the controller and all five exact roles", () 
       ...(role === "environment-router"
         ? { environmentGateway: { acceptedVersions: [2, 3] } }
         : {}),
+      ...(role === "turn-worker"
+        ? { configurationContractFingerprint: `sha256:${digest}` }
+        : {}),
     })),
   });
   assert.equal(base.components.length, 5);

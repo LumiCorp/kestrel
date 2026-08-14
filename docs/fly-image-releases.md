@@ -82,6 +82,24 @@ fail closed when that bundle is absent or does not contain the exact public GHCR
 repositories. Deployed Web and worker processes do not carry tenant-runtime
 image variables.
 
+### First authority cutover
+
+The process contracts intentionally reject the former image variables and Web
+platform Fly credentials. They must therefore be removed from the Vercel
+Production environment **before** the first Web deployment that contains these
+contracts. Before removal, verify that the current production database has a
+completed stable release whose Environment Router and Workspace Runtime are the
+exact public GHCR digest repositories. The predecessor already prefers that
+stable bundle, so removing its fallback variables is safe only after this proof.
+
+After the variables are removed, deploy migration 0069 and the matching Web
+revision. Then run the controller release command below. It stages both the
+controller allowlist and removal of the two legacy image secrets, so the old
+controller Machine remains untouched and the removals activate atomically with
+the new controller image. Do not deploy this revision first and defer Vercel
+variable removal to a later redeploy; production preflight will reject that
+ordering.
+
 The candidate endpoint accepts only a GitHub Actions OIDC token for the exact
 main-branch release workflow and commit SHA. Its preflight rejects an
 incompatible serving revision before any artifact build. The authoritative
@@ -131,9 +149,10 @@ pnpm --dir apps/web release:control-worker
 ```
 
 The command pulls the canonical `lumi-kestrel/one` production service
-configuration, selects only the explicit controller allowlist, and preserves
-the platform Fly credentials already stored on the control-worker App. Operator
-Fly authentication supplies deployment authority. The command refuses the
+configuration, selects only the explicit controller allowlist, stages removal
+of legacy tenant-image secrets, and preserves the platform Fly credentials
+already stored on the control-worker App. Operator Fly authentication supplies
+deployment authority. The command refuses the
 cutover while a legacy release or Environment
 lifecycle queue has nonterminal work. It deploys the exact local commit and
 verifies the readiness file and database heartbeat. Do not run this command in
@@ -223,10 +242,23 @@ updated Machine reports the exact source revision and process-configuration
 fingerprint within 120 seconds. Merely observing a running Machine is not
 release evidence.
 Only then is **Retry failed target** available. There is no automatic rollback.
-Choose **Roll back to stable** only when the active release is paused; rollback
-creates a new coordinated release for targets the failed release may already
-have mutated and follows the same canary-first rollout. Rollback is blocked when
-the stable router has unknown or incompatible gateway evidence.
+Choose **Roll back to stable** only when the active release is paused. This
+prepares a rollback candidate without touching a Machine or superseding the
+paused release. When its turn-worker process-contract fingerprint differs from
+the paused release, check out the stable turn-worker component's source
+revision, restore any stable contract values in the canonical Vercel
+configuration, and run the staging command with the rollback candidate ID.
+After verifying the staged inventory, acknowledge the gate and choose
+**Activate rollback**. The existing forward-recovery transaction then
+supersedes the paused release and starts the same canary-first coordinated
+rollout. This checkout requirement ensures the staging command validates the
+stable contract rather than the failed candidate contract. Rollback is blocked
+when the stable router has unknown or incompatible gateway evidence.
+
+Configuration fingerprints describe contract shape, not secret values. A
+same-shape secret rotation remains canonical configuration and is not reverted
+by an image rollback; restore a previous secret version in the configured secret
+system before staging if value rollback is required.
 
 When a legacy stable bundle lacks compatibility metadata, deploy the repair with
 `KESTREL_RELEASE_COMPATIBILITY_BOOTSTRAP=allow-legacy-stable`. This literal is a

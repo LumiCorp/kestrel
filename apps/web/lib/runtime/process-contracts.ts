@@ -250,4 +250,69 @@ export function assertControlWorkerProcessConfiguration(
   env: Record<string, string | undefined> = process.env,
 ) {
   assertProcessConfiguration(CONTROL_WORKER_PROCESS_CONTRACT, env);
+  assertControlWorkerSemanticConfiguration(env);
+}
+
+function assertControlWorkerSemanticConfiguration(
+  env: Record<string, string | undefined>,
+) {
+  const backupKey = Buffer.from(
+    env.KESTREL_WORKSPACE_BACKUP_KEY ?? "",
+    "base64",
+  );
+  if (backupKey.byteLength !== 32) {
+    throw new Error(
+      "KESTREL_WORKSPACE_BACKUP_KEY must be a base64-encoded 32-byte key.",
+    );
+  }
+  const controlPlaneUrl = new URL(env.KESTREL_ONE_APP_URL ?? "");
+  if (
+    controlPlaneUrl.protocol !== "https:" &&
+    !["127.0.0.1", "localhost"].includes(controlPlaneUrl.hostname)
+  ) {
+    throw new Error(
+      "KESTREL_ONE_APP_URL must use HTTPS outside local development.",
+    );
+  }
+  assertGatewayCredentialConfiguration(env);
+}
+
+function assertGatewayCredentialConfiguration(
+  env: Record<string, string | undefined>,
+) {
+  const activeKeyId = env.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID?.trim();
+  const rawKeys = env.KESTREL_GATEWAY_CREDENTIAL_KEYS?.trim();
+  if (!(activeKeyId && rawKeys)) {
+    throw new Error(
+      "Gateway credential encryption requires an active key ID and keyring.",
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawKeys);
+  } catch {
+    throw new Error(
+      "KESTREL_GATEWAY_CREDENTIAL_KEYS must be a JSON object of base64-encoded 32-byte keys.",
+    );
+  }
+  if (!(parsed && typeof parsed === "object" && !Array.isArray(parsed))) {
+    throw new Error("KESTREL_GATEWAY_CREDENTIAL_KEYS must be a JSON object.");
+  }
+  const entries = Object.entries(parsed);
+  for (const [keyId, encodedKey] of entries) {
+    if (
+      !/^[A-Za-z0-9._-]{1,64}$/u.test(keyId) ||
+      typeof encodedKey !== "string" ||
+      Buffer.from(encodedKey, "base64").byteLength !== 32
+    ) {
+      throw new Error(
+        "KESTREL_GATEWAY_CREDENTIAL_KEYS must contain valid base64-encoded keys that decode to 32 bytes.",
+      );
+    }
+  }
+  if (!Object.hasOwn(parsed, activeKeyId)) {
+    throw new Error(
+      "KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID must identify a configured gateway credential key.",
+    );
+  }
 }

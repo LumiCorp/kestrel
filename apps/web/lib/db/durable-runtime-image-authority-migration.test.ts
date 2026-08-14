@@ -11,7 +11,7 @@ const migration = fs.readFileSync(
   "utf8",
 );
 
-test("migration 0070 persists worker contract acknowledgement and heartbeat evidence", () => {
+test("migration 0071 persists worker contract acknowledgement and heartbeat evidence", () => {
   assert.match(migration, /configuration_contract_fingerprint/u);
   assert.match(migration, /turn_worker_configuration_approved_by_user_id/u);
   assert.match(migration, /CREATE TABLE "platform_worker_heartbeats"/u);

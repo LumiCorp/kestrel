@@ -20,6 +20,10 @@ test("ordinary hosted runtime paths use the stable release without image environ
     );
   }
   assert.match(runtime, /requireStableFlyEnvironmentImages/u);
+  assert.match(runtime, /flyImageReleaseTargets\.findFirst/u);
+  assert.match(runtime, /flyImageReleaseComponents\.findMany/u);
+  assert.match(runtime, /type !== "environment\.delete"/u);
+  assert.match(runtime, /type !== "workspace\.delete"/u);
   assert.match(admin, /requireStableFlyEnvironmentImages/u);
   assert.match(backups, /requireStableFlyEnvironmentImages/u);
   assert.match(releaseStore, /STABLE_FLY_RUNTIME_BUNDLE_UNAVAILABLE/u);

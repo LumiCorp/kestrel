@@ -124,8 +124,6 @@ export async function deployStoredControlWorkerCandidate(input: {
   revision: string;
   image: string;
   fingerprint: string;
-  routerImage: string;
-  workspaceImage: string;
   appName?: string;
   accessToken: string;
   dependencies: Pick<
@@ -141,18 +139,6 @@ export async function deployStoredControlWorkerCandidate(input: {
   ) {
     throw new Error("Preparation requires an immutable control-worker image.");
   }
-  if (
-    !/^ghcr\.io\/lumicorp\/kestrel-environment-router@sha256:[a-f0-9]{64}$/u.test(
-      input.routerImage,
-    ) ||
-    !/^ghcr\.io\/lumicorp\/kestrel-workspace-runtime@sha256:[a-f0-9]{64}$/u.test(
-      input.workspaceImage,
-    )
-  ) {
-    throw new Error(
-      "Preparation requires the candidate's immutable Environment Router and Workspace Runtime images.",
-    );
-  }
   await updateControlWorkerMachines({
     appName,
     accessToken: input.accessToken,
@@ -161,10 +147,6 @@ export async function deployStoredControlWorkerCandidate(input: {
     authoritativeImage: input.image,
     fingerprint: input.fingerprint.replace(/^sha256:/u, ""),
     revision: input.revision,
-    runtimeImages: {
-      router: input.routerImage,
-      workspace: input.workspaceImage,
-    },
   });
   await verifyControllerReadiness(input.dependencies, appName);
   input.dependencies.write(
@@ -237,10 +219,6 @@ async function updateControlWorkerMachines(input: {
   authoritativeImage: string;
   fingerprint: string;
   revision: string;
-  runtimeImages?: {
-    router: string;
-    workspace: string;
-  };
 }) {
   const inventory = await input.dependencies.readInventory(
     input.appName,
@@ -264,14 +242,6 @@ async function updateControlWorkerMachines(input: {
       "120",
       "--yes",
     ];
-    if (input.runtimeImages) {
-      args.push(
-        "--env",
-        `KESTREL_ENVIRONMENT_ROUTER_IMAGE=${input.runtimeImages.router}`,
-        "--env",
-        `KESTREL_WORKSPACE_RUNTIME_IMAGE=${input.runtimeImages.workspace}`,
-      );
-    }
     if (update.skipStart) args.push("--skip-start");
     await input.dependencies.run("flyctl", args);
     await waitForMachinePostcondition({
@@ -282,12 +252,6 @@ async function updateControlWorkerMachines(input: {
       expectedState: update.expectedState,
       expectedFingerprint: input.fingerprint,
       expectedRevision: input.revision,
-      expectedEnvironment: input.runtimeImages
-        ? {
-            KESTREL_ENVIRONMENT_ROUTER_IMAGE: input.runtimeImages.router,
-            KESTREL_WORKSPACE_RUNTIME_IMAGE: input.runtimeImages.workspace,
-          }
-        : undefined,
     });
   }
 }

@@ -58,6 +58,7 @@ export default async function AdminReleasesPage() {
           components: release.components.map((component) => ({
             role: component.role,
             image: component.image,
+            sourceRevision: component.sourceRevision,
             changed: component.changed,
             environmentGatewayAcceptedVersions:
               component.environmentGatewayAcceptedVersions,

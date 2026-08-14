@@ -93,12 +93,15 @@ export async function POST(request: Request) {
     const acknowledgement =
       input.action === "migration_ready" ||
       input.action === "turn_worker_configuration_ready";
-    if (release && !acknowledgement) {
+    if (release && !acknowledgement && release.status !== "candidate") {
       await enqueueFlyImageRelease(release.id);
     }
+    const accepted = !(
+      acknowledgement || release?.status === "candidate"
+    );
     return NextResponse.json(
       { release },
-      { status: acknowledgement ? 200 : 202 },
+      { status: accepted ? 202 : 200 },
     );
   } catch (error) {
     return errorResponse(error, 409);

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import {
+  assertControlWorkerProcessConfiguration,
   assertTurnWorkerProcessConfiguration,
   processConfigurationContractFingerprint,
   TURN_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
@@ -26,6 +27,40 @@ function turnWorkerEnvironment() {
     KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "broker",
     KESTREL_ONE_PROFILE_ID: "kestrel",
     KESTREL_ONE_TOOL_TOKEN: "tool",
+  };
+}
+
+function controlWorkerEnvironment() {
+  const keys = generateKeyPairSync("ed25519");
+  const encryptionKey = Buffer.alloc(32, 7).toString("base64");
+  return {
+    POSTGRES_URL: "postgres://database",
+    CRON_SECRET: "cron",
+    FLY_API_TOKEN: "platform-authority",
+    KESTREL_APP_CREDENTIAL_ACTIVE_KEY_ID: "primary",
+    KESTREL_APP_CREDENTIAL_KEYS: JSON.stringify({ primary: encryptionKey }),
+    KESTREL_ENVIRONMENTS_ENABLED: "true",
+    KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: keys.privateKey
+      .export({ type: "pkcs8", format: "pem" })
+      .toString(),
+    KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY: keys.publicKey
+      .export({ type: "spki", format: "pem" })
+      .toString(),
+    KESTREL_FLY_ORGANIZATION_SLUG: "platform",
+    KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID: "primary",
+    KESTREL_GATEWAY_CREDENTIAL_KEYS: JSON.stringify({
+      primary: encryptionKey,
+    }),
+    KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
+    KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "broker",
+    KESTREL_ONE_TOOL_TOKEN: "tool",
+    KESTREL_WORKSPACE_BACKUP_KEY: encryptionKey,
+    KESTREL_WORKSPACE_BACKUP_KEY_ID: "backup-v1",
+    STORAGE_ACCESS_KEY_ID: "access",
+    STORAGE_BUCKET: "bucket",
+    STORAGE_ENDPOINT: "https://storage.example",
+    STORAGE_PROVIDER: "s3",
+    STORAGE_SECRET_ACCESS_KEY: "secret",
   };
 }
 
@@ -58,5 +93,34 @@ test("turn-worker configuration rejects cross-role authority", () => {
         KESTREL_WORKSPACE_RUNTIME_IMAGE: `ghcr.io/example@sha256:${"a".repeat(64)}`,
       }),
     /forbidden values: KESTREL_WORKSPACE_RUNTIME_IMAGE/u,
+  );
+});
+
+test("control-worker validation preserves semantic readiness checks", () => {
+  const valid = controlWorkerEnvironment();
+  assert.doesNotThrow(() => assertControlWorkerProcessConfiguration(valid));
+  assert.throws(
+    () =>
+      assertControlWorkerProcessConfiguration({
+        ...valid,
+        KESTREL_WORKSPACE_BACKUP_KEY: "not-a-32-byte-key",
+      }),
+    /base64-encoded 32-byte key/u,
+  );
+  assert.throws(
+    () =>
+      assertControlWorkerProcessConfiguration({
+        ...valid,
+        KESTREL_ONE_APP_URL: "http://kestrelagents.dev",
+      }),
+    /must use HTTPS/u,
+  );
+  assert.throws(
+    () =>
+      assertControlWorkerProcessConfiguration({
+        ...valid,
+        KESTREL_GATEWAY_CREDENTIAL_KEYS: '{"primary":"short"}',
+      }),
+    /32 bytes/u,
   );
 });

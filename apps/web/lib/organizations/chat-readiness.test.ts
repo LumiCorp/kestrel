@@ -196,6 +196,16 @@ test("execution readiness reports rollout and terminal environment states", () =
     /signed stable runtime release/u,
   );
 
+  const readyWithoutStableBundle = deriveOrganizationChatReadiness(
+    readyInput({ stableRuntimeBundleAvailable: false }),
+  );
+  assert.equal(
+    readyWithoutStableBundle.environmentExecution.status,
+    "stable_runtime_bundle_unavailable",
+  );
+  assert.equal(readyWithoutStableBundle.environmentExecution.ready, false);
+  assert.equal(readyWithoutStableBundle.ready, false);
+
   const failed = deriveOrganizationChatReadiness(
     readyInput({
       environment: {

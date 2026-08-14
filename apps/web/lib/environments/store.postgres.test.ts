@@ -58,7 +58,7 @@ test(
     const sql = postgres(databaseUrl, { max: 1 });
     const suffix = crypto.randomUUID();
     const removeStableRuntimeBundle = await installTestStableRuntimeBundle(
-      sql,
+      databaseUrl,
       suffix,
     );
     context.after(async () => {

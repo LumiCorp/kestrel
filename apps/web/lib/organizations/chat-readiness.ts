@@ -260,13 +260,13 @@ export function deriveOrganizationChatReadiness(
   } else if (!input.rollout.organizationEnabled) {
     executionStatus = "rollout_disabled";
     executionDetail = "Enable Environment execution for this organization.";
-  } else if (input.environment?.status === "ready") {
-    executionStatus = "ready";
-    executionDetail = "The default Environment is ready for agent turns.";
   } else if (input.stableRuntimeBundleAvailable === false) {
     executionStatus = "stable_runtime_bundle_unavailable";
     executionDetail =
       "Hosted provisioning is waiting for a signed stable runtime release.";
+  } else if (input.environment?.status === "ready") {
+    executionStatus = "ready";
+    executionDetail = "The default Environment is ready for agent turns.";
   } else if (
     input.operation?.status === "queued" ||
     input.operation?.status === "running" ||
@@ -290,7 +290,9 @@ export function deriveOrganizationChatReadiness(
   const environmentExecution: OrganizationChatReadiness["environmentExecution"] =
     {
       ready:
-        input.rollout.effectiveEnabled && input.environment?.status === "ready",
+        input.rollout.effectiveEnabled &&
+        input.stableRuntimeBundleAvailable !== false &&
+        input.environment?.status === "ready",
       status: executionStatus,
       detail: executionDetail,
       deploymentEnabled: input.rollout.deploymentEnabled,

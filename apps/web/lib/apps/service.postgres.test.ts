@@ -95,7 +95,7 @@ test(
     const linearCapabilityId = crypto.randomUUID();
     const now = new Date();
     const removeStableRuntimeBundle = await installTestStableRuntimeBundle(
-      sql,
+      databaseUrl,
       suffix,
     );
 

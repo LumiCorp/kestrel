@@ -321,12 +321,19 @@ function createProvisioner(
   backupWorkspace?: ConstructorParameters<
     typeof EnvironmentProvisioner
   >[0]["backupWorkspace"],
+  images: {
+    runtimeImage?: string;
+    routerImage?: string;
+    requireRuntimeImages?: boolean;
+  } = {},
 ) {
   return new EnvironmentProvisioner({
     repository,
     provider,
-    runtimeImage: "registry.example/runtime@sha256:abc",
-    routerImage: "registry.example/router@sha256:def",
+    runtimeImage:
+      images.runtimeImage ?? "registry.example/runtime@sha256:abc",
+    routerImage: images.routerImage ?? "registry.example/router@sha256:def",
+    requireRuntimeImages: images.requireRuntimeImages,
     ticketPublicKey:
       "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
     controlPlaneUrl: "https://kestrel.example",
@@ -432,6 +439,7 @@ test("Environment updates reject tenant images from the wrong release repository
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
+    releaseTargetId: "release-target-id",
   });
 
   assert.equal(
@@ -442,6 +450,54 @@ test("Environment updates reject tenant images from the wrong release repository
     "environment:degraded:ENVIRONMENT_IMAGE_INVALID",
     "operation:failed:ENVIRONMENT_IMAGE_INVALID",
   ]);
+});
+
+test("manual Environment reconciliation ignores stale operation image snapshots", async () => {
+  const staleRuntimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const staleRouterImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
+  const stableRuntimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"c".repeat(64)}`;
+  const stableRouterImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"d".repeat(64)}`;
+  const { repository, provider } = fixture("environment.update", null, {
+    runtimeImage: staleRuntimeImage,
+    routerImage: staleRouterImage,
+    releaseId: "stable-at-request-time",
+  });
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "workspace-id",
+      status: "ready",
+      flyMachineId: "workspace-machine-id",
+      flyVolumeId: "workspace-volume-id",
+      runtimeImage: staleRuntimeImage,
+    },
+  ];
+  const updates: Array<Parameters<typeof provider.updateMachineImage>[0]> = [];
+  provider.updateMachineImage = async (input) => {
+    updates.push(input);
+    return { id: input.machineId, state: "started", region: "iad" };
+  };
+
+  await createProvisioner(repository, provider, undefined, {
+    runtimeImage: stableRuntimeImage,
+    routerImage: stableRouterImage,
+  }).process("operation-id");
+
+  assert.equal(updates[0]?.runtimeImage, stableRouterImage);
+  assert.equal(updates[1]?.runtimeImage, stableRuntimeImage);
+});
+
+test("deletion operations do not require runtime image authority", async () => {
+  const { repository, provider, calls } = fixture("environment.delete");
+  provider.deleteEnvironmentApp = async () => {
+    calls.push("provider:delete-app");
+  };
+  await createProvisioner(repository, provider, undefined, {
+    runtimeImage: "",
+    routerImage: "",
+    requireRuntimeImages: false,
+  }).process("operation-id");
+  assert.ok(calls.includes("provider:delete-app"));
+  assert.ok(calls.includes("operation:completed"));
 });
 
 test("Environment update retries resume after verified resources", async () => {
@@ -699,6 +755,7 @@ test("managed releases reconfigure stopped Workspaces without launching them", a
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
+    releaseTargetId: "release-target-id",
     preserveStoppedWorkspaces: true,
     automaticRollback: false,
   });
@@ -762,6 +819,7 @@ test("Environment updates report Workspaces that require provisioning recovery",
   const { repository, provider } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
+    releaseTargetId: "release-target-id",
   });
   repository.listEnvironmentWorkspaces = async () => [
     {
