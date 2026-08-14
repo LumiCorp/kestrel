@@ -152,11 +152,11 @@ test("publisher waits for every artifact and reports all failures together", asy
 test("publication preflight fails before any managed image command", async () => {
   const harness = publisherHarness({
     reusePublishedImages: false,
-    preflightFailureCode: "RELEASE_CONTROLLER_STALE",
+    preflightFailureCode: "RELEASE_MIGRATION_BLOCKED",
   });
   await assert.rejects(
     publishFlyImages(harness.dependencies),
-    /409: RELEASE_CONTROLLER_STALE/u,
+    /409: RELEASE_MIGRATION_BLOCKED/u,
   );
   assert.equal(harness.flyBuilds.length, 0);
   assert.equal(harness.smokes.length, 0);
