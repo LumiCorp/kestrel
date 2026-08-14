@@ -29,6 +29,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx lib/db/migrate.ts",
     "db:migrate:deploy": "tsx lib/db/migrate.ts",
+    "db:migrate:release-control": "tsx scripts/ensure-release-control-schema.ts",
     "db:migrate:contract": "tsx lib/db/contract-migrate.ts",
     "knowledge:retire-legacy": "tsx scripts/retire-legacy-knowledge.ts",
     "db:push": "drizzle-kit push",

@@ -109,6 +109,12 @@ test("Fly image release automation covers every managed image and authenticates 
   assert.match(publisherRuntime, /verifyAnonymousGhcrDigestPull/u);
   assert.match(publisherRuntime, /pullPublishedImage/u);
   assert.match(publisherRuntime, /publicationToken/u);
+  assert.equal(
+    candidateRoute.match(
+      /error instanceof FlyImageReleaseError[\s\S]{0,80}response\(error\.code, 409\)/gu,
+    )?.length,
+    4,
+  );
   assert.match(oidc, /workflow_ref/u);
   assert.match(oidc, /run_id/u);
   assert.match(oidc, /run_attempt/u);
@@ -184,6 +190,7 @@ test("Fly image release automation covers every managed image and authenticates 
 
   const orderedSteps = [
     "Validate the release revision",
+    "Ensure release-control database schema",
     "Authenticate Docker to the Fly registry",
     "Wait for the exact Kestrel One production revision",
     "Preflight release publication",
@@ -198,6 +205,23 @@ test("Fly image release automation covers every managed image and authenticates 
     workflow,
     /run: pnpm tsx scripts\/preflight-fly-image-publication\.ts/u,
   );
+  assert.match(
+    workflow,
+    /POSTGRES_URL_NON_POOLING: \$\{\{ secrets\.POSTGRES_URL_NON_POOLING \}\}/u,
+  );
+  assert.match(
+    workflow,
+    /KESTREL_RELEASE_DATABASE_TARGET_SHA256: \$\{\{ vars\.KESTREL_RELEASE_DATABASE_TARGET_SHA256 \}\}/u,
+  );
+  assert.match(
+    workflow,
+    /run: pnpm --dir apps\/web db:migrate:release-control/u,
+  );
+  const jobEnvironmentBlock = workflow.slice(
+    workflow.indexOf("timeout-minutes: 90"),
+    workflow.indexOf("steps:"),
+  );
+  assert.doesNotMatch(jobEnvironmentBlock, /POSTGRES_URL_NON_POOLING/u);
   assert.match(preparationWorkflow, /workflow_dispatch/u);
   assert.match(preparationWorkflow, /cancel-in-progress: false/u);
   assert.match(
@@ -254,6 +278,18 @@ test("promotion drains sequentially and preserves stopped Workspaces", async () 
   assert.match(provisioner, /configureStoppedWorkspaceRuntime/u);
   assert.match(executionRoute, /activeReleaseTarget/u);
   assert.match(releaseStore, /RELEASE_MIGRATION_BLOCKED/u);
+  assert.match(releaseStore, /expectedMigrationTag/u);
+  assert.match(releaseStore, /expectedMigrationHash/u);
+  assert.match(releaseStore, /postgres\(databaseUrl/u);
+  assert.doesNotMatch(
+    releaseStore.slice(
+      releaseStore.indexOf("async function assertReleaseControlSchemaReady"),
+      releaseStore.indexOf(
+        "export async function assertReleaseControllerHealthy",
+      ),
+    ),
+    /knowledgeDb/u,
+  );
   assert.match(releaseStore, /acknowledgeFlyImageReleaseMigration/u);
   assert.match(releaseStore, /trigger: "rollback"/u);
   assert.match(runtime, /completeFlyImageReleaseIfReady/u);

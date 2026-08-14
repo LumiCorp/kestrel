@@ -42,6 +42,11 @@ jobs:
       - uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
       - name: Validate the release revision
         run: pnpm validate
+      - name: Ensure release-control database schema
+        env:
+          POSTGRES_URL_NON_POOLING: ${{ secrets.POSTGRES_URL_NON_POOLING }}
+          KESTREL_RELEASE_DATABASE_TARGET_SHA256: ${{ vars.KESTREL_RELEASE_DATABASE_TARGET_SHA256 }}
+        run: pnpm --dir apps/web db:migrate:release-control
       - name: Authenticate Docker to the Fly registry
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

@@ -10,6 +10,8 @@ import {
   gt,
   sql,
 } from "drizzle-orm";
+import postgres from "postgres";
+import { getDbRuntimeConfig } from "@/lib/db/runtime";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { ENVIRONMENT_GATEWAY_CONFIG_PRODUCED_VERSION } from "@lumi/kestrel-environment-auth";
 import {
@@ -38,6 +40,11 @@ import {
   RELEASE_MIGRATION_HEAD_SQL_HASH,
   RELEASE_MIGRATION_HISTORY_LOCK_HASH,
 } from "./migration-identity";
+import {
+  inspectReleaseControlSchema,
+  RELEASE_CONTROL_SCHEMA_MIGRATION_HASH,
+  RELEASE_CONTROL_SCHEMA_MIGRATION_TAG,
+} from "./release-control-schema";
 
 export const FLY_IMAGE_RELEASE_LOCK_KEY = "kestrel:fly-image-release";
 export const RELEASE_ATTEMPT_LEASE_MS = 15 * 60 * 1000;
@@ -68,6 +75,46 @@ export class FlyImageReleaseError extends Error {
     super(message);
     this.name = "FlyImageReleaseError";
   }
+}
+
+async function assertReleaseControlSchemaReady() {
+  const databaseUrl = getDbRuntimeConfig().databaseUrl;
+  if (!databaseUrl) {
+    throwReleaseControlSchemaBlocked(["database:unconfigured"]);
+  }
+  const connection = postgres(databaseUrl, { max: 1, prepare: false });
+  let readiness;
+  try {
+    readiness = await inspectReleaseControlSchema(
+      async <Row extends Record<string, unknown>>(statement: string) =>
+        connection.unsafe<Row[]>(statement),
+    );
+  } catch (error) {
+    throwReleaseControlSchemaBlocked(["inspection:failed"], error);
+  } finally {
+    await connection.end({ timeout: 0 });
+  }
+  if (!readiness.ready) {
+    throwReleaseControlSchemaBlocked(readiness.missingRequirements);
+  }
+}
+
+function throwReleaseControlSchemaBlocked(
+  missingRequirements: string[],
+  cause?: unknown,
+): never {
+  console.error("Fly image release-control schema is not ready.", {
+    missingRequirements,
+    expectedMigrationTag: RELEASE_CONTROL_SCHEMA_MIGRATION_TAG,
+    expectedMigrationHash: RELEASE_CONTROL_SCHEMA_MIGRATION_HASH,
+    ...(cause instanceof Error
+      ? { inspectionError: { name: cause.name, message: cause.message } }
+      : {}),
+  });
+  throw new FlyImageReleaseError(
+    "RELEASE_MIGRATION_BLOCKED",
+    "The release-control database schema is not ready for candidate publication.",
+  );
 }
 
 export async function assertReleaseControllerHealthy(
@@ -191,6 +238,7 @@ export async function acquireFlyImageReleaseAttempt(input: {
   githubRunId: string;
   githubRunAttempt: number;
 }) {
+  await assertReleaseControlSchemaReady();
   assertCurrentBuildRevision(input.sourceRevision);
   return knowledgeDb.transaction(async (transaction) => {
     await lockFlyImageReleases(transaction);
@@ -260,6 +308,7 @@ export async function renewFlyImageReleaseAttempt(input: {
   githubRunId: string;
   githubRunAttempt: number;
 }) {
+  await assertReleaseControlSchemaReady();
   const now = new Date();
   const [attempt] = await knowledgeDb
     .update(schema.flyImageReleaseAttempts)
@@ -301,6 +350,7 @@ export async function failFlyImageReleaseAttempt(input: {
   githubRunAttempt: number;
   evidence: Record<string, unknown>;
 }) {
+  await assertReleaseControlSchemaReady();
   return knowledgeDb.transaction(async (transaction) => {
     await lockFlyImageReleases(transaction);
     const [attempt] = await transaction
@@ -336,6 +386,7 @@ export async function failFlyImageReleaseAttempt(input: {
 export async function registerFlyImageReleaseCandidate(
   input: FlyImageReleaseManifestV3,
 ) {
+  await assertReleaseControlSchemaReady();
   const manifest = flyImageReleaseManifestV3Schema.parse(input);
   assertCurrentBuildRevision(manifest.bundleRevision);
   if (
@@ -765,6 +816,7 @@ export async function listFlyImageReleaseCanaries() {
 }
 
 export async function getFlyImageReleasePublicationState() {
+  await assertReleaseControlSchemaReady();
   const settings = await knowledgeDb.query.flyImageReleaseSettings.findFirst({
     where: eq(schema.flyImageReleaseSettings.id, "platform"),
     columns: { stableReleaseId: true },
