@@ -153,8 +153,6 @@ function validEnvironment() {
       format: "pem",
       type: "spki",
     }) as string,
-    KESTREL_ENVIRONMENT_ROUTER_IMAGE: `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"a".repeat(64)}`,
-    KESTREL_WORKSPACE_RUNTIME_IMAGE: `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"b".repeat(64)}`,
     KESTREL_WORKSPACE_BACKUP_KEY: randomBytes(32).toString("base64"),
     KESTREL_WORKSPACE_BACKUP_KEY_ID: "workspace-backup-v1",
     KESTREL_ONE_APP_URL: "https://kestrel-one.example",
@@ -205,7 +203,7 @@ test("Environment deployment defaults on while organization eligibility is expli
   assert.equal(hostedEnvironmentsOrganizationEnabled(false), false);
 });
 
-test("hosted cutover accepts complete immutable Environment configuration", () => {
+test("hosted cutover accepts complete non-image Environment configuration", () => {
   assert.doesNotThrow(() =>
     assertHostedEnvironmentConfiguration(validEnvironment())
   );
@@ -227,13 +225,13 @@ test("hosted runtime preparation permits the legacy runner during staged deploym
   );
 });
 
-test("hosted runtime image validation ignores surrounding deployment whitespace", () => {
+test("hosted runtime readiness does not read duplicated image configuration", () => {
   const environment = validEnvironment();
   assert.doesNotThrow(() =>
     assertHostedEnvironmentRuntimeConfiguration({
       ...environment,
-      KESTREL_ENVIRONMENT_ROUTER_IMAGE: ` ${environment.KESTREL_ENVIRONMENT_ROUTER_IMAGE}\n`,
-      KESTREL_WORKSPACE_RUNTIME_IMAGE: `${environment.KESTREL_WORKSPACE_RUNTIME_IMAGE}\n`,
+      KESTREL_ENVIRONMENT_ROUTER_IMAGE: "not-runtime-authority",
+      KESTREL_WORKSPACE_RUNTIME_IMAGE: "not-runtime-authority",
     })
   );
 });
@@ -253,16 +251,7 @@ test("hosted cutover rejects missing values and legacy global runner configurati
   );
 });
 
-test("hosted cutover rejects mutable images and mismatched ticket keys", () => {
-  assert.throws(
-    () =>
-      assertHostedEnvironmentConfiguration({
-        ...validEnvironment(),
-        KESTREL_ENVIRONMENT_ROUTER_IMAGE:
-          "ghcr.io/lumicorp/kestrel-environment-router:latest",
-      }),
-    /immutable ghcr\.io\/lumicorp\/kestrel-environment-router sha256 digest/u
-  );
+test("hosted cutover rejects mismatched ticket keys", () => {
   const first = validEnvironment();
   const second = validEnvironment();
   assert.throws(

@@ -24,6 +24,8 @@ export default async function AdminReleasesPage() {
         compatibilityMode={releaseData.compatibilityMode}
         currentBuildRevision={releaseData.currentBuildRevision}
         rollbackEligibility={releaseData.rollbackEligibility}
+        canaryRequired={releaseData.canaryRequired}
+        canaryRequirementReason={releaseData.canaryRequirementReason}
         initialReleases={releaseData.releases.map((release) => ({
           id: release.id,
           bundleRevision: release.bundleRevision,
@@ -37,6 +39,12 @@ export default async function AdminReleasesPage() {
             release.migrationVerifiedAt?.toISOString() ?? null,
           controllerPreparedAt:
             release.controllerPreparedAt?.toISOString() ?? null,
+          turnWorkerConfigurationApprovedAt:
+            release.turnWorkerConfigurationApprovedAt?.toISOString() ?? null,
+          turnWorkerConfigurationAcknowledgementRequired:
+            release.turnWorkerConfigurationAcknowledgementRequired,
+          turnWorkerConfigurationAcknowledgementEligibility:
+            release.turnWorkerConfigurationAcknowledgementEligibility,
           failureMessage: release.failureMessage,
           createdAt: release.createdAt.toISOString(),
           environmentGatewayConfigVersion:
@@ -50,6 +58,7 @@ export default async function AdminReleasesPage() {
           components: release.components.map((component) => ({
             role: component.role,
             image: component.image,
+            sourceRevision: component.sourceRevision,
             changed: component.changed,
             environmentGatewayAcceptedVersions:
               component.environmentGatewayAcceptedVersions,

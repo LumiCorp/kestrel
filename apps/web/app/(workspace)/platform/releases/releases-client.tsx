@@ -19,6 +19,13 @@ type Release = {
   migrationApprovedAt: string | null;
   migrationVerifiedAt: string | null;
   controllerPreparedAt: string | null;
+  turnWorkerConfigurationApprovedAt: string | null;
+  turnWorkerConfigurationAcknowledgementRequired: boolean;
+  turnWorkerConfigurationAcknowledgementEligibility: {
+    ok: boolean;
+    code?: string;
+    message?: string;
+  };
   failureMessage: string | null;
   environmentGatewayConfigVersion: number | null;
   admission: { ok: boolean; code?: string; message?: string };
@@ -34,6 +41,7 @@ type Release = {
   components: Array<{
     role: string;
     image: string;
+    sourceRevision: string;
     changed: boolean;
     environmentGatewayAcceptedVersions: number[] | null;
   }>;
@@ -53,6 +61,8 @@ export function ReleasesClient({
   currentBuildRevision,
   compatibilityMode,
   rollbackEligibility,
+  canaryRequired,
+  canaryRequirementReason,
 }: {
   initialReleases: Release[];
   initialSettings: {
@@ -69,6 +79,8 @@ export function ReleasesClient({
   currentBuildRevision: string | null;
   compatibilityMode: "enforced" | "legacy_bridge";
   rollbackEligibility: { ok: boolean; code?: string; message?: string };
+  canaryRequired: boolean;
+  canaryRequirementReason: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -86,7 +98,10 @@ export function ReleasesClient({
   const candidate = initialReleases.find(
     (release) => release.status === "candidate",
   );
-  const decisionRelease = active ?? candidate ?? null;
+  const decisionRelease =
+    active?.status === "paused" && candidate
+      ? candidate
+      : (active ?? candidate ?? null);
   const history = initialReleases.filter(
     (release) => release.id !== decisionRelease?.id,
   );
@@ -154,6 +169,19 @@ export function ReleasesClient({
               })}
           </div>
         ) : null}
+        {release.status === "candidate" &&
+        release.turnWorkerConfigurationAcknowledgementRequired &&
+        !release.turnWorkerConfigurationApprovedAt ? (
+          <SettingsStatusNotice
+            description={
+              release.trigger === "rollback"
+                ? `Check out the stable turn-worker revision ${release.components.find((component) => component.role === "turn-worker")?.sourceRevision ?? "shown below"}, run pnpm --dir apps/web stage:turn-worker-config -- --release ${release.id}, verify Fly reports the stable configuration as staged, then acknowledge this gate.`
+                : `Run pnpm --dir apps/web stage:turn-worker-config -- --release ${release.id}, verify Fly reports the changes as staged, then acknowledge this gate.`
+            }
+            title="Turn-worker configuration staging required"
+            tone="warning"
+          />
+        ) : null}
         <div className="flex flex-wrap gap-2">
           {canInvalidateLegacy ? (
             <Button
@@ -183,6 +211,25 @@ export function ReleasesClient({
                   Mark migration runbook complete
                 </Button>
               ) : null}
+              {release.turnWorkerConfigurationAcknowledgementRequired &&
+              !release.turnWorkerConfigurationApprovedAt ? (
+                <Button
+                  disabled={
+                    pending ||
+                    !release.turnWorkerConfigurationAcknowledgementEligibility
+                      .ok
+                  }
+                  onClick={() =>
+                    act({
+                      action: "turn_worker_configuration_ready",
+                      releaseId: release.id,
+                    })
+                  }
+                  variant="outline"
+                >
+                  Acknowledge staged worker configuration
+                </Button>
+              ) : null}
               <Button
                 disabled={
                   pending ||
@@ -190,8 +237,10 @@ export function ReleasesClient({
                   !release.controllerPreparedAt ||
                   !release.migrationVerifiedAt ||
                   Boolean(active) ||
-                  !savedCanaryId ||
+                  (canaryRequired && !savedCanaryId) ||
                   (release.migrationChanged && !release.migrationApprovedAt) ||
+                  (release.turnWorkerConfigurationAcknowledgementRequired &&
+                    !release.turnWorkerConfigurationApprovedAt) ||
                   !release.admission.ok
                 }
                 onClick={() =>
@@ -217,7 +266,9 @@ export function ReleasesClient({
                   }
                   variant="destructive"
                 >
-                  Recover forward
+                  {release.trigger === "rollback"
+                    ? "Activate rollback"
+                    : "Recover forward"}
                 </Button>
               ) : null}
               {active?.status === "paused" &&
@@ -319,7 +370,7 @@ export function ReleasesClient({
         />
       ) : candidate ? (
         <SettingsStatusNotice
-          description="Review the candidate and approve it when the migration and canary requirements are satisfied."
+          description={`Review the candidate and approve it when its gates are satisfied. ${canaryRequirementReason}`}
           title="Candidate ready for a decision"
           tone="warning"
         />

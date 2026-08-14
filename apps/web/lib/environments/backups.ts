@@ -9,6 +9,7 @@ import {
 import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
+import { requireStableFlyEnvironmentImages } from "@/lib/releases/store";
 import {
   createWorkspaceBackupDecryptionStream,
   createWorkspaceBackupEncryptionStream,
@@ -1548,7 +1549,7 @@ export async function restoreWorkspaceBackup(input: {
   const snapshotId =
     recoverySource.kind === "snapshot" ? recoverySource.snapshotId : null;
   const runtimeImage = snapshotId
-    ? requireImmutableWorkspaceRuntimeImage()
+    ? (await requireStableFlyEnvironmentImages()).runtimeImage
     : environment.runtimeImage;
   let archive: NodeJS.ReadableStream | null = null;
   let checksum: string | null = null;
@@ -1998,16 +1999,6 @@ async function readStoredSessionDescription(input: {
   } finally {
     await client.close();
   }
-}
-
-function requireImmutableWorkspaceRuntimeImage() {
-  const image = process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE?.trim() ?? "";
-  if (!/@sha256:[a-f0-9]{64}$/u.test(image)) {
-    throw new Error(
-      "KESTREL_WORKSPACE_RUNTIME_IMAGE must identify an immutable image digest for snapshot recovery.",
-    );
-  }
-  return image;
 }
 
 type WorkspaceBackupPreparationResponse = {

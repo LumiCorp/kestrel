@@ -12,18 +12,6 @@ const preparationSchema = z.object({
       inputFingerprint: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
       contractRevision: z.number().int().positive(),
     }),
-    runtimeImages: z.object({
-      router: z
-        .string()
-        .regex(
-          /^ghcr\.io\/lumicorp\/kestrel-environment-router@sha256:[a-f0-9]{64}$/u,
-        ),
-      workspace: z
-        .string()
-        .regex(
-          /^ghcr\.io\/lumicorp\/kestrel-workspace-runtime@sha256:[a-f0-9]{64}$/u,
-        ),
-    }),
   }),
 });
 const preparationCompletionSchema = z.object({
@@ -53,8 +41,6 @@ async function main() {
     revision,
     image: preparation.controller.image,
     fingerprint: preparation.controller.inputFingerprint,
-    routerImage: preparation.runtimeImages.router,
-    workspaceImage: preparation.runtimeImages.workspace,
     accessToken,
     dependencies: {
       readInventory: readControlWorkerInventory,

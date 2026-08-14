@@ -15,8 +15,10 @@ import {
   completeFlyImageReleaseIfReady,
   getFlyImageReleaseExecutionAdmission,
 } from "./store";
+import { PROCESS_CONFIGURATION_CONTRACT_REVISION } from "@/lib/runtime/process-contracts";
 
 const RELEASE_DRAIN_TIMEOUT_MS = 30 * 60 * 1000;
+const TURN_WORKER_READINESS_TIMEOUT_MS = 120_000;
 const GLOBAL_APP_BY_ROLE = {
   "preview-edge": "kestrel-preview-edge",
   "turn-worker": "kestrel-one-turn-worker",
@@ -168,9 +170,12 @@ export async function processFlyImageRelease(
         .where(eq(schema.flyImageReleaseTargets.id, target.id));
       return "deferred";
     }
-    const failureCode = retryable
-      ? "RELEASE_RETRY_BUDGET_EXHAUSTED"
-      : "RELEASE_TARGET_FAILED";
+    const failureCode =
+      error instanceof TurnWorkerReadinessTimeoutError
+        ? "TURN_WORKER_READINESS_TIMEOUT"
+        : retryable
+          ? "RELEASE_RETRY_BUDGET_EXHAUSTED"
+          : "RELEASE_TARGET_FAILED";
     await knowledgeDb
       .update(schema.flyImageReleaseTargets)
       .set({
@@ -232,13 +237,14 @@ async function applyGlobalAppTarget(
     columns: { bundleRevision: true },
   });
   if (!release) throw new Error("Global Fly image release disappeared.");
+  const updateStartedAt = new Date();
   await knowledgeDb
     .update(schema.flyImageReleaseTargets)
     .set({
       status: "applying",
       stage: "global_app.updating",
       priorImage: before[0]?.image ?? null,
-      startedAt: target.startedAt ?? new Date(),
+      startedAt: target.startedAt ?? updateStartedAt,
       result: buildGlobalAppApplyingResult(target.result, before),
       updatedAt: new Date(),
     })
@@ -252,6 +258,35 @@ async function applyGlobalAppTarget(
     sourceRevision: release.bundleRevision,
     waitForWorkerReadiness,
   });
+  if (role === "turn-worker") {
+    const component =
+      await knowledgeDb.query.flyImageReleaseComponents.findFirst({
+        where: and(
+          eq(schema.flyImageReleaseComponents.releaseId, target.releaseId),
+          eq(schema.flyImageReleaseComponents.role, "turn-worker"),
+        ),
+      });
+    if (
+      !(component?.sourceRevision && component.configurationContractFingerprint)
+    ) {
+      throw new Error("Turn-worker release readiness contract is incomplete.");
+    }
+    await knowledgeDb
+      .update(schema.flyImageReleaseTargets)
+      .set({
+        status: "verifying",
+        stage: "global_app.awaiting_worker_heartbeat",
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.flyImageReleaseTargets.id, target.id));
+    await waitForTurnWorkerHeartbeat({
+      machineIds: before.map((machine) => machine.id),
+      sourceRevision: component.sourceRevision,
+      configurationFingerprint: component.configurationContractFingerprint,
+      notBefore: updateStartedAt,
+      timeoutMs: TURN_WORKER_READINESS_TIMEOUT_MS,
+    });
+  }
   await knowledgeDb
     .update(schema.flyImageReleaseTargets)
     .set({
@@ -359,7 +394,12 @@ export async function updateGlobalAppMachines(input: {
   sourceRevision: string;
   waitForWorkerReadiness: typeof waitForWorkerReadiness;
 }) {
-  const plan = validateGlobalAppMachineTopology(input.machines);
+  const plan = validateGlobalAppMachineTopology(input.machines).sort(
+    (left, right) =>
+      (left.expectedState === "stopped" ? 0 : 1) -
+        (right.expectedState === "stopped" ? 0 : 1) ||
+      left.machine.id.localeCompare(right.machine.id),
+  );
   const verifiedMachines: EnvironmentProviderMachine[] = [];
   for (const { machine, expectedState } of plan) {
     const updateStartedAt = new Date();
@@ -368,7 +408,7 @@ export async function updateGlobalAppMachines(input: {
       machineId: machine.id,
       runtimeImage: input.desiredImage,
       envPatch:
-        input.role === "turn-worker" || input.role === "runpod-worker"
+        input.role === "runpod-worker"
           ? { KESTREL_RELEASE_IMAGE: input.desiredImage }
           : undefined,
     });
@@ -403,10 +443,7 @@ export async function updateGlobalAppMachines(input: {
         `Fly Machine '${machine.id}' did not remain ${expectedState} on the release digest.`,
       );
     }
-    if (
-      expectedState === "started" &&
-      (input.role === "turn-worker" || input.role === "runpod-worker")
-    ) {
+    if (expectedState === "started" && input.role === "runpod-worker") {
       await input.waitForWorkerReadiness({
         role: input.role,
         machineId: machine.id,
@@ -456,12 +493,15 @@ export async function waitForWorkerReadiness(input: {
 }
 
 export function isReleaseWorkerHeartbeatReady(input: {
-  heartbeat: {
-    sourceRevision: string;
-    image: string;
-    startedAt: Date;
-    heartbeatAt: Date;
-  } | null | undefined;
+  heartbeat:
+    | {
+        sourceRevision: string;
+        image: string;
+        startedAt: Date;
+        heartbeatAt: Date;
+      }
+    | null
+    | undefined;
   sourceRevision: string;
   expectedDigest: string | undefined;
   notBefore: Date;
@@ -471,12 +511,80 @@ export function isReleaseWorkerHeartbeatReady(input: {
     input.heartbeat?.image.match(/sha256:[a-f0-9]{64}$/u)?.[0];
   return Boolean(
     input.heartbeat?.sourceRevision === input.sourceRevision &&
-      heartbeatDigest === input.expectedDigest &&
-      input.heartbeat.startedAt >= input.notBefore &&
-      (input.now ?? new Date()).getTime() -
-        input.heartbeat.heartbeatAt.getTime() <=
-        90_000,
+    heartbeatDigest === input.expectedDigest &&
+    input.heartbeat.startedAt >= input.notBefore &&
+    (input.now ?? new Date()).getTime() -
+      input.heartbeat.heartbeatAt.getTime() <=
+      90_000,
   );
+}
+
+export function isMatchingTurnWorkerHeartbeat(
+  heartbeat: {
+    machineId: string;
+    sourceRevision: string;
+    configurationFingerprint: string;
+    contractRevision: number;
+    processStartedAt: Date;
+    heartbeatAt: Date;
+  },
+  expected: {
+    machineIds: string[];
+    sourceRevision: string;
+    configurationFingerprint: string;
+    notBefore: Date;
+    now: Date;
+  },
+) {
+  return (
+    expected.machineIds.includes(heartbeat.machineId) &&
+    heartbeat.sourceRevision === expected.sourceRevision &&
+    heartbeat.configurationFingerprint === expected.configurationFingerprint &&
+    heartbeat.contractRevision === PROCESS_CONFIGURATION_CONTRACT_REVISION &&
+    heartbeat.processStartedAt >= expected.notBefore &&
+    heartbeat.heartbeatAt >= expected.notBefore &&
+    expected.now.getTime() - heartbeat.heartbeatAt.getTime() < 60_000
+  );
+}
+
+class TurnWorkerReadinessTimeoutError extends Error {
+  constructor() {
+    super(
+      "The updated turn-worker Machines did not report the expected revision and configuration heartbeat within 120 seconds.",
+    );
+    this.name = "TurnWorkerReadinessTimeoutError";
+  }
+}
+
+async function waitForTurnWorkerHeartbeat(input: {
+  machineIds: string[];
+  sourceRevision: string;
+  configurationFingerprint: string;
+  notBefore: Date;
+  timeoutMs: number;
+}) {
+  const deadline = Date.now() + input.timeoutMs;
+  while (Date.now() < deadline) {
+    const heartbeats = await knowledgeDb
+      .select()
+      .from(schema.platformWorkerHeartbeats)
+      .where(
+        and(
+          eq(schema.platformWorkerHeartbeats.workerRole, "turn-worker"),
+          inArray(schema.platformWorkerHeartbeats.machineId, input.machineIds),
+        ),
+      );
+    const now = new Date();
+    if (
+      heartbeats.some((heartbeat) =>
+        isMatchingTurnWorkerHeartbeat(heartbeat, { ...input, now }),
+      )
+    ) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new TurnWorkerReadinessTimeoutError();
 }
 
 async function applyEnvironmentTarget(input: {

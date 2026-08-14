@@ -10,6 +10,7 @@ import {
   RELEASE_MIGRATION_HISTORY_LOCK_HASH,
 } from "../apps/web/lib/releases/migration-identity.js";
 import { flyImageReleaseCandidatePublicationResponseSchema } from "../apps/web/lib/releases/contracts.js";
+import { TURN_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT } from "../apps/web/lib/runtime/process-contracts.js";
 import {
   fingerprintImageInputs,
   flyImageCatalogSchema,
@@ -192,6 +193,12 @@ export async function publishFlyImages(
                   ...ENVIRONMENT_GATEWAY_CONFIG_ACCEPTED_VERSIONS,
                 ],
               },
+            }
+          : {}),
+        ...(image.role === "turn-worker"
+          ? {
+              configurationContractFingerprint:
+                TURN_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
             }
           : {}),
       };

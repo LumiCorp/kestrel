@@ -67,6 +67,9 @@ const evidence = flyImageReleaseManifestV3Schema.parse({
     ...(role === "environment-router"
       ? { environmentGateway: { acceptedVersions: [2, 3] } }
       : {}),
+    ...(role === "turn-worker"
+      ? { configurationContractFingerprint: `sha256:${digest}` }
+      : {}),
   })),
 });
 

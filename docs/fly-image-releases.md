@@ -80,9 +80,29 @@ Platform credentials are never a fallback for tenant provisioning. Each tenant
 Environment operation resolves only that Kestrel organization's encrypted Fly
 connection and creates resources only in the exact user-entered Fly organization.
 
-The existing `KESTREL_WORKSPACE_RUNTIME_IMAGE` and
-`KESTREL_ENVIRONMENT_ROUTER_IMAGE` values remain bootstrap fallbacks until the
-first release becomes stable. Postgres is authoritative after that point.
+The signed stable release manifest in Postgres is the sole steady-state image
+authority. Provisioning, recovery, reconciliation, and Workspace replacement
+fail closed when that bundle is absent or does not contain the exact public GHCR
+repositories. Deployed Web and worker processes do not carry tenant-runtime
+image variables.
+
+### First authority cutover
+
+The process contracts intentionally reject the former image variables and Web
+platform Fly credentials. They must therefore be removed from the Vercel
+Production environment **before** the first Web deployment that contains these
+contracts. Before removal, verify that the current production database has a
+completed stable release whose Environment Router and Workspace Runtime are the
+exact public GHCR digest repositories. The predecessor already prefers that
+stable bundle, so removing its fallback variables is safe only after this proof.
+
+After the variables are removed, deploy migration 0069 and the matching Web
+revision. Then run the controller release command below. It stages both the
+controller allowlist and removal of the two legacy image secrets, so the old
+controller Machine remains untouched and the removals activate atomically with
+the new controller image. Do not deploy this revision first and defer Vercel
+variable removal to a later redeploy; production preflight will reject that
+ordering.
 
 The candidate endpoint accepts only a GitHub Actions OIDC token for the exact
 main-branch release workflow and commit SHA. Its preflight rejects an
@@ -146,9 +166,12 @@ for the digest recorded in a candidate:
 pnpm --dir apps/web release:control-worker
 ```
 
-The command pulls the canonical `lumi-kestrel/one` production configuration,
-selects only the explicit controller allowlist, passes secrets to Fly through
-standard input, and refuses the cutover while a legacy release or Environment
+The command pulls the canonical `lumi-kestrel/one` production service
+configuration, selects only the explicit controller allowlist, stages removal
+of legacy tenant-image secrets, and preserves the platform Fly credentials
+already stored on the control-worker App. Operator Fly authentication supplies
+deployment authority. The command refuses the
+cutover while a legacy release or Environment
 lifecycle queue has nonterminal work. It deploys the exact local commit and
 verifies the readiness file and database heartbeat. Do not run this command in
 pull-request CI.
@@ -162,10 +185,10 @@ registry digest, and records that evidence in the workflow log. It does not
 inspect or update the controller Machine topology.
 
 Every managed image smoke runs an executable image contract. In particular,
-the turn-worker smoke invokes the image's real default `CMD`, requires the exact
-missing-database startup failure, and verifies the immutable image's Git
-revision label. A source-file check or `tsx --version` is not sufficient release
-evidence.
+the turn-worker smoke invokes the image's real default `CMD`, requires a
+fail-closed configuration error, and verifies both its immutable Git revision
+label and readable source-revision artifact. A source-file check or
+`tsx --version` is not sufficient release evidence.
 
 Before rollout, an operator can rerun the complete local contract journey with
 `pnpm release:verify-pipeline`. Given a captured v3 manifest, run
@@ -183,8 +206,11 @@ provider-owned representation change.
 
 ## Promotion
 
-1. Open Kestrel Admin, choose **Releases**, and select a dedicated Fly canary
-   Environment.
+1. Open Kestrel Admin and choose **Releases**. Select a dedicated Fly canary
+   Environment when the response says `canaryRequired`. A signed bundle may
+   promote fleetless while no non-archived, non-deleted Fly Environment exists;
+   first Environment creation is blocked while that promotion is approved or
+   deploying. A paused promotion is no longer mutating the fleet.
 2. Review the candidate's six exact immutable artifacts and smoke evidence.
 3. Dispatch `Prepare release candidate` for that candidate UUID from the exact
    candidate revision. Do not approve until preparation records the exact
@@ -192,7 +218,13 @@ provider-owned representation change.
 4. If the candidate contains a Web database migration, review the verified
    ledger evidence and mark the migration runbook complete. This acknowledgment
    records the administrator and time; it does not run a migration.
-5. Approve the release.
+5. Run
+   `pnpm --dir apps/web stage:turn-worker-config -- --release <release-id>`.
+   The command validates the role allowlist, stages exact sets and known
+   removals with Fly's `--stage` behavior, and leaves existing Machines
+   untouched. If the process-contract fingerprint changed, acknowledge the
+   staged configuration in Admin.
+6. Approve the release.
 
 When Environment images change, promotion updates the canary first, then
 Preview Edge, the RunPod worker, all other active Fly Environments sequentially,
@@ -201,7 +233,8 @@ then turn-worker order. New
 executions are blocked for the Environment currently draining. A drain that
 still has active executions after 30 minutes pauses the release.
 
-The canary must be ready or degraded when selected and when promotion starts.
+When a live fleet exists, the canary must be ready or degraded when selected
+and when promotion starts.
 Requested or provisioning Environments wait for provisioning before rollout.
 Non-canary Environments that become failed, deleting, deleted, or archived are
 recorded as skipped so an unavailable Environment cannot deadlock promotion or
@@ -222,11 +255,28 @@ response, and authoritative state while the release remains deploying.
 
 Promotion pauses immediately for non-retryable failures, contradictory provider
 state, or failed health checks, and pauses when the retry budget is exhausted.
+The turn-worker target also pauses with `TURN_WORKER_READINESS_TIMEOUT` when no
+updated Machine reports the exact source revision and process-configuration
+fingerprint within 120 seconds. Merely observing a running Machine is not
+release evidence.
 Only then is **Retry failed target** available. There is no automatic rollback.
-Choose **Roll back to stable** only when the active release is paused; rollback
-creates a new coordinated release for targets the failed release may already
-have mutated and follows the same canary-first rollout. Rollback is blocked when
-the stable router has unknown or incompatible gateway evidence.
+Choose **Roll back to stable** only when the active release is paused. This
+prepares a rollback candidate without touching a Machine or superseding the
+paused release. When its turn-worker process-contract fingerprint differs from
+the paused release, check out the stable turn-worker component's source
+revision, restore any stable contract values in the canonical Vercel
+configuration, and run the staging command with the rollback candidate ID.
+After verifying the staged inventory, acknowledge the gate and choose
+**Activate rollback**. The existing forward-recovery transaction then
+supersedes the paused release and starts the same canary-first coordinated
+rollout. This checkout requirement ensures the staging command validates the
+stable contract rather than the failed candidate contract. Rollback is blocked
+when the stable router has unknown or incompatible gateway evidence.
+
+Configuration fingerprints describe contract shape, not secret values. A
+same-shape secret rotation remains canonical configuration and is not reverted
+by an image rollback; restore a previous secret version in the configured secret
+system before staging if value rollback is required.
 
 When a legacy stable bundle lacks compatibility metadata, deploy the repair with
 `KESTREL_RELEASE_COMPATIBILITY_BOOTSTRAP=allow-legacy-stable`. This literal is a

@@ -7,11 +7,18 @@ import {
 } from "@/lib/ai/gateway-credential-health";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import type { GatewayProtocolProvider } from "@/lib/ai/gateway-utils";
-import { getHostedEnvironmentsRollout } from "@/lib/environments/config";
+import {
+  getHostedEnvironmentRuntimeMode,
+  getHostedEnvironmentsRollout,
+} from "@/lib/environments/config";
 import { getFlyProviderConnection } from "@/lib/environments/fly-connection";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { isPersonalOrganizationSlug } from "@/lib/personal-workspace-shared";
 import { isSignupOnboardingProvider } from "@/lib/signup-onboarding-provider-policy";
+import {
+  FlyImageReleaseError,
+  requireStableFlyEnvironmentImages,
+} from "@/lib/releases/store";
 
 export type OrganizationSetupNextStep =
   | "model_access"
@@ -82,6 +89,7 @@ export type OrganizationChatReadinessInput = {
     organizationEnabled: boolean;
     effectiveEnabled: boolean;
   };
+  stableRuntimeBundleAvailable?: boolean;
   environment: {
     id: string;
     name: string;
@@ -252,6 +260,10 @@ export function deriveOrganizationChatReadiness(
   } else if (!input.rollout.organizationEnabled) {
     executionStatus = "rollout_disabled";
     executionDetail = "Enable Environment execution for this organization.";
+  } else if (input.stableRuntimeBundleAvailable === false) {
+    executionStatus = "stable_runtime_bundle_unavailable";
+    executionDetail =
+      "Hosted provisioning is waiting for a signed stable runtime release.";
   } else if (input.environment?.status === "ready") {
     executionStatus = "ready";
     executionDetail = "The default Environment is ready for agent turns.";
@@ -278,7 +290,9 @@ export function deriveOrganizationChatReadiness(
   const environmentExecution: OrganizationChatReadiness["environmentExecution"] =
     {
       ready:
-        input.rollout.effectiveEnabled && input.environment?.status === "ready",
+        input.rollout.effectiveEnabled &&
+        input.stableRuntimeBundleAvailable !== false &&
+        input.environment?.status === "ready",
       status: executionStatus,
       detail: executionDetail,
       deploymentEnabled: input.rollout.deploymentEnabled,
@@ -317,7 +331,7 @@ export function deriveOrganizationChatReadiness(
 export async function getOrganizationChatReadiness(
   organizationId: string,
 ): Promise<OrganizationChatReadiness> {
-  const [organization, environment, rollout, fly] = await Promise.all([
+  const [organization, environment, rollout, fly, stableRuntimeBundleAvailable] = await Promise.all([
     knowledgeDb.query.organizations.findFirst({
       where: eq(schema.organizations.id, organizationId),
       columns: { slug: true },
@@ -338,6 +352,7 @@ export async function getOrganizationChatReadiness(
     }),
     getHostedEnvironmentsRollout({ organizationId }),
     getFlyProviderConnection(organizationId),
+    stableRuntimeBundleIsAvailable(),
   ]);
 
   const personal = isPersonalOrganizationSlug(organization?.slug);
@@ -444,7 +459,24 @@ export async function getOrganizationChatReadiness(
         }
       : null,
     rollout,
+    stableRuntimeBundleAvailable,
     environment: environment ?? null,
     operation: operation ?? null,
   });
+}
+
+async function stableRuntimeBundleIsAvailable() {
+  if (getHostedEnvironmentRuntimeMode() === "local") return true;
+  try {
+    await requireStableFlyEnvironmentImages();
+    return true;
+  } catch (error) {
+    if (
+      error instanceof FlyImageReleaseError &&
+      error.code === "STABLE_FLY_RUNTIME_BUNDLE_UNAVAILABLE"
+    ) {
+      return false;
+    }
+    throw error;
+  }
 }

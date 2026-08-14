@@ -17,7 +17,7 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { getOrganizationInfrastructureSettings } from "@/lib/environments/organization-infrastructure-settings";
 import { environmentLifecycleLockKey } from "@/lib/environments/lifecycle-lock";
-import { assertFlyImageMatchesRole } from "@/lib/releases/contracts";
+import { requireStableFlyEnvironmentImages } from "@/lib/releases/store";
 
 export async function createAdminEnvironment(input: {
   organizationId: string;
@@ -190,7 +190,6 @@ export async function updateAdminEnvironmentRuntime(input: {
   organizationId: string;
   actorUserId: string;
   environmentId: string;
-  runtimeImage: string;
   reconcile?: boolean | undefined;
 }) {
   const environment = await getOrganizationEnvironment({
@@ -198,12 +197,10 @@ export async function updateAdminEnvironmentRuntime(input: {
     environmentId: input.environmentId,
   });
   if (!environment) throw new Error("Environment not found.");
-  assertFlyImageMatchesRole("workspace-runtime", input.runtimeImage);
-  const routerImage =
-    process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE?.trim() ?? "";
-  assertFlyImageMatchesRole("environment-router", routerImage);
+  const { runtimeImage, routerImage, releaseId } =
+    await requireStableFlyEnvironmentImages();
   if (
-    environment.runtimeImage === input.runtimeImage &&
+    environment.runtimeImage === runtimeImage &&
     environment.routerImage === routerImage &&
     input.reconcile !== true
   ) {
@@ -213,8 +210,9 @@ export async function updateAdminEnvironmentRuntime(input: {
   const idempotencyKey = [
     "environment.update",
     input.environmentId,
+    releaseId,
     routerImage,
-    input.runtimeImage,
+    runtimeImage,
   ].join(":");
   const operation = await knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
@@ -263,7 +261,7 @@ export async function updateAdminEnvironmentRuntime(input: {
         status: "queued",
         stage: "requested",
         idempotencyKey,
-        input: { runtimeImage: input.runtimeImage, routerImage },
+        input: { runtimeImage, routerImage, releaseId },
         createdAt: now,
         updatedAt: now,
       })
@@ -284,12 +282,12 @@ export async function updateAdminEnvironmentRuntime(input: {
     targetId: input.environmentId,
     message: "Queued a durable Environment image update.",
     metadata: {
-      runtimeImage: input.runtimeImage,
+      runtimeImage,
       routerImage,
       operationId: operation.id,
     },
   });
-  return { ...environment, runtimeImage: input.runtimeImage, updatedAt: now };
+  return { ...environment, runtimeImage, routerImage, updatedAt: now };
 }
 
 export async function updateAdminEnvironmentReasoningPolicy(input: {

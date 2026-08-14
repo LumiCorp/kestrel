@@ -1,6 +1,10 @@
 import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { attachActiveFlyImageReleaseTarget } from "@/lib/releases/store";
+import {
+  assertFlyEnvironmentCreationAllowed,
+  attachActiveFlyImageReleaseTarget,
+  requireStableFlyEnvironmentImages,
+} from "@/lib/releases/store";
 import {
   assertEnvironmentTransition,
   assertWorkspaceTransition,
@@ -15,6 +19,7 @@ import {
   selectDefaultEnvironmentRecoveryAction,
   workspaceProvisionIdempotencyKey,
 } from "./contracts";
+import { getHostedEnvironmentRuntimeMode } from "./config";
 import {
   environmentLifecycleLockKey,
   organizationEnvironmentCreateLockKey,
@@ -129,6 +134,12 @@ export async function ensureOrganizationDefaultEnvironment(input: {
       }
     }
 
+    const usesFlyRuntime = getHostedEnvironmentRuntimeMode() === "fly";
+    if (usesFlyRuntime) {
+      await requireStableFlyEnvironmentImages(transaction);
+      await assertFlyEnvironmentCreationAllowed(transaction);
+    }
+
     const now = new Date();
     const environmentId = crypto.randomUUID();
     await transaction.execute(
@@ -172,7 +183,9 @@ export async function ensureOrganizationDefaultEnvironment(input: {
       })
       .returning();
     if (!operation) throw new Error("Default Environment operation failed.");
-    await attachActiveFlyImageReleaseTarget(transaction, environmentId);
+    if (usesFlyRuntime) {
+      await attachActiveFlyImageReleaseTarget(transaction, environmentId);
+    }
     return { environment, operation, created: true };
   });
 }
@@ -275,6 +288,8 @@ export async function createOrganizationEnvironment(input: {
   environment: CreateEnvironmentInput;
   runtimeTemplate?: string;
 }) {
+  const usesFlyRuntime = getHostedEnvironmentRuntimeMode() === "fly";
+  if (usesFlyRuntime) await requireStableFlyEnvironmentImages();
   const environmentId = crypto.randomUUID();
   const operationId = crypto.randomUUID();
   const now = new Date();
@@ -285,6 +300,7 @@ export async function createOrganizationEnvironment(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentDefaultLockKey(input.organizationId)}, 0))`,
     );
+    if (usesFlyRuntime) await assertFlyEnvironmentCreationAllowed(transaction);
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentCreateLockKey(input.organizationId)}, 0))`,
     );
@@ -350,7 +366,9 @@ export async function createOrganizationEnvironment(input: {
         updatedAt: now,
       })
       .returning();
-    await attachActiveFlyImageReleaseTarget(transaction, environmentId);
+    if (usesFlyRuntime) {
+      await attachActiveFlyImageReleaseTarget(transaction, environmentId);
+    }
     return { environment, operation };
   });
 }

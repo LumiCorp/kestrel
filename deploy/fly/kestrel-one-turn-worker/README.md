@@ -18,20 +18,16 @@ database work without a pg-boss job.
 
 ## Production release gate
 
-Vercel production is the canonical source for the gateway credential keyring.
-Before deploying any change to this worker—or any change that rotates or
-depends on gateway credential keys—run this command from `apps/web`:
+The coordinated release owns this worker's image. Before approving a candidate,
+stage the exact role configuration from `apps/web`:
 
 ```bash
-pnpm release:turn-worker
+pnpm stage:turn-worker-config -- --release <release-id>
 ```
 
-It copies only the configured keyring values from Vercel production to
-`kestrel-one-turn-worker`, restarts the worker through Fly secret deployment,
-compares the active key ID, sorted configured key IDs, and a non-secret
-fingerprint, then deploys the worker image. If synchronization or parity
-verification fails, it stops before the image deployment.
-
-Use `pnpm sync:turn-worker-keyring -- --verify` for the read-only production
-parity check. Do not run either command from pull-request CI: the release owner
-runs the release command after review and approval.
+It selects only the declared turn-worker contract, stages exact sets and known
+removals without restarting Machines, verifies the secret-name inventory, and
+binds the operation to the candidate configuration fingerprint. A release
+Machine update activates the staged configuration. The target completes only
+after the expected revision and fingerprint report a fresh database heartbeat.
+Do not run this command from pull-request CI.

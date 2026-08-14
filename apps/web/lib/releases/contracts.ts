@@ -47,6 +47,7 @@ export function evaluateFlyImageForwardRecoveryEligibility(input: {
   admission: { ok: true } | { ok: false; code: string; message: string };
   migrationReady: boolean;
   canaryValid: boolean;
+  canaryRequired?: boolean;
 }): { ok: true } | { ok: false; code: string; message: string } {
   if (input.activeStatus !== "paused") {
     return {
@@ -63,7 +64,7 @@ export function evaluateFlyImageForwardRecoveryEligibility(input: {
       message: "Complete the migration runbook before forward recovery.",
     };
   }
-  if (!input.canaryValid) {
+  if ((input.canaryRequired ?? true) && !input.canaryValid) {
     return {
       ok: false,
       code: "RELEASE_CANARY_REQUIRED",
@@ -96,6 +97,29 @@ export function evaluateFlyImageMigrationAcknowledgementEligibility(input: {
       ok: false,
       code: "RELEASE_MIGRATION_ALREADY_ACKNOWLEDGED",
       message: "The migration runbook is already complete.",
+    };
+  }
+  return { ok: true };
+}
+
+export function evaluateTurnWorkerConfigurationAcknowledgementEligibility(input: {
+  status: string;
+  acknowledgementRequired: boolean;
+  acknowledgedAt: Date | null;
+}): { ok: true } | { ok: false; code: string; message: string } {
+  if (input.status !== "candidate" || !input.acknowledgementRequired) {
+    return {
+      ok: false,
+      code: "RELEASE_STATE_INVALID",
+      message:
+        "Only a candidate with a changed turn-worker process contract can acknowledge staged configuration.",
+    };
+  }
+  if (input.acknowledgedAt) {
+    return {
+      ok: false,
+      code: "RELEASE_TURN_WORKER_CONFIG_ALREADY_ACKNOWLEDGED",
+      message: "The staged turn-worker configuration is already acknowledged.",
     };
   }
   return { ok: true };
@@ -300,6 +324,7 @@ export const flyImageReleaseComponentSchema = z
     image: immutableOciImageSchema,
     sourceRevision: gitRevisionSchema,
     inputFingerprint: sha256Schema,
+    configurationContractFingerprint: sha256Schema.optional(),
     smoke: z.object({
       status: z.literal("passed"),
       command: z.string().trim().min(1).max(500),
@@ -339,6 +364,28 @@ export const flyImageReleaseComponentSchema = z
         message:
           "Only the environment-router component may declare gateway compatibility.",
         path: ["environmentGateway"],
+      });
+    }
+    if (
+      component.role === "turn-worker" &&
+      !component.configurationContractFingerprint
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "The turn-worker component must declare its process configuration contract fingerprint.",
+        path: ["configurationContractFingerprint"],
+      });
+    }
+    if (
+      component.role !== "turn-worker" &&
+      component.configurationContractFingerprint
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Only the turn-worker component may declare a process configuration contract fingerprint.",
+        path: ["configurationContractFingerprint"],
       });
     }
   });
