@@ -24,7 +24,7 @@ const runMigrate = async () => {
 
   if (!databaseConnection) {
     console.log(
-      "⏭️  No unpooled or pooled database URL is defined, skipping migrations"
+      "⏭️  No unpooled or pooled database URL is defined, skipping migrations",
     );
     return;
   }
@@ -55,10 +55,11 @@ const runMigrate = async () => {
       migrationsFolder: "./lib/db/migrations",
     });
     await reconcileSkippedMigrations(connection);
-    const { backfillPersonalWorkspaceData } = await import(
-      "@/lib/personal-workspace"
-    );
-    await backfillPersonalWorkspaceData();
+    const [{ backfillPersonalWorkspaceData }, { schema }] = await Promise.all([
+      import("@/lib/personal-workspace"),
+      import("@/lib/knowledge/db"),
+    ]);
+    await backfillPersonalWorkspaceData(drizzle(connection, { schema }));
     const end = Date.now();
 
     console.log("✅ Migrations completed in", end - start, "ms");

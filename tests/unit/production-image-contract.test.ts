@@ -64,6 +64,44 @@ test("catalog changes rebuild every managed image", () => {
   assert.equal(impacted.length, 6);
 });
 
+test("production delivery changes reselect only their owning channels", async () => {
+  const releaseCatalog = flyImageCatalogSchema.parse(
+    JSON.parse(
+      await readFile(
+        path.join(process.cwd(), "deploy/fly/image-catalog.json"),
+        "utf8",
+      ),
+    ),
+  );
+  assert.deepEqual(
+    impactedFlyImages({
+      catalog: releaseCatalog,
+      changedPaths: [".github/workflows/production-fly.yml"],
+    }).map((entry) => entry.role),
+    [
+      "workspace-runtime",
+      "environment-router",
+      "preview-edge",
+      "turn-worker",
+      "control-worker",
+    ],
+  );
+  assert.deepEqual(
+    impactedFlyImages({
+      catalog: releaseCatalog,
+      changedPaths: [".github/workflows/production-runpod.yml"],
+    }).map((entry) => entry.role),
+    ["runpod-worker"],
+  );
+  assert.equal(
+    impactedFlyImages({
+      catalog: releaseCatalog,
+      changedPaths: ["scripts/deploy-production-image.ts"],
+    }).length,
+    6,
+  );
+});
+
 test("tenant runtime catalog roles publish from exact public GHCR repositories", async () => {
   const releaseCatalog = flyImageCatalogSchema.parse(
     JSON.parse(
