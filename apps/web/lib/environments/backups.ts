@@ -9,7 +9,7 @@ import {
 import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
-import { requireStableFlyEnvironmentImages } from "@/lib/releases/store";
+import { requireCurrentEnvironmentRuntime } from "./runtime-channel";
 import {
   createWorkspaceBackupDecryptionStream,
   createWorkspaceBackupEncryptionStream,
@@ -67,7 +67,6 @@ export async function createWorkspaceBackup(input: {
   executionOwnership?: BackupExecutionOwnership | undefined;
   workerAttempt?: EnvironmentWorkerAttempt | undefined;
   parentLifecycleOperationId?: string | undefined;
-  parentReleaseTargetId?: string | undefined;
   preDestructiveSnapshot?: { id: string; state: string } | undefined;
 }) {
   const [environment, workspace, binding] = await Promise.all([
@@ -1549,7 +1548,7 @@ export async function restoreWorkspaceBackup(input: {
   const snapshotId =
     recoverySource.kind === "snapshot" ? recoverySource.snapshotId : null;
   const runtimeImage = snapshotId
-    ? (await requireStableFlyEnvironmentImages()).runtimeImage
+    ? (await requireCurrentEnvironmentRuntime()).runtimeImage
     : environment.runtimeImage;
   let archive: NodeJS.ReadableStream | null = null;
   let checksum: string | null = null;

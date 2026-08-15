@@ -56,9 +56,10 @@ export async function processEnvironmentOperation(
         operation.type,
       );
       const images = runtimeImagesRequired
-        ? operation.type === "environment.update"
+        ? operation.type === "environment.update" ||
+          operation.type === "environment.provision"
           ? await resolveEnvironmentUpdateImages(operation)
-          : await resolveStableEnvironmentImages()
+          : await resolveAppliedEnvironmentImages(operation.environmentId)
         : { runtimeImage: "", routerImage: "" };
       const provisioner = new EnvironmentProvisioner({
         repository: databaseEnvironmentProvisioningRepository,
@@ -84,49 +85,22 @@ async function resolveEnvironmentUpdateImages(operation: {
   environmentId: string;
   input: Record<string, unknown> | null;
 }) {
-  const releaseTargetId = operation.input?.releaseTargetId;
-  if (typeof releaseTargetId !== "string") {
-    return resolveStableEnvironmentImages();
-  }
-  const releaseId = operation.input?.releaseId;
-  if (typeof releaseId !== "string") {
+  const runtimeVersionId = operation.input?.runtimeVersionId;
+  if (typeof runtimeVersionId !== "string") {
     throw new Error(
-      "Release Environment update operation is missing its release identity.",
-    );
-  }
-  const target = await knowledgeDb.query.flyImageReleaseTargets.findFirst({
-    where: eq(schema.flyImageReleaseTargets.id, releaseTargetId),
-    columns: {
-      releaseId: true,
-      targetKind: true,
-      environmentId: true,
-      status: true,
-    },
-  });
-  if (
-    !target ||
-    target.releaseId !== releaseId ||
-    target.targetKind !== "environment" ||
-    target.environmentId !== operation.environmentId ||
-    target.status !== "applying"
-  ) {
-    throw new Error(
-      "Release Environment update operation is not bound to its release target.",
+      "Environment lifecycle operation is missing its Runtime Version identity.",
     );
   }
   const images = requireEnvironmentUpdateImages(operation.input);
-  const components = await knowledgeDb.query.flyImageReleaseComponents.findMany({
-    where: eq(schema.flyImageReleaseComponents.releaseId, releaseId),
-    columns: { role: true, image: true },
+  const version = await knowledgeDb.query.environmentRuntimeVersions.findFirst({
+    where: eq(schema.environmentRuntimeVersions.id, runtimeVersionId),
   });
   if (
-    components.find((component) => component.role === "workspace-runtime")
-      ?.image !== images.runtimeImage ||
-    components.find((component) => component.role === "environment-router")
-      ?.image !== images.routerImage
+    version?.workspaceRuntimeImage !== images.runtimeImage ||
+    version.environmentRouterImage !== images.routerImage
   ) {
     throw new Error(
-      "Release Environment update images do not match the immutable release manifest.",
+      "Environment update images do not match the immutable Runtime Version.",
     );
   }
   return images;
@@ -143,8 +117,18 @@ function requireEnvironmentUpdateImages(input: Record<string, unknown> | null) {
   return { runtimeImage, routerImage };
 }
 
-async function resolveStableEnvironmentImages() {
-  const { requireStableFlyEnvironmentImages } =
-    await import("@/lib/releases/store");
-  return requireStableFlyEnvironmentImages();
+async function resolveAppliedEnvironmentImages(environmentId: string) {
+  const environment = await knowledgeDb.query.environments.findFirst({
+    where: eq(schema.environments.id, environmentId),
+    columns: { runtimeImage: true, routerImage: true },
+  });
+  if (!(environment?.runtimeImage && environment.routerImage)) {
+    throw new Error(
+      "The existing Environment is missing its applied immutable runtime images.",
+    );
+  }
+  return {
+    runtimeImage: environment.runtimeImage,
+    routerImage: environment.routerImage,
+  };
 }

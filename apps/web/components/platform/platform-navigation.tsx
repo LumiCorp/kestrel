@@ -44,7 +44,7 @@ const platformNavigationGroups: Array<{
         icon: ServerCog,
         label: "Environment operations",
       },
-      { href: "/platform/releases", icon: Rocket, label: "Releases" },
+      { href: "/platform/runtime", icon: Rocket, label: "Runtime" },
       {
         href: "/platform/billing",
         icon: CreditCard,

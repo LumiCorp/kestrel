@@ -34,7 +34,9 @@ A published distribution may receive a packaging-only patch without changing the
 
 - Mixed first-party release lines fail the version or packed-consumer gates.
 - A private package manifest means “not published to npm,” not “unversioned.”
-- Candidates are built from one frozen revision before any stable channel changes.
+- A unified product version does not create one hosted distribution unit;
+  database, Vercel, Fly components, and the managed RunPod worker advance and
+  roll back through independent production delivery channels.
 - Desktop OTA promotion is a separate proof and may remain behind the suite version.
 - Hosted access restrictions do not restrict repository cloning or tagged source availability.
 - Release evidence records a packaging-only distribution patch separately from the suite version.

@@ -1,52 +1,53 @@
 ---
 title: Production deployment
-summary: Release one exact Kestrel revision through migrations, previews, workers, canaries, evidence, and a proven rollback path.
+summary: Deliver independently through database, Vercel, Fly, and RunPod channels with provider-owned proof and rollback.
 section: operate
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-14
 ---
 
-Use this playbook to move an exact candidate into production without rebuilding between verification and promotion.
+Use this playbook to advance the protected `production` branch while keeping each delivery channel independently provable and recoverable.
 
 ## Assign operational responsibility
 
 | Layer | Owner | Required evidence |
 | --- | --- | --- |
-| Application and Vercel | Auth, routes, preview, promotion | Deployment ID, revision, allowed/denied path |
-| Database | Schema and data health | Pending-only preflight, backup, migration record |
-| Fly and workers | Five immutable image roles and queues | Digests, rollout state, role canaries |
+| Application and Vercel | Auth, routes, native deployment | Deployment ID, revision, allowed/denied path |
+| Database | Schema and data health | Ordered migrator result and compatibility evidence |
+| Fly components | Catalog-owned images and private workers | Exact digests and role health |
+| RunPod worker | Managed deployment processing | Exact digest and private worker health |
 | Runtime and store | Sessions, events, outcomes, replay | Known-session completion and inspection |
 | Providers | Registry, qualification, models, leases | Profile/model readiness and short run |
-| Release owner | Gates, artifacts, decision, rollback | Signed approval and evidence index |
+| Production owner | Protected-branch decision and rollback | Reviewed change and provider evidence |
 
-## Prepare an exact revision
+## Advance production
 
-Record `0.8.0`, commit SHA, Vercel deployment identity, package manifests, database target, worker image digests, and configuration revisions. Build all artifacts from that frozen source.
+Merge the reviewed replacement to `main`, then advance the protected `production` branch. Source revisions remain diagnostic metadata; production authority is the provider deployment identity or immutable image digest owned by each channel.
 
 ## Preflight migrations
 
-Inspect actual current and pending migrations, compatibility, backup, and stop conditions. Apply only pending migrations; never assume every migration since a previous product version must be replayed.
+Run the dedicated database job with only the unpooled production connection. Apply ordinary ordered migrations and preserve expand/deploy/contract compatibility.
 
-## Release a change
+## Let each channel select its work
 
-Build a Vercel preview and immutable worker images. Validate auth, provider/profile readiness, one terminal and one streaming request, waiting/cancellation, persistence, Mission Control, artifacts, and traces before any production alias or worker rollout.
+Vercel deploys natively. Fly and RunPod select roles only from the catalog's declared inputs. A role that did not change is not rebuilt merely to manufacture a coordinated revision.
 
-## Verify workers and canaries
+## Verify workers and Environment runtime canaries
 
-Roll the five Fly roles by approved digest, check queues and health, and run role-specific canaries. A healthy HTTP service is insufficient if a worker, image, queue, or provider path is stale.
+Verify every deployed Machine's exact digest and provider-native health result. When Router or Workspace Runtime changes, update the configured Environment through its durable lifecycle, run the existing live Workspace and Preview proofs, and atomically advance the Environment Runtime Channel. Do not update the remaining fleet automatically.
 
 ## Record evidence
 
-Retain version/revision, deployment ID, image digests, migration state, gate results, canary correlation, approver, timestamps, and public artifact checksums. Keep credentials and private reasoning out of the record.
+Retain the protected-branch revision, Vercel deployment ID, migration result, exact image digests, worker health, runtime version/channel generation, canary operation, and timestamps. Keep credentials and private reasoning out of the record.
 
 ## Roll back or fix forward
 
-Promote the already verified Vercel deployment rather than rebuilding it. Roll application aliases and Fly roles back to previous exact identities when migration compatibility permits. Never reverse data migrations destructively; stop and fix forward when rollback cannot preserve data contracts.
+Promote the prior Vercel deployment or redeploy each Fly/RunPod application's recorded prior digest. Select the previous Environment Runtime Version only after its canary. Never reverse data migrations destructively; stop and fix forward when rollback cannot preserve data contracts.
 
 <Outcome>
-  <p>The production path runs the same exact revision and immutable artifacts that passed preflight, user-path smoke tests, and canaries.</p>
+  <p>Every production channel proves and recovers its own authority, while tenant runtime defaults advance only as one canary-proven immutable pair.</p>
 </Outcome>
 
-Continue with [Release management](/operate/release-management), [Migrations](/operate/migrations), and [Troubleshooting](/operate/troubleshooting).
+Continue with [Production delivery](/operate/production-delivery), [Migrations](/operate/migrations), and [Troubleshooting](/operate/troubleshooting).

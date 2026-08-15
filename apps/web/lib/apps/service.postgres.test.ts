@@ -6,7 +6,7 @@ import {
   verifyEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
 import postgres from "postgres";
-import { installTestStableRuntimeBundle } from "@/lib/releases/test-stable-runtime-bundle";
+import { installTestStableRuntimeBundle } from "@/lib/environments/test-runtime-channel";
 
 const databaseUrl = process.env.KESTREL_APPS_DB_TEST_URL?.trim();
 

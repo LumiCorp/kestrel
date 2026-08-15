@@ -15,12 +15,7 @@ function requiredPort(name: string): number {
 const port = requiredPort("KESTREL_PRODUCT_APP_PORT");
 const fakeOpenRouterPort = requiredPort("KESTREL_PRODUCT_FAKE_OPENROUTER_PORT");
 const runnerPort = requiredPort("KESTREL_PRODUCT_RUNNER_PORT");
-const workerReadyFile = process.env.KESTREL_PRODUCT_WORKER_READY_FILE;
-if (!workerReadyFile) {
-  throw new Error(
-    "KESTREL_PRODUCT_WORKER_READY_FILE must be set by the product contract launcher.",
-  );
-}
+const workerHealthPort = requiredPort("KESTREL_PRODUCT_WORKER_HEALTH_PORT");
 const baseURL = `http://localhost:${port}`;
 const databaseUrl = process.env.KESTREL_PRODUCT_DATABASE_URL;
 if (!databaseUrl) {
@@ -48,6 +43,7 @@ const webServerEnv = {
   DEV_ALL_PORT: String(port),
   DEV_AUTH_BYPASS: "true",
   KESTREL_DISABLE_DOTENV: "1",
+  KESTREL_BUILD_REVISION: "0".repeat(40),
   KESTREL_ENVIRONMENT_GATEWAY_URL: `http://127.0.0.1:${fakeOpenRouterPort}`,
   KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID: "product-contract-key",
   KESTREL_GATEWAY_CREDENTIAL_KEYS:
@@ -58,7 +54,7 @@ const webServerEnv = {
   KESTREL_ONE_APP_URL: baseURL,
   KESTREL_ONE_TOOL_TOKEN: "product-contract-tool",
   KESTREL_PRODUCT_CONTRACT: "true",
-  KESTREL_TURN_WORKER_READY_FILE: workerReadyFile,
+  KESTREL_WORKER_HEALTH_PORT: String(workerHealthPort),
   KESTREL_RUNNER_SERVICE_PORT: String(runnerPort),
   KESTREL_RUNNER_SERVICE_TOKEN: "product-contract-runner-token",
   KESTREL_WORKSPACE_SERVICE_TOKEN: "product-contract-workspace-token",

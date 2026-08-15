@@ -1,6 +1,6 @@
 # ADR 0001: Stable Runtime Bundle authority
 
-- Status: accepted
+- Status: superseded by ADR 0002
 - Date: 2026-08-13
 
 ## Context
@@ -13,6 +13,10 @@ variables created multiple authorities and allowed a worker restart to revive
 stale private images after the database release had already advanced.
 
 ## Decision
+
+This decision's requirement for one immutable Router/Workspace pair remains,
+but ADR 0002 replaces the signed coordinated release manifest with an
+Environment Runtime Version and atomic Environment Runtime Channel pointer.
 
 The signed stable release manifest in Postgres is the sole steady-state image
 authority. Ordinary provisioning, recovery, and reconciliation require its

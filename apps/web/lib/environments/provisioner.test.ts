@@ -7,8 +7,8 @@ import {
 import {
   classifyEnvironmentGatewayHealthFailure,
   EnvironmentProvisioner,
-  releaseRetryDelaySeconds,
-  releaseRetryNextAttemptAt,
+  environmentRetryDelaySeconds,
+  environmentRetryNextAttemptAt,
   type EnvironmentProvisioningRepository,
   type ProvisioningOperation,
 } from "./provisioner";
@@ -63,24 +63,24 @@ test("gateway health classification preserves unrecognized Fly failures", async 
   );
 });
 
-test("managed release retries use the bounded fixed schedule", () => {
+test("managed Environment retries use the bounded fixed schedule", () => {
   assert.deepEqual(
     Array.from({ length: 8 }, (_, index) =>
-      releaseRetryDelaySeconds(index + 1),
+      environmentRetryDelaySeconds(index + 1),
     ),
     [5, 10, 20, 40, 80, 120, 120, 120],
   );
 });
 
-test("managed release retries stop exactly at the one-hour deadline", () => {
+test("managed Environment retries stop exactly at the one-hour deadline", () => {
   const firstFailureAt = "2026-08-05T12:00:00.000Z";
   const firstFailureTime = Date.parse(firstFailureAt);
   assert.equal(
-    releaseRetryNextAttemptAt(firstFailureAt, 1, firstFailureTime),
+    environmentRetryNextAttemptAt(firstFailureAt, 1, firstFailureTime),
     "2026-08-05T12:00:05.000Z",
   );
   assert.equal(
-    releaseRetryNextAttemptAt(
+    environmentRetryNextAttemptAt(
       firstFailureAt,
       20,
       firstFailureTime + 59 * 60 * 1000,
@@ -88,7 +88,7 @@ test("managed release retries stop exactly at the one-hour deadline", () => {
     "2026-08-05T13:00:00.000Z",
   );
   assert.equal(
-    releaseRetryNextAttemptAt(
+    environmentRetryNextAttemptAt(
       firstFailureAt,
       20,
       firstFailureTime + 60 * 60 * 1000,
@@ -367,7 +367,6 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
-    releaseTargetId: "release-target-id",
   });
   repository.listEnvironmentWorkspaces = async () => [
     {
@@ -382,7 +381,7 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
     [];
   const awaitedStates: string[] = [];
   const backupInputs: Array<{
-    parentReleaseTargetId?: string | undefined;
+    workspaceId: string;
   }> = [];
   let gatewayUpdate:
     | Parameters<typeof repository.completeEnvironmentGatewayUpdate>[0]
@@ -433,13 +432,12 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
   assert.equal(workspaceUpdate?.serviceTokenHash, undefined);
 });
 
-test("Environment updates reject tenant images from the wrong release repository", async () => {
+test("Environment updates reject tenant images from the wrong role repository", async () => {
   const runtimeImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"a".repeat(64)}`;
   const routerImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
-    releaseTargetId: "release-target-id",
   });
 
   assert.equal(
@@ -452,7 +450,7 @@ test("Environment updates reject tenant images from the wrong release repository
   ]);
 });
 
-test("manual Environment reconciliation ignores stale operation image snapshots", async () => {
+test("Environment updates remain bound to their immutable operation snapshot", async () => {
   const staleRuntimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
   const staleRouterImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const stableRuntimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"c".repeat(64)}`;
@@ -460,7 +458,6 @@ test("manual Environment reconciliation ignores stale operation image snapshots"
   const { repository, provider } = fixture("environment.update", null, {
     runtimeImage: staleRuntimeImage,
     routerImage: staleRouterImage,
-    releaseId: "stable-at-request-time",
   });
   repository.listEnvironmentWorkspaces = async () => [
     {
@@ -482,8 +479,8 @@ test("manual Environment reconciliation ignores stale operation image snapshots"
     routerImage: stableRouterImage,
   }).process("operation-id");
 
-  assert.equal(updates[0]?.runtimeImage, stableRouterImage);
-  assert.equal(updates[1]?.runtimeImage, stableRuntimeImage);
+  assert.equal(updates[0]?.runtimeImage, staleRouterImage);
+  assert.equal(updates[1]?.runtimeImage, staleRuntimeImage);
 });
 
 test("deletion operations do not require runtime image authority", async () => {
@@ -648,7 +645,6 @@ test("Environment updates repair failed Workspaces before routed backup", async 
       idempotencyKey:
         "environment.update:operation-id:backup:workspace-v2:failed-workspace-id",
       parentLifecycleOperationId: "operation-id",
-      parentReleaseTargetId: undefined,
       preDestructiveSnapshot: {
         id: "pre-repair-snapshot",
         state: "created",
@@ -668,13 +664,12 @@ test("Environment updates repair failed Workspaces before routed backup", async 
   );
 });
 
-test("an auxiliary pre-repair snapshot 408 does not pause a release", async () => {
+test("an auxiliary pre-repair snapshot 408 does not pause an Environment update", async () => {
   const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
   const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
-    releaseTargetId: "release-target-id",
     workspaceDataMigrationRevision: "workspace-v2",
   });
   repository.listEnvironmentWorkspaces = async () => [
@@ -749,13 +744,12 @@ test("operator-authorized maintenance updates can skip Workspace retention", asy
   assert.ok(calls.includes("provider:image:workspace-machine-id"));
 });
 
-test("managed releases reconfigure stopped Workspaces without launching them", async () => {
+test("Environment updates reconfigure stopped Workspaces without launching them", async () => {
   const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
   const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
-    releaseTargetId: "release-target-id",
     preserveStoppedWorkspaces: true,
     automaticRollback: false,
   });
@@ -819,7 +813,6 @@ test("Environment updates report Workspaces that require provisioning recovery",
   const { repository, provider } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
-    releaseTargetId: "release-target-id",
   });
   repository.listEnvironmentWorkspaces = async () => [
     {

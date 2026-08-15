@@ -26,9 +26,9 @@ import {
 } from "./service-tokens";
 import { createAuxiliaryVolumeSnapshot } from "./backup-snapshot";
 import {
-  assertFlyImageMatchesRole,
-  type FlyImageRole,
-} from "@/lib/releases/contracts";
+  assertEnvironmentRuntimeImage,
+  type EnvironmentRuntimeImageRole,
+} from "@/lib/runtime/images";
 
 export type ProvisioningOperation = {
   id: string;
@@ -173,10 +173,6 @@ export interface EnvironmentProvisioningRepository {
     runtimeImage: string;
     serviceTokenHash?: string | undefined;
   }): Promise<void>;
-  markWorkspaceReleaseVerified?(input: {
-    workspaceId: string;
-    runtimeImage: string;
-  }): Promise<void>;
   updateOperationStage(input: {
     operationId: string;
     attempt?: number | undefined;
@@ -216,21 +212,21 @@ export interface EnvironmentProvisioningRepository {
   }): Promise<void>;
 }
 
-export const RELEASE_RETRY_BUDGET_MS = 60 * 60 * 1000;
+export const ENVIRONMENT_RETRY_BUDGET_MS = 60 * 60 * 1000;
 
-export function releaseRetryDelaySeconds(attempt: number) {
+export function environmentRetryDelaySeconds(attempt: number) {
   return [5, 10, 20, 40, 80][attempt - 1] ?? 120;
 }
 
-export function releaseRetryNextAttemptAt(
+export function environmentRetryNextAttemptAt(
   firstFailureAt: string,
   attempt: number,
   now = Date.now(),
 ) {
-  const deadline = Date.parse(firstFailureAt) + RELEASE_RETRY_BUDGET_MS;
+  const deadline = Date.parse(firstFailureAt) + ENVIRONMENT_RETRY_BUDGET_MS;
   if (now >= deadline) return null;
   return new Date(
-    Math.min(deadline, now + releaseRetryDelaySeconds(attempt) * 1000),
+    Math.min(deadline, now + environmentRetryDelaySeconds(attempt) * 1000),
   ).toISOString();
 }
 
@@ -249,7 +245,6 @@ export class EnvironmentProvisioner {
     reason: "pre_destructive";
     idempotencyKey: string;
     parentLifecycleOperationId?: string | undefined;
-    parentReleaseTargetId?: string | undefined;
     preDestructiveSnapshot?: { id: string; state: string } | undefined;
   }) => Promise<unknown>;
 
@@ -270,7 +265,6 @@ export class EnvironmentProvisioner {
           reason: "pre_destructive";
           idempotencyKey: string;
           parentLifecycleOperationId?: string | undefined;
-          parentReleaseTargetId?: string | undefined;
           preDestructiveSnapshot?: { id: string; state: string } | undefined;
         }) => Promise<unknown>)
       | undefined;
@@ -365,7 +359,7 @@ export class EnvironmentProvisioner {
           readInputString(asRecord(previousRetry), "firstFailureAt") ??
           new Date().toISOString();
         const retryAttempt = Number(asRecord(previousRetry)?.attempt ?? 0) + 1;
-        const nextAttemptAt = releaseRetryNextAttemptAt(
+        const nextAttemptAt = environmentRetryNextAttemptAt(
           firstFailureAt,
           retryAttempt,
         );
@@ -643,7 +637,6 @@ export class EnvironmentProvisioner {
       environment.organizationId !== operation.organizationId ||
       !environment.flyAppName ||
       !environment.flyGatewayMachineId ||
-      !operation.requestedByUserId ||
       !["ready", "degraded"].includes(environment.status)
     ) {
       throw operationError(
@@ -651,21 +644,16 @@ export class EnvironmentProvisioner {
         "Environment update target is unavailable.",
       );
     }
-    const releaseTargetId = readInputString(operation.input, "releaseTargetId");
-    const runtimeImage = releaseTargetId
-      ? readImmutableImage(
-          operation.input?.runtimeImage,
-          "Workspace runtime image",
-          "workspace-runtime",
-        )
-      : this.runtimeImage;
-    const routerImage = releaseTargetId
-      ? readImmutableImage(
-          operation.input?.routerImage,
-          "Environment router image",
-          "environment-router",
-        )
-      : this.routerImage;
+    const runtimeImage = readImmutableImage(
+      operation.input?.runtimeImage,
+      "Workspace runtime image",
+      "workspace-runtime",
+    );
+    const routerImage = readImmutableImage(
+      operation.input?.routerImage,
+      "Environment router image",
+      "environment-router",
+    );
     const workspaceDataMigrationRevision = readInputString(
       operation.input,
       "workspaceDataMigrationRevision",
@@ -676,6 +664,12 @@ export class EnvironmentProvisioner {
     const preserveStoppedWorkspaces =
       operation.input?.preserveStoppedWorkspaces === true;
     const automaticRollback = operation.input?.automaticRollback !== false;
+    if (!skipWorkspaceBackups && !operation.requestedByUserId) {
+      throw operationError(
+        "ENVIRONMENT_UPDATE_ACTOR_REQUIRED",
+        "Environment updates that create backups require an audit actor.",
+      );
+    }
     const workspaces = await this.repository.listEnvironmentWorkspaces(
       environment.id,
     );
@@ -782,16 +776,12 @@ export class EnvironmentProvisioner {
           organizationId: operation.organizationId,
           environmentId: environment.id,
           workspaceId: workspace.id,
-          actorUserId: operation.requestedByUserId,
+          actorUserId: operation.requestedByUserId!,
           reason: "pre_destructive",
           idempotencyKey:
             `environment.update:${operation.id}:backup:` +
             `${workspaceDataMigrationRevision}:${workspace.id}`,
           parentLifecycleOperationId: operation.id,
-          parentReleaseTargetId:
-            typeof operation.input?.releaseTargetId === "string"
-              ? operation.input.releaseTargetId
-              : undefined,
         } as const;
         if (workspace.status === "failed") {
           const preDestructiveSnapshot =
@@ -1222,10 +1212,6 @@ export class EnvironmentProvisioner {
       timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
     });
     await this.repository.completeWorkspaceStart(workspace.id);
-    await this.repository.markWorkspaceReleaseVerified?.({
-      workspaceId: workspace.id,
-      runtimeImage: desiredRuntimeImage,
-    });
     await this.repository.completeOperation({
       operationId: operation.id,
       stage: "environment.activation.ready",
@@ -2097,11 +2083,6 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         })
         .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
     },
-    async markWorkspaceReleaseVerified(input) {
-      const { markWorkspaceReleaseVerified } =
-        await import("@/lib/releases/runtime");
-      await markWorkspaceReleaseVerified(input);
-    },
     async updateOperationStage(input) {
       await knowledgeDb
         .update(schema.environmentOperations)
@@ -2200,33 +2181,6 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             ),
           )
           .returning({ input: schema.environmentOperations.input });
-        const releaseTargetId = readInputString(
-          operation?.input,
-          "releaseTargetId",
-        );
-        if (releaseTargetId && input.retryState) {
-          const target =
-            await transaction.query.flyImageReleaseTargets.findFirst({
-              where: (table, { eq }) => eq(table.id, releaseTargetId),
-              columns: { result: true },
-            });
-          await transaction
-            .update(schema.flyImageReleaseTargets)
-            .set({
-              status: "applying",
-              stage: "environment.provider.retrying",
-              result: {
-                ...(target?.result ?? {}),
-                retryAttempt: input.retryState.attempt,
-                firstFailureAt: input.retryState.firstFailureAt,
-                lastProviderResponse: input.retryState.lastError,
-                nextAttemptAt: input.retryState.nextAttemptAt,
-                authoritativeState: input.retryState.authoritativeState,
-              },
-              updatedAt: new Date(),
-            })
-            .where(eq(schema.flyImageReleaseTargets.id, releaseTargetId));
-        }
       });
     },
   };
@@ -2285,7 +2239,11 @@ async function cleanupFailedWorkspaceProvisioning(input: {
   }
 }
 
-function readImmutableImage(value: unknown, label: string, role: FlyImageRole) {
+function readImmutableImage(
+  value: unknown,
+  label: string,
+  role: EnvironmentRuntimeImageRole,
+) {
   if (typeof value !== "string") {
     throw operationError(
       "ENVIRONMENT_IMAGE_INVALID",
@@ -2293,7 +2251,7 @@ function readImmutableImage(value: unknown, label: string, role: FlyImageRole) {
     );
   }
   try {
-    assertFlyImageMatchesRole(role, value);
+    assertEnvironmentRuntimeImage(role, value);
   } catch {
     throw operationError(
       "ENVIRONMENT_IMAGE_INVALID",

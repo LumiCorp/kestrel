@@ -90,7 +90,7 @@ test("the complete 0.8 documentation surface is represented", async () => {
     "build/upgrading-to-0-8",
     "operate/migrations",
     "operate/budgets-and-allocations",
-    "operate/release-management",
+    "operate/production-delivery",
     "reference/runtime-profiles-and-providers",
     "reference/recovery",
     "reference/approvals-and-effects",

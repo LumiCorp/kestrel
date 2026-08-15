@@ -328,7 +328,7 @@ export const getNavigation = cache(async (): Promise<NavGroup[]> => {
       ["Runtime behavior", ["/build/protocol-and-results", "/build/runner-events", "/build/waiting-resume-and-cancellation", "/build/upgrading-to-0-8"]],
     ]),
     group("operate", "Operate", "/operate", [
-      ["Prepare and deploy", ["/operate", "/operate/runner-service", "/operate/environment-and-auth", "/operate/deployment", "/operate/migrations", "/operate/release-management"]],
+      ["Prepare and deploy", ["/operate", "/operate/runner-service", "/operate/environment-and-auth", "/operate/deployment", "/operate/migrations", "/operate/production-delivery"]],
       ["Inspect and recover", ["/operate/operator-control", "/operate/review-and-state", "/operate/observability", "/operate/reliability", "/operate/replay", "/operate/troubleshooting"]],
       ["Security and quality", ["/operate/credential-leases", "/operate/model-authority", "/operate/budgets-and-allocations", "/operate/evaluations", "/operate/quality-gates", "/operate/security"]],
     ]),
