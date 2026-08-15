@@ -34,8 +34,18 @@ async function main() {
       : image.channel !== "runpod",
   );
   const matrix = JSON.stringify({ role: images.map((image) => image.role) });
+  const selectedRoles = JSON.stringify(images.map((image) => image.role));
+  const runtimeSelected = images.some(
+    (image) => image.channel === "environment-runtime",
+  );
   const output = process.env.GITHUB_OUTPUT;
-  if (output) await appendFile(output, `matrix=${matrix}\n`, "utf8");
+  if (output) {
+    await appendFile(
+      output,
+      `matrix=${matrix}\nselected_roles=${selectedRoles}\nruntime_selected=${runtimeSelected}\n`,
+      "utf8",
+    );
+  }
   process.stdout.write(`${matrix}\n`);
 }
 
