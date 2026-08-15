@@ -7,6 +7,8 @@ const databaseWorkflow = source(".github/workflows/production-database.yml");
 const flyWorkflow = source(".github/workflows/production-fly.yml");
 const runPodWorkflow = source(".github/workflows/production-runpod.yml");
 const deployScript = source("scripts/deploy-production-image.ts");
+const migrator = source("apps/web/lib/db/migrate.ts");
+const personalWorkspace = source("apps/web/lib/personal-workspace.ts");
 const promotionScript = source("scripts/promote-environment-runtime.ts");
 const cutoverPreflight = source("scripts/production-cutover-preflight.ts");
 const rootPackage = JSON.parse(source("package.json")) as {
@@ -33,8 +35,17 @@ test("production delivery exposes four independent branch-owned lanes", () => {
   assert.match(databaseWorkflow, /pnpm db:migrate:deploy/u);
   assert.doesNotMatch(databaseWorkflow, /POSTGRES_URL:|DATABASE_URL:/u);
   assert.doesNotMatch(databaseWorkflow, /release-control|bootstrap/iu);
+  assert.match(
+    migrator,
+    /backfillPersonalWorkspaceData\(drizzle\(connection, \{ schema \}\)\)/u,
+  );
+  assert.match(
+    personalWorkspace,
+    /database: typeof knowledgeDb = knowledgeDb/u,
+  );
 
   assert.match(flyWorkflow, /select-production-images\.ts fly/u);
+  assert.match(flyWorkflow, /flyctl auth docker/u);
   assert.match(flyWorkflow, /production-fly-\$\{\{ matrix\.role \}\}/u);
   assert.match(flyWorkflow, /promote-environment-runtime\.ts/u);
   assert.match(flyWorkflow, /VERCEL_TOKEN: \$\{\{ secrets\.VERCEL_TOKEN \}\}/u);
@@ -46,6 +57,7 @@ test("production delivery exposes four independent branch-owned lanes", () => {
   assert.doesNotMatch(flyWorkflow, /vercel.*sha|sha.*vercel/iu);
 
   assert.match(runPodWorkflow, /select-production-images\.ts runpod/u);
+  assert.match(runPodWorkflow, /flyctl auth docker/u);
   assert.match(runPodWorkflow, /deploy-production-image\.ts runpod-worker/u);
   assert.match(
     runPodWorkflow,
@@ -64,7 +76,10 @@ test("production delivery exposes four independent branch-owned lanes", () => {
   );
   assert.match(cutoverPreflight, /canary_environment_id/u);
   assert.match(cutoverPreflight, /environment\."provider" = 'fly'/u);
-  assert.match(cutoverPreflight, /environment\."status" IN \('ready', 'degraded'\)/u);
+  assert.match(
+    cutoverPreflight,
+    /environment\."status" IN \('ready', 'degraded'\)/u,
+  );
 });
 
 test("image deployment smokes before mutation and restores the prior digest", () => {
@@ -79,6 +94,8 @@ test("image deployment smokes before mutation and restores the prior digest", ()
   assert.ok((deployScript.match(/assertWorkerChecksPass/g) ?? []).length >= 2);
   assert.match(deployScript, /cosign", \["sign"/u);
   assert.match(deployScript, /cosign", \[\s*"verify"/u);
+  assert.doesNotMatch(deployScript, /(?:run|capture)\("fly"/u);
+  assert.match(deployScript, /run\("flyctl"/u);
   assert.doesNotMatch(deployScript, /:production\b/u);
 });
 
