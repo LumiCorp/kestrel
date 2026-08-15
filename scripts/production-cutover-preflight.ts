@@ -24,8 +24,12 @@ async function main() {
         (SELECT count(*)::int FROM "fly_image_releases"
           WHERE "status" IN ('approved', 'deploying', 'paused'))
           AS "activeReleaseCount",
-        (SELECT count(*)::int FROM "fly_image_release_targets"
-          WHERE "status" NOT IN ('completed', 'failed'))
+        (SELECT count(*)::int
+          FROM "fly_image_release_targets" target
+          JOIN "fly_image_releases" release
+            ON release."id" = target."release_id"
+          WHERE target."status" NOT IN ('completed', 'failed')
+            AND release."status" NOT IN ('completed', 'superseded'))
           AS "nonterminalTargetCount",
         (SELECT count(*)::int FROM pgboss.job
           WHERE name LIKE 'fly-image.release%'
