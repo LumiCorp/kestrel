@@ -2072,6 +2072,13 @@ export const flyImageReleases = pgTable(
     controllerPreparedAt: timestamp("controller_prepared_at", {
       withTimezone: true,
     }),
+    turnWorkerConfigurationApprovedByUserId: text(
+      "turn_worker_configuration_approved_by_user_id",
+    ).references(() => users.id, { onDelete: "set null" }),
+    turnWorkerConfigurationApprovedAt: timestamp(
+      "turn_worker_configuration_approved_at",
+      { withTimezone: true },
+    ),
     validation: jsonb("validation")
       .$type<{
         status: "passed";
@@ -2142,6 +2149,9 @@ export const flyImageReleaseComponents = pgTable(
     image: text("image").notNull(),
     sourceRevision: text("source_revision").notNull(),
     inputFingerprint: text("input_fingerprint").notNull(),
+    configurationContractFingerprint: text(
+      "configuration_contract_fingerprint",
+    ),
     changed: boolean("changed").notNull(),
     smoke: jsonb("smoke")
       .$type<{ status: "passed"; command: string; completedAt: string }>()
@@ -2166,6 +2176,13 @@ export const flyImageReleaseComponents = pgTable(
         OR (${table.role} = 'preview-edge' AND ${table.image} ~ '^registry\\.fly\\.io/kestrel-preview-edge@sha256:[0-9a-f]{64}$')
         OR (${table.role} = 'turn-worker' AND ${table.image} ~ '^registry\\.fly\\.io/kestrel-one-turn-worker@sha256:[0-9a-f]{64}$')
         OR (${table.role} = 'runpod-worker' AND ${table.image} ~ '^registry\\.fly\\.io/kestrel-one-runpod-worker@sha256:[0-9a-f]{64}$')
+      )`,
+    ),
+    check(
+      "fly_image_release_components_configuration_fingerprint_check",
+      sql`(
+        (${table.role} = 'turn-worker' AND (${table.configurationContractFingerprint} IS NULL OR ${table.configurationContractFingerprint} ~ '^sha256:[0-9a-f]{64}$'))
+        OR (${table.role} <> 'turn-worker' AND ${table.configurationContractFingerprint} IS NULL)
       )`,
     ),
   ],
@@ -2268,6 +2285,103 @@ export const flyImageReleaseSettings = pgTable(
     check(
       "fly_image_release_settings_singleton_check",
       sql`${table.id} = 'platform'`,
+    ),
+  ],
+);
+
+export const environmentRuntimeVersions = pgTable(
+  "environment_runtime_versions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workspaceRuntimeImage: text("workspace_runtime_image").notNull(),
+    workspaceRuntimeSourceRevision: text(
+      "workspace_runtime_source_revision",
+    ).notNull(),
+    environmentRouterImage: text("environment_router_image").notNull(),
+    environmentRouterSourceRevision: text(
+      "environment_router_source_revision",
+    ).notNull(),
+    githubRunId: text("github_run_id"),
+    githubRunAttempt: integer("github_run_attempt"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("environment_runtime_versions_digest_pair_unique").on(
+      table.workspaceRuntimeImage,
+      table.environmentRouterImage,
+    ),
+    check(
+      "environment_runtime_versions_workspace_image_check",
+      sql`${table.workspaceRuntimeImage} ~ '^ghcr\\.io/lumicorp/kestrel-workspace-runtime@sha256:[0-9a-f]{64}$'`,
+    ),
+    check(
+      "environment_runtime_versions_router_image_check",
+      sql`${table.environmentRouterImage} ~ '^ghcr\\.io/lumicorp/kestrel-environment-router@sha256:[0-9a-f]{64}$'`,
+    ),
+    check(
+      "environment_runtime_versions_workspace_revision_check",
+      sql`${table.workspaceRuntimeSourceRevision} ~ '^[0-9a-f]{40}$'`,
+    ),
+    check(
+      "environment_runtime_versions_router_revision_check",
+      sql`${table.environmentRouterSourceRevision} ~ '^[0-9a-f]{40}$'`,
+    ),
+    check(
+      "environment_runtime_versions_run_identity_check",
+      sql`(
+        (${table.githubRunId} is null and ${table.githubRunAttempt} is null)
+        or (${table.githubRunId} ~ '^[0-9]+$' and ${table.githubRunAttempt} > 0)
+      )`,
+    ),
+  ],
+);
+
+export const environmentRuntimeChannels = pgTable(
+  "environment_runtime_channels",
+  {
+    name: text("name", { enum: ["production"] }).primaryKey().notNull(),
+    currentVersionId: text("current_version_id").references(
+      () => environmentRuntimeVersions.id,
+      { onDelete: "restrict" },
+    ),
+    previousVersionId: text("previous_version_id").references(
+      () => environmentRuntimeVersions.id,
+      { onDelete: "restrict" },
+    ),
+    canaryEnvironmentId: text("canary_environment_id").references(
+      () => environments.id,
+      { onDelete: "set null" },
+    ),
+    generation: integer("generation").notNull().default(0),
+    lastGithubRunId: text("last_github_run_id"),
+    lastGithubRunAttempt: integer("last_github_run_attempt"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "environment_runtime_channels_name_check",
+      sql`${table.name} = 'production'`,
+    ),
+    check(
+      "environment_runtime_channels_generation_check",
+      sql`${table.generation} >= 0`,
+    ),
+    check(
+      "environment_runtime_channels_distinct_versions_check",
+      sql`${table.previousVersionId} is null or ${table.currentVersionId} is null or ${table.previousVersionId} <> ${table.currentVersionId}`,
+    ),
+    check(
+      "environment_runtime_channels_run_identity_check",
+      sql`(
+        (${table.lastGithubRunId} is null and ${table.lastGithubRunAttempt} is null)
+        or (${table.lastGithubRunId} ~ '^[0-9]+$' and ${table.lastGithubRunAttempt} > 0)
+      )`,
     ),
   ],
 );
@@ -2831,6 +2945,38 @@ export const releaseWorkerHeartbeats = pgTable(
     check(
       "release_worker_heartbeats_image_check",
       sql`${table.image} ~ '^registry\\.fly\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$'`,
+    ),
+  ],
+);
+
+export const platformWorkerHeartbeats = pgTable(
+  "platform_worker_heartbeats",
+  {
+    workerRole: text("worker_role", { enum: ["turn-worker"] }).notNull(),
+    machineId: text("machine_id").notNull(),
+    sourceRevision: text("source_revision").notNull(),
+    configurationFingerprint: text("configuration_fingerprint").notNull(),
+    contractRevision: integer("contract_revision").notNull(),
+    processStartedAt: timestamp("process_started_at", {
+      withTimezone: true,
+    }).notNull(),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workerRole, table.machineId] }),
+    index("platform_worker_heartbeats_match_idx").on(
+      table.workerRole,
+      table.sourceRevision,
+      table.configurationFingerprint,
+      table.heartbeatAt,
+    ),
+    check(
+      "platform_worker_heartbeats_source_revision_check",
+      sql`${table.sourceRevision} ~ '^[0-9a-f]{40}$'`,
+    ),
+    check(
+      "platform_worker_heartbeats_configuration_fingerprint_check",
+      sql`${table.configurationFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
     ),
   ],
 );

@@ -6,9 +6,7 @@ import {
   assertHostedEnvironmentConfiguration,
   assertHostedEnvironmentRuntimeConfiguration,
   assertLocalEnvironmentRuntimeConfiguration,
-  getHostedEnvironmentBuildPreflightPhase,
   getHostedEnvironmentRuntimeMode,
-  hostedEnvironmentPreflightRequiresQuietCutover,
   hostedEnvironmentsDeploymentEnabled,
   hostedEnvironmentsEnabled,
   hostedEnvironmentsOrganizationEnabled,
@@ -64,75 +62,6 @@ test("local Environment mode needs only the loopback runner service", () => {
   );
 });
 
-test("production builds select a fail-closed hosted Environment preflight phase", () => {
-  assert.equal(getHostedEnvironmentBuildPreflightPhase({}), null);
-  assert.equal(
-    getHostedEnvironmentBuildPreflightPhase({
-      VERCEL_ENV: "preview",
-      KESTREL_ENVIRONMENTS_ENABLED: "true",
-    }),
-    null
-  );
-  assert.equal(
-    getHostedEnvironmentBuildPreflightPhase({
-      VERCEL_ENV: "production",
-      KESTREL_ENVIRONMENTS_ENABLED: "false",
-    }),
-    "prepare"
-  );
-  assert.equal(
-    getHostedEnvironmentBuildPreflightPhase({
-      VERCEL_ENV: "production",
-      KESTREL_ENVIRONMENTS_ENABLED: "true",
-    }),
-    "deploy"
-  );
-  assert.equal(
-    getHostedEnvironmentBuildPreflightPhase({
-      VERCEL_ENV: "production",
-    }),
-    "deploy"
-  );
-  assert.throws(
-    () =>
-      getHostedEnvironmentBuildPreflightPhase({
-        VERCEL_ENV: "production",
-        KESTREL_ENVIRONMENTS_ENABLED: "enabled",
-      }),
-    /must be true or false when configured/u
-  );
-});
-
-test("steady-state deployment does not require a quiet Environment execution boundary", () => {
-  assert.equal(
-    hostedEnvironmentPreflightRequiresQuietCutover("prepare"),
-    false
-  );
-  assert.equal(
-    hostedEnvironmentPreflightRequiresQuietCutover("deploy"),
-    false
-  );
-  assert.equal(
-    hostedEnvironmentPreflightRequiresQuietCutover("cutover"),
-    true
-  );
-});
-
-test("Vercel production delegates to the phased deployment preflight", async () => {
-  const source = await readFile(
-    new URL("../../scripts/vercel-production-preflight.ts", import.meta.url),
-    "utf8"
-  );
-  assert.match(
-    source,
-    /await import\("\.\/hosted-environment-build-preflight"\)/u
-  );
-  assert.doesNotMatch(
-    source,
-    /await import\("\.\/hosted-environment-preflight"\)/u
-  );
-});
-
 test("the checked-in local environment enables hosted Environments", async () => {
   const envExample = await readFile(
     new URL("../../.env.example", import.meta.url),
@@ -153,8 +82,6 @@ function validEnvironment() {
       format: "pem",
       type: "spki",
     }) as string,
-    KESTREL_ENVIRONMENT_ROUTER_IMAGE: `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"a".repeat(64)}`,
-    KESTREL_WORKSPACE_RUNTIME_IMAGE: `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"b".repeat(64)}`,
     KESTREL_WORKSPACE_BACKUP_KEY: randomBytes(32).toString("base64"),
     KESTREL_WORKSPACE_BACKUP_KEY_ID: "workspace-backup-v1",
     KESTREL_ONE_APP_URL: "https://kestrel-one.example",
@@ -205,7 +132,7 @@ test("Environment deployment defaults on while organization eligibility is expli
   assert.equal(hostedEnvironmentsOrganizationEnabled(false), false);
 });
 
-test("hosted cutover accepts complete immutable Environment configuration", () => {
+test("hosted cutover accepts complete non-image Environment configuration", () => {
   assert.doesNotThrow(() =>
     assertHostedEnvironmentConfiguration(validEnvironment())
   );
@@ -227,13 +154,13 @@ test("hosted runtime preparation permits the legacy runner during staged deploym
   );
 });
 
-test("hosted runtime image validation ignores surrounding deployment whitespace", () => {
+test("hosted runtime readiness does not read duplicated image configuration", () => {
   const environment = validEnvironment();
   assert.doesNotThrow(() =>
     assertHostedEnvironmentRuntimeConfiguration({
       ...environment,
-      KESTREL_ENVIRONMENT_ROUTER_IMAGE: ` ${environment.KESTREL_ENVIRONMENT_ROUTER_IMAGE}\n`,
-      KESTREL_WORKSPACE_RUNTIME_IMAGE: `${environment.KESTREL_WORKSPACE_RUNTIME_IMAGE}\n`,
+      KESTREL_ENVIRONMENT_ROUTER_IMAGE: "not-runtime-authority",
+      KESTREL_WORKSPACE_RUNTIME_IMAGE: "not-runtime-authority",
     })
   );
 });
@@ -253,16 +180,7 @@ test("hosted cutover rejects missing values and legacy global runner configurati
   );
 });
 
-test("hosted cutover rejects mutable images and mismatched ticket keys", () => {
-  assert.throws(
-    () =>
-      assertHostedEnvironmentConfiguration({
-        ...validEnvironment(),
-        KESTREL_ENVIRONMENT_ROUTER_IMAGE:
-          "ghcr.io/lumicorp/kestrel-environment-router:latest",
-      }),
-    /immutable ghcr\.io\/lumicorp\/kestrel-environment-router sha256 digest/u
-  );
+test("hosted cutover rejects mismatched ticket keys", () => {
   const first = validEnvironment();
   const second = validEnvironment();
   assert.throws(

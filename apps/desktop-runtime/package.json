@@ -14,7 +14,7 @@
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@tavily/core": "^0.7.2",
     "ajv": "^8.18.0",
-    "cron-parser": "^5.5.0",
+    "cron-parser": "^5.9.0",
     "ink": "^6.8.0",
     "ink-text-input": "^6.0.0",
     "js-tiktoken": "1.0.21",

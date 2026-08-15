@@ -73,12 +73,10 @@ fly deploy . \
   --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}"
 ```
 
-Record both registry digests reported by the publisher.
-`KESTREL_WORKSPACE_RUNTIME_IMAGE` must reference the Workspace Runtime digest,
-and `KESTREL_ENVIRONMENT_ROUTER_IMAGE` must reference the Environment Router
-digest. Both must use their immutable
-`ghcr.io/lumicorp/kestrel-<role>@sha256:...` references, never a mutable tag,
-Fly registry reference, or the same cross-role image.
+Record both public GHCR digests reported by the publisher. The signed stable
+release row in Postgres is the only steady-state authority for Workspace Runtime
+and Environment Router images. Operator canaries receive candidate digests as
+explicit command arguments; deployed process configuration must not copy them.
 
 ## Enter maintenance and cut over the control plane
 

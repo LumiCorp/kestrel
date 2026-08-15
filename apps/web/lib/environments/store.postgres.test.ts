@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import postgres from "postgres";
+import { installTestStableRuntimeBundle } from "./test-runtime-channel";
 
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
@@ -22,10 +23,6 @@ test(
     process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY = publicKey
       .export({ format: "pem", type: "spki" })
       .toString();
-    process.env.FLY_API_TOKEN = "FlyV1 test";
-    process.env.KESTREL_FLY_ORGANIZATION_SLUG = "test-org";
-    process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"a".repeat(64)}`;
-    process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"b".repeat(64)}`;
     process.env.KESTREL_WORKSPACE_BACKUP_KEY =
       randomBytes(32).toString("base64");
     process.env.KESTREL_WORKSPACE_BACKUP_KEY_ID = "test-backup-v1";
@@ -59,12 +56,17 @@ test(
       import("@/lib/threads/store"),
     ]);
     const sql = postgres(databaseUrl, { max: 1 });
+    const suffix = crypto.randomUUID();
+    const removeStableRuntimeBundle = await installTestStableRuntimeBundle(
+      databaseUrl,
+      suffix,
+    );
     context.after(async () => {
+      await removeStableRuntimeBundle();
       await resetDbRuntimeForTests();
       await sql.end({ timeout: 0 });
     });
 
-    const suffix = crypto.randomUUID();
     const organizationA = `org-a-${suffix}`;
     const organizationB = `org-b-${suffix}`;
     const userA = `user-a-${suffix}`;

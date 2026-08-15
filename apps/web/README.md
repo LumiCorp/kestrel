@@ -57,6 +57,7 @@ Requirements: Docker with Docker Compose, PostgreSQL client tools (`psql`), and
 starting.
 
 `dev:all`:
+
 - starts Docker Compose infra (`pgvector` Postgres, Redis, MinIO)
 - verifies service health and pgvector availability
 - applies migrations
@@ -80,6 +81,7 @@ For local browser flows, `DEV_AUTH_BYPASS=true` only works on `localhost`/`127.0
 Kestrel One declares exact released versions of every `@kestrel-agents/*` package it consumes. Repository-root commands build the matching workspace packages before invoking the app, while Kestrel One's own scripts contain no sibling-package filters or source imports. `pnpm run check:kestrel-boundary` enforces that standalone contract.
 
 Public-repo defaults:
+
 - `dev:all` seeds a local-only admin for development, but there is no automatic first-user production admin bootstrap.
 - Billing is opt-in. Set `NEXT_PUBLIC_BILLING_ENABLED=true` only after configuring all required Stripe env vars for org-owned subscriptions.
 - `ADMIN_USER_IDS` is empty by default; no hardcoded public admin IDs ship with the repo.
@@ -148,10 +150,6 @@ KESTREL_ENVIRONMENTS_ENABLED=true
 CRON_SECRET=replace-with-random-secret
 KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY=replace-with-ed25519-private-key-pem
 KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY=replace-with-ed25519-public-key-pem
-FLY_API_TOKEN=FlyV1...
-KESTREL_FLY_ORGANIZATION_SLUG=your-fly-organization
-KESTREL_ENVIRONMENT_ROUTER_IMAGE=ghcr.io/lumicorp/kestrel-environment-router@sha256:...
-KESTREL_WORKSPACE_RUNTIME_IMAGE=ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:...
 KESTREL_MCP_GATEWAY_URL=https://mcp.internal.example/mcp
 KESTREL_MCP_CREDENTIAL_ACTIVE_KEY_ID=primary
 KESTREL_MCP_CREDENTIAL_KEYS={"primary":"replace-with-base64-32-byte-key"}
@@ -160,6 +158,7 @@ NEXT_PUBLIC_BILLING_ENABLED=false
 ```
 
 Requirements:
+
 - Docker with Docker Compose
 - PostgreSQL client tools (`psql`)
 - curl
@@ -215,6 +214,7 @@ Operational statuses:
 - `/shared/[token]`
 
 Removed from the supported core product surface:
+
 - legacy chat-shaped page routes
 - `/device/*`
 - `/oauth/authorize`
@@ -294,6 +294,7 @@ scripts/
 ## Auth Scope
 
 Enabled:
+
 - organizations
 - passkeys
 - 2FA
@@ -303,6 +304,7 @@ Enabled:
 - admin role support
 
 Not part of the final core product:
+
 - social auth providers
 - device authorization
 - OAuth consent UI

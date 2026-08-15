@@ -49,7 +49,8 @@ task instead of reading the repository as one long manual.
 - [Security](../SECURITY.md)
 - [Quality gates](../apps/docs/content/operations/quality-gates.mdx)
 - [Deployment troubleshooting](../apps/docs/content/deploy/deployment-troubleshooting.mdx)
-- [Fly image releases](fly-image-releases.md)
+- [Production delivery channels](production-delivery-channels.md)
+- [Operations glossary](glossary.md)
 - [Evaluations with Ruhroh](../apps/docs/content/operations/evaluations.mdx)
 
 ### Change the Repository
@@ -60,6 +61,8 @@ task instead of reading the repository as one long manual.
 - [Design principles](../DESIGN.md)
 - [Plans index](PLANS.md)
 - [Architecture decisions](decisions/0001-unified-suite-version-and-release-channels.md)
+- [Stable Runtime Bundle authority](adr/0001-stable-runtime-bundle-authority.md)
+- [Independent production delivery channels](adr/0002-independent-production-delivery-channels.md)
 - [CI validation](ci-validation.md)
 - [Contributor guardrails](../AGENTS.md)
 

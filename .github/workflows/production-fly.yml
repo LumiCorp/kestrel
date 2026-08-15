@@ -1,0 +1,91 @@
+name: Production Fly
+
+on:
+  push:
+    branches: [production]
+  workflow_dispatch:
+    inputs:
+      diff_base:
+        description: Git revision to diff for manual recovery
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.images.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - id: images
+        name: Select catalog-owned Fly roles
+        env:
+          KESTREL_DIFF_BASE: ${{ github.event_name == 'push' && github.event.before || inputs.diff_base }}
+        run: pnpm tsx scripts/select-production-images.ts fly
+
+  deploy:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.matrix).role[0] != null }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    concurrency:
+      group: production-fly-${{ matrix.role }}
+      cancel-in-progress: false
+    environment: Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.82
+      - uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+      - name: Authenticate registries
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          fly auth docker
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - id: deploy
+        name: Build, smoke, deploy, and verify exact role digest
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: pnpm tsx scripts/deploy-production-image.ts "${{ matrix.role }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-image-${{ matrix.role }}
+          path: production-image-${{ matrix.role }}.json
+          if-no-files-found: error
+
+  promote-runtime:
+    needs: [select, deploy]
+    if: ${{ always() && needs.deploy.result == 'success' }}
+    concurrency:
+      group: production-environment-runtime-promotion
+      cancel-in-progress: false
+    environment: Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      KESTREL_RUNTIME_API_URL: ${{ vars.KESTREL_ONE_PRODUCTION_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: production-image-*
+          merge-multiple: true
+      - name: Update canary, prove the live runtime, and promote atomically
+        run: pnpm tsx scripts/promote-environment-runtime.ts

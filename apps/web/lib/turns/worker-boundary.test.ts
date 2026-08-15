@@ -355,15 +355,17 @@ test(
   },
 );
 
-test("the dedicated control worker owns release and lifecycle queues", async () => {
+test("the dedicated control worker owns only environment lifecycle queues", async () => {
   const source = await readFile(
     new URL("../../scripts/control-worker.ts", import.meta.url),
     "utf8",
   );
   assert.match(source, /startEnvironmentLifecycleWorker/u);
   assert.match(source, /stopEnvironmentLifecycleWorker/u);
-  assert.match(source, /releaseControllerHeartbeats/u);
-  assert.match(source, /RELEASE_CONTROLLER_CONTRACT_REVISION/u);
+  assert.match(source, /startWorkerHealthServer/u);
+  assert.doesNotMatch(source, /releaseControllerHeartbeats/u);
+  assert.doesNotMatch(source, /RELEASE_CONTROLLER_CONTRACT_REVISION/u);
+  assert.doesNotMatch(source, /CRON_SECRET/u);
 });
 
 test(

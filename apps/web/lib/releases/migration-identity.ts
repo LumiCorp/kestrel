@@ -1,5 +1,0 @@
-export const RELEASE_MIGRATION_HEAD = "0070_project_prompt_schedules";
-export const RELEASE_MIGRATION_HEAD_SQL_HASH =
-  "74fbd2b7e450bfd73a5811259dbda37eb3bc7ec461f12543f16340062be28cba";
-export const RELEASE_MIGRATION_HISTORY_LOCK_HASH =
-  "sha256:322e378b4c6e4df7400bb627486c896b63f04ffefe312de46422c24fc2ab8347";

@@ -61,3 +61,26 @@ test("workspace skills package exports only published build artifacts", async ()
   assert.ok(pkg.files?.includes("dist"));
   assert.equal(pkg.files?.includes("src"), false);
 });
+
+test("every cron runtime uses the DST-correct parser version", async () => {
+  const manifests = await Promise.all(
+    [
+      "package.json",
+      "apps/desktop-runtime/package.json",
+      "apps/web/package.json",
+    ].map(async (manifestPath) => ({
+      manifestPath,
+      manifest: JSON.parse(
+        await readFile(path.join(process.cwd(), manifestPath), "utf8"),
+      ) as { dependencies?: Record<string, string> },
+    })),
+  );
+
+  for (const { manifestPath, manifest } of manifests) {
+    assert.equal(
+      manifest.dependencies?.["cron-parser"],
+      "^5.9.0",
+      `${manifestPath} must use the DST-correct cron-parser version`,
+    );
+  }
+});

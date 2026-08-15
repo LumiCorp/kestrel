@@ -587,6 +587,51 @@
       "testFiles": ["apps/web/lib/apps/preview-lifecycle.test.ts"]
     },
     {
+      "id": "production-database-unpooled-ownership-bypass",
+      "target": ".github/workflows/production-database.yml",
+      "find": "run: pnpm db:migrate:deploy",
+      "replace": "run: pnpm db:migrate",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=production delivery exposes", "tests/unit/production-delivery-boundary.test.ts"],
+      "testFiles": ["tests/unit/production-delivery-boundary.test.ts"]
+    },
+    {
+      "id": "environment-runtime-pointer-generation-bypass",
+      "target": "apps/web/lib/environments/runtime-channel.ts",
+      "find": "      channel.generation !== input.expectedGeneration",
+      "replace": "      false",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "lib/environments/runtime-channel.postgres.test.ts"],
+      "testFiles": ["apps/web/lib/environments/runtime-channel.postgres.test.ts"]
+    },
+    {
+      "id": "environment-runtime-oidc-workflow-sha-bypass",
+      "target": "apps/web/lib/runtime/github-actions-oidc.ts",
+      "find": "    claims.workflow_sha !== input.expectedWorkflowSha ||",
+      "replace": "    false ||",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--import", "tsx", "--test", "lib/runtime/github-actions-oidc.test.ts"],
+      "testFiles": ["apps/web/lib/runtime/github-actions-oidc.test.ts"]
+    },
+    {
+      "id": "environment-update-runtime-version-binding-bypass",
+      "target": "apps/web/lib/environments/process-runtime.ts",
+      "find": "    version?.workspaceRuntimeImage !== images.runtimeImage ||",
+      "replace": "    false ||",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "lib/environments/runtime-channel.postgres.test.ts"],
+      "testFiles": ["apps/web/lib/environments/runtime-channel.postgres.test.ts"]
+    },
+    {
+      "id": "production-image-smoke-before-mutation-bypass",
+      "target": "scripts/deploy-production-image.ts",
+      "find": "  run(\"bash\", [image.smoke, digest], { EXPECTED_GIT_SHA: revision });",
+      "replace": "  void image.smoke;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=image deployment smokes", "tests/unit/production-delivery-boundary.test.ts"],
+      "testFiles": ["tests/unit/production-delivery-boundary.test.ts"]
+    },
+    {
       "id": "durable-turn-premature-cancellation-settlement",
       "target": "apps/web/lib/turns/process-runtime.ts",
       "find": "    if (stopped && !runtimeTerminalObserved && environmentExecutionId) {",

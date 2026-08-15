@@ -2,7 +2,10 @@ import { config } from "dotenv";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres, { type Sql } from "postgres";
-import { resolveMigrationDatabaseConnection } from "./migration-connection";
+import {
+  requireUnpooledMigrationDatabaseConnection,
+  resolveMigrationDatabaseConnection,
+} from "./migration-connection";
 import {
   hasKnownMigrationLedgerDrift,
   reconcilePublishedMigrationLedgerTimestamps,
@@ -14,7 +17,10 @@ config({
 });
 
 const runMigrate = async () => {
-  const databaseConnection = resolveMigrationDatabaseConnection();
+  const requireUnpooled = process.argv.includes("--require-unpooled");
+  const databaseConnection = requireUnpooled
+    ? requireUnpooledMigrationDatabaseConnection()
+    : resolveMigrationDatabaseConnection();
 
   if (!databaseConnection) {
     console.log(

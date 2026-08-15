@@ -1,0 +1,67 @@
+---
+title: Deliver Kestrel One to production
+summary: Operate the independent database, Vercel, Fly, and RunPod production channels and the Environment Runtime Channel.
+section: operate
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-14
+---
+
+Production delivery has four independent lanes. Advancing the protected
+`production` branch is the human production decision; each lane then proves and
+rolls back only the provider state it owns.
+
+## Database migrations
+
+`production-database.yml` runs the ordinary ordered migrator with the unpooled
+production connection. It is serialized without cancellation and has no image,
+Vercel, or release-controller dependency. Use expand/deploy/contract
+compatibility; destructive contract migrations belong to a later production
+promotion.
+
+## Vercel
+
+Vercel deploys natively from `production`. Vercel Production remains the
+canonical source for shared hosted configuration. Its deployment identity and
+source revision are useful diagnostics, but no other channel waits for an exact
+Vercel SHA.
+
+## Fly components
+
+`production-fly.yml` selects affected roles from
+`deploy/fly/image-catalog.json`. Each role builds, smokes, deploys, and verifies
+an immutable digest independently. Private workers use Fly health checks and
+restore their prior digest if deployment readiness fails.
+
+Workspace Runtime and Environment Router are different: their exact immutable
+digest pair is registered as an Environment Runtime Version. After the
+configured production canary updates through the normal durable Environment
+lifecycle and the live Workspace and Preview proofs pass, one atomic Environment
+Runtime Channel pointer advances. Existing Environments stay unchanged.
+
+## RunPod worker
+
+`production-runpod.yml` owns the managed RunPod worker. Its catalog inputs,
+configuration allowlist, build, smoke, deployment, health proof, and rollback
+are independent of Vercel and the Fly component lane.
+
+## Existing Environment updates
+
+An organization administrator can update one Environment to the current runtime
+from its Runtime page. Operators can use the runtime update CLI for one explicit
+Environment/version pair or for the remaining eligible fleet after the named
+canary operation completed for the still-current version. Both paths create only
+idempotent `environment.update` lifecycle operations.
+
+## Rollback
+
+Roll back each provider through its own prior immutable identity. Vercel promotes
+its prior deployment; Fly and RunPod redeploy their recorded prior digest. A
+runtime pointer rollback selects the previous Environment Runtime Version only
+after its canary. Environment operations retain their existing backup and
+rollback behavior.
+
+<Outcome>
+  <p>Each production channel can ship and recover independently while tenant runtime defaults advance through one canary-proven digest pair.</p>
+</Outcome>

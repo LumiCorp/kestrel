@@ -16,9 +16,8 @@
     "start": "next start --port 43103",
     "worker:turns": "node --import ./scripts/register-server-only.mjs --import tsx scripts/turn-worker.ts",
     "worker:control": "node --import ./scripts/register-server-only.mjs --import tsx scripts/control-worker.ts",
-    "sync:turn-worker-keyring": "tsx scripts/sync-turn-worker-keyring.ts",
-    "release:turn-worker": "tsx scripts/release-turn-worker.ts",
-    "release:control-worker": "tsx scripts/release-control-worker.ts",
+    "sync:worker-config": "tsx scripts/sync-worker-config.ts",
+    "runtime:update": "tsx scripts/update-environment-runtime.ts",
     "worker:runpod": "node --conditions=react-server --import tsx scripts/managed-runpod-worker.ts",
     "runpod:bootstrap:qwen3": "node --conditions=react-server --import tsx scripts/bootstrap-qwen3-runpod-profile.ts",
     "format": "ultracite fix",
@@ -29,8 +28,7 @@
     "typecheck:self": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx lib/db/migrate.ts",
-    "db:migrate:deploy": "tsx lib/db/migrate.ts",
-    "db:migrate:release-control": "tsx scripts/ensure-release-control-schema.ts",
+    "db:migrate:deploy": "tsx lib/db/migrate.ts --require-unpooled",
     "db:migrate:contract": "tsx lib/db/contract-migrate.ts",
     "knowledge:retire-legacy": "tsx scripts/retire-legacy-knowledge.ts",
     "db:push": "drizzle-kit push",
@@ -62,8 +60,6 @@
     "canary:environment:preview": "tsx scripts/environment-preview-canary.ts",
     "canary:github:oauth": "tsx scripts/github-oauth-canary.ts",
     "canary:github:approval": "tsx scripts/github-approval-canary.ts",
-    "preflight:environment:hosted": "tsx scripts/hosted-environment-preflight.ts",
-    "preflight:vercel:production": "tsx scripts/vercel-production-preflight.ts",
     "test:unit": "pnpm run check:brand && pnpm run check:kestrel-boundary && node ../../scripts/validate.mjs --leaf hermetic apps/web",
     "test": "pnpm run test:unit",
     "test:integration": "node --conditions=react-server --import tsx --test lib/**/*.postgres.test.ts"
@@ -242,6 +238,7 @@
     "tsx": "^4.20.6",
     "tw-animate-css": "^1.3.8",
     "typescript": "5.9.3",
-    "ultracite": "6.3.2"
+    "ultracite": "6.3.2",
+    "vercel": "50.23.2"
   }
 }

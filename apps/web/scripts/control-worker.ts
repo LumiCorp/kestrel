@@ -2,99 +2,47 @@ import {
   startEnvironmentLifecycleWorker,
   stopEnvironmentLifecycleWorker,
 } from "@/lib/knowledge/queue";
-import { rm, writeFile } from "node:fs/promises";
-import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { assertHostedEnvironmentConfiguration } from "@/lib/environments/config";
-import { RELEASE_CONTROLLER_CONTRACT_REVISION } from "@/lib/releases/controller-contract";
+import {
+  assertControlWorkerProcessConfiguration,
+  CONTROL_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
+} from "@/lib/runtime/process-contracts";
+import {
+  assertWorkerDatabaseReady,
+  resolveWorkerSourceRevision,
+  startWorkerHealthServer,
+} from "@/lib/runtime/worker-health";
 
-const readyFile = process.env.KESTREL_CONTROL_WORKER_READY_FILE;
-const startedAt = new Date();
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-
-async function heartbeat() {
-  const now = new Date();
-  const sourceRevision = process.env.KESTREL_BUILD_REVISION?.trim();
-  const image =
-    process.env.KESTREL_RELEASE_IMAGE?.trim() ||
-    process.env.FLY_IMAGE_REF?.trim();
-  const inputFingerprint =
-    process.env.KESTREL_CONTROL_WORKER_FINGERPRINT?.trim();
-  const machineId = process.env.FLY_MACHINE_ID?.trim();
-  if (!(sourceRevision && image && inputFingerprint && machineId)) {
-    throw new Error("Release controller runtime identity is incomplete.");
-  }
-  await knowledgeDb
-    .insert(schema.releaseControllerHeartbeats)
-    .values({
-      id: "platform",
-      contractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
-      sourceRevision,
-      image,
-      inputFingerprint,
-      machineId,
-      heartbeatAt: now,
-      startedAt,
-    })
-    .onConflictDoUpdate({
-      target: schema.releaseControllerHeartbeats.id,
-      set: {
-        contractRevision: RELEASE_CONTROLLER_CONTRACT_REVISION,
-        sourceRevision,
-        image,
-        inputFingerprint,
-        machineId,
-        heartbeatAt: now,
-        startedAt,
-      },
-    });
-}
-
-async function markReady() {
-  if (readyFile) {
-    await writeFile(
-      readyFile,
-      `release-controller-v${RELEASE_CONTROLLER_CONTRACT_REVISION}\n`,
-      "utf8",
-    );
-  }
-}
-
-async function clearReady() {
-  if (readyFile) await rm(readyFile, { force: true });
-}
+let health: Awaited<ReturnType<typeof startWorkerHealthServer>> | null = null;
 
 async function main() {
-  assertHostedEnvironmentConfiguration();
+  assertControlWorkerProcessConfiguration();
+  health = await startWorkerHealthServer({
+    role: "control-worker",
+    sourceRevision: await resolveWorkerSourceRevision(),
+    configurationFingerprint: CONTROL_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
+  });
+  await assertWorkerDatabaseReady();
   await startEnvironmentLifecycleWorker();
-  await heartbeat();
-  heartbeatTimer = setInterval(() => {
-    void heartbeat().catch((error: unknown) => {
-      process.stderr.write(
-        `Release controller heartbeat failed: ${error instanceof Error ? error.message : "Unknown error"}\n`,
-      );
-    });
-  }, 30_000);
-  await markReady();
-  process.stdout.write(
-    `Kestrel One control worker started (release-controller-v${RELEASE_CONTROLLER_CONTRACT_REVISION}).\n`,
-  );
+  health.markReady();
+  process.stdout.write("Kestrel One Environment lifecycle worker started.\n");
 }
 
 async function shutdown(signal: string) {
-  process.stdout.write(`Kestrel One control worker received ${signal}.\n`);
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  process.stdout.write(`Kestrel One Environment lifecycle worker received ${signal}.\n`);
+  health?.markUnhealthy();
   await stopEnvironmentLifecycleWorker();
-  await clearReady();
+  await health?.close();
   process.exit(0);
 }
 
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
-void main().catch((error: unknown) => {
-  void clearReady();
+void main().catch(async (error: unknown) => {
+  health?.markUnhealthy();
+  await health?.close().catch(() => {});
   process.stderr.write(
-    `Kestrel One control worker failed to start: ${
+    `Kestrel One Environment lifecycle worker failed to start: ${
       error instanceof Error ? error.message : "Unknown startup error"
     }\n`,
   );

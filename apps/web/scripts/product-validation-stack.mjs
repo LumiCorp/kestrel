@@ -1,5 +1,4 @@
 import { spawn, spawnSync } from "node:child_process";
-import { access, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,14 +8,13 @@ const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const host = "127.0.0.1";
 const appPort = required("KESTREL_PRODUCT_APP_PORT");
 const runnerPort = required("KESTREL_PRODUCT_RUNNER_PORT");
-const workerReadyFile = required("KESTREL_PRODUCT_WORKER_READY_FILE");
+const workerHealthPort = required("KESTREL_PRODUCT_WORKER_HEALTH_PORT");
 const children = [];
 
 process.once("SIGINT", () => shutdown(130));
 process.once("SIGTERM", () => shutdown(143));
 
 try {
-  await rm(workerReadyFile, { force: true });
   const adminOutput = runCaptured(pnpm, ["create-dev-admin"], webRoot);
   const personalOrganizationId = adminOutput.match(
     /^Personal organization ID: (.+)$/mu,
@@ -37,7 +35,11 @@ try {
   await waitForUrl(`http://${host}:${runnerPort}/health`, runner, "Runner");
 
   const worker = start(pnpm, ["worker:turns"], webRoot);
-  await waitForFile(workerReadyFile, worker, "Turn worker");
+  await waitForUrl(
+    `http://${host}:${workerHealthPort}/healthz`,
+    worker,
+    "Turn worker",
+  );
 
   const web = start(pnpm, ["exec", "next", "start", "--hostname", host, "--port", appPort], webRoot);
   const first = await Promise.race(children.map(waitForExit));
@@ -92,14 +94,6 @@ async function waitForUrl(url, child, label) {
   }
 }
 
-async function waitForFile(file, child, label) {
-  while (true) {
-    assertRunning(child, label);
-    try { await access(file); return; } catch {}
-    await delay(250);
-  }
-}
-
 function assertRunning(child, label) {
   if (child.exitCode !== null || child.signalCode !== null) throw new Error(`${label} exited before readiness`);
 }
@@ -113,7 +107,6 @@ function waitForExit(child) {
 
 function cleanup() {
   for (const child of children) terminate(child);
-  void rm(workerReadyFile, { force: true });
 }
 
 function shutdown(code) {

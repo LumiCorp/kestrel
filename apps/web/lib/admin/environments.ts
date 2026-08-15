@@ -16,8 +16,10 @@ import {
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { getOrganizationInfrastructureSettings } from "@/lib/environments/organization-infrastructure-settings";
-import { environmentLifecycleLockKey } from "@/lib/environments/lifecycle-lock";
-import { assertFlyImageMatchesRole } from "@/lib/releases/contracts";
+import {
+  requireCurrentEnvironmentRuntime,
+  requestEnvironmentRuntimeUpdate,
+} from "@/lib/environments/runtime-channel";
 
 export async function createAdminEnvironment(input: {
   organizationId: string;
@@ -190,7 +192,6 @@ export async function updateAdminEnvironmentRuntime(input: {
   organizationId: string;
   actorUserId: string;
   environmentId: string;
-  runtimeImage: string;
   reconcile?: boolean | undefined;
 }) {
   const environment = await getOrganizationEnvironment({
@@ -198,80 +199,22 @@ export async function updateAdminEnvironmentRuntime(input: {
     environmentId: input.environmentId,
   });
   if (!environment) throw new Error("Environment not found.");
-  assertFlyImageMatchesRole("workspace-runtime", input.runtimeImage);
-  const routerImage =
-    process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE?.trim() ?? "";
-  assertFlyImageMatchesRole("environment-router", routerImage);
+  const current = await requireCurrentEnvironmentRuntime();
+  const { runtimeImage, routerImage } = current;
   if (
-    environment.runtimeImage === input.runtimeImage &&
+    environment.runtimeImage === runtimeImage &&
     environment.routerImage === routerImage &&
     input.reconcile !== true
   ) {
-    return environment;
+    return { environment, operation: null, version: current };
   }
-  const now = new Date();
-  const idempotencyKey = [
-    "environment.update",
-    input.environmentId,
-    routerImage,
-    input.runtimeImage,
-  ].join(":");
-  const operation = await knowledgeDb.transaction(async (transaction) => {
-    await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
-    );
-    const existing = await transaction.query.environmentOperations.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.organizationId, input.organizationId),
-          eq(table.idempotencyKey, idempotencyKey),
-        ),
-    });
-    if (existing) {
-      if (existing.status === "queued" || existing.status === "running") {
-        return existing;
-      }
-      if (existing.status === "completed" && input.reconcile !== true) {
-        return existing;
-      }
-      const [reset] = await transaction
-        .update(schema.environmentOperations)
-        .set({
-          status: "queued",
-          stage: "requested",
-          requestedByUserId: input.actorUserId,
-          providerRequestId: null,
-          result: null,
-          errorCode: null,
-          errorMessage: null,
-          startedAt: null,
-          completedAt: null,
-          updatedAt: now,
-        })
-        .where(eq(schema.environmentOperations.id, existing.id))
-        .returning();
-      return reset ?? existing;
-    }
-    const [created] = await transaction
-      .insert(schema.environmentOperations)
-      .values({
-        id: crypto.randomUUID(),
-        organizationId: input.organizationId,
-        environmentId: input.environmentId,
-        requestedByUserId: input.actorUserId,
-        type: "environment.update",
-        status: "queued",
-        stage: "requested",
-        idempotencyKey,
-        input: { runtimeImage: input.runtimeImage, routerImage },
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
-    if (!created)
-      throw new Error("Environment update operation was not created.");
-    return created;
+  const requested = await requestEnvironmentRuntimeUpdate({
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+    runtimeVersionId: current.id,
+    actorUserId: input.actorUserId,
   });
+  const { operation } = requested;
   if (operation.status !== "completed") {
     await enqueueEnvironmentOperation(operation.id);
   }
@@ -284,12 +227,12 @@ export async function updateAdminEnvironmentRuntime(input: {
     targetId: input.environmentId,
     message: "Queued a durable Environment image update.",
     metadata: {
-      runtimeImage: input.runtimeImage,
+      runtimeImage,
       routerImage,
       operationId: operation.id,
     },
   });
-  return { ...environment, runtimeImage: input.runtimeImage, updatedAt: now };
+  return requested;
 }
 
 export async function updateAdminEnvironmentReasoningPolicy(input: {

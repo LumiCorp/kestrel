@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { attachActiveFlyImageReleaseTarget } from "@/lib/releases/store";
+import { requireCurrentEnvironmentRuntime } from "./runtime-channel";
 import {
   assertEnvironmentTransition,
   assertWorkspaceTransition,
@@ -15,6 +15,7 @@ import {
   selectDefaultEnvironmentRecoveryAction,
   workspaceProvisionIdempotencyKey,
 } from "./contracts";
+import { getHostedEnvironmentRuntimeMode } from "./config";
 import {
   environmentLifecycleLockKey,
   organizationEnvironmentCreateLockKey,
@@ -72,6 +73,11 @@ export async function ensureOrganizationDefaultEnvironment(input: {
   });
   if (existing)
     return { environment: existing, operation: null, created: false };
+
+  const usesFlyRuntime = getHostedEnvironmentRuntimeMode() === "fly";
+  const runtimeVersion = usesFlyRuntime
+    ? await requireCurrentEnvironmentRuntime()
+    : null;
 
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
@@ -166,13 +172,19 @@ export async function ensureOrganizationDefaultEnvironment(input: {
         input: {
           region: environment.region,
           runtimeTemplate: ENVIRONMENT_RUNTIME_TEMPLATE,
+          ...(runtimeVersion
+            ? {
+                runtimeVersionId: runtimeVersion.id,
+                runtimeImage: runtimeVersion.runtimeImage,
+                routerImage: runtimeVersion.routerImage,
+              }
+            : {}),
         },
         createdAt: now,
         updatedAt: now,
       })
       .returning();
     if (!operation) throw new Error("Default Environment operation failed.");
-    await attachActiveFlyImageReleaseTarget(transaction, environmentId);
     return { environment, operation, created: true };
   });
 }
@@ -275,6 +287,10 @@ export async function createOrganizationEnvironment(input: {
   environment: CreateEnvironmentInput;
   runtimeTemplate?: string;
 }) {
+  const usesFlyRuntime = getHostedEnvironmentRuntimeMode() === "fly";
+  const runtimeVersion = usesFlyRuntime
+    ? await requireCurrentEnvironmentRuntime()
+    : null;
   const environmentId = crypto.randomUUID();
   const operationId = crypto.randomUUID();
   const now = new Date();
@@ -345,12 +361,18 @@ export async function createOrganizationEnvironment(input: {
           region: input.environment.region,
           runtimeTemplate:
             input.runtimeTemplate ?? ENVIRONMENT_RUNTIME_TEMPLATE,
+          ...(runtimeVersion
+            ? {
+                runtimeVersionId: runtimeVersion.id,
+                runtimeImage: runtimeVersion.runtimeImage,
+                routerImage: runtimeVersion.routerImage,
+              }
+            : {}),
         },
         createdAt: now,
         updatedAt: now,
       })
       .returning();
-    await attachActiveFlyImageReleaseTarget(transaction, environmentId);
     return { environment, operation };
   });
 }

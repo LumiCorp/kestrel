@@ -9,7 +9,8 @@ import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { ReasoningPolicyForm } from "@/app/(workspace)/settings/environments/[id]/reasoning-policy-form";
 import { Badge } from "@/components/ui/badge";
-import { getEnvironmentFlyImageReleaseStatus } from "@/lib/releases/store";
+import { getEnvironmentRuntimeChannel } from "@/lib/environments/runtime-channel";
+import { RuntimeUpdateButton } from "./runtime-update-button";
 
 export default async function OrganizationEnvironmentRuntimePage({
   params,
@@ -18,44 +19,56 @@ export default async function OrganizationEnvironmentRuntimePage({
 }) {
   const { organizationId } = await requireOrganizationAdmin();
   const { id } = await params;
-  const [environment, releaseStatus] = await Promise.all([
+  const [environment, channel] = await Promise.all([
     getOrganizationEnvironment({
       organizationId,
       environmentId: id,
     }),
-    getEnvironmentFlyImageReleaseStatus(id),
+    getEnvironmentRuntimeChannel(),
   ]);
   if (!environment) return null;
+  const aligned = Boolean(
+    channel.currentVersion &&
+      environment.runtimeImage === channel.currentVersion.runtimeImage &&
+      environment.routerImage === channel.currentVersion.routerImage,
+  );
 
   return (
     <div>
       <SettingsSection
-        description="Release alignment across this Environment's Workspaces."
-        title="Runtime release"
+        description="Alignment with the production Environment Runtime Channel."
+        title="Environment Runtime"
       >
         <SettingsRows>
           <SettingsRow label="Alignment">
             <SettingsStatusSummary
-              detail="Stopped Workspaces apply the release on their next activation."
+              detail="Updates run through this Environment's durable lifecycle operation."
               status={
-                releaseStatus.desiredRuntimeImage
-                  ? environment.runtimeImage === releaseStatus.desiredRuntimeImage
+                channel.currentVersion
+                  ? aligned
                   ? "Current"
-                  : "Update pending" : "Bootstrap"
+                  : "Update available"
+                  : "Bootstrap"
               }
               tone={
-                releaseStatus.desiredRuntimeImage
-                  ? environment.runtimeImage === releaseStatus.desiredRuntimeImage
+                channel.currentVersion
+                  ? aligned
                   ? "positive"
-                  : "warning" : "neutral"
+                  : "warning"
+                  : "neutral"
               }
             />
           </SettingsRow>
-          <SettingsRow label="Release status">
+          <SettingsRow label="Channel generation">
             <Badge variant="outline">
-              {releaseStatus.rolloutStatus ??
-                (releaseStatus.stableReleaseId ? "stable" : "bootstrap")}
+              {channel.generation}
             </Badge>
+          </SettingsRow>
+          <SettingsRow label="Action">
+            <RuntimeUpdateButton
+              aligned={aligned}
+              environmentId={environment.id}
+            />
           </SettingsRow>
         </SettingsRows>
       </SettingsSection>
@@ -65,15 +78,34 @@ export default async function OrganizationEnvironmentRuntimePage({
         title="Runtime details"
       >
         <SettingsRows>
-          <SettingsRow label="Applied image">
+          <SettingsRow label="Applied Workspace image">
             <span className="break-all font-mono text-xs">
               {environment.runtimeImage ?? "Not provisioned"}
             </span>
           </SettingsRow>
-          <SettingsRow label="Stable release image">
+          <SettingsRow label="Applied Router image">
             <span className="break-all font-mono text-xs">
-              {releaseStatus.desiredRuntimeImage ??
-                "Bootstrap configuration (no stable release yet)"}
+              {environment.routerImage ?? "Not provisioned"}
+            </span>
+          </SettingsRow>
+          <SettingsRow label="Current Workspace image">
+            <span className="break-all font-mono text-xs">
+              {channel.currentVersion?.runtimeImage ?? "No current version"}
+            </span>
+          </SettingsRow>
+          <SettingsRow label="Current Router image">
+            <span className="break-all font-mono text-xs">
+              {channel.currentVersion?.routerImage ?? "No current version"}
+            </span>
+          </SettingsRow>
+          <SettingsRow label="Previous Workspace image">
+            <span className="break-all font-mono text-xs">
+              {channel.previousVersion?.runtimeImage ?? "No previous version"}
+            </span>
+          </SettingsRow>
+          <SettingsRow label="Previous Router image">
+            <span className="break-all font-mono text-xs">
+              {channel.previousVersion?.routerImage ?? "No previous version"}
             </span>
           </SettingsRow>
           <SettingsRow label="Runtime template">

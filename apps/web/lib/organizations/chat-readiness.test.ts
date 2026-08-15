@@ -180,6 +180,32 @@ test("execution readiness reports rollout and terminal environment states", () =
   );
   assert.equal(disabled.environmentExecution.status, "rollout_disabled");
 
+  const missingCurrentRuntime = deriveOrganizationChatReadiness(
+    readyInput({
+      currentEnvironmentRuntimeAvailable: false,
+      environment: null,
+      operation: null,
+    }),
+  );
+  assert.equal(
+    missingCurrentRuntime.environmentExecution.status,
+    "current_environment_runtime_unavailable",
+  );
+  assert.match(
+    missingCurrentRuntime.environmentExecution.detail,
+    /production Environment Runtime Channel/u,
+  );
+
+  const readyWithoutCurrentRuntime = deriveOrganizationChatReadiness(
+    readyInput({ currentEnvironmentRuntimeAvailable: false }),
+  );
+  assert.equal(
+    readyWithoutCurrentRuntime.environmentExecution.status,
+    "current_environment_runtime_unavailable",
+  );
+  assert.equal(readyWithoutCurrentRuntime.environmentExecution.ready, false);
+  assert.equal(readyWithoutCurrentRuntime.ready, false);
+
   const failed = deriveOrganizationChatReadiness(
     readyInput({
       environment: {

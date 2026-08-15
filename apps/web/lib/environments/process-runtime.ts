@@ -20,7 +20,12 @@ export async function processEnvironmentOperation(
 ) {
   const operation = await knowledgeDb.query.environmentOperations.findFirst({
     where: eq(schema.environmentOperations.id, operationId),
-    columns: { organizationId: true, environmentId: true, type: true },
+    columns: {
+      organizationId: true,
+      environmentId: true,
+      type: true,
+      input: true,
+    },
   });
   if (!operation) throw new Error("Environment operation was not found.");
   const locked = await withEnvironmentOperationLock({
@@ -47,20 +52,21 @@ export async function processEnvironmentOperation(
         if (dependency === "blocked") return "blocked" as const;
         if (dependency === "terminal") return "processed" as const;
       }
-      const { getStableFlyEnvironmentImages } =
-        await import("@/lib/releases/store");
-      const stableImages = await getStableFlyEnvironmentImages();
+      const runtimeImagesRequired = operationRequiresRuntimeImages(
+        operation.type,
+      );
+      const images = runtimeImagesRequired
+        ? operation.type === "environment.update" ||
+          operation.type === "environment.provision"
+          ? await resolveEnvironmentUpdateImages(operation)
+          : await resolveAppliedEnvironmentImages(operation.environmentId)
+        : { runtimeImage: "", routerImage: "" };
       const provisioner = new EnvironmentProvisioner({
         repository: databaseEnvironmentProvisioningRepository,
         provider: await createFlyProviderClient(operation.organizationId),
-        runtimeImage:
-          stableImages?.runtimeImage ??
-          process.env.KESTREL_WORKSPACE_RUNTIME_IMAGE?.trim() ??
-          "",
-        routerImage:
-          stableImages?.routerImage ??
-          process.env.KESTREL_ENVIRONMENT_ROUTER_IMAGE?.trim() ??
-          "",
+        runtimeImage: images.runtimeImage,
+        routerImage: images.routerImage,
+        requireRuntimeImages: runtimeImagesRequired,
         ticketPublicKey:
           process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
         controlPlaneUrl: process.env.KESTREL_ONE_APP_URL ?? "",
@@ -69,4 +75,60 @@ export async function processEnvironmentOperation(
     },
   });
   return locked.acquired ? locked.result : "not_claimed";
+}
+
+export function operationRequiresRuntimeImages(type: string) {
+  return type !== "environment.delete" && type !== "workspace.delete";
+}
+
+async function resolveEnvironmentUpdateImages(operation: {
+  environmentId: string;
+  input: Record<string, unknown> | null;
+}) {
+  const runtimeVersionId = operation.input?.runtimeVersionId;
+  if (typeof runtimeVersionId !== "string") {
+    throw new Error(
+      "Environment lifecycle operation is missing its Runtime Version identity.",
+    );
+  }
+  const images = requireEnvironmentUpdateImages(operation.input);
+  const version = await knowledgeDb.query.environmentRuntimeVersions.findFirst({
+    where: eq(schema.environmentRuntimeVersions.id, runtimeVersionId),
+  });
+  if (
+    version?.workspaceRuntimeImage !== images.runtimeImage ||
+    version.environmentRouterImage !== images.routerImage
+  ) {
+    throw new Error(
+      "Environment update images do not match the immutable Runtime Version.",
+    );
+  }
+  return images;
+}
+
+function requireEnvironmentUpdateImages(input: Record<string, unknown> | null) {
+  const runtimeImage = input?.runtimeImage;
+  const routerImage = input?.routerImage;
+  if (!(typeof runtimeImage === "string" && typeof routerImage === "string")) {
+    throw new Error(
+      "Environment update operation is missing its immutable candidate images.",
+    );
+  }
+  return { runtimeImage, routerImage };
+}
+
+async function resolveAppliedEnvironmentImages(environmentId: string) {
+  const environment = await knowledgeDb.query.environments.findFirst({
+    where: eq(schema.environments.id, environmentId),
+    columns: { runtimeImage: true, routerImage: true },
+  });
+  if (!(environment?.runtimeImage && environment.routerImage)) {
+    throw new Error(
+      "The existing Environment is missing its applied immutable runtime images.",
+    );
+  }
+  return {
+    runtimeImage: environment.runtimeImage,
+    routerImage: environment.routerImage,
+  };
 }

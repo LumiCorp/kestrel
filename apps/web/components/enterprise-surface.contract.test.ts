@@ -119,7 +119,7 @@ test("environment details prioritize health and disclose technical controls", ()
   assert.match(overview, /title="Operational state"/u);
   assert.match(overview, /title="Technical details"/u);
   assert.match(overview, /<SettingsDangerSection/u);
-  assert.match(runtime, /title="Runtime release"/u);
+  assert.match(runtime, /title="Environment Runtime"/u);
   assert.match(runtime, /title="Runtime details"/u);
   assert.match(runtime, /title="Provider reasoning policy"/u);
   assert.match(workspaces, /<ResourceList>/u);
