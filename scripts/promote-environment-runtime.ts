@@ -23,11 +23,26 @@ const channelSchema = z.object({
   currentVersion: versionSchema.nullable(),
 });
 
+const selectedFlyRoleSchema = z.enum([
+  "workspace-runtime",
+  "environment-router",
+  "preview-edge",
+  "turn-worker",
+  "control-worker",
+]);
+
 async function main() {
   const workflowRevision = z.string().regex(/^[a-f0-9]{40}$/u).parse(process.env.GITHUB_SHA);
   const githubRunId = requireEnv("GITHUB_RUN_ID");
   const githubRunAttempt = z.coerce.number().int().positive().parse(requireEnv("GITHUB_RUN_ATTEMPT"));
   const api = requireEnv("KESTREL_RUNTIME_API_URL").replace(/\/$/u, "");
+  const selectedRuntimeRoles = z
+    .array(selectedFlyRoleSchema)
+    .parse(JSON.parse(requireEnv("KESTREL_SELECTED_FLY_ROLES")))
+    .filter(
+      (role) =>
+        role === "workspace-runtime" || role === "environment-router",
+    );
   const identity = { workflowRevision, githubRunId, githubRunAttempt };
   const channelResponse = await runtimeRequest({
     api,
@@ -38,6 +53,16 @@ async function main() {
   const current = channel.currentVersion;
   const workspace = await readArtifact("workspace-runtime");
   const router = await readArtifact("environment-router");
+  for (const selectedRole of selectedRuntimeRoles) {
+    if (
+      (selectedRole === "workspace-runtime" && !workspace) ||
+      (selectedRole === "environment-router" && !router)
+    ) {
+      throw new Error(
+        `Selected Runtime role ${selectedRole} did not publish an immutable image artifact.`,
+      );
+    }
+  }
   if (!(workspace || router)) return;
   if (!(workspace || current) || !(router || current)) {
     throw new Error("The first Runtime Version must publish both immutable images.");

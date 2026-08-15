@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.images.outputs.matrix }}
+      selected_roles: ${{ steps.images.outputs.selected_roles }}
+      runtime_selected: ${{ steps.images.outputs.runtime_selected }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,7 +73,7 @@ jobs:
 
   promote-runtime:
     needs: [select, deploy]
-    if: ${{ always() && needs.deploy.result == 'success' }}
+    if: ${{ always() && needs.select.result == 'success' && needs.select.outputs.runtime_selected == 'true' && needs.deploy.result != 'cancelled' }}
     concurrency:
       group: production-environment-runtime-promotion
       cancel-in-progress: false
@@ -80,6 +82,7 @@ jobs:
     timeout-minutes: 90
     env:
       KESTREL_RUNTIME_API_URL: ${{ vars.KESTREL_ONE_PRODUCTION_URL }}
+      KESTREL_SELECTED_FLY_ROLES: ${{ needs.select.outputs.selected_roles }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
