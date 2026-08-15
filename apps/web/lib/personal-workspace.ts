@@ -34,16 +34,19 @@ function buildPersonalMetadata(userId: string) {
   });
 }
 
-export async function ensurePersonalOrganization(user: UserLike) {
+export async function ensurePersonalOrganization(
+  user: UserLike,
+  database: typeof knowledgeDb = knowledgeDb,
+) {
   const slug = getPersonalOrganizationSlug(user.id);
   const metadata = buildPersonalMetadata(user.id);
   const now = new Date();
   const lockKey = `kestrel:personal-workspace:${user.id}`;
 
-  return knowledgeDb.transaction(async (transaction) => {
+  return database.transaction(async (transaction) => {
     // Layouts and pages may resolve the same new session concurrently.
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
     );
 
     let organization = await transaction.query.organizations.findFirst({
@@ -84,7 +87,7 @@ export async function ensurePersonalOrganization(user: UserLike) {
       where: (table, { and, eq }) =>
         and(
           eq(table.organizationId, organization.id),
-          eq(table.userId, user.id)
+          eq(table.userId, user.id),
         ),
     });
 
@@ -126,7 +129,7 @@ export async function ensurePersonalOrganizationByUserId(userId: string) {
 
 async function sessionHasOrganizationAccess(
   userId: string,
-  organizationId: string
+  organizationId: string,
 ) {
   const membership = await knowledgeDb.query.members.findFirst({
     where: (table, { and, eq }) =>
@@ -197,8 +200,10 @@ export async function ensureSessionHasActiveOrganization<
   } as T;
 }
 
-export async function backfillPersonalWorkspaceData() {
-  const users = await knowledgeDb.query.users.findMany({
+export async function backfillPersonalWorkspaceData(
+  database: typeof knowledgeDb = knowledgeDb,
+) {
+  const users = await database.query.users.findMany({
     columns: {
       id: true,
       name: true,
@@ -207,9 +212,12 @@ export async function backfillPersonalWorkspaceData() {
   });
 
   for (const user of users) {
-    const personalOrganization = await ensurePersonalOrganization(user);
+    const personalOrganization = await ensurePersonalOrganization(
+      user,
+      database,
+    );
 
-    await knowledgeDb
+    await database
       .update(schema.sessions)
       .set({
         activeOrganizationId: personalOrganization.id,
@@ -218,48 +226,48 @@ export async function backfillPersonalWorkspaceData() {
       .where(
         and(
           eq(schema.sessions.userId, user.id),
-          isNull(schema.sessions.activeOrganizationId)
-        )
+          isNull(schema.sessions.activeOrganizationId),
+        ),
       );
 
-    await knowledgeDb
+    await database
       .update(schema.threads)
       .set({ organizationId: personalOrganization.id })
       .where(
         and(
           eq(schema.threads.createdByUserId, user.id),
-          isNull(schema.threads.organizationId)
-        )
+          isNull(schema.threads.organizationId),
+        ),
       );
 
-    await knowledgeDb
+    await database
       .update(schema.apiUsage)
       .set({ organizationId: personalOrganization.id })
       .where(
         and(
           eq(schema.apiUsage.userId, user.id),
-          isNull(schema.apiUsage.organizationId)
-        )
+          isNull(schema.apiUsage.organizationId),
+        ),
       );
 
-    await knowledgeDb
+    await database
       .update(schema.usageStats)
       .set({ organizationId: personalOrganization.id })
       .where(
         and(
           eq(schema.usageStats.userId, user.id),
-          isNull(schema.usageStats.organizationId)
-        )
+          isNull(schema.usageStats.organizationId),
+        ),
       );
 
-    await knowledgeDb
+    await database
       .update(schema.adminEventLogs)
       .set({ organizationId: personalOrganization.id })
       .where(
         and(
           eq(schema.adminEventLogs.actorUserId, user.id),
-          isNull(schema.adminEventLogs.organizationId)
-        )
+          isNull(schema.adminEventLogs.organizationId),
+        ),
       );
   }
 }

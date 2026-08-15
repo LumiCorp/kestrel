@@ -13,6 +13,8 @@
       "rollout": "environment",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".github/workflows/production-fly.yml",
+        "scripts/deploy-production-image.ts",
         ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
@@ -45,6 +47,8 @@
       "rollout": "environment",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".github/workflows/production-fly.yml",
+        "scripts/deploy-production-image.ts",
         ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
@@ -65,6 +69,8 @@
       "rollout": "global-app",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".github/workflows/production-fly.yml",
+        "scripts/deploy-production-image.ts",
         ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
@@ -85,6 +91,8 @@
       "rollout": "global-app",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".github/workflows/production-fly.yml",
+        "scripts/deploy-production-image.ts",
         ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
@@ -113,6 +121,8 @@
       "rollout": "global-app",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".github/workflows/production-fly.yml",
+        "scripts/deploy-production-image.ts",
         ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
@@ -137,6 +147,8 @@
       "rollout": "global-app",
       "inputs": [
         "deploy/fly/image-catalog.json",
+        ".github/workflows/production-runpod.yml",
+        "scripts/deploy-production-image.ts",
         ".dockerignore",
         "package.json",
         "pnpm-lock.yaml",
