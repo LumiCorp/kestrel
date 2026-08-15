@@ -14,7 +14,10 @@ const roleSchema = z.enum([
 
 async function main() {
   const role = roleSchema.parse(process.argv[2]);
-  const revision = z.string().regex(/^[a-f0-9]{40}$/u).parse(process.env.GITHUB_SHA);
+  const revision = z
+    .string()
+    .regex(/^[a-f0-9]{40}$/u)
+    .parse(process.env.GITHUB_SHA);
   const catalog = flyImageCatalogSchema.parse(
     JSON.parse(await readFile("deploy/fly/image-catalog.json", "utf8")),
   );
@@ -38,7 +41,7 @@ async function main() {
       ".",
     ]);
   } else {
-    run("fly", [
+    run("flyctl", [
       "deploy",
       ".",
       "--app",
@@ -79,7 +82,11 @@ async function main() {
     ]);
   }
   const artifact = { role, image: digest, sourceRevision: revision };
-  await writeFile(`production-image-${role}.json`, JSON.stringify(artifact), "utf8");
+  await writeFile(
+    `production-image-${role}.json`,
+    JSON.stringify(artifact),
+    "utf8",
+  );
   if (image.channel === "environment-runtime") {
     await writeOutput("image", digest);
     return;
@@ -87,7 +94,9 @@ async function main() {
 
   const previousImage = currentMachineImage(image.app, image.repository);
   if (!previousImage) {
-    throw new Error(`${image.app} has no prior Machine digest to restore safely.`);
+    throw new Error(
+      `${image.app} has no prior Machine digest to restore safely.`,
+    );
   }
   try {
     if (["turn-worker", "control-worker", "runpod-worker"].includes(role)) {
@@ -100,7 +109,7 @@ async function main() {
         role,
       ]);
     }
-    run("fly", [
+    run("flyctl", [
       "deploy",
       ".",
       "--app",
@@ -118,7 +127,7 @@ async function main() {
       assertWorkerChecksPass(image.app);
     }
   } catch (error) {
-    run("fly", [
+    run("flyctl", [
       "deploy",
       ".",
       "--app",
@@ -142,9 +151,13 @@ async function main() {
 }
 
 function machineInventory(app: string) {
-  return z.array(z.record(z.string(), z.unknown())).parse(
-    JSON.parse(capture("fly", ["machines", "list", "--app", app, "--json"])),
-  );
+  return z
+    .array(z.record(z.string(), z.unknown()))
+    .parse(
+      JSON.parse(
+        capture("flyctl", ["machines", "list", "--app", app, "--json"]),
+      ),
+    );
 }
 
 function currentMachineImage(app: string, repository: string) {
@@ -157,21 +170,30 @@ function currentMachineImage(app: string, repository: string) {
         : [];
     }),
   );
-  if (images.size > 1) throw new Error(`${app} Machines do not share one prior digest.`);
+  if (images.size > 1)
+    throw new Error(`${app} Machines do not share one prior digest.`);
   return [...images][0] ?? null;
 }
 
-function assertMachinesUseImage(app: string, repository: string, expected: string) {
+function assertMachinesUseImage(
+  app: string,
+  repository: string,
+  expected: string,
+) {
   const current = currentMachineImage(app, repository);
   if (current !== expected) {
-    throw new Error(`${app} Machines did not converge on the exact deployed digest.`);
+    throw new Error(
+      `${app} Machines did not converge on the exact deployed digest.`,
+    );
   }
 }
 
 function assertWorkerChecksPass(app: string) {
-  const checks = z.array(z.record(z.string(), z.unknown())).parse(
-    JSON.parse(capture("fly", ["checks", "list", "--app", app, "--json"])),
-  );
+  const checks = z
+    .array(z.record(z.string(), z.unknown()))
+    .parse(
+      JSON.parse(capture("flyctl", ["checks", "list", "--app", app, "--json"])),
+    );
   if (
     checks.length === 0 ||
     checks.some((check) => {
@@ -189,12 +211,17 @@ function asRecord(value: unknown) {
     : null;
 }
 
-function run(command: string, args: string[], extraEnv: Record<string, string> = {}) {
+function run(
+  command: string,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+) {
   const result = spawnSync(command, args, {
     stdio: "inherit",
     env: { ...process.env, ...extraEnv },
   });
-  if (result.status !== 0) throw new Error(`${command} ${args[0] ?? ""} failed.`);
+  if (result.status !== 0)
+    throw new Error(`${command} ${args[0] ?? ""} failed.`);
 }
 
 function capture(command: string, args: string[]) {
