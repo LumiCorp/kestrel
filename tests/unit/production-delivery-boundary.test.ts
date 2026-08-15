@@ -9,6 +9,9 @@ const runPodWorkflow = source(".github/workflows/production-runpod.yml");
 const deployScript = source("scripts/deploy-production-image.ts");
 const promotionScript = source("scripts/promote-environment-runtime.ts");
 const cutoverPreflight = source("scripts/production-cutover-preflight.ts");
+const rootPackage = JSON.parse(source("package.json")) as {
+  dependencies?: Record<string, string>;
+};
 const webPackage = JSON.parse(source("apps/web/package.json")) as {
   devDependencies?: Record<string, string>;
 };
@@ -53,6 +56,12 @@ test("production delivery exposes four independent branch-owned lanes", () => {
     /production-fly|promote-runtime|KESTREL_RUNTIME_API_URL|environment-runtime/iu,
   );
   assert.equal(webPackage.devDependencies?.vercel, "50.23.2");
+  assert.equal(rootPackage.dependencies?.postgres, "^3.4.7");
+  assert.match(cutoverPreflight, /JOIN "fly_image_releases" release/u);
+  assert.match(
+    cutoverPreflight,
+    /release\."status" NOT IN \('completed', 'superseded'\)/u,
+  );
   assert.match(cutoverPreflight, /canary_environment_id/u);
   assert.match(cutoverPreflight, /environment\."provider" = 'fly'/u);
   assert.match(cutoverPreflight, /environment\."status" IN \('ready', 'degraded'\)/u);
