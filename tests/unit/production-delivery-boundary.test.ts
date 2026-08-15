@@ -48,6 +48,17 @@ test("production delivery exposes four independent branch-owned lanes", () => {
   assert.match(flyWorkflow, /flyctl auth docker/u);
   assert.match(flyWorkflow, /production-fly-\$\{\{ matrix\.role \}\}/u);
   assert.match(flyWorkflow, /promote-environment-runtime\.ts/u);
+  assert.match(flyWorkflow, /runtime_selected:/u);
+  assert.match(
+    flyWorkflow,
+    /needs\.select\.outputs\.runtime_selected == 'true'/u,
+  );
+  assert.match(
+    flyWorkflow,
+    /KESTREL_SELECTED_FLY_ROLES: \$\{\{ needs\.select\.outputs\.selected_roles \}\}/u,
+  );
+  assert.match(flyWorkflow, /needs\.deploy\.result != 'cancelled'/u);
+  assert.doesNotMatch(flyWorkflow, /needs\.deploy\.result == 'success'/u);
   assert.match(flyWorkflow, /VERCEL_TOKEN: \$\{\{ secrets\.VERCEL_TOKEN \}\}/u);
   assert.match(
     flyWorkflow,
@@ -97,6 +108,16 @@ test("image deployment smokes before mutation and restores the prior digest", ()
   assert.doesNotMatch(deployScript, /(?:run|capture)\("fly"/u);
   assert.match(deployScript, /run\("flyctl"/u);
   assert.doesNotMatch(deployScript, /:production\b/u);
+  assert.match(deployScript, /FLY_REGISTRY_PULL_ATTEMPTS = 12/u);
+  assert.match(deployScript, /FLY_REGISTRY_PULL_DELAY_MS = 5_000/u);
+  assert.match(
+    deployScript,
+    /if \(publisher !== "fly"\)[\s\S]*run\("docker", \["pull", taggedImage\]\)/u,
+  );
+  assert.match(
+    deployScript,
+    /attempt <= FLY_REGISTRY_PULL_ATTEMPTS[\s\S]*await delay\(FLY_REGISTRY_PULL_DELAY_MS\)/u,
+  );
 });
 
 test("runtime promotion uses a fresh OIDC token for every API call", () => {
@@ -111,6 +132,11 @@ test("runtime promotion uses a fresh OIDC token for every API call", () => {
       promotionScript.indexOf("/promote`"),
   );
   assert.doesNotMatch(promotionScript, /DATABASE_URL|POSTGRES_URL/u);
+  assert.match(promotionScript, /KESTREL_SELECTED_FLY_ROLES/u);
+  assert.match(
+    promotionScript,
+    /Selected Runtime role \$\{selectedRole\} did not publish an immutable image artifact/u,
+  );
 });
 
 test("the coordinated workflows and application release subsystem are retired", () => {

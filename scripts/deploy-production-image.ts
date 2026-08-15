@@ -1,7 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { flyImageCatalogSchema } from "./production-image-contract.js";
+
+const FLY_REGISTRY_PULL_ATTEMPTS = 12;
+const FLY_REGISTRY_PULL_DELAY_MS = 5_000;
 
 const roleSchema = z.enum([
   "workspace-runtime",
@@ -59,7 +63,7 @@ async function main() {
       `KESTREL_GIT_SHA=${revision}`,
     ]);
   }
-  run("docker", ["pull", taggedImage]);
+  await pullPublishedImage(taggedImage, image.publisher);
   const digest = capture("docker", [
     "inspect",
     "--format",
@@ -148,6 +152,32 @@ async function main() {
   }
   await writeOutput("image", digest);
   await writeOutput("previous_image", previousImage);
+}
+
+async function pullPublishedImage(
+  taggedImage: string,
+  publisher: "fly" | "ghcr",
+) {
+  if (publisher !== "fly") {
+    run("docker", ["pull", taggedImage]);
+    return;
+  }
+  for (let attempt = 1; attempt <= FLY_REGISTRY_PULL_ATTEMPTS; attempt += 1) {
+    const result = spawnSync("docker", ["pull", taggedImage], {
+      stdio: "inherit",
+      env: process.env,
+    });
+    if (result.status === 0) return;
+    if (attempt === FLY_REGISTRY_PULL_ATTEMPTS) {
+      throw new Error(
+        `Fly Registry did not expose ${taggedImage} after ${FLY_REGISTRY_PULL_ATTEMPTS} attempts.`,
+      );
+    }
+    process.stderr.write(
+      `Fly Registry has not exposed the new image yet; retrying in ${FLY_REGISTRY_PULL_DELAY_MS / 1_000} seconds.\n`,
+    );
+    await delay(FLY_REGISTRY_PULL_DELAY_MS);
+  }
 }
 
 function machineInventory(app: string) {
