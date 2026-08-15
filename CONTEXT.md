@@ -63,6 +63,19 @@ A project-level mode that starts eligible Work Items while respecting Project re
 
 ## Memory, provenance, and resource terms
 
+**Environment Runtime Version**
+An immutable pair of role-specific Workspace Runtime and Environment Router
+digests, their source revisions, and originating GitHub workflow identity.
+
+**Environment Runtime Channel**
+The atomic generation-checked production pointer selecting the current and
+previous Environment Runtime Version plus the canary Environment. It chooses
+the default for new Environments and never updates existing Environments.
+
+**Production Delivery Channel**
+One independently triggered, proved, and rolled-back hosted production lane:
+database, Vercel, Fly component, or managed RunPod worker.
+
 **Memory Read Binding**
 A trusted, versioned authorization that binds one memory retrieval to an exact tenant, user, agent, task, policy revision, namespace, scope, and document-access set. A model can provide a bounded query but cannot mint or widen this binding.
 
@@ -105,6 +118,8 @@ Kestrel-owned runtime data rooted at `/.kestrel/` or the legacy `/.local/share/k
 - A **Preview Publication Lease** protects the backing process before Application Liveness or public URL work starts, then becomes the final preview-backed Process Retention Lease through one atomic promotion.
 - A preview-backed **Process Retention Lease** adopts the Preview Lease expiry. A finalized non-preview process receives a standalone 30-minute retention lease.
 - **Workspace Internal State** is operational data rather than application source and does not enter Kestrel-generated managed app worktrees.
+- An **Environment Runtime Channel** selects one **Environment Runtime Version** for new Environment provisioning; existing Environments change only through their durable lifecycle operation.
+- A **Production Delivery Channel** proves and rolls back its own provider state without requiring source-revision equality with another channel.
 
 ## Legacy migration vocabulary
 

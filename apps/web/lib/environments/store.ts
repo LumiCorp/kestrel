@@ -1,10 +1,6 @@
 import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import {
-  assertFlyEnvironmentCreationAllowed,
-  attachActiveFlyImageReleaseTarget,
-  requireStableFlyEnvironmentImages,
-} from "@/lib/releases/store";
+import { requireCurrentEnvironmentRuntime } from "./runtime-channel";
 import {
   assertEnvironmentTransition,
   assertWorkspaceTransition,
@@ -78,6 +74,11 @@ export async function ensureOrganizationDefaultEnvironment(input: {
   if (existing)
     return { environment: existing, operation: null, created: false };
 
+  const usesFlyRuntime = getHostedEnvironmentRuntimeMode() === "fly";
+  const runtimeVersion = usesFlyRuntime
+    ? await requireCurrentEnvironmentRuntime()
+    : null;
+
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentDefaultLockKey(input.organizationId)}, 0))`,
@@ -134,12 +135,6 @@ export async function ensureOrganizationDefaultEnvironment(input: {
       }
     }
 
-    const usesFlyRuntime = getHostedEnvironmentRuntimeMode() === "fly";
-    if (usesFlyRuntime) {
-      await requireStableFlyEnvironmentImages(transaction);
-      await assertFlyEnvironmentCreationAllowed(transaction);
-    }
-
     const now = new Date();
     const environmentId = crypto.randomUUID();
     await transaction.execute(
@@ -177,15 +172,19 @@ export async function ensureOrganizationDefaultEnvironment(input: {
         input: {
           region: environment.region,
           runtimeTemplate: ENVIRONMENT_RUNTIME_TEMPLATE,
+          ...(runtimeVersion
+            ? {
+                runtimeVersionId: runtimeVersion.id,
+                runtimeImage: runtimeVersion.runtimeImage,
+                routerImage: runtimeVersion.routerImage,
+              }
+            : {}),
         },
         createdAt: now,
         updatedAt: now,
       })
       .returning();
     if (!operation) throw new Error("Default Environment operation failed.");
-    if (usesFlyRuntime) {
-      await attachActiveFlyImageReleaseTarget(transaction, environmentId);
-    }
     return { environment, operation, created: true };
   });
 }
@@ -289,7 +288,9 @@ export async function createOrganizationEnvironment(input: {
   runtimeTemplate?: string;
 }) {
   const usesFlyRuntime = getHostedEnvironmentRuntimeMode() === "fly";
-  if (usesFlyRuntime) await requireStableFlyEnvironmentImages();
+  const runtimeVersion = usesFlyRuntime
+    ? await requireCurrentEnvironmentRuntime()
+    : null;
   const environmentId = crypto.randomUUID();
   const operationId = crypto.randomUUID();
   const now = new Date();
@@ -300,7 +301,6 @@ export async function createOrganizationEnvironment(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentDefaultLockKey(input.organizationId)}, 0))`,
     );
-    if (usesFlyRuntime) await assertFlyEnvironmentCreationAllowed(transaction);
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentCreateLockKey(input.organizationId)}, 0))`,
     );
@@ -361,14 +361,18 @@ export async function createOrganizationEnvironment(input: {
           region: input.environment.region,
           runtimeTemplate:
             input.runtimeTemplate ?? ENVIRONMENT_RUNTIME_TEMPLATE,
+          ...(runtimeVersion
+            ? {
+                runtimeVersionId: runtimeVersion.id,
+                runtimeImage: runtimeVersion.runtimeImage,
+                routerImage: runtimeVersion.routerImage,
+              }
+            : {}),
         },
         createdAt: now,
         updatedAt: now,
       })
       .returning();
-    if (usesFlyRuntime) {
-      await attachActiveFlyImageReleaseTarget(transaction, environmentId);
-    }
     return { environment, operation };
   });
 }

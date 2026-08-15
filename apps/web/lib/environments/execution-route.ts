@@ -3,7 +3,7 @@ import {
   signEnvironmentExecutionTicket,
   WORKSPACE_READINESS_TIMEOUT_MS,
 } from "@lumi/kestrel-environment-auth";
-import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { isGatewayCredentialReadyForRuntime } from "@/lib/ai/gateway-credential-health";
 import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
 import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
@@ -94,7 +94,6 @@ export async function resolveEnvironmentExecutionRoute(input: {
     durableTurnId?: string | undefined;
   };
   owningLifecycleOperationIds?: readonly string[] | undefined;
-  owningReleaseTargetIds?: readonly string[] | undefined;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
   await requireHostedEnvironmentsEnabled({
@@ -176,7 +175,6 @@ export async function resolveEnvironmentExecutionRoute(input: {
       workspaceId: resolved.binding.workspaceId,
       actorUserId: input.actorUserId,
       owningLifecycleOperationIds: input.owningLifecycleOperationIds,
-      owningReleaseTargetIds: input.owningReleaseTargetIds,
       onProgress: input.onProgress,
     });
     const effectiveCapabilities = await snapshotEffectiveCapabilities({
@@ -202,7 +200,6 @@ export async function resolveEnvironmentExecutionRoute(input: {
       reasoningPolicy,
       recordExecution: input.recordExecution,
       owningLifecycleOperationIds: input.owningLifecycleOperationIds,
-      owningReleaseTargetIds: input.owningReleaseTargetIds,
     });
   }
   let mcpPolicy;
@@ -382,7 +379,6 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
       }
     | undefined;
   owningLifecycleOperationIds?: readonly string[] | undefined;
-  owningReleaseTargetIds?: readonly string[] | undefined;
 }) {
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
@@ -391,12 +387,7 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
     );
-    const [
-      environment,
-      workspace,
-      activeLifecycleOperation,
-      activeReleaseTarget,
-    ] = await Promise.all([
+    const [environment, workspace, activeLifecycleOperation] = await Promise.all([
       transaction.query.environments.findFirst({
         where: (table, { and, eq, isNull }) =>
           and(
@@ -433,17 +424,6 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
         workspaceId: input.workspaceId,
         excludedOperationIds: input.owningLifecycleOperationIds,
       }),
-      transaction.query.flyImageReleaseTargets.findFirst({
-        where: (table, { and, eq, inArray }) =>
-          and(
-            eq(table.environmentId, input.environmentId),
-            inArray(table.status, ["draining", "applying", "verifying"]),
-            ...(input.owningReleaseTargetIds?.length
-              ? [notInArray(table.id, [...input.owningReleaseTargetIds])]
-              : []),
-          ),
-        columns: { id: true },
-      }),
     ]);
     if (
       !(
@@ -453,8 +433,7 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
         workspace?.flyMachineId &&
         workspace.runtimeImage
       ) ||
-      activeLifecycleOperation ||
-      activeReleaseTarget
+      activeLifecycleOperation
     ) {
       return null;
     }
@@ -622,19 +601,13 @@ async function waitForExecutionResources(input: {
   workspaceId: string;
   actorUserId: string;
   owningLifecycleOperationIds?: readonly string[] | undefined;
-  owningReleaseTargetIds?: readonly string[] | undefined;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
   const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
   let lastDetail = "";
   let startRequested = false;
   while (Date.now() < deadline) {
-    const [
-      environment,
-      workspace,
-      activeLifecycleOperation,
-      activeReleaseTarget,
-    ] = await Promise.all([
+    const [environment, workspace, activeLifecycleOperation] = await Promise.all([
       knowledgeDb.query.environments.findFirst({
         where: (table, { and, eq }) =>
           and(
@@ -655,17 +628,6 @@ async function waitForExecutionResources(input: {
         environmentId: input.environmentId,
         workspaceId: input.workspaceId,
         excludedOperationIds: input.owningLifecycleOperationIds,
-      }),
-      knowledgeDb.query.flyImageReleaseTargets.findFirst({
-        where: (table, { and, eq, inArray }) =>
-          and(
-            eq(table.environmentId, input.environmentId),
-            inArray(table.status, ["draining", "applying", "verifying"]),
-            ...(input.owningReleaseTargetIds?.length
-              ? [notInArray(table.id, [...input.owningReleaseTargetIds])]
-              : []),
-          ),
-        columns: { id: true },
       }),
     ]);
     if (!(environment && workspace)) {
@@ -688,8 +650,7 @@ async function waitForExecutionResources(input: {
       workspace.status === "ready" &&
       workspace.flyMachineId &&
       workspace.runtimeImage &&
-      !activeLifecycleOperation &&
-      !activeReleaseTarget
+      !activeLifecycleOperation
     ) {
       return {
         environment: {
@@ -705,7 +666,7 @@ async function waitForExecutionResources(input: {
       };
     }
     if (
-      !(startRequested || activeReleaseTarget) &&
+      !startRequested &&
       (workspace.status === "stopped" || workspace.status === "degraded")
     ) {
       const operation = await requestWorkspaceStart({
@@ -719,13 +680,7 @@ async function waitForExecutionResources(input: {
       }
       startRequested = true;
     }
-    const progress = activeReleaseTarget
-      ? {
-          stage: "environment.health.checking" as const,
-          detail: "Applying a managed Environment release…",
-          status: "pending" as const,
-        }
-      : activeLifecycleOperation
+    const progress = activeLifecycleOperation
         ? {
             stage: "environment.health.checking" as const,
             detail: "Checking Workspace health…",

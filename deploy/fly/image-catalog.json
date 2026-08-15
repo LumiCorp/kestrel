@@ -9,6 +9,7 @@
       "config": "apps/workspace-runtime/fly.build.toml",
       "dockerfile": "apps/workspace-runtime/Dockerfile",
       "smoke": "apps/workspace-runtime/scripts/image-smoke.sh",
+      "channel": "environment-runtime",
       "rollout": "environment",
       "inputs": [
         "deploy/fly/image-catalog.json",
@@ -40,6 +41,7 @@
       "config": "apps/environment-router/fly.build.toml",
       "dockerfile": "apps/environment-router/Dockerfile",
       "smoke": "apps/environment-router/scripts/image-smoke.sh",
+      "channel": "environment-runtime",
       "rollout": "environment",
       "inputs": [
         "deploy/fly/image-catalog.json",
@@ -59,6 +61,7 @@
       "config": "apps/preview-edge/fly.build.toml",
       "dockerfile": "apps/preview-edge/Dockerfile",
       "smoke": "apps/preview-edge/scripts/image-smoke.sh",
+      "channel": "fly",
       "rollout": "global-app",
       "inputs": [
         "deploy/fly/image-catalog.json",
@@ -78,6 +81,7 @@
       "config": "deploy/fly/kestrel-one-turn-worker/fly.toml",
       "dockerfile": "deploy/fly/kestrel-one-turn-worker/Dockerfile",
       "smoke": "deploy/fly/kestrel-one-turn-worker/smoke.sh",
+      "channel": "fly",
       "rollout": "global-app",
       "inputs": [
         "deploy/fly/image-catalog.json",
@@ -98,6 +102,30 @@
       ]
     },
     {
+      "role": "control-worker",
+      "publisher": "fly",
+      "repository": "registry.fly.io/kestrel-one-control-worker",
+      "app": "kestrel-one-control-worker",
+      "config": "deploy/fly/kestrel-one-control-worker/fly.toml",
+      "dockerfile": "deploy/fly/kestrel-one-control-worker/Dockerfile",
+      "smoke": "deploy/fly/kestrel-one-control-worker/smoke.sh",
+      "channel": "fly",
+      "rollout": "global-app",
+      "inputs": [
+        "deploy/fly/image-catalog.json",
+        ".dockerignore",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "apps/web/**",
+        "packages/environment-auth/**",
+        "packages/mcp-security/**",
+        "packages/protocol/**",
+        "packages/sdk/**",
+        "deploy/fly/kestrel-one-control-worker/**"
+      ]
+    },
+    {
       "role": "runpod-worker",
       "publisher": "fly",
       "repository": "registry.fly.io/kestrel-one-runpod-worker",
@@ -105,6 +133,7 @@
       "config": "deploy/fly/kestrel-one-runpod-worker/fly.toml",
       "dockerfile": "deploy/fly/kestrel-one-runpod-worker/Dockerfile",
       "smoke": "deploy/fly/kestrel-one-runpod-worker/smoke.sh",
+      "channel": "runpod",
       "rollout": "global-app",
       "inputs": [
         "deploy/fly/image-catalog.json",

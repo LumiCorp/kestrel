@@ -2289,6 +2289,103 @@ export const flyImageReleaseSettings = pgTable(
   ],
 );
 
+export const environmentRuntimeVersions = pgTable(
+  "environment_runtime_versions",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    workspaceRuntimeImage: text("workspace_runtime_image").notNull(),
+    workspaceRuntimeSourceRevision: text(
+      "workspace_runtime_source_revision",
+    ).notNull(),
+    environmentRouterImage: text("environment_router_image").notNull(),
+    environmentRouterSourceRevision: text(
+      "environment_router_source_revision",
+    ).notNull(),
+    githubRunId: text("github_run_id"),
+    githubRunAttempt: integer("github_run_attempt"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("environment_runtime_versions_digest_pair_unique").on(
+      table.workspaceRuntimeImage,
+      table.environmentRouterImage,
+    ),
+    check(
+      "environment_runtime_versions_workspace_image_check",
+      sql`${table.workspaceRuntimeImage} ~ '^ghcr\\.io/lumicorp/kestrel-workspace-runtime@sha256:[0-9a-f]{64}$'`,
+    ),
+    check(
+      "environment_runtime_versions_router_image_check",
+      sql`${table.environmentRouterImage} ~ '^ghcr\\.io/lumicorp/kestrel-environment-router@sha256:[0-9a-f]{64}$'`,
+    ),
+    check(
+      "environment_runtime_versions_workspace_revision_check",
+      sql`${table.workspaceRuntimeSourceRevision} ~ '^[0-9a-f]{40}$'`,
+    ),
+    check(
+      "environment_runtime_versions_router_revision_check",
+      sql`${table.environmentRouterSourceRevision} ~ '^[0-9a-f]{40}$'`,
+    ),
+    check(
+      "environment_runtime_versions_run_identity_check",
+      sql`(
+        (${table.githubRunId} is null and ${table.githubRunAttempt} is null)
+        or (${table.githubRunId} ~ '^[0-9]+$' and ${table.githubRunAttempt} > 0)
+      )`,
+    ),
+  ],
+);
+
+export const environmentRuntimeChannels = pgTable(
+  "environment_runtime_channels",
+  {
+    name: text("name", { enum: ["production"] }).primaryKey().notNull(),
+    currentVersionId: text("current_version_id").references(
+      () => environmentRuntimeVersions.id,
+      { onDelete: "restrict" },
+    ),
+    previousVersionId: text("previous_version_id").references(
+      () => environmentRuntimeVersions.id,
+      { onDelete: "restrict" },
+    ),
+    canaryEnvironmentId: text("canary_environment_id").references(
+      () => environments.id,
+      { onDelete: "set null" },
+    ),
+    generation: integer("generation").notNull().default(0),
+    lastGithubRunId: text("last_github_run_id"),
+    lastGithubRunAttempt: integer("last_github_run_attempt"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "environment_runtime_channels_name_check",
+      sql`${table.name} = 'production'`,
+    ),
+    check(
+      "environment_runtime_channels_generation_check",
+      sql`${table.generation} >= 0`,
+    ),
+    check(
+      "environment_runtime_channels_distinct_versions_check",
+      sql`${table.previousVersionId} is null or ${table.currentVersionId} is null or ${table.previousVersionId} <> ${table.currentVersionId}`,
+    ),
+    check(
+      "environment_runtime_channels_run_identity_check",
+      sql`(
+        (${table.lastGithubRunId} is null and ${table.lastGithubRunAttempt} is null)
+        or (${table.lastGithubRunId} ~ '^[0-9]+$' and ${table.lastGithubRunAttempt} > 0)
+      )`,
+    ),
+  ],
+);
+
 export const projectEnvironmentBindings = pgTable(
   "project_environment_bindings",
   {

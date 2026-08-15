@@ -9,6 +9,18 @@ kill_timeout = 35
 [processes]
   worker = "node --conditions=react-server --import tsx scripts/managed-runpod-worker.ts"
 
+[env]
+  KESTREL_WORKER_HEALTH_PORT = "8081"
+
+[checks.worker]
+  type = "http"
+  port = 8081
+  method = "GET"
+  path = "/healthz"
+  interval = "15s"
+  timeout = "5s"
+  grace_period = "30s"
+
 [[vm]]
   processes = ["worker"]
   cpu_kind = "shared"

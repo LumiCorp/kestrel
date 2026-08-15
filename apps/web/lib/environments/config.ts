@@ -11,32 +11,7 @@ export type HostedEnvironmentsRollout = {
   effectiveEnabled: boolean;
 };
 
-export type HostedEnvironmentBuildPreflightPhase = "prepare" | "deploy";
-
-export type HostedEnvironmentPreflightPhase =
-  | HostedEnvironmentBuildPreflightPhase
-  | "cutover";
-
 export type HostedEnvironmentRuntimeMode = "fly" | "local";
-
-export function getHostedEnvironmentBuildPreflightPhase(
-  env: Record<string, string | undefined> = process.env
-): HostedEnvironmentBuildPreflightPhase | null {
-  if (env.VERCEL_ENV !== "production") return null;
-  const value = env.KESTREL_ENVIRONMENTS_ENABLED?.trim().toLowerCase();
-  if (!value) return "deploy";
-  if (value === "false") return "prepare";
-  if (value === "true") return "deploy";
-  throw new Error(
-    "KESTREL_ENVIRONMENTS_ENABLED must be true or false when configured."
-  );
-}
-
-export function hostedEnvironmentPreflightRequiresQuietCutover(
-  phase: HostedEnvironmentPreflightPhase
-) {
-  return phase === "cutover";
-}
 
 const REQUIRED_HOSTED_ENVIRONMENT_VALUES = [
   "CRON_SECRET",

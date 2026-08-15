@@ -7,10 +7,19 @@ kill_timeout = 35
   dockerfile = "Dockerfile"
 
 [env]
-  KESTREL_CONTROL_WORKER_READY_FILE = "/tmp/kestrel-control-worker-ready"
+  KESTREL_WORKER_HEALTH_PORT = "8081"
 
 [processes]
-  worker = "node /app/control-worker.cjs"
+  worker = "pnpm --filter @kestrel/kestrel-one worker:control"
+
+[checks.worker]
+  type = "http"
+  port = 8081
+  method = "GET"
+  path = "/healthz"
+  interval = "15s"
+  timeout = "5s"
+  grace_period = "30s"
 
 [[vm]]
   processes = ["worker"]

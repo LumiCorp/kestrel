@@ -1,10 +1,14 @@
 import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
 
-export const PROCESS_CONFIGURATION_CONTRACT_REVISION = 1;
+export const PROCESS_CONFIGURATION_CONTRACT_REVISION = 2;
 
-type ProcessRole = "web" | "turn-worker" | "control-worker";
+export type ProcessRole =
+  | "web"
+  | "turn-worker"
+  | "control-worker"
+  | "runpod-worker";
 
-type ProcessContract = {
+export type ProcessContract = {
   role: ProcessRole;
   required: readonly string[];
   optional: readonly string[];
@@ -115,7 +119,6 @@ export const TURN_WORKER_PROCESS_CONTRACT = {
 export const CONTROL_WORKER_PROCESS_CONTRACT = {
   role: "control-worker",
   required: [
-    "CRON_SECRET",
     "FLY_API_TOKEN",
     "KESTREL_APP_CREDENTIAL_ACTIVE_KEY_ID",
     "KESTREL_APP_CREDENTIAL_KEYS",
@@ -147,7 +150,31 @@ export const CONTROL_WORKER_PROCESS_CONTRACT = {
     ...OPTIONAL_STORAGE_CONFIGURATION,
   ],
   oneOf: [["DATABASE_URL", "POSTGRES_URL"]],
-  forbidden: [...IMAGE_CONFIGURATION],
+  forbidden: [...IMAGE_CONFIGURATION, "CRON_SECRET"],
+} as const satisfies ProcessContract;
+
+export const RUNPOD_WORKER_PROCESS_CONTRACT = {
+  role: "runpod-worker",
+  required: [
+    "KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID",
+    "KESTREL_GATEWAY_CREDENTIAL_KEYS",
+    "KESTREL_PRIVATE_INFERENCE_ENABLED",
+    "RUNPOD_MANAGED_DEPLOYMENTS_ENABLED",
+  ],
+  optional: [
+    "DATABASE_URL",
+    "POSTGRES_URL",
+    "KESTREL_APP_CREDENTIAL_ACTIVE_KEY_ID",
+    "KESTREL_APP_CREDENTIAL_KEYS",
+  ],
+  oneOf: [["DATABASE_URL", "POSTGRES_URL"]],
+  forbidden: [
+    ...IMAGE_CONFIGURATION,
+    ...PLATFORM_FLY_CONFIGURATION,
+    "CRON_SECRET",
+    ...BACKUP_CONFIGURATION,
+    "RUNPOD_API_KEY",
+  ],
 } as const satisfies ProcessContract;
 
 function normalizedContract(contract: ProcessContract) {
@@ -171,6 +198,10 @@ export function processConfigurationContractFingerprint(
 
 export const TURN_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT =
   processConfigurationContractFingerprint(TURN_WORKER_PROCESS_CONTRACT);
+export const CONTROL_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT =
+  processConfigurationContractFingerprint(CONTROL_WORKER_PROCESS_CONTRACT);
+export const RUNPOD_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT =
+  processConfigurationContractFingerprint(RUNPOD_WORKER_PROCESS_CONTRACT);
 
 export function processContractAllowedNames(contract: ProcessContract) {
   return new Set([
@@ -184,6 +215,7 @@ export const MANAGED_HOSTED_RUNTIME_SECRET_NAMES = new Set([
   ...processContractAllowedNames(WEB_PROCESS_CONTRACT),
   ...processContractAllowedNames(TURN_WORKER_PROCESS_CONTRACT),
   ...processContractAllowedNames(CONTROL_WORKER_PROCESS_CONTRACT),
+  ...processContractAllowedNames(RUNPOD_WORKER_PROCESS_CONTRACT),
   ...IMAGE_CONFIGURATION,
   ...PLATFORM_FLY_CONFIGURATION,
 ]);
@@ -251,6 +283,21 @@ export function assertControlWorkerProcessConfiguration(
 ) {
   assertProcessConfiguration(CONTROL_WORKER_PROCESS_CONTRACT, env);
   assertControlWorkerSemanticConfiguration(env);
+}
+
+export function assertRunPodWorkerProcessConfiguration(
+  env: Record<string, string | undefined> = process.env,
+) {
+  assertProcessConfiguration(RUNPOD_WORKER_PROCESS_CONTRACT, env);
+  if (
+    env.KESTREL_PRIVATE_INFERENCE_ENABLED !== "true" ||
+    env.RUNPOD_MANAGED_DEPLOYMENTS_ENABLED !== "true"
+  ) {
+    throw new Error(
+      "runpod-worker managed deployment flags must both be exactly true.",
+    );
+  }
+  assertGatewayCredentialConfiguration(env);
 }
 
 function assertControlWorkerSemanticConfiguration(

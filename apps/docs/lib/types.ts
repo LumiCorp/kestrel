@@ -80,7 +80,7 @@ export type SearchCapability =
   | "budgets"
   | "migrations"
   | "updates"
-  | "release management"
+  | "production delivery"
   | "project review"
   | "scene replay"
   | "apps"

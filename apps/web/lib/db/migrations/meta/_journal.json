@@ -505,6 +505,13 @@
       "when": 1786676400000,
       "tag": "0071_durable_runtime_image_authority",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1786680000000,
+      "tag": "0072_environment_runtime_channels",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import postgres from "postgres";
-import { installTestStableRuntimeBundle } from "@/lib/releases/test-stable-runtime-bundle";
+import { installTestStableRuntimeBundle } from "./test-runtime-channel";
 
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();

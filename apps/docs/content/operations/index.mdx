@@ -12,7 +12,7 @@ Deploy the runtime, understand what it is doing, and keep the user path recovera
 
 ## Prepare and deploy
 
-Start with [local and remote runner connections](/operate/runner-service), then configure [environment and authentication](/operate/environment-and-auth), [preflight migrations](/operate/migrations), and review the [production operating model](/operate/deployment). Keep runner and provider credentials on trusted servers, record exact release identity, and prove the request path before serving users.
+Start with [local and remote runner connections](/operate/runner-service), then configure [environment and authentication](/operate/environment-and-auth), [migrations](/operate/migrations), and review the [production operating model](/operate/deployment). Keep runner and provider credentials on trusted servers, record each provider's exact deployment identity, and prove the request path before serving users.
 
 ## Investigate and recover
 
@@ -28,10 +28,10 @@ Use [Operator control](/operate/operator-control) to act on work already in flig
 
 Mission Control owns project work and acceptance; [Budgets and allocations](/operate/budgets-and-allocations) own spend authority and ledger evidence.
 
-## Release and rollback
+## Production delivery and rollback
 
-Use [Release management](/operate/release-management) to prepare an exact revision, promote verified Vercel and Fly artifacts, run canaries, retain evidence, and roll back or fix forward without rebuilding the candidate.
+Use [Production delivery](/operate/production-delivery) to operate the independent database, Vercel, Fly, and RunPod lanes, advance the canary-proven Environment Runtime Channel, and roll back only the affected provider authority.
 
 <Outcome>
-  <p>You can identify the owning operational boundary and the exact playbook for a deployment, incident, control action, budget, or release.</p>
+  <p>You can identify the owning operational boundary and the exact playbook for a deployment, incident, control action, budget, or production change.</p>
 </Outcome>

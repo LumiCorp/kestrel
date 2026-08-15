@@ -37,7 +37,7 @@ test("scope footer matches only its canonical route family", () => {
     isPlatformAdmin: true,
   });
 
-  assert.equal(items[0]?.match("/platform/releases"), true);
+  assert.equal(items[0]?.match("/platform/runtime"), true);
   assert.equal(items[0]?.match("/organization"), false);
   assert.equal(items[1]?.match("/organization/people"), true);
   assert.equal(items[1]?.match("/settings/profile"), false);
