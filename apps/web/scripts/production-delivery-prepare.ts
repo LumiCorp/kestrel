@@ -296,6 +296,47 @@ export function assertProspectiveWebConfiguration(
   assertWebProcessConfiguration(prospective);
 }
 
+export function assertVercelProductionEnvironmentInventory(value: unknown) {
+  const envs =
+    value &&
+    typeof value === "object" &&
+    "envs" in value &&
+    Array.isArray(value.envs)
+      ? value.envs
+      : [];
+  const productionVariables = envs.flatMap((item) => {
+    if (!(item && typeof item === "object")) return [];
+    const record = item as Record<string, unknown>;
+    if (
+      typeof record.key !== "string" ||
+      !Array.isArray(record.target) ||
+      !record.target.includes("production")
+    ) {
+      return [];
+    }
+    return [
+      {
+        key: record.key,
+        type: typeof record.type === "string" ? record.type : "",
+      },
+    ];
+  });
+  const token = productionVariables.find(
+    (variable) => variable.key === "PRODUCTION_IMAGE_DEPLOY_TOKEN",
+  );
+  if (token?.type !== "sensitive") {
+    throw new Error("Vercel production delivery token verification failed.");
+  }
+  const remainingLegacyNames = LEGACY_WEB_IMAGE_NAMES.filter((name) =>
+    productionVariables.some((variable) => variable.key === name),
+  );
+  if (remainingLegacyNames.length) {
+    throw new Error(
+      `Vercel legacy image removal verification failed: ${remainingLegacyNames.join(", ")}.`,
+    );
+  }
+}
+
 function secretInventory(value: unknown): SecretInventoryItem[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
@@ -572,30 +613,19 @@ export async function prepareProductionDelivery(input: {
     ) {
       throw new Error("GitHub production delivery token verification failed.");
     }
-    runner.run("vercel", [
-      "env",
-      "pull",
-      envFile,
-      "--environment=production",
-      "--cwd",
-      directory,
-      "--yes",
-    ]);
-    const verifiedWebConfiguration = dotenv.parse(
-      await readFile(envFile, "utf8"),
+    assertVercelProductionEnvironmentInventory(
+      JSON.parse(
+        runner.run("vercel", [
+          "env",
+          "ls",
+          "production",
+          "--cwd",
+          directory,
+          "--format",
+          "json",
+        ]),
+      ),
     );
-    if (!verifiedWebConfiguration.PRODUCTION_IMAGE_DEPLOY_TOKEN?.trim()) {
-      throw new Error("Vercel production delivery token verification failed.");
-    }
-    const remainingLegacyNames = LEGACY_WEB_IMAGE_NAMES.filter((name) =>
-      Boolean(verifiedWebConfiguration[name]?.trim()),
-    );
-    if (remainingLegacyNames.length) {
-      throw new Error(
-        `Vercel legacy image removal verification failed: ${remainingLegacyNames.join(", ")}.`,
-      );
-    }
-    assertWebProcessConfiguration(verifiedWebConfiguration);
     process.stdout.write(
       "Production delivery configuration is prepared; no image was deployed.\n",
     );

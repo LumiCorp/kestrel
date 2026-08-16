@@ -7,6 +7,7 @@ import {
   assertProspectiveWebConfiguration,
   assertProductionBranchPolicy,
   assertStagedWorkerSecretInventory,
+  assertVercelProductionEnvironmentInventory,
   classifyWorkerSecretInventory,
   requireProductionDatabaseUrl,
   selectWorkerConfiguration,
@@ -196,6 +197,51 @@ test("preparation validates the prospective Web contract before mutation", () =>
         KESTREL_FLY_ORGANIZATION_SLUG: "",
       }),
     /web configuration is incomplete: KESTREL_FLY_ORGANIZATION_SLUG, FLY_API_TOKEN/u,
+  );
+});
+
+test("preparation verifies sensitive Vercel token metadata without pulling its value", () => {
+  assert.doesNotThrow(() =>
+    assertVercelProductionEnvironmentInventory({
+      envs: [
+        {
+          key: "PRODUCTION_IMAGE_DEPLOY_TOKEN",
+          type: "sensitive",
+          target: ["production"],
+        },
+      ],
+    }),
+  );
+  assert.throws(
+    () =>
+      assertVercelProductionEnvironmentInventory({
+        envs: [
+          {
+            key: "PRODUCTION_IMAGE_DEPLOY_TOKEN",
+            type: "encrypted",
+            target: ["production"],
+          },
+        ],
+      }),
+    /production delivery token verification failed/u,
+  );
+  assert.throws(
+    () =>
+      assertVercelProductionEnvironmentInventory({
+        envs: [
+          {
+            key: "PRODUCTION_IMAGE_DEPLOY_TOKEN",
+            type: "sensitive",
+            target: ["production"],
+          },
+          {
+            key: "KESTREL_WORKSPACE_RUNTIME_IMAGE",
+            type: "encrypted",
+            target: ["production"],
+          },
+        ],
+      }),
+    /legacy image removal verification failed: KESTREL_WORKSPACE_RUNTIME_IMAGE/u,
   );
 });
 
