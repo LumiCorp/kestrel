@@ -1,6 +1,6 @@
 ---
 title: Deliver Kestrel One to production
-summary: Operate the independent database, Vercel, Fly, and RunPod production channels and the Environment Runtime Channel.
+summary: Operate Vercel and the three independent production image channels.
 section: operate
 audience: integrators
 status: active
@@ -8,60 +8,94 @@ sourceKind: curated
 updatedAt: 2026-08-14
 ---
 
-Production delivery has four independent lanes. Advancing the protected
-`production` branch is the human production decision; each lane then proves and
-rolls back only the provider state it owns.
+Advancing the protected `production` branch is the human production decision.
+Vercel owns the Web deployment and database migration. Three small GitHub
+workflows own image publication for platform Fly roles, the Environment Runtime
+pair, and the RunPod worker.
 
 ## Database migrations
 
-`production-database.yml` runs the ordinary ordered migrator with the unpooled
-production connection. It is serialized without cancellation and has no image,
-Vercel, or release-controller dependency. Use expand/deploy/contract
-compatibility; destructive contract migrations belong to a later production
-promotion.
+The Vercel production build runs the ordinary ordered migrator with the
+unpooled production connection before building the Web application. Preview
+builds do not migrate. Use expand/deploy/contract compatibility; destructive
+contract migrations belong to a later production promotion.
 
 ## Vercel
 
-Vercel deploys natively from `production`. Vercel Production remains the
-canonical source for shared hosted configuration. Its deployment identity and
-source revision are useful diagnostics, but no other channel waits for an exact
-Vercel SHA.
+Vercel deploys natively from `production` and remains the canonical source for
+hosted configuration. Image workflows wait for the authenticated production
+receiver to prove the repository's latest database migration is applied; they
+do not coordinate revisions with Vercel after that readiness check.
 
 ## Fly components
 
-`production-fly.yml` selects affected roles from
-`deploy/fly/image-catalog.json`. Each role builds, smokes, deploys, and verifies
-an immutable digest independently. Private workers use Fly health checks and
-restore their prior digest if deployment readiness fails.
+`production-fly.yml` selects affected platform roles from
+`deploy/fly/image-catalog.json`. Each selected role builds and smokes locally,
+pushes a fixed `production-<run>-<attempt>` image tag, and notifies one internal
+Kestrel endpoint once. Before that single notification, it polls authenticated
+receiver readiness every five seconds for up to 15 minutes. Kestrel rejects a
+stale build or transitional inventory, then updates Fly Machines directly: it
+uses one running Machine and one stopped candidate, installs the role's
+readiness check, proves the candidate first, updates every running and stopped
+Machine, and re-lists the complete app before success. A failed active Machine
+is stopped while the proven candidate stays running. The final read verifies
+the requested build tag and requires every Machine to report the same
+Fly-resolved image digest.
 
-Workspace Runtime and Environment Router are different: their exact immutable
-digest pair is registered as an Environment Runtime Version. After the
-configured production canary updates through the normal durable Environment
-lifecycle and the live Workspace and Preview proofs pass, one atomic Environment
-Runtime Channel pointer advances. Existing Environments stay unchanged.
+`production-runtime.yml` always publishes Workspace Runtime and Environment
+Router as a pair. Its notification records that pair as the desired Environment
+Runtime Version. The existing reconciliation cron updates the configured canary
+through the normal durable Environment lifecycle and promotes the pair only
+after a fresh operation for that desired selection is ready. Runtime publication
+also waits until every lifecycle-worker Machine uses the tag-capable operation
+contract. A failed or recovery-required canary remains terminal until an
+explicit retry or a new workflow attempt. Existing Environments stay unchanged.
+Workflow success means only that the desired pair was recorded. The platform
+Runtime page shows the canary operation, status, stage, and error and owns retry
+and previous-version recovery actions.
 
 ## RunPod worker
 
-`production-runpod.yml` owns the managed RunPod worker. Its catalog inputs,
-configuration allowlist, build, smoke, deployment, health proof, and rollback
-are independent of Vercel and the Fly component lane.
+`production-runpod.yml` owns the managed RunPod worker. It uses the same simple
+build, smoke, push, and notify contract and does not wait for Vercel, Fly
+components, or the Environment Runtime pair.
 
 ## Existing Environment updates
 
 An organization administrator can update one Environment to the current runtime
-from its Runtime page. Operators can use the runtime update CLI for one explicit
-Environment/version pair or for the remaining eligible fleet after the named
-canary operation completed for the still-current version. Both paths create only
-idempotent `environment.update` lifecycle operations.
+from its Runtime page. These updates use the existing idempotent
+`environment.update` lifecycle operation. Runtime promotion changes the default
+for new Environments; it does not mutate the existing fleet. Each update
+snapshots which Workspaces are stopped before provider mutation, starts them
+only long enough to prove the new runtime, and returns them to stopped before
+completion. The same operation reconciles Router and Workspace control-plane
+URLs to the lifecycle worker's canonical application URL.
+
+## First cutover preparation
+
+Run the preparation command without `--apply` first. It validates production
+branch restrictions, database and canary blockers, and the exact worker secret
+contracts without changing production. Apply mode stages all three worker
+contracts, installs the shared deployment token in Vercel and GitHub, and
+removes the two legacy Web image settings. It does not deploy or advance the
+production branch.
+
+Active canary backups are reported but are not blockers. The repaired lifecycle
+worker drains them before runtime reconciliation can enter the same serialized
+lifecycle lane. Any other active canary lifecycle operation remains a blocker.
+
+```bash
+pnpm --filter @kestrel/kestrel-one production-delivery:prepare
+pnpm --filter @kestrel/kestrel-one production-delivery:prepare -- --apply
+```
 
 ## Rollback
 
-Roll back each provider through its own prior immutable identity. Vercel promotes
-its prior deployment; Fly and RunPod redeploy their recorded prior digest. A
-runtime pointer rollback selects the previous Environment Runtime Version only
-after its canary. Environment operations retain their existing backup and
-rollback behavior.
+Vercel can promote its prior deployment. Platform image recovery republishes a
+known fixed image tag through the owning channel. Runtime recovery uses
+**Canary previous version** on the platform Runtime page, selects the previous
+pair as desired, and requires fresh canary evidence before promotion.
 
 <Outcome>
-  <p>Each production channel can ship and recover independently while tenant runtime defaults advance through one canary-proven digest pair.</p>
+  <p>GitHub builds images; Kestrel applies them; each production channel moves independently.</p>
 </Outcome>

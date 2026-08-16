@@ -43,6 +43,7 @@ export type EnvironmentProviderMachine = {
   cpus?: number | undefined;
   memoryMb?: number | undefined;
   image?: string | undefined;
+  resolvedImageDigest?: string | undefined;
   instanceId?: string | undefined;
   workspaceId?: string | undefined;
   mounts?: EnvironmentProviderMachineMount[] | undefined;

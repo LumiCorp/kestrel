@@ -6,7 +6,7 @@ import {
   impactedFlyImages,
 } from "./production-image-contract.js";
 
-const channelSchema = z.enum(["fly", "runpod"]);
+const channelSchema = z.enum(["fly", "runpod", "environment-runtime"]);
 
 async function main() {
   const channel = channelSchema.parse(process.argv[2]);
@@ -25,24 +25,23 @@ async function main() {
     .split("\n")
     .map((value) => value.trim())
     .filter(Boolean);
-  const images = impactedFlyImages({
+  const impacted = impactedFlyImages({
     catalog,
     changedPaths,
-  }).filter((image) =>
-    channel === "runpod"
-      ? image.channel === "runpod"
-      : image.channel !== "runpod",
-  );
+  });
+  const images =
+    channel === "environment-runtime"
+      ? impacted.some((image) => image.channel === "environment-runtime")
+        ? catalog.images.filter((image) => image.channel === "environment-runtime")
+        : []
+      : impacted.filter((image) => image.channel === channel);
   const matrix = JSON.stringify({ role: images.map((image) => image.role) });
   const selectedRoles = JSON.stringify(images.map((image) => image.role));
-  const runtimeSelected = images.some(
-    (image) => image.channel === "environment-runtime",
-  );
   const output = process.env.GITHUB_OUTPUT;
   if (output) {
     await appendFile(
       output,
-      `matrix=${matrix}\nselected_roles=${selectedRoles}\nruntime_selected=${runtimeSelected}\n`,
+      `matrix=${matrix}\nselected_roles=${selectedRoles}\n`,
       "utf8",
     );
   }

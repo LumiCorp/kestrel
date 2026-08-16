@@ -19,12 +19,14 @@ type Version = {
 export function RuntimeChannelClient({
   channel,
   canaries,
+  desiredOperation,
 }: {
   channel: {
     generation: number;
     canaryEnvironmentId: string | null;
     currentVersion: Version | null;
     previousVersion: Version | null;
+    desiredVersion: Version | null;
   };
   canaries: Array<{
     id: string;
@@ -32,18 +34,36 @@ export function RuntimeChannelClient({
     organizationName: string;
     status: string;
   }>;
+  desiredOperation: {
+    id: string;
+    status: string;
+    stage: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+  } | null;
 }) {
   const router = useRouter();
   const [selected, setSelected] = useState(channel.canaryEnvironmentId ?? "");
-  const [pending, setPending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
   async function saveCanary() {
     if (!selected) return;
-    setPending(true);
+    await mutateChannel(
+      "set-canary",
+      { action: "set-canary", environmentId: selected },
+      "Production canary updated.",
+    );
+  }
+  async function mutateChannel(
+    action: string,
+    body: Record<string, string>,
+    success: string,
+  ) {
+    setPendingAction(action);
     try {
       const response = await fetch("/api/admin/runtime-channel", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ environmentId: selected }),
+        body: JSON.stringify(body),
       });
       const payload = (await response.json()) as {
         error?: { message?: string };
@@ -51,12 +71,12 @@ export function RuntimeChannelClient({
       if (!response.ok) {
         throw new Error(payload.error?.message ?? "Canary selection failed.");
       }
-      toast.success("Production canary updated.");
+      toast.success(success);
       router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Canary selection failed.");
     } finally {
-      setPending(false);
+      setPendingAction(null);
     }
   }
   return (
@@ -71,6 +91,29 @@ export function RuntimeChannelClient({
         </SettingsRow>
         <SettingsRow label="Previous version">
           <DigestPair version={channel.previousVersion} />
+        </SettingsRow>
+        <SettingsRow label="Desired version">
+          <DigestPair version={channel.desiredVersion} />
+        </SettingsRow>
+        <SettingsRow label="Desired operation">
+          {desiredOperation ? (
+            <div className="space-y-1 text-xs">
+              <div className="font-mono">{desiredOperation.id}</div>
+              <div>
+                {desiredOperation.status} / {desiredOperation.stage}
+              </div>
+              {desiredOperation.errorMessage ? (
+                <div className="text-destructive">
+                  {desiredOperation.errorCode
+                    ? `${desiredOperation.errorCode}: `
+                    : ""}
+                  {desiredOperation.errorMessage}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <span>No canary operation</span>
+          )}
         </SettingsRow>
         <SettingsRow label="Canary Environment">
           <div className="flex w-full max-w-xl gap-2">
@@ -88,11 +131,45 @@ export function RuntimeChannelClient({
               ))}
             </select>
             <Button
-              disabled={!selected || pending}
+              disabled={!selected || pendingAction !== null}
               onClick={() => void saveCanary()}
               type="button"
             >
-              {pending ? "Saving…" : "Save"}
+              {pendingAction === "set-canary" ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </SettingsRow>
+        <SettingsRow label="Recovery">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              disabled={!channel.desiredVersion || pendingAction !== null}
+              onClick={() =>
+                void mutateChannel(
+                  "retry-desired",
+                  { action: "retry-desired" },
+                  "Desired runtime retry queued.",
+                )
+              }
+              type="button"
+              variant="outline"
+            >
+              {pendingAction === "retry-desired" ? "Retrying…" : "Retry desired"}
+            </Button>
+            <Button
+              disabled={!channel.previousVersion || pendingAction !== null}
+              onClick={() =>
+                void mutateChannel(
+                  "select-previous",
+                  { action: "select-previous" },
+                  "Previous runtime selected for canary.",
+                )
+              }
+              type="button"
+              variant="outline"
+            >
+              {pendingAction === "select-previous"
+                ? "Selecting…"
+                : "Canary previous version"}
             </Button>
           </div>
         </SettingsRow>

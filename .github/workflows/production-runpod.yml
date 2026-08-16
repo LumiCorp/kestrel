@@ -1,4 +1,4 @@
-name: Production RunPod worker
+name: Production RunPod worker image
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-runpod-worker
+  group: production-image-runpod-worker
   cancel-in-progress: false
 
 jobs:
@@ -31,8 +31,7 @@ jobs:
         env:
           KESTREL_DIFF_BASE: ${{ github.event_name == 'push' && github.event.before || inputs.diff_base }}
         run: pnpm tsx scripts/select-production-images.ts runpod
-
-  deploy:
+  build:
     needs: select
     if: ${{ fromJSON(needs.select.outputs.matrix).role[0] != null }}
     environment: Production
@@ -48,8 +47,8 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: flyctl auth docker
-      - name: Build, smoke, deploy, verify health, and roll back on failure
+      - name: Build, smoke, publish, and notify Kestrel
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: pnpm tsx scripts/deploy-production-image.ts runpod-worker
+          KESTREL_ONE_PRODUCTION_URL: ${{ vars.KESTREL_ONE_PRODUCTION_URL }}
+          PRODUCTION_IMAGE_DEPLOY_TOKEN: ${{ secrets.PRODUCTION_IMAGE_DEPLOY_TOKEN }}
+        run: pnpm tsx scripts/build-production-image.ts runpod-worker

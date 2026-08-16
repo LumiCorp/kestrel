@@ -2,15 +2,15 @@ import { createServer, type Server } from "node:http";
 import { readFile } from "node:fs/promises";
 import { sql } from "drizzle-orm";
 import { knowledgeDb } from "@/lib/knowledge/db";
-import { PROCESS_CONFIGURATION_CONTRACT_REVISION, type ProcessRole } from "./process-contracts";
+import type { ProcessRole } from "./process-contracts";
 
 type WorkerRole = Exclude<ProcessRole, "web">;
 
-export async function resolveWorkerSourceRevision() {
-  const configured = process.env.KESTREL_BUILD_REVISION?.trim();
-  const value = configured || (await readFile("/workspace/.kestrel-source-revision", "utf8")).trim();
-  if (!/^[a-f0-9]{40}$/u.test(value)) {
-    throw new Error("Worker source revision is not a full Git SHA.");
+export async function resolveWorkerBuildId() {
+  const configured = process.env.KESTREL_BUILD_ID?.trim();
+  const value = configured || (await readFile("/workspace/.kestrel-build-id", "utf8")).trim();
+  if (!/^production-[1-9][0-9]*-[1-9][0-9]*$/u.test(value)) {
+    throw new Error("Worker build ID is invalid.");
   }
   return value;
 }
@@ -21,8 +21,7 @@ export async function assertWorkerDatabaseReady() {
 
 export async function startWorkerHealthServer(input: {
   role: WorkerRole;
-  sourceRevision: string;
-  configurationFingerprint: string;
+  buildId: string;
   port?: number;
 }) {
   let ready = false;
@@ -42,9 +41,7 @@ export async function startWorkerHealthServer(input: {
       JSON.stringify({
         ok: true,
         role: input.role,
-        sourceRevision: input.sourceRevision,
-        contractRevision: PROCESS_CONFIGURATION_CONTRACT_REVISION,
-        configurationFingerprint: input.configurationFingerprint,
+        buildId: input.buildId,
       }),
     );
   });

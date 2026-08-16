@@ -225,6 +225,9 @@ function fixture(
     async completeWorkspaceRebuild() {
       calls.push("workspace:rebuilt");
     },
+    async completeStoppedWorkspaceRebuild() {
+      calls.push("workspace:rebuilt-stopped");
+    },
     async updateOperationStage(input) {
       calls.push(`operation:stage:${input.stage}`);
     },
@@ -424,8 +427,17 @@ test("Environment updates preserve Workspaces, update ingress, and verify runtim
   assert.ok(calls.includes("operation:completed"));
   assert.equal(calls.includes("environment:gateway-token-staged"), false);
   assert.equal(backupInputs.length, 0);
-  assert.equal(machineUpdates[0]?.envPatch, undefined);
-  assert.equal(machineUpdates[1]?.envPatch, undefined);
+  assert.deepEqual(machineUpdates[0]?.envPatch, {
+    KESTREL_CONTROL_PLANE_URL: "https://kestrel.example",
+  });
+  assert.deepEqual(machineUpdates[1]?.envPatch, {
+    KESTREL_CONTROL_PLANE_URL: "https://kestrel.example",
+    KESTREL_ONE_APP_URL: "https://kestrel.example",
+  });
+  assert.ok(
+    calls.indexOf("operation:stage:environment.update.state_snapshot") <
+      calls.indexOf("provider:image:gateway-machine-id"),
+  );
   assert.deepEqual(awaitedStates, ["started", "started"]);
   assert.equal(calls.includes("provider:start"), false);
   assert.equal(gatewayUpdate?.gatewayServiceTokenHash, undefined);
@@ -744,13 +756,12 @@ test("operator-authorized maintenance updates can skip Workspace retention", asy
   assert.ok(calls.includes("provider:image:workspace-machine-id"));
 });
 
-test("Environment updates reconfigure stopped Workspaces without launching them", async () => {
+test("Environment updates prove stopped Workspaces and restore them to stopped", async () => {
   const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
   const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
   const { repository, provider, calls } = fixture("environment.update", null, {
     runtimeImage,
     routerImage,
-    preserveStoppedWorkspaces: true,
     automaticRollback: false,
   });
   repository.listEnvironmentWorkspaces = async () => [
@@ -762,31 +773,34 @@ test("Environment updates reconfigure stopped Workspaces without launching them"
       runtimeImage: "registry.example/runtime@sha256:old",
     },
   ];
-  let configured:
-    | Parameters<NonNullable<typeof repository.configureStoppedWorkspace>>[0]
+  let rebuiltStopped:
+    | Parameters<typeof repository.completeStoppedWorkspaceRebuild>[0]
     | undefined;
   let completion: Record<string, unknown> | undefined;
   let backupCount = 0;
-  repository.configureStoppedWorkspace = async (input) => {
-    configured = input;
-    calls.push("workspace:configured-stopped");
+  repository.completeStoppedWorkspaceRebuild = async (input) => {
+    rebuiltStopped = input;
+    calls.push("workspace:rebuilt-stopped");
   };
   repository.completeOperation = async (input) => {
     completion = input.result;
   };
-  provider.createVolumeSnapshot = async () => {
-    throw new Error("config-only stopped updates must not snapshot volumes");
-  };
   provider.updateMachineImage = async (input) => ({
     id: input.machineId,
-    state: input.machineId === "workspace-machine-id" ? "replacing" : "started",
+    state: input.machineId === "workspace-machine-id" ? "stopped" : "started",
     region: "iad",
   });
   provider.waitForMachine = async (input) => {
     calls.push(`provider:wait:${input.machineId}:${input.state}`);
   };
-  provider.startMachine = async () => {
-    calls.push("provider:start");
+  provider.startMachine = async (input) => {
+    calls.push(`provider:start:${input.machineId}`);
+  };
+  provider.stopMachine = async (input) => {
+    calls.push(`provider:stop:${input.machineId}`);
+  };
+  provider.waitForMachineHealth = async (input) => {
+    calls.push(`provider:health:${input.machineId}`);
   };
 
   await createProvisioner(repository, provider, async () => {
@@ -794,17 +808,62 @@ test("Environment updates reconfigure stopped Workspaces without launching them"
   }).process("operation-id");
 
   assert.equal(backupCount, 0);
-  assert.equal(calls.includes("provider:start"), false);
+  assert.ok(calls.includes("provider:start:workspace-machine-id"));
+  assert.ok(calls.includes("provider:health:workspace-machine-id"));
+  assert.ok(calls.includes("provider:stop:workspace-machine-id"));
   assert.ok(calls.includes("provider:wait:workspace-machine-id:stopped"));
+  assert.equal(rebuiltStopped?.workspaceId, "workspace-id");
+  assert.equal(rebuiltStopped?.runtimeImage, runtimeImage);
+  assert.deepEqual(completion?.restoredStoppedWorkspaceIds, ["workspace-id"]);
+});
+
+test("Environment update retry does not verify a stopped Workspace until restop succeeds", async () => {
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture("environment.update", null, {
+    runtimeImage,
+    routerImage,
+  });
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "workspace-id",
+      status: "stopped",
+      flyMachineId: "workspace-machine-id",
+      flyVolumeId: "workspace-volume-id",
+      runtimeImage: "registry.example/runtime@sha256:old",
+    },
+  ];
+  let completionCalled = false;
+  let checkpoint: Record<string, unknown> | undefined;
+  repository.updateOperationStage = async (input) => {
+    checkpoint = input.result?.environmentUpdateCheckpoint as
+      | Record<string, unknown>
+      | undefined;
+    calls.push(`operation:stage:${input.stage}`);
+  };
+  repository.completeOperation = async () => {
+    completionCalled = true;
+  };
+  provider.updateMachineImage = async (input) => ({
+    id: input.machineId,
+    state: input.machineId === "workspace-machine-id" ? "stopped" : "started",
+    region: "iad",
+  });
+  provider.stopMachine = async () => {
+    throw new EnvironmentProviderError(
+      "FLY_PROVIDER_UNAVAILABLE",
+      "stop failed",
+    );
+  };
+
   assert.equal(
-    calls.some((entry) => entry.startsWith("provider:snapshot:")),
-    false,
+    await createProvisioner(repository, provider).process("operation-id"),
+    "deferred",
   );
-  assert.equal(configured?.workspaceId, "workspace-id");
-  assert.equal(configured?.runtimeImage, runtimeImage);
-  assert.deepEqual(completion?.configuredUnverifiedWorkspaceIds, [
-    "workspace-id",
-  ]);
+  assert.equal(completionCalled, false);
+  assert.deepEqual(checkpoint?.initiallyStoppedWorkspaceIds, ["workspace-id"]);
+  assert.deepEqual(checkpoint?.verifiedWorkspaceIds, []);
+  assert.deepEqual(checkpoint?.restoredStoppedWorkspaceIds, []);
 });
 
 test("Environment updates report Workspaces that require provisioning recovery", async () => {

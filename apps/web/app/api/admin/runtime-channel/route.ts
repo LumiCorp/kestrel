@@ -3,12 +3,24 @@ import { z } from "zod";
 import {
   getEnvironmentRuntimeChannel,
   listEnvironmentRuntimeCanaries,
+  retryDesiredEnvironmentRuntime,
+  selectPreviousEnvironmentRuntime,
   setEnvironmentRuntimeCanary,
 } from "@/lib/environments/runtime-channel";
 import { requireAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
+import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 
-const inputSchema = z.object({ environmentId: z.string().uuid() }).strict();
+const inputSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("set-canary"),
+      environmentId: z.string().uuid(),
+    })
+    .strict(),
+  z.object({ action: z.literal("retry-desired") }).strict(),
+  z.object({ action: z.literal("select-previous") }).strict(),
+]);
 
 export async function GET() {
   try {
@@ -26,9 +38,21 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     await requireAdmin();
-    const { environmentId } = inputSchema.parse(await request.json());
+    const input = inputSchema.parse(await request.json());
+    if (input.action === "set-canary") {
+      return NextResponse.json({
+        channel: await setEnvironmentRuntimeCanary(input.environmentId),
+      });
+    }
+    if (input.action === "retry-desired") {
+      const requested = await retryDesiredEnvironmentRuntime();
+      if (requested.operation.status === "queued") {
+        await enqueueEnvironmentOperation(requested.operation.id);
+      }
+      return NextResponse.json({ operation: requested.operation });
+    }
     return NextResponse.json({
-      channel: await setEnvironmentRuntimeCanary(environmentId),
+      selection: await selectPreviousEnvironmentRuntime(),
     });
   } catch (error) {
     return errorResponse(error, 409);

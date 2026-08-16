@@ -168,6 +168,11 @@ export interface EnvironmentProvisioningRepository {
     runtimeImage: string;
     serviceTokenHash?: string | undefined;
   }): Promise<void>;
+  completeStoppedWorkspaceRebuild(input: {
+    workspaceId: string;
+    runtimeImage: string;
+    serviceTokenHash?: string | undefined;
+  }): Promise<void>;
   configureStoppedWorkspace?(input: {
     workspaceId: string;
     runtimeImage: string;
@@ -661,8 +666,6 @@ export class EnvironmentProvisioner {
     const skipWorkspaceBackups =
       operation.input?.skipWorkspaceBackups === true ||
       !workspaceDataMigrationRevision;
-    const preserveStoppedWorkspaces =
-      operation.input?.preserveStoppedWorkspaces === true;
     const automaticRollback = operation.input?.automaticRollback !== false;
     if (!skipWorkspaceBackups && !operation.requestedByUserId) {
       throw operationError(
@@ -684,6 +687,16 @@ export class EnvironmentProvisioner {
         },
       });
     };
+    if (!checkpoint.workspaceStateSnapshotCaptured) {
+      checkpoint.initiallyStoppedWorkspaceIds = workspaces
+        .filter((workspace) => workspace.status === "stopped")
+        .map((workspace) => workspace.id);
+      checkpoint.workspaceStateSnapshotCaptured = true;
+      await persistCheckpoint("environment.update.state_snapshot");
+    }
+    const initiallyStoppedWorkspaceIds = new Set(
+      checkpoint.initiallyStoppedWorkspaceIds,
+    );
     if (!checkpoint.gatewayVerified) {
       await persistCheckpoint("environment.update.gateway");
       try {
@@ -691,6 +704,9 @@ export class EnvironmentProvisioner {
           appName: environment.flyAppName,
           machineId: environment.flyGatewayMachineId,
           runtimeImage: routerImage,
+          envPatch: {
+            KESTREL_CONTROL_PLANE_URL: this.controlPlaneUrl,
+          },
         });
         if (gateway.state === "stopped") {
           await this.provider.startMachine({
@@ -768,9 +784,6 @@ export class EnvironmentProvisioner {
       await persistCheckpoint("environment.update.backing_up");
       for (const workspace of workspaces) {
         if (!(workspace.flyMachineId && workspace.flyVolumeId)) continue;
-        if (preserveStoppedWorkspaces && workspace.status === "stopped") {
-          continue;
-        }
         if (checkpoint.backedUpWorkspaceIds.includes(workspace.id)) continue;
         const backupInput = {
           organizationId: operation.organizationId,
@@ -794,6 +807,7 @@ export class EnvironmentProvisioner {
             workspaceId: workspace.id,
             machineId: workspace.flyMachineId,
             runtimeImage,
+            restoreStopped: initiallyStoppedWorkspaceIds.has(workspace.id),
           });
           await this.backupWorkspace({
             ...backupInput,
@@ -803,6 +817,14 @@ export class EnvironmentProvisioner {
           checkpoint.verifiedWorkspaceIds = [
             ...new Set([...checkpoint.verifiedWorkspaceIds, workspace.id]),
           ];
+          if (initiallyStoppedWorkspaceIds.has(workspace.id)) {
+            checkpoint.restoredStoppedWorkspaceIds = [
+              ...new Set([
+                ...checkpoint.restoredStoppedWorkspaceIds,
+                workspace.id,
+              ]),
+            ];
+          }
           checkpoint.backedUpWorkspaceIds = [
             ...new Set([...checkpoint.backedUpWorkspaceIds, workspace.id]),
           ];
@@ -825,6 +847,7 @@ export class EnvironmentProvisioner {
             workspaceId: workspace.id,
             machineId: workspace.flyMachineId,
             runtimeImage,
+            restoreStopped: initiallyStoppedWorkspaceIds.has(workspace.id),
           });
           await this.backupWorkspace({
             ...backupInput,
@@ -839,13 +862,20 @@ export class EnvironmentProvisioner {
           checkpoint.verifiedWorkspaceIds = [
             ...new Set([...checkpoint.verifiedWorkspaceIds, workspace.id]),
           ];
+          if (initiallyStoppedWorkspaceIds.has(workspace.id)) {
+            checkpoint.restoredStoppedWorkspaceIds = [
+              ...new Set([
+                ...checkpoint.restoredStoppedWorkspaceIds,
+                workspace.id,
+              ]),
+            ];
+          }
         }
         await persistCheckpoint("environment.update.backing_up");
       }
     }
     await persistCheckpoint("environment.update.workspaces");
     const skippedWorkspaceIds: string[] = [];
-    const configuredUnverifiedWorkspaceIds: string[] = [];
     let updatedWorkspaceCount = 0;
     for (const workspace of workspaces) {
       if (alreadyUpdatedWorkspaceIds.has(workspace.id)) {
@@ -856,38 +886,24 @@ export class EnvironmentProvisioner {
         skippedWorkspaceIds.push(workspace.id);
         continue;
       }
-      if (preserveStoppedWorkspaces && workspace.status === "stopped") {
-        if (checkpoint.configuredStoppedWorkspaceIds.includes(workspace.id)) {
-          configuredUnverifiedWorkspaceIds.push(workspace.id);
-          updatedWorkspaceCount += 1;
-          continue;
-        }
-        await this.configureStoppedWorkspaceRuntime({
-          appName: environment.flyAppName,
-          workspaceId: workspace.id,
-          machineId: workspace.flyMachineId,
-          runtimeImage,
-        });
-        configuredUnverifiedWorkspaceIds.push(workspace.id);
-        checkpoint.configuredStoppedWorkspaceIds = [
-          ...new Set([
-            ...checkpoint.configuredStoppedWorkspaceIds,
-            workspace.id,
-          ]),
-        ];
-        updatedWorkspaceCount += 1;
-        await persistCheckpoint("environment.update.workspaces");
-        continue;
-      }
       await this.updateWorkspaceRuntime({
         appName: environment.flyAppName,
         workspaceId: workspace.id,
         machineId: workspace.flyMachineId,
         runtimeImage,
+        restoreStopped: initiallyStoppedWorkspaceIds.has(workspace.id),
       });
       checkpoint.verifiedWorkspaceIds = [
         ...new Set([...checkpoint.verifiedWorkspaceIds, workspace.id]),
       ];
+      if (initiallyStoppedWorkspaceIds.has(workspace.id)) {
+        checkpoint.restoredStoppedWorkspaceIds = [
+          ...new Set([
+            ...checkpoint.restoredStoppedWorkspaceIds,
+            workspace.id,
+          ]),
+        ];
+      }
       updatedWorkspaceCount += 1;
       await persistCheckpoint("environment.update.workspaces");
     }
@@ -909,8 +925,11 @@ export class EnvironmentProvisioner {
         workspaceCount: workspaces.length,
         updatedWorkspaceCount,
         skippedWorkspaceIds,
-        ...(configuredUnverifiedWorkspaceIds.length > 0
-          ? { configuredUnverifiedWorkspaceIds }
+        ...(checkpoint.restoredStoppedWorkspaceIds.length > 0
+          ? {
+              restoredStoppedWorkspaceIds:
+                checkpoint.restoredStoppedWorkspaceIds,
+            }
           : {}),
         ...(skipWorkspaceBackups ? { workspaceBackupsSkipped: true } : {}),
         environmentUpdateCheckpoint: checkpoint,
@@ -934,6 +953,10 @@ export class EnvironmentProvisioner {
       appName: input.appName,
       machineId: input.machineId,
       runtimeImage: input.runtimeImage,
+      envPatch: {
+        KESTREL_CONTROL_PLANE_URL: this.controlPlaneUrl,
+        KESTREL_ONE_APP_URL: this.controlPlaneUrl,
+      },
       stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
     });
     if (machine.state !== "stopped") {
@@ -967,6 +990,7 @@ export class EnvironmentProvisioner {
     workspaceId: string;
     machineId: string;
     runtimeImage: string;
+    restoreStopped?: boolean | undefined;
   }) {
     await this.repository.setWorkspaceStarting(input.workspaceId);
     try {
@@ -974,9 +998,16 @@ export class EnvironmentProvisioner {
         appName: input.appName,
         machineId: input.machineId,
         runtimeImage: input.runtimeImage,
+        envPatch: {
+          KESTREL_CONTROL_PLANE_URL: this.controlPlaneUrl,
+          KESTREL_ONE_APP_URL: this.controlPlaneUrl,
+        },
         stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
       });
-      if (machine.state === "stopped") {
+      if (
+        machine.state === "stopped" ||
+        (input.restoreStopped && machine.state !== "started")
+      ) {
         await this.provider.startMachine({
           appName: input.appName,
           machineId: input.machineId,
@@ -996,11 +1027,45 @@ export class EnvironmentProvisioner {
         checkName: "workspace",
         timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
       });
-      await this.repository.completeWorkspaceRebuild({
-        workspaceId: input.workspaceId,
-        runtimeImage: input.runtimeImage,
-      });
+      if (input.restoreStopped) {
+        await this.repository.setWorkspaceStopping(input.workspaceId);
+        await this.provider.stopMachine({
+          appName: input.appName,
+          machineId: input.machineId,
+        });
+        await this.provider.waitForMachine({
+          appName: input.appName,
+          machineId: input.machineId,
+          state: "stopped",
+          timeoutSeconds: 60,
+        });
+        await this.repository.completeStoppedWorkspaceRebuild({
+          workspaceId: input.workspaceId,
+          runtimeImage: input.runtimeImage,
+        });
+      } else {
+        await this.repository.completeWorkspaceRebuild({
+          workspaceId: input.workspaceId,
+          runtimeImage: input.runtimeImage,
+        });
+      }
     } catch (error) {
+      if (input.restoreStopped) {
+        await this.provider
+          .stopMachine({
+            appName: input.appName,
+            machineId: input.machineId,
+          })
+          .then(() =>
+            this.provider.waitForMachine({
+              appName: input.appName,
+              machineId: input.machineId,
+              state: "stopped",
+              timeoutSeconds: 60,
+            }),
+          )
+          .catch(() => undefined);
+      }
       const failure = safeFailure(error);
       if (!failure.retryable) {
         await this.repository.failWorkspace({
@@ -2068,6 +2133,23 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         })
         .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
     },
+    async completeStoppedWorkspaceRebuild(input) {
+      const now = new Date();
+      await knowledgeDb
+        .update(schema.environmentWorkspaces)
+        .set({
+          status: "stopped",
+          runtimeImage: input.runtimeImage,
+          ...(input.serviceTokenHash
+            ? { serviceTokenHash: input.serviceTokenHash }
+            : {}),
+          failureCode: null,
+          failureMessage: null,
+          lastHealthAt: now,
+          updatedAt: now,
+        })
+        .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
+    },
     async configureStoppedWorkspace(input) {
       await knowledgeDb
         .update(schema.environmentWorkspaces)
@@ -2247,7 +2329,7 @@ function readImmutableImage(
   if (typeof value !== "string") {
     throw operationError(
       "ENVIRONMENT_IMAGE_INVALID",
-      `${label} must use its exact immutable release repository and sha256 digest.`,
+      `${label} must use its approved fixed production repository and reference.`,
     );
   }
   try {
@@ -2255,7 +2337,7 @@ function readImmutableImage(
   } catch {
     throw operationError(
       "ENVIRONMENT_IMAGE_INVALID",
-      `${label} must use its exact immutable release repository and sha256 digest.`,
+      `${label} must use its approved fixed production repository and reference.`,
     );
   }
   return value;
@@ -2402,6 +2484,9 @@ type EnvironmentUpdateCheckpoint = {
   backedUpWorkspaceIds: string[];
   verifiedWorkspaceIds: string[];
   configuredStoppedWorkspaceIds: string[];
+  workspaceStateSnapshotCaptured: boolean;
+  initiallyStoppedWorkspaceIds: string[];
+  restoredStoppedWorkspaceIds: string[];
 };
 
 function readEnvironmentUpdateCheckpoint(
@@ -2414,6 +2499,14 @@ function readEnvironmentUpdateCheckpoint(
     verifiedWorkspaceIds: readStringArray(checkpoint?.verifiedWorkspaceIds),
     configuredStoppedWorkspaceIds: readStringArray(
       checkpoint?.configuredStoppedWorkspaceIds,
+    ),
+    workspaceStateSnapshotCaptured:
+      checkpoint?.workspaceStateSnapshotCaptured === true,
+    initiallyStoppedWorkspaceIds: readStringArray(
+      checkpoint?.initiallyStoppedWorkspaceIds,
+    ),
+    restoredStoppedWorkspaceIds: readStringArray(
+      checkpoint?.restoredStoppedWorkspaceIds,
     ),
   };
 }

@@ -9,14 +9,17 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
   process.env.DATABASE_URL = databaseUrl;
   process.env.POSTGRES_URL = databaseUrl;
-  const [{ resetDbRuntimeForTests }, runtime, processRuntime] = await Promise.all([
-    import("@/lib/db/runtime"),
-    import("./runtime-channel"),
-    import("./process-runtime"),
-  ]);
+  const [{ resetDbRuntimeForTests }, runtime, processRuntime, queue] =
+    await Promise.all([
+      import("@/lib/db/runtime"),
+      import("./runtime-channel"),
+      import("./process-runtime"),
+      import("@/lib/knowledge/queue"),
+    ]);
   const pool = postgres(databaseUrl, { max: 1 });
   const connection = await pool.reserve();
   const suffix = crypto.randomUUID();
+  const productionRun = BigInt(`0x${suffix.replaceAll("-", "").slice(0, 15)}`);
   const userId = `runtime-user-${suffix}`;
   const organizationId = `runtime-org-${suffix}`;
   const environmentId = `runtime-environment-${suffix}`;
@@ -31,6 +34,7 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
     Array<{
       currentVersionId: string | null;
       previousVersionId: string | null;
+      desiredVersionId: string | null;
       canaryEnvironmentId: string | null;
       generation: number;
       lastGithubRunId: string | null;
@@ -41,6 +45,7 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
     SELECT
       current_version_id AS "currentVersionId",
       previous_version_id AS "previousVersionId",
+      desired_version_id AS "desiredVersionId",
       canary_environment_id AS "canaryEnvironmentId",
       generation,
       last_github_run_id AS "lastGithubRunId",
@@ -54,16 +59,25 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
 
   context.after(async () => {
     try {
+      await queue.stopEnvironmentLifecycleWorker();
       await connection`
         UPDATE environment_runtime_channels SET
           current_version_id = ${savedChannel.currentVersionId},
           previous_version_id = ${savedChannel.previousVersionId},
+          desired_version_id = ${savedChannel.desiredVersionId},
           canary_environment_id = ${savedChannel.canaryEnvironmentId},
           generation = ${savedChannel.generation},
           last_github_run_id = ${savedChannel.lastGithubRunId},
           last_github_run_attempt = ${savedChannel.lastGithubRunAttempt},
           updated_at = ${savedChannel.updatedAt}
         WHERE name = 'production'
+      `;
+      await connection`
+        DELETE FROM pgboss.job
+        WHERE data->>'operationId' IN (
+          SELECT id FROM environment_operations
+          WHERE environment_id = ${environmentId}
+        )
       `;
       await connection`
         DELETE FROM environment_operations
@@ -113,17 +127,17 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
     githubRunAttempt: 1,
   });
   const proposed = await register(runtime, {
-    runtimeImage: runtimeImage(suffix, "runtime-b"),
+    runtimeImage: runtimeTag(productionRun),
     runtimeSourceRevision: revisionB,
-    routerImage: routerImage(suffix, "router-b"),
+    routerImage: routerTag(productionRun),
     routerSourceRevision: revisionB,
     githubRunId: "1002",
     githubRunAttempt: 1,
   });
   const third = await register(runtime, {
-    runtimeImage: runtimeImage(suffix, "runtime-c"),
+    runtimeImage: runtimeTag(productionRun + BigInt(1)),
     runtimeSourceRevision: revisionC,
-    routerImage: routerImage(suffix, "router-c"),
+    routerImage: routerTag(productionRun + BigInt(1)),
     routerSourceRevision: revisionC,
     githubRunId: "1003",
     githubRunAttempt: 1,
@@ -175,6 +189,7 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
     UPDATE environment_runtime_channels SET
       current_version_id = ${initial.id},
       previous_version_id = NULL,
+      desired_version_id = NULL,
       canary_environment_id = ${environmentId},
       generation = ${generation},
       last_github_run_id = '1001',
@@ -183,9 +198,33 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
     WHERE name = 'production'
   `;
 
-  const requested = await runtime.requestEnvironmentRuntimeCanary({
-    runtimeVersionId: proposed.id,
-  });
+  const desired = await selectDesired(runtime, proposed, true);
+  assert.equal(desired.version.id, proposed.id);
+  assert.equal(desired.alreadyCurrent, false);
+  const cancelled = await selectDesired(runtime, initial);
+  assert.equal(cancelled.alreadyCurrent, true);
+  assert.equal(
+    (await runtime.getEnvironmentRuntimeChannel()).desiredVersion,
+    null,
+  );
+  await selectDesired(runtime, proposed, true);
+
+  const initialReconciliation =
+    await runtime.reconcileDesiredEnvironmentRuntime();
+  assert.equal(initialReconciliation.status, "requested");
+  const requestedOperation = await runtime.getEnvironmentRuntimeCanary(
+    proposed.id,
+  );
+  assert.ok(requestedOperation);
+  const [queuedJob] = await connection<Array<{ count: number }>>`
+    SELECT count(*)::int AS count
+    FROM pgboss.job
+    WHERE name = 'environment.operation.controller-v1'
+      AND data->>'operationId' = ${requestedOperation.id}
+      AND state IN ('created', 'retry', 'active')
+  `;
+  assert.equal(queuedJob?.count, 1);
+  const requested = { operation: requestedOperation };
   const repeated = await runtime.requestEnvironmentRuntimeCanary({
     runtimeVersionId: proposed.id,
   });
@@ -208,7 +247,7 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
     runtime.requestEnvironmentRuntimeCanary({ runtimeVersionId: third.id }),
     (error: unknown) =>
       error instanceof runtime.EnvironmentRuntimeChannelError &&
-      error.code === "RUNTIME_UPDATE_CONFLICT",
+      error.code === "RUNTIME_VERSION_CONFLICT",
   );
   await connection`
     UPDATE environment_operations SET
@@ -217,34 +256,60 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
       completed_at = now(), updated_at = now()
     WHERE id = ${requested.operation.id}
   `;
-  const retried = await runtime.requestEnvironmentRuntimeCanary({
+  const failed = await runtime.reconcileDesiredEnvironmentRuntime();
+  assert.equal(failed.status, "failed");
+  const retriedRequest = await runtime.requestEnvironmentRuntimeCanary({
     runtimeVersionId: proposed.id,
   });
-  assert.equal(retried.operation.id, requested.operation.id);
-  assert.equal(retried.operation.status, "queued");
-  assert.equal(retried.operation.errorCode, null);
+  assert.equal(retriedRequest.operation.id, requested.operation.id);
+  const retriedOperation = await runtime.getEnvironmentRuntimeCanary(
+    proposed.id,
+  );
+  assert.equal(retriedOperation?.status, "queued");
+  assert.equal(retriedOperation?.errorCode, null);
   await completeCanary(connection, {
     operationId: requested.operation.id,
     environmentId,
     version: proposed,
   });
-  const promoted = await runtime.promoteEnvironmentRuntimeVersion({
+  await selectDesired(runtime, third, true);
+  await assert.rejects(
+    runtime.requestEnvironmentRuntimeCanary({ runtimeVersionId: proposed.id }),
+    (error: unknown) =>
+      error instanceof runtime.EnvironmentRuntimeChannelError &&
+      error.code === "RUNTIME_VERSION_CONFLICT",
+  );
+  await assert.rejects(
+    runtime.promoteEnvironmentRuntimeVersion({
+      runtimeVersionId: proposed.id,
+      canaryOperationId: requested.operation.id,
+    }),
+    (error: unknown) =>
+      error instanceof runtime.EnvironmentRuntimeChannelError &&
+      error.code === "RUNTIME_VERSION_CONFLICT",
+  );
+  const stale = await selectDesired(runtime, proposed, true);
+  assert.equal(stale.stale, true);
+  assert.equal(
+    (await runtime.getEnvironmentRuntimeChannel()).desiredVersion?.id,
+    third.id,
+  );
+  await selectDesired(runtime, proposed);
+  const reselectedCanary = await runtime.requestEnvironmentRuntimeCanary({
     runtimeVersionId: proposed.id,
-    expectedCurrentVersionId: initial.id,
-    expectedGeneration: generation,
-    canaryOperationId: requested.operation.id,
-    githubRunId: "1002",
-    githubRunAttempt: 1,
   });
-  assert.equal(promoted.generation, generation + 1);
+  await completeCanary(connection, {
+    operationId: reselectedCanary.operation.id,
+    environmentId,
+    version: proposed,
+  });
+  const reconciled = await runtime.reconcileDesiredEnvironmentRuntime();
+  assert.equal(reconciled.status, "promoted");
+  const promoted = { versionId: proposed.id, generation: generation + 1 };
   assert.deepEqual(
     await runtime.promoteEnvironmentRuntimeVersion({
       runtimeVersionId: proposed.id,
-      expectedCurrentVersionId: initial.id,
-      expectedGeneration: generation,
-      canaryOperationId: requested.operation.id,
-      githubRunId: "1002",
-      githubRunAttempt: 1,
+      canaryOperationId: reselectedCanary.operation.id,
     }),
     promoted,
   );
@@ -252,40 +317,11 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
   assert.equal(channel.currentVersion?.id, proposed.id);
   assert.equal(channel.previousVersion?.id, initial.id);
 
+  await selectDesired(runtime, third, true);
   await assert.rejects(
     runtime.promoteEnvironmentRuntimeVersion({
       runtimeVersionId: third.id,
-      expectedCurrentVersionId: proposed.id,
-      expectedGeneration: generation,
       canaryOperationId: requested.operation.id,
-      githubRunId: "1003",
-      githubRunAttempt: 1,
-    }),
-    (error: unknown) =>
-      error instanceof runtime.EnvironmentRuntimeChannelError &&
-      error.code === "RUNTIME_VERSION_CONFLICT",
-  );
-  await assert.rejects(
-    runtime.promoteEnvironmentRuntimeVersion({
-      runtimeVersionId: third.id,
-      expectedCurrentVersionId: initial.id,
-      expectedGeneration: generation,
-      canaryOperationId: requested.operation.id,
-      githubRunId: "1003",
-      githubRunAttempt: 1,
-    }),
-    (error: unknown) =>
-      error instanceof runtime.EnvironmentRuntimeChannelError &&
-      error.code === "RUNTIME_VERSION_CONFLICT",
-  );
-  await assert.rejects(
-    runtime.promoteEnvironmentRuntimeVersion({
-      runtimeVersionId: third.id,
-      expectedCurrentVersionId: proposed.id,
-      expectedGeneration: generation + 1,
-      canaryOperationId: requested.operation.id,
-      githubRunId: "1003",
-      githubRunAttempt: 1,
     }),
     (error: unknown) =>
       error instanceof runtime.EnvironmentRuntimeChannelError &&
@@ -304,11 +340,7 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
   await assert.rejects(
     runtime.promoteEnvironmentRuntimeVersion({
       runtimeVersionId: third.id,
-      expectedCurrentVersionId: proposed.id,
-      expectedGeneration: generation + 1,
       canaryOperationId: thirdCanary.operation.id,
-      githubRunId: "1003",
-      githubRunAttempt: 1,
     }),
     (error: unknown) =>
       error instanceof runtime.EnvironmentRuntimeChannelError &&
@@ -321,30 +353,59 @@ test("Environment Runtime Channel registration, canary, promotion, and rollback 
       updated_at = now()
     WHERE id = ${environmentId}
   `;
+  await connection`
+    UPDATE environment_operations SET
+      status = 'completed', stage = 'environment.update.recovery_required',
+      completed_at = now(), updated_at = now()
+    WHERE id = ${thirdCanary.operation.id}
+  `;
+  const recoveryRequired = await runtime.reconcileDesiredEnvironmentRuntime();
+  assert.equal(recoveryRequired.status, "recovery_required");
+  const recoveryRetry = await runtime.retryDesiredEnvironmentRuntime();
+  assert.equal(recoveryRetry.operation.status, "queued");
+  assert.notEqual(recoveryRetry.operation.id, thirdCanary.operation.id);
+  await completeCanary(connection, {
+    operationId: recoveryRetry.operation.id,
+    environmentId,
+    version: third,
+  });
   await runtime.promoteEnvironmentRuntimeVersion({
     runtimeVersionId: third.id,
-    expectedCurrentVersionId: proposed.id,
-    expectedGeneration: generation + 1,
-    canaryOperationId: thirdCanary.operation.id,
-    githubRunId: "1003",
-    githubRunAttempt: 1,
+    canaryOperationId: recoveryRetry.operation.id,
   });
 
+  const rollbackSelection = await runtime.selectPreviousEnvironmentRuntime();
+  assert.equal(rollbackSelection.versionId, proposed.id);
+  assert.equal(
+    (await runtime.getEnvironmentRuntimeChannel()).desiredVersion?.id,
+    proposed.id,
+  );
   const rollbackCanary = await runtime.requestEnvironmentRuntimeCanary({
     runtimeVersionId: proposed.id,
   });
+  await connection`
+    UPDATE environment_operations SET
+      status = 'failed', stage = 'environment.update.failed',
+      error_code = 'TEST_FAILURE', error_message = 'select again',
+      completed_at = now(), updated_at = now()
+    WHERE id = ${rollbackCanary.operation.id}
+  `;
+  await runtime.selectPreviousEnvironmentRuntime();
+  const freshRollbackCanary = await runtime.requestEnvironmentRuntimeCanary({
+    runtimeVersionId: proposed.id,
+  });
+  assert.notEqual(
+    freshRollbackCanary.operation.id,
+    rollbackCanary.operation.id,
+  );
   await completeCanary(connection, {
-    operationId: rollbackCanary.operation.id,
+    operationId: freshRollbackCanary.operation.id,
     environmentId,
     version: proposed,
   });
   await runtime.promoteEnvironmentRuntimeVersion({
     runtimeVersionId: proposed.id,
-    expectedCurrentVersionId: third.id,
-    expectedGeneration: generation + 2,
-    canaryOperationId: rollbackCanary.operation.id,
-    githubRunId: "1004",
-    githubRunAttempt: 1,
+    canaryOperationId: freshRollbackCanary.operation.id,
   });
   channel = await runtime.getEnvironmentRuntimeChannel();
   assert.equal(channel.currentVersion?.id, proposed.id);
@@ -362,6 +423,22 @@ async function register(
   input: Parameters<RuntimeModule["registerEnvironmentRuntimeVersion"]>[0],
 ) {
   return (await runtime.registerEnvironmentRuntimeVersion(input)).version;
+}
+
+async function selectDesired(
+  runtime: RuntimeModule,
+  version: Version,
+  rejectStaleBuild = false,
+) {
+  return runtime.selectDesiredEnvironmentRuntime({
+    runtimeImage: version.runtimeImage,
+    runtimeSourceRevision: version.runtimeSourceRevision,
+    routerImage: version.routerImage,
+    routerSourceRevision: version.routerSourceRevision,
+    githubRunId: version.githubRunId,
+    githubRunAttempt: version.githubRunAttempt,
+    rejectStaleBuild,
+  });
 }
 
 async function completeCanary(
@@ -389,6 +466,14 @@ function runtimeImage(suffix: string, role: string) {
 
 function routerImage(suffix: string, role: string) {
   return `ghcr.io/lumicorp/kestrel-environment-router@sha256:${digest(suffix, role)}`;
+}
+
+function runtimeTag(runNumber: bigint) {
+  return `ghcr.io/lumicorp/kestrel-workspace-runtime:production-${runNumber}-1`;
+}
+
+function routerTag(runNumber: bigint) {
+  return `ghcr.io/lumicorp/kestrel-environment-router:production-${runNumber}-1`;
 }
 
 function digest(suffix: string, role: string) {

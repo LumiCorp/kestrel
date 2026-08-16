@@ -53,9 +53,4 @@ node -e '
   }
 ' "$(<"$public_file")"
 
-if [[ -n "${EXPECTED_GIT_SHA:-}" ]]; then
-  revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")"
-  [[ "$revision" == "$EXPECTED_GIT_SHA" ]]
-fi
-
 printf 'Preview Edge image smoke passed\n'
