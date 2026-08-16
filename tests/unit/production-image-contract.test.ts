@@ -7,7 +7,8 @@ import {
   productionImageTagSchema,
 } from "../../scripts/production-image-contract.js";
 import {
-  flyMachineStatusArgs,
+  deployProductionFlyMachine,
+  flyMachineListArgs,
   flyMachineUpdateArgs,
   parseFlyMachineDeploymentArgs,
 } from "../../scripts/deploy-production-fly-machine.js";
@@ -19,13 +20,22 @@ import {
 const tag = "operator-aug16";
 
 test("operator tags follow the ordinary container tag contract", () => {
-  assert.equal(productionImageTagSchema.parse("operator-aug16"), "operator-aug16");
+  assert.equal(
+    productionImageTagSchema.parse("operator-aug16"),
+    "operator-aug16",
+  );
   assert.throws(() => productionImageTagSchema.parse("not a tag"));
 });
 
 test("local publication builds one amd64 image, smokes it, then pushes", () => {
   assert.deepEqual(
-    parsePublishProductionImageArgs(["--role", "preview-edge", "--tag", tag]),
+    parsePublishProductionImageArgs([
+      "--",
+      "--role",
+      "preview-edge",
+      "--tag",
+      tag,
+    ]),
     { role: "preview-edge", tag },
   );
   const commands = productionImageBuildCommands({
@@ -44,6 +54,7 @@ test("local publication builds one amd64 image, smokes it, then pushes", () => {
 test("local Fly deployment names one platform Machine and operator tag", () => {
   assert.deepEqual(
     parseFlyMachineDeploymentArgs([
+      "--",
       "--role",
       "preview-edge",
       "--machine",
@@ -53,10 +64,9 @@ test("local Fly deployment names one platform Machine and operator tag", () => {
     ]),
     { role: "preview-edge", machineId: "e2865", tag },
   );
-  assert.deepEqual(flyMachineStatusArgs("example", "e2865"), [
+  assert.deepEqual(flyMachineListArgs("example"), [
     "machine",
-    "status",
-    "e2865",
+    "list",
     "--app",
     "example",
     "--json",
@@ -78,6 +88,44 @@ test("local Fly deployment names one platform Machine and operator tag", () => {
       "--yes",
     ],
   );
+});
+
+test("local Fly deployment selects the exact Machine from provider lists", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  let listCount = 0;
+  const result = await deployProductionFlyMachine(
+    ["--role", "preview-edge", "--machine", "e2865", "--tag", tag],
+    (command, args) => {
+      calls.push({ command, args });
+      if (args[0] === "auth")
+        return { status: 0, stdout: "operator@example.com\n" };
+      if (args[0] === "machine" && args[1] === "list") {
+        listCount += 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            { id: "sibling", state: "started" },
+            {
+              id: "e2865",
+              state: "started",
+              image_ref: { tag: listCount === 1 ? "old" : tag },
+            },
+          ]),
+        };
+      }
+      if (args[0] === "machine" && args[1] === "update") {
+        return { status: 0, stdout: "" };
+      }
+      return { status: 1, stdout: "" };
+    },
+    async () => undefined,
+  );
+
+  assert.equal(result.before.id, "e2865");
+  assert.equal(result.after.id, "e2865");
+  assert.equal(calls.filter(({ args }) => args[1] === "list").length, 2);
+  assert.equal(calls.filter(({ args }) => args[1] === "update").length, 1);
+  assert.ok(calls.every(({ args }) => !args.includes("status")));
 });
 
 test("tenant runtime catalog roles publish from exact public GHCR repositories", async () => {
