@@ -78,7 +78,9 @@ export function rejectUnknownArguments(args: string[], names: string[]) {
       consumed.add(index + 1);
     }
   }
-  const unknown = args.filter((_, index) => !consumed.has(index));
+  const unknown = args.filter(
+    (value, index) => value !== "--" && !consumed.has(index),
+  );
   if (unknown.length) throw new Error(`Unknown argument: ${unknown[0]}.`);
 }
 

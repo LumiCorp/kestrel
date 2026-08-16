@@ -9,10 +9,15 @@ type RunResult = { status: number | null; stdout: string };
 type Runner = (command: string, args: string[], inherit?: boolean) => RunResult;
 
 export function parsePublishProductionImageArgs(args: string[]) {
-  const role = argument(args, "--role");
-  const tag = productionImageTagSchema.parse(argument(args, "--tag"));
-  rejectUnknownArgs(args, ["--role", "--tag"]);
+  const normalized = operatorArgs(args);
+  const role = argument(normalized, "--role");
+  const tag = productionImageTagSchema.parse(argument(normalized, "--tag"));
+  rejectUnknownArgs(normalized, ["--role", "--tag"]);
   return { role, tag };
+}
+
+function operatorArgs(args: string[]) {
+  return args[0] === "--" ? args.slice(1) : args;
 }
 
 export function productionImageBuildCommands(input: {

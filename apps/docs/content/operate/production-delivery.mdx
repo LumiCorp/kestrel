@@ -26,7 +26,7 @@ current provider image for every Machine or Environment in scope. Run
 Choose a readable tag and publish one role:
 
 ```bash
-pnpm production:image:publish -- --role <role> --tag <tag>
+pnpm production:image:publish --role <role> --tag <tag>
 ```
 
 The command builds for `linux/amd64`, runs that role's image smoke, and pushes
@@ -35,7 +35,7 @@ the tag. It does not inspect Git history or deploy anything.
 ## Update one platform Machine
 
 ```bash
-pnpm production:fly:machine -- \
+pnpm production:fly:machine \
   --role <preview-edge|turn-worker|control-worker|runpod-worker> \
   --machine <machine-id> \
   --tag <tag>
@@ -44,6 +44,9 @@ pnpm production:fly:machine -- \
 Review the current provider record and type back the exact target. The command
 uses provider-native `fly machine update` for one Machine. Repeat explicitly for
 another Machine. Rollback is the same command with the prior tag.
+
+An image update preserves a stopped Machine's state. Start that exact Machine
+explicitly with `fly machine start <machine-id> --app <app>` when it should run.
 
 Staged Fly secrets are separate and app-wide. Review their status and activate
 them deliberately with `fly secrets deploy --app <app>`. Image commands never
@@ -55,7 +58,7 @@ Publish `workspace-runtime` and `environment-router` with the same operator tag,
 then queue one chosen Environment:
 
 ```bash
-pnpm --dir apps/web runtime:update -- \
+pnpm --dir apps/web runtime:update \
   --environment <environment-id> \
   --tag <tag>
 ```
@@ -64,7 +67,7 @@ After that exact operation reaches `environment.update.ready` and manual
 Workspace and preview canaries pass, activate it:
 
 ```bash
-pnpm --dir apps/web production:runtime:activate -- \
+pnpm --dir apps/web production:runtime:activate \
   --tag <tag> \
   --canary-operation <operation-id>
 ```
