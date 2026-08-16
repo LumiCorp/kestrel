@@ -588,30 +588,30 @@
     },
     {
       "id": "production-database-unpooled-ownership-bypass",
-      "target": ".github/workflows/production-database.yml",
-      "find": "run: pnpm db:migrate:deploy",
-      "replace": "run: pnpm db:migrate",
+      "target": "apps/web/vercel.json",
+      "find": "db:migrate:deploy",
+      "replace": "db:migrate",
       "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=production delivery exposes", "tests/unit/production-delivery-boundary.test.ts"],
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=production database migration belongs", "tests/unit/production-delivery-boundary.test.ts"],
       "testFiles": ["tests/unit/production-delivery-boundary.test.ts"]
     },
     {
-      "id": "environment-runtime-pointer-generation-bypass",
+      "id": "environment-runtime-desired-pointer-bypass",
       "target": "apps/web/lib/environments/runtime-channel.ts",
-      "find": "      channel.generation !== input.expectedGeneration",
-      "replace": "      false",
+      "find": "channel.desiredVersionId !== input.runtimeVersionId",
+      "replace": "false",
       "command": "pnpm",
       "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "lib/environments/runtime-channel.postgres.test.ts"],
       "testFiles": ["apps/web/lib/environments/runtime-channel.postgres.test.ts"]
     },
     {
-      "id": "environment-runtime-oidc-workflow-sha-bypass",
-      "target": "apps/web/lib/runtime/github-actions-oidc.ts",
-      "find": "    claims.workflow_sha !== input.expectedWorkflowSha ||",
-      "replace": "    false ||",
+      "id": "production-image-bearer-bypass",
+      "target": "apps/web/lib/deployment/production-images.ts",
+      "find": "!timingSafeEqual(suppliedBytes, expectedBytes)",
+      "replace": "false",
       "command": "pnpm",
-      "args": ["--dir", "apps/web", "exec", "node", "--import", "tsx", "--test", "lib/runtime/github-actions-oidc.test.ts"],
-      "testFiles": ["apps/web/lib/runtime/github-actions-oidc.test.ts"]
+      "args": ["--dir", "apps/web", "exec", "node", "--import", "tsx", "--test", "lib/deployment/production-images.test.ts"],
+      "testFiles": ["apps/web/lib/deployment/production-images.test.ts"]
     },
     {
       "id": "environment-update-runtime-version-binding-bypass",
@@ -624,12 +624,30 @@
     },
     {
       "id": "production-image-smoke-before-mutation-bypass",
-      "target": "scripts/deploy-production-image.ts",
-      "find": "  run(\"bash\", [image.smoke, digest], { EXPECTED_GIT_SHA: revision });",
+      "target": "scripts/build-production-image.ts",
+      "find": "  run(\"bash\", [image.smoke, taggedImage]);",
       "replace": "  void image.smoke;",
       "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=image deployment smokes", "tests/unit/production-delivery-boundary.test.ts"],
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=image publication smokes", "tests/unit/production-delivery-boundary.test.ts"],
       "testFiles": ["tests/unit/production-delivery-boundary.test.ts"]
+    },
+    {
+      "id": "environment-update-stopped-state-restoration-bypass",
+      "target": "apps/web/lib/environments/provisioner.ts",
+      "find": "        await this.repository.completeStoppedWorkspaceRebuild({",
+      "replace": "        await this.repository.completeWorkspaceRebuild({",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--import", "tsx", "--test", "--test-name-pattern=prove stopped Workspaces", "lib/environments/provisioner.test.ts"],
+      "testFiles": ["apps/web/lib/environments/provisioner.test.ts"]
+    },
+    {
+      "id": "production-preparation-active-operation-bypass",
+      "target": "apps/web/scripts/production-delivery-prepare.ts",
+      "find": "  if (blockingCanaryOperations.length) {",
+      "replace": "  if (false) {",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--import", "tsx", "--test", "--test-name-pattern=exact non-backup canary operation blockers", "scripts/production-delivery-prepare.test.ts"],
+      "testFiles": ["apps/web/scripts/production-delivery-prepare.test.ts"]
     },
     {
       "id": "durable-turn-premature-cancellation-settlement",

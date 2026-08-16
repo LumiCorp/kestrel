@@ -32,9 +32,9 @@ RUN pnpm --filter @lumi/kestrel-environment-auth build \
     && pnpm --filter @kestrel/workspace-runtime build
 
 FROM node:22-bookworm-slim
-ARG KESTREL_GIT_SHA=unknown
+ARG KESTREL_BUILD_ID=unknown
 LABEL org.opencontainers.image.source="https://github.com/LumiCorp/kestrel"
-LABEL org.opencontainers.image.revision=$KESTREL_GIT_SHA
+LABEL org.opencontainers.image.version=$KESTREL_BUILD_ID
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl openssh-client procps python3 util-linux && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/node_modules ./node_modules

@@ -3,14 +3,14 @@ set -euo pipefail
 
 image="${1:?usage: smoke.sh IMAGE}"
 
-docker run --rm --entrypoint sh "$image" -c \
-  'test -f /workspace/apps/web/scripts/control-worker.ts
-   test -f /workspace/apps/web/lib/runtime/worker-health.ts
-   test -f /workspace/apps/web/lib/runtime/process-contracts.ts'
+if output="$(docker run --rm "$image" 2>&1)"; then
+  printf 'control worker unexpectedly started without configuration\n' >&2
+  exit 1
+fi
 
-if [[ -n "${EXPECTED_GIT_SHA:-}" ]]; then
-  revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")"
-  [[ "$revision" == "$EXPECTED_GIT_SHA" ]]
+if [[ "$output" != *"Kestrel One Environment lifecycle worker failed to start: control-worker configuration is incomplete"* ]]; then
+  printf 'control worker did not report the expected invalid-configuration startup failure\n%s\n' "$output" >&2
+  exit 1
 fi
 
 printf 'control worker image smoke passed\n'

@@ -37,11 +37,6 @@ node -e '
 
 docker exec "$container" test -d /workspace/.kestrel/runner/store/pglite
 
-if [[ -n "${EXPECTED_GIT_SHA:-}" ]]; then
-  revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")"
-  [[ "$revision" == "$EXPECTED_GIT_SHA" ]]
-fi
-
 docker run --rm \
   --entrypoint node \
   "$image" \

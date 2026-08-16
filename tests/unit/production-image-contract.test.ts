@@ -78,13 +78,14 @@ test("production delivery changes reselect only their owning channels", async ()
       catalog: releaseCatalog,
       changedPaths: [".github/workflows/production-fly.yml"],
     }).map((entry) => entry.role),
-    [
-      "workspace-runtime",
-      "environment-router",
-      "preview-edge",
-      "turn-worker",
-      "control-worker",
-    ],
+    ["preview-edge", "turn-worker", "control-worker"],
+  );
+  assert.deepEqual(
+    impactedFlyImages({
+      catalog: releaseCatalog,
+      changedPaths: [".github/workflows/production-runtime.yml"],
+    }).map((entry) => entry.role),
+    ["workspace-runtime", "environment-router"],
   );
   assert.deepEqual(
     impactedFlyImages({
@@ -96,9 +97,16 @@ test("production delivery changes reselect only their owning channels", async ()
   assert.equal(
     impactedFlyImages({
       catalog: releaseCatalog,
-      changedPaths: ["scripts/deploy-production-image.ts"],
+      changedPaths: ["scripts/build-production-image.ts"],
     }).length,
     6,
+  );
+  assert.deepEqual(
+    impactedFlyImages({
+      catalog: releaseCatalog,
+      changedPaths: ["scripts/notify-production-runtime.ts"],
+    }).map((entry) => entry.role),
+    ["workspace-runtime", "environment-router"],
   );
 });
 
@@ -217,7 +225,6 @@ function image(
           ? "ghcr.io/lumicorp/kestrel-environment-router"
           : `registry.fly.io/app-${role}`,
     app: `app-${role}`,
-    config: `${role}/fly.toml`,
     dockerfile: `${role}/Dockerfile`,
     smoke: `${role}/smoke.sh`,
     channel:

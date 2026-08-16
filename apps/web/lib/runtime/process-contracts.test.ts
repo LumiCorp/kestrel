@@ -5,6 +5,7 @@ import {
   assertControlWorkerProcessConfiguration,
   assertRunPodWorkerProcessConfiguration,
   assertTurnWorkerProcessConfiguration,
+  assertWebProcessConfiguration,
   CONTROL_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
   processConfigurationContractFingerprint,
   RUNPOD_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
@@ -40,8 +41,6 @@ function controlWorkerEnvironment() {
   return {
     POSTGRES_URL: "postgres://database",
     FLY_API_TOKEN: "platform-authority",
-    KESTREL_APP_CREDENTIAL_ACTIVE_KEY_ID: "primary",
-    KESTREL_APP_CREDENTIAL_KEYS: JSON.stringify({ primary: encryptionKey }),
     KESTREL_ENVIRONMENTS_ENABLED: "true",
     KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: keys.privateKey
       .export({ type: "pkcs8", format: "pem" })
@@ -79,6 +78,59 @@ function runPodWorkerEnvironment() {
     RUNPOD_MANAGED_DEPLOYMENTS_ENABLED: "true",
   };
 }
+
+function webEnvironment() {
+  const control = controlWorkerEnvironment();
+  return {
+    POSTGRES_URL: control.POSTGRES_URL,
+    CRON_SECRET: "cron",
+    FLY_API_TOKEN: control.FLY_API_TOKEN,
+    KESTREL_ENVIRONMENTS_ENABLED: control.KESTREL_ENVIRONMENTS_ENABLED,
+    KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:
+      control.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY,
+    KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:
+      control.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY,
+    KESTREL_FLY_ORGANIZATION_SLUG: control.KESTREL_FLY_ORGANIZATION_SLUG,
+    KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID:
+      control.KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID,
+    KESTREL_GATEWAY_CREDENTIAL_KEYS:
+      control.KESTREL_GATEWAY_CREDENTIAL_KEYS,
+    KESTREL_ONE_APP_URL: control.KESTREL_ONE_APP_URL,
+    KESTREL_ONE_CREDENTIAL_BROKER_TOKEN:
+      control.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN,
+    KESTREL_ONE_TOOL_TOKEN: control.KESTREL_ONE_TOOL_TOKEN,
+    KESTREL_WORKSPACE_BACKUP_KEY: control.KESTREL_WORKSPACE_BACKUP_KEY,
+    KESTREL_WORKSPACE_BACKUP_KEY_ID:
+      control.KESTREL_WORKSPACE_BACKUP_KEY_ID,
+    PRODUCTION_IMAGE_DEPLOY_TOKEN: "production-image-token",
+    STORAGE_ACCESS_KEY_ID: control.STORAGE_ACCESS_KEY_ID,
+    STORAGE_BUCKET: control.STORAGE_BUCKET,
+    STORAGE_ENDPOINT: control.STORAGE_ENDPOINT,
+    STORAGE_PROVIDER: control.STORAGE_PROVIDER,
+    STORAGE_SECRET_ACCESS_KEY: control.STORAGE_SECRET_ACCESS_KEY,
+  };
+}
+
+test("web production configuration requires its receiver token and rejects legacy images", () => {
+  const valid = webEnvironment();
+  assert.doesNotThrow(() => assertWebProcessConfiguration(valid));
+  assert.throws(
+    () =>
+      assertWebProcessConfiguration({
+        ...valid,
+        PRODUCTION_IMAGE_DEPLOY_TOKEN: undefined,
+      }),
+    /incomplete: PRODUCTION_IMAGE_DEPLOY_TOKEN/u,
+  );
+  assert.throws(
+    () =>
+      assertWebProcessConfiguration({
+        ...valid,
+        KESTREL_WORKSPACE_RUNTIME_IMAGE: "legacy-image",
+      }),
+    /forbidden values: KESTREL_WORKSPACE_RUNTIME_IMAGE/u,
+  );
+});
 
 test("turn-worker configuration fingerprint depends only on deterministic contract shape", () => {
   assert.match(

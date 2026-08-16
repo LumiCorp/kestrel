@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { environmentLifecycleLockKey } from "./lifecycle-lock";
 
 const PRODUCTION_CHANNEL = "production" as const;
@@ -17,7 +18,8 @@ export class EnvironmentRuntimeChannelError extends Error {
       | "RUNTIME_CANARY_INCOMPLETE"
       | "RUNTIME_CANARY_MISMATCH"
       | "RUNTIME_UPDATE_CONFLICT"
-      | "RUNTIME_ALREADY_CURRENT",
+      | "RUNTIME_ALREADY_CURRENT"
+      | "RUNTIME_ROLLBACK_UNAVAILABLE",
     message: string,
   ) {
     super(message);
@@ -42,6 +44,7 @@ export type EnvironmentRuntimeChannel = {
   canaryEnvironmentId: string | null;
   currentVersion: EnvironmentRuntimeVersion | null;
   previousVersion: EnvironmentRuntimeVersion | null;
+  desiredVersion: EnvironmentRuntimeVersion | null;
   lastGithubRunId: string | null;
   lastGithubRunAttempt: number | null;
   updatedAt: Date;
@@ -59,7 +62,7 @@ type ChannelRow = {
   currentRouterSourceRevision: string | null;
   currentGithubRunId: string | null;
   currentGithubRunAttempt: number | null;
-  currentCreatedAt: Date | null;
+  currentCreatedAt: Date | string | null;
   previousVersionId: string | null;
   previousRuntimeImage: string | null;
   previousRuntimeSourceRevision: string | null;
@@ -67,10 +70,18 @@ type ChannelRow = {
   previousRouterSourceRevision: string | null;
   previousGithubRunId: string | null;
   previousGithubRunAttempt: number | null;
-  previousCreatedAt: Date | null;
+  previousCreatedAt: Date | string | null;
+  desiredVersionId: string | null;
+  desiredRuntimeImage: string | null;
+  desiredRuntimeSourceRevision: string | null;
+  desiredRouterImage: string | null;
+  desiredRouterSourceRevision: string | null;
+  desiredGithubRunId: string | null;
+  desiredGithubRunAttempt: number | null;
+  desiredCreatedAt: Date | string | null;
   lastGithubRunId: string | null;
   lastGithubRunAttempt: number | null;
-  updatedAt: Date;
+  updatedAt: Date | string;
 };
 
 export async function environmentRuntimeChannelSchemaExists() {
@@ -108,6 +119,14 @@ export async function getEnvironmentRuntimeChannel(): Promise<EnvironmentRuntime
       previous_version."github_run_id" AS "previousGithubRunId",
       previous_version."github_run_attempt" AS "previousGithubRunAttempt",
       previous_version."created_at" AS "previousCreatedAt",
+      desired_version."id" AS "desiredVersionId",
+      desired_version."workspace_runtime_image" AS "desiredRuntimeImage",
+      desired_version."workspace_runtime_source_revision" AS "desiredRuntimeSourceRevision",
+      desired_version."environment_router_image" AS "desiredRouterImage",
+      desired_version."environment_router_source_revision" AS "desiredRouterSourceRevision",
+      desired_version."github_run_id" AS "desiredGithubRunId",
+      desired_version."github_run_attempt" AS "desiredGithubRunAttempt",
+      desired_version."created_at" AS "desiredCreatedAt",
       channel."last_github_run_id" AS "lastGithubRunId",
       channel."last_github_run_attempt" AS "lastGithubRunAttempt",
       channel."updated_at" AS "updatedAt"
@@ -116,6 +135,8 @@ export async function getEnvironmentRuntimeChannel(): Promise<EnvironmentRuntime
       ON current_version."id" = channel."current_version_id"
     LEFT JOIN "environment_runtime_versions" previous_version
       ON previous_version."id" = channel."previous_version_id"
+    LEFT JOIN "environment_runtime_versions" desired_version
+      ON desired_version."id" = channel."desired_version_id"
     WHERE channel."name" = ${PRODUCTION_CHANNEL}
     LIMIT 1
   `);
@@ -132,9 +153,10 @@ export async function getEnvironmentRuntimeChannel(): Promise<EnvironmentRuntime
     canaryEnvironmentId: row.canaryEnvironmentId,
     currentVersion: mapVersion(row, "current"),
     previousVersion: mapVersion(row, "previous"),
+    desiredVersion: mapVersion(row, "desired"),
     lastGithubRunId: row.lastGithubRunId,
     lastGithubRunAttempt: row.lastGithubRunAttempt,
-    updatedAt: row.updatedAt,
+    updatedAt: runtimeDate(row.updatedAt),
     source: "runtime-channel",
   };
 }
@@ -223,8 +245,8 @@ export async function registerEnvironmentRuntimeVersion(input: {
   runtimeSourceRevision: string;
   routerImage: string;
   routerSourceRevision: string;
-  githubRunId: string;
-  githubRunAttempt: number;
+  githubRunId?: string | null;
+  githubRunAttempt?: number | null;
 }) {
   await requireRuntimeChannelSchema();
   const [created] = await knowledgeDb
@@ -278,11 +300,165 @@ export async function registerEnvironmentRuntimeVersion(input: {
   return { version: mapSchemaVersion(version), generation: channel.generation };
 }
 
+export async function selectDesiredEnvironmentRuntime(input: {
+  runtimeImage: string;
+  runtimeSourceRevision: string;
+  routerImage: string;
+  routerSourceRevision: string;
+  githubRunId?: string | null;
+  githubRunAttempt?: number | null;
+  rejectStaleBuild?: boolean;
+}) {
+  const { version } = await registerEnvironmentRuntimeVersion(input);
+  return knowledgeDb.transaction(async (transaction) => {
+    const channelRows = await transaction.execute<{
+      currentVersionId: string | null;
+      desiredVersionId: string | null;
+    }>(sql`
+      SELECT
+        "current_version_id" AS "currentVersionId",
+        "desired_version_id" AS "desiredVersionId"
+      FROM "environment_runtime_channels"
+      WHERE "name" = ${PRODUCTION_CHANNEL}
+      FOR UPDATE
+    `);
+    const channel = channelRows[0];
+    if (!channel) {
+      throw new EnvironmentRuntimeChannelError(
+        "RUNTIME_CHANNEL_UNAVAILABLE",
+        "The production Environment Runtime Channel is unavailable.",
+      );
+    }
+    const existingIds = [
+      channel.currentVersionId,
+      channel.desiredVersionId,
+    ].filter((id): id is string => Boolean(id));
+    const existingVersions = existingIds.length
+      ? await transaction.query.environmentRuntimeVersions.findMany({
+          where: inArray(schema.environmentRuntimeVersions.id, existingIds),
+        })
+      : [];
+    if (
+      input.rejectStaleBuild &&
+      existingVersions.some((existing) =>
+        isNewerProductionBuild(
+          existing.workspaceRuntimeImage,
+          version.runtimeImage,
+        ),
+      )
+    ) {
+      return {
+        version,
+        alreadyCurrent: channel.currentVersionId === version.id,
+        stale: true,
+      };
+    }
+    const desiredVersionId =
+      channel.currentVersionId === version.id ? null : version.id;
+    if (channel.desiredVersionId !== desiredVersionId) {
+      await transaction
+        .update(schema.environmentRuntimeChannels)
+        .set({ desiredVersionId, updatedAt: new Date() })
+        .where(eq(schema.environmentRuntimeChannels.name, PRODUCTION_CHANNEL));
+    }
+    return {
+      version,
+      alreadyCurrent: channel.currentVersionId === version.id,
+      stale: false,
+    };
+  });
+}
+
+export async function reconcileDesiredEnvironmentRuntime() {
+  const channel = await getEnvironmentRuntimeChannel();
+  const desired = channel.desiredVersion;
+  if (channel.source !== "runtime-channel" || !desired) {
+    return { status: "idle" as const };
+  }
+  if (channel.currentVersion?.id === desired.id) {
+    await knowledgeDb
+      .update(schema.environmentRuntimeChannels)
+      .set({ desiredVersionId: null, updatedAt: new Date() })
+      .where(eq(schema.environmentRuntimeChannels.name, PRODUCTION_CHANNEL));
+    return { status: "promoted" as const, versionId: desired.id };
+  }
+  const operation = await getEnvironmentRuntimeCanary(
+    desired.id,
+    channel.updatedAt,
+  );
+  if (!operation) {
+    try {
+      const requested = await requestEnvironmentRuntimeCanary({
+        runtimeVersionId: desired.id,
+      });
+      if (requested.operation.status === "queued") {
+        await enqueueEnvironmentOperation(requested.operation.id);
+      }
+      return {
+        status: "requested" as const,
+        versionId: desired.id,
+        operationId: requested.operation.id,
+      };
+    } catch (error) {
+      if (
+        error instanceof EnvironmentRuntimeChannelError &&
+        ["RUNTIME_UPDATE_CONFLICT", "RUNTIME_VERSION_CONFLICT"].includes(
+          error.code,
+        )
+      ) {
+        return { status: "pending" as const, versionId: desired.id };
+      }
+      throw error;
+    }
+  }
+  if (operation.status === "queued") {
+    await enqueueEnvironmentOperation(operation.id);
+  }
+  if (operation.status === "failed" || operation.status === "cancelled") {
+    return {
+      status: "failed" as const,
+      versionId: desired.id,
+      operationId: operation.id,
+    };
+  }
+  if (
+    operation.status === "completed" &&
+    operation.stage === "environment.update.recovery_required"
+  ) {
+    return {
+      status: "recovery_required" as const,
+      versionId: desired.id,
+      operationId: operation.id,
+    };
+  }
+  if (
+    operation.status !== "completed" ||
+    operation.stage !== "environment.update.ready"
+  ) {
+    return {
+      status: "pending" as const,
+      versionId: desired.id,
+      operationId: operation.id,
+    };
+  }
+  await promoteEnvironmentRuntimeVersion({
+    runtimeVersionId: desired.id,
+    canaryOperationId: operation.id,
+  });
+  return {
+    status: "promoted" as const,
+    versionId: desired.id,
+    operationId: operation.id,
+  };
+}
+
 export async function requestEnvironmentRuntimeUpdate(input: {
   organizationId: string;
   environmentId: string;
   runtimeVersionId: string;
   actorUserId: string | null;
+  requestIdentity?: string;
+  expectedDesiredVersionId?: string;
 }) {
   await requireRuntimeChannelSchema();
   const version = await getEnvironmentRuntimeVersion(input.runtimeVersionId);
@@ -317,13 +493,32 @@ export async function requestEnvironmentRuntimeUpdate(input: {
       ),
       orderBy: desc(schema.environmentOperations.createdAt),
     });
-    if (existing?.status === "completed") {
-      return { environment, operation: existing, version: mapSchemaVersion(version) };
+    if (
+      existing?.status === "completed" &&
+      existing.stage === "environment.update.ready" &&
+      !input.requestIdentity
+    ) {
+      return {
+        environment,
+        operation: existing,
+        version: mapSchemaVersion(version),
+      };
     }
-    throw new EnvironmentRuntimeChannelError(
-      "RUNTIME_ALREADY_CURRENT",
-      "The Environment already uses the requested runtime version.",
-    );
+    if (
+      !input.requestIdentity &&
+      (!existing ||
+        !(
+          existing.status === "failed" ||
+          existing.status === "cancelled" ||
+          (existing.status === "completed" &&
+            existing.stage === "environment.update.recovery_required")
+        ))
+    ) {
+      throw new EnvironmentRuntimeChannelError(
+        "RUNTIME_ALREADY_CURRENT",
+        "The Environment already uses the requested runtime version.",
+      );
+    }
   }
   const now = new Date();
   const idempotencyKey = environmentRuntimeUpdateIdempotencyKey({
@@ -331,11 +526,30 @@ export async function requestEnvironmentRuntimeUpdate(input: {
     runtimeVersionId: version.id,
     sourceRuntimeImage: environment.runtimeImage,
     sourceRouterImage: environment.routerImage,
+    requestIdentity: input.requestIdentity,
   });
   const operation = await knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
     );
+    if (input.expectedDesiredVersionId) {
+      const channelRows = await transaction.execute<{
+        desiredVersionId: string | null;
+      }>(sql`
+        SELECT "desired_version_id" AS "desiredVersionId"
+        FROM "environment_runtime_channels"
+        WHERE "name" = ${PRODUCTION_CHANNEL}
+        FOR SHARE
+      `);
+      if (
+        channelRows[0]?.desiredVersionId !== input.expectedDesiredVersionId
+      ) {
+        throw new EnvironmentRuntimeChannelError(
+          "RUNTIME_VERSION_CONFLICT",
+          "A newer desired Environment Runtime Version replaced this canary.",
+        );
+      }
+    }
     const existing = await transaction.query.environmentOperations.findFirst({
       where: and(
         eq(schema.environmentOperations.organizationId, input.organizationId),
@@ -343,7 +557,12 @@ export async function requestEnvironmentRuntimeUpdate(input: {
       ),
     });
     if (existing) {
-      if (existing.status === "failed" || existing.status === "cancelled") {
+      if (
+        existing.status === "failed" ||
+        existing.status === "cancelled" ||
+        (existing.status === "completed" &&
+          existing.stage === "environment.update.recovery_required")
+      ) {
         const [requeued] = await transaction
           .update(schema.environmentOperations)
           .set({
@@ -358,7 +577,8 @@ export async function requestEnvironmentRuntimeUpdate(input: {
           })
           .where(eq(schema.environmentOperations.id, existing.id))
           .returning();
-        if (!requeued) throw new Error("Environment update retry was not queued.");
+        if (!requeued)
+          throw new Error("Environment update retry was not queued.");
         return requeued;
       }
       return existing;
@@ -427,10 +647,66 @@ export async function requestEnvironmentRuntimeCanary(input: {
     environmentId: channel.canaryEnvironmentId,
     runtimeVersionId: input.runtimeVersionId,
     actorUserId: null,
+    requestIdentity: `production-canary:${channel.updatedAt.toISOString()}`,
+    expectedDesiredVersionId: input.runtimeVersionId,
   });
 }
 
-export async function getEnvironmentRuntimeCanary(versionId: string) {
+export async function retryDesiredEnvironmentRuntime() {
+  const channel = await getEnvironmentRuntimeChannel();
+  if (channel.source !== "runtime-channel" || !channel.desiredVersion) {
+    throw new EnvironmentRuntimeChannelError(
+      "RUNTIME_VERSION_NOT_FOUND",
+      "The production Runtime Channel has no desired version to retry.",
+    );
+  }
+  return requestEnvironmentRuntimeCanary({
+    runtimeVersionId: channel.desiredVersion.id,
+  });
+}
+
+export async function selectPreviousEnvironmentRuntime() {
+  await requireRuntimeChannelSchema();
+  const selected = await knowledgeDb.transaction(async (transaction) => {
+    const rows = await transaction.execute<{
+      previousVersionId: string | null;
+      desiredVersionId: string | null;
+      generation: number;
+    }>(sql`
+      SELECT
+        "previous_version_id" AS "previousVersionId",
+        "desired_version_id" AS "desiredVersionId",
+        "generation"
+      FROM "environment_runtime_channels"
+      WHERE "name" = ${PRODUCTION_CHANNEL}
+      FOR UPDATE
+    `);
+    const channel = rows[0];
+    if (!channel?.previousVersionId) {
+      throw new EnvironmentRuntimeChannelError(
+        "RUNTIME_ROLLBACK_UNAVAILABLE",
+        "The production Runtime Channel has no previous version.",
+      );
+    }
+    await transaction
+      .update(schema.environmentRuntimeChannels)
+      .set({
+        desiredVersionId: channel.previousVersionId,
+        updatedAt: sql`GREATEST(now(), ${schema.environmentRuntimeChannels.updatedAt} + interval '1 millisecond')`,
+      })
+      .where(eq(schema.environmentRuntimeChannels.name, PRODUCTION_CHANNEL));
+    return {
+      versionId: channel.previousVersionId,
+      generation: channel.generation,
+    };
+  });
+  return selected;
+}
+
+export async function getEnvironmentRuntimeCanary(
+  versionId: string,
+  createdAtOrAfter?: Date,
+) {
   const channel = await getEnvironmentRuntimeChannel();
   if (channel.source !== "runtime-channel" || !channel.canaryEnvironmentId) {
     throw new EnvironmentRuntimeChannelError(
@@ -440,9 +716,17 @@ export async function getEnvironmentRuntimeCanary(versionId: string) {
   }
   return knowledgeDb.query.environmentOperations.findFirst({
     where: and(
-      eq(schema.environmentOperations.environmentId, channel.canaryEnvironmentId),
+      eq(
+        schema.environmentOperations.environmentId,
+        channel.canaryEnvironmentId,
+      ),
       eq(schema.environmentOperations.type, "environment.update"),
       sql`${schema.environmentOperations.input}->>'runtimeVersionId' = ${versionId}`,
+      ...(createdAtOrAfter
+        ? [
+            sql`${schema.environmentOperations.createdAt} >= ${createdAtOrAfter.toISOString()}::timestamptz`,
+          ]
+        : []),
     ),
     orderBy: desc(schema.environmentOperations.createdAt),
   });
@@ -450,23 +734,23 @@ export async function getEnvironmentRuntimeCanary(versionId: string) {
 
 export async function promoteEnvironmentRuntimeVersion(input: {
   runtimeVersionId: string;
-  expectedCurrentVersionId: string | null;
-  expectedGeneration: number;
   canaryOperationId: string;
-  githubRunId: string;
-  githubRunAttempt: number;
 }) {
   await requireRuntimeChannelSchema();
   return knowledgeDb.transaction(async (transaction) => {
     const channelRows = await transaction.execute<{
       currentVersionId: string | null;
+      desiredVersionId: string | null;
       generation: number;
       canaryEnvironmentId: string | null;
+      updatedAt: Date | string;
     }>(sql`
       SELECT
         "current_version_id" AS "currentVersionId",
+        "desired_version_id" AS "desiredVersionId",
         "generation",
-        "canary_environment_id" AS "canaryEnvironmentId"
+        "canary_environment_id" AS "canaryEnvironmentId",
+        "updated_at" AS "updatedAt"
       FROM "environment_runtime_channels"
       WHERE "name" = ${PRODUCTION_CHANNEL}
       FOR UPDATE
@@ -479,15 +763,15 @@ export async function promoteEnvironmentRuntimeVersion(input: {
       );
     }
     if (channel.currentVersionId === input.runtimeVersionId) {
-      return { versionId: input.runtimeVersionId, generation: channel.generation };
+      return {
+        versionId: input.runtimeVersionId,
+        generation: channel.generation,
+      };
     }
-    if (
-      channel.currentVersionId !== input.expectedCurrentVersionId ||
-      channel.generation !== input.expectedGeneration
-    ) {
+    if (channel.desiredVersionId !== input.runtimeVersionId) {
       throw new EnvironmentRuntimeChannelError(
         "RUNTIME_VERSION_CONFLICT",
-        "The production Runtime Channel changed; rebuild the pair from the current version.",
+        "A newer desired Environment Runtime Version replaced this canary.",
       );
     }
     if (!channel.canaryEnvironmentId) {
@@ -496,9 +780,10 @@ export async function promoteEnvironmentRuntimeVersion(input: {
         "The production Runtime Channel has no canary Environment.",
       );
     }
-    const version = await transaction.query.environmentRuntimeVersions.findFirst({
-      where: eq(schema.environmentRuntimeVersions.id, input.runtimeVersionId),
-    });
+    const version =
+      await transaction.query.environmentRuntimeVersions.findFirst({
+        where: eq(schema.environmentRuntimeVersions.id, input.runtimeVersionId),
+      });
     if (!version) {
       throw new EnvironmentRuntimeChannelError(
         "RUNTIME_VERSION_NOT_FOUND",
@@ -508,7 +793,10 @@ export async function promoteEnvironmentRuntimeVersion(input: {
     const operation = await transaction.query.environmentOperations.findFirst({
       where: and(
         eq(schema.environmentOperations.id, input.canaryOperationId),
-        eq(schema.environmentOperations.environmentId, channel.canaryEnvironmentId),
+        eq(
+          schema.environmentOperations.environmentId,
+          channel.canaryEnvironmentId,
+        ),
         eq(schema.environmentOperations.type, "environment.update"),
       ),
     });
@@ -516,7 +804,8 @@ export async function promoteEnvironmentRuntimeVersion(input: {
       !operation ||
       operation.status !== "completed" ||
       operation.stage !== "environment.update.ready" ||
-      operation.input?.runtimeVersionId !== input.runtimeVersionId
+      operation.input?.runtimeVersionId !== input.runtimeVersionId ||
+      operation.createdAt < runtimeDate(channel.updatedAt)
     ) {
       throw new EnvironmentRuntimeChannelError(
         "RUNTIME_CANARY_INCOMPLETE",
@@ -541,9 +830,10 @@ export async function promoteEnvironmentRuntimeVersion(input: {
       .set({
         previousVersionId: channel.currentVersionId,
         currentVersionId: version.id,
+        desiredVersionId: null,
         generation: channel.generation + 1,
-        lastGithubRunId: input.githubRunId,
-        lastGithubRunAttempt: input.githubRunAttempt,
+        lastGithubRunId: version.githubRunId,
+        lastGithubRunAttempt: version.githubRunAttempt,
         updatedAt: new Date(),
       })
       .where(eq(schema.environmentRuntimeChannels.name, PRODUCTION_CHANNEL));
@@ -565,10 +855,15 @@ function environmentRuntimeUpdateIdempotencyKey(input: {
   runtimeVersionId: string;
   sourceRuntimeImage: string | null;
   sourceRouterImage: string | null;
+  requestIdentity?: string;
 }) {
   const sourceFingerprint = createHash("sha256")
     .update(
-      JSON.stringify([input.sourceRuntimeImage, input.sourceRouterImage]),
+      JSON.stringify([
+        input.sourceRuntimeImage,
+        input.sourceRouterImage,
+        input.requestIdentity ?? null,
+      ]),
     )
     .digest("hex");
   return [
@@ -579,10 +874,34 @@ function environmentRuntimeUpdateIdempotencyKey(input: {
   ].join(":");
 }
 
+function isNewerProductionBuild(existingImage: string, incomingImage: string) {
+  const existing = productionBuildSequence(existingImage);
+  const incoming = productionBuildSequence(incomingImage);
+  if (!(existing && incoming)) return false;
+  return (
+    existing.runNumber > incoming.runNumber ||
+    (existing.runNumber === incoming.runNumber &&
+      existing.runAttempt > incoming.runAttempt)
+  );
+}
+
+function productionBuildSequence(image: string) {
+  const match = image.match(/:production-([1-9][0-9]*)-([1-9][0-9]*)$/u);
+  if (!match) return null;
+  return {
+    runNumber: BigInt(match[1]!),
+    runAttempt: BigInt(match[2]!),
+  };
+}
+
 async function getLegacyRuntimeChannel(): Promise<EnvironmentRuntimeChannel> {
   const settings = await knowledgeDb.query.flyImageReleaseSettings.findFirst({
     where: eq(schema.flyImageReleaseSettings.id, "platform"),
-    columns: { stableReleaseId: true, canaryEnvironmentId: true, updatedAt: true },
+    columns: {
+      stableReleaseId: true,
+      canaryEnvironmentId: true,
+      updatedAt: true,
+    },
   });
   if (!settings?.stableReleaseId) {
     return {
@@ -591,23 +910,33 @@ async function getLegacyRuntimeChannel(): Promise<EnvironmentRuntimeChannel> {
       canaryEnvironmentId: settings?.canaryEnvironmentId ?? null,
       currentVersion: null,
       previousVersion: null,
+      desiredVersion: null,
       lastGithubRunId: null,
       lastGithubRunAttempt: null,
       updatedAt: settings?.updatedAt ?? new Date(0),
       source: "legacy-read-bridge",
     };
   }
-  const components = await knowledgeDb.query.flyImageReleaseComponents.findMany({
-    where: and(
-      eq(schema.flyImageReleaseComponents.releaseId, settings.stableReleaseId),
-      inArray(schema.flyImageReleaseComponents.role, [
-        "workspace-runtime",
-        "environment-router",
-      ]),
-    ),
-  });
-  const runtime = components.find((component) => component.role === "workspace-runtime");
-  const router = components.find((component) => component.role === "environment-router");
+  const components = await knowledgeDb.query.flyImageReleaseComponents.findMany(
+    {
+      where: and(
+        eq(
+          schema.flyImageReleaseComponents.releaseId,
+          settings.stableReleaseId,
+        ),
+        inArray(schema.flyImageReleaseComponents.role, [
+          "workspace-runtime",
+          "environment-router",
+        ]),
+      ),
+    },
+  );
+  const runtime = components.find(
+    (component) => component.role === "workspace-runtime",
+  );
+  const router = components.find(
+    (component) => component.role === "environment-router",
+  );
   const complete = runtime && router;
   return {
     name: PRODUCTION_CHANNEL,
@@ -626,6 +955,7 @@ async function getLegacyRuntimeChannel(): Promise<EnvironmentRuntimeChannel> {
         }
       : null,
     previousVersion: null,
+    desiredVersion: null,
     lastGithubRunId: null,
     lastGithubRunAttempt: null,
     updatedAt: settings.updatedAt,
@@ -644,45 +974,74 @@ function mapSchemaVersion(
     routerSourceRevision: version.environmentRouterSourceRevision,
     githubRunId: version.githubRunId,
     githubRunAttempt: version.githubRunAttempt,
-    createdAt: version.createdAt,
+    createdAt: runtimeDate(version.createdAt),
   };
 }
 
-function mapVersion(row: ChannelRow, prefix: "current" | "previous") {
-  const id = prefix === "current" ? row.currentVersionId : row.previousVersionId;
-  if (!id) return null;
-  const runtimeImage =
-    prefix === "current" ? row.currentRuntimeImage : row.previousRuntimeImage;
-  const runtimeSourceRevision =
-    prefix === "current"
-      ? row.currentRuntimeSourceRevision
-      : row.previousRuntimeSourceRevision;
-  const routerImage =
-    prefix === "current" ? row.currentRouterImage : row.previousRouterImage;
-  const routerSourceRevision =
-    prefix === "current"
-      ? row.currentRouterSourceRevision
-      : row.previousRouterSourceRevision;
-  const createdAt =
-    prefix === "current" ? row.currentCreatedAt : row.previousCreatedAt;
-  if (!(runtimeImage && runtimeSourceRevision && routerImage && routerSourceRevision && createdAt)) {
+function runtimeDate(value: Date | string) {
+  return value instanceof Date ? value : new Date(value);
+}
+
+function mapVersion(
+  row: ChannelRow,
+  prefix: "current" | "previous" | "desired",
+) {
+  const versions = {
+    current: {
+      id: row.currentVersionId,
+      runtimeImage: row.currentRuntimeImage,
+      runtimeSourceRevision: row.currentRuntimeSourceRevision,
+      routerImage: row.currentRouterImage,
+      routerSourceRevision: row.currentRouterSourceRevision,
+      githubRunId: row.currentGithubRunId,
+      githubRunAttempt: row.currentGithubRunAttempt,
+      createdAt: row.currentCreatedAt,
+    },
+    previous: {
+      id: row.previousVersionId,
+      runtimeImage: row.previousRuntimeImage,
+      runtimeSourceRevision: row.previousRuntimeSourceRevision,
+      routerImage: row.previousRouterImage,
+      routerSourceRevision: row.previousRouterSourceRevision,
+      githubRunId: row.previousGithubRunId,
+      githubRunAttempt: row.previousGithubRunAttempt,
+      createdAt: row.previousCreatedAt,
+    },
+    desired: {
+      id: row.desiredVersionId,
+      runtimeImage: row.desiredRuntimeImage,
+      runtimeSourceRevision: row.desiredRuntimeSourceRevision,
+      routerImage: row.desiredRouterImage,
+      routerSourceRevision: row.desiredRouterSourceRevision,
+      githubRunId: row.desiredGithubRunId,
+      githubRunAttempt: row.desiredGithubRunAttempt,
+      createdAt: row.desiredCreatedAt,
+    },
+  };
+  const version = versions[prefix];
+  if (!version.id) return null;
+  if (
+    !(
+      version.runtimeImage &&
+      version.runtimeSourceRevision &&
+      version.routerImage &&
+      version.routerSourceRevision &&
+      version.createdAt
+    )
+  ) {
     throw new EnvironmentRuntimeChannelError(
       "RUNTIME_CHANNEL_UNAVAILABLE",
       `The ${prefix} Environment Runtime Version is incomplete.`,
     );
   }
   return {
-    id,
-    runtimeImage,
-    runtimeSourceRevision,
-    routerImage,
-    routerSourceRevision,
-    githubRunId:
-      prefix === "current" ? row.currentGithubRunId : row.previousGithubRunId,
-    githubRunAttempt:
-      prefix === "current"
-        ? row.currentGithubRunAttempt
-        : row.previousGithubRunAttempt,
-    createdAt,
+    id: version.id,
+    runtimeImage: version.runtimeImage,
+    runtimeSourceRevision: version.runtimeSourceRevision,
+    routerImage: version.routerImage,
+    routerSourceRevision: version.routerSourceRevision,
+    githubRunId: version.githubRunId,
+    githubRunAttempt: version.githubRunAttempt,
+    createdAt: runtimeDate(version.createdAt),
   };
 }

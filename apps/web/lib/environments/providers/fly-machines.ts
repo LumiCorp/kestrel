@@ -75,6 +75,12 @@ const machineSchema = z.object({
   id: z.string().min(1),
   state: z.string().min(1),
   region: z.string().min(1),
+  image_ref: z
+    .object({
+      digest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+    })
+    .passthrough()
+    .optional(),
   instance_id: z.string().min(1).nullable().optional(),
   checks: z
     .array(
@@ -139,6 +145,14 @@ const snapshotResponseSchema = z.object({
 
 const MACHINE_START_RETRY_INTERVAL_MS = 1000;
 const MACHINE_START_RETRY_ATTEMPTS = 10;
+
+export type FlyMachineHealthCheck = {
+  name: string;
+  port: number;
+  path: string;
+  timeoutSeconds: number;
+  gracePeriodSeconds: number;
+};
 
 export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   private readonly token: string;
@@ -850,6 +864,58 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     return machines.map(toMachine);
   }
 
+  async cloneMachineAsStoppedStandby(input: {
+    appName: string;
+    machineId: string;
+    runtimeImage: string;
+    healthCheck: FlyMachineHealthCheck;
+  }) {
+    const current = parseResponse(
+      machineSchema,
+      await this.request(
+        "fly.machine.clone-source.get",
+        `/apps/${encodeURIComponent(input.appName)}/machines/${encodeURIComponent(input.machineId)}`,
+        { method: "GET" },
+      ),
+    );
+    if (!current.config) {
+      throw new EnvironmentProviderError(
+        "FLY_RESPONSE_INVALID",
+        "Fly Machine configuration is unavailable for standby creation.",
+      );
+    }
+    if (current.config.mounts?.length) {
+      throw new EnvironmentProviderError(
+        "FLY_RESOURCE_CONFLICT",
+        "Platform deployment cannot clone a Machine with attached volumes.",
+      );
+    }
+    return toMachine(
+      parseResponse(
+        machineSchema,
+        await this.request(
+          "fly.machine.standby.create",
+          `/apps/${encodeURIComponent(input.appName)}/machines`,
+          {
+            method: "POST",
+            body: jsonBody({
+              region: current.region,
+              skip_launch: true,
+              config: {
+                ...current.config,
+                image: input.runtimeImage,
+                checks: applyMachineHealthCheck(
+                  current.config.checks,
+                  input.healthCheck,
+                ),
+              },
+            }),
+          },
+        ),
+      ),
+    );
+  }
+
   async waitForMachine(input: {
     appName: string;
     machineId: string;
@@ -964,6 +1030,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     runtimeImage: string;
     envPatch?: Record<string, string | undefined> | undefined;
     stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
+    healthCheck?: FlyMachineHealthCheck | undefined;
   }) {
     const current = parseResponse(
       machineSchema,
@@ -985,10 +1052,14 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       current.config.env ?? {},
       input.envPatch,
     );
+    const nextChecks = input.healthCheck
+      ? applyMachineHealthCheck(current.config.checks, input.healthCheck)
+      : current.config.checks;
     if (
       sameImageDigest(current.config.image, input.runtimeImage) &&
       environmentsEqual(current.config.env ?? {}, nextEnvironment) &&
-      stopConfigsEqual(current.config.stop_config, input.stopConfig)
+      stopConfigsEqual(current.config.stop_config, input.stopConfig) &&
+      healthCheckMatches(current.config.checks, input.healthCheck)
     ) {
       return toMachine(current);
     }
@@ -1006,6 +1077,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
                 ...current.config,
                 image: input.runtimeImage,
                 env: nextEnvironment,
+                ...(nextChecks ? { checks: nextChecks } : {}),
                 ...(input.stopConfig ? { stop_config: input.stopConfig } : {}),
               },
               current_version: current.instance_id,
@@ -1037,6 +1109,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           runtimeImage: input.runtimeImage,
           environment: nextEnvironment,
           stopConfig: input.stopConfig,
+          healthCheck: input.healthCheck,
         })
       ) {
         Object.assign(error, {
@@ -1055,6 +1128,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       runtimeImage: input.runtimeImage,
       environment: nextEnvironment,
       stopConfig: input.stopConfig,
+      healthCheck: input.healthCheck,
     })
       ? updated
       : await this.waitForMachineConfiguration({
@@ -1063,6 +1137,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           runtimeImage: input.runtimeImage,
           environment: nextEnvironment,
           stopConfig: input.stopConfig,
+          healthCheck: input.healthCheck,
         });
     return toMachine(applied);
   }
@@ -1073,6 +1148,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     runtimeImage: string;
     environment: Record<string, string>;
     stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
+    healthCheck?: FlyMachineHealthCheck | undefined;
   }) {
     const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
     while (true) {
@@ -1089,6 +1165,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           runtimeImage: input.runtimeImage,
           environment: input.environment,
           stopConfig: input.stopConfig,
+          healthCheck: input.healthCheck,
         })
       ) {
         return machine;
@@ -1415,6 +1492,9 @@ function toMachine(
       ? { memoryMb: machine.config.guest.memory_mb }
       : {}),
     ...(machine.config?.image ? { image: machine.config.image } : {}),
+    ...(machine.image_ref?.digest
+      ? { resolvedImageDigest: machine.image_ref.digest }
+      : {}),
     ...(machine.instance_id ? { instanceId: machine.instance_id } : {}),
     ...(machine.config?.metadata?.kestrel_workspace_id
       ? { workspaceId: machine.config.metadata.kestrel_workspace_id }
@@ -1504,20 +1584,71 @@ function machineConfigurationMatches(
         image?: string | undefined;
         env?: Record<string, string> | undefined;
         stop_config?: { signal: string; timeout: number } | null | undefined;
+        checks?: unknown;
       }
     | undefined,
   requested: {
     runtimeImage: string;
     environment: Record<string, string>;
     stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
+    healthCheck?: FlyMachineHealthCheck | undefined;
   },
 ) {
   return Boolean(
     current?.image &&
     sameImageDigest(current.image, requested.runtimeImage) &&
     environmentsEqual(current.env ?? {}, requested.environment) &&
-    stopConfigsEqual(current.stop_config, requested.stopConfig),
+    stopConfigsEqual(current.stop_config, requested.stopConfig) &&
+    healthCheckMatches(current.checks, requested.healthCheck),
   );
+}
+
+function applyMachineHealthCheck(
+  current: unknown,
+  requested: FlyMachineHealthCheck,
+) {
+  const checks = isRecord(current) ? { ...current } : {};
+  checks[requested.name] = {
+    type: "http",
+    port: requested.port,
+    method: "GET",
+    path: requested.path,
+    interval: 15_000_000_000,
+    timeout: requested.timeoutSeconds * 1_000_000_000,
+    grace_period: requested.gracePeriodSeconds * 1_000_000_000,
+  };
+  return checks;
+}
+
+function healthCheckMatches(
+  current: unknown,
+  requested: FlyMachineHealthCheck | undefined,
+) {
+  if (!requested) return true;
+  if (!isRecord(current)) return false;
+  const check = current[requested.name];
+  if (!isRecord(check)) return false;
+  return (
+    check.type === "http" &&
+    check.port === requested.port &&
+    String(check.method).toUpperCase() === "GET" &&
+    check.path === requested.path &&
+    machineDurationNanoseconds(check.interval) === 15_000_000_000 &&
+    machineDurationNanoseconds(check.timeout) ===
+      requested.timeoutSeconds * 1_000_000_000 &&
+    machineDurationNanoseconds(check.grace_period) ===
+      requested.gracePeriodSeconds * 1_000_000_000
+  );
+}
+
+function machineDurationNanoseconds(value: unknown) {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+  if (typeof value === "string") return parseFlyDurationNanoseconds(value);
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseResponse<T>(schema: z.ZodType<T>, value: unknown): T {

@@ -30,5 +30,10 @@ export async function runScheduledEnvironmentReconciliation(input?: {
 
 async function loadAndReconcileHostedEnvironments() {
   const { reconcileHostedEnvironments } = await import("./reconcile");
-  return reconcileHostedEnvironments();
+  const result = await reconcileHostedEnvironments();
+  const { reconcileDesiredEnvironmentRuntime } = await import(
+    "./runtime-channel"
+  );
+  await reconcileDesiredEnvironmentRuntime();
+  return result;
 }

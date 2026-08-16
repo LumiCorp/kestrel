@@ -1,6 +1,7 @@
 import { AdminPageHeader } from "@/components/admin/admin-page-header";
 import {
   getEnvironmentRuntimeChannel,
+  getEnvironmentRuntimeCanary,
   listEnvironmentRuntimeCanaries,
 } from "@/lib/environments/runtime-channel";
 import { requireAdmin } from "@/lib/knowledge/auth";
@@ -8,9 +9,15 @@ import { RuntimeChannelClient } from "./runtime-channel-client";
 
 export default async function PlatformRuntimePage() {
   await requireAdmin();
-  const [channel, canaries] = await Promise.all([
-    getEnvironmentRuntimeChannel(),
+  const channel = await getEnvironmentRuntimeChannel();
+  const [canaries, desiredOperation] = await Promise.all([
     listEnvironmentRuntimeCanaries(),
+    channel.desiredVersion && channel.canaryEnvironmentId
+      ? getEnvironmentRuntimeCanary(
+          channel.desiredVersion.id,
+          channel.updatedAt,
+        )
+      : null,
   ]);
   return (
     <div className="space-y-6">
@@ -21,6 +28,17 @@ export default async function PlatformRuntimePage() {
       />
       <RuntimeChannelClient
         canaries={canaries}
+        desiredOperation={
+          desiredOperation
+            ? {
+                id: desiredOperation.id,
+                status: desiredOperation.status,
+                stage: desiredOperation.stage,
+                errorCode: desiredOperation.errorCode,
+                errorMessage: desiredOperation.errorMessage,
+              }
+            : null
+        }
         channel={{
           generation: channel.generation,
           canaryEnvironmentId: channel.canaryEnvironmentId,
@@ -36,6 +54,13 @@ export default async function PlatformRuntimePage() {
                 id: channel.previousVersion.id,
                 runtimeImage: channel.previousVersion.runtimeImage,
                 routerImage: channel.previousVersion.routerImage,
+              }
+            : null,
+          desiredVersion: channel.desiredVersion
+            ? {
+                id: channel.desiredVersion.id,
+                runtimeImage: channel.desiredVersion.runtimeImage,
+                routerImage: channel.desiredVersion.routerImage,
               }
             : null,
         }}

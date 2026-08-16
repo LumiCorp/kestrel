@@ -11,17 +11,12 @@ docker run --rm --entrypoint sh "$image" -c '
     exit 1
   }
   case "$output" in
-    *"DATABASE_URL or POSTGRES_URL is required"*) ;;
+    *"runpod-worker configuration is incomplete"*) ;;
     *)
       printf "%s\n" "$output" >&2
       exit 1
       ;;
   esac
 '
-
-if [[ -n "${EXPECTED_GIT_SHA:-}" ]]; then
-  revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")"
-  [[ "$revision" == "$EXPECTED_GIT_SHA" ]]
-fi
 
 printf 'RunPod worker image smoke passed\n'

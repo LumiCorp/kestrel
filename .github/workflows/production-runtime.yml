@@ -1,0 +1,63 @@
+name: Production Environment Runtime images
+
+on:
+  push:
+    branches: [production]
+  workflow_dispatch:
+    inputs:
+      diff_base:
+        description: Git revision to diff for manual recovery
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: production-environment-runtime-images
+  cancel-in-progress: false
+
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.images.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - id: images
+        env:
+          KESTREL_DIFF_BASE: ${{ github.event_name == 'push' && github.event.before || inputs.diff_base }}
+        run: pnpm tsx scripts/select-production-images.ts environment-runtime
+  build:
+    needs: select
+    if: ${{ fromJSON(needs.select.outputs.matrix).role[0] != null }}
+    strategy:
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Authenticate GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Build, smoke, and publish runtime image
+        run: pnpm tsx scripts/build-production-image.ts "${{ matrix.role }}"
+  notify:
+    needs: [select, build]
+    if: ${{ needs.build.result == 'success' }}
+    environment: Production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Record the desired runtime pair in Kestrel
+        env:
+          KESTREL_ONE_PRODUCTION_URL: ${{ vars.KESTREL_ONE_PRODUCTION_URL }}
+          PRODUCTION_IMAGE_DEPLOY_TOKEN: ${{ secrets.PRODUCTION_IMAGE_DEPLOY_TOKEN }}
+        run: pnpm tsx scripts/notify-production-runtime.ts

@@ -512,6 +512,13 @@
       "when": 1786680000000,
       "tag": "0072_environment_runtime_channels",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1786766400000,
+      "tag": "0073_application_owned_production_delivery",
+      "breakpoints": true
     }
   ]
 }

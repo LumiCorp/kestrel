@@ -2316,11 +2316,11 @@ export const environmentRuntimeVersions = pgTable(
     ),
     check(
       "environment_runtime_versions_workspace_image_check",
-      sql`${table.workspaceRuntimeImage} ~ '^ghcr\\.io/lumicorp/kestrel-workspace-runtime@sha256:[0-9a-f]{64}$'`,
+      sql`${table.workspaceRuntimeImage} ~ '^ghcr\\.io/lumicorp/kestrel-workspace-runtime(@sha256:[0-9a-f]{64}|:production-[1-9][0-9]*-[1-9][0-9]*)$'`,
     ),
     check(
       "environment_runtime_versions_router_image_check",
-      sql`${table.environmentRouterImage} ~ '^ghcr\\.io/lumicorp/kestrel-environment-router@sha256:[0-9a-f]{64}$'`,
+      sql`${table.environmentRouterImage} ~ '^ghcr\\.io/lumicorp/kestrel-environment-router(@sha256:[0-9a-f]{64}|:production-[1-9][0-9]*-[1-9][0-9]*)$'`,
     ),
     check(
       "environment_runtime_versions_workspace_revision_check",
@@ -2349,6 +2349,10 @@ export const environmentRuntimeChannels = pgTable(
       { onDelete: "restrict" },
     ),
     previousVersionId: text("previous_version_id").references(
+      () => environmentRuntimeVersions.id,
+      { onDelete: "restrict" },
+    ),
+    desiredVersionId: text("desired_version_id").references(
       () => environmentRuntimeVersions.id,
       { onDelete: "restrict" },
     ),

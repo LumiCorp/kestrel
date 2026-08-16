@@ -1,11 +1,10 @@
 import { getGatewayCredentialAuthorityReadiness } from "@/lib/ai/gateway-credential-readiness.server";
 import {
   assertTurnWorkerProcessConfiguration,
-  TURN_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
 } from "@/lib/runtime/process-contracts";
 import {
   assertWorkerDatabaseReady,
-  resolveWorkerSourceRevision,
+  resolveWorkerBuildId,
   startWorkerHealthServer,
 } from "@/lib/runtime/worker-health";
 import {
@@ -23,8 +22,7 @@ async function main() {
   }
   health = await startWorkerHealthServer({
     role: "turn-worker",
-    sourceRevision: await resolveWorkerSourceRevision(),
-    configurationFingerprint: TURN_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
+    buildId: await resolveWorkerBuildId(),
   });
   await assertWorkerDatabaseReady();
   const readiness = await getGatewayCredentialAuthorityReadiness();

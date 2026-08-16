@@ -4,11 +4,10 @@ import {
 } from "@/lib/knowledge/queue";
 import {
   assertControlWorkerProcessConfiguration,
-  CONTROL_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
 } from "@/lib/runtime/process-contracts";
 import {
   assertWorkerDatabaseReady,
-  resolveWorkerSourceRevision,
+  resolveWorkerBuildId,
   startWorkerHealthServer,
 } from "@/lib/runtime/worker-health";
 
@@ -18,8 +17,7 @@ async function main() {
   assertControlWorkerProcessConfiguration();
   health = await startWorkerHealthServer({
     role: "control-worker",
-    sourceRevision: await resolveWorkerSourceRevision(),
-    configurationFingerprint: CONTROL_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
+    buildId: await resolveWorkerBuildId(),
   });
   await assertWorkerDatabaseReady();
   await startEnvironmentLifecycleWorker();
