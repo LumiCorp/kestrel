@@ -19,7 +19,6 @@ export const flyImageCatalogSchema = z.object({
           publisher: z.enum(["fly", "ghcr"]),
           repository: z.string().trim().min(1),
           app: z.string().trim().min(1),
-          config: z.string().trim().min(1),
           dockerfile: z.string().trim().min(1),
           smoke: z.string().trim().min(1),
           channel: z.enum(["environment-runtime", "fly", "runpod"]),

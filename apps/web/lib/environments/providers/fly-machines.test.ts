@@ -40,6 +40,7 @@ test("Fly Machine inventory preserves authoritative standby relationships", asyn
           id: "primary-1",
           state: "started",
           region: "iad",
+          image_ref: { digest: `sha256:${"a".repeat(64)}` },
           config: { image: "registry.fly.io/example@sha256:abc" },
         },
         {
@@ -59,11 +60,20 @@ test("Fly Machine inventory preserves authoritative standby relationships", asyn
   assert.deepEqual(
     machines.map((machine) => ({
       id: machine.id,
+      resolvedImageDigest: machine.resolvedImageDigest,
       standbyForMachineIds: machine.standbyForMachineIds,
     })),
     [
-      { id: "primary-1", standbyForMachineIds: [] },
-      { id: "standby-1", standbyForMachineIds: ["primary-1"] },
+      {
+        id: "primary-1",
+        resolvedImageDigest: `sha256:${"a".repeat(64)}`,
+        standbyForMachineIds: [],
+      },
+      {
+        id: "standby-1",
+        resolvedImageDigest: undefined,
+        standbyForMachineIds: ["primary-1"],
+      },
     ],
   );
 });
@@ -1079,6 +1089,167 @@ test("Fly image updates are idempotent across tag aliases of the same digest", a
     ["GET"],
   );
 });
+
+test("Fly platform image updates install the exact named health check", async () => {
+  const requests: Array<{ method: string; body: TestMachineRequestBody | null }> = [];
+  const currentConfig = {
+    image: "registry.fly.io/kestrel-one-turn-worker:production-41-1",
+    env: { KESTREL_WORKER_HEALTH_PORT: "8081" },
+  };
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      requests.push({ method: init?.method ?? "GET", body });
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        instance_id: "instance-1",
+        config: body?.config ?? currentConfig,
+      });
+    }) as typeof fetch,
+  });
+  await client.updateMachineImage({
+    appName: "kestrel-one-turn-worker",
+    machineId: "machine-1",
+    runtimeImage: "registry.fly.io/kestrel-one-turn-worker:production-42-1",
+    healthCheck: {
+      name: "worker",
+      port: 8081,
+      path: "/healthz",
+      timeoutSeconds: 5,
+      gracePeriodSeconds: 30,
+    },
+  });
+  assert.equal(requests[1]?.body?.config?.checks?.worker?.path, "/healthz");
+  assert.equal(requests[1]?.body?.config?.checks?.worker?.port, 8081);
+  assert.equal(
+    requests[1]?.body?.config?.checks?.worker?.timeout,
+    5_000_000_000,
+  );
+});
+
+test("Fly platform image updates repair stale health check timing", async () => {
+  const requests: Array<{ method: string; body: TestMachineRequestBody | null }> = [];
+  const image = "registry.fly.io/kestrel-one-turn-worker:production-42-1";
+  const currentConfig = {
+    image,
+    checks: {
+      worker: {
+        type: "http",
+        port: 8081,
+        method: "GET",
+        path: "/healthz",
+        interval: "15s",
+        timeout: "2s",
+        grace_period: "10s",
+      },
+    },
+  };
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      requests.push({ method: init?.method ?? "GET", body });
+      return Response.json({
+        id: "machine-1",
+        state: "started",
+        region: "iad",
+        instance_id: "instance-1",
+        config: body?.config ?? currentConfig,
+      });
+    }) as typeof fetch,
+  });
+  await client.updateMachineImage({
+    appName: "kestrel-one-turn-worker",
+    machineId: "machine-1",
+    runtimeImage: image,
+    healthCheck: {
+      name: "worker",
+      port: 8081,
+      path: "/healthz",
+      timeoutSeconds: 5,
+      gracePeriodSeconds: 30,
+    },
+  });
+  assert.equal(requests.length, 2);
+  assert.equal(
+    requests[1]?.body?.config?.checks?.worker?.timeout,
+    5_000_000_000,
+  );
+  assert.equal(
+    requests[1]?.body?.config?.checks?.worker?.grace_period,
+    30_000_000_000,
+  );
+});
+
+test("Fly platform standby creation clones configuration without launching", async () => {
+  const requests: Array<{ method: string; body: TestMachineRequestBody | null }> = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+      requests.push({ method: init?.method ?? "GET", body });
+      if ((init?.method ?? "GET") === "GET") {
+        return Response.json({
+          id: "active",
+          state: "started",
+          region: "iad",
+          config: {
+            image: "registry.fly.io/kestrel-one-runpod-worker:production-41-1",
+            env: { KESTREL_WORKER_HEALTH_PORT: "8081" },
+          },
+        });
+      }
+      return Response.json({
+        id: "standby",
+        state: "created",
+        region: "iad",
+        config: body?.config,
+      });
+    }) as typeof fetch,
+  });
+  const standby = await client.cloneMachineAsStoppedStandby({
+    appName: "kestrel-one-runpod-worker",
+    machineId: "active",
+    runtimeImage: "registry.fly.io/kestrel-one-runpod-worker:production-42-1",
+    healthCheck: {
+      name: "worker",
+      port: 8081,
+      path: "/healthz",
+      timeoutSeconds: 5,
+      gracePeriodSeconds: 30,
+    },
+  });
+  assert.equal(standby.id, "standby");
+  assert.equal(requests[1]?.body?.skip_launch, true);
+  assert.equal(
+    requests[1]?.body?.config?.image,
+    "registry.fly.io/kestrel-one-runpod-worker:production-42-1",
+  );
+  assert.equal(requests[1]?.body?.config?.checks?.worker?.path, "/healthz");
+});
+
+type TestMachineRequestBody = {
+  skip_launch?: boolean;
+  config?: {
+    image?: string;
+    env?: Record<string, string>;
+    checks?: Record<
+      string,
+      {
+        path?: string;
+        port?: number;
+        timeout?: number;
+        grace_period?: number;
+      }
+    >;
+  };
+};
 
 test("Fly Workspace image updates repair missing graceful stop configuration", async () => {
   const requests: Array<{ method: string; body: unknown }> = [];

@@ -25,26 +25,15 @@ List any focused process, PostgreSQL, Chromium, mutation, documentation,
 Desktop, Ruhroh, or release checks separately when the change touches those
 surfaces.
 
-For a Kestrel One turn-worker configuration-contract change, add this release note:
+For the initial application-owned production-delivery cutover, add this note:
 
 ```text
-Production release owner: run `pnpm --dir apps/web stage:turn-worker-config -- --release <release-id>` before approval.
+Production owner: run `pnpm --filter @kestrel/kestrel-one production-delivery:prepare`, review the exact blockers and changes, then run the same command with `-- --apply` before advancing `production`.
 ```
 
-Do not run that command in PR CI: it stages production role configuration from
-Vercel to Fly without touching the existing Machines.
-
-For a Kestrel One release-controller or lifecycle-queue change, add this release
-note:
-
-```text
-Production release owner: after candidate publication, dispatch `Prepare release candidate` for the candidate UUID from the exact release revision before approval.
-```
-
-The preparation workflow deploys the candidate controller, preserves the
-primary/standby topology, and verifies the exact artifact and database
-heartbeat. Use `pnpm --dir apps/web release:control-worker` only for an explicit
-bootstrap or repair, not as the standard candidate release path.
+Do not run apply mode in PR CI. It stages production worker configuration and
+installs the shared notification token but does not deploy Machines or advance
+the production branch.
 
 ## Notes
 

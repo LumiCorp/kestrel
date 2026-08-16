@@ -44,6 +44,7 @@ const webServerEnv = {
   DEV_AUTH_BYPASS: "true",
   KESTREL_DISABLE_DOTENV: "1",
   KESTREL_BUILD_REVISION: "0".repeat(40),
+  KESTREL_BUILD_ID: "production-1-1",
   KESTREL_ENVIRONMENT_GATEWAY_URL: `http://127.0.0.1:${fakeOpenRouterPort}`,
   KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID: "product-contract-key",
   KESTREL_GATEWAY_CREDENTIAL_KEYS:

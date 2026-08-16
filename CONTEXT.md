@@ -64,17 +64,18 @@ A project-level mode that starts eligible Work Items while respecting Project re
 ## Memory, provenance, and resource terms
 
 **Environment Runtime Version**
-An immutable pair of role-specific Workspace Runtime and Environment Router
-digests, their source revisions, and originating GitHub workflow identity.
+An immutable pair of fixed Workspace Runtime and Environment Router image
+references.
 
 **Environment Runtime Channel**
-The atomic generation-checked production pointer selecting the current and
-previous Environment Runtime Version plus the canary Environment. It chooses
-the default for new Environments and never updates existing Environments.
+The production record selecting the current, previous, and newest desired
+Environment Runtime Version plus the canary Environment. It chooses the
+default for new Environments and never updates existing Environments.
 
 **Production Delivery Channel**
-One independently triggered, proved, and rolled-back hosted production lane:
-database, Vercel, Fly component, or managed RunPod worker.
+One independently triggered hosted production lane: native Vercel delivery,
+Fly platform images, the paired Environment Runtime, or the managed RunPod
+worker.
 
 **Memory Read Binding**
 A trusted, versioned authorization that binds one memory retrieval to an exact tenant, user, agent, task, policy revision, namespace, scope, and document-access set. A model can provide a bounded query but cannot mint or widen this binding.

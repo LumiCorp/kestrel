@@ -11,10 +11,16 @@ export function assertEnvironmentRuntimeImage(
   role: EnvironmentRuntimeImageRole,
   image: string,
 ) {
-  const expected = `${REPOSITORIES[role]}@`;
-  if (!image.startsWith(expected) || !/@sha256:[0-9a-f]{64}$/u.test(image)) {
+  const repository = REPOSITORIES[role];
+  const reference = image.slice(repository.length);
+  if (
+    !image.startsWith(repository) ||
+    !/^(?:@sha256:[0-9a-f]{64}|:production-[1-9][0-9]*-[1-9][0-9]*)$/u.test(
+      reference,
+    )
+  ) {
     throw new Error(
-      `Environment Runtime image for '${role}' must be an immutable ${REPOSITORIES[role]} digest.`,
+      `Environment Runtime image for '${role}' must use an approved fixed ${repository} reference.`,
     );
   }
 }

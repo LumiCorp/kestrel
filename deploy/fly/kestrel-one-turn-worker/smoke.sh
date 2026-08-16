@@ -13,11 +13,4 @@ if [[ "$output" != *"Kestrel One durable turn worker failed to start: turn-worke
   exit 1
 fi
 
-if [[ -n "${EXPECTED_GIT_SHA:-}" ]]; then
-  revision="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")"
-  [[ "$revision" == "$EXPECTED_GIT_SHA" ]]
-  artifact="$(docker run --rm "$image" sh -c 'cat /workspace/.kestrel-source-revision')"
-  [[ "$artifact" == "$EXPECTED_GIT_SHA" ]]
-fi
-
 printf 'turn worker image smoke passed\n'

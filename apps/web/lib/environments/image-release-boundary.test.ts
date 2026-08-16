@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-test("hosted Environment images have distinct revisioned release contracts", async () => {
+test("hosted Environment images carry the production build identity", async () => {
   const [
     workspaceDockerfile,
     routerDockerfile,
@@ -75,10 +75,10 @@ test("hosted Environment images have distinct revisioned release contracts", asy
     routerDockerfile,
     previewEdgeDockerfile,
   ]) {
-    assert.match(dockerfile, /ARG KESTREL_GIT_SHA=unknown/u);
+    assert.match(dockerfile, /ARG KESTREL_BUILD_ID=unknown/u);
     assert.match(
       dockerfile,
-      /org\.opencontainers\.image\.revision=\$KESTREL_GIT_SHA/u,
+      /org\.opencontainers\.image\.version=\$KESTREL_BUILD_ID/u,
     );
   }
   assert.match(

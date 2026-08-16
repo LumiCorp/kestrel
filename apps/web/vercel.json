@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd ../.. && pnpm run web:build",
+  "buildCommand": "cd ../.. && if [ \"$VERCEL_ENV\" = \"production\" ]; then pnpm --filter @kestrel/kestrel-one config:validate:production && pnpm --filter @kestrel/kestrel-one db:migrate:deploy; fi && pnpm run web:build",
   "crons": [
     {
       "path": "/api/cron/environments/reconcile",

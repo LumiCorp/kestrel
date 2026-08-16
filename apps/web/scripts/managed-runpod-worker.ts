@@ -1,11 +1,10 @@
 import { startManagedRunPodWorker } from "@/lib/knowledge/queue";
 import {
   assertRunPodWorkerProcessConfiguration,
-  RUNPOD_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
 } from "@/lib/runtime/process-contracts";
 import {
   assertWorkerDatabaseReady,
-  resolveWorkerSourceRevision,
+  resolveWorkerBuildId,
   startWorkerHealthServer,
 } from "@/lib/runtime/worker-health";
 
@@ -13,8 +12,7 @@ async function run() {
   assertRunPodWorkerProcessConfiguration();
   const health = await startWorkerHealthServer({
     role: "runpod-worker",
-    sourceRevision: await resolveWorkerSourceRevision(),
-    configurationFingerprint: RUNPOD_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
+    buildId: await resolveWorkerBuildId(),
   });
   try {
     await assertWorkerDatabaseReady();

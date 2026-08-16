@@ -5,8 +5,7 @@ import { startWorkerHealthServer } from "./worker-health";
 test("private worker health is closed until ready and closes during shutdown", async () => {
   const health = await startWorkerHealthServer({
     role: "turn-worker",
-    sourceRevision: "a".repeat(40),
-    configurationFingerprint: `sha256:${"b".repeat(64)}`,
+    buildId: "production-42-1",
     port: 0,
   });
   const url = `http://127.0.0.1:${health.port}/healthz`;
@@ -18,9 +17,7 @@ test("private worker health is closed until ready and closes during shutdown", a
     assert.deepEqual(await ready.json(), {
       ok: true,
       role: "turn-worker",
-      sourceRevision: "a".repeat(40),
-      contractRevision: 2,
-      configurationFingerprint: `sha256:${"b".repeat(64)}`,
+      buildId: "production-42-1",
     });
     health.markUnhealthy();
     assert.equal((await fetch(url)).status, 503);
