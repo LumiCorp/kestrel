@@ -16,10 +16,6 @@ import {
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { getOrganizationInfrastructureSettings } from "@/lib/environments/organization-infrastructure-settings";
-import {
-  requireCurrentEnvironmentRuntime,
-  requestEnvironmentRuntimeUpdate,
-} from "@/lib/environments/runtime-channel";
 
 export async function createAdminEnvironment(input: {
   organizationId: string;
@@ -185,53 +181,6 @@ export async function requestAdminEnvironmentDeletion(input: {
       requestAction: requested.action,
     },
   }).catch(() => {});
-  return requested;
-}
-
-export async function updateAdminEnvironmentRuntime(input: {
-  organizationId: string;
-  actorUserId: string;
-  environmentId: string;
-  reconcile?: boolean | undefined;
-}) {
-  const environment = await getOrganizationEnvironment({
-    organizationId: input.organizationId,
-    environmentId: input.environmentId,
-  });
-  if (!environment) throw new Error("Environment not found.");
-  const current = await requireCurrentEnvironmentRuntime();
-  const { runtimeImage, routerImage } = current;
-  if (
-    environment.runtimeImage === runtimeImage &&
-    environment.routerImage === routerImage &&
-    input.reconcile !== true
-  ) {
-    return { environment, operation: null, version: current };
-  }
-  const requested = await requestEnvironmentRuntimeUpdate({
-    organizationId: input.organizationId,
-    environmentId: input.environmentId,
-    runtimeVersionId: current.id,
-    actorUserId: input.actorUserId,
-  });
-  const { operation } = requested;
-  if (operation.status !== "completed") {
-    await enqueueEnvironmentOperation(operation.id);
-  }
-  await logAdminEvent({
-    organizationId: input.organizationId,
-    actorUserId: input.actorUserId,
-    category: "environments",
-    action: "environment.runtime.updated",
-    targetType: "environment",
-    targetId: input.environmentId,
-    message: "Queued a durable Environment image update.",
-    metadata: {
-      runtimeImage,
-      routerImage,
-      operationId: operation.id,
-    },
-  });
   return requested;
 }
 

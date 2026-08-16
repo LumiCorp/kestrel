@@ -25,15 +25,14 @@ List any focused process, PostgreSQL, Chromium, mutation, documentation,
 Desktop, Ruhroh, or release checks separately when the change touches those
 surfaces.
 
-For the initial application-owned production-delivery cutover, add this note:
+For changes to production images or runtime delivery, add this note:
 
 ```text
-Production owner: run `pnpm --filter @kestrel/kestrel-one production-delivery:prepare`, review the exact blockers and changes, then run the same command with `-- --apply` before advancing `production`.
+Production owner: Fly, managed RunPod, and tenant runtime changes are local manual operations. Review `docs/production-delivery-channels.md`; do not add a production-push deployment or a web-triggered deployment path.
 ```
 
-Do not run apply mode in PR CI. It stages production worker configuration and
-installs the shared notification token but does not deploy Machines or advance
-the production branch.
+PR CI must not publish images, update Machines, register runtime pairs, or
+activate tenant runtime versions.
 
 ## Notes
 

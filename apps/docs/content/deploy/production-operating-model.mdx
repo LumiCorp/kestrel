@@ -1,6 +1,6 @@
 ---
 title: Production deployment
-summary: Deliver independently through database, Vercel, Fly, and RunPod channels with provider-owned proof and rollback.
+summary: Let Vercel deploy Web and Docs while an operator changes every other production target manually.
 section: operate
 audience: integrators
 status: active
@@ -8,46 +8,46 @@ sourceKind: curated
 updatedAt: 2026-08-14
 ---
 
-Use this playbook to advance the protected `production` branch while keeping each delivery channel independently provable and recoverable.
+Use this page to understand the operating boundary, then follow the [production delivery runbook](/operate/production-delivery) for the commands and checklist.
 
 ## Assign operational responsibility
 
 | Layer | Owner | Required evidence |
 | --- | --- | --- |
-| Application and Vercel | Auth, routes, native deployment | Deployment ID, revision, allowed/denied path |
+| Application and Vercel | Auth, routes, native deployment | Deployment ID, migration result, allowed/denied path |
 | Database | Schema and data health | Ordered migrator result and compatibility evidence |
-| Fly components | Catalog-owned images and private workers | Exact digests and role health |
-| RunPod worker | Managed deployment processing | Exact digest and private worker health |
+| Fly components | Operator-selected images and private workers | Exact tag, Machine record, and role health |
+| RunPod worker | Managed deployment processing | Exact tag, Machine record, and private worker health |
 | Runtime and store | Sessions, events, outcomes, replay | Known-session completion and inspection |
-| Providers | Registry, qualification, models, leases | Profile/model readiness and short run |
+| Providers | Registry, qualification, and models | Profile/model readiness and short run |
 | Production owner | Protected-branch decision and rollback | Reviewed change and provider evidence |
 
 ## Advance production
 
-Merge the reviewed replacement to `main`, then advance the protected `production` branch. Source revisions remain diagnostic metadata; production authority is the provider deployment identity or immutable image digest owned by each channel.
+Merge the reviewed change to `main`, then advance the protected `production` branch. Vercel natively deploys `one` and `docs`. Fly, RunPod worker, and tenant runtime targets do not react to the branch change.
 
 ## Preflight migrations
 
 Run the dedicated database job with only the unpooled production connection. Apply ordinary ordered migrations and preserve expand/deploy/contract compatibility.
 
-## Let each channel select its work
+## Operate each target manually
 
-Vercel deploys natively. Fly and RunPod select roles only from the catalog's declared inputs. A role that did not change is not rebuilt merely to manufacture a coordinated revision.
+Choose a readable operator tag and publish only the intended image roles. Update one exact Fly Machine or tenant Environment at a time. Managed RunPod profile changes are separate administrative operations. Nothing selects, rebuilds, deploys, or promotes another target automatically.
 
 ## Verify workers and Environment runtime canaries
 
-Verify every deployed Machine's exact digest and provider-native health result. When Router or Workspace Runtime changes, update the configured Environment through its durable lifecycle, run the existing live Workspace and Preview proofs, and atomically advance the Environment Runtime Channel. Do not update the remaining fleet automatically.
+Verify every deployed Machine's selected tag and provider-native health result. When Router or Workspace Runtime changes, update one canary Environment through its durable lifecycle, run the existing live Workspace and Preview proofs, and explicitly activate that pair. Do not update the remaining fleet automatically.
 
 ## Record evidence
 
-Retain the protected-branch revision, Vercel deployment ID, migration result, exact image digests, worker health, runtime version/channel generation, canary operation, and timestamps. Keep credentials and private reasoning out of the record.
+Retain the operator, intended scope and tag, Vercel deployment IDs, migration result, Fly Machine before/after records, worker health, canary operation, activation result, and timestamps. Keep credentials and private reasoning out of the record.
 
 ## Roll back or fix forward
 
-Promote the prior Vercel deployment or redeploy each Fly/RunPod application's recorded prior digest. Select the previous Environment Runtime Version only after its canary. Never reverse data migrations destructively; stop and fix forward when rollback cannot preserve data contracts.
+Use Vercel's native rollback for its own projects. Redeploy each selected Fly Machine with its recorded prior tag. Return Router and Workspace Runtime to the prior tag only through the same canary-first manual process. Never reverse data migrations destructively; stop and fix forward when rollback cannot preserve data contracts.
 
 <Outcome>
-  <p>Every production channel proves and recovers its own authority, while tenant runtime defaults advance only as one canary-proven immutable pair.</p>
+  <p>Vercel owns Web and Docs; an authenticated operator owns every other exact production target.</p>
 </Outcome>
 
 Continue with [Production delivery](/operate/production-delivery), [Migrations](/operate/migrations), and [Troubleshooting](/operate/troubleshooting).

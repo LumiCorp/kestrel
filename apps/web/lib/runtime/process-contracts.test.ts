@@ -6,12 +6,6 @@ import {
   assertRunPodWorkerProcessConfiguration,
   assertTurnWorkerProcessConfiguration,
   assertWebProcessConfiguration,
-  CONTROL_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
-  processConfigurationContractFingerprint,
-  RUNPOD_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
-  RUNPOD_WORKER_PROCESS_CONTRACT,
-  TURN_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
-  TURN_WORKER_PROCESS_CONTRACT,
 } from "./process-contracts";
 
 function turnWorkerEnvironment() {
@@ -102,7 +96,6 @@ function webEnvironment() {
     KESTREL_WORKSPACE_BACKUP_KEY: control.KESTREL_WORKSPACE_BACKUP_KEY,
     KESTREL_WORKSPACE_BACKUP_KEY_ID:
       control.KESTREL_WORKSPACE_BACKUP_KEY_ID,
-    PRODUCTION_IMAGE_DEPLOY_TOKEN: "production-image-token",
     STORAGE_ACCESS_KEY_ID: control.STORAGE_ACCESS_KEY_ID,
     STORAGE_BUCKET: control.STORAGE_BUCKET,
     STORAGE_ENDPOINT: control.STORAGE_ENDPOINT,
@@ -111,17 +104,9 @@ function webEnvironment() {
   };
 }
 
-test("web production configuration requires its receiver token and rejects legacy images", () => {
+test("web production configuration rejects legacy image authority", () => {
   const valid = webEnvironment();
   assert.doesNotThrow(() => assertWebProcessConfiguration(valid));
-  assert.throws(
-    () =>
-      assertWebProcessConfiguration({
-        ...valid,
-        PRODUCTION_IMAGE_DEPLOY_TOKEN: undefined,
-      }),
-    /incomplete: PRODUCTION_IMAGE_DEPLOY_TOKEN/u,
-  );
   assert.throws(
     () =>
       assertWebProcessConfiguration({
@@ -129,17 +114,6 @@ test("web production configuration requires its receiver token and rejects legac
         KESTREL_WORKSPACE_RUNTIME_IMAGE: "legacy-image",
       }),
     /forbidden values: KESTREL_WORKSPACE_RUNTIME_IMAGE/u,
-  );
-});
-
-test("turn-worker configuration fingerprint depends only on deterministic contract shape", () => {
-  assert.match(
-    TURN_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
-    /^sha256:[a-f0-9]{64}$/u,
-  );
-  assert.equal(
-    processConfigurationContractFingerprint(TURN_WORKER_PROCESS_CONTRACT),
-    TURN_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
   );
 });
 
@@ -158,7 +132,7 @@ test("turn-worker configuration rejects cross-role authority", () => {
     () =>
       assertTurnWorkerProcessConfiguration({
         ...valid,
-        KESTREL_WORKSPACE_RUNTIME_IMAGE: `ghcr.io/example@sha256:${"a".repeat(64)}`,
+        KESTREL_WORKSPACE_RUNTIME_IMAGE: "ghcr.io/example:legacy",
       }),
     /forbidden values: KESTREL_WORKSPACE_RUNTIME_IMAGE/u,
   );
@@ -167,10 +141,6 @@ test("turn-worker configuration rejects cross-role authority", () => {
 test("control-worker validation preserves semantic readiness checks", () => {
   const valid = controlWorkerEnvironment();
   assert.doesNotThrow(() => assertControlWorkerProcessConfiguration(valid));
-  assert.match(
-    CONTROL_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
-    /^sha256:[a-f0-9]{64}$/u,
-  );
   assert.throws(
     () =>
       assertControlWorkerProcessConfiguration({
@@ -208,10 +178,6 @@ test("control-worker validation preserves semantic readiness checks", () => {
 test("runpod-worker requires managed mode without provider authority", () => {
   const valid = runPodWorkerEnvironment();
   assert.doesNotThrow(() => assertRunPodWorkerProcessConfiguration(valid));
-  assert.equal(
-    processConfigurationContractFingerprint(RUNPOD_WORKER_PROCESS_CONTRACT),
-    RUNPOD_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT,
-  );
   assert.throws(
     () =>
       assertRunPodWorkerProcessConfiguration({

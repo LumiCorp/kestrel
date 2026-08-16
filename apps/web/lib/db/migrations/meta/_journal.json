@@ -519,6 +519,13 @@
       "when": 1786766400000,
       "tag": "0073_application_owned_production_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1786852800000,
+      "tag": "0074_manual_runtime_tags",
+      "breakpoints": true
     }
   ]
 }

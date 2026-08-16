@@ -12,9 +12,8 @@ export async function installTestStableRuntimeBundle(
     SELECT pg_advisory_lock(hashtextextended(${FIXTURE_LOCK_KEY}, 0))
   `;
   const versionId = `test-runtime-${suffix}`;
-  const revision = "a".repeat(40);
-  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"d".repeat(64)}`;
-  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime:test-${suffix}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router:test-${suffix}`;
   let previous: {
     currentVersionId: string | null;
     previousVersionId: string | null;
@@ -38,13 +37,12 @@ export async function installTestStableRuntimeBundle(
     previous = row ?? null;
     await connection`
       INSERT INTO "environment_runtime_versions" (
-        "id", "workspace_runtime_image", "workspace_runtime_source_revision",
-        "environment_router_image", "environment_router_source_revision"
+        "id", "workspace_runtime_image", "environment_router_image"
       ) VALUES (
-        ${versionId}, ${runtimeImage}, ${revision}, ${routerImage}, ${revision}
+        ${versionId}, ${runtimeImage}, ${routerImage}
       )
       ON CONFLICT ("workspace_runtime_image", "environment_router_image")
-      DO UPDATE SET "workspace_runtime_source_revision" = EXCLUDED."workspace_runtime_source_revision"
+      DO NOTHING
     `;
     const [version] = await connection<Array<{ id: string }>>`
       SELECT "id" FROM "environment_runtime_versions"

@@ -1966,329 +1966,6 @@ export const environmentWorkspaces = pgTable(
   ],
 );
 
-/** =========================
- *  Fly image releases
- *  ========================= */
-
-export const flyImageReleaseAttempts = pgTable(
-  "fly_image_release_attempts",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    sourceRevision: text("source_revision").notNull(),
-    trigger: text("trigger", {
-      enum: ["main", "scheduled", "manual"],
-    }).notNull(),
-    forceAll: boolean("force_all").notNull(),
-    githubRunId: text("github_run_id").notNull(),
-    githubRunAttempt: integer("github_run_attempt").notNull(),
-    status: text("status", {
-      enum: ["acquired", "building", "candidate", "failed", "expired"],
-    })
-      .notNull()
-      .default("acquired"),
-    leaseExpiresAt: timestamp("lease_expires_at", {
-      withTimezone: true,
-    }).notNull(),
-    releaseId: text("release_id"),
-    failureEvidence: jsonb("failure_evidence").$type<Record<string, unknown>>(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("fly_image_release_attempts_github_run_idx").on(
-      table.githubRunId,
-      table.githubRunAttempt,
-    ),
-    index("fly_image_release_attempts_status_lease_idx").on(
-      table.status,
-      table.leaseExpiresAt,
-    ),
-    check(
-      "fly_image_release_attempts_source_revision_check",
-      sql`${table.sourceRevision} ~ '^[0-9a-f]{40}$'`,
-    ),
-    check(
-      "fly_image_release_attempts_run_id_check",
-      sql`${table.githubRunId} ~ '^[0-9]+$'`,
-    ),
-    check(
-      "fly_image_release_attempts_run_attempt_check",
-      sql`${table.githubRunAttempt} > 0`,
-    ),
-  ],
-);
-
-export const flyImageReleases = pgTable(
-  "fly_image_releases",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    manifestVersion: integer("manifest_version").notNull().default(2),
-    attemptId: text("attempt_id").references(() => flyImageReleaseAttempts.id, {
-      onDelete: "restrict",
-    }),
-    bundleRevision: text("bundle_revision").notNull(),
-    manifestDigest: text("manifest_digest").notNull(),
-    trigger: text("trigger", {
-      enum: ["main", "scheduled", "manual", "bootstrap", "rollback"],
-    }).notNull(),
-    status: text("status", {
-      enum: [
-        "candidate",
-        "approved",
-        "deploying",
-        "paused",
-        "completed",
-        "superseded",
-      ],
-    })
-      .notNull()
-      .default("candidate"),
-    migrationChanged: boolean("migration_changed").notNull().default(false),
-    migrationApprovedByUserId: text("migration_approved_by_user_id").references(
-      () => users.id,
-      { onDelete: "set null" },
-    ),
-    migrationApprovedAt: timestamp("migration_approved_at", {
-      withTimezone: true,
-    }),
-    migrationExpectedHead: text("migration_expected_head"),
-    migrationExpectedHistoryLockHash: text(
-      "migration_expected_history_lock_hash",
-    ),
-    migrationVerifiedAt: timestamp("migration_verified_at", {
-      withTimezone: true,
-    }),
-    controllerImage: text("controller_image"),
-    controllerInputFingerprint: text("controller_input_fingerprint"),
-    controllerContractRevision: integer("controller_contract_revision"),
-    controllerPreparedAt: timestamp("controller_prepared_at", {
-      withTimezone: true,
-    }),
-    turnWorkerConfigurationApprovedByUserId: text(
-      "turn_worker_configuration_approved_by_user_id",
-    ).references(() => users.id, { onDelete: "set null" }),
-    turnWorkerConfigurationApprovedAt: timestamp(
-      "turn_worker_configuration_approved_at",
-      { withTimezone: true },
-    ),
-    validation: jsonb("validation")
-      .$type<{
-        status: "passed";
-        commands: string[];
-        completedAt: string;
-      }>()
-      .notNull(),
-    environmentGatewayConfigVersion: integer(
-      "environment_gateway_config_version",
-    ),
-    baseReleaseId: text("base_release_id"),
-    recoveryOfReleaseId: text("recovery_of_release_id"),
-    approvedByUserId: text("approved_by_user_id").references(() => users.id, {
-      onDelete: "set null",
-    }),
-    approvedAt: timestamp("approved_at", { withTimezone: true }),
-    startedAt: timestamp("started_at", { withTimezone: true }),
-    completedAt: timestamp("completed_at", { withTimezone: true }),
-    failureCode: text("failure_code"),
-    failureMessage: text("failure_message"),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("fly_image_releases_manifest_digest_idx").on(
-      table.manifestDigest,
-    ),
-    uniqueIndex("fly_image_releases_attempt_idx")
-      .on(table.attemptId)
-      .where(sql`${table.attemptId} is not null`),
-    index("fly_image_releases_status_created_idx").on(
-      table.status,
-      table.createdAt,
-    ),
-    check(
-      "fly_image_releases_bundle_revision_check",
-      sql`${table.bundleRevision} ~ '^[0-9a-f]{40}$'`,
-    ),
-    check(
-      "fly_image_releases_manifest_digest_check",
-      sql`${table.manifestDigest} ~ '^sha256:[0-9a-f]{64}$'`,
-    ),
-  ],
-);
-
-export const flyImageReleaseComponents = pgTable(
-  "fly_image_release_components",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    releaseId: text("release_id")
-      .notNull()
-      .references(() => flyImageReleases.id, { onDelete: "cascade" }),
-    role: text("role", {
-      enum: [
-        "workspace-runtime",
-        "environment-router",
-        "preview-edge",
-        "turn-worker",
-        "runpod-worker",
-      ],
-    }).notNull(),
-    image: text("image").notNull(),
-    sourceRevision: text("source_revision").notNull(),
-    inputFingerprint: text("input_fingerprint").notNull(),
-    configurationContractFingerprint: text(
-      "configuration_contract_fingerprint",
-    ),
-    changed: boolean("changed").notNull(),
-    smoke: jsonb("smoke")
-      .$type<{ status: "passed"; command: string; completedAt: string }>()
-      .notNull(),
-    environmentGatewayAcceptedVersions: integer(
-      "environment_gateway_accepted_versions",
-    ).array(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("fly_image_release_components_release_role_idx").on(
-      table.releaseId,
-      table.role,
-    ),
-    check(
-      "fly_image_release_components_image_check",
-      sql`(
-        (${table.role} = 'workspace-runtime' AND (${table.image} ~ '^ghcr\\.io/lumicorp/kestrel-workspace-runtime@sha256:[0-9a-f]{64}$' OR ${table.image} ~ '^registry\\.fly\\.io/kestrel-one-runner@sha256:[0-9a-f]{64}$'))
-        OR (${table.role} = 'environment-router' AND (${table.image} ~ '^ghcr\\.io/lumicorp/kestrel-environment-router@sha256:[0-9a-f]{64}$' OR ${table.image} ~ '^registry\\.fly\\.io/kestrel-one-runner@sha256:[0-9a-f]{64}$'))
-        OR (${table.role} = 'preview-edge' AND ${table.image} ~ '^registry\\.fly\\.io/kestrel-preview-edge@sha256:[0-9a-f]{64}$')
-        OR (${table.role} = 'turn-worker' AND ${table.image} ~ '^registry\\.fly\\.io/kestrel-one-turn-worker@sha256:[0-9a-f]{64}$')
-        OR (${table.role} = 'runpod-worker' AND ${table.image} ~ '^registry\\.fly\\.io/kestrel-one-runpod-worker@sha256:[0-9a-f]{64}$')
-      )`,
-    ),
-    check(
-      "fly_image_release_components_configuration_fingerprint_check",
-      sql`(
-        (${table.role} = 'turn-worker' AND (${table.configurationContractFingerprint} IS NULL OR ${table.configurationContractFingerprint} ~ '^sha256:[0-9a-f]{64}$'))
-        OR (${table.role} <> 'turn-worker' AND ${table.configurationContractFingerprint} IS NULL)
-      )`,
-    ),
-  ],
-);
-
-export const flyImageReleaseTargets = pgTable(
-  "fly_image_release_targets",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    releaseId: text("release_id")
-      .notNull()
-      .references(() => flyImageReleases.id, { onDelete: "cascade" }),
-    targetKind: text("target_kind", {
-      enum: ["global_app", "environment", "workspace"],
-    }).notNull(),
-    componentRole: text("component_role", {
-      enum: [
-        "workspace-runtime",
-        "environment-router",
-        "preview-edge",
-        "turn-worker",
-        "runpod-worker",
-      ],
-    }),
-    environmentId: text("environment_id").references(() => environments.id, {
-      onDelete: "set null",
-    }),
-    workspaceId: text("workspace_id").references(
-      () => environmentWorkspaces.id,
-      { onDelete: "set null" },
-    ),
-    targetKey: text("target_key").notNull(),
-    desiredImage: text("desired_image"),
-    priorImage: text("prior_image"),
-    status: text("status", {
-      enum: [
-        "pending",
-        "draining",
-        "applying",
-        "configured_unverified",
-        "verifying",
-        "completed",
-        "failed",
-      ],
-    })
-      .notNull()
-      .default("pending"),
-    stage: text("stage").notNull().default("pending"),
-    result: jsonb("result").$type<Record<string, unknown>>(),
-    failureCode: text("failure_code"),
-    failureMessage: text("failure_message"),
-    startedAt: timestamp("started_at", { withTimezone: true }),
-    completedAt: timestamp("completed_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("fly_image_release_targets_release_key_idx").on(
-      table.releaseId,
-      table.targetKey,
-    ),
-    index("fly_image_release_targets_release_status_idx").on(
-      table.releaseId,
-      table.status,
-    ),
-    index("fly_image_release_targets_environment_idx").on(table.environmentId),
-  ],
-);
-
-export const flyImageReleaseSettings = pgTable(
-  "fly_image_release_settings",
-  {
-    id: text("id").primaryKey().notNull().default("platform"),
-    stableReleaseId: text("stable_release_id").references(
-      () => flyImageReleases.id,
-      { onDelete: "set null" },
-    ),
-    activeReleaseId: text("active_release_id").references(
-      () => flyImageReleases.id,
-      { onDelete: "set null" },
-    ),
-    canaryEnvironmentId: text("canary_environment_id").references(
-      () => environments.id,
-      { onDelete: "set null" },
-    ),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [
-    check(
-      "fly_image_release_settings_singleton_check",
-      sql`${table.id} = 'platform'`,
-    ),
-  ],
-);
-
 export const environmentRuntimeVersions = pgTable(
   "environment_runtime_versions",
   {
@@ -2296,46 +1973,15 @@ export const environmentRuntimeVersions = pgTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     workspaceRuntimeImage: text("workspace_runtime_image").notNull(),
-    workspaceRuntimeSourceRevision: text(
-      "workspace_runtime_source_revision",
-    ).notNull(),
     environmentRouterImage: text("environment_router_image").notNull(),
-    environmentRouterSourceRevision: text(
-      "environment_router_source_revision",
-    ).notNull(),
-    githubRunId: text("github_run_id"),
-    githubRunAttempt: integer("github_run_attempt"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex("environment_runtime_versions_digest_pair_unique").on(
+    uniqueIndex("environment_runtime_versions_image_pair_unique").on(
       table.workspaceRuntimeImage,
       table.environmentRouterImage,
-    ),
-    check(
-      "environment_runtime_versions_workspace_image_check",
-      sql`${table.workspaceRuntimeImage} ~ '^ghcr\\.io/lumicorp/kestrel-workspace-runtime(@sha256:[0-9a-f]{64}|:production-[1-9][0-9]*-[1-9][0-9]*)$'`,
-    ),
-    check(
-      "environment_runtime_versions_router_image_check",
-      sql`${table.environmentRouterImage} ~ '^ghcr\\.io/lumicorp/kestrel-environment-router(@sha256:[0-9a-f]{64}|:production-[1-9][0-9]*-[1-9][0-9]*)$'`,
-    ),
-    check(
-      "environment_runtime_versions_workspace_revision_check",
-      sql`${table.workspaceRuntimeSourceRevision} ~ '^[0-9a-f]{40}$'`,
-    ),
-    check(
-      "environment_runtime_versions_router_revision_check",
-      sql`${table.environmentRouterSourceRevision} ~ '^[0-9a-f]{40}$'`,
-    ),
-    check(
-      "environment_runtime_versions_run_identity_check",
-      sql`(
-        (${table.githubRunId} is null and ${table.githubRunAttempt} is null)
-        or (${table.githubRunId} ~ '^[0-9]+$' and ${table.githubRunAttempt} > 0)
-      )`,
     ),
   ],
 );
@@ -2352,17 +1998,11 @@ export const environmentRuntimeChannels = pgTable(
       () => environmentRuntimeVersions.id,
       { onDelete: "restrict" },
     ),
-    desiredVersionId: text("desired_version_id").references(
-      () => environmentRuntimeVersions.id,
-      { onDelete: "restrict" },
-    ),
     canaryEnvironmentId: text("canary_environment_id").references(
       () => environments.id,
       { onDelete: "set null" },
     ),
     generation: integer("generation").notNull().default(0),
-    lastGithubRunId: text("last_github_run_id"),
-    lastGithubRunAttempt: integer("last_github_run_attempt"),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -2379,13 +2019,6 @@ export const environmentRuntimeChannels = pgTable(
     check(
       "environment_runtime_channels_distinct_versions_check",
       sql`${table.previousVersionId} is null or ${table.currentVersionId} is null or ${table.previousVersionId} <> ${table.currentVersionId}`,
-    ),
-    check(
-      "environment_runtime_channels_run_identity_check",
-      sql`(
-        (${table.lastGithubRunId} is null and ${table.lastGithubRunAttempt} is null)
-        or (${table.lastGithubRunId} ~ '^[0-9]+$' and ${table.lastGithubRunAttempt} > 0)
-      )`,
     ),
   ],
 );
@@ -2909,79 +2542,6 @@ export const workspaceBackups = pgTable(
       .where(
         sql`${table.sourceRevision} is not null and ${table.status} in ('queued', 'creating', 'available', 'deleting', 'delete_failed')`,
       ),
-  ],
-);
-
-export const releaseControllerHeartbeats = pgTable(
-  "release_controller_heartbeats",
-  {
-    id: text("id").primaryKey(),
-    contractRevision: integer("contract_revision").notNull(),
-    sourceRevision: text("source_revision"),
-    image: text("image"),
-    inputFingerprint: text("input_fingerprint"),
-    machineId: text("machine_id"),
-    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
-    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
-  },
-  (table) => [
-    index("release_controller_heartbeats_age_idx").on(table.heartbeatAt),
-  ],
-);
-
-export const releaseWorkerHeartbeats = pgTable(
-  "release_worker_heartbeats",
-  {
-    role: text("role", { enum: ["turn-worker", "runpod-worker"] }).notNull(),
-    sourceRevision: text("source_revision").notNull(),
-    image: text("image").notNull(),
-    machineId: text("machine_id").notNull(),
-    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
-    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.role, table.machineId] }),
-    index("release_worker_heartbeats_age_idx").on(table.heartbeatAt),
-    check(
-      "release_worker_heartbeats_revision_check",
-      sql`${table.sourceRevision} ~ '^[0-9a-f]{40}$'`,
-    ),
-    check(
-      "release_worker_heartbeats_image_check",
-      sql`${table.image} ~ '^registry\\.fly\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$'`,
-    ),
-  ],
-);
-
-export const platformWorkerHeartbeats = pgTable(
-  "platform_worker_heartbeats",
-  {
-    workerRole: text("worker_role", { enum: ["turn-worker"] }).notNull(),
-    machineId: text("machine_id").notNull(),
-    sourceRevision: text("source_revision").notNull(),
-    configurationFingerprint: text("configuration_fingerprint").notNull(),
-    contractRevision: integer("contract_revision").notNull(),
-    processStartedAt: timestamp("process_started_at", {
-      withTimezone: true,
-    }).notNull(),
-    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }).notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.workerRole, table.machineId] }),
-    index("platform_worker_heartbeats_match_idx").on(
-      table.workerRole,
-      table.sourceRevision,
-      table.configurationFingerprint,
-      table.heartbeatAt,
-    ),
-    check(
-      "platform_worker_heartbeats_source_revision_check",
-      sql`${table.sourceRevision} ~ '^[0-9a-f]{40}$'`,
-    ),
-    check(
-      "platform_worker_heartbeats_configuration_fingerprint_check",
-      sql`${table.configurationFingerprint} ~ '^sha256:[0-9a-f]{64}$'`,
-    ),
   ],
 );
 

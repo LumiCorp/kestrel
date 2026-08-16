@@ -2,113 +2,79 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
-const flyWorkflow = source(".github/workflows/production-fly.yml");
-const runtimeWorkflow = source(".github/workflows/production-runtime.yml");
-const runPodWorkflow = source(".github/workflows/production-runpod.yml");
-const buildScript = source("scripts/build-production-image.ts");
-const productionImageRoute = source(
-  "apps/web/app/api/internal/production-images/route.ts",
+const publishImage = source("scripts/publish-production-image.ts");
+const deployFlyMachine = source("scripts/deploy-production-fly-machine.ts");
+const reconcileSchedule = source(
+  "apps/web/lib/environments/reconcile-schedule.ts",
 );
-const productionImages = source(
-  "apps/web/lib/deployment/production-images.ts",
+const runtimeUpdate = source(
+  "apps/web/scripts/update-environment-runtime.ts",
 );
-const productionImageReadiness = source(
-  "apps/web/lib/deployment/production-image-readiness.ts",
+const runtimeActivation = source(
+  "apps/web/scripts/activate-production-runtime.ts",
 );
-const runtimeChannel = source(
-  "apps/web/lib/environments/runtime-channel.ts",
-);
-const runtimeChannelClient = source(
-  "apps/web/app/(workspace)/platform/runtime/runtime-channel-client.tsx",
-);
-const cutoverPreflight = source("scripts/production-cutover-preflight.ts");
 const vercel = source("apps/web/vercel.json");
 
-test("production delivery has three build-only image channels", () => {
-  for (const workflow of [flyWorkflow, runtimeWorkflow, runPodWorkflow]) {
-    assert.match(workflow, /branches: \[production\]/u);
-    assert.match(workflow, /workflow_dispatch:/u);
-    assert.match(workflow, /build-production-image\.ts/u);
-    assert.doesNotMatch(workflow, /flyctl deploy|fly deploy|cosign|id-token:|VERCEL_TOKEN/u);
+test("production pushes have no Fly, RunPod, runtime, or migration workflow", () => {
+  for (const path of [
+    ".github/workflows/production-fly.yml",
+    ".github/workflows/production-runpod.yml",
+    ".github/workflows/production-runtime.yml",
+    ".github/workflows/production-database.yml",
+  ]) {
+    assert.equal(existsSync(path), false, path);
   }
-  assert.match(flyWorkflow, /select-production-images\.ts fly/u);
-  assert.match(runPodWorkflow, /select-production-images\.ts runpod/u);
-  assert.match(
-    runtimeWorkflow,
-    /select-production-images\.ts environment-runtime/u,
-  );
-  assert.match(runtimeWorkflow, /notify-production-runtime\.ts/u);
-  assert.match(runtimeWorkflow, /needs\.build\.result == 'success'/u);
 });
 
-test("image publication smokes locally before push and notifies Kestrel afterward", () => {
-  const smoke = buildScript.indexOf(
-    'run("bash", [image.smoke, taggedImage])',
-  );
-  const push = buildScript.indexOf('run("docker", ["push", taggedImage])');
-  const notify = buildScript.indexOf("await notifyKestrel");
-  assert.ok(smoke >= 0 && smoke < push && push < notify);
-  assert.match(buildScript, /production-\$\{runNumber\}-\$\{runAttempt\}/u);
-  assert.doesNotMatch(buildScript, /flyctl|cosign|github\.sha|GITHUB_SHA/u);
-  assert.match(buildScript, /waitForKestrelProductionReceiver/u);
-  assert.match(buildScript, /READINESS_TIMEOUT_MS = 15 \* 60 \* 1000/u);
-  assert.match(buildScript, /READINESS_POLL_INTERVAL_MS = 5000/u);
-  assert.match(buildScript, /AbortSignal\.timeout\(810_000\)/u);
-  assert.match(productionImageRoute, /export function GET/u);
-  assert.match(productionImageRoute, /maxDuration = 800/u);
-  assert.match(buildScript, /latestProductionMigration/u);
-  assert.match(buildScript, /readiness\?\.migration === input\.requiredMigration/u);
-  assert.match(productionImageRoute, /migrationApplied\(requiredMigration\)/u);
-  assert.match(productionImageRoute, /runtimeConsumerReady/u);
-  assert.match(productionImageReadiness, /drizzle\.__drizzle_migrations/u);
-  assert.match(productionImageReadiness, /CONTROL_WORKER_IMAGE/u);
-});
-
-test("application-owned deployment fails closed on stale and unconverged provider state", () => {
-  assert.match(productionImages, /isNewerProductionImage/u);
-  assert.match(productionImages, /retry after the app reaches a stable state/u);
-  assert.match(productionImages, /const finalMachines = await input\.fly\.listAppMachines/u);
-  assert.match(productionImages, /did not converge/u);
-});
-
-test("runtime recovery is explicit and uses fresh canary evidence", () => {
-  assert.match(runtimeChannel, /status: "recovery_required" as const/u);
-  assert.match(runtimeChannel, /retryDesiredEnvironmentRuntime/u);
-  assert.match(runtimeChannel, /selectPreviousEnvironmentRuntime/u);
-  assert.match(
-    runtimeChannel,
-    /operation\.createdAt < runtimeDate\(channel\.updatedAt\)/u,
-  );
-  assert.match(runtimeChannelClient, /Retry desired/u);
-  assert.match(runtimeChannelClient, /Canary previous version/u);
-});
-
-test("cutover preflight prefers the runtime-channel canary authority", () => {
-  const runtimeAuthority = cutoverPreflight.indexOf(
-    "environment_runtime_channels",
-  );
-  const legacyFallback = cutoverPreflight.indexOf("fly_image_release_settings");
-  assert.ok(runtimeAuthority >= 0 && runtimeAuthority < legacyFallback);
-  assert.match(cutoverPreflight, /to_regclass\('public\.environment_runtime_channels'\)/u);
-});
-
-test("production database migration belongs to the Vercel production build", () => {
-  assert.match(vercel, /VERCEL_ENV/u);
+test("Vercel production build retains configuration validation and migration", () => {
   const validateConfiguration = vercel.indexOf("config:validate:production");
   const migrate = vercel.indexOf("db:migrate:deploy");
   assert.ok(validateConfiguration >= 0 && validateConfiguration < migrate);
-  assert.match(vercel, /db:migrate:deploy/u);
+  assert.match(vercel, /VERCEL_ENV/u);
 });
 
-test("retired production orchestration is absent", () => {
+test("local image publication smokes before push and never deploys or notifies", () => {
+  const smoke = publishImage.indexOf("productionImageBuildCommands");
+  const push = publishImage.indexOf('{ command: "docker", args: ["push"');
+  assert.ok(smoke >= 0 && push > smoke);
+  assert.match(publishImage, /linux\/amd64/u);
+  assert.doesNotMatch(publishImage, /revision|imagetools|digest/u);
+  assert.doesNotMatch(
+    publishImage,
+    /production-images|KESTREL_ONE_PRODUCTION_URL|PRODUCTION_IMAGE_DEPLOY_TOKEN/u,
+  );
+  assert.doesNotMatch(publishImage, /fly machine update|fly deploy/u);
+});
+
+test("local Fly deployment accepts one exact Machine and operator tag only", () => {
+  assert.match(deployFlyMachine, /--machine/u);
+  assert.match(deployFlyMachine, /--tag/u);
+  assert.doesNotMatch(deployFlyMachine, /revision|digest/u);
+  assert.match(deployFlyMachine, /Confirmation did not match the exact target/u);
+  assert.match(deployFlyMachine, /flyMachineUpdateArgs/u);
+  assert.doesNotMatch(deployFlyMachine, /for \(const machine|listAppMachines/u);
+});
+
+test("runtime delivery is explicit and exact-environment only", () => {
+  assert.match(runtimeUpdate, /registerEnvironmentRuntimeVersion/u);
+  assert.match(runtimeUpdate, /logAdminEvent/u);
+  assert.match(runtimeActivation, /activateEnvironmentRuntimeVersion/u);
+  assert.match(runtimeActivation, /logAdminEvent/u);
+  assert.match(runtimeActivation, /canary-operation/u);
+  assert.match(runtimeUpdate, /--environment/u);
+  assert.match(runtimeUpdate, /--tag/u);
+  assert.doesNotMatch(runtimeUpdate, /actor-user-id|revision|digest/u);
+  assert.doesNotMatch(runtimeUpdate, /--batch|findMany|for \(const environment/u);
+  assert.doesNotMatch(reconcileSchedule, /runtime-channel|reconcileDesired/u);
+});
+
+test("web deployment receivers and controls are absent", () => {
   for (const path of [
-    "scripts/deploy-production-image.ts",
-    "scripts/promote-environment-runtime.ts",
-    "apps/web/scripts/sync-worker-config.ts",
-    "apps/web/lib/runtime/github-actions-oidc.ts",
-    ".github/workflows/production-database.yml",
-    ".github/workflows/fly-image-release.yml",
-    ".github/workflows/prepare-release-candidate.yml",
+    "apps/web/app/api/internal/production-images/route.ts",
+    "apps/web/lib/deployment/production-images.ts",
+    "apps/web/app/api/admin/runtime-channel/route.ts",
+    "apps/web/app/(workspace)/platform/runtime/page.tsx",
+    "apps/web/app/api/organization/environments/[id]/runtime-updates/route.ts",
   ]) {
     assert.equal(existsSync(path), false, path);
   }
