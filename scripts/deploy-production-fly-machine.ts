@@ -17,10 +17,11 @@ type RunResult = { status: number | null; stdout: string };
 type Runner = (command: string, args: string[], inherit?: boolean) => RunResult;
 
 export function parseFlyMachineDeploymentArgs(args: string[]) {
-  const role = argument(args, "--role");
-  const machineId = argument(args, "--machine");
-  const tag = productionImageTagSchema.parse(argument(args, "--tag"));
-  rejectUnknownArgs(args, ["--role", "--machine", "--tag"]);
+  const normalized = operatorArgs(args);
+  const role = argument(normalized, "--role");
+  const machineId = argument(normalized, "--machine");
+  const tag = productionImageTagSchema.parse(argument(normalized, "--tag"));
+  rejectUnknownArgs(normalized, ["--role", "--machine", "--tag"]);
   if (!PLATFORM_ROLES.has(role)) {
     throw new Error(`${role} is not a directly deployed Fly Machine role.`);
   }
@@ -30,8 +31,8 @@ export function parseFlyMachineDeploymentArgs(args: string[]) {
   return { role, machineId, tag };
 }
 
-export function flyMachineStatusArgs(app: string, machineId: string) {
-  return ["machine", "status", machineId, "--app", app, "--json"];
+export function flyMachineListArgs(app: string) {
+  return ["machine", "list", "--app", app, "--json"];
 }
 
 export function flyMachineUpdateArgs(input: {
@@ -66,12 +67,11 @@ export async function deployProductionFlyMachine(
   }
   const image = `${role.repository}:${parsed.tag}`;
   const providerIdentity = captureText(runner, "fly", ["auth", "whoami"]);
-  const before = captureJson(
-    runner,
-    "fly",
-    flyMachineStatusArgs(role.app, parsed.machineId),
+  const before = readMachine(
+    captureJson(runner, "fly", flyMachineListArgs(role.app)),
+    parsed.machineId,
   );
-  if (readMachineId(before) !== parsed.machineId) {
+  if (!before) {
     throw new Error(`Fly did not return Machine ${parsed.machineId} in ${role.app}.`);
   }
   const expected = `${parsed.role} ${parsed.machineId} ${parsed.tag}`;
@@ -89,11 +89,13 @@ export async function deployProductionFlyMachine(
     true,
   );
   if (updated.status !== 0) throw new Error("fly machine update failed.");
-  const after = captureJson(
-    runner,
-    "fly",
-    flyMachineStatusArgs(role.app, parsed.machineId),
+  const after = readMachine(
+    captureJson(runner, "fly", flyMachineListArgs(role.app)),
+    parsed.machineId,
   );
+  if (!after) {
+    throw new Error(`Fly did not return Machine ${parsed.machineId} in ${role.app} after update.`);
+  }
   process.stdout.write(`${JSON.stringify({ providerResult: after }, null, 2)}\n`);
   return { providerIdentity, app: role.app, image, before, after, ...parsed };
 }
@@ -126,10 +128,18 @@ function captureText(runner: Runner, command: string, args: string[]) {
   return value;
 }
 
-function readMachineId(value: unknown) {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
-  return typeof record.id === "string" ? record.id : null;
+function readMachine(value: unknown, machineId: string) {
+  if (!Array.isArray(value)) return null;
+  return (
+    value.find((candidate) => {
+      if (!candidate || typeof candidate !== "object") return false;
+      return (candidate as Record<string, unknown>).id === machineId;
+    }) ?? null
+  );
+}
+
+function operatorArgs(args: string[]) {
+  return args[0] === "--" ? args.slice(1) : args;
 }
 
 function argument(args: string[], name: string) {
