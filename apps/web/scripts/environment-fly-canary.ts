@@ -14,11 +14,9 @@ import {
 const execFileAsync = promisify(execFile);
 const token = required("FLY_API_TOKEN");
 const organizationSlug = required("KESTREL_FLY_ORGANIZATION_SLUG");
-const routerImage = immutableImage(argument("--router-image"), "--router-image");
-const workspaceImage = immutableImage(
-  argument("--workspace-image"),
-  "--workspace-image",
-);
+const imageTag = containerTag(argument("--tag"));
+const routerImage = `ghcr.io/lumicorp/kestrel-environment-router:${imageTag}`;
+const workspaceImage = `ghcr.io/lumicorp/kestrel-workspace-runtime:${imageTag}`;
 const region = process.env.KESTREL_FLY_CANARY_REGION?.trim() || "iad";
 const apiBaseUrl = "https://api.machines.dev/v1";
 const provider = new FlyMachinesClient({ token, organizationSlug });
@@ -473,9 +471,9 @@ function summarize(environment: CanaryEnvironment) {
   };
 }
 
-function immutableImage(value: string, name: string) {
-  if (!/@sha256:[a-f0-9]{64}$/u.test(value)) {
-    throw new Error(`${name} must be an immutable sha256 image reference.`);
+function containerTag(value: string) {
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/u.test(value)) {
+    throw new Error("--tag must be a valid container image tag.");
   }
   return value;
 }

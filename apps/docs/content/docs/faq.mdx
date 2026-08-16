@@ -50,7 +50,7 @@ Kestrel records a waiting request with registered options. Your response binds t
 
 ## How do I verify which hosted Kestrel revision is running?
 
-Record product version, source revision, Vercel deployment, migration state, worker revision, and immutable Fly image digests. A semantic version without those deployed identities is incomplete evidence.
+Record the Vercel deployment and migration result and the operator-selected tag, provider record, and health result for each manually changed worker or tenant Environment. Do not infer hosted state from a semantic version or another target's result.
 
 ## Why not call a model directly?
 

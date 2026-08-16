@@ -60,11 +60,11 @@ Inspect the deployed schema and pending list. Stop when compatibility or backup 
 
 ## Queue and worker delivery
 
-Check queue ownership, stuck work, retry evidence, each of the five role digests, and the terminal event emitted for the affected run.
+Check queue ownership, stuck work, retry evidence, the selected image tag on each affected Machine, and the terminal event emitted for the affected run.
 
-## Vercel and Fly release identity
+## Vercel and Fly deployment identity
 
-Compare the user-facing deployment and every worker digest with the approved release record. A rebuild with the same version label is not the same artifact.
+Compare the user-facing Vercel deployment and each affected Fly Machine's provider record with the operator's release notes. Diagnose each target independently.
 
 ## Execution policy and external approvals
 
@@ -72,7 +72,7 @@ Inspect the resolved profile, tool descriptor, network/OCI policy, pending reque
 
 ## Roll back or fix forward
 
-Roll code and images to recorded exact identities only when migration compatibility is proven. Otherwise stop and fix forward without destructive data reversal.
+Roll Vercel back through its native provider operation and redeploy each selected Machine with its recorded prior tag only when migration compatibility is proven. Otherwise stop and fix forward without destructive data reversal.
 
 ## Confirm the user path
 

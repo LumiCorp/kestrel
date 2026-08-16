@@ -9,7 +9,7 @@ type WorkerRole = Exclude<ProcessRole, "web">;
 export async function resolveWorkerBuildId() {
   const configured = process.env.KESTREL_BUILD_ID?.trim();
   const value = configured || (await readFile("/workspace/.kestrel-build-id", "utf8")).trim();
-  if (!/^production-[1-9][0-9]*-[1-9][0-9]*$/u.test(value)) {
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/u.test(value)) {
     throw new Error("Worker build ID is invalid.");
   }
   return value;

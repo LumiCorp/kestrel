@@ -155,7 +155,6 @@ test(
       "/platform/signup-codes",
       "/platform/email",
       "/platform/operations",
-      "/platform/runtime",
       "/platform/billing",
       "/platform/docs",
     ]);
@@ -233,7 +232,7 @@ test("legacy platform routes permanently redirect to canonical owners", () => {
   const redirects = [
     ["app/admin/page.tsx", "/platform/operations"],
     ["app/admin/environments/page.tsx", "/platform/operations"],
-    ["app/admin/releases/page.tsx", "/platform/runtime"],
+    ["app/admin/releases/page.tsx", "/platform/operations"],
     ["app/admin/billing/page.tsx", "/platform/billing"],
     ["app/admin/docs/page.tsx", "/platform/docs"],
     ["app/admin/users/page.tsx", "/platform/users"],

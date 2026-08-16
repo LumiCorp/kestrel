@@ -1,6 +1,11 @@
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { z } from "zod";
+
+export const productionImageTagSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/u, "Invalid container image tag.");
 
 export const flyImageCatalogSchema = z.object({
   version: z.literal(1),
@@ -21,9 +26,7 @@ export const flyImageCatalogSchema = z.object({
           app: z.string().trim().min(1),
           dockerfile: z.string().trim().min(1),
           smoke: z.string().trim().min(1),
-          channel: z.enum(["environment-runtime", "fly", "runpod"]),
           rollout: z.enum(["environment", "global-app"]),
-          inputs: z.array(z.string().trim().min(1)).min(1),
         })
         .superRefine((image, context) => {
           const expectedRepository =
@@ -41,71 +44,9 @@ export const flyImageCatalogSchema = z.object({
               path: ["repository"],
             });
           }
-          const expectedChannel =
-            image.role === "runpod-worker"
-              ? "runpod"
-              : image.rollout === "environment"
-                ? "environment-runtime"
-                : "fly";
-          if (image.channel !== expectedChannel) {
-            context.addIssue({
-              code: "custom",
-              message: `Image '${image.role}' has the wrong deployment channel.`,
-              path: ["channel"],
-            });
-          }
         }),
     )
     .length(6),
 });
 
 export type FlyImageCatalog = z.infer<typeof flyImageCatalogSchema>;
-export type FlyImageCatalogEntry = FlyImageCatalog["images"][number];
-
-export function impactedFlyImages(input: {
-  catalog: FlyImageCatalog;
-  changedPaths: string[];
-}) {
-  return input.catalog.images.filter((image) =>
-    input.changedPaths.some((path) =>
-      image.inputs.some((pattern) => matchesCatalogInput(path, pattern)),
-    ),
-  );
-}
-
-export function flyMigrationChanged(changedPaths: string[]) {
-  return changedPaths.some(
-    (path) =>
-      path.startsWith("apps/web/lib/db/migrations/") ||
-      path.startsWith("apps/web/drizzle/"),
-  );
-}
-
-export function matchesCatalogInput(path: string, pattern: string) {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/gu, "\\$&");
-  const expression = escaped
-    .replace(/\*\*/gu, "\u0000")
-    .replace(/\*/gu, "[^/]*")
-    .replace(/\u0000/gu, ".*");
-  return new RegExp(`^${expression}$`, "u").test(path);
-}
-
-export async function fingerprintImageInputs(input: {
-  image: FlyImageCatalogEntry;
-  trackedPaths: string[];
-  root: string;
-}) {
-  const paths = input.trackedPaths
-    .filter((path) =>
-      input.image.inputs.some((pattern) => matchesCatalogInput(path, pattern)),
-    )
-    .sort();
-  const hash = createHash("sha256");
-  for (const path of paths) {
-    hash.update(path);
-    hash.update("\0");
-    hash.update(await readFile(`${input.root}/${path}`));
-    hash.update("\0");
-  }
-  return `sha256:${hash.digest("hex")}`;
-}

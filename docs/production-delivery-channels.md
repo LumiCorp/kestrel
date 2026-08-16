@@ -3,123 +3,307 @@ id: production-delivery-channels
 domain: operations
 status: active
 owner: kestrel-one
-last_verified_at: 2026-08-15
+last_verified_at: 2026-08-16
 depends_on:
-  - ../.github/workflows/production-fly.yml
-  - ../.github/workflows/production-runtime.yml
-  - ../.github/workflows/production-runpod.yml
+  - ../apps/web/vercel.json
   - ../deploy/fly/image-catalog.json
-  - ../apps/web/app/api/internal/production-images/route.ts
+  - ../scripts/publish-production-image.ts
+  - ../scripts/deploy-production-fly-machine.ts
+  - ../apps/web/scripts/update-environment-runtime.ts
+  - ../apps/web/scripts/activate-production-runtime.ts
 ---
 
-# Production delivery
+# Production release runbook
 
-`production` is the reviewed production decision. Vercel deploys that branch
-natively. Its production build runs the ordinary locked, unpooled database
-migrator before building Web; preview builds do not migrate production.
+This is the canonical procedure for releasing Kestrel One. The operator owns
+the release. There is no coordinated release object and no requirement to
+derive image identity from Git.
 
-GitHub has three image jobs:
+- Advancing the protected `production` branch lets Vercel natively deploy
+  `one` and `docs`. The `one` build performs the ordinary production migration.
+- Every image is published manually with a tag chosen by the operator.
+- Every Fly Machine is changed manually, one exact Machine at a time.
+- Managed RunPod worker and profile changes are separate manual operations.
+- Every tenant Environment is changed manually. No command widens the rollout.
 
-- Fly platform images: Preview Edge, turn worker, and control worker.
-- Environment Runtime images: Workspace Runtime and Environment Router,
-  always built as a pair.
-- The managed RunPod worker image.
+## Before starting
 
-Each job selects catalog-owned changes, builds the affected image locally,
-runs its existing image smoke, pushes a fixed
-`production-<run-number>-<attempt>` tag, and calls Kestrel. GitHub does not
-deploy Machines, coordinate provider revisions, synchronize configuration,
-or manage rollback. Before notification, a publisher waits up to 15 minutes for
-the authenticated production receiver to prove the repository's latest database
-migration is applied, polling every five seconds. A runtime publisher also waits
-until every Environment lifecycle-worker Machine uses the tag-capable contract.
-It retries only receiver readiness while those conditions are unavailable;
-authentication and other unexpected responses fail immediately. Each published
-image then makes exactly one deployment notification attempt. A failed or
-ambiguous notification fails the workflow and is retried only by rerunning it
-with a new attempt tag.
+Work from the repository root. Decide which of these targets are actually in
+scope:
 
-## Platform images
+| Target | Delivery path |
+| --- | --- |
+| `one` | Vercel native deployment from `production` |
+| `docs` | Vercel native deployment from `production` |
+| `preview-edge` | Published image, then one Fly Machine update |
+| `turn-worker` | Published image, then one Fly Machine update |
+| `control-worker` | Published image, then one Fly Machine update |
+| `runpod-worker` | Published image, then one Fly Machine update |
+| Router and Workspace Runtime | Two published images, then one Environment update |
+| Managed RunPod profile | Separate manual profile operation; never implied by a worker image |
 
-`POST /api/internal/production-images` accepts a role and its fixed repository
-tag using `PRODUCTION_IMAGE_DEPLOY_TOKEN`. Kestrel maps the role to its Fly app
-and health check. An older build than any existing Machine is a successful stale
-no-op. A transitional Machine makes the deployment fail closed. Kestrel uses one
-running Machine and one stopped candidate. If the app has only one Machine, it
-clones a stopped candidate; if every Machine is stopped, it starts and proves
-one first. It then proves the candidate, updates the running Machines one at a
-time, updates every additional stopped Machine, and stops the candidate. A final
-provider read must show every Machine stable and configured with the requested
-build tag before success. Fly's `image_ref.digest` is recorded separately, and
-every Machine for the role must resolve that tag to the same digest.
-
-Existing Machine configuration is preserved except for installing the role's
-named readiness check. A failed standby is stopped before returning. If an
-active update fails, the failed Machine is stopped and the proven standby stays
-running, so there is no custom rollback controller.
-
-Fly authority lives only in Vercel Production as `FLY_API_TOKEN` and
-`KESTREL_FLY_ORGANIZATION_SLUG`. Image publication never copies or changes
-application configuration or secrets.
-
-## Environment Runtime images
-
-The same endpoint records the newest published Workspace Runtime and Router
-pair as `desired_version_id` and returns HTTP 202. The existing Environment
-reconciliation cron requests the normal durable `environment.update` for the
-configured canary. It promotes the current pointer only after that operation
-reaches `environment.update.ready` and the canary stores the exact pair.
-
-Runtime workflow success means only that the desired pair was recorded. GitHub
-does not wait for backups, canary execution, live proofs, or promotion. The
-platform Runtime page is the authority for desired, current, pending, failed,
-and recovery-required state. It shows the exact canary operation and error.
-
-A newer desired pair replaces an older desired pair. An operation for an older
-pair cannot promote. A failed canary leaves the current pointer unchanged.
-The cron does not retry it. **Retry desired** creates or requeues durable repair
-work. **Canary previous version** selects the previous pair and requires a fresh
-canary operation created after that selection before promotion. Rerunning the
-workflow publishes a new attempt pair.
-Pointer promotion affects new Environments only; existing Environments update
-through their existing explicit runtime action or operator CLI.
-
-Every runtime update snapshots the durable stopped Workspace set before its
-first provider mutation. Stopped Workspaces start temporarily for the normal
-health proof and return to stopped before the operation can become ready.
-Running Workspaces remain running. Router and Workspace updates also reconcile
-their control-plane URL values to `KESTREL_ONE_APP_URL` from the lifecycle
-worker, repairing URL drift as part of the existing operation.
-
-## Required production configuration
-
-Vercel Production requires the normal Web contract plus:
-
-- `POSTGRES_URL_NON_POOLING` or `DATABASE_URL_UNPOOLED` for migrations.
-- `FLY_API_TOKEN` and `KESTREL_FLY_ORGANIZATION_SLUG` for platform Machines.
-- `PRODUCTION_IMAGE_DEPLOY_TOKEN`, matching the GitHub Production secret.
-
-GitHub Production requires registry credentials, the Kestrel production URL,
-and the matching deployment token. No GitHub job receives database authority.
-
-No live provider or branch mutation is part of repository validation. The
-separate cutover advances `production` only after these values and the configured
-canary are verified.
-
-Before the first cutover, run the one-time preparation check and then explicitly
-apply it:
+Confirm the local checkout contains the intended code and run the repository
+gate:
 
 ```bash
-pnpm --filter @kestrel/kestrel-one production-delivery:prepare
-pnpm --filter @kestrel/kestrel-one production-delivery:prepare -- --apply
+pnpm validate
 ```
 
-The command reports and permits active canary `workspace.backup` operations;
-the repaired lifecycle worker drains them before runtime reconciliation can use
-the same serialized lifecycle lane. It fails before mutation for any other
-active canary lifecycle work, an active legacy release, an incorrect production
-branch restriction, or an already-live new migration. Apply mode stages exact worker-role secrets,
-installs one matching deployment token in Vercel and GitHub, and removes the two
-legacy Web image values. It never deploys an image or advances `production`,
-and it never prints secret values. Rerun check mode after apply and require a
-clean result.
+Verify the provider sessions you intend to use:
+
+```bash
+vercel whoami
+fly auth whoami
+docker info
+```
+
+Choose one readable container tag, such as `aug16-runtime-fix`. A tag may use
+letters, numbers, `_`, `.`, and `-`; it must begin with a letter, number, or
+underscore. The commands trust the operator's chosen tag.
+
+Write down the release scope, tag, operator, start time, and the current image
+for every target before changing anything. The provider records are the source
+of truth.
+
+## 1. Deploy `one` and `docs`
+
+Advance the protected `production` branch through the normal repository
+process. Do not run a repository deployment workflow for Fly or RunPod.
+
+In Vercel, wait for the native production deployments of both projects:
+
+1. Confirm `one` used the production branch and its migration/build completed.
+2. Confirm `docs` used the production branch and its build completed.
+3. Open the production URLs and verify the smallest affected user path.
+4. Record the two Vercel deployment IDs and results.
+
+If either deployment fails, stop. Diagnose that Vercel deployment independently;
+do not change Fly, RunPod, or tenant Environments to compensate.
+
+## 2. Publish only the images in scope
+
+Valid roles are `workspace-runtime`, `environment-router`, `preview-edge`,
+`turn-worker`, `control-worker`, and `runpod-worker`.
+
+Publish one role at a time:
+
+```bash
+pnpm production:image:publish -- \
+  --role <role> \
+  --tag <tag>
+```
+
+The command builds the selected role for `linux/amd64`, runs that role's image
+smoke, and pushes the selected tag. It does not inspect Git, deploy the image,
+or update another role. Save the final JSON output in the release notes.
+
+If build, smoke, or push fails, nothing has been deployed. Fix the failure and
+rerun only the selected role.
+
+## 3. Update one platform Fly Machine
+
+This procedure applies to `preview-edge`, `turn-worker`, `control-worker`, and
+the Fly-hosted `runpod-worker`.
+
+Find and inspect the exact target in its catalog-mapped app:
+
+```bash
+fly machine list --app <app>
+fly machine status <machine-id> --app <app>
+```
+
+Record the current image. Then update one Machine:
+
+```bash
+pnpm production:fly:machine -- \
+  --role <preview-edge|turn-worker|control-worker|runpod-worker> \
+  --machine <machine-id> \
+  --tag <tag>
+```
+
+The command prints the signed-in Fly identity, current provider record, exact
+requested image, and confirmation text. Read it, type the exact confirmation,
+and retain the fresh provider record printed after `fly machine update`.
+
+Verify that Machine before touching another one:
+
+```bash
+fly machine status <machine-id> --app <app>
+fly logs --app <app>
+```
+
+Confirm the Machine is started, reports the requested tagged image, and passes
+the role's normal health or work-delivery check. Updating another Machine is a
+new invocation with its own review and confirmation.
+
+### Fly configuration
+
+An image change never activates staged secrets. If configuration is also in
+scope, review it separately:
+
+```bash
+fly secrets list --app <app>
+```
+
+Activate staged secrets only as an explicit app-wide action:
+
+```bash
+fly secrets deploy --app <app>
+```
+
+Record configuration activation separately because it may restart more than
+the selected Machine.
+
+### Fly rollback
+
+Use the same one-Machine command with the previously recorded tag:
+
+```bash
+pnpm production:fly:machine -- \
+  --role <role> \
+  --machine <machine-id> \
+  --tag <previous-tag>
+```
+
+Verify and record the provider result again. Do not roll back sibling Machines
+unless the operator explicitly selects each one.
+
+## 4. Update one Router and Workspace Runtime pair
+
+Router and Workspace Runtime are a pair for tenant Environments, but publishing
+one never publishes or deploys the other. Publish both explicitly with the tag
+you intend to use:
+
+```bash
+pnpm production:image:publish -- --role workspace-runtime --tag <tag>
+pnpm production:image:publish -- --role environment-router --tag <tag>
+```
+
+Before changing a tenant, prove the pair on disposable Fly resources:
+
+```bash
+pnpm --dir apps/web canary:environment:fly -- --tag <tag>
+```
+
+That command creates isolated provider resources, exercises routing,
+persistence, backup/restore, and cleanup, then deletes those resources. A pass
+is isolated-provider evidence, not production proof.
+
+Choose one exact canary Environment and queue only that Environment:
+
+```bash
+pnpm --dir apps/web runtime:update -- \
+  --environment <environment-id> \
+  --tag <tag>
+```
+
+The command pulls the `one` production configuration into a temporary local
+directory, prints the authenticated Vercel operator, current pair, requested
+pair, and exact confirmation. It returns the real Environment operation ID.
+
+Follow that operation in **Platform > Environment operations** or the selected
+Environment's **Activity** page. Do not continue until its status is
+`completed` and its stage is `environment.update.ready`. On failure, retain the
+operation ID and error and stop; do not activate the pair.
+
+Run the live Workspace and Preview canaries with credentials for that exact
+canary Environment:
+
+```bash
+pnpm --dir apps/web canary:environment:workspace
+pnpm --dir apps/web canary:environment:preview
+```
+
+The Workspace canary requires `KESTREL_ONE_CANARY_URL`,
+`KESTREL_ONE_CANARY_COOKIE`, `KESTREL_ONE_CANARY_THREAD_ID`, and
+`KESTREL_ONE_CANARY_APP_PORT`. The selected Thread must be bound to the canary
+Environment. The Preview canary requires
+`KESTREL_PREVIEW_CANARY_GATEWAY_URL`,
+`KESTREL_PREVIEW_CANARY_CONTROL_PLANE_URL`,
+`KESTREL_PREVIEW_CANARY_TICKET`, and
+`KESTREL_PREVIEW_CANARY_PROJECT_DIR`. Supply secrets through the local process
+environment; do not paste their values into release notes.
+
+When the operation and both live canaries pass, activate the pair for new
+provisioning:
+
+```bash
+pnpm --dir apps/web production:runtime:activate -- \
+  --tag <tag> \
+  --canary-operation <operation-id>
+```
+
+Review the printed current pair, requested pair, and canary operation, then
+type the exact confirmation. Activation changes only the current/previous
+runtime pointers used by new provisioning. It does not enqueue any Environment.
+
+Update each approved noncanary Environment through a separate `runtime:update`
+command and observe its exact operation to completion. There is no batch step.
+
+### Router and Workspace rollback
+
+Treat the previous tag as another manual release:
+
+1. Run the disposable Fly pair canary with the previous tag.
+2. Update one canary Environment to the previous tag.
+3. Run its live Workspace and Preview canaries.
+4. Activate the previous tag using that exact completed operation.
+5. Update any other approved Environment individually.
+
+Do not reverse a database migration to make an older runtime work. If the prior
+images are incompatible with current data, stop and fix forward.
+
+## 5. Managed RunPod changes
+
+The `runpod-worker` is a Fly Machine and uses the one-Machine procedure above.
+Changing its image does not create, edit, qualify, select, or remove a managed
+RunPod profile or provider deployment.
+
+If a managed RunPod profile change is intentionally in scope, perform it as a
+separate authenticated administrative operation. Record the organization,
+profile, image configured for the provider, qualification job/result, and one
+real inference result. Do not combine it with a worker image update and do not
+apply it to another organization implicitly.
+
+## 6. Close the release
+
+Record only concrete results:
+
+```text
+Operator:
+Started / completed:
+Operator tag:
+Intended targets:
+Vercel one deployment and result:
+Vercel docs deployment and result:
+Migration result:
+Published role -> tagged image:
+Fly app / Machine -> before image -> after image -> health:
+Canary Environment -> operation ID -> result:
+Workspace canary result:
+Preview canary result:
+Runtime activation result:
+Managed RunPod profile / qualification / inference result:
+Failures and disposition:
+```
+
+Omit rows that were out of scope. Never mark a target released from a build,
+mock, walkthrough, or another provider's success.
+
+## Evidence meanings
+
+| Evidence | What it proves |
+| --- | --- |
+| Unit or mock test | Local command and contract behavior only |
+| Image smoke | The selected image starts and satisfies its smoke contract |
+| Disposable Fly or RunPod result | Isolated-provider behavior only |
+| Production provider record and health | The exact selected production target changed and is healthy |
+| Completed Environment operation and live canaries | The exact selected tenant update worked |
+
+Production proof is target-specific. No result implicitly proves or updates a
+sibling Machine, another role, another provider, or another tenant Environment.
+
+The executable contracts are the [image publisher](../scripts/publish-production-image.ts),
+[one-Machine Fly updater](../scripts/deploy-production-fly-machine.ts),
+[Environment updater](../apps/web/scripts/update-environment-runtime.ts), and
+[runtime activator](../apps/web/scripts/activate-production-runtime.ts).

@@ -75,6 +75,8 @@
     "validate:chromium": "node scripts/validate.mjs --leaf chromium all",
     "validate:audit": "node scripts/validate.mjs --leaf audit all",
     "production:cutover:preflight": "node --import tsx scripts/production-cutover-preflight.ts",
+    "production:image:publish": "node --import tsx scripts/publish-production-image.ts",
+    "production:fly:machine": "node --import tsx scripts/deploy-production-fly-machine.ts",
     "brand:build": "node brand/scripts/build-brand-assets.mjs && node brand/scripts/build-desktop-brand-assets.mjs",
     "brand:sync:web": "node brand/scripts/sync-web-brand-assets.mjs",
     "brand:sync:desktop": "node brand/scripts/sync-desktop-brand-assets.mjs",
