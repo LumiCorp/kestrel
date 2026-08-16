@@ -1,101 +1,92 @@
 ---
-title: Deliver Kestrel One to production
-summary: Operate Vercel and the three independent production image channels.
+title: Production release runbook
+summary: Let Vercel deploy Web and Docs, then operate every selected Fly, RunPod-worker, and tenant runtime target manually.
 section: operate
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-08-14
+updatedAt: 2026-08-16
 ---
 
-Advancing the protected `production` branch is the human production decision.
-Vercel owns the Web deployment and database migration. Three small GitHub
-workflows own image publication for platform Fly roles, the Environment Runtime
-pair, and the RunPod worker.
+Advancing the protected `production` branch lets Vercel natively deploy `one`
+and `docs`. The `one` production build retains its configuration validation and
+ordinary unpooled database migration. Vercel does not coordinate with the
+runtime providers.
 
-## Database migrations
+GitHub does not build, deploy, select, canary, or promote production Fly,
+RunPod-worker, Workspace Runtime, or Environment Router images. Those actions
+are local and target-by-target.
 
-The Vercel production build runs the ordinary ordered migrator with the
-unpooled production connection before building the Web application. Preview
-builds do not migrate. Use expand/deploy/contract compatibility; destructive
-contract migrations belong to a later production promotion.
+Before starting, record the intended targets, operator, readable image tag, and
+current provider image for every Machine or Environment in scope. Run
+`pnpm validate`, then verify the local `vercel`, `fly`, and Docker sessions.
 
-## Vercel
+## Publish one image
 
-Vercel deploys natively from `production` and remains the canonical source for
-hosted configuration. Image workflows wait for the authenticated production
-receiver to prove the repository's latest database migration is applied; they
-do not coordinate revisions with Vercel after that readiness check.
-
-## Fly components
-
-`production-fly.yml` selects affected platform roles from
-`deploy/fly/image-catalog.json`. Each selected role builds and smokes locally,
-pushes a fixed `production-<run>-<attempt>` image tag, and notifies one internal
-Kestrel endpoint once. Before that single notification, it polls authenticated
-receiver readiness every five seconds for up to 15 minutes. Kestrel rejects a
-stale build or transitional inventory, then updates Fly Machines directly: it
-uses one running Machine and one stopped candidate, installs the role's
-readiness check, proves the candidate first, updates every running and stopped
-Machine, and re-lists the complete app before success. A failed active Machine
-is stopped while the proven candidate stays running. The final read verifies
-the requested build tag and requires every Machine to report the same
-Fly-resolved image digest.
-
-`production-runtime.yml` always publishes Workspace Runtime and Environment
-Router as a pair. Its notification records that pair as the desired Environment
-Runtime Version. The existing reconciliation cron updates the configured canary
-through the normal durable Environment lifecycle and promotes the pair only
-after a fresh operation for that desired selection is ready. Runtime publication
-also waits until every lifecycle-worker Machine uses the tag-capable operation
-contract. A failed or recovery-required canary remains terminal until an
-explicit retry or a new workflow attempt. Existing Environments stay unchanged.
-Workflow success means only that the desired pair was recorded. The platform
-Runtime page shows the canary operation, status, stage, and error and owns retry
-and previous-version recovery actions.
-
-## RunPod worker
-
-`production-runpod.yml` owns the managed RunPod worker. It uses the same simple
-build, smoke, push, and notify contract and does not wait for Vercel, Fly
-components, or the Environment Runtime pair.
-
-## Existing Environment updates
-
-An organization administrator can update one Environment to the current runtime
-from its Runtime page. These updates use the existing idempotent
-`environment.update` lifecycle operation. Runtime promotion changes the default
-for new Environments; it does not mutate the existing fleet. Each update
-snapshots which Workspaces are stopped before provider mutation, starts them
-only long enough to prove the new runtime, and returns them to stopped before
-completion. The same operation reconciles Router and Workspace control-plane
-URLs to the lifecycle worker's canonical application URL.
-
-## First cutover preparation
-
-Run the preparation command without `--apply` first. It validates production
-branch restrictions, database and canary blockers, and the exact worker secret
-contracts without changing production. Apply mode stages all three worker
-contracts, installs the shared deployment token in Vercel and GitHub, and
-removes the two legacy Web image settings. It does not deploy or advance the
-production branch.
-
-Active canary backups are reported but are not blockers. The repaired lifecycle
-worker drains them before runtime reconciliation can enter the same serialized
-lifecycle lane. Any other active canary lifecycle operation remains a blocker.
+Choose a readable tag and publish one role:
 
 ```bash
-pnpm --filter @kestrel/kestrel-one production-delivery:prepare
-pnpm --filter @kestrel/kestrel-one production-delivery:prepare -- --apply
+pnpm production:image:publish -- --role <role> --tag <tag>
 ```
 
-## Rollback
+The command builds for `linux/amd64`, runs that role's image smoke, and pushes
+the tag. It does not inspect Git history or deploy anything.
 
-Vercel can promote its prior deployment. Platform image recovery republishes a
-known fixed image tag through the owning channel. Runtime recovery uses
-**Canary previous version** on the platform Runtime page, selects the previous
-pair as desired, and requires fresh canary evidence before promotion.
+## Update one platform Machine
+
+```bash
+pnpm production:fly:machine -- \
+  --role <preview-edge|turn-worker|control-worker|runpod-worker> \
+  --machine <machine-id> \
+  --tag <tag>
+```
+
+Review the current provider record and type back the exact target. The command
+uses provider-native `fly machine update` for one Machine. Repeat explicitly for
+another Machine. Rollback is the same command with the prior tag.
+
+Staged Fly secrets are separate and app-wide. Review their status and activate
+them deliberately with `fly secrets deploy --app <app>`. Image commands never
+activate configuration.
+
+## Update a Router and Workspace pair
+
+Publish `workspace-runtime` and `environment-router` with the same operator tag,
+then queue one chosen Environment:
+
+```bash
+pnpm --dir apps/web runtime:update -- \
+  --environment <environment-id> \
+  --tag <tag>
+```
+
+After that exact operation reaches `environment.update.ready` and manual
+Workspace and preview canaries pass, activate it:
+
+```bash
+pnpm --dir apps/web production:runtime:activate -- \
+  --tag <tag> \
+  --canary-operation <operation-id>
+```
+
+The commands trust the Vercel-authenticated operator, record that provider
+identity, and never accept a user ID to impersonate. Activation affects new
+provisioning only. Every other Environment requires its own explicit update.
+There is no batch rollout or background promotion.
+
+## Evidence boundary
+
+Mock tests prove command contracts. Disposable Fly and RunPod resources prove
+isolated provider behavior. Neither proves production. Production proof comes
+only from the real Vercel migration/deployment result or exact production
+provider and Environment-operation evidence.
+
+Close the release with the Vercel deployment and migration results, every
+published role/tag, each selected Machine's before/after provider record and
+health, the exact canary Environment operation, live canary results, and any
+managed RunPod qualification or inference result. Omit targets that were out of
+scope; one provider result never proves another target.
 
 <Outcome>
-  <p>GitHub builds images; Kestrel applies them; each production channel moves independently.</p>
+  <p>Vercel deploys the two web projects; an authenticated human moves every other exact target locally.</p>
 </Outcome>

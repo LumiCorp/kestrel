@@ -29,9 +29,10 @@ test("ordinary hosted runtime paths use the Environment Runtime Channel without 
   assert.doesNotMatch(runtime, /flyImageReleaseComponents/u);
   assert.match(runtime, /type !== "environment\.delete"/u);
   assert.match(runtime, /type !== "workspace\.delete"/u);
-  assert.match(admin, /requireCurrentEnvironmentRuntime/u);
+  assert.doesNotMatch(admin, /requireCurrentEnvironmentRuntime/u);
+  assert.doesNotMatch(admin, /updateAdminEnvironmentRuntime/u);
   assert.match(backups, /requireCurrentEnvironmentRuntime/u);
   assert.match(runtimeChannel, /RUNTIME_CHANNEL_UNAVAILABLE/u);
-  assert.match(runtimeChannel, /getLegacyRuntimeChannel/u);
+  assert.doesNotMatch(runtimeChannel, /getLegacyRuntimeChannel/u);
   assert.doesNotMatch(runtimeChannel, /process\.env\.KESTREL_(?:ENVIRONMENT_ROUTER|WORKSPACE_RUNTIME)_IMAGE/u);
 });

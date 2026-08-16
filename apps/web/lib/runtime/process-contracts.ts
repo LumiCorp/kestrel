@@ -1,6 +1,4 @@
-import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
-
-export const PROCESS_CONFIGURATION_CONTRACT_REVISION = 2;
+import { createPrivateKey, createPublicKey } from "node:crypto";
 
 export type ProcessRole =
   | "web"
@@ -61,7 +59,6 @@ export const WEB_PROCESS_CONTRACT = {
     "KESTREL_WORKSPACE_BACKUP_KEY",
     "KESTREL_WORKSPACE_BACKUP_KEY_ID",
     "FLY_API_TOKEN",
-    "PRODUCTION_IMAGE_DEPLOY_TOKEN",
     "STORAGE_BUCKET",
     "STORAGE_ENDPOINT",
     "STORAGE_PROVIDER",
@@ -177,32 +174,6 @@ export const RUNPOD_WORKER_PROCESS_CONTRACT = {
     "RUNPOD_API_KEY",
   ],
 } as const satisfies ProcessContract;
-
-function normalizedContract(contract: ProcessContract) {
-  return {
-    revision: PROCESS_CONFIGURATION_CONTRACT_REVISION,
-    role: contract.role,
-    required: [...new Set(contract.required)].sort(),
-    optional: [...new Set(contract.optional)].sort(),
-    oneOf: contract.oneOf.map((group) => [...group].sort()).sort(),
-    forbidden: [...new Set(contract.forbidden)].sort(),
-  };
-}
-
-export function processConfigurationContractFingerprint(
-  contract: ProcessContract,
-) {
-  return `sha256:${createHash("sha256")
-    .update(JSON.stringify(normalizedContract(contract)))
-    .digest("hex")}`;
-}
-
-export const TURN_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT =
-  processConfigurationContractFingerprint(TURN_WORKER_PROCESS_CONTRACT);
-export const CONTROL_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT =
-  processConfigurationContractFingerprint(CONTROL_WORKER_PROCESS_CONTRACT);
-export const RUNPOD_WORKER_CONFIGURATION_CONTRACT_FINGERPRINT =
-  processConfigurationContractFingerprint(RUNPOD_WORKER_PROCESS_CONTRACT);
 
 export function processContractAllowedNames(contract: ProcessContract) {
   return new Set([

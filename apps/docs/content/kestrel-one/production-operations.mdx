@@ -1,34 +1,34 @@
 ---
 title: Operate Kestrel One in production
-summary: Verify exact application, migration, worker, image, model, and user-path evidence before inviting a team or promoting a change.
+summary: Operate Vercel natively and release every Fly, RunPod-worker, and tenant runtime target manually.
 section: kestrel-one
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-16
 ---
 
-Use this playbook before enabling an organization and after a change to application code, data, workers, images, model access, Apps/MCP, or managed deployment infrastructure.
+Use the [production delivery runbook](/operate/production-delivery) before enabling an organization and after a change to application code, data, workers, images, model access, Apps/MCP, or managed deployment infrastructure.
 
 ## Establish a healthy baseline
 
-Record Kestrel version and source revision. Confirm the Vercel application, PostgreSQL, Redis, object storage, queue services, runner access, approved gateways/models, workers, Fly image roles, and email services are healthy.
+Record the operator, intended targets, and chosen image tag. Confirm the Vercel application, PostgreSQL, Redis, object storage, queue services, runner access, approved gateways/models, workers, Fly image roles, and email services are healthy.
 
 ## Preflight migrations
 
-Inspect the actual production migration history, identify only pending migrations, take an owned backup, and verify current/candidate application and worker compatibility. Stop when rollback compatibility is unknown.
+Inspect the actual production migration history, identify only pending migrations, take an owned backup, and verify application and worker compatibility. Stop when rollback compatibility is unknown.
 
-## Deploy an exact revision
+## Let Vercel deploy Web and Docs
 
-Build application, workers, and images from the same reviewed commit. Record deployment identity and immutable artifacts; do not rebuild another revision under the same candidate.
+Advance the protected `production` branch through the normal repository process. Vercel natively deploys `one` and `docs`; the `one` build runs the ordinary production migration. Record each real Vercel result.
 
-## Promote the Vercel deployment
+## Publish and deploy one image at a time
 
-Build and test a production-shaped preview. Inspect its build identity, run the user-path smoke, and use `vercel promote` on that exact deployment rather than triggering a new production build.
+Choose a readable tag. Publish only the selected role, then update only the selected Fly Machine. Review the provider record before the change and verify the exact Machine afterward. Managed RunPod worker changes use the same manual Fly path; managed RunPod profile changes remain separate.
 
-## Roll out workers and Fly images
+## Update Router and Workspace Runtime deliberately
 
-Build and smoke workspace-runtime, environment-router, preview-edge, turn-worker, and runpod-worker. Record immutable digests, bind them to the release approval, and roll out only the approved candidate.
+Publish Router and Workspace Runtime explicitly with the intended tag. Prove the pair on disposable Fly resources, update one canary Environment, run the live Workspace and Preview canaries, and activate using that exact completed operation. Update every other Environment separately.
 
 ## Verify the user path
 
@@ -42,14 +42,14 @@ Build and smoke workspace-runtime, environment-router, preview-edge, turn-worker
 
 ## Run canaries
 
-Verify application health, queue/worker delivery, workspace provisioning, model access, one terminal result, artifact persistence, operator control, and exact image identities before widening traffic.
+Verify application health, queue/worker delivery, workspace provisioning, model access, one terminal result, artifact persistence, operator control, and selected image tags before changing another target.
 
 ## Prove recovery after a change
 
-Preserve application, database, queue, runner, deployment, model, trace, and image evidence. Restore the prior Vercel deployment and approved digests only when migrations remain compatible; otherwise stop and fix forward.
+Preserve application, database, queue, runner, deployment, model, trace, and image evidence. Restore the prior provider deployment or operator tag only when migrations remain compatible; otherwise stop and fix forward.
 
 ## Incident handoff
 
-Include version, source revision, Vercel deployment, migration before/after state, worker revision, five image digests, organization/Environment/Project/Thread/run identifiers, trace correlation, timestamps, observed symptom, and last safe action.
+Include the operator, chosen tag, intended targets, Vercel deployments, migration before/after state, Fly Machine before/after records, organization/Environment/Project/Thread/run identifiers, trace correlation, timestamps, observed symptom, and last safe action.
 
-Escalate when equivalent actors receive different authority results, data disappears, a credential reaches browser state, an unqualified deployment becomes selectable, or release identity cannot be proven.
+Escalate when equivalent actors receive different authority results, data disappears, a credential reaches browser state, an unqualified deployment becomes selectable, or the selected production target cannot be verified.

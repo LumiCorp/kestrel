@@ -8,32 +8,7 @@
       "app": "kestrel-one-runner",
       "dockerfile": "apps/workspace-runtime/Dockerfile",
       "smoke": "apps/workspace-runtime/scripts/image-smoke.sh",
-      "channel": "environment-runtime",
-      "rollout": "environment",
-      "inputs": [
-        "deploy/fly/image-catalog.json",
-        ".github/workflows/production-runtime.yml",
-        "scripts/build-production-image.ts",
-        "scripts/notify-production-runtime.ts",
-        ".dockerignore",
-        "package.json",
-        "pnpm-lock.yaml",
-        "pnpm-workspace.yaml",
-        "tsconfig.json",
-        "apps/workspace-runtime/**",
-        "packages/environment-auth/**",
-        "packages/memory/**",
-        "packages/mcp-security/**",
-        "packages/sdk/**",
-        "packages/protocol/**",
-        "packages/workspace-skills/**",
-        "agents/**",
-        "cli/**",
-        "models/**",
-        "src/**",
-        "tools/**",
-        "db/**"
-      ]
+      "rollout": "environment"
     },
     {
       "role": "environment-router",
@@ -42,20 +17,7 @@
       "app": "kestrel-one-runner",
       "dockerfile": "apps/environment-router/Dockerfile",
       "smoke": "apps/environment-router/scripts/image-smoke.sh",
-      "channel": "environment-runtime",
-      "rollout": "environment",
-      "inputs": [
-        "deploy/fly/image-catalog.json",
-        ".github/workflows/production-runtime.yml",
-        "scripts/build-production-image.ts",
-        "scripts/notify-production-runtime.ts",
-        ".dockerignore",
-        "package.json",
-        "pnpm-lock.yaml",
-        "pnpm-workspace.yaml",
-        "apps/environment-router/**",
-        "packages/environment-auth/**"
-      ]
+      "rollout": "environment"
     },
     {
       "role": "preview-edge",
@@ -64,19 +26,7 @@
       "app": "kestrel-preview-edge",
       "dockerfile": "apps/preview-edge/Dockerfile",
       "smoke": "apps/preview-edge/scripts/image-smoke.sh",
-      "channel": "fly",
-      "rollout": "global-app",
-      "inputs": [
-        "deploy/fly/image-catalog.json",
-        ".github/workflows/production-fly.yml",
-        "scripts/build-production-image.ts",
-        ".dockerignore",
-        "package.json",
-        "pnpm-lock.yaml",
-        "pnpm-workspace.yaml",
-        "apps/preview-edge/**",
-        "packages/environment-auth/**"
-      ]
+      "rollout": "global-app"
     },
     {
       "role": "turn-worker",
@@ -85,27 +35,7 @@
       "app": "kestrel-one-turn-worker",
       "dockerfile": "deploy/fly/kestrel-one-turn-worker/Dockerfile",
       "smoke": "deploy/fly/kestrel-one-turn-worker/smoke.sh",
-      "channel": "fly",
-      "rollout": "global-app",
-      "inputs": [
-        "deploy/fly/image-catalog.json",
-        ".github/workflows/production-fly.yml",
-        "scripts/build-production-image.ts",
-        ".dockerignore",
-        "package.json",
-        "pnpm-lock.yaml",
-        "pnpm-workspace.yaml",
-        "tsconfig.json",
-        "apps/web/**",
-        "packages/environment-auth/**",
-        "packages/mcp-security/**",
-        "packages/protocol/**",
-        "packages/sdk/**",
-        "packages/ai-sdk/**",
-        "packages/next/**",
-        "packages/workspace-skills/**",
-        "deploy/fly/kestrel-one-turn-worker/**"
-      ]
+      "rollout": "global-app"
     },
     {
       "role": "control-worker",
@@ -114,23 +44,7 @@
       "app": "kestrel-one-control-worker",
       "dockerfile": "deploy/fly/kestrel-one-control-worker/Dockerfile",
       "smoke": "deploy/fly/kestrel-one-control-worker/smoke.sh",
-      "channel": "fly",
-      "rollout": "global-app",
-      "inputs": [
-        "deploy/fly/image-catalog.json",
-        ".github/workflows/production-fly.yml",
-        "scripts/build-production-image.ts",
-        ".dockerignore",
-        "package.json",
-        "pnpm-lock.yaml",
-        "pnpm-workspace.yaml",
-        "apps/web/**",
-        "packages/environment-auth/**",
-        "packages/mcp-security/**",
-        "packages/protocol/**",
-        "packages/sdk/**",
-        "deploy/fly/kestrel-one-control-worker/**"
-      ]
+      "rollout": "global-app"
     },
     {
       "role": "runpod-worker",
@@ -139,20 +53,7 @@
       "app": "kestrel-one-runpod-worker",
       "dockerfile": "deploy/fly/kestrel-one-runpod-worker/Dockerfile",
       "smoke": "deploy/fly/kestrel-one-runpod-worker/smoke.sh",
-      "channel": "runpod",
-      "rollout": "global-app",
-      "inputs": [
-        "deploy/fly/image-catalog.json",
-        ".github/workflows/production-runpod.yml",
-        "scripts/build-production-image.ts",
-        ".dockerignore",
-        "package.json",
-        "pnpm-lock.yaml",
-        "pnpm-workspace.yaml",
-        "apps/web/**",
-        "packages/environment-auth/**",
-        "deploy/fly/kestrel-one-runpod-worker/**"
-      ]
+      "rollout": "global-app"
     }
   ]
 }

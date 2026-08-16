@@ -13,7 +13,6 @@ test("hosted Environment images carry the production build identity", async () =
     previewEdgeServiceConfig,
     rollout,
     previewEdgeRollout,
-    imageCatalog,
     previewEdgeServer,
     previewEdgeSmoke,
   ] = await Promise.all([
@@ -57,10 +56,6 @@ test("hosted Environment images carry the production build identity", async () =
       "utf8",
     ),
     readFile(
-      new URL("../../../../deploy/fly/image-catalog.json", import.meta.url),
-      "utf8",
-    ),
-    readFile(
       new URL("../../../preview-edge/src/server.ts", import.meta.url),
       "utf8",
     ),
@@ -97,13 +92,6 @@ test("hosted Environment images carry the production build identity", async () =
     workspaceDockerfile,
     /COPY packages\/mcp-security packages\/mcp-security/u,
   );
-  const workspaceImage = (
-    JSON.parse(imageCatalog) as {
-      images: Array<{ role: string; inputs: string[] }>;
-    }
-  ).images.find((image) => image.role === "workspace-runtime");
-  assert.ok(workspaceImage);
-  assert.ok(workspaceImage.inputs.includes("packages/mcp-security/**"));
   for (const flyConfig of [
     workspaceFlyConfig,
     routerFlyConfig,
@@ -111,18 +99,11 @@ test("hosted Environment images carry the production build identity", async () =
   ]) {
     assert.match(flyConfig, /dockerfile = "Dockerfile"/u);
   }
-  assert.match(rollout, /--config apps\/workspace-runtime\/fly\.build\.toml/u);
-  assert.match(rollout, /--config apps\/environment-router\/fly\.build\.toml/u);
-  assert.match(rollout, /apps\/workspace-runtime\/scripts\/image-smoke\.sh/u);
-  assert.match(rollout, /apps\/environment-router\/scripts\/image-smoke\.sh/u);
-  assert.match(
-    previewEdgeRollout,
-    /--config apps\/preview-edge\/fly\.build\.toml/u,
-  );
-  assert.match(
-    previewEdgeRollout,
-    /apps\/preview-edge\/scripts\/image-smoke\.sh/u,
-  );
+  assert.match(rollout, /--role workspace-runtime --tag <tag>/u);
+  assert.match(rollout, /--role environment-router --tag <tag>/u);
+  assert.match(rollout, /runtime:update/u);
+  assert.match(previewEdgeRollout, /--role preview-edge --tag <tag>/u);
+  assert.match(previewEdgeRollout, /production:fly:machine/u);
   assert.match(previewEdgeServiceConfig, /HEALTH_PORT = "8081"/u);
   assert.match(previewEdgeServiceConfig, /\[checks\.preview_edge\]/u);
   assert.match(previewEdgeServiceConfig, /port = 8081/u);

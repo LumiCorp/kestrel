@@ -1,48 +1,20 @@
-# Preview Edge image release boundary
+# Preview Edge image rollout
 
-This app is the public HTTP and WebSocket ingress for exact active preview
-hostnames. It resolves each hostname through Kestrel One and forwards traffic to
-the authorized Environment Router. The image can be built before the Fly App,
-wildcard certificate, and DNS are created.
-
-## Build and verify the immutable image
-
-From a clean committed revision at the repository root:
+Choose a readable operator tag, build and smoke the image locally, then update
+one exact Fly Machine:
 
 ```bash
-RELEASE_SHA="$(git rev-parse HEAD)"
-test -z "$(git status --porcelain)"
-PREVIEW_EDGE_IMAGE="kestrel-preview-edge:${RELEASE_SHA}"
-
-docker build \
-  --file apps/preview-edge/Dockerfile \
-  --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}" \
-  --tag "${PREVIEW_EDGE_IMAGE}" \
-  --progress plain \
-  .
-
-EXPECTED_GIT_SHA="${RELEASE_SHA}" \
-  apps/preview-edge/scripts/image-smoke.sh "${PREVIEW_EDGE_IMAGE}"
+pnpm production:image:publish -- --role preview-edge --tag <tag>
+pnpm production:fly:machine -- \
+  --role preview-edge \
+  --machine <machine-id> \
+  --tag <tag>
 ```
 
-The approved Fly builder may publish the image without deploying it:
+The first command does not deploy. The second prints the authenticated Fly
+identity and provider state, requires the role, Machine ID, and tag to be typed
+back, updates only that Machine, and prints a fresh provider record. Rollback is
+the same Machine command with the previous tag.
 
-```bash
-fly deploy . \
-  --config apps/preview-edge/fly.build.toml \
-  --build-only \
-  --push \
-  --build-arg "KESTREL_GIT_SHA=${RELEASE_SHA}"
-```
-
-Record the immutable `registry.fly.io/...@sha256:...` digest. Do not attach DNS,
-create certificates, or route production preview traffic as part of the image
-build.
-
-## Later infrastructure boundary
-
-The infrastructure rollout creates the dedicated Fly App from
-`fly.toml.example`, provisions `KESTREL_CONTROL_PLANE_URL` and
-`KESTREL_PREVIEW_EDGE_SERVICE_TOKEN`, attaches the wildcard certificate, and
-runs an isolated canary hostname. Complete the Environment Router and Workspace
-Runtime cutover in the same maintenance window before accepting preview traffic.
+DNS, certificates, secrets, and traffic routing are separate provider-native
+operations. The image command never changes them.

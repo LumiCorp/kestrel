@@ -48,8 +48,8 @@ Upgrade the existing application-owned stores in place. Preserve provider settin
 
 ## Kestrel One hosted migrations
 
-Preflight the production database, apply only pending Kestrel One migrations, verify queue and worker compatibility, then promote the exact tested application and image candidate.
+Preflight the production database and verify queue and worker compatibility. The native `one` Vercel build applies only pending Kestrel One migrations. Image and worker changes remain separate manual operations.
 
 ## Release checklist
 
-The release record must include target, before/after migration history, backup, command result, application revision, worker/image identities, smoke tests, and rollback or fix-forward disposition.
+The release record must include the target, before/after migration history, backup, Vercel result, selected worker/image tags, provider results, smoke tests, and rollback or fix-forward disposition.
