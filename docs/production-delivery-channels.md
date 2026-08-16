@@ -88,7 +88,7 @@ Valid roles are `workspace-runtime`, `environment-router`, `preview-edge`,
 Publish one role at a time:
 
 ```bash
-pnpm production:image:publish -- \
+pnpm production:image:publish \
   --role <role> \
   --tag <tag>
 ```
@@ -115,7 +115,7 @@ fly machine status <machine-id> --app <app>
 Record the current image. Then update one Machine:
 
 ```bash
-pnpm production:fly:machine -- \
+pnpm production:fly:machine \
   --role <preview-edge|turn-worker|control-worker|runpod-worker> \
   --machine <machine-id> \
   --tag <tag>
@@ -132,7 +132,14 @@ fly machine status <machine-id> --app <app>
 fly logs --app <app>
 ```
 
-Confirm the Machine is started, reports the requested tagged image, and passes
+`fly machine update` preserves a stopped Machine's state. If this exact Machine
+should be running, start it explicitly:
+
+```bash
+fly machine start <machine-id> --app <app>
+```
+
+Confirm the Machine is in the intended state, reports the requested tagged image, and passes
 the role's normal health or work-delivery check. Updating another Machine is a
 new invocation with its own review and confirmation.
 
@@ -175,8 +182,8 @@ one never publishes or deploys the other. Publish both explicitly with the tag
 you intend to use:
 
 ```bash
-pnpm production:image:publish -- --role workspace-runtime --tag <tag>
-pnpm production:image:publish -- --role environment-router --tag <tag>
+pnpm production:image:publish --role workspace-runtime --tag <tag>
+pnpm production:image:publish --role environment-router --tag <tag>
 ```
 
 Before changing a tenant, prove the pair on disposable Fly resources:
@@ -192,7 +199,7 @@ is isolated-provider evidence, not production proof.
 Choose one exact canary Environment and queue only that Environment:
 
 ```bash
-pnpm --dir apps/web runtime:update -- \
+pnpm --dir apps/web runtime:update \
   --environment <environment-id> \
   --tag <tag>
 ```
@@ -228,7 +235,7 @@ When the operation and both live canaries pass, activate the pair for new
 provisioning:
 
 ```bash
-pnpm --dir apps/web production:runtime:activate -- \
+pnpm --dir apps/web production:runtime:activate \
   --tag <tag> \
   --canary-operation <operation-id>
 ```
