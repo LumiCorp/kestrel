@@ -9,3 +9,7 @@ production Postgres URL and gateway credential encryption keys as Kestrel One,
 plus `RUNPOD_API_KEY` and `RUNPOD_MANAGED_DEPLOYMENTS_ENABLED=true` as Fly
 secrets. Deploy the schema reconciliation and inference expansion before
 starting this process.
+
+Publish this worker locally with `pnpm production:image:publish`, then update
+one exact Fly Machine with `pnpm production:fly:machine`. No production push
+deploys this worker or changes a managed RunPod profile.

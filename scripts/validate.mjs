@@ -493,6 +493,7 @@ function trackedTests(prefixes) {
   return output.stdout
     .split("\0")
     .filter(Boolean)
+    .filter((file) => existsSync(path.join(ROOT, file)))
     .filter((file) => prefixes.some((prefix) => file.startsWith(prefix)))
     .filter((file) =>
       /(?:\.(?:test|spec)\.[cm]?[jt]sx?|\.ops\.ts)$/u.test(file),

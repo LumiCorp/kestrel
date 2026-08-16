@@ -4,7 +4,6 @@ import {
   BookOpen,
   CreditCard,
   Mail,
-  Rocket,
   ServerCog,
   TicketCheck,
   Users,
@@ -44,7 +43,6 @@ const platformNavigationGroups: Array<{
         icon: ServerCog,
         label: "Environment operations",
       },
-      { href: "/platform/runtime", icon: Rocket, label: "Runtime" },
       {
         href: "/platform/billing",
         icon: CreditCard,

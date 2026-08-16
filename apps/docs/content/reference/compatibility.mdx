@@ -42,7 +42,7 @@ Desktop and Local Core preserve their owned settings, credentials, projects, ses
 - Removed Board/Task or project snapshot write APIs
 - Desktop 0.8.0 installed through the stable OTA pointer
 - Broad approvals reused for a different action
-- A hosted deployment identified only by semantic version without revision and image evidence
+- A hosted deployment whose actual Vercel result, Machine image tag, or tenant operation was not verified
 
 ## Historical releases
 
@@ -50,4 +50,4 @@ The [0.7 upgrade guide](/build/upgrading-to-0-7) remains available as history. I
 
 ## Verify a deployed system
 
-Record package versions, Desktop or CLI version, application/source revision, migration history, worker revision, Fly image digests, and one successful terminal result. Every value must describe the same release candidate.
+For hosted operation, record the Vercel deployment and migration result, the operator-selected tag and provider record for each changed Machine, the exact tenant operation when applicable, and one successful terminal result. Do not infer one target's state from another target's result.

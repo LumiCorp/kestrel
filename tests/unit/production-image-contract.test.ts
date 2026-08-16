@@ -4,109 +4,79 @@ import path from "node:path";
 import test from "node:test";
 import {
   flyImageCatalogSchema,
-  flyMigrationChanged,
-  impactedFlyImages,
-  matchesCatalogInput,
-  type FlyImageCatalog,
+  productionImageTagSchema,
 } from "../../scripts/production-image-contract.js";
+import {
+  flyMachineStatusArgs,
+  flyMachineUpdateArgs,
+  parseFlyMachineDeploymentArgs,
+} from "../../scripts/deploy-production-fly-machine.js";
+import {
+  parsePublishProductionImageArgs,
+  productionImageBuildCommands,
+} from "../../scripts/publish-production-image.js";
 
-const catalog = {
-  version: 1,
-  images: [
-    image("workspace-runtime", [
-      "apps/workspace-runtime/**",
-      "packages/sdk/**",
-    ]),
-    image("environment-router", ["apps/environment-router/**"]),
-    image("preview-edge", ["apps/preview-edge/**"]),
-    image("turn-worker", ["apps/web/**"]),
-    image("control-worker", ["apps/web/**"]),
-    image("runpod-worker", ["apps/web/**"]),
-  ],
-} satisfies FlyImageCatalog;
+const tag = "operator-aug16";
 
-test("catalog input matching is path anchored", () => {
-  assert.equal(matchesCatalogInput("apps/web/lib/a.ts", "apps/web/**"), true);
-  assert.equal(
-    matchesCatalogInput("other/apps/web/lib/a.ts", "apps/web/**"),
-    false,
-  );
-  assert.equal(matchesCatalogInput("package.json", "package.json"), true);
+test("operator tags follow the ordinary container tag contract", () => {
+  assert.equal(productionImageTagSchema.parse("operator-aug16"), "operator-aug16");
+  assert.throws(() => productionImageTagSchema.parse("not a tag"));
 });
 
-test("impact detection selects every image whose declared inputs changed", () => {
+test("local publication builds one amd64 image, smokes it, then pushes", () => {
   assert.deepEqual(
-    impactedFlyImages({
-      catalog,
-      changedPaths: ["apps/web/lib/environments/runtime-channel.ts"],
-    }).map((entry) => entry.role),
-    ["turn-worker", "control-worker", "runpod-worker"],
+    parsePublishProductionImageArgs(["--role", "preview-edge", "--tag", tag]),
+    { role: "preview-edge", tag },
   );
-});
-
-test("migration detection covers authoritative web schema inputs", () => {
-  assert.equal(flyMigrationChanged(["apps/web/drizzle/schema.ts"]), true);
-  assert.equal(
-    flyMigrationChanged(["apps/web/lib/db/migrations/0058_example.sql"]),
-    true,
-  );
-  assert.equal(
-    flyMigrationChanged(["apps/web/lib/environments/runtime-channel.ts"]),
-    false,
-  );
-});
-
-test("catalog changes rebuild every managed image", () => {
-  const impacted = impactedFlyImages({
-    catalog,
-    changedPaths: ["deploy/fly/image-catalog.json"],
+  const commands = productionImageBuildCommands({
+    dockerfile: "Dockerfile",
+    image: `registry.fly.io/example:${tag}`,
+    tag,
+    smoke: "smoke.sh",
   });
-  assert.equal(impacted.length, 6);
+  assert.deepEqual(
+    commands.map((command) => `${command.command} ${command.args[0]}`),
+    ["docker buildx", "bash smoke.sh", "docker push"],
+  );
+  assert.match(commands[0].args.join(" "), /--platform linux\/amd64/u);
 });
 
-test("production delivery changes reselect only their owning channels", async () => {
-  const releaseCatalog = flyImageCatalogSchema.parse(
-    JSON.parse(
-      await readFile(
-        path.join(process.cwd(), "deploy/fly/image-catalog.json"),
-        "utf8",
-      ),
-    ),
-  );
+test("local Fly deployment names one platform Machine and operator tag", () => {
   assert.deepEqual(
-    impactedFlyImages({
-      catalog: releaseCatalog,
-      changedPaths: [".github/workflows/production-fly.yml"],
-    }).map((entry) => entry.role),
-    ["preview-edge", "turn-worker", "control-worker"],
+    parseFlyMachineDeploymentArgs([
+      "--role",
+      "preview-edge",
+      "--machine",
+      "e2865",
+      "--tag",
+      tag,
+    ]),
+    { role: "preview-edge", machineId: "e2865", tag },
   );
+  assert.deepEqual(flyMachineStatusArgs("example", "e2865"), [
+    "machine",
+    "status",
+    "e2865",
+    "--app",
+    "example",
+    "--json",
+  ]);
   assert.deepEqual(
-    impactedFlyImages({
-      catalog: releaseCatalog,
-      changedPaths: [".github/workflows/production-runtime.yml"],
-    }).map((entry) => entry.role),
-    ["workspace-runtime", "environment-router"],
-  );
-  assert.deepEqual(
-    impactedFlyImages({
-      catalog: releaseCatalog,
-      changedPaths: [".github/workflows/production-runpod.yml"],
-    }).map((entry) => entry.role),
-    ["runpod-worker"],
-  );
-  assert.equal(
-    impactedFlyImages({
-      catalog: releaseCatalog,
-      changedPaths: ["scripts/build-production-image.ts"],
-    }).length,
-    6,
-  );
-  assert.deepEqual(
-    impactedFlyImages({
-      catalog: releaseCatalog,
-      changedPaths: ["scripts/notify-production-runtime.ts"],
-    }).map((entry) => entry.role),
-    ["workspace-runtime", "environment-router"],
+    flyMachineUpdateArgs({
+      app: "example",
+      image: `registry.fly.io/kestrel-preview-edge:${tag}`,
+      machineId: "e2865",
+    }),
+    [
+      "machine",
+      "update",
+      "e2865",
+      "--app",
+      "example",
+      "--image",
+      `registry.fly.io/kestrel-preview-edge:${tag}`,
+      "--yes",
+    ],
   );
 });
 
@@ -142,21 +112,6 @@ test("tenant runtime catalog roles publish from exact public GHCR repositories",
   );
 });
 
-test("Docker build-context changes rebuild every managed image", () => {
-  const catalogWithDockerContext = {
-    ...catalog,
-    images: catalog.images.map((entry) => ({
-      ...entry,
-      inputs: [".dockerignore", ...entry.inputs],
-    })),
-  } satisfies FlyImageCatalog;
-  const impacted = impactedFlyImages({
-    catalog: catalogWithDockerContext,
-    changedPaths: [".dockerignore"],
-  });
-  assert.equal(impacted.length, 6);
-});
-
 test("workspace-runtime image builds and carries the shared memory package", async () => {
   const dockerfile = await readFile(
     path.join(process.cwd(), "apps/workspace-runtime/Dockerfile"),
@@ -167,16 +122,12 @@ test("workspace-runtime image builds and carries the shared memory package", asy
       path.join(process.cwd(), "deploy/fly/image-catalog.json"),
       "utf8",
     ),
-  ) as FlyImageCatalog;
+  ) as { images: Array<{ role: string }> };
   const workspaceRuntime = releaseCatalog.images.find(
     (entry) => entry.role === "workspace-runtime",
   );
 
   assert.ok(workspaceRuntime, "workspace-runtime image must be registered");
-  assert.ok(
-    workspaceRuntime.inputs.includes("packages/memory/**"),
-    "memory changes must rebuild the workspace-runtime image",
-  );
   const memoryManifestCopy = dockerfile.indexOf(
     "COPY packages/memory/package.json packages/memory/package.json",
   );
@@ -207,33 +158,3 @@ test("workspace-runtime image builds and carries the shared memory package", asy
     "the memory package must be present behind the production workspace symlink",
   );
 });
-
-function image(
-  role: FlyImageCatalog["images"][number]["role"],
-  inputs: string[],
-): FlyImageCatalog["images"][number] {
-  return {
-    role,
-    publisher:
-      role === "workspace-runtime" || role === "environment-router"
-        ? "ghcr"
-        : "fly",
-    repository:
-      role === "workspace-runtime"
-        ? "ghcr.io/lumicorp/kestrel-workspace-runtime"
-        : role === "environment-router"
-          ? "ghcr.io/lumicorp/kestrel-environment-router"
-          : `registry.fly.io/app-${role}`,
-    app: `app-${role}`,
-    dockerfile: `${role}/Dockerfile`,
-    smoke: `${role}/smoke.sh`,
-    channel:
-      role === "runpod-worker"
-        ? "runpod"
-        : role === "workspace-runtime" || role === "environment-router"
-          ? "environment-runtime"
-          : "fly",
-    rollout: role === "workspace-runtime" ? "environment" : "global-app",
-    inputs: ["deploy/fly/image-catalog.json", ...inputs],
-  };
-}

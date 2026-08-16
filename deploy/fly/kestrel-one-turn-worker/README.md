@@ -18,15 +18,7 @@ database work without a pg-boss job.
 
 ## Production deployment
 
-`production-fly.yml` selects this worker only when a catalog-declared input
-changes. It stages the exact role configuration from Vercel Production with:
-
-```bash
-pnpm --dir apps/web sync:worker-config -- --role turn-worker
-```
-
-It selects only the declared turn-worker contract, stages exact sets and known
-removals without restarting Machines, verifies the secret-name inventory, and
-never prints values. Deploying the corresponding exact image digest activates
-the staged configuration. The deployment completes only after every Machine
-reports that digest and its private Fly health check is ready.
+Publish this worker locally with `pnpm production:image:publish`, then update
+one exact Machine with `pnpm production:fly:machine`. The image command does not
+stage configuration, and another Machine requires another explicit command and
+confirmation. Roll back the selected Machine with its previous operator tag.

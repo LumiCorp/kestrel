@@ -13,17 +13,8 @@ function read(relativePath: string) {
   return fs.readFileSync(path.join(webRoot, relativePath), "utf8");
 }
 
-test("Platform Runtime and Billing lead with the next operational decision", () => {
-  const runtime = read(
-    "app/(workspace)/platform/runtime/runtime-channel-client.tsx",
-  );
+test("Platform Billing leads with the next operational decision", () => {
   const billing = read("app/(workspace)/platform/billing/page.tsx");
-
-  assert.match(runtime, /title="Production channel"/u);
-  assert.match(runtime, /Pointer promotion changes the default/u);
-  assert.match(runtime, /Current version/u);
-  assert.match(runtime, /Previous version/u);
-  assert.doesNotMatch(runtime, /\bCard\b/u);
 
   assert.match(billing, /Billing integration is ready/u);
   assert.match(billing, /Required action/u);
