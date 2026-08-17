@@ -590,14 +590,14 @@ export function SchedulesClient({
       )}
 
       <Dialog onOpenChange={setDialogOpen} open={dialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editing ? "Edit schedule" : "New schedule"}</DialogTitle>
             <DialogDescription>
               Each occurrence creates a new Thread in the selected Project.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain pr-2">
             <div className="space-y-2">
               <Label htmlFor="schedule-project">Project</Label>
               <Select
@@ -713,6 +713,7 @@ export function SchedulesClient({
             <div className="space-y-2">
               <Label htmlFor="schedule-prompt">Prompt</Label>
               <Textarea
+                className="min-h-48 resize-y sm:min-h-56"
                 id="schedule-prompt"
                 onChange={(event) =>
                   setDraft((current) => ({

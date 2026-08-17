@@ -47,3 +47,13 @@ test("approval return context is revalidated from durable server state", () => {
   assert.match(policy, /candidate\.status === "pending"/u);
   assert.match(policy, /projectRoleAllows\(access\.projectRole, "editor"\)/u);
 });
+
+test("Environment capability switches show their current on or off state", () => {
+  const environmentDetail = read("components/apps/environment-apps-panel.tsx");
+
+  assert.match(
+    environmentDetail,
+    /capability\.enabled \? "On" : "Off"/u,
+  );
+  assert.match(environmentDetail, /aria-label=\{`Enable \$\{capability\.displayName\}`\}/u);
+});

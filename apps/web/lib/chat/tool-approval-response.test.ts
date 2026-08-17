@@ -39,9 +39,16 @@ test("approval response must correspond to a persisted pending request", () => {
     approval: { id: "approval-1", approved: true },
     input: { repository: "acme/widgets", title: "Canary" },
   });
+  const replay = applySubmittedToolApproval({
+    submittedApproval,
+    persistedMessages: [submitted],
+  });
+  assert.deepEqual(replay?.assistantMessage, submitted);
+  assert.equal(replay?.approvalId, "approval-1");
+  assert.equal(replay?.approved, true);
   assert.equal(
     applySubmittedToolApproval({
-      submittedApproval,
+      submittedApproval: { ...submittedApproval, approved: false },
       persistedMessages: [submitted],
     }),
     null

@@ -41,7 +41,20 @@ export function applySubmittedToolApproval(input: {
   const pendingPartIndex = persisted.parts.findIndex((candidate) =>
     isPendingApproval(candidate, input.submittedApproval.approvalId)
   );
-  if (pendingPartIndex === -1) return null;
+  if (pendingPartIndex === -1) {
+    const exactReplay = persisted.parts.some((candidate) =>
+      isExactRespondedApproval(candidate, input.submittedApproval)
+    );
+    if (!exactReplay) return null;
+    return {
+      assistantMessage: persisted,
+      approvalId: input.submittedApproval.approvalId,
+      approved: input.submittedApproval.approved,
+      ...(input.submittedApproval.reason
+        ? { reason: input.submittedApproval.reason }
+        : {}),
+    };
+  }
   const pendingPart = persisted.parts[pendingPartIndex];
   if (!pendingPart) return null;
   const parts = [...persisted.parts];
@@ -72,6 +85,20 @@ function isPendingApproval(part: unknown, approvalId: string) {
   return record?.state === "approval-requested" && approval?.id === approvalId;
 }
 
+function isExactRespondedApproval(
+  part: unknown,
+  submitted: SubmittedToolApproval
+) {
+  const record = asRecord(part);
+  const approval = asRecord(record?.approval);
+  return (
+    record?.state === "approval-responded" &&
+    approval?.id === submitted.approvalId &&
+    approval.approved === submitted.approved &&
+    readReason(approval.reason) === readReason(submitted.reason)
+  );
+}
+
 function readRespondedApproval(part: unknown) {
   const record = asRecord(part);
   const approval = asRecord(record?.approval);
@@ -87,6 +114,10 @@ function readRespondedApproval(part: unknown) {
     approved: approval.approved,
     ...(typeof approval.reason === "string" ? { reason: approval.reason } : {}),
   };
+}
+
+function readReason(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
