@@ -533,6 +533,13 @@
       "when": 1786856400000,
       "tag": "0075_project_prompt_schedule_models",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1786942800000,
+      "tag": "0076_schedule_titles_and_test_runs",
+      "breakpoints": true
     }
   ]
 }

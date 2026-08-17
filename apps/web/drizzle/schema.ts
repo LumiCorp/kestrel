@@ -970,6 +970,7 @@ export const projectPromptSchedules = pgTable(
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
+    title: text("title").notNull(),
     cronExpression: text("cron_expression").notNull(),
     timeZone: text("time_zone").notNull(),
     prompt: text("prompt").notNull(),
@@ -1010,8 +1011,13 @@ export const projectPromptScheduleRuns = pgTable(
       .references(() => projectPromptSchedules.id, { onDelete: "cascade" }),
     scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
     catchUpFrom: timestamp("catch_up_from", { withTimezone: true }),
+    titleSnapshot: text("title_snapshot").notNull(),
     promptSnapshot: text("prompt_snapshot").notNull(),
     modelIdSnapshot: text("model_id_snapshot"),
+    trigger: text("trigger", { enum: ["scheduled", "test"] })
+      .notNull()
+      .default("scheduled"),
+    requestId: text("request_id"),
     // Reserved when the occurrence is claimed, before the Thread exists.
     threadId: text("thread_id"),
     messageId: text("message_id").notNull(),
@@ -1037,6 +1043,10 @@ export const projectPromptScheduleRuns = pgTable(
     uniqueIndex("project_prompt_schedule_runs_occurrence_idx").on(
       table.scheduleId,
       table.scheduledFor,
+    ),
+    uniqueIndex("project_prompt_schedule_runs_request_idx").on(
+      table.scheduleId,
+      table.requestId,
     ),
     index("project_prompt_schedule_runs_status_idx").on(table.status),
     index("project_prompt_schedule_runs_thread_idx").on(table.threadId),

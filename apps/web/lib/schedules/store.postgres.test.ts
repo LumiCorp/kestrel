@@ -192,6 +192,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       organizationId: ids.organization,
       projectId: ids.project,
       userId: ids.lifecycleCreator,
+      title: "Archive race",
       cronExpression: "0 * * * *",
       timeZone: "UTC",
       prompt: "Must not be created while the Project is being archived.",
@@ -236,6 +237,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       organizationId: ids.organization,
       projectId: ids.project,
       userId: ids.creator,
+      title: "Unavailable model",
       cronExpression: "0 * * * *",
       timeZone: "UTC",
       prompt: "Do not persist an unavailable model.",
@@ -268,6 +270,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       organizationId: ids.organization,
       projectId: ids.project,
       userId: ids.lifecycleCreator,
+      title: "Membership race",
       cronExpression: "0 * * * *",
       timeZone: "UTC",
       prompt: "Must not survive concurrent membership removal.",
@@ -307,16 +310,139 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     organizationId: ids.organization,
     projectId: ids.project,
     userId: ids.creator,
+    title: "Scheduled review",
     cronExpression: "*/5 * * * *",
     timeZone: "America/New_York",
     prompt: "Prepare the scheduled review.",
     modelId: "openrouter/test-schedule-model",
   });
+
+  let allowArchiveScheduleUpdate = () => {};
+  const archiveScheduleUpdateGate = new Promise<void>((resolve) => {
+    allowArchiveScheduleUpdate = resolve;
+  });
+  let markTestArchiveProjectLocked = () => {};
+  const testArchiveProjectLocked = new Promise<void>((resolve) => {
+    markTestArchiveProjectLocked = resolve;
+  });
+  let markTestArchiveScheduleUpdated = () => {};
+  const testArchiveScheduleUpdated = new Promise<void>((resolve) => {
+    markTestArchiveScheduleUpdated = resolve;
+  });
+  let releaseTestArchive = () => {};
+  const testArchiveGate = new Promise<void>((resolve) => {
+    releaseTestArchive = resolve;
+  });
+  const heldTestArchive = sql
+    .begin(async (transaction) => {
+      await transaction`
+        UPDATE "projects"
+        SET "archived_at" = ${now}, "updated_at" = ${now}
+        WHERE "id" = ${ids.project}
+      `;
+      markTestArchiveProjectLocked();
+      await archiveScheduleUpdateGate;
+      await transaction`
+        UPDATE "project_prompt_schedules"
+        SET "enabled" = false, "pause_reason" = 'project_archived',
+            "next_run_at" = NULL, "updated_at" = ${now}
+        WHERE "project_id" = ${ids.project}
+      `;
+      markTestArchiveScheduleUpdated();
+      await testArchiveGate;
+    })
+    .then(
+      () => ({ status: "fulfilled" as const }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+  await testArchiveProjectLocked;
+  let archiveTestSettled = false;
+  const archiveTest = schedules
+    .createProjectPromptScheduleTestRun({
+      scheduleId: created.id,
+      projectId: ids.project,
+      organizationId: ids.organization,
+      userId: ids.creator,
+      requestId: crypto.randomUUID(),
+    })
+    .then(
+      (value) => {
+        archiveTestSettled = true;
+        return { status: "fulfilled" as const, value };
+      },
+      (error: unknown) => {
+        archiveTestSettled = true;
+        return { status: "rejected" as const, error };
+      },
+    );
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(
+    archiveTestSettled,
+    false,
+    "test creation waits for the Project row before locking the schedule",
+  );
+  allowArchiveScheduleUpdate();
+  let archiveProgressTimeout: ReturnType<typeof setTimeout> | undefined;
+  const archiveProgress = await Promise.race([
+    testArchiveScheduleUpdated.then(() => "schedule-updated" as const),
+    heldTestArchive.then(() => "archive-settled" as const),
+    new Promise<"timeout">((resolve) => {
+      archiveProgressTimeout = setTimeout(() => resolve("timeout"), 2500);
+    }),
+  ]);
+  if (archiveProgressTimeout) clearTimeout(archiveProgressTimeout);
+  releaseTestArchive();
+  const [heldTestArchiveResult, archiveTestResult] = await Promise.all([
+    heldTestArchive,
+    archiveTest,
+  ]);
+  assert.equal(
+    archiveProgress,
+    "schedule-updated",
+    "Project archival must not deadlock with schedule test creation",
+  );
+  assert.equal(heldTestArchiveResult.status, "fulfilled");
+  assert.equal(archiveTestResult.status, "rejected");
+  assert.match(
+    archiveTestResult.status === "rejected" &&
+      archiveTestResult.error instanceof Error
+      ? archiveTestResult.error.message
+      : "",
+    /Restore the Project before testing/u,
+  );
+  await projects.setProjectArchived({
+    projectId: ids.project,
+    organizationId: ids.organization,
+    userId: ids.owner,
+    archived: false,
+  });
+  await schedules.updateProjectPromptSchedule({
+    scheduleId: created.id,
+    projectId: ids.project,
+    organizationId: ids.organization,
+    userId: ids.creator,
+    enabled: true,
+  });
+
+  await assert.rejects(
+    schedules.createProjectPromptSchedule({
+      organizationId: ids.organization,
+      projectId: ids.project,
+      userId: ids.creator,
+      title: "   ",
+      cronExpression: "0 * * * *",
+      timeZone: "UTC",
+      prompt: "A title is required.",
+      modelId: "openrouter/test-schedule-model",
+    }),
+    /title is required/u,
+  );
   const [memberView] = await schedules.listProjectPromptSchedulesForUser({
     organizationId: ids.organization,
     projectId: ids.project,
     userId: ids.member,
   });
+  assert.equal(memberView?.title, "Scheduled review");
   assert.equal(memberView?.prompt, "Prepare the scheduled review.");
   assert.equal(memberView?.modelId, "openrouter/test-schedule-model");
   await assert.rejects(
@@ -331,6 +457,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
   );
   assert.deepEqual(memberView?.permissions, {
     canEdit: false,
+    canTest: false,
     canEnable: false,
     canPause: false,
     canDelete: false,
@@ -341,6 +468,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     userId: ids.owner,
   });
   assert.equal(ownerView?.permissions.canEdit, false);
+  assert.equal(ownerView?.permissions.canTest, false);
   assert.equal(ownerView?.permissions.canPause, true);
   assert.equal(ownerView?.permissions.canDelete, true);
   await assert.rejects(
@@ -371,6 +499,193 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     enabled: false,
   });
   assert.equal(paused.nextRunAt, null);
+  await assert.rejects(
+    schedules.createProjectPromptScheduleTestRun({
+      scheduleId: created.id,
+      projectId: ids.project,
+      organizationId: ids.organization,
+      userId: ids.owner,
+      requestId: crypto.randomUUID(),
+    }),
+    /Only the schedule creator can test/u,
+  );
+  const testRequestId = crypto.randomUUID();
+  const testReceipt = new Date();
+  const testRun = await schedules.createProjectPromptScheduleTestRun({
+    scheduleId: created.id,
+    projectId: ids.project,
+    organizationId: ids.organization,
+    userId: ids.creator,
+    requestId: testRequestId,
+    receivedAt: testReceipt,
+  });
+  const duplicateTestRun = await schedules.createProjectPromptScheduleTestRun({
+    scheduleId: created.id,
+    projectId: ids.project,
+    organizationId: ids.organization,
+    userId: ids.creator,
+    requestId: testRequestId,
+    receivedAt: testReceipt,
+  });
+  assert.deepEqual(duplicateTestRun, testRun);
+  await sql`
+    UPDATE "project_prompt_schedules"
+    SET "model_id" = 'openrouter/no-longer-available'
+    WHERE "id" = ${created.id}
+  `;
+  const replayAfterModelChange =
+    await schedules.createProjectPromptScheduleTestRun({
+      scheduleId: created.id,
+      projectId: ids.project,
+      organizationId: ids.organization,
+      userId: ids.creator,
+      requestId: testRequestId,
+      receivedAt: testReceipt,
+    });
+  assert.deepEqual(replayAfterModelChange, testRun);
+  await sql`
+    UPDATE "project_prompt_schedules"
+    SET "model_id" = 'openrouter/test-schedule-model'
+    WHERE "id" = ${created.id}
+  `;
+  const independentTestRun =
+    await schedules.createProjectPromptScheduleTestRun({
+      scheduleId: created.id,
+      projectId: ids.project,
+      organizationId: ids.organization,
+      userId: ids.creator,
+      requestId: crypto.randomUUID(),
+      receivedAt: testReceipt,
+    });
+  assert.notEqual(independentTestRun.runId, testRun.runId);
+  assert.notEqual(independentTestRun.threadId, testRun.threadId);
+  const [testIdentityCounts] = await sql<
+    Array<{ runs: number; auditEvents: number }>
+  >`
+    SELECT
+      (
+        SELECT count(*)::int
+        FROM "project_prompt_schedule_runs"
+        WHERE "schedule_id" = ${created.id} AND "trigger" = 'test'
+      ) AS "runs",
+      (
+        SELECT count(*)::int
+        FROM "project_audit_events"
+        WHERE "project_id" = ${ids.project}
+          AND "target_id" = ${created.id}
+          AND "action" = 'project.schedule.tested'
+      ) AS "auditEvents"
+  `;
+  assert.deepEqual(testIdentityCounts, { runs: 2, auditEvents: 2 });
+  const [testOccurrences] = await sql<
+    Array<{ first: Date; second: Date }>
+  >`
+    SELECT
+      (SELECT "scheduled_for" FROM "project_prompt_schedule_runs" WHERE "id" = ${testRun.runId}) AS "first",
+      (SELECT "scheduled_for" FROM "project_prompt_schedule_runs" WHERE "id" = ${independentTestRun.runId}) AS "second"
+  `;
+  assert.equal(testOccurrences.first.getTime(), testReceipt.getTime());
+  assert.equal(testOccurrences.second.getTime(), testReceipt.getTime() + 1);
+  const testTurnId = await materializeProjectPromptScheduleRun(testRun.runId);
+  const independentTestTurnId = await materializeProjectPromptScheduleRun(
+    independentTestRun.runId,
+  );
+  assert.ok(testTurnId);
+  assert.ok(independentTestTurnId);
+  await sql`
+    UPDATE "thread_turns"
+    SET
+      "status" = CASE
+        WHEN "id" = ${testTurnId} THEN 'waiting_for_input'
+        ELSE 'failed'
+      END,
+      "failure_code" = CASE
+        WHEN "id" = ${independentTestTurnId} THEN 'TEST_RUNTIME_FAILED'
+        ELSE NULL
+      END,
+      "failure_message" = CASE
+        WHEN "id" = ${independentTestTurnId} THEN 'The test runtime failed.'
+        ELSE NULL
+      END,
+      "finished_at" = CASE
+        WHEN "id" = ${independentTestTurnId} THEN now()
+        ELSE NULL
+      END
+    WHERE "id" IN (${testTurnId}, ${independentTestTurnId})
+  `;
+  const [overlappingView] = await schedules.listProjectPromptSchedulesForUser({
+    organizationId: ids.organization,
+    projectId: ids.project,
+    userId: ids.creator,
+  });
+  assert.equal(overlappingView?.activeStatus, "waiting_for_input");
+  assert.equal(overlappingView?.latestRun?.id, independentTestRun.runId);
+  assert.equal(overlappingView?.latestRun?.turnStatus, "failed");
+  assert.deepEqual(overlappingView?.latestRun?.failure, {
+    code: "TEST_RUNTIME_FAILED",
+    message: "The test runtime failed.",
+  });
+  await sql`
+    UPDATE "thread_turns"
+    SET "status" = 'completed', "failure_code" = NULL,
+        "failure_message" = NULL, "finished_at" = now()
+    WHERE "id" = ${testTurnId}
+  `;
+  const [materializedTest] = await sql<
+    Array<{
+      enabled: boolean;
+      nextRunAt: Date | null;
+      trigger: string;
+      requestId: string | null;
+      titleSnapshot: string;
+      requestedInteractionMode: string;
+      interactionMode: string;
+      threadMode: string;
+      threadTitle: string;
+    }>
+  >`
+    SELECT
+      schedules."enabled",
+      schedules."next_run_at" AS "nextRunAt",
+      runs."trigger",
+      runs."request_id" AS "requestId",
+      runs."title_snapshot" AS "titleSnapshot",
+      turns."requested_interaction_mode" AS "requestedInteractionMode",
+      threads."interaction_mode" AS "interactionMode",
+      threads."mode" AS "threadMode",
+      threads."title" AS "threadTitle"
+    FROM "project_prompt_schedule_runs" runs
+    JOIN "project_prompt_schedules" schedules ON schedules."id" = runs."schedule_id"
+    JOIN "thread_turns" turns ON turns."id" = runs."turn_id"
+    JOIN "threads" threads ON threads."id" = runs."thread_id"
+    WHERE runs."id" = ${testRun.runId}
+  `;
+  assert.deepEqual(
+    {
+      enabled: materializedTest.enabled,
+      nextRunAt: materializedTest.nextRunAt,
+      trigger: materializedTest.trigger,
+      requestId: materializedTest.requestId,
+      titleSnapshot: materializedTest.titleSnapshot,
+      requestedInteractionMode: materializedTest.requestedInteractionMode,
+      interactionMode: materializedTest.interactionMode,
+      threadMode: materializedTest.threadMode,
+    },
+    {
+      enabled: false,
+      nextRunAt: null,
+      trigger: "test",
+      requestId: testRequestId,
+      titleSnapshot: "Scheduled review",
+      requestedInteractionMode: "build",
+      interactionMode: "build",
+      threadMode: "chat",
+    },
+  );
+  assert.match(
+    materializedTest.threadTitle,
+    /^Scheduled review · Test · /u,
+  );
   await assert.rejects(
     schedules.updateProjectPromptSchedule({
       scheduleId: created.id,
@@ -407,24 +722,37 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       id: string;
       scheduledFor: Date;
       catchUpFrom: Date | null;
+      titleSnapshot: string;
       promptSnapshot: string;
       modelIdSnapshot: string | null;
+      trigger: string;
       threadId: string;
     }>
   >`
     SELECT
       "id", "scheduled_for" AS "scheduledFor", "catch_up_from" AS "catchUpFrom",
+      "title_snapshot" AS "titleSnapshot",
       "prompt_snapshot" AS "promptSnapshot",
-      "model_id_snapshot" AS "modelIdSnapshot", "thread_id" AS "threadId"
+      "model_id_snapshot" AS "modelIdSnapshot", "trigger",
+      "thread_id" AS "threadId"
     FROM "project_prompt_schedule_runs"
-    WHERE "schedule_id" = ${created.id}
+    WHERE "id" = ${runIds[0]}
   `;
   assert.ok(claimed);
+  assert.equal(claimed.titleSnapshot, "Scheduled review");
   assert.equal(claimed.promptSnapshot, "Prepare the scheduled review.");
   assert.equal(claimed.modelIdSnapshot, "openrouter/test-schedule-model");
+  assert.equal(claimed.trigger, "scheduled");
   assert.equal(claimed.catchUpFrom?.getTime(), firstDueAt.getTime());
   assert.ok(claimed.scheduledFor.getTime() > firstDueAt.getTime());
 
+  await schedules.updateProjectPromptSchedule({
+    scheduleId: created.id,
+    projectId: ids.project,
+    organizationId: ids.organization,
+    userId: ids.creator,
+    title: "Renamed scheduled review",
+  });
   const firstTurnId = await materializeProjectPromptScheduleRun(claimed.id);
   const retriedTurnId = await materializeProjectPromptScheduleRun(claimed.id);
   assert.ok(firstTurnId);
@@ -435,31 +763,45 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       messages: number;
       turns: number;
       requestedModelId: string | null;
+      requestedInteractionMode: string;
+      interactionMode: string;
+      threadMode: string;
+      threadTitle: string;
     }>
   >`
     SELECT
       (SELECT count(*)::int FROM "threads" WHERE "id" = ${claimed.threadId}) AS "threads",
       (SELECT count(*)::int FROM "thread_messages" WHERE "thread_id" = ${claimed.threadId}) AS "messages",
       (SELECT count(*)::int FROM "thread_turns" WHERE "thread_id" = ${claimed.threadId}) AS "turns",
-      (SELECT "requested_model_id" FROM "thread_turns" WHERE "thread_id" = ${claimed.threadId}) AS "requestedModelId"
+      (SELECT "requested_model_id" FROM "thread_turns" WHERE "thread_id" = ${claimed.threadId}) AS "requestedModelId",
+      (SELECT "requested_interaction_mode" FROM "thread_turns" WHERE "thread_id" = ${claimed.threadId}) AS "requestedInteractionMode",
+      (SELECT "interaction_mode" FROM "threads" WHERE "id" = ${claimed.threadId}) AS "interactionMode",
+      (SELECT "mode" FROM "threads" WHERE "id" = ${claimed.threadId}) AS "threadMode",
+      (SELECT "title" FROM "threads" WHERE "id" = ${claimed.threadId}) AS "threadTitle"
   `;
   assert.deepEqual(materialized, {
     threads: 1,
     messages: 1,
     turns: 1,
     requestedModelId: "openrouter/test-schedule-model",
+    requestedInteractionMode: "build",
+    interactionMode: "build",
+    threadMode: "chat",
+    threadTitle: materialized.threadTitle,
   });
+  assert.match(materialized.threadTitle, /^Scheduled review · /u);
+  assert.doesNotMatch(materialized.threadTitle, /Renamed/u);
 
   const failedRunId = `schedule-failed-run-${suffix}`;
   const reservedFailedThreadId = `schedule-failed-thread-${suffix}`;
   await sql`
     INSERT INTO "project_prompt_schedule_runs" (
-      "id", "schedule_id", "scheduled_for", "prompt_snapshot",
+      "id", "schedule_id", "scheduled_for", "title_snapshot", "prompt_snapshot",
       "thread_id", "message_id", "status", "failure_code",
       "failure_message", "finished_at", "created_at", "updated_at"
     ) VALUES (
-      ${failedRunId}, ${created.id}, ${new Date(now.getTime() + 60_000)},
-      'Failed before materialization.', ${reservedFailedThreadId},
+      ${failedRunId}, ${created.id}, ${new Date(Date.now() + 60_000)},
+      'Renamed scheduled review', 'Failed before materialization.', ${reservedFailedThreadId},
       ${`schedule-failed-message-${suffix}`}, 'failed',
       'SCHEDULE_ENVIRONMENT_UNAVAILABLE',
       'Project Environment is unavailable.', ${now}, ${now}, ${now}
@@ -527,6 +869,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     organizationId: ids.organization,
     projectId: ids.project,
     userId: ids.creator,
+    title: "Archive behavior",
     cronExpression: "0 * * * *",
     timeZone: "UTC",
     prompt: "Archive behavior.",
@@ -610,6 +953,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     organizationId: ids.organization,
     projectId: ids.rebindProject,
     userId: ids.creator,
+    title: "Portable schedule",
     cronExpression: "0 * * * *",
     timeZone: "UTC",
     prompt: "Remain enabled because this model is organization-scoped.",
@@ -620,6 +964,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       organizationId: ids.organization,
       projectId: ids.rebindProject,
       userId: ids.creator,
+      title: "Environment-scoped schedule",
       cronExpression: "0 * * * *",
       timeZone: "UTC",
       prompt: "Pause after the Project leaves this model's Environment.",
@@ -653,6 +998,36 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
   assert.deepEqual(portableAfterEnvironmentMove, {
     enabled: true,
     pauseReason: null,
+  });
+  await assert.rejects(
+    schedules.createProjectPromptScheduleTestRun({
+      scheduleId: environmentScopedSchedule.id,
+      projectId: ids.rebindProject,
+      organizationId: ids.organization,
+      userId: ids.creator,
+      requestId: crypto.randomUUID(),
+    }),
+    /model is not available in this Project Environment/u,
+  );
+  const [unavailableAfterRejectedTest] = await sql<
+    Array<{ enabled: boolean; nextRunAt: Date | null; testRuns: number }>
+  >`
+    SELECT
+      schedules."enabled",
+      schedules."next_run_at" AS "nextRunAt",
+      (
+        SELECT count(*)::int
+        FROM "project_prompt_schedule_runs" runs
+        WHERE runs."schedule_id" = schedules."id"
+          AND runs."trigger" = 'test'
+      ) AS "testRuns"
+    FROM "project_prompt_schedules" schedules
+    WHERE schedules."id" = ${environmentScopedSchedule.id}
+  `;
+  assert.deepEqual(unavailableAfterRejectedTest, {
+    enabled: false,
+    nextRunAt: null,
+    testRuns: 0,
   });
 
   await schedules.updateProjectPromptSchedule({
@@ -714,11 +1089,11 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
   `;
   await sql`
     INSERT INTO "project_prompt_schedule_runs" (
-      "id", "schedule_id", "scheduled_for", "prompt_snapshot",
+      "id", "schedule_id", "scheduled_for", "title_snapshot", "prompt_snapshot",
       "thread_id", "message_id", "status", "created_at", "updated_at"
     ) VALUES (
       ${authorityLossRunId}, ${archivedSchedule.id}, ${new Date(now.getTime() + 120_000)},
-      'Must not execute without a creator.', ${`schedule-authority-thread-${suffix}`},
+      'Archive behavior', 'Must not execute without a creator.', ${`schedule-authority-thread-${suffix}`},
       ${`schedule-authority-message-${suffix}`}, 'queued', ${now}, ${now}
     )
   `;

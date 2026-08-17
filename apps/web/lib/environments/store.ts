@@ -30,6 +30,7 @@ import {
   environmentLifecycleLockKey,
   organizationEnvironmentCreateLockKey,
   organizationEnvironmentDefaultLockKey,
+  projectEnvironmentBindingLockKey,
   threadEnvironmentBindingLockKey,
   workspaceLifecycleLockKey,
 } from "./lifecycle-lock";
@@ -685,10 +686,9 @@ export async function bindProjectToEnvironment(input: {
   userId: string;
 }) {
   const now = new Date();
-  const lockKey = `kestrel:project-environment:${input.projectId}`;
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${projectEnvironmentBindingLockKey(input.projectId)}, 0))`,
     );
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,

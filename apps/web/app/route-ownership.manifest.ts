@@ -1856,6 +1856,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/projects/[id]/schedules/[scheduleId]/test/route.ts",
+    "/api/projects/:id/schedules/:scheduleId/test",
+    "projects",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/projects/[id]/context/route.ts",
     "/api/projects/:id/context",
     "projects",
