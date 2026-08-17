@@ -43,7 +43,10 @@ import {
 } from "../../../src/localCore/daemon.js";
 import { resolveKestrelCoreHome } from "../../../src/localCore/home.js";
 import type { LocalCoreClient } from "../../../src/localCore/client.js";
-import { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
+import {
+  LocalCoreConnectionManager,
+  type LocalCoreConnectionState,
+} from "../../../src/localCore/connectionManager.js";
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
 import { parseLocalCoreBuildIdentity } from "../../../src/localCore/contracts.js";
 import { LOCAL_CORE_BUILD_MANIFEST_NAME } from "../../../src/localCore/buildIdentity.js";
@@ -227,6 +230,8 @@ import {
   resolveDesktopThreadWorkspace,
 } from "./threadWorkspace.js";
 import { WorkspaceSkillManager } from "../../../src/skills/WorkspaceSkillStore.js";
+import { requireMissionControlProjectId } from "../../../src/missionControl/projectAuthority.js";
+import { discoverWorkspaceValidationCatalog } from "../../../src/validation/WorkspaceValidationService.js";
 import type { WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 import { resolveDesktopWorkspaceAccessRoot } from "./workspaceAccess.js";
 import {
@@ -368,6 +373,7 @@ let desktopConfig: ReturnType<typeof resolveDesktopPathConfig> | undefined;
 let localCoreStatus: LocalCoreStatus | undefined;
 let runtimeHealth: DesktopRuntimeHealth = {
   state: "degraded",
+  connection: "disconnected",
   summary: "Preparing desktop app…",
   running: false,
 };
@@ -410,6 +416,7 @@ function resolveAuthoritativeDesktopExecutionSelection(
 }
 let desktopModelPolicy: ResolvedModelPolicy = createDefaultModelPolicy();
 let localCoreConnectionManager: LocalCoreConnectionManager | undefined;
+let localCoreConnectionState: LocalCoreConnectionState = "disconnected";
 const desktopRunnerAdapters = new Map<string, WebRunnerAdapter>();
 let defaultDesktopRunnerProfileId: string | undefined;
 let unsubscribeProjectRunEvents: (() => void) | undefined;
@@ -556,6 +563,7 @@ async function startDesktopServices(): Promise<void> {
   );
   const ready = await ensureDesktopLocalCoreReady(localCoreConfig);
   localCoreStatus = ready.status;
+  localCoreConnectionState = "connected";
   localCoreConnectionManager = new LocalCoreConnectionManager({
     initialConnection: ready,
     connect: async () => await ensureDesktopLocalCoreReady(localCoreConfig),
@@ -563,6 +571,10 @@ async function startDesktopServices(): Promise<void> {
       localCoreStatus = connection.status;
       currentDatabaseUrl = connection.status.databaseUrl;
       subscribeToCoreProjectRuns(connection.client);
+    },
+    onStateChanged(state) {
+      localCoreConnectionState = state;
+      publishDesktopRuntimeHealth();
     },
   });
   updateBootState(
@@ -694,10 +706,19 @@ async function startDesktopExecutionServicesOnce(): Promise<void> {
       try {
         const event = parseRunnerEventV2(JSON.parse(line));
         if (
-          (event.type.startsWith("run.") || event.type === "task.updated") &&
+          (event.type.startsWith("run.") ||
+            event.type === "task.updated" ||
+            event.type === "mission_control.project") &&
           mainWindow?.isDestroyed() === false
         ) {
-          mainWindow.webContents.send("desktop:runner-event", event);
+          if (event.type === "mission_control.project") {
+            mainWindow.webContents.send("desktop:mission-control-project", {
+              projectId: event.payload.projectId,
+              project: event.payload.project,
+            });
+          } else {
+            mainWindow.webContents.send("desktop:runner-event", event);
+          }
         }
       } catch {
         // Protocol parsing and command-specific error handling remain owned by the adapter.
@@ -3705,6 +3726,27 @@ function registerIpcHandlers(
       }),
   );
   ipcMain.handle(
+    "desktop:inspect-mission-control-project-setup",
+    async (_event, projectIdValue: unknown) => {
+      const projectId = requireMissionControlProjectId(projectIdValue);
+      const project = desktopSettings.projects.find(
+        (candidate) => candidate.id === projectId,
+      );
+      if (project === undefined) {
+        throw createDesktopError({
+          code: "desktop.unregistered_mission_control_project",
+          message: "Mission Control project setup requires a registered project.",
+        });
+      }
+      const catalog = await discoverWorkspaceValidationCatalog(project.path);
+      return {
+        projectId,
+        projectPath: project.path,
+        ...catalog,
+      };
+    },
+  );
+  ipcMain.handle(
     "desktop:execute-mission-control-action",
     async (_event, intent: unknown) =>
       executeDesktopMissionControlAction({
@@ -5212,9 +5254,11 @@ function deriveRuntimeHealth(
   nextBootState: DesktopBootState,
 ): DesktopRuntimeHealth {
   const status = runnerTransport?.getStatus();
+  const connection = localCoreConnectionState;
   if (databaseStatus.state === "blocked") {
     return {
       state: "blocked",
+      connection,
       summary: databaseStatus.summary,
       details: databaseStatus.lastError?.details?.recommendedAction as
         | string
@@ -5231,6 +5275,7 @@ function deriveRuntimeHealth(
     ) {
       return {
         state: "blocked",
+        connection,
         summary: "Kestrel Local Core needs an update.",
         code: nextBootState.code,
         details: nextBootState.details,
@@ -5241,6 +5286,7 @@ function deriveRuntimeHealth(
     }
     return {
       state: "blocked",
+      connection,
       summary: nextBootState.message,
       ...(nextBootState.code !== undefined ? { code: nextBootState.code } : {}),
       ...(nextBootState.details !== undefined
@@ -5251,9 +5297,22 @@ function deriveRuntimeHealth(
       database: databaseStatus,
     };
   }
+  if (nextBootState.phase === "ready" && connection !== "connected") {
+    return {
+      state: "degraded",
+      connection,
+      summary: connection === "connecting"
+        ? "Reconnecting to Kestrel Local Core…"
+        : "Kestrel Local Core is disconnected.",
+      running: status?.running ?? false,
+      ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
+      database: databaseStatus,
+    };
+  }
   if (nextBootState.phase === "ready") {
     return {
       state: "healthy",
+      connection,
       summary: "Runtime ready.",
       running: status?.running ?? false,
       ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
@@ -5262,6 +5321,7 @@ function deriveRuntimeHealth(
   }
   return {
     state: "degraded",
+    connection,
     summary: nextBootState.message,
     ...(nextBootState.code !== undefined ? { code: nextBootState.code } : {}),
     ...(nextBootState.details !== undefined
@@ -5271,6 +5331,11 @@ function deriveRuntimeHealth(
     ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
     database: databaseStatus,
   };
+}
+
+function publishDesktopRuntimeHealth(): void {
+  runtimeHealth = deriveRuntimeHealth(bootState);
+  mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
 }
 
 function updateBootState(

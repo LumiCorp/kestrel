@@ -142,19 +142,28 @@ export function readDesktopRendererState(
 }
 
 export function createRendererThread(input: {
+  sessionId?: string | undefined;
+  title?: string | undefined;
+  titleLocked?: boolean | undefined;
   projectPath?: string | undefined;
   modelConfigurationId?: string | undefined;
   modelConfigurationRevision?: number | undefined;
   enabledWorkflowAppIds?: string[] | undefined;
+  rawState?: Record<string, unknown> | undefined;
 } = {}): RendererThread {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   return {
     id,
-    title: "New conversation",
-    sessionId: crypto.randomUUID(),
+    title: input.title === undefined
+      ? "New conversation"
+      : normalizeRendererThreadTitle(input.title),
+    sessionId: input.sessionId ?? crypto.randomUUID(),
     ...(input.projectPath !== undefined
       ? { projectPath: input.projectPath }
+      : {}),
+    ...(input.titleLocked !== undefined
+      ? { titleLocked: input.titleLocked }
       : {}),
     updatedAt: now,
     transcript: [],
@@ -175,7 +184,7 @@ export function createRendererThread(input: {
     modelConfigurationRevision: input.modelConfigurationRevision ?? 1,
     enabledWorkflowAppIds: filterDesktopWorkflowAppIds(input.enabledWorkflowAppIds ?? []),
     rawSummary: {},
-    rawState: {},
+    rawState: input.rawState ?? {},
   };
 }
 
@@ -278,6 +287,58 @@ export function addRendererThread(
     activeThreadId: thread.id,
     threads: [thread, ...state.threads],
   };
+}
+
+export function ensureRendererThread(
+  state: DesktopRendererState,
+  input: Parameters<typeof createRendererThread>[0] & { sessionId: string },
+): DesktopRendererState {
+  const existing = state.threads.find(
+    (thread) => thread.sessionId === input.sessionId,
+  );
+  if (existing !== undefined) {
+    const title = input.title === undefined
+      ? existing.title
+      : normalizeRendererThreadTitle(input.title);
+    const rawState = input.rawState === undefined
+      ? existing.rawState
+      : { ...existing.rawState, ...input.rawState };
+    const changed =
+      title !== existing.title ||
+      (input.titleLocked !== undefined && input.titleLocked !== existing.titleLocked) ||
+      (input.projectPath !== undefined && input.projectPath !== existing.projectPath) ||
+      (input.rawState !== undefined && rendererStateValuesEqual(rawState, existing.rawState) === false);
+    if (changed === false) return state;
+    return {
+      ...state,
+      threads: state.threads.map((thread) => thread.id === existing.id
+        ? {
+            ...thread,
+            title,
+            ...(input.titleLocked === undefined
+              ? {}
+              : { titleLocked: input.titleLocked }),
+            ...(input.projectPath === undefined
+              ? {}
+              : { projectPath: input.projectPath }),
+            rawState,
+          }
+        : thread),
+    };
+  }
+  const thread = createRendererThread(input);
+  return {
+    ...state,
+    threads: [thread, ...state.threads],
+  };
+}
+
+function rendererStateValuesEqual(left: unknown, right: unknown): boolean {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return left === right;
+  }
 }
 
 export function selectRendererThread(

@@ -296,7 +296,6 @@ test("unavailable-project conversations are read-only across work surfaces", asy
 
   assert.match(app, /isDesktopThreadProjectUnavailable\(activeThread, settings\.projects\)/u);
   assert.match(app, /const threadReadOnlySelected = archivedThreadSelected \|\| unavailableProjectThreadSelected;/u);
-  assert.match(app, /disabled=\{threadReadOnlySelected\}/u);
   assert.match(app, /\{threadReadOnlySelected \? null : \(/u);
   assert.match(app, /This conversation is read-only because its project is no longer registered\./u);
 });
@@ -376,6 +375,16 @@ test("settings keep compact checks and wrap navigation at narrow widths", async 
   );
 });
 
+test("Mission Control keeps connection state visible at narrow widths", async () => {
+  const styles = await readDesktopStyles();
+
+  assert.match(
+    styles,
+    /@media \(max-width:\s*760px\)\s*\{[\s\S]*?\.unified-mission-header\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*68px;[\s\S]*?\.mission-live-state\s*\{[^}]*grid-column:\s*2 \/ 4;[^}]*grid-row:\s*2;[^}]*justify-self:\s*start;/su,
+  );
+  assert.doesNotMatch(styles, /\.mission-live-state\s*\{\s*display:\s*none;\s*\}/u);
+});
+
 test("settings navigation mounts one bounded category page at a time", async () => {
   const app = await readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8");
   const styles = await readDesktopStyles();
@@ -435,22 +444,28 @@ test("conversation menus and rename dialog expose keyboard and focus behavior", 
   assert.match(explorer, /onSubmit=/u);
 });
 
-test("archived conversations are read-only and thread-scoped surfaces are disabled", async () => {
+test("archived conversations are read-only without disabling project-scoped surfaces", async () => {
   const app = await readFile(appPath, "utf8");
   assert.match(app, /const archivedThreadSelected = activeThread\?\.archivedAt !== undefined/u);
   assert.match(app, /className="timeline-entry timeline-entry-archived"/u);
   assert.match(app, /className="timeline-entry-content archived-conversation-banner"/u);
   assert.match(app, /This transcript is read-only\./u);
-  assert.match(app, /disabled=\{threadReadOnlySelected\}/u);
-  assert.match(app, /if \(threadReadOnlySelected\) setSurface\("chat"\)/u);
+  assert.match(app, /\{threadReadOnlySelected \? null : \(/u);
+  assert.match(app, /threadReadOnlySelected && isConversationOwnedSurface\(surface\)/u);
+  assert.match(app, /surface === "diff" \|\| surface === "review" \|\| surface === "validation"/u);
+  assert.doesNotMatch(
+    app,
+    /className=\{surface === "mission-control"[\s\S]{0,180}disabled=\{threadReadOnlySelected\}/u,
+  );
 });
 
-test("conversation header keeps project context in the project switcher without sidebar reassignment", async () => {
+test("conversation header keeps its project context while Mission Control owns an explicit project selector", async () => {
   const [app, sidebar] = await Promise.all([readFile(appPath, "utf8"), readFile(contextSidebarPath, "utf8")]);
-  assert.match(app, /const titlebarProjectLabel = surface === "projects" \? selectedProjectLabel : conversationProjectLabel/u);
+  assert.match(app, /surface === "mission-control"[\s\S]*missionControlProject\?\.label \?\? "No project"/u);
   assert.match(app, /className="project-switcher"[\s\S]*\{titlebarProjectLabel\}/u);
   assert.doesNotMatch(app, /<small>\{conversationProjectLabel\}<\/small>/u);
-  assert.doesNotMatch(app, /onProjectChange=/u);
+  assert.match(app, /<UnifiedMissionControlWorkspace[\s\S]*onProjectChange=/u);
+  assert.match(app, /setMissionControlProjectPath\(projectPath\)/u);
   assert.doesNotMatch(sidebar, /Conversation project/u);
   assert.doesNotMatch(app, /activeProjectPath/u);
 });

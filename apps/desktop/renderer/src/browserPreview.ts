@@ -35,6 +35,7 @@ import {
   DESKTOP_DEFAULT_ENABLED_APP_IDS,
   listDesktopAppDefinitions,
 } from "../../../../src/desktopShell/configuration";
+import { createMissionControlPreviewStore } from "./missionControlPreviewStore";
 
 export function ensureBrowserPreviewBridge(): void {
   const previewWindow = window as unknown as { kestrelDesktop?: DesktopBridge };
@@ -130,6 +131,11 @@ export function ensureBrowserPreviewBridge(): void {
   const projectRunListeners = new Set<
     (runs: DesktopManagedProjectRun[]) => void
   >();
+  const missionControlStore = createMissionControlPreviewStore({
+    projectPath: (projectId) =>
+      settings.projects.find((project) => project.id === projectId)?.path
+        ?? "/workspace/kestrel",
+  });
   let projectRuns: DesktopManagedProjectRun[] = [
     {
       runId: "preview-run-1",
@@ -448,6 +454,7 @@ export function ensureBrowserPreviewBridge(): void {
     async getRuntimeHealth() {
       return {
         state: "healthy",
+        connection: "connected",
         summary: "Local runtime is ready.",
         running: true,
       };
@@ -819,12 +826,20 @@ export function ensureBrowserPreviewBridge(): void {
     async getMissionControlProject(
       projectId: string,
     ): Promise<DesktopMissionControlProjectResponse> {
-      return createPreviewMissionControlProject(projectId);
+      return missionControlStore.getProject(projectId);
+    },
+    async inspectMissionControlProjectSetup(projectId: string) {
+      return missionControlStore.inspectSetup(projectId);
+    },
+    onMissionControlProject(
+      listener: (project: DesktopMissionControlProjectResponse) => void,
+    ) {
+      return missionControlStore.subscribe(listener);
     },
     async executeMissionControlAction(
       intent: DesktopMissionControlActionIntent,
     ): Promise<DesktopMissionControlProjectResponse> {
-      return createPreviewMissionControlProject(intent.projectId);
+      return missionControlStore.execute(intent);
     },
     async getOperatorThread(
       threadId: string,
@@ -1599,119 +1614,6 @@ function createPreviewWorkspaceGit(
     ],
     notifications: [],
     generatedAt: now,
-  };
-}
-
-function createPreviewMissionControlProject(
-  projectId: string,
-): DesktopMissionControlProjectResponse {
-  const now = new Date().toISOString();
-  return {
-    projectId,
-    project: {
-      projectId,
-      schemaVersion: 1,
-      revision: 6,
-      authorityEpoch: 1,
-      document: {
-        schemaVersion: 1,
-        projectId,
-        autopilot: { enabled: false, wipLimit: 2 },
-        items: {
-          "preview-ready": {
-            id: "preview-ready",
-            title: "Prepare the Desktop release",
-            instructions: "Complete the project-scoped release checklist.",
-            createdBy: "operator",
-            phase: "ready",
-            order: 1,
-            attempts: [],
-            version: 1,
-            createdAt: now,
-            updatedAt: now,
-          },
-          "preview-active": {
-            id: "preview-active",
-            title: "Verify Mission Control recovery",
-            instructions: "Exercise disconnect, relaunch, and exact-run recovery.",
-            createdBy: "operator",
-            phase: "active",
-            order: 1,
-            currentAttemptId: "preview-attempt",
-            attempts: [{
-              id: "preview-attempt",
-              generation: 1,
-              initiatedBy: "operator",
-              status: "running",
-              version: 2,
-              profileId: "desktop",
-              requestedSessionId: "preview-desktop-bridge",
-              requestedThreadId: "thread-main:preview-desktop-bridge",
-              dispatchCommandId: "preview-command",
-              dispatchRunId: "preview-run",
-              currentRunId: "preview-run",
-              runs: [{
-                sessionId: "preview-desktop-bridge",
-                threadId: "thread-main:preview-desktop-bridge",
-                runId: "preview-run",
-                commandId: "preview-command",
-                acceptedAt: now,
-              }],
-              createdAt: now,
-              updatedAt: now,
-            }],
-            version: 2,
-            createdAt: now,
-            updatedAt: now,
-          },
-          "preview-review": {
-            id: "preview-review",
-            title: "Inspect the frozen candidate",
-            instructions: "Review candidate-bound proof before acceptance.",
-            createdBy: "agent",
-            phase: "review",
-            order: 1,
-            attempts: [],
-            version: 1,
-            createdAt: now,
-            updatedAt: now,
-          },
-          "preview-discarded": {
-            id: "preview-discarded",
-            title: "Retired parallel board",
-            instructions: "Historical preview-only item.",
-            createdBy: "agent",
-            phase: "discarded",
-            order: 1,
-            attempts: [],
-            version: 2,
-            createdAt: now,
-            updatedAt: now,
-          },
-        },
-        history: [{
-          actionId: "preview-history",
-          actionType: "execution.accepted",
-          revision: 6,
-          timestamp: now,
-          itemId: "preview-active",
-          attemptId: "preview-attempt",
-          disposition: "applied",
-        }],
-        migration: {
-          version: 1,
-          status: "staged",
-          registeredPath: "/workspace/kestrel",
-          sources: [],
-          candidates: [],
-          rebinds: [],
-          stagedAt: now,
-          updatedAt: now,
-        },
-      },
-      createdAt: now,
-      updatedAt: now,
-    },
   };
 }
 

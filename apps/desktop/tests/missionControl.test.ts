@@ -223,6 +223,110 @@ test(
   },
 );
 
+test("Desktop maps editing, follow-ups, and complete Ready ordering to authority actions", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  const actions: Record<string, unknown>[] = [];
+  const project = {
+    projectId,
+    schemaVersion: 1 as const,
+    revision: 12,
+    authorityEpoch: 1,
+    document: createEmptyMissionControlProjectDocument(projectId),
+    createdAt: "2026-07-31T12:00:00.000Z",
+    updatedAt: "2026-07-31T12:00:00.000Z",
+  };
+  const adapter: Pick<WebRunnerAdapter, "sendControl"> = {
+    async sendControl(command) {
+      if (command.type === "mission_control.action.execute") {
+        actions.push(command.action as Record<string, unknown>);
+      }
+      return {
+        id: "event-action",
+        type: "mission_control.project",
+        ts: "2026-07-31T12:00:00.000Z",
+        payload: { projectId, project },
+      };
+    },
+  };
+  const contract = {
+    workType: "non_code" as const,
+    changeOutcome: "no_change" as const,
+    validation: {
+      mode: "not_applicable" as const,
+      reason: "No project files change.",
+    },
+    requiredEvidence: [],
+  };
+  const common = {
+    adapter,
+    registeredProjectIds: [projectId],
+    profileId: "desktop",
+    actionTs: "2026-07-31T12:00:00.000Z",
+    context,
+  };
+  await executeDesktopMissionControlAction({
+    ...common,
+    actionId: "edit-action",
+    intent: {
+      type: "update",
+      projectId,
+      expectedRevision: 9,
+      itemId: "ready-one",
+      expectedItemVersion: 2,
+      title: "Clarified work",
+      instructions: "Clarified instructions.",
+      completionContract: contract,
+    },
+  });
+  await executeDesktopMissionControlAction({
+    ...common,
+    actionId: "order-action",
+    intent: {
+      type: "resequence",
+      projectId,
+      expectedRevision: 10,
+      targetPhase: "ready",
+      orderedItemIds: ["ready-two", "ready-one"],
+    },
+  });
+  await executeDesktopMissionControlAction({
+    ...common,
+    actionId: "follow-up-action",
+    intent: {
+      type: "create",
+      projectId,
+      expectedRevision: 11,
+      title: "Follow up: Accepted work",
+      instructions: "Apply a new correction.",
+      completionContract: contract,
+      followUpToItemId: "done-one",
+    },
+  });
+  assert.deepEqual(actions[0], {
+    type: "item.update",
+    projectId,
+    actionId: "edit-action",
+    actionTs: common.actionTs,
+    expectedRevision: 9,
+    itemId: "ready-one",
+    expectedItemVersion: 2,
+    title: "Clarified work",
+    instructions: "Clarified instructions.",
+    completionContract: contract,
+  });
+  assert.deepEqual(actions[1], {
+    type: "item.resequence",
+    projectId,
+    actionId: "order-action",
+    actionTs: common.actionTs,
+    expectedRevision: 10,
+    targetPhase: "ready",
+    orderedItemIds: ["ready-two", "ready-one"],
+  });
+  assert.equal(actions[2]?.type, "item.create");
+  assert.equal(actions[2]?.followUpToItemId, "done-one");
+});
+
 test("Desktop Mission Control projects runtime thread inspection through the runner", async () => {
   const calls: unknown[] = [];
   const adapter: Pick<WebRunnerAdapter, "sendControl"> = {

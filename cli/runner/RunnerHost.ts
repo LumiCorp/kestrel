@@ -517,6 +517,9 @@ export type RunnerRuntimeFactory = (
   onTaskUpdate: (update: DelegationTaskUpdate) => void,
   onRunEvent: (event: RunEvent) => void,
   onDetachedTurnEvent: (event: DetachedTurnLifecycleEvent) => void,
+  onMissionControlProject: (
+    project: MissionControlProjectStateRecord,
+  ) => void,
 ) => RunnerRuntime;
 
 export function createLiveOnlyProgressListener(
@@ -543,6 +546,7 @@ export function createDefaultRunnerRuntimeFactory(
     onTaskUpdate,
     onRunEvent,
     onDetachedTurnEvent,
+    onMissionControlProject,
   ) =>
     createRuntime(profile, {
       onRunLog,
@@ -552,6 +556,7 @@ export function createDefaultRunnerRuntimeFactory(
       onTaskUpdate,
       onRunEvent,
       onDetachedTurnEvent,
+      onMissionControlProject,
     });
 }
 
@@ -3016,6 +3021,12 @@ export class RunnerHost {
       },
       (event) => {
         this.onDetachedTurnEvent(event);
+      },
+      (project) => {
+        this.writer.emit("mission_control.project", {
+          projectId: project.projectId,
+          project: { ...project },
+        });
       },
     );
 

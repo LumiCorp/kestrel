@@ -36,6 +36,9 @@ export interface MissionControlRunnerCommandClient {
 export interface MissionControlExecutionRuntimeOptions {
   commandMetadata?: RunnerCommandMetadata | undefined;
   now?: (() => string) | undefined;
+  onProjectChanged?:
+    | ((project: MissionControlProjectStateRecord) => void)
+    | undefined;
 }
 
 type ExecutionRepository = Pick<
@@ -109,7 +112,10 @@ export class MissionControlExecutionRuntime {
     this.store = store;
     this.runner = runner;
     this.options = options;
-    this.execution = new MissionControlExecutionService(store);
+    this.execution = new MissionControlExecutionService(
+      store,
+      options.onProjectChanged,
+    );
     this.unsubscribe = runner.onEvent((event) => {
       const context =
         event.commandId === undefined

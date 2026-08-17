@@ -51,6 +51,7 @@ import type {
   DesktopConversationMessageRoute,
   DesktopConversationTurn,
   DesktopRuntimeHealth,
+  DesktopRuntimeConnectionState,
   DesktopRuntimeRunIndex,
   DesktopRuntimeRunIndexQuery,
   DesktopRuntimeRunInspection,
@@ -90,8 +91,15 @@ import type {
   DesktopWorkspaceFeedbackSubmitResult,
 } from "../../../src/desktopShell/contracts.js";
 import type { ModelPolicyV1 } from "../../../src/profile/modelPolicy.js";
-import type { MissionControlProjectStateRecord } from "../../../src/missionControl/projectAuthority.js";
+import type {
+  MissionControlProjectStateRecord,
+  MissionControlWorkPhase,
+} from "../../../src/missionControl/projectAuthority.js";
 import type { MissionControlCompletionContract } from "../../../src/missionControl/reviewContracts.js";
+import type {
+  WorkspaceValidationAction,
+  WorkspaceValidationSuite,
+} from "../../../src/validation/contracts.js";
 import type { DesktopEnvironmentStatusProjection } from "../../../src/localCore/desktopEnvironmentConnector.js";
 import type { LocalCoreSystemLifecycleBlocker } from "../../../src/localCore/contracts.js";
 import type {
@@ -218,6 +226,7 @@ export type {
   DesktopConversationMessageRoute,
   DesktopConversationTurn,
   DesktopRuntimeHealth,
+  DesktopRuntimeConnectionState,
   DesktopRuntimeRunIndex,
   DesktopRuntimeRunIndexEntry,
   DesktopRuntimeRunIndexQuery,
@@ -645,6 +654,12 @@ export interface DesktopBridge {
   getMissionControlProject(
     projectId: string,
   ): Promise<DesktopMissionControlProjectResponse>;
+  inspectMissionControlProjectSetup(
+    projectId: string,
+  ): Promise<DesktopMissionControlProjectSetup>;
+  onMissionControlProject(
+    listener: (project: DesktopMissionControlProjectResponse) => void,
+  ): () => void;
   executeMissionControlAction(
     intent: DesktopMissionControlActionIntent,
   ): Promise<DesktopMissionControlProjectResponse>;
@@ -858,6 +873,13 @@ export interface DesktopMissionControlProjectResponse {
   project: MissionControlProjectStateRecord;
 }
 
+export interface DesktopMissionControlProjectSetup {
+  projectId: string;
+  projectPath: string;
+  actions: WorkspaceValidationAction[];
+  suites: WorkspaceValidationSuite[];
+}
+
 interface DesktopMissionControlActionBase {
   projectId: string;
   expectedRevision: number;
@@ -881,6 +903,18 @@ export type DesktopMissionControlActionIntent =
       title: string;
       instructions: string;
       completionContract: MissionControlCompletionContract;
+      followUpToItemId?: string | undefined;
+    })
+  | (DesktopMissionControlItemActionBase & {
+      type: "update";
+      title: string;
+      instructions: string;
+      completionContract: MissionControlCompletionContract;
+    })
+  | (DesktopMissionControlActionBase & {
+      type: "resequence";
+      targetPhase: MissionControlWorkPhase;
+      orderedItemIds: string[];
     })
   | (DesktopMissionControlItemActionBase & {
       type:

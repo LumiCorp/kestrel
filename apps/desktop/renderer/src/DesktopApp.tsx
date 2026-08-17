@@ -45,6 +45,7 @@ import type {
   DesktopOperatorInboxItem,
   DesktopRendererSettings,
   DesktopMcpDiscoveryResult,
+  DesktopMissionControlProjectResponse,
   DesktopProjectRegistration,
   DesktopRunnerEvent,
   DesktopRuntimeHealth,
@@ -115,6 +116,7 @@ import {
 } from "./terminalProjection";
 import {
   addRendererThread,
+  ensureRendererThread,
   addRendererDraftAttachment,
   archiveRendererThread,
   appendRendererTranscript,
@@ -198,6 +200,7 @@ export function DesktopApp(props: {
   const [appsNavigationRequest, setAppsNavigationRequest] = useState<DesktopAppsNavigationRequest>({ requestId: 0 });
   const [appsDiscovery, setAppsDiscovery] = useState<DesktopMcpDiscoveryResult>();
   const [selectedProjectPath, setSelectedProjectPath] = useState<string>();
+  const [missionControlProjectPath, setMissionControlProjectPath] = useState<string>();
   const [selectedProjectPersistenceReady, setSelectedProjectPersistenceReady] = useState(false);
   const [newConversationRequestId, setNewConversationRequestId] = useState(0);
   const [timelineHasNewActivity, setTimelineHasNewActivity] = useState(false);
@@ -236,8 +239,10 @@ export function DesktopApp(props: {
   const threadReadOnlySelected = archivedThreadSelected || unavailableProjectThreadSelected;
 
   useEffect(() => {
-    if (threadReadOnlySelected) setSurface("chat");
-  }, [threadReadOnlySelected]);
+    if (threadReadOnlySelected && isConversationOwnedSurface(surface)) {
+      setSurface("chat");
+    }
+  }, [surface, threadReadOnlySelected]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1627,7 +1632,47 @@ export function DesktopApp(props: {
     setSurface("chat");
   }
 
+  function registerMissionControlConversations(
+    response: DesktopMissionControlProjectResponse,
+    projectPath: string,
+  ): void {
+    const defaultConfiguration = settings?.modelConfigurations.find(
+      (configuration) => configuration.id === settings.defaultModelConfigurationId,
+    );
+    setState((current) => {
+      if (current === undefined) return current;
+      let next = current;
+      for (const item of Object.values(response.project.document.items)) {
+        for (const attempt of item.attempts) {
+          next = ensureRendererThread(next, {
+            sessionId: attempt.requestedSessionId,
+            title: item.title,
+            titleLocked: true,
+            projectPath,
+            modelConfigurationId: defaultConfiguration?.id,
+            modelConfigurationRevision: defaultConfiguration?.currentRevision,
+            enabledWorkflowAppIds: [],
+            rawState: {
+              missionControl: {
+                projectId: response.projectId,
+                itemId: item.id,
+                attemptId: attempt.id,
+              },
+            },
+          });
+        }
+      }
+      return next;
+    });
+  }
+
   function openWorkSurface(nextSurface: DesktopSurface): void {
+    if (nextSurface === "mission-control") {
+      const projectPath = selectedProjectPath
+        ?? activeThread?.projectPath
+        ?? settings?.projects[0]?.path;
+      if (projectPath !== undefined) setMissionControlProjectPath(projectPath);
+    }
     setSurface(nextSurface);
     closeWorkNavigator();
   }
@@ -1644,6 +1689,8 @@ export function DesktopApp(props: {
 
   function inspectOutcomeRun(runId: string): void {
     void runId;
+    const projectPath = activeThread?.projectPath ?? selectedProjectPath;
+    if (projectPath !== undefined) setMissionControlProjectPath(projectPath);
     setSurface("mission-control");
   }
 
@@ -1717,6 +1764,9 @@ export function DesktopApp(props: {
   const threadProject = settings?.projects.find(
     (project) => project.path === threadProjectPath,
   );
+  const missionControlProject = settings?.projects.find(
+    (project) => project.path === missionControlProjectPath,
+  );
   const projectWorkspace =
     selectedProject !== undefined &&
     activeThreadWorkspace?.sourceWorkspaceRoot === selectedProject.path
@@ -1726,7 +1776,11 @@ export function DesktopApp(props: {
   const conversationProjectLabel = threadProject?.label
     ?? (threadProjectPath === undefined ? "No project" : "Unavailable project");
   const selectedProjectLabel = selectedProject?.label ?? "No project";
-  const titlebarProjectLabel = surface === "projects" ? selectedProjectLabel : conversationProjectLabel;
+  const titlebarProjectLabel = surface === "projects"
+    ? selectedProjectLabel
+    : surface === "mission-control"
+      ? missionControlProject?.label ?? "No project"
+      : conversationProjectLabel;
   const showInspector = surface === "chat" && inspectorOpen;
   return (
     <div className="desktop-app">
@@ -1852,7 +1906,6 @@ export function DesktopApp(props: {
               <button
                 className={surface === "mission-control" ? "active" : ""}
                 type="button"
-                disabled={threadReadOnlySelected}
                 title="Mission control"
                 aria-label="Mission control"
                 onClick={() => openWorkSurface("mission-control")}
@@ -2324,19 +2377,54 @@ export function DesktopApp(props: {
                 onError={(error) => setSurfaceError("projects", error)}
               />
             ) : surface === "mission-control" ? (
-              threadProject?.id !== undefined ? (
+              missionControlProject?.id !== undefined ? (
                 <UnifiedMissionControlWorkspace
-                  project={{ ...threadProject, id: threadProject.id }}
+                  key={missionControlProject.id}
+                  project={{ ...missionControlProject, id: missionControlProject.id }}
+                  runtimeHealth={runtimeHealth ?? {
+                    state: "degraded",
+                    connection: "connecting",
+                    summary: "Connecting to Kestrel Local Core…",
+                    running: false,
+                  }}
+                  projects={(settings?.projects ?? []).flatMap((project) =>
+                    project.id === undefined ? [] : [{ ...project, id: project.id }]
+                  )}
+                  onProjectChange={(projectPath) => {
+                    setMissionControlProjectPath(projectPath);
+                    setSelectedProjectPath(projectPath);
+                  }}
+                  onProjectResponse={(response) =>
+                    registerMissionControlConversations(
+                      response,
+                      missionControlProject.path,
+                    )}
                   onReturnToConversation={() => setSurface("chat")}
                   onOpenConversation={openMissionControlConversation}
-                  onStartConversation={startProjectConversation}
                   onError={(error) => setSurfaceError("mission-control", error)}
                 />
               ) : (
                 <main className="surface-pane unified-mission-control" id="app-main">
                   <section className="unified-mission-empty">
                     <h1>Mission Control</h1>
-                    <p>Reconnect this conversation to a registered project to view project work.</p>
+                    <p>Choose an available project to view and manage its work.</p>
+                    {selectedProject?.id !== undefined ? (
+                      <button
+                        type="button"
+                        onClick={() => setMissionControlProjectPath(selectedProject.path)}
+                      >
+                        Open {selectedProject.label}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void addProject().then((project) => {
+                          if (project !== undefined) setMissionControlProjectPath(project.path);
+                        })}
+                      >
+                        Add a project
+                      </button>
+                    )}
                   </section>
                 </main>
               )
@@ -2747,6 +2835,10 @@ function surfacePageTitle(surface: DesktopSurface): string {
   if (surface === "validation") return "Validation";
   if (surface === "mcp") return "Apps";
   return surface === "settings" ? "Settings" : "Diagnostics";
+}
+
+function isConversationOwnedSurface(surface: DesktopSurface): boolean {
+  return surface === "diff" || surface === "review" || surface === "validation";
 }
 
 function parseDesktopSurface(value: string | undefined): DesktopSurface {
