@@ -80,7 +80,7 @@
   --titlebar-height: var(--topbar-height);
   --rail-width: var(--session-pane-width);
   --inspector-width: 288px;
-  --conversation-content-width: 640px;
+  --conversation-content-width: 880px;
   --conversation-gutter: var(--space-3);
   --conversation-total-gutter: 24px;
 }

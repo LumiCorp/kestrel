@@ -57,7 +57,7 @@ const SETTINGS_PAGE_LABELS: Record<SettingsPage, string> = {
 };
 
 const SETTINGS_PAGE_DESCRIPTIONS: Record<SettingsPage, string> = {
-  general: "Readiness, appearance, and an Apps overview.",
+  general: "Personalize Kestrel and finish anything that needs your attention.",
   models: "Providers and conversation model configurations.",
   local_capabilities: "Filesystem, developer shell, and sandboxed execution.",
   connections: "Kestrel One environments and connected Apps.",
@@ -762,7 +762,7 @@ export function SettingsWorkspace({
             className={loading ? "spin" : undefined}
             aria-hidden="true"
           />
-          {loading ? "Checking…" : "Refresh readiness"}
+          {loading ? "Checking…" : "Refresh status"}
         </button>
       </header>
 
@@ -807,9 +807,9 @@ export function SettingsWorkspace({
                   <p>
                     {attentionCapabilities.length}{" "}
                     {attentionCapabilities.length === 1
-                      ? "capability"
-                      : "capabilities"}{" "}
-                    to resolve.
+                      ? "item needs"
+                      : "items need"}{" "}
+                    your attention.
                   </p>
                 </div>
                 <p>
@@ -1801,17 +1801,22 @@ export function SettingsWorkspace({
         <div className="settings-content settings-card">
           <fieldset className="appearance-options">
             <legend>Appearance</legend>
-            {(["system", "light", "dark"] as const).map((theme) => (
-              <label key={theme}>
-                <input
-                  type="radio"
-                  name="theme"
-                  checked={settings.appearanceTheme === theme}
-                  onChange={() => void onSettings({ appearanceTheme: theme })}
-                />
-                {theme[0]!.toUpperCase() + theme.slice(1)}
-              </label>
-            ))}
+            <p className="settings-preference-description">
+              Choose the appearance that feels most comfortable.
+            </p>
+            <div className="settings-theme-options">
+              {(["system", "light", "dark"] as const).map((theme) => (
+                <label key={theme}>
+                  <input
+                    type="radio"
+                    name="theme"
+                    checked={settings.appearanceTheme === theme}
+                    onChange={() => void onSettings({ appearanceTheme: theme })}
+                  />
+                  {theme[0]!.toUpperCase() + theme.slice(1)}
+                </label>
+              ))}
+            </div>
             {settings.appearanceTheme === "system" ? (
               <p className="compact-note">
                 Follows macOS — currently {systemIsDark ? "Dark" : "Light"}.
@@ -1819,12 +1824,17 @@ export function SettingsWorkspace({
             ) : null}
           </fieldset>
           <div className="settings-form settings-apps-summary">
-            <strong>Apps</strong>
-            <p className="compact-note">
-              {includedAppCount} included capabilities · {connectedAppCount} connected Apps
-            </p>
+            <div>
+              <strong>Apps</strong>
+              <p className="settings-preference-description">
+                Manage the tools and services available to Kestrel.
+              </p>
+              <p className="compact-note">
+                {includedAppCount} included · {connectedAppCount} connected
+              </p>
+            </div>
             <button className="secondary-button" type="button" onClick={() => onOpenApps()}>
-              Open Apps
+              Manage Apps
             </button>
           </div>
         </div>

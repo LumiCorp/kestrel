@@ -568,7 +568,7 @@ export function ProjectWorkspace(props: {
             <ProjectStat label="Waiting" value={threadSummary.waiting} tone="waiting" />
             <ProjectStat label="Failed" value={threadSummary.failed} tone="failed" />
           </div>
-          <div className="project-overview-heading"><div><h2>Conversations</h2><p>Work continues while you move between projects.</p></div><button type="button" onClick={() => props.onChat(props.project!)}>New conversation</button></div>
+          <div className="project-overview-heading"><div><h2>Conversations</h2><p>Work continues while you move between projects.</p></div></div>
           <div className="project-overview-threads">
             {props.threads.map(({ thread, status, activity, updatedAt }) => (
               <button key={thread.id} type="button" onClick={() => props.onSelectThread(thread.id)}>

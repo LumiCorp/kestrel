@@ -497,6 +497,21 @@ export function ensureBrowserPreviewBridge(): void {
         },
       };
     },
+    async getUpdateState() {
+      return {
+        supported: false,
+        phase: "unsupported" as const,
+        currentVersion: "preview",
+        blockers: [],
+        message: "Updates are unavailable in the browser preview.",
+      };
+    },
+    async listConversationMessages(threadId: string) {
+      return { threadId, messages: [], hasMore: false };
+    },
+    async listConversationActivity(sessionId: string) {
+      return { sessionId, events: [], hasMore: false };
+    },
     onRuntimeHealth() {
       return () => {};
     },
@@ -1280,7 +1295,7 @@ function createPreviewWorkspaceChanges(
     conflicted: false,
     files: [
       {
-        path: "apps/desktop/renderer/src/GitWorkspace.tsx",
+        path: "apps/desktop/renderer/src/DesktopApp.tsx",
         status: "modified",
         staged: true,
         unstaged: false,
@@ -1494,7 +1509,7 @@ function createPreviewWorkspaceGit(
     behind: 0,
     files: [
       {
-        path: "apps/desktop/renderer/src/GitWorkspace.tsx",
+        path: "apps/desktop/renderer/src/DesktopApp.tsx",
         status: "modified",
         staged: true,
         unstaged: false,
@@ -1547,7 +1562,7 @@ function createPreviewWorkspaceGit(
       reviewDecision: "REVIEW_REQUIRED",
       changedFiles: [
         {
-          path: "apps/desktop/renderer/src/GitWorkspace.tsx",
+          path: "apps/desktop/renderer/src/DesktopApp.tsx",
           additions: 84,
           deletions: 7,
         },

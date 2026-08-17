@@ -1,12 +1,10 @@
 import {
   ChevronDown,
   Folder,
-  GitPullRequest,
   KeyRound,
   ListChecks,
   MessageSquare,
   Moon,
-  MonitorPlay,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
@@ -16,7 +14,6 @@ import {
   Settings,
   Square,
   Sun,
-  TerminalSquare,
   Wrench,
   X,
 } from "lucide-react";
@@ -59,7 +56,6 @@ import {
   TimelineMarker,
 } from "./ConversationTimeline";
 import { DiffWorkspace } from "./DiffWorkspace";
-import { GitWorkspace } from "./GitWorkspace";
 import { McpWorkspace } from "./McpWorkspace";
 import { UnifiedMissionControlWorkspace } from "./UnifiedMissionControlWorkspace";
 import {
@@ -69,9 +65,7 @@ import {
   withDesktopOutcomeWorkspaceChanges,
 } from "./outcomeHandoff";
 import { ProjectWorkspace } from "./ProjectWorkspace";
-import { PreviewWorkspace } from "./PreviewWorkspace";
 import { ReviewWorkspace } from "./ReviewWorkspace";
-import { TerminalWorkspace } from "./TerminalWorkspace";
 import { ValidationWorkspace } from "./ValidationWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
 import { ConversationWorkflowControl } from "./ConversationWorkflowControl";
@@ -166,9 +160,6 @@ type DesktopSurface =
   | "diff"
   | "review"
   | "validation"
-  | "git"
-  | "preview"
-  | "terminal"
   | "mcp"
   | "settings"
   | "diagnostics";
@@ -870,11 +861,11 @@ export function DesktopApp(props: {
           ),
         );
       }
-      await recoverConversationMessages(thread).catch((cause) => {
-        setThreadFailure(thread.id, "Some messages could not be restored", errorMessage(cause));
+      await recoverConversationMessages(thread).catch(() => {
+        setThreadActivity(thread.id, "Conversation history is partially available");
       });
-      await recoverConversationActivity(thread).catch((cause) => {
-        setThreadFailure(thread.id, "Some activity could not be restored", errorMessage(cause));
+      await recoverConversationActivity(thread).catch(() => {
+        setThreadActivity(thread.id, "Conversation history is partially available");
       });
     }
     return result;
@@ -1427,86 +1418,6 @@ export function DesktopApp(props: {
     }
   }
 
-  async function attachTerminalOutput(
-    text: string,
-    terminal: import("../../src/contracts").DesktopUserTerminal,
-  ): Promise<void> {
-    if (activeThread === undefined || text.length === 0) {
-      return;
-    }
-    const ownerThread = activeThread;
-    if (ownerThread.draftAttachmentIds.length >= 8) {
-      setThreadFailure(ownerThread.id, "Attachment not added", "A message can include at most 8 attachments.");
-      return;
-    }
-    try {
-      const bytes = new TextEncoder().encode(text);
-      const attachment = await importGeneratedAttachment(ownerThread, {
-        filename: `terminal-${terminal.terminalId.slice(0, 8)}.txt`,
-        mimeType: "text/plain",
-        sha256: await sha256Hex(bytes),
-        bytes,
-      });
-      setState((current) => current === undefined ? current : addRendererDraftAttachment(current, ownerThread.id, {
-        attachmentId: attachment.attachmentId,
-        generatedDraft: "Please review the attached terminal output.",
-      }));
-      setSurface("chat");
-      clearThreadError(ownerThread.id);
-    } catch (cause) {
-      setThreadFailure(ownerThread.id, "Attachment not added", errorMessage(cause));
-    }
-  }
-
-  async function attachVisualFeedback(input: {
-    dataUrl: string;
-    filename: string;
-    comment: string;
-    runId: string;
-    url: string;
-    region?:
-      | { x: number; y: number; width: number; height: number }
-      | undefined;
-  }): Promise<void> {
-    if (activeThread === undefined) return;
-    const ownerThread = activeThread;
-    if (ownerThread.draftAttachmentIds.length >= 8) {
-      setThreadFailure(ownerThread.id, "Attachment not added", "A message can include at most 8 attachments.");
-      return;
-    }
-    try {
-      const match = /^data:image\/png;base64,(.+)$/u.exec(input.dataUrl);
-      if (!match) throw new Error("Preview screenshot is not a PNG attachment.");
-      const binary = atob(match[1]!);
-      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-      if (bytes.byteLength > 5 * 1024 * 1024) throw new Error("Preview screenshot exceeds the 5 MB attachment limit.");
-      const attachment = await importGeneratedAttachment(ownerThread, {
-        filename: input.filename,
-        mimeType: "image/png",
-        sha256: await sha256Hex(bytes),
-        bytes,
-      });
-      const prompt = [
-        input.comment,
-        "",
-        `Preview evidence: run ${input.runId}`,
-        `URL: ${input.url}`,
-        ...(input.region
-          ? [`Annotated region: x=${input.region.x.toFixed(3)}, y=${input.region.y.toFixed(3)}, width=${input.region.width.toFixed(3)}, height=${input.region.height.toFixed(3)}`]
-          : []),
-      ].join("\n");
-      setState((current) => current === undefined ? current : addRendererDraftAttachment(current, ownerThread.id, {
-        attachmentId: attachment.attachmentId,
-        generatedDraft: prompt,
-        replaceDraft: true,
-      }));
-      setSurface("chat");
-      clearThreadError(ownerThread.id);
-    } catch (cause) {
-      setThreadFailure(ownerThread.id, "Attachment not added", errorMessage(cause));
-    }
-  }
-
   async function importGeneratedAttachment(
     thread: RendererThread,
     input: { filename: string; mimeType: string; bytes: Uint8Array; sha256: string },
@@ -1926,90 +1837,65 @@ export function DesktopApp(props: {
           }}
         >
           <nav className="surface-tabs" aria-label="Kestrel views">
-            <span className="surface-tabs-heading">Work</span>
-            <button
-              className={surface === "chat" ? "active" : ""}
-              type="button"
-              title="Conversations"
-              aria-label="Conversations"
-              onClick={() => openWorkSurface("chat")}
+            <div className="surface-tabs-section" role="group" aria-labelledby="work-navigation-heading">
+              <span className="surface-tabs-heading" id="work-navigation-heading">Work</span>
+              <button
+                className={surface === "chat" ? "active" : ""}
+                type="button"
+                title="Conversations"
+                aria-label="Conversations"
+                onClick={() => openWorkSurface("chat")}
+              >
+                <MessageSquare size={17} />
+                <span>Conversation</span>
+              </button>
+              <button
+                className={surface === "mission-control" ? "active" : ""}
+                type="button"
+                disabled={threadReadOnlySelected}
+                title="Mission control"
+                aria-label="Mission control"
+                onClick={() => openWorkSurface("mission-control")}
+              >
+                <ListChecks size={17} />
+                <span>Mission control</span>
+              </button>
+              <button
+                className={surface === "projects" ? "active" : ""}
+                type="button"
+                title="Projects"
+                aria-label="Projects"
+                onClick={() => openWorkSurface("projects")}
+              >
+                <Folder size={17} />
+                <span>Projects</span>
+              </button>
+            </div>
+            <div
+              className="surface-tabs-section surface-tabs-configure"
+              role="group"
+              aria-labelledby="configure-navigation-heading"
             >
-              <MessageSquare size={17} />
-              <span>Conversation</span>
-            </button>
-            <button
-              className={surface === "mission-control" ? "active" : ""}
-              type="button"
-              disabled={threadReadOnlySelected}
-              title="Mission control"
-              aria-label="Mission control"
-              onClick={() => openWorkSurface("mission-control")}
-            >
-              <ListChecks size={17} />
-              <span>Mission control</span>
-            </button>
-            <button
-              className={surface === "projects" ? "active" : ""}
-              type="button"
-              title="Projects"
-              aria-label="Projects"
-              onClick={() => openWorkSurface("projects")}
-            >
-              <Folder size={17} />
-              <span>Projects</span>
-            </button>
-            <button
-              className={surface === "git" ? "active" : ""}
-              type="button"
-              disabled={threadReadOnlySelected}
-              title="Git and pull requests"
-              aria-label="Git and pull requests"
-              onClick={() => openWorkSurface("git")}
-            >
-              <GitPullRequest size={17} />
-              <span>Git and pull requests</span>
-            </button>
-            <button
-              className={surface === "preview" ? "active" : ""}
-              type="button"
-              disabled={threadReadOnlySelected}
-              title="Preview"
-              aria-label="Preview"
-              onClick={() => openWorkSurface("preview")}
-            >
-              <MonitorPlay size={17} />
-              <span>Preview</span>
-            </button>
-            <button
-              className={surface === "terminal" ? "active" : ""}
-              type="button"
-              disabled={threadReadOnlySelected}
-              title="Terminal"
-              aria-label="Terminal"
-              onClick={() => openWorkSurface("terminal")}
-            >
-              <TerminalSquare size={17} />
-              <span>Terminal</span>
-            </button>
-            <span className="surface-tabs-heading">Configure</span>
-            <button
-              className={surface === "mcp" ? "active" : ""}
-              type="button"
-              title="Apps"
-              aria-label="Apps"
-              onClick={() => openWorkSurface("mcp")}
-            >
-              <Plug size={17} />
-              <span>Apps</span>
-            </button>
-            <button className={surface === "settings" ? "active" : ""} type="button" title="Settings" aria-label="Settings" onClick={() => { openCapabilitySettings(); closeWorkNavigator(); }}>
-              <Settings size={17} />
-              <span>Settings</span>
-            </button>
-            <button className={surface === "diagnostics" ? "active" : ""} type="button" title="Diagnostics" aria-label="Diagnostics" onClick={() => openWorkSurface("diagnostics")}>
-              <Wrench size={17} />
-              <span>Diagnostics</span>
-            </button>
+              <span className="surface-tabs-heading" id="configure-navigation-heading">Configure</span>
+              <button
+                className={surface === "mcp" ? "active" : ""}
+                type="button"
+                title="Apps"
+                aria-label="Apps"
+                onClick={() => openWorkSurface("mcp")}
+              >
+                <Plug size={17} />
+                <span>Apps</span>
+              </button>
+              <button className={surface === "settings" ? "active" : ""} type="button" title="Settings" aria-label="Settings" onClick={() => { openCapabilitySettings(); closeWorkNavigator(); }}>
+                <Settings size={17} />
+                <span>Settings</span>
+              </button>
+              <button className={surface === "diagnostics" ? "active" : ""} type="button" title="Diagnostics" aria-label="Diagnostics" onClick={() => openWorkSurface("diagnostics")}>
+                <Wrench size={17} />
+                <span>Diagnostics</span>
+              </button>
+            </div>
           </nav>
 
           <ConversationExplorer
@@ -2496,13 +2382,6 @@ export function DesktopApp(props: {
                 }}
                 onError={(error) => setSurfaceError("diff", error)}
               />
-            ) : surface === "terminal" ? (
-              <TerminalWorkspace
-                sessionId={activeThread.sessionId}
-                threadId={localCoreThreadId(activeThread.sessionId)}
-                onAttachOutput={attachTerminalOutput}
-                onError={(error) => setSurfaceError("terminal", error)}
-              />
             ) : surface === "review" ? (
               <ReviewWorkspace
                 sessionId={activeThread.sessionId}
@@ -2543,24 +2422,6 @@ export function DesktopApp(props: {
                     });
                 }}
                 onError={(error) => setSurfaceError("validation", error)}
-              />
-            ) : surface === "git" ? (
-              <GitWorkspace
-                sessionId={activeThread.sessionId}
-                threadId={localCoreThreadId(activeThread.sessionId)}
-                defaultBaseRef={activeThread.workspaceBaseRef}
-                executionSelection={toDesktopExecutionSelection(
-                  activeThread,
-                  settings?.apps ?? [],
-                )}
-                onError={(error) => setSurfaceError("git", error)}
-              />
-            ) : surface === "preview" ? (
-              <PreviewWorkspace
-                projectPath={threadProjectPath}
-                threadId={localCoreThreadId(activeThread.sessionId)}
-                onAttachVisualFeedback={attachVisualFeedback}
-                onError={(error) => setSurfaceError("preview", error)}
               />
             ) : surface === "mcp" ? (
               <McpWorkspace
@@ -2879,16 +2740,11 @@ function surfacePageTitle(surface: DesktopSurface): string {
   if (surface === "mission-control") {
     return "Mission control";
   }
-  if (surface === "terminal") {
-    return "Terminal";
-  }
   if (surface === "diff") {
     return "Diff";
   }
   if (surface === "review") return "Review";
   if (surface === "validation") return "Validation";
-  if (surface === "git") return "Git and pull requests";
-  if (surface === "preview") return "Preview";
   if (surface === "mcp") return "Apps";
   return surface === "settings" ? "Settings" : "Diagnostics";
 }
@@ -2899,9 +2755,6 @@ function parseDesktopSurface(value: string | undefined): DesktopSurface {
     value === "diff" ||
     value === "review" ||
     value === "validation" ||
-    value === "git" ||
-    value === "preview" ||
-    value === "terminal" ||
     value === "mcp" ||
     value === "settings" ||
     value === "diagnostics"

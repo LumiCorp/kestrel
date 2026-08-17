@@ -122,8 +122,27 @@
 
 .work-navigator .surface-tabs {
   gap: var(--space-1);
-  max-height: 184px;
+  max-height: none;
+  overflow-y: visible;
   padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.work-navigator .surface-tabs-section {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.work-navigator .surface-tabs-configure {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+
+.work-navigator .surface-tabs-configure button {
+  width: 100%;
+  justify-content: flex-start;
 }
 
 .surface-tabs-heading {

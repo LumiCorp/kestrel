@@ -192,7 +192,7 @@ test(
       );
     });
 
-    assert.match(container.textContent ?? "", /Project authority · epoch 1/u);
+    assert.doesNotMatch(container.textContent ?? "", /Project authority|11111111-1111-4111-8111-111111111111/u);
     assert.match(container.textContent ?? "", /Prepare release notes/u);
     assert.match(container.textContent ?? "", /Verify Desktop package/u);
     assert.doesNotMatch(container.textContent ?? "", /Discarded experiment/u);
@@ -330,7 +330,7 @@ test(
       assert.ok(resolveProject);
       resolveProject(response);
     });
-    assert.match(container.textContent ?? "", /Project authority · epoch 1/u);
+    assert.doesNotMatch(container.textContent ?? "", /Project authority/u);
     assert.deepEqual(reportedByFirst, []);
     assert.deepEqual(reportedByLatest, [undefined]);
     await act(async () => root.unmount());
@@ -375,7 +375,7 @@ test(
       );
     });
 
-    assert.match(container.textContent ?? "", /Project authority · epoch 1/u);
+    assert.doesNotMatch(container.textContent ?? "", /Project authority/u);
     assert.equal(button(container, "Start").disabled, false);
 
     await act(async () => button(container, "Enable Autopilot").click());

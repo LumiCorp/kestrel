@@ -178,10 +178,6 @@ export function UnifiedMissionControlWorkspace({
           <h1>Mission Control</h1>
           <p>{project.label}</p>
         </div>
-        <div className="unified-mission-authority">
-          <span>Project authority · epoch {response?.project.authorityEpoch ?? 1}</span>
-          <code>{project.id}</code>
-        </div>
         <button
           className="icon-button"
           type="button"
@@ -300,7 +296,7 @@ export function UnifiedMissionControlWorkspace({
         <div className="mission-empty">
           <List size={22} />
           <strong>No work items in this project</strong>
-          <span>Project authority is ready for new work.</span>
+          <span>Add work when you are ready.</span>
         </div>
       ) : visibleItems.length === 0 ? (
         <div className="mission-empty">

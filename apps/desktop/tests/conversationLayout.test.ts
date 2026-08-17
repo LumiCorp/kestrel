@@ -31,7 +31,7 @@ async function readDesktopStyles(filePath = stylesPath, seen = new Set<string>()
 test("conversation timeline and composer share the conversation width", async () => {
   const source = await readDesktopStyles();
 
-  assert.match(source, /--conversation-content-width:\s*640px;/u);
+  assert.match(source, /--conversation-content-width:\s*880px;/u);
   assert.match(source, /\.conversation-timeline\s*\{[^}]*padding:\s*var\(--space-5\) var\(--conversation-gutter\) var\(--space-3\);/su);
   assert.match(source, /\.conversation-timeline-list\s*\{[^}]*width:\s*min\(var\(--conversation-content-width\),\s*100%\);/su);
   assert.match(source, /\.conversation-timeline-list::before\s*\{[^}]*width:\s*1px;/su);
@@ -223,8 +223,25 @@ test("browser preview keeps new bridge members from crashing workspace navigatio
   assert.match(preview, /async getKestrelOneAccount\(\)\s*\{/u);
   assert.match(preview, /async getKestrelOneEnvironments\(\)\s*\{/u);
   assert.match(preview, /async syncWorkspaceSkills\(\)\s*\{\s*return \[\];\s*\}/su);
+  assert.match(preview, /async getUpdateState\(\)\s*\{/u);
+  assert.match(preview, /async listConversationMessages\(threadId: string\)\s*\{/u);
+  assert.match(preview, /async listConversationActivity\(sessionId: string\)\s*\{/u);
   assert.match(preview, /bridge = new Proxy\(implementedBridge,/u);
   assert.match(preview, /is unavailable in the browser preview/u);
+});
+
+test("partial conversation history stays non-blocking", async () => {
+  const app = await readFile(appPath, "utf8");
+
+  assert.match(
+    app,
+    /recoverConversationMessages\(thread\)\.catch\(\(\) => \{\s*setThreadActivity\(thread\.id, "Conversation history is partially available"\);/su,
+  );
+  assert.match(
+    app,
+    /recoverConversationActivity\(thread\)\.catch\(\(\) => \{\s*setThreadActivity\(thread\.id, "Conversation history is partially available"\);/su,
+  );
+  assert.doesNotMatch(app, /setThreadFailure\(thread\.id, "Some (?:messages|activity) could not be restored"/u);
 });
 
 test("renderer failures show a recoverable surface instead of a blank window", async () => {
@@ -347,7 +364,7 @@ test("settings keep compact checks and wrap navigation at narrow widths", async 
   );
   assert.match(
     styles,
-    /\.settings-surface \.capability-card\s*\{[^}]*min-height:\s*0;[^}]*border-radius:\s*0;[^}]*background:\s*transparent;/su,
+    /\.settings-surface \.capability-card\s*\{[^}]*min-height:\s*124px;[^}]*border-radius:\s*var\(--radius-sm\);[^}]*background:\s*var\(--bg-pane-subtle\);/su,
   );
   assert.match(
     styles,
@@ -376,6 +393,13 @@ test("settings navigation mounts one bounded category page at a time", async () 
   assert.match(
     styles,
     /\.settings-category-nav a\.active,[\s\S]*?a\[aria-current="page"\]\s*\{[^}]*background:\s*var\(--bg-active\);/su,
+  );
+  assert.match(app, /Personalize Kestrel and finish anything that needs your attention\./u);
+  assert.match(app, /className="settings-theme-options"/u);
+  assert.match(app, /Manage Apps/u);
+  assert.match(
+    styles,
+    /\.settings-surface \.settings-card\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[^}]*background:\s*var\(--bg-pane-subtle\);/su,
   );
 });
 
@@ -479,6 +503,27 @@ test("details persist while Find Work remains a calm, temporary drawer", async (
   assert.match(app, /aria-modal=\{workNavigatorOpen \? true : undefined\}/u);
   assert.doesNotMatch(styles, /\.workspace\.with-conversation-rail\s*\{/u);
   assert.match(app, /storedWidth === null \? 288 : clampInspectorWidth\(Number\(storedWidth\)\)/u);
+});
+
+test("top-level navigation omits retired Git, Terminal, and Preview screens", async () => {
+  const [app, rendererEntry, packageJson] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(rendererEntryPath, "utf8"),
+    readFile(path.join(testDir, "..", "package.json"), "utf8"),
+  ]);
+
+  assert.doesNotMatch(app, /Git and pull requests|<GitWorkspace|<TerminalWorkspace|<PreviewWorkspace/u);
+  assert.doesNotMatch(app, /\| "git"|\| "terminal"|\| "preview"/u);
+  assert.doesNotMatch(rendererEntry, /@xterm\/xterm/u);
+  assert.doesNotMatch(packageJson, /@xterm\/xterm/u);
+});
+
+test("Configure navigation stacks Apps, Settings, and Diagnostics", async () => {
+  const [app, styles] = await Promise.all([readFile(appPath, "utf8"), readDesktopStyles()]);
+
+  assert.match(app, /className="surface-tabs-section surface-tabs-configure"[\s\S]*aria-label="Apps"[\s\S]*aria-label="Settings"[\s\S]*aria-label="Diagnostics"/u);
+  assert.match(styles, /\.work-navigator \.surface-tabs-configure\s*\{[^}]*flex-direction:\s*column;[^}]*flex-wrap:\s*nowrap;/su);
+  assert.match(styles, /\.work-navigator \.surface-tabs-configure button\s*\{[^}]*width:\s*100%;[^}]*justify-content:\s*flex-start;/su);
 });
 
 test("top-level workspace headers avoid decorative category kickers", async () => {
