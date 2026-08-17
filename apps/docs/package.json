@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.8.0",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "prepare:workspace": "pnpm --filter @kestrel-agents/protocol build",
     "dev": "WATCHPACK_POLLING=true next dev --port 43102",

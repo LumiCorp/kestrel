@@ -3,6 +3,9 @@
   "version": "0.8.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "description": "Kestrel One application platform with auth, chat, and knowledge-agent capabilities",
   "scripts": {
     "clean": "rm -rf .next tsconfig.tsbuildinfo",
