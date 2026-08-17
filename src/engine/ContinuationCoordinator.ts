@@ -1,9 +1,12 @@
 import type { RunEventType, RuntimeError } from "../kestrel/contracts/base.js";
 import type { RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { GuardrailConfig, NormalizedOutput, RuntimeDependencies, Transition } from "../kestrel/contracts/execution.js";
+import type { ModelRequest } from "../kestrel/contracts/model-io.js";
 import type { SessionRecord } from "../kestrel/contracts/store.js";
 
-import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
+import { createRuntimeFailure, RunCancelledError } from "../runtime/RuntimeFailure.js";
+import { readActiveTaskGoalFromState } from "../runtime/turnObjective.js";
+import { normalizeVisibleTodoState } from "../runtime/visibleTodos.js";
 import { clearRuntimeWaitState, readActiveWaitState } from "../runtime/waitState.js";
 import {
   classifyUserReplyIntent,
@@ -12,8 +15,29 @@ import {
 import { Guardrails } from "./Guardrails.js";
 import type { WaitResumeCoordinator } from "./WaitResumeCoordinator.js";
 
-const CONTINUATION_EXTRA_STEPS = 50;
-const CONTINUATION_EXTRA_MODEL_CALLS = 50;
+const LEGACY_CONTINUATION_EXTRA_STEPS = 50;
+const CONTINUATION_CHECKPOINT_MAX_CHARS = 600;
+const CONTINUATION_CHECKPOINT_CONTEXT_MAX_CHARS = 400;
+const CONTINUATION_CHECKPOINT_FORBIDDEN_LANGUAGE =
+  /\b(?:model\s+calls?|calls?|steps?|counters?|budgets?|limits?|internal\s+agents?|runtime\s+machinery)\b/iu;
+const CONTINUATION_CHECKPOINT_INVITATION =
+  /\b(?:continue|keep going|go on|proceed|carry on)\b/iu;
+const CONTINUATION_CHECKPOINT_FUTURE_WORK =
+  /\b(?:next(?:\s+up)?|remaining|still\s+need\s+to|then|after\s+that)\b/iu;
+const CONTINUATION_CHECKPOINT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    message: {
+      type: "string",
+      minLength: 1,
+      maxLength: CONTINUATION_CHECKPOINT_MAX_CHARS,
+      description:
+        "A natural user-facing progress checkpoint that states concrete progress, identifies the next remaining work, and ends by asking whether to continue.",
+    },
+  },
+  required: ["message"],
+};
 
 export const FRESH_TURN_AGENT_CONTROL_KEYS = [
   "goal",
@@ -51,10 +75,12 @@ const ALL_FRESH_TURN_AGENT_CONTROL_KEYS = [
 ] as const;
 
 export type ContinuationWaitReason = "max_steps_continuation" | "max_model_calls_continuation";
+export type ContinuationGrantMode = "additive" | "reset_window";
 
 export interface ContinuationRequestState {
   extraStepsRequested: number;
   extraModelCallsRequested?: number | undefined;
+  grantMode: ContinuationGrantMode;
   budget: "steps" | "model_calls";
   completedSoFar: string[];
   blockedOn: string;
@@ -67,10 +93,14 @@ export interface ContinuationRequestState {
 }
 
 export interface ContinuationState {
+  accountingVersion: 1 | 2;
   baseMaxStepsPerRun: number;
   grantedExtraSteps: number;
   baseMaxModelCallsPerRun: number;
   grantedExtraModelCalls: number;
+  grantMode: ContinuationGrantMode;
+  windowStartSteps: number;
+  windowStartModelCalls: number;
   continuationCount: number;
   stepsConsumed: number;
   modelCallsConsumed: number;
@@ -103,6 +133,31 @@ export interface ContinuationCoordinatorDependencies {
     stepIndex?: number | undefined,
   ) => Promise<void>;
   mapError: (error: unknown) => RuntimeError;
+  checkpointModel?: string | undefined;
+  callMaintenanceModel: (input: {
+    request: ModelRequest;
+    runId: string;
+    event: RuntimeEvent;
+    session: SessionRecord;
+    currentStep: string;
+    stepIndex: number;
+    guardrails: Guardrails;
+    progressSeq: number;
+    signal?: AbortSignal | undefined;
+  }) => Promise<
+    | {
+        ok: true;
+        value: unknown;
+        session: SessionRecord;
+        progressSeq: number;
+      }
+    | {
+        ok: false;
+        error: unknown;
+        session: SessionRecord;
+        progressSeq: number;
+      }
+  >;
   returnTerminal: ReturnTerminal;
 }
 
@@ -112,6 +167,8 @@ export class ContinuationCoordinator {
   private readonly waitResumeCoordinator: WaitResumeCoordinator;
   private readonly appendRunEvent: ContinuationCoordinatorDependencies["appendRunEvent"];
   private readonly mapError: ContinuationCoordinatorDependencies["mapError"];
+  private readonly checkpointModel: string | undefined;
+  private readonly callMaintenanceModel: ContinuationCoordinatorDependencies["callMaintenanceModel"];
   private readonly returnTerminal: ReturnTerminal;
 
   constructor(deps: ContinuationCoordinatorDependencies) {
@@ -120,6 +177,8 @@ export class ContinuationCoordinator {
     this.waitResumeCoordinator = deps.waitResumeCoordinator;
     this.appendRunEvent = deps.appendRunEvent;
     this.mapError = deps.mapError;
+    this.checkpointModel = deps.checkpointModel;
+    this.callMaintenanceModel = deps.callMaintenanceModel;
     this.returnTerminal = deps.returnTerminal;
   }
 
@@ -132,10 +191,14 @@ export class ContinuationCoordinator {
     return {
       ...this.guardrailConfig,
       maxStepsPerRun:
-        continuationState.baseMaxStepsPerRun + continuationState.grantedExtraSteps,
+        continuationState.grantMode === "reset_window"
+          ? continuationState.windowStartSteps + continuationState.baseMaxStepsPerRun
+          : continuationState.baseMaxStepsPerRun + continuationState.grantedExtraSteps,
       maxModelCallsPerRun:
-        continuationState.baseMaxModelCallsPerRun
-        + continuationState.grantedExtraModelCalls,
+        continuationState.grantMode === "reset_window"
+          ? continuationState.windowStartModelCalls + continuationState.baseMaxModelCallsPerRun
+          : continuationState.baseMaxModelCallsPerRun
+            + continuationState.grantedExtraModelCalls,
     };
   }
 
@@ -147,7 +210,11 @@ export class ContinuationCoordinator {
     if (continuation === undefined) {
       return ;
     }
+    const grantMode = continuation.grantMode === "reset_window"
+      ? "reset_window"
+      : "additive";
     return {
+      accountingVersion: grantMode === "reset_window" ? 2 : 1,
       baseMaxStepsPerRun:
         readMaybeNumber(continuation.baseMaxStepsPerRun) ?? this.guardrailConfig.maxStepsPerRun,
       grantedExtraSteps: readMaybeNumber(continuation.grantedExtraSteps) ?? 0,
@@ -155,6 +222,15 @@ export class ContinuationCoordinator {
         readMaybeNumber(continuation.baseMaxModelCallsPerRun)
         ?? this.guardrailConfig.maxModelCallsPerRun,
       grantedExtraModelCalls: readMaybeNumber(continuation.grantedExtraModelCalls) ?? 0,
+      grantMode,
+      windowStartSteps:
+        grantMode === "reset_window"
+          ? readMaybeNumber(continuation.windowStartSteps) ?? 0
+          : 0,
+      windowStartModelCalls:
+        grantMode === "reset_window"
+          ? readMaybeNumber(continuation.windowStartModelCalls) ?? 0
+          : 0,
       continuationCount: readMaybeNumber(continuation.continuationCount) ?? 0,
       stepsConsumed: readMaybeNumber(continuation.stepsConsumed) ?? 0,
       modelCallsConsumed: readMaybeNumber(continuation.modelCallsConsumed) ?? 0,
@@ -254,17 +330,35 @@ export class ContinuationCoordinator {
       useModel: (request) => this.deps.modelGateway.call(request),
     });
     if (isHighConfidenceContinuation(intent)) {
-      const nextContinuationState: ContinuationState = {
-        baseMaxStepsPerRun: continuationState.baseMaxStepsPerRun,
-        grantedExtraSteps:
-          continuationState.grantedExtraSteps + pending.extraStepsRequested,
-        baseMaxModelCallsPerRun: continuationState.baseMaxModelCallsPerRun,
-        grantedExtraModelCalls:
-          continuationState.grantedExtraModelCalls + (pending.extraModelCallsRequested ?? 0),
-        continuationCount: continuationState.continuationCount + 1,
-        stepsConsumed: pending.stepsConsumed,
-        modelCallsConsumed: pending.modelCallsConsumed,
-      };
+      const nextContinuationState: ContinuationState = pending.grantMode === "reset_window"
+        ? {
+            accountingVersion: 2,
+            baseMaxStepsPerRun: continuationState.baseMaxStepsPerRun,
+            grantedExtraSteps: continuationState.grantedExtraSteps,
+            baseMaxModelCallsPerRun: continuationState.baseMaxModelCallsPerRun,
+            grantedExtraModelCalls: continuationState.grantedExtraModelCalls,
+            grantMode: "reset_window",
+            windowStartSteps: pending.stepsConsumed,
+            windowStartModelCalls: pending.modelCallsConsumed,
+            continuationCount: continuationState.continuationCount + 1,
+            stepsConsumed: pending.stepsConsumed,
+            modelCallsConsumed: pending.modelCallsConsumed,
+          }
+        : {
+            accountingVersion: continuationState.accountingVersion,
+            baseMaxStepsPerRun: continuationState.baseMaxStepsPerRun,
+            grantedExtraSteps:
+              continuationState.grantedExtraSteps + pending.extraStepsRequested,
+            baseMaxModelCallsPerRun: continuationState.baseMaxModelCallsPerRun,
+            grantedExtraModelCalls:
+              continuationState.grantedExtraModelCalls + (pending.extraModelCallsRequested ?? 0),
+            grantMode: continuationState.grantMode,
+            windowStartSteps: continuationState.windowStartSteps,
+            windowStartModelCalls: continuationState.windowStartModelCalls,
+            continuationCount: continuationState.continuationCount + 1,
+            stepsConsumed: pending.stepsConsumed,
+            modelCallsConsumed: pending.modelCallsConsumed,
+          };
       const commit = await this.deps.store.commitStep({
         runId: input.runId,
         event: input.event,
@@ -291,6 +385,11 @@ export class ContinuationCoordinator {
         "run.continuation_granted",
         "INFO",
         {
+          grantMode: pending.grantMode,
+          window: {
+            maxSteps: pending.extraStepsRequested,
+            maxModelCalls: pending.extraModelCallsRequested ?? 0,
+          },
           extraStepsGranted: pending.extraStepsRequested,
           ...(pending.extraModelCallsRequested !== undefined
             ? { extraModelCallsGranted: pending.extraModelCallsRequested }
@@ -305,6 +404,11 @@ export class ContinuationCoordinator {
         currentStep: pending.resumeStepAgent,
         continuation: {
           outcome: "granted",
+          grantMode: pending.grantMode,
+          window: {
+            maxSteps: pending.extraStepsRequested,
+            maxModelCalls: pending.extraModelCallsRequested ?? 0,
+          },
           extraStepsRequested: pending.extraStepsRequested,
           extraStepsGranted: pending.extraStepsRequested,
           ...(pending.extraModelCallsRequested !== undefined
@@ -443,9 +547,16 @@ export class ContinuationCoordinator {
     guardrails: Guardrails;
     progressSeq: number;
     reason: ContinuationWaitReason;
+    signal?: AbortSignal | undefined;
+    onCheckpointStateUpdated: (input: {
+      session: SessionRecord;
+      progressSeq: number;
+    }) => void;
   }): Promise<NormalizedOutput | undefined> {
-    const prior = this.readContinuationState(input.session.state);
-    const reactState = asRecord(input.session.state.agent) ?? {};
+    let effectiveSession = input.session;
+    let progressSeq = input.progressSeq;
+    let prior = this.readContinuationState(effectiveSession.state);
+    let reactState = asRecord(effectiveSession.state.agent) ?? {};
     const summary = buildContinuationSummary(reactState, input.currentStep);
     const telemetry = input.guardrails.telemetry();
     const stepsConsumed = Math.max(0, telemetry.stepsExecuted - 1);
@@ -458,20 +569,73 @@ export class ContinuationCoordinator {
     const nextIfApproved = [...summary.nextIfApproved];
     const resumeStepAgent = prior?.pendingContinuationRequest?.resumeStepAgent ?? input.currentStep;
     const budgetLabel = input.reason === "max_model_calls_continuation" ? "model_calls" : "steps";
-    const extraModelCallsRequested =
-      input.reason === "max_model_calls_continuation" ? CONTINUATION_EXTRA_MODEL_CALLS : undefined;
+    const isMigratingLegacyAccounting = prior?.grantMode === "additive";
+    const baseMaxStepsPerRun = isMigratingLegacyAccounting
+      ? this.guardrailConfig.maxStepsPerRun
+      : prior?.baseMaxStepsPerRun ?? this.guardrailConfig.maxStepsPerRun;
+    const baseMaxModelCallsPerRun = isMigratingLegacyAccounting
+      ? this.guardrailConfig.maxModelCallsPerRun
+      : prior?.baseMaxModelCallsPerRun ?? this.guardrailConfig.maxModelCallsPerRun;
+    let question = buildContinuationFallbackQuestion(summary);
+    let checkpointSource: "model" | "fallback" = "fallback";
+    try {
+      const authored = await this.callMaintenanceModel({
+        request: buildContinuationCheckpointRequest(
+          summary,
+          input.event.payload,
+          this.checkpointModel,
+        ),
+        runId: input.runId,
+        event: input.event,
+        session: effectiveSession,
+        currentStep: input.currentStep,
+        stepIndex: input.stepIndex,
+        guardrails: input.guardrails,
+        progressSeq,
+        ...(input.signal !== undefined ? { signal: input.signal } : {}),
+      });
+      effectiveSession = authored.session;
+      progressSeq = authored.progressSeq;
+      input.onCheckpointStateUpdated({
+        session: effectiveSession,
+        progressSeq,
+      });
+      prior = this.readContinuationState(effectiveSession.state);
+      reactState = asRecord(effectiveSession.state.agent) ?? {};
+      if (authored.ok === false) {
+        if (isRunCancellation(authored.error)) {
+          throw authored.error;
+        }
+      } else {
+        const authoredQuestion = readContinuationCheckpointMessage(authored.value);
+        if (authoredQuestion !== undefined) {
+          question = authoredQuestion;
+          checkpointSource = "model";
+        }
+      }
+    } catch (error) {
+      if (isRunCancellation(error)) {
+        throw error;
+      }
+      // The continuation wait is more important than presentation generation.
+      // A deterministic, context-backed question remains available on every failure path.
+    }
     const continuationState: ContinuationState = {
-      baseMaxStepsPerRun: prior?.baseMaxStepsPerRun ?? this.guardrailConfig.maxStepsPerRun,
+      accountingVersion: prior?.accountingVersion ?? 2,
+      baseMaxStepsPerRun,
       grantedExtraSteps: prior?.grantedExtraSteps ?? 0,
-      baseMaxModelCallsPerRun:
-        prior?.baseMaxModelCallsPerRun ?? this.guardrailConfig.maxModelCallsPerRun,
+      baseMaxModelCallsPerRun,
       grantedExtraModelCalls: prior?.grantedExtraModelCalls ?? 0,
+      grantMode: prior?.grantMode ?? "reset_window",
+      windowStartSteps: prior?.windowStartSteps ?? 0,
+      windowStartModelCalls: prior?.windowStartModelCalls ?? 0,
       continuationCount: prior?.continuationCount ?? 0,
       stepsConsumed,
       modelCallsConsumed,
       pendingContinuationRequest: {
-        extraStepsRequested: CONTINUATION_EXTRA_STEPS,
-        ...(extraModelCallsRequested !== undefined ? { extraModelCallsRequested } : {}),
+        extraStepsRequested: baseMaxStepsPerRun,
+        extraModelCallsRequested: baseMaxModelCallsPerRun,
+        grantMode: "reset_window",
         budget: budgetLabel,
         completedSoFar,
         blockedOn: summary.blockedOn,
@@ -486,27 +650,49 @@ export class ContinuationCoordinator {
     const waitMetadata = {
       reason: input.reason,
       budget: budgetLabel,
-      extraStepsRequested: CONTINUATION_EXTRA_STEPS,
-      ...(extraModelCallsRequested !== undefined ? { extraModelCallsRequested } : {}),
+      grantMode: "reset_window",
+      window: {
+        maxSteps: baseMaxStepsPerRun,
+        maxModelCalls: baseMaxModelCallsPerRun,
+      },
+      extraStepsRequested: baseMaxStepsPerRun,
+      extraModelCallsRequested: baseMaxModelCallsPerRun,
       completedSoFar: [...completedSoFar],
       blockedOn: summary.blockedOn,
       nextIfApproved: [...nextIfApproved],
       ...(summary.partialAnswer !== undefined ? { partialAnswer: summary.partialAnswer } : {}),
       continuationCount: continuationState.continuationCount,
-      question:
-        input.reason === "max_model_calls_continuation"
-          ? `Should I continue this run with ${CONTINUATION_EXTRA_MODEL_CALLS} more model calls and ${CONTINUATION_EXTRA_STEPS} more steps?`
-          : `Should I continue this run with ${CONTINUATION_EXTRA_STEPS} more steps?`,
+      stepsConsumed,
+      modelCallsConsumed,
+      checkpointSource,
+      question,
       resumeReply: "continue",
-      prompt:
-        input.reason === "max_model_calls_continuation"
-          ? "I hit the current model-call budget before finishing this task."
-          : "I hit the current step budget before finishing this task.",
+      prompt: question,
     };
     const waitFor = {
       kind: "user" as const,
       eventType: "user.reply",
       metadata: waitMetadata,
+      interaction: {
+        version: "v1" as const,
+        requestId: `${input.runId}:continuation:${continuationState.continuationCount}`,
+        kind: "user_input" as const,
+        eventType: "user.reply",
+        prompt: question,
+        metadata: {
+          reason: input.reason,
+          budget: budgetLabel,
+          grantMode: "reset_window",
+          window: {
+            maxSteps: baseMaxStepsPerRun,
+            maxModelCalls: baseMaxModelCallsPerRun,
+          },
+          stepsConsumed,
+          modelCallsConsumed,
+          checkpointSource,
+          continuationCount: continuationState.continuationCount,
+        },
+      },
     };
     await this.deps.store.commitStep({
       runId: input.runId,
@@ -518,8 +704,8 @@ export class ContinuationCoordinator {
           reason: input.reason,
         },
       },
-      sessionId: input.session.sessionId,
-      expectedVersion: input.session.version,
+      sessionId: effectiveSession.sessionId,
+      expectedVersion: effectiveSession.version,
       stepAgent: input.currentStep,
       nextStepAgent: input.currentStep,
       statePatch: {
@@ -551,18 +737,26 @@ export class ContinuationCoordinator {
       emitEvents: [],
       stepIndex: input.stepIndex,
     });
-    await this.appendRunEvent(input.runId, input.session.sessionId, "run.continuation_requested", "WARN", {
+    await this.appendRunEvent(input.runId, effectiveSession.sessionId, "run.continuation_requested", "WARN", {
       reason: input.reason,
       budget: budgetLabel,
-      extraStepsRequested: CONTINUATION_EXTRA_STEPS,
-      ...(extraModelCallsRequested !== undefined ? { extraModelCallsRequested } : {}),
+      grantMode: "reset_window",
+      window: {
+        maxSteps: baseMaxStepsPerRun,
+        maxModelCalls: baseMaxModelCallsPerRun,
+      },
+      extraStepsRequested: baseMaxStepsPerRun,
+      extraModelCallsRequested: baseMaxModelCallsPerRun,
+      checkpointSource,
       continuationCount: continuationState.continuationCount,
       stepsConsumed,
       modelCallsConsumed,
     }, input.stepIndex);
+    const finalTelemetry = input.guardrails.telemetry();
+    const maintenanceModelCalls = finalTelemetry.maintenanceModelCalls ?? 0;
     return this.returnTerminal(
       input.runId,
-      input.session.sessionId,
+      effectiveSession.sessionId,
       input.currentStep,
       {
         status: "WAITING",
@@ -572,13 +766,23 @@ export class ContinuationCoordinator {
       [],
       new Guardrails(
         this.resolveGuardrailConfigForSession(continuationState),
-        { stepsExecuted: stepsConsumed, modelCalls: modelCallsConsumed },
+        {
+          stepsExecuted: stepsConsumed,
+          modelCalls: modelCallsConsumed + maintenanceModelCalls,
+          actionModelCalls: modelCallsConsumed,
+          maintenanceModelCalls,
+        },
       ),
-      input.progressSeq,
+      progressSeq,
       {
         outcome: "requested",
-        extraStepsRequested: CONTINUATION_EXTRA_STEPS,
-        ...(extraModelCallsRequested !== undefined ? { extraModelCallsRequested } : {}),
+        grantMode: "reset_window",
+        window: {
+          maxSteps: baseMaxStepsPerRun,
+          maxModelCalls: baseMaxModelCallsPerRun,
+        },
+        extraStepsRequested: baseMaxStepsPerRun,
+        extraModelCallsRequested: baseMaxModelCallsPerRun,
         continuationCount: continuationState.continuationCount,
       },
     );
@@ -699,8 +903,12 @@ export class ContinuationCoordinator {
     const reactState = asRecord(session.state.agent) ?? {};
     if (
       continuationState?.grantedExtraSteps !== nextContinuationState.grantedExtraSteps ||
+      continuationState?.accountingVersion !== nextContinuationState.accountingVersion ||
       continuationState?.grantedExtraModelCalls
         !== nextContinuationState.grantedExtraModelCalls ||
+      continuationState?.grantMode !== nextContinuationState.grantMode ||
+      continuationState?.windowStartSteps !== nextContinuationState.windowStartSteps ||
+      continuationState?.windowStartModelCalls !== nextContinuationState.windowStartModelCalls ||
       continuationState?.continuationCount !== nextContinuationState.continuationCount ||
       continuationState?.modelCallsConsumed !== nextContinuationState.modelCallsConsumed ||
       continuationState?.pendingContinuationRequest !== undefined ||
@@ -717,8 +925,16 @@ export class ContinuationCoordinator {
           actualResumeStepAgent: session.currentStepAgent,
           expectedGrantedExtraSteps: nextContinuationState.grantedExtraSteps,
           actualGrantedExtraSteps: continuationState?.grantedExtraSteps,
+          expectedAccountingVersion: nextContinuationState.accountingVersion,
+          actualAccountingVersion: continuationState?.accountingVersion,
           expectedGrantedExtraModelCalls: nextContinuationState.grantedExtraModelCalls,
           actualGrantedExtraModelCalls: continuationState?.grantedExtraModelCalls,
+          expectedGrantMode: nextContinuationState.grantMode,
+          actualGrantMode: continuationState?.grantMode,
+          expectedWindowStartSteps: nextContinuationState.windowStartSteps,
+          actualWindowStartSteps: continuationState?.windowStartSteps,
+          expectedWindowStartModelCalls: nextContinuationState.windowStartModelCalls,
+          actualWindowStartModelCalls: continuationState?.windowStartModelCalls,
           expectedModelCallsConsumed: nextContinuationState.modelCallsConsumed,
           actualModelCallsConsumed: continuationState?.modelCallsConsumed,
           expectedContinuationCount: nextContinuationState.continuationCount,
@@ -753,12 +969,24 @@ function buildContinuationSummary(
   reactState: Record<string, unknown>,
   currentStep: string,
 ): {
+  objective?: string | undefined;
   completedSoFar: string[];
+  remainingWork: string[];
+  checkpointNextActions: string[];
   blockedOn: string;
   nextIfApproved: string[];
   partialAnswer?: string | undefined;
 } {
   const completedSoFar: string[] = [];
+  const visibleTodos = normalizeVisibleTodoState(reactState.visibleTodos);
+  const objective = visibleTodos?.objective ?? readActiveTaskGoalFromState(reactState);
+  appendUniqueLines(
+    completedSoFar,
+    visibleTodos?.items
+      .filter((item) => item.status === "done")
+      .slice(-2)
+      .map((item) => item.note ?? item.text) ?? [],
+  );
   const lastObservation = latestObservationSummary(reactState.observations);
   if (lastObservation.trim().length > 0) {
     completedSoFar.push(lastObservation.trim());
@@ -780,19 +1008,235 @@ function buildContinuationSummary(
   }
 
   const nextAction = asRecord(reactState.nextAction);
-  const nextIfApproved = buildContinuationNextActions(nextAction, currentStep);
+  const remainingWork = visibleTodos?.items
+    .filter((item) => item.status !== "done")
+    .slice(0, 3)
+    .map((item) => item.note ?? item.text) ?? [];
+  const checkpointNextActions = [...remainingWork];
+  appendUniqueLines(checkpointNextActions, buildCheckpointNextActions(nextAction, currentStep));
+  const nextIfApproved = [...remainingWork];
+  appendUniqueLines(nextIfApproved, buildContinuationNextActions(nextAction, currentStep));
   const partialAnswer = buildContinuationPartialAnswer(
     asString(reactState.assistantText),
     lastObservation,
     completedSoFar,
   );
   return {
+    ...(objective !== undefined && objective.trim().length > 0
+      ? { objective: objective.trim() }
+      : {}),
     completedSoFar: completedSoFar.slice(0, 3),
+    remainingWork,
+    checkpointNextActions: checkpointNextActions.slice(0, 3),
     blockedOn:
-      "I hit the current step budget before I could finish the next verification and synthesis pass.",
+      "The current work window ended before I could finish the remaining work.",
     nextIfApproved: nextIfApproved.slice(0, 3),
     ...(partialAnswer !== undefined ? { partialAnswer } : {}),
   };
+}
+
+function buildContinuationFallbackQuestion(summary: {
+  objective?: string | undefined;
+  completedSoFar: string[];
+  remainingWork: string[];
+  checkpointNextActions: string[];
+  nextIfApproved: string[];
+}): string {
+  const objective = summary.objective?.trim();
+  const next = summary.checkpointNextActions[0]?.trim();
+  if (objective !== undefined && next !== undefined) {
+    const candidate = boundContinuationQuestion(
+      `I’ve made progress on ${stripTrailingPunctuation(objective)}. Next up: ${ensureTrailingPunctuation(next)} Want me to keep going?`,
+    );
+    return isValidContinuationCheckpointMessage(candidate)
+      ? candidate
+      : "I’m not finished yet, but I can continue from where I left off. Want me to keep going?";
+  }
+  if (next !== undefined) {
+    const candidate = boundContinuationQuestion(
+      `I’ve made progress on this task. Next up: ${ensureTrailingPunctuation(next)} Want me to keep going?`,
+    );
+    return isValidContinuationCheckpointMessage(candidate)
+      ? candidate
+      : "I’m not finished yet, but I can continue from where I left off. Want me to keep going?";
+  }
+  return "I’m not finished yet, but I can continue from where I left off. Want me to keep going?";
+}
+
+function buildContinuationCheckpointRequest(
+  summary: {
+    objective?: string | undefined;
+    completedSoFar: string[];
+    remainingWork: string[];
+    checkpointNextActions: string[];
+    nextIfApproved: string[];
+  },
+  eventPayload: Record<string, unknown>,
+  configuredCheckpointModel: string | undefined,
+): ModelRequest {
+  const context = {
+    objective: boundCheckpointContext(summary.objective),
+    completedSoFar: summary.completedSoFar
+      .map((value) => boundCheckpointContext(value))
+      .filter((value): value is string => value !== undefined),
+    remainingWork: summary.remainingWork
+      .map((value) => boundCheckpointContext(value))
+      .filter((value): value is string => value !== undefined),
+    nextActions: summary.checkpointNextActions
+      .map((value) => boundCheckpointContext(value))
+      .filter((value): value is string => value !== undefined),
+  };
+  const checkpointModel =
+    configuredCheckpointModel ?? readContinuationCheckpointModel(eventPayload);
+  return {
+    ...(checkpointModel !== undefined
+      ? { model: checkpointModel }
+      : {}),
+    input: {
+      version: "continuation_checkpoint_v1",
+      context,
+    },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You write Kestrel's brief user-facing continuation checkpoint.",
+          "Use only the supplied runtime facts; do not invent completed work, blockers, or results.",
+          "Write one to three natural sentences in the first person.",
+          "State concrete progress and identify the next remaining work.",
+          "End with a direct question that uses either 'continue' or 'keep going'.",
+          "Do not mention model calls, steps, counters, budgets, limits, internal agents, or runtime machinery.",
+          "Return only JSON matching the response schema.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          "Write the continuation checkpoint from this bounded runtime context:",
+          JSON.stringify(context),
+        ].join("\n"),
+      },
+    ],
+    responseFormat: "json",
+    responseSchema: CONTINUATION_CHECKPOINT_SCHEMA,
+    reasoning: { mode: "off" },
+    providerOptions: {
+      openrouter: {
+        endpoint: "chat",
+        toolChoice: "none",
+        responseSchemaName: "kestrel_continuation_checkpoint",
+      },
+      openai: {
+        toolChoice: "none",
+        responseSchemaName: "kestrel_continuation_checkpoint",
+      },
+      anthropic: {
+        toolChoice: "none",
+        responseSchemaName: "kestrel_continuation_checkpoint",
+      },
+    },
+    metadata: {
+      phase: "runtime.continuation_checkpoint",
+      modelRole: "continuation_checkpoint",
+      modelBudgetClass: "maintenance",
+    },
+  };
+}
+
+function readContinuationCheckpointMessage(value: unknown): string | undefined {
+  const record = asRecord(value);
+  let root: unknown = record?.output ?? value;
+  if (record?.output === undefined && typeof record?.text === "string") {
+    try {
+      root = JSON.parse(record.text);
+    } catch {
+      return ;
+    }
+  }
+  const rootRecord = asRecord(root);
+  if (
+    rootRecord === undefined ||
+    Object.keys(rootRecord).some((key) => key !== "message")
+  ) {
+    return ;
+  }
+  const message = asString(rootRecord.message)?.trim();
+  if (
+    message === undefined ||
+    message.length === 0 ||
+    message.length > CONTINUATION_CHECKPOINT_MAX_CHARS ||
+    isValidContinuationCheckpointMessage(message) === false
+  ) {
+    return ;
+  }
+  return message;
+}
+
+function isValidContinuationCheckpointMessage(message: string): boolean {
+  if (
+    CONTINUATION_CHECKPOINT_FORBIDDEN_LANGUAGE.test(message) ||
+    message.endsWith("?") === false
+  ) {
+    return false;
+  }
+  const sentenceCount = message.match(/[.!?](?=\s|$)/gu)?.length ?? 0;
+  if (sentenceCount < 1 || sentenceCount > 3) {
+    return false;
+  }
+  const futureWork = CONTINUATION_CHECKPOINT_FUTURE_WORK.exec(message);
+  if (futureWork?.index === undefined) {
+    return false;
+  }
+  const progressText = message.slice(0, futureWork.index).trim();
+  if (progressText.length === 0 || progressText.endsWith("?")) {
+    return false;
+  }
+  const finalSentence = message.split(/(?<=[.!?])\s+/u).at(-1) ?? message;
+  const invitation = CONTINUATION_CHECKPOINT_INVITATION.exec(finalSentence);
+  if (invitation?.index === undefined) {
+    return false;
+  }
+  const invitationIndex = message.length - finalSentence.length + invitation.index;
+  return futureWork.index < invitationIndex;
+}
+
+function isRunCancellation(error: unknown): boolean {
+  return error instanceof RunCancelledError || asString(asRecord(error)?.code) === "RUN_CANCELLED";
+}
+
+function readContinuationCheckpointModel(eventPayload: Record<string, unknown>): string | undefined {
+  const runtimeAssembly =
+    asRecord(asRecord(eventPayload.metadata)?.runtimeAssembly) ??
+    asRecord(eventPayload.runtimeAssembly);
+  const stageConfig = asRecord(runtimeAssembly?.agentStageConfig);
+  const modelByStage = asRecord(stageConfig?.modelByStage);
+  return asString(modelByStage?.["agent.maintenance"]) ?? asString(runtimeAssembly?.model);
+}
+
+function boundCheckpointContext(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (trimmed === undefined || trimmed.length === 0) {
+    return ;
+  }
+  if (trimmed.length <= CONTINUATION_CHECKPOINT_CONTEXT_MAX_CHARS) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, CONTINUATION_CHECKPOINT_CONTEXT_MAX_CHARS - 1).trimEnd()}…`;
+}
+
+function boundContinuationQuestion(value: string): string {
+  if (value.length <= 600) {
+    return value;
+  }
+  return `${value.slice(0, 596).trimEnd()}…`;
+}
+
+function stripTrailingPunctuation(value: string): string {
+  return value.replace(/[.!?]+$/u, "");
+}
+
+function ensureTrailingPunctuation(value: string): string {
+  return /[.!?]$/u.test(value) ? value : `${value}.`;
 }
 
 function parseContinuationRequestState(
@@ -809,10 +1253,12 @@ function parseContinuationRequestState(
     return ;
   }
   return {
-    extraStepsRequested: readMaybeNumber(value.extraStepsRequested) ?? CONTINUATION_EXTRA_STEPS,
+    extraStepsRequested:
+      readMaybeNumber(value.extraStepsRequested) ?? LEGACY_CONTINUATION_EXTRA_STEPS,
     ...(readMaybeNumber(value.extraModelCallsRequested) !== undefined
       ? { extraModelCallsRequested: readMaybeNumber(value.extraModelCallsRequested) }
       : {}),
+    grantMode: value.grantMode === "reset_window" ? "reset_window" : "additive",
     budget: value.budget === "model_calls" ? "model_calls" : "steps",
     completedSoFar: readStringArray(value.completedSoFar),
     blockedOn:
@@ -832,10 +1278,14 @@ function parseContinuationRequestState(
 
 function serializeContinuationState(value: ContinuationState): Record<string, unknown> {
   return {
+    accountingVersion: value.accountingVersion,
     baseMaxStepsPerRun: value.baseMaxStepsPerRun,
     grantedExtraSteps: value.grantedExtraSteps,
     baseMaxModelCallsPerRun: value.baseMaxModelCallsPerRun,
     grantedExtraModelCalls: value.grantedExtraModelCalls,
+    grantMode: value.grantMode,
+    windowStartSteps: value.windowStartSteps,
+    windowStartModelCalls: value.windowStartModelCalls,
     continuationCount: value.continuationCount,
     stepsConsumed: value.stepsConsumed,
     modelCallsConsumed: value.modelCallsConsumed,
@@ -846,6 +1296,7 @@ function serializeContinuationState(value: ContinuationState): Record<string, un
             ...(value.pendingContinuationRequest.extraModelCallsRequested !== undefined
               ? { extraModelCallsRequested: value.pendingContinuationRequest.extraModelCallsRequested }
               : {}),
+            grantMode: value.pendingContinuationRequest.grantMode,
             budget: value.pendingContinuationRequest.budget,
             completedSoFar: value.pendingContinuationRequest.completedSoFar,
             blockedOn: value.pendingContinuationRequest.blockedOn,
@@ -955,6 +1406,23 @@ function buildContinuationNextActions(
     `Resume at ${currentStep} and continue gathering evidence.`,
     "Complete the final synthesis once the remaining checks are done.",
   ];
+}
+
+function buildCheckpointNextActions(
+  nextAction: Record<string, unknown> | undefined,
+  currentStep: string,
+): string[] {
+  if (nextAction === undefined) {
+    return [];
+  }
+  const authoredSummary =
+    asString(nextAction.summary) ??
+    asString(nextAction.description) ??
+    asString(nextAction.instruction);
+  if (authoredSummary !== undefined && authoredSummary.trim().length > 0) {
+    return [authoredSummary.trim()];
+  }
+  return buildContinuationNextActions(nextAction, currentStep);
 }
 
 function buildContinuationPartialAnswer(

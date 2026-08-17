@@ -3394,6 +3394,14 @@ function createRuntimeWithStore(
   const kestrel = new Kestrel({
     store,
     modelGateway,
+    ...(profile.agentStageConfig?.modelByStage?.["agent.maintenance"] !== undefined
+      ? {
+          continuationCheckpointModel:
+            profile.agentStageConfig.modelByStage["agent.maintenance"],
+        }
+      : profile.model !== undefined
+        ? { continuationCheckpointModel: profile.model }
+        : {}),
     executionBoundaryRuntime,
     ...(evaluationRuntime !== undefined ? { evaluationRuntime } : {}),
     providerReasoningVault,
