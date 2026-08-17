@@ -74,6 +74,12 @@ export async function deployProductionFlyMachine(
   if (!before) {
     throw new Error(`Fly did not return Machine ${parsed.machineId} in ${role.app}.`);
   }
+  assertRoleDeploymentContract({
+    role: parsed.role,
+    machineId: parsed.machineId,
+    machine: before,
+    phase: "before",
+  });
   const expected = `${parsed.role} ${parsed.machineId} ${parsed.tag}`;
   process.stdout.write(
     `${JSON.stringify({ action: "update-image", providerIdentity, app: role.app, role: parsed.role, machineId: parsed.machineId, current: before, requestedImage: image }, null, 2)}\n`,
@@ -96,6 +102,12 @@ export async function deployProductionFlyMachine(
   if (!after) {
     throw new Error(`Fly did not return Machine ${parsed.machineId} in ${role.app} after update.`);
   }
+  assertRoleDeploymentContract({
+    role: parsed.role,
+    machineId: parsed.machineId,
+    machine: after,
+    phase: "after",
+  });
   process.stdout.write(`${JSON.stringify({ providerResult: after }, null, 2)}\n`);
   return { providerIdentity, app: role.app, image, before, after, ...parsed };
 }
@@ -136,6 +148,75 @@ function readMachine(value: unknown, machineId: string) {
       return (candidate as Record<string, unknown>).id === machineId;
     }) ?? null
   );
+}
+
+function assertRoleDeploymentContract(input: {
+  role: string;
+  machineId: string;
+  machine: unknown;
+  phase: "before" | "after";
+}) {
+  if (input.role !== "preview-edge") return;
+  const machine = record(input.machine);
+  const config = record(machine?.config);
+  const services = config?.services;
+  if (
+    !Array.isArray(services) ||
+    !services.some(hasPreviewEdgePublicIngress)
+  ) {
+    throw new Error(
+      `Preview Edge Machine ${input.machineId} is missing its public ingress contract ${input.phase} image update. Repair configuration from fly.preview-edge.toml before retrying.`,
+    );
+  }
+}
+
+function hasPreviewEdgePublicIngress(value: unknown) {
+  const service = record(value);
+  if (
+    service?.protocol !== "tcp" ||
+    service.internal_port !== 8080 ||
+    !Array.isArray(service.ports)
+  ) {
+    return false;
+  }
+  return (
+    service.ports.some((port) =>
+      matchesPort(port, {
+        port: 80,
+        handlers: ["http"],
+        forceHttps: true,
+      }),
+    ) &&
+    service.ports.some((port) =>
+      matchesPort(port, { port: 443, handlers: ["tls", "http"] }),
+    )
+  );
+}
+
+function matchesPort(
+  value: unknown,
+  expected: { port: number; handlers: string[]; forceHttps?: boolean },
+) {
+  const port = record(value);
+  const handlers = port?.handlers;
+  if (port?.port !== expected.port || !Array.isArray(handlers)) {
+    return false;
+  }
+  if (
+    handlers.length !== expected.handlers.length ||
+    !expected.handlers.every((handler) => handlers.includes(handler))
+  ) {
+    return false;
+  }
+  return expected.forceHttps === undefined
+    ? true
+    : port.force_https === expected.forceHttps;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function operatorArgs(args: string[]) {
