@@ -497,6 +497,13 @@ function requestMatchesWaitFor(
   }
 
   const requestMetadata = request.metadata ?? {};
+  if (request.kind === "approval" && waitFor.kind === "approval") {
+    const approvalId = readNonEmptyString(waitFor.metadata.approvalId);
+    const requestApprovalId = readNonEmptyString(requestMetadata.approvalId);
+    if (approvalId !== undefined || requestApprovalId !== undefined) {
+      return approvalId !== undefined && approvalId === requestApprovalId;
+    }
+  }
   const blockedActionId = readNonEmptyString(waitFor.metadata.blockedActionId);
   const requestBlockedActionId = readNonEmptyString(requestMetadata.blockedActionId);
   if (blockedActionId !== undefined || requestBlockedActionId !== undefined) {
