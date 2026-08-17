@@ -4094,7 +4094,7 @@ test("run completion appends finalize provenance notice when reporting grounding
   assert.match(rawHistory, /model_authored are narrative and not runtime-verified facts\./u);
 });
 
-test("continuation grant history line is driven by runtime output", async () => {
+test("continuation grant history line confirms resumption without raw counters", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -4152,7 +4152,8 @@ test("continuation grant history line is driven by runtime output", async () => 
   await (appState.handleLine as (line: string) => Promise<void>)("go on");
 
   const rawHistory = await readFile(historyPath, "utf8");
-  assert.match(rawHistory, /Granted 10 more steps\. Resuming run\./u);
+  assert.match(rawHistory, /Continuation approved\. Resuming from the checkpoint\./u);
+  assert.doesNotMatch(rawHistory, /10 more steps/u);
 });
 
 test("assembly command resolves the pending proposal id from operator inbox when omitted", async () => {

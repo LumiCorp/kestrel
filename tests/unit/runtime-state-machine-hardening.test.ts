@@ -27,6 +27,10 @@ function createRuntime(
   guardrails: Partial<{ maxStepsPerRun: number; maxStepVisits: number; maxModelCallsPerRun: number }> = {},
   options: {
     toolGateway?: ConstructorParameters<typeof Kestrel>[0]["toolGateway"] | undefined;
+    modelGateway?: ConstructorParameters<typeof Kestrel>[0]["modelGateway"] | undefined;
+    continuationCheckpointModel?: string | undefined;
+    progressListener?: ConstructorParameters<typeof Kestrel>[0]["progressListener"] | undefined;
+    useCoreGuardrailDefaults?: boolean | undefined;
     workspaceCheckpointService?: RuntimeWorkspaceCheckpointService | undefined;
     managedTaskWorktreeService?: ManagedTaskWorktreeService | undefined;
   } = {},
@@ -42,7 +46,7 @@ function createRuntime(
     ...(options.managedTaskWorktreeService !== undefined
       ? { managedTaskWorktreeService: options.managedTaskWorktreeService }
       : {}),
-    modelGateway: new RetryingModelGateway(async <T>(request: ModelRequest) => {
+    modelGateway: options.modelGateway ?? new RetryingModelGateway(async <T>(request: ModelRequest) => {
       const metadata = request.metadata as Record<string, unknown> | undefined;
       const input = request.input as Record<string, unknown> | undefined;
       const reply = typeof input?.userReply === "string" ? input.userReply.toLowerCase() : "";
@@ -68,11 +72,21 @@ function createRuntime(
       }
       return { ok: true } as T;
     }),
-    guardrails: {
-      maxStepsPerRun: 50,
-      maxStepVisits: 50,
-      ...guardrails,
-    },
+    ...(options.continuationCheckpointModel !== undefined
+      ? { continuationCheckpointModel: options.continuationCheckpointModel }
+      : {}),
+    ...(options.progressListener !== undefined
+      ? { progressListener: options.progressListener }
+      : {}),
+    ...(options.useCoreGuardrailDefaults === true
+      ? { guardrails }
+      : {
+          guardrails: {
+            maxStepsPerRun: 50,
+            maxStepVisits: 50,
+            ...guardrails,
+          },
+        }),
   });
 }
 
@@ -3330,12 +3344,22 @@ test("MAX_STEPS_EXCEEDED becomes a continuation wait on first exhaustion", async
 
   assert.equal(output.status, "WAITING");
   assert.equal(output.continuation?.outcome, "requested");
-  assert.equal(output.continuation?.extraStepsRequested, 50);
+  assert.equal(output.continuation?.grantMode, "reset_window");
+  assert.deepEqual(output.continuation?.window, { maxSteps: 2, maxModelCalls: 100 });
+  assert.equal(output.continuation?.extraStepsRequested, 2);
+  assert.equal(output.continuation?.extraModelCallsRequested, 100);
   assert.equal(output.continuation?.continuationCount, 0);
   assert.equal(output.waitFor?.eventType, "user.reply");
   const metadata = (output.waitFor?.metadata ?? {}) as Record<string, unknown>;
   assert.equal(metadata.reason, "max_steps_continuation");
-  assert.equal(metadata.extraStepsRequested, 50);
+  assert.equal(metadata.grantMode, "reset_window");
+  assert.deepEqual(metadata.window, { maxSteps: 2, maxModelCalls: 100 });
+  assert.equal(metadata.extraStepsRequested, 2);
+  assert.equal(metadata.extraModelCallsRequested, 100);
+  assert.equal(metadata.checkpointSource, "fallback");
+  assert.doesNotMatch(String(metadata.question), /\b(?:calls?|steps?|budgets?|limits?)\b/iu);
+  assert.equal(output.telemetry.actionModelCalls, 0);
+  assert.equal(output.telemetry.maintenanceModelCalls, 1);
   assert.equal(Array.isArray(metadata.completedSoFar), true);
   const session = await store.getSession("continuation-session");
   const react = (session?.state.agent ?? {}) as Record<string, unknown>;
@@ -3348,6 +3372,569 @@ test("MAX_STEPS_EXCEEDED becomes a continuation wait on first exhaustion", async
   const continuationRequestEvent = persistedStateEvents.at(-1);
   assert.equal(continuationRequestEvent?.metadata?.stepAgent, "loop.step");
   assert.equal(continuationRequestEvent?.metadata?.nextStepAgent, "loop.step");
+});
+
+test("core defaults allow 1,000 committed steps and pause on the next attempt", async () => {
+  const store = new InMemorySessionStore();
+  const kestrel = createRuntime(store, {}, { useCoreGuardrailDefaults: true });
+
+  for (let index = 0; index <= 1_000; index += 1) {
+    kestrel.registerStep(`default.step.${index}`, async (ctx) => ({
+      status: "RUNNING",
+      nextStepAgent: `default.step.${index + 1}`,
+      statePatch: {
+        count: ((ctx.session.state.count as number | undefined) ?? 0) + 1,
+        agent: {
+          ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+          observations: [{ summary: `Completed default step ${index + 1}.` }],
+          nextAction: { summary: "Continue the default-window verification." },
+        },
+      },
+    }));
+  }
+
+  const output = await kestrel.run({
+    id: "evt-default-step-window",
+    type: "user.message",
+    sessionId: "default-step-window-session",
+    payload: { message: "verify the default step window" },
+    stepAgent: "default.step.0",
+  });
+
+  assert.equal(output.status, "WAITING");
+  assert.equal((await store.getSession("default-step-window-session"))?.state.count, 1_000);
+  assert.equal(output.telemetry.stepsExecuted, 1_000);
+  assert.deepEqual(output.continuation?.window, { maxSteps: 1_000, maxModelCalls: 100 });
+});
+
+test("core defaults allow 100 action-model calls and pause on the next attempt", async () => {
+  const store = new InMemorySessionStore();
+  const kestrel = createRuntime(store, {}, { useCoreGuardrailDefaults: true });
+
+  kestrel.registerStep("default.model.window", async (_ctx, io) => {
+    for (let index = 0; index <= 100; index += 1) {
+      await io.useModel({ model: "mock", input: { index } });
+    }
+    return { status: "COMPLETED" };
+  });
+
+  const output = await kestrel.run({
+    id: "evt-default-model-window",
+    type: "user.message",
+    sessionId: "default-model-window-session",
+    payload: { message: "verify the default model window" },
+    stepAgent: "default.model.window",
+  });
+
+  assert.equal(output.status, "WAITING");
+  assert.equal(output.telemetry.actionModelCalls, 100);
+  assert.equal(output.telemetry.maintenanceModelCalls, 1);
+  assert.deepEqual(output.continuation?.window, { maxSteps: 1_000, maxModelCalls: 100 });
+});
+
+test("continuation checkpoint uses bounded context and the configured maintenance model", async () => {
+  const store = new InMemorySessionStore();
+  const requests: ModelRequest[] = [];
+  const modelGateway = new RetryingModelGateway(async <T>(request: ModelRequest) => {
+    requests.push(request);
+    if (request.metadata?.modelRole === "continuation_checkpoint") {
+      return {
+        output: {
+          message: "I’ve verified the parser and updated the tests. Next I’ll run the focused validation. Want me to continue?",
+        },
+      } as T;
+    }
+    return { ok: true } as T;
+  });
+  const kestrel = createRuntime(
+    store,
+    { maxStepsPerRun: 1 },
+    {
+      modelGateway,
+      continuationCheckpointModel: "maintenance/checkpoint-model",
+    },
+  );
+
+  kestrel.registerStep("checkpoint.context", async (ctx) => ({
+    status: "RUNNING",
+    nextStepAgent: "checkpoint.context",
+    statePatch: {
+      agent: {
+        ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+        visibleTodos: {
+          objective: "ship contextual continuation",
+          items: [
+            { id: "parser", text: "Update the parser", status: "done" },
+            { id: "tests", text: "Run focused validation", status: "in_progress" },
+          ],
+        },
+        observations: [{ summary: "Verified the parser." }],
+        nextAction: { summary: "Run focused validation." },
+      },
+    },
+  }));
+
+  const output = await kestrel.run({
+    id: "evt-contextual-checkpoint",
+    type: "user.message",
+    sessionId: "contextual-checkpoint-session",
+    payload: { message: "ship contextual continuation" },
+    stepAgent: "checkpoint.context",
+  });
+
+  const metadata = output.waitFor?.metadata as Record<string, unknown>;
+  assert.equal(metadata.checkpointSource, "model");
+  assert.equal(
+    metadata.question,
+    "I’ve verified the parser and updated the tests. Next I’ll run the focused validation. Want me to continue?",
+  );
+  assert.equal(metadata.prompt, metadata.question);
+  assert.equal(output.waitFor?.interaction?.prompt, metadata.question);
+  assert.equal(metadata.stepsConsumed, 1);
+  assert.equal(metadata.modelCallsConsumed, 0);
+  const interactionMetadata = output.waitFor?.interaction?.metadata as Record<string, unknown>;
+  assert.equal(interactionMetadata.stepsConsumed, 1);
+  assert.equal(interactionMetadata.modelCallsConsumed, 0);
+  assert.equal(interactionMetadata.checkpointSource, "model");
+  assert.equal(interactionMetadata.continuationCount, 0);
+  assert.deepEqual(interactionMetadata.window, { maxSteps: 1, maxModelCalls: 100 });
+  assert.equal(output.telemetry.maintenanceModelCalls, 1);
+  const checkpointRequest = requests.find(
+    (request) => request.metadata?.modelRole === "continuation_checkpoint",
+  );
+  assert.equal(checkpointRequest?.model, "maintenance/checkpoint-model");
+  assert.equal(checkpointRequest?.metadata?.modelBudgetClass, "maintenance");
+  assert.equal(checkpointRequest?.reasoning?.mode, "off");
+  assert.equal(checkpointRequest?.tools, undefined);
+  assert.equal(checkpointRequest?.responseFormat, "json");
+  assert.equal(checkpointRequest?.responseSchema?.additionalProperties, false);
+  assert.match(JSON.stringify(checkpointRequest?.input), /ship contextual continuation/u);
+  const requestedEvent = store.getRunEvents().find((event) =>
+    event.runId === output.runId &&
+    event.type === "model.requested" &&
+    event.metadata?.modelRole === "continuation_checkpoint"
+  );
+  assert.equal(requestedEvent?.metadata?.modelBudgetClass, "maintenance");
+  const continuationEvent = store.getRunEvents().find((event) =>
+    event.runId === output.runId && event.type === "run.continuation_requested"
+  );
+  assert.equal(continuationEvent?.metadata?.stepsConsumed, 1);
+  assert.equal(continuationEvent?.metadata?.modelCallsConsumed, 0);
+});
+
+test("continuation checkpoint falls back to deterministic contextual copy on provider failure", async () => {
+  const store = new InMemorySessionStore();
+  const progressUpdates: Array<{ seq: number; code: string }> = [];
+  const modelGateway = new RetryingModelGateway(async () => {
+    throw new Error("checkpoint provider unavailable");
+  });
+  const kestrel = createRuntime(
+    store,
+    { maxStepsPerRun: 1 },
+    {
+      modelGateway,
+      progressListener: (update) => {
+        progressUpdates.push({ seq: update.seq, code: update.code });
+      },
+    },
+  );
+
+  kestrel.registerStep("checkpoint.fallback", async (ctx) => ({
+    status: "RUNNING",
+    nextStepAgent: "checkpoint.fallback",
+    statePatch: {
+      agent: {
+        ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+        visibleTodos: {
+          objective: "finish the continuation fallback",
+          items: [
+            { id: "validate", text: "Run validation", status: "in_progress" },
+          ],
+        },
+      },
+    },
+  }));
+
+  const output = await kestrel.run({
+    id: "evt-checkpoint-fallback",
+    type: "user.message",
+    sessionId: "checkpoint-fallback-session",
+    payload: { message: "finish the continuation fallback" },
+    stepAgent: "checkpoint.fallback",
+  });
+
+  const metadata = output.waitFor?.metadata as Record<string, unknown>;
+  assert.equal(output.status, "WAITING");
+  assert.equal(metadata.checkpointSource, "fallback");
+  assert.equal(
+    metadata.question,
+    "I’ve made progress on finish the continuation fallback. Next up: Run validation. Want me to keep going?",
+  );
+  assert.equal(output.waitFor?.interaction?.prompt, metadata.question);
+  assert.equal(output.telemetry.maintenanceModelCalls, 1);
+  assert.equal(
+    progressUpdates.every((update, index) =>
+      index === 0 || progressUpdates[index - 1]!.seq < update.seq
+    ),
+    true,
+    `Expected strictly increasing progress sequences: ${JSON.stringify(progressUpdates)}`,
+  );
+});
+
+test("continuation checkpoint rejects policy-invalid model copy and uses a safe fallback", async () => {
+  const store = new InMemorySessionStore();
+  const modelGateway = new RetryingModelGateway(async <T>(request: ModelRequest) => {
+    if (request.metadata?.modelRole === "continuation_checkpoint") {
+      return {
+        output: {
+          message: "I used 100 model calls and reached the step limit. Want me to continue?",
+        },
+      } as T;
+    }
+    return { ok: true } as T;
+  });
+  const kestrel = createRuntime(
+    store,
+    { maxStepsPerRun: 1 },
+    { modelGateway },
+  );
+
+  kestrel.registerStep("checkpoint.invalid-copy", async (ctx) => ({
+    status: "RUNNING",
+    nextStepAgent: "checkpoint.invalid-copy",
+    statePatch: {
+      agent: {
+        ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+        visibleTodos: {
+          objective: "verify the model call limit",
+          items: [
+            { id: "continue", text: "Run the remaining steps", status: "in_progress" },
+          ],
+        },
+      },
+    },
+  }));
+
+  const output = await kestrel.run({
+    id: "evt-checkpoint-invalid-copy",
+    type: "user.message",
+    sessionId: "checkpoint-invalid-copy-session",
+    payload: { message: "verify the model call limit" },
+    stepAgent: "checkpoint.invalid-copy",
+  });
+
+  const metadata = output.waitFor?.metadata as Record<string, unknown>;
+  assert.equal(output.status, "WAITING");
+  assert.equal(metadata.checkpointSource, "fallback");
+  assert.doesNotMatch(
+    String(metadata.question),
+    /\b(?:model\s+calls?|calls?|steps?|counters?|budgets?|limits?)\b/iu,
+  );
+  assert.equal(output.waitFor?.interaction?.prompt, metadata.question);
+});
+
+test("continuation checkpoint rejects copy without progress before explicit future work", async () => {
+  const invalidMessages = [
+    "Want me to continue?",
+    "Want me to continue with the next item?",
+    "I’ve verified the parser and updated the tests. Want me to continue?",
+    "I’ve verified the parser. Want me to continue with the next item?",
+    "Next I’ll run the focused validation. Want me to continue?",
+  ];
+
+  for (const [index, message] of invalidMessages.entries()) {
+    const store = new InMemorySessionStore();
+    const modelGateway = new RetryingModelGateway(async <T>(request: ModelRequest) => {
+      if (request.metadata?.modelRole === "continuation_checkpoint") {
+        return { output: { message } } as T;
+      }
+      return { ok: true } as T;
+    });
+    const kestrel = createRuntime(
+      store,
+      { maxStepsPerRun: 1 },
+      { modelGateway },
+    );
+
+    kestrel.registerStep("checkpoint.semantic-validation", async (ctx) => ({
+      status: "RUNNING",
+      nextStepAgent: "checkpoint.semantic-validation",
+      statePatch: {
+        agent: {
+          ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+          visibleTodos: {
+            objective: "finish contextual checkpoint validation",
+            items: [
+              { id: "validate", text: "Run focused validation", status: "in_progress" },
+            ],
+          },
+        },
+      },
+    }));
+
+    const output = await kestrel.run({
+      id: `evt-checkpoint-semantic-${index}`,
+      type: "user.message",
+      sessionId: `checkpoint-semantic-${index}`,
+      payload: { message: "finish contextual checkpoint validation" },
+      stepAgent: "checkpoint.semantic-validation",
+    });
+
+    const metadata = output.waitFor?.metadata as Record<string, unknown>;
+    assert.equal(output.status, "WAITING");
+    assert.equal(metadata.checkpointSource, "fallback", message);
+    assert.notEqual(metadata.question, message);
+  }
+});
+
+test("checkpoint cancellation takes precedence over exhausted maintenance capacity", async () => {
+  const store = new InMemorySessionStore();
+  const controller = new AbortController();
+  let selectedSteps = 0;
+  let providerCalls = 0;
+  const modelGateway = new RetryingModelGateway(async <T>() => {
+    providerCalls += 1;
+    return { ok: true } as T;
+  });
+  const kestrel = createRuntime(
+    store,
+    { maxStepsPerRun: 1 },
+    {
+      modelGateway,
+      progressListener: (update) => {
+        if (update.code === "STEP_SELECTED") {
+          selectedSteps += 1;
+          if (selectedSteps === 2) {
+            controller.abort();
+          }
+        }
+      },
+    },
+  );
+
+  kestrel.registerStep("checkpoint.maintenance-capacity", async (ctx, io) => {
+    for (let index = 0; index < 8; index += 1) {
+      await io.useModel({
+        model: "mock",
+        input: { index },
+        metadata: {
+          modelRole: "maintenance_capacity_fixture",
+          modelBudgetClass: "maintenance",
+        },
+      });
+    }
+    return {
+      status: "RUNNING",
+      nextStepAgent: "checkpoint.maintenance-capacity",
+      statePatch: {
+        agent: {
+          ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+          observations: [{ summary: "Completed the maintenance preparation." }],
+        },
+      },
+    };
+  });
+
+  const output = await kestrel.run(
+    {
+      id: "evt-checkpoint-cancel-exhausted-maintenance",
+      type: "user.message",
+      sessionId: "checkpoint-cancel-exhausted-maintenance",
+      payload: { message: "cancel before the checkpoint" },
+      stepAgent: "checkpoint.maintenance-capacity",
+    },
+    { signal: controller.signal },
+  );
+
+  assert.equal(output.status, "FAILED");
+  assert.equal(output.errors[0]?.code, "RUN_CANCELLED");
+  assert.equal(output.waitFor, undefined);
+  assert.equal(providerCalls, 8);
+  assert.equal(
+    store.getRunEvents().some((event) =>
+      event.runId === output.runId && event.type === "run.continuation_requested"
+    ),
+    false,
+  );
+});
+
+test("exhausted checkpoint maintenance capacity still uses fallback without cancellation", async () => {
+  const store = new InMemorySessionStore();
+  let providerCalls = 0;
+  const modelGateway = new RetryingModelGateway(async <T>() => {
+    providerCalls += 1;
+    return { ok: true } as T;
+  });
+  const kestrel = createRuntime(
+    store,
+    { maxStepsPerRun: 1 },
+    { modelGateway },
+  );
+
+  kestrel.registerStep("checkpoint.maintenance-fallback", async (ctx, io) => {
+    for (let index = 0; index < 8; index += 1) {
+      await io.useModel({
+        model: "mock",
+        input: { index },
+        metadata: {
+          modelRole: "maintenance_capacity_fixture",
+          modelBudgetClass: "maintenance",
+        },
+      });
+    }
+    return {
+      status: "RUNNING",
+      nextStepAgent: "checkpoint.maintenance-fallback",
+      statePatch: {
+        agent: {
+          ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+          observations: [{ summary: "Completed the maintenance preparation." }],
+          nextAction: { summary: "Run the remaining verification." },
+        },
+      },
+    };
+  });
+
+  const output = await kestrel.run({
+    id: "evt-checkpoint-exhausted-maintenance-fallback",
+    type: "user.message",
+    sessionId: "checkpoint-exhausted-maintenance-fallback",
+    payload: { message: "continue after maintenance preparation" },
+    stepAgent: "checkpoint.maintenance-fallback",
+  });
+
+  const metadata = output.waitFor?.metadata as Record<string, unknown>;
+  assert.equal(output.status, "WAITING");
+  assert.equal(metadata.checkpointSource, "fallback");
+  assert.equal(output.telemetry.maintenanceModelCalls, 8);
+  assert.equal(providerCalls, 8);
+});
+
+test("cancelling checkpoint generation terminates the run instead of entering a continuation wait", async () => {
+  const store = new InMemorySessionStore();
+  const controller = new AbortController();
+  const progressUpdates: Array<{ seq: number; code: string }> = [];
+  let markCheckpointStarted: (() => void) | undefined;
+  const checkpointStarted = new Promise<void>((resolve) => {
+    markCheckpointStarted = resolve;
+  });
+  const modelGateway = new RetryingModelGateway(
+    async <T>(request: ModelRequest) => {
+      if (request.metadata?.modelRole === "continuation_checkpoint") {
+        markCheckpointStarted?.();
+        return await new Promise<T>((resolve) => {
+          setTimeout(() => resolve({ output: { message: "Want me to continue?" } } as T), 250);
+        });
+      }
+      return { ok: true } as T;
+    },
+    { retryCount: 0 },
+  );
+  const kestrel = createRuntime(
+    store,
+    { maxStepsPerRun: 1 },
+    {
+      modelGateway,
+      progressListener: (update) => {
+        progressUpdates.push({ seq: update.seq, code: update.code });
+      },
+    },
+  );
+
+  kestrel.registerStep("checkpoint.cancel", async () => ({
+    status: "RUNNING",
+    nextStepAgent: "checkpoint.cancel",
+  }));
+
+  const runPromise = kestrel.run(
+    {
+      id: "evt-checkpoint-cancel",
+      type: "user.message",
+      sessionId: "checkpoint-cancel-session",
+      payload: { message: "cancel the checkpoint" },
+      stepAgent: "checkpoint.cancel",
+    },
+    { signal: controller.signal },
+  );
+  await checkpointStarted;
+  controller.abort();
+  const output = await runPromise;
+
+  assert.equal(output.status, "FAILED");
+  assert.equal(output.errors[0]?.code, "RUN_CANCELLED");
+  assert.equal(output.waitFor, undefined);
+  assert.equal(
+    store.getRunEvents().some((event) =>
+      event.runId === output.runId && event.type === "run.cancelled"
+    ),
+    true,
+  );
+  assert.equal(
+    progressUpdates.every((update, index) =>
+      index === 0 || progressUpdates[index - 1]!.seq < update.seq
+    ),
+    true,
+    `Expected strictly increasing progress sequences: ${JSON.stringify(progressUpdates)}`,
+  );
+});
+
+test("step exhaustion resets the under-consumed model allowance to a full fresh window", async () => {
+  const store = new InMemorySessionStore();
+  const kestrel = createRuntime(store, {
+    maxStepsPerRun: 2,
+    maxModelCallsPerRun: 2,
+  });
+
+  kestrel.registerStep("reset.both", async (ctx, io) => {
+    const count = (ctx.session.state.count as number | undefined) ?? 0;
+    if (count === 0) {
+      await io.useModel({ model: "mock", input: { phase: "before-reset" } });
+    }
+    if (count === 2) {
+      await io.useModel({ model: "mock", input: { phase: "after-reset-1" } });
+      await io.useModel({ model: "mock", input: { phase: "after-reset-2" } });
+      return {
+        status: "COMPLETED",
+        statePatch: { count: 3 },
+      };
+    }
+    return {
+      status: "RUNNING",
+      nextStepAgent: "reset.both",
+      statePatch: {
+        count: count + 1,
+        agent: {
+          ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+          observations: [{ summary: `Completed phase ${count + 1}.` }],
+        },
+      },
+    };
+  });
+
+  const first = await kestrel.run({
+    id: "evt-reset-both-1",
+    type: "user.message",
+    sessionId: "reset-both-session",
+    payload: { message: "exercise both limits" },
+    stepAgent: "reset.both",
+  });
+  assert.equal(first.status, "WAITING");
+  assert.equal(first.telemetry.actionModelCalls, 1);
+  assert.deepEqual(first.continuation?.window, { maxSteps: 2, maxModelCalls: 2 });
+
+  const resumed = await kestrel.run({
+    id: "evt-reset-both-2",
+    type: "user.reply",
+    sessionId: "reset-both-session",
+    payload: { message: "continue" },
+  });
+  assert.equal(resumed.status, "COMPLETED");
+  assert.equal(resumed.telemetry.modelCalls, 3);
+  assert.equal(resumed.continuation?.grantMode, "reset_window");
+  const session = await store.getSession("reset-both-session");
+  const continuation = ((session?.state.agent as Record<string, unknown>).continuation ?? {}) as Record<string, unknown>;
+  assert.equal(continuation.windowStartSteps, 2);
+  assert.equal(continuation.windowStartModelCalls, 1);
 });
 
 test("MAX_MODEL_CALLS_EXCEEDED becomes a continuation wait instead of a terminal fresh-turn failure", async () => {
@@ -3443,7 +4030,9 @@ test("MAX_MODEL_CALLS_EXCEEDED becomes a continuation wait instead of a terminal
   const metadata = (first.waitFor?.metadata ?? {}) as Record<string, unknown>;
   assert.equal(metadata.reason, "max_model_calls_continuation");
   assert.equal(metadata.budget, "model_calls");
-  assert.match(String(metadata.prompt), /model-call budget/u);
+  assert.equal(metadata.prompt, metadata.question);
+  assert.doesNotMatch(String(metadata.prompt), /\b(?:calls?|steps?|budgets?|limits?)\b/iu);
+  assert.deepEqual(metadata.window, { maxSteps: 50, maxModelCalls: 1 });
   assert.deepEqual(metadata.completedSoFar, [
     "Completed 1 model-backed steps.",
     "Dev shell process state: 1 completed, 1 failed, 1 stopped, 1 lost.",
@@ -3472,13 +4061,21 @@ test("MAX_MODEL_CALLS_EXCEEDED becomes a continuation wait instead of a terminal
 
   assert.equal(resumed.status, "COMPLETED");
   assert.equal(resumed.continuation?.outcome, "granted");
-  assert.equal(resumed.continuation?.extraModelCallsRequested, 50);
-  assert.equal(resumed.continuation?.extraModelCallsGranted, 50);
+  assert.equal(resumed.continuation?.grantMode, "reset_window");
+  assert.deepEqual(resumed.continuation?.window, { maxSteps: 50, maxModelCalls: 1 });
+  assert.equal(resumed.continuation?.extraStepsRequested, 50);
+  assert.equal(resumed.continuation?.extraStepsGranted, 50);
+  assert.equal(resumed.continuation?.extraModelCallsRequested, 1);
+  assert.equal(resumed.continuation?.extraModelCallsGranted, 1);
   const session = await store.getSession("model-continuation-session");
   const react = (session?.state.agent ?? {}) as Record<string, unknown>;
   assert.equal(((react.finalOutput ?? {}) as Record<string, unknown>).message, "continued from model-call budget");
   const continuation = (react.continuation ?? {}) as Record<string, unknown>;
-  assert.equal(continuation.grantedExtraModelCalls, 50);
+  assert.equal(continuation.grantedExtraModelCalls, 0);
+  assert.equal(continuation.grantMode, "reset_window");
+  assert.equal(continuation.accountingVersion, 2);
+  assert.equal(continuation.windowStartSteps, 1);
+  assert.equal(continuation.windowStartModelCalls, 1);
   assert.equal(continuation.modelCallsConsumed, 1);
 });
 
@@ -3552,7 +4149,7 @@ test("fresh user message resets exhausted model-call continuation state", async 
   assert.equal(((react.finalOutput ?? {}) as Record<string, unknown>).message, "fresh task completed");
 });
 
-test("model-call continuation approval preserves cumulative model-call accounting", async () => {
+test("model-call continuation approval resets a full window while preserving cumulative accounting", async () => {
   const store = new InMemorySessionStore();
   const kestrel = createRuntime(store, {
     maxModelCallsPerRun: 1,
@@ -3562,19 +4159,6 @@ test("model-call continuation approval preserves cumulative model-call accountin
 
   kestrel.registerStep("loop.model", async (ctx, io) => {
     const count = typeof ctx.session.state.count === "number" ? (ctx.session.state.count as number) : 0;
-    if (count >= 52) {
-      return {
-        status: "COMPLETED",
-        statePatch: {
-          agent: {
-            ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
-            finalOutput: {
-              message: "unexpected fresh model-call budget",
-            },
-          },
-        },
-      };
-    }
     await io.useModel({ model: "mock", input: { prompt: "step once" } });
     return {
       status: "RUNNING",
@@ -3602,7 +4186,13 @@ test("model-call continuation approval preserves cumulative model-call accountin
   });
 
   assert.equal(first.status, "WAITING");
-  assert.equal(((first.waitFor?.metadata ?? {}) as Record<string, unknown>).reason, "max_model_calls_continuation");
+  const firstMetadata = (first.waitFor?.metadata ?? {}) as Record<string, unknown>;
+  assert.equal(firstMetadata.reason, "max_model_calls_continuation");
+  assert.equal(firstMetadata.stepsConsumed, 1);
+  assert.equal(firstMetadata.modelCallsConsumed, 1);
+  const firstInteractionMetadata = first.waitFor?.interaction?.metadata as Record<string, unknown>;
+  assert.equal(firstInteractionMetadata.stepsConsumed, 1);
+  assert.equal(firstInteractionMetadata.modelCallsConsumed, 1);
 
   const resumed = await kestrel.run({
     id: "evt-model-cont-cumulative-2",
@@ -3614,13 +4204,22 @@ test("model-call continuation approval preserves cumulative model-call accountin
   });
 
   assert.equal(resumed.status, "WAITING");
-  assert.equal(((resumed.waitFor?.metadata ?? {}) as Record<string, unknown>).reason, "max_model_calls_continuation");
+  const resumedMetadata = (resumed.waitFor?.metadata ?? {}) as Record<string, unknown>;
+  assert.equal(resumedMetadata.reason, "max_model_calls_continuation");
+  assert.equal(resumedMetadata.stepsConsumed, 2);
+  assert.equal(resumedMetadata.modelCallsConsumed, 2);
   const session = await store.getSession("model-continuation-cumulative-session");
-  assert.equal(session?.state.count, 51);
+  assert.equal(session?.state.count, 2);
   const react = (session?.state.agent ?? {}) as Record<string, unknown>;
   const continuation = (react.continuation ?? {}) as Record<string, unknown>;
-  assert.equal(continuation.grantedExtraModelCalls, 50);
-  assert.equal(continuation.modelCallsConsumed, 51);
+  assert.equal(continuation.grantedExtraModelCalls, 0);
+  assert.equal(continuation.grantMode, "reset_window");
+  assert.equal(continuation.windowStartModelCalls, 1);
+  assert.equal(continuation.modelCallsConsumed, 2);
+  const pending = continuation.pendingContinuationRequest as Record<string, unknown>;
+  assert.equal(pending.grantMode, "reset_window");
+  assert.equal(pending.extraModelCallsRequested, 1);
+  assert.equal(pending.extraStepsRequested, 100);
 });
 
 test("continuation approval resumes and completes with cumulative step counting", async () => {
@@ -3678,8 +4277,12 @@ test("continuation approval resumes and completes with cumulative step counting"
   });
   assert.equal(resumed.status, "COMPLETED");
   assert.equal(resumed.continuation?.outcome, "granted");
-  assert.equal(resumed.continuation?.extraStepsRequested, 50);
-  assert.equal(resumed.continuation?.extraStepsGranted, 50);
+  assert.equal(resumed.continuation?.grantMode, "reset_window");
+  assert.deepEqual(resumed.continuation?.window, { maxSteps: 2, maxModelCalls: 100 });
+  assert.equal(resumed.continuation?.extraStepsRequested, 2);
+  assert.equal(resumed.continuation?.extraStepsGranted, 2);
+  assert.equal(resumed.continuation?.extraModelCallsRequested, 100);
+  assert.equal(resumed.continuation?.extraModelCallsGranted, 100);
   assert.equal(resumed.continuation?.continuationCount, 1);
   const session = await store.getSession("continuation-resume-session");
   const react = (session?.state.agent ?? {}) as Record<string, unknown>;
@@ -3688,7 +4291,10 @@ test("continuation approval resumes and completes with cumulative step counting"
   assert.equal(react.wait, undefined);
   assert.equal(readActiveWaitState(react), undefined);
   const continuation = (react.continuation ?? {}) as Record<string, unknown>;
-  assert.equal(continuation.grantedExtraSteps, 50);
+  assert.equal(continuation.grantedExtraSteps, 0);
+  assert.equal(continuation.grantMode, "reset_window");
+  assert.equal(continuation.windowStartSteps, 2);
+  assert.equal(continuation.windowStartModelCalls, 0);
   assert.equal(continuation.continuationCount, 1);
   assert.equal(
     ((continuation.pendingContinuationRequest ?? {}) as Record<string, unknown>).resumeStepAgent,
@@ -3857,6 +4463,206 @@ test("continuation requests continue past the former third-grant cap", async () 
   const metadata = (final.waitFor?.metadata ?? {}) as Record<string, unknown>;
   assert.equal(metadata.reason, "max_steps_continuation");
   assert.equal(metadata.continuationCount, 4);
+});
+
+test("legacy additive offers are honored once and migrate at the next continuation", async () => {
+  const store = new InMemorySessionStore();
+  const kestrel = createRuntime(store, { maxStepsPerRun: 1 });
+
+  for (let index = 0; index <= 4; index += 1) {
+    kestrel.registerStep(`loop.legacy.${index}`, async (ctx) => ({
+      status: "RUNNING",
+      nextStepAgent: `loop.legacy.${index + 1}`,
+      statePatch: {
+        count: ((ctx.session.state.count as number | undefined) ?? 0) + 1,
+        agent: {
+          ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+          observations: [{ summary: "Completed another legacy-window iteration." }],
+        },
+      },
+    }));
+  }
+
+  const first = await kestrel.run({
+    id: "evt-cont-legacy-1",
+    type: "user.message",
+    sessionId: "continuation-legacy-session",
+    payload: { message: "start" },
+    stepAgent: "loop.legacy.0",
+  });
+  assert.equal(first.status, "WAITING");
+
+  const waitingSession = await store.getSession("continuation-legacy-session");
+  const legacyState = structuredClone(waitingSession!.state);
+  const legacyAgent = legacyState.agent as Record<string, unknown>;
+  const legacyContinuation = legacyAgent.continuation as Record<string, unknown>;
+  delete legacyContinuation.grantMode;
+  delete legacyContinuation.accountingVersion;
+  delete legacyContinuation.windowStartSteps;
+  delete legacyContinuation.windowStartModelCalls;
+  const legacyPending = legacyContinuation.pendingContinuationRequest as Record<string, unknown>;
+  delete legacyPending.grantMode;
+  legacyPending.extraStepsRequested = 2;
+  delete legacyPending.extraModelCallsRequested;
+  const legacyWaitingFor = legacyAgent.waitingFor as Record<string, unknown>;
+  legacyWaitingFor.metadata = {
+    ...((legacyWaitingFor.metadata ?? {}) as Record<string, unknown>),
+    extraStepsRequested: 2,
+    question: "I can make two more passes. Want me to continue?",
+    prompt: "I can make two more passes. Want me to continue?",
+  };
+  legacyWaitingFor.interaction = {
+    ...((legacyWaitingFor.interaction ?? {}) as Record<string, unknown>),
+    version: "v1",
+    kind: "user_input",
+    eventType: "user.reply",
+    prompt: "I can make two more passes. Want me to continue?",
+  };
+  store.unsafeOverwriteSessionStateForTest({
+    sessionId: "continuation-legacy-session",
+    state: legacyState,
+  });
+
+  const migratedOffer = await kestrel.run({
+    id: "evt-cont-legacy-2",
+    type: "user.reply",
+    sessionId: "continuation-legacy-session",
+    payload: { message: "continue" },
+  });
+  assert.equal(migratedOffer.status, "WAITING", JSON.stringify(migratedOffer.errors));
+  assert.equal((await store.getSession("continuation-legacy-session"))?.state.count, 3);
+  const grantEvent = store.getRunEvents().find((event) =>
+    event.runId === migratedOffer.runId && event.type === "run.continuation_granted"
+  );
+  assert.equal(grantEvent?.metadata?.grantMode, "additive");
+  assert.equal(grantEvent?.metadata?.extraStepsGranted, 2);
+
+  const migratedSession = await store.getSession("continuation-legacy-session");
+  const migratedContinuation = (
+    (migratedSession?.state.agent as Record<string, unknown>).continuation ?? {}
+  ) as Record<string, unknown>;
+  assert.equal(migratedContinuation.grantMode, "additive");
+  assert.equal(migratedContinuation.accountingVersion, 1);
+  assert.equal(migratedContinuation.grantedExtraSteps, 2);
+  const migratedPending = migratedContinuation.pendingContinuationRequest as Record<string, unknown>;
+  assert.equal(migratedPending.grantMode, "reset_window");
+  assert.equal(migratedPending.extraStepsRequested, 1);
+  assert.equal(migratedPending.extraModelCallsRequested, 100);
+  assert.equal(migratedPending.resumeStepAgent, "loop.legacy.3");
+
+  const resetOffer = await kestrel.run({
+    id: "evt-cont-legacy-3",
+    type: "user.reply",
+    sessionId: "continuation-legacy-session",
+    payload: { message: "continue" },
+  });
+  assert.equal(resetOffer.status, "WAITING", JSON.stringify(resetOffer.errors));
+  const resetSession = await store.getSession("continuation-legacy-session");
+  assert.equal(resetSession?.state.count, 4);
+  const resetContinuation = (
+    (resetSession?.state.agent as Record<string, unknown>).continuation ?? {}
+  ) as Record<string, unknown>;
+  assert.equal(resetContinuation.grantMode, "reset_window");
+  assert.equal(resetContinuation.accountingVersion, 2);
+  assert.equal(resetContinuation.windowStartSteps, 3);
+  assert.equal(resetContinuation.stepsConsumed, 4);
+});
+
+test("legacy additive migration resolves the next reset window from the active profile", async () => {
+  const store = new InMemorySessionStore();
+  const legacyRuntime = createRuntime(store, {
+    maxStepsPerRun: 1,
+    maxModelCallsPerRun: 2,
+  });
+  const registerLoop = (runtime: Kestrel) => {
+    for (let index = 0; index <= 8; index += 1) {
+      runtime.registerStep(`loop.active-profile.${index}`, async (ctx) => ({
+        status: "RUNNING",
+        nextStepAgent: `loop.active-profile.${index + 1}`,
+        statePatch: {
+          count: ((ctx.session.state.count as number | undefined) ?? 0) + 1,
+          agent: {
+            ...((ctx.session.state.agent ?? {}) as Record<string, unknown>),
+            observations: [{ summary: "Completed another legacy migration iteration." }],
+          },
+        },
+      }));
+    }
+  };
+  registerLoop(legacyRuntime);
+
+  const initial = await legacyRuntime.run({
+    id: "evt-active-profile-legacy-1",
+    type: "user.message",
+    sessionId: "active-profile-legacy-session",
+    payload: { message: "start" },
+    stepAgent: "loop.active-profile.0",
+  });
+  assert.equal(initial.status, "WAITING");
+
+  const waitingSession = await store.getSession("active-profile-legacy-session");
+  const legacyState = structuredClone(waitingSession!.state);
+  const legacyAgent = legacyState.agent as Record<string, unknown>;
+  const legacyContinuation = legacyAgent.continuation as Record<string, unknown>;
+  delete legacyContinuation.grantMode;
+  delete legacyContinuation.accountingVersion;
+  delete legacyContinuation.windowStartSteps;
+  delete legacyContinuation.windowStartModelCalls;
+  const legacyPending = legacyContinuation.pendingContinuationRequest as Record<string, unknown>;
+  delete legacyPending.grantMode;
+  legacyPending.extraStepsRequested = 2;
+  delete legacyPending.extraModelCallsRequested;
+  const legacyWaitingFor = legacyAgent.waitingFor as Record<string, unknown>;
+  const legacyWaitMetadata = legacyWaitingFor.metadata as Record<string, unknown>;
+  delete legacyWaitMetadata.grantMode;
+  delete legacyWaitMetadata.window;
+  legacyWaitMetadata.extraStepsRequested = 2;
+  delete legacyWaitMetadata.extraModelCallsRequested;
+  store.unsafeOverwriteSessionStateForTest({
+    sessionId: "active-profile-legacy-session",
+    state: legacyState,
+  });
+
+  const activeRuntime = createRuntime(store, {
+    maxStepsPerRun: 3,
+    maxModelCallsPerRun: 7,
+  });
+  registerLoop(activeRuntime);
+  const migrated = await activeRuntime.run({
+    id: "evt-active-profile-legacy-2",
+    type: "user.reply",
+    sessionId: "active-profile-legacy-session",
+    payload: { message: "continue" },
+  });
+
+  assert.equal(migrated.status, "WAITING", JSON.stringify(migrated.errors));
+  assert.equal((await store.getSession("active-profile-legacy-session"))?.state.count, 3);
+  const grantEvent = store.getRunEvents().find((event) =>
+    event.runId === migrated.runId && event.type === "run.continuation_granted"
+  );
+  assert.equal(grantEvent?.metadata?.grantMode, "additive");
+  assert.equal(grantEvent?.metadata?.extraStepsGranted, 2);
+  assert.deepEqual(migrated.continuation?.window, { maxSteps: 3, maxModelCalls: 7 });
+  const migratedMetadata = migrated.waitFor?.metadata as Record<string, unknown>;
+  assert.deepEqual(migratedMetadata.window, { maxSteps: 3, maxModelCalls: 7 });
+
+  const reset = await activeRuntime.run({
+    id: "evt-active-profile-legacy-3",
+    type: "user.reply",
+    sessionId: "active-profile-legacy-session",
+    payload: { message: "continue" },
+  });
+  assert.equal(reset.status, "WAITING", JSON.stringify(reset.errors));
+  assert.equal((await store.getSession("active-profile-legacy-session"))?.state.count, 6);
+  const resetSession = await store.getSession("active-profile-legacy-session");
+  const resetContinuation = (
+    (resetSession?.state.agent as Record<string, unknown>).continuation ?? {}
+  ) as Record<string, unknown>;
+  assert.equal(resetContinuation.accountingVersion, 2);
+  assert.equal(resetContinuation.grantMode, "reset_window");
+  assert.equal(resetContinuation.windowStartSteps, 3);
+  assert.equal(resetContinuation.windowStartModelCalls, 0);
+  assert.deepEqual(reset.continuation?.window, { maxSteps: 3, maxModelCalls: 7 });
 });
 
 test("continuation approval fails hard when committed continuation state is stale", async () => {

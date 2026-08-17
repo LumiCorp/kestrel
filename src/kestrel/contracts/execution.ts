@@ -254,6 +254,11 @@ export interface NormalizedOutput {
   continuation?:
     | {
         outcome: "requested" | "granted" | "declined";
+        grantMode?: "additive" | "reset_window" | undefined;
+        window?: {
+          maxSteps: number;
+          maxModelCalls: number;
+        } | undefined;
         extraStepsRequested?: number | undefined;
         extraStepsGranted?: number | undefined;
         extraModelCallsRequested?: number | undefined;
@@ -303,6 +308,7 @@ export interface RuntimeDependencies {
   workspaceCheckpointService?: RuntimeWorkspaceCheckpointService | undefined;
   managedTaskWorktreeService?: ManagedTaskWorktreeService | undefined;
   modelGateway: ModelGateway;
+  continuationCheckpointModel?: string | undefined;
   providerReasoningVault?: ProviderReasoningVault | undefined;
   effectRunner: EffectRunner;
   outbox: Outbox;
