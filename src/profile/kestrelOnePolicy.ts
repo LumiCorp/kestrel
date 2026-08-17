@@ -262,6 +262,9 @@ export interface KestrelOneProfileOverlay {
   kestrelOneAppApprovalModes?:
     | TuiProfile["kestrelOneAppApprovalModes"]
     | undefined;
+  kestrelOneAppApprovalPolicies?:
+    | TuiProfile["kestrelOneAppApprovalPolicies"]
+    | undefined;
   additionalToolNames?: string[] | undefined;
   mcpServers?: TuiProfile["mcpServers"] | undefined;
   ociMcpEgressBindings?: TuiProfile["ociMcpEgressBindings"] | undefined;
@@ -394,6 +397,12 @@ function composeLegacyKestrelOneProfile(
     ...(input.overlay?.kestrelOneAppApprovalModes !== undefined
       ? {
           kestrelOneAppApprovalModes: input.overlay.kestrelOneAppApprovalModes,
+        }
+      : {}),
+    ...(input.overlay?.kestrelOneAppApprovalPolicies !== undefined
+      ? {
+          kestrelOneAppApprovalPolicies:
+            input.overlay.kestrelOneAppApprovalPolicies,
         }
       : {}),
     mcpServers: input.overlay?.mcpServers ?? [],
@@ -532,6 +541,13 @@ export function composeKestrelProfile(
     defaultActSubmode: definition.interaction.defaultActSubmode,
     toolAllowlist,
     kestrelOneAppApprovalModes: structuredClone(binding.apps.approvalModes),
+    ...(binding.apps.approvalPolicies === undefined
+      ? {}
+      : {
+          kestrelOneAppApprovalPolicies: structuredClone(
+            binding.apps.approvalPolicies,
+          ),
+        }),
     mcpServers: structuredClone(binding.tools.mcpServers),
     ociMcpEgressBindings: structuredClone(
       binding.tools.ociMcpEgressBindings,
@@ -635,6 +651,13 @@ export function createKestrelEnvironmentBindingFromOverlay(input: {
       approvalModes: structuredClone(
         input.overlay?.kestrelOneAppApprovalModes ?? {},
       ),
+      ...(input.overlay?.kestrelOneAppApprovalPolicies === undefined
+        ? {}
+        : {
+            approvalPolicies: structuredClone(
+              input.overlay.kestrelOneAppApprovalPolicies,
+            ),
+          }),
     },
     tools: {
       additionalToolNames: normalizeKestrelOneToolAllowlist(
@@ -656,8 +679,7 @@ export function createKestrelEnvironmentBindingFromOverlay(input: {
         ? input.overlay?.modelCredential !== undefined
           ? {
               scope: "hosted",
-              organizationId:
-                input.overlay.modelCredential.organizationId,
+              organizationId: input.overlay.modelCredential.organizationId,
               environmentId: input.overlay.modelCredential.environmentId,
             }
           : {
@@ -706,9 +728,7 @@ function bindDefinitionPoliciesToEnvironment(
   binding: KestrelEnvironmentBindingV1,
 ): TuiProfile {
   if (binding.modelRoute.kind !== "pinned") {
-    if (
-      definition.evaluationPolicy !== undefined
-    ) {
+    if (definition.evaluationPolicy !== undefined) {
       throw new Error(
         "Route-bound Kestrel evaluation policies require a pinned environment model route.",
       );
@@ -724,8 +744,7 @@ function bindDefinitionPoliciesToEnvironment(
       ...structuredClone(definition.evaluationPolicy.judge),
       provider: binding.modelRoute.provider,
       model: binding.modelRoute.model,
-      modelRegistrationRevision:
-        binding.modelRoute.modelRegistrationRevision,
+      modelRegistrationRevision: binding.modelRoute.modelRegistrationRevision,
       capabilities: structuredClone(binding.modelRoute.capabilities),
       ...(binding.modelRoute.credentialReference !== undefined
         ? {
@@ -779,14 +798,12 @@ export function fingerprintResolvedProfile(
 ): string {
   return createHash("sha256")
     .update(
-      stableJson(
-        {
-          profile,
-          executionBoundaryPolicyRevision:
-            KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
-          ...(revisionProvenance !== undefined ? { revisionProvenance } : {}),
-        },
-      ),
+      stableJson({
+        profile,
+        executionBoundaryPolicyRevision:
+          KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+        ...(revisionProvenance !== undefined ? { revisionProvenance } : {}),
+      }),
     )
     .digest("hex");
 }

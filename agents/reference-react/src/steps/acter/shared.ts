@@ -4,6 +4,7 @@ import type {
   ToolDescriptorRefV1,
   ToolSurfaceSnapshotV1,
 } from "../../../../../src/kestrel/contracts/tool-contract.js";
+import type { ToolApprovalDispositionV1 } from "../../../../../src/mode/contracts.js";
 
 import type { AutonomyPolicy } from "../../../../../src/governance/contracts.js";
 import type {
@@ -29,10 +30,13 @@ export interface ActerStepConfig {
     freshnessClass?: "live" | "volatile" | "static" | "runtime" | "snapshot" | undefined;
     capabilityClasses: string[];
     approvalCapabilities?: string[] | undefined;
-    approvalAuthority?: {
-      kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
-      revision: string;
-    } | undefined;
+    approvalDisposition?: ToolApprovalDispositionV1 | undefined;
+    approvalAuthority?:
+      | {
+          kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
+          revision: string;
+        }
+      | undefined;
     descriptorRef?: ToolDescriptorRefV1 | undefined;
     executionClass?: ToolExecutionClass | undefined;
     allowedInteractionModes?: CanonicalInteractionMode[] | undefined;
@@ -51,10 +55,18 @@ export interface ExecutionActionContext {
   capabilityManifest: ReturnType<ActerStepConfig["capabilityManifestProvider"]>;
   toolCapabilityClassesByName: Record<string, string[]>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
-  toolApprovalAuthorityByName: Record<string, {
-    kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
-    revision: string;
-  } | undefined>;
+  toolApprovalDispositionByName: Record<
+    string,
+    ToolApprovalDispositionV1 | undefined
+  >;
+  toolApprovalAuthorityByName: Record<
+    string,
+    | {
+        kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
+        revision: string;
+      }
+    | undefined
+  >;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
   toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   reactState: Record<string, unknown>;

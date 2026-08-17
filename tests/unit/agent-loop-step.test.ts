@@ -460,14 +460,19 @@ function buildStep(input?: {
   agentProvider?: string;
   agentModel?: string;
   maintenanceModel?: string;
-    capabilityManifest?: Array<{
-      name: string;
-      description: string;
-      capabilityClasses: string[];
-      approvalCapabilities?: string[];
-      executionClass: "read_only" | "planning_write" | "sandboxed_only" | "external_side_effect";
-      allowedInteractionModes?: Array<"chat" | "plan" | "build">;
-      toolFamily?: string;
+  capabilityManifest?: Array<{
+    name: string;
+    description: string;
+    capabilityClasses: string[];
+    approvalCapabilities?: string[];
+    approvalDisposition?: import("../../src/mode/contracts.js").ToolApprovalDispositionV1;
+    executionClass:
+      | "read_only"
+      | "planning_write"
+      | "sandboxed_only"
+      | "external_side_effect";
+    allowedInteractionModes?: Array<"chat" | "plan" | "build">;
+    toolFamily?: string;
   }>;
 }) {
   return createAgentLoopStep({
@@ -2435,6 +2440,70 @@ test("agent loop disables parallel tool calls under strict per-call approval pol
   assert.equal(capturedRequest?.providerOptions?.openrouter?.parallelToolCalls, false);
   assert.equal(capturedRequest?.providerOptions?.openai?.parallelToolCalls, false);
   assert.equal(capturedRequest?.providerOptions?.anthropic?.parallelToolCalls, false);
+});
+
+test("agent loop keeps parallel calls enabled for explicit Automatic App tools with legacy confirmation metadata", async () => {
+  let capturedRequest: ModelRequest | undefined;
+  const buildContext = context();
+  buildContext.event.payload = {
+    ...buildContext.event.payload,
+    interactionMode: "build",
+  };
+  buildContext.session.state.agent = { interactionMode: "build" };
+  const tool: ModelToolSpec = {
+    name: "calendar.create_event",
+    description: "Create a calendar event.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  };
+
+  await buildStep({
+    tools: [tool],
+    capabilityManifest: [
+      {
+        name: tool.name,
+        description: tool.description,
+        capabilityClasses: ["calendar.write"],
+        approvalCapabilities: ["network.call", "external.confirm"],
+        approvalDisposition: {
+          mode: "auto",
+          reasonCode: "environment_policy",
+          authority: { kind: "hosted_app_policy", revision: "revision-1" },
+        },
+        executionClass: "external_side_effect",
+        allowedInteractionModes: ["build"],
+      },
+    ],
+  })(buildContext, {
+    useModel: async (request) => {
+      capturedRequest = request;
+      return modelResponse({
+        version: "v1",
+        reason: "No calendar change is needed.",
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "Done.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(
+    capturedRequest?.providerOptions?.openrouter?.parallelToolCalls,
+    true,
+  );
+  assert.equal(
+    capturedRequest?.providerOptions?.openai?.parallelToolCalls,
+    true,
+  );
+  assert.equal(
+    capturedRequest?.providerOptions?.anthropic?.parallelToolCalls,
+    true,
+  );
 });
 
 test("agent loop fails immediately when a required structured action is missing", async () => {

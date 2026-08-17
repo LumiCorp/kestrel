@@ -51,10 +51,13 @@ export interface ToolCapabilityContractV1 {
   allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: ApprovalCapabilityClass[] | undefined;
-  approvalAuthority?: {
-    kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
-    revision: string;
-  } | undefined;
+  minimumApprovalMode?: "auto" | "ask" | undefined;
+  approvalAuthority?:
+    | {
+        kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
+        revision: string;
+      }
+    | undefined;
   requires?: string[] | undefined;
   suitability?: ToolCapabilitySuitabilityV1 | undefined;
 }
@@ -180,6 +183,7 @@ const CAPABILITY_KEYS = new Set([
   "allowedInteractionModes",
   "capabilityClasses",
   "approvalCapabilities",
+  "minimumApprovalMode",
   "approvalAuthority",
   "requires",
   "suitability",
@@ -796,6 +800,13 @@ function parseCapability(value: unknown): ToolCapabilityContractV1 {
         "tool descriptor.capability.approvalCapabilities must be omitted when empty",
       );
     }
+  }
+  if (input.minimumApprovalMode !== undefined) {
+    requireEnumString(
+      input.minimumApprovalMode,
+      new Set(["auto", "ask"]),
+      "tool descriptor.capability.minimumApprovalMode",
+    );
   }
   if (input.requires !== undefined) {
     requireStringArray(input.requires, "tool descriptor.capability.requires");

@@ -75,3 +75,20 @@ test("GitHub action tools send the signed execution ticket and exact approval ID
   );
   assert.equal(requests[1]?.headers.get("x-kestrel-runtime-approval"), null);
 });
+
+test("GitHub writes configured Automatic do not require a runtime approval ID", async () => {
+  const requests: Headers[] = [];
+  const handler = kestrelOneGitHubIssueCreateTool.createHandler({
+    kestrelOne: {
+      appUrl: "https://kestrel.example",
+      executionTicket: "signed-environment-ticket",
+      appApprovalModes: { "kestrel_one.github_issue_create": "auto" },
+    },
+    fetchImpl: async (_input, init) => {
+      requests.push(new Headers(init?.headers));
+      return Response.json({ result: { ok: true } });
+    },
+  });
+  await handler({ repository: "acme/widgets", title: "Automatic policy" });
+  assert.equal(requests[0]?.get("x-kestrel-approval-id"), null);
+});

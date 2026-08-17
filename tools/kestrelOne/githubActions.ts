@@ -219,9 +219,11 @@ async function invokeGitHubAction(
     context,
     "/api/runtime/github/action",
   );
+  const explicitApprovalMode =
+    context.kestrelOne?.appApprovalModes?.[input.toolName];
   const approvalRequired =
-    input.requiresApproval ||
-    context.kestrelOne?.appApprovalModes?.[input.toolName] === "ask";
+    explicitApprovalMode === "ask" ||
+    (explicitApprovalMode === undefined && input.requiresApproval);
   const approvalId = approvalRequired
     ? requireContextValue(
         context.runtime?.approvalId,

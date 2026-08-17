@@ -21,8 +21,13 @@ import {
   isToolEligibleForInteractionMode,
   needsPerCallApproval,
   readBlockedApprovalCapability,
+  type ToolApprovalDispositionV1,
 } from "../../../../../src/mode/contracts.js";
 import { isMutationCapableToolName } from "../../../../../src/runtime/mutationTools.js";
+import {
+  approvalReasonExplanation,
+  buildToolApprovalPresentation,
+} from "../../../../../src/runtime/toolApprovalPresentation.js";
 import {
   sanitizeJsonValue,
   stringifySanitizedJson,
@@ -73,10 +78,21 @@ export async function checkToolPolicyGate(input: {
   toolClass: ToolExecutionClass;
   allowedInteractionModes?: readonly CanonicalInteractionMode[] | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
-  approvalAuthority?: {
-    kind: RunnerExternalApprovalAuthorityKind;
-    revision: string;
-  } | undefined;
+  approvalDisposition?: ToolApprovalDispositionV1 | undefined;
+  approvalAuthority?:
+    | {
+        kind: RunnerExternalApprovalAuthorityKind;
+        revision: string;
+      }
+    | undefined;
+  toolIntent?:
+    | {
+        modelToolCallId?: string | undefined;
+        toolSurfaceSnapshot?:
+          | import("../../../../../src/kestrel/contracts/tool-contract.js").ToolSurfaceSnapshotV1
+          | undefined;
+      }
+    | undefined;
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   modeSystemV2Enabled: boolean;
@@ -170,7 +186,9 @@ export async function checkToolPolicyGate(input: {
       actSubmode: input.actSubmode,
       executionPolicy: input.executionPolicy,
       requiredApprovalCapabilities: input.requiredApprovalCapabilities,
+      approvalDisposition: input.approvalDisposition,
       approvalAuthority: input.approvalAuthority,
+      toolIntent: input.toolIntent,
       io: input.io,
     });
     if (approvalTransition !== undefined) {
@@ -195,6 +213,10 @@ export async function checkToolBatchPolicyGate(input: {
   eventPayload: Record<string, unknown> | undefined;
   items: Array<{ name: string; input: Record<string, unknown> }>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
+  toolApprovalDispositionByName: Record<
+    string,
+    ToolApprovalDispositionV1 | undefined
+  >;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
   toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   interactionMode: CanonicalInteractionMode;
@@ -209,14 +231,16 @@ export async function checkToolBatchPolicyGate(input: {
 }): Promise<PolicyGateResult> {
   if (
     input.modeSystemV2Enabled &&
-    (requiresExplicitToolApproval({
+    input.items.some((item) =>
+      requiresExplicitToolApproval({
         interactionMode: input.interactionMode,
         actSubmode: input.actSubmode,
         executionPolicy: input.executionPolicy,
-        requiredApprovalCapabilities: input.items.flatMap(
-          (item) => input.toolApprovalCapabilitiesByName[item.name] ?? []
-        ),
-      }))
+        requiredApprovalCapabilities:
+          input.toolApprovalCapabilitiesByName[item.name] ?? [],
+        approvalDisposition: input.toolApprovalDispositionByName[item.name],
+      }),
+    )
   ) {
     return {
       kind: "blocked",
@@ -227,7 +251,8 @@ export async function checkToolBatchPolicyGate(input: {
         stepIndex: input.stepIndex,
         toolName: "tool_batch",
         toolClass: "external_side_effect",
-        reason: "tool_batch is not supported in Build: Ask First; use single tool calls",
+        reason:
+          "tool_batch cannot include operations whose effective approval disposition is Ask; use single tool calls",
         interactionMode: input.interactionMode,
         actSubmode: input.actSubmode,
       }),
@@ -318,10 +343,13 @@ export function checkToolBatchChunkPolicyGate(input: {
   modeSystemV2Enabled: boolean;
   executionPolicy: ExecutionPolicy | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
-  approvalAuthority?: {
-    kind: RunnerExternalApprovalAuthorityKind;
-    revision: string;
-  } | undefined;
+  approvalDisposition?: ToolApprovalDispositionV1 | undefined;
+  approvalAuthority?:
+    | {
+        kind: RunnerExternalApprovalAuthorityKind;
+        revision: string;
+      }
+    | undefined;
 }): PolicyGateResult {
   return checkToolItemsModeAndCapabilityPolicy(input);
 }
@@ -481,10 +509,21 @@ async function maybeRequireToolApproval(input: {
   io: StepIO;
   executionPolicy: ExecutionPolicy | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
-  approvalAuthority?: {
-    kind: RunnerExternalApprovalAuthorityKind;
-    revision: string;
-  } | undefined;
+  approvalDisposition?: ToolApprovalDispositionV1 | undefined;
+  approvalAuthority?:
+    | {
+        kind: RunnerExternalApprovalAuthorityKind;
+        revision: string;
+      }
+    | undefined;
+  toolIntent?:
+    | {
+        modelToolCallId?: string | undefined;
+        toolSurfaceSnapshot?:
+          | import("../../../../../src/kestrel/contracts/tool-contract.js").ToolSurfaceSnapshotV1
+          | undefined;
+      }
+    | undefined;
 }): Promise<Transition | undefined> {
   if (
     !requiresExplicitToolApproval({
@@ -492,32 +531,62 @@ async function maybeRequireToolApproval(input: {
       actSubmode: input.actSubmode,
       executionPolicy: input.executionPolicy,
       requiredApprovalCapabilities: input.requiredApprovalCapabilities,
+      approvalDisposition: input.approvalDisposition,
     })
   ) {
     return ;
   }
 
-  const approvalId = buildApprovalId(input.runId, input.stepIndex, input.toolName, input.toolInput);
+  const effectiveToolInput =
+    input.io.inspectTool === undefined
+      ? input.toolInput
+      : (
+          await input.io.inspectTool(
+            input.toolName,
+            input.toolInput,
+            input.toolIntent,
+          )
+        ).effectiveInput;
+  const approvalId = buildApprovalId(
+    input.runId,
+    input.stepIndex,
+    input.toolName,
+    effectiveToolInput,
+  );
   const requestedAt = new Date().toISOString();
-  const expiresAt = new Date(Date.parse(requestedAt) + 5 * 60_000).toISOString();
-  const binding = input.toolClass === "external_side_effect"
-    ? buildExternalApprovalBinding({
-        approvalId,
-        threadId: readApprovalThreadId(input.eventPayload) ?? input.sessionId,
-        runId: input.runId,
-        toolName: input.toolName,
-        toolInput: input.toolInput,
-        toolClass: input.toolClass,
-        requiredApprovalCapabilities: input.requiredApprovalCapabilities,
-        approvalAuthority: input.approvalAuthority,
-        interactionMode: input.interactionMode,
-        actSubmode: input.actSubmode,
-        executionPolicy: input.executionPolicy,
-        requestedAt,
-        expiresAt,
-      })
-    : undefined;
-  const currentPendingApproval = asRecord(asRecord(input.reactState.exec)?.pendingApproval);
+  const expiresAt = new Date(
+    Date.parse(requestedAt) + 5 * 60_000,
+  ).toISOString();
+  const effectiveDisposition = resolveEffectiveApprovalDisposition(input);
+  const approvalPresentation = buildToolApprovalPresentation({
+    toolName: input.toolName,
+    effectiveInput: effectiveToolInput,
+    disposition: effectiveDisposition,
+  });
+  const approvalReason = approvalReasonExplanation(
+    effectiveDisposition.reasonCode,
+  );
+  const binding =
+    input.toolClass === "external_side_effect"
+      ? buildExternalApprovalBinding({
+          approvalId,
+          threadId: readApprovalThreadId(input.eventPayload) ?? input.sessionId,
+          runId: input.runId,
+          toolName: input.toolName,
+          toolInput: effectiveToolInput,
+          toolClass: input.toolClass,
+          requiredApprovalCapabilities: input.requiredApprovalCapabilities,
+          approvalAuthority: input.approvalAuthority,
+          interactionMode: input.interactionMode,
+          actSubmode: input.actSubmode,
+          executionPolicy: input.executionPolicy,
+          requestedAt,
+          expiresAt,
+        })
+      : undefined;
+  const currentPendingApproval = asRecord(
+    asRecord(input.reactState.exec)?.pendingApproval,
+  );
   const currentPendingApprovalId = asString(currentPendingApproval?.approvalId);
   const decision = await resolveApprovalDecision({
     eventType: input.eventType,
@@ -530,7 +599,9 @@ async function maybeRequireToolApproval(input: {
         approvalId,
         toolName: input.toolName,
         toolClass: input.toolClass,
-        reason: "Build: Ask First requires per-call approval",
+        reason: approvalReason,
+        reasonCode: effectiveDisposition.reasonCode,
+        approvalPresentation,
       },
     },
   });
@@ -610,10 +681,12 @@ async function maybeRequireToolApproval(input: {
     metadata: {
       approvalId,
       toolName: input.toolName,
-      toolInput: input.toolInput,
+      toolInput: effectiveToolInput,
       toolClass: input.toolClass,
       riskLevel: riskLevelForToolClass(input.toolClass),
-      reason: "Build: Ask First requires per-call approval",
+      reason: approvalReason,
+      reasonCode: effectiveDisposition.reasonCode,
+      approvalPresentation,
       expiresAt,
       ...(binding !== undefined ? { externalApprovalBinding: binding } : {}),
       prompt,
@@ -672,15 +745,47 @@ async function maybeRequireToolApproval(input: {
   });
 }
 
+function resolveEffectiveApprovalDisposition(input: {
+  interactionMode: CanonicalInteractionMode;
+  actSubmode: ActSubmode;
+  executionPolicy: ExecutionPolicy | undefined;
+  approvalDisposition?: ToolApprovalDispositionV1 | undefined;
+}): ToolApprovalDispositionV1 {
+  if (needsPerCallApproval(input)) {
+    return {
+      mode: "ask",
+      reasonCode: "runtime_strict",
+      authority: {
+        kind: "runtime_policy",
+        revision: "strict-approval-per-call:v1",
+      },
+    };
+  }
+  return (
+    input.approvalDisposition ?? {
+      mode: "ask",
+      reasonCode: "tool_minimum",
+      authority: {
+        kind: "runtime_policy",
+        revision: "legacy-external-confirm",
+      },
+    }
+  );
+}
+
 export function requiresExplicitToolApproval(input: {
   interactionMode: CanonicalInteractionMode;
   actSubmode: ActSubmode;
   executionPolicy: ExecutionPolicy | undefined;
   requiredApprovalCapabilities?: readonly string[] | undefined;
+  approvalDisposition?: ToolApprovalDispositionV1 | undefined;
 }) {
+  if (needsPerCallApproval(input)) return true;
+  if (input.approvalDisposition !== undefined) {
+    return input.approvalDisposition.mode === "ask";
+  }
   return (
-    input.requiredApprovalCapabilities?.includes("external.confirm") === true ||
-    needsPerCallApproval(input)
+    input.requiredApprovalCapabilities?.includes("external.confirm") === true
   );
 }
 

@@ -1,6 +1,32 @@
 import { z } from "zod";
 import { messageMetadataSchema, type ChatMessage } from "@/lib/types";
 
+export const runtimeApprovalPolicyViewSchema = z.object({
+  projectId: z.string(),
+  environmentId: z.string(),
+  appKey: z.string(),
+  capabilityKey: z.string(),
+  capabilityDisplayName: z.string(),
+  environmentApprovalMode: z.enum(["auto", "ask", "deny"]),
+  projectApprovalMode: z.enum(["auto", "ask", "deny"]),
+  minimumApprovalMode: z.enum(["auto", "ask"]),
+  reasonCode: z.enum([
+    "tool_minimum",
+    "environment_policy",
+    "project_restriction",
+    "subject_restriction",
+    "runtime_strict",
+  ]),
+  canEditProject: z.boolean(),
+  approvalRequirementExplanation: z.string().optional(),
+  alwaysApprovalAction: z.enum([
+    "open_environment_apps",
+    "minimum_ask",
+    "unavailable",
+  ]),
+  environmentAppsHref: z.string(),
+});
+
 export const threadInteractionViewSchema = z.object({
   id: z.string(),
   requestId: z.string(),
@@ -11,6 +37,7 @@ export const threadInteractionViewSchema = z.object({
   prompt: z.string(),
   status: z.enum(["pending", "processing", "resolved", "cancelled", "failed"]),
   requestEnvelope: z.record(z.string(), z.unknown()),
+  approvalPolicy: runtimeApprovalPolicyViewSchema.optional(),
   responseEnvelope: z.record(z.string(), z.unknown()).nullable(),
   responseMessageId: z.string().nullable(),
   turnId: z.string().nullable(),
@@ -76,6 +103,9 @@ export const threadConversationSnapshotSchema =
   });
 
 export type ThreadInteractionView = z.infer<typeof threadInteractionViewSchema>;
+export type RuntimeApprovalPolicyView = z.infer<
+  typeof runtimeApprovalPolicyViewSchema
+>;
 export type ThreadTurnView = z.infer<typeof threadTurnViewSchema>;
 export type ThreadConversationState = z.infer<
   typeof threadConversationStateSchema

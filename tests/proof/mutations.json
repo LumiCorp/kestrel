@@ -3,12 +3,19 @@
   "mutations": [
     {
       "id": "conversation-refresh-message-discard",
-      "target": "apps/web/lib/turns/message-reconciliation.ts",
-      "find": "return turnStatus === \"running\" ? live : persisted;",
+      "target": "packages/conversation/src/projector.ts",
+      "find": "return status === \"running\" ? live : persisted;",
       "replace": "return live;",
       "command": "pnpm",
-      "args": ["--dir", "apps/web", "exec", "tsx", "--test", "lib/turns/message-reconciliation.test.ts"],
-      "testFiles": ["apps/web/lib/turns/message-reconciliation.test.ts"]
+      "args": [
+        "--dir",
+        "packages/conversation",
+        "exec",
+        "tsx",
+        "--test",
+        "tests/conversation.test.ts"
+      ],
+      "testFiles": ["packages/conversation/tests/conversation.test.ts"]
     },
     {
       "id": "conversation-snapshot-orphan-interaction",
@@ -427,8 +434,8 @@
     {
       "id": "tool-inflight-generation-name-switch",
       "target": "tools/runtime/UnifiedToolRegistry.ts",
-      "find": "        (toolInput: unknown) => pinnedHandle.call(toolInput),",
-      "replace": "        (toolInput: unknown) => manager.callTool(descriptor.toolId, toolInput),",
+      "find": "          pinnedHandle.call(toolInput),",
+      "replace": "          manager.callTool(descriptor.toolId, toolInput),",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=model snapshot, preparation, and execution retain one exact MCP activation", "tests/unit/tool-invocation-integrity.test.ts"],
       "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
@@ -463,8 +470,8 @@
     {
       "id": "tool-approval-descriptor-revision-omission",
       "target": "src/io/ToolInvocationSupport.ts",
-      "find": "          version: \"prepared-tool-approval-authority-v1\",\n          activation: input.activation,\n          effectiveInput: input.effectiveInput,",
-      "replace": "          version: \"prepared-tool-approval-authority-v1\",\n          activation: { ...input.activation, descriptor: { ...input.activation.descriptor, contractRevision: `sha256:${\"0\".repeat(64)}` } },\n          effectiveInput: input.effectiveInput,",
+      "find": "            version: \"prepared-tool-approval-authority-v1\",\n            activation: input.activation,\n            effectiveInput: input.effectiveInput,",
+      "replace": "            version: \"prepared-tool-approval-authority-v1\",\n            activation: { ...input.activation, descriptor: { ...input.activation.descriptor, contractRevision: `sha256:${\"0\".repeat(64)}` } },\n            effectiveInput: input.effectiveInput,",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=approval authority includes the exact descriptor revision", "tests/unit/tool-invocation-integrity.test.ts"],
       "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
@@ -592,7 +599,13 @@
       "find": "db:migrate:deploy",
       "replace": "db:migrate",
       "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=production database migration belongs", "tests/unit/production-delivery-boundary.test.ts"],
+      "args": [
+        "--import",
+        "tsx",
+        "--test",
+        "--test-name-pattern=Vercel production build retains configuration validation and migration",
+        "tests/unit/production-delivery-boundary.test.ts"
+      ],
       "testFiles": ["tests/unit/production-delivery-boundary.test.ts"]
     },
     {
@@ -601,8 +614,18 @@
       "find": "    version?.workspaceRuntimeImage !== images.runtimeImage ||",
       "replace": "    false ||",
       "command": "pnpm",
-      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "lib/environments/runtime-channel.postgres.test.ts"],
-      "testFiles": ["apps/web/lib/environments/runtime-channel.postgres.test.ts"]
+      "args": [
+        "--dir",
+        "apps/web",
+        "exec",
+        "tsx",
+        "--test",
+        "--test-name-pattern=ordinary hosted runtime paths",
+        "lib/environments/runtime-channel-authority-boundary.test.ts"
+      ],
+      "testFiles": [
+        "apps/web/lib/environments/runtime-channel-authority-boundary.test.ts"
+      ]
     },
     {
       "id": "environment-update-stopped-state-restoration-bypass",

@@ -199,7 +199,9 @@ export type RunTurnResult = RuntimeTurnResult & {
 interface RuntimeBootstrap {
   kestrel: Kestrel;
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
-  persistExecutionBoundaryDecision?: ((decision: ExecutionBoundaryDecisionV1) => Promise<void>) | undefined;
+  persistExecutionBoundaryDecision?:
+    | ((decision: ExecutionBoundaryDecisionV1) => Promise<void>)
+    | undefined;
   missionControlStore?: SessionStore | undefined;
   missionControlProjectService?: MissionControlProjectService | undefined;
   missionControlProjectChanges?: MissionControlProjectChangePublisher | undefined;
@@ -264,7 +266,9 @@ export interface RuntimeFactory {
       | undefined,
     onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined,
     onRunEvent?: ((event: RunEvent) => void) | undefined,
-    onDetachedTurnEvent?: ((event: DetachedTurnLifecycleEvent) => void) | undefined,
+    onDetachedTurnEvent?:
+      | ((event: DetachedTurnLifecycleEvent) => void)
+      | undefined,
   ): RuntimeBootstrap;
 }
 
@@ -301,7 +305,9 @@ export interface KestrelChatRuntimeOptions {
     | undefined;
   onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined;
   onRunEvent?: ((event: RunEvent) => void) | undefined;
-  onDetachedTurnEvent?: ((event: DetachedTurnLifecycleEvent) => void) | undefined;
+  onDetachedTurnEvent?:
+    | ((event: DetachedTurnLifecycleEvent) => void)
+    | undefined;
   onMissionControlProject?:
     | ((project: MissionControlProjectStateRecord) => void)
     | undefined;
@@ -510,7 +516,10 @@ export class KestrelChatRuntime {
         ? { executionBoundaryRuntime: bootstrap.executionBoundaryRuntime }
         : {}),
       ...(bootstrap.persistExecutionBoundaryDecision !== undefined
-        ? { persistExecutionBoundaryDecision: bootstrap.persistExecutionBoundaryDecision }
+        ? {
+            persistExecutionBoundaryDecision:
+              bootstrap.persistExecutionBoundaryDecision,
+          }
         : {}),
     });
     const missionControlStore = bootstrap.missionControlStore;
@@ -522,10 +531,7 @@ export class KestrelChatRuntime {
         runStart: (payload) =>
           this.runTurn(payload.turn as unknown as RunTurnInput),
         operatorControl: (payload) => {
-          if (
-            payload.action !== "retry" &&
-            payload.action !== "reply"
-          ) {
+          if (payload.action !== "retry" && payload.action !== "reply") {
             throw createRuntimeFailure(
               "MISSION_CONTROL_OPERATOR_ACTION_INVALID",
               `Mission Control cannot dispatch operator action '${payload.action}'.`,
@@ -539,21 +545,20 @@ export class KestrelChatRuntime {
         cancel: (payload) => this.cancelMissionControlRun(payload),
         inspectRun: (payload) => this.inspectMissionControlRun(payload.runId),
       });
-      this.missionControlExecutionRuntime =
-        new MissionControlExecutionRuntime(
-          missionControlStore as SessionStore & {
-            markMissionControlOutboxDelivered: NonNullable<
-              SessionStore["markMissionControlOutboxDelivered"]
-            >;
-            recordMissionControlOutboxFailure: NonNullable<
-              SessionStore["recordMissionControlOutboxFailure"]
-            >;
-          },
-          runner,
-          {
-            onProjectChanged: bootstrap.missionControlProjectChanges?.publish,
-          },
-        );
+      this.missionControlExecutionRuntime = new MissionControlExecutionRuntime(
+        missionControlStore as SessionStore & {
+          markMissionControlOutboxDelivered: NonNullable<
+            SessionStore["markMissionControlOutboxDelivered"]
+          >;
+          recordMissionControlOutboxFailure: NonNullable<
+            SessionStore["recordMissionControlOutboxFailure"]
+          >;
+        },
+        runner,
+        {
+          onProjectChanged: bootstrap.missionControlProjectChanges?.publish,
+        },
+      );
       this.missionControlReviewService = new MissionControlReviewService(
         missionControlStore,
         this.createMissionControlReviewEvidenceResolver(),
@@ -956,8 +961,8 @@ export class KestrelChatRuntime {
         .project;
     }
     await this.driveMissionControlAutopilot(project.projectId);
-    return (
-      await this.missionControlProjectService!.getProject(project.projectId)
+    return await this.missionControlProjectService!.getProject(
+      project.projectId,
     );
   }
 
@@ -2692,15 +2697,12 @@ export class KestrelChatRuntime {
         "Mission Control project authority is unavailable.",
       );
     }
-    const project = await this.missionControlProjectService.getProject(
-      projectId,
-    );
+    const project =
+      await this.missionControlProjectService.getProject(projectId);
     return project;
   }
 
-  private async driveMissionControlAutopilot(
-    projectId: string,
-  ): Promise<void> {
+  private async driveMissionControlAutopilot(projectId: string): Promise<void> {
     if (
       this.missionControlProjectService === undefined ||
       this.missionControlExecutionRuntime === undefined
@@ -2708,9 +2710,8 @@ export class KestrelChatRuntime {
       return;
     }
     for (;;) {
-      const project = await this.missionControlProjectService.getProject(
-        projectId,
-      );
+      const project =
+        await this.missionControlProjectService.getProject(projectId);
       if (
         project.document.autopilot.enabled === false ||
         Object.values(project.document.items).some(
@@ -2823,8 +2824,7 @@ export class KestrelChatRuntime {
     };
   }
 
-  private createMissionControlReviewEvidenceResolver():
-    MissionControlReviewEvidenceResolver {
+  private createMissionControlReviewEvidenceResolver(): MissionControlReviewEvidenceResolver {
     return {
       resolve: async (input) => {
         const [changes, validation, inspected] = await Promise.all([
@@ -2971,7 +2971,9 @@ export class KestrelChatRuntime {
       candidate: {
         workspaceRoot: changes.workspaceRoot,
         candidateFingerprint: changes.candidateFingerprint,
-        ...(changes.headSha === undefined ? {} : { commitSha: changes.headSha }),
+        ...(changes.headSha === undefined
+          ? {}
+          : { commitSha: changes.headSha }),
       },
       evidence: {
         change: changes.candidateFingerprint,
@@ -3120,7 +3122,9 @@ function createDefaultRuntime(
     | undefined,
   onTaskUpdate?: ((update: DelegationTaskUpdate) => void) | undefined,
   onRunEvent?: ((event: RunEvent) => void) | undefined,
-  onDetachedTurnEvent?: ((event: DetachedTurnLifecycleEvent) => void) | undefined,
+  onDetachedTurnEvent?:
+    | ((event: DetachedTurnLifecycleEvent) => void)
+    | undefined,
 ): RuntimeBootstrap {
   const storeHandle = createSessionStoreFromEnv({
     ...(profile.storeDriver !== undefined
@@ -3144,7 +3148,10 @@ function createDefaultRuntime(
     false,
     undefined,
     storeHandle.driver === "sqlite"
-      ? (sessionId) => (storeHandle.store as PostgresSessionStore).recoverOrphanedActiveRun(sessionId)
+      ? (sessionId) =>
+          (storeHandle.store as PostgresSessionStore).recoverOrphanedActiveRun(
+            sessionId,
+          )
       : undefined,
   );
 }
@@ -3207,7 +3214,9 @@ function createRuntimeWithStore(
     | undefined,
   onTaskUpdate: ((update: DelegationTaskUpdate) => void) | undefined,
   onRunEvent: ((event: RunEvent) => void) | undefined,
-  onDetachedTurnEvent: ((event: DetachedTurnLifecycleEvent) => void) | undefined,
+  onDetachedTurnEvent:
+    | ((event: DetachedTurnLifecycleEvent) => void)
+    | undefined,
   store: SessionStore,
   closeStore: () => Promise<void>,
   environment?: KestrelRuntimeEnvironment | undefined,
@@ -3306,14 +3315,21 @@ function createRuntimeWithStore(
     devShell: profile.devShell,
     kestrelOne: {
       appUrl: parseEnvString("KESTREL_ONE_APP_URL", runtimeEnv),
-      appRelayUrl: parseEnvString("KESTREL_ENVIRONMENT_GATEWAY_URL", runtimeEnv),
-      appRelayToken: parseEnvString("KESTREL_WORKSPACE_SERVICE_TOKEN", runtimeEnv),
+      appRelayUrl: parseEnvString(
+        "KESTREL_ENVIRONMENT_GATEWAY_URL",
+        runtimeEnv,
+      ),
+      appRelayToken: parseEnvString(
+        "KESTREL_WORKSPACE_SERVICE_TOKEN",
+        runtimeEnv,
+      ),
       workspaceRuntimeUrl: parseEnvString(
         "KESTREL_WORKSPACE_RUNTIME_URL",
         runtimeEnv,
       ),
       toolToken: parseEnvString("KESTREL_ONE_TOOL_TOKEN", runtimeEnv),
       appApprovalModes: profile.kestrelOneAppApprovalModes,
+      appApprovalPolicies: profile.kestrelOneAppApprovalPolicies,
     },
     providerConfigurations:
       createToolProviderConfigurationResolverFromEnvironment(
@@ -3390,9 +3406,10 @@ function createRuntimeWithStore(
       });
     },
   });
-  const evaluationRuntime = profile.evaluationPolicy === undefined
-    ? undefined
-    : createRuntimeEvaluationConfiguration(profile, modelGateway, runtimeEnv);
+  const evaluationRuntime =
+    profile.evaluationPolicy === undefined
+      ? undefined
+      : createRuntimeEvaluationConfiguration(profile, modelGateway, runtimeEnv);
   const providerReasoningVault = createProviderReasoningVaultFromEnv(
     store,
     runtimeEnv,
@@ -3560,11 +3577,13 @@ function createRuntimeWithStore(
               hookKind: "handoff",
               sourceId: input.specialistId,
               objective: input.objective,
-              evidence: [{
-                evidenceId: `handoff-${input.stepIndex}`,
-                kind: "handoff",
-                value: input.result,
-              }],
+              evidence: [
+                {
+                  evidenceId: `handoff-${input.stepIndex}`,
+                  kind: "handoff",
+                  value: input.result,
+                },
+              ],
             });
           },
         }
@@ -3590,11 +3609,14 @@ function createRuntimeWithStore(
       await store.appendRunEvent({
         runId: decision.runId,
         sessionId: decision.sessionId,
-        ...(decision.stepIndex !== undefined ? { stepIndex: decision.stepIndex } : {}),
+        ...(decision.stepIndex !== undefined
+          ? { stepIndex: decision.stepIndex }
+          : {}),
         type: "execution_boundary.decision",
-        level: decision.outcome === "DENY" || decision.outcome === "QUARANTINE"
-          ? "WARN"
-          : "INFO",
+        level:
+          decision.outcome === "DENY" || decision.outcome === "QUARANTINE"
+            ? "WARN"
+            : "INFO",
         timestamp: decision.createdAt,
         metadata: { ...decision },
       });
@@ -3627,7 +3649,9 @@ function createRuntimeWithStore(
     ...(workspaceGitService !== undefined ? { workspaceGitService } : {}),
     ...(workspaceGitReady !== undefined ? { workspaceGitReady } : {}),
     entryStepAgent: registration.entryStepAgent,
-    ...(recoverOrphanedActiveRun !== undefined ? { recoverOrphanedActiveRun } : {}),
+    ...(recoverOrphanedActiveRun !== undefined
+      ? { recoverOrphanedActiveRun }
+      : {}),
     reasoningPolicyReady,
     readFinalizedPayload: async (sessionId: string) => {
       const session = await kestrel.getSession(sessionId);
@@ -3674,7 +3698,11 @@ function registerKnownRuntimeSensitiveValues(
   for (const environment of environments) {
     for (const key of RUNTIME_SENSITIVE_ENVIRONMENT_KEYS) {
       const value = environment[key]?.trim();
-      if (value === undefined || value.length === 0 || registered.has(`${key}\0${value}`)) {
+      if (
+        value === undefined ||
+        value.length === 0 ||
+        registered.has(`${key}\0${value}`)
+      ) {
         continue;
       }
       registered.add(`${key}\0${value}`);
@@ -3768,35 +3796,35 @@ export function createRuntimeEvaluationJudgeInvoker(
   judgeGateway: ModelGateway,
 ): RuntimeEvaluationRuntimeConfiguration["invokeJudge"] {
   return async (request, signal) => {
-      const startedAt = Date.now();
-      let response: ModelResponse<unknown>;
-      try {
-        response = await judgeGateway.call<ModelResponse<unknown>>(request, {
-          signal,
-        });
-      } catch (error) {
-        if (signal.aborted) throw signal.reason ?? error;
-        throw new RuntimeEvaluationFailure(
-          "EVALUATOR_UNAVAILABLE",
-          "The pinned runtime evaluator route is unavailable.",
-        );
-      }
-      if (
-        response.provider.name !== policy.judge.provider ||
-        response.provider.model !== policy.judge.model
-      ) {
-        throw new Error(
-          "Runtime evaluator observed a model route that differs from the pinned primary route.",
-        );
-      }
-      return {
-        output: readStructuredEvaluationOutput(response),
-        provider: policy.judge.provider,
-        requestedModel: policy.judge.model,
-        observedModelRevision: response.provider.model,
-        usage: response.usage ?? {},
-        latencyMs: Date.now() - startedAt,
-      };
+    const startedAt = Date.now();
+    let response: ModelResponse<unknown>;
+    try {
+      response = await judgeGateway.call<ModelResponse<unknown>>(request, {
+        signal,
+      });
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error;
+      throw new RuntimeEvaluationFailure(
+        "EVALUATOR_UNAVAILABLE",
+        "The pinned runtime evaluator route is unavailable.",
+      );
+    }
+    if (
+      response.provider.name !== policy.judge.provider ||
+      response.provider.model !== policy.judge.model
+    ) {
+      throw new Error(
+        "Runtime evaluator observed a model route that differs from the pinned primary route.",
+      );
+    }
+    return {
+      output: readStructuredEvaluationOutput(response),
+      provider: policy.judge.provider,
+      requestedModel: policy.judge.model,
+      observedModelRevision: response.provider.model,
+      usage: response.usage ?? {},
+      latencyMs: Date.now() - startedAt,
+    };
   };
 }
 
@@ -4138,8 +4166,9 @@ export function applyRequiredManagedWorkspacePolicy(
       "KESTREL_REQUIRE_MANAGED_WORKTREE requires KESTREL_WORKSPACE_ID and KESTREL_WORKSPACE_ROOT.",
     );
   }
-  const isolation = workspace?.managedWorktreeIsolation
-    ?? parseEnvString("KESTREL_MANAGED_WORKTREE_ISOLATION", env);
+  const isolation =
+    workspace?.managedWorktreeIsolation ??
+    parseEnvString("KESTREL_MANAGED_WORKTREE_ISOLATION", env);
   if (
     isolation !== undefined &&
     isolation !== "scoped" &&
@@ -4177,7 +4206,10 @@ export function applyRequiredManagedWorkspacePolicy(
       ? { managedWorktreeScope: workspace.managedWorktreeScope }
       : {}),
     ...(workspace?.managedWorktreeParentThreadId !== undefined
-      ? { managedWorktreeParentThreadId: workspace.managedWorktreeParentThreadId }
+      ? {
+          managedWorktreeParentThreadId:
+            workspace.managedWorktreeParentThreadId,
+        }
       : {}),
   };
 }
@@ -4356,7 +4388,9 @@ function missionControlReviewRunStatus(
   if (value === "WAITING") return "waiting";
   if (value === "RUNNING") return "running";
   if (value === "FAILED") return "failed";
-  throw new Error(`Mission Control linked run status is invalid: ${String(value)}.`);
+  throw new Error(
+    `Mission Control linked run status is invalid: ${String(value)}.`,
+  );
 }
 
 function requireText(value: unknown, field: string): string {

@@ -1,6 +1,7 @@
 import type { StepIO, Transition } from "../../../../../src/kestrel/contracts/execution.js";
 
 import type { AutonomyPolicy } from "../../../../../src/governance/contracts.js";
+import type { ToolApprovalDispositionV1 } from "../../../../../src/mode/contracts.js";
 import { checkToolBatchPolicyGate } from "./policyGates.js";
 import type {
   ActerStepConfig,
@@ -25,6 +26,10 @@ export function handlePendingToolBatch(input: {
   checkpointSize: number;
   toolCapabilityClassesByName: Record<string, string[]>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
+  toolApprovalDispositionByName: Record<
+    string,
+    ToolApprovalDispositionV1 | undefined
+  >;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
   toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   interactionMode: CanonicalInteractionMode;
@@ -86,6 +91,10 @@ export async function handleToolBatchAction(input: {
   checkpointSize: number;
   toolCapabilityClassesByName: Record<string, string[]>;
   toolApprovalCapabilitiesByName: Record<string, string[]>;
+  toolApprovalDispositionByName: Record<
+    string,
+    ToolApprovalDispositionV1 | undefined
+  >;
   toolExecutionClassByName: Record<string, ToolExecutionClass>;
   toolAllowedInteractionModesByName: Record<string, CanonicalInteractionMode[] | undefined>;
   interactionMode: CanonicalInteractionMode;
@@ -115,6 +124,7 @@ export async function handleToolBatchAction(input: {
     eventPayload: input.eventPayload,
     items: input.action.items,
     toolApprovalCapabilitiesByName: input.toolApprovalCapabilitiesByName,
+    toolApprovalDispositionByName: input.toolApprovalDispositionByName,
     toolExecutionClassByName: input.toolExecutionClassByName,
     toolAllowedInteractionModesByName: input.toolAllowedInteractionModesByName,
     interactionMode: input.interactionMode,

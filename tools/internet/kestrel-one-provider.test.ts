@@ -10,6 +10,7 @@ test("Kestrel One Tavily proxy uses an execution ticket instead of provider cred
     appUrl: "https://kestrel.example",
     executionTicket: "execution-ticket",
     approvalModes: { "internet.usage": "ask" },
+    approvalId: "approval-1",
     fetchImpl: (async (url, init) => {
       requestUrl = String(url);
       authorization = String(
@@ -25,7 +26,7 @@ test("Kestrel One Tavily proxy uses an execution ticket instead of provider cred
   const result = await provider.usage();
   assert.equal(
     requestUrl,
-    "https://kestrel.example/api/runtime/apps/tavily/usage/confirmed/usage"
+    "https://kestrel.example/api/runtime/apps/tavily/usage/confirmed%3Aapproval-1/usage",
   );
   assert.equal(authorization, "Bearer execution-ticket");
   assert.equal(result.status, "ok");

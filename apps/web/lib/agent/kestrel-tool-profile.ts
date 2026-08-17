@@ -1,4 +1,6 @@
 import type { RunnerProfile } from "@kestrel-agents/sdk/runner";
+import { getCoreAppDefinition } from "@/lib/apps/catalog";
+import { applyMinimumApprovalMode } from "@/lib/apps/policy";
 
 const GOOGLE_CALENDAR_TOOL_CAPABILITIES = new Map<string, string>([
   ["kestrel_one.google_calendar_list_events", "calendar.events.read"],
@@ -85,11 +87,26 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
       capabilityKey: "searchKnowledgeDocuments",
     },
   ],
-  ["workspace.preview.publish", { appKey: "built_in.previews", capabilityKey: "publish" }],
-  ["workspace.preview.list", { appKey: "built_in.previews", capabilityKey: "list" }],
-  ["workspace.preview.inspect", { appKey: "built_in.previews", capabilityKey: "inspect" }],
-  ["workspace.preview.renew", { appKey: "built_in.previews", capabilityKey: "renew" }],
-  ["workspace.preview.close", { appKey: "built_in.previews", capabilityKey: "close" }],
+  [
+    "workspace.preview.publish",
+    { appKey: "built_in.previews", capabilityKey: "publish" },
+  ],
+  [
+    "workspace.preview.list",
+    { appKey: "built_in.previews", capabilityKey: "list" },
+  ],
+  [
+    "workspace.preview.inspect",
+    { appKey: "built_in.previews", capabilityKey: "inspect" },
+  ],
+  [
+    "workspace.preview.renew",
+    { appKey: "built_in.previews", capabilityKey: "renew" },
+  ],
+  [
+    "workspace.preview.close",
+    { appKey: "built_in.previews", capabilityKey: "close" },
+  ],
   [
     "createDocument",
     { appKey: "built_in.artifacts", capabilityKey: "createDocument" },
@@ -114,6 +131,39 @@ export const KESTREL_ONE_HOSTED_RUNTIME_TOOL_NAMES = Object.freeze([
   ...BUILT_IN_TOOL_CAPABILITIES.keys(),
 ]);
 
+export type KestrelOneToolCapabilityBinding = {
+  appKey: string;
+  capabilityKey: string;
+};
+
+export type KestrelOneCapabilityApprovalPolicyEvidence = {
+  appKey: string;
+  capabilityKey: string;
+  environment: "auto" | "ask" | "deny";
+  project?: "auto" | "ask" | "deny" | undefined;
+  subject?: "auto" | "ask" | "deny" | undefined;
+  minimum: "auto" | "ask";
+};
+
+export function resolveKestrelOneToolCapability(
+  toolName: string,
+): KestrelOneToolCapabilityBinding | null {
+  for (const [appKey, capabilities] of [
+    ["google_workspace", GOOGLE_CALENDAR_TOOL_CAPABILITIES],
+    ["microsoft_365", MICROSOFT_365_TOOL_CAPABILITIES],
+    ["github", GITHUB_TOOL_CAPABILITIES],
+    ["email", EMAIL_TOOL_CAPABILITIES],
+    ["tavily", TAVILY_TOOL_CAPABILITIES],
+    ["vercel", VERCEL_TOOL_CAPABILITIES],
+  ] as const) {
+    const capabilityKey = capabilities.get(toolName);
+    if (capabilityKey !== undefined) {
+      return { appKey, capabilityKey };
+    }
+  }
+  return BUILT_IN_TOOL_CAPABILITIES.get(toolName) ?? null;
+}
+
 function appApprovalModes(effectiveCapabilities: string[], appKey: string) {
   const prefix = `app:${appKey}.`;
   return new Map<string, "auto" | "ask">(
@@ -134,14 +184,17 @@ function appApprovalModes(effectiveCapabilities: string[], appKey: string) {
 export function restrictKestrelOneProfileTools(input: {
   profile: RunnerProfile;
   effectiveCapabilities: string[];
+  approvalPolicies?: KestrelOneCapabilityApprovalPolicyEvidence[] | undefined;
 }): RunnerProfile {
   const configuration = resolveKestrelOneToolProfileConfiguration({
     availableToolNames: input.profile.toolAllowlist ?? [],
     effectiveCapabilities: input.effectiveCapabilities,
+    approvalPolicies: input.approvalPolicies,
   });
   return {
     ...input.profile,
     kestrelOneAppApprovalModes: configuration.kestrelOneAppApprovalModes,
+    kestrelOneAppApprovalPolicies: configuration.kestrelOneAppApprovalPolicies,
     toolAllowlist: configuration.additionalToolNames,
   };
 }
@@ -149,9 +202,14 @@ export function restrictKestrelOneProfileTools(input: {
 export function resolveKestrelOneToolProfileConfiguration(input: {
   availableToolNames: string[];
   effectiveCapabilities: string[];
+  approvalPolicies?: KestrelOneCapabilityApprovalPolicyEvidence[] | undefined;
 }): {
   additionalToolNames: string[];
   kestrelOneAppApprovalModes: Record<string, "auto" | "ask">;
+  kestrelOneAppApprovalPolicies: Record<
+    string,
+    Omit<KestrelOneCapabilityApprovalPolicyEvidence, "appKey" | "capabilityKey">
+  >;
 } {
   const googleApprovalByCapability = appApprovalModes(
     input.effectiveCapabilities,
@@ -187,46 +245,86 @@ export function resolveKestrelOneToolProfileConfiguration(input: {
       appApprovalModes(input.effectiveCapabilities, appKey),
     ]),
   );
-  const kestrelOneAppApprovalModes = Object.fromEntries([
-    ...[...GOOGLE_CALENDAR_TOOL_CAPABILITIES].flatMap(
-      ([toolName, capability]) => {
-        const approvalMode = googleApprovalByCapability.get(capability);
+  const kestrelOneAppApprovalModes = Object.fromEntries(
+    [
+      ...[...GOOGLE_CALENDAR_TOOL_CAPABILITIES].flatMap(
+        ([toolName, capability]) => {
+          const approvalMode = googleApprovalByCapability.get(capability);
+          return approvalMode ? [[toolName, approvalMode] as const] : [];
+        },
+      ),
+      ...[...TAVILY_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
+        const approvalMode = tavilyApprovalByCapability.get(capability);
         return approvalMode ? [[toolName, approvalMode] as const] : [];
-      },
-    ),
-    ...[...TAVILY_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
-      const approvalMode = tavilyApprovalByCapability.get(capability);
-      return approvalMode ? [[toolName, approvalMode] as const] : [];
-    }),
-    ...[...GITHUB_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
-      const approvalMode = githubApprovalByCapability.get(capability);
-      return approvalMode ? [[toolName, approvalMode] as const] : [];
-    }),
-    ...[...EMAIL_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
-      const approvalMode = emailApprovalByCapability.get(capability);
-      return approvalMode ? [[toolName, "ask"] as const] : [];
-    }),
-    ...[...MICROSOFT_365_TOOL_CAPABILITIES].flatMap(
-      ([toolName, capability]) => {
-        const approvalMode = microsoftApprovalByCapability.get(capability);
+      }),
+      ...[...GITHUB_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
+        const approvalMode = githubApprovalByCapability.get(capability);
         return approvalMode ? [[toolName, approvalMode] as const] : [];
-      },
-    ),
-    ...[...VERCEL_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
-      const approvalMode = vercelApprovalByCapability.get(capability);
-      return approvalMode ? [[toolName, approvalMode] as const] : [];
-    }),
-    ...[...BUILT_IN_TOOL_CAPABILITIES].flatMap(
-      ([toolName, { appKey, capabilityKey }]) => {
-        const approvalMode = builtInApprovalByApp
-          .get(appKey)
-          ?.get(capabilityKey);
+      }),
+      ...[...EMAIL_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
+        const approvalMode = emailApprovalByCapability.get(capability);
         return approvalMode ? [[toolName, approvalMode] as const] : [];
-      },
-    ),
-  ]);
+      }),
+      ...[...MICROSOFT_365_TOOL_CAPABILITIES].flatMap(
+        ([toolName, capability]) => {
+          const approvalMode = microsoftApprovalByCapability.get(capability);
+          return approvalMode ? [[toolName, approvalMode] as const] : [];
+        },
+      ),
+      ...[...VERCEL_TOOL_CAPABILITIES].flatMap(([toolName, capability]) => {
+        const approvalMode = vercelApprovalByCapability.get(capability);
+        return approvalMode ? [[toolName, approvalMode] as const] : [];
+      }),
+      ...[...BUILT_IN_TOOL_CAPABILITIES].flatMap(
+        ([toolName, { appKey, capabilityKey }]) => {
+          const approvalMode = builtInApprovalByApp
+            .get(appKey)
+            ?.get(capabilityKey);
+          return approvalMode ? [[toolName, approvalMode] as const] : [];
+        },
+      ),
+    ].map(([toolName, approvalMode]) => {
+      const effectiveMode = applyMinimumApprovalMode({
+        requested: approvalMode,
+        minimum: minimumApprovalModeForTool(toolName),
+      });
+      return [toolName, effectiveMode === "ask" ? "ask" : "auto"] as const;
+    }),
+  );
+  const policyByCapability = new Map(
+    (input.approvalPolicies ?? []).map((policy) => [
+      `${policy.appKey}:${policy.capabilityKey}`,
+      policy,
+    ]),
+  );
+  const kestrelOneAppApprovalPolicies = Object.fromEntries(
+    Object.keys(kestrelOneAppApprovalModes).flatMap((toolName) => {
+      const binding = resolveKestrelOneToolCapability(toolName);
+      if (binding === null) return [];
+      const policy = policyByCapability.get(
+        `${binding.appKey}:${binding.capabilityKey}`,
+      );
+      if (policy === undefined) return [];
+      return [
+        [
+          toolName,
+          {
+            environment: policy.environment,
+            ...(policy.project === undefined
+              ? {}
+              : { project: policy.project }),
+            ...(policy.subject === undefined
+              ? {}
+              : { subject: policy.subject }),
+            minimum: policy.minimum,
+          },
+        ] as const,
+      ];
+    }),
+  );
   return {
     kestrelOneAppApprovalModes,
+    kestrelOneAppApprovalPolicies,
     additionalToolNames: input.availableToolNames.filter((toolName) => {
       const requiredCapability =
         GOOGLE_CALENDAR_TOOL_CAPABILITIES.get(toolName);
@@ -280,4 +378,14 @@ export function resolveKestrelOneToolProfileConfiguration(input: {
       );
     }),
   };
+}
+
+function minimumApprovalModeForTool(toolName: string): "auto" | "ask" {
+  const binding = resolveKestrelOneToolCapability(toolName);
+  if (binding === null) return "auto";
+  return (
+    getCoreAppDefinition(binding.appKey)?.capabilities.find(
+      (capability) => capability.key === binding.capabilityKey,
+    )?.minimumApprovalMode ?? "auto"
+  );
 }

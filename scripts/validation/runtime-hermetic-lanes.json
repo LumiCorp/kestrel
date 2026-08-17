@@ -342,6 +342,8 @@
         "tests/unit/provider-retry-after.test.ts",
         "tests/unit/repo-trace-tool.test.ts",
         "tests/unit/tavily-client.test.ts",
+        "tests/unit/tool-approval-disposition.test.ts",
+        "tests/unit/tool-approval-presentation.test.ts",
         "tests/unit/tool-catalog.test.ts",
         "tests/unit/tool-contract-v1.test.ts",
         "tests/unit/tool-failure-output.test.ts",

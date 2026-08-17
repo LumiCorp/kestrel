@@ -16,7 +16,9 @@ import type {
   ToolLoggingMode,
   ToolRateLimitMode,
 } from "@/lib/tools/types";
+import { getCoreAppDefinition } from "./catalog";
 import {
+  applyMinimumApprovalMode,
   intersectAppApprovalModes,
   isProjectApprovalWithinEnvironment,
 } from "./policy";
@@ -39,6 +41,8 @@ export type ProjectAppCapability = {
   approvalMode: ToolApprovalMode;
   environmentEnabled: boolean;
   environmentApprovalMode: ToolApprovalMode;
+  projectApprovalMode: ToolApprovalMode;
+  minimumApprovalMode: Exclude<ToolApprovalMode, "deny">;
   loggingMode: ToolLoggingMode;
   rateLimitMode: ToolRateLimitMode;
   inherited: boolean;
@@ -408,6 +412,10 @@ export async function listProjectAppConfigurations(input: {
             const policy = policyByCapability.get(
               `${definition.key}:${capability.key}`,
             );
+            const minimumApprovalMode =
+              getCoreAppDefinition(definition.key)?.capabilities.find(
+                (candidate) => candidate.key === capability.key,
+              )?.minimumApprovalMode ?? "auto";
             const environmentEnabled = Boolean(
               grant?.enabled && grant.approvalMode !== "deny",
             );
@@ -426,13 +434,19 @@ export async function listProjectAppConfigurations(input: {
               groupKey: capability.groupKey,
               enabled,
               approvalMode: enabled
-                ? intersectAppApprovalModes(
-                    environmentApprovalMode,
-                    policy?.approvalMode ?? environmentApprovalMode,
-                  )
+                ? applyMinimumApprovalMode({
+                    requested: intersectAppApprovalModes(
+                      environmentApprovalMode,
+                      policy?.approvalMode ?? environmentApprovalMode,
+                    ),
+                    minimum: minimumApprovalMode,
+                  })
                 : "deny",
               environmentEnabled,
               environmentApprovalMode,
+              projectApprovalMode:
+                policy?.approvalMode ?? environmentApprovalMode,
+              minimumApprovalMode,
               loggingMode: grant?.loggingMode ?? "metadata_only",
               rateLimitMode: grant?.rateLimitMode ?? "strict",
               inherited: !policy,
@@ -471,6 +485,9 @@ export async function resolveEffectiveProjectAppsAccess(input: {
               key: capability.key,
               runtimeName: capability.runtimeName,
               approvalMode: capability.approvalMode,
+              environmentApprovalMode: capability.environmentApprovalMode,
+              projectApprovalMode: capability.projectApprovalMode,
+              minimumApprovalMode: capability.minimumApprovalMode,
               loggingMode: capability.loggingMode,
               rateLimitMode: capability.rateLimitMode,
               settings: {},
@@ -680,21 +697,20 @@ export async function attachProjectAppConnection(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${connectionLockKey}, 0))`,
     );
-    const lockedConnection =
-      await transaction.query.appConnections.findFirst({
-        where: (table, { and: all, eq: equals, inArray: among }) =>
-          all(
-            equals(table.id, connection.id),
-            equals(table.organizationId, input.organizationId),
-            equals(table.appKey, input.appKey),
-            among(
-              table.status,
-              definition.delivery === "lifecycle"
-                ? ["connected", "degraded"]
-                : ["connected"],
-            ),
+    const lockedConnection = await transaction.query.appConnections.findFirst({
+      where: (table, { and: all, eq: equals, inArray: among }) =>
+        all(
+          equals(table.id, connection.id),
+          equals(table.organizationId, input.organizationId),
+          equals(table.appKey, input.appKey),
+          among(
+            table.status,
+            definition.delivery === "lifecycle"
+              ? ["connected", "degraded"]
+              : ["connected"],
           ),
-      });
+        ),
+    });
     if (!lockedConnection) {
       throw new ProjectAppError(
         "APP_CONNECTION_NOT_FOUND",
@@ -872,11 +888,15 @@ export async function saveProjectAppCapabilityPolicy(input: {
       );
     }
   }
-  const approvalMode = input.enabled
-    ? input.appKey === "email" && input.capabilityKey === "send"
-      ? "ask"
-      : input.approvalMode
-    : "deny";
+  const minimumApprovalMode =
+    getCoreAppDefinition(input.appKey)?.capabilities.find(
+      (candidate) => candidate.key === input.capabilityKey,
+    )?.minimumApprovalMode ?? "auto";
+  const approvalMode = applyMinimumApprovalMode({
+    requested: input.approvalMode,
+    minimum: minimumApprovalMode,
+    enabled: input.enabled,
+  });
   if (
     input.enabled &&
     (!grant.enabled ||
@@ -1053,10 +1073,16 @@ export async function resolveEffectiveProjectAppAccess(input: {
       {
         key: capability.key,
         runtimeName: capability.runtimeName,
-        approvalMode: intersectAppApprovalModes(
-          grant.approvalMode,
-          policy?.approvalMode ?? grant.approvalMode,
-        ),
+        approvalMode: applyMinimumApprovalMode({
+          requested: intersectAppApprovalModes(
+            grant.approvalMode,
+            policy?.approvalMode ?? grant.approvalMode,
+          ),
+          minimum:
+            getCoreAppDefinition(input.appKey)?.capabilities.find(
+              (candidate) => candidate.key === capability.key,
+            )?.minimumApprovalMode ?? "auto",
+        }),
         loggingMode: grant.loggingMode,
         rateLimitMode: grant.rateLimitMode,
         settings: grant.settings ?? {},

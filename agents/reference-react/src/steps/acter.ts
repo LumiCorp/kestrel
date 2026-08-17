@@ -133,6 +133,9 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
     const toolApprovalCapabilitiesByName = Object.fromEntries(
       capabilityManifest.map((tool) => [tool.name, tool.approvalCapabilities ?? []]),
     );
+    const toolApprovalDispositionByName = Object.fromEntries(
+      capabilityManifest.map((tool) => [tool.name, tool.approvalDisposition]),
+    );
     const toolApprovalAuthorityByName = Object.fromEntries(
       capabilityManifest.map((tool) => [tool.name, tool.approvalAuthority]),
     );
@@ -195,6 +198,7 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
       capabilityManifest,
       toolCapabilityClassesByName,
       toolApprovalCapabilitiesByName,
+      toolApprovalDispositionByName,
       toolApprovalAuthorityByName,
       toolExecutionClassByName,
       toolAllowedInteractionModesByName,
@@ -255,7 +259,10 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         activeRegion,
         config,
         toolCapabilityClassesByName: actionContext.toolCapabilityClassesByName,
-        toolApprovalCapabilitiesByName: actionContext.toolApprovalCapabilitiesByName,
+        toolApprovalCapabilitiesByName:
+          actionContext.toolApprovalCapabilitiesByName,
+        toolApprovalDispositionByName:
+          actionContext.toolApprovalDispositionByName,
         toolExecutionClassByName: actionContext.toolExecutionClassByName,
         toolAllowedInteractionModesByName: actionContext.toolAllowedInteractionModesByName,
         interactionMode: actionContext.interactionMode,
@@ -339,13 +346,31 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         toolName: actionForDispatch.name,
         toolInput: actionForDispatch.input,
         toolClass,
-        allowedInteractionModes: toolAllowedInteractionModesByName[actionForDispatch.name],
-        requiredApprovalCapabilities: toolApprovalCapabilitiesByName[actionForDispatch.name],
+        allowedInteractionModes:
+          toolAllowedInteractionModesByName[actionForDispatch.name],
+        requiredApprovalCapabilities:
+          toolApprovalCapabilitiesByName[actionForDispatch.name],
+        approvalDisposition:
+          toolApprovalDispositionByName[actionForDispatch.name],
         approvalAuthority: bindApprovalAuthorityToActivation(
           toolApprovalAuthorityByName[actionForDispatch.name],
-          "activation" in actionForDispatch ? actionForDispatch.activation : undefined,
+          "activation" in actionForDispatch
+            ? actionForDispatch.activation
+            : undefined,
         ),
-        interactionMode: toCanonicalInteractionMode(modeResolution.interactionMode),
+        toolIntent: {
+          ...("toolCallId" in actionForDispatch &&
+          actionForDispatch.toolCallId !== undefined
+            ? { modelToolCallId: actionForDispatch.toolCallId }
+            : {}),
+          ...("toolSurfaceSnapshot" in actionForDispatch &&
+          actionForDispatch.toolSurfaceSnapshot !== undefined
+            ? { toolSurfaceSnapshot: actionForDispatch.toolSurfaceSnapshot }
+            : {}),
+        },
+        interactionMode: toCanonicalInteractionMode(
+          modeResolution.interactionMode,
+        ),
         actSubmode: modeResolution.actSubmode,
         modeSystemV2Enabled,
         executionPolicy,
@@ -917,7 +942,10 @@ function createExecutionStepReducerInternal(config: ActerStepConfig): StepAgent 
         config,
         checkpointSize,
         toolCapabilityClassesByName: actionContext.toolCapabilityClassesByName,
-        toolApprovalCapabilitiesByName: actionContext.toolApprovalCapabilitiesByName,
+        toolApprovalCapabilitiesByName:
+          actionContext.toolApprovalCapabilitiesByName,
+        toolApprovalDispositionByName:
+          actionContext.toolApprovalDispositionByName,
         toolExecutionClassByName: actionContext.toolExecutionClassByName,
         toolAllowedInteractionModesByName: actionContext.toolAllowedInteractionModesByName,
         interactionMode: actionContext.interactionMode,

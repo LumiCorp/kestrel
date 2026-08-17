@@ -669,6 +669,9 @@ export interface ToolCapabilityManifestItem {
   allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: string[] | undefined;
+  approvalDisposition?:
+    | import("../../../src/mode/contracts.js").ToolApprovalDispositionV1
+    | undefined;
   /** Internal authority metadata. Deliberation prompts must not render this field. */
   approvalAuthority?: {
     kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";

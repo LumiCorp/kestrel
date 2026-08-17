@@ -8,6 +8,18 @@ const PUBLIC_WARNING =
   "This is an anonymous bearer URL. Anyone with the URL can access the application until the preview closes or expires.";
 const PREVIEW_PUBLICATION_LEASE_TTL_MS = 10 * 60_000;
 
+function requireContextValue(value: string | undefined, label: string) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    throw createRuntimeFailure(
+      "TOOL_CONTEXT_MISSING",
+      `${label} is required.`,
+      { subsystem: "tooling", classification: "policy", recoverable: false },
+    );
+  }
+  return normalized;
+}
+
 const sharedCapability = {
   freshnessClass: "live" as const,
   latencyClass: "medium" as const,
@@ -293,9 +305,9 @@ async function requestPreview(
   const runtimeName = `workspace.preview.${capability}`;
   const approval =
     context.kestrelOne?.appApprovalModes?.[runtimeName] === "ask"
-      ? "confirmed"
+      ? `confirmed:${requireContextValue(context.runtime?.approvalId, "Runtime preview approval ID")}`
       : "auto";
-  const pathname = `/api/runtime/apps/built_in.previews/${capability}/${approval}/${path
+  const pathname = `/api/runtime/apps/built_in.previews/${capability}/${encodeURIComponent(approval)}/${path
     .map(encodeURIComponent)
     .join("/")}`;
   const transport = resolveKestrelOneAppRequest(context, pathname);

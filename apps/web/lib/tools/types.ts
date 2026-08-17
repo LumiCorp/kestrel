@@ -74,6 +74,7 @@ export type ToolCapabilityDefinition = {
   displayName: string;
   description: string;
   accessMode: ToolAccessMode;
+  minimumApprovalMode?: Exclude<ToolApprovalMode, "deny"> | undefined;
   defaultPolicy: ToolCapabilityPolicy;
   metadata?: Record<string, unknown>;
 };
