@@ -75,6 +75,8 @@ export interface DesktopOperatorInboxItem {
     title: string;
     actionable: boolean;
     createdAt: string;
+    runId?: string | undefined;
+    turnId?: string | undefined;
     requestId?: string | undefined;
     checkpointId?: string | undefined;
     delegationId?: string | undefined;
@@ -92,6 +94,65 @@ export interface DesktopFollowUpQueueEntry {
     actSubmode?: "strict" | "safe" | "full_auto" | undefined;
     createdAt: string;
     state: "queued" | "starting";
+    source?: "human" | "dialog" | undefined;
+    sourceMessageId?: string | undefined;
+}
+export interface DesktopConversationTurn {
+    turnId: string;
+    threadId: string;
+    sessionId: string;
+    sequence: number;
+    status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
+    sourceMessageId?: string | undefined;
+    rootRunId?: string | undefined;
+    activeRunId?: string | undefined;
+    terminalRunId?: string | undefined;
+    terminalStatus?: string | undefined;
+    startedAt: string;
+    updatedAt: string;
+    completedAt?: string | undefined;
+}
+export interface DesktopConversationMessageRoute {
+    messageId: string;
+    disposition: "started" | "replied" | "queued";
+    createdAt: string;
+    runId?: string | undefined;
+    turnId?: string | undefined;
+    requestId?: string | undefined;
+    followUpId?: string | undefined;
+}
+export interface DesktopConversationMessageResult {
+    threadId: string;
+    sessionId: string;
+    messageId: string;
+    disposition: "started" | "replied" | "queued";
+    runId?: string | undefined;
+    requestId?: string | undefined;
+    followUpId?: string | undefined;
+    view: DesktopRuntimeThreadInspection;
+}
+export interface DesktopConversationMessagePage {
+    threadId: string;
+    messages: Array<{
+        messageId: string;
+        turnId: string;
+        threadId: string;
+        sessionId: string;
+        runId: string;
+        completedAt: string;
+        result: {
+            assistantText: string;
+            output: unknown;
+        };
+    }>;
+    nextCursor?: string | undefined;
+    hasMore: boolean;
+}
+export interface DesktopConversationActivityPage {
+    sessionId: string;
+    events: DesktopRunnerEvent[];
+    nextCursor?: string | undefined;
+    hasMore: boolean;
 }
 export interface DesktopOperatorControlRequest {
     action: "approve" | "reject" | "reply" | "steer" | "retry" | "continue_waiting" | "focus_thread" | "resolve_context_checkpoint" | "approve_assembly_change" | "reject_assembly_change" | "supersede_child_thread" | "resolve_fan_in_checkpoint" | "enqueue_follow_up" | "edit_follow_up" | "cancel_follow_up" | "resume_follow_up_queue";
@@ -161,6 +222,8 @@ export interface DesktopRuntimeThreadPlan {
 }
 export interface DesktopRuntimeThreadInspection {
     thread: DesktopRuntimeThreadSummary;
+    conversationTurns: DesktopConversationTurn[];
+    conversationMessageRoutes?: DesktopConversationMessageRoute[] | undefined;
     focusedThreadId?: string | undefined;
     parentThread?: DesktopRuntimeThreadSummary | undefined;
     childThreads: DesktopRuntimeThreadSummary[];

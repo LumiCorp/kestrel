@@ -167,9 +167,86 @@ export class OperatorControlPlane {
       threadMetadata: status.thread.metadata,
       ...(session !== null && session !== undefined ? { sessionState: session.state } : {}),
     });
-    const inboxItems = await this.buildInboxItemsForThread(status.thread);
+    const storedConversationTurns = await this.store.listConversationTurns?.({
+      threadId,
+      limit: 500,
+    }) ?? [];
+    const legacySequenceByTurnId = new Map(
+      [...storedConversationTurns]
+        .sort((left, right) =>
+          left.startedAt.localeCompare(right.startedAt) || left.turnId.localeCompare(right.turnId)
+        )
+        .map((turn, index) => [turn.turnId, index + 1]),
+    );
+    const conversationTurns = storedConversationTurns
+      .map((turn) => ({
+        turnId: turn.turnId,
+        threadId: turn.threadId,
+        sessionId: turn.sessionId,
+        sequence: asPositiveSafeInteger(turn.metadata?.conversationSequence)
+          ?? legacySequenceByTurnId.get(turn.turnId)!,
+        status: turn.status,
+        ...(asString(turn.metadata?.sourceMessageId) !== undefined
+          ? { sourceMessageId: asString(turn.metadata?.sourceMessageId) }
+          : {}),
+        ...(turn.rootRunId !== undefined ? { rootRunId: turn.rootRunId } : {}),
+        ...(turn.activeRunId !== undefined ? { activeRunId: turn.activeRunId } : {}),
+        ...(turn.terminalRunId !== undefined ? { terminalRunId: turn.terminalRunId } : {}),
+        ...(turn.terminalStatus !== undefined ? { terminalStatus: turn.terminalStatus } : {}),
+        startedAt: turn.startedAt,
+        updatedAt: turn.updatedAt,
+        ...(turn.completedAt !== undefined ? { completedAt: turn.completedAt } : {}),
+      }))
+      .sort((left, right) => left.sequence - right.sequence || left.turnId.localeCompare(right.turnId));
+    const conversationMessageRoutes: NonNullable<OperatorThreadView["conversationMessageRoutes"]> = Object.entries(
+      asRecord(status.thread.metadata?.conversationMessageRoutes) ?? {},
+    ).flatMap(([messageId, value]) => {
+      const route = asRecord(value);
+      const disposition = route?.disposition;
+      const createdAt = asString(route?.createdAt);
+      if (
+        route?.messageId !== messageId ||
+        (disposition !== "started" && disposition !== "replied" && disposition !== "queued") ||
+        createdAt === undefined
+      ) {
+        return [];
+      }
+      const normalizedDisposition: "started" | "replied" | "queued" = disposition;
+      const runId = asString(route.runId);
+      const explicitTurnId = asString(route.turnId);
+      const owner = explicitTurnId === undefined
+        ? conversationTurns.find((turn) =>
+            runId !== undefined && (
+              turn.rootRunId === runId ||
+              turn.activeRunId === runId ||
+              turn.terminalRunId === runId
+            ))
+        : conversationTurns.find((turn) => turn.turnId === explicitTurnId);
+      return [{
+        messageId,
+        disposition: normalizedDisposition,
+        createdAt,
+        ...(runId !== undefined ? { runId } : {}),
+        ...(owner !== undefined ? { turnId: owner.turnId } : {}),
+        ...(asString(route.requestId) !== undefined ? { requestId: asString(route.requestId) } : {}),
+        ...(asString(route.followUpId) !== undefined ? { followUpId: asString(route.followUpId) } : {}),
+      }];
+    }).sort((left, right) =>
+      left.createdAt.localeCompare(right.createdAt) || left.messageId.localeCompare(right.messageId)
+    );
+    const inboxItems = (await this.buildInboxItemsForThread(status.thread)).map((item) => {
+      if (item.runId === undefined) return item;
+      const owner = conversationTurns.find((turn) =>
+        turn.rootRunId === item.runId ||
+        turn.activeRunId === item.runId ||
+        turn.terminalRunId === item.runId
+      );
+      return owner === undefined ? item : { ...item, turnId: owner.turnId };
+    });
     return {
       thread: status.thread,
+      conversationTurns,
+      conversationMessageRoutes,
       ...(workspace !== undefined ? { workspace } : {}),
       ...(focus !== null ? { focusedThreadId: focus.threadId } : {}),
       ...(parentThread !== null ? { parentThread } : {}),
@@ -1315,6 +1392,7 @@ function toRequestInboxItem(thread: ThreadRecord, request: InteractionRequestRec
     title: request.prompt ?? `${request.kind} required`,
     actionable: true,
     createdAt: request.createdAt,
+    ...(request.runId !== undefined ? { runId: request.runId } : {}),
     requestId: request.requestId,
     ...(request.delegationId !== undefined ? { delegationId: request.delegationId } : {}),
     recommendedAction: request.kind === "approval" ? "approve" : "reply",
@@ -1903,6 +1981,12 @@ function asStringArray(value: unknown): string[] | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function asPositiveSafeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
+    : undefined;
 }
 
 function uniqueStrings(values: Array<string | undefined>): string[] {

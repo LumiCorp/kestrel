@@ -118,6 +118,7 @@ export type RunnerCommandType = (typeof RUNNER_COMMAND_TYPES)[number];
 export const RUNNER_STREAMING_COMMAND_TYPES = [
   "job.run",
   "run.start",
+  "conversation.message.submit",
 ] as const satisfies readonly RunnerCommandType[];
 
 export type RunnerStreamingCommandType =
@@ -1209,13 +1210,18 @@ export type RunnerOperatorControlAction =
   | "reply"
   | "steer"
   | "retry"
+  | "continue_waiting"
   | "focus_thread"
   | "resolve_context_checkpoint"
   | "approve_assembly_change"
   | "reject_assembly_change"
   | "spawn_child_thread"
   | "supersede_child_thread"
-  | "resolve_fan_in_checkpoint";
+  | "resolve_fan_in_checkpoint"
+  | "enqueue_follow_up"
+  | "edit_follow_up"
+  | "cancel_follow_up"
+  | "resume_follow_up_queue";
 
 export type RunnerOperatorControlActionValue =
   | "continue"
@@ -1231,6 +1237,7 @@ export interface OperatorControlCommandPayload {
   action: RunnerOperatorControlAction;
   threadId: string;
   completionMode?: "terminal" | "accepted" | undefined;
+  followUpId?: string | undefined;
   requestId?: string | undefined;
   recoveryOptionId?: string | undefined;
   proposalId?: string | undefined;
@@ -1239,6 +1246,9 @@ export interface OperatorControlCommandPayload {
   actionValue?: RunnerOperatorControlActionValue | undefined;
   message?: string | undefined;
   attachments?: RunnerTurnAttachment[] | undefined;
+  attachmentIds?: string[] | undefined;
+  interactionMode?: RunnerInteractionMode | undefined;
+  actSubmode?: RunnerActSubmode | undefined;
   title?: string | undefined;
   rolePrompt?: string | undefined;
   goal?: string | undefined;
@@ -1605,6 +1615,8 @@ export interface RunStartedEventPayload {
   sessionId: string;
   runId?: string | undefined;
   eventType: string;
+  followUpId?: string | undefined;
+  sourceMessageId?: string | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: RunnerInteractionMode | undefined;
@@ -1868,6 +1880,7 @@ export interface TaskUpdatedEventPayload {
   dialogMessage?: {
     messageId: string;
     dialogId: string;
+    parentRunId?: string | undefined;
     name: string;
     childSessionId: string;
     sender: "kestrel" | "collaborator" | "system";
@@ -2285,6 +2298,10 @@ export function isRunnerEventAllowedForCommand(
     return typeof event.type === "string"
       && RUNNER_RUN_STREAM_EVENT_TYPE_SET.has(event.type);
   }
+  if (commandType === "conversation.message.submit") {
+    return typeof event.type === "string"
+      && RUNNER_RUN_STREAM_EVENT_TYPE_SET.has(event.type);
+  }
   if (commandType === "job.run") {
     return typeof event.type === "string"
       && RUNNER_JOB_STREAM_EVENT_TYPE_SET.has(event.type);
@@ -2558,6 +2575,7 @@ function parseRunnerCommandPayloadV2(
         "action",
         "threadId",
         "completionMode",
+        "followUpId",
         "requestId",
         "recoveryOptionId",
         "proposalId",
@@ -2586,6 +2604,7 @@ function parseRunnerCommandPayloadV2(
         "reply",
         "steer",
         "retry",
+        "continue_waiting",
         "focus_thread",
         "resolve_context_checkpoint",
         "approve_assembly_change",
@@ -2593,10 +2612,15 @@ function parseRunnerCommandPayloadV2(
         "spawn_child_thread",
         "supersede_child_thread",
         "resolve_fan_in_checkpoint",
+        "enqueue_follow_up",
+        "edit_follow_up",
+        "cancel_follow_up",
+        "resume_follow_up_queue",
       ]);
       requireNonEmptyString(payload.threadId, `${label}.threadId`);
       validateOptionalEnum(payload.completionMode, `${label}.completionMode`, ["terminal", "accepted"]);
       for (const field of [
+        "followUpId",
         "requestId",
         "recoveryOptionId",
         "proposalId",
@@ -2615,6 +2639,7 @@ function parseRunnerCommandPayloadV2(
           `${label}.recoveryOptionId is supported only for reply actions`,
         );
       }
+      validateOperatorFollowUpIdentity(payload, label);
       validateOptionalString(payload.message, `${label}.message`);
       validateOptionalEnum(payload.actionValue, `${label}.actionValue`, [
         "continue",
@@ -2634,6 +2659,17 @@ function parseRunnerCommandPayloadV2(
         "lmstudio",
       ]);
       validateOptionalAttachments(payload.attachments, `${label}.attachments`);
+      validateOptionalNonEmptyStringArray(payload.attachmentIds, `${label}.attachmentIds`);
+      validateOptionalEnum(payload.interactionMode, `${label}.interactionMode`, [
+        "chat",
+        "plan",
+        "build",
+      ]);
+      validateOptionalEnum(payload.actSubmode, `${label}.actSubmode`, [
+        "strict",
+        "safe",
+        "full_auto",
+      ]);
       validateOptionalNonNegativeInteger(payload.maxTurns, `${label}.maxTurns`);
       validateOptionalNonNegativeInteger(payload.maxRuntimeMs, `${label}.maxRuntimeMs`);
       validateOptionalBoolean(
@@ -2857,6 +2893,27 @@ function parseRunnerCommandPayloadV2(
   return payload;
 }
 
+function validateOperatorFollowUpIdentity(
+  payload: Record<string, unknown>,
+  label: string,
+): void {
+  const action = payload.action;
+  const ownsFollowUpIdentity =
+    action === "enqueue_follow_up"
+    || action === "edit_follow_up"
+    || action === "cancel_follow_up";
+  if (ownsFollowUpIdentity) {
+    requireNonEmptyString(payload.followUpId, `${label}.followUpId`);
+  } else if (payload.followUpId !== undefined) {
+    throw new RunnerProtocolContractError(
+      `${label}.followUpId is supported only for enqueue_follow_up, edit_follow_up, and cancel_follow_up actions`,
+    );
+  }
+  if (action === "enqueue_follow_up" || action === "edit_follow_up") {
+    requireNonEmptyString(payload.message, `${label}.message`);
+  }
+}
+
 function parseRunnerEventPayloadV2(
   type: RunnerEventType,
   payload: Record<string, unknown>,
@@ -2916,6 +2973,8 @@ function parseRunnerEventPayloadV2(
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       validateOptionalNonEmptyString(payload.runId, `${label}.runId`);
       requireNonEmptyString(payload.eventType, `${label}.eventType`);
+      validateOptionalNonEmptyString(payload.followUpId, `${label}.followUpId`);
+      validateOptionalNonEmptyString(payload.sourceMessageId, `${label}.sourceMessageId`);
       validateOptionalNonEmptyString(payload.stepAgent, `${label}.stepAgent`);
       validateOptionalBoolean(payload.modeSystemV2Enabled, `${label}.modeSystemV2Enabled`);
       validateOptionalEnum(payload.interactionMode, `${label}.interactionMode`, [

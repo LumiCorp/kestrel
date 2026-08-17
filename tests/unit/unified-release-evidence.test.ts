@@ -7,6 +7,7 @@ const checksum = "b".repeat(64);
 const timestamp = "2026-08-04T16:00:00.000Z";
 const packageNames = [
   "@kestrel-agents/protocol",
+  "@kestrel-agents/conversation",
   "@kestrel-agents/memory",
   "@kestrel-agents/workspace-skills",
   "@kestrel-agents/sdk",

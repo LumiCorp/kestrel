@@ -92,6 +92,7 @@ export type DesktopBridgeCapabilityId =
   | "attachments"
   | "operator_control"
   | "external_open"
+  | "link_preview"
   | "path_open"
   | "microphone"
   | "model_configurations"
@@ -139,6 +140,7 @@ export const DESKTOP_BRIDGE_CAPABILITIES: DesktopBridgeCapabilityId[] = [
   "attachments",
   "operator_control",
   "external_open",
+  "link_preview",
   "path_open",
   "microphone",
   "model_configurations",
@@ -268,6 +270,8 @@ export interface DesktopOperatorInboxItem {
   title: string;
   actionable: boolean;
   createdAt: string;
+  runId?: string | undefined;
+  turnId?: string | undefined;
   requestId?: string | undefined;
   checkpointId?: string | undefined;
   delegationId?: string | undefined;
@@ -286,6 +290,34 @@ export interface DesktopFollowUpQueueEntry {
   actSubmode?: "strict" | "safe" | "full_auto" | undefined;
   createdAt: string;
   state: "queued" | "starting";
+  source?: "human" | "dialog" | undefined;
+  sourceMessageId?: string | undefined;
+}
+
+export interface DesktopConversationTurn {
+  turnId: string;
+  threadId: string;
+  sessionId: string;
+  sequence: number;
+  status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
+  sourceMessageId?: string | undefined;
+  rootRunId?: string | undefined;
+  activeRunId?: string | undefined;
+  terminalRunId?: string | undefined;
+  terminalStatus?: string | undefined;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string | undefined;
+}
+
+export interface DesktopConversationMessageRoute {
+  messageId: string;
+  disposition: "started" | "replied" | "queued";
+  createdAt: string;
+  runId?: string | undefined;
+  turnId?: string | undefined;
+  requestId?: string | undefined;
+  followUpId?: string | undefined;
 }
 
 export interface DesktopOperatorControlRequest {
@@ -374,6 +406,13 @@ export interface DesktopConversationMessagePage {
   hasMore: boolean;
 }
 
+export interface DesktopConversationActivityPage {
+  sessionId: string;
+  events: DesktopRunnerEvent[];
+  nextCursor?: string | undefined;
+  hasMore: boolean;
+}
+
 export function parseDesktopOperatorControlRequest(
   value: unknown,
 ): DesktopOperatorControlRequest {
@@ -429,6 +468,22 @@ export function parseDesktopOperatorControlRequest(
   ] as const) {
     if (input[field] !== undefined)
       result[field] = parseRequiredDesktopString(input[field], field);
+  }
+  const ownsFollowUpIdentity =
+    action === "enqueue_follow_up" ||
+    action === "edit_follow_up" ||
+    action === "cancel_follow_up";
+  if (ownsFollowUpIdentity && result.followUpId === undefined) {
+    throw new Error(`Desktop operator control ${action} requires followUpId.`);
+  }
+  if (!ownsFollowUpIdentity && result.followUpId !== undefined) {
+    throw new Error("Desktop operator control followUpId is supported only for follow-up item actions.");
+  }
+  if (
+    (action === "enqueue_follow_up" || action === "edit_follow_up") &&
+    result.message === undefined
+  ) {
+    throw new Error(`Desktop operator control ${action} requires message.`);
   }
   if (result.recoveryOptionId !== undefined && action !== "reply") {
     throw new Error("Desktop operator control recoveryOptionId is supported only for reply actions.");
@@ -567,6 +622,8 @@ export interface DesktopRuntimeThreadPlan {
 
 export interface DesktopRuntimeThreadInspection {
   thread: DesktopRuntimeThreadSummary;
+  conversationTurns: DesktopConversationTurn[];
+  conversationMessageRoutes?: DesktopConversationMessageRoute[] | undefined;
   workspace?: DesktopThreadWorkspaceContext | undefined;
   focusedThreadId?: string | undefined;
   parentThread?: DesktopRuntimeThreadSummary | undefined;
@@ -611,6 +668,7 @@ export interface DesktopDialogView {
 export interface DesktopDialogMessage {
   messageId: string;
   dialogId: string;
+  parentRunId?: string | undefined;
   name: string;
   childSessionId: string;
   sender: "kestrel" | "collaborator" | "system";
@@ -1951,7 +2009,8 @@ export interface DesktopSettings {
   advancedWorkspaceEnabled: boolean;
   modelConfigurations: DesktopModelConfiguration[];
   defaultModelConfigurationId: string;
-  defaultEnabledAppIds: string[];
+  defaultEnabledBuiltInAppIds: string[];
+  legacyDefaultWorkflowAppIds?: string[] | undefined;
   appearanceTheme: DesktopAppearanceTheme;
 }
 
@@ -1973,7 +2032,9 @@ export interface DesktopRendererSettings {
   advancedWorkspaceEnabled: boolean;
   modelConfigurations: DesktopModelConfiguration[];
   defaultModelConfigurationId: string;
-  defaultEnabledAppIds: string[];
+  defaultEnabledBuiltInAppIds: string[];
+  legacyDefaultWorkflowAppIds?: string[] | undefined;
+  enabledConnectedAppIds: string[];
   appearanceTheme: DesktopAppearanceTheme;
   apps: DesktopAppDefinition[];
   providerReadiness: DesktopProviderReadiness[];
@@ -1983,7 +2044,7 @@ export interface DesktopRendererSettingsUpdate {
   projects?: DesktopProjectRegistration[] | undefined;
   modelConfigurations?: DesktopModelConfiguration[] | undefined;
   defaultModelConfigurationId?: string | undefined;
-  defaultEnabledAppIds?: string[] | undefined;
+  defaultEnabledBuiltInAppIds?: string[] | undefined;
   appearanceTheme?: DesktopAppearanceTheme | undefined;
 }
 
@@ -2003,7 +2064,7 @@ export function parseDesktopRendererSettingsUpdate(
     "projects",
     "modelConfigurations",
     "defaultModelConfigurationId",
-    "defaultEnabledAppIds",
+    "defaultEnabledBuiltInAppIds",
     "appearanceTheme",
   ]);
   const unsupportedKey = Object.keys(input).find(
@@ -2051,19 +2112,19 @@ export function parseDesktopRendererSettingsUpdate(
       "defaultModelConfigurationId",
     );
   }
-  if (input.defaultEnabledAppIds !== undefined) {
+  if (input.defaultEnabledBuiltInAppIds !== undefined) {
     if (
-      Array.isArray(input.defaultEnabledAppIds) === false ||
-      input.defaultEnabledAppIds.some(
+      Array.isArray(input.defaultEnabledBuiltInAppIds) === false ||
+      input.defaultEnabledBuiltInAppIds.some(
         (entry) => typeof entry !== "string" || entry.trim().length === 0,
       )
     ) {
       throw new Error(
-        "Desktop settings update defaultEnabledAppIds must be an array of strings.",
+        "Desktop settings update defaultEnabledBuiltInAppIds must be an array of strings.",
       );
     }
-    update.defaultEnabledAppIds = [
-      ...new Set(input.defaultEnabledAppIds.map((entry) => entry.trim())),
+    update.defaultEnabledBuiltInAppIds = [
+      ...new Set(input.defaultEnabledBuiltInAppIds.map((entry) => entry.trim())),
     ].sort();
   }
   if (input.appearanceTheme !== undefined) {

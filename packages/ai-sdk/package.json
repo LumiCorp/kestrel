@@ -30,6 +30,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@kestrel-agents/conversation": "workspace:*",
     "@kestrel-agents/protocol": "workspace:*",
     "@kestrel-agents/sdk": "workspace:*"
   },

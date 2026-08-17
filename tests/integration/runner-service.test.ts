@@ -1096,6 +1096,96 @@ test("runner service exposes profiles and resolves profileId for run.start", asy
   }
 });
 
+test("runner service streams the complete conversation lifecycle before routing settles", async () => {
+  const service = createInMemoryRunnerService({
+    runtimeFactory: (_profile, _onRunLog, onProgress) => ({
+      runTurn: async () => ({}) as never,
+      submitConversationMessage: async (input) => {
+        onProgress({
+          version: "v1",
+          runId: "run-conversation-stream",
+          sessionId: "session-conversation-stream",
+          ts: new Date().toISOString(),
+          seq: 1,
+          kind: "stage",
+          phase: "engine",
+          code: "RUN_STARTED",
+          message: "Run started.",
+          persist: false,
+        });
+        return {
+          threadId: input.threadId,
+          sessionId: "session-conversation-stream",
+          messageId: input.messageId,
+          disposition: "started",
+          runId: "run-conversation-stream",
+          view: {},
+          result: {
+            assistantText: "Conversation response",
+            output: {
+              status: "COMPLETED",
+              sessionId: "session-conversation-stream",
+              runId: "run-conversation-stream",
+              errors: [],
+              telemetry: {
+                stepsExecuted: 1,
+                toolCalls: 0,
+                modelCalls: 1,
+                durationMs: 10,
+              },
+            },
+          },
+        } as never;
+      },
+      close: async () => {},
+    }),
+  });
+
+  try {
+    const response = await service.dispatch({
+      method: "POST",
+      url: "/commands/stream",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "cmd-conversation-stream",
+        type: "conversation.message.submit",
+        metadata: {
+          actor: { actorId: "desktop", actorType: "operator" },
+          profile,
+        },
+        payload: {
+          profile,
+          threadId: "thread-main:session-conversation-stream",
+          messageId: "message-conversation-stream",
+          turn: {
+            sessionId: "session-conversation-stream",
+            message: "Hello",
+          },
+        },
+      }),
+    });
+    const events = response.body
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice("data: ".length)) as {
+        type: string;
+        payload: Record<string, unknown>;
+      });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(events.map((event) => event.type), [
+      "run.progress",
+      "run.completed",
+      "conversation.message.routed",
+    ]);
+    assert.equal(
+      (events[1]?.payload.result as { assistantText?: string } | undefined)?.assistantText,
+      "Conversation response",
+    );
+  } finally {
+    await service.close();
+  }
+});
+
 test("runner service settles an invalid job terminal without a journal", async () => {
   const service = createInMemoryRunnerService({
     runtimeFactory: () => ({

@@ -570,8 +570,20 @@ export function parseDesktopRuntimeThreadInspection(
   const dialogs = view.dialogs === undefined
     ? []
     : requireArray(view.dialogs, "operator thread view.dialogs").map((value, index) => parseDialogView(value, index));
+  const conversationTurns = view.conversationTurns === undefined
+    ? []
+    : requireArray(view.conversationTurns, "operator thread view.conversationTurns")
+        .map(parseConversationTurn);
+  const conversationMessageRoutes = view.conversationMessageRoutes === undefined
+    ? []
+    : requireArray(
+        view.conversationMessageRoutes,
+        "operator thread view.conversationMessageRoutes",
+      ).map(parseConversationMessageRoute);
   return {
     thread: parseRuntimeThreadSummary(view.thread, "operator thread view.thread"),
+    conversationTurns,
+    conversationMessageRoutes,
     ...(workspace !== undefined ? { workspace } : {}),
     ...(focusedThreadId !== undefined ? { focusedThreadId } : {}),
     ...(parentThread !== undefined ? { parentThread } : {}),
@@ -585,6 +597,92 @@ export function parseDesktopRuntimeThreadInspection(
     ...(activeRun !== undefined ? { activeRun } : {}),
     followUpQueue,
     inboxItems,
+  };
+}
+
+function parseConversationMessageRoute(
+  value: unknown,
+  index: number,
+): NonNullable<DesktopRuntimeThreadInspection["conversationMessageRoutes"]>[number] {
+  const route = requireRecord(
+    value,
+    `operator thread view.conversationMessageRoutes[${index}]`,
+  );
+  if (
+    route.disposition !== "started" &&
+    route.disposition !== "replied" &&
+    route.disposition !== "queued"
+  ) {
+    throw new Error(
+      `operator thread view.conversationMessageRoutes[${index}].disposition is invalid.`,
+    );
+  }
+  return {
+    messageId: requireString(
+      route.messageId,
+      `operator thread view.conversationMessageRoutes[${index}].messageId`,
+    ),
+    disposition: route.disposition,
+    createdAt: requireTimestamp(
+      route.createdAt,
+      `operator thread view.conversationMessageRoutes[${index}].createdAt`,
+    ),
+    ...optionalField(
+      route.runId,
+      `operator thread view.conversationMessageRoutes[${index}].runId`,
+      "runId",
+    ),
+    ...optionalField(
+      route.turnId,
+      `operator thread view.conversationMessageRoutes[${index}].turnId`,
+      "turnId",
+    ),
+    ...optionalField(
+      route.requestId,
+      `operator thread view.conversationMessageRoutes[${index}].requestId`,
+      "requestId",
+    ),
+    ...optionalField(
+      route.followUpId,
+      `operator thread view.conversationMessageRoutes[${index}].followUpId`,
+      "followUpId",
+    ),
+  };
+}
+
+function parseConversationTurn(
+  value: unknown,
+  index: number,
+): DesktopRuntimeThreadInspection["conversationTurns"][number] {
+  const turn = requireRecord(value, `operator thread view.conversationTurns[${index}]`);
+  if (
+    turn.status !== "RUNNING" &&
+    turn.status !== "WAITING" &&
+    turn.status !== "COMPLETED" &&
+    turn.status !== "FAILED"
+  ) {
+    throw new Error(`operator thread view.conversationTurns[${index}].status is invalid.`);
+  }
+  const sequence = turn.sequence;
+  if (typeof sequence !== "number" || Number.isSafeInteger(sequence) === false || sequence < 1) {
+    throw new Error(`operator thread view.conversationTurns[${index}].sequence is invalid.`);
+  }
+  return {
+    turnId: requireString(turn.turnId, `operator thread view.conversationTurns[${index}].turnId`),
+    threadId: requireString(turn.threadId, `operator thread view.conversationTurns[${index}].threadId`),
+    sessionId: requireString(turn.sessionId, `operator thread view.conversationTurns[${index}].sessionId`),
+    sequence,
+    status: turn.status,
+    ...optionalField(turn.sourceMessageId, `operator thread view.conversationTurns[${index}].sourceMessageId`, "sourceMessageId"),
+    ...optionalField(turn.rootRunId, `operator thread view.conversationTurns[${index}].rootRunId`, "rootRunId"),
+    ...optionalField(turn.activeRunId, `operator thread view.conversationTurns[${index}].activeRunId`, "activeRunId"),
+    ...optionalField(turn.terminalRunId, `operator thread view.conversationTurns[${index}].terminalRunId`, "terminalRunId"),
+    ...optionalField(turn.terminalStatus, `operator thread view.conversationTurns[${index}].terminalStatus`, "terminalStatus"),
+    startedAt: requireTimestamp(turn.startedAt, `operator thread view.conversationTurns[${index}].startedAt`),
+    updatedAt: requireTimestamp(turn.updatedAt, `operator thread view.conversationTurns[${index}].updatedAt`),
+    ...(turn.completedAt === undefined
+      ? {}
+      : { completedAt: requireTimestamp(turn.completedAt, `operator thread view.conversationTurns[${index}].completedAt`) }),
   };
 }
 
@@ -603,6 +701,7 @@ function parseDialogView(value: unknown, index: number): NonNullable<DesktopRunt
       return {
         messageId: requireString(message.messageId, "dialog message.messageId"),
         dialogId: requireString(message.dialogId, "dialog message.dialogId"),
+        ...optionalField(message.parentRunId, "dialog message.parentRunId", "parentRunId"),
         name: requireString(message.name, "dialog message.name"),
         childSessionId: requireString(message.childSessionId, "dialog message.childSessionId"),
         sender: message.sender,
@@ -636,12 +735,17 @@ function parseFollowUpQueue(value: unknown): DesktopRuntimeThreadInspection["fol
       if (item.state !== "queued" && item.state !== "starting") throw new Error("operator follow-up state is invalid.");
       const interactionMode = item.interactionMode;
       const actSubmode = item.actSubmode;
+      const source = item.source;
       return {
         followUpId: requireString(item.followUpId, "followUpId"),
         message: requireString(item.message, "message"),
         attachmentIds: requireArray(item.attachmentIds, "attachmentIds").map((id) => requireString(id, "attachmentId")),
         ...(interactionMode === "chat" || interactionMode === "plan" || interactionMode === "build" ? { interactionMode } : {}),
         ...(actSubmode === "strict" || actSubmode === "safe" || actSubmode === "full_auto" ? { actSubmode } : {}),
+        ...(source === "human" || source === "dialog" ? { source } : {}),
+        ...(item.sourceMessageId === undefined
+          ? {}
+          : { sourceMessageId: requireString(item.sourceMessageId, "sourceMessageId") }),
         createdAt: requireTimestamp(item.createdAt, "createdAt"),
         state: item.state,
       };
@@ -661,6 +765,8 @@ function parseInboxItem(value: unknown, index: number): DesktopRuntimeThreadInsp
     title: requireString(item.title, "title"),
     actionable: item.actionable,
     createdAt: requireTimestamp(item.createdAt, "createdAt"),
+    ...optionalField(item.runId, "runId", "runId"),
+    ...optionalField(item.turnId, "turnId", "turnId"),
     ...optionalField(item.requestId, "requestId", "requestId"),
     ...optionalField(item.checkpointId, "checkpointId", "checkpointId"),
     ...optionalField(item.delegationId, "delegationId", "delegationId"),

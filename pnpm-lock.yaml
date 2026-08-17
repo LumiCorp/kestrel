@@ -121,6 +121,12 @@ importers:
       '@hono/node-server':
         specifier: ^1.19.9
         version: 1.19.9(hono@4.12.3)
+      '@kestrel-agents/conversation':
+        specifier: workspace:*
+        version: link:../../packages/conversation
+      '@kestrel/mcp-security':
+        specifier: workspace:^
+        version: link:../../packages/mcp-security
       '@lumi/kestrel-environment-auth':
         specifier: workspace:^
         version: link:../../packages/environment-auth
@@ -175,6 +181,9 @@ importers:
       lucide-react:
         specifier: ^1.18.0
         version: 1.18.0(react@19.2.4)
+      parse5:
+        specifier: ^7.3.0
+        version: 7.3.0
       pg:
         specifier: ^8.18.0
         version: 8.18.0
@@ -187,12 +196,18 @@ importers:
       react-dom:
         specifier: 19.2.4
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
       streamdown:
         specifier: ^2.0.1
         version: 2.5.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       tsx:
         specifier: ^4.19.3
         version: 4.21.0
+      undici:
+        specifier: ^6.24.1
+        version: 6.28.0
       ws:
         specifier: ^8.21.1
         version: 8.21.1
@@ -498,6 +513,9 @@ importers:
       '@kestrel-agents/ai-sdk':
         specifier: 0.8.0
         version: link:../../packages/ai-sdk
+      '@kestrel-agents/conversation':
+        specifier: 0.8.0
+        version: link:../../packages/conversation
       '@kestrel-agents/memory':
         specifier: 0.8.0
         version: link:../../packages/memory
@@ -980,6 +998,9 @@ importers:
 
   packages/ai-sdk:
     dependencies:
+      '@kestrel-agents/conversation':
+        specifier: workspace:*
+        version: link:../conversation
       '@kestrel-agents/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -990,6 +1011,8 @@ importers:
       ai:
         specifier: 6.0.246
         version: 6.0.246(zod@4.3.6)
+
+  packages/conversation: {}
 
   packages/environment-auth:
     devDependencies:

@@ -3,17 +3,19 @@ import {
   desktopAppIdForServer,
   listDesktopAppDefinitions,
 } from "../../../src/desktopShell/configuration.js";
+import { KESTREL_APP_IDS } from "@kestrel-agents/protocol";
 import type {
   DesktopRendererSettings,
   DesktopSettings,
 } from "./contracts.js";
 
 export function getEffectiveDesktopEnabledAppIds(
-  settings: Pick<DesktopSettings, "defaultEnabledAppIds" | "mcpServers">,
+  settings: Pick<DesktopSettings, "defaultEnabledBuiltInAppIds" | "mcpServers" | "tavilyApiKey">,
 ): string[] {
   return [
     ...new Set([
-      ...settings.defaultEnabledAppIds,
+      ...settings.defaultEnabledBuiltInAppIds,
+      ...(settings.tavilyApiKey?.trim() ? [KESTREL_APP_IDS.TAVILY] : []),
       ...settings.mcpServers
         .filter((server) => server.enabled)
         .map((server) => desktopAppIdForServer(server)),
@@ -64,7 +66,13 @@ export function toDesktopRendererSettings(
       })),
     })),
     defaultModelConfigurationId: settings.defaultModelConfigurationId,
-    defaultEnabledAppIds: getEffectiveDesktopEnabledAppIds(settings),
+    defaultEnabledBuiltInAppIds: [...settings.defaultEnabledBuiltInAppIds],
+    ...(settings.legacyDefaultWorkflowAppIds !== undefined
+      ? { legacyDefaultWorkflowAppIds: [...settings.legacyDefaultWorkflowAppIds] }
+      : {}),
+    enabledConnectedAppIds: getEffectiveDesktopEnabledAppIds(settings).filter(
+      (id) => !settings.defaultEnabledBuiltInAppIds.includes(id),
+    ),
     appearanceTheme: settings.appearanceTheme,
     apps: listDesktopAppDefinitions(settings.mcpServers),
     providerReadiness: providers.map((provider) => ({

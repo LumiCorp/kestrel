@@ -39,6 +39,7 @@ task instead of reading the repository as one long manual.
 - [SDK](../packages/sdk/README.md)
 - [Next.js helpers](../packages/next/README.md)
 - [AI SDK adapter](../packages/ai-sdk/README.md)
+- [Conversation kernel](../packages/conversation/README.md)
 - [Observability](../packages/observability/README.md)
 - [Protocol and terminal results](../apps/docs/content/build/protocol-and-results.mdx)
 

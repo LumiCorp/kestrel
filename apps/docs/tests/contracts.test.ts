@@ -71,7 +71,7 @@ test("release metadata names only real public packages with reference coverage",
   assert.equal(DOCS_RELEASE.packages.version, "0.8.0");
   assert.equal(DOCS_RELEASE.packages.runtimeNpmVersion, "0.8.2");
 
-  for (const route of ["protocol", "sdk", "memory", "nextjs", "ai-sdk", "observability", "workspace-skills"]) {
+  for (const route of ["protocol", "conversation", "sdk", "memory", "nextjs", "ai-sdk", "observability", "workspace-skills"]) {
     assert.ok(await getRenderedPageBySlug(["reference", route]), route);
   }
 });

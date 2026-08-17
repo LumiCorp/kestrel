@@ -28,8 +28,9 @@ test("Desktop renderer settings never project persisted credentials", () => {
     "apps",
     "capabilityPacks",
     "databaseMode",
-    "defaultEnabledAppIds",
+    "defaultEnabledBuiltInAppIds",
     "defaultModelConfigurationId",
+    "enabledConnectedAppIds",
     "modelConfigurations",
     "presetId",
     "projects",
@@ -92,6 +93,6 @@ test("Desktop projects standard capabilities under their canonical App", () => {
     description: "Plan, track, and update product and engineering work.",
     toolNames: ["mcp.linear-local.create_issue"],
   });
-  assert.ok(projected.defaultEnabledAppIds.includes("linear"));
-  assert.deepEqual(getEffectiveDesktopEnabledAppIds(settings), projected.defaultEnabledAppIds);
+  assert.ok(projected.enabledConnectedAppIds.includes("linear"));
+  assert.deepEqual(getEffectiveDesktopEnabledAppIds(settings).filter((id) => !projected.defaultEnabledBuiltInAppIds.includes(id)), projected.enabledConnectedAppIds);
 });

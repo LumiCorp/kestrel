@@ -644,10 +644,10 @@ button:disabled {
 }
 
 .conversation-explorer {
-  display: grid;
+  display: flex;
   grid-column: 1;
   grid-row: 1 / -1;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
@@ -720,32 +720,97 @@ button:disabled {
 .explorer-notice span { flex: 1; }
 .explorer-notice button:first-of-type { color: var(--accent); font-weight: 700; }
 
+.explorer-project-picker {
+  display: grid;
+  gap: 2px;
+  margin: 2px 8px 5px;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.explorer-project-picker strong {
+  padding: 4px 7px;
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.explorer-project-picker button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 29px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.explorer-project-picker button:hover,
+.explorer-project-picker button:focus-visible { background: var(--surface-muted); }
+.explorer-project-picker .explorer-add-project { border-top: 1px solid var(--border); border-radius: 0; color: var(--accent); }
+
 .explorer-groups {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 3px 6px 8px;
 }
 
-.explorer-group-toggle {
+.explorer-group-heading {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) 27px;
   align-items: center;
-  gap: 4px;
   width: 100%;
   min-height: 27px;
-  padding: 0 5px;
+  border-radius: 5px;
+}
+
+.explorer-group-heading.selected { background: var(--surface-raised); }
+
+.explorer-group-toggle,
+.explorer-project-select,
+.explorer-project-create {
+  border: 0;
   border: 0;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+}
+
+.explorer-group-toggle,
+.explorer-project-create {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 27px;
+  padding: 0;
+}
+
+.explorer-project-select,
+.explorer-project-label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: 27px;
+  padding: 0;
   text-align: left;
   font-size: 10px;
   font-weight: 700;
 }
 
 .explorer-group-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
-.explorer-group-toggle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.explorer-group-toggle small { font-size: 9px; font-weight: 500; }
+.explorer-project-select span,
+.explorer-project-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-project-select small,
+.explorer-project-label small { font-size: 9px; font-weight: 500; }
 
 .explorer-thread-row {
   position: relative;
@@ -770,7 +835,7 @@ button:disabled {
 
 .explorer-thread-select {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
   gap: 5px;
   align-items: center;
   min-width: 0;
@@ -780,7 +845,16 @@ button:disabled {
 }
 
 .explorer-thread-row.active .explorer-thread-select { color: var(--text); }
-.explorer-thread-select span { overflow: hidden; font-size: 11px; font-weight: 570; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-thread-status { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.explorer-thread-status.status-running { background: var(--accent); }
+.explorer-thread-status.status-waiting { background: var(--warning); }
+.explorer-thread-status.status-failed { background: var(--danger); }
+.explorer-thread-status.status-unavailable { border: 1px solid var(--danger); background: transparent; }
+.explorer-thread-copy { display: grid; min-width: 0; }
+.explorer-thread-copy strong,
+.explorer-thread-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-thread-copy strong { font-size: 11px; font-weight: 570; }
+.explorer-thread-copy small { color: var(--muted); font-size: 9px; font-weight: 400; }
 .explorer-thread-select time { font-size: 8px; white-space: nowrap; }
 .explorer-thread-menu-button { display: grid; place-items: center; width: 25px; height: 29px; padding: 0; opacity: 0; }
 .explorer-thread-row:hover .explorer-thread-menu-button,

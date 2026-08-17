@@ -1,0 +1,46 @@
+---
+title: Conversation kernel
+summary: Project durable Kestrel turns, streams, queues, composer actions, and typed host interactions without coupling to a UI framework.
+section: packages
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-08-13
+---
+
+`@kestrel-agents/conversation` is the shared, framework-neutral conversation
+kernel used by Kestrel Desktop and Kestrel One. It owns identity-based ordering,
+live and persisted reconciliation, streamed activity accumulation, queue and
+composer policy, typed interactions, and mode-switch retry idempotency.
+
+The package does not include React components, native actions, transport, or
+styling. Each host supplies its own renderers and command adapter.
+
+## Install
+
+```bash
+pnpm add @kestrel-agents/conversation@0.8.0
+```
+
+## Project a snapshot
+
+```ts
+import {
+  projectConversationSnapshot,
+  type ConversationSnapshot,
+} from "@kestrel-agents/conversation";
+
+const projection = projectConversationSnapshot(
+  snapshot satisfies ConversationSnapshot
+);
+```
+
+Turn ownership comes from explicit message, turn, run, and request identities.
+The projector does not infer ownership from text, timestamps, or array position.
+
+## Register host renderers
+
+Use `ConversationRendererMap<Output>` to make host rendering exhaustive across
+text, progress, reasoning, tools, citations, artifacts, interactions, links,
+status, dialogs, and mode switching. Desktop can bind native link and dialog
+actions while Kestrel One keeps its hosted visual components.

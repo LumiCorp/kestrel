@@ -586,7 +586,7 @@ export class RunnerHost {
   private readonly commandBySession = new Map<string, string>();
   private readonly commandTypeBySession = new Map<
     string,
-    "run.start" | "job.run" | "operator.control"
+    "run.start" | "job.run" | "operator.control" | "conversation.message.submit"
   >();
   private readonly threadIdBySession = new Map<string, string>();
   private readonly activeRuns = new Map<string, ActiveRunEntry>();
@@ -1608,35 +1608,77 @@ export class RunnerHost {
             ? { tenantId: metadata.tenantId }
             : {}),
         };
-    const routed = await runtime.submitConversationMessage({
-      threadId: payload.threadId,
-      messageId: payload.messageId,
-      message: payload.turn.message,
-      ...(payload.turn.attachments !== undefined ? { attachments: payload.turn.attachments } : {}),
-      ...(payload.turn.interactionMode !== undefined ? { interactionMode: payload.turn.interactionMode } : {}),
-      ...(payload.turn.actSubmode !== undefined ? { actSubmode: payload.turn.actSubmode } : {}),
-      ...(payload.turn.executionPolicy !== undefined ? { executionPolicy: payload.turn.executionPolicy } : {}),
-      ...(payload.turn.manualCompaction !== undefined ? { manualCompaction: payload.turn.manualCompaction } : {}),
-      ...(payload.turn.autoCompaction !== undefined ? { autoCompaction: payload.turn.autoCompaction } : {}),
-      ...(payload.turn.metadata !== undefined ? { metadata: payload.turn.metadata } : {}),
-      ...(actor !== undefined ? { actor } : {}),
-      runtimeTurn: payload.turn,
-    });
-    this.writer.emit("conversation.message.routed", {
-      threadId: routed.threadId,
-      sessionId: routed.sessionId,
-      messageId: routed.messageId,
-      disposition: routed.disposition,
-      ...(routed.runId !== undefined ? { runId: routed.runId } : {}),
-      ...(routed.requestId !== undefined ? { requestId: routed.requestId } : {}),
-      ...(routed.followUpId !== undefined ? { followUpId: routed.followUpId } : {}),
-      view: routed.view,
-    }, {
-      commandId,
-      threadId: routed.threadId,
-      sessionId: routed.sessionId,
-      ...(routed.runId !== undefined ? { runId: routed.runId } : {}),
-    });
+    const sessionId = payload.turn.sessionId;
+    const existingSessionCommand = this.commandBySession.get(sessionId);
+    if (existingSessionCommand === undefined) {
+      this.commandBySession.set(sessionId, commandId);
+      this.commandTypeBySession.set(sessionId, "conversation.message.submit");
+      this.threadIdBySession.set(sessionId, payload.threadId);
+    }
+    try {
+      const routed = await runtime.submitConversationMessage({
+        threadId: payload.threadId,
+        messageId: payload.messageId,
+        message: payload.turn.message,
+        ...(payload.turn.attachments !== undefined ? { attachments: payload.turn.attachments } : {}),
+        ...(payload.turn.interactionMode !== undefined ? { interactionMode: payload.turn.interactionMode } : {}),
+        ...(payload.turn.actSubmode !== undefined ? { actSubmode: payload.turn.actSubmode } : {}),
+        ...(payload.turn.executionPolicy !== undefined ? { executionPolicy: payload.turn.executionPolicy } : {}),
+        ...(payload.turn.manualCompaction !== undefined ? { manualCompaction: payload.turn.manualCompaction } : {}),
+        ...(payload.turn.autoCompaction !== undefined ? { autoCompaction: payload.turn.autoCompaction } : {}),
+        ...(payload.turn.metadata !== undefined ? { metadata: payload.turn.metadata } : {}),
+        ...(actor !== undefined ? { actor } : {}),
+        runtimeTurn: payload.turn,
+      });
+      if (routed.result !== undefined) {
+        const runId = routed.result.output.runId;
+        const identity = {
+          commandId,
+          threadId: routed.threadId,
+          sessionId: routed.sessionId,
+          runId,
+        };
+        if (routed.result.output.status === "FAILED") {
+          const failure = routed.result.output.errors[0];
+          this.writer.emit("run.failed", {
+            result: routed.result,
+            error: {
+              code: failure?.code ?? "RUN_FAILED",
+              message: failure?.message ?? "Run failed",
+              ...(failure?.details !== undefined
+                ? { details: failure.details }
+                : {}),
+            },
+          }, identity);
+        } else {
+          this.writer.emit("run.completed", { result: routed.result }, identity);
+        }
+      }
+      this.writer.emit("conversation.message.routed", {
+        threadId: routed.threadId,
+        sessionId: routed.sessionId,
+        messageId: routed.messageId,
+        disposition: routed.disposition,
+        ...(routed.runId !== undefined ? { runId: routed.runId } : {}),
+        ...(routed.requestId !== undefined ? { requestId: routed.requestId } : {}),
+        ...(routed.followUpId !== undefined ? { followUpId: routed.followUpId } : {}),
+        view: routed.view,
+      }, {
+        commandId,
+        threadId: routed.threadId,
+        sessionId: routed.sessionId,
+        ...(routed.runId !== undefined ? { runId: routed.runId } : {}),
+      });
+    } finally {
+      if (
+        existingSessionCommand === undefined &&
+        this.commandBySession.get(sessionId) === commandId
+      ) {
+        this.commandBySession.delete(sessionId);
+        this.commandTypeBySession.delete(sessionId);
+        this.threadIdBySession.delete(sessionId);
+      }
+    }
   }
 
   async operatorRuns(
@@ -3285,6 +3327,8 @@ export class RunnerHost {
         sessionId: event.sessionId,
         runId: event.runId,
         eventType: event.eventType,
+        ...(event.followUpId !== undefined ? { followUpId: event.followUpId } : {}),
+        ...(event.sourceMessageId !== undefined ? { sourceMessageId: event.sourceMessageId } : {}),
       }, identity);
       return;
     }

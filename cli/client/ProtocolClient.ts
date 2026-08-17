@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 
 import {
   isRunnerEventAllowedForCommand,
-  isRunnerTerminalResponseEvent,
+  isRunnerExpectedResponseEvent,
   parseRunnerCommandV2,
   parseRunnerEventV2,
 } from "@kestrel-agents/protocol";
@@ -230,7 +230,7 @@ export class ProtocolClient {
       return;
     }
 
-    if (isRunnerTerminalResponseEvent(event.type)) {
+    if (isRunnerExpectedResponseEvent(pending.commandType, event)) {
       this.pending.delete(commandId);
       if (event.type === "runner.error") {
         const error = new Error(event.payload.message) as ProtocolClientRunnerError;

@@ -6,6 +6,7 @@ import type {
   DesktopFileReadInput,
   DesktopFileWriteInput,
   DesktopLegacyUiStateEntries,
+  DesktopLinkPreviewInput,
   DesktopManagedProjectRun,
   DesktopMcpServerMutationInput,
   DesktopMissionControlActionIntent,
@@ -77,7 +78,8 @@ export function ensureBrowserPreviewBridge(): void {
     setupCompletedAt: new Date().toISOString(),
     modelConfigurations: [previewModelConfiguration],
     defaultModelConfigurationId: previewModelConfiguration.id,
-    defaultEnabledAppIds: [...DESKTOP_DEFAULT_ENABLED_APP_IDS],
+    defaultEnabledBuiltInAppIds: [...DESKTOP_DEFAULT_ENABLED_APP_IDS],
+    enabledConnectedAppIds: [],
     appearanceTheme: "system",
     apps: listDesktopAppDefinitions(),
     providerReadiness: [
@@ -346,7 +348,7 @@ export function ensureBrowserPreviewBridge(): void {
           advancedWorkspaceEnabled: settings.advancedWorkspaceEnabled,
           modelConfigurations: settings.modelConfigurations,
           defaultModelConfigurationId: settings.defaultModelConfigurationId,
-          defaultEnabledAppIds: settings.defaultEnabledAppIds,
+          defaultEnabledBuiltInAppIds: settings.defaultEnabledBuiltInAppIds,
           appearanceTheme: settings.appearanceTheme,
         },
         credentials: {
@@ -421,8 +423,8 @@ export function ensureBrowserPreviewBridge(): void {
         ...(update.defaultModelConfigurationId !== undefined
           ? { defaultModelConfigurationId: update.defaultModelConfigurationId }
           : {}),
-        ...(update.defaultEnabledAppIds !== undefined
-          ? { defaultEnabledAppIds: update.defaultEnabledAppIds }
+        ...(update.defaultEnabledBuiltInAppIds !== undefined
+          ? { defaultEnabledBuiltInAppIds: update.defaultEnabledBuiltInAppIds }
           : {}),
         ...(update.appearanceTheme !== undefined
           ? { appearanceTheme: update.appearanceTheme }
@@ -1083,6 +1085,13 @@ export function ensureBrowserPreviewBridge(): void {
     },
     async openExternal() {
       return;
+    },
+    async getLinkPreviews(input: DesktopLinkPreviewInput) {
+      return input.urls.map((requestedUrl: string) => ({
+        status: "unavailable" as const,
+        requestedUrl,
+        reason: "network" as const,
+      }));
     },
     onProjectRuns(listener: (runs: DesktopManagedProjectRun[]) => void) {
       projectRunListeners.add(listener);
@@ -1792,6 +1801,7 @@ function createPreviewRuntimeThreadInspection(
       at: now,
       runId: isChild ? "run-preview-electron-smoke" : "run-preview-web-cutover",
     },
+    conversationTurns: [],
     activeRun: {
       runId: isChild ? "run-preview-electron-smoke" : "run-preview-web-cutover",
       status: isChild ? "WAITING" : "RUNNING",

@@ -15,7 +15,22 @@ import {
   parseDesktopModelConfigurations,
   resolveDesktopModelConfiguration,
   resolveDesktopWorkflowSelections,
+  validateDesktopRendererWorkflowSelection,
 } from "../../../src/desktopShell/configuration.js";
+
+test("renderer execution selection accepts workflows but rejects forged global Apps", () => {
+  assert.deepEqual(
+    validateDesktopRendererWorkflowSelection(
+      ["built_in.weather", "workflow.software_delivery"],
+      ["built_in.weather", "linear"],
+    ),
+    ["workflow.software_delivery"],
+  );
+  assert.throws(
+    () => validateDesktopRendererWorkflowSelection(["notion"], ["built_in.weather"]),
+    /non-workflow App 'notion'/u,
+  );
+});
 
 test(
   "desktop model configurations retain immutable revisions",

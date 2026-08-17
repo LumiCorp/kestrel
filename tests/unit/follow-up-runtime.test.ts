@@ -54,7 +54,13 @@ class FollowUpExecutor implements TurnExecutor {
 test("ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses duplicate IDs", async () => {
   const store = new InMemorySessionStore();
   const executor = new FollowUpExecutor(store, [completed("run-follow-up-1"), completed("run-follow-up-2")]);
-  const detachedEvents: Array<{ type: string; runId: string; status?: string | undefined }> = [];
+  const detachedEvents: Array<{
+    type: string;
+    runId: string;
+    status?: string | undefined;
+    followUpId?: string | undefined;
+    sourceMessageId?: string | undefined;
+  }> = [];
   const runtime = new ThreadRuntime({
     sessionStore: store,
     executor,
@@ -62,6 +68,12 @@ test("ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses d
       detachedEvents.push({
         type: event.type,
         runId: event.runId,
+        ...(event.type === "started" && event.followUpId !== undefined
+          ? { followUpId: event.followUpId }
+          : {}),
+        ...(event.type === "started" && event.sourceMessageId !== undefined
+          ? { sourceMessageId: event.sourceMessageId }
+          : {}),
         ...(event.type === "completed" || (event.type === "failed" && event.result !== undefined)
           ? { status: event.result?.output.status }
           : {}),
@@ -71,8 +83,18 @@ test("ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses d
   const started = await runtime.startThread({ threadId: "thread-fifo", sessionId: "session-fifo", title: "FIFO" });
   await store.upsertThread({ ...started, status: "RUNNING", updatedAt: new Date().toISOString() });
 
-  await runtime.enqueueFollowUp({ threadId: started.threadId, followUpId: "follow-up-1", message: "first" });
-  await runtime.enqueueFollowUp({ threadId: started.threadId, followUpId: "follow-up-2", message: "second" });
+  await runtime.enqueueFollowUp({
+    threadId: started.threadId,
+    followUpId: "follow-up-1",
+    message: "first",
+    sourceMessageId: "message-1",
+  });
+  await runtime.enqueueFollowUp({
+    threadId: started.threadId,
+    followUpId: "follow-up-2",
+    message: "second",
+    sourceMessageId: "message-2",
+  });
   await runtime.enqueueFollowUp({ threadId: started.threadId, followUpId: "follow-up-1", message: "duplicate" });
   const queued = await runtime.getOperatorThreadView(started.threadId);
   assert.deepEqual(queued?.followUpQueue?.items.map((entry) => entry.message), ["first", "second"]);
@@ -91,6 +113,20 @@ test("ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses d
     ["started", executor.inputs[1]?.runtimeTurn?.runId, undefined],
     ["completed", executor.inputs[1]?.runtimeTurn?.runId, "COMPLETED"],
   ]);
+  assert.deepEqual(
+    detachedEvents
+      .filter((event) => event.type === "started")
+      .map((event) => [event.followUpId, event.sourceMessageId]),
+    [
+      ["follow-up-1", "message-1"],
+      ["follow-up-2", "message-2"],
+    ],
+  );
+  const completedView = await runtime.getOperatorThreadView(started.threadId);
+  assert.deepEqual(
+    completedView?.conversationTurns?.map((turn) => [turn.sequence, turn.sourceMessageId]),
+    [[1, "message-1"], [2, "message-2"]],
+  );
 });
 
 test("ThreadRuntime pauses remaining follow-ups when an entry waits for operator input", async () => {

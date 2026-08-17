@@ -72,7 +72,6 @@ export function OutcomeHandoff(props: {
   outcome: DesktopTerminalOutcome;
   hasWorkspace: boolean;
   onReviewChanges: (runId: string) => void;
-  onViewChecks: () => void;
   onInspectRun: (runId: string) => void;
 }) {
   if (
@@ -84,7 +83,6 @@ export function OutcomeHandoff(props: {
       <span>Run completed</span>
       <div className="outcome-handoff-actions">
         {props.hasWorkspace && props.outcome.hasWorkspaceChanges === true ? <button type="button" onClick={() => props.onReviewChanges(props.outcome.runId)}>Review changes</button> : null}
-        {props.hasWorkspace ? <button type="button" onClick={props.onViewChecks}>View checks</button> : null}
         <button type="button" onClick={() => props.onInspectRun(props.outcome.runId)}>Inspect run</button>
       </div>
     </section>

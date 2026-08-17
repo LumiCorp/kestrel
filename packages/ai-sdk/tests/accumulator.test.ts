@@ -30,6 +30,7 @@ test("presentation data part runtime keys stay aligned with the public contract"
     "kestrel-interaction",
     "kestrel-status",
     "kestrel-dialog-message",
+    "kestrel-mode-switch",
   ]);
 });
 
@@ -124,6 +125,29 @@ test("waiting output persists one assistant prompt and its exact durable interac
     snapshot.message.parts.some((part) => part.type === "data-kestrel-interaction"),
     true,
   );
+});
+
+test("mode-blocked waiting output emits the shared durable mode switch action", () => {
+  const accumulator = createKestrelPresentationAccumulator({
+    assistantMessageId: "assistant-mode-switch",
+    interactionMode: "chat",
+  });
+  const event = waitingEvent();
+  const interaction = event.payload.result.output.waitFor?.interaction;
+  if (interaction === undefined) assert.fail("fixture interaction is required");
+  interaction.metadata = {
+    reason: "acter_mode_blocked",
+    requiredToolClass: "sandboxed_only",
+  };
+
+  const snapshot = accumulator.finish(event);
+  const modeSwitch = snapshot.message.parts.find(
+    (part) => part.type === "data-kestrel-mode-switch",
+  );
+  assert.equal(modeSwitch?.type, "data-kestrel-mode-switch");
+  if (modeSwitch?.type !== "data-kestrel-mode-switch") assert.fail("mode switch is required");
+  assert.equal(modeSwitch.data.recommendationId, "request-workspace");
+  assert.equal(modeSwitch.data.toMode, "build");
 });
 
 test("empty completed output becomes a visible contract failure", () => {

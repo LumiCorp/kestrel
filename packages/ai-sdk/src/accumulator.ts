@@ -19,6 +19,10 @@ import type {
   KestrelDialogMessagePresentation,
   KestrelUIMessage,
 } from "./contracts.js";
+import {
+  resolveConversationModeSwitch,
+  type ConversationMode,
+} from "@kestrel-agents/conversation";
 
 const CONTRACT_FAILURE_CODE = "KESTREL_PRESENTATION_CONTRACT_FAILURE";
 
@@ -66,6 +70,7 @@ export function readKestrelTerminalInteraction(
 export function createKestrelPresentationAccumulator(input: {
   assistantMessageId: string;
   turnId?: string | undefined;
+  interactionMode?: ConversationMode | undefined;
 }): KestrelPresentationAccumulator {
   const parts: KestrelPresentationPart[] = [];
   const seenPartIds = new Set<string>();
@@ -333,6 +338,20 @@ export function createKestrelPresentationAccumulator(input: {
               id: `interaction:${interaction.requestId}`,
               data: interaction,
             });
+            const modeSwitch = resolveConversationModeSwitch({
+              recommendationId: interaction.requestId,
+              originatingMessageId: input.assistantMessageId,
+              fromMode: input.interactionMode ?? "chat",
+              reason: interaction.prompt,
+              metadata: interaction.metadata,
+            });
+            if (modeSwitch !== undefined) {
+              appendPart({
+                type: "data-kestrel-mode-switch",
+                id: `mode-switch:${modeSwitch.recommendationId}`,
+                data: modeSwitch,
+              });
+            }
           } else {
             throw new KestrelPresentationContractError(
               `run.completed carried unsupported runtime status '${result.output.status}'.`,
