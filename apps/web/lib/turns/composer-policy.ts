@@ -1,5 +1,6 @@
 import type { ThreadConversationState } from "@/lib/turns/client-contract";
 import { readThreadStructuredReview } from "@/lib/turns/structured-review";
+import { resolveConversationComposerPolicy } from "@kestrel-agents/conversation";
 
 type ChatTransportStatus = "submitted" | "streaming" | "ready" | "error";
 
@@ -24,34 +25,16 @@ export function getComposerSubmissionPolicy(input: {
   conversationState: ThreadConversationState;
   transportStatus: ChatTransportStatus;
 }): ComposerSubmissionPolicy {
-  const pendingInteraction = input.conversationState.interactions.find(
-    (interaction) => interaction.status === "pending"
-  );
-  if (pendingInteraction) {
-    if (
-      pendingInteraction.source === "runtime" &&
-      pendingInteraction.kind === "user_input"
-    ) {
-      const review = readThreadStructuredReview(pendingInteraction);
-      if (review.kind === "structured_review" || review.kind === "invalid_review") {
-        return { mode: "blocked_interaction", interaction: pendingInteraction };
-      }
-      return { mode: "answer_interaction", interaction: pendingInteraction };
-    }
-    return { mode: "blocked_interaction", interaction: pendingInteraction };
-  }
-
-  const activeTurn = input.conversationState.turns.find(
-    (turn) => turn.id === input.conversationState.queue.activeTurnId
-  );
-  if (
-    input.transportStatus === "submitted" ||
-    input.transportStatus === "streaming" ||
-    activeTurn?.status === "queued" ||
-    activeTurn?.status === "running"
-  ) {
-    return { mode: "queue_turn" };
-  }
-
-  return { mode: "start_turn" };
+  return resolveConversationComposerPolicy({
+    turns: input.conversationState.turns,
+    interactions: input.conversationState.interactions,
+    queue: input.conversationState.queue,
+    transportStatus: input.transportStatus,
+    isInteractionBlocked: (interaction) => {
+      const review = readThreadStructuredReview(
+        interaction as ThreadConversationState["interactions"][number],
+      );
+      return review.kind === "structured_review" || review.kind === "invalid_review";
+    },
+  }) as ComposerSubmissionPolicy;
 }

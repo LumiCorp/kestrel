@@ -187,11 +187,15 @@
   padding: var(--space-1) var(--space-2) var(--space-3);
 }
 
-.explorer-group-toggle {
+.explorer-group-heading {
   min-height: var(--row-height-compact);
   color: var(--text-tertiary);
   font-size: 11px;
   font-weight: 500;
+}
+
+.explorer-group-heading.selected {
+  background: var(--bg-active);
 }
 
 .explorer-thread-row {
@@ -213,9 +217,14 @@
   padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
 }
 
-.explorer-thread-select span {
+.explorer-thread-copy strong {
   font-size: 12px;
   font-weight: 500;
+}
+
+.explorer-thread-copy small {
+  color: var(--text-tertiary);
+  font-size: 10px;
 }
 
 .explorer-thread-select time {

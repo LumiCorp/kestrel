@@ -298,6 +298,8 @@ export interface OperatorInboxItem {
   title: string;
   actionable: boolean;
   createdAt: string;
+  runId?: string | undefined;
+  turnId?: string | undefined;
   requestId?: string | undefined;
   checkpointId?: string | undefined;
   delegationId?: string | undefined;
@@ -641,6 +643,8 @@ export interface OperatorRunIndexView {
 
 export interface OperatorThreadView {
   thread: ThreadRecord;
+  conversationTurns?: OperatorConversationTurnView[] | undefined;
+  conversationMessageRoutes?: OperatorConversationMessageRouteView[] | undefined;
   workspace?: ThreadWorkspaceAuthorityProjection | undefined;
   focusedThreadId?: string | undefined;
   parentThread?: ThreadRecord | undefined;
@@ -681,6 +685,32 @@ export interface OperatorThreadView {
   inboxItems?: OperatorInboxItem[] | undefined;
 }
 
+export interface OperatorConversationMessageRouteView {
+  messageId: string;
+  disposition: "started" | "replied" | "queued";
+  createdAt: string;
+  runId?: string | undefined;
+  turnId?: string | undefined;
+  requestId?: string | undefined;
+  followUpId?: string | undefined;
+}
+
+export interface OperatorConversationTurnView {
+  turnId: string;
+  threadId: string;
+  sessionId: string;
+  sequence: number;
+  status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
+  sourceMessageId?: string | undefined;
+  rootRunId?: string | undefined;
+  activeRunId?: string | undefined;
+  terminalRunId?: string | undefined;
+  terminalStatus?: string | undefined;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string | undefined;
+}
+
 export interface DialogView {
   dialogId: string;
   name: string;
@@ -689,6 +719,7 @@ export interface DialogView {
   messages: Array<{
     messageId: string;
     dialogId: string;
+    parentRunId?: string | undefined;
     name: string;
     childSessionId: string;
     sender: "kestrel" | "collaborator" | "system";

@@ -48,6 +48,8 @@ import type {
   DesktopRunTurnRequest,
   DesktopConversationMessageRequest,
   DesktopConversationMessageResult,
+  DesktopConversationMessageRoute,
+  DesktopConversationTurn,
   DesktopRuntimeHealth,
   DesktopRuntimeRunIndex,
   DesktopRuntimeRunIndexQuery,
@@ -67,6 +69,7 @@ import type {
   DesktopOperatorControlRequest,
   DesktopOperatorControlResult,
   DesktopConversationMessagePage,
+  DesktopConversationActivityPage,
   DesktopOperatorInboxItem,
   DesktopRuntimeStoreReset,
   DesktopSupportBundle,
@@ -212,6 +215,8 @@ export type {
   DesktopRunTurnRequest,
   DesktopConversationMessageRequest,
   DesktopConversationMessageResult,
+  DesktopConversationMessageRoute,
+  DesktopConversationTurn,
   DesktopRuntimeHealth,
   DesktopRuntimeRunIndex,
   DesktopRuntimeRunIndexEntry,
@@ -226,6 +231,7 @@ export type {
   DesktopOperatorControlRequest,
   DesktopOperatorControlResult,
   DesktopConversationMessagePage,
+  DesktopConversationActivityPage,
   DesktopOperatorInboxItem,
   DesktopRuntimeThreadNextAction,
   DesktopRuntimeThreadPlan,
@@ -383,6 +389,40 @@ export interface DesktopAttachmentImportInput {
   sha256?: string | undefined;
 }
 
+export interface DesktopLinkPreviewInput {
+  urls: string[];
+}
+
+export type DesktopLinkPreviewUnavailableReason =
+  | "unsupported"
+  | "blocked"
+  | "timeout"
+  | "network"
+  | "non_html"
+  | "oversized"
+  | "missing_metadata";
+
+export interface DesktopLinkPreviewAvailable {
+  status: "available";
+  requestedUrl: string;
+  finalUrl: string;
+  title: string;
+  description?: string | undefined;
+  siteName?: string | undefined;
+  canonicalUrl?: string | undefined;
+  imageDataUrl?: string | undefined;
+}
+
+export interface DesktopLinkPreviewUnavailable {
+  status: "unavailable";
+  requestedUrl: string;
+  reason: DesktopLinkPreviewUnavailableReason;
+}
+
+export type DesktopLinkPreviewResult =
+  | DesktopLinkPreviewAvailable
+  | DesktopLinkPreviewUnavailable;
+
 export interface DesktopBridge {
   getBridgeInfo(): Promise<DesktopBridgeInfo>;
   getAppInfo(): Promise<DesktopAppInfo>;
@@ -485,6 +525,11 @@ export interface DesktopBridge {
     afterCursor?: string,
     limit?: number,
   ): Promise<DesktopConversationMessagePage>;
+  listConversationActivity(
+    sessionId: string,
+    afterCursor?: string,
+    limit?: number,
+  ): Promise<DesktopConversationActivityPage>;
   cancelRun(
     request: DesktopRunCancelRequest,
   ): Promise<DesktopRunCancellationResult>;
@@ -497,6 +542,9 @@ export interface DesktopBridge {
   onBootState(listener: (state: DesktopBootState) => void): () => void;
   pickWorkspace(): Promise<string | undefined>;
   pickProjectFolder(): Promise<DesktopProjectRegistration | undefined>;
+  getLinkPreviews(
+    input: DesktopLinkPreviewInput,
+  ): Promise<DesktopLinkPreviewResult[]>;
   openExternal(url: string): Promise<void>;
   openProjectRunPreview(input: {
     runId: string;

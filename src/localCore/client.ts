@@ -1,6 +1,9 @@
 import { request } from "node:http";
 
-import { parseRunnerEventV2 } from "@kestrel-agents/protocol";
+import {
+  isRunnerStreamingCommandType,
+  parseRunnerEventV2,
+} from "@kestrel-agents/protocol";
 
 import {
   parseDesktopUiStateV1,
@@ -42,6 +45,7 @@ import type {
   ThreadRecord,
 } from "../kestrel/contracts/orchestration.js";
 import type { WorkspaceRuntimeContext } from "../../cli/contracts.js";
+import type { RunnerEvent } from "../../cli/protocol/contracts.js";
 import {
   parseLocalCoreCredentialId,
   parseLocalCoreCredentialSecret,
@@ -936,6 +940,42 @@ export class LocalCoreClient {
     );
   }
 
+  async listDesktopConversationActivity(input: {
+    sessionId: string;
+    afterCursor?: string | undefined;
+    limit?: number | undefined;
+  }): Promise<{
+    sessionId: string;
+    events: RunnerEvent[];
+    nextCursor?: string | undefined;
+    hasMore: boolean;
+  }> {
+    const query = new URLSearchParams({ sessionId: input.sessionId });
+    if (input.afterCursor !== undefined) query.set("afterCursor", input.afterCursor);
+    if (input.limit !== undefined) query.set("limit", String(input.limit));
+    const response = await this.get(`/v1/desktop/conversation-activity?${query.toString()}`) as {
+      sessionId?: unknown;
+      events?: unknown;
+      nextCursor?: unknown;
+      hasMore?: unknown;
+    };
+    if (
+      response.sessionId !== input.sessionId ||
+      Array.isArray(response.events) === false ||
+      typeof response.hasMore !== "boolean" ||
+      (response.nextCursor !== undefined && typeof response.nextCursor !== "string")
+    ) {
+      throw new Error("Local Core conversation activity response is invalid.");
+    }
+    const events = response.events.map((event) => parseRunnerEventV2(event) as RunnerEvent);
+    return {
+      sessionId: input.sessionId,
+      events,
+      ...(typeof response.nextCursor === "string" ? { nextCursor: response.nextCursor } : {}),
+      hasMore: response.hasMore,
+    };
+  }
+
   async sendRunnerCommand(
     line: string,
     input: {
@@ -945,10 +985,13 @@ export class LocalCoreClient {
   ): Promise<void> {
     const command = parseRunnerCommandEnvelope(line);
     const stream =
-      command.type === "run.start" ||
-      command.type === "job.run" ||
+      isRunnerStreamingCommandType(command.type) ||
       (command.type === "operator.control" &&
         command.payload.completionMode === "accepted");
+    const commandTimeoutMs = desktopRunnerCommandTimeoutMs(
+      command.type,
+      this.timeoutMs,
+    );
     await new Promise<void>((resolve, reject) => {
       const req = request(
         {
@@ -956,6 +999,9 @@ export class LocalCoreClient {
           path: `/runtime/v2/commands${stream ? "/stream" : ""}`,
           method: "POST",
           signal: input.signal,
+          ...(stream || commandTimeoutMs === undefined
+            ? {}
+            : { timeout: commandTimeoutMs }),
           headers: {
             authorization: `Bearer ${this.token}`,
             accept: stream
@@ -1005,6 +1051,11 @@ export class LocalCoreClient {
           response.on("error", reject);
         },
       );
+      req.on("timeout", () => {
+        req.destroy(new Error(
+          `Local Core runner command timed out after ${commandTimeoutMs ?? this.timeoutMs}ms: ${command.type}`,
+        ));
+      });
       req.on("error", reject);
       req.write(line);
       req.end();
@@ -1160,6 +1211,16 @@ export class LocalCoreClient {
       req.end();
     });
   }
+}
+
+export function desktopRunnerCommandTimeoutMs(
+  commandType: string,
+  standardTimeoutMs: number,
+): number | undefined {
+  return commandType === "mission_control.project.get" ||
+    commandType === "mission_control.action.execute"
+    ? standardTimeoutMs
+    : undefined;
 }
 
 function parseCorrelatedRunnerErrorLine(

@@ -1477,6 +1477,10 @@ function isStreamingRunnerCommand(command: RunnerCommand): boolean {
 }
 
 function isTerminalEventForCommand(command: RunnerCommand, event: RunnerEvent): boolean {
+  if (command.type === "conversation.message.submit") {
+    return event.type === "conversation.message.routed"
+      || event.type === "runner.error";
+  }
   if (command.type === "operator.control" && command.payload.completionMode === "accepted") {
     return event.type === "run.completed"
       || event.type === "run.failed"

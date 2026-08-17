@@ -52,6 +52,7 @@ export interface DelegationTaskUpdate {
 export interface DialogMessageRecord {
   messageId: string;
   dialogId: string;
+  parentRunId?: string | undefined;
   name: string;
   childSessionId: string;
   sender: "kestrel" | "collaborator" | "system";
@@ -152,7 +153,17 @@ export class DelegationSupervisor implements DelegationServicePort, DialogServic
     const dialog = readDialogState(record)!;
     if (dialog.status !== "open") throw createRuntimeFailure("DIALOG_CLOSED", `Dialog '${input.dialogId}' is closed.`, { dialogId: input.dialogId });
     if (record.status === "RUNNING") throw createRuntimeFailure("DIALOG_BUSY", `Dialog '${input.dialogId}' is already processing a message.`, { dialogId: input.dialogId });
-    const updated = appendDialogMessage({ ...record, prompt: input.message, status: "RUNNING", ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}), updatedAt: new Date().toISOString() }, createDialogMessage(record, "kestrel", input.message));
+    const activeRecord = {
+      ...record,
+      prompt: input.message,
+      status: "RUNNING" as const,
+      ...(input.parentRunId !== undefined ? { parentRunId: input.parentRunId } : {}),
+      updatedAt: new Date().toISOString(),
+    };
+    const updated = appendDialogMessage(
+      activeRecord,
+      createDialogMessage(activeRecord, "kestrel", input.message),
+    );
     await this.store.upsertDelegation(updated);
     const message = lastDialogMessage(updated)!;
     await this.appendDialogEvent("dialog.message", updated, message);
@@ -738,6 +749,7 @@ function createDialogMessage(record: DelegationRecord, sender: DialogMessageReco
   return {
     messageId: `dialog-message-${randomUUID()}`,
     dialogId: record.delegationId,
+    ...(record.parentRunId !== undefined ? { parentRunId: record.parentRunId } : {}),
     name: dialog?.name ?? record.title,
     childSessionId: record.childThreadId,
     sender,

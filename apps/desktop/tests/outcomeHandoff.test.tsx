@@ -95,7 +95,6 @@ test("completed workspace outcomes hand off directly to existing evidence surfac
   const { root, container } = installDom();
   const reviewed: string[] = [];
   const inspected: string[] = [];
-  let checksViewed = 0;
   await act(async () => root.render(<OutcomeHandoff
     outcome={{
       kind: "desktop.terminal-outcome.v1",
@@ -106,18 +105,16 @@ test("completed workspace outcomes hand off directly to existing evidence surfac
     }}
     hasWorkspace
     onReviewChanges={(runId) => reviewed.push(runId)}
-    onViewChecks={() => { checksViewed += 1; }}
     onInspectRun={(runId) => inspected.push(runId)}
   />));
 
-  assert.equal(container.querySelector('[aria-label="Completed run actions"]')?.textContent?.replace(/\s+/gu, " ").trim(), "Run completedReview changesView checksInspect run");
-  for (const label of ["Review changes", "View checks", "Inspect run"]) {
+  assert.equal(container.querySelector('[aria-label="Completed run actions"]')?.textContent?.replace(/\s+/gu, " ").trim(), "Run completedReview changesInspect run");
+  for (const label of ["Review changes", "Inspect run"]) {
     const action = [...container.querySelectorAll("button")].find((button) => button.textContent === label);
     assert.ok(action, `Expected ${label} action.`);
     await act(async () => action.click());
   }
   assert.deepEqual(reviewed, ["run-123"]);
-  assert.equal(checksViewed, 1);
   assert.deepEqual(inspected, ["run-123"]);
   await act(async () => root.unmount());
 });
@@ -133,7 +130,6 @@ test("outcome handoff stays available for inspection without a workspace and is 
     }}
     hasWorkspace={false}
     onReviewChanges={() => { throw new Error("Review should not be available."); }}
-    onViewChecks={() => { throw new Error("Checks should not be available."); }}
     onInspectRun={() => {}}
   />));
   assert.equal(container.querySelector("button")?.textContent, "Inspect run");
@@ -147,12 +143,11 @@ test("outcome handoff stays available for inspection without a workspace and is 
     }}
     hasWorkspace
     onReviewChanges={() => { throw new Error("Review should require run evidence."); }}
-    onViewChecks={() => {}}
     onInspectRun={() => {}}
   />));
   assert.deepEqual(
     [...container.querySelectorAll("button")].map((button) => button.textContent),
-    ["View checks", "Inspect run"],
+    ["Inspect run"],
   );
 
   await act(async () => root.render(<OutcomeHandoff
@@ -164,7 +159,6 @@ test("outcome handoff stays available for inspection without a workspace and is 
     }}
     hasWorkspace
     onReviewChanges={() => {}}
-    onViewChecks={() => {}}
     onInspectRun={() => {}}
   />));
   assert.equal(container.querySelector('[aria-label="Completed run actions"]'), null);

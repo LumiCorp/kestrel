@@ -406,6 +406,104 @@ test("ProtocolClient resolves run.start command with completed response", async 
   await client.close();
 });
 
+test("ProtocolClient streams conversation lifecycle events and resolves only the routing envelope", async () => {
+  const transport = new ControlledExitTransport();
+  const client = new ProtocolClient(transport);
+  const seen: string[] = [];
+  client.onEvent((event) => seen.push(event.type));
+  let settled = false;
+  const pending = client.sendCommandWithId(
+    "command-conversation-stream",
+    "conversation.message.submit",
+    {
+      profileId: "kestrel",
+      threadId: "thread-main:session-conversation",
+      messageId: "message-conversation",
+      turn: {
+        sessionId: "session-conversation",
+        message: "Hello",
+      },
+    },
+  ).finally(() => {
+    settled = true;
+  });
+  await tick();
+  transport.emitEvent({
+    id: "evt-conversation-progress",
+    type: "run.progress",
+    ts: new Date().toISOString(),
+    commandId: "command-conversation-stream",
+    runId: "run-conversation",
+    sessionId: "session-conversation",
+    payload: {
+      update: {
+        version: "v1",
+        runId: "run-conversation",
+        sessionId: "session-conversation",
+        ts: new Date().toISOString(),
+        seq: 1,
+        kind: "stage",
+        phase: "engine",
+        code: "RUN_STARTED",
+        message: "Run started.",
+        persist: true,
+      },
+    },
+  });
+  transport.emitEvent({
+    id: "evt-conversation-completed",
+    type: "run.completed",
+    ts: new Date().toISOString(),
+    commandId: "command-conversation-stream",
+    runId: "run-conversation",
+    sessionId: "session-conversation",
+    payload: {
+      result: {
+        assistantText: "Hello back",
+        output: {
+          status: "COMPLETED",
+          sessionId: "session-conversation",
+          runId: "run-conversation",
+          errors: [],
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 1,
+            durationMs: 10,
+          },
+        },
+      },
+    },
+  });
+  await tick();
+  assert.equal(settled, false);
+  transport.emitEvent({
+    id: "evt-conversation-routed",
+    type: "conversation.message.routed",
+    ts: new Date().toISOString(),
+    commandId: "command-conversation-stream",
+    runId: "run-conversation",
+    sessionId: "session-conversation",
+    threadId: "thread-main:session-conversation",
+    payload: {
+      threadId: "thread-main:session-conversation",
+      sessionId: "session-conversation",
+      messageId: "message-conversation",
+      disposition: "started",
+      runId: "run-conversation",
+      view: {},
+    },
+  });
+  const response = await pending;
+  assert.equal(response.type, "conversation.message.routed");
+  assert.deepEqual(seen, [
+    "run.progress",
+    "run.completed",
+    "conversation.message.routed",
+  ]);
+  await client.close();
+});
+
 test("ProtocolClient merges caller metadata over defaults without dropping other defaults", async () => {
   const transport = new MockTransport();
   const client = new ProtocolClient(transport, {

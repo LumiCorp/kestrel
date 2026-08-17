@@ -25,6 +25,7 @@ import type {
   DesktopRunTurnRequest,
   DesktopConversationMessageRequest,
   DesktopConversationMessageResult,
+  DesktopConversationActivityPage,
   DesktopRuntimeHealth,
   DesktopRestartKestrelInput,
   DesktopRestartKestrelResult,
@@ -203,6 +204,9 @@ const desktopBridge: DesktopBridge = {
   listConversationMessages(threadId, afterCursor, limit) {
     return ipcRenderer.invoke("desktop:conversation-messages", threadId, afterCursor, limit);
   },
+  listConversationActivity(sessionId, afterCursor, limit): Promise<DesktopConversationActivityPage> {
+    return ipcRenderer.invoke("desktop:conversation-activity", sessionId, afterCursor, limit);
+  },
   cancelRun(
     request: DesktopRunCancelRequest,
   ): Promise<DesktopRunCancellationResult> {
@@ -246,6 +250,9 @@ const desktopBridge: DesktopBridge = {
   },
   pickProjectFolder() {
     return ipcRenderer.invoke("desktop:pick-project-folder");
+  },
+  getLinkPreviews(input) {
+    return ipcRenderer.invoke("desktop:get-link-previews", input);
   },
   openExternal(url) {
     return ipcRenderer.invoke("desktop:open-external", url);

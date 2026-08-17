@@ -1,255 +1,298 @@
-import type { DesktopRunnerEvent } from "../../src/contracts";
-import type { RendererTranscriptLine } from "./state";
+import {
+  reduceConversationActivity,
+  type ConversationActivityItem,
+} from "@kestrel-agents/conversation";
 
-export interface DesktopRunStreamItem {
-  id: string;
-  kind: "assistant" | "reasoning" | "tool" | "status";
-  label: string;
-  text: string;
-  timestamp: string;
-  status: "active" | "completed" | "failed";
-  reasoningKey?: string | undefined;
-  toolName?: string | undefined;
-  toolInput?: unknown;
-}
+import type {
+  DesktopConversationMessageRoute,
+  DesktopConversationTurn,
+  DesktopRunnerEvent,
+} from "../../src/contracts";
+import type { RendererTranscriptLine } from "./state";
+import { adaptDesktopConversation } from "./conversationAdapter";
+
+export type DesktopRunStreamItem = ConversationActivityItem;
 
 export type DesktopConversationTimelineItem =
-  | {
-      id: string;
-      type: "transcript";
-      line: RendererTranscriptLine;
-    }
-  | {
-      id: string;
-      type: "run_stream";
-      item: DesktopRunStreamItem;
-    };
-
-const MAX_STREAM_ITEMS = 80;
-
-export function projectDesktopConversationTimeline(
-  transcript: readonly RendererTranscriptLine[],
-  runStream: readonly DesktopRunStreamItem[],
-): DesktopConversationTimelineItem[] {
-  const activeTurnStart = findLastIndex(transcript, (line) => line.role === "user");
-  const beforeRun = transcript.slice(0, activeTurnStart + 1);
-  const afterRun = transcript.slice(activeTurnStart + 1);
-  return [
-    ...beforeRun.map(toTranscriptTimelineItem),
-    ...runStream.map((item) => ({
-      id: `run-stream:${item.id}`,
-      type: "run_stream" as const,
-      item,
-    })),
-    ...afterRun.map((line, index) => toTranscriptTimelineItem(line, activeTurnStart + 1 + index)),
-  ];
-}
+  | { id: string; type: "transcript"; line: RendererTranscriptLine }
+  | { id: string; type: "run_stream"; item: DesktopRunStreamItem };
 
 export function projectDesktopRunStream(
   current: readonly DesktopRunStreamItem[],
   event: DesktopRunnerEvent,
 ): DesktopRunStreamItem[] {
-  if (event.type === "run.started") return [];
   const update = readRecord((event.payload as { update?: unknown }).update);
-  if (update === undefined) return [...current];
-  const runId = readString(update.runId) ?? event.runId ?? "run";
-
-  if (event.type === "run.agent_progress") {
-    return appendDistinct(current, {
-      id: `assistant:${event.id}`,
-      kind: "assistant",
-      label: "Kestrel",
-      text: readString(update.message) ?? "Working…",
-      timestamp: readString(update.ts) ?? event.ts,
-      status: "active",
-    });
+  const runId = readString(update?.runId) ?? event.runId;
+  const normalizedEvent = {
+    id: event.id,
+    type: event.type,
+    ts: event.ts,
+    ...(event.runId !== undefined ? { runId: event.runId } : {}),
+    payload: event.payload as Record<string, unknown>,
+  };
+  if (runId === undefined) {
+    return reduceConversationActivity(current, normalizedEvent);
   }
 
-  if (event.type === "run.progress") {
-    const message = readString(update.message);
-    if (message === undefined) return [...current];
-    return appendDistinct(current, {
-      id: `status:${event.id}`,
-      kind: "status",
-      label: "Runtime",
-      text: message,
-      timestamp: readString(update.ts) ?? event.ts,
-      status:
-        readString(update.phase) === "failed" ? "failed" : "completed",
-    });
+  const firstRunIndex = current.findIndex((item) => item.runId === runId);
+  const currentRun = current.filter((item) => item.runId === runId);
+  const nextRun = reduceConversationActivity(currentRun, normalizedEvent);
+  if (firstRunIndex < 0) return [...current, ...nextRun];
+
+  const before = current.slice(0, firstRunIndex).filter((item) => item.runId !== runId);
+  const after = current.slice(firstRunIndex).filter((item) => item.runId !== runId);
+  return [...before, ...nextRun, ...after];
+}
+
+/**
+ * Projects the Desktop transcript around durable Local Core turn identities.
+ * The legacy fallback is used only for pre-authority threads with no turn
+ * records. Durable turn ownership is never inferred from timestamp, text, or
+ * adjacency. Unowned legacy entries retain chronological display placement
+ * without being assigned to a turn.
+ */
+export function projectDesktopConversationTimeline(
+  transcript: readonly RendererTranscriptLine[],
+  runStream: readonly DesktopRunStreamItem[],
+  conversationTurns: readonly DesktopConversationTurn[] = [],
+  messageRoutes: readonly DesktopConversationMessageRoute[] = [],
+): DesktopConversationTimelineItem[] {
+  if (conversationTurns.length === 0) {
+    return projectLegacyTimeline(transcript, runStream);
   }
 
-  if (event.type.startsWith("run.model.reasoning.")) {
-    const attempt = typeof update.attempt === "number" ? update.attempt : 0;
-    const format = readString(update.format) ?? "provider_reasoning_text";
-    const reasoningKey = `${runId}:${attempt}:${format}`;
-    const phase = event.type.slice("run.model.reasoning.".length);
-    const last = current.at(-1);
-    if (
-      phase === "started"
-      && last?.kind === "reasoning"
-      && last.reasoningKey === reasoningKey
-      && last.status === "active"
-    ) {
-      return [...current];
+  const adapted = adaptDesktopConversation({
+    threadId: conversationTurns[0]?.threadId ?? "desktop-thread",
+    transcript,
+    turns: conversationTurns,
+    messageRoutes,
+  });
+  const turnByRunId = new Map<string, string>();
+  for (const turn of adapted.snapshot.turns) {
+    for (const runId of [turn.rootRunId, turn.activeRunId, turn.terminalRunId]) {
+      if (runId) turnByRunId.set(runId, turn.id);
     }
-    if (phase === "completed" || phase === "failed") {
-      const emptyText = update.contentState === "not_retained"
-        ? "Provider reasoning is not retained for this run."
-        : phase === "failed"
-          ? "Provider reasoning failed before returning visible detail."
-          : "Provider returned no visible reasoning detail.";
-      return completeMostRecentReasoning(
-        current,
-        reasoningKey,
-        phase === "failed" ? "failed" : "completed",
-        emptyText,
+  }
+  const turnIdByMessageId = new Map<string, string>();
+  for (const item of adapted.projection.items) {
+    if (item.kind !== "durable_turn") continue;
+    for (const message of item.messages) turnIdByMessageId.set(message.id, item.turnId);
+  }
+  for (const route of messageRoutes) {
+    if (route.runId === undefined) continue;
+    const turnId = route.turnId ?? turnIdByMessageId.get(route.messageId);
+    if (turnId !== undefined) turnByRunId.set(route.runId, turnId);
+  }
+
+  const activityByTurnId = new Map<string, DesktopRunStreamItem[]>();
+  const standaloneActivity: DesktopRunStreamItem[] = [];
+  for (const item of runStream) {
+    const turnId = item.runId === undefined ? undefined : turnByRunId.get(item.runId);
+    if (turnId === undefined) {
+      standaloneActivity.push(item);
+      continue;
+    }
+    const current = activityByTurnId.get(turnId) ?? [];
+    current.push(item);
+    activityByTurnId.set(turnId, current);
+  }
+
+  const segments = new Map<string, {
+    id: string;
+    turnSequence: number;
+    segmentOrder: number;
+    timestamp: string;
+    items: DesktopConversationTimelineItem[];
+  }>();
+  const standaloneMessages: DesktopConversationTimelineItem[] = [];
+  const provisionalMessages: DesktopConversationTimelineItem[] = [];
+  for (const item of adapted.projection.items) {
+    if (item.kind === "standalone_message") {
+      const timelineItem = toTranscriptTimelineItem(
+        item.message.line,
+        transcript.indexOf(item.message.line),
       );
+      if (item.message.metadata?.deliveryState === "submitting") {
+        provisionalMessages.push(timelineItem);
+      } else {
+        standaloneMessages.push(timelineItem);
+      }
+      continue;
     }
-    const contentState = update.contentState === "not_retained" ? "not_retained" : "live";
-    const delta = phase === "delta" && contentState === "live" ? readString(update.delta) : undefined;
-    const continuesTail = phase !== "started"
-      && last?.kind === "reasoning"
-      && last.reasoningKey === reasoningKey
-      && last.status === "active";
-    const text = phase === "unavailable"
-      ? "Provider reasoning is unavailable for this model."
-      : contentState === "not_retained"
-        ? "Provider reasoning is not retained for this run."
-        : `${continuesTail ? last.text : ""}${delta ?? ""}`;
-    const item: DesktopRunStreamItem = {
-      id: continuesTail ? last.id : `reasoning:${event.id}`,
-      kind: "reasoning",
-      label: update.format === "summary"
-        ? "Provider reasoning summary"
-        : update.format === "provider_thinking"
-          ? "Provider-visible thinking"
-          : "Provider reasoning",
-      text,
-      timestamp: readString(update.ts) ?? event.ts,
-      status: phase === "unavailable" ? "completed" : "active",
-      reasoningKey,
-    };
-    if (continuesTail) return replaceLast(current, item);
-    return [...current, item].slice(-MAX_STREAM_ITEMS);
+    const activities = activityByTurnId.get(item.turnId) ?? [];
+    const messageIds = new Set(item.messages.map((message) => message.id));
+    const routedRunIds = messageRoutes
+      .filter((route) =>
+        route.runId !== undefined &&
+        (route.turnId === item.turnId || messageIds.has(route.messageId)),
+      )
+      .slice()
+      .sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt) || left.messageId.localeCompare(right.messageId),
+      )
+      .map((route) => route.runId!);
+    const runIds = new Set<string>();
+    if (item.turn?.rootRunId) runIds.add(item.turn.rootRunId);
+    for (const runId of routedRunIds) runIds.add(runId);
+    for (const message of item.messages) {
+      if (message.metadata?.kestrelRunId) runIds.add(message.metadata.kestrelRunId);
+    }
+    for (const activity of activities) {
+      if (activity.runId) runIds.add(activity.runId);
+    }
+    let segmentOrder = 0;
+    for (const runId of runIds) {
+      const runMessages = item.messages.filter(
+        (message) => message.metadata?.kestrelRunId === runId,
+      );
+      const runActivities = activities.filter((activity) => activity.runId === runId);
+      const timelineItems = [
+        ...runMessages.filter((message) => message.role === "user").map((message) =>
+          toTranscriptTimelineItem(message.line, transcript.indexOf(message.line))),
+        ...runActivities.map(toRunStreamTimelineItem),
+        ...runMessages.filter((message) => message.role !== "user").map((message) =>
+          toTranscriptTimelineItem(message.line, transcript.indexOf(message.line))),
+      ];
+      if (timelineItems.length === 0) continue;
+      const key = `turn:${item.turnId}:run:${runId}`;
+      segments.set(key, {
+        id: key,
+        turnSequence: item.turn?.sequence ?? Number.MAX_SAFE_INTEGER,
+        segmentOrder,
+        timestamp: earliestTimelineTimestamp(timelineItems),
+        items: timelineItems,
+      });
+      segmentOrder += 1;
+    }
+
+    const ungroupedMessages = item.messages.filter(
+      (message) => message.metadata?.kestrelRunId === undefined,
+    );
+    const ungroupedActivities = activities.filter((activity) => activity.runId === undefined);
+    if (ungroupedMessages.length > 0 || ungroupedActivities.length > 0) {
+      const timelineItems = [
+        ...ungroupedMessages.filter((message) => message.role === "user").map((message) =>
+          toTranscriptTimelineItem(message.line, transcript.indexOf(message.line))),
+        ...ungroupedActivities.map(toRunStreamTimelineItem),
+        ...ungroupedMessages.filter((message) => message.role !== "user").map((message) =>
+          toTranscriptTimelineItem(message.line, transcript.indexOf(message.line))),
+      ];
+      const key = `turn:${item.turnId}:unsegmented`;
+      segments.set(key, {
+        id: key,
+        turnSequence: item.turn?.sequence ?? Number.MAX_SAFE_INTEGER,
+        segmentOrder,
+        timestamp: earliestTimelineTimestamp(timelineItems),
+        items: timelineItems,
+      });
+    }
   }
 
-  if (event.type === "run.tool.started" || event.type === "run.tool.completed" || event.type === "run.tool.failed") {
-    const toolCallId = readString(update.toolCallId) ?? event.id;
-    const canonicalToolName = readString(update.toolName) ?? "tool";
-    const displayName = readString(update.displayName) ?? canonicalToolName;
-    const toolIdentity = displayName === canonicalToolName
-      ? canonicalToolName
-      : `${displayName} (${canonicalToolName})`;
-    const phase = event.type.slice("run.tool.".length);
-    const error = readRecord(update.error);
-    const failure = readString(error?.message);
-    return upsert(current, {
-      id: `tool:${toolCallId}`,
-      kind: "tool",
-      label: "Tool action",
-      text: phase === "started"
-        ? `Running ${toolIdentity}`
-        : phase === "failed"
-          ? `${toolIdentity} failed${failure === undefined ? "" : `: ${failure}`}`
-          : `Completed ${toolIdentity}`,
-      timestamp: readString(update.ts) ?? event.ts,
-      status: phase === "failed" ? "failed" : phase === "completed" ? "completed" : "active",
-      toolName: canonicalToolName,
-      ...("input" in update ? { toolInput: update.input } : {}),
-    });
+  const orderedSegments = [...segments.values()]
+    .sort((left, right) =>
+      left.turnSequence - right.turnSequence ||
+      left.segmentOrder - right.segmentOrder ||
+      left.timestamp.localeCompare(right.timestamp) ||
+      left.id.localeCompare(right.id)
+  );
+  const unownedItems = [
+    ...standaloneMessages,
+    ...provisionalMessages,
+    ...standaloneActivity.map(toRunStreamTimelineItem),
+  ].sort(compareTimelineItems);
+  const projected: DesktopConversationTimelineItem[] = [];
+  let unownedIndex = 0;
+  for (const segment of orderedSegments) {
+    while (
+      unownedIndex < unownedItems.length &&
+      timelineItemTimestamp(unownedItems[unownedIndex]!) <= segment.timestamp
+    ) {
+      projected.push(unownedItems[unownedIndex]!);
+      unownedIndex += 1;
+    }
+    projected.push(...segment.items);
   }
-
-  return [...current];
+  projected.push(...unownedItems.slice(unownedIndex));
+  return projected;
 }
 
 export function describeDesktopRunnerActivity(event: DesktopRunnerEvent): string {
-  if (event.type === "run.progress") {
-    const update = readRecord(event.payload.update);
-    return readString(update?.message) ?? "Runtime active";
+  if (event.type !== "run.progress" && event.type !== "run.agent_progress") return "";
+  const update = readRecord((event.payload as { update?: unknown }).update);
+  return readString(update?.message) ?? (event.type === "run.agent_progress" ? "Working" : "Runtime active");
+}
+
+function projectLegacyTimeline(
+  transcript: readonly RendererTranscriptLine[],
+  runStream: readonly DesktopRunStreamItem[],
+): DesktopConversationTimelineItem[] {
+  const activeTurnStart = findLastIndex(transcript, (line) => line.role === "user");
+  return [
+    ...transcript.slice(0, activeTurnStart + 1).map(toTranscriptTimelineItem),
+    ...runStream.map(toRunStreamTimelineItem),
+    ...transcript.slice(activeTurnStart + 1).map((line, index) =>
+      toTranscriptTimelineItem(line, activeTurnStart + 1 + index)),
+  ];
+}
+
+function toRunStreamTimelineItem(item: DesktopRunStreamItem): DesktopConversationTimelineItem {
+  return { id: `run-stream:${item.id}`, type: "run_stream", item };
+}
+
+function toTranscriptTimelineItem(line: RendererTranscriptLine, index: number): DesktopConversationTimelineItem {
+  return { id: `transcript:${messageIdentity(line) ?? `${index}:${line.timestamp}`}`, type: "transcript", line };
+}
+
+function earliestTimelineTimestamp(items: readonly DesktopConversationTimelineItem[]): string {
+  return items.reduce((earliest, item) => {
+    const timestamp = item.type === "transcript" ? item.line.timestamp : item.item.timestamp;
+    return earliest === "" || timestamp < earliest ? timestamp : earliest;
+  }, "");
+}
+
+function compareTimelineItems(
+  left: DesktopConversationTimelineItem,
+  right: DesktopConversationTimelineItem,
+): number {
+  return timelineItemTimestamp(left).localeCompare(timelineItemTimestamp(right))
+    || timelineItemKindOrder(left) - timelineItemKindOrder(right)
+    || left.id.localeCompare(right.id);
+}
+
+function timelineItemTimestamp(item: DesktopConversationTimelineItem): string {
+  return item.type === "transcript" ? item.line.timestamp : item.item.timestamp;
+}
+
+function timelineItemKindOrder(item: DesktopConversationTimelineItem): number {
+  return item.type === "transcript" && item.line.role === "user"
+    ? 0
+    : item.type === "run_stream"
+      ? 1
+      : 2;
+}
+
+function messageIdentity(line: RendererTranscriptLine) {
+  return userMessageId(line) ?? line.dialog?.messageId ?? (line.terminal?.runId === undefined ? undefined : `terminal:${line.terminal.runId}`);
+}
+
+function userMessageId(line: RendererTranscriptLine): string | undefined {
+  const data = readRecord(line.data);
+  return data?.kind === "desktop.user-message.v1" ? readString(data.messageId) : undefined;
+}
+
+function findLastIndex<T>(values: readonly T[], predicate: (value: T) => boolean) {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (predicate(values[index]!)) return index;
   }
-  if (event.type === "run.agent_progress") {
-    const update = readRecord(event.payload.update);
-    return readString(update?.message) ?? "Working";
-  }
-  return "";
-}
-
-function appendDistinct(
-  current: readonly DesktopRunStreamItem[],
-  item: DesktopRunStreamItem,
-): DesktopRunStreamItem[] {
-  const previous = current.at(-1);
-  if (previous?.kind === item.kind && previous.text === item.text) return [...current];
-  return [...current, item].slice(-MAX_STREAM_ITEMS);
-}
-
-function upsert(
-  current: readonly DesktopRunStreamItem[],
-  item: DesktopRunStreamItem,
-): DesktopRunStreamItem[] {
-  const index = current.findIndex((candidate) => candidate.id === item.id);
-  if (index < 0) return [...current, item].slice(-MAX_STREAM_ITEMS);
-  const next = [...current];
-  next[index] = { ...item, timestamp: next[index]!.timestamp };
-  return next;
-}
-
-function replaceLast(
-  current: readonly DesktopRunStreamItem[],
-  item: DesktopRunStreamItem,
-): DesktopRunStreamItem[] {
-  return [...current.slice(0, -1), item];
-}
-
-function completeMostRecentReasoning(
-  current: readonly DesktopRunStreamItem[],
-  reasoningKey: string,
-  status: "completed" | "failed",
-  emptyText: string,
-): DesktopRunStreamItem[] {
-  const index = findLastIndex(current, (item) => (
-    item.kind === "reasoning"
-    && item.reasoningKey === reasoningKey
-    && item.status === "active"
-  ));
-  if (index < 0) return [...current];
-  const next = [...current];
-  next[index] = {
-    ...next[index]!,
-    status,
-    ...(next[index]!.text.length === 0 ? { text: emptyText } : {}),
-  };
-  return next;
+  return -1;
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && Array.isArray(value) === false
+  return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
 }
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
-}
-
-function toTranscriptTimelineItem(
-  line: RendererTranscriptLine,
-  index: number,
-): DesktopConversationTimelineItem {
-  return {
-    id: `transcript:${index}:${line.timestamp}`,
-    type: "transcript",
-    line,
-  };
-}
-
-function findLastIndex<T>(
-  values: readonly T[],
-  predicate: (value: T) => boolean,
-): number {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    if (predicate(values[index]!)) return index;
-  }
-  return -1;
 }

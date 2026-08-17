@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { DesktopCapability } from "../../../src/desktopShell/contracts.js";
 import type { KestrelUninstallPlanV1 } from "../src/contracts.js";
 import {
-  createToolServicesNavigationRequest,
+  DEFAULT_KESTREL_ONE_BASE_URL,
   desktopUninstallConfirmationsSatisfied,
   getDesktopCapabilityAttentionQueue,
 } from "../renderer/src/SettingsWorkspace.js";
@@ -16,6 +16,10 @@ const rendererDirectory = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../renderer/src",
 );
+
+test("Kestrel One sign-in targets the canonical hosted application", () => {
+  assert.equal(DEFAULT_KESTREL_ONE_BASE_URL, "https://kestrelagents.dev");
+});
 
 function capability(id: DesktopCapability["id"], readiness: DesktopCapability["readiness"]): DesktopCapability {
   return {
@@ -59,12 +63,9 @@ test("Settings does not let an older readiness probe overwrite a later apply res
   assert.match(source, /function commitCapabilityView[\s\S]*refreshVersionRef\.current \+= 1;/u);
 });
 
-test("repeated tool-service recovery requests carry a fresh navigation signal", () => {
-  const initial = createToolServicesNavigationRequest("tools.internet.tavily");
-  const repeated = createToolServicesNavigationRequest("tools.internet.tavily", initial);
-
-  assert.deepEqual(initial, { capabilityId: "tools.internet.tavily", requestId: 1 });
-  assert.deepEqual(repeated, { capabilityId: "tools.internet.tavily", requestId: 2 });
+test("tool-service recovery routes to the Apps owner", async () => {
+  const source = await readFile(path.join(rendererDirectory, "SettingsWorkspace.tsx"), "utf8");
+  assert.match(source, /onOpenApps\(\{ kind: "capability", capabilityId: capability\.id \}\)/u);
 });
 
 test("Settings keeps healthy readiness quiet while retaining targeted recovery", async () => {

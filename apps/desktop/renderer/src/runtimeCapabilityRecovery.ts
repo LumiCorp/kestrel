@@ -18,14 +18,22 @@ export function extractTerminalFailure(
   return {
     message: readString(error?.message) ?? code ?? "Run failed.",
     capabilityId:
-      explicitCapabilityId ?? capabilityForRuntimeFailureCode(code, selectedProvider),
+      explicitCapabilityId
+      ?? capabilityForRuntimeFailureContract(code, details, selectedProvider),
   };
 }
 
-function capabilityForRuntimeFailureCode(
+function capabilityForRuntimeFailureContract(
   code: string | undefined,
+  details: Record<string, unknown> | undefined,
   selectedProvider: DesktopRendererSettings["selectedProvider"] | undefined,
 ): DesktopCapabilityId | undefined {
+  if (
+    code === "TOOL_PROVIDER_FAILED" &&
+    readString(details?.provider) === "tavily"
+  ) {
+    return "tools.internet.tavily";
+  }
   if (
     code === "IO_MODEL_FAILED" ||
     code === "IO_MODEL_TIMEOUT" ||

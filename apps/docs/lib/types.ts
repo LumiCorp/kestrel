@@ -69,6 +69,7 @@ export interface JourneyMeta {
 }
 export type SearchCapability =
   | "openai-compatible http"
+  | "conversation"
   | "operator control"
   | "mission control"
   | "recovery"

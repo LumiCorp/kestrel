@@ -20,7 +20,7 @@ import {
 } from "./connection.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
 import { readCoreLock } from "./lock.js";
-import { ensureLocalCoreReady } from "./ready.js";
+import { ensureLocalCoreReady, isLocalCoreProcessAlive } from "./ready.js";
 
 export interface LocalCoreDaemonReady {
   status: LocalCoreStatus;
@@ -280,9 +280,10 @@ async function inspectWithExpected(
   const env = options.env ?? process.env;
   const home = resolveKestrelCoreHome(env, options.platform);
   const paths = resolveLocalCorePaths(home.homePath);
+  const isPidAlive = options.isPidAlive ?? isLocalCoreProcessAlive;
   const lock = await readCoreLock({
     homePath: home.homePath,
-    isPidAlive: options.isPidAlive,
+    isPidAlive,
   });
   if (lock.state === "missing" || lock.state === "stale") {
     return {
@@ -414,10 +415,11 @@ async function waitForDaemonExit(input: {
   isPidAlive?: ((pid: number) => boolean) | undefined;
 }): Promise<void> {
   const startedAt = Date.now();
+  const isPidAlive = input.isPidAlive ?? isLocalCoreProcessAlive;
   while (Date.now() - startedAt < input.timeoutMs) {
     const lock = await readCoreLock({
       homePath: input.homePath,
-      isPidAlive: input.isPidAlive,
+      isPidAlive,
     });
     if (
       lock.state === "missing"

@@ -106,7 +106,15 @@ export interface ThreadRuntimeOptions {
 }
 
 export type DetachedTurnLifecycleEvent =
-  | { type: "started"; threadId: string; sessionId: string; runId: string; eventType: string }
+  | {
+      type: "started";
+      threadId: string;
+      sessionId: string;
+      runId: string;
+      eventType: string;
+      followUpId?: string | undefined;
+      sourceMessageId?: string | undefined;
+    }
   | { type: "completed"; threadId: string; sessionId: string; runId: string; result: SubmitTurnResult }
   | { type: "failed"; threadId: string; sessionId: string; runId: string; result?: SubmitTurnResult | undefined; error: RuntimeError };
 
@@ -559,9 +567,12 @@ export class ThreadRuntime implements ThreadRuntimePort {
             } : {}),
           });
       await this.withMessageRoutingMutation(input.threadId, async (thread) => {
+        const turnId = readNonEmptyString(thread.metadata?.activeTurnId)
+          ?? readNonEmptyString(thread.metadata?.turnId);
         await this.store.upsertThread(writeConversationMessageRoute(thread, {
           ...route,
           runId: result.output.runId,
+          ...(turnId !== undefined ? { turnId } : {}),
         }));
       });
       return {
@@ -590,12 +601,20 @@ export class ThreadRuntime implements ThreadRuntimePort {
       (input.resumeBlockedRun === true ? activeTurnId : undefined) ??
       `turn-${randomUUID()}`;
     const turnStartedAt = new Date().toISOString();
+    const existingTurn = await this.store.getConversationTurn?.(turnId);
+    const existingConversationSequence = readPositiveSafeInteger(
+      existingTurn?.metadata?.conversationSequence,
+    );
+    const conversationSequence = existingTurn === null || existingTurn === undefined
+      ? await this.nextConversationSequence(thread.threadId)
+      : existingConversationSequence;
     const latestSummary = (await this.store.listContextSummaryArtifacts(thread.threadId))[0];
     const turnMetadata = {
       ...(submittedMetadata ?? {}),
       ...(latestSummary !== undefined ? { authoritativeContextSummary: latestSummary } : {}),
       ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       ...(input.actSubmode !== undefined ? { actSubmode: input.actSubmode } : {}),
+      ...(conversationSequence !== undefined ? { conversationSequence } : {}),
       turnId,
       activeTurnId: turnId,
     };
@@ -611,7 +630,6 @@ export class ThreadRuntime implements ThreadRuntimePort {
             metadata: mergedMetadata,
             updatedAt: new Date().toISOString(),
           };
-    const existingTurn = await this.store.getConversationTurn?.(turnId);
     await this.resolveSubmitGateCheckpoints(activeThread);
     const resolvedLatestSummary = (await this.store.listContextSummaryArtifacts(activeThread.threadId))[0];
     if (resolvedLatestSummary !== undefined && resolvedLatestSummary.artifactId !== latestSummary?.artifactId) {
@@ -959,6 +977,18 @@ export class ThreadRuntime implements ThreadRuntimePort {
       ...result,
       thread: threadWithIdentity,
     };
+  }
+
+  private async nextConversationSequence(threadId: string): Promise<number> {
+    const turns = await this.store.listConversationTurns?.({ threadId, limit: 501 }) ?? [];
+    const explicitMaximum = turns.reduce(
+      (maximum, turn) => Math.max(
+        maximum,
+        readPositiveSafeInteger(turn.metadata?.conversationSequence) ?? 0,
+      ),
+      0,
+    );
+    return Math.max(explicitMaximum, turns.length) + 1;
   }
 
   private async resolveContextPolicyDefinition(contextPolicyId: string) {
@@ -1841,6 +1871,12 @@ export class ThreadRuntime implements ThreadRuntimePort {
       sessionId: thread.sessionId,
       runId,
       eventType: input.eventType,
+      ...(readNonEmptyString(input.metadata?.followUpId) !== undefined
+        ? { followUpId: readNonEmptyString(input.metadata?.followUpId) }
+        : {}),
+      ...(readNonEmptyString(input.metadata?.sourceMessageId) !== undefined
+        ? { sourceMessageId: readNonEmptyString(input.metadata?.sourceMessageId) }
+        : {}),
     });
     try {
       const result = await this.submitTurn({ ...input, runtimeTurn });
@@ -2672,6 +2708,7 @@ interface ConversationMessageRouteRecord {
   requestId?: string | undefined;
   followUpId?: string | undefined;
   runId?: string | undefined;
+  turnId?: string | undefined;
   createdAt: string;
 }
 
@@ -2702,6 +2739,9 @@ function readConversationMessageRoute(
     ...(readNonEmptyString(route.runId) !== undefined
       ? { runId: route.runId as string }
       : {}),
+    ...(readNonEmptyString(route.turnId) !== undefined
+      ? { turnId: route.turnId as string }
+      : {}),
   };
 }
 
@@ -2730,6 +2770,12 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function readNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readPositiveSafeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
+    : undefined;
 }
 
 function extractAllowedCapabilities(

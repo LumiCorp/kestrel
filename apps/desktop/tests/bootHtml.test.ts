@@ -74,6 +74,40 @@ test("Desktop creates a visible boot window before runtime startup", async () =>
   assert.doesNotMatch(source, /window\.on\("ready-to-show"/u);
 });
 
+test("Desktop main-window navigation and external-open IPC are defense-in-depth guarded", async () => {
+  const source = await readFile(mainPath, "utf8");
+  const windowStart = source.indexOf("const window = new BrowserWindow");
+  const windowEnd = source.indexOf("ensureMediaPermissionHandler(window)", windowStart);
+  const windowSetup = source.slice(windowStart, windowEnd);
+  const openStart = source.indexOf('ipcMain.handle("desktop:open-external"');
+  const openEnd = source.indexOf('ipcMain.handle("desktop:get-link-previews"', openStart);
+  const openHandler = source.slice(openStart, openEnd);
+
+  assert.match(windowSetup, /setWindowOpenHandler\(\(\) => \(\{ action: "deny" \}\)\)/u);
+  assert.match(
+    windowSetup,
+    /webContents\.on\("will-navigate", \(event\) => \{\s*if \(event\.url !== window\.webContents\.getURL\(\)\) \{\s*event\.preventDefault\(\)/u,
+  );
+  assert.match(openHandler, /requireCurrentMainWindowIpcSender\(_event\)/u);
+});
+
+test("Desktop registers execution IPC before loading the renderer", async () => {
+  const source = await readFile(mainPath, "utf8");
+  const startup = source.slice(
+    source.indexOf("async function startDesktopExecutionServices"),
+    source.indexOf("function installDesktopLifecycleHandlers"),
+  );
+
+  const registration = startup.indexOf("registerIpcHandlers(runnerTransport);");
+  const rendererBoot = startup.indexOf("await bootDesktop({ runnerTransport });");
+  assert.ok(registration >= 0, "execution IPC registration must be present");
+  assert.ok(rendererBoot >= 0, "renderer boot must be present");
+  assert.ok(
+    registration < rendererBoot,
+    "execution IPC must be registered before the renderer can invoke it",
+  );
+});
+
 test("Desktop guards the Vite renderer with generation-scoped readiness and fallback", async () => {
   const source = await readFile(mainPath, "utf8");
 

@@ -84,6 +84,7 @@ test("the complete 0.8 documentation surface is represented", async () => {
     "reference/terminal-results",
     "reference/compatibility",
     "reference/ai-sdk",
+    "reference/conversation",
     "start/runtime-model",
     "desktop/updates",
     "kestrel-one/source-and-hosting",
@@ -144,12 +145,12 @@ test("Kestrel One documentation uses the owned product routes", async () => {
 });
 
 test("released packages and compatibility are first-class public reference pages", async () => {
-  const routes = ["protocol", "sdk", "memory", "nextjs", "ai-sdk", "observability", "workspace-skills"];
+  const routes = ["protocol", "conversation", "sdk", "memory", "nextjs", "ai-sdk", "observability", "workspace-skills"];
   for (const route of routes) assert.ok(await getRenderedPageBySlug(["reference", route]), route);
   assert.ok(await getRenderedPageBySlug(["reference", "compatibility"]));
   assert.deepEqual(
     DOCS_RELEASE.compatibility.map(({ surface }) => surface),
-    ["Runtime", "Protocol", "SDK", "Memory", "Next.js", "AI SDK", "Observability", "Workspace skills", "CLI", "Desktop", "Kestrel One"],
+    ["Runtime", "Protocol", "Conversation", "SDK", "Memory", "Next.js", "AI SDK", "Observability", "Workspace skills", "CLI", "Desktop", "Kestrel One"],
   );
 });
 

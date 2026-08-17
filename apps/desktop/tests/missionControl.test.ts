@@ -253,6 +253,22 @@ test("Desktop Mission Control projects runtime thread inspection through the run
               createdAt: "2026-07-10T11:30:00.000Z",
               updatedAt: "2026-07-10T12:00:00.000Z",
             }],
+            dialogs: [{
+              dialogId: "dialog-1",
+              name: "Peregrine",
+              status: "open",
+              childThreadId: "thread-child:session-1",
+              messages: [{
+                messageId: "dialog-message-1",
+                dialogId: "dialog-1",
+                parentRunId: "run-1",
+                name: "Peregrine",
+                childSessionId: "thread-child:session-1",
+                sender: "collaborator",
+                text: "The bridge is verified.",
+                createdAt: "2026-07-10T11:59:00.000Z",
+              }],
+            }],
             childBlockerChain: [],
             workspace: {
               kind: "managed",
@@ -298,6 +314,8 @@ test("Desktop Mission Control projects runtime thread inspection through the run
                 attachmentIds: ["attachment-1"],
                 interactionMode: "build",
                 actSubmode: "safe",
+                source: "human",
+                sourceMessageId: "message-1",
                 createdAt: "2026-07-10T12:00:00.000Z",
                 state: "queued",
               }],
@@ -350,12 +368,15 @@ test("Desktop Mission Control projects runtime thread inspection through the run
   assert.deepEqual(response.activeRun, { runId: "run-1", status: "RUNNING" });
   assert.equal(response.followUpQueue.pauseReason, "operator");
   assert.equal(response.followUpQueue.items[0]?.attachmentIds[0], "attachment-1");
+  assert.equal(response.followUpQueue.items[0]?.source, "human");
+  assert.equal(response.followUpQueue.items[0]?.sourceMessageId, "message-1");
   assert.equal(response.inboxItems[0]?.requestId, "request-1");
   assert.equal(
     response.inboxItems[0]?.interaction?.metadata?.reason,
     "recovery_review",
   );
   assert.deepEqual(response.childThreads.map((thread) => thread.threadId), ["thread-child:session-1"]);
+  assert.equal(response.dialogs?.[0]?.messages[0]?.parentRunId, "run-1");
   assert.deepEqual(calls, [{
     command: { type: "operator.thread", threadId: "thread-main:session-1" },
     requestContext: context,

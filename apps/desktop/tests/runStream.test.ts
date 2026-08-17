@@ -13,7 +13,7 @@ import {
 import type { DesktopRunnerEvent } from "../src/contracts.js";
 
 
-test("Desktop projects assistant progress and tool activity into the conversation stream", () => {
+test("Desktop projects agent progress and tool activity into the conversation stream", () => {
   const progress = event("run.agent_progress", {
     update: baseUpdate({ message: "I am starting the development server.", stepIndex: 1, stepAgent: "agent.loop" }),
   });
@@ -38,7 +38,7 @@ test("Desktop projects assistant progress and tool activity into the conversatio
 
   const projected = [progress, started, completed].reduce(projectDesktopRunStream, []);
   assert.deepEqual(projected.map((item) => [item.kind, item.text, item.status]), [
-    ["assistant", "I am starting the development server.", "active"],
+    ["agent_progress", "I am starting the development server.", "active"],
     ["tool", "Completed Exec Command (exec_command)", "completed"],
   ]);
   assert.equal(projected[1]?.label, "Tool action");
@@ -123,16 +123,15 @@ test("Desktop keeps mismatched agent narration separate from canonical Weather a
   }));
 
   assert.deepEqual(runStream.map((item) => [item.kind, item.text]), [
-    ["assistant", "Continuing implementation of Likes feature server action and UI components."],
+    ["agent_progress", "Continuing implementation of Likes feature server action and UI components."],
     ["tool", "Completed Current Weather (free.weather.current)"],
   ]);
-  assert.match(html, /Kestrel/u);
+  assert.match(html, /Agent progress/u);
   assert.match(html, /Continuing implementation of Likes feature/u);
   assert.match(html, /Details/u);
-  assert.match(html, /Tool action/u);
-  assert.match(html, /Current Weather \(free\.weather\.current\)/u);
-  assert.match(html, /free\.weather\.current input/u);
-  assert.match(html, /Atlantic Ocean/u);
+  assert.match(html, /aria-expanded="false"/u);
+  assert.doesNotMatch(html, /Tool action/u);
+  assert.doesNotMatch(html, /free\.weather\.current input/u);
 });
 
 test("Desktop ignores repeated reasoning starts after an interrupted stream", () => {
@@ -157,7 +156,7 @@ test("Desktop ignores repeated reasoning starts after an interrupted stream", ()
   assert.equal(projected[0]?.text, "Inspecting the workspace.");
 });
 
-test("Desktop starts a new reasoning block after assistant and tool activity", () => {
+test("Desktop keeps interleaved reasoning in one coherent streaming block", () => {
   const events = [
     event("run.model.reasoning.started", {
       update: baseUpdate({ event: "started", attempt: 1, format: "summary", contentState: "live" }),
@@ -178,10 +177,9 @@ test("Desktop starts a new reasoning block after assistant and tool activity", (
 
   const projected = events.reduce(projectDesktopRunStream, []);
   assert.deepEqual(projected.map((item) => [item.kind, item.text]), [
-    ["reasoning", "First thought."],
-    ["assistant", "I’m continuing the requested work."],
+    ["reasoning", "First thought.Second thought."],
+    ["agent_progress", "I’m continuing the requested work."],
     ["tool", "Completed fs.search_text"],
-    ["reasoning", "Second thought."],
   ]);
 });
 
@@ -204,7 +202,7 @@ test("Desktop completes an earlier reasoning block without moving it past later 
   const projected = events.reduce(projectDesktopRunStream, []);
   assert.deepEqual(projected.map((item) => [item.kind, item.status]), [
     ["reasoning", "completed"],
-    ["assistant", "active"],
+    ["agent_progress", "active"],
   ]);
 });
 
@@ -221,14 +219,15 @@ test("Desktop preserves a live item's first-seen timestamp when later phases upd
   assert.equal(projected[0]?.status, "completed");
 });
 
-test("Desktop starts each accepted run with an empty transient stream", () => {
+test("Desktop starts each accepted run without clearing earlier run groups", () => {
   const current = projectDesktopRunStream([], event("run.agent_progress", {
-    update: baseUpdate({ message: "Old progress", stepIndex: 1, stepAgent: "agent.loop" }),
+    update: baseUpdate({ runId: "run-old", message: "Old progress", stepIndex: 1, stepAgent: "agent.loop" }),
   }));
-  assert.deepEqual(projectDesktopRunStream(current, event("run.started", {
+  const next = projectDesktopRunStream(current, event("run.started", {
     sessionId: "session-1",
     eventType: "user.message",
-  })), []);
+  }));
+  assert.deepEqual(next.map((item) => [item.runId, item.text]), [["run-old", "Old progress"]]);
 });
 
 test("Desktop retains runtime progress as operational timeline detail", () => {
@@ -342,6 +341,342 @@ test("Desktop preserves durable transcript order when transcript timestamps are 
   ]);
 });
 
+test("Desktop restores authoritative turn order from a scrambled persisted transcript", () => {
+  const timestamp = "2026-08-13T12:00:00.000Z";
+  const transcript = [
+    { role: "assistant" as const, text: "Second response.", timestamp, terminal: { runId: "run-2", turnId: "turn-2" } },
+    { role: "user" as const, text: "Second request.", timestamp, data: { kind: "desktop.user-message.v1", messageId: "message-2" } },
+    { role: "assistant" as const, text: "First response.", timestamp, terminal: { runId: "run-1", turnId: "turn-1" } },
+    { role: "user" as const, text: "First request.", timestamp, data: { kind: "desktop.user-message.v1", messageId: "message-1" } },
+  ];
+  const turns = [
+    {
+      turnId: "turn-2", threadId: "thread-1", sessionId: "session-1", sequence: 2,
+      status: "COMPLETED" as const, sourceMessageId: "message-2", rootRunId: "run-2",
+      terminalRunId: "run-2", startedAt: timestamp, updatedAt: timestamp, completedAt: timestamp,
+    },
+    {
+      turnId: "turn-1", threadId: "thread-1", sessionId: "session-1", sequence: 1,
+      status: "COMPLETED" as const, sourceMessageId: "message-1", rootRunId: "run-1",
+      terminalRunId: "run-1", startedAt: timestamp, updatedAt: timestamp, completedAt: timestamp,
+    },
+  ];
+
+  const timeline = projectDesktopConversationTimeline(transcript, [], turns);
+  assert.deepEqual(
+    timeline.map((item) => item.type === "transcript" ? item.line.text : item.item.text),
+    ["First request.", "First response.", "Second request.", "Second response."],
+  );
+});
+
+test("Desktop keeps unowned legacy messages and activity in chronological display slots", () => {
+  const firstTimestamp = "2026-08-13T12:00:00.000Z";
+  const legacyTimestamp = "2026-08-13T12:01:00.000Z";
+  const activityTimestamp = "2026-08-13T12:01:30.000Z";
+  const secondTimestamp = "2026-08-13T12:02:00.000Z";
+  const transcript = [
+    {
+      role: "user" as const,
+      text: "First request.",
+      timestamp: firstTimestamp,
+      data: { kind: "desktop.user-message.v1", messageId: "message-1" },
+    },
+    {
+      role: "assistant" as const,
+      text: "First response.",
+      timestamp: firstTimestamp,
+      terminal: { runId: "run-1", turnId: "turn-1" },
+    },
+    {
+      role: "assistant" as const,
+      text: "Legacy collaborator note.",
+      timestamp: legacyTimestamp,
+    },
+    {
+      role: "user" as const,
+      text: "Second request.",
+      timestamp: secondTimestamp,
+      data: { kind: "desktop.user-message.v1", messageId: "message-2" },
+    },
+    {
+      role: "assistant" as const,
+      text: "Second response.",
+      timestamp: secondTimestamp,
+      terminal: { runId: "run-2", turnId: "turn-2" },
+    },
+  ];
+  const turns = [
+    {
+      turnId: "turn-1", threadId: "thread-1", sessionId: "session-1", sequence: 1,
+      status: "COMPLETED" as const, sourceMessageId: "message-1", rootRunId: "run-1",
+      terminalRunId: "run-1", startedAt: firstTimestamp, updatedAt: firstTimestamp,
+      completedAt: firstTimestamp,
+    },
+    {
+      turnId: "turn-2", threadId: "thread-1", sessionId: "session-1", sequence: 2,
+      status: "COMPLETED" as const, sourceMessageId: "message-2", rootRunId: "run-2",
+      terminalRunId: "run-2", startedAt: secondTimestamp, updatedAt: secondTimestamp,
+      completedAt: secondTimestamp,
+    },
+  ];
+  const timeline = projectDesktopConversationTimeline(transcript, [{
+    id: "status:legacy",
+    kind: "status",
+    label: "Runtime",
+    text: "Legacy runtime detail.",
+    timestamp: activityTimestamp,
+    status: "completed",
+  }], turns);
+
+  assert.deepEqual(
+    timeline.map((item) => item.type === "transcript" ? item.line.text : item.item.text),
+    [
+      "First request.",
+      "First response.",
+      "Legacy collaborator note.",
+      "Legacy runtime detail.",
+      "Second request.",
+      "Second response.",
+    ],
+  );
+});
+
+test("Desktop keeps a later collaborator message in its owning durable turn", () => {
+  const firstTimestamp = "2026-08-13T12:00:00.000Z";
+  const secondTimestamp = "2026-08-13T12:01:00.000Z";
+  const transcript = [
+    {
+      role: "user" as const,
+      text: "First request.",
+      timestamp: firstTimestamp,
+      data: { kind: "desktop.user-message.v1", messageId: "message-1" },
+    },
+    {
+      role: "assistant" as const,
+      text: "First response.",
+      timestamp: firstTimestamp,
+      terminal: { runId: "run-1", turnId: "turn-1" },
+    },
+    {
+      role: "user" as const,
+      text: "Ask Peregrine.",
+      timestamp: secondTimestamp,
+      data: { kind: "desktop.user-message.v1", messageId: "message-2" },
+    },
+    {
+      role: "assistant" as const,
+      text: "Peregrine replied later.",
+      timestamp: secondTimestamp,
+      dialog: {
+        messageId: "dialog-message-1",
+        dialogId: "dialog-1",
+        parentRunId: "run-2",
+        name: "Peregrine",
+        childSessionId: "dialog-child-1",
+        sender: "collaborator" as const,
+      },
+    },
+  ];
+  const turns = [
+    {
+      turnId: "turn-1", threadId: "thread-1", sessionId: "session-1", sequence: 1,
+      status: "COMPLETED" as const, sourceMessageId: "message-1", rootRunId: "run-1",
+      terminalRunId: "run-1", startedAt: firstTimestamp, updatedAt: firstTimestamp,
+      completedAt: firstTimestamp,
+    },
+    {
+      turnId: "turn-2", threadId: "thread-1", sessionId: "session-1", sequence: 2,
+      status: "WAITING" as const, sourceMessageId: "message-2", rootRunId: "run-2",
+      activeRunId: "run-2", startedAt: secondTimestamp, updatedAt: secondTimestamp,
+    },
+  ];
+
+  const timeline = projectDesktopConversationTimeline(transcript, [], turns);
+
+  assert.deepEqual(
+    timeline.map((item) => item.type === "transcript" ? item.line.text : item.item.text),
+    ["First request.", "First response.", "Ask Peregrine.", "Peregrine replied later."],
+  );
+});
+
+test("Desktop keeps a submitting user message at the tail before its durable turn arrives", () => {
+  const transcript = [
+    {
+      role: "user" as const,
+      text: "How is it going?",
+      timestamp: "2026-08-13T23:31:00.000Z",
+      data: { kind: "desktop.user-message.v1", messageId: "message-old" },
+    },
+    {
+      role: "assistant" as const,
+      text: "Current verified progress so far.",
+      timestamp: "2026-08-13T23:31:30.000Z",
+      terminal: { runId: "run-old", turnId: "turn-old" },
+    },
+    {
+      role: "user" as const,
+      text: "Let's keep going",
+      timestamp: "2026-08-13T23:32:00.000Z",
+      data: {
+        kind: "desktop.user-message.v1",
+        messageId: "message-new",
+        deliveryState: "submitting",
+      },
+    },
+  ];
+  const runStream = [{
+    id: "agent-progress:new-run",
+    runId: "run-new",
+    kind: "agent_progress" as const,
+    label: "Agent progress",
+    text: "Continuing the implementation.",
+    timestamp: "2026-08-13T23:32:01.000Z",
+    status: "active" as const,
+  }];
+  const turns = [{
+    threadId: "thread-1",
+    turnId: "turn-old",
+    sequence: 1,
+    status: "COMPLETED" as const,
+    inputMessageId: "message-old",
+    assistantMessageId: "terminal:run-old",
+    rootRunId: "run-old",
+    activeRunId: undefined,
+    terminalRunId: "run-old",
+    startedAt: "2026-08-13T23:31:00.000Z",
+    updatedAt: "2026-08-13T23:31:30.000Z",
+    completedAt: "2026-08-13T23:31:30.000Z",
+  }];
+
+  const items = projectDesktopConversationTimeline(transcript, runStream, turns, []);
+
+  assert.deepEqual(
+    items.map((item) => item.type === "transcript" ? item.line.text : item.item.text),
+    [
+      "How is it going?",
+      "Current verified progress so far.",
+      "Let's keep going",
+      "Continuing the implementation.",
+    ],
+  );
+});
+
+test("Desktop keeps resumed-run details with their chronological message group", () => {
+  const transcript = [
+    {
+      role: "user" as const,
+      text: "Start the app.",
+      timestamp: "2026-08-13T18:39:56.000Z",
+      data: { kind: "desktop.user-message.v1", messageId: "message-start" },
+    },
+    {
+      role: "system" as const,
+      text: "Switch to Build and resume?",
+      timestamp: "2026-08-13T18:40:03.000Z",
+      terminal: { runId: "run-wait" },
+    },
+    {
+      role: "user" as const,
+      text: "you're now in build",
+      timestamp: "2026-08-13T18:40:23.000Z",
+      data: { kind: "desktop.user-message.v1", messageId: "message-resume" },
+    },
+    {
+      role: "assistant" as const,
+      text: "The app is running.",
+      timestamp: "2026-08-13T18:40:41.000Z",
+      terminal: { runId: "run-resume" },
+    },
+    {
+      role: "user" as const,
+      text: "Build notifications.",
+      timestamp: "2026-08-13T21:04:58.000Z",
+      data: { kind: "desktop.user-message.v1", messageId: "message-later" },
+    },
+    {
+      role: "assistant" as const,
+      text: "Notifications are complete.",
+      timestamp: "2026-08-13T21:06:55.000Z",
+      terminal: { runId: "run-later" },
+    },
+  ];
+  const turns = [
+    {
+      turnId: "turn-start",
+      threadId: "thread-1",
+      sessionId: "session-1",
+      sequence: 1,
+      status: "COMPLETED" as const,
+      sourceMessageId: "message-start",
+      rootRunId: "run-wait",
+      terminalRunId: "run-resume",
+      startedAt: "2026-08-13T18:39:56.000Z",
+      updatedAt: "2026-08-13T18:40:41.000Z",
+      completedAt: "2026-08-13T18:40:41.000Z",
+    },
+    {
+      turnId: "turn-later",
+      threadId: "thread-1",
+      sessionId: "session-1",
+      sequence: 2,
+      status: "COMPLETED" as const,
+      sourceMessageId: "message-later",
+      rootRunId: "run-later",
+      terminalRunId: "run-later",
+      startedAt: "2026-08-13T21:04:58.000Z",
+      updatedAt: "2026-08-13T21:06:55.000Z",
+      completedAt: "2026-08-13T21:06:55.000Z",
+    },
+  ];
+  const runStream = [
+    {
+      id: "agent-progress:resume",
+      runId: "run-resume",
+      kind: "agent_progress" as const,
+      label: "Agent progress",
+      text: "Starting the app.",
+      timestamp: "2026-08-13T18:40:30.000Z",
+      status: "completed" as const,
+    },
+    {
+      id: "agent-progress:later",
+      runId: "run-later",
+      kind: "agent_progress" as const,
+      label: "Agent progress",
+      text: "Building notifications.",
+      timestamp: "2026-08-13T21:05:30.000Z",
+      status: "completed" as const,
+    },
+  ];
+  const routes = [
+    { messageId: "message-start", runId: "run-wait", disposition: "started" as const, createdAt: "2026-08-13T18:39:56.000Z" },
+    { messageId: "message-resume", runId: "run-resume", disposition: "replied" as const, createdAt: "2026-08-13T18:40:23.000Z" },
+    { messageId: "message-later", runId: "run-later", disposition: "started" as const, createdAt: "2026-08-13T21:04:58.000Z" },
+  ];
+
+  const items = projectDesktopConversationTimeline(transcript, runStream, turns, routes);
+  assert.deepEqual(items.map((item) => item.type === "transcript" ? item.line.text : item.item.text), [
+    "Start the app.",
+    "Switch to Build and resume?",
+    "you're now in build",
+    "Starting the app.",
+    "The app is running.",
+    "Build notifications.",
+    "Building notifications.",
+    "Notifications are complete.",
+  ]);
+
+  const html = renderToStaticMarkup(React.createElement(ConversationTimeline, {
+    items,
+    active: false,
+    activity: "Ready",
+    endRef: { current: null },
+  }));
+  assert.equal(html.match(/Agent progress · 1 update/g)?.length, 2);
+  assert.ok(html.indexOf("Starting the app.") < html.indexOf("The app is running."));
+  assert.ok(html.indexOf("Building notifications.") < html.indexOf("Notifications are complete."));
+});
+
 test("Desktop renders a stopped transition when cancellation has no assistant response", () => {
   const items = projectDesktopConversationTimeline(
     [{
@@ -370,12 +705,81 @@ test("Desktop renders a stopped transition when cancellation has no assistant re
   assert.match(html, /state-cancelled/u);
 });
 
+test("Desktop does not render Completed before the agent finalizes an answer", () => {
+  const items = projectDesktopConversationTimeline(
+    [{
+      role: "user",
+      text: "Inspect the workspace.",
+      timestamp: "2026-07-20T12:00:00.000Z",
+    }],
+    [{
+      id: "tool:tool-1",
+      kind: "tool",
+      label: "Tool",
+      text: "Completed fs.read_text",
+      timestamp: "2026-07-20T12:00:01.000Z",
+      status: "completed",
+    }],
+  );
+
+  const html = renderToStaticMarkup(React.createElement(ConversationTimeline, {
+    items,
+    active: false,
+    activity: "Ready",
+    endRef: { current: null },
+  }));
+
+  assert.doesNotMatch(html, />Completed</u);
+});
+
+test("Desktop renders Completed only with the finalized assistant answer", () => {
+  const items = projectDesktopConversationTimeline(
+    [
+      {
+        role: "user",
+        text: "Inspect the workspace.",
+        timestamp: "2026-07-20T12:00:00.000Z",
+      },
+      {
+        role: "assistant",
+        text: "The workspace inspection is complete.",
+        timestamp: "2026-07-20T12:00:02.000Z",
+      },
+    ],
+    [{
+      id: "tool:tool-1",
+      kind: "tool",
+      label: "Tool",
+      text: "Completed fs.read_text",
+      timestamp: "2026-07-20T12:00:01.000Z",
+      status: "completed",
+    }],
+  );
+
+  const html = renderToStaticMarkup(React.createElement(ConversationTimeline, {
+    items,
+    active: false,
+    activity: "Ready",
+    endRef: { current: null },
+  }));
+
+  assert.match(html, /The workspace inspection is complete\./u);
+  assert.match(
+    html,
+    /timeline-entry-transition state-completed[\s\S]*<strong>Completed<\/strong>/u,
+  );
+  assert.ok(
+    html.indexOf("The workspace inspection is complete.") <
+      html.indexOf("timeline-entry-transition state-completed"),
+  );
+});
+
 test("Desktop renders progress calmly while operational evidence stays collapsed", () => {
   const items = projectDesktopConversationTimeline([], [
     {
-      id: "assistant:event-1",
-      kind: "assistant",
-      label: "Kestrel",
+      id: "agent-progress:event-1",
+      kind: "agent_progress",
+      label: "Agent progress",
       text: "Inspecting the workspace.",
       timestamp: "2026-07-20T12:00:01.000Z",
       status: "active",
@@ -397,12 +801,36 @@ test("Desktop renders progress calmly while operational evidence stays collapsed
     endRef: { current: null },
   }));
 
-  assert.match(html, /Kestrel/u);
+  assert.match(html, /Agent progress/u);
   assert.match(html, /Inspecting the workspace\./u);
+  assert.match(html, /open=""/u);
+  assert.match(html, /Agent is working/u);
   assert.match(html, /Details/u);
   assert.match(html, /1 operational event/u);
-  assert.doesNotMatch(html, /Agent progress/u);
+  assert.match(html, /<button[^>]*aria-expanded="false"[^>]*>/u);
+  assert.doesNotMatch(html, /Completed exec_command/u);
   assert.doesNotMatch(html, /Activity details/u);
+});
+
+test("Desktop summarizes and collapses agent progress after the run completes", () => {
+  const runStream = [
+    event("run.agent_progress", {
+      update: baseUpdate({ message: "Inspecting the workspace.", seq: 1 }),
+    }),
+    event("run.agent_progress", {
+      update: baseUpdate({ message: "Starting the development server.", seq: 2 }),
+    }),
+  ].reduce(projectDesktopRunStream, []);
+  const html = renderToStaticMarkup(React.createElement(ConversationTimeline, {
+    items: projectDesktopConversationTimeline([], runStream),
+    active: false,
+    activity: "Ready",
+    endRef: { current: null },
+  }));
+
+  assert.match(html, /Agent progress · 2 updates/u);
+  assert.doesNotMatch(html, /open=""/u);
+  assert.doesNotMatch(html, /Agent is working/u);
 });
 
 function event(type: DesktopRunnerEvent["type"], payload: Record<string, unknown>): DesktopRunnerEvent {

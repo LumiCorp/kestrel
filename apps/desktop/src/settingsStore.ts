@@ -24,6 +24,8 @@ import {
   createDesktopModelConfiguration,
   DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
   DESKTOP_DEFAULT_ENABLED_APP_IDS,
+  filterDesktopBuiltInAppIds,
+  filterDesktopWorkflowAppIds,
   getDesktopAppDefinition,
   listDesktopAppDefinitions,
   normalizeDesktopAppId,
@@ -90,8 +92,13 @@ type DesktopSettingsFileBase = {
   modelConfigurations?: DesktopSettings["modelConfigurations"] | undefined;
   defaultModelConfigurationId?: string | undefined;
   defaultEnabledAppIds?: string[] | undefined;
+  defaultEnabledBuiltInAppIds?: string[] | undefined;
   appearanceTheme?: DesktopSettings["appearanceTheme"] | undefined;
   projectTombstones?: DesktopSettings["projectTombstones"] | undefined;
+};
+
+type DesktopSettingsInput = Partial<DesktopSettings> & {
+  defaultEnabledAppIds?: string[] | undefined;
 };
 
 type DesktopSettingsFileV1 = {
@@ -158,6 +165,13 @@ type DesktopSettingsFileV10 = DesktopSettingsFileBase & {
   projects?: DesktopProjectRegistration[] | undefined;
 };
 
+type DesktopSettingsFileV11 = DesktopSettingsFileBase & {
+  version: 11;
+  presetId?: DesktopSettings["presetId"] | undefined;
+  capabilityPacks?: DesktopSettings["capabilityPacks"] | undefined;
+  projects?: DesktopProjectRegistration[] | undefined;
+};
+
 const LEGACY_SETUP_COMPLETED_AT = "1970-01-01T00:00:00.000Z";
 const LEGACY_PROVIDER_SELECTION_COMPLETED_AT = "1970-01-01T00:00:00.000Z";
 const DESKTOP_SAFE_CAPABILITY_PACKS: DesktopCapabilityPackId[] = [
@@ -205,7 +219,7 @@ export function createDefaultDesktopSettings(
     advancedWorkspaceEnabled: false,
     modelConfigurations: [createDesktopModelConfiguration(fallbackModelPolicy)],
     defaultModelConfigurationId: DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
-    defaultEnabledAppIds: [...DESKTOP_DEFAULT_ENABLED_APP_IDS],
+    defaultEnabledBuiltInAppIds: [...DESKTOP_DEFAULT_ENABLED_APP_IDS],
     appearanceTheme: "system",
   };
 }
@@ -223,7 +237,7 @@ export function describeDesktopProviderCredentialRequirement(
 }
 
 export function normalizeDesktopSettings(
-  settings: Partial<DesktopSettings> | undefined,
+  settings: DesktopSettingsInput | undefined,
   options: {
     legacySetupCompletedFromKeys?: boolean | undefined;
     legacyAdvancedWorkspaceEnabled?: boolean | undefined;
@@ -385,23 +399,19 @@ export function normalizeDesktopSettings(
         (configuration) => configuration.archivedAt === undefined,
       )?.id ?? modelConfigurations[0]!.id);
   const mcpServers = normalizeDesktopMcpServers(settings?.mcpServers);
-  const defaultEnabledAppIds = Array.isArray(settings?.defaultEnabledAppIds)
-    ? [
-        ...new Set(
-          settings.defaultEnabledAppIds.flatMap((id) => {
-            if (typeof id !== "string") return [];
-            const normalized = normalizeDesktopAppId(id.trim());
-            return getDesktopAppDefinition(
-              normalized,
-              undefined,
-              mcpServers,
-            ) === undefined
-              ? []
-              : [normalized];
-          }),
-        ),
-      ].sort()
-    : [...DESKTOP_DEFAULT_ENABLED_APP_IDS];
+  const legacyDefaultAppIds = Array.isArray(settings?.defaultEnabledAppIds)
+    ? settings.defaultEnabledAppIds.flatMap((id) => typeof id === "string" ? [id] : [])
+    : undefined;
+  const defaultEnabledBuiltInAppIds = Array.isArray(settings?.defaultEnabledBuiltInAppIds)
+    ? filterDesktopBuiltInAppIds(settings.defaultEnabledBuiltInAppIds)
+    : legacyDefaultAppIds !== undefined
+      ? filterDesktopBuiltInAppIds(legacyDefaultAppIds)
+      : [...DESKTOP_DEFAULT_ENABLED_APP_IDS];
+  const legacyDefaultWorkflowAppIds = settings?.legacyDefaultWorkflowAppIds !== undefined
+    ? filterDesktopWorkflowAppIds(settings.legacyDefaultWorkflowAppIds)
+    : legacyDefaultAppIds !== undefined
+      ? filterDesktopWorkflowAppIds(legacyDefaultAppIds)
+      : undefined;
   const appearanceTheme =
     settings?.appearanceTheme === "light" ||
     settings?.appearanceTheme === "dark"
@@ -478,7 +488,10 @@ export function normalizeDesktopSettings(
         : options.legacyAdvancedWorkspaceEnabled === true,
     modelConfigurations,
     defaultModelConfigurationId,
-    defaultEnabledAppIds,
+    defaultEnabledBuiltInAppIds,
+    ...(legacyDefaultWorkflowAppIds !== undefined
+      ? { legacyDefaultWorkflowAppIds }
+      : {}),
     appearanceTheme,
   };
 }
@@ -637,7 +650,8 @@ export async function readDesktopSettings(
       parsed.version !== 7 &&
       parsed.version !== 8 &&
       parsed.version !== 9 &&
-      parsed.version !== 10
+      parsed.version !== 10 &&
+      parsed.version !== 11
     ) {
       return createDefaultDesktopSettings();
     }
@@ -773,7 +787,7 @@ export async function readDesktopSettings(
         ? parsed.setupCompletedAt
         : undefined;
     const desktopOnboarding =
-      parsed.version === 10
+      (parsed.version === 10 || parsed.version === 11)
         ? normalizeDesktopOnboardingRecord(parsed.desktopOnboarding)
         : undefined;
     const advancedWorkspaceEnabled =
@@ -782,20 +796,30 @@ export async function readDesktopSettings(
         ? parsed.advancedWorkspaceEnabled
         : undefined;
     const modelConfigurations =
-      parsed.version === 10 && Array.isArray(parsed.modelConfigurations)
+      (parsed.version === 10 || parsed.version === 11) && Array.isArray(parsed.modelConfigurations)
         ? parsed.modelConfigurations
         : undefined;
     const defaultModelConfigurationId =
-      parsed.version === 10 &&
+      (parsed.version === 10 || parsed.version === 11) &&
       typeof parsed.defaultModelConfigurationId === "string"
         ? parsed.defaultModelConfigurationId
         : undefined;
-    const defaultEnabledAppIds =
+    const legacyDefaultAppIds =
       parsed.version === 10 && Array.isArray(parsed.defaultEnabledAppIds)
-        ? parsed.defaultEnabledAppIds
+        ? parsed.defaultEnabledAppIds.flatMap((entry) => typeof entry === "string" ? [entry] : [])
+        : [];
+    const defaultEnabledBuiltInAppIds =
+      parsed.version === 11 && Array.isArray(parsed.defaultEnabledBuiltInAppIds)
+        ? parsed.defaultEnabledBuiltInAppIds
+        : parsed.version === 10
+          ? filterDesktopBuiltInAppIds(legacyDefaultAppIds)
+          : undefined;
+    const legacyDefaultWorkflowAppIds =
+      parsed.version === 10
+        ? filterDesktopWorkflowAppIds(legacyDefaultAppIds)
         : undefined;
     const appearanceTheme =
-      parsed.version === 10 &&
+      (parsed.version === 10 || parsed.version === 11) &&
       (parsed.appearanceTheme === "system" ||
         parsed.appearanceTheme === "light" ||
         parsed.appearanceTheme === "dark")
@@ -887,12 +911,13 @@ export async function readDesktopSettings(
         ...(defaultModelConfigurationId !== undefined
           ? { defaultModelConfigurationId }
           : {}),
-        ...(defaultEnabledAppIds !== undefined ? { defaultEnabledAppIds } : {}),
+        ...(defaultEnabledBuiltInAppIds !== undefined ? { defaultEnabledBuiltInAppIds } : {}),
+        ...(legacyDefaultWorkflowAppIds !== undefined ? { legacyDefaultWorkflowAppIds } : {}),
         ...(appearanceTheme !== undefined ? { appearanceTheme } : {}),
       },
       {
         backfillProviderSelection:
-          parsed.version !== 9 && parsed.version !== 10,
+          parsed.version !== 9 && parsed.version !== 10 && parsed.version !== 11,
       },
     );
   } catch {
@@ -905,8 +930,8 @@ export async function writeDesktopSettings(
   settings: DesktopSettings,
 ): Promise<DesktopSettings> {
   const normalized = normalizeDesktopSettings(settings);
-  const payload: DesktopSettingsFileV10 = {
-    version: 10,
+  const payload: DesktopSettingsFileV11 = {
+    version: 11,
     selectedProvider: normalized.selectedProvider,
     databaseMode: normalized.databaseMode,
     presetId: normalized.presetId,
@@ -1010,7 +1035,7 @@ export async function writeDesktopSettings(
     advancedWorkspaceEnabled: normalized.advancedWorkspaceEnabled,
     modelConfigurations: normalized.modelConfigurations,
     defaultModelConfigurationId: normalized.defaultModelConfigurationId,
-    defaultEnabledAppIds: normalized.defaultEnabledAppIds,
+    defaultEnabledBuiltInAppIds: normalized.defaultEnabledBuiltInAppIds,
     appearanceTheme: normalized.appearanceTheme,
   };
   await mkdir(path.dirname(settingsPath), { recursive: true });
@@ -1025,6 +1050,7 @@ export async function writeDesktopSettings(
     openaiApiKey: _openaiApiKey,
     anthropicApiKey: _anthropicApiKey,
     tavilyApiKey: _tavilyApiKey,
+    legacyDefaultWorkflowAppIds: _legacyDefaultWorkflowAppIds,
     ...sanitized
   } = normalized;
   return sanitized;

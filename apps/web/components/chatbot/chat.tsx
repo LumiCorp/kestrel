@@ -543,7 +543,9 @@ function ChatShell({
     feedback: "positive" | "negative" | null
   ) => void;
   onModelChange: (modelId: string) => void;
-  onInteractionModeChange: (mode: KestrelOneInteractionMode) => void;
+  onInteractionModeChange: (
+    mode: KestrelOneInteractionMode
+  ) => boolean | void | Promise<boolean | void>;
   regenerate: ChatController["regenerate"];
   selectedVisibilityType: VisibilityType;
   sendMessage: ChatController["sendMessage"];
@@ -597,11 +599,25 @@ function ChatShell({
           feedbackByMessageId={feedbackByMessageId}
           isArtifactVisible={isArtifactVisible}
           isReadonly={isReadonly}
+          interactionMode={interactionMode}
           liveRuntimePresentation={liveRuntimePresentation}
           messages={messages}
           onFeedbackChange={onFeedbackChange}
           onRefreshConversationState={onRefreshConversationState}
           onRuntimeInteractionResponse={onRuntimeInteractionResponse}
+          onModeSwitch={async (interaction, mode) => {
+            const changed = await onInteractionModeChange(mode);
+            if (changed === false) {
+              throw new Error("Mode selection could not be saved.");
+            }
+            if (!interaction.turnId) throw new Error("The waiting turn could not be identified.");
+            await onRuntimeInteractionResponse({
+              requestId: interaction.requestId,
+              eventType: interaction.eventType,
+              turnId: interaction.turnId,
+              message: `/mode ${mode}`,
+            });
+          }}
           regenerate={regenerate}
           selectedModelId={currentModelId}
           setMessages={setMessages}
@@ -612,12 +628,26 @@ function ChatShell({
 
         {isReadonly || !threadExists ? null : (
           <InteractionPanel
+            currentMode={interactionMode}
             interactions={conversationState.interactions.filter(
               (interaction) =>
                 interaction.status === "pending" && interaction.turnId === null
             )}
             onResolved={onRefreshConversationState}
             onRuntimeResponse={onRuntimeInteractionResponse}
+            onModeSwitch={async (interaction, mode) => {
+              const changed = await onInteractionModeChange(mode);
+              if (changed === false) {
+                throw new Error("Mode selection could not be saved.");
+              }
+              if (!interaction.turnId) throw new Error("The waiting turn could not be identified.");
+              await onRuntimeInteractionResponse({
+                requestId: interaction.requestId,
+                eventType: interaction.eventType,
+                turnId: interaction.turnId,
+                message: `/mode ${mode}`,
+              });
+            }}
             threadId={threadId}
           />
         )}
@@ -1059,9 +1089,9 @@ export function Chat({
     nextMode: KestrelOneInteractionMode,
   ) => {
     const previousMode = shared.interactionModeRef.current;
-    if (nextMode === previousMode) return;
+    if (nextMode === previousMode) return true;
     shared.setInteractionMode(nextMode);
-    if (!chatExists) return;
+    if (!chatExists) return true;
     try {
       const response = await fetch(`/api/threads/${id}`, {
         method: "PATCH",
@@ -1069,6 +1099,7 @@ export function Chat({
         body: JSON.stringify({ interactionMode: nextMode }),
       });
       if (!response.ok) throw new Error("Mode selection could not be saved.");
+      return true;
     } catch {
       if (shared.interactionModeRef.current === nextMode) {
         shared.setInteractionMode(previousMode);
@@ -1077,6 +1108,7 @@ export function Chat({
         type: "error",
         description: "Mode selection could not be saved.",
       });
+      return false;
     }
   }, [chatExists, id, shared.interactionModeRef, shared.setInteractionMode]);
 
@@ -1515,7 +1547,7 @@ export function Chat({
           }));
         }}
         onInterrupt={interruptActiveTurn}
-        onInteractionModeChange={(mode) => void changeInteractionMode(mode)}
+        onInteractionModeChange={changeInteractionMode}
         onModelChange={shared.setCurrentModelId}
         onRefreshConversationState={refreshConversationState}
         onRuntimeInteractionResponse={respondToRuntimeInteraction}

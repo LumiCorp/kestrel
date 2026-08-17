@@ -280,6 +280,64 @@ test(
 );
 
 test(
+  "unified Mission Control keeps the active project load across parent callback rerenders",
+  async () => {
+    const response = projectResponse();
+    let resolveProject:
+      | ((value: DesktopMissionControlProjectResponse) => void)
+      | undefined;
+    let calls = 0;
+    const reportedByFirst: Array<string | undefined> = [];
+    const reportedByLatest: Array<string | undefined> = [];
+    const { root, container } = installDom(async () => {
+      calls += 1;
+      return new Promise<DesktopMissionControlProjectResponse>((resolve) => {
+        resolveProject = resolve;
+      });
+    });
+    const commonProps = {
+      project: { id: PROJECT_ID, path: "/project", label: "Kestrel" },
+      onReturnToConversation: () => {},
+      onOpenConversation: () => {},
+      onStartConversation: () => {},
+    };
+
+    await act(async () => {
+      root.render(
+        <UnifiedMissionControlWorkspace
+          {...commonProps}
+          onError={(message) => reportedByFirst.push(message)}
+        />,
+      );
+    });
+    assert.equal(calls, 1);
+
+    await act(async () => {
+      root.render(
+        <UnifiedMissionControlWorkspace
+          {...commonProps}
+          onError={(message) => reportedByLatest.push(message)}
+        />,
+      );
+    });
+    assert.equal(
+      calls,
+      1,
+      "changing a parent callback must not cancel and restart the project request",
+    );
+
+    await act(async () => {
+      assert.ok(resolveProject);
+      resolveProject(response);
+    });
+    assert.match(container.textContent ?? "", /Project authority · epoch 1/u);
+    assert.deepEqual(reportedByFirst, []);
+    assert.deepEqual(reportedByLatest, [undefined]);
+    await act(async () => root.unmount());
+  },
+);
+
+test(
   "unified Mission Control routes explicit operator commands through active project authority",
   async () => {
     const inactive = projectResponse();

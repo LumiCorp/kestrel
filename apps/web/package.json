@@ -92,6 +92,7 @@
     "@hookform/resolvers": "^5.2.2",
     "@icons-pack/react-simple-icons": "^13.7.0",
     "@kestrel-agents/ai-sdk": "0.8.0",
+    "@kestrel-agents/conversation": "0.8.0",
     "@kestrel-agents/memory": "0.8.0",
     "@kestrel-agents/next": "0.8.0",
     "@kestrel-agents/protocol": "0.8.0",

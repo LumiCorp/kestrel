@@ -9,6 +9,7 @@ import type {
   KestrelPresentationSnapshot,
   KestrelUIMessage,
 } from "./contracts.js";
+import type { ConversationMode } from "@kestrel-agents/conversation";
 
 export async function writeKestrelRunnerStreamToUIMessage(input: {
   writer: UIMessageStreamWriter<KestrelUIMessage>;
@@ -17,12 +18,14 @@ export async function writeKestrelRunnerStreamToUIMessage(input: {
   assistantMessageId: string;
   textPartId: string;
   turnId?: string | undefined;
+  interactionMode?: ConversationMode | undefined;
   onPart?: ((part: KestrelPresentationPart) => void) | undefined;
   onEvent?: ((event: RunnerRunStreamEvent) => void) | undefined;
 }): Promise<KestrelPresentationSnapshot> {
   const accumulator = createKestrelPresentationAccumulator({
     assistantMessageId: input.assistantMessageId,
     ...(input.turnId !== undefined ? { turnId: input.turnId } : {}),
+    ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
   });
   input.writer.write({ type: "start", messageId: input.assistantMessageId });
   input.writer.write({ type: "text-start", id: input.textPartId });

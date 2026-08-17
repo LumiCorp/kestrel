@@ -2,6 +2,7 @@ import type { DesktopCapabilityId } from "../../src/contracts";
 
 export interface DesktopThreadFeedback {
   activity: string;
+  activityUpdatedAt?: string | undefined;
   error?: string | undefined;
   errorCapability?: DesktopCapabilityId | undefined;
 }

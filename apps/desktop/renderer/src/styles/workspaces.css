@@ -207,6 +207,9 @@
   padding-top: var(--space-3);
   border-top: var(--border-width) solid var(--border-subtle);
 }
+.settings-surface .appearance-options legend { font-weight: 650; padding: 0 4px; }
+.settings-apps-summary { border-top: 1px solid var(--border-subtle); margin-top: 14px; padding-top: 14px; }
+.mcp-list-group-heading { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 12px 10px 5px; text-transform: uppercase; }
 
 .settings-surface .appearance-options label {
   display: flex;
@@ -221,6 +224,121 @@
 .project-grid {
   min-height: calc(100% - var(--surface-header-height));
 }
+
+.project-surface-header {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.project-surface-header > :last-child { justify-self: end; }
+
+.project-workspace-tabs {
+  display: inline-flex;
+  padding: 2px;
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-control);
+}
+
+.project-workspace-tabs button {
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.project-workspace-tabs button.active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.project-overview {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  min-height: calc(100% - var(--surface-header-height));
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+.project-overview-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.project-overview-stat {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-pane-subtle);
+}
+
+.project-overview-stat strong { font-size: 22px; font-weight: 500; }
+.project-overview-stat span { color: var(--text-tertiary); font-size: 11px; }
+.project-overview-stat.status-running strong { color: var(--accent); }
+.project-overview-stat.status-waiting strong { color: var(--warning); }
+.project-overview-stat.status-failed strong { color: var(--danger); }
+
+.project-overview-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-width) solid var(--border-subtle);
+}
+
+.project-overview-heading h2 { margin: 0; font-size: 14px; font-weight: 500; }
+.project-overview-heading p { margin: var(--space-1) 0 0; color: var(--text-tertiary); font-size: 11px; }
+
+.project-overview-threads { display: grid; gap: var(--space-1); }
+.project-overview-threads > button {
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 58px;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-pane-subtle);
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.project-overview-threads > button:hover { background: var(--bg-hover); }
+.project-overview-threads > button > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
+.project-overview-threads > button strong,
+.project-overview-threads > button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-overview-threads > button strong { font-size: 12px; font-weight: 500; }
+.project-overview-threads > button small,
+.project-overview-threads > button time { color: var(--text-tertiary); font-size: 10px; }
+.project-thread-status { width: 8px; height: 8px; border-radius: 50%; background: var(--text-tertiary); }
+.project-thread-status.status-running { background: var(--accent); }
+.project-thread-status.status-waiting { background: var(--warning); }
+.project-thread-status.status-failed { background: var(--danger); }
+.project-thread-status.status-unavailable { border: 1px solid var(--danger); background: transparent; }
+
+.project-overview-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  border: var(--border-width) dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.project-overview-empty strong { color: var(--text-primary); font-size: 13px; }
+.project-overview-empty span { font-size: 11px; }
 
 .workspace-panel,
 .runtime-tail,
@@ -311,6 +429,12 @@
   .project-side-stack {
     grid-template-rows: minmax(190px, 0.72fr) minmax(280px, 1.28fr);
   }
+}
+
+@media (max-width: 760px) {
+  .project-surface-header { grid-template-columns: minmax(0, 1fr) auto; }
+  .project-surface-header > :first-child { display: none; }
+  .project-overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .unified-mission-control {

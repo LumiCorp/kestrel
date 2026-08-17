@@ -138,6 +138,65 @@ test("Local Core daemon readiness returns a redaction-aware in-memory connection
   }
 });
 
+test("Local Core daemon inspection recognizes a responsive owner with a stale heartbeat", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kc-daemon-stale-heartbeat-"));
+  const buildIdentity = buildFixtureIdentity("d");
+  const authority = await startFakeLocalCoreAuthority({
+    home,
+    coreVersion: buildIdentity.suiteVersion,
+    buildIdentity,
+    lockNow: new Date("2020-01-01T00:00:00.000Z"),
+  });
+  try {
+    const inspection = await inspectLocalCoreDaemon({
+      env: { KESTREL_CORE_HOME: home },
+      platform: process.platform,
+      coreVersion: buildIdentity.suiteVersion,
+      buildIdentity,
+    });
+    assert.equal(inspection.state, "running");
+    assert.equal(inspection.compatibility, "current");
+    assert.equal(inspection.ownerPid, process.pid);
+  } finally {
+    await authority.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("Local Core readiness gracefully replaces a responsive outdated owner with a stale heartbeat", async () => {
+  const home = await mkdtemp(path.join("/tmp", "kc-daemon-stale-replace-"));
+  const env = { KESTREL_CORE_HOME: home, KESTREL_CORE_IDLE_TIMEOUT_MS: "0" };
+  const expectedBuild = resolveLocalCoreBuildIdentity({
+    runtimeRoot: process.cwd(),
+    suiteVersion: "0.7.0",
+  });
+  const authority = await startFakeLocalCoreAuthority({
+    home,
+    coreVersion: "0.7.0",
+    buildIdentity: buildFixtureIdentity("e"),
+    lockNow: new Date("2020-01-01T00:00:00.000Z"),
+    closeDelayMs: 4_000,
+  });
+  let ready: Awaited<ReturnType<typeof ensureLocalCoreDaemonReady>> | undefined;
+  try {
+    ready = await ensureLocalCoreDaemonReady({
+      env,
+      platform: process.platform,
+      coreVersion: "0.7.0",
+      buildIdentity: expectedBuild,
+      repoRoot: process.cwd(),
+      waitTimeoutMs: 8_000,
+    });
+    assert.deepEqual(authority.shutdownReasons, ["code_update"]);
+    assert.equal((await ready.client?.buildIdentity())?.buildId, expectedBuild.buildId);
+  } finally {
+    await ready?.client?.shutdownForCodeUpdate().catch(() => undefined);
+    await authority.close();
+    await waitForCoreRelease(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("concurrent Local Core launchers converge while replacing an idle outdated build", async () => {
   const tempRoot = process.platform === "darwin" ? "/tmp" : os.tmpdir();
   const home = await mkdtemp(path.join(tempRoot, "kc-daemon-replace-"));
@@ -373,6 +432,8 @@ async function startFakeLocalCoreAuthority(input: {
   home: string;
   coreVersion: string;
   buildIdentity?: LocalCoreBuildIdentityV1 | undefined;
+  lockNow?: Date | undefined;
+  closeDelayMs?: number | undefined;
   legacy?: boolean | undefined;
   busy?: boolean | undefined;
   lifecycleUnavailable?: boolean | undefined;
@@ -393,6 +454,7 @@ async function startFakeLocalCoreAuthority(input: {
     authorityId,
     socketPath: paths.apiSocketPath,
     isPidAlive: () => true,
+    now: input.lockNow,
   });
   assert.equal(lock.state, "live");
 
@@ -467,7 +529,14 @@ async function startFakeLocalCoreAuthority(input: {
         ok: true,
         shutdown: { status: "accepted", reason: body.reason, lifecycle: currentLifecycle },
       });
-      setImmediate(() => void close());
+      setImmediate(() => {
+        void (async () => {
+          if (input.closeDelayMs !== undefined) {
+            await new Promise((resolve) => setTimeout(resolve, input.closeDelayMs));
+          }
+          await close();
+        })();
+      });
       return;
     }
     writeFakeJson(response, 404, { ok: false });

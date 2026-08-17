@@ -197,6 +197,41 @@ test("Local Core protocol journal rejects malformed event envelopes during repla
   }
 });
 
+test("Local Core protocol journal pages durable conversation activity by session", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-protocol-journal-activity-"));
+  try {
+    const handle = await ensureLocalCoreStore({ homePath: home });
+    const journal = new LocalCoreProtocolEventJournal(handle.executor);
+    await journal.ready();
+    const first = agentProgress("activity-1", "session-activity", "run-1", 1, "Inspecting the workspace.");
+    const second = agentProgress("activity-2", "session-activity", "run-1", 2, "Applying the change.");
+    await journal.append(first);
+    await journal.append(agentProgress("activity-other", "session-other", "run-other", 1, "Unrelated."));
+    await journal.append(runnerPong("activity-pong", "command-pong", "not conversation activity"));
+    await journal.append(second);
+
+    const page1 = await journal.listDesktopConversationActivity({
+      sessionId: "session-activity",
+      limit: 1,
+    });
+    assert.deepEqual(page1.events, [first]);
+    assert.equal(page1.hasMore, true);
+    assert.ok(page1.nextCursor);
+
+    const page2 = await journal.listDesktopConversationActivity({
+      sessionId: "session-activity",
+      afterCursor: page1.nextCursor,
+      limit: 1,
+    });
+    assert.deepEqual(page2.events, [second]);
+    assert.equal(page2.hasMore, false);
+    assert.ok(page2.nextCursor);
+  } finally {
+    await closeLocalCoreStore(home);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 async function insertRawProtocolEvent(
   executor: ConstructorParameters<typeof LocalCoreProtocolEventJournal>[0],
   event: Record<string, unknown>,
@@ -292,6 +327,35 @@ function runnerCompleted(
             durationMs: 1,
           },
         },
+      },
+    },
+  };
+}
+
+function agentProgress(
+  id: string,
+  sessionId: string,
+  runId: string,
+  seq: number,
+  message: string,
+): RunnerEvent {
+  const ts = "2026-07-13T12:00:00.000Z";
+  return {
+    id,
+    type: "run.agent_progress",
+    ts,
+    runId,
+    sessionId,
+    payload: {
+      update: {
+        version: "v1",
+        runId,
+        sessionId,
+        ts,
+        seq,
+        message,
+        stepIndex: seq,
+        stepAgent: "agent.loop",
       },
     },
   };

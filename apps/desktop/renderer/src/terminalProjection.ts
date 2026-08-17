@@ -12,7 +12,11 @@ export interface DesktopTerminalProjectionInput {
   assistantText: string | null | undefined;
   status: string;
   timestamp: string;
-  pendingUser?: { text: string; timestamp: string } | undefined;
+  pendingUser?: {
+    text: string;
+    timestamp: string;
+    messageId?: string | undefined;
+  } | undefined;
   pendingWaitEventType?: string | undefined;
   waitingPrompt?: string | undefined;
   failureMessage?: string | undefined;
@@ -49,19 +53,33 @@ export function projectDesktopTerminalMessage(
     next = appendRendererTranscript(
       acceptRendererPrompt(next, input.threadId, input.pendingUser.text),
       input.threadId,
-      { role: "user", text: input.pendingUser.text, timestamp: input.pendingUser.timestamp },
+      {
+        role: "user",
+        text: input.pendingUser.text,
+        timestamp: input.pendingUser.timestamp,
+        ...(input.pendingUser.messageId === undefined
+          ? {}
+          : {
+              data: {
+                kind: "desktop.user-message.v1",
+                messageId: input.pendingUser.messageId,
+              },
+            }),
+      },
     );
   }
   const deliveryError = getDesktopTerminalDeliveryError(input);
   const failed = input.status === "FAILED";
+  const cancelled = input.status === "CANCELLED";
   const waiting = input.status === "WAITING";
   const assistantText = typeof input.assistantText === "string" ? input.assistantText : "";
   const text = deliveryError
     ?? (failed ? input.failureMessage ?? "Run failed." : undefined)
+    ?? (cancelled ? "Run cancelled." : undefined)
     ?? (waiting ? input.waitingPrompt ?? waitingText(input.pendingWaitEventType) : undefined)
     ?? assistantText;
   next = appendRendererTranscript(next, input.threadId, {
-    role: deliveryError !== undefined || failed || waiting ? "system" : "assistant",
+    role: deliveryError !== undefined || failed || cancelled || waiting ? "system" : "assistant",
     text,
     timestamp: input.timestamp,
     ...(input.data !== undefined && deliveryError === undefined ? { data: input.data } : {}),

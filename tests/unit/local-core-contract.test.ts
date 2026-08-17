@@ -20,8 +20,10 @@ import {
   releaseCoreLock,
   resolveKestrelCoreHome,
   resolveLocalCorePaths,
+  writeCoreLockHeartbeat,
   writeCoreManifest,
 } from "../../src/localCore/index.js";
+import { desktopRunnerCommandTimeoutMs } from "../../src/localCore/client.js";
 import { closeLocalCoreStore } from "../../src/localCore/store.js";
 
 
@@ -95,6 +97,13 @@ function canonicalLocalCoreStatus(): Record<string, unknown> {
     logsPath: paths.logsPath,
   };
 }
+
+test("Desktop applies the standard command timeout only to Mission Control requests", () => {
+  assert.equal(desktopRunnerCommandTimeoutMs("mission_control.project.get", 10_000), 10_000);
+  assert.equal(desktopRunnerCommandTimeoutMs("mission_control.action.execute", 10_000), 10_000);
+  assert.equal(desktopRunnerCommandTimeoutMs("operator.thread.get", 10_000), undefined);
+  assert.equal(desktopRunnerCommandTimeoutMs("operator.control", 10_000), undefined);
+});
 
 test("Local Core accepts the exact Desktop restart shutdown contract", () => {
   assert.deepEqual(
@@ -396,6 +405,58 @@ test("readCoreLock treats dead or expired old-version owners as stale before ver
       currentCoreVersion: "0.6.1",
       now: new Date("2026-07-13T12:01:00.000Z"),
     })).state, "stale");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("the owning Local Core can refresh its heartbeat after the lock becomes stale", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-heartbeat-recovery-"));
+  try {
+    await acquireCoreLock({
+      homePath: home,
+      coreVersion: "0.6.0",
+      ownerExecutable: "/Applications/Kestrel.app",
+      ownerPid: 101,
+      authorityId: "authority-101",
+      now: new Date("2026-07-13T12:00:00.000Z"),
+    });
+
+    const heartbeat = await writeCoreLockHeartbeat({
+      homePath: home,
+      coreVersion: "0.6.0",
+      ownerPid: 101,
+      authorityId: "authority-101",
+      now: new Date("2026-07-13T12:01:00.000Z"),
+    });
+
+    assert.equal(heartbeat.state, "live");
+    assert.equal(heartbeat.lock.heartbeatAt, "2026-07-13T12:01:00.000Z");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("the owning Local Core can release its lock after the heartbeat becomes stale", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "kestrel-core-stale-release-"));
+  try {
+    await acquireCoreLock({
+      homePath: home,
+      coreVersion: "0.6.0",
+      ownerExecutable: "/Applications/Kestrel.app",
+      ownerPid: 101,
+      authorityId: "authority-101",
+      now: new Date("2020-01-01T00:00:00.000Z"),
+    });
+
+    await releaseCoreLock({
+      homePath: home,
+      coreVersion: "0.6.0",
+      ownerPid: 101,
+      authorityId: "authority-101",
+    });
+
+    assert.equal((await readCoreLock({ homePath: home })).state, "missing");
   } finally {
     await rm(home, { recursive: true, force: true });
   }

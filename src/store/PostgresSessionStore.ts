@@ -843,8 +843,8 @@ export class PostgresSessionStore implements SessionStore {
       session_id: string;
       event_type: string;
       status: TransitionStatus | "RUNNING";
-      started_at: string;
-      completed_at: string | null;
+      started_at: string | Date;
+      completed_at: string | Date | null;
       error_json: Record<string, unknown> | null;
     }>(
       `SELECT run_id, session_id, event_type, status, started_at, completed_at, error_json
@@ -962,8 +962,8 @@ export class PostgresSessionStore implements SessionStore {
       session_id: string;
       event_type: string;
       status: TransitionStatus | "RUNNING";
-      started_at: string;
-      completed_at: string | null;
+      started_at: string | Date;
+      completed_at: string | Date | null;
       error_json: Record<string, unknown> | null;
     }>(
       `SELECT run_id, session_id, event_type, status, started_at, completed_at, error_json
@@ -999,8 +999,8 @@ export class PostgresSessionStore implements SessionStore {
       session_id: string;
       event_type: string;
       status: TransitionStatus | "RUNNING";
-      started_at: string;
-      completed_at: string | null;
+      started_at: string | Date;
+      completed_at: string | Date | null;
       error_json: Record<string, unknown> | null;
       event_count: number | string;
       thread_id: string | null;
@@ -4054,8 +4054,8 @@ export class PostgresSessionStore implements SessionStore {
     session_id: string;
     event_type: string;
     status: TransitionStatus | "RUNNING";
-    started_at: string;
-    completed_at: string | null;
+    started_at: string | Date;
+    completed_at: string | Date | null;
     error_json: Record<string, unknown> | null;
   }): PersistedRunRecord {
     return {
@@ -4063,8 +4063,10 @@ export class PostgresSessionStore implements SessionStore {
       sessionId: row.session_id,
       eventType: row.event_type,
       status: row.status,
-      startedAt: row.started_at,
-      completedAt: row.completed_at ?? undefined,
+      startedAt: normalizeTimestampString(row.started_at),
+      completedAt: row.completed_at === null
+        ? undefined
+        : normalizeTimestampString(row.completed_at),
       error:
         row.error_json === null
           ? undefined
