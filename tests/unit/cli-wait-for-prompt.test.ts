@@ -136,14 +136,15 @@ test("legacy structured review wait is blocked and directs the operator to stop"
   );
 });
 
-test("buildWaitingSystemText formats max-step continuation waits", () => {
+test("buildWaitingSystemText renders the canonical contextual step-continuation prompt", () => {
   assert.equal(
     buildWaitingSystemText({
       kind: "user",
       eventType: "user.reply",
       metadata: {
         reason: "max_steps_continuation",
-        extraStepsRequested: 50,
+        question: "I’ve narrowed the list to independent barbers. Next I’ll verify the top contenders. Want me to continue?",
+        extraStepsRequested: 1_000,
         completedSoFar: ["Gathered Cincinnati barber candidates.", "Filtered out chain shops."],
         blockedOn: "Need more steps to verify the top contenders.",
         nextIfApproved: ["Run the remaining web searches.", "Synthesize the top 3 answer."],
@@ -151,28 +152,22 @@ test("buildWaitingSystemText formats max-step continuation waits", () => {
     }),
     [
       "Waiting for your reply.",
-      "Should I continue this run with 50 more steps?",
-      "Completed so far:",
-      "- Gathered Cincinnati barber candidates.",
-      "- Filtered out chain shops.",
-      "Blocked on: Need more steps to verify the top contenders.",
-      "With 50 more steps, I will:",
-      "- Run the remaining web searches.",
-      "- Synthesize the top 3 answer.",
+      "I’ve narrowed the list to independent barbers. Next I’ll verify the top contenders. Want me to continue?",
       "Reply naturally to continue, or say: `continue`",
     ].join("\n"),
   );
 });
 
-test("buildWaitingSystemText formats model-call continuation waits with both budgets", () => {
+test("buildWaitingSystemText does not duplicate continuation diagnostics", () => {
   assert.equal(
     buildWaitingSystemText({
       kind: "user",
       eventType: "user.reply",
       metadata: {
         reason: "max_model_calls_continuation",
-        extraModelCallsRequested: 50,
-        extraStepsRequested: 50,
+        question: "I’ve collected the implementation evidence. Next I’ll finish verification and synthesize the answer. Keep going?",
+        extraModelCallsRequested: 100,
+        extraStepsRequested: 1_000,
         completedSoFar: ["Used fs.read_text.", "Collected evidence for dev.shell."],
         blockedOn: "I hit the current step budget before I could finish verification.",
         nextIfApproved: ["Run fs.read_text to gather missing evidence.", "Synthesize the final answer."],
@@ -180,14 +175,7 @@ test("buildWaitingSystemText formats model-call continuation waits with both bud
     }),
     [
       "Waiting for your reply.",
-      "Should I continue this run with 50 more model calls and 50 more steps?",
-      "Completed so far:",
-      "- Used fs.read_text.",
-      "- Collected evidence for dev.shell.",
-      "Blocked on: I hit the current step budget before I could finish verification.",
-      "With 50 more model calls and 50 more steps, I will:",
-      "- Run fs.read_text to gather missing evidence.",
-      "- Synthesize the final answer.",
+      "I’ve collected the implementation evidence. Next I’ll finish verification and synthesize the answer. Keep going?",
       "Reply naturally to continue, or say: `continue`",
     ].join("\n"),
   );

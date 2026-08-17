@@ -31,11 +31,9 @@ export function extractUserReplyQuestion(waitFor: WaitForLike | undefined): stri
     metadata?.reason === "max_steps_continuation" ||
     metadata?.reason === "max_model_calls_continuation"
   ) {
-    const extraStepsRequested = readPositiveInteger(metadata.extraStepsRequested) ?? 10;
-    const extraModelCallsRequested = readPositiveInteger(metadata.extraModelCallsRequested);
     return (
       readFirstNonEmptyString(metadata, ["question"])
-      ?? `Should I continue this run with ${formatContinuationBudget(extraStepsRequested, extraModelCallsRequested)}?`
+      ?? "I’m not finished yet, but I can continue from where I left off. Want me to keep going?"
     );
   }
 
@@ -125,30 +123,10 @@ function buildContinuationWaitingText(
   waitEvent: string,
   metadata: Record<string, unknown>,
 ): string {
-  const completedSoFar = readStringArray(metadata.completedSoFar);
-  const blockedOn = readFirstNonEmptyString(metadata, ["blockedOn"]) ?? "I need more steps to continue.";
-  const nextIfApproved = readStringArray(metadata.nextIfApproved);
-  const extraStepsRequested = readPositiveInteger(metadata.extraStepsRequested) ?? 10;
-  const extraModelCallsRequested = readPositiveInteger(metadata.extraModelCallsRequested);
-  const continuationBudget = formatContinuationBudget(extraStepsRequested, extraModelCallsRequested);
-
   const question =
     readFirstNonEmptyString(metadata, ["question"])
-    ?? `Should I continue this run with ${continuationBudget}?`;
+    ?? "I’m not finished yet, but I can continue from where I left off. Want me to keep going?";
   const lines = ["Waiting for your reply.", question];
-  if (completedSoFar.length > 0) {
-    lines.push("Completed so far:");
-    for (const item of completedSoFar) {
-      lines.push(`- ${item}`);
-    }
-  }
-  lines.push(`Blocked on: ${blockedOn}`);
-  if (nextIfApproved.length > 0) {
-    lines.push(`With ${continuationBudget}, I will:`);
-    for (const item of nextIfApproved) {
-      lines.push(`- ${item}`);
-    }
-  }
   lines.push(
     extractWaitDetail({
       eventType: waitEvent,
@@ -213,32 +191,6 @@ function readFirstNonEmptyString(
   }
 
   return ;
-}
-
-function readStringArray(value: unknown): string[] {
-  if (Array.isArray(value) === false) {
-    return [];
-  }
-  return value
-    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-    .filter((entry) => entry.length > 0);
-}
-
-function readPositiveInteger(value: unknown): number | undefined {
-  if (typeof value !== "number" || Number.isFinite(value) === false) {
-    return ;
-  }
-  return Math.max(1, Math.trunc(value));
-}
-
-function formatContinuationBudget(
-  extraStepsRequested: number,
-  extraModelCallsRequested: number | undefined,
-): string {
-  if (extraModelCallsRequested !== undefined) {
-    return `${extraModelCallsRequested} more model calls and ${extraStepsRequested} more steps`;
-  }
-  return `${extraStepsRequested} more steps`;
 }
 
 function buildFallbackModeBlockedQuestion(metadata: Record<string, unknown>): string {
