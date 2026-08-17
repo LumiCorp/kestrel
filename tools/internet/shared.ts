@@ -43,6 +43,7 @@ export function getInternetProvider(
     return createKestrelOneTavilyProvider({
       ...hostedTransport,
       approvalModes: context.kestrelOne?.appApprovalModes,
+      approvalId: context.runtime?.approvalId,
       fetchImpl: context.fetchImpl,
     });
   }

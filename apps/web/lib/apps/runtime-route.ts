@@ -38,7 +38,8 @@ export async function handleAppRuntimeRequest(input: {
     if (!ticket.capabilities.includes("kestrel.tools.invoke")) {
       throw new AppRuntimeError("APP_RUNTIME_ROUTE_CAPABILITY_DENIED");
     }
-    if (input.approval !== "auto" && input.approval !== "confirmed") {
+    const approval = parseApprovalContext(input.approval);
+    if (approval === null) {
       throw new AppRuntimeError("APP_RUNTIME_APPROVAL_INVALID", 400);
     }
     if (
@@ -67,7 +68,7 @@ export async function handleAppRuntimeRequest(input: {
       ticket,
       appKey: input.appKey,
       capabilityKey: input.capabilityKey,
-      approval: input.approval,
+      approval: approval.mode,
     });
     connectionId = policy.connectionId;
     if (runtime.mode === "lifecycle") {
@@ -98,6 +99,9 @@ export async function handleAppRuntimeRequest(input: {
           agentId: ticket.agentId,
           connectionId: policy.connectionId,
           approvalMode: policy.capability.approvalMode,
+          ...(approval.runtimeApprovalId === null
+            ? {}
+            : { runtimeApprovalId: approval.runtimeApprovalId }),
           loggingMode: policy.capability.loggingMode,
         },
       });
@@ -135,6 +139,9 @@ export async function handleAppRuntimeRequest(input: {
       metadata: {
         connectionId: policy.connectionId,
         approvalMode: policy.capability.approvalMode,
+        ...(approval.runtimeApprovalId === null
+          ? {}
+          : { runtimeApprovalId: approval.runtimeApprovalId }),
       },
     });
     usageEventId = usageEvent.id;
@@ -194,6 +201,9 @@ export async function handleAppRuntimeRequest(input: {
         agentId: ticket.agentId,
         connectionId: policy.connectionId,
         approvalMode: policy.capability.approvalMode,
+        ...(approval.runtimeApprovalId === null
+          ? {}
+          : { runtimeApprovalId: approval.runtimeApprovalId }),
         loggingMode: policy.capability.loggingMode,
         upstreamStatus: upstream.status,
         usageEventId,
@@ -256,6 +266,20 @@ export async function handleAppRuntimeRequest(input: {
     }
     return errorResponse(error, ticket ? 400 : 401);
   }
+}
+
+function parseApprovalContext(value: string): {
+  mode: "auto" | "confirmed";
+  runtimeApprovalId: string | null;
+} | null {
+  if (value === "auto") return { mode: "auto", runtimeApprovalId: null };
+  if (value === "confirmed")
+    return { mode: "confirmed", runtimeApprovalId: null };
+  if (!value.startsWith("confirmed:")) return null;
+  const runtimeApprovalId = value.slice("confirmed:".length).trim();
+  return runtimeApprovalId.length > 0 && runtimeApprovalId.length <= 200
+    ? { mode: "confirmed", runtimeApprovalId }
+    : null;
 }
 
 async function readBoundedBody(request: Request) {

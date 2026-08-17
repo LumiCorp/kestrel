@@ -57,11 +57,14 @@ export interface RuntimeInteractionRequestV1 extends Record<string, unknown> {
   prompt: string;
   inputSchema?: Record<string, unknown> | undefined;
   metadata?: Record<string, unknown> | undefined;
-  approval?: {
-    toolCallId: string;
-    toolName: string;
-    input: unknown;
-  } | undefined;
+  approval?:
+    | {
+        toolCallId: string;
+        toolName: string;
+        input?: unknown;
+        presentation?: unknown;
+      }
+    | undefined;
 }
 
 export interface UserWaitForMatcher {
@@ -211,6 +214,14 @@ export interface StepContext {
 
 export interface StepIO {
   useModel<T>(request: ModelRequest): Promise<T | ModelResponse<unknown>>;
+  inspectTool?(
+    name: string,
+    input: unknown,
+    intent?: {
+      modelToolCallId?: string | undefined;
+      toolSurfaceSnapshot?: ToolSurfaceSnapshotV1 | undefined;
+    },
+  ): Promise<{ effectiveInput: Record<string, unknown> }>;
   useTool?(
     name: string,
     input: unknown,

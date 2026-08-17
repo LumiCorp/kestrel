@@ -28,6 +28,11 @@ test("Vercel tools bind the App capability and signed execution ticket", async (
     body: Record<string, unknown>;
   }> = [];
   const context = {
+    runtime: {
+      runId: "run-1",
+      sessionId: "session-1",
+      approvalId: "approval-1",
+    },
     kestrelOne: {
       appUrl: "https://kestrel.example",
       executionTicket: "signed-environment-ticket",
@@ -66,7 +71,7 @@ test("Vercel tools bind the App capability and signed execution ticket", async (
   });
   assert.equal(
     requests[1]?.url,
-    "https://kestrel.example/api/runtime/apps/vercel/operations.read/confirmed/deployment-events"
+    "https://kestrel.example/api/runtime/apps/vercel/operations.read/confirmed%3Aapproval-1/deployment-events",
   );
   assert.deepEqual(requests[1]?.body, {
     deploymentId: "dpl_123",

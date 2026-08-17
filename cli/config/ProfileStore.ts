@@ -1,26 +1,14 @@
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-import type {
-  CodeModeProfileConfig,
-} from "../../src/code/contracts.js";
-import {
-  DEFAULT_CODE_MODE_DISABLED_CONFIG,
-} from "../../src/code/contracts.js";
-import type {
-  DevShellProfileConfig,
-} from "../../src/devshell/contracts.js";
-import {
-  DEFAULT_DEV_SHELL_DISABLED_CONFIG,
-} from "../../src/devshell/contracts.js";
-import type {
-  GuardrailConfig,
-} from "../../src/kestrel/contracts/execution.js";
+import type { CodeModeProfileConfig } from "../../src/code/contracts.js";
+import { DEFAULT_CODE_MODE_DISABLED_CONFIG } from "../../src/code/contracts.js";
+import type { DevShellProfileConfig } from "../../src/devshell/contracts.js";
+import { DEFAULT_DEV_SHELL_DISABLED_CONFIG } from "../../src/devshell/contracts.js";
+import type { GuardrailConfig } from "../../src/kestrel/contracts/execution.js";
 import { parseHarnessEconomicsControlV1 } from "../../src/economics/policy.js";
 import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/evaluation.js";
-import type {
-  McpServerConfig,
-} from "../../src/mcp/contracts.js";
+import type { McpServerConfig } from "../../src/mcp/contracts.js";
 import {
   DEFAULT_ACT_SUBMODE,
   DEFAULT_INTERACTION_MODE,
@@ -173,7 +161,9 @@ export class ProfileStore {
         parsed,
         this.managedEnvironmentPresetId,
       );
-      if (serializeProfilesFileV10(ensured) !== serializeProfilesFileV10(parsed)) {
+      if (
+        serializeProfilesFileV10(ensured) !== serializeProfilesFileV10(parsed)
+      ) {
         await writeProfilesFileV10(this.filePath, ensured);
       }
       return this.hydrateProfilesFileV10(ensured);
@@ -233,7 +223,9 @@ export class ProfileStore {
       (profile) => profile.id === KESTREL_ONE_POLICY_ID,
     );
     if (canonical === undefined) {
-      throw new Error("profiles.json V10 requires the canonical Kestrel profile");
+      throw new Error(
+        "profiles.json V10 requires the canonical Kestrel profile",
+      );
     }
     const nonCanonical = profiles.find((profile) => profile !== canonical);
     if (nonCanonical !== undefined) {
@@ -301,10 +293,7 @@ export class ProfileStore {
     );
     this.loadedProfilesFileV10 = ensured;
     return this.resolveProfilesWithSharedModelPolicy([
-      resolveProfilesFileV10Profile(
-        ensured,
-        this.managedEnvironmentPresetId,
-      ),
+      resolveProfilesFileV10Profile(ensured, this.managedEnvironmentPresetId),
     ]);
   }
 
@@ -364,7 +353,11 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
     validateProfile(profile, version, notices),
   );
   const managedProfileOverlays =
-    version === 5 || version === 6 || version === 7 || version === 8 || version === 9
+    version === 5 ||
+    version === 6 ||
+    version === 7 ||
+    version === 8 ||
+    version === 9
       ? parseKestrelOneManagedOverlays(
           root.managedProfileOverlays,
           notices,
@@ -385,9 +378,7 @@ export function parseProfilesFile(raw: string): ParsedProfilesResult {
 
   return {
     profiles: validated,
-    ...(managedProfileOverlays !== undefined
-      ? { managedProfileOverlays }
-      : {}),
+    ...(managedProfileOverlays !== undefined ? { managedProfileOverlays } : {}),
     sourceVersion: version,
     migrated: version !== 9,
     notices,
@@ -421,8 +412,7 @@ function migrateGeneratedLocalProfile(
   return {
     ...profile,
     shellKind,
-    presetId:
-      shellKind === "desktop" ? "desktop_dev_local" : "cli_dev_local",
+    presetId: shellKind === "desktop" ? "desktop_dev_local" : "cli_dev_local",
     ...(profile.capabilityPacks === undefined
       ? {
           capabilityPacks:
@@ -442,26 +432,22 @@ function isGeneratedReferenceProfile(profile: TuiProfile): boolean {
   ) {
     return false;
   }
-  if (
-    profile.shellKind !== undefined &&
-    profile.shellKind !== "cli"
-  ) {
+  if (profile.shellKind !== undefined && profile.shellKind !== "cli") {
     return false;
   }
-  if (
-    profile.presetId !== undefined &&
-    profile.presetId !== "cli_dev_local"
-  ) {
+  if (profile.presetId !== undefined && profile.presetId !== "cli_dev_local") {
     return false;
   }
   if (profile.capabilityPacks === undefined) {
     return true;
   }
   const packs = new Set(profile.capabilityPacks);
-  return packs.size === 3 &&
+  return (
+    packs.size === 3 &&
     packs.has("balanced") &&
     packs.has("filesystem") &&
-    packs.has("dev_shell");
+    packs.has("dev_shell")
+  );
 }
 
 function addLocalIsolationMigrationNotice(notices: string[]): void {
@@ -581,11 +567,14 @@ function validateProfile(
   const modelTimeoutMs =
     version >= 3 ? parseModelTimeoutMs(item.modelTimeoutMs, id) : undefined;
   const theme = version >= 3 ? parseTheme(item.theme, id, notices) : undefined;
-  const delegation = version >= 3 ? parseDelegation(item.delegation) : undefined;
-  const reasoning = version >= 4 ? parseReasoningPolicy(item.reasoning, id) : undefined;
-  const harnessEconomics = item.harnessEconomics === undefined
-    ? undefined
-    : parseHarnessEconomicsControlV1(item.harnessEconomics);
+  const delegation =
+    version >= 3 ? parseDelegation(item.delegation) : undefined;
+  const reasoning =
+    version >= 4 ? parseReasoningPolicy(item.reasoning, id) : undefined;
+  const harnessEconomics =
+    item.harnessEconomics === undefined
+      ? undefined
+      : parseHarnessEconomicsControlV1(item.harnessEconomics);
 
   return {
     id,
@@ -701,10 +690,7 @@ function profilesChanged(before: TuiProfile[], after: TuiProfile[]): boolean {
 }
 
 function createManagedKestrelOneProfile(
-  environmentPresetId:
-    | "cli_safe_local"
-    | "cli_dev_local"
-    | "workspace_hosted",
+  environmentPresetId: "cli_safe_local" | "cli_dev_local" | "workspace_hosted",
   overlay: KestrelOneManagedProfileOverlay = {},
 ): TuiProfile {
   const composedOverlay: KestrelOneProfileOverlay = {
@@ -826,8 +812,7 @@ function parseKestrelOneManagedOverlays(
   }
   const parsed: ProfilesFileV9["managedProfileOverlays"] = {};
   const legacyLocalRaw =
-    overlays["kestrel@cli_dev_local"] ??
-    overlays["kestrel-one@cli_dev_local"];
+    overlays["kestrel@cli_dev_local"] ?? overlays["kestrel-one@cli_dev_local"];
   if (sourceVersion >= 7) {
     for (const key of [
       "kestrel@cli_safe_local",
@@ -841,15 +826,19 @@ function parseKestrelOneManagedOverlays(
       }
     }
   } else if (legacyLocalRaw !== undefined) {
-    parsed["kestrel@cli_safe_local"] =
-      parseKestrelOneManagedOverlayValue(legacyLocalRaw, notices);
+    parsed["kestrel@cli_safe_local"] = parseKestrelOneManagedOverlayValue(
+      legacyLocalRaw,
+      notices,
+    );
   }
   const hostedRaw =
     overlays["kestrel@workspace_hosted"] ??
     overlays["kestrel-one@workspace_hosted"];
   if (hostedRaw !== undefined) {
-    parsed["kestrel@workspace_hosted"] =
-      parseKestrelOneManagedOverlayValue(hostedRaw, notices);
+    parsed["kestrel@workspace_hosted"] = parseKestrelOneManagedOverlayValue(
+      hostedRaw,
+      notices,
+    );
   }
   if (sourceVersion < 7 && legacyLocalRaw !== undefined) {
     addLocalIsolationMigrationNotice(notices);
@@ -883,6 +872,7 @@ const KESTREL_MANAGED_CONFIGURATION_FIELDS = new Set([
   "modelTimeoutMs",
   "storeDriver",
   "kestrelOneAppApprovalModes",
+  "kestrelOneAppApprovalPolicies",
 ]);
 
 export function parseKestrelManagedConfiguration(
@@ -980,6 +970,14 @@ export function parseKestrelManagedConfiguration(
           ),
         }
       : {}),
+    ...(record.kestrelOneAppApprovalPolicies !== undefined
+      ? {
+          kestrelOneAppApprovalPolicies: parseKestrelOneAppApprovalPolicies(
+            record.kestrelOneAppApprovalPolicies,
+            KESTREL_ONE_POLICY_ID,
+          ),
+        }
+      : {}),
     ...overlay,
   };
 }
@@ -1032,18 +1030,12 @@ function parseKestrelOneManagedOverlayValue(
     ...(additionalToolNames !== undefined ? { additionalToolNames } : {}),
     ...(record.mcpServers !== undefined
       ? {
-          mcpServers: parseMcpServers(
-            record.mcpServers,
-            KESTREL_ONE_POLICY_ID,
-          ),
+          mcpServers: parseMcpServers(record.mcpServers, KESTREL_ONE_POLICY_ID),
         }
       : {}),
     ...(record.toolQueue !== undefined
       ? {
-          toolQueue: parseToolQueue(
-            record.toolQueue,
-            KESTREL_ONE_POLICY_ID,
-          ),
+          toolQueue: parseToolQueue(record.toolQueue, KESTREL_ONE_POLICY_ID),
         }
       : {}),
     ...(record.codeMode !== undefined
@@ -1088,11 +1080,7 @@ function parseKestrelOneManagedOverlayValue(
       : {}),
     ...(record.theme !== undefined
       ? {
-          theme: parseTheme(
-            record.theme,
-            KESTREL_ONE_POLICY_ID,
-            notices,
-          ),
+          theme: parseTheme(record.theme, KESTREL_ONE_POLICY_ID, notices),
         }
       : {}),
     ...(record.default !== undefined
@@ -1141,11 +1129,71 @@ function parseKestrelOneAppApprovalModes(
   return parsed;
 }
 
+function parseKestrelOneAppApprovalPolicies(
+  value: unknown,
+  profileId: string,
+): TuiProfile["kestrelOneAppApprovalPolicies"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(
+      `Profile '${profileId}' field 'kestrelOneAppApprovalPolicies' must be an object`,
+    );
+  }
+  const parsed: NonNullable<TuiProfile["kestrelOneAppApprovalPolicies"]> = {};
+  for (const [toolName, rawPolicy] of Object.entries(value)) {
+    if (toolName.trim().length === 0) {
+      throw new Error(
+        `Profile '${profileId}' field 'kestrelOneAppApprovalPolicies' contains an empty tool name`,
+      );
+    }
+    if (
+      typeof rawPolicy !== "object" ||
+      rawPolicy === null ||
+      Array.isArray(rawPolicy)
+    ) {
+      throw new Error(
+        `Profile '${profileId}' field 'kestrelOneAppApprovalPolicies.${toolName}' must be an object`,
+      );
+    }
+    const policy = rawPolicy as Record<string, unknown>;
+    const mode = (field: "environment" | "project" | "subject") => {
+      const candidate = policy[field];
+      if (
+        candidate !== undefined &&
+        candidate !== "auto" &&
+        candidate !== "ask" &&
+        candidate !== "deny"
+      ) {
+        throw new Error(
+          `Profile '${profileId}' field 'kestrelOneAppApprovalPolicies.${toolName}.${field}' is invalid`,
+        );
+      }
+      return candidate as "auto" | "ask" | "deny" | undefined;
+    };
+    const environment = mode("environment");
+    const project = mode("project");
+    const subject = mode("subject");
+    if (environment === undefined) {
+      throw new Error(
+        `Profile '${profileId}' field 'kestrelOneAppApprovalPolicies.${toolName}.environment' is required`,
+      );
+    }
+    if (policy.minimum !== "auto" && policy.minimum !== "ask") {
+      throw new Error(
+        `Profile '${profileId}' field 'kestrelOneAppApprovalPolicies.${toolName}.minimum' is invalid`,
+      );
+    }
+    parsed[toolName] = {
+      environment,
+      ...(project === undefined ? {} : { project }),
+      ...(subject === undefined ? {} : { subject }),
+      minimum: policy.minimum,
+    };
+  }
+  return parsed;
+}
+
 function managedOverlayKey(
-  environmentPresetId:
-    | "cli_safe_local"
-    | "cli_dev_local"
-    | "workspace_hosted",
+  environmentPresetId: "cli_safe_local" | "cli_dev_local" | "workspace_hosted",
 ):
   | "kestrel@cli_safe_local"
   | "kestrel@cli_dev_local"

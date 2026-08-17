@@ -32,6 +32,7 @@ export function createKestrelOneTavilyProvider(input: {
   appUrl: string;
   executionTicket: string;
   approvalModes?: Record<string, "auto" | "ask"> | undefined;
+  approvalId?: string | undefined;
   fetchImpl?: typeof fetch | undefined;
 }): TavilyInternetProvider {
   const providers = new Map<TavilyCapabilityKey, TavilyInternetProvider>();
@@ -40,10 +41,14 @@ export function createKestrelOneTavilyProvider(input: {
     if (existing) return existing;
     const runtimeName = CAPABILITY_RUNTIME_NAMES[capability];
     const approval =
-      input.approvalModes?.[runtimeName] === "ask" ? "confirmed" : "auto";
-    const appUrl = input.appUrl.endsWith("/") ? input.appUrl : `${input.appUrl}/`;
+      input.approvalModes?.[runtimeName] === "ask"
+        ? `confirmed:${requireApprovalId(input.approvalId, runtimeName)}`
+        : "auto";
+    const appUrl = input.appUrl.endsWith("/")
+      ? input.appUrl
+      : `${input.appUrl}/`;
     const baseUrl = new URL(
-      `api/runtime/apps/tavily/${capability}/${approval}`,
+      `api/runtime/apps/tavily/${capability}/${encodeURIComponent(approval)}`,
       appUrl,
     ).toString();
     const provider = createTavilyInternetProvider({
@@ -71,6 +76,14 @@ export function createKestrelOneTavilyProvider(input: {
       providerFor("research_status").researchStatus(value),
     usage: () => providerFor("usage").usage(),
   };
+}
+
+function requireApprovalId(value: string | undefined, toolName: string) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    throw new Error(`${toolName} requires a runtime approval ID.`);
+  }
+  return normalized;
 }
 
 export function hasKestrelOneTavilyContext(

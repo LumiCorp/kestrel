@@ -56,6 +56,7 @@ export type AppCapability = {
   audience: "self" | "project" | "both";
   defaultEnabled: boolean;
   defaultApprovalMode: ToolApprovalMode;
+  minimumApprovalMode: Exclude<ToolApprovalMode, "deny">;
   defaultLoggingMode: ToolLoggingMode;
   defaultRateLimitMode: ToolRateLimitMode;
   metadata: Record<string, unknown>;

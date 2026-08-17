@@ -888,6 +888,10 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     title: "Escalate the customer incident",
     body: "Created by the Kestrel agent after explicit approval.",
   };
+  const normalizedToolInput = {
+    ...toolInput,
+    title: toolInput.title.trim(),
+  };
   const config = {
     ...buildExecConfig(),
     capabilityManifestProvider: () => [
@@ -919,6 +923,11 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     },
   };
   let inlineToolCalls = 0;
+  let approvalInspections = 0;
+  const inspectTool: NonNullable<StepIO["inspectTool"]> = async () => {
+    approvalInspections += 1;
+    return { effectiveInput: normalizedToolInput };
+  };
 
   const approvalWait = await dispatchStep(
     buildContext({
@@ -943,6 +952,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
       useModel: async () => {
         throw new Error("not expected");
       },
+      inspectTool,
       useTool: async () => {
         inlineToolCalls += 1;
         throw new Error("GitHub mutation must not run before approval");
@@ -953,7 +963,10 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
   assert.equal(approvalWait.status, "WAITING");
   assert.equal(approvalWait.waitFor?.eventType, "user.approval");
   assert.equal(approvalWait.waitFor?.metadata?.toolName, definition.name);
-  assert.deepEqual(approvalWait.waitFor?.metadata?.toolInput, toolInput);
+  assert.deepEqual(
+    approvalWait.waitFor?.metadata?.toolInput,
+    normalizedToolInput,
+  );
   assert.equal(inlineToolCalls, 0);
   const waitingAgent = approvalWait.statePatch?.agent as Record<
     string,
@@ -1012,6 +1025,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
       useModel: async () => {
         throw new Error("not expected");
       },
+      inspectTool,
       useTool: async () => {
         throw new Error("stale approval must not execute the mutation");
       },
@@ -1042,6 +1056,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
       useModel: async () => {
         throw new Error("not expected");
       },
+      inspectTool,
       useTool: async () => {
         inlineToolCalls += 1;
         throw new Error("durable GitHub mutation must not run inline");
@@ -1066,6 +1081,7 @@ test("GitHub external confirmation resumes only the exact approved mutation", as
     idempotencyKey: resumed.effects?.[0]?.idempotencyKey,
   });
   assert.equal(inlineToolCalls, 0);
+  assert.equal(approvalInspections, 3);
 });
 
 test("exec.wait_effect records processor-owned effect waits when result is unavailable", async () => {

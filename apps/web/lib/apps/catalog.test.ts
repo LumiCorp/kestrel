@@ -153,6 +153,18 @@ test("Tavily recommended defaults require approval for expansive work", () => {
   assert.equal(byKey.get("usage")?.defaultApprovalMode, "deny");
 });
 
+test("only capabilities with a hard approval floor reject Automatic policy", () => {
+  const email = getCoreAppDefinition("email");
+  const google = getCoreAppDefinition("google_workspace");
+  assert.equal(email?.capabilities[0]?.minimumApprovalMode, "ask");
+  assert.equal(
+    google?.capabilities.find(
+      (capability) => capability.key === "calendar.events.create",
+    )?.minimumApprovalMode,
+    "auto",
+  );
+});
+
 test("Google Workspace is personal while built-ins are inherited", () => {
   const google = getCoreAppDefinition("google_workspace");
   const weather = getCoreAppDefinition("built_in.weather");

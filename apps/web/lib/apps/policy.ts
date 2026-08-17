@@ -27,3 +27,12 @@ export function intersectAppApprovalModes(
     "auto"
   );
 }
+
+export function applyMinimumApprovalMode(input: {
+  requested: ToolApprovalMode;
+  minimum: Exclude<ToolApprovalMode, "deny">;
+  enabled?: boolean | undefined;
+}): ToolApprovalMode {
+  if (input.enabled === false || input.requested === "deny") return "deny";
+  return intersectAppApprovalModes(input.requested, input.minimum);
+}

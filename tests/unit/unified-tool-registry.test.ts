@@ -48,7 +48,9 @@ async function callTool(
 function unsignedExecutionTicket(expiresAt: number, nonce: string) {
   return [
     "header",
-    Buffer.from(JSON.stringify({ expiresAt, nonce }), "utf8").toString("base64url"),
+    Buffer.from(JSON.stringify({ expiresAt, nonce }), "utf8").toString(
+      "base64url",
+    ),
     "signature",
   ].join(".");
 }
@@ -59,14 +61,15 @@ async function validateToolInput(
   toolInput: Record<string, unknown>,
   options?: Parameters<typeof prepareTestToolCall>[0]["options"],
 ) {
-  return (await prepareTestToolCall({
-    gateway: registry,
-    toolName,
-    toolInput,
-    options,
-  })).effectiveInput;
+  return (
+    await prepareTestToolCall({
+      gateway: registry,
+      toolName,
+      toolInput,
+      options,
+    })
+  ).effectiveInput;
 }
-
 
 class MockMcpProvider implements McpToolProvider {
   private readonly snapshot: McpStatusSnapshot;
@@ -123,9 +126,7 @@ class MockInternetProvider implements TavilyInternetProvider {
   crawlCalls: unknown[] = [];
   mapCalls: unknown[] = [];
 
-  async search(
-    input: Parameters<TavilyInternetProvider["search"]>[0]
-  ): Promise<
+  async search(input: Parameters<TavilyInternetProvider["search"]>[0]): Promise<
     InternetProviderCallResult<{
       query: string;
       results: InternetSearchResultItem[];
@@ -141,7 +142,7 @@ class MockInternetProvider implements TavilyInternetProvider {
   }
 
   async searchAdvanced(
-    input: Parameters<TavilyInternetProvider["searchAdvanced"]>[0]
+    input: Parameters<TavilyInternetProvider["searchAdvanced"]>[0],
   ): Promise<
     InternetProviderCallResult<{
       query: string;
@@ -157,9 +158,7 @@ class MockInternetProvider implements TavilyInternetProvider {
     };
   }
 
-  async news(
-    input: Parameters<TavilyInternetProvider["news"]>[0]
-  ): Promise<
+  async news(input: Parameters<TavilyInternetProvider["news"]>[0]): Promise<
     InternetProviderCallResult<{
       query: string;
       results: InternetSearchResultItem[];
@@ -175,7 +174,7 @@ class MockInternetProvider implements TavilyInternetProvider {
   }
 
   async images(
-    input: Parameters<TavilyInternetProvider["images"]>[0]
+    input: Parameters<TavilyInternetProvider["images"]>[0],
   ): Promise<InternetProviderCallResult<{ query: string; results: [] }>> {
     return {
       status: "ok",
@@ -186,7 +185,7 @@ class MockInternetProvider implements TavilyInternetProvider {
   }
 
   async extract(
-    input: Parameters<TavilyInternetProvider["extract"]>[0]
+    input: Parameters<TavilyInternetProvider["extract"]>[0],
   ): Promise<InternetProviderCallResult<InternetExtractOutput>> {
     this.extractCalls.push(input);
     const url = input.urls[0] ?? "https://example.com";
@@ -208,9 +207,7 @@ class MockInternetProvider implements TavilyInternetProvider {
     };
   }
 
-  async crawl(
-    input: Parameters<TavilyInternetProvider["crawl"]>[0]
-  ): Promise<
+  async crawl(input: Parameters<TavilyInternetProvider["crawl"]>[0]): Promise<
     InternetProviderCallResult<{
       baseUrl: string;
       results: InternetFetchResult[];
@@ -226,7 +223,7 @@ class MockInternetProvider implements TavilyInternetProvider {
   }
 
   async map(
-    input: Parameters<TavilyInternetProvider["map"]>[0]
+    input: Parameters<TavilyInternetProvider["map"]>[0],
   ): Promise<
     InternetProviderCallResult<{ baseUrl: string; results: string[] }>
   > {
@@ -240,7 +237,7 @@ class MockInternetProvider implements TavilyInternetProvider {
   }
 
   async research(
-    input: Parameters<TavilyInternetProvider["research"]>[0]
+    input: Parameters<TavilyInternetProvider["research"]>[0],
   ): Promise<
     InternetProviderCallResult<{
       requestId: string;
@@ -257,7 +254,7 @@ class MockInternetProvider implements TavilyInternetProvider {
   }
 
   async researchStatus(
-    input: Parameters<TavilyInternetProvider["researchStatus"]>[0]
+    input: Parameters<TavilyInternetProvider["researchStatus"]>[0],
   ): Promise<
     InternetProviderCallResult<{ requestId: string; status: string }>
   > {
@@ -294,7 +291,7 @@ async function assertToolInputInvalid(
     field: string;
     expected?: string;
     invalidValues: unknown[];
-  }
+  },
 ): Promise<void> {
   let failure:
     | RuntimeFailure
@@ -315,7 +312,7 @@ async function assertToolInputInvalid(
   assert.notEqual(
     failure,
     undefined,
-    "expected invalid tool input to throw or return a FAILED tool result"
+    "expected invalid tool input to throw or return a FAILED tool result",
   );
   const details = failure?.details as Record<string, unknown> | undefined;
   assert.equal(failure?.code, "TOOL_INPUT_INVALID");
@@ -433,7 +430,7 @@ test("UnifiedToolRegistry blocks non-allowlisted MCP tools", async () => {
 
   await assert.rejects(
     () => callTool(registry, "mcp.remote.lookup", {}),
-    /not available/
+    /not available/,
   );
 });
 
@@ -463,11 +460,11 @@ test("UnifiedToolRegistry hides MCP tools without explicit presentation metadata
   assert.deepEqual(registry.getCapabilityManifest(), []);
   assert.deepEqual(
     registry.resolveAvailableAllowlist(["mcp.remote.lookup"]),
-    []
+    [],
   );
   await assert.rejects(
     () => callTool(registry, "mcp.remote.lookup", {}),
-    /not available/
+    /not available/,
   );
 });
 
@@ -513,7 +510,7 @@ test("UnifiedToolRegistry exposes Playwright MCP tools only through explicit met
 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
-    ["mcp.playwright.browser_snapshot"]
+    ["mcp.playwright.browser_snapshot"],
   );
   assert.deepEqual(
     registry.getCapabilityManifest().map((tool) => ({
@@ -529,14 +526,14 @@ test("UnifiedToolRegistry exposes Playwright MCP tools only through explicit met
         provider: "playwright",
         toolFamily: "browser_automation",
       },
-    ]
+    ],
   );
   assert.deepEqual(
     registry.resolveAvailableAllowlist([
       "mcp.playwright.browser_snapshot",
       "mcp.playwright.browser_magic_unlisted",
     ]),
-    ["mcp.playwright.browser_snapshot"]
+    ["mcp.playwright.browser_snapshot"],
   );
 });
 
@@ -622,15 +619,116 @@ test("UnifiedToolRegistry turns Project App ask policy into a runtime approval g
   const manifest = new Map(
     registry
       .getCapabilityManifest()
-      .map((capability) => [capability.name, capability])
+      .map((capability) => [capability.name, capability]),
   );
   assert.deepEqual(
     manifest.get("internet.search")?.approvalCapabilities,
-    undefined
+    undefined,
   );
   assert.deepEqual(manifest.get("internet.crawl")?.approvalCapabilities, [
     "external.confirm",
   ]);
+});
+
+test("UnifiedToolRegistry lets explicit Automatic App policy override a tool default", () => {
+  const toolName = "kestrel_one.google_calendar_create_event";
+  const registry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: {
+      kestrelOne: {
+        appApprovalModes: { [toolName]: "auto" },
+      },
+    },
+  });
+  const capability = registry
+    .getCapabilityManifest()
+    .find((candidate) => candidate.name === toolName);
+
+  assert.deepEqual(capability?.approvalCapabilities, ["network.call"]);
+  assert.equal(capability?.approvalDisposition?.mode, "auto");
+  assert.equal(
+    capability?.approvalDisposition?.reasonCode,
+    "environment_policy",
+  );
+  assert.equal(capability?.approvalAuthority?.kind, "hosted_app_policy");
+});
+
+test("UnifiedToolRegistry applies a capability minimum after hosted App policy", () => {
+  const toolName = "kestrel_one.email_send";
+  const registry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: {
+      kestrelOne: { appApprovalModes: { [toolName]: "auto" } },
+    },
+  });
+  const capability = registry
+    .getCapabilityManifest()
+    .find((candidate) => candidate.name === toolName);
+  assert.equal(capability?.minimumApprovalMode, "ask");
+  assert.equal(capability?.approvalDisposition?.mode, "ask");
+  assert.equal(capability?.approvalDisposition?.reasonCode, "tool_minimum");
+  assert.equal(capability?.approvalAuthority?.kind, "hosted_app_policy");
+});
+
+test("UnifiedToolRegistry preserves hosted App policy provenance", () => {
+  const toolName = "internet.crawl";
+  const registry = new UnifiedToolRegistry({
+    allowlist: [toolName],
+    context: {
+      kestrelOne: {
+        appApprovalModes: { [toolName]: "ask" },
+        appApprovalPolicies: {
+          [toolName]: {
+            environment: "auto",
+            project: "auto",
+            subject: "ask",
+            minimum: "auto",
+          },
+        },
+      },
+    },
+  });
+  const capability = registry
+    .getCapabilityManifest()
+    .find((candidate) => candidate.name === toolName);
+  assert.equal(capability?.approvalDisposition?.mode, "ask");
+  assert.equal(
+    capability?.approvalDisposition?.reasonCode,
+    "subject_restriction",
+  );
+  assert.equal(capability?.approvalAuthority?.kind, "hosted_app_policy");
+});
+
+test("UnifiedToolRegistry inspection validates without reserving a prepared execution", async () => {
+  const toolName = "internet.search";
+  const registry = new UnifiedToolRegistry({ allowlist: [toolName] });
+  const runContext = createToolRunContext({
+    runId: "run-inspection",
+    sessionId: "session-inspection",
+  });
+  const snapshot = await registry.createToolSurfaceSnapshot({
+    runContext,
+    toolNames: [toolName],
+  });
+  const activation = snapshot.tools.find(
+    (candidate) => candidate.descriptor.toolId === toolName,
+  );
+  assert.notEqual(activation, undefined);
+  const inspect = () =>
+    registry.inspectToolCall!(
+      {
+        activation: activation!,
+        origin: {
+          kind: "trusted_runtime",
+          producerId: "test",
+          adapterId: "test",
+        },
+        rawInput: { query: "Kestrel" },
+      },
+      { runContext },
+    );
+  assert.deepEqual(await inspect(), await inspect());
+  await registry.releaseToolSurfaceSnapshot(snapshot.snapshotId);
 });
 
 test("UnifiedToolRegistry routes a direct Environment App through scoped execution authorization", async () => {
@@ -647,7 +745,7 @@ test("UnifiedToolRegistry routes a direct Environment App through scoped executi
       fetchImpl: (async (url, init) => {
         requestUrl = String(url);
         authorization = String(
-          (init?.headers as Record<string, string> | undefined)?.Authorization
+          (init?.headers as Record<string, string> | undefined)?.Authorization,
         );
         return new Response(JSON.stringify({ key: { usage: 1 } }), {
           status: 200,
@@ -669,7 +767,8 @@ test("UnifiedToolRegistry routes a direct Environment App through scoped executi
     mcpAuthorization: { executionTicket: "signed-run-ticket" },
   });
 
-  await callTool(registry,
+  await callTool(
+    registry,
     "internet.usage",
     {},
     {
@@ -677,16 +776,18 @@ test("UnifiedToolRegistry routes a direct Environment App through scoped executi
         runId: "run-environment-app",
         sessionId: "session-environment-app",
       }),
-    }
+    },
   );
 
   assert.equal(
     requestUrl,
-    "https://kestrel.example/api/runtime/apps/tavily/usage/auto/usage"
+    "https://kestrel.example/api/runtime/apps/tavily/usage/auto/usage",
   );
   assert.equal(authorization, "Bearer signed-run-ticket");
   assert.deepEqual(
-    sensitiveValueRegistry.registeredValueDigests().map((entry) => entry.referenceId),
+    sensitiveValueRegistry
+      .registeredValueDigests()
+      .map((entry) => entry.referenceId),
     ["execution-ticket:run-environment-app"],
   );
   registry.clearRuntimeTurnAuthorization("run-environment-app");
@@ -707,7 +808,10 @@ test("UnifiedToolRegistry renews and retries exactly once after a pre-dispatch e
   let capabilityRequests = 0;
   let providerDispatches = 0;
   const sensitiveValueRegistry = new SensitiveValueRegistry();
-  const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+  const fetchImpl = (async (
+    url: string | URL | Request,
+    init?: RequestInit,
+  ) => {
     if (String(url) === "https://kestrel.example/renew") {
       renewalRequests += 1;
       return Response.json({
@@ -762,20 +866,31 @@ test("UnifiedToolRegistry renews and retries exactly once after a pre-dispatch e
     },
   });
 
-  const result = await callTool(registry, "internet.usage", {}, {
-    runContext: createToolRunContext({
-      runId: "run-expiry-retry",
-      sessionId: "session-expiry-retry",
-    }),
-  });
+  const result = await callTool(
+    registry,
+    "internet.usage",
+    {},
+    {
+      runContext: createToolRunContext({
+        runId: "run-expiry-retry",
+        sessionId: "session-expiry-retry",
+      }),
+    },
+  );
 
   assert.equal(result.outcome.kind, "success", JSON.stringify(result));
   assert.equal(renewalRequests, 1);
   assert.equal(capabilityRequests, 2);
   assert.equal(providerDispatches, 1);
   assert.deepEqual(
-    sensitiveValueRegistry.registeredValueDigests().map((entry) => entry.referenceId).sort(),
-    ["execution-renewal-token:run-expiry-retry", "execution-ticket:run-expiry-retry"],
+    sensitiveValueRegistry
+      .registeredValueDigests()
+      .map((entry) => entry.referenceId)
+      .sort(),
+    [
+      "execution-renewal-token:run-expiry-retry",
+      "execution-ticket:run-expiry-retry",
+    ],
   );
   registry.clearRuntimeTurnAuthorization("run-expiry-retry");
   assert.deepEqual(sensitiveValueRegistry.registeredValueDigests(), []);
@@ -794,7 +909,7 @@ test("UnifiedToolRegistry preserves execution authorization when the engine assi
       },
       fetchImpl: (async (_url, init) => {
         authorization = String(
-          (init?.headers as Record<string, string> | undefined)?.Authorization
+          (init?.headers as Record<string, string> | undefined)?.Authorization,
         );
         return new Response(JSON.stringify({ key: { usage: 1 } }), {
           status: 200,
@@ -815,7 +930,8 @@ test("UnifiedToolRegistry preserves execution authorization when the engine assi
     mcpAuthorization: { executionTicket: "signed-run-ticket" },
   });
 
-  await callTool(registry,
+  await callTool(
+    registry,
     "internet.usage",
     {},
     {
@@ -823,13 +939,13 @@ test("UnifiedToolRegistry preserves execution authorization when the engine assi
         runId: "engine-run-id",
         sessionId: "session-environment-app",
       }),
-    }
+    },
   );
 
   assert.equal(authorization, "Bearer signed-run-ticket");
   registry.clearRuntimeTurnAuthorization(
     "environment-execution-id",
-    "session-environment-app"
+    "session-environment-app",
   );
 });
 
@@ -864,7 +980,8 @@ test("UnifiedToolRegistry fails closed when a session has overlapping execution 
   });
 
   await assert.rejects(
-    callTool(registry,
+    callTool(
+      registry,
       "internet.usage",
       {},
       {
@@ -872,18 +989,18 @@ test("UnifiedToolRegistry fails closed when a session has overlapping execution 
           runId: "unmatched-engine-run",
           sessionId: "shared-session",
         }),
-      }
+      },
     ),
-    /Missing Tavily API key/u
+    /Missing Tavily API key/u,
   );
 
   registry.clearRuntimeTurnAuthorization(
     "environment-execution-a",
-    "shared-session"
+    "shared-session",
   );
   registry.clearRuntimeTurnAuthorization(
     "environment-execution-b",
-    "shared-session"
+    "shared-session",
   );
 });
 
@@ -902,11 +1019,12 @@ test("UnifiedToolRegistry rejects unadvertised internet.news domain filters befo
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => callTool(registry, "internet.news", {
-      query:
-        "Georgia Florida wildfires current updates homes evacuations damage May 2026",
-      domainDeny: ["opinion", "video"],
-    }),
+    () =>
+      callTool(registry, "internet.news", {
+        query:
+          "Georgia Florida wildfires current updates homes evacuations damage May 2026",
+        domainDeny: ["opinion", "video"],
+      }),
     {
       field: "domainDeny",
       expected: "no unknown fields",
@@ -931,11 +1049,12 @@ test("UnifiedToolRegistry rejects the first unadvertised internet.search field b
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => callTool(registry, "internet.search", {
-      query: "Ada Lovelace",
-      domainAllow: ["wikipedia.org"],
-      domainDeny: ["news"],
-    }),
+    () =>
+      callTool(registry, "internet.search", {
+        query: "Ada Lovelace",
+        domainAllow: ["wikipedia.org"],
+        domainDeny: ["news"],
+      }),
     {
       field: "domainAllow",
       expected: "no unknown fields",
@@ -969,7 +1088,7 @@ test("UnifiedToolRegistry rejects invalid internet.search_advanced domains befor
       field: "domainDeny",
       expected: "hostnames only, without schemes, paths, or content categories",
       invalidValues: ["opinion", "video"],
-    }
+    },
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
@@ -998,7 +1117,7 @@ test("UnifiedToolRegistry rejects invalid internet.search_advanced country befor
     {
       field: "country",
       invalidValues: ["United States"],
-    }
+    },
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
@@ -1088,7 +1207,7 @@ test("UnifiedToolRegistry rejects invalid internet.search_advanced explicit date
       field: "startDate",
       expected: "a YYYY-MM-DD date",
       invalidValues: ["2026-02-31"],
-    }
+    },
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
@@ -1118,7 +1237,7 @@ test("UnifiedToolRegistry rejects internet.search_advanced explicit date ranges 
       field: "startDate",
       expected: "endDate must be a different YYYY-MM-DD date than startDate",
       invalidValues: ["2026-06-01", "2026-06-01"],
-    }
+    },
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
@@ -1148,7 +1267,7 @@ test("UnifiedToolRegistry rejects internet.search_advanced exactMatch queries wi
       expected:
         "a query containing at least one double-quoted phrase when exactMatch is true",
       invalidValues: ["current U.S. business and technology news"],
-    }
+    },
   );
   assert.deepEqual(internetProvider.searchAdvancedCalls, []);
 });
@@ -1273,7 +1392,7 @@ test("UnifiedToolRegistry rejects invalid built-in internet URLs before provider
     {
       field: "url",
       invalidValues: ["/relative/path"],
-    }
+    },
   );
   await assertToolInputInvalid(
     () =>
@@ -1283,7 +1402,7 @@ test("UnifiedToolRegistry rejects invalid built-in internet URLs before provider
     {
       field: "url",
       invalidValues: ["ftp://example.com/article"],
-    }
+    },
   );
   assert.equal(internetProvider.extractCalls.length, 0);
 });
@@ -1311,7 +1430,7 @@ test("UnifiedToolRegistry rejects local built-in internet URLs before provider c
       field: "url",
       expected: "public absolute http or https URLs",
       invalidValues: ["http://127.0.0.1:8000/index.html"],
-    }
+    },
   );
   await assertToolInputInvalid(
     () =>
@@ -1322,7 +1441,7 @@ test("UnifiedToolRegistry rejects local built-in internet URLs before provider c
       field: "url",
       expected: "a public absolute http or https URL",
       invalidValues: ["http://localhost:3000"],
-    }
+    },
   );
   await assertToolInputInvalid(
     () =>
@@ -1333,7 +1452,7 @@ test("UnifiedToolRegistry rejects local built-in internet URLs before provider c
       field: "url",
       expected: "a public absolute http or https URL",
       invalidValues: ["http://192.168.1.10"],
-    }
+    },
   );
   assert.equal(internetProvider.extractCalls.length, 0);
   assert.equal(internetProvider.crawlCalls.length, 0);
@@ -1364,7 +1483,7 @@ test("UnifiedToolRegistry reports built-in schema bound failures as recoverable 
       field: "maxChars",
       expected: "value >= 500",
       invalidValues: [100],
-    }
+    },
   );
   assert.equal(internetProvider.extractCalls.length, 0);
 });
@@ -1504,7 +1623,7 @@ test("UnifiedToolRegistry preserves MCP schema failure codes for dynamic tools",
       assert.equal(failure.code, "TOOL_INPUT_SCHEMA_FAILED");
       assert.notEqual(failure.code, "TOOL_INPUT_INVALID");
       return true;
-    }
+    },
   );
   assert.equal(mcp.calls.length, 0);
 });
@@ -1665,7 +1784,7 @@ test("UnifiedToolRegistry hides code.execute when profile code-mode is disabled"
   assert.deepEqual(registry.getCapabilityManifest(), []);
   await assert.rejects(
     () => callTool(registry, "code.execute", {}),
-    /not available/
+    /not available/,
   );
 });
 
@@ -1698,7 +1817,8 @@ test("UnifiedToolRegistry carries cancellation into code.execute", async () => {
     }),
   });
   const controller = new AbortController();
-  const call = callTool(registry,
+  const call = callTool(
+    registry,
     "code.execute",
     {
       language: "javascript",
@@ -1739,7 +1859,7 @@ test("UnifiedToolRegistry gates dev.shell tools by devShell profile config", asy
         command: "echo ok",
         workspaceRoot: ".",
       }),
-    /not available/
+    /not available/,
   );
 
   const enabledRegistry = new UnifiedToolRegistry({
@@ -1760,7 +1880,7 @@ test("UnifiedToolRegistry gates dev.shell tools by devShell profile config", asy
   await enabledRegistry.refresh();
   assert.deepEqual(
     enabledRegistry.getModelTools().map((tool) => tool.name),
-    ["dev.shell.run"]
+    ["dev.shell.run"],
   );
 });
 
@@ -1794,7 +1914,8 @@ test("UnifiedToolRegistry enables managed dev-shell mode from trusted agent sess
   });
 
   await registry.refresh();
-  await callTool(registry,
+  await callTool(
+    registry,
     "dev.shell.run",
     { command: "echo ok", workspaceRoot: "." },
     {
@@ -1808,10 +1929,11 @@ test("UnifiedToolRegistry enables managed dev-shell mode from trusted agent sess
           },
         },
       }),
-    }
+    },
   );
 
-  await callTool(registry,
+  await callTool(
+    registry,
     "dev.shell.run",
     { command: "echo ok", workspaceRoot: "." },
     {
@@ -1839,7 +1961,7 @@ test("UnifiedToolRegistry enables managed dev-shell mode from trusted agent sess
           },
         },
       }),
-    }
+    },
   );
 
   assert.deepEqual(execInputs[0]?.sourceWriteGuard, { enabled: true });
@@ -1907,24 +2029,33 @@ test("UnifiedToolRegistry passes Build-mode dev-shell commands without package-m
       },
     }),
   };
-  await callTool(registry,
+  await callTool(
+    registry,
     "exec_command",
     { command: "pnpm dev", cwd: "." },
     buildRunContext,
   );
-  await callTool(registry,
+  await callTool(
+    registry,
     "dev.shell.run",
     { command: "pnpm dev", workspaceRoot: "/workspace" },
     buildRunContext,
   );
-  await callTool(registry,
+  await callTool(
+    registry,
     "dev.process.start",
     { command: "pnpm dev", workspaceRoot: "/workspace" },
     buildRunContext,
   );
 
-  assert.deepEqual(startInputs.map((input) => input.command), ["pnpm dev", "pnpm dev"]);
-  assert.deepEqual(runInputs.map((input) => input.command), ["pnpm dev"]);
+  assert.deepEqual(
+    startInputs.map((input) => input.command),
+    ["pnpm dev", "pnpm dev"],
+  );
+  assert.deepEqual(
+    runInputs.map((input) => input.command),
+    ["pnpm dev"],
+  );
   for (const input of [...startInputs, ...runInputs]) {
     assert.equal("packageManagerPreflight" in input, false);
   }
@@ -1972,7 +2103,8 @@ test("UnifiedToolRegistry rejects managed dev-shell mode when trusted binding do
     },
   };
 
-  await callTool(registry,
+  await callTool(
+    registry,
     "dev.shell.run",
     { command: "echo ok", workspaceRoot: "." },
     {
@@ -1987,10 +2119,11 @@ test("UnifiedToolRegistry rejects managed dev-shell mode when trusted binding do
         },
         sessionState: state,
       }),
-    }
+    },
   );
 
-  await callTool(registry,
+  await callTool(
+    registry,
     "dev.shell.run",
     { command: "echo ok", workspaceRoot: "." },
     {
@@ -2005,7 +2138,7 @@ test("UnifiedToolRegistry rejects managed dev-shell mode when trusted binding do
         },
         sessionState: state,
       }),
-    }
+    },
   );
 
   assert.deepEqual(execInputs[0]?.sourceWriteGuard, { enabled: true });
@@ -2042,7 +2175,8 @@ test("UnifiedToolRegistry does not grant direct source writes for explicit manag
   });
 
   await registry.refresh();
-  await callTool(registry,
+  await callTool(
+    registry,
     "dev.shell.run",
     { command: "echo ok", workspaceRoot: "." },
     {
@@ -2061,7 +2195,7 @@ test("UnifiedToolRegistry does not grant direct source writes for explicit manag
           },
         },
       }),
-    }
+    },
   );
 
   assert.equal(execInputs[0]?.sourceWriteAuthority, undefined);
@@ -2100,7 +2234,8 @@ test("UnifiedToolRegistry carries source-write authority and write roots for def
   });
 
   await registry.refresh();
-  await callTool(registry,
+  await callTool(
+    registry,
     "dev.shell.run",
     { command: "echo ok", workspaceRoot: "." },
     {
@@ -2119,7 +2254,7 @@ test("UnifiedToolRegistry carries source-write authority and write roots for def
           },
         },
       }),
-    }
+    },
   );
 
   assert.equal(execInputs[0]?.sourceWriteAuthority, "source_write");
@@ -2160,7 +2295,8 @@ test("UnifiedToolRegistry ignores descriptive workspace authority without an exp
   });
 
   await registry.refresh();
-  await callTool(registry,
+  await callTool(
+    registry,
     "dev.shell.run",
     { command: "echo ok", workspaceRoot: "." },
     {
@@ -2178,7 +2314,7 @@ test("UnifiedToolRegistry ignores descriptive workspace authority without an exp
           },
         },
       }),
-    }
+    },
   );
 
   assert.equal(execInputs[0]?.sourceWriteAuthority, undefined);
@@ -2205,7 +2341,7 @@ test("UnifiedToolRegistry exposes allowlisted filesystem tools and can call them
   const tools = registry.getModelTools();
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ["fs.read_text", "fs.write_text"]
+    ["fs.read_text", "fs.write_text"],
   );
 
   const manifest = registry.getCapabilityManifest();
@@ -2217,7 +2353,7 @@ test("UnifiedToolRegistry exposes allowlisted filesystem tools and can call them
     [
       { name: "fs.read_text", executionClass: "read_only" },
       { name: "fs.write_text", executionClass: "sandboxed_only" },
-    ]
+    ],
   );
 
   const result = await callTool(registry, "fs.read_text", {
@@ -2225,19 +2361,19 @@ test("UnifiedToolRegistry exposes allowlisted filesystem tools and can call them
   });
   assert.equal(
     (result.auditRecord.output as { content?: string }).content,
-    "registry file"
+    "registry file",
   );
 });
 
 test("UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace inspection", async () => {
   const tempDir = await mkdtemp(
-    path.join(os.tmpdir(), "kestrel-unified-repo-trace-")
+    path.join(os.tmpdir(), "kestrel-unified-repo-trace-"),
   );
   await fsMkdir(path.join(tempDir, "src"), { recursive: true });
   await writeFile(
     path.join(tempDir, "src", "main.ts"),
     "export const value = 'TRACE_TOKEN';\n",
-    "utf8"
+    "utf8",
   );
 
   const registry = new UnifiedToolRegistry({
@@ -2261,7 +2397,7 @@ test("UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace 
   const tools = registry.getModelTools();
   assert.deepEqual(
     tools.map((tool) => tool.name),
-    ["repo.trace"]
+    ["repo.trace"],
   );
 
   const manifest = registry.getCapabilityManifest();
@@ -2277,7 +2413,7 @@ test("UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace 
         executionClass: "read_only",
         capabilityClasses: ["fs.read", "repo.trace"],
       },
-    ]
+    ],
   );
 
   const result = await callTool(registry, "repo.trace", {
@@ -2290,7 +2426,7 @@ test("UnifiedToolRegistry exposes allowlisted repo.trace as read-only workspace 
   assert.equal(output.resultCount, 1);
   assert.deepEqual(
     output.groups?.map((group) => group.path),
-    ["src/main.ts"]
+    ["src/main.ts"],
   );
   assert.match(result.modelContext.text, /Tool result: repo\.trace/u);
   assert.match(result.modelContext.text, /resultCount: 1/u);
@@ -2312,10 +2448,11 @@ test("UnifiedToolRegistry rejects unsupported fields before normalization", asyn
   await registry.refresh();
 
   await assertToolInputInvalid(
-    () => validateToolInput(registry, "free.time.current", {
-      timezone: "Etc/UTC",
-      unexpected: true,
-    }),
+    () =>
+      validateToolInput(registry, "free.time.current", {
+        timezone: "Etc/UTC",
+        unexpected: true,
+      }),
     {
       field: "unexpected",
       expected: "no unknown fields",
@@ -2373,8 +2510,11 @@ test("UnifiedToolRegistry rejects legacy aliases and accepts canonical model inp
         const failure = error as RuntimeFailure;
         assert.equal(failure.code, "TOOL_INPUT_INVALID");
         assert.equal(
-          (failure.details?.validationErrors as Array<{ keyword?: string }> | undefined)
-            ?.some((item) => item.keyword === "additionalProperties"),
+          (
+            failure.details?.validationErrors as
+              | Array<{ keyword?: string }>
+              | undefined
+          )?.some((item) => item.keyword === "additionalProperties"),
           true,
         );
         return true;
@@ -2383,7 +2523,11 @@ test("UnifiedToolRegistry rejects legacy aliases and accepts canonical model inp
   }
 
   await assert.rejects(
-    () => validateToolInput(registry, "fs.read_text", { path: "README.md", maxBytes: "2" }),
+    () =>
+      validateToolInput(registry, "fs.read_text", {
+        path: "README.md",
+        maxBytes: "2",
+      }),
     (error: unknown) => {
       assert.equal(error instanceof RuntimeFailure, true);
       assert.equal((error as RuntimeFailure).code, "TOOL_INPUT_INVALID");
@@ -2496,9 +2640,25 @@ test("UnifiedToolRegistry preserves runtime built-ins when pruning unavailable t
 
 test("UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn tools", async () => {
   const registry = new UnifiedToolRegistry({
-    allowlist: ["dialog.open", "dialog.send", "dialog.close", "agent.spawn", "delegate.spawn_child"],
+    allowlist: [
+      "dialog.open",
+      "dialog.send",
+      "dialog.close",
+      "agent.spawn",
+      "delegate.spawn_child",
+    ],
     context: {
-      dialogService: { async open() { throw new Error("not called"); }, async send() { throw new Error("not called"); }, async close() { throw new Error("not called"); } },
+      dialogService: {
+        async open() {
+          throw new Error("not called");
+        },
+        async send() {
+          throw new Error("not called");
+        },
+        async close() {
+          throw new Error("not called");
+        },
+      },
     },
     mcpManager: new MockMcpProvider({
       healthy: true,
@@ -2511,12 +2671,14 @@ test("UnifiedToolRegistry exposes persistent dialog tools and hides legacy spawn
 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
-    ["dialog.open", "dialog.send", "dialog.close"]
+    ["dialog.open", "dialog.send", "dialog.close"],
   );
 });
 
 test("Kestrel-One profile exposes only model-visible collaborator dialogs", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-dialog-profile-registry-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-dialog-profile-registry-"),
+  );
   const store = new ProfileStore(tempDir);
   const profile = store.findById(await store.load(), "kestrel");
   assert.ok(profile);
@@ -2532,7 +2694,8 @@ test("Kestrel-One profile exposes only model-visible collaborator dialogs", asyn
   await registry.refresh();
 
   assert.deepEqual(
-    registry.getModelTools()
+    registry
+      .getModelTools()
       .map((tool) => tool.name)
       .filter(
         (toolName) =>
@@ -2561,10 +2724,7 @@ test("every canonical Kestrel One environment exposes dialogs without legacy del
               model: "openai/gpt-5.6-luna",
             }
           : {}),
-        additionalToolNames: [
-          "agent.spawn",
-          "delegate.spawn_child",
-        ],
+        additionalToolNames: ["agent.spawn", "delegate.spawn_child"],
       },
     }).profile;
     const registry = new UnifiedToolRegistry({
@@ -2578,7 +2738,8 @@ test("every canonical Kestrel One environment exposes dialogs without legacy del
     });
     await registry.refresh();
     assert.deepEqual(
-      registry.getModelTools()
+      registry
+        .getModelTools()
         .map((tool) => tool.name)
         .filter(
           (name) =>
@@ -2611,9 +2772,12 @@ test("UnifiedToolRegistry blocks all legacy spawn tools even when allowlisted", 
 
   assert.deepEqual(
     registry.getModelTools().map((tool) => tool.name),
-    []
+    [],
   );
-  await assert.rejects(() => callTool(registry, "agent.spawn", { task: "legacy" }), /not available/);
+  await assert.rejects(
+    () => callTool(registry, "agent.spawn", { task: "legacy" }),
+    /not available/,
+  );
   await assert.rejects(
     () =>
       callTool(registry, "delegate.spawn_child", {
@@ -2621,14 +2785,14 @@ test("UnifiedToolRegistry blocks all legacy spawn tools even when allowlisted", 
         prompt: "Do the legacy thing",
         parentSessionId: "session-parent",
       }),
-    /not available/
+    /not available/,
   );
   await assert.rejects(
     () =>
       validateToolInput(registry, "delegate.list_children", {
         parentSessionId: "session-parent",
       }),
-    /not available/
+    /not available/,
   );
   await assert.rejects(
     () => validateToolInput(registry, "delegate.future_internal_tool", {}),
@@ -2640,7 +2804,17 @@ test("dialog.open validates its minimal name and message contract", async () => 
   const registry = new UnifiedToolRegistry({
     allowlist: ["dialog.open"],
     context: {
-      dialogService: { async open() { throw new Error("not called"); }, async send() { throw new Error("not called"); }, async close() { throw new Error("not called"); } },
+      dialogService: {
+        async open() {
+          throw new Error("not called");
+        },
+        async send() {
+          throw new Error("not called");
+        },
+        async close() {
+          throw new Error("not called");
+        },
+      },
     },
     mcpManager: new MockMcpProvider({
       healthy: true,
@@ -2659,7 +2833,7 @@ test("dialog.open validates its minimal name and message contract", async () => 
     {
       name: "Peregrine",
       message: "Investigate failing tests",
-    }
+    },
   );
   await assert.rejects(
     () =>
@@ -2668,7 +2842,7 @@ test("dialog.open validates its minimal name and message contract", async () => 
         message: "Investigate failing tests",
         parentSessionId: "session-1",
       }),
-    /parentSessionId/
+    /parentSessionId/,
   );
 });
 
@@ -2692,8 +2866,12 @@ test("dialog.open uses active thread identity and forbids nested dialogs", async
             updatedAt: now,
           };
         },
-        async send() { throw new Error("not called"); },
-        async close() { throw new Error("not called"); },
+        async send() {
+          throw new Error("not called");
+        },
+        async close() {
+          throw new Error("not called");
+        },
       },
     },
     mcpManager: new MockMcpProvider({
@@ -2704,7 +2882,8 @@ test("dialog.open uses active thread identity and forbids nested dialogs", async
     }),
   });
   await registry.refresh();
-  const result = await callTool(registry,
+  const result = await callTool(
+    registry,
     "dialog.open",
     {
       name: "Peregrine",
@@ -2723,10 +2902,13 @@ test("dialog.open uses active thread identity and forbids nested dialogs", async
           },
         },
       }),
-    }
+    },
   );
 
-  assert.equal((result.auditRecord.output as { dialogId?: string }).dialogId, "dialog-child");
+  assert.equal(
+    (result.auditRecord.output as { dialogId?: string }).dialogId,
+    "dialog-child",
+  );
   assert.deepEqual(requests, [
     {
       parentSessionId: "thread-parent",
@@ -2735,20 +2917,37 @@ test("dialog.open uses active thread identity and forbids nested dialogs", async
       message: "Investigate failing tests",
     },
   ]);
-  const nested = await callTool(registry, "dialog.open", { name: "Osprey", message: "nested" }, {
+  const nested = await callTool(
+    registry,
+    "dialog.open",
+    { name: "Osprey", message: "nested" },
+    {
       runContext: createToolRunContext({
         runId: "run-child",
         sessionId: "session-child",
-        payload: { orchestration: { threadId: "thread-child", delegationId: "dialog-parent", delegationDepth: 1, runtimeAssembly: { toolAllowlist: ["dialog.open"] } } },
+        payload: {
+          orchestration: {
+            threadId: "thread-child",
+            delegationId: "dialog-parent",
+            delegationDepth: 1,
+            runtimeAssembly: { toolAllowlist: ["dialog.open"] },
+          },
+        },
       }),
-    });
+    },
+  );
   assert.equal(nested.status, "FAILED");
-  assert.match(String((nested.auditRecord.error as { message?: string } | undefined)?.message), /Only Kestrel can open collaborator dialogs/);
+  assert.match(
+    String(
+      (nested.auditRecord.error as { message?: string } | undefined)?.message,
+    ),
+    /Only Kestrel can open collaborator dialogs/,
+  );
 });
 
 test("UnifiedToolRegistry scopes filesystem root per workspace payload", async () => {
   const baseDir = await mkdtemp(
-    path.join(os.tmpdir(), "kestrel-unified-workspace-fs-")
+    path.join(os.tmpdir(), "kestrel-unified-workspace-fs-"),
   );
   const workspaceA = path.join(baseDir, "workspace-a");
   const workspaceB = path.join(baseDir, "workspace-b");
@@ -2778,7 +2977,8 @@ test("UnifiedToolRegistry scopes filesystem root per workspace payload", async (
   await registry.refresh();
 
   const readWithinWorkspace = async (workspaceRoot: string) =>
-    callTool(registry,
+    callTool(
+      registry,
       "fs.read_text",
       { path: "note.txt" },
       {
@@ -2794,7 +2994,7 @@ test("UnifiedToolRegistry scopes filesystem root per workspace payload", async (
             },
           },
         }),
-      }
+      },
     );
 
   const [left, right] = await Promise.all([
@@ -2804,48 +3004,59 @@ test("UnifiedToolRegistry scopes filesystem root per workspace payload", async (
 
   assert.equal(
     (left.auditRecord.output as { content?: string }).content,
-    "workspace-a"
+    "workspace-a",
   );
   assert.equal(
     (right.auditRecord.output as { content?: string }).content,
-    "workspace-b"
+    "workspace-b",
   );
-  const outside = await callTool(registry,
-      "fs.read_text",
-      { path: path.join(baseDir, "outside.txt") },
-      {
-        runContext: createToolRunContext({
-          runId: "run-outside",
-          sessionId: "session-outside",
-          payload: {
-            workspace: {
-              workspaceId: "workspace-a",
-              workspaceRoot: workspaceA,
-              appRoot: ".",
-              commands: {},
-            },
+  const outside = await callTool(
+    registry,
+    "fs.read_text",
+    { path: path.join(baseDir, "outside.txt") },
+    {
+      runContext: createToolRunContext({
+        runId: "run-outside",
+        sessionId: "session-outside",
+        payload: {
+          workspace: {
+            workspaceId: "workspace-a",
+            workspaceRoot: workspaceA,
+            appRoot: ".",
+            commands: {},
           },
-        }),
-      }
-    );
+        },
+      }),
+    },
+  );
   assert.equal(outside.status, "FAILED");
   assert.match(
-    String((outside.auditRecord.error as { message?: string } | undefined)?.message),
+    String(
+      (outside.auditRecord.error as { message?: string } | undefined)?.message,
+    ),
     /outside allowed roots/i,
   );
 });
 
 test("UnifiedToolRegistry records exact provenance when an installed SKILL.md is fully loaded", async () => {
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-unified-skill-read-"));
+  const workspaceRoot = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-unified-skill-read-"),
+  );
   const commitSha = "a".repeat(40);
   const skillFile = `.kestrel/skills/review/revisions/${commitSha}/SKILL.md`;
-  await fsMkdir(path.dirname(path.join(workspaceRoot, skillFile)), { recursive: true });
+  await fsMkdir(path.dirname(path.join(workspaceRoot, skillFile)), {
+    recursive: true,
+  });
   await writeFile(
     path.join(workspaceRoot, skillFile),
     `---\nname: review\ndescription: Review carefully.\n---\n\n# Review\n\n${"Use evidence.\n".repeat(700)}`,
     "utf8",
   );
-  const contentDigest = (await validateWorkspaceSkillPackage(path.dirname(path.join(workspaceRoot, skillFile)))).contentDigest;
+  const contentDigest = (
+    await validateWorkspaceSkillPackage(
+      path.dirname(path.join(workspaceRoot, skillFile)),
+    )
+  ).contentDigest;
   const registry = new UnifiedToolRegistry({
     allowlist: ["fs.read_text", "fs.write_text"],
     context: { fileSystem: { workspaceRoot, tempRoots: [os.tmpdir()] } },
@@ -2861,40 +3072,74 @@ test("UnifiedToolRegistry records exact provenance when an installed SKILL.md is
     runId: "run-skill-read",
     sessionId: "session-skill-read",
     payload: {
-      workspace: { workspaceId: "workspace-skill", workspaceRoot, appRoot: ".", commands: {} },
-      workspaceSkills: [{
-        installationId: "review",
-        name: "review",
-        description: "Review carefully.",
-        commitSha,
-        contentDigest,
-        skillFile,
-      }],
+      workspace: {
+        workspaceId: "workspace-skill",
+        workspaceRoot,
+        appRoot: ".",
+        commands: {},
+      },
+      workspaceSkills: [
+        {
+          installationId: "review",
+          name: "review",
+          description: "Review carefully.",
+          commitSha,
+          contentDigest,
+          skillFile,
+        },
+      ],
     },
   });
-  const firstPage = await callTool(registry, "fs.read_text", { path: skillFile }, {
-    runContext,
-  });
-  assert.equal((firstPage.auditRecord.output as { workspaceSkillProvenance?: unknown }).workspaceSkillProvenance, undefined);
-  const firstOutput = firstPage.auditRecord.output as { nextOffsetBytes: number; revision: string };
-  const result = await callTool(registry, "fs.read_text", {
-    path: skillFile,
-    offsetBytes: firstOutput.nextOffsetBytes,
-    expectedRevision: firstOutput.revision,
-  }, { runContext });
-  assert.deepEqual((result.auditRecord.output as { range: unknown; complete: unknown }).range, {
-    startByte: firstOutput.nextOffsetBytes,
-    endByte: (result.auditRecord.output as { totalBytes: number }).totalBytes,
-  });
-  assert.equal((result.auditRecord.output as { complete: boolean }).complete, true);
-  assert.deepEqual((result.auditRecord.output as { workspaceSkillProvenance?: unknown }).workspaceSkillProvenance, {
-    installationId: "review",
-    name: "review",
-    commitSha,
-    contentDigest,
-    skillFile,
-    loaded: true,
-  });
+  const firstPage = await callTool(
+    registry,
+    "fs.read_text",
+    { path: skillFile },
+    {
+      runContext,
+    },
+  );
+  assert.equal(
+    (firstPage.auditRecord.output as { workspaceSkillProvenance?: unknown })
+      .workspaceSkillProvenance,
+    undefined,
+  );
+  const firstOutput = firstPage.auditRecord.output as {
+    nextOffsetBytes: number;
+    revision: string;
+  };
+  const result = await callTool(
+    registry,
+    "fs.read_text",
+    {
+      path: skillFile,
+      offsetBytes: firstOutput.nextOffsetBytes,
+      expectedRevision: firstOutput.revision,
+    },
+    { runContext },
+  );
+  assert.deepEqual(
+    (result.auditRecord.output as { range: unknown; complete: unknown }).range,
+    {
+      startByte: firstOutput.nextOffsetBytes,
+      endByte: (result.auditRecord.output as { totalBytes: number }).totalBytes,
+    },
+  );
+  assert.equal(
+    (result.auditRecord.output as { complete: boolean }).complete,
+    true,
+  );
+  assert.deepEqual(
+    (result.auditRecord.output as { workspaceSkillProvenance?: unknown })
+      .workspaceSkillProvenance,
+    {
+      installationId: "review",
+      name: "review",
+      commitSha,
+      contentDigest,
+      skillFile,
+      loaded: true,
+    },
+  );
   const writeResult = await callTool(
     registry,
     "fs.write_text",
@@ -2903,7 +3148,10 @@ test("UnifiedToolRegistry records exact provenance when an installed SKILL.md is
   );
   assert.equal(writeResult.status, "FAILED");
   assert.match(
-    String((writeResult.auditRecord.error as { message?: string } | undefined)?.message),
+    String(
+      (writeResult.auditRecord.error as { message?: string } | undefined)
+        ?.message,
+    ),
     /cannot modify Kestrel-owned workspace skill state/u,
   );
 });

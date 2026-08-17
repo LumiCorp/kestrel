@@ -1934,6 +1934,8 @@ export class ExecutionEngine {
           });
         }
       },
+      inspectTool: (name, input, intent) =>
+        runtimeIO.inspectTool(name, input, intent),
     };
   }
 
@@ -3093,10 +3095,12 @@ export class ExecutionEngine {
           ? { authority: "automatic" }
           : { authority: bindingAuthorityRevision }),
       });
+      let exactApprovalBinding:
+        | ReturnType<typeof parseRunnerExternalApprovalBindingV1>
+        | undefined;
       if (approvalId !== undefined) {
-        let exactBinding;
         try {
-          exactBinding = parseRunnerExternalApprovalBindingV1(approvalBinding);
+          exactApprovalBinding = parseRunnerExternalApprovalBindingV1(approvalBinding);
         } catch (error) {
           throw createRuntimeFailure(
             "TOOL_APPROVAL_BINDING_INVALID",
@@ -3108,11 +3112,9 @@ export class ExecutionEngine {
             },
           );
         }
-        const preparedPayloadHash = digestExternalApprovalPayload(rawInput);
         if (
-          exactBinding.actionKey !== toolName ||
-          exactBinding.payloadHash !== preparedPayloadHash ||
-          Date.parse(exactBinding.expiresAt) <= Date.now()
+          exactApprovalBinding.actionKey !== toolName ||
+          Date.parse(exactApprovalBinding.expiresAt) <= Date.now()
         ) {
           throw createRuntimeFailure(
             "TOOL_APPROVAL_BINDING_CHANGED",
@@ -3120,12 +3122,10 @@ export class ExecutionEngine {
             {
               recoverable: true,
               toolName,
-              approvalId: exactBinding.approvalId,
-              bindingRunId: exactBinding.runId,
+              approvalId: exactApprovalBinding.approvalId,
+              bindingRunId: exactApprovalBinding.runId,
               preparedRunId: runId,
-              bindingActionKey: exactBinding.actionKey,
-              bindingPayloadHash: exactBinding.payloadHash,
-              preparedPayloadHash,
+              bindingActionKey: exactApprovalBinding.actionKey,
               descriptorRevision: activation.descriptor.contractRevision,
               scopeFingerprint: activation.scopeFingerprint,
             },
@@ -3135,7 +3135,7 @@ export class ExecutionEngine {
         // prepared invocation retains the run identity that the operator
         // actually approved instead of silently rebinding that authority to
         // the continuation run.
-        preparedRunId = exactBinding.runId;
+        preparedRunId = exactApprovalBinding.runId;
       }
       const approval = approvalId === undefined
         ? undefined
@@ -3159,6 +3159,29 @@ export class ExecutionEngine {
         },
         { runContext, runtimeBudgetRemainingMs },
       );
+      if (exactApprovalBinding !== undefined) {
+        const preparedPayloadHash = digestExternalApprovalPayload(
+          preparedToolCall.effectiveInput,
+        );
+        if (exactApprovalBinding.payloadHash !== preparedPayloadHash) {
+          throw createRuntimeFailure(
+            "TOOL_APPROVAL_BINDING_CHANGED",
+            "External approval no longer matches the normalized executable tool action.",
+            {
+              recoverable: true,
+              toolName,
+              approvalId: exactApprovalBinding.approvalId,
+              bindingRunId: exactApprovalBinding.runId,
+              preparedRunId,
+              bindingActionKey: exactApprovalBinding.actionKey,
+              bindingPayloadHash: exactApprovalBinding.payloadHash,
+              preparedPayloadHash,
+              descriptorRevision: activation.descriptor.contractRevision,
+              scopeFingerprint: activation.scopeFingerprint,
+            },
+          );
+        }
+      }
       const {
         toolName: _toolName,
         toolInput: _toolInput,

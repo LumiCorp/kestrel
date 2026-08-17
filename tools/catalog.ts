@@ -354,6 +354,9 @@ export function createToolCatalog(
         ...(capability.approvalCapabilities !== undefined
           ? { approvalCapabilities: [...capability.approvalCapabilities] }
           : {}),
+        ...(capability.minimumApprovalMode !== undefined
+          ? { minimumApprovalMode: capability.minimumApprovalMode }
+          : {}),
         requires: capability.requires ?? [],
         ...(capability.suitability !== undefined
           ? {
@@ -524,6 +527,24 @@ function validateCapabilityMetadata(
   name: string,
   capability: ToolCapabilityMetadata,
 ): void {
+  if (
+    capability.minimumApprovalMode !== undefined &&
+    capability.minimumApprovalMode !== "auto" &&
+    capability.minimumApprovalMode !== "ask"
+  ) {
+    throw createToolCatalogError(
+      "TOOL_CAPABILITY_METADATA_INVALID",
+      `Tool '${name}' has invalid capability.minimumApprovalMode.`,
+      {
+        subsystem: "tooling",
+        toolName: name,
+        field: "minimumApprovalMode",
+        contractPath: "definition.capability.minimumApprovalMode",
+        classification: "configuration",
+        recoverable: false,
+      },
+    );
+  }
   if (
     typeof capability.executionClass !== "string" ||
     capability.executionClass.trim().length === 0
