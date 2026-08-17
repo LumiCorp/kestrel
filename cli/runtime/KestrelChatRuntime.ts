@@ -65,6 +65,7 @@ import {
   assertRequiredKestrelOneTools,
   KESTREL_ONE_POLICY_ID,
   MissionControlProjectService,
+  MissionControlProjectChangePublisher,
   MissionControlExecutionRuntime,
   MissionControlReviewService,
   parseMissionControlExecutionAction,
@@ -203,6 +204,7 @@ interface RuntimeBootstrap {
     | undefined;
   missionControlStore?: SessionStore | undefined;
   missionControlProjectService?: MissionControlProjectService | undefined;
+  missionControlProjectChanges?: MissionControlProjectChangePublisher | undefined;
   threadRuntime?: ThreadRuntime | undefined;
   taskGraphStore?: ProductTaskGraphStore | undefined;
   projectStore?: ProductProjectStateStore | undefined;
@@ -306,6 +308,9 @@ export interface KestrelChatRuntimeOptions {
   onDetachedTurnEvent?:
     | ((event: DetachedTurnLifecycleEvent) => void)
     | undefined;
+  onMissionControlProject?:
+    | ((project: MissionControlProjectStateRecord) => void)
+    | undefined;
 }
 
 export class KestrelChatRuntime {
@@ -365,6 +370,7 @@ export class KestrelChatRuntime {
   private readonly releaseRuntimeAuthorization: RuntimeBootstrap["releaseRuntimeAuthorization"];
   private readonly reasoningPolicyReady: Promise<unknown>;
   private readonly missionControlProfileId: string;
+  private readonly unsubscribeMissionControlProjects: () => void;
 
   private finalizedPayload: unknown;
 
@@ -391,6 +397,13 @@ export class KestrelChatRuntime {
     this.kestrel = bootstrap.kestrel;
     this.missionControlProfileId = profile.id;
     this.missionControlProjectService = bootstrap.missionControlProjectService;
+    this.unsubscribeMissionControlProjects =
+      bootstrap.missionControlProjectChanges === undefined ||
+        options.onMissionControlProject === undefined
+        ? () => undefined
+        : bootstrap.missionControlProjectChanges.subscribe(
+            options.onMissionControlProject,
+          );
     this.threadRuntime = bootstrap.threadRuntime;
     this.taskGraphStore = bootstrap.taskGraphStore;
     this.projectStore = bootstrap.projectStore;
@@ -542,10 +555,14 @@ export class KestrelChatRuntime {
           >;
         },
         runner,
+        {
+          onProjectChanged: bootstrap.missionControlProjectChanges?.publish,
+        },
       );
       this.missionControlReviewService = new MissionControlReviewService(
         missionControlStore,
         this.createMissionControlReviewEvidenceResolver(),
+        bootstrap.missionControlProjectChanges?.publish,
       );
     }
   }
@@ -3014,6 +3031,7 @@ export class KestrelChatRuntime {
   }
 
   async close(): Promise<void> {
+    this.unsubscribeMissionControlProjects();
     this.missionControlExecutionRuntime?.close();
     await this.closePool();
   }
@@ -3225,7 +3243,11 @@ function createRuntimeWithStore(
   ]);
   const taskGraphStore = new ProductTaskGraphStore(store);
   const projectStore = new ProductProjectStateStore(store);
-  const missionControlProjectService = new MissionControlProjectService(store);
+  const missionControlProjectChanges = new MissionControlProjectChangePublisher();
+  const missionControlProjectService = new MissionControlProjectService(
+    store,
+    missionControlProjectChanges.publish,
+  );
   const workspaceCheckpointService = new WorkspaceCheckpointService(store);
   const userTerminalService = enableUserTerminals
     ? new UserTerminalService({
@@ -3601,6 +3623,7 @@ function createRuntimeWithStore(
     },
     missionControlStore: store,
     missionControlProjectService,
+    missionControlProjectChanges,
     threadRuntime,
     taskGraphStore,
     projectStore,

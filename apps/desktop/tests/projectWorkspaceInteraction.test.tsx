@@ -59,6 +59,10 @@ test("project overview summarizes work and routes thread and creation actions", 
   assert.match(container.textContent ?? "", /Running tests/u);
   assert.match(container.textContent ?? "", /Approve deployment/u);
   assert.match(container.textContent ?? "", /2Total/u);
+  assert.equal(
+    [...container.querySelectorAll("button")].filter((entry) => entry.textContent === "New conversation").length,
+    1,
+  );
   await act(async () => [...container.querySelectorAll("button")].find((entry) => entry.textContent?.startsWith("Deploy"))?.click());
   assert.deepEqual(selected, ["waiting"]);
   await act(async () => [...container.querySelectorAll("button")].find((entry) => entry.textContent === "New conversation")?.click());

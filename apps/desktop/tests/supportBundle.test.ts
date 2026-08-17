@@ -10,7 +10,7 @@ test("buildDesktopSupportBundle includes native runtime, database, settings, and
     generatedAt: "2026-04-29T12:00:00.000Z",
     appInfo: { name: "Kestrel", version: "0.1.0", isPackaged: false },
     bootState: { phase: "ready", message: "Ready.", webUrl: "http://localhost:43100" },
-    runtimeHealth: { state: "healthy", summary: "Runtime ready.", running: true, logPath: "/tmp/runtime.log" },
+    runtimeHealth: { state: "healthy", connection: "connected", summary: "Runtime ready.", running: true, logPath: "/tmp/runtime.log" },
     databaseStatus: { state: "healthy", summary: "DB ready.", managed: true, initialized: true, running: true },
     settings: { ...createDefaultDesktopSettings(), openrouterApiKey: "sk-or-v1-secret" },
     projectRuns: [

@@ -115,6 +115,55 @@ final result: passed
 
 ---
 
+# Desktop navigation simplification design QA
+
+## Target and evidence
+
+- Source visual truth: `attachment://codex-clipboard-c05ab3d4-9fae-4cfa-88c5-2eb5b0a00215.png` (432 x 402 px) and `attachment://codex-clipboard-c344cb85-f7be-4d48-957b-b58fb131351b.png` (444 x 206 px)
+- Implementation screenshot: `artifact://kestrel-nav-qa/kestrel-navigation-implementation.png`
+- Focused comparison: `artifact://kestrel-nav-qa/kestrel-navigation-comparison.png`
+- Browser viewport: 1280 x 720 CSS px
+- Implementation screenshot: 1280 x 720 px at device pixel ratio 2, returned by the browser at CSS-pixel dimensions
+- State: light theme, Find work open, Conversation selected
+
+The supplied references are detail crops rather than a full matching viewport. They were normalized from 432 x 402 to 216 x 201 px and from 444 x 206 to 222 x 103 px. The implementation navigation was cropped to 215 x 258 px. This aligns the drawer widths for the focused comparison without treating surrounding browser-preview content as design evidence.
+
+## Full-view and focused comparison
+
+The full 1280 x 720 render shows the complete Find work drawer in context. Its bottom navigation fits without clipping or a scrollbar, and the main surface remains unobstructed outside the intended modal scrim.
+
+The combined focused comparison places the normalized supplied Work and Configure crops beside the rendered navigation crop. It confirms that Git and pull requests, Preview, and Terminal are absent, while Apps, Settings, and Diagnostics form one vertical column.
+
+## Fidelity surfaces
+
+- Typography preserves the existing Kestrel navigation type scale, weights, and heading hierarchy.
+- Spacing and layout use full-width, left-aligned Configure controls with consistent vertical rhythm.
+- Colors preserve the existing light-theme background, border, muted-label, and selected-control tokens.
+- Image quality is not applicable because this navigation change contains no raster or decorative assets; existing library icons remain sharp and consistently sized.
+- Copy exactly matches the retained destinations and contains no retired destination.
+- Accessibility exposes Work and Configure as labelled groups with named destination buttons.
+
+## Interaction and runtime checks
+
+- Opened Find work and confirmed its labelled Work and Configure groups.
+- Opened Apps, Settings, and Diagnostics and confirmed each destination heading.
+- Checked browser console warnings and errors; none were present.
+
+## Comparison history
+
+- The initial rendered comparison found no actionable P0, P1, or P2 issue, so no visual correction loop was required.
+
+## Findings
+
+- P0: none
+- P1: none
+- P2: none
+- P3: none
+
+final result: passed
+
+---
+
 # Desktop navigation and title bar design QA
 
 **Source visual truth**

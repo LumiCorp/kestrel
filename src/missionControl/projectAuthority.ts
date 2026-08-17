@@ -101,6 +101,7 @@ export interface MissionControlWorkItem {
   instructions: string;
   createdBy: MissionControlWorkCreator;
   completionContract?: MissionControlCompletionContract | undefined;
+  followUpToItemId?: string | undefined;
   phase: MissionControlWorkPhase;
   order: number;
   attempts: MissionControlExecutionAttempt[];
@@ -229,7 +230,14 @@ export type MissionControlProjectAction =
       instructions: string;
       createdBy: MissionControlWorkCreator;
       completionContract?: MissionControlCompletionContract | undefined;
+      followUpToItemId?: string | undefined;
       order: number;
+    })
+  | (MissionControlItemActionBase & {
+      type: "item.update";
+      title: string;
+      instructions: string;
+      completionContract: MissionControlCompletionContract;
     })
   | (MissionControlItemActionBase & {
       type: "item.approve";
@@ -238,6 +246,11 @@ export type MissionControlProjectAction =
       type: "item.reorder";
       targetPhase: MissionControlWorkPhase;
       order: number;
+    })
+  | (MissionControlActionBase & {
+      type: "item.resequence";
+      targetPhase: MissionControlWorkPhase;
+      orderedItemIds: string[];
     })
   | (MissionControlItemActionBase & {
       type: "item.return_to_ready";
@@ -306,6 +319,9 @@ export class MissionControlProjectService {
       MissionControlProjectRepository,
       "getMissionControlProjectState" | "updateMissionControlProjectState"
     >,
+    private readonly onProjectChanged?: (
+      project: MissionControlProjectStateRecord,
+    ) => void,
   ) {
     this.store = store;
   }
@@ -330,13 +346,21 @@ export class MissionControlProjectService {
 
   async execute(actionValue: unknown): Promise<MissionControlProjectMutationResult> {
     const action = parseMissionControlProjectAction(actionValue);
-    return this.store.updateMissionControlProjectState({
+    const result = await this.store.updateMissionControlProjectState({
       projectId: action.projectId,
       actionId: action.actionId,
       requestFingerprint: fingerprintMissionControlProjectAction(action),
       expectedRevision: action.expectedRevision,
       apply: (current) => reduceMissionControlProjectAction(current, action),
     });
+    if (result.duplicate === false) {
+      try {
+        this.onProjectChanged?.(result.project);
+      } catch {
+        // Observers cannot turn a committed authoritative mutation into failure.
+      }
+    }
+    return result;
   }
 }
 
@@ -383,6 +407,7 @@ export function parseMissionControlProjectAction(
         "instructions",
         "createdBy",
         "completionContract",
+        "followUpToItemId",
         "order",
       ]);
       return {
@@ -399,7 +424,43 @@ export function parseMissionControlProjectAction(
                 record.completionContract,
               ),
             }),
+        ...(record.followUpToItemId === undefined
+          ? {}
+          : {
+              followUpToItemId: requireBoundedString(
+                record.followUpToItemId,
+                "followUpToItemId",
+                256,
+              ),
+            }),
         order: requireNonNegativeInteger(record.order, "order"),
+      };
+    case "item.update":
+      assertAllowedKeys(record, [
+        "type",
+        "projectId",
+        "actionId",
+        "actionTs",
+        "expectedRevision",
+        "itemId",
+        "expectedItemVersion",
+        "title",
+        "instructions",
+        "completionContract",
+      ]);
+      return {
+        ...base,
+        type,
+        itemId: requireBoundedString(record.itemId, "itemId", 256),
+        expectedItemVersion: requirePositiveInteger(
+          record.expectedItemVersion,
+          "expectedItemVersion",
+        ),
+        title: requireBoundedString(record.title, "title", 512),
+        instructions: requireBoundedString(record.instructions, "instructions", 32_000),
+        completionContract: parseMissionControlCompletionContract(
+          record.completionContract,
+        ),
       };
     case "item.approve":
     case "item.return_to_ready":
@@ -446,6 +507,32 @@ export function parseMissionControlProjectAction(
         targetPhase: requireWorkPhase(record.targetPhase),
         order: requireNonNegativeInteger(record.order, "order"),
       };
+    case "item.resequence": {
+      assertAllowedKeys(record, [
+        "type",
+        "projectId",
+        "actionId",
+        "actionTs",
+        "expectedRevision",
+        "targetPhase",
+        "orderedItemIds",
+      ]);
+      if (Array.isArray(record.orderedItemIds) === false) {
+        throw new Error("orderedItemIds must be an array.");
+      }
+      const orderedItemIds = record.orderedItemIds.map((itemId, index) =>
+        requireBoundedString(itemId, `orderedItemIds.${index}`, 256),
+      );
+      if (new Set(orderedItemIds).size !== orderedItemIds.length) {
+        throw new Error("orderedItemIds must not contain duplicates.");
+      }
+      return {
+        ...base,
+        type,
+        targetPhase: requireWorkPhase(record.targetPhase),
+        orderedItemIds,
+      };
+    }
     case "autopilot.configure":
       assertAllowedKeys(record, [
         "type",
@@ -509,6 +596,16 @@ export function parseMissionControlProjectDocument(
       parseWorkItem(item, itemId, projectId),
     ]),
   );
+  for (const item of Object.values(items)) {
+    if (
+      item.followUpToItemId !== undefined &&
+      items[item.followUpToItemId] === undefined
+    ) {
+      throw new Error(
+        `items.${item.id}.followUpToItemId must identify a persisted work item.`,
+      );
+    }
+  }
   if (Array.isArray(record.history) === false) {
     throw new Error("history must be an array.");
   }
@@ -610,6 +707,14 @@ export function reduceMissionControlProjectAction(
           `Mission Control item already exists: ${action.itemId}.`,
         );
       }
+      if (action.followUpToItemId !== undefined) {
+        const source = current.items[action.followUpToItemId];
+        if (source === undefined || source.phase !== "done") {
+          throw new MissionControlTransitionError(
+            "A Mission Control follow-up must reference existing Done work.",
+          );
+        }
+      }
       const item: MissionControlWorkItem = {
         id: action.itemId,
         title: action.title,
@@ -618,6 +723,9 @@ export function reduceMissionControlProjectAction(
         ...(action.completionContract === undefined
           ? {}
           : { completionContract: action.completionContract }),
+        ...(action.followUpToItemId === undefined
+          ? {}
+          : { followUpToItemId: action.followUpToItemId }),
         phase: action.createdBy === "agent" ? "proposed" : "ready",
         order: action.order,
         attempts: [],
@@ -630,6 +738,32 @@ export function reduceMissionControlProjectAction(
       return {
         document: appendHistory(
           replaceWorkItem(current, item),
+          action,
+          nextRevision,
+        ),
+        effects: [],
+      };
+    }
+    case "item.update": {
+      const item = requireVersionedItem(current, action);
+      if (
+        (item.phase !== "proposed" && item.phase !== "ready") ||
+        item.attempts.length > 0
+      ) {
+        throw new MissionControlTransitionError(
+          "Mission Control work can be edited only before its first run while Proposed or Ready.",
+        );
+      }
+      return {
+        document: appendHistory(
+          replaceWorkItem(current, {
+            ...item,
+            title: action.title,
+            instructions: action.instructions,
+            completionContract: action.completionContract,
+            version: item.version + 1,
+            updatedAt: action.actionTs,
+          }),
           action,
           nextRevision,
         ),
@@ -675,6 +809,38 @@ export function reduceMissionControlProjectAction(
           action,
           nextRevision,
         ),
+        effects: [],
+      };
+    }
+    case "item.resequence": {
+      const phaseItems = Object.values(current.items)
+        .filter((item) => item.phase === action.targetPhase);
+      const actualIds = new Set(phaseItems.map((item) => item.id));
+      if (
+        actualIds.size !== action.orderedItemIds.length ||
+        action.orderedItemIds.some((itemId) => actualIds.has(itemId) === false)
+      ) {
+        throw new MissionControlTransitionError(
+          "Mission Control resequencing must provide the complete current item set for one phase.",
+        );
+      }
+      const orderById = new Map(
+        action.orderedItemIds.map((itemId, index) => [itemId, index]),
+      );
+      const items = { ...current.items };
+      for (const item of phaseItems) {
+        const order = orderById.get(item.id)!;
+        items[item.id] = order === item.order
+          ? item
+          : {
+              ...item,
+              order,
+              version: item.version + 1,
+              updatedAt: action.actionTs,
+            };
+      }
+      return {
+        document: appendHistory({ ...current, items }, action, nextRevision),
         effects: [],
       };
     }
@@ -900,6 +1066,7 @@ function parseWorkItem(
     "instructions",
     "createdBy",
     "completionContract",
+    "followUpToItemId",
     "phase",
     "order",
     "attempts",
@@ -1035,6 +1202,15 @@ function parseWorkItem(
           completionContract: parseMissionControlCompletionContract(
             record.completionContract,
             `items.${itemKey}.completionContract`,
+          ),
+        }),
+    ...(record.followUpToItemId === undefined
+      ? {}
+      : {
+          followUpToItemId: requireBoundedString(
+            record.followUpToItemId,
+            `items.${itemKey}.followUpToItemId`,
+            256,
           ),
         }),
     phase: requireWorkPhase(record.phase),
@@ -1522,8 +1698,10 @@ function requirePendingRequestKind(
 function requireHistoryActionType(value: string): MissionControlHistoryActionType {
   if (
     value !== "item.create" &&
+    value !== "item.update" &&
     value !== "item.approve" &&
     value !== "item.reorder" &&
+    value !== "item.resequence" &&
     value !== "item.return_to_ready" &&
     value !== "item.discard" &&
     value !== "item.restore" &&

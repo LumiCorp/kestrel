@@ -50,6 +50,10 @@ import type { ResolvedProviderModelCatalog } from "../profile/modelCatalogDiscov
 import { getDesktopStandardAppConnection } from "./standardAppConnections.js";
 
 export type DesktopRuntimeHealthState = "healthy" | "degraded" | "blocked";
+export type DesktopRuntimeConnectionState =
+  | "connected"
+  | "connecting"
+  | "disconnected";
 export type DesktopDatabaseState =
   | "starting"
   | "healthy"
@@ -1376,6 +1380,7 @@ export interface DesktopDatabaseStatus {
 
 export interface DesktopRuntimeHealth {
   state: DesktopRuntimeHealthState;
+  connection: DesktopRuntimeConnectionState;
   summary: string;
   code?: string | undefined;
   details?: string | undefined;

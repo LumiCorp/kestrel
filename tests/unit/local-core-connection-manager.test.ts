@@ -109,6 +109,7 @@ test("Local Core connection manager reconnects before a non-idempotent operation
   } as unknown as LocalCoreClient;
   let reconnects = 0;
   let operationCalls = 0;
+  const states: string[] = [];
   const manager = new LocalCoreConnectionManager({
     initialConnection: {
       status: {} as LocalCoreStatus,
@@ -120,6 +121,9 @@ test("Local Core connection manager reconnects before a non-idempotent operation
         status: {} as LocalCoreStatus,
         client: recoveredClient,
       };
+    },
+    onStateChanged(state) {
+      states.push(state);
     },
   });
   const ambiguousFailure = Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
@@ -134,6 +138,31 @@ test("Local Core connection manager reconnects before a non-idempotent operation
   );
   assert.equal(reconnects, 1);
   assert.equal(operationCalls, 1);
+  assert.equal(manager.current(), undefined);
+  assert.deepEqual(states, [
+    "disconnected",
+    "connecting",
+    "connected",
+    "disconnected",
+  ]);
+});
+
+test("Local Core connection manager reports exhausted reconnect attempts", async () => {
+  const states: string[] = [];
+  const failure = Object.assign(new Error("socket unavailable"), {
+    code: "ENOENT",
+  });
+  const manager = new LocalCoreConnectionManager({
+    connect: async () => {
+      throw failure;
+    },
+    onStateChanged(state) {
+      states.push(state);
+    },
+  });
+
+  await assert.rejects(() => manager.ensureConnected(), (error) => error === failure);
+  assert.deepEqual(states, ["connecting", "disconnected"]);
 });
 
 test("Local Core connection manager coalesces concurrent recovery onto one connection", async () => {

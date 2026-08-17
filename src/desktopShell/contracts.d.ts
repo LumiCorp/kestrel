@@ -1,6 +1,7 @@
 import type { RunnerEvent } from "../../cli/protocol/contracts.js";
 import type { RunnerAssistantTextHistoryDataV2, RunnerWaitingPromptHistoryDataV2 } from "@kestrel-agents/protocol";
 export type DesktopRuntimeHealthState = "healthy" | "degraded" | "blocked";
+export type DesktopRuntimeConnectionState = "connected" | "connecting" | "disconnected";
 export type DesktopDatabaseState = "starting" | "healthy" | "degraded" | "blocked";
 export type { SupportBundle as DesktopSupportBundle } from "../diagnostics/supportBundle.js";
 export type DesktopBridgeCapabilityId = "app_info" | "settings" | "provider_credentials" | "ui_state" | "runner_commands" | "support_bundle" | "project_picker" | "workspace_picker" | "runtime_control" | "database_control" | "file_browser" | "file_editor" | "file_write" | "file_watch" | "mcp_discovery" | "project_launcher" | "project_runs" | "project_run_preview" | "mission_control" | "runtime_inspection" | "attachments" | "operator_control" | "external_open" | "path_open" | "microphone" | "commands";
@@ -382,6 +383,7 @@ export interface DesktopDatabaseStatus {
 }
 export interface DesktopRuntimeHealth {
     state: DesktopRuntimeHealthState;
+    connection: DesktopRuntimeConnectionState;
     summary: string;
     code?: string | undefined;
     details?: string | undefined;

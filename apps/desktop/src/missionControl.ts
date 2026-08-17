@@ -133,8 +133,26 @@ export async function executeDesktopMissionControlAction(input: {
               instructions: intent.instructions,
               createdBy: "operator",
               completionContract: intent.completionContract,
+              ...(intent.followUpToItemId === undefined
+                ? {}
+                : { followUpToItemId: intent.followUpToItemId }),
               order: intent.expectedRevision,
             }
+          : intent.type === "update"
+            ? {
+                ...itemBase!,
+                type: "item.update",
+                title: intent.title,
+                instructions: intent.instructions,
+                completionContract: intent.completionContract,
+              }
+          : intent.type === "resequence"
+            ? {
+                ...base,
+                type: "item.resequence",
+                targetPhase: intent.targetPhase,
+                orderedItemIds: intent.orderedItemIds,
+              }
           : intent.type === "approve"
             ? { ...itemBase!, type: "item.approve" }
             : intent.type === "return_to_ready"
@@ -261,12 +279,12 @@ export function parseDesktopMissionControlActionIntent(
   };
   const baseKeys = ["type", "projectId", "expectedRevision"];
   if (type === "create") {
-    requireExactKeys(record, [
+    requireIntentKeys(record, [
       ...baseKeys,
       "title",
       "instructions",
       "completionContract",
-    ]);
+    ], ["followUpToItemId"]);
     return {
       ...base,
       type,
@@ -275,6 +293,29 @@ export function parseDesktopMissionControlActionIntent(
       completionContract: parseMissionControlCompletionContract(
         record.completionContract,
       ),
+      ...(record.followUpToItemId === undefined
+        ? {}
+        : { followUpToItemId: requireText(record.followUpToItemId, "followUpToItemId") }),
+    };
+  }
+  if (type === "resequence") {
+    requireExactKeys(record, [
+      ...baseKeys,
+      "targetPhase",
+      "orderedItemIds",
+    ]);
+    const orderedItemIds = requireArray(
+      record.orderedItemIds,
+      "orderedItemIds",
+    ).map((itemId, index) => requireText(itemId, `orderedItemIds[${index}]`));
+    if (new Set(orderedItemIds).size !== orderedItemIds.length) {
+      throw new Error("orderedItemIds must not contain duplicates.");
+    }
+    return {
+      ...base,
+      type,
+      targetPhase: requireMissionControlWorkPhase(record.targetPhase),
+      orderedItemIds,
     };
   }
   if (type === "configure_autopilot") {
@@ -306,6 +347,23 @@ export function parseDesktopMissionControlActionIntent(
     ),
   };
   const itemKeys = [...baseKeys, "itemId", "expectedItemVersion"];
+  if (type === "update") {
+    requireExactKeys(record, [
+      ...itemKeys,
+      "title",
+      "instructions",
+      "completionContract",
+    ]);
+    return {
+      ...itemBase,
+      type,
+      title: requireText(record.title, "title"),
+      instructions: requireText(record.instructions, "instructions"),
+      completionContract: parseMissionControlCompletionContract(
+        record.completionContract,
+      ),
+    };
+  }
   if (
     type === "approve" ||
     type === "return_to_ready" ||
@@ -1417,6 +1475,23 @@ function requireTimestamp(value: unknown, label: string): string {
 function requireBoolean(value: unknown, label: string): boolean {
   if (typeof value !== "boolean") {
     throw new Error(`${label} must be a boolean.`);
+  }
+  return value;
+}
+
+function requireMissionControlWorkPhase(
+  value: unknown,
+): "proposed" | "ready" | "active" | "needs_attention" | "review" | "done" | "discarded" {
+  if (
+    value !== "proposed" &&
+    value !== "ready" &&
+    value !== "active" &&
+    value !== "needs_attention" &&
+    value !== "review" &&
+    value !== "done" &&
+    value !== "discarded"
+  ) {
+    throw new Error("targetPhase must be a Mission Control work phase.");
   }
   return value;
 }

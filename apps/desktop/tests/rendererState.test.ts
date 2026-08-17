@@ -9,6 +9,7 @@ import {
   appendRendererTranscript,
   archiveRendererThread,
   createRendererThread,
+  ensureRendererThread,
   getRendererTurnContinuation,
   getRendererThreadArchiveBlockReason,
   getTerminalWaitEventType,
@@ -38,6 +39,73 @@ test("new Desktop conversations default to the local checkout", () => {
 
 test("new Desktop conversations default to chat mode", () => {
   assert.equal(createRendererThread().mode, "chat");
+});
+
+test("Mission Control can register an authoritative conversation without changing selection", () => {
+  const initial = readDesktopRendererState(null);
+  const selected = initial.activeThreadId;
+  const next = ensureRendererThread(initial, {
+    sessionId: "mission-session",
+    title: "Verify the release",
+    titleLocked: true,
+    projectPath: "/workspace/project",
+    rawState: {
+      missionControl: {
+        projectId: "project-id",
+        itemId: "item-id",
+        attemptId: "attempt-id",
+      },
+    },
+  });
+  assert.equal(next.activeThreadId, selected);
+  assert.equal(next.threads[0]?.sessionId, "mission-session");
+  assert.equal(next.threads[0]?.title, "Verify the release");
+  assert.equal(next.threads[0]?.titleLocked, true);
+  assert.equal(next.threads[0]?.projectPath, "/workspace/project");
+  assert.deepEqual(next.threads[0]?.rawState.missionControl, {
+    projectId: "project-id",
+    itemId: "item-id",
+    attemptId: "attempt-id",
+  });
+  const existingId = next.threads[0]!.id;
+  next.threads[0]!.rawState.localPreference = "preserved";
+  const reconciled = ensureRendererThread(next, {
+    sessionId: "mission-session",
+    title: "Updated authoritative title",
+    titleLocked: true,
+    projectPath: "/workspace/updated-project",
+    rawState: {
+      missionControl: {
+        projectId: "updated-project-id",
+        itemId: "updated-item-id",
+        attemptId: "updated-attempt-id",
+      },
+    },
+  });
+  assert.equal(reconciled.threads.length, next.threads.length);
+  assert.equal(reconciled.threads[0]?.id, existingId);
+  assert.equal(reconciled.activeThreadId, selected);
+  assert.equal(reconciled.threads[0]?.title, "Updated authoritative title");
+  assert.equal(reconciled.threads[0]?.projectPath, "/workspace/updated-project");
+  assert.equal(reconciled.threads[0]?.rawState.localPreference, "preserved");
+  assert.deepEqual(reconciled.threads[0]?.rawState.missionControl, {
+    projectId: "updated-project-id",
+    itemId: "updated-item-id",
+    attemptId: "updated-attempt-id",
+  });
+  assert.equal(ensureRendererThread(reconciled, {
+    sessionId: "mission-session",
+    title: "Updated authoritative title",
+    titleLocked: true,
+    projectPath: "/workspace/updated-project",
+    rawState: {
+      missionControl: {
+        projectId: "updated-project-id",
+        itemId: "updated-item-id",
+        attemptId: "updated-attempt-id",
+      },
+    },
+  }), reconciled);
 });
 
 test("new conversations select no workflows and legacy App state keeps workflows only", () => {

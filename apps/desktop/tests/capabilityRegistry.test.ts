@@ -65,6 +65,10 @@ test("Desktop capability registry exposes stable coverage and honest readiness",
     view.capabilities.find((capability) => capability.id === "tools.weather")?.readiness,
     "optional",
   );
+  assert.equal(
+    view.capabilities.find((capability) => capability.id === "permission.microphone")?.detail,
+    "Microphone access has not been requested yet.",
+  );
   assert.equal(view.refreshedAt, "2026-07-20T12:00:00.000Z");
 });
 

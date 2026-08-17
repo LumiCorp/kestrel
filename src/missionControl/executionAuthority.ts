@@ -12,6 +12,7 @@ import {
   type MissionControlPendingRequest,
   type MissionControlProjectDocument,
   type MissionControlProjectMutationResult,
+  type MissionControlProjectStateRecord,
   type MissionControlWorkItem,
   parseMissionControlProjectDocument,
   requireMissionControlActionId,
@@ -132,22 +133,36 @@ export class MissionControlExecutionService {
       MissionControlProjectRepository,
       "getMissionControlProjectState" | "updateMissionControlProjectState"
     >,
+    onProjectChanged?: (project: MissionControlProjectStateRecord) => void,
   ) {
     this.store = store;
-    this.projects = new MissionControlProjectService(store);
+    this.projects = new MissionControlProjectService(store, onProjectChanged);
+    this.onProjectChanged = onProjectChanged;
   }
+
+  private readonly onProjectChanged:
+    | ((project: MissionControlProjectStateRecord) => void)
+    | undefined;
 
   async execute(
     actionValue: unknown,
   ): Promise<MissionControlProjectMutationResult> {
     const action = parseMissionControlExecutionAction(actionValue);
-    return this.store.updateMissionControlProjectState({
+    const result = await this.store.updateMissionControlProjectState({
       projectId: action.projectId,
       actionId: action.actionId,
       requestFingerprint: fingerprint(action),
       expectedRevision: action.expectedRevision,
       apply: (current) => reduceMissionControlExecutionAction(current, action),
     });
+    if (result.duplicate === false) {
+      try {
+        this.onProjectChanged?.(result.project);
+      } catch {
+        // Observers cannot turn a committed authoritative mutation into failure.
+      }
+    }
+    return result;
   }
 }
 

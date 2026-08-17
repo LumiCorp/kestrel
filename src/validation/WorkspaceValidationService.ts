@@ -108,7 +108,7 @@ export class WorkspaceValidationService {
     const threadId = identifier(input.threadId, "threadId");
     const workspaceRoot = await realpath(path.resolve(input.workspaceRoot));
     const candidateFingerprint = fingerprint(input.candidateFingerprint);
-    const { actions, suites } = await discover(workspaceRoot);
+    const { actions, suites } = await discoverWorkspaceValidationCatalog(workspaceRoot);
     let changed = false;
     for (const [id, result] of this.results) {
       if (
@@ -380,7 +380,12 @@ export class WorkspaceValidationService {
   }
 }
 
-async function discover(workspaceRoot: string): Promise<{ actions: WorkspaceValidationAction[]; suites: WorkspaceValidationSuite[] }> {
+export async function discoverWorkspaceValidationCatalog(
+  workspaceRoot: string,
+): Promise<{
+  actions: WorkspaceValidationAction[];
+  suites: WorkspaceValidationSuite[];
+}> {
   const actions = new Map<string, WorkspaceValidationAction>();
   const packageJsonPath = path.join(workspaceRoot, "package.json");
   try {

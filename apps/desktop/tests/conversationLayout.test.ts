@@ -31,7 +31,7 @@ async function readDesktopStyles(filePath = stylesPath, seen = new Set<string>()
 test("conversation timeline and composer share the conversation width", async () => {
   const source = await readDesktopStyles();
 
-  assert.match(source, /--conversation-content-width:\s*640px;/u);
+  assert.match(source, /--conversation-content-width:\s*880px;/u);
   assert.match(source, /\.conversation-timeline\s*\{[^}]*padding:\s*var\(--space-5\) var\(--conversation-gutter\) var\(--space-3\);/su);
   assert.match(source, /\.conversation-timeline-list\s*\{[^}]*width:\s*min\(var\(--conversation-content-width\),\s*100%\);/su);
   assert.match(source, /\.conversation-timeline-list::before\s*\{[^}]*width:\s*1px;/su);
@@ -223,8 +223,25 @@ test("browser preview keeps new bridge members from crashing workspace navigatio
   assert.match(preview, /async getKestrelOneAccount\(\)\s*\{/u);
   assert.match(preview, /async getKestrelOneEnvironments\(\)\s*\{/u);
   assert.match(preview, /async syncWorkspaceSkills\(\)\s*\{\s*return \[\];\s*\}/su);
+  assert.match(preview, /async getUpdateState\(\)\s*\{/u);
+  assert.match(preview, /async listConversationMessages\(threadId: string\)\s*\{/u);
+  assert.match(preview, /async listConversationActivity\(sessionId: string\)\s*\{/u);
   assert.match(preview, /bridge = new Proxy\(implementedBridge,/u);
   assert.match(preview, /is unavailable in the browser preview/u);
+});
+
+test("partial conversation history stays non-blocking", async () => {
+  const app = await readFile(appPath, "utf8");
+
+  assert.match(
+    app,
+    /recoverConversationMessages\(thread\)\.catch\(\(\) => \{\s*setThreadActivity\(thread\.id, "Conversation history is partially available"\);/su,
+  );
+  assert.match(
+    app,
+    /recoverConversationActivity\(thread\)\.catch\(\(\) => \{\s*setThreadActivity\(thread\.id, "Conversation history is partially available"\);/su,
+  );
+  assert.doesNotMatch(app, /setThreadFailure\(thread\.id, "Some (?:messages|activity) could not be restored"/u);
 });
 
 test("renderer failures show a recoverable surface instead of a blank window", async () => {
@@ -279,7 +296,6 @@ test("unavailable-project conversations are read-only across work surfaces", asy
 
   assert.match(app, /isDesktopThreadProjectUnavailable\(activeThread, settings\.projects\)/u);
   assert.match(app, /const threadReadOnlySelected = archivedThreadSelected \|\| unavailableProjectThreadSelected;/u);
-  assert.match(app, /disabled=\{threadReadOnlySelected\}/u);
   assert.match(app, /\{threadReadOnlySelected \? null : \(/u);
   assert.match(app, /This conversation is read-only because its project is no longer registered\./u);
 });
@@ -347,7 +363,7 @@ test("settings keep compact checks and wrap navigation at narrow widths", async 
   );
   assert.match(
     styles,
-    /\.settings-surface \.capability-card\s*\{[^}]*min-height:\s*0;[^}]*border-radius:\s*0;[^}]*background:\s*transparent;/su,
+    /\.settings-surface \.capability-card\s*\{[^}]*min-height:\s*124px;[^}]*border-radius:\s*var\(--radius-sm\);[^}]*background:\s*var\(--bg-pane-subtle\);/su,
   );
   assert.match(
     styles,
@@ -357,6 +373,16 @@ test("settings keep compact checks and wrap navigation at narrow widths", async 
     styles,
     /@media \(max-width:\s*760px\)\s*\{[\s\S]*?\.settings-category-nav\s*\{[^}]*flex-wrap:\s*wrap;[^}]*overflow-x:\s*visible;/su,
   );
+});
+
+test("Mission Control keeps connection state visible at narrow widths", async () => {
+  const styles = await readDesktopStyles();
+
+  assert.match(
+    styles,
+    /@media \(max-width:\s*760px\)\s*\{[\s\S]*?\.unified-mission-header\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*68px;[\s\S]*?\.mission-live-state\s*\{[^}]*grid-column:\s*2 \/ 4;[^}]*grid-row:\s*2;[^}]*justify-self:\s*start;/su,
+  );
+  assert.doesNotMatch(styles, /\.mission-live-state\s*\{\s*display:\s*none;\s*\}/u);
 });
 
 test("settings navigation mounts one bounded category page at a time", async () => {
@@ -376,6 +402,13 @@ test("settings navigation mounts one bounded category page at a time", async () 
   assert.match(
     styles,
     /\.settings-category-nav a\.active,[\s\S]*?a\[aria-current="page"\]\s*\{[^}]*background:\s*var\(--bg-active\);/su,
+  );
+  assert.match(app, /Personalize Kestrel and finish anything that needs your attention\./u);
+  assert.match(app, /className="settings-theme-options"/u);
+  assert.match(app, /Manage Apps/u);
+  assert.match(
+    styles,
+    /\.settings-surface \.settings-card\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);[^}]*background:\s*var\(--bg-pane-subtle\);/su,
   );
 });
 
@@ -411,22 +444,28 @@ test("conversation menus and rename dialog expose keyboard and focus behavior", 
   assert.match(explorer, /onSubmit=/u);
 });
 
-test("archived conversations are read-only and thread-scoped surfaces are disabled", async () => {
+test("archived conversations are read-only without disabling project-scoped surfaces", async () => {
   const app = await readFile(appPath, "utf8");
   assert.match(app, /const archivedThreadSelected = activeThread\?\.archivedAt !== undefined/u);
   assert.match(app, /className="timeline-entry timeline-entry-archived"/u);
   assert.match(app, /className="timeline-entry-content archived-conversation-banner"/u);
   assert.match(app, /This transcript is read-only\./u);
-  assert.match(app, /disabled=\{threadReadOnlySelected\}/u);
-  assert.match(app, /if \(threadReadOnlySelected\) setSurface\("chat"\)/u);
+  assert.match(app, /\{threadReadOnlySelected \? null : \(/u);
+  assert.match(app, /threadReadOnlySelected && isConversationOwnedSurface\(surface\)/u);
+  assert.match(app, /surface === "diff" \|\| surface === "review" \|\| surface === "validation"/u);
+  assert.doesNotMatch(
+    app,
+    /className=\{surface === "mission-control"[\s\S]{0,180}disabled=\{threadReadOnlySelected\}/u,
+  );
 });
 
-test("conversation header keeps project context in the project switcher without sidebar reassignment", async () => {
+test("conversation header keeps its project context while Mission Control owns an explicit project selector", async () => {
   const [app, sidebar] = await Promise.all([readFile(appPath, "utf8"), readFile(contextSidebarPath, "utf8")]);
-  assert.match(app, /const titlebarProjectLabel = surface === "projects" \? selectedProjectLabel : conversationProjectLabel/u);
+  assert.match(app, /surface === "mission-control"[\s\S]*missionControlProject\?\.label \?\? "No project"/u);
   assert.match(app, /className="project-switcher"[\s\S]*\{titlebarProjectLabel\}/u);
   assert.doesNotMatch(app, /<small>\{conversationProjectLabel\}<\/small>/u);
-  assert.doesNotMatch(app, /onProjectChange=/u);
+  assert.match(app, /<UnifiedMissionControlWorkspace[\s\S]*onProjectChange=/u);
+  assert.match(app, /setMissionControlProjectPath\(projectPath\)/u);
   assert.doesNotMatch(sidebar, /Conversation project/u);
   assert.doesNotMatch(app, /activeProjectPath/u);
 });
@@ -479,6 +518,27 @@ test("details persist while Find Work remains a calm, temporary drawer", async (
   assert.match(app, /aria-modal=\{workNavigatorOpen \? true : undefined\}/u);
   assert.doesNotMatch(styles, /\.workspace\.with-conversation-rail\s*\{/u);
   assert.match(app, /storedWidth === null \? 288 : clampInspectorWidth\(Number\(storedWidth\)\)/u);
+});
+
+test("top-level navigation omits retired Git, Terminal, and Preview screens", async () => {
+  const [app, rendererEntry, packageJson] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(rendererEntryPath, "utf8"),
+    readFile(path.join(testDir, "..", "package.json"), "utf8"),
+  ]);
+
+  assert.doesNotMatch(app, /Git and pull requests|<GitWorkspace|<TerminalWorkspace|<PreviewWorkspace/u);
+  assert.doesNotMatch(app, /\| "git"|\| "terminal"|\| "preview"/u);
+  assert.doesNotMatch(rendererEntry, /@xterm\/xterm/u);
+  assert.doesNotMatch(packageJson, /@xterm\/xterm/u);
+});
+
+test("Configure navigation stacks Apps, Settings, and Diagnostics", async () => {
+  const [app, styles] = await Promise.all([readFile(appPath, "utf8"), readDesktopStyles()]);
+
+  assert.match(app, /className="surface-tabs-section surface-tabs-configure"[\s\S]*aria-label="Apps"[\s\S]*aria-label="Settings"[\s\S]*aria-label="Diagnostics"/u);
+  assert.match(styles, /\.work-navigator \.surface-tabs-configure\s*\{[^}]*flex-direction:\s*column;[^}]*flex-wrap:\s*nowrap;/su);
+  assert.match(styles, /\.work-navigator \.surface-tabs-configure button\s*\{[^}]*width:\s*100%;[^}]*justify-content:\s*flex-start;/su);
 });
 
 test("top-level workspace headers avoid decorative category kickers", async () => {
