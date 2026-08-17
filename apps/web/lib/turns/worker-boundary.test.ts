@@ -112,6 +112,11 @@ test("scheduled prompt materialization stays on its locked database transaction"
     runtimeSource,
     /createDurableThreadTurnInTransaction\(tx,/u,
   );
+  assert.match(
+    runtimeSource,
+    /requestedModelId: current\.run\.modelIdSnapshot/u,
+    "scheduled turns must carry the model captured for their occurrence",
+  );
   assert.doesNotMatch(runtimeSource, /creatorCanExecuteProjectPromptSchedule/u);
   assert.doesNotMatch(runtimeSource, /resolveProjectRuntimeContext/u);
   assert.doesNotMatch(runtimeSource, /getOrganizationEnvironment/u);

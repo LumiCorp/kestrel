@@ -38,6 +38,7 @@ import {
   resolveKestrelOneToolProfileConfiguration,
 } from "@/lib/agent/kestrel-tool-profile";
 import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
+import { parseDesktopLocalRuntimeModelId } from "@/lib/ai/gateway-utils";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import type { Session } from "@/lib/auth-types";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
@@ -1429,23 +1430,9 @@ async function resolveDesktopLocalRuntimeModel(input: {
   organizationId: string;
   environmentId: string;
 }): Promise<DesktopLocalRuntimeModelSelection | null> {
-  if (!input.selection.startsWith("desktop-local:")) return null;
-  const match = input.selection.match(
-    /^desktop-local:(openai|openrouter|anthropic|ollama|lmstudio):(.+)$/u,
-  );
-  if (!(match?.[1] && match[2])) {
-    throw new Error("The selected Desktop-local model ID is invalid.");
-  }
-  let model: string;
-  try {
-    model = decodeURIComponent(match[2]);
-  } catch {
-    throw new Error("The selected Desktop-local model ID is invalid.");
-  }
-  if (!model || model.length > 200 || encodeURIComponent(model) !== match[2]) {
-    throw new Error("The selected Desktop-local model ID is invalid.");
-  }
-  const provider = match[1] as DesktopLocalRuntimeModelSelection["provider"];
+  const selection = parseDesktopLocalRuntimeModelId(input.selection);
+  if (!selection) return null;
+  const { model, provider } = selection;
   const connection =
     await knowledgeDb.query.desktopEnvironmentConnections.findFirst({
       where: (table, { and, eq }) =>

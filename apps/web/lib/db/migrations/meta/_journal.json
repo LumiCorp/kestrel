@@ -526,6 +526,13 @@
       "when": 1786852800000,
       "tag": "0074_manual_runtime_tags",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1786856400000,
+      "tag": "0075_project_prompt_schedule_models",
+      "breakpoints": true
     }
   ]
 }

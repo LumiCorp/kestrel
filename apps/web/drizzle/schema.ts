@@ -973,6 +973,7 @@ export const projectPromptSchedules = pgTable(
     cronExpression: text("cron_expression").notNull(),
     timeZone: text("time_zone").notNull(),
     prompt: text("prompt").notNull(),
+    modelId: text("model_id"),
     enabled: boolean("enabled").notNull().default(true),
     pauseReason: text("pause_reason"),
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),
@@ -1010,6 +1011,7 @@ export const projectPromptScheduleRuns = pgTable(
     scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
     catchUpFrom: timestamp("catch_up_from", { withTimezone: true }),
     promptSnapshot: text("prompt_snapshot").notNull(),
+    modelIdSnapshot: text("model_id_snapshot"),
     // Reserved when the occurrence is claimed, before the Thread exists.
     threadId: text("thread_id"),
     messageId: text("message_id").notNull(),
