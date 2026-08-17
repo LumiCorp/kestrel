@@ -1,0 +1,36 @@
+{
+  "name": "@kestrel-agents/conversation",
+  "version": "0.8.0",
+  "description": "Framework-neutral conversation projection and presentation kernel for Kestrel clients",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
+    "build": "pnpm run clean && tsc -p tsconfig.json",
+    "build:self": "pnpm run build",
+    "test": "pnpm run test:unit",
+    "test:unit": "node ../../scripts/validate.mjs --leaf hermetic packages/conversation",
+    "smoke:import": "node --input-type=module -e \"import('./dist/index.js').then(({ projectConversation }) => { void projectConversation; })\"",
+    "release:check": "pnpm run build && pnpm run smoke:import"
+  }
+}

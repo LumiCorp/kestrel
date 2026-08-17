@@ -334,7 +334,7 @@ export const getNavigation = cache(async (): Promise<NavGroup[]> => {
     ]),
     group("reference", "Reference", "/reference", [
       ["Contracts", ["/reference", "/reference/protocol", "/reference/terminal-results", "/reference/events", "/reference/runtime-profiles-and-providers", "/reference/recovery", "/reference/approvals-and-effects", "/reference/tool-contracts", "/reference/compatibility"]],
-      ["Packages", ["/reference/sdk", "/reference/memory", "/reference/nextjs", "/reference/ai-sdk", "/reference/observability", "/reference/http"]],
+      ["Packages", ["/reference/sdk", "/reference/conversation", "/reference/memory", "/reference/nextjs", "/reference/ai-sdk", "/reference/observability", "/reference/http"]],
       ["CLI and configuration", ["/cli/install", "/reference/cli", "/cli/command-suite", "/cli/profiles-code-mode-and-mcp", "/reference/configuration"]],
       ["Releases and evidence", ["/reference/reasoning-and-agent-progress", "/reference/terminology", "/reference/releases"]],
     ]),

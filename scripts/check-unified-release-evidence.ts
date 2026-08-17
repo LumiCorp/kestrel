@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const PUBLIC_PACKAGES = [
   "@kestrel-agents/protocol",
+  "@kestrel-agents/conversation",
   "@kestrel-agents/memory",
   "@kestrel-agents/workspace-skills",
   "@kestrel-agents/sdk",

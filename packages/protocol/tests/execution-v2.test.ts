@@ -108,6 +108,91 @@ test("evaluation review contract is canonical across first-party clients", () =>
   });
 });
 
+test("operator controls accept follow-up queue actions and fields", () => {
+  const commands = [
+    {
+      id: "command-enqueue-follow-up",
+      type: "operator.control",
+      payload: {
+        action: "enqueue_follow_up",
+        threadId: "thread-1",
+        followUpId: "follow-up-1",
+        message: "Continue with this request.",
+        attachmentIds: ["attachment-1"],
+        interactionMode: "build",
+        actSubmode: "safe",
+      },
+    },
+    {
+      id: "command-edit-follow-up",
+      type: "operator.control",
+      payload: {
+        action: "edit_follow_up",
+        threadId: "thread-1",
+        followUpId: "follow-up-1",
+        message: "Use the updated request.",
+      },
+    },
+    {
+      id: "command-cancel-follow-up",
+      type: "operator.control",
+      payload: {
+        action: "cancel_follow_up",
+        threadId: "thread-1",
+        followUpId: "follow-up-1",
+      },
+    },
+    {
+      id: "command-resume-follow-up-queue",
+      type: "operator.control",
+      payload: {
+        action: "resume_follow_up_queue",
+        threadId: "thread-1",
+      },
+    },
+    {
+      id: "command-continue-waiting",
+      type: "operator.control",
+      payload: {
+        action: "continue_waiting",
+        threadId: "thread-1",
+      },
+    },
+  ] as const;
+
+  for (const command of commands) {
+    const parsed = parseRunnerCommandV2(command);
+    assert.equal(parsed.type, "operator.control");
+    assert.equal(parsed.payload.action, command.payload.action);
+  }
+});
+
+test("operator controls require follow-up identity only for item actions", () => {
+  for (const action of ["enqueue_follow_up", "edit_follow_up", "cancel_follow_up"] as const) {
+    assert.throws(() => parseRunnerCommandV2({
+      id: `missing-${action}`,
+      type: "operator.control",
+      payload: {
+        action,
+        threadId: "thread-1",
+        ...((action === "enqueue_follow_up" || action === "edit_follow_up")
+          ? { message: "Follow up." }
+          : {}),
+      },
+    }), /followUpId/u);
+  }
+  assert.throws(() => parseRunnerCommandV2({
+    id: "reply-with-follow-up-id",
+    type: "operator.control",
+    payload: {
+      action: "reply",
+      threadId: "thread-1",
+      followUpId: "follow-up-1",
+      message: "Ordinary reply.",
+    },
+  }), /followUpId is supported only/u);
+});
+
 test("structured review contract rejects metadata and schema drift", () => {
   const interaction = createRunnerStructuredReviewInteractionV1({
     reason: "evaluation_review",
@@ -505,6 +590,8 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "run.started": {
     sessionId: "session-1",
     eventType: "user.message",
+    followUpId: "follow-up:message-1",
+    sourceMessageId: "message-1",
     reasoningKeyReady: true,
     reasoningKeyVersion: 1,
   },
@@ -612,7 +699,11 @@ test("Execution Protocol v3 descriptor owns the full supported registries", () =
   ]) {
     assert.equal(new Set<string>(RUNNER_COMMAND_TYPES).has(required), true);
   }
-  assert.deepEqual(RUNNER_STREAMING_COMMAND_TYPES, ["job.run", "run.start"]);
+  assert.deepEqual(RUNNER_STREAMING_COMMAND_TYPES, [
+    "job.run",
+    "run.start",
+    "conversation.message.submit",
+  ]);
   assert.equal(isRunnerStreamingCommandType("job.run"), true);
   assert.equal(isRunnerStreamingCommandType("run.start"), true);
   assert.equal(isRunnerStreamingCommandType("run.cancel"), false);

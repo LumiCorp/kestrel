@@ -66,6 +66,61 @@ export class LocalCoreProtocolEventJournal implements RunnerServiceEventJournal 
     );
   }
 
+  async listDesktopConversationActivity(input: {
+    sessionId: string;
+    afterCursor?: string | undefined;
+    limit?: number | undefined;
+  }): Promise<{
+    events: RunnerEvent[];
+    nextCursor?: string | undefined;
+    hasMore: boolean;
+  }> {
+    const limit = input.limit ?? REPLAY_PAGE_SIZE;
+    const afterSequence = input.afterCursor === undefined
+      ? undefined
+      : parseSequenceCursor(input.afterCursor);
+    const values: unknown[] = [input.sessionId];
+    const conditions = [
+      "session_id = $1",
+      `event_type IN (
+        'run.agent_progress',
+        'run.progress',
+        'run.tool.started',
+        'run.tool.completed',
+        'run.tool.failed'
+      )`,
+    ];
+    if (afterSequence !== undefined) {
+      values.push(afterSequence);
+      conditions.push(`sequence > $${values.length}`);
+    }
+    values.push(limit + 1);
+    const result = await this.executor.query<{
+      sequence: string | number;
+      event_json: unknown;
+    }>(
+      `SELECT sequence, event_json
+         FROM runner_protocol_events
+        WHERE ${conditions.join(" AND ")}
+        ORDER BY sequence ASC
+        LIMIT $${values.length}`,
+      values,
+    );
+    const hasMore = result.rows.length > limit;
+    const rows = result.rows.slice(0, limit);
+    const events = rows.flatMap((row) =>
+      isCurrentProtocolEvent(row.event_json)
+        ? [parseRunnerEventJson(row.event_json)]
+        : [],
+    );
+    const nextSequence = rows.at(-1)?.sequence;
+    return {
+      events,
+      ...(nextSequence === undefined ? {} : { nextCursor: String(nextSequence) }),
+      hasMore,
+    };
+  }
+
   async findTerminalEvent(
     filter: RunnerEventSubscriptionFilter,
   ): Promise<RunnerEvent | null> {
@@ -178,6 +233,13 @@ export class LocalCoreProtocolEventJournal implements RunnerServiceEventJournal 
     }
     return { status: "ok" };
   }
+}
+
+function parseSequenceCursor(value: string): string {
+  if (/^[0-9]+$/u.test(value) === false) {
+    throw new Error("Local Core conversation activity cursor is invalid.");
+  }
+  return value;
 }
 
 function appendFilterCondition(

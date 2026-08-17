@@ -1,4 +1,14 @@
-import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  notInArray,
+  sql,
+} from "drizzle-orm";
+import { findUnavailableKestrelRuntimeModelSelectionsInTransaction } from "@/lib/ai/runtime-model-selection";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { requireCurrentEnvironmentRuntime } from "./runtime-channel";
 import {
@@ -25,6 +35,72 @@ import {
 } from "./lifecycle-lock";
 
 const UNAVAILABLE_ENVIRONMENT_STATES = ["deleting", "deleted"] as const;
+
+async function pauseSchedulesWithUnavailableModels(
+  transaction: Parameters<Parameters<typeof knowledgeDb.transaction>[0]>[0],
+  input: {
+    organizationId: string;
+    projectId: string;
+    environmentId: string;
+    actorUserId: string;
+    now: Date;
+  },
+) {
+  const schedules = await transaction
+    .select({
+      id: schema.projectPromptSchedules.id,
+      modelId: schema.projectPromptSchedules.modelId,
+    })
+    .from(schema.projectPromptSchedules)
+    .where(
+      and(
+        eq(schema.projectPromptSchedules.organizationId, input.organizationId),
+        eq(schema.projectPromptSchedules.projectId, input.projectId),
+        eq(schema.projectPromptSchedules.enabled, true),
+        isNotNull(schema.projectPromptSchedules.modelId),
+      ),
+    )
+    .for("update");
+  if (schedules.length === 0) return;
+  const unavailable =
+    await findUnavailableKestrelRuntimeModelSelectionsInTransaction(
+      transaction,
+      {
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        modelIds: schedules.flatMap((schedule) =>
+          schedule.modelId ? [schedule.modelId] : [],
+        ),
+      },
+    );
+  const scheduleIds = schedules
+    .filter(
+      (schedule) => schedule.modelId && unavailable.has(schedule.modelId),
+    )
+    .map((schedule) => schedule.id);
+  if (scheduleIds.length === 0) return;
+  await transaction
+    .update(schema.projectPromptSchedules)
+    .set({
+      enabled: false,
+      pauseReason: "environment_model_unavailable",
+      nextRunAt: null,
+      updatedAt: input.now,
+    })
+    .where(inArray(schema.projectPromptSchedules.id, scheduleIds));
+  await transaction.insert(schema.projectAuditEvents).values(
+    scheduleIds.map((scheduleId) => ({
+      id: crypto.randomUUID(),
+      projectId: input.projectId,
+      actorUserId: input.actorUserId,
+      action: "project.schedule.paused",
+      targetType: "project_prompt_schedule",
+      targetId: scheduleId,
+      metadata: { reason: "environment_model_unavailable" },
+      createdAt: input.now,
+    })),
+  );
+}
 
 export async function listOrganizationEnvironments(organizationId: string) {
   return knowledgeDb
@@ -682,6 +758,13 @@ export async function bindProjectToEnvironment(input: {
           "Project Environment cannot change while a Thread turn is active.",
         );
       }
+      await pauseSchedulesWithUnavailableModels(transaction, {
+        organizationId: input.organizationId,
+        projectId: project.id,
+        environmentId: environment.id,
+        actorUserId: input.userId,
+        now,
+      });
       await transaction
         .delete(schema.threadExecutionBindings)
         .where(
@@ -1659,6 +1742,13 @@ export async function createOrConfigureProjectWorkspace(input: {
       }
       const now = new Date();
       await assertProjectHasNoActiveWork();
+      await pauseSchedulesWithUnavailableModels(transaction, {
+        organizationId: input.organizationId,
+        projectId: project.id,
+        environmentId: environment.id,
+        actorUserId: input.userId,
+        now,
+      });
       await transaction
         .delete(schema.threadExecutionBindings)
         .where(

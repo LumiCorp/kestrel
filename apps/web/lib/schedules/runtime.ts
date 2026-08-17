@@ -174,7 +174,7 @@ export async function materializeProjectPromptScheduleRun(runId: string) {
         idempotencyKey: `schedule:${current.schedule.id}:${current.run.scheduledFor.toISOString()}`,
         requestedEnvironmentId: environment.id,
         projectContextRevisionId: projectContext.id,
-        requestedModelId: null,
+        requestedModelId: current.run.modelIdSnapshot,
         requestedInteractionMode: "chat",
         source: "web",
       });

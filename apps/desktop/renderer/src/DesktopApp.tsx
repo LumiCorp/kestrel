@@ -32,6 +32,11 @@ import {
   runnerStructuredReviewOptionLabel,
   type RunnerStructuredReviewOptionId,
 } from "@kestrel-agents/protocol";
+import {
+  createModeSwitchRetryGuard,
+  resolveConversationComposerKeyboardAction,
+  resolveConversationModeSwitch,
+} from "@kestrel-agents/conversation";
 
 import type {
   DesktopCapabilityId,
@@ -42,6 +47,8 @@ import type {
   DesktopOperatorControlResult,
   DesktopOperatorInboxItem,
   DesktopRendererSettings,
+  DesktopMcpDiscoveryResult,
+  DesktopProjectRegistration,
   DesktopRunnerEvent,
   DesktopRuntimeHealth,
   DesktopThreadAuthorityResult,
@@ -67,7 +74,20 @@ import { ReviewWorkspace } from "./ReviewWorkspace";
 import { TerminalWorkspace } from "./TerminalWorkspace";
 import { ValidationWorkspace } from "./ValidationWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
+import { ConversationWorkflowControl } from "./ConversationWorkflowControl";
+import type { DesktopAppsNavigationRequest, DesktopAppsNavigationTarget } from "./appsNavigation";
 import { getDesktopComposerSubmissionPolicy } from "./composerPolicy";
+import {
+  markDesktopFollowUpStarted,
+  projectDesktopConversationSubmission,
+  projectDesktopStartingFollowUps,
+  queuedDesktopFollowUps,
+  recoverDesktopConversationSubmissionDisposition,
+  resolveDesktopStartedSubmission,
+  revertDesktopConversationSubmission,
+  type DesktopConversationSubmissionIdentity,
+} from "./conversationSubmission";
+import { adaptDesktopConversation } from "./conversationAdapter";
 import { loadDesktopUiState } from "./uiStateBootstrap";
 import {
   describeDesktopRunnerActivity,
@@ -77,6 +97,12 @@ import {
 } from "./runStream";
 import { ContextSidebar } from "./ContextSidebar";
 import { ConversationExplorer } from "./ConversationExplorer";
+import {
+  isDesktopThreadProjectUnavailable,
+  projectDesktopWorkNavigator,
+  resolveDesktopSelectedProjectPath,
+  resolveDesktopThreadNavigationStates,
+} from "./workNavigator";
 import { keepFocusInsideDialog } from "./dialogFocus";
 import { withoutDesktopActiveRun } from "./cancellationState";
 import {
@@ -133,13 +159,6 @@ interface ActiveRun {
   runId?: string | undefined;
 }
 
-interface PendingTurnSubmission {
-  threadId: string;
-  message: string;
-  submittedAt: string;
-  projectPath?: string | undefined;
-}
-
 type DesktopSurface =
   | "chat"
   | "mission-control"
@@ -156,6 +175,7 @@ type DesktopSurface =
 const SURFACE_STATE_KEY = "kestrel:desktop:surface:v1" as const;
 const INSPECTOR_STATE_KEY = "kestrel:desktop:inspector-open:v1" as const;
 const INSPECTOR_WIDTH_KEY = "kestrel:desktop:inspector-width:v1" as const;
+const SELECTED_PROJECT_KEY = "kestrel:desktop:selected-project:v1" as const;
 
 export function DesktopApp(props: {
   onboardingHandoff?: {
@@ -184,7 +204,11 @@ export function DesktopApp(props: {
   const [inspectorWidth, setInspectorWidth] = useState(() => readDesktopSidebarWidth());
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
+  const [appsNavigationRequest, setAppsNavigationRequest] = useState<DesktopAppsNavigationRequest>({ requestId: 0 });
+  const [appsDiscovery, setAppsDiscovery] = useState<DesktopMcpDiscoveryResult>();
   const [selectedProjectPath, setSelectedProjectPath] = useState<string>();
+  const [selectedProjectPersistenceReady, setSelectedProjectPersistenceReady] = useState(false);
+  const [newConversationRequestId, setNewConversationRequestId] = useState(0);
   const [timelineHasNewActivity, setTimelineHasNewActivity] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -193,9 +217,13 @@ export function DesktopApp(props: {
   const workNavigatorSearchRef = useRef<HTMLInputElement>(null);
   const workNavigatorTriggerRef = useRef<HTMLElement | null>(null);
   const workNavigatorFallbackRef = useRef<HTMLButtonElement>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const threadsRef = useRef<DesktopRendererState["threads"]>([]);
-  const pendingTurnSubmissionsRef = useRef<Record<string, PendingTurnSubmission>>({});
-  const acceptedTurnSessionsRef = useRef(new Set<string>());
+  const pendingTurnSubmissionsRef = useRef(new Map<string, DesktopConversationSubmissionIdentity>());
+  const queuedTurnSubmissionsRef = useRef(new Map<string, DesktopConversationSubmissionIdentity>());
+  const startedConversationMessagesRef = useRef(new Set<string>());
+  const composerDispatchingRef = useRef(false);
+  const modeSwitchRetryGuardRef = useRef(createModeSwitchRetryGuard());
   const uiStatePersistenceEnabledRef = useRef(true);
   const { activeRuns, threadViews, threadWorkspaces, authorityStatuses } = authorityCaches;
 
@@ -210,10 +238,15 @@ export function DesktopApp(props: {
   const activeThreadAuthorityStatus = activeThread === undefined
     ? undefined
     : authorityStatuses[activeThread.id];
+  const archivedThreadSelected = activeThread?.archivedAt !== undefined;
+  const unavailableProjectThreadSelected = activeThread !== undefined && settings !== undefined
+    ? isDesktopThreadProjectUnavailable(activeThread, settings.projects)
+    : false;
+  const threadReadOnlySelected = archivedThreadSelected || unavailableProjectThreadSelected;
 
   useEffect(() => {
-    if (activeThread?.archivedAt !== undefined) setSurface("chat");
-  }, [activeThread?.archivedAt]);
+    if (threadReadOnlySelected) setSurface("chat");
+  }, [threadReadOnlySelected]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -246,10 +279,33 @@ export function DesktopApp(props: {
     : (threadViews[activeThread.id]?.inboxItems ?? []).filter(
         (item) => item.kind !== "stalled_thread_attention" || activeRun === undefined,
       );
+  const activeConversation = activeThread === undefined
+    ? undefined
+    : adaptDesktopConversation({
+        threadId: activeThread.id,
+        transcript: activeThread.transcript,
+        turns: threadViews[activeThread.id]?.conversationTurns ?? [],
+        messageRoutes: threadViews[activeThread.id]?.conversationMessageRoutes ?? [],
+        inboxItems: operatorInboxItems,
+        followUpQueue: threadViews[activeThread.id]?.followUpQueue,
+        activeRunId: activeRun?.runId,
+      });
   const composerPolicy = getDesktopComposerSubmissionPolicy({
     inboxItems: operatorInboxItems,
     runActive: activeRun !== undefined,
+    conversation: activeConversation?.snapshot,
   });
+  const modeSwitchPresentation = activeThread !== undefined && composerPolicy.mode === "reply_to_request"
+    ? resolveConversationModeSwitch({
+        recommendationId: composerPolicy.item.requestId,
+        originatingMessageId: activeConversation?.snapshot.turns.find(
+          (turn) => turn.id === composerPolicy.item.turnId,
+        )?.inputMessageId ?? "",
+        fromMode: activeThread.mode,
+        reason: composerPolicy.item.title,
+        metadata: composerPolicy.item.metadata,
+      })
+    : undefined;
   const operatorActionCardItems = operatorInboxItems.filter(
     (item) => item.kind !== "user_input_request",
   );
@@ -257,14 +313,34 @@ export function DesktopApp(props: {
   const activeThreadFeedback = activeThread === undefined
     ? { activity: "Ready" }
     : threadFeedback[activeThread.id] ?? { activity: "Ready" };
-  const activeLifecycleActivity = composerPolicy.mode === "select_evaluation_option"
+  const activeLifecycleActivity = modeSwitchPresentation !== undefined
+    ? "Mode change required"
+    : composerPolicy.mode === "select_evaluation_option"
     ? "Waiting for your decision"
     : composerPolicy.mode === "reply_to_request"
       ? "Waiting for your input"
       : activeThreadFeedback.activity;
   const conversationTimeline = activeThread === undefined
     ? []
-    : projectDesktopConversationTimeline(activeThread.transcript, activeRunStream);
+    : projectDesktopConversationTimeline(
+        activeThread.transcript,
+        activeRunStream,
+        threadViews[activeThread.id]?.conversationTurns ?? [],
+        threadViews[activeThread.id]?.conversationMessageRoutes ?? [],
+      );
+  const threadNavigation = useMemo(() => resolveDesktopThreadNavigationStates({
+    threads: state?.threads ?? [],
+    threadViews,
+    activeRuns,
+    authorityStatuses,
+    feedback: threadFeedback,
+  }), [state?.threads, threadViews, activeRuns, authorityStatuses, threadFeedback]);
+  const workNavigatorProjection = useMemo(() => projectDesktopWorkNavigator({
+    threads: state?.threads ?? [],
+    projects: settings?.projects ?? [],
+    navigation: threadNavigation,
+    archived: false,
+  }), [state?.threads, settings?.projects, threadNavigation]);
 
   useEffect(() => {
     threadsRef.current = state?.threads ?? [];
@@ -278,8 +354,8 @@ export function DesktopApp(props: {
     setAuthorityCaches((current) => ({ ...current, threadViews: update(current.threadViews) }));
   }
 
-  function setThreadActivity(threadId: string, activity: string): void {
-    setThreadFeedback((current) => updateDesktopThreadFeedback(current, threadId, { activity }));
+  function setThreadActivity(threadId: string, activity: string, activityUpdatedAt = new Date().toISOString()): void {
+    setThreadFeedback((current) => updateDesktopThreadFeedback(current, threadId, { activity, activityUpdatedAt }));
   }
 
   function clearThreadError(threadId: string): void {
@@ -294,6 +370,7 @@ export function DesktopApp(props: {
   ): void {
     setThreadFeedback((current) => updateDesktopThreadFeedback(current, threadId, {
       activity,
+      activityUpdatedAt: new Date().toISOString(),
       error,
       ...(errorCapability !== undefined ? { errorCapability } : { errorCapability: undefined }),
     }));
@@ -314,11 +391,12 @@ export function DesktopApp(props: {
       loadDesktopUiState(() => window.kestrelDesktop.getUiState()),
       window.kestrelDesktop.getSettings(),
       window.kestrelDesktop.getRuntimeHealth(),
-    ]).then(([uiStateBootstrap, nextSettings, health]) => {
+    ]).then(async ([uiStateBootstrap, loadedSettings, health]) => {
       if (disposed) {
         return;
       }
       uiStatePersistenceEnabledRef.current = uiStateBootstrap.persistenceEnabled;
+      let nextSettings = loadedSettings;
       const defaultConfiguration = nextSettings.modelConfigurations.find(
         (configuration) => configuration.id === nextSettings.defaultModelConfigurationId,
       );
@@ -329,7 +407,7 @@ export function DesktopApp(props: {
           nextSettings.projects[0]?.path,
         modelConfigurationId: defaultConfiguration?.id,
         modelConfigurationRevision: defaultConfiguration?.currentRevision,
-        enabledAppIds: nextSettings.defaultEnabledAppIds,
+        legacyDefaultWorkflowAppIds: nextSettings.legacyDefaultWorkflowAppIds,
         theme: nextSettings.appearanceTheme,
       });
       if (props.onboardingHandoff !== undefined) {
@@ -343,7 +421,16 @@ export function DesktopApp(props: {
                   defaultConfiguration.currentRevision,
               }
             : {}),
-          enabledAppIds: nextSettings.defaultEnabledAppIds,
+        });
+      }
+      if (
+        nextSettings.legacyDefaultWorkflowAppIds !== undefined &&
+        uiStatePersistenceEnabledRef.current
+      ) {
+        await window.kestrelDesktop.saveUiState(serializeDesktopRendererState(rendererState));
+        if (disposed) return;
+        nextSettings = await window.kestrelDesktop.saveSettings({
+          defaultEnabledBuiltInAppIds: nextSettings.defaultEnabledBuiltInAppIds,
         });
       }
       setState(rendererState);
@@ -361,11 +448,14 @@ export function DesktopApp(props: {
       setSettings(nextSettings);
       setSelectedProjectPath(
         (current) =>
-          current ??
-          props.onboardingHandoff?.projectPath ??
-          nextSettings.defaultProjectPath ??
-          nextSettings.projects[0]?.path,
+          current ?? resolveDesktopSelectedProjectPath({
+            projects: nextSettings.projects,
+            storedProjectPath: readStoredSelectedProjectPath(),
+            activeThreadProjectPath: props.onboardingHandoff?.projectPath,
+            defaultProjectPath: nextSettings.defaultProjectPath,
+          }),
       );
+      setSelectedProjectPersistenceReady(true);
       setRuntimeHealth(health);
     }).catch((cause) => {
       if (disposed === false) {
@@ -377,35 +467,79 @@ export function DesktopApp(props: {
     };
   }, [props.onboardingHandoff?.id, props.onboardingHandoff?.projectPath]);
 
+  useEffect(() => {
+    let disposed = false;
+    void window.kestrelDesktop.discoverMcpServers().then((result) => {
+      if (!disposed) setAppsDiscovery(result);
+    }).catch(() => undefined);
+    return () => { disposed = true; };
+  }, []);
+
   useEffect(() => window.kestrelDesktop.onRunnerEvent((event) => {
       const rendererThread = event.sessionId === undefined
         ? undefined
         : threadsRef.current.find((thread) => thread.sessionId === event.sessionId);
       if (rendererThread !== undefined && event.type !== "run.completed") {
-        setThreadActivity(rendererThread.id, describeRunnerActivity(event));
+        setThreadActivity(rendererThread.id, describeRunnerActivity(event), event.ts);
       }
       if (event.type === "run.started" && rendererThread !== undefined) {
-        const pendingSubmission = pendingTurnSubmissionsRef.current[rendererThread.sessionId];
-        if (pendingSubmission !== undefined) {
-          delete pendingTurnSubmissionsRef.current[rendererThread.sessionId];
-          acceptedTurnSessionsRef.current.add(rendererThread.sessionId);
+        const sourceMessageId = readString(event.payload.sourceMessageId);
+        const promotedSubmission = resolveDesktopStartedSubmission({
+          sourceMessageId,
+          sessionId: rendererThread.sessionId,
+          pending: [...pendingTurnSubmissionsRef.current.values()],
+          queued: [...queuedTurnSubmissionsRef.current.values()],
+        });
+        const startedMessageId = sourceMessageId ?? promotedSubmission?.messageId;
+        if (
+          promotedSubmission !== undefined
+          && pendingTurnSubmissionsRef.current.has(promotedSubmission.messageId)
+        ) {
+          startedConversationMessagesRef.current.add(promotedSubmission.messageId);
+        }
+        if (startedMessageId !== undefined) {
+          queuedTurnSubmissionsRef.current.delete(startedMessageId);
+          setThreadViews((current) => {
+            const view = current[rendererThread.id];
+            return view === undefined
+              ? current
+              : {
+                  ...current,
+                  [rendererThread.id]: {
+                    ...view,
+                    followUpQueue: {
+                      ...view.followUpQueue,
+                      items: markDesktopFollowUpStarted(
+                        view.followUpQueue.items,
+                        startedMessageId,
+                      ),
+                    },
+                  },
+                };
+          });
+        }
+        if (promotedSubmission !== undefined) {
           setState((current) => {
             if (current === undefined) return current;
-            const accepted = acceptRendererPrompt(current, pendingSubmission.threadId, pendingSubmission.message);
-            const withUser = appendRendererTranscript(accepted, pendingSubmission.threadId, {
-              role: "user",
-              text: pendingSubmission.message,
-              timestamp: pendingSubmission.submittedAt,
+            const withUser = projectDesktopConversationSubmission(current, {
+              threadId: promotedSubmission.threadId,
+              messageId: promotedSubmission.messageId,
+              message: promotedSubmission.message,
+              submittedAt: promotedSubmission.submittedAt,
+              // The start event can precede the authoritative route/turn response.
+              // Keep the message provisional until that response installs ownership
+              // so the timeline projector cannot reclassify it as historical state.
+              disposition: "submitting",
             });
-            return updateRendererThread(withUser, pendingSubmission.threadId, (thread) => ({
+            return updateRendererThread(withUser, promotedSubmission.threadId, (thread) => ({
               ...thread,
               pendingWaitEventType: undefined,
-              ...(pendingSubmission.projectPath !== undefined ? { projectPath: pendingSubmission.projectPath } : {}),
+              ...(promotedSubmission.projectPath !== undefined ? { projectPath: promotedSubmission.projectPath } : {}),
             }));
           });
           setHistoryNavigation((current) => {
             const next = { ...current };
-            delete next[pendingSubmission.threadId];
+            delete next[promotedSubmission.threadId];
             return next;
           });
         }
@@ -433,6 +567,7 @@ export function DesktopApp(props: {
           dialog: {
             messageId: message.messageId,
             dialogId: message.dialogId,
+            ...(message.parentRunId !== undefined ? { parentRunId: message.parentRunId } : {}),
             name: message.name,
             childSessionId: message.childSessionId,
             sender: message.sender,
@@ -447,51 +582,72 @@ export function DesktopApp(props: {
         || event.type === "run.cancelled"
       ) {
         if (rendererThread !== undefined && event.type !== "task.updated") {
-          if (event.type === "run.completed") {
-            const result = asRecord(event.payload.result);
-            const output = asRecord(result?.output);
-            const runId = event.runId ?? readString(output?.runId);
-            if (runId !== undefined) {
-              const status = readString(output?.status) ?? "COMPLETED";
-              const assistantText = typeof result?.assistantText === "string" ? result.assistantText : null;
-              const deliveryError = getDesktopTerminalDeliveryError({ assistantText, status });
-              const pending = pendingTurnSubmissionsRef.current[rendererThread.sessionId];
-              if (pending !== undefined) {
-                delete pendingTurnSubmissionsRef.current[rendererThread.sessionId];
-                acceptedTurnSessionsRef.current.add(rendererThread.sessionId);
-              }
-              setState((current) => {
-                if (current === undefined) return current;
-                const projection = projectDesktopTerminalMessage(current, {
-                  threadId: rendererThread.id,
-                  runId,
-                  assistantText,
-                  status,
-                  timestamp: event.ts,
-                  ...(pending !== undefined ? { pendingUser: { text: pending.message, timestamp: pending.submittedAt } } : {}),
-                  pendingWaitEventType: getTerminalWaitEventType(event),
-                  waitingPrompt: getTerminalWaitingPrompt(event)?.text,
-                  data: extractDesktopTerminalOutcome(event),
-                });
-                console.info(`terminal_message.${projection.outcome === "contract_failure"
-                  ? "recovery_failed"
-                  : projection.outcome === "duplicate"
-                    ? "duplicate_suppressed"
-                    : "projected"}`, {
-                  threadId: rendererThread.id,
-                  runId,
-                  count: 1,
-                });
-                return projection.state;
+          const result = asRecord(event.payload.result);
+          const output = asRecord(result?.output);
+          const runId = event.runId ?? readString(output?.runId);
+          if (runId !== undefined) {
+            const status = readString(output?.status)
+              ?? (event.type === "run.failed"
+                ? "FAILED"
+                : event.type === "run.cancelled"
+                  ? "CANCELLED"
+                  : "COMPLETED");
+            const assistantText = typeof result?.assistantText === "string" ? result.assistantText : null;
+            const terminalFailure = extractTerminalFailure(event, undefined);
+            const deliveryError = getDesktopTerminalDeliveryError({ assistantText, status });
+            const pending = [...pendingTurnSubmissionsRef.current.values()].find(
+              (submission) => submission.sessionId === rendererThread.sessionId,
+            );
+            if (pending !== undefined) {
+              pendingTurnSubmissionsRef.current.delete(pending.messageId);
+            }
+            setState((current) => {
+              if (current === undefined) return current;
+              const projection = projectDesktopTerminalMessage(current, {
+                threadId: rendererThread.id,
+                runId,
+                assistantText,
+                status,
+                timestamp: event.ts,
+                ...(pending !== undefined ? {
+                  pendingUser: {
+                    text: pending.message,
+                    timestamp: pending.submittedAt,
+                    messageId: pending.messageId,
+                  },
+                } : {}),
+                pendingWaitEventType: getTerminalWaitEventType(event),
+                waitingPrompt: getTerminalWaitingPrompt(event)?.text,
+                ...(terminalFailure !== undefined
+                  ? { failureMessage: terminalFailure.message }
+                  : {}),
+                data: extractDesktopTerminalOutcome(event),
               });
-              if (deliveryError !== undefined) {
-                setThreadFailure(rendererThread.id, "Final response unavailable", deliveryError);
-              } else {
-                setThreadActivity(
-                  rendererThread.id,
-                  getTerminalWaitEventType(event) === undefined ? "Ready" : `Waiting for ${getTerminalWaitEventType(event)}`,
-                );
-              }
+              console.info(`terminal_message.${projection.outcome === "contract_failure"
+                ? "recovery_failed"
+                : projection.outcome === "duplicate"
+                  ? "duplicate_suppressed"
+                  : "projected"}`, {
+                threadId: rendererThread.id,
+                runId,
+                count: 1,
+              });
+              return projection.state;
+            });
+            if (terminalFailure !== undefined) {
+              setThreadFailure(
+                rendererThread.id,
+                "Run failed",
+                terminalFailure.message,
+                terminalFailure.capabilityId,
+              );
+            } else if (deliveryError !== undefined) {
+              setThreadFailure(rendererThread.id, "Final response unavailable", deliveryError);
+            } else {
+              setThreadActivity(
+                rendererThread.id,
+                getTerminalWaitEventType(event) === undefined ? "Ready" : `Waiting for ${getTerminalWaitEventType(event)}`,
+              );
             }
           }
           setActiveRuns((current) => {
@@ -516,7 +672,7 @@ export function DesktopApp(props: {
           return;
         }
         if (command === "new-thread") {
-          newConversation();
+          requestNewConversation();
           return;
         }
         if (command === "stop-agent") {
@@ -568,6 +724,22 @@ export function DesktopApp(props: {
   useEffect(() => {
     writeDesktopSidebarState(INSPECTOR_STATE_KEY, inspectorOpen);
   }, [inspectorOpen]);
+
+  useEffect(() => {
+    if (!selectedProjectPersistenceReady) return;
+    writeDesktopSelectedProjectPath(selectedProjectPath);
+  }, [selectedProjectPath, selectedProjectPersistenceReady]);
+
+  useEffect(() => {
+    if (settings === undefined) return;
+    if (selectedProjectPath !== undefined && settings.projects.some((project) => project.path === selectedProjectPath)) return;
+    const next = resolveDesktopSelectedProjectPath({
+      projects: settings.projects,
+      activeThreadProjectPath: activeThread?.projectPath,
+      defaultProjectPath: settings.defaultProjectPath,
+    });
+    if (next !== selectedProjectPath) setSelectedProjectPath(next);
+  }, [settings?.projects, settings?.defaultProjectPath, activeThread?.projectPath, selectedProjectPath]);
 
   useEffect(() => {
     try {
@@ -659,6 +831,15 @@ export function DesktopApp(props: {
       result,
     }));
     if (result.status === "available") {
+      setState((current) =>
+        current === undefined
+          ? current
+          : projectDesktopStartingFollowUps(
+              current,
+              thread.id,
+              result.view.followUpQueue.items,
+            ),
+      );
       const dialogMessages = (result.view.dialogs ?? [])
         .flatMap((dialog) => dialog.messages)
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -676,6 +857,7 @@ export function DesktopApp(props: {
                     dialog: {
                       messageId: message.messageId,
                       dialogId: message.dialogId,
+                      ...(message.parentRunId !== undefined ? { parentRunId: message.parentRunId } : {}),
                       name: message.name,
                       childSessionId: message.childSessionId,
                       sender: message.sender,
@@ -691,8 +873,35 @@ export function DesktopApp(props: {
       await recoverConversationMessages(thread).catch((cause) => {
         setThreadFailure(thread.id, "Some messages could not be restored", errorMessage(cause));
       });
+      await recoverConversationActivity(thread).catch((cause) => {
+        setThreadFailure(thread.id, "Some activity could not be restored", errorMessage(cause));
+      });
     }
     return result;
+  }
+
+  async function recoverConversationActivity(
+    thread: DesktopRendererState["threads"][number],
+  ): Promise<void> {
+    let cursor: string | undefined;
+    do {
+      const page = await window.kestrelDesktop.listConversationActivity(
+        thread.sessionId,
+        cursor,
+        500,
+      );
+      setRunStreams((current) => ({
+        ...current,
+        [thread.id]: page.events.reduce(
+          projectDesktopRunStream,
+          current[thread.id] ?? [],
+        ),
+      }));
+      cursor = page.hasMore ? page.nextCursor : undefined;
+      if (page.hasMore && cursor === undefined) {
+        throw new Error("Conversation activity pagination did not return a cursor.");
+      }
+    } while (cursor !== undefined);
   }
 
   async function recoverConversationMessages(
@@ -812,9 +1021,12 @@ export function DesktopApp(props: {
     }
   }
 
-  async function submitTurn(event: FormEvent): Promise<void> {
-    event.preventDefault();
-    const message = activeThread?.draft ?? "";
+  async function submitTurn(
+    event?: FormEvent,
+    override?: { message: string; mode: RendererMode },
+  ): Promise<void> {
+    event?.preventDefault();
+    const message = override?.message ?? activeThread?.draft ?? "";
     if (
       state === undefined
       || activeThread === undefined
@@ -837,15 +1049,45 @@ export function DesktopApp(props: {
     });
     const submittedPendingWaitEventType = activeThread.pendingWaitEventType;
     const workspaceSetup = buildManagedWorkspaceSetup(activeThread);
+    const submissionMode = override?.mode ?? activeThread.mode;
+    const submittedAttachmentIds = override === undefined ? [...activeThread.draftAttachmentIds] : [];
+    if (composerDispatchingRef.current) return;
+    composerDispatchingRef.current = true;
+    queueMicrotask(() => {
+      composerDispatchingRef.current = false;
+    });
     clearThreadError(threadId);
     const messageId = crypto.randomUUID();
-    pendingTurnSubmissionsRef.current[activeThread.sessionId] = {
+    pendingTurnSubmissionsRef.current.set(messageId, {
       threadId,
+      sessionId: activeThread.sessionId,
+      messageId,
       message,
       submittedAt,
       projectPath,
-    };
+    });
+    const optimisticInTranscript = composerPolicy.mode !== "queue_follow_up";
+    if (optimisticInTranscript) {
+      setState((current) => current === undefined
+        ? current
+        : projectDesktopConversationSubmission(current, {
+            threadId,
+            messageId,
+            message,
+            submittedAt,
+            disposition: "submitting",
+          }));
+    } else if (override === undefined) {
+      setState((current) => current === undefined
+        ? current
+        : updateRendererThread(current, threadId, (thread) => ({
+            ...thread,
+            draft: "",
+            draftAttachmentIds: [],
+          })));
+    }
     setThreadActivity(threadId, "Routing message");
+    let authorityRefreshAttempted = false;
     try {
       const routed = await window.kestrelDesktop.submitConversationMessage({
         sessionId: activeThread.sessionId,
@@ -853,34 +1095,61 @@ export function DesktopApp(props: {
         messageId,
         message,
         history,
-        interactionMode: activeThread.mode,
+        interactionMode: submissionMode,
         workspaceMode: activeThread.workspaceMode,
         ...(activeThread.workspaceMode === "managed"
           ? { workspaceBaseRef: activeThread.workspaceBaseRef }
           : {}),
-        attachmentIds: activeThread.draftAttachmentIds,
+        attachmentIds: submittedAttachmentIds,
         ...(projectPath !== undefined ? { projectPath } : {}),
         ...(activeThread.workspaceMode === "managed" && workspaceSetup !== undefined
           ? { workspaceSetup }
           : {}),
-        ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
+        ...(submissionMode === "build" ? { actSubmode: "safe" } : {}),
         executionSelection: toDesktopExecutionSelection(
           activeThread,
           settings.apps,
-          settings.defaultEnabledAppIds,
         ),
       });
-      setThreadViews((current) => ({ ...current, [threadId]: routed.view }));
-      const acceptedFromEvent = acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
+      const observedStart = startedConversationMessagesRef.current.delete(messageId);
+      const startedBeforeRoute = routed.disposition === "queued" && observedStart;
+      const projectedDisposition = startedBeforeRoute ? "started" : routed.disposition;
+      if (routed.disposition === "queued" && !startedBeforeRoute) {
+        queuedTurnSubmissionsRef.current.set(messageId, {
+          threadId,
+          sessionId: activeThread.sessionId,
+          messageId,
+          message,
+          submittedAt,
+          projectPath,
+        });
+      } else {
+        queuedTurnSubmissionsRef.current.delete(messageId);
+      }
+      setThreadViews((current) => ({
+        ...current,
+        [threadId]: startedBeforeRoute
+          ? {
+              ...routed.view,
+              followUpQueue: {
+                ...routed.view.followUpQueue,
+                items: markDesktopFollowUpStarted(
+                  routed.view.followUpQueue.items,
+                  messageId,
+                ),
+              },
+            }
+          : routed.view,
+      }));
       setState((current) => {
         if (current === undefined) return current;
-        const accepted = acceptedFromEvent
-          ? current
-          : appendRendererTranscript(
-              acceptRendererPrompt(current, threadId, message),
-              threadId,
-              { role: "user", text: message, timestamp: submittedAt },
-            );
+        const accepted = projectDesktopConversationSubmission(current, {
+          threadId,
+          messageId,
+          message,
+          submittedAt,
+          disposition: projectedDisposition,
+        });
         return updateRendererThread(accepted, threadId, (thread) => ({
           ...thread,
           ...(projectPath !== undefined ? { projectPath } : {}),
@@ -916,7 +1185,68 @@ export function DesktopApp(props: {
               : "Message sent",
       );
     } catch (cause) {
-      if (submittedPendingWaitEventType !== undefined) {
+      let recoveredDisposition = recoverDesktopConversationSubmissionDisposition({
+        messageId,
+        observedStart: startedConversationMessagesRef.current.delete(messageId),
+        routes: [],
+      });
+      if (recoveredDisposition === undefined) {
+        try {
+          authorityRefreshAttempted = true;
+          const authority = await refreshThreadAuthority(activeThread);
+          if (authority.status === "available") {
+            recoveredDisposition = recoverDesktopConversationSubmissionDisposition({
+              messageId,
+              observedStart: false,
+              routes: authority.view.conversationMessageRoutes ?? [],
+            });
+          }
+        } catch {
+          // Preserve the original submission failure when authority cannot be checked.
+        }
+      }
+      if (recoveredDisposition !== undefined) {
+        if (recoveredDisposition === "queued") {
+          queuedTurnSubmissionsRef.current.set(messageId, {
+            threadId,
+            sessionId: activeThread.sessionId,
+            messageId,
+            message,
+            submittedAt,
+            projectPath,
+          });
+        }
+        setState((current) => current === undefined
+          ? current
+          : projectDesktopConversationSubmission(current, {
+              threadId,
+              messageId,
+              message,
+              submittedAt,
+              disposition: recoveredDisposition,
+            }));
+        setThreadActivity(
+          threadId,
+          recoveredDisposition === "queued" ? "Queued behind current work" : "Message sent",
+        );
+      } else {
+        setState((current) => {
+          if (current === undefined) return current;
+          const reverted = optimisticInTranscript
+            ? revertDesktopConversationSubmission(current, threadId, messageId)
+            : current;
+          if (override !== undefined) return reverted;
+          return updateRendererThread(reverted, threadId, (thread) =>
+            thread.draft.length === 0 && thread.draftAttachmentIds.length === 0
+              ? {
+                  ...thread,
+                  draft: message,
+                  draftAttachmentIds: submittedAttachmentIds,
+                }
+              : thread);
+        });
+      }
+      if (recoveredDisposition === undefined && submittedPendingWaitEventType !== undefined) {
         setState((current) => current === undefined
           ? current
           : updateRendererThread(current, threadId, (thread) => ({
@@ -924,15 +1254,36 @@ export function DesktopApp(props: {
               pendingWaitEventType: submittedPendingWaitEventType,
             })));
       }
-      setThreadFailure(threadId, "Message not sent", errorMessage(cause));
+      if (recoveredDisposition === undefined) {
+        setThreadFailure(threadId, "Message not sent", errorMessage(cause));
+      }
     } finally {
-      delete pendingTurnSubmissionsRef.current[activeThread.sessionId];
-      void refreshThreadAuthority(activeThread).catch((cause) => {
-        setThreadFailure(activeThread.id, "Thread status unavailable", errorMessage(cause));
-      });
+      pendingTurnSubmissionsRef.current.delete(messageId);
+      if (!authorityRefreshAttempted) {
+        void refreshThreadAuthority(activeThread).catch((cause) => {
+          setThreadFailure(activeThread.id, "Thread status unavailable", errorMessage(cause));
+        });
+      }
     }
     return;
 
+  }
+
+  async function acceptModeSwitch(): Promise<void> {
+    if (activeThread === undefined || modeSwitchPresentation === undefined) return;
+    await modeSwitchRetryGuardRef.current.run({
+      recommendationId: modeSwitchPresentation.recommendationId,
+      mode: modeSwitchPresentation.toMode,
+      switchMode: (mode) => {
+        setState((current) => current === undefined
+          ? current
+          : updateRendererThread(current, activeThread.id, (thread) => ({ ...thread, mode })));
+      },
+      retry: () => submitTurn(undefined, {
+        message: `/mode ${modeSwitchPresentation.toMode}`,
+        mode: modeSwitchPresentation.toMode,
+      }),
+    });
   }
 
   async function submitEvaluationOption(optionId: RunnerStructuredReviewOptionId): Promise<void> {
@@ -978,7 +1329,6 @@ export function DesktopApp(props: {
         // Preserve the recovery submission error; the next authority refresh can retry.
       });
     } finally {
-      acceptedTurnSessionsRef.current.delete(activeThread.sessionId);
       setOperatorActionPending((current) => ({ ...current, [item.itemId]: false }));
     }
   }
@@ -1287,13 +1637,13 @@ export function DesktopApp(props: {
     }
   }
 
-  async function addProject(): Promise<void> {
+  async function addProject(): Promise<DesktopProjectRegistration | undefined> {
     if (settings === undefined) {
-      return;
+      return undefined;
     }
     const project = await window.kestrelDesktop.pickProjectFolder();
     if (project === undefined) {
-      return;
+      return undefined;
     }
     const projects = [
       ...settings.projects.filter((entry) => entry.path !== project.path),
@@ -1302,9 +1652,10 @@ export function DesktopApp(props: {
     const saved = await window.kestrelDesktop.saveSettings({ projects });
     setSettings(saved);
     setSelectedProjectPath(project.path);
+    return project;
   }
 
-  function newConversation(projectPath: string | null = activeThreadWorkspace?.sourceWorkspaceRoot ?? activeThread?.projectPath ?? null): void {
+  function createConversationForProject(projectPath: string | null): void {
     const defaultConfiguration = settings?.modelConfigurations.find(
       (configuration) => configuration.id === settings.defaultModelConfigurationId,
     );
@@ -1312,13 +1663,32 @@ export function DesktopApp(props: {
       ...(projectPath !== null ? { projectPath } : {}),
       modelConfigurationId: defaultConfiguration?.id,
       modelConfigurationRevision: defaultConfiguration?.currentRevision,
-      enabledAppIds: settings?.defaultEnabledAppIds,
+      enabledWorkflowAppIds: [],
     }));
+    if (projectPath !== null) setSelectedProjectPath(projectPath);
     setSurface("chat");
+    closeWorkNavigator(false);
+    requestAnimationFrame(() => composerTextareaRef.current?.focus());
+  }
+
+  function requestNewConversation(): void {
+    openWorkNavigator();
+    setNewConversationRequestId((current) => current + 1);
+  }
+
+  async function addProjectAndCreate(): Promise<void> {
+    const project = await addProject();
+    if (project !== undefined) createConversationForProject(project.path);
   }
 
   function startProjectConversation(projectPath: string): void {
-    newConversation(projectPath);
+    createConversationForProject(projectPath);
+  }
+
+  function openProjectHub(projectPath: string): void {
+    setSelectedProjectPath(projectPath);
+    setSurface("projects");
+    closeWorkNavigator();
   }
 
   function openMissionControlConversation(sessionId: string): void {
@@ -1339,6 +1709,10 @@ export function DesktopApp(props: {
         ? current
         : selectRendererThread(current, matches[0]!.id),
     );
+    const projectPath = matches[0]!.projectPath;
+    if (projectPath !== undefined && settings?.projects.some((project) => project.path === projectPath)) {
+      setSelectedProjectPath(projectPath);
+    }
     setSurface("chat");
   }
 
@@ -1377,8 +1751,22 @@ export function DesktopApp(props: {
   }
 
   function openCapabilitySettings(target?: DesktopCapabilityId): void {
+    if (
+      target === "tools.internet.tavily" ||
+      target === "tools.weather" ||
+      target === "tools.network.free" ||
+      target === "connections.mcp"
+    ) {
+      openApps(target === undefined ? undefined : { kind: "capability", capabilityId: target });
+      return;
+    }
     setSettingsTarget(target);
     setSurface("settings");
+  }
+
+  function openApps(target?: DesktopAppsNavigationTarget): void {
+    setAppsNavigationRequest((current) => ({ requestId: current.requestId + 1, ...(target ? { target } : {}) }));
+    setSurface("mcp");
   }
 
   function openReadinessSettings(itemId: DesktopReadinessItemId): void {
@@ -1401,14 +1789,13 @@ export function DesktopApp(props: {
   const healthState = runtimeHealth?.state ?? "degraded";
   const healthLabel = runtimeHealthLabel(healthState);
   const detailsLabel = `${inspectorOpen ? "Close" : "Open"} details${healthState === "healthy" ? "" : `, ${healthLabel}`}`;
-  const archivedThreadSelected = activeThread.archivedAt !== undefined;
   const activeModelConfiguration = settings?.modelConfigurations.find(
     (configuration) => configuration.id === activeThread.modelConfigurationId,
   );
   const activeModelRevision = activeModelConfiguration?.revisions.find(
     (revision) => revision.revision === activeThread.modelConfigurationRevision,
   );
-  const modelSelectionLocked = archivedThreadSelected
+  const modelSelectionLocked = threadReadOnlySelected
     || activeRun !== undefined
     || activeThread.pendingWaitEventType !== undefined;
   const selectedProject =
@@ -1424,8 +1811,11 @@ export function DesktopApp(props: {
     activeThreadWorkspace?.sourceWorkspaceRoot === selectedProject.path
       ? activeThreadWorkspace
       : undefined;
+  const projectConversationMatchesActiveThread = selectedProject?.path === activeThread.projectPath;
   const conversationProjectLabel = threadProject?.label
     ?? (threadProjectPath === undefined ? "No project" : "Unavailable project");
+  const selectedProjectLabel = selectedProject?.label ?? "No project";
+  const titlebarProjectLabel = surface === "projects" ? selectedProjectLabel : conversationProjectLabel;
   const showInspector = surface === "chat" && inspectorOpen;
   return (
     <div className="desktop-app">
@@ -1443,11 +1833,11 @@ export function DesktopApp(props: {
           onClick={(event) => openWorkNavigator(event.currentTarget)}
         >
           <Folder size={16} aria-hidden="true" />
-          <span>{conversationProjectLabel}</span>
+          <span>{titlebarProjectLabel}</span>
         </button>
         <div
           className="titlebar-context"
-          title={`${activeThread.title} · ${conversationProjectLabel} · ${surfacePageTitle(surface)}`}
+          title={`${activeThread.title} · ${titlebarProjectLabel} · ${surfacePageTitle(surface)}`}
         >
           <span className="titlebar-thread-context">
             <strong className="titlebar-thread-title">{activeThread.title}</strong>
@@ -1550,7 +1940,7 @@ export function DesktopApp(props: {
             <button
               className={surface === "mission-control" ? "active" : ""}
               type="button"
-              disabled={archivedThreadSelected}
+              disabled={threadReadOnlySelected}
               title="Mission control"
               aria-label="Mission control"
               onClick={() => openWorkSurface("mission-control")}
@@ -1566,12 +1956,12 @@ export function DesktopApp(props: {
               onClick={() => openWorkSurface("projects")}
             >
               <Folder size={17} />
-              <span>Project files</span>
+              <span>Projects</span>
             </button>
             <button
               className={surface === "git" ? "active" : ""}
               type="button"
-              disabled={archivedThreadSelected}
+              disabled={threadReadOnlySelected}
               title="Git and pull requests"
               aria-label="Git and pull requests"
               onClick={() => openWorkSurface("git")}
@@ -1582,7 +1972,7 @@ export function DesktopApp(props: {
             <button
               className={surface === "preview" ? "active" : ""}
               type="button"
-              disabled={archivedThreadSelected}
+              disabled={threadReadOnlySelected}
               title="Preview"
               aria-label="Preview"
               onClick={() => openWorkSurface("preview")}
@@ -1593,7 +1983,7 @@ export function DesktopApp(props: {
             <button
               className={surface === "terminal" ? "active" : ""}
               type="button"
-              disabled={archivedThreadSelected}
+              disabled={threadReadOnlySelected}
               title="Terminal"
               aria-label="Terminal"
               onClick={() => openWorkSurface("terminal")}
@@ -1626,16 +2016,22 @@ export function DesktopApp(props: {
               threads={state.threads}
               activeThreadId={state.activeThreadId}
               projects={settings?.projects ?? []}
+              navigation={threadNavigation}
+              selectedProjectPath={selectedProjectPath}
+              newConversationRequestId={newConversationRequestId}
               searchInputRef={workNavigatorSearchRef}
               onSelect={(threadId) => {
+                const selectedThread = state.threads.find((thread) => thread.id === threadId);
+                if (selectedThread?.projectPath !== undefined && settings?.projects.some((project) => project.path === selectedThread.projectPath)) {
+                  setSelectedProjectPath(selectedThread.projectPath);
+                }
                 setState((current) => current === undefined ? current : selectRendererThread(current, threadId));
                 setSurface("chat");
                 closeWorkNavigator();
               }}
-              onNewConversation={() => {
-                newConversation();
-                closeWorkNavigator();
-              }}
+              onSelectProject={openProjectHub}
+              onNewConversation={createConversationForProject}
+              onAddProjectAndCreate={addProjectAndCreate}
               onRename={(threadId, title) => setState((current) => current === undefined ? current : renameRendererThread(current, threadId, title))}
               onArchive={async (threadId) => {
                 const thread = threadsRef.current.find((candidate) => candidate.id === threadId);
@@ -1661,7 +2057,7 @@ export function DesktopApp(props: {
                   setState((current) => current === undefined ? current : archiveRendererThread(current, threadId, {
                     modelConfigurationId: defaultConfiguration?.id,
                     modelConfigurationRevision: defaultConfiguration?.currentRevision,
-                    enabledAppIds: settings?.defaultEnabledAppIds,
+                    enabledWorkflowAppIds: [],
                   }));
                   setSurface("chat");
                   return { status: "archived" };
@@ -1715,14 +2111,13 @@ export function DesktopApp(props: {
                   outcome={outcome}
                   hasWorkspace={threadProjectPath !== undefined}
                   onReviewChanges={reviewOutcomeChanges}
-                  onViewChecks={() => setSurface("validation")}
                   onInspectRun={inspectOutcomeRun}
                 />
               );
             }}
             tail={(
               <>
-                {!archivedThreadSelected && threadViews[activeThread.id]?.followUpQueue.items.length ? (
+                {!threadReadOnlySelected && queuedDesktopFollowUps(threadViews[activeThread.id]?.followUpQueue.items ?? []).length ? (
                   <li className="timeline-entry timeline-entry-queue">
                     <TimelineMarker kind="queue" />
                     <section className="timeline-entry-content follow-up-queue" aria-label="Queued follow-ups">
@@ -1735,7 +2130,7 @@ export function DesktopApp(props: {
                           })}>Resume queue</button>
                         ) : null}
                       </div>
-                      {threadViews[activeThread.id]?.followUpQueue.items.map((item, index) => (
+                      {queuedDesktopFollowUps(threadViews[activeThread.id]?.followUpQueue.items ?? []).map((item, index) => (
                         <QueuedFollowUpCard
                           key={item.followUpId}
                           item={item}
@@ -1749,7 +2144,7 @@ export function DesktopApp(props: {
                   </li>
                 ) : null}
 
-                {!archivedThreadSelected ? operatorActionCardItems.map((item) => (
+                {!threadReadOnlySelected ? operatorActionCardItems.map((item) => (
                   <OperatorActionCard
                     key={item.itemId}
                     item={item}
@@ -1758,14 +2153,26 @@ export function DesktopApp(props: {
                   />
                 )) : null}
 
-                {archivedThreadSelected ? (
+                {threadReadOnlySelected ? (
                   <li className="timeline-entry timeline-entry-archived">
                     <TimelineMarker kind="attention" />
-                    <section className="timeline-entry-content archived-conversation-banner" aria-label="Archived conversation">
-                      <div><strong>Archived conversation</strong><span>This transcript is read-only.</span></div>
-                      <button className="primary-button" type="button" onClick={() => {
-                        setState((current) => current === undefined ? current : restoreRendererThread(current, activeThread.id));
-                      }}>Restore conversation</button>
+                    <section
+                      className="timeline-entry-content archived-conversation-banner"
+                      aria-label={archivedThreadSelected ? "Archived conversation" : "Unavailable project conversation"}
+                    >
+                      <div>
+                        <strong>{archivedThreadSelected ? "Archived conversation" : "Project unavailable"}</strong>
+                        <span>
+                          {archivedThreadSelected
+                            ? "This transcript is read-only."
+                            : "This conversation is read-only because its project is no longer registered."}
+                        </span>
+                      </div>
+                      {archivedThreadSelected ? (
+                        <button className="primary-button" type="button" onClick={() => {
+                          setState((current) => current === undefined ? current : restoreRendererThread(current, activeThread.id));
+                        }}>Restore conversation</button>
+                      ) : null}
                     </section>
                   </li>
                 ) : null}
@@ -1773,9 +2180,25 @@ export function DesktopApp(props: {
             )}
           />
 
-          {archivedThreadSelected ? null : (
+          {threadReadOnlySelected ? null : (
             <>
-            {composerPolicy.mode === "select_evaluation_option" ? (
+            {modeSwitchPresentation !== undefined ? (
+              <section className="composer mode-switch-composer" aria-label="Mode change required">
+                <div className="recovery-option-copy">
+                  <strong>Continue in {modeLabel(modeSwitchPresentation.toMode)}</strong>
+                  <span>{modeSwitchPresentation.reason}</span>
+                </div>
+                <div className="recovery-option-actions">
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => void acceptModeSwitch()}
+                  >
+                    Switch to {modeLabel(modeSwitchPresentation.toMode)} and continue
+                  </button>
+                </div>
+              </section>
+            ) : composerPolicy.mode === "select_evaluation_option" ? (
             <section className="composer recovery-option-composer" aria-label="Evaluation options">
               <div className="recovery-option-copy">
                 <strong>Result requires review</strong>
@@ -1840,6 +2263,7 @@ export function DesktopApp(props: {
               ))}
             </div>
             <textarea
+              ref={composerTextareaRef}
               aria-label="Message"
               placeholder={composerPolicy.mode === "reply_to_request" ? "Reply to Kestrel" : "Message Kestrel"}
               rows={3}
@@ -1855,7 +2279,14 @@ export function DesktopApp(props: {
                   if (event.key === "ArrowUp" && atStart && navigatePromptHistory(activeThread.id, -1)) { event.preventDefault(); return; }
                   if (event.key === "ArrowDown" && atEnd && navigatePromptHistory(activeThread.id, 1)) { event.preventDefault(); return; }
                 }
-                if (event.key === "Enter" && event.shiftKey === false) {
+                if (resolveConversationComposerKeyboardAction({
+                  key: event.key,
+                  shiftKey: event.shiftKey,
+                  altKey: event.altKey,
+                  ctrlKey: event.ctrlKey,
+                  metaKey: event.metaKey,
+                  isComposing: event.nativeEvent.isComposing,
+                }) === "submit") {
                   event.preventDefault();
                   event.currentTarget.form?.requestSubmit();
                 }
@@ -1918,6 +2349,18 @@ export function DesktopApp(props: {
                 <button className="icon-button" type="button" title="Attach files" aria-label="Attach files" disabled={activeThread.draftAttachmentIds.length >= 8} onClick={() => void selectAttachments()}>
                   <Paperclip size={16} />
                 </button>
+                <ConversationWorkflowControl
+                  selectedIds={activeThread.enabledWorkflowAppIds}
+                  servers={appsDiscovery?.servers ?? []}
+                  onChange={(enabledWorkflowAppIds) =>
+                    setState((current) => current === undefined
+                      ? current
+                      : updateRendererThread(current, activeThread.id, (thread) => ({
+                          ...thread,
+                          enabledWorkflowAppIds,
+                        })))}
+                  onSetup={(workflowId) => openApps({ kind: "workflow", workflowId })}
+                />
               </div>
               <div className="composer-actions-right">
                 {composerPolicy.mode === "reply_to_request" ? (
@@ -1961,14 +2404,19 @@ export function DesktopApp(props: {
             {surface === "projects" ? (
               <ProjectWorkspace
                 project={selectedProject}
+                threads={workNavigatorProjection.groups.find((group) => group.projectPath === selectedProject?.path)?.threads ?? []}
                 threadId={localCoreThreadId(activeThread.sessionId)}
                 workspace={projectWorkspace}
-                openFiles={activeThread.openFiles}
+                openFiles={projectConversationMatchesActiveThread ? activeThread.openFiles : []}
                 onChat={(project) => startProjectConversation(project.path)}
-                onAttachFile={(filePath, rootPath, threadId, intent) =>
-                  void attachWorkspaceFile(filePath, rootPath, threadId, intent)
+                onSelectThread={(threadId) => {
+                  setState((current) => current === undefined ? current : selectRendererThread(current, threadId));
+                  setSurface("chat");
+                }}
+                onAttachFile={projectConversationMatchesActiveThread ? (filePath, rootPath, threadId, intent) =>
+                  void attachWorkspaceFile(filePath, rootPath, threadId, intent) : undefined
                 }
-                onOpenFile={(filePath) =>
+                onOpenFile={projectConversationMatchesActiveThread ? (filePath) =>
                   setState((current) =>
                     current === undefined
                       ? current
@@ -1985,7 +2433,7 @@ export function DesktopApp(props: {
                             ].slice(-20),
                           }),
                         ),
-                  )
+                  ) : undefined
                 }
                 onError={(error) => setSurfaceError("projects", error)}
               />
@@ -2104,7 +2552,6 @@ export function DesktopApp(props: {
                 executionSelection={toDesktopExecutionSelection(
                   activeThread,
                   settings?.apps ?? [],
-                  settings?.defaultEnabledAppIds ?? [],
                 )}
                 onError={(error) => setSurfaceError("git", error)}
               />
@@ -2116,7 +2563,27 @@ export function DesktopApp(props: {
                 onError={(error) => setSurfaceError("preview", error)}
               />
             ) : surface === "mcp" ? (
-              <McpWorkspace onError={(error) => setSurfaceError("mcp", error)} />
+              <McpWorkspace
+                settings={settings!}
+                currentWorkflowIds={activeThread.enabledWorkflowAppIds}
+                navigationRequest={appsNavigationRequest}
+                onSettings={async (update) => {
+                  const saved = await window.kestrelDesktop.saveSettings(update);
+                  setSettings(saved);
+                  return saved;
+                }}
+                onWorkflowChange={(enabledWorkflowAppIds) =>
+                  setState((current) => current === undefined ? current : updateRendererThread(
+                    current,
+                    activeThread.id,
+                    (thread) => ({ ...thread, enabledWorkflowAppIds }),
+                  ))}
+                onDiscoveryChange={(result) => {
+                  setAppsDiscovery(result);
+                  void window.kestrelDesktop.getSettings().then(setSettings).catch(() => undefined);
+                }}
+                onError={(error) => setSurfaceError("mcp", error)}
+              />
             ) : surface === "settings" ? (
               <SettingsWorkspace
                 settings={settings!}
@@ -2127,16 +2594,10 @@ export function DesktopApp(props: {
                   setState((current) => current === undefined ? current : {
                     ...current,
                     theme: saved.appearanceTheme,
-                    ...(update.defaultEnabledAppIds === undefined ? {} : {
-                      threads: current.threads.map((thread) => ({
-                        ...thread,
-                        enabledAppIds: [...saved.defaultEnabledAppIds],
-                      })),
-                    }),
                   });
                   return saved;
                 }}
-                onOpenMcp={() => setSurface("mcp")}
+                onOpenApps={openApps}
                 onAddProject={async () => { await addProject(); }}
                 onCreateUninstallPlan={async (scope, options) =>
                   await window.kestrelDesktop.createUninstallPlan({ scope, options })}
@@ -2468,6 +2929,24 @@ function writeDesktopSidebarState(key: string, value: boolean): void {
     window.localStorage.setItem(key, String(value));
   } catch {
     // Sidebar preferences are optional; the workspace remains usable without them.
+  }
+}
+
+function readStoredSelectedProjectPath(): string | undefined {
+  try {
+    const stored = window.localStorage.getItem(SELECTED_PROJECT_KEY);
+    return stored ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeDesktopSelectedProjectPath(projectPath: string | undefined): void {
+  try {
+    if (projectPath === undefined) window.localStorage.removeItem(SELECTED_PROJECT_KEY);
+    else window.localStorage.setItem(SELECTED_PROJECT_KEY, projectPath);
+  } catch {
+    // Project context persistence is optional; project selection remains usable.
   }
 }
 

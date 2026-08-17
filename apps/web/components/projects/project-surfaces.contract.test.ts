@@ -93,6 +93,9 @@ test("Schedules live in primary navigation under Work instead of Project tabs", 
   assert.match(schedules, /No schedules yet/u);
   assert.match(schedules, /Next run:/u);
   assert.match(schedules, /aria-describedby="schedule-next-run"/u);
+  assert.match(schedules, /Label htmlFor="schedule-model">Model/u);
+  assert.match(schedules, /\/api\/models\/approved\?modality=language&projectId=/u);
+  assert.match(schedules, /modelId: draft\.modelId/u);
   assert.match(schedules, /schedule\.permissions\.canEdit/u);
   assert.match(schedules, /schedule\.permissions\.canPause/u);
   assert.match(schedules, /schedule\.permissions\.canDelete/u);

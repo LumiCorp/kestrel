@@ -75,7 +75,11 @@ try {
   assert.ok(Array.isArray(entryModule.RUNNER_RUN_STREAM_EVENT_TYPES));
   assert.equal(entryModule.RUNNER_COMMAND_TYPES.includes("job.run"), true);
   assert.equal(entryModule.RUNNER_COMMAND_TYPES.includes("operator.runs"), true);
-  assert.deepEqual(entryModule.RUNNER_STREAMING_COMMAND_TYPES, ["job.run", "run.start"]);
+  assert.deepEqual(entryModule.RUNNER_STREAMING_COMMAND_TYPES, [
+    "job.run",
+    "run.start",
+    "conversation.message.submit",
+  ]);
   assert.equal(entryModule.RUNNER_JOB_STREAM_EVENT_TYPES.includes("run.progress"), true);
   assert.equal(typeof entryModule.isRunnerEventAllowedForCommand, "function");
   const health = entryModule.createRunnerHealthV1({ serviceVersion: "0.7.0" });

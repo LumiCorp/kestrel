@@ -1,19 +1,27 @@
-import { Archive, ChevronDown, MoreHorizontal, Plus, Search, X } from "lucide-react";
+import { Archive, ChevronDown, FolderPlus, MoreHorizontal, Plus, Search, X } from "lucide-react";
 import React, { type RefObject, useEffect, useMemo, useRef, useState } from "react";
 
 import { keepFocusInsideDialog } from "./dialogFocus";
 import {
-  groupRendererThreads,
   MAX_RENDERER_THREAD_TITLE_LENGTH,
   type RendererThread,
 } from "./state";
+import {
+  projectDesktopWorkNavigator,
+  type DesktopThreadNavigationState,
+} from "./workNavigator";
 
 export function ConversationExplorer(props: {
   threads: readonly RendererThread[];
   activeThreadId: string;
   projects: readonly { path: string; label: string }[];
+  navigation: Readonly<Record<string, DesktopThreadNavigationState>>;
+  selectedProjectPath?: string | undefined;
+  newConversationRequestId: number;
   onSelect: (threadId: string) => void;
-  onNewConversation: () => void;
+  onSelectProject: (projectPath: string) => void;
+  onNewConversation: (projectPath: string | null) => void;
+  onAddProjectAndCreate: () => Promise<void>;
   onRename: (threadId: string, title: string) => void;
   onArchive: (threadId: string) => Promise<{ status: "archived" } | { status: "blocked"; message: string }>;
   onUndoArchive: (threadId: string, removeReplacement: boolean) => void;
@@ -22,6 +30,7 @@ export function ConversationExplorer(props: {
 }) {
   const [view, setView] = useState<"active" | "archived">("active");
   const [query, setQuery] = useState("");
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [openMenuId, setOpenMenuId] = useState<string>();
   const [renamingThread, setRenamingThread] = useState<RendererThread>();
@@ -29,16 +38,52 @@ export function ConversationExplorer(props: {
   const [notice, setNotice] = useState<{ threadId?: string; removeReplacement?: boolean; message: string }>();
   const [archivePendingId, setArchivePendingId] = useState<string>();
   const menuRef = useRef<HTMLDivElement>(null);
+  const projectPickerRef = useRef<HTMLDivElement>(null);
   const menuButtons = useRef<Record<string, HTMLButtonElement | null>>({});
   const renameDialogRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const archivedCount = props.threads.filter((thread) => thread.archivedAt !== undefined).length;
-  const groups = useMemo(() => groupRendererThreads({
+  const groups = useMemo(() => projectDesktopWorkNavigator({
     threads: props.threads,
     projects: props.projects,
+    navigation: props.navigation ?? {},
     archived: view === "archived",
     query,
-  }), [props.threads, props.projects, query, view]);
+  }).groups, [props.threads, props.projects, props.navigation, query, view]);
+  const creationProjects = useMemo(() => projectDesktopWorkNavigator({
+    threads: props.threads,
+    projects: props.projects,
+    navigation: props.navigation ?? {},
+    archived: false,
+  }).groups.filter((group) => group.kind === "project"), [props.threads, props.projects, props.navigation]);
+
+  useEffect(() => {
+    if (props.newConversationRequestId > 0) {
+      setView("active");
+      setProjectPickerOpen(true);
+    }
+  }, [props.newConversationRequestId]);
+
+  useEffect(() => {
+    if (!projectPickerOpen) return;
+    projectPickerRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setProjectPickerOpen(false);
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const items = [...(projectPickerRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
+      const index = items.indexOf(document.activeElement as HTMLButtonElement);
+      if (items.length > 0 && index >= 0) {
+        event.preventDefault();
+        items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [projectPickerOpen]);
 
   useEffect(() => {
     if (openMenuId === undefined) return;
@@ -135,11 +180,38 @@ export function ConversationExplorer(props: {
               <span>{view === "active" ? `Archived (${archivedCount})` : "Back"}</span>
             </button>
           ) : null}
-          <button className="icon-button" type="button" title="New conversation" aria-label="New conversation" onClick={props.onNewConversation}>
+          <button
+            className="icon-button"
+            type="button"
+            title="New conversation"
+            aria-label="New conversation"
+            aria-haspopup="menu"
+            aria-expanded={projectPickerOpen}
+            onClick={() => setProjectPickerOpen((open) => !open)}
+          >
             <Plus size={17} />
           </button>
         </div>
       </div>
+      {projectPickerOpen ? (
+        <div ref={projectPickerRef} className="explorer-project-picker" role="menu" aria-label="Choose a project for the new conversation">
+          <strong>New conversation in</strong>
+          {creationProjects.map((project) => (
+            <button key={project.projectPath} type="button" role="menuitem" onClick={() => {
+              setProjectPickerOpen(false);
+              props.onNewConversation(project.projectPath!);
+            }}>{project.label}</button>
+          ))}
+          <button type="button" role="menuitem" onClick={() => {
+            setProjectPickerOpen(false);
+            props.onNewConversation(null);
+          }}>No project</button>
+          <button className="explorer-add-project" type="button" role="menuitem" onClick={() => {
+            setProjectPickerOpen(false);
+            void props.onAddProjectAndCreate();
+          }}><FolderPlus size={14} aria-hidden="true" />Add Project…</button>
+        </div>
+      ) : null}
       <label className="explorer-search">
         <Search size={14} aria-hidden="true" />
         <input ref={props.searchInputRef} aria-label="Search conversations" type="search" value={query} placeholder="Search conversations" onChange={(event) => setQuery(event.target.value)} />
@@ -165,28 +237,44 @@ export function ConversationExplorer(props: {
           const collapsed = collapsedGroups.has(group.key) && query.length === 0;
           return (
             <section className="explorer-group" key={group.key}>
-              <button
-                className="explorer-group-toggle"
-                type="button"
-                aria-expanded={!collapsed}
-                title={group.projectPath ?? group.label}
-                onClick={() => setCollapsedGroups((current) => {
-                  const next = new Set(current);
-                  if (next.has(group.key)) next.delete(group.key); else next.add(group.key);
-                  return next;
-                })}
-              >
-                <ChevronDown size={13} aria-hidden="true" />
-                <span>{group.label}</span>
-                <small>{group.threads.length}</small>
-              </button>
+              <div className={`explorer-group-heading ${group.projectPath === props.selectedProjectPath ? "selected" : ""}`}>
+                <button
+                  className="explorer-group-toggle"
+                  type="button"
+                  aria-label={`${collapsed ? "Expand" : "Collapse"} ${group.label}`}
+                  aria-expanded={!collapsed}
+                  onClick={() => setCollapsedGroups((current) => {
+                    const next = new Set(current);
+                    if (next.has(group.key)) next.delete(group.key); else next.add(group.key);
+                    return next;
+                  })}
+                ><ChevronDown size={13} aria-hidden="true" /></button>
+                {group.projectPath !== undefined ? (
+                  <button className="explorer-project-select" type="button" title={group.projectPath} onClick={() => props.onSelectProject(group.projectPath!)}>
+                    <span>{group.label}</span>
+                    <small>{group.summary.total}</small>
+                  </button>
+                ) : (
+                  <span className="explorer-project-label"><span>{group.label}</span><small>{group.summary.total}</small></span>
+                )}
+                {view === "active" && group.kind !== "unavailable-project" ? (
+                  <button
+                    className="explorer-project-create"
+                    type="button"
+                    title={`New conversation in ${group.label}`}
+                    aria-label={`New conversation in ${group.label}`}
+                    onClick={() => props.onNewConversation(group.projectPath ?? null)}
+                  ><Plus size={14} /></button>
+                ) : null}
+              </div>
               {!collapsed ? (
                 <div className="explorer-thread-list">
-                  {group.threads.map((thread) => (
+                  {group.threads.map(({ thread, status, activity, updatedAt }) => (
                     <div className={`explorer-thread-row ${thread.id === props.activeThreadId ? "active" : ""}`} key={thread.id}>
                       <button className="explorer-thread-select" type="button" title={thread.title} aria-label={`Open conversation: ${thread.title}`} onClick={() => props.onSelect(thread.id)}>
-                        <span>{thread.title}</span>
-                        <time>{formatThreadTime(thread.updatedAt)}</time>
+                        <span className={`explorer-thread-status status-${status}`} aria-label={status} />
+                        <span className="explorer-thread-copy"><strong>{thread.title}</strong><small>{activity}</small></span>
+                        <time>{formatThreadTime(updatedAt)}</time>
                       </button>
                       <button
                         className="explorer-thread-menu-button"

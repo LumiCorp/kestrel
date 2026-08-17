@@ -147,6 +147,10 @@ export async function writeCoreLockHeartbeat(input: {
       homePath: input.homePath,
       currentCoreVersion: input.coreVersion,
       now: input.now,
+      // The heartbeat writer is the authority proving its own liveness. Read
+      // through heartbeat expiry, then require the exact PID and authority ID
+      // below before refreshing the lock.
+      isPidAlive: () => true,
     });
     if (current.state !== "live") {
       return current;
@@ -198,6 +202,10 @@ export async function releaseCoreLock(input: {
     const current = await readCoreLock({
       homePath: input.homePath,
       currentCoreVersion: input.coreVersion,
+      // A graceful owner must still be able to release its lock after a long
+      // event-loop pause. Exact PID and authority checks below prevent another
+      // process from releasing it.
+      isPidAlive: () => true,
     });
     if (current.state !== "live") {
       return;

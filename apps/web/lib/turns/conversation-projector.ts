@@ -4,49 +4,13 @@ import type {
   ThreadTurnView,
 } from "@/lib/turns/client-contract";
 import type { ChatMessage } from "@/lib/types";
+import {
+  projectConversation,
+} from "@kestrel-agents/conversation";
 
-export type ConversationProjectionIssue = {
-  code: "MESSAGE_TURN_CONFLICT" | "MISSING_TURN_RECORD";
-  message: string;
-  messageId: string;
-};
-
-export type ProjectedConversationItem =
-  | {
-      kind: "durable_turn";
-      id: string;
-      turnId: string;
-      turn: ThreadTurnView | null;
-      messages: ChatMessage[];
-      interactions: ThreadInteractionView[];
-    }
-  | {
-      kind: "standalone_message";
-      id: string;
-      message: ChatMessage;
-    };
-
-export type ProjectedConversation = {
-  items: ProjectedConversationItem[];
-  issues: ConversationProjectionIssue[];
-};
-
-function clearProcessedDeliveryState(
-  message: ChatMessage,
-  turn: ThreadTurnView | undefined
-) {
-  if (
-    !turn ||
-    turn.status === "queued" ||
-    turn.inputMessageId !== message.id ||
-    message.metadata?.deliveryState === undefined
-  ) {
-    return message;
-  }
-
-  const { deliveryState: _deliveryState, ...metadata } = message.metadata;
-  return { ...message, metadata };
-}
+export type ConversationProjectionIssue = import("@kestrel-agents/conversation").ConversationProjectionIssue;
+export type ProjectedConversationItem = import("@kestrel-agents/conversation").ProjectedConversationItem<ChatMessage, ThreadTurnView, ThreadInteractionView>;
+export type ProjectedConversation = import("@kestrel-agents/conversation").ProjectedConversation<ChatMessage, ThreadTurnView, ThreadInteractionView>;
 
 export function collectDurableTurnPresentationParts(messages: ChatMessage[]) {
   const seen = new Set<string>();
@@ -92,89 +56,9 @@ export function projectThreadConversation(input: {
   messages: ChatMessage[];
   conversationState: ThreadConversationState;
 }): ProjectedConversation {
-  const turnsById = new Map(
-    input.conversationState.turns.map((turn) => [turn.id, turn])
-  );
-  const turnIdByMessageId = new Map<string, string>();
-  const issues: ConversationProjectionIssue[] = [];
-
-  const bindMessage = (messageId: string | null, turnId: string | null) => {
-    if (!(messageId && turnId)) return;
-    const existing = turnIdByMessageId.get(messageId);
-    if (existing && existing !== turnId) {
-      issues.push({
-        code: "MESSAGE_TURN_CONFLICT",
-        message: `Message '${messageId}' is bound to multiple durable turns.`,
-        messageId,
-      });
-      return;
-    }
-    turnIdByMessageId.set(messageId, turnId);
-  };
-
-  for (const turn of input.conversationState.turns) {
-    bindMessage(turn.inputMessageId, turn.id);
-  }
-  for (const interaction of input.conversationState.interactions) {
-    bindMessage(interaction.assistantMessageId, interaction.turnId);
-    bindMessage(interaction.responseMessageId, interaction.turnId);
-  }
-  for (const message of input.messages) {
-    bindMessage(message.id, message.metadata?.kestrelTurnId ?? null);
-  }
-
-  const messagesByTurnId = new Map<string, ChatMessage[]>();
-  for (const message of input.messages) {
-    const turnId = turnIdByMessageId.get(message.id);
-    if (!turnId) continue;
-    const current = messagesByTurnId.get(turnId) ?? [];
-    current.push(clearProcessedDeliveryState(message, turnsById.get(turnId)));
-    messagesByTurnId.set(turnId, current);
-    if (
-      !turnsById.has(turnId) &&
-      message.metadata?.deliveryState !== "sending" &&
-      message.metadata?.deliveryState !== "queued" &&
-      input.conversationState.queue.activeTurnId !== turnId
-    ) {
-      issues.push({
-        code: "MISSING_TURN_RECORD",
-        message: `Message '${message.id}' references missing durable turn '${turnId}'.`,
-        messageId: message.id,
-      });
-    }
-  }
-
-  const interactionsByTurnId = new Map<string, ThreadInteractionView[]>();
-  for (const interaction of input.conversationState.interactions) {
-    if (!interaction.turnId) continue;
-    const current = interactionsByTurnId.get(interaction.turnId) ?? [];
-    current.push(interaction);
-    interactionsByTurnId.set(interaction.turnId, current);
-  }
-
-  const emittedTurnIds = new Set<string>();
-  const items: ProjectedConversationItem[] = [];
-  for (const message of input.messages) {
-    const turnId = turnIdByMessageId.get(message.id);
-    if (!turnId) {
-      items.push({
-        kind: "standalone_message",
-        id: `message:${message.id}`,
-        message,
-      });
-      continue;
-    }
-    if (emittedTurnIds.has(turnId)) continue;
-    emittedTurnIds.add(turnId);
-    items.push({
-      kind: "durable_turn",
-      id: `turn:${turnId}`,
-      turnId,
-      turn: turnsById.get(turnId) ?? null,
-      messages: messagesByTurnId.get(turnId) ?? [],
-      interactions: interactionsByTurnId.get(turnId) ?? [],
-    });
-  }
-
-  return { items, issues };
+  return projectConversation({
+    messages: input.messages,
+    turns: input.conversationState.turns,
+    interactions: input.conversationState.interactions,
+  });
 }

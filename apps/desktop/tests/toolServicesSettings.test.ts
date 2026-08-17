@@ -13,12 +13,14 @@ const rendererDirectory = path.resolve(
 );
 
 test("Desktop Tools and services uses a cardless guided connector surface", async () => {
-  const [settingsSource, toolServicesSource] = await Promise.all([
+  const [appsSource, settingsSource, toolServicesSource] = await Promise.all([
+    readFile(path.join(rendererDirectory, "McpWorkspace.tsx"), "utf8"),
     readFile(path.join(rendererDirectory, "SettingsWorkspace.tsx"), "utf8"),
     readFile(path.join(rendererDirectory, "ToolServicesSettings.tsx"), "utf8"),
   ]);
 
-  assert.match(settingsSource, /category === "tools_services"[\s\S]*<ToolServicesSettings/u);
+  assert.match(appsSource, /<ToolServicesSettings/u);
+  assert.doesNotMatch(settingsSource, /<ToolServicesSettings/u);
   assert.doesNotMatch(toolServicesSource, /capability-card/u);
   assert.match(toolServicesSource, /name="Tavily"/u);
   assert.match(toolServicesSource, /name="Exa"/u);

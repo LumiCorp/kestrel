@@ -91,7 +91,7 @@ for (const [network, prefix] of [
   nonPublicIpv6Addresses.addSubnet(network, prefix, "ipv6");
 }
 
-export function assertPublicMcpResolvedAddresses(
+export function assertPublicResolvedAddresses(
   addresses: readonly McpResolvedAddress[],
 ): void {
   if (addresses.length === 0) {
@@ -110,6 +110,9 @@ export function assertPublicMcpResolvedAddresses(
     }
   }
 }
+
+/** @deprecated Prefer assertPublicResolvedAddresses for non-MCP callers. */
+export const assertPublicMcpResolvedAddresses = assertPublicResolvedAddresses;
 
 function readMappedIpv4Address(address: string): string | undefined {
   const normalized = address.toLowerCase();

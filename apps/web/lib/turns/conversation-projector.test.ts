@@ -6,9 +6,54 @@ import {
   projectThreadConversation,
 } from "@/lib/turns/conversation-projector";
 import type { ChatMessage } from "@/lib/types";
+import {
+  conversationConformanceFixture,
+  normalizeConversationConformanceProjection,
+} from "@kestrel-agents/conversation";
 
 
 const now = "2026-07-15T12:00:00.000Z";
+
+test("Kestrel One projects the shared conformance fixture by durable identity", () => {
+  const fixture = conversationConformanceFixture;
+  const projection = projectThreadConversation({
+    conversationState: {
+      turns: fixture.turns.map((turn) => ({
+        id: turn.id,
+        sequence: turn.sequence,
+        inputMessageId: turn.inputMessageId,
+        status: turn.status,
+        failureCode: null,
+        failureMessage: null,
+        cancelRequestedAt: null,
+        startedAt: now,
+        finishedAt: turn.status === "completed" ? now : null,
+        createdAt: now,
+        updatedAt: now,
+      })),
+      interactions: [],
+      queue: {
+        state: "running",
+        pauseReason: null,
+        activeTurnId: "turn-2",
+        version: 1,
+      },
+    },
+    messages: fixture.messages.map((entry) =>
+      message(
+        entry.id,
+        entry.role,
+        entry.text,
+        "turnId" in entry ? entry.turnId : undefined,
+      )
+    ),
+  });
+
+  assert.deepEqual(
+    normalizeConversationConformanceProjection(projection),
+    fixture.expected,
+  );
+});
 
 function message(
   id: string,

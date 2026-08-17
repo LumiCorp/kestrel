@@ -29,6 +29,8 @@ const owner: DesktopLocalCoreRecoveryOwner = {
   pid: 4200,
   authorityId: "authority-a",
   socketPath: "/tmp/kestrel-core.sock",
+  processIdentity: "process-birth-a",
+  socketIdentity: "socket-inode-a",
 };
 
 function accepted(reason: "desktop_restart" | "desktop_update" = "desktop_restart"): LocalCoreSystemShutdownResult {
@@ -385,6 +387,128 @@ test("force recovery does not signal a replacement authority after SIGTERM", asy
   assert.deepEqual(state.signals, ["SIGTERM"]);
   assert.equal(state.prepared, 0);
   assert.equal(state.relaunched, 0);
+});
+
+test("automatic startup recovery never signals a responsive verified owner", async () => {
+  const state = harness({
+    initialOwner: {
+      ...owner,
+      ownerExecutable: "/opt/kestrel/daemonMain.js",
+      heartbeatStale: true,
+      executableVerified: true,
+    },
+    client: {
+      async shutdownForDesktopRestart() {
+        assert.fail("automatic recovery must not shut down a responsive owner");
+      },
+      async shutdownForDesktopUpdate() {
+        assert.fail("automatic recovery must not shut down a responsive owner");
+      },
+    },
+  });
+
+  assert.equal(await state.coordinator.recoverStartupFailure(), undefined);
+  assert.deepEqual(state.signals, []);
+});
+
+test("automatic startup recovery replaces only a stale unreachable verified owner", async () => {
+  const state = harness({
+    initialOwner: {
+      ...owner,
+      ownerExecutable: "/opt/kestrel/daemonMain.js",
+      heartbeatStale: true,
+      executableVerified: true,
+    },
+  });
+
+  assert.deepEqual(await state.coordinator.recoverStartupFailure(), { status: "restarting" });
+  assert.deepEqual(state.signals, ["SIGTERM"]);
+  assert.equal(state.prepared, 1);
+  assert.equal(state.relaunched, 1);
+});
+
+test("automatic startup recovery aborts when ownership changes after handshake failure", async () => {
+  const state = harness({
+    initialOwner: {
+      ...owner,
+      ownerExecutable: "/opt/kestrel/daemonMain.js",
+      heartbeatStale: true,
+      executableVerified: true,
+    },
+    connect() {
+      state.setOwner({
+        ...owner,
+        authorityId: "authority-b",
+        ownerExecutable: "/opt/kestrel/daemonMain.js",
+        heartbeatStale: true,
+        executableVerified: true,
+      });
+    },
+  });
+
+  const result = await state.coordinator.recoverStartupFailure();
+  assert.equal(result?.status, "blocked");
+  assert.deepEqual(state.signals, []);
+});
+
+test("automatic startup recovery aborts when the PID has a different process birth identity", async () => {
+  const state = harness({
+    initialOwner: {
+      ...owner,
+      ownerExecutable: "/opt/kestrel/daemonMain.js",
+      heartbeatStale: true,
+      executableVerified: true,
+    },
+    connect() {
+      state.setOwner({
+        ...owner,
+        processIdentity: "process-birth-b",
+        ownerExecutable: "/opt/kestrel/daemonMain.js",
+        heartbeatStale: true,
+        executableVerified: true,
+      });
+    },
+  });
+
+  assert.equal((await state.coordinator.recoverStartupFailure())?.status, "blocked");
+  assert.deepEqual(state.signals, []);
+});
+
+test("automatic startup recovery aborts when the socket is replaced at the same path", async () => {
+  const state = harness({
+    initialOwner: {
+      ...owner,
+      ownerExecutable: "/opt/kestrel/daemonMain.js",
+      heartbeatStale: true,
+      executableVerified: true,
+    },
+    connect() {
+      state.setOwner({
+        ...owner,
+        socketIdentity: "socket-inode-b",
+        ownerExecutable: "/opt/kestrel/daemonMain.js",
+        heartbeatStale: true,
+        executableVerified: true,
+      });
+    },
+  });
+
+  assert.equal((await state.coordinator.recoverStartupFailure())?.status, "blocked");
+  assert.deepEqual(state.signals, []);
+});
+
+test("automatic startup recovery refuses ambiguous executable ownership", async () => {
+  const state = harness({
+    initialOwner: {
+      ...owner,
+      ownerExecutable: "/usr/bin/node",
+      heartbeatStale: true,
+      executableVerified: false,
+    },
+  });
+
+  assert.equal(await state.coordinator.recoverStartupFailure(), undefined);
+  assert.deepEqual(state.signals, []);
 });
 
 test("recovery requests are single-flight", async () => {

@@ -7,6 +7,7 @@ export const DOCS_RELEASE = {
     releasedPackageNames: [
       "@kestrel-agents/kestrel",
       "@kestrel-agents/protocol",
+      "@kestrel-agents/conversation",
       "@kestrel-agents/sdk",
       "@kestrel-agents/memory",
       "@kestrel-agents/next",
@@ -50,6 +51,7 @@ export const DOCS_RELEASE = {
   compatibility: [
     { surface: "Runtime", version: "0.8.0", channel: "Stable", note: "The 0.8.2 npm artifact packages the 0.8.0 runtime contracts for clean global installation" },
     { surface: "Protocol", version: "0.8.0", channel: "Stable", note: "Owns execution, conversations, approvals, recovery, Mission Control, and events" },
+    { surface: "Conversation", version: "0.8.0", channel: "Stable", note: "Projects durable turns, streaming presentation, queues, composer actions, and typed host interactions" },
     { surface: "SDK", version: "0.8.0", channel: "Stable", note: "Consumes the exact matching runner and protocol contracts" },
     { surface: "Memory", version: "0.8.0", channel: "Stable", note: "Provides governed memory contracts, backends, and retrieval helpers" },
     { surface: "Next.js", version: "0.8.0", channel: "Stable", note: "Adapts SDK results to server routes" },

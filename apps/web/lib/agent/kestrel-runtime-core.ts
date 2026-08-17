@@ -309,6 +309,7 @@ export function createKestrelOneAgentResponseFromAgent(
             ...(input.durableTurnId !== undefined
               ? { turnId: input.durableTurnId }
               : {}),
+            interactionMode: input.interactionMode,
             onEvent: input.onRuntimeEvent,
           });
         } catch (error) {

@@ -832,6 +832,7 @@ test("Delegation failure persistence retains normalized message and event code",
 test("persistent dialogs support multi-turn exchange, name ownership, and explicit close", async () => {
   const store = new InMemorySessionStore();
   const updates: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord[] = [];
+  const emittedMessages: import("../../src/orchestration/DelegationSupervisor.js").DialogMessageRecord[] = [];
   let childCount = 0;
   const supervisor = new DelegationSupervisor({
     profile: {
@@ -865,21 +866,40 @@ test("persistent dialogs support multi-turn exchange, name ownership, and explic
       await store.upsertThread(thread);
       return thread;
     },
+    onTaskUpdate: ({ dialogMessage }) => {
+      if (dialogMessage !== undefined) emittedMessages.push(dialogMessage);
+    },
     onDialogReply: ({ message }) => { updates.push(message); },
   });
 
-  const opened = await supervisor.open({ parentSessionId: "root", name: "Peregrine", message: "first" });
+  const opened = await supervisor.open({
+    parentSessionId: "root",
+    parentRunId: "run-dialog-1",
+    name: "Peregrine",
+    message: "first",
+  });
   await tick();
   assert.equal(updates[0]?.text, "reply:first");
+  assert.equal(updates[0]?.parentRunId, "run-dialog-1");
   await assert.rejects(
     () => supervisor.open({ parentSessionId: "root", name: "peregrine", message: "duplicate" }),
     { code: "DIALOG_NAME_IN_USE" },
   );
 
-  const sent = await supervisor.send({ parentSessionId: "root", dialogId: opened.dialogId, message: "second" });
+  const sent = await supervisor.send({
+    parentSessionId: "root",
+    parentRunId: "run-dialog-2",
+    dialogId: opened.dialogId,
+    message: "second",
+  });
   assert.equal(sent.active, true);
+  const sentMessage = emittedMessages.find(
+    (message) => message.sender === "kestrel" && message.text === "second",
+  );
+  assert.equal(sentMessage?.parentRunId, "run-dialog-2");
   await tick();
   assert.equal(updates[1]?.text, "reply:second");
+  assert.equal(updates[1]?.parentRunId, "run-dialog-2");
 
   const closed = await supervisor.close({ parentSessionId: "root", dialogId: opened.dialogId });
   assert.equal(closed.status, "closed");

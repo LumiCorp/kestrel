@@ -45,6 +45,7 @@ for (const manifestPath of ["package.json", ...workspaceManifestPaths]) {
 const publicPackageNames = [
   "@kestrel-agents/kestrel",
   "@kestrel-agents/protocol",
+  "@kestrel-agents/conversation",
   "@kestrel-agents/sdk",
   "@kestrel-agents/memory",
   "@kestrel-agents/next",
@@ -57,6 +58,7 @@ const kestrelOne = readManifest("apps/web/package.json");
 requireNumericVersion(kestrelOne.version, "Kestrel One package.json");
 const kestrelOnePackageDependencies = [
   "@kestrel-agents/protocol",
+  "@kestrel-agents/conversation",
   "@kestrel-agents/sdk",
   "@kestrel-agents/memory",
   "@kestrel-agents/next",
@@ -90,7 +92,7 @@ assert.equal(
 assert.deepEqual(
   [...DOCS_RELEASE.packages.releasedPackageNames],
   [...publicPackageNames],
-  "docs must enumerate the eight public packages in release order",
+  "docs must enumerate the nine public packages in release order",
 );
 requireNumericVersion(
   DOCS_RELEASE.packages.runtimeNpmVersion,

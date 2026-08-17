@@ -83,6 +83,38 @@ export function isPublishedStandardAppId(appId: string): appId is KestrelAppId {
   return KESTREL_STANDARD_APP_MANIFESTS.some((app) => app.id === appId);
 }
 
+export function isDesktopWorkflowAppId(appId: string): appId is KestrelAppId {
+  const normalized = normalizeDesktopAppId(appId);
+  return isPublishedStandardAppId(normalized) && getKestrelStandardAppManifest(normalized)?.category === "workflow";
+}
+
+export function isDesktopBuiltInAppId(appId: string): appId is KestrelAppId {
+  const normalized = normalizeDesktopAppId(appId);
+  return isPublishedStandardAppId(normalized) && getKestrelStandardAppManifest(normalized)?.category === "built_in";
+}
+
+export function filterDesktopWorkflowAppIds(appIds: readonly string[]): KestrelAppId[] {
+  return [...new Set(appIds.map(normalizeDesktopAppId).filter(isDesktopWorkflowAppId))].sort();
+}
+
+export function filterDesktopBuiltInAppIds(appIds: readonly string[]): KestrelAppId[] {
+  return [...new Set(appIds.map(normalizeDesktopAppId).filter(isDesktopBuiltInAppId))].sort();
+}
+
+export function validateDesktopRendererWorkflowSelection(
+  requestedAppIds: readonly string[],
+  authoritativeGlobalAppIds: readonly string[],
+): KestrelAppId[] {
+  const authoritative = new Set(authoritativeGlobalAppIds.map(normalizeDesktopAppId));
+  const forged = requestedAppIds
+    .map(normalizeDesktopAppId)
+    .find((id) => !isDesktopWorkflowAppId(id) && !authoritative.has(id));
+  if (forged !== undefined) {
+    throw new Error(`Desktop renderer selected non-workflow App '${forged}'.`);
+  }
+  return filterDesktopWorkflowAppIds(requestedAppIds);
+}
+
 export function desktopAppIdForServer(
   server: DesktopCustomAppDefinitionSource,
 ): string {

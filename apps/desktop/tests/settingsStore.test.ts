@@ -257,6 +257,37 @@ test(
   },
 );
 
+test("version 10 App defaults split built-ins from conversation workflows", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-app-migration-"));
+  const settingsPath = path.join(tempDir, "desktop-settings.json");
+  await writeFile(settingsPath, `${JSON.stringify({
+    version: 10,
+    defaultEnabledAppIds: [
+      "built_in.weather",
+      "linear",
+      "workflow.software_delivery",
+      "workflow.software_delivery",
+    ],
+  }, null, 2)}\n`, "utf8");
+  const restored = await readDesktopSettings(settingsPath);
+  assert.deepEqual(restored.defaultEnabledBuiltInAppIds, ["built_in.weather"]);
+  assert.deepEqual(restored.legacyDefaultWorkflowAppIds, ["workflow.software_delivery"]);
+});
+
+test("active Local Core settings normalization migrates legacy App defaults", () => {
+  const restored = normalizeDesktopSettings({
+    defaultEnabledAppIds: [
+      "built_in.weather",
+      "linear",
+      "workflow.software_delivery",
+      "workflow.software_delivery",
+    ],
+  });
+
+  assert.deepEqual(restored.defaultEnabledBuiltInAppIds, ["built_in.weather"]);
+  assert.deepEqual(restored.legacyDefaultWorkflowAppIds, ["workflow.software_delivery"]);
+});
+
 test(
   "readDesktopSettings keeps provider selection unset for pristine legacy OpenRouter defaults",
   async () => {
@@ -431,7 +462,7 @@ test(
     assert.equal(restored.openaiModel, "gpt-5.4-2026-03-05");
     assert.equal(restored.tavilyApiKey, undefined);
     assert.deepEqual(restored.projects, saved.projects);
-    assert.match(raw, /"version": 10/u);
+    assert.match(raw, /"version": 11/u);
     assert.match(raw, /"selectedProvider": "openai"/u);
     assert.match(raw, /"databaseMode": "default"/u);
     assert.equal(raw.includes("openai-key"), false);
@@ -473,7 +504,7 @@ test(
     assert.equal(saved.databaseUrl, undefined);
     assert.equal(restored.databaseMode, "external");
     assert.equal(restored.databaseUrl, undefined);
-    assert.match(raw, /"version": 10/u);
+    assert.match(raw, /"version": 11/u);
     assert.match(raw, /"databaseMode": "external"/u);
     assert.equal(raw.includes("user:password"), false);
   },

@@ -30,3 +30,13 @@ test("runtime failure-provided capability ownership takes precedence", () => {
     "tools.internet.tavily",
   );
 });
+
+test("runtime failure provider contracts resolve the owning Desktop capability", () => {
+  assert.equal(
+    extractTerminalFailure(failed("TOOL_PROVIDER_FAILED", {
+      provider: "tavily",
+      classification: "configuration",
+    }), "openrouter")?.capabilityId,
+    "tools.internet.tavily",
+  );
+});

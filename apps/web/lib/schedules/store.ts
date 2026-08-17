@@ -2,6 +2,7 @@ import "server-only";
 
 import { and, asc, desc, eq, inArray, isNotNull, lte } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { isKestrelRuntimeModelSelectionAvailableInTransaction } from "@/lib/ai/runtime-model-selection";
 import {
   type ProjectRole,
   ProjectAccessError,
@@ -18,6 +19,7 @@ export const PROJECT_PROMPT_SCHEDULE_PAUSE_REASONS = [
   "manual",
   "project_archived",
   "creator_access_lost",
+  "environment_model_unavailable",
 ] as const;
 
 type SchedulePauseReason =
@@ -31,6 +33,7 @@ export type ProjectPromptScheduleSummary = {
   cronExpression: string;
   timeZone: string;
   prompt: string;
+  modelId: string | null;
   enabled: boolean;
   pauseReason: string | null;
   nextRunAt: Date | null;
@@ -204,14 +207,20 @@ export async function createProjectPromptSchedule(input: {
   cronExpression: string;
   timeZone: string;
   prompt: string;
+  modelId: string;
 }) {
   const validated = validateProjectPromptSchedule(input);
   const prompt = input.prompt.trim();
   if (!prompt) throw new Error("A prompt is required.");
+  const modelId = input.modelId.trim();
+  if (!modelId) throw new Error("A model is required.");
   const now = new Date();
   const schedule = await knowledgeDb.transaction(async (tx) => {
     const [project] = await tx
-      .select({ archivedAt: schema.projects.archivedAt })
+      .select({
+        archivedAt: schema.projects.archivedAt,
+        environmentId: schema.projects.environmentId,
+      })
       .from(schema.projects)
       .where(
         and(
@@ -256,6 +265,18 @@ export async function createProjectPromptSchedule(input: {
         "Project editor access is required.",
       );
     }
+    if (
+      !(await isKestrelRuntimeModelSelectionAvailableInTransaction(tx, {
+        organizationId: input.organizationId,
+        environmentId: project.environmentId,
+        modelId,
+      }))
+    ) {
+      throw Object.assign(
+        new Error("The selected model is not available in this Project Environment."),
+        { code: "SCHEDULE_MODEL_UNAVAILABLE" },
+      );
+    }
     const [inserted] = await tx
       .insert(schema.projectPromptSchedules)
       .values({
@@ -266,6 +287,7 @@ export async function createProjectPromptSchedule(input: {
         cronExpression: validated.cronExpression,
         timeZone: validated.timeZone,
         prompt,
+        modelId,
         enabled: true,
         pauseReason: null,
         nextRunAt: nextProjectPromptScheduleOccurrence({
@@ -299,6 +321,7 @@ export async function updateProjectPromptSchedule(input: {
   cronExpression?: string;
   timeZone?: string;
   prompt?: string;
+  modelId?: string;
   enabled?: boolean;
 }) {
   return knowledgeDb.transaction(async (tx) => {
@@ -326,6 +349,7 @@ export async function updateProjectPromptSchedule(input: {
     const [access] = await tx
       .select({
         projectArchivedAt: schema.projects.archivedAt,
+        projectEnvironmentId: schema.projects.environmentId,
         role: schema.projectMembers.role,
       })
       .from(schema.projects)
@@ -350,7 +374,8 @@ export async function updateProjectPromptSchedule(input: {
           eq(schema.projects.organizationId, input.organizationId),
         ),
       )
-      .limit(1);
+      .limit(1)
+      .for("update");
     if (!access) {
       throw new ProjectAccessError(
         "PROJECT_NOT_FOUND",
@@ -363,7 +388,8 @@ export async function updateProjectPromptSchedule(input: {
     const changesDefinition =
       input.cronExpression !== undefined ||
       input.timeZone !== undefined ||
-      input.prompt !== undefined;
+      input.prompt !== undefined ||
+      input.modelId !== undefined;
     if (changesDefinition && !isCreator) {
       throw new ProjectAccessError(
         "PROJECT_FORBIDDEN",
@@ -395,7 +421,25 @@ export async function updateProjectPromptSchedule(input: {
     });
     const prompt = (input.prompt ?? schedule.prompt).trim();
     if (!prompt) throw new Error("A prompt is required.");
+    const modelId = (input.modelId ?? schedule.modelId)?.trim() || null;
+    if (input.modelId !== undefined && !modelId) {
+      throw new Error("A model is required.");
+    }
     const enabled = input.enabled ?? schedule.enabled;
+    if (
+      modelId &&
+      (input.modelId !== undefined || enabled) &&
+      !(await isKestrelRuntimeModelSelectionAvailableInTransaction(tx, {
+        organizationId: input.organizationId,
+        environmentId: access.projectEnvironmentId,
+        modelId,
+      }))
+    ) {
+      throw Object.assign(
+        new Error("The selected model is not available in this Project Environment."),
+        { code: "SCHEDULE_MODEL_UNAVAILABLE" },
+      );
+    }
     const now = new Date();
     const nextRunAt = enabled
       ? input.enabled === true || changesDefinition || !schedule.nextRunAt
@@ -408,6 +452,7 @@ export async function updateProjectPromptSchedule(input: {
         cronExpression: validated.cronExpression,
         timeZone: validated.timeZone,
         prompt,
+        modelId,
         enabled,
         pauseReason: enabled ? null : "manual",
         nextRunAt,
@@ -666,6 +711,7 @@ export async function claimDueProjectPromptScheduleRuns(now = new Date()) {
           scheduledFor: occurrence.scheduledFor,
           catchUpFrom: occurrence.catchUpFrom,
           promptSnapshot: schedule.prompt,
+          modelIdSnapshot: schedule.modelId,
           threadId: crypto.randomUUID(),
           messageId: crypto.randomUUID(),
           status: "queued",

@@ -587,6 +587,8 @@ export interface RunStartedEventPayload {
   sessionId: string;
   runId?: string | undefined;
   eventType: string;
+  followUpId?: string | undefined;
+  sourceMessageId?: string | undefined;
   stepAgent?: string | undefined;
   modeSystemV2Enabled?: boolean | undefined;
   interactionMode?: "chat" | "plan" | "build" | undefined;

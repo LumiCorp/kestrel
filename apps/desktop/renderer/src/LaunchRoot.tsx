@@ -187,17 +187,39 @@ function LaunchProgress({ state }: { state?: DesktopLaunchState | undefined }): 
 }
 
 function LaunchRecovery({ state }: { state: DesktopLaunchState }): React.JSX.Element {
+  const [recovering, setRecovering] = useState(false);
+  const [forceAvailable, setForceAvailable] = useState(false);
+  const [recoveryError, setRecoveryError] = useState<string>();
+  const restart = async (force: boolean) => {
+    setRecovering(true);
+    setRecoveryError(undefined);
+    try {
+      const result = await window.kestrelDesktop.restartKestrel({ force });
+      if (result.status === "blocked") {
+        setForceAvailable(result.forceAvailable);
+        setRecoveryError(result.blockers.map((blocker) => blocker.message).join("\n"));
+      }
+    } catch (cause) {
+      setRecoveryError(errorMessage(cause));
+    } finally {
+      setRecovering(false);
+    }
+  };
   return (
     <main className="launch-root launch-recovery">
       <div className="launch-recovery-icon"><CircleAlert aria-hidden="true" /></div>
       <p className="launch-eyebrow">Startup needs attention</p>
       <h1>{state.message}</h1>
       {state.details !== undefined ? <p className="launch-error-detail">{state.details}</p> : null}
+      {recoveryError !== undefined ? <p className="launch-error-detail">{recoveryError}</p> : null}
       {state.code !== undefined ? <code>{state.code}</code> : null}
       <div className="launch-actions">
-        <button className="onboarding-primary" type="button" onClick={() => void window.kestrelDesktop.restartApp()}>
-          <RotateCcw size={15} aria-hidden="true" /> Restart Kestrel
+        <button className="onboarding-primary" type="button" disabled={recovering} onClick={() => void restart(false)}>
+          <RotateCcw size={15} aria-hidden="true" /> {recovering ? "Checking Kestrel…" : "Restart Kestrel"}
         </button>
+        {forceAvailable ? (
+          <button type="button" disabled={recovering} onClick={() => void restart(true)}>Force recovery</button>
+        ) : null}
         <button type="button" onClick={() => void window.kestrelDesktop.openDiagnostics()}>Open Diagnostics</button>
       </div>
     </main>

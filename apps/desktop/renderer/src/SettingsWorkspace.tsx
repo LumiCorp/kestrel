@@ -6,6 +6,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { KESTREL_STANDARD_APP_MANIFESTS } from "@kestrel-agents/protocol";
 
 import type {
   DesktopCapability,
@@ -30,16 +31,14 @@ import {
   createDesktopModelConfiguration,
 } from "../../../../src/desktopShell/configuration";
 import { keepFocusInsideDialog } from "./dialogFocus";
-import {
-  ToolServicesSettings,
-  type ToolServicesNavigationRequest,
-} from "./ToolServicesSettings";
+import type { DesktopAppsNavigationTarget } from "./appsNavigation";
 
-type SettingsPage = "general" | DesktopCapabilityCategory;
+export const DEFAULT_KESTREL_ONE_BASE_URL = "https://kestrelagents.dev";
 
-const CATEGORY_ORDER: DesktopCapabilityCategory[] = [
+type SettingsPage = "general" | Exclude<DesktopCapabilityCategory, "tools_services">;
+
+const CATEGORY_ORDER: Exclude<DesktopCapabilityCategory, "tools_services">[] = [
   "models",
-  "tools_services",
   "local_capabilities",
   "connections",
   "workspace_data",
@@ -51,7 +50,6 @@ const SETTINGS_PAGE_ORDER: SettingsPage[] = ["general", ...CATEGORY_ORDER];
 const SETTINGS_PAGE_LABELS: Record<SettingsPage, string> = {
   general: "General",
   models: "Models",
-  tools_services: "Tools & services",
   local_capabilities: "Local capabilities",
   connections: "Connections",
   workspace_data: "Workspace & data",
@@ -59,16 +57,13 @@ const SETTINGS_PAGE_LABELS: Record<SettingsPage, string> = {
 };
 
 const SETTINGS_PAGE_DESCRIPTIONS: Record<SettingsPage, string> = {
-  general: "Readiness, appearance, and default Apps.",
+  general: "Readiness, appearance, and an Apps overview.",
   models: "Providers and conversation model configurations.",
-  tools_services: "Hosted tools and compatible MCP connectors.",
   local_capabilities: "Filesystem, developer shell, and sandboxed execution.",
   connections: "Kestrel One environments and connected Apps.",
   workspace_data: "Projects, runtime storage, privacy, and removal.",
   permissions: "Operating-system access used by Desktop features.",
 };
-
-const DEFAULT_KESTREL_ONE_URL = "https://kestrelagents.dev";
 
 interface SettingsWorkspaceProps {
   settings: DesktopRendererSettings;
@@ -77,7 +72,7 @@ interface SettingsWorkspaceProps {
     update: DesktopRendererSettingsUpdate,
   ) => Promise<DesktopRendererSettings>;
   onCapabilitiesChange?: ((view: DesktopCapabilityView) => void) | undefined;
-  onOpenMcp: () => void;
+  onOpenApps: (target?: DesktopAppsNavigationTarget) => void;
   onAddProject: () => Promise<void>;
   onCreateUninstallPlan: (
     scope: KestrelUninstallScope,
@@ -95,7 +90,7 @@ export function SettingsWorkspace({
   initialCapabilityId,
   onSettings,
   onCapabilitiesChange,
-  onOpenMcp,
+  onOpenApps,
   onAddProject,
   onCreateUninstallPlan,
   onApplyUninstallPlan,
@@ -116,8 +111,9 @@ export function SettingsWorkspace({
   const [confirmingCredentialRemoval, setConfirmingCredentialRemoval] =
     useState(false);
   const [openedTarget, setOpenedTarget] = useState<DesktopCapabilityId>();
-  const [toolServicesNavigationRequest, setToolServicesNavigationRequest] =
-    useState<ToolServicesNavigationRequest>();
+  const [systemIsDark, setSystemIsDark] = useState(() =>
+    window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false,
+  );
   const [selectedId, setSelectedId] = useState(
     settings.defaultModelConfigurationId,
   );
@@ -158,7 +154,7 @@ export function SettingsWorkspace({
     "chat" | "plan" | "build"
   >("chat");
   const [kestrelOneModelId, setKestrelOneModelId] = useState("");
-  const [kestrelOneUrl, setKestrelOneUrl] = useState(DEFAULT_KESTREL_ONE_URL);
+  const [kestrelOneUrl, setKestrelOneUrl] = useState(DEFAULT_KESTREL_ONE_BASE_URL);
   const [desktopName, setDesktopName] = useState("Kestrel Desktop");
   const [kestrelOneBusy, setKestrelOneBusy] = useState(false);
   const dialogRef = useRef<HTMLFormElement>(null);
@@ -170,12 +166,16 @@ export function SettingsWorkspace({
         CATEGORY_ORDER.map((category) => [
           category,
           view?.capabilities.filter(
-            (capability) => capability.category === category,
+            (capability) => capability.category === category && capability.id !== "connections.mcp",
           ) ?? [],
         ]),
       ),
     [view],
   );
+  const includedAppCount = settings.apps.filter(
+    (app) => KESTREL_STANDARD_APP_MANIFESTS.find((manifest) => manifest.id === app.id)?.category === "built_in",
+  ).length;
+  const connectedAppCount = settings.enabledConnectedAppIds.length;
   const attentionCapabilities = useMemo(
     () => getDesktopCapabilityAttentionQueue(view?.capabilities ?? []),
     [view],
@@ -184,6 +184,14 @@ export function SettingsWorkspace({
     () => settings.modelConfigurations.find((entry) => entry.id === selectedId),
     [settings.modelConfigurations, selectedId],
   );
+
+  useEffect(() => {
+    const query = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (query === undefined) return;
+    const update = () => setSystemIsDark(query.matches);
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -203,7 +211,15 @@ export function SettingsWorkspace({
   }, []);
 
   useEffect(() => {
+    if (window.location.hash === "#settings-tools_services") {
+      onOpenApps();
+      return;
+    }
     const syncPageFromHash = () => {
+      if (window.location.hash === "#settings-tools_services") {
+        onOpenApps();
+        return;
+      }
       setActivePage(settingsPageFromHash(window.location.hash));
     };
     window.addEventListener("hashchange", syncPageFromHash);
@@ -309,8 +325,12 @@ export function SettingsWorkspace({
       (capability) => capability.id === initialCapabilityId,
     );
     if (target !== undefined) {
-      navigateToSettingsPage(target.category);
-      if (isConfigurable(target)) openEditor(target);
+      if (target.category === "tools_services" || target.id === "connections.mcp") {
+        onOpenApps({ kind: "capability", capabilityId: target.id });
+      } else {
+        navigateToSettingsPage(target.category);
+        if (isConfigurable(target)) openEditor(target);
+      }
     }
     setOpenedTarget(initialCapabilityId);
   }, [initialCapabilityId, openedTarget, view]);
@@ -469,7 +489,9 @@ export function SettingsWorkspace({
   function actionFor(
     capability: DesktopCapability,
   ): (() => void | Promise<void>) | undefined {
-    if (capability.id === "connections.mcp") return onOpenMcp;
+    if (capability.id === "connections.mcp") {
+      return () => onOpenApps({ kind: "capability", capabilityId: capability.id });
+    }
     if (isConfigurable(capability)) return () => openEditor(capability);
     if (capability.id === "data.workspace") return onAddProject;
     if (capability.id === "permission.microphone") return onRequestMicrophone;
@@ -480,12 +502,7 @@ export function SettingsWorkspace({
     capability: DesktopCapability,
   ): (() => void | Promise<void>) | undefined {
     if (capability.category === "tools_services") {
-      return () => {
-        navigateToSettingsPage("tools_services");
-        setToolServicesNavigationRequest((current) =>
-          createToolServicesNavigationRequest(capability.id, current),
-        );
-      };
+      return () => onOpenApps({ kind: "capability", capabilityId: capability.id });
     }
     return actionFor(capability);
   }
@@ -1511,22 +1528,6 @@ export function SettingsWorkspace({
           {(() => {
             const category = activePage;
             const capabilities = grouped.get(category) ?? [];
-            if (category === "tools_services" && view !== undefined) {
-              return (
-                <ToolServicesSettings
-                  capabilities={capabilities}
-                  credentialStoreAvailable={view.credentialStore.available}
-                  navigationRequest={toolServicesNavigationRequest}
-                  key={category}
-                  onCapabilitiesChange={(nextView) => {
-                    commitCapabilityView(nextView);
-                  }}
-                  onNotice={setNotice}
-                  onOpenMcp={onOpenMcp}
-                  onError={onError}
-                />
-              );
-            }
             return (
               <section
                 className="settings-section"
@@ -1798,37 +1799,8 @@ export function SettingsWorkspace({
           <h2 id="desktop-preferences-title">Desktop preferences</h2>
         </div>
         <div className="settings-content settings-card">
-          <div className="settings-form">
-            <strong>Enabled Apps</strong>
-            <p className="compact-note">
-              Available to every conversation. Changes affect the next run; an
-              active run keeps its submitted tools.
-            </p>
-            {settings.apps.map((app) => (
-              <label className="settings-check" key={app.id}>
-                <input
-                  type="checkbox"
-                  checked={settings.defaultEnabledAppIds.includes(app.id)}
-                  onChange={(event) =>
-                    void onSettings({
-                      defaultEnabledAppIds: event.target.checked
-                        ? [
-                            ...new Set([
-                              ...settings.defaultEnabledAppIds,
-                              app.id,
-                            ]),
-                          ]
-                        : settings.defaultEnabledAppIds.filter(
-                            (id) => id !== app.id,
-                          ),
-                    })
-                  }
-                />
-                Enable {app.label}
-              </label>
-            ))}
-          </div>
-          <div className="appearance-options">
+          <fieldset className="appearance-options">
+            <legend>Appearance</legend>
             {(["system", "light", "dark"] as const).map((theme) => (
               <label key={theme}>
                 <input
@@ -1840,6 +1812,20 @@ export function SettingsWorkspace({
                 {theme[0]!.toUpperCase() + theme.slice(1)}
               </label>
             ))}
+            {settings.appearanceTheme === "system" ? (
+              <p className="compact-note">
+                Follows macOS — currently {systemIsDark ? "Dark" : "Light"}.
+              </p>
+            ) : null}
+          </fieldset>
+          <div className="settings-form settings-apps-summary">
+            <strong>Apps</strong>
+            <p className="compact-note">
+              {includedAppCount} included capabilities · {connectedAppCount} connected Apps
+            </p>
+            <button className="secondary-button" type="button" onClick={() => onOpenApps()}>
+              Open Apps
+            </button>
           </div>
         </div>
         </section>
@@ -1869,7 +1855,7 @@ export function SettingsWorkspace({
             <div className="provider-dialog-header">
               <div>
                 <span className="surface-kicker">
-                  {SETTINGS_PAGE_LABELS[editing.category]}
+                  {editing.category === "tools_services" ? "Apps" : SETTINGS_PAGE_LABELS[editing.category]}
                 </span>
                 <h2 id="capability-dialog-title">{editing.name}</h2>
                 <p id="capability-dialog-description">
@@ -2125,16 +2111,6 @@ export function desktopUninstallConfirmationsSatisfied(
       }
       return discardWorktreesPhrase === confirmation.phrase;
     });
-}
-
-export function createToolServicesNavigationRequest(
-  capabilityId: DesktopCapabilityId,
-  previous?: ToolServicesNavigationRequest | undefined,
-): ToolServicesNavigationRequest {
-  return {
-    capabilityId,
-    requestId: (previous?.requestId ?? 0) + 1,
-  };
 }
 
 function summarizeTools(toolNames: string[]): string {

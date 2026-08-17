@@ -13,6 +13,9 @@ import React, {
   Fragment,
   type ReactNode,
   type RefObject,
+  useId,
+  useRef,
+  useState,
 } from "react";
 
 import { MessageContent } from "./MessageContent";
@@ -37,20 +40,15 @@ export function ConversationTimeline(props: {
   showNewActivity?: boolean | undefined;
   onFollowNewActivity?: (() => void) | undefined;
 }) {
-  const operationalItems = props.items.flatMap((entry) =>
-    entry.type === "run_stream" && entry.item.kind !== "assistant"
-      ? [entry.item]
-      : [],
+  const activityGroups = groupTimelineActivity(props.items);
+  const activityGroupByStart = new Map(
+    activityGroups.map((group) => [group.startIndex, group]),
   );
-  const progressItems = props.items.flatMap((entry) =>
-    entry.type === "run_stream" && entry.item.kind === "assistant"
-      ? [entry.item]
-      : [],
-  );
-  const lastRunIndex = findLastIndex(
-    props.items,
-    (entry) => entry.type === "run_stream",
-  );
+  const latestActivityGroup = activityGroups.at(-1);
+  const latestProgressItems = latestActivityGroup?.items.filter(
+    (item) => item.kind === "agent_progress",
+  ) ?? [];
+  const lastRunIndex = latestActivityGroup?.endIndex ?? -1;
   const terminalAssistantIndex = props.items.findIndex(
     (entry, index) =>
       index > lastRunIndex &&
@@ -66,9 +64,8 @@ export function ConversationTimeline(props: {
   const lastRunEntry = props.items[lastRunIndex];
   const terminalTimestamp =
     lastRunEntry?.type === "run_stream" ? lastRunEntry.item.timestamp : "";
-  const latestProgressId = progressItems.at(-1)?.id;
   const latestProgress =
-    progressItems.at(-1)?.text ??
+    latestProgressItems.at(-1)?.text ??
     (props.active
       ? props.activity === "Cancelling"
         ? "Stopping the active run…"
@@ -78,6 +75,7 @@ export function ConversationTimeline(props: {
     items: props.items,
     active: props.active,
     waiting: props.waiting === true,
+    hasFinalizedAnswer: terminalAssistantIndex >= 0,
     activity: props.activity,
     error: props.error,
   });
@@ -100,27 +98,26 @@ export function ConversationTimeline(props: {
         className={`conversation-timeline-list ${props.items.length === 0 ? "is-empty" : ""}`}
       >
         {props.items.map((entry, index) => {
-          if (
-            entry.type === "run_stream" &&
-            entry.item.kind !== "assistant"
-          ) {
-            return index === lastRunIndex ? (
-              <OperationalDetails
-                key="operational-details"
-                items={operationalItems}
-              />
-            ) : null;
-          }
-
           if (entry.type === "run_stream") {
+            const group = activityGroupByStart.get(index);
+            if (group === undefined) return null;
+            const progressItems = group.items.filter(
+              (item) => item.kind === "agent_progress",
+            );
+            const operationalItems = group.items.filter(
+              (item) => item.kind !== "agent_progress",
+            );
+            const groupActive = props.active && group === latestActivityGroup;
             return (
-              <Fragment key={entry.id}>
-                <ProgressEntry
-                  item={entry.item}
-                  current={props.active && entry.item.id === latestProgressId}
-                />
-                {index === lastRunIndex ? (
-                  <OperationalDetails items={operationalItems} />
+              <Fragment key={group.id}>
+                {progressItems.length > 0 ? (
+                  <AgentProgressDisclosure
+                    active={groupActive}
+                    items={progressItems}
+                  />
+                ) : null}
+                {operationalItems.length > 0 ? (
+                  <OperationalDetails groupId={group.id} items={operationalItems} />
                 ) : null}
               </Fragment>
             );
@@ -139,11 +136,11 @@ export function ConversationTimeline(props: {
 
           return (
             <Fragment key={entry.id}>
-              {transition}
               <MessageEntry
                 entry={entry}
                 supplement={props.messageSupplement?.(entry)}
               />
+              {transition}
             </Fragment>
           );
         })}
@@ -154,7 +151,7 @@ export function ConversationTimeline(props: {
             state={terminalState}
           />
         ) : null}
-        {props.active && progressItems.length === 0 ? (
+        {props.active && latestProgressItems.length === 0 ? (
           <li className="timeline-entry timeline-entry-progress is-current">
             <TimelineMarker kind="progress" />
             <div className="timeline-entry-content">
@@ -206,6 +203,51 @@ export function ConversationTimeline(props: {
   );
 }
 
+function groupTimelineActivity(
+  items: readonly DesktopConversationTimelineItem[],
+): Array<{
+  id: string;
+  startIndex: number;
+  endIndex: number;
+  items: DesktopRunStreamItem[];
+}> {
+  const groups: Array<{
+    id: string;
+    startIndex: number;
+    endIndex: number;
+    items: DesktopRunStreamItem[];
+  }> = [];
+  let index = 0;
+  while (index < items.length) {
+    const entry = items[index];
+    if (entry?.type !== "run_stream") {
+      index += 1;
+      continue;
+    }
+    const startIndex = index;
+    const runId = entry.item.runId;
+    const groupItems: DesktopRunStreamItem[] = [];
+    while (index < items.length) {
+      const candidate = items[index];
+      if (
+        candidate?.type !== "run_stream" ||
+        candidate.item.runId !== runId
+      ) {
+        break;
+      }
+      groupItems.push(candidate.item);
+      index += 1;
+    }
+    groups.push({
+      id: `run-activity:${runId ?? startIndex}`,
+      startIndex,
+      endIndex: index - 1,
+      items: groupItems,
+    });
+  }
+  return groups;
+}
+
 function MessageEntry({
   entry,
   supplement,
@@ -251,79 +293,117 @@ function MessageEntry({
   );
 }
 
-function ProgressEntry({
-  item,
-  current,
+function AgentProgressDisclosure({
+  active,
+  items,
 }: {
-  item: DesktopRunStreamItem;
-  current: boolean;
+  active: boolean;
+  items: readonly DesktopRunStreamItem[];
 }) {
   return (
-    <li
-      className={`timeline-entry timeline-entry-progress ${current ? "is-current" : ""}`}
-    >
+    <li className={`timeline-entry timeline-entry-progress ${active ? "is-current" : ""}`}>
       <TimelineMarker kind="progress" />
-      <div className="timeline-entry-content">
-        <div className="timeline-entry-meta">
-          <strong>{item.label}</strong>
-          <time dateTime={item.timestamp}>{formatMessageTime(item.timestamp)}</time>
-        </div>
-        <MessageContent
-          messageRole="assistant"
-          text={item.text.length > 0 ? item.text : "Working…"}
-        />
-      </div>
+      <details
+        className="timeline-progress"
+        open={active}
+        onToggle={(event) => {
+          if (active && event.currentTarget.open === false) {
+            event.currentTarget.open = true;
+          }
+        }}
+      >
+        <summary>
+          <Activity size={14} />
+          <span>
+            {active
+              ? "Agent progress"
+              : `Agent progress · ${items.length} ${items.length === 1 ? "update" : "updates"}`}
+          </span>
+          {active ? <span aria-label="Agent is working" className="timeline-progress-pulse" /> : null}
+        </summary>
+        <ol>
+          {items.map((item) => (
+            <li key={item.id}>
+              <span>{item.text.length > 0 ? item.text : "Working…"}</span>
+              <time dateTime={item.timestamp}>{formatMessageTime(item.timestamp)}</time>
+            </li>
+          ))}
+        </ol>
+      </details>
     </li>
   );
 }
 
 function OperationalDetails({
+  groupId,
   items,
 }: {
+  groupId: string;
   items: readonly DesktopRunStreamItem[];
 }) {
+  const [open, setOpen] = useState(false);
+  const contentId = useId();
+  const toggleRef = useRef<HTMLButtonElement>(null);
   if (items.length === 0) return null;
+  const toggle = () => {
+    const nextOpen = !open;
+    setOpen(nextOpen);
+    if (nextOpen === false) {
+      requestAnimationFrame(() => {
+        toggleRef.current?.scrollIntoView({ block: "nearest" });
+      });
+    }
+  };
   return (
-    <li className="timeline-entry timeline-entry-details">
+    <li className="timeline-entry timeline-entry-details" data-activity-group={groupId}>
       <TimelineMarker kind="details" />
-      <details className="timeline-details">
-        <summary>
+      <div className={`timeline-details ${open ? "is-open" : ""}`}>
+        <button
+          aria-controls={contentId}
+          aria-expanded={open}
+          className="timeline-details-toggle"
+          onClick={toggle}
+          ref={toggleRef}
+          type="button"
+        >
           <span>Details</span>
           <small aria-label={`${items.length} operational ${items.length === 1 ? "event" : "events"}`}>
             {items.length}
           </small>
-        </summary>
-        <ol>
-          {items.map((item) => (
-            <li
-              className={`timeline-detail timeline-detail-${item.kind} timeline-detail-${item.status}`}
-              key={item.id}
-            >
-              <div>
-                <strong>{item.label}</strong>
-                <time dateTime={item.timestamp}>
-                  {formatMessageTime(item.timestamp)}
-                </time>
-              </div>
-              <p>
-                {item.text.length > 0
-                  ? item.text
-                  : item.kind === "reasoning"
-                    ? "Provider returned no visible reasoning detail."
-                    : "No visible detail."}
-              </p>
-              {item.kind === "tool" && item.toolInput !== undefined ? (
-                <pre
-                  aria-label={`${item.toolName ?? "Tool"} input`}
-                  className="timeline-detail-tool-input"
-                >
-                  <code>{formatToolInput(item.toolInput)}</code>
-                </pre>
-              ) : null}
-            </li>
-          ))}
-        </ol>
-      </details>
+        </button>
+        {open ? (
+          <ol id={contentId}>
+            {items.map((item) => (
+              <li
+                className={`timeline-detail timeline-detail-${item.kind} timeline-detail-${item.status}`}
+                key={item.id}
+              >
+                <div>
+                  <strong>{item.label}</strong>
+                  <time dateTime={item.timestamp}>
+                    {formatMessageTime(item.timestamp)}
+                  </time>
+                </div>
+                <p>
+                  {item.text.length > 0
+                    ? item.text
+                    : item.kind === "reasoning"
+                      ? "Provider returned no visible reasoning detail."
+                      : "No visible detail."}
+                </p>
+                {item.kind === "tool" && item.toolInput !== undefined ? (
+                  <pre
+                    aria-label={`${item.toolName ?? "Tool"} input`}
+                    className="timeline-detail-tool-input"
+                  >
+                    <code>{formatToolInput(item.toolInput)}</code>
+                  </pre>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        ) : null}
+      </div>
     </li>
   );
 }
@@ -399,6 +479,7 @@ function transitionLabel(input: {
   items: readonly DesktopConversationTimelineItem[];
   active: boolean;
   waiting: boolean;
+  hasFinalizedAnswer: boolean;
   activity: string;
   error?: string | undefined;
 }): string | undefined {
@@ -409,7 +490,7 @@ function transitionLabel(input: {
     return "Run failed";
   }
   if (input.activity === "Cancelled") return "Run stopped";
-  return "Completed";
+  return input.hasFinalizedAnswer ? "Completed" : undefined;
 }
 
 function formatMessageTime(value: string): string {
@@ -427,14 +508,4 @@ function formatToolInput(value: unknown): string {
   } catch {
     return "Tool input could not be displayed.";
   }
-}
-
-function findLastIndex<T>(
-  values: readonly T[],
-  predicate: (value: T) => boolean,
-): number {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    if (predicate(values[index]!)) return index;
-  }
-  return -1;
 }
