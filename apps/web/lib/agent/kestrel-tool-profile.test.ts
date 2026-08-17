@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { RunnerProfile } from "@kestrel-agents/sdk/runner";
-import { restrictKestrelOneProfileTools } from "./kestrel-tool-profile";
-
+import {
+  resolveKestrelOneToolCapability,
+  restrictKestrelOneProfileTools,
+} from "./kestrel-tool-profile";
 
 const profile = {
   id: "kestrel-one",
@@ -18,6 +20,18 @@ const profile = {
     "kestrel_one.microsoft_365_send_mail",
   ],
 } as RunnerProfile;
+
+test("hosted runtime tools resolve to the existing App capability owner", () => {
+  assert.deepEqual(resolveKestrelOneToolCapability("internet.research"), {
+    appKey: "tavily",
+    capabilityKey: "research",
+  });
+  assert.deepEqual(resolveKestrelOneToolCapability("free.weather.current"), {
+    appKey: "built_in.weather",
+    capabilityKey: "getWeather",
+  });
+  assert.equal(resolveKestrelOneToolCapability("unknown.tool"), null);
+});
 
 test("calendar tools are exposed only for effective Project capabilities", () => {
   const restricted = restrictKestrelOneProfileTools({
@@ -37,6 +51,29 @@ test("calendar tools are exposed only for effective Project capabilities", () =>
     "kestrel_one.search_knowledge_documents": "auto",
     "kestrel_one.google_calendar_list_events": "auto",
     "kestrel_one.google_calendar_check_availability": "ask",
+  });
+});
+
+test("hosted profile carries source policy evidence alongside effective modes", () => {
+  const restricted = restrictKestrelOneProfileTools({
+    profile,
+    effectiveCapabilities: ["app:google_workspace.calendar.events.create:ask"],
+    approvalPolicies: [
+      {
+        appKey: "google_workspace",
+        capabilityKey: "calendar.events.create",
+        environment: "auto",
+        project: "ask",
+        minimum: "auto",
+      },
+    ],
+  });
+  assert.deepEqual(restricted.kestrelOneAppApprovalPolicies, {
+    "kestrel_one.google_calendar_create_event": {
+      environment: "auto",
+      project: "ask",
+      minimum: "auto",
+    },
   });
 });
 

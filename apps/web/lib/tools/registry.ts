@@ -549,6 +549,7 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
         description:
           "Send an external email from the organization's verified sender. Every message requires human approval; attachments are not supported.",
         accessMode: "write",
+        minimumApprovalMode: "ask",
         defaultPolicy: {
           enabled: false,
           approvalMode: "ask",

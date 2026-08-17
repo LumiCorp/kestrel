@@ -6,41 +6,58 @@ import {
   kestrelOneMicrosoft365SendMailTool,
 } from "../../tools/kestrelOne/microsoft-365.js";
 
-test(
-  "Microsoft 365 tools carry confirmed Project approval to the App route",
-  async () => {
-    const requests: Headers[] = [];
-    const context = {
-      kestrelOne: {
-        appUrl: "https://kestrel.example",
-        executionTicket: "signed-environment-ticket",
-        appApprovalModes: {
-          "kestrel_one.microsoft_365_list_mail": "ask" as const,
-          "kestrel_one.microsoft_365_send_mail": "ask" as const,
-        },
+test("Microsoft 365 tools carry confirmed Project approval to the App route", async () => {
+  const requests: Headers[] = [];
+  const context = {
+    runtime: {
+      runId: "run-1",
+      sessionId: "session-1",
+      approvalId: "approval-1",
+    },
+    kestrelOne: {
+      appUrl: "https://kestrel.example",
+      executionTicket: "signed-environment-ticket",
+      appApprovalModes: {
+        "kestrel_one.microsoft_365_list_mail": "ask" as const,
+        "kestrel_one.microsoft_365_send_mail": "ask" as const,
       },
-      fetchImpl: async (_input: string | URL | Request, init?: RequestInit) => {
-        requests.push(new Headers(init?.headers));
-        return Response.json({ result: { ok: true } });
-      },
-    };
+    },
+    fetchImpl: async (_input: string | URL | Request, init?: RequestInit) => {
+      requests.push(new Headers(init?.headers));
+      return Response.json({ result: { ok: true } });
+    },
+  };
 
-    await kestrelOneMicrosoft365ListMailTool.createHandler(context)({
-      maxResults: 1,
-    });
-    await kestrelOneMicrosoft365SendMailTool.createHandler(context)({
-      to: ["person@example.com"],
-      subject: "Decision",
-      body: "Approved.",
-    });
+  await kestrelOneMicrosoft365ListMailTool.createHandler(context)({
+    maxResults: 1,
+  });
+  await kestrelOneMicrosoft365SendMailTool.createHandler(context)({
+    to: ["person@example.com"],
+    subject: "Decision",
+    body: "Approved.",
+  });
 
-    assert.equal(
-      requests[0]?.get("x-kestrel-runtime-approval"),
-      "confirmed",
-    );
-    assert.equal(
-      requests[1]?.get("x-kestrel-runtime-approval"),
-      "confirmed",
-    );
-  },
-);
+  assert.equal(requests[0]?.get("x-kestrel-approval-id"), "approval-1");
+  assert.equal(requests[1]?.get("x-kestrel-approval-id"), "approval-1");
+});
+
+test("Microsoft 365 writes configured Automatic do not require a runtime approval ID", async () => {
+  let headers = new Headers();
+  const handler = kestrelOneMicrosoft365SendMailTool.createHandler({
+    kestrelOne: {
+      appUrl: "https://kestrel.example",
+      executionTicket: "signed-environment-ticket",
+      appApprovalModes: { "kestrel_one.microsoft_365_send_mail": "auto" },
+    },
+    fetchImpl: async (_input, init) => {
+      headers = new Headers(init?.headers);
+      return Response.json({ result: { ok: true } });
+    },
+  });
+  await handler({
+    to: ["person@example.com"],
+    subject: "Decision",
+    body: "Automatic.",
+  });
+  assert.equal(headers.get("x-kestrel-approval-id"), null);
+});

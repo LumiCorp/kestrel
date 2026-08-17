@@ -11,10 +11,9 @@ import type {
   ProjectAppConnection,
 } from "./project-service";
 
-
 function connection(
   input: Partial<ProjectAppConnection> &
-    Pick<ProjectAppConnection, "id" | "scope">
+    Pick<ProjectAppConnection, "id" | "scope">,
 ): ProjectAppConnection {
   return {
     id: input.id,
@@ -64,6 +63,8 @@ function appConfiguration(input: {
         approvalMode: "auto",
         environmentEnabled: true,
         environmentApprovalMode: "auto",
+        projectApprovalMode: "auto",
+        minimumApprovalMode: "auto",
         loggingMode: "metadata_only",
         rateLimitMode: "default",
         inherited: true,
@@ -82,7 +83,7 @@ test("hybrid App resolution chooses the actor personal default first", () => {
       connectionModel: "hybrid",
       connections: [shared, personal],
     })?.id,
-    "personal"
+    "personal",
   );
 });
 
@@ -98,7 +99,7 @@ test("hybrid App resolution falls back to the Project shared default", () => {
       connectionModel: "hybrid",
       connections: [personal, shared],
     })?.id,
-    "shared"
+    "shared",
   );
 });
 
@@ -108,7 +109,7 @@ test("optional Environment Apps may resolve without a connection", () => {
       connectionModel: "environment",
       connections: [],
     }),
-    null
+    null,
   );
 });
 
@@ -123,7 +124,7 @@ test("a degraded default remains executable when no healthy connection is availa
       connectionModel: "environment",
       connections: [degraded],
     })?.id,
-    "degraded-shared"
+    "degraded-shared",
   );
 });
 
@@ -134,13 +135,21 @@ test("workflow readiness requires every dependency role without widening App acc
       name: "Software delivery",
       executable: false,
     }),
-    appConfiguration({ appKey: KESTREL_APP_IDS.GITHUB, name: "GitHub", groupKey: "repositories" }),
+    appConfiguration({
+      appKey: KESTREL_APP_IDS.GITHUB,
+      name: "GitHub",
+      groupKey: "repositories",
+    }),
     appConfiguration({ appKey: KESTREL_APP_IDS.ATLASSIAN, name: "Atlassian" }),
-    appConfiguration({ appKey: KESTREL_APP_IDS.VERCEL, name: "Vercel", groupKey: "deployments" }),
+    appConfiguration({
+      appKey: KESTREL_APP_IDS.VERCEL,
+      name: "Vercel",
+      groupKey: "deployments",
+    }),
   ]);
   const workflow = configurations.find(
     (configuration) =>
-      configuration.app.key === KESTREL_APP_IDS.SOFTWARE_DELIVERY
+      configuration.app.key === KESTREL_APP_IDS.SOFTWARE_DELIVERY,
   );
   assert.equal(workflow?.dependencyReady, true);
   assert.deepEqual(
@@ -152,7 +161,7 @@ test("workflow readiness requires every dependency role without widening App acc
       ["Source control", true],
       ["Work tracking", true],
       ["Deployment", true],
-    ]
+    ],
   );
   const context = formatActiveProjectWorkflowContext(configurations);
   assert.match(context ?? "", /Software delivery/u);
@@ -173,7 +182,7 @@ test("workflow context is absent when a required App role is missing", () => {
   ]);
   const workflow = configurations.find(
     (configuration) =>
-      configuration.app.key === KESTREL_APP_IDS.SOFTWARE_DELIVERY
+      configuration.app.key === KESTREL_APP_IDS.SOFTWARE_DELIVERY,
   );
   assert.equal(workflow?.dependencyReady, false);
   assert.equal(formatActiveProjectWorkflowContext(configurations), null);
@@ -181,17 +190,32 @@ test("workflow context is absent when a required App role is missing", () => {
 
 test("workflow readiness requires the capability pack that fulfills each App role", () => {
   const configurations = addProjectAppDependencyStatuses([
-    appConfiguration({ appKey: KESTREL_APP_IDS.SOFTWARE_DELIVERY, name: "Software delivery", executable: false }),
-    appConfiguration({ appKey: KESTREL_APP_IDS.GITHUB, name: "GitHub", groupKey: "repositories" }),
+    appConfiguration({
+      appKey: KESTREL_APP_IDS.SOFTWARE_DELIVERY,
+      name: "Software delivery",
+      executable: false,
+    }),
+    appConfiguration({
+      appKey: KESTREL_APP_IDS.GITHUB,
+      name: "GitHub",
+      groupKey: "repositories",
+    }),
     appConfiguration({ appKey: KESTREL_APP_IDS.LINEAR, name: "Linear" }),
-    appConfiguration({ appKey: KESTREL_APP_IDS.VERCEL, name: "Vercel", groupKey: "projects" }),
+    appConfiguration({
+      appKey: KESTREL_APP_IDS.VERCEL,
+      name: "Vercel",
+      groupKey: "projects",
+    }),
   ]);
   const workflow = configurations.find(
-    (configuration) => configuration.app.key === KESTREL_APP_IDS.SOFTWARE_DELIVERY,
+    (configuration) =>
+      configuration.app.key === KESTREL_APP_IDS.SOFTWARE_DELIVERY,
   );
   assert.equal(workflow?.dependencyReady, false);
   assert.deepEqual(
-    workflow?.dependencies.filter((dependency) => !dependency.satisfied).map((dependency) => dependency.role),
+    workflow?.dependencies
+      .filter((dependency) => !dependency.satisfied)
+      .map((dependency) => dependency.role),
     ["Deployment"],
   );
 });

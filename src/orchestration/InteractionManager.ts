@@ -32,25 +32,32 @@ export class InteractionManager {
     runId?: string | undefined;
     actor?: RuntimeTurnActor | undefined;
     delegationId?: string | undefined;
-    waitFor?: {
-      kind?: string | undefined;
-      eventType?: string | undefined;
-      metadata?: Record<string, unknown> | undefined;
-      interaction?: {
-        version?: string | undefined;
-        requestId?: string | undefined;
-        kind?: string | undefined;
-        eventType?: string | undefined;
-        prompt?: string | undefined;
-        inputSchema?: Record<string, unknown> | undefined;
-        metadata?: Record<string, unknown> | undefined;
-        approval?: {
-          toolCallId: string;
-          toolName: string;
-          input: unknown;
-        } | undefined;
-      } | undefined;
-    } | undefined;
+    waitFor?:
+      | {
+          kind?: string | undefined;
+          eventType?: string | undefined;
+          metadata?: Record<string, unknown> | undefined;
+          interaction?:
+            | {
+                version?: string | undefined;
+                requestId?: string | undefined;
+                kind?: string | undefined;
+                eventType?: string | undefined;
+                prompt?: string | undefined;
+                inputSchema?: Record<string, unknown> | undefined;
+                metadata?: Record<string, unknown> | undefined;
+                approval?:
+                  | {
+                      toolCallId: string;
+                      toolName: string;
+                      input?: unknown;
+                      presentation?: unknown;
+                    }
+                  | undefined;
+              }
+            | undefined;
+        }
+      | undefined;
   }): Promise<InteractionRequestRecord | undefined> {
     const pending = await this.store.listInteractionRequests({
       threadId: input.threadId,

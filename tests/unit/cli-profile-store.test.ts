@@ -13,9 +13,10 @@ import {
 import { MODEL_POLICY_FILE_NAME } from "../../src/profile/modelPolicy.js";
 import { FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
 
-
 test("ProfileStore bootstraps default profile when file is missing", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-"),
+  );
   const store = new ProfileStore(tempDir);
 
   const profiles = await store.load();
@@ -25,7 +26,11 @@ test("ProfileStore bootstraps default profile when file is missing", async () =>
   assert.equal(profiles[0]?.agent, "kestrel");
   assert.equal(profiles[0]?.shellKind, "cli");
   assert.equal(profiles[0]?.presetId, "cli_safe_local");
-  assert.deepEqual(profiles[0]?.capabilityPacks, ["balanced", "filesystem", "sandbox_code"]);
+  assert.deepEqual(profiles[0]?.capabilityPacks, [
+    "balanced",
+    "filesystem",
+    "sandbox_code",
+  ]);
   assert.equal(profiles[0]?.guardrails?.maxStepVisits, 80);
   assert.equal(profiles[0]?.toolQueue?.perRunConcurrency, 8);
   assert.equal(profiles[0]?.toolQueue?.globalConcurrency, 24);
@@ -34,14 +39,18 @@ test("ProfileStore bootstraps default profile when file is missing", async () =>
   assert.equal(profiles[0]?.codeMode?.sandbox.executor, "docker");
   assert.equal(profiles[0]?.toolAllowlist?.includes("code.execute"), true);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.run"), false);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.write"), false);
+  assert.equal(
+    profiles[0]?.toolAllowlist?.includes("dev.process.write"),
+    false,
+  );
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.read"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.stop"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.start"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.input"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.status"), false);
   for (const toolName of FILESYSTEM_TOOL_NAMES.filter(
-    (toolName) => toolName !== "fs.write_text" && toolName !== "fs.replace_text",
+    (toolName) =>
+      toolName !== "fs.write_text" && toolName !== "fs.replace_text",
   )) {
     assert.equal(profiles[0]?.toolAllowlist?.includes(toolName), true);
   }
@@ -62,39 +71,43 @@ test("ProfileStore v9 migrates only generated local profiles and emits the isola
   const filePath = path.join(tempDir, "profiles.json");
   await writeFile(
     filePath,
-    `${JSON.stringify({
-      version: 6,
-      profiles: [
-        {
-          id: "reference",
-          label: "Reference React",
-          agent: "reference-react",
-          sessionPrefix: "reference",
-          shellKind: "cli",
-          presetId: "cli_dev_local",
-          capabilityPacks: ["balanced", "filesystem", "dev_shell"],
-          modeSystemV2Enabled: true,
-          default: true,
-        },
-        {
-          id: "custom-developer",
-          label: "Custom Developer",
-          agent: "reference-react",
-          sessionPrefix: "custom-developer",
-          shellKind: "cli",
-          presetId: "cli_dev_local",
-          capabilityPacks: ["balanced", "filesystem", "dev_shell"],
-          modeSystemV2Enabled: true,
-          default: false,
-        },
-      ],
-      managedProfileOverlays: {
-        "kestrel@cli_dev_local": {
-          approvalPolicyPackId: "production",
-          theme: { brandAlt: "#123456" },
+    `${JSON.stringify(
+      {
+        version: 6,
+        profiles: [
+          {
+            id: "reference",
+            label: "Reference React",
+            agent: "reference-react",
+            sessionPrefix: "reference",
+            shellKind: "cli",
+            presetId: "cli_dev_local",
+            capabilityPacks: ["balanced", "filesystem", "dev_shell"],
+            modeSystemV2Enabled: true,
+            default: true,
+          },
+          {
+            id: "custom-developer",
+            label: "Custom Developer",
+            agent: "reference-react",
+            sessionPrefix: "custom-developer",
+            shellKind: "cli",
+            presetId: "cli_dev_local",
+            capabilityPacks: ["balanced", "filesystem", "dev_shell"],
+            modeSystemV2Enabled: true,
+            default: false,
+          },
+        ],
+        managedProfileOverlays: {
+          "kestrel@cli_dev_local": {
+            approvalPolicyPackId: "production",
+            theme: { brandAlt: "#123456" },
+          },
         },
       },
-    }, null, 2)}\n`,
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
   const store = new ProfileStore(tempDir);
@@ -120,11 +133,16 @@ test("ProfileStore v9 migrates only generated local profiles and emits the isola
     "production",
   );
   assert.equal(
-    (await readFile(`${filePath}.v6.pre-v10.bak`, "utf8")).includes('"version": 6'),
+    (await readFile(`${filePath}.v6.pre-v10.bak`, "utf8")).includes(
+      '"version": 6',
+    ),
     true,
   );
   const report = JSON.parse(
-    await readFile(path.join(tempDir, "profiles.json.v10-migration-report.json"), "utf8"),
+    await readFile(
+      path.join(tempDir, "profiles.json.v10-migration-report.json"),
+      "utf8",
+    ),
   );
   assert.deepEqual(report.omittedProfileIds, ["custom-developer", "reference"]);
 
@@ -145,27 +163,34 @@ test("ProfileStore omits V7 custom profile authority during the V10 cutover", as
   };
   await writeFile(
     filePath,
-    `${JSON.stringify({
-      version: 7,
-      profiles: [
-        {
-          id: "custom-v7",
-          label: "Custom V7",
-          agent: "reference-react",
-          sessionPrefix: "custom-v7",
-          codeMode: {
-            enabled: true,
-            sandbox: sandboxQuotas,
+    `${JSON.stringify(
+      {
+        version: 7,
+        profiles: [
+          {
+            id: "custom-v7",
+            label: "Custom V7",
+            agent: "reference-react",
+            sessionPrefix: "custom-v7",
+            codeMode: {
+              enabled: true,
+              sandbox: sandboxQuotas,
+            },
           },
-        },
-      ],
-      managedProfileOverlays: {},
-    }, null, 2)}\n`,
+        ],
+        managedProfileOverlays: {},
+      },
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
 
   const profiles = await new ProfileStore(tempDir).load();
-  assert.deepEqual(profiles.map((profile) => profile.id), ["kestrel"]);
+  assert.deepEqual(
+    profiles.map((profile) => profile.id),
+    ["kestrel"],
+  );
 
   const persisted = JSON.parse(await readFile(filePath, "utf8")) as {
     version: number;
@@ -174,11 +199,16 @@ test("ProfileStore omits V7 custom profile authority during the V10 cutover", as
   assert.equal(persisted.version, 10);
   assert.equal(persisted.profile.id, "kestrel");
   assert.equal(
-    (await readFile(`${filePath}.v7.pre-v10.bak`, "utf8")).includes('"version": 7'),
+    (await readFile(`${filePath}.v7.pre-v10.bak`, "utf8")).includes(
+      '"version": 7',
+    ),
     true,
   );
   const report = JSON.parse(
-    await readFile(path.join(tempDir, "profiles.json.v10-migration-report.json"), "utf8"),
+    await readFile(
+      path.join(tempDir, "profiles.json.v10-migration-report.json"),
+      "utf8",
+    ),
   );
   assert.deepEqual(report.omittedProfileIds, ["custom-v7"]);
 });
@@ -196,26 +226,33 @@ test("ProfileStore omits V8 custom sandbox authority during the V10 cutover", as
   };
   await writeFile(
     filePath,
-    `${JSON.stringify({
-      version: 8,
-      profiles: [
-        {
-          id: "custom-v8",
-          label: "Custom V8",
-          agent: "reference-react",
-          sessionPrefix: "custom-v8",
-          modelProvider: "openrouter",
-          model: "z-ai/glm-5.2",
-          codeMode: { enabled: true, sandbox: sandboxQuotas },
-        },
-      ],
-      managedProfileOverlays: {},
-    }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        version: 8,
+        profiles: [
+          {
+            id: "custom-v8",
+            label: "Custom V8",
+            agent: "reference-react",
+            sessionPrefix: "custom-v8",
+            modelProvider: "openrouter",
+            model: "z-ai/glm-5.2",
+            codeMode: { enabled: true, sandbox: sandboxQuotas },
+          },
+        ],
+        managedProfileOverlays: {},
+      },
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
 
   const profiles = await new ProfileStore(tempDir).load();
-  assert.deepEqual(profiles.map((profile) => profile.id), ["kestrel"]);
+  assert.deepEqual(
+    profiles.map((profile) => profile.id),
+    ["kestrel"],
+  );
 
   const persisted = JSON.parse(await readFile(filePath, "utf8")) as {
     version: number;
@@ -224,28 +261,36 @@ test("ProfileStore omits V8 custom sandbox authority during the V10 cutover", as
   assert.equal(persisted.version, 10);
   assert.equal(persisted.profile.id, "kestrel");
   assert.equal(
-    (await readFile(`${filePath}.v8.pre-v10.bak`, "utf8")).includes('"version": 8'),
+    (await readFile(`${filePath}.v8.pre-v10.bak`, "utf8")).includes(
+      '"version": 8',
+    ),
     true,
   );
 });
 
 test("ProfileStore applies shared model policy when profiles.json is missing", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-policy-bootstrap-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-policy-bootstrap-"),
+  );
   const policyPath = path.join(tempDir, MODEL_POLICY_FILE_NAME);
   await writeFile(
     policyPath,
-    `${JSON.stringify({
-      version: 1,
-      provider: "openai",
-      model: "gpt-5.4-2026-03-05",
-      modelByStage: {
-        "agent.loop": "gpt-5.4-mini",
+    `${JSON.stringify(
+      {
+        version: 1,
+        provider: "openai",
+        model: "gpt-5.4-2026-03-05",
+        modelByStage: {
+          "agent.loop": "gpt-5.4-mini",
+        },
+        modelTimeoutMs: 45_000,
+        modelCapabilities: {
+          visionInputEnabled: true,
+        },
       },
-      modelTimeoutMs: 45_000,
-      modelCapabilities: {
-        visionInputEnabled: true,
-      },
-    }, null, 2)}\n`,
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
   const store = new ProfileStore(tempDir);
@@ -262,13 +307,20 @@ test("ProfileStore applies shared model policy when profiles.json is missing", a
 });
 
 test("ProfileStore keeps hosted tools out of the local Kestrel One policy", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-"),
+  );
   const store = new ProfileStore(tempDir);
 
   const profiles = await store.load();
   const kestrelOne = profiles.find((profile) => profile.id === "kestrel");
 
-  assert.equal(kestrelOne?.toolAllowlist?.includes("kestrel_one.search_knowledge_documents"), false);
+  assert.equal(
+    kestrelOne?.toolAllowlist?.includes(
+      "kestrel_one.search_knowledge_documents",
+    ),
+    false,
+  );
   assert.equal(kestrelOne?.delegation?.allowAgentSpawn, true);
   assert.deepEqual(
     kestrelOne?.toolAllowlist?.filter(
@@ -282,44 +334,50 @@ test("ProfileStore keeps hosted tools out of the local Kestrel One policy", asyn
 });
 
 test("ProfileStore reconciles persisted Kestrel-One collaborator dialogs idempotently", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-dialogs-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-dialogs-"),
+  );
   const filePath = path.join(tempDir, "profiles.json");
   await writeFile(
     filePath,
-    `${JSON.stringify({
-      version: 4,
-      profiles: [
-        {
-          id: "reference",
-          label: "Reference React",
-          agent: "reference-react",
-          sessionPrefix: "reference",
-          delegation: {
-            allowAgentSpawn: false,
-            maxConcurrentChildSessions: 4,
-            maxDepth: 3,
+    `${JSON.stringify(
+      {
+        version: 4,
+        profiles: [
+          {
+            id: "reference",
+            label: "Reference React",
+            agent: "reference-react",
+            sessionPrefix: "reference",
+            delegation: {
+              allowAgentSpawn: false,
+              maxConcurrentChildSessions: 4,
+              maxDepth: 3,
+            },
           },
-        },
-        {
-          id: "kestrel-one",
-          label: "Kestrel-One",
-          agent: "reference-react",
-          sessionPrefix: "kestrel-one",
-          toolAllowlist: [
-            "FinalizeAnswer",
-            "agent.spawn",
-            "delegate.spawn_child",
-            "delegate.list_children",
-            "delegate.get_child_result",
-          ],
-          delegation: {
-            allowAgentSpawn: false,
-            maxConcurrentChildSessions: 7,
-            maxDepth: 1,
+          {
+            id: "kestrel-one",
+            label: "Kestrel-One",
+            agent: "reference-react",
+            sessionPrefix: "kestrel-one",
+            toolAllowlist: [
+              "FinalizeAnswer",
+              "agent.spawn",
+              "delegate.spawn_child",
+              "delegate.list_children",
+              "delegate.get_child_result",
+            ],
+            delegation: {
+              allowAgentSpawn: false,
+              maxConcurrentChildSessions: 7,
+              maxDepth: 1,
+            },
           },
-        },
-      ],
-    }, null, 2)}\n`,
+        ],
+      },
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
   const store = new ProfileStore(tempDir);
@@ -345,15 +403,19 @@ test("ProfileStore reconciles persisted Kestrel-One collaborator dialogs idempot
   assert.deepEqual(firstLoad, secondLoad);
   assert.equal(firstPersisted, secondPersisted);
   assert.equal(JSON.parse(firstPersisted).version, 10);
+  assert.equal("profiles" in JSON.parse(firstPersisted), false);
   assert.equal(
-    "profiles" in JSON.parse(firstPersisted),
-    false,
+    (await readFile(`${filePath}.v4.pre-v10.bak`, "utf8")).includes(
+      '"version": 4',
+    ),
+    true,
   );
-  assert.equal((await readFile(`${filePath}.v4.pre-v10.bak`, "utf8")).includes('"version": 4'), true);
 });
 
 test("ProfileStore does not keep legacy profile aliases selectable", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-legacy-alias-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-legacy-alias-"),
+  );
   const store = new ProfileStore(tempDir);
 
   const profiles = await store.load();
@@ -365,7 +427,9 @@ test("ProfileStore does not keep legacy profile aliases selectable", async () =>
 });
 
 test("ProfileStore replaces legacy authored profiles with canonical Kestrel", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-kestrel-one-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-kestrel-one-"),
+  );
   const filePath = path.join(tempDir, "profiles.json");
 
   await writeFile(
@@ -390,7 +454,10 @@ test("ProfileStore replaces legacy authored profiles with canonical Kestrel", as
   const profiles = await store.load();
   const kestrelOne = profiles.find((profile) => profile.id === "kestrel");
 
-  assert.deepEqual(profiles.map((profile) => profile.id), ["kestrel"]);
+  assert.deepEqual(
+    profiles.map((profile) => profile.id),
+    ["kestrel"],
+  );
   assert.equal(kestrelOne?.default, true);
   assert.deepEqual(
     kestrelOne?.toolAllowlist?.filter((name) => name.startsWith("dialog.")),
@@ -410,29 +477,33 @@ test("ProfileStore rejects conflicting behavior across legacy environment overla
   const filePath = path.join(tempDir, "profiles.json");
   await writeFile(
     filePath,
-    `${JSON.stringify({
-      version: 5,
-      profiles: [],
-      managedProfileOverlays: {
-        "kestrel-one@cli_dev_local": {
-          approvalPolicyPackId: "production",
-          delegationLimits: {
-            maxConcurrentChildSessions: 6,
-            maxDepth: 1,
+    `${JSON.stringify(
+      {
+        version: 5,
+        profiles: [],
+        managedProfileOverlays: {
+          "kestrel-one@cli_dev_local": {
+            approvalPolicyPackId: "production",
+            delegationLimits: {
+              maxConcurrentChildSessions: 6,
+              maxDepth: 1,
+            },
+            theme: {
+              brandAlt: "#123456",
+            },
           },
-          theme: {
-            brandAlt: "#123456",
-          },
-        },
-        "kestrel-one@workspace_hosted": {
-          approvalPolicyPackId: "ci_bot",
-          reasoning: {
-            request: { mode: "summary", effort: "medium" },
-            retention: { mode: "provider_visible", days: 5 },
+          "kestrel-one@workspace_hosted": {
+            approvalPolicyPackId: "ci_bot",
+            reasoning: {
+              request: { mode: "summary", effort: "medium" },
+              retention: { mode: "provider_visible", days: 5 },
+            },
           },
         },
       },
-    }, null, 2)}\n`,
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
 
@@ -463,6 +534,13 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
     kestrelOneAppApprovalModes: {
       "kestrel_one.search_knowledge_documents": "auto",
     },
+    kestrelOneAppApprovalPolicies: {
+      "kestrel_one.search_knowledge_documents": {
+        environment: "auto",
+        project: "ask",
+        minimum: "auto",
+      },
+    },
     additionalToolNames: ["kestrel_one.search_knowledge_documents"],
     reasoning: {
       request: { mode: "summary", effort: "high" },
@@ -479,6 +557,12 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
       "kestrel_one.search_knowledge_documents"
     ],
     "auto",
+  );
+  assert.deepEqual(
+    parsed.kestrelOneAppApprovalPolicies?.[
+      "kestrel_one.search_knowledge_documents"
+    ],
+    { environment: "auto", project: "ask", minimum: "auto" },
   );
   assert.throws(
     () =>
@@ -498,7 +582,7 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
 
 test("ProfileStore never persists transient gateway credential references", async () => {
   const tempDir = await mkdtemp(
-    path.join(os.tmpdir(), "kestrel-profile-store-managed-credential-")
+    path.join(os.tmpdir(), "kestrel-profile-store-managed-credential-"),
   );
   const filePath = path.join(tempDir, "profiles.json");
   await writeFile(
@@ -525,12 +609,15 @@ test("ProfileStore never persists transient gateway credential references", asyn
         },
       ],
     }),
-    "utf8"
+    "utf8",
   );
 
   const store = new ProfileStore(tempDir);
   const profiles = await store.load();
-  assert.deepEqual(profiles.map((profile) => profile.id), ["kestrel"]);
+  assert.deepEqual(
+    profiles.map((profile) => profile.id),
+    ["kestrel"],
+  );
   assert.equal(profiles[0]?.modelCredential, undefined);
 
   const persisted = await readFile(filePath, "utf8");
@@ -545,7 +632,9 @@ test("parseProfilesFile validates profile shape", () => {
 });
 
 test("ProfileStore rejects unsupported agent", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-invalid-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-invalid-"),
+  );
   const filePath = path.join(tempDir, "profiles.json");
 
   await writeFile(
@@ -569,7 +658,9 @@ test("ProfileStore rejects unsupported agent", async () => {
 });
 
 test("ProfileStore backfills guardrail defaults for existing profiles", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-backfill-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-backfill-"),
+  );
   const filePath = path.join(tempDir, "profiles.json");
 
   await writeFile(
@@ -597,7 +688,10 @@ test("ProfileStore backfills guardrail defaults for existing profiles", async ()
   assert.equal(profiles[0]?.shellKind, "cli");
   assert.equal(profiles[0]?.presetId, "cli_safe_local");
   assert.equal(profiles[0]?.capabilityPacks?.includes("filesystem"), true);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("free.weather.forecast"), true);
+  assert.equal(
+    profiles[0]?.toolAllowlist?.includes("free.weather.forecast"),
+    true,
+  );
   assert.equal(profiles[0]?.toolAllowlist?.includes("FinalizeAnswer"), true);
   assert.equal(profiles[0]?.toolQueue?.checkpointSize, 10);
   assert.equal(profiles[0]?.toolQueue?.retryCount, 1);
@@ -606,12 +700,16 @@ test("ProfileStore backfills guardrail defaults for existing profiles", async ()
   assert.equal(profiles[0]?.modeSystemV2Enabled, true);
   assert.equal(profiles[0]?.toolAllowlist?.includes("code.execute"), true);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.run"), false);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.write"), false);
+  assert.equal(
+    profiles[0]?.toolAllowlist?.includes("dev.process.write"),
+    false,
+  );
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.read"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.stop"), false);
   assert.equal(profiles[0]?.toolAllowlist?.includes("dev.shell.start"), false);
   for (const toolName of FILESYSTEM_TOOL_NAMES.filter(
-    (toolName) => toolName !== "fs.write_text" && toolName !== "fs.replace_text",
+    (toolName) =>
+      toolName !== "fs.write_text" && toolName !== "fs.replace_text",
   )) {
     assert.equal(profiles[0]?.toolAllowlist?.includes(toolName), true);
   }
@@ -620,7 +718,9 @@ test("ProfileStore backfills guardrail defaults for existing profiles", async ()
 });
 
 test("ProfileStore restores balanced planning tools for stale canonical profiles", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-canonical-backfill-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-canonical-backfill-"),
+  );
   const filePath = path.join(tempDir, "profiles.json");
 
   await writeFile(
@@ -635,8 +735,18 @@ test("ProfileStore restores balanced planning tools for stale canonical profiles
           sessionPrefix: "reference",
           shellKind: "cli",
           presetId: "cli_dev_local",
-          capabilityPacks: ["balanced", "filesystem", "dev_shell", "sandbox_code"],
-          toolAllowlist: ["FinalizeAnswer", "fs.read_text", "dev.shell.run", "code.execute"],
+          capabilityPacks: [
+            "balanced",
+            "filesystem",
+            "dev_shell",
+            "sandbox_code",
+          ],
+          toolAllowlist: [
+            "FinalizeAnswer",
+            "fs.read_text",
+            "dev.shell.run",
+            "code.execute",
+          ],
           default: true,
         },
       ],
@@ -650,11 +760,16 @@ test("ProfileStore restores balanced planning tools for stale canonical profiles
   assert.equal(profiles[0]?.toolAllowlist?.includes("FinalizeAnswer"), true);
   assert.equal(profiles[0]?.toolAllowlist?.includes("task.propose"), true);
   assert.equal(profiles[0]?.toolAllowlist?.includes("fs.verify_json"), true);
-  assert.equal(profiles[0]?.toolAllowlist?.includes("dev.process.write"), false);
+  assert.equal(
+    profiles[0]?.toolAllowlist?.includes("dev.process.write"),
+    false,
+  );
 });
 
 test("ProfileStore removes reference profiles and enables Kestrel mode-system v2", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-mode-v2-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-mode-v2-"),
+  );
   const filePath = path.join(tempDir, "profiles.json");
 
   await writeFile(
@@ -684,7 +799,9 @@ test("ProfileStore removes reference profiles and enables Kestrel mode-system v2
 });
 
 test("ProfileStore omits theme authority from removed reference profiles", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-theme-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-theme-"),
+  );
   const filePath = path.join(tempDir, "profiles.json");
 
   await writeFile(
@@ -714,7 +831,9 @@ test("ProfileStore omits theme authority from removed reference profiles", async
 });
 
 test("ProfileStore does not surface removed reference theme entries", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-theme-notices-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-theme-notices-"),
+  );
   const filePath = path.join(tempDir, "profiles.json");
 
   await writeFile(
@@ -749,7 +868,9 @@ test("ProfileStore does not surface removed reference theme entries", async () =
 });
 
 test("ProfileStore resets to defaults when legacy version file is present", async () => {
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-profile-store-legacy-"));
+  const tempDir = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-profile-store-legacy-"),
+  );
   const filePath = path.join(tempDir, "profiles.json");
   const policyPath = path.join(tempDir, MODEL_POLICY_FILE_NAME);
 
@@ -763,21 +884,28 @@ test("ProfileStore resets to defaults when legacy version file is present", asyn
   );
   await writeFile(
     policyPath,
-    `${JSON.stringify({
-      version: 1,
-      provider: "anthropic",
-      model: "claude-3-5-haiku-latest",
-      modelByStage: {},
-      modelCapabilities: {
-        visionInputEnabled: false,
+    `${JSON.stringify(
+      {
+        version: 1,
+        provider: "anthropic",
+        model: "claude-3-5-haiku-latest",
+        modelByStage: {},
+        modelCapabilities: {
+          visionInputEnabled: false,
+        },
       },
-    }, null, 2)}\n`,
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
 
   const store = new ProfileStore(tempDir);
   const profiles = await store.load();
-  assert.deepEqual(profiles.map((profile) => profile.id), ["kestrel"]);
+  assert.deepEqual(
+    profiles.map((profile) => profile.id),
+    ["kestrel"],
+  );
   assert.equal(profiles[0]?.modelProvider, "anthropic");
   assert.equal(profiles[0]?.model, "claude-3-5-haiku-latest");
 });
@@ -841,7 +969,10 @@ test("parseProfilesFile strictly validates harness economics configuration", () 
         version: 1,
         policyId: "economics:reference:observe:v1",
         mode: "observe",
-        counting: { estimatorVersion: "utf8-byte-upper-bound:v1", allowEstimatedEnforcement: false },
+        counting: {
+          estimatorVersion: "utf8-byte-upper-bound:v1",
+          allowEstimatedEnforcement: false,
+        },
         context: {
           outputReserveTokens: 8_000,
           safetyReserveTokens: 2_000,
@@ -855,68 +986,93 @@ test("parseProfilesFile strictly validates harness economics configuration", () 
         },
         cache: { mode: "provider_default" },
       },
-      modelProfiles: [{
-        version: 1,
-        profileId: "openrouter:model-a:v1",
-        provider: "openrouter",
-        model: "model-a",
-        contextWindowTokens: 100_000,
-        maxOutputTokens: 8_000,
-        counting: {
-          counter: "tiktoken:o200k_base",
-          counterVersion: "1.0.21",
-          method: "model_tokenizer",
-          confidence: "model_compatible",
+      modelProfiles: [
+        {
+          version: 1,
+          profileId: "openrouter:model-a:v1",
+          provider: "openrouter",
+          model: "model-a",
+          contextWindowTokens: 100_000,
+          maxOutputTokens: 8_000,
+          counting: {
+            counter: "tiktoken:o200k_base",
+            counterVersion: "1.0.21",
+            method: "model_tokenizer",
+            confidence: "model_compatible",
+          },
+          cache: { behavior: "provider_automatic" },
         },
-        cache: { behavior: "provider_automatic" },
-      }],
+      ],
     },
   };
-  const parsed = parseProfilesFile(JSON.stringify({ version: 4, profiles: [baseProfile] }));
+  const parsed = parseProfilesFile(
+    JSON.stringify({ version: 4, profiles: [baseProfile] }),
+  );
 
-  assert.equal(parsed.profiles[0]?.harnessEconomics?.policy.policyId, "economics:reference:observe:v1");
-  assert.equal(parsed.profiles[0]?.harnessEconomics?.modelProfiles[0]?.profileId, "openrouter:model-a:v1");
+  assert.equal(
+    parsed.profiles[0]?.harnessEconomics?.policy.policyId,
+    "economics:reference:observe:v1",
+  );
+  assert.equal(
+    parsed.profiles[0]?.harnessEconomics?.modelProfiles[0]?.profileId,
+    "openrouter:model-a:v1",
+  );
   assert.throws(
-    () => parseProfilesFile(JSON.stringify({
-      version: 4,
-      profiles: [{
-        ...baseProfile,
-        harnessEconomics: { ...baseProfile.harnessEconomics, threshold: 0.8 },
-      }],
-    })),
+    () =>
+      parseProfilesFile(
+        JSON.stringify({
+          version: 4,
+          profiles: [
+            {
+              ...baseProfile,
+              harnessEconomics: {
+                ...baseProfile.harnessEconomics,
+                threshold: 0.8,
+              },
+            },
+          ],
+        }),
+      ),
     /unknown field 'threshold'/u,
   );
 });
 
 test("parseProfilesFile preserves MCP tool approval and interaction-mode metadata", () => {
-  const parsed = parseProfilesFile(JSON.stringify({
-    version: 3,
-    profiles: [{
-      id: "reference",
-      label: "Reference React",
-      agent: "reference-react",
-      sessionPrefix: "reference",
-      mcpServers: [{
-        id: "calendar",
-        transport: "http",
-        url: "https://mcp.example.test",
-        toolMetadata: {
-          create_event: {
-            displayName: "Create event",
-            aliases: ["calendar create"],
-            keywords: ["calendar", "event"],
-            provider: "calendar",
-            toolFamily: "calendar.write",
-            capabilityClasses: ["calendar.write"],
-            approvalMode: "ask",
-            allowedInteractionModes: ["chat", "build", "chat"],
-          },
+  const parsed = parseProfilesFile(
+    JSON.stringify({
+      version: 3,
+      profiles: [
+        {
+          id: "reference",
+          label: "Reference React",
+          agent: "reference-react",
+          sessionPrefix: "reference",
+          mcpServers: [
+            {
+              id: "calendar",
+              transport: "http",
+              url: "https://mcp.example.test",
+              toolMetadata: {
+                create_event: {
+                  displayName: "Create event",
+                  aliases: ["calendar create"],
+                  keywords: ["calendar", "event"],
+                  provider: "calendar",
+                  toolFamily: "calendar.write",
+                  capabilityClasses: ["calendar.write"],
+                  approvalMode: "ask",
+                  allowedInteractionModes: ["chat", "build", "chat"],
+                },
+              },
+            },
+          ],
         },
-      }],
-    }],
-  }));
+      ],
+    }),
+  );
 
-  const metadata = parsed.profiles[0]?.mcpServers?.[0]?.toolMetadata?.create_event;
+  const metadata =
+    parsed.profiles[0]?.mcpServers?.[0]?.toolMetadata?.create_event;
   assert.equal(metadata?.approvalMode, "ask");
   assert.deepEqual(metadata?.allowedInteractionModes, ["chat", "build"]);
 });
@@ -970,34 +1126,43 @@ test("parseProfilesFile requires positive integer code-mode storage quotas", () 
     ["tmpInodes", "2048"],
   ] as const) {
     assert.throws(
-      () => parseProfilesFile(JSON.stringify({
-        version: 3,
-        profiles: [{
-          id: "reference",
-          label: "Reference React",
-          agent: "reference-react",
-          sessionPrefix: "reference",
-          codeMode: {
-            enabled: true,
-            sandbox: { [field]: value },
-          },
-        }],
-      })),
+      () =>
+        parseProfilesFile(
+          JSON.stringify({
+            version: 3,
+            profiles: [
+              {
+                id: "reference",
+                label: "Reference React",
+                agent: "reference-react",
+                sessionPrefix: "reference",
+                codeMode: {
+                  enabled: true,
+                  sandbox: { [field]: value },
+                },
+              },
+            ],
+          }),
+        ),
       new RegExp(`${field}.*positive integer`, "u"),
     );
   }
 });
 
 test("version 3 profiles migrate to live-only provider reasoning defaults", () => {
-  const parsed = parseProfilesFile(JSON.stringify({
-    version: 3,
-    profiles: [{
-      id: "reference",
-      label: "Reference React",
-      agent: "reference-react",
-      sessionPrefix: "reference",
-    }],
-  }));
+  const parsed = parseProfilesFile(
+    JSON.stringify({
+      version: 3,
+      profiles: [
+        {
+          id: "reference",
+          label: "Reference React",
+          agent: "reference-react",
+          sessionPrefix: "reference",
+        },
+      ],
+    }),
+  );
   assert.equal(parsed.migrated, true);
   assert.deepEqual(applyProfileDefaults(parsed.profiles[0]!).reasoning, {
     request: { mode: "provider_visible" },
@@ -1006,36 +1171,48 @@ test("version 3 profiles migrate to live-only provider reasoning defaults", () =
 });
 
 test("version 4 profiles accept explicit retention and enforce the 1 to 30 day range", () => {
-  const valid = parseProfilesFile(JSON.stringify({
-    version: 4,
-    profiles: [{
-      id: "reference",
-      label: "Reference React",
-      agent: "reference-react",
-      sessionPrefix: "reference",
-      reasoning: {
-        request: { mode: "summary", effort: "high" },
-        retention: { mode: "provider_visible", days: 30 },
-      },
-    }],
-  }));
+  const valid = parseProfilesFile(
+    JSON.stringify({
+      version: 4,
+      profiles: [
+        {
+          id: "reference",
+          label: "Reference React",
+          agent: "reference-react",
+          sessionPrefix: "reference",
+          reasoning: {
+            request: { mode: "summary", effort: "high" },
+            retention: { mode: "provider_visible", days: 30 },
+          },
+        },
+      ],
+    }),
+  );
   assert.deepEqual(valid.profiles[0]?.reasoning, {
     request: { mode: "summary", effort: "high" },
     retention: { mode: "provider_visible", days: 30 },
   });
   for (const days of [0, 31]) {
-    assert.throws(() => parseProfilesFile(JSON.stringify({
-      version: 4,
-      profiles: [{
-        id: "reference",
-        label: "Reference React",
-        agent: "reference-react",
-        sessionPrefix: "reference",
-        reasoning: {
-          request: { mode: "summary" },
-          retention: { mode: "provider_visible", days },
-        },
-      }],
-    })), /integer from 1 to 30/u);
+    assert.throws(
+      () =>
+        parseProfilesFile(
+          JSON.stringify({
+            version: 4,
+            profiles: [
+              {
+                id: "reference",
+                label: "Reference React",
+                agent: "reference-react",
+                sessionPrefix: "reference",
+                reasoning: {
+                  request: { mode: "summary" },
+                  retention: { mode: "provider_visible", days },
+                },
+              },
+            ],
+          }),
+        ),
+      /integer from 1 to 30/u,
+    );
   }
 });

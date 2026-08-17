@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { getOrganizationEnvironment } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { listCoreAppDefinitions } from "./catalog";
+import { getCoreAppDefinition, listCoreAppDefinitions } from "./catalog";
 import type {
   CreateEnvironmentAppConnectionInput,
   EnvironmentAppCapabilityGrantInput,
@@ -22,6 +22,7 @@ import type {
   AppsOverview,
   EnvironmentAppConfiguration,
 } from "./types";
+import { applyMinimumApprovalMode } from "./policy";
 
 const APP_AUTH_METHODS = new Set<AppAuthMethod>([
   "none",
@@ -482,6 +483,10 @@ export async function getAppForOrganization(input: {
         audience: capability.audience,
         defaultEnabled: capability.defaultEnabled,
         defaultApprovalMode: capability.defaultApprovalMode,
+        minimumApprovalMode:
+          getCoreAppDefinition(input.appKey)?.capabilities.find(
+            (candidate) => candidate.key === capability.key,
+          )?.minimumApprovalMode ?? "auto",
         defaultLoggingMode: capability.defaultLoggingMode,
         defaultRateLimitMode: capability.defaultRateLimitMode,
         metadata: record(capability.metadata),
@@ -857,6 +862,10 @@ export async function getEnvironmentAppConfiguration(input: {
       })),
     capabilities: visibleCapabilities.map((capability) => {
       const grant = grants.get(capability.key);
+      const minimumApprovalMode =
+        getCoreAppDefinition(input.appKey)?.capabilities.find(
+          (candidate) => candidate.key === capability.key,
+        )?.minimumApprovalMode ?? "auto";
       return {
         key: capability.key,
         runtimeName: capability.runtimeName,
@@ -867,11 +876,16 @@ export async function getEnvironmentAppConfiguration(input: {
         audience: capability.audience,
         defaultEnabled: capability.defaultEnabled,
         defaultApprovalMode: capability.defaultApprovalMode,
+        minimumApprovalMode,
         defaultLoggingMode: capability.defaultLoggingMode,
         defaultRateLimitMode: capability.defaultRateLimitMode,
         metadata: record(capability.metadata),
         enabled: grant?.enabled ?? capability.defaultEnabled,
-        approvalMode: grant?.approvalMode ?? capability.defaultApprovalMode,
+        approvalMode: applyMinimumApprovalMode({
+          requested: grant?.approvalMode ?? capability.defaultApprovalMode,
+          minimum: minimumApprovalMode,
+          enabled: grant?.enabled ?? capability.defaultEnabled,
+        }),
         loggingMode: grant?.loggingMode ?? capability.defaultLoggingMode,
         rateLimitMode: grant?.rateLimitMode ?? capability.defaultRateLimitMode,
         inheritedDefault: !grant,
@@ -1191,7 +1205,7 @@ export async function saveEnvironmentAppCapabilityGrant(input: {
         equals(table.key, input.capabilityKey),
       ),
   });
-  if (!capability || !capability.active) {
+  if (!(capability && capability.active)) {
     throw new AppServiceError("APP_NOT_FOUND", "App capability not found.");
   }
   if (capability.connectionId) {
@@ -1209,17 +1223,18 @@ export async function saveEnvironmentAppCapabilityGrant(input: {
       throw new AppServiceError("APP_NOT_FOUND", "App capability not found.");
     }
   }
-  const grant =
-    input.appKey === "email" && input.capabilityKey === "send"
-      ? {
-          ...input.grant,
-          approvalMode: input.grant.enabled
-            ? ("ask" as const)
-            : ("deny" as const),
-          loggingMode: "metadata_only" as const,
-          rateLimitMode: "strict" as const,
-        }
-      : input.grant;
+  const minimumApprovalMode =
+    getCoreAppDefinition(input.appKey)?.capabilities.find(
+      (candidate) => candidate.key === input.capabilityKey,
+    )?.minimumApprovalMode ?? "auto";
+  const grant = {
+    ...input.grant,
+    approvalMode: applyMinimumApprovalMode({
+      requested: input.grant.approvalMode,
+      minimum: minimumApprovalMode,
+      enabled: input.grant.enabled,
+    }),
+  };
   const now = new Date();
   const [savedGrant] = await knowledgeDb
     .insert(schema.environmentAppCapabilityGrants)

@@ -48,10 +48,10 @@ export async function POST(request: Request) {
       capability,
       requireRunExecution: true,
     });
-    if (
-      policy.approvalMode === "ask" &&
-      request.headers.get("x-kestrel-runtime-approval") !== "confirmed"
-    ) {
+    const runtimeApprovalId = readApprovalId(
+      request.headers.get("x-kestrel-approval-id"),
+    );
+    if (policy.approvalMode === "ask" && runtimeApprovalId === null) {
       throw new GoogleCalendarPolicyError(
         "GOOGLE_CALENDAR_APPROVAL_REQUIRED",
         409
@@ -153,6 +153,7 @@ export async function POST(request: Request) {
         agentId: ticket.agentId,
         capability,
         approvalMode: policy.approvalMode,
+        ...(runtimeApprovalId === null ? {} : { runtimeApprovalId }),
         loggingMode: policy.loggingMode,
         subjectCount,
       },
@@ -191,6 +192,11 @@ export async function POST(request: Request) {
     }
     return errorResponse(error, ticket ? 400 : 401);
   }
+}
+
+function readApprovalId(value: string | null) {
+  const normalized = value?.trim();
+  return normalized && normalized.length <= 200 ? normalized : null;
 }
 
 async function getConnectionAccessToken(input: {

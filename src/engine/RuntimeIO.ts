@@ -1494,6 +1494,89 @@ export class RuntimeIO {
     }
   }
 
+  async inspectTool(
+    name: string,
+    input: unknown,
+    intent?: {
+      modelToolCallId?: string | undefined;
+      toolSurfaceSnapshot?: import("../kestrel/contracts/tool-contract.js").ToolSurfaceSnapshotV1 | undefined;
+    },
+  ): Promise<{ effectiveInput: Record<string, unknown> }> {
+    const { progress } = this.options;
+    throwIfRuntimeIOAborted(progress.signal);
+    const sessionState = this.options.getSessionState();
+    const runContext = {
+      runId: progress.runId,
+      sessionId: progress.sessionId,
+      payload: this.options.runtimePayload ?? {},
+      sessionState,
+    };
+    const ownsSnapshot = intent?.toolSurfaceSnapshot === undefined;
+    const snapshot = intent?.toolSurfaceSnapshot ??
+      await this.options.deps.toolGateway.createToolSurfaceSnapshot({
+        runContext,
+        toolNames: [name],
+      });
+    const activation = snapshot.tools.find(
+      (candidate) => candidate.descriptor.toolId === name,
+    );
+    if (activation === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_SNAPSHOT_LOOKUP_FAILED",
+        `Tool '${name}' was not exposed in snapshot '${snapshot.snapshotId}'.`,
+        { recoverable: false, toolName: name },
+      );
+    }
+    const rawInput = asPlainRecord(input);
+    if (rawInput === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_INPUT_SCHEMA_FAILED",
+        `Tool '${name}' input must be an object.`,
+        { recoverable: true, toolName: name },
+      );
+    }
+    const origin = intent?.modelToolCallId !== undefined
+      ? {
+          kind: "model" as const,
+          snapshotId: snapshot.snapshotId,
+          modelToolCallId: intent.modelToolCallId,
+        }
+      : {
+          kind: "trusted_runtime" as const,
+          producerId: "runtime.approval-inspection:v1",
+          adapterId: "runtime.approval-inspection:v1",
+        };
+    const inspectToolCall = this.options.deps.toolGateway.inspectToolCall;
+    if (inspectToolCall === undefined) {
+      if (ownsSnapshot) {
+        await this.options.deps.toolGateway.releaseToolSurfaceSnapshot?.(
+          snapshot.snapshotId,
+        );
+      }
+      throw createRuntimeFailure(
+        "TOOL_INSPECTION_UNAVAILABLE",
+        `Tool '${name}' cannot be inspected safely before approval.`,
+        { recoverable: false, toolName: name },
+      );
+    }
+    try {
+      return await inspectToolCall.call(
+        this.options.deps.toolGateway,
+        { activation, origin, rawInput },
+        {
+          runContext,
+          runtimeBudgetRemainingMs: this.options.guardrails.budgetSnapshot().remainingMs,
+        },
+      );
+    } finally {
+      if (ownsSnapshot) {
+        await this.options.deps.toolGateway.releaseToolSurfaceSnapshot?.(
+          snapshot.snapshotId,
+        );
+      }
+    }
+  }
+
   private async emitToolUpdate(input: {
     phase: RunToolPhase;
     toolCallId: string;

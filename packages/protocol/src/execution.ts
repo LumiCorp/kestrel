@@ -350,6 +350,12 @@ export interface RunnerProfile {
   defaultActSubmode?: RunnerActSubmode | undefined;
   toolAllowlist?: string[] | undefined;
   kestrelOneAppApprovalModes?: Record<string, "auto" | "ask"> | undefined;
+  kestrelOneAppApprovalPolicies?: Record<string, {
+    environment: "auto" | "ask" | "deny";
+    project?: "auto" | "ask" | "deny" | undefined;
+    subject?: "auto" | "ask" | "deny" | undefined;
+    minimum: "auto" | "ask";
+  }> | undefined;
   mcpServers?: RunnerMcpServerConfig[] | undefined;
   toolQueue?: RunnerToolQueueProfileConfig | undefined;
   guardrails?: RunnerGuardrailConfig | undefined;
@@ -563,7 +569,8 @@ export interface RunnerInteractionRequestV1 extends Record<string, unknown> {
   approval?: {
     toolCallId: string;
     toolName: string;
-    input: unknown;
+    input?: unknown;
+    presentation?: unknown;
   } | undefined;
 }
 
@@ -3637,8 +3644,16 @@ function validateRunnerInteractionRequest(
     const approval = requireRecord(interaction.approval, `${label}.approval`);
     requireNonEmptyString(approval.toolCallId, `${label}.approval.toolCallId`);
     requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
-    if (Object.hasOwn(approval, "input") === false) {
-      throw new RunnerProtocolContractError(`${label}.approval.input is required`);
+    if (
+      Object.hasOwn(approval, "input") === false &&
+      Object.hasOwn(approval, "presentation") === false
+    ) {
+      throw new RunnerProtocolContractError(
+        `${label}.approval.input or .presentation is required`,
+      );
+    }
+    if (approval.presentation !== undefined) {
+      requireRecord(approval.presentation, `${label}.approval.presentation`);
     }
   }
 }
@@ -3758,6 +3773,10 @@ function validateRunnerProfile(
     `${label}.kestrelOneAppApprovalModes`,
     ["auto", "ask"],
   );
+  validateOptionalAppApprovalPolicyRecord(
+    profile.kestrelOneAppApprovalPolicies,
+    `${label}.kestrelOneAppApprovalPolicies`,
+  );
   validateOptionalRecordArray(profile.mcpServers, `${label}.mcpServers`);
   validateOptionalRecord(profile.toolQueue, `${label}.toolQueue`);
   validateOptionalRecord(profile.guardrails, `${label}.guardrails`);
@@ -3775,6 +3794,34 @@ function validateRunnerProfile(
     }
   }
   validateOptionalBoolean(profile.default, `${label}.default`);
+}
+
+function validateOptionalAppApprovalPolicyRecord(
+  value: unknown,
+  label: string,
+): void {
+  if (value === undefined) return;
+  const policies = requireRecord(value, label);
+  for (const [toolName, rawPolicy] of Object.entries(policies)) {
+    requireNonEmptyString(toolName, `${label} tool name`);
+    const policy = requireRecord(rawPolicy, `${label}.${toolName}`);
+    validateEnum(policy.environment, `${label}.${toolName}.environment`, [
+      "auto",
+      "ask",
+      "deny",
+    ]);
+    validateOptionalEnum(policy.project, `${label}.${toolName}.project`, [
+      "auto",
+      "ask",
+      "deny",
+    ]);
+    validateOptionalEnum(policy.subject, `${label}.${toolName}.subject`, [
+      "auto",
+      "ask",
+      "deny",
+    ]);
+    validateEnum(policy.minimum, `${label}.${toolName}.minimum`, ["auto", "ask"]);
+  }
 }
 
 function validateWorkspaceCheckpointRecord(

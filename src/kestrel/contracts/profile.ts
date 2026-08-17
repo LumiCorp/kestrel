@@ -35,7 +35,10 @@ export type KestrelEnvironmentPresetIdV1 = Exclude<
   ShellPresetId,
   "web_balanced"
 >;
-export type KestrelEnvironmentNameV1 = "safe" | "developer" | "workspace_hosted";
+export type KestrelEnvironmentNameV1 =
+  | "safe"
+  | "developer"
+  | "workspace_hosted";
 
 export interface KestrelProfileDefinitionV1 {
   version: typeof KESTREL_PROFILE_DEFINITION_VERSION;
@@ -111,6 +114,12 @@ export interface KestrelEnvironmentBindingV1 {
   };
   apps: {
     approvalModes: Record<string, "auto" | "ask">;
+    approvalPolicies?:
+      | Record<
+          string,
+          import("../../mode/contracts.js").ToolApprovalPolicyEvidenceV1
+        >
+      | undefined;
   };
   tools: {
     additionalToolNames: string[];
@@ -154,8 +163,16 @@ export interface KestrelEnvironmentSelectionV1 {
 
 const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const nonEmptyString = z.string().trim().min(1);
-const positiveSafeInteger = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
-const nonNegativeSafeInteger = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const positiveSafeInteger = z
+  .number()
+  .int()
+  .positive()
+  .max(Number.MAX_SAFE_INTEGER);
+const nonNegativeSafeInteger = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
 const stringArray = z.array(nonEmptyString).max(4_096);
 
 const reasoningSchema = z
@@ -323,9 +340,7 @@ const devShellSchema = z
   })
   .strict();
 
-const interactionModesSchema = z.array(
-  z.enum(["chat", "plan", "build"]),
-);
+const interactionModesSchema = z.array(z.enum(["chat", "plan", "build"]));
 const mcpToolMetadataSchema = z
   .object({
     displayName: nonEmptyString,
@@ -359,7 +374,10 @@ const mcpServerSchema = z.discriminatedUnion("transport", [
       url: nonEmptyString,
       authTokenEnv: nonEmptyString.optional(),
       headerEnvs: z.record(nonEmptyString, nonEmptyString).optional(),
-      oauthCredentialPrefix: z.string().regex(/^mcp\..+/u).optional(),
+      oauthCredentialPrefix: z
+        .string()
+        .regex(/^mcp\..+/u)
+        .optional(),
     })
     .strict(),
   z
@@ -369,7 +387,10 @@ const mcpServerSchema = z.discriminatedUnion("transport", [
       url: nonEmptyString,
       authTokenEnv: nonEmptyString.optional(),
       headerEnvs: z.record(nonEmptyString, nonEmptyString).optional(),
-      oauthCredentialPrefix: z.string().regex(/^mcp\..+/u).optional(),
+      oauthCredentialPrefix: z
+        .string()
+        .regex(/^mcp\..+/u)
+        .optional(),
     })
     .strict(),
 ]);
@@ -457,6 +478,19 @@ const environmentBindingSchema = z
     apps: z
       .object({
         approvalModes: z.record(nonEmptyString, z.enum(["auto", "ask"])),
+        approvalPolicies: z
+          .record(
+            nonEmptyString,
+            z
+              .object({
+                environment: z.enum(["auto", "ask", "deny"]),
+                project: z.enum(["auto", "ask", "deny"]).optional(),
+                subject: z.enum(["auto", "ask", "deny"]).optional(),
+                minimum: z.enum(["auto", "ask"]),
+              })
+              .strict(),
+          )
+          .optional(),
       })
       .strict(),
     tools: z
@@ -508,7 +542,10 @@ const environmentSelectionSchema = z
   .strict();
 
 export function createKestrelProfileDefinitionV1(
-  input: Omit<KestrelProfileDefinitionV1, "version" | "id" | "revision" | "label">,
+  input: Omit<
+    KestrelProfileDefinitionV1,
+    "version" | "id" | "revision" | "label"
+  >,
 ): KestrelProfileDefinitionV1 {
   const draft = {
     ...structuredClone(input),
@@ -529,7 +566,9 @@ export function parseKestrelProfileDefinitionV1(
   const parsed: KestrelProfileDefinitionV1 = {
     ...base,
     ...(rawEvaluationPolicy !== undefined
-      ? { evaluationPolicy: parseRuntimeEvaluationPolicyV1(rawEvaluationPolicy) }
+      ? {
+          evaluationPolicy: parseRuntimeEvaluationPolicyV1(rawEvaluationPolicy),
+        }
       : {}),
   };
   if (fingerprintKestrelProfileDefinitionV1(parsed) !== parsed.revision) {
@@ -658,12 +697,11 @@ export function canonicalizeFirstPartyKestrelProfileId(
 function assertEnvironmentPresetOwnership(
   binding: KestrelEnvironmentBindingV1,
 ): void {
-  const expectedShellKind =
-    binding.presetId.startsWith("cli_")
-      ? "cli"
-      : binding.presetId.startsWith("desktop_")
-        ? "desktop"
-        : "web";
+  const expectedShellKind = binding.presetId.startsWith("cli_")
+    ? "cli"
+    : binding.presetId.startsWith("desktop_")
+      ? "desktop"
+      : "web";
   if (binding.shellKind !== expectedShellKind) {
     throw new Error(
       `Kestrel environment '${binding.bindingId}' preset does not belong to shell '${binding.shellKind}'.`,
@@ -720,7 +758,9 @@ function assertPinnedRouteOwnership(
   }
 }
 
-function stripRevision<T extends { revision: string }>(value: T): Omit<T, "revision"> {
+function stripRevision<T extends { revision: string }>(
+  value: T,
+): Omit<T, "revision"> {
   const { revision: _revision, ...rest } = value;
   return rest;
 }

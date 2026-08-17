@@ -38,6 +38,10 @@ export type AppCatalogDefinition = {
     audience: "self" | "project" | "both";
     defaultEnabled: boolean;
     defaultApprovalMode: ToolCapabilityDefinition["defaultPolicy"]["approvalMode"];
+    minimumApprovalMode: Exclude<
+      ToolCapabilityDefinition["defaultPolicy"]["approvalMode"],
+      "deny"
+    >;
     defaultLoggingMode: ToolCapabilityDefinition["defaultPolicy"]["loggingMode"];
     defaultRateLimitMode: ToolCapabilityDefinition["defaultPolicy"]["rateLimitMode"];
     defaultSettings: Record<string, unknown>;
@@ -121,6 +125,7 @@ function toAppDefinition(
       audience: audienceFor(capability),
       defaultEnabled: capability.defaultPolicy.enabled,
       defaultApprovalMode: capability.defaultPolicy.approvalMode,
+      minimumApprovalMode: capability.minimumApprovalMode ?? "auto",
       defaultLoggingMode: capability.defaultPolicy.loggingMode,
       defaultRateLimitMode: capability.defaultPolicy.rateLimitMode,
       defaultSettings: capability.defaultPolicy.settings,

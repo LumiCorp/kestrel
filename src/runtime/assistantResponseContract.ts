@@ -16,7 +16,11 @@ import type {
   ExecutionBoundaryPolicyRuntime,
 } from "../security/ExecutionBoundaryPolicy.js";
 import { createRuntimeFailure } from "./RuntimeFailure.js";
-import { extractUserReplyQuestion, extractWaitPrompt } from "./waitForPrompt.js";
+import {
+  extractUserReplyQuestion,
+  extractWaitPrompt,
+} from "./waitForPrompt.js";
+import type { ToolApprovalPresentationV1 } from "./toolApprovalPresentation.js";
 
 export function materializeUserFacingWaitInteraction<T extends WaitForMatcher>(
   waitFor: T,
@@ -287,7 +291,60 @@ function readApprovalPresentation(
     approval: {
       toolCallId,
       toolName,
-      input: metadata?.toolInput ?? {},
+      presentation: readToolApprovalPresentation(
+        metadata?.approvalPresentation,
+      ),
+    },
+  };
+}
+
+function readToolApprovalPresentation(
+  value: unknown,
+): ToolApprovalPresentationV1 {
+  const record = asRecord(value);
+  const policy = asRecord(record?.policy);
+  const fields = Array.isArray(record?.fields)
+    ? record.fields.flatMap((field) => {
+        const item = asRecord(field);
+        const label = readNonEmptyString(item?.label);
+        const fieldValue = readNonEmptyString(item?.value);
+        return label === undefined || fieldValue === undefined
+          ? []
+          : [{ label, value: fieldValue }];
+      })
+    : [];
+  const warnings = Array.isArray(record?.warnings)
+    ? record.warnings.flatMap((warning) => readNonEmptyString(warning) ?? [])
+    : [];
+  const reasonCode = readNonEmptyString(policy?.reasonCode);
+  const authorityKind = readNonEmptyString(policy?.authorityKind);
+  return {
+    title: readNonEmptyString(record?.title) ?? "Approve tool operation",
+    summary:
+      readNonEmptyString(record?.summary) ??
+      "Request details are hidden because this tool does not provide a safe approval preview.",
+    fields,
+    warnings,
+    policy: {
+      mode: "ask",
+      reasonCode:
+        reasonCode === "environment_policy" ||
+        reasonCode === "project_restriction" ||
+        reasonCode === "subject_restriction" ||
+        reasonCode === "runtime_strict"
+          ? reasonCode
+          : "tool_minimum",
+      explanation:
+        readNonEmptyString(policy?.explanation) ??
+        "This invocation requires approval.",
+      authorityKind:
+        authorityKind === "hosted_app_policy" ||
+        authorityKind === "hosted_mcp_grant"
+          ? authorityKind
+          : "runtime_policy",
+      authorityRevision:
+        readNonEmptyString(policy?.authorityRevision) ??
+        "legacy-external-confirm",
     },
   };
 }

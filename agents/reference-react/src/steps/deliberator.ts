@@ -1048,9 +1048,12 @@ function shouldEnableParallelToolCalls(input: {
   }
 
   const surfacedToolNames = new Set(input.tools.map((tool) => tool.name));
-  return input.capabilityManifest.every((tool) =>
-    surfacedToolNames.has(tool.name) === false ||
-    tool.approvalCapabilities?.includes("external.confirm") !== true
+  return input.capabilityManifest.every(
+    (tool) =>
+      surfacedToolNames.has(tool.name) === false ||
+      (tool.approvalDisposition !== undefined
+        ? tool.approvalDisposition.mode !== "ask"
+        : tool.approvalCapabilities?.includes("external.confirm") !== true),
   );
 }
 

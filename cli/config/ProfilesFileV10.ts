@@ -58,6 +58,7 @@ const ROOT_FIELDS = new Set(["version", "profile", "environmentBindings"]);
 const AUTHORITY_FIELDS = [
   "approvalPolicyPackId",
   "kestrelOneAppApprovalModes",
+  "kestrelOneAppApprovalPolicies",
   "toolAllowlist",
   "mcpServers",
   "ociMcpEgressBindings",
@@ -77,6 +78,7 @@ const ENVIRONMENT_FIELDS = [
   "storeDriver",
   "approvalPolicyPackId",
   "kestrelOneAppApprovalModes",
+  "kestrelOneAppApprovalPolicies",
   "additionalToolNames",
   "mcpServers",
   "ociMcpEgressBindings",
@@ -336,7 +338,9 @@ function collectManagedOverlays(
     | {
         "kestrel@cli_safe_local"?: KestrelOneManagedProfileOverlay | undefined;
         "kestrel@cli_dev_local"?: KestrelOneManagedProfileOverlay | undefined;
-        "kestrel@workspace_hosted"?: KestrelOneManagedProfileOverlay | undefined;
+        "kestrel@workspace_hosted"?:
+          | KestrelOneManagedProfileOverlay
+          | undefined;
       }
     | undefined,
 ): Map<KestrelEnvironmentPresetIdV1, KestrelOneProfileOverlay> {
@@ -392,7 +396,9 @@ function pickBehaviorFields(
 ): KestrelOneProfileOverlay {
   return Object.fromEntries(
     BEHAVIOR_FIELDS.flatMap((field) =>
-      overlay[field] === undefined ? [] : [[field, structuredClone(overlay[field])]],
+      overlay[field] === undefined
+        ? []
+        : [[field, structuredClone(overlay[field])]],
     ),
   ) as KestrelOneProfileOverlay;
 }
@@ -436,6 +442,13 @@ function extractManagedConfiguration(
           ),
         }
       : {}),
+    ...(profile.kestrelOneAppApprovalPolicies !== undefined
+      ? {
+          kestrelOneAppApprovalPolicies: structuredClone(
+            profile.kestrelOneAppApprovalPolicies,
+          ),
+        }
+      : {}),
     ...(additionalToolNames !== undefined && additionalToolNames.length > 0
       ? { additionalToolNames }
       : {}),
@@ -444,9 +457,7 @@ function extractManagedConfiguration(
       : {}),
     ...(profile.ociMcpEgressBindings !== undefined
       ? {
-          ociMcpEgressBindings: structuredClone(
-            profile.ociMcpEgressBindings,
-          ),
+          ociMcpEgressBindings: structuredClone(profile.ociMcpEgressBindings),
         }
       : {}),
     ...(profile.toolQueue !== undefined
@@ -478,24 +489,27 @@ function extractAdditionalToolNames(
   presetId: KestrelEnvironmentPresetIdV1,
 ): string[] | undefined {
   if (profile.toolAllowlist === undefined) return undefined;
-  const baseline = composeKestrelProfile({
-    definition: createKestrelProfileDefinitionFromOverlay(undefined),
-    environmentBinding: createKestrelEnvironmentBindingFromOverlay({
-      environmentPresetId: presetId,
-      overlay: {
-        ...(profile.codeMode !== undefined
-          ? { codeMode: structuredClone(profile.codeMode) }
-          : {}),
-        ...(profile.devShell !== undefined
-          ? { devShell: structuredClone(profile.devShell) }
-          : {}),
-      },
-      bindingId: `kestrel:${presetId}:baseline`,
-    }),
-    resolvedProfileId: KESTREL_POLICY_ID,
-  }).profile.toolAllowlist ?? [];
+  const baseline =
+    composeKestrelProfile({
+      definition: createKestrelProfileDefinitionFromOverlay(undefined),
+      environmentBinding: createKestrelEnvironmentBindingFromOverlay({
+        environmentPresetId: presetId,
+        overlay: {
+          ...(profile.codeMode !== undefined
+            ? { codeMode: structuredClone(profile.codeMode) }
+            : {}),
+          ...(profile.devShell !== undefined
+            ? { devShell: structuredClone(profile.devShell) }
+            : {}),
+        },
+        bindingId: `kestrel:${presetId}:baseline`,
+      }),
+      resolvedProfileId: KESTREL_POLICY_ID,
+    }).profile.toolAllowlist ?? [];
   const baselineNames = new Set(baseline);
-  return profile.toolAllowlist.filter((name) => baselineNames.has(name) === false);
+  return profile.toolAllowlist.filter(
+    (name) => baselineNames.has(name) === false,
+  );
 }
 
 function collectRetainedManagedFields(
@@ -530,9 +544,16 @@ function isManagedProfileId(profileId: string): boolean {
   );
 }
 
-async function writeExactBackup(filePath: string, sourceBytes: string): Promise<void> {
+async function writeExactBackup(
+  filePath: string,
+  sourceBytes: string,
+): Promise<void> {
   try {
-    await writeFile(filePath, sourceBytes, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await writeFile(filePath, sourceBytes, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
     return;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -545,7 +566,10 @@ async function writeExactBackup(filePath: string, sourceBytes: string): Promise<
   }
 }
 
-async function writeAtomicJson(filePath: string, value: unknown): Promise<void> {
+async function writeAtomicJson(
+  filePath: string,
+  value: unknown,
+): Promise<void> {
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
     encoding: "utf8",
