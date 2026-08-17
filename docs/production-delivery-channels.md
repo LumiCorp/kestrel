@@ -125,6 +125,11 @@ The command prints the signed-in Fly identity, current provider record, exact
 requested image, and confirmation text. Read it, type the exact confirmation,
 and retain the fresh provider record printed after `fly machine update`.
 
+For `preview-edge`, the command also requires the selected Machine to expose
+HTTP 80 and HTTPS 443 to internal port 8080 before the confirmation and after
+the update. It refuses missing or changed ingress instead of repairing Fly
+configuration during an image rollout.
+
 Verify that Machine before touching another one:
 
 ```bash
@@ -160,6 +165,24 @@ fly secrets deploy --app <app>
 
 Record configuration activation separately because it may restart more than
 the selected Machine.
+
+For Preview Edge, `fly.preview-edge.toml` is the only deployable Fly
+configuration. If a Machine is missing its public ingress contract, reconcile
+the app separately with the current image reference:
+
+```bash
+fly deploy \
+  --app kestrel-preview-edge \
+  --config fly.preview-edge.toml \
+  --image <current-image-reference> \
+  --update-only \
+  --ha=false \
+  --strategy rolling
+```
+
+Verify every Preview Edge Machine has the same 80/443-to-8080 service mapping
+before resuming image rollout. Keep this app-wide configuration evidence
+separate from the one-Machine image update.
 
 ### Fly rollback
 
