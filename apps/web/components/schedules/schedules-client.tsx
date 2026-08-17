@@ -66,6 +66,13 @@ export type ScheduleProjectOption = {
   canCreateSchedule: boolean;
 };
 
+type ScheduleModelOption = {
+  id: string;
+  name: string;
+  provider: string;
+  isDefault: boolean;
+};
+
 export type ScheduleSummary = {
   id: string;
   organizationId: string;
@@ -74,6 +81,7 @@ export type ScheduleSummary = {
   cronExpression: string;
   timeZone: string;
   prompt: string;
+  modelId: string | null;
   enabled: boolean;
   pauseReason: string | null;
   nextRunAt: string | null;
@@ -109,6 +117,7 @@ type ScheduleDraft = {
   cronExpression: string;
   timeZone: string;
   prompt: string;
+  modelId: string;
 };
 
 function browserTimeZone() {
@@ -121,6 +130,7 @@ function emptyDraft(projectId = ""): ScheduleDraft {
     cronExpression: "0 9 * * 1-5",
     timeZone: browserTimeZone(),
     prompt: "",
+    modelId: "",
   };
 }
 
@@ -149,6 +159,9 @@ export function SchedulesClient({
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState<ScheduleSummary | null>(null);
   const [timeZones, setTimeZones] = useState<string[]>([]);
+  const [models, setModels] = useState<ScheduleModelOption[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
 
   useEffect(() => {
     const supportedValuesOf = (
@@ -162,6 +175,52 @@ export function SchedulesClient({
         : [browserTimeZone(), "UTC"],
     );
   }, []);
+
+  useEffect(() => {
+    if (!(dialogOpen && draft.projectId)) {
+      return;
+    }
+    const projectId = draft.projectId;
+    const controller = new AbortController();
+    setModelsLoading(true);
+    setModelsError(null);
+    void fetch(
+      `/api/models/approved?modality=language&projectId=${encodeURIComponent(projectId)}`,
+      { cache: "no-store", signal: controller.signal },
+    )
+      .then(async (response) => {
+        const result = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          models?: ScheduleModelOption[];
+        };
+        if (!(response.ok && Array.isArray(result.models))) {
+          throw new Error(result.error ?? "Models could not be loaded.");
+        }
+        setModels(result.models);
+        setDraft((current) => {
+          if (current.projectId !== projectId) return current;
+          const selected = result.models?.some(
+            (model) => model.id === current.modelId,
+          )
+            ? current.modelId
+            : (result.models?.find((model) => model.isDefault)?.id ??
+              result.models?.[0]?.id ??
+              "");
+          return { ...current, modelId: selected };
+        });
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setModels([]);
+        setModelsError(
+          error instanceof Error ? error.message : "Models could not be loaded.",
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setModelsLoading(false);
+      });
+    return () => controller.abort();
+  }, [dialogOpen, draft.projectId]);
 
   const nextRun = useMemo(() => {
     try {
@@ -201,12 +260,15 @@ export function SchedulesClient({
       cronExpression: schedule.cronExpression,
       timeZone: schedule.timeZone,
       prompt: schedule.prompt,
+      modelId: schedule.modelId ?? "",
     });
     setDialogOpen(true);
   }
 
   async function saveSchedule() {
-    if (!(draft.projectId && draft.prompt.trim() && nextRun)) return;
+    if (!(draft.projectId && draft.prompt.trim() && draft.modelId && nextRun)) {
+      return;
+    }
     setBusy(true);
     try {
       const url = editing
@@ -219,6 +281,7 @@ export function SchedulesClient({
           cronExpression: draft.cronExpression,
           timeZone: draft.timeZone,
           prompt: draft.prompt,
+          modelId: draft.modelId,
         }),
       });
       const result = (await response.json().catch(() => ({}))) as {
@@ -403,6 +466,10 @@ export function SchedulesClient({
                         <span aria-hidden="true">·</span>
                         <span>{schedule.timeZone}</span>
                         <span aria-hidden="true">·</span>
+                        <span>
+                          Model: {schedule.modelId ?? "Project default"}
+                        </span>
+                        <span aria-hidden="true">·</span>
                         <span>Runs as {schedule.creator?.name ?? "Former member"}</span>
                         {schedule.nextRunAt ? (
                           <>
@@ -531,6 +598,36 @@ export function SchedulesClient({
                 : "Enter a valid five-field cron and IANA timezone."}
             </p>
             <div className="space-y-2">
+              <Label htmlFor="schedule-model">Model</Label>
+              <Select
+                disabled={modelsLoading || models.length === 0}
+                onValueChange={(modelId) =>
+                  setDraft((current) => ({ ...current, modelId }))
+                }
+                value={draft.modelId}
+              >
+                <SelectTrigger id="schedule-model">
+                  <SelectValue
+                    placeholder={
+                      modelsLoading ? "Loading models…" : "Choose a model"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {models.map((model) => (
+                    <SelectItem key={`${model.provider}:${model.id}`} value={model.id}>
+                      {model.name} · {model.provider}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {modelsError ? (
+                <p className="text-destructive text-xs" role="alert">
+                  {modelsError}
+                </p>
+              ) : null}
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="schedule-prompt">Prompt</Label>
               <Textarea
                 id="schedule-prompt"
@@ -552,7 +649,13 @@ export function SchedulesClient({
             </Button>
             <Button
               disabled={
-                busy || !draft.projectId || !draft.prompt.trim() || !nextRun
+                busy ||
+                modelsLoading ||
+                Boolean(modelsError) ||
+                !draft.projectId ||
+                !draft.modelId ||
+                !draft.prompt.trim() ||
+                !nextRun
               }
               onClick={() => void saveSchedule()}
             >

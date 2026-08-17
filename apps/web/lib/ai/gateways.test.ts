@@ -10,6 +10,7 @@ import {
   isRunPodServerlessBaseUrl,
   normalizeGatewayModelMetadata,
   normalizeOpenAICompatibleBaseUrl,
+  parseDesktopLocalRuntimeModelId,
   selectGatewayModelSelection,
   selectPreferredGatewayModelId,
 } from "./gateway-utils";
@@ -75,6 +76,20 @@ test("external Kestrel chat runtime excludes unsupported gateway providers", () 
   assert.equal(isKestrelRuntimeLanguageProvider("runpod"), true);
   assert.equal(isKestrelRuntimeLanguageProvider("lumi"), true);
   assert.equal(isKestrelRuntimeLanguageProvider("replicate"), false);
+});
+
+test("Desktop-local model IDs preserve the exact advertised provider and model", () => {
+  assert.deepEqual(
+    parseDesktopLocalRuntimeModelId(
+      "desktop-local:ollama:qwen%2Fqwen3%3A32b",
+    ),
+    { provider: "ollama", model: "qwen/qwen3:32b" },
+  );
+  assert.equal(parseDesktopLocalRuntimeModelId("openrouter/gpt-5.4"), null);
+  assert.throws(
+    () => parseDesktopLocalRuntimeModelId("desktop-local:unknown:model"),
+    /Desktop-local model ID is invalid/u,
+  );
 });
 
 test("Environment defaults override but do not erase the platform default", () => {

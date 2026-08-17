@@ -18,6 +18,7 @@ const updateSchema = z
     cronExpression: z.string().trim().min(1).optional(),
     timeZone: z.string().trim().min(1).max(200).optional(),
     prompt: z.string().trim().min(1).optional(),
+    modelId: z.string().trim().min(1).max(200).optional(),
     enabled: z.boolean().optional(),
   })
   .strict()
