@@ -263,6 +263,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     ticketPublicKey: string;
     controlPlaneUrl: string;
     serviceToken?: string | undefined;
+    initExec?: string[] | undefined;
   }): Promise<EnvironmentProviderGateway> {
     const ticketPublicKey = canonicalEnvironmentTicketPublicKey(
       input.ticketPublicKey,
@@ -1346,10 +1347,12 @@ function environmentGatewayMachineConfig(input: {
   ticketPublicKey: string;
   controlPlaneUrl: string;
   serviceToken: string;
+  initExec?: string[] | undefined;
 }) {
   return {
     image: input.runtimeImage,
     auto_destroy: false,
+    ...(input.initExec ? { init: { exec: input.initExec } } : {}),
     env: {
       KESTREL_ENVIRONMENT_APP_NAME: input.appName,
       KESTREL_ENVIRONMENT_ID: input.environmentId,

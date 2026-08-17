@@ -798,6 +798,7 @@ test("Environment gateway owns public ingress while Workspace Machines remain pr
     runtimeImage: "registry.fly.io/router@sha256:abc",
     ticketPublicKey: environmentTicketPublicKey.trim(),
     controlPlaneUrl: "https://kestrel.example",
+    initExec: ["node", "--eval", "fixture"],
   });
   assert.equal(gateway.routerUrl, "https://kestrel-env-abc.fly.dev");
   assert.equal(gateway.sharedIp, "203.0.113.1");
@@ -815,6 +816,11 @@ test("Environment gateway owns public ingress while Workspace Machines remain pr
   assert.equal(machineBody.config.image, "registry.fly.io/router@sha256:abc");
   assert.equal(machineBody.config.services[0].internal_port, 8080);
   assert.equal(machineBody.config.services[0].min_machines_running, 1);
+  assert.deepEqual(machineBody.config.init.exec, [
+    "node",
+    "--eval",
+    "fixture",
+  ]);
   assert.equal(
     machineBody.config.env.KESTREL_ENVIRONMENT_APP_NAME,
     "kestrel-env-abc",

@@ -94,13 +94,14 @@ function canaryIdentity() {
 async function provisionCanaryEnvironment(identity: CanaryIdentity) {
   const app = await provider.ensureEnvironmentApp(identity);
   createdApps.push(identity.appName);
+  const gatewayFixture = canaryGatewayFixture(identity);
   const gateway = await provider.ensureEnvironmentGateway({
     appName: identity.appName,
     environmentId: identity.environmentId,
     region,
     runtimeImage: routerImage,
     ticketPublicKey: publicKey,
-    controlPlaneUrl: "https://canary.invalid",
+    ...gatewayFixture,
   });
   if (gateway.state !== "started") {
     await provider.waitForMachine({
@@ -158,7 +159,7 @@ async function provisionCanaryEnvironment(identity: CanaryIdentity) {
       region,
       runtimeImage: routerImage,
       ticketPublicKey: publicKey,
-      controlPlaneUrl: "https://canary.invalid",
+      ...gatewayFixture,
     }),
     provider.ensureWorkspaceVolume({
       appName: identity.appName,
@@ -177,6 +178,42 @@ async function provisionCanaryEnvironment(identity: CanaryIdentity) {
   }
   await waitForHealth(gateway.routerUrl);
   return { ...identity, app, gateway, volume, machine, machineInput };
+}
+
+function canaryGatewayFixture(identity: CanaryIdentity) {
+  const serviceToken = `canary-gateway-${identity.environmentId}`;
+  const config = {
+    version: 3,
+    environmentId: identity.environmentId,
+    revision: "canary-v3",
+    workspaces: [],
+    previews: [],
+    modelGrants: [],
+    appGrants: [],
+  };
+  const source = `
+import { createServer } from "node:http";
+const expectedAuthorization = ${JSON.stringify(`Bearer ${serviceToken}`)};
+const config = ${JSON.stringify(config)};
+const fixture = createServer((request, response) => {
+  if (request.headers.authorization !== expectedAuthorization) {
+    response.writeHead(401).end();
+    return;
+  }
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(JSON.stringify(config));
+});
+await new Promise((resolve, reject) => {
+  fixture.once("error", reject);
+  fixture.listen(18081, "127.0.0.1", resolve);
+});
+await import("file:///app/apps/environment-router/dist/server.js");
+`;
+  return {
+    controlPlaneUrl: "http://127.0.0.1:18081",
+    serviceToken,
+    initExec: ["node", "--input-type=module", "--eval", source],
+  };
 }
 
 async function assertGatewayBoundary(environment: CanaryEnvironment) {
