@@ -117,6 +117,13 @@ test("scheduled prompt materialization stays on its locked database transaction"
     /requestedModelId: current\.run\.modelIdSnapshot/u,
     "scheduled turns must carry the model captured for their occurrence",
   );
+  assert.match(runtimeSource, /requestedInteractionMode: "build"/u);
+  assert.match(runtimeSource, /idempotencyKey: `schedule-run:\$\{current\.run\.id\}`/u);
+  assert.match(runtimeSource, /title: current\.run\.titleSnapshot/u);
+  assert.match(
+    runtimeSource,
+    /current\.run\.trigger === "scheduled" && !current\.schedule\.enabled/u,
+  );
   assert.doesNotMatch(runtimeSource, /creatorCanExecuteProjectPromptSchedule/u);
   assert.doesNotMatch(runtimeSource, /resolveProjectRuntimeContext/u);
   assert.doesNotMatch(runtimeSource, /getOrganizationEnvironment/u);
