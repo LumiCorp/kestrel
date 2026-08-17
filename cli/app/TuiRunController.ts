@@ -348,12 +348,10 @@ export class TuiRunController {
       });
 
       if (output.continuation?.outcome === "granted") {
-        const extraStepsGranted = output.continuation.extraStepsGranted;
-        const grantMessage =
-          typeof extraStepsGranted === "number"
-            ? `Granted ${extraStepsGranted} more steps. Resuming run.`
-            : "Granted more steps. Resuming run.";
-        await this.context.appendHistoryLine("system", grantMessage);
+        await this.context.appendHistoryLine(
+          "system",
+          "Continuation approved. Resuming from the checkpoint.",
+        );
       }
 
       if (output.status === "WAITING") {

@@ -11,6 +11,7 @@ import {
 const paramsSchema = z.object({ id: routeIdSchema });
 const createSchema = z
   .object({
+    title: z.string().trim().min(1).max(120),
     cronExpression: z.string().trim().min(1),
     timeZone: z.string().trim().min(1).max(200),
     prompt: z.string().trim().min(1),

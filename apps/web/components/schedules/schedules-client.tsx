@@ -2,6 +2,7 @@
 
 import {
   CalendarClock,
+  FlaskConical,
   MoreHorizontal,
   Pause,
   Pencil,
@@ -58,6 +59,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { TimeText } from "@/components/ui/time-text";
 import { nextProjectPromptScheduleOccurrence } from "@/lib/schedules/cron";
+import {
+  type ScheduleOperationalStatus,
+  scheduleOperationalStatus,
+} from "./schedule-status";
 
 export type ScheduleProjectOption = {
   id: string;
@@ -78,6 +83,7 @@ export type ScheduleSummary = {
   organizationId: string;
   project: { id: string; name: string };
   creator: { id: string; name: string } | null;
+  title: string;
   cronExpression: string;
   timeZone: string;
   prompt: string;
@@ -89,14 +95,17 @@ export type ScheduleSummary = {
   updatedAt: string;
   permissions: {
     canEdit: boolean;
+    canTest: boolean;
     canEnable: boolean;
     canPause: boolean;
     canDelete: boolean;
   };
+  activeStatus: "waiting_for_input" | "running" | null;
   latestRun: {
     id: string;
     scheduledFor: string;
     catchUpFrom: string | null;
+    trigger: "scheduled" | "test";
     status: "queued" | "materialized" | "failed" | "cancelled";
     threadId: string | null;
     threadTitle: string | null;
@@ -114,6 +123,7 @@ export type ScheduleSummary = {
 
 type ScheduleDraft = {
   projectId: string;
+  title: string;
   cronExpression: string;
   timeZone: string;
   prompt: string;
@@ -127,6 +137,7 @@ function browserTimeZone() {
 function emptyDraft(projectId = ""): ScheduleDraft {
   return {
     projectId,
+    title: "",
     cronExpression: "0 9 * * 1-5",
     timeZone: browserTimeZone(),
     prompt: "",
@@ -140,6 +151,13 @@ function runLabel(schedule: ScheduleSummary) {
   if (run.turnStatus === "waiting_for_input") return "Waiting for input";
   if (run.turnStatus) return run.turnStatus.replaceAll("_", " ");
   return run.status;
+}
+
+function statusVariant(status: ScheduleOperationalStatus) {
+  if (status === "Failed") return "destructive" as const;
+  if (status === "Paused") return "outline" as const;
+  if (status === "Scheduled") return "secondary" as const;
+  return "default" as const;
 }
 
 export function SchedulesClient({
@@ -257,6 +275,7 @@ export function SchedulesClient({
     setEditing(schedule);
     setDraft({
       projectId: schedule.project.id,
+      title: schedule.title,
       cronExpression: schedule.cronExpression,
       timeZone: schedule.timeZone,
       prompt: schedule.prompt,
@@ -266,7 +285,7 @@ export function SchedulesClient({
   }
 
   async function saveSchedule() {
-    if (!(draft.projectId && draft.prompt.trim() && draft.modelId && nextRun)) {
+    if (!(draft.projectId && draft.title.trim() && draft.prompt.trim() && draft.modelId && nextRun)) {
       return;
     }
     setBusy(true);
@@ -278,6 +297,7 @@ export function SchedulesClient({
         method: editing ? "PATCH" : "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          title: draft.title,
           cronExpression: draft.cronExpression,
           timeZone: draft.timeZone,
           prompt: draft.prompt,
@@ -296,6 +316,37 @@ export function SchedulesClient({
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Schedule could not be saved.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testSchedule(schedule: ScheduleSummary) {
+    setBusy(true);
+    try {
+      const response = await fetch(
+        `/api/projects/${schedule.project.id}/schedules/${schedule.id}/test`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ requestId: crypto.randomUUID() }),
+        },
+      );
+      const result = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        threadId?: string;
+      };
+      if (!(response.ok && result.threadId)) {
+        throw new Error(result.error ?? "The schedule test could not start.");
+      }
+      toast.success("Test started.");
+      router.push(`/threads/${result.threadId}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "The schedule test could not start.",
       );
     } finally {
       setBusy(false);
@@ -406,6 +457,7 @@ export function SchedulesClient({
                   <ResourceRow
                     actions={
                       schedule.permissions.canEdit ||
+                      schedule.permissions.canTest ||
                       schedule.permissions.canPause ||
                       schedule.permissions.canEnable ||
                       schedule.permissions.canDelete ? (
@@ -424,6 +476,13 @@ export function SchedulesClient({
                             {schedule.permissions.canEdit ? (
                               <DropdownMenuItem onSelect={() => openEdit(schedule)}>
                                 <Pencil className="size-4" /> Edit
+                              </DropdownMenuItem>
+                            ) : null}
+                            {schedule.permissions.canTest ? (
+                              <DropdownMenuItem
+                                onSelect={() => void testSchedule(schedule)}
+                              >
+                                <FlaskConical className="size-4" /> Test run
                               </DropdownMenuItem>
                             ) : null}
                             {schedule.enabled && schedule.permissions.canPause ? (
@@ -483,15 +542,23 @@ export function SchedulesClient({
                           <>
                             <span aria-hidden="true">·</span>
                             {schedule.latestRun.threadId ? (
-                              <Link
-                                className="underline underline-offset-2"
-                                href={`/threads/${schedule.latestRun.threadId}`}
-                              >
-                                {schedule.latestRun.threadTitle || "Latest Thread"}
-                              </Link>
+                              <span>
+                                {schedule.latestRun.trigger === "test"
+                                  ? "Latest test: "
+                                  : "Latest: "}
+                                <Link
+                                  className="underline underline-offset-2"
+                                  href={`/threads/${schedule.latestRun.threadId}`}
+                                >
+                                  {schedule.latestRun.threadTitle || "Thread"}
+                                </Link>
+                              </span>
                             ) : (
                               <span>
-                                Last: {runLabel(schedule)}
+                                {schedule.latestRun.trigger === "test"
+                                  ? "Latest test"
+                                  : "Latest"}
+                                : {runLabel(schedule)}
                               </span>
                             )}
                             {schedule.latestRun.failure?.message ? (
@@ -504,14 +571,14 @@ export function SchedulesClient({
                       </span>
                     }
                     status={
-                      <Badge variant={schedule.enabled ? "secondary" : "outline"}>
-                        {schedule.enabled ? "Enabled" : "Paused"}
+                      <Badge variant={statusVariant(scheduleOperationalStatus(schedule))}>
+                        {scheduleOperationalStatus(schedule)}
                       </Badge>
                     }
                     title={
                       <span className="flex items-center gap-2">
                         <CalendarClock className="size-4 text-muted-foreground" />
-                        {schedule.latestRun ? runLabel(schedule) : "Scheduled prompt"}
+                        {schedule.title}
                       </span>
                     }
                   />
@@ -551,6 +618,22 @@ export function SchedulesClient({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="schedule-title">Title</Label>
+              <Input
+                id="schedule-title"
+                maxLength={120}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    title: event.target.value,
+                  }))
+                }
+                placeholder="Weekly customer health report"
+                required
+                value={draft.title}
+              />
             </div>
             <div className="grid gap-4 sm:grid-cols-[1fr_1.25fr]">
               <div className="space-y-2">
@@ -654,6 +737,7 @@ export function SchedulesClient({
                 modelsLoading ||
                 Boolean(modelsError) ||
                 !draft.projectId ||
+                !draft.title.trim() ||
                 !draft.modelId ||
                 !draft.prompt.trim() ||
                 !nextRun
