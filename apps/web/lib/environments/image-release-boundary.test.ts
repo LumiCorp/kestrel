@@ -9,7 +9,6 @@ test("hosted Environment images carry the production build identity", async () =
     previewEdgeDockerfile,
     workspaceFlyConfig,
     routerFlyConfig,
-    previewEdgeFlyConfig,
     previewEdgeServiceConfig,
     rollout,
     previewEdgeRollout,
@@ -37,11 +36,7 @@ test("hosted Environment images carry the production build identity", async () =
       "utf8",
     ),
     readFile(
-      new URL("../../../preview-edge/fly.build.toml", import.meta.url),
-      "utf8",
-    ),
-    readFile(
-      new URL("../../../preview-edge/fly.toml.example", import.meta.url),
+      new URL("../../../../fly.preview-edge.toml", import.meta.url),
       "utf8",
     ),
     readFile(
@@ -92,11 +87,7 @@ test("hosted Environment images carry the production build identity", async () =
     workspaceDockerfile,
     /COPY packages\/mcp-security packages\/mcp-security/u,
   );
-  for (const flyConfig of [
-    workspaceFlyConfig,
-    routerFlyConfig,
-    previewEdgeFlyConfig,
-  ]) {
+  for (const flyConfig of [workspaceFlyConfig, routerFlyConfig]) {
     assert.match(flyConfig, /dockerfile = "Dockerfile"/u);
   }
   assert.match(rollout, /--role workspace-runtime --tag <tag>/u);
@@ -104,6 +95,13 @@ test("hosted Environment images carry the production build identity", async () =
   assert.match(rollout, /runtime:update/u);
   assert.match(previewEdgeRollout, /--role preview-edge --tag <tag>/u);
   assert.match(previewEdgeRollout, /production:fly:machine/u);
+  assert.match(
+    previewEdgeServiceConfig,
+    /dockerfile = "apps\/preview-edge\/Dockerfile"/u,
+  );
+  assert.match(previewEdgeServiceConfig, /\[http_service\]/u);
+  assert.match(previewEdgeServiceConfig, /internal_port = 8080/u);
+  assert.match(previewEdgeServiceConfig, /force_https = true/u);
   assert.match(previewEdgeServiceConfig, /HEALTH_PORT = "8081"/u);
   assert.match(previewEdgeServiceConfig, /\[checks\.preview_edge\]/u);
   assert.match(previewEdgeServiceConfig, /port = 8081/u);
