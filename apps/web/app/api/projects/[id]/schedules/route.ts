@@ -14,6 +14,7 @@ const createSchema = z
     cronExpression: z.string().trim().min(1),
     timeZone: z.string().trim().min(1).max(200),
     prompt: z.string().trim().min(1),
+    modelId: z.string().trim().min(1).max(200),
   })
   .strict();
 

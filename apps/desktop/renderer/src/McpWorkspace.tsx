@@ -12,20 +12,30 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   DesktopMcpDiscoveryResult,
   DesktopMcpServerConfig,
   DesktopMcpServerMutationInput,
+  DesktopRendererSettings,
+  DesktopRendererSettingsUpdate,
+  DesktopCapabilityView,
+  DesktopCapabilityId,
 } from "../../src/contracts";
 import {
   getDesktopAppDefinition,
   getDesktopStandardAppConnection,
 } from "../../../../src/desktopShell/configuration";
 import { keepFocusInsideDialog } from "./dialogFocus";
+import { getDesktopWorkflowDependencies } from "./workflowAvailability";
+import type { DesktopAppsNavigationRequest } from "./appsNavigation";
+import { ToolServicesSettings } from "./ToolServicesSettings";
 
-const DESKTOP_STANDARD_APPS = KESTREL_STANDARD_APP_MANIFESTS;
+const APP_CATEGORY_ORDER = ["built_in", "productivity", "engineering", "communication", "workflow"] as const;
+const DESKTOP_STANDARD_APPS = [...KESTREL_STANDARD_APP_MANIFESTS].sort(
+  (left, right) => APP_CATEGORY_ORDER.indexOf(left.category) - APP_CATEGORY_ORDER.indexOf(right.category),
+);
 
 type McpTransport = DesktopMcpServerMutationInput["transport"];
 type McpCredentialInput = NonNullable<
@@ -54,10 +64,26 @@ interface McpServerDraft {
 
 interface McpWorkspaceProps {
   onError: (message: string | undefined) => void;
+  settings: DesktopRendererSettings;
+  currentWorkflowIds: readonly string[];
+  navigationRequest: DesktopAppsNavigationRequest;
+  onSettings: (update: DesktopRendererSettingsUpdate) => Promise<DesktopRendererSettings>;
+  onWorkflowChange: (ids: string[]) => void;
+  onDiscoveryChange?: (result: DesktopMcpDiscoveryResult) => void;
 }
 
-export function McpWorkspace({ onError }: McpWorkspaceProps) {
+export function McpWorkspace({
+  onError,
+  settings,
+  currentWorkflowIds,
+  navigationRequest,
+  onSettings,
+  onWorkflowChange,
+  onDiscoveryChange,
+}: McpWorkspaceProps) {
   const [result, setResult] = useState<DesktopMcpDiscoveryResult>();
+  const [capabilityView, setCapabilityView] = useState<DesktopCapabilityView>();
+  const [toolCapabilityId, setToolCapabilityId] = useState<DesktopCapabilityId>();
   const [selectedId, setSelectedId] = useState<string>(
     `app:${DESKTOP_STANDARD_APPS[0]?.id ?? ""}`,
   );
@@ -95,6 +121,20 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
   }, []);
 
   useEffect(() => {
+    const target = navigationRequest.target;
+    if (target === undefined) return;
+    if (target.kind === "workflow") setSelectedId(`app:${target.workflowId}`);
+    else if (target.kind === "app") setSelectedId(`app:${target.appId}`);
+    else if (target.capabilityId === "tools.internet.tavily") {
+      setSelectedId("app:tavily"); setToolCapabilityId(target.capabilityId);
+    } else if (target.capabilityId === "tools.weather") {
+      setSelectedId("app:weather"); setToolCapabilityId(target.capabilityId);
+    } else if (target.capabilityId === "tools.network.free") {
+      setSelectedId("app:time"); setToolCapabilityId(target.capabilityId);
+    } else setToolCapabilityId(undefined);
+  }, [navigationRequest.requestId]);
+
+  useEffect(() => {
     loadingRef.current = loading;
   }, [loading]);
 
@@ -118,8 +158,13 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
   async function refresh(): Promise<void> {
     setLoading(true);
     try {
-      const discovered = await window.kestrelDesktop.discoverMcpServers();
+      const [discovered, capabilities] = await Promise.all([
+        window.kestrelDesktop.discoverMcpServers(),
+        window.kestrelDesktop.getCapabilities(),
+      ]);
       setResult(discovered);
+      setCapabilityView(capabilities);
+      onDiscoveryChange?.(discovered);
       setSelectedId((current) =>
         DESKTOP_STANDARD_APPS.some((app) => `app:${app.id}` === current) ||
         discovered.servers.some((server) => `server:${server.id}` === current)
@@ -143,6 +188,7 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
     try {
       const next = await window.kestrelDesktop.saveMcpServer(input);
       setResult(next);
+      onDiscoveryChange?.(next);
       setSelectedId(
         input.appId !== undefined ? `app:${input.appId}` : `server:${input.id}`,
       );
@@ -167,7 +213,9 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
   async function removeServer(server: DesktopMcpServerConfig): Promise<void> {
     setLoading(true);
     try {
-      setResult(await window.kestrelDesktop.deleteMcpServer(server.id));
+      const next = await window.kestrelDesktop.deleteMcpServer(server.id);
+      setResult(next);
+      onDiscoveryChange?.(next);
       setSelectedId(
         server.appId !== undefined
           ? `app:${server.appId}`
@@ -367,7 +415,7 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
             </span>
           </div>
           <div className="mcp-list">
-            {DESKTOP_STANDARD_APPS.map((app) => {
+            {DESKTOP_STANDARD_APPS.map((app, index) => {
               const connection = result?.servers.find(
                 (server) => server.appId === app.id,
               );
@@ -378,13 +426,24 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
               const workflowReady = workflowDependencies.every(
                 (dependency) => dependency.ready,
               );
+              const previous = DESKTOP_STANDARD_APPS[index - 1];
               return (
+                <Fragment key={app.id}>
+                {appListGroup(previous) !== appListGroup(app) ? (
+                  <div className="mcp-list-group-heading">
+                    {app.category === "built_in"
+                      ? "Included capabilities"
+                      : app.category === "workflow"
+                        ? "Workflows"
+                        : "Connected Apps"}
+                  </div>
+                ) : null}
                 <button
                   type="button"
                   className={`mcp-row ${selectedId === `app:${app.id}` ? "active" : ""}`}
-                  key={app.id}
                   onClick={() => {
                     setSelectedId(`app:${app.id}`);
+                    setToolCapabilityId(app.id === "tavily" ? "tools.internet.tavily" : undefined);
                     setConfirmingRemove(false);
                   }}
                 >
@@ -419,6 +478,7 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
                             : "Disabled"}
                   </span>
                 </button>
+                </Fragment>
               );
             })}
             {result?.servers
@@ -430,6 +490,7 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
                   key={server.id}
                   onClick={() => {
                     setSelectedId(`server:${server.id}`);
+                    setToolCapabilityId(undefined);
                     setConfirmingRemove(false);
                   }}
                 >
@@ -468,9 +529,21 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
               </span>
             ) : null}
           </div>
-          {selectedStandardApp !== undefined ? (
+          {toolCapabilityId !== undefined && capabilityView !== undefined ? (
+            <ToolServicesSettings
+              capabilities={capabilityView.capabilities.filter((capability) => capability.category === "tools_services")}
+              credentialStoreAvailable={capabilityView.credentialStore.available}
+              navigationRequest={{ capabilityId: toolCapabilityId, requestId: navigationRequest.requestId }}
+              onCapabilitiesChange={setCapabilityView}
+              onNotice={setNotice}
+              onOpenMcp={beginAdd}
+              onError={onError}
+            />
+          ) : selectedStandardApp !== undefined ? (
             <StandardAppDetail
               app={selectedStandardApp}
+              builtInEnabled={settings.defaultEnabledBuiltInAppIds.includes(selectedStandardApp.id)}
+              workflowSelected={currentWorkflowIds.includes(selectedStandardApp.id)}
               server={selected}
               loading={loading}
               confirmingRemove={confirmingRemove}
@@ -480,6 +553,22 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
                   `${selectedStandardApp.name} was verified and connected.`,
                 )
               }
+              onBuiltInToggle={(enabled) =>
+                void onSettings({
+                  defaultEnabledBuiltInAppIds: enabled
+                    ? [...new Set([...settings.defaultEnabledBuiltInAppIds, selectedStandardApp.id])]
+                    : settings.defaultEnabledBuiltInAppIds.filter((id) => id !== selectedStandardApp.id),
+                })
+              }
+              onWorkflowToggle={(enabled) =>
+                onWorkflowChange(enabled
+                  ? [...new Set([...currentWorkflowIds, selectedStandardApp.id])]
+                  : currentWorkflowIds.filter((id) => id !== selectedStandardApp.id))
+              }
+              onSelectApp={(appId) => {
+                setSelectedId(`app:${appId}`);
+                setToolCapabilityId(appId === "tavily" ? "tools.internet.tavily" : undefined);
+              }}
               servers={result?.servers ?? []}
               onConfirmRemove={() => setConfirmingRemove(true)}
               onCancelRemove={() => setConfirmingRemove(false)}
@@ -842,13 +931,25 @@ export function McpWorkspace({ onError }: McpWorkspaceProps) {
   );
 }
 
+function appListGroup(app: KestrelAppManifest | undefined): "included" | "connected" | "workflows" | undefined {
+  if (app === undefined) return undefined;
+  if (app.category === "built_in") return "included";
+  if (app.category === "workflow") return "workflows";
+  return "connected";
+}
+
 interface StandardAppDetailProps {
   app: KestrelAppManifest;
   server: DesktopMcpServerConfig | undefined;
   servers: readonly DesktopMcpServerConfig[];
   loading: boolean;
   confirmingRemove: boolean;
+  builtInEnabled: boolean;
+  workflowSelected: boolean;
   onConnect: (input: DesktopMcpServerMutationInput) => void;
+  onBuiltInToggle: (enabled: boolean) => void;
+  onWorkflowToggle: (enabled: boolean) => void;
+  onSelectApp: (appId: string) => void;
   onSave: (enabled: boolean) => void;
   onPolicyChange: (
     toolName: string,
@@ -866,7 +967,12 @@ function StandardAppDetail({
   servers,
   loading,
   confirmingRemove,
+  builtInEnabled,
+  workflowSelected,
   onConnect,
+  onBuiltInToggle,
+  onWorkflowToggle,
+  onSelectApp,
   onSave,
   onPolicyChange,
   onConfirmRemove,
@@ -969,6 +1075,11 @@ function StandardAppDetail({
                     : `Connect and select ${dependency.alternativeNames.join(" or ")}`}
                 </small>
               </span>
+              {dependency.ready ? null : dependency.alternativeIds.map((appId, index) => (
+                <button className="text-button" key={appId} type="button" onClick={() => onSelectApp(appId)}>
+                  Set up {dependency.alternativeNames[index]}
+                </button>
+              ))}
             </div>
           ))}
         </div>
@@ -977,6 +1088,12 @@ function StandardAppDetail({
             ? "Select this Workflow App and its required Apps in a conversation to coordinate the workflow."
             : "Connect the missing Apps before using this workflow in a conversation."}
         </p>
+        {ready ? (
+          <label className="settings-check">
+            <input type="checkbox" checked={workflowSelected} onChange={(event) => onWorkflowToggle(event.target.checked)} />
+            Selected for the current conversation
+          </label>
+        ) : null}
       </div>
     );
   }
@@ -1001,6 +1118,12 @@ function StandardAppDetail({
             <dd>No connection required</dd>
           </div>
         </dl>
+        {included ? (
+          <label className="settings-check">
+            <input type="checkbox" checked={builtInEnabled} onChange={(event) => onBuiltInToggle(event.target.checked)} />
+            Available by default in every conversation
+          </label>
+        ) : null}
         <div className="mcp-tool-heading">
           <div>
             <Wrench size={15} aria-hidden="true" />
@@ -1493,57 +1616,4 @@ function errorMessage(value: unknown): string {
 
 async function waitForAppConnectionPoll(): Promise<void> {
   await new Promise<void>((resolve) => window.setTimeout(resolve, 1_000));
-}
-
-function getDesktopWorkflowDependencies(
-  app: KestrelAppManifest,
-  servers: readonly DesktopMcpServerConfig[],
-) {
-  const capabilityPacksByAppId = new Map<string, Set<string>>();
-  for (const server of servers) {
-    if (
-      server.enabled &&
-      server.appId !== undefined &&
-      (server.toolCount ?? 0) > 0
-    ) {
-      const manifest = KESTREL_STANDARD_APP_MANIFESTS.find(
-        (candidate) => candidate.id === server.appId,
-      );
-      capabilityPacksByAppId.set(
-        server.appId,
-        new Set(
-          server.capabilityPacks ??
-            manifest?.capabilityPacks.map((pack) => pack.key) ??
-            [],
-        ),
-      );
-    }
-  }
-  return (app.dependencies ?? []).map((dependency) => {
-    const readyIds = dependency.appIds.filter((appId) => {
-      const configuredPacks = capabilityPacksByAppId.get(appId);
-      if (configuredPacks === undefined) return false;
-      const requiredPacks = dependency.requiredCapabilityPacks?.[appId];
-      return (
-        !requiredPacks?.length ||
-        requiredPacks.some((pack) => configuredPacks.has(pack))
-      );
-    });
-    return {
-      role: dependency.role,
-      ready: readyIds.length >= dependency.minimum,
-      readyNames: readyIds.map(
-        (appId) =>
-          KESTREL_STANDARD_APP_MANIFESTS.find(
-            (manifest) => manifest.id === appId,
-          )?.name ?? appId,
-      ),
-      alternativeNames: dependency.appIds.map(
-        (appId) =>
-          KESTREL_STANDARD_APP_MANIFESTS.find(
-            (manifest) => manifest.id === appId,
-          )?.name ?? appId,
-      ),
-    };
-  });
 }

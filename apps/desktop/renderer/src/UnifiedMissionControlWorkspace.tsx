@@ -7,7 +7,7 @@ import {
   MessageSquare,
   RefreshCw,
 } from "lucide-react";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   DesktopMissionControlActionIntent,
@@ -72,6 +72,11 @@ export function UnifiedMissionControlWorkspace({
   const [view, setView] = useState<MissionControlView>("list");
   const [showDiscarded, setShowDiscarded] = useState(false);
   const [selectedItemId, setSelectedItemId] = useState<string>();
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   useEffect(() => {
     setResponse(undefined);
@@ -90,13 +95,13 @@ export function UnifiedMissionControlWorkspace({
         if (disposed) return;
         setResponse(next);
         setCommandError(undefined);
-        onError(undefined);
+        onErrorRef.current(undefined);
       })
       .catch((error) => {
         if (disposed) return;
         const message = errorMessage(error);
         setCommandError(message);
-        onError(message);
+        onErrorRef.current(message);
       })
       .finally(() => {
         if (disposed) return;
@@ -106,7 +111,7 @@ export function UnifiedMissionControlWorkspace({
     return () => {
       disposed = true;
     };
-  }, [onError, project.id, reloadKey]);
+  }, [project.id, reloadKey]);
 
   const allItems = useMemo(
     () =>
@@ -141,11 +146,11 @@ export function UnifiedMissionControlWorkspace({
       );
       setResponse(next);
       setCommandError(undefined);
-      onError(undefined);
+      onErrorRef.current(undefined);
     } catch (error) {
       const message = errorMessage(error);
       setCommandError(message);
-      onError(message);
+      onErrorRef.current(message);
     } finally {
       setCommanding(false);
     }

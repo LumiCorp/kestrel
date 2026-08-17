@@ -8,6 +8,9 @@ import { ConversationExplorer } from "../renderer/src/ConversationExplorer.js";
 import { ContextSidebar } from "../renderer/src/ContextSidebar.js";
 import { keepFocusInsideDialog } from "../renderer/src/dialogFocus.js";
 import { createRendererThread } from "../renderer/src/state.js";
+import { KESTREL_STANDARD_APP_MANIFESTS } from "@kestrel-agents/protocol";
+import { ConversationWorkflowControl } from "../renderer/src/ConversationWorkflowControl.js";
+import type { DesktopMcpServerConfig } from "../src/contracts.js";
 
 function installDom(): { root: Root; container: HTMLDivElement } {
   const browser = new Window({ url: "http://localhost/" });
@@ -75,6 +78,43 @@ test("conversation explorer exposes its search field for Find Work focus", async
   await act(async () => root.unmount());
 });
 
+test("conversation explorer exposes empty projects and requires an explicit project for global creation", async () => {
+  const { root, container } = installDom();
+  const thread = { ...createRendererThread({ projectPath: "/project/a" }), id: "thread-1", title: "Running work" };
+  const created: Array<string | null> = [];
+  const selectedProjects: string[] = [];
+  await act(async () => root.render(<ConversationExplorer
+    threads={[thread]}
+    activeThreadId={thread.id}
+    projects={[{ path: "/project/a", label: "Alpha" }, { path: "/project/b", label: "Empty project" }]}
+    navigation={{ [thread.id]: { thread, status: "running", activity: "Running tests", updatedAt: thread.updatedAt } }}
+    selectedProjectPath="/project/a"
+    newConversationRequestId={0}
+    onSelect={() => {}}
+    onSelectProject={(projectPath) => selectedProjects.push(projectPath)}
+    onNewConversation={(projectPath) => created.push(projectPath)}
+    onAddProjectAndCreate={async () => {}}
+    onRename={() => {}}
+    onArchive={async () => ({ status: "archived" })}
+    onUndoArchive={() => {}}
+    onRestore={() => {}}
+  />));
+
+  assert.ok(container.querySelector('[title="/project/b"]'), "empty registered project must remain visible");
+  assert.ok(container.querySelector('[aria-label="Collapse Alpha"]'));
+  assert.ok(container.querySelector('[aria-label="New conversation in Alpha"]'));
+  await act(async () => container.querySelector<HTMLButtonElement>('[title="/project/b"]')?.click());
+  assert.deepEqual(selectedProjects, ["/project/b"]);
+
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="New conversation"]')?.click());
+  const picker = container.querySelector('[aria-label="Choose a project for the new conversation"]');
+  assert.ok(picker);
+  assert.equal(document.activeElement?.textContent, "Alpha");
+  await act(async () => button(picker as HTMLElement, "Empty project").click());
+  assert.deepEqual(created, ["/project/b"]);
+  await act(async () => root.unmount());
+});
+
 test("Find Work focus wraps within its dialog", () => {
   installDom();
   const drawer = document.createElement("aside");
@@ -93,6 +133,36 @@ test("Find Work focus wraps within its dialog", () => {
   keepFocusInsideDialog(backward, drawer);
   assert.equal(document.activeElement, last);
   assert.equal(backward.defaultPrevented, true);
+});
+
+test("composer workflow control keeps unavailable workflows visible and selects ready workflows", async () => {
+  const { root, container } = installDom();
+  const changes: string[][] = [];
+  const setup: string[] = [];
+  const workflow = KESTREL_STANDARD_APP_MANIFESTS.find((app) => app.id === "workflow.software_delivery")!;
+  const servers: DesktopMcpServerConfig[] = [...new Set(workflow.dependencies?.flatMap((dependency) => dependency.appIds) ?? [])]
+    .map((appId) => {
+      const manifest = KESTREL_STANDARD_APP_MANIFESTS.find((app) => app.id === appId)!;
+      const required = workflow.dependencies?.flatMap((dependency) => dependency.requiredCapabilityPacks?.[appId] ?? []) ?? [];
+      return {
+        id: `standard.${appId}`, appId, name: manifest.name, transport: "http", url: "https://example.test/mcp",
+        enabled: true, source: "desktop", sourceKind: "desktop-managed", toolCount: 1,
+        capabilityPacks: required.length > 0 ? required : manifest.capabilityPacks.map((pack) => pack.key),
+      };
+    });
+  await act(async () => root.render(<ConversationWorkflowControl selectedIds={[]} servers={[]} onChange={(ids) => changes.push(ids)} onSetup={(id) => setup.push(id)} />));
+  await act(async () => button(container, "Workflows").click());
+  const unavailable = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("Software delivery"))!;
+  assert.equal((unavailable.querySelector("input") as HTMLInputElement).disabled, true);
+  await act(async () => (unavailable.parentElement?.querySelector("button") as HTMLButtonElement).click());
+  assert.deepEqual(setup, ["workflow.software_delivery"]);
+  await act(async () => root.render(<ConversationWorkflowControl selectedIds={[]} servers={servers} onChange={(ids) => changes.push(ids)} onSetup={(id) => setup.push(id)} />));
+  const ready = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("Software delivery"))!;
+  const checkbox = ready.querySelector("input") as HTMLInputElement;
+  assert.equal(checkbox.disabled, false);
+  await act(async () => checkbox.click());
+  assert.deepEqual(changes.at(-1), ["workflow.software_delivery"]);
+  await act(async () => root.unmount());
 });
 
 test("conversation archive waits for authoritative preflight before offering Undo", async () => {

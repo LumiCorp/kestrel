@@ -22,6 +22,7 @@ import {
   resolveRendererThreadProjectPath,
   restoreRendererThread,
   serializeDesktopRendererState,
+  toDesktopExecutionSelection,
   updateRendererDraft,
   updateRendererDraftAttachments,
   toDesktopRunHistory,
@@ -37,6 +38,60 @@ test("new Desktop conversations default to the local checkout", () => {
 
 test("new Desktop conversations default to chat mode", () => {
   assert.equal(createRendererThread().mode, "chat");
+});
+
+test("new conversations select no workflows and legacy App state keeps workflows only", () => {
+  assert.deepEqual(createRendererThread().enabledWorkflowAppIds, []);
+  const initial = readDesktopRendererState(null);
+  const entries = serializeDesktopRendererState(initial);
+  const store = JSON.parse(entries["kchat:web:threads:v2"]!);
+  const id = initial.threads[0]!.id;
+  delete store.states[id].enabledWorkflowAppIds;
+  store.states[id].enabledAppIds = ["built_in.weather", "linear", "workflow.software_delivery"];
+  entries["kchat:web:threads:v2"] = JSON.stringify(store);
+  const migrated = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "legacy-local-storage",
+    sourceAppVersion: "0.8.0",
+    capturedAt: new Date().toISOString(),
+    entries,
+  });
+  assert.deepEqual(migrated.threads[0]!.enabledWorkflowAppIds, ["workflow.software_delivery"]);
+  assert.deepEqual(
+    toDesktopExecutionSelection(migrated.threads[0]!, [
+      { id: "built_in.weather", contractVersion: 1 },
+      { id: "workflow.software_delivery", contractVersion: 1 },
+    ]).apps,
+    [{ id: "workflow.software_delivery", contractVersion: 1 }],
+  );
+  const migratedWithV10GlobalWorkflow = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "legacy-local-storage",
+    sourceAppVersion: "0.8.0",
+    capturedAt: new Date().toISOString(),
+    entries,
+  }, { legacyDefaultWorkflowAppIds: ["workflow.incident_response"] });
+  assert.deepEqual(migratedWithV10GlobalWorkflow.threads[0]!.enabledWorkflowAppIds, [
+    "workflow.incident_response",
+    "workflow.software_delivery",
+  ]);
+});
+
+test("conversation workflow selections persist and new state wins over legacy Apps", () => {
+  const state = readDesktopRendererState(null);
+  state.threads[0]!.enabledWorkflowAppIds = ["workflow.customer_escalation", "workflow.meeting_follow_through"];
+  state.threads[0]!.rawState.enabledAppIds = ["workflow.software_delivery", "linear"];
+  const restored = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "local-core",
+    sourceAppVersion: "0.8.0",
+    capturedAt: new Date().toISOString(),
+    entries: serializeDesktopRendererState(state),
+  });
+  assert.deepEqual(restored.threads[0]!.enabledWorkflowAppIds, [
+    "workflow.customer_escalation",
+    "workflow.meeting_follow_through",
+  ]);
 });
 
 test("Desktop preserves explicit build mode but defaults missing persisted mode to chat", () => {
@@ -168,6 +223,16 @@ test("Desktop renders waiting and failed terminal results as visible system mess
   });
   assert.equal(failed.state.threads[0]?.transcript[1]?.role, "system");
   assert.equal(failed.state.threads[0]?.transcript[1]?.text, "Provider connection failed.");
+
+  const cancelled = projectDesktopTerminalMessage(failed.state, {
+    threadId: thread.id,
+    runId: "run-cancelled-result",
+    assistantText: null,
+    status: "CANCELLED",
+    timestamp: "2026-07-31T10:00:02.000Z",
+  });
+  assert.equal(cancelled.state.threads[0]?.transcript[2]?.role, "system");
+  assert.equal(cancelled.state.threads[0]?.transcript[2]?.text, "Run cancelled.");
 });
 
 test("Desktop exposes completed results that violate the assistantText contract", () => {
@@ -444,6 +509,7 @@ test("dialog messages persist inline and deduplicate by runtime message id", () 
     dialog: {
       messageId: "dialog-message-1",
       dialogId: "dialog-1",
+      parentRunId: "run-parent-1",
       name: "Peregrine",
       childSessionId: "dialog-child-1",
       sender: "collaborator" as const,
@@ -775,7 +841,7 @@ test("onboarding handoff opens one authoritative empty project conversation", ()
     replaceInitialThread: false,
     modelConfigurationId: "configured-model",
     modelConfigurationRevision: 4,
-    enabledAppIds: ["built_in.sandbox"],
+    enabledWorkflowAppIds: ["workflow.software_delivery"],
   });
 
   assert.equal(handedOff.threads.length, 2);
@@ -787,6 +853,7 @@ test("onboarding handoff opens one authoritative empty project conversation", ()
   assert.equal(active.modelConfigurationRevision, 4);
   assert.deepEqual(active.transcript, []);
   assert.equal(active.mode, "chat");
+  assert.deepEqual(active.enabledWorkflowAppIds, ["workflow.software_delivery"]);
   assert.equal(active.rawState.onboardingHandoffId, "handoff-1");
 
   const repeated = applyDesktopOnboardingHandoff(handedOff, {

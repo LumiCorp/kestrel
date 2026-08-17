@@ -12,6 +12,11 @@ import { parseUrlElicitation } from "@/lib/mcp/interaction-protocol";
 import type { ThreadInteractionView } from "@/lib/turns/client-contract";
 import { readEvaluationReview } from "./evaluation-review";
 import { readThreadStructuredReview } from "@/lib/turns/structured-review";
+import {
+  createModeSwitchRetryGuard,
+  resolveConversationModeSwitch,
+  type ConversationMode,
+} from "@kestrel-agents/conversation";
 
 export type RuntimeInteractionResponse = {
   requestId: string;
@@ -28,18 +33,23 @@ export function InteractionPanel({
   interactions,
   onRuntimeResponse,
   onResolved,
+  currentMode = "chat",
+  onModeSwitch,
   embedded = false,
 }: {
   threadId: string;
   interactions: ThreadInteractionView[];
   onRuntimeResponse: (response: RuntimeInteractionResponse) => Promise<void>;
   onResolved: () => Promise<void>;
+  currentMode?: ConversationMode;
+  onModeSwitch?: ((interaction: ThreadInteractionView, mode: ConversationMode) => Promise<void>) | undefined;
   embedded?: boolean;
 }) {
   const [content, setContent] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const firstControlRef = useRef<HTMLTextAreaElement | null>(null);
+  const modeSwitchRetryGuardRef = useRef(createModeSwitchRetryGuard());
 
   useEffect(() => {
     firstControlRef.current?.focus();
@@ -176,6 +186,7 @@ export function InteractionPanel({
 
   const visibleInteractions = interactions.filter(
     (interaction) =>
+      readModeSwitch(interaction, currentMode) !== undefined ||
       !(
         interaction.source === "runtime" &&
         interaction.kind === "user_input" &&
@@ -198,6 +209,7 @@ export function InteractionPanel({
         Agent requests that need your response
       </h2>
       {visibleInteractions.map((interaction, index) => {
+        const modeSwitch = readModeSwitch(interaction, currentMode);
         const structuredReview = readThreadStructuredReview(interaction);
         const evaluationReview = readEvaluationReview(interaction);
         const urlElicitation =
@@ -210,6 +222,8 @@ export function InteractionPanel({
               <CardTitle className="text-sm">
                 {structuredReview.kind === "invalid_review"
                   ? "This request cannot be answered safely"
+                  : modeSwitch !== undefined
+                  ? `Continue in ${modeSwitch.toMode === "build" ? "Build" : "Plan"}`
                   : evaluationReview !== null
                   ? "Result requires review"
                   : interaction.kind === "approval" ||
@@ -296,7 +310,26 @@ export function InteractionPanel({
                 />
               ) : null}
               <div className="flex justify-end gap-2">
-                {interaction.source === "runtime" ? (
+                {modeSwitch !== undefined && onModeSwitch !== undefined ? (
+                  <Button
+                    disabled={busy !== null}
+                    onClick={() => {
+                      setBusy(interaction.requestId);
+                      setError(null);
+                      void modeSwitchRetryGuardRef.current.run({
+                        recommendationId: modeSwitch.recommendationId,
+                        mode: modeSwitch.toMode,
+                        switchMode: () => undefined,
+                        retry: () => onModeSwitch(interaction, modeSwitch.toMode),
+                      }).then(onResolved).catch((caught) => {
+                        setError(caught instanceof Error ? caught.message : "The mode could not be changed.");
+                      }).finally(() => setBusy(null));
+                    }}
+                    size="sm"
+                  >
+                    Switch to {modeSwitch.toMode === "build" ? "Build" : "Plan"} and continue
+                  </Button>
+                ) : interaction.source === "runtime" ? (
                   structuredReview.kind === "structured_review" ? (
                     structuredReview.allowedOptionIds.map((optionId) => (
                       <Button
@@ -387,4 +420,20 @@ export function InteractionPanel({
       ) : null}
     </section>
   );
+}
+
+function readModeSwitch(
+  interaction: ThreadInteractionView,
+  currentMode: ConversationMode,
+) {
+  const metadata = interaction.requestEnvelope.metadata;
+  return resolveConversationModeSwitch({
+    recommendationId: interaction.requestId,
+    originatingMessageId: interaction.assistantMessageId ?? interaction.requestId,
+    fromMode: currentMode,
+    reason: interaction.prompt,
+    metadata: typeof metadata === "object" && metadata !== null && !Array.isArray(metadata)
+      ? metadata as Record<string, unknown>
+      : undefined,
+  });
 }

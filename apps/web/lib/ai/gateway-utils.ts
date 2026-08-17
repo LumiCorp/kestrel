@@ -16,6 +16,13 @@ export type GatewayProtocolModality =
 
 export type GatewayLanguageProtocol = "openai" | "anthropic";
 
+type DesktopLocalProvider =
+  | "openai"
+  | "openrouter"
+  | "anthropic"
+  | "ollama"
+  | "lmstudio";
+
 export const GATEWAY_PROVIDERS = [
   "anthropic",
   "lumi",
@@ -137,6 +144,29 @@ export function isKestrelRuntimeLanguageProvider(
   | "openrouter"
   | "runpod" {
   return KESTREL_RUNTIME_LANGUAGE_PROVIDERS.has(provider);
+}
+
+export function parseDesktopLocalRuntimeModelId(selection: string): {
+  provider: DesktopLocalProvider;
+  model: string;
+} | null {
+  if (!selection.startsWith("desktop-local:")) return null;
+  const match = selection.match(
+    /^desktop-local:(openai|openrouter|anthropic|ollama|lmstudio):(.+)$/u,
+  );
+  if (!(match?.[1] && match[2])) {
+    throw new Error("The selected Desktop-local model ID is invalid.");
+  }
+  let model: string;
+  try {
+    model = decodeURIComponent(match[2]);
+  } catch {
+    throw new Error("The selected Desktop-local model ID is invalid.");
+  }
+  if (!model || model.length > 200 || encodeURIComponent(model) !== match[2]) {
+    throw new Error("The selected Desktop-local model ID is invalid.");
+  }
+  return { provider: match[1] as DesktopLocalProvider, model };
 }
 
 export function selectPreferredGatewayModelId(

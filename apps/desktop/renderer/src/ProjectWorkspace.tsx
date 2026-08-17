@@ -10,7 +10,7 @@ import {
   Search,
   Square,
 } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import React, { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import type {
   DesktopDirectoryListing,
@@ -33,22 +33,26 @@ import type {
   DesktopWorkspaceValidationSnapshot,
   WorkspaceSkillInstallation,
 } from "../../src/contracts";
+import type { DesktopThreadNavigationState } from "./workNavigator";
 
 export function ProjectWorkspace(props: {
   project: DesktopProjectRegistration | undefined;
+  threads: readonly DesktopThreadNavigationState[];
   threadId?: string | undefined;
   workspace?: DesktopThreadWorkspaceContext | undefined;
   openFiles: string[];
   onChat: (project: DesktopProjectRegistration) => void;
-  onAttachFile: (
+  onSelectThread: (threadId: string) => void;
+  onAttachFile?: ((
     filePath: string,
     rootPath: string,
     threadId: string | undefined,
     intent: "attach" | "ask",
-  ) => void;
-  onOpenFile: (filePath: string) => void;
+  ) => void) | undefined;
+  onOpenFile?: ((filePath: string) => void) | undefined;
   onError: (message: string | undefined) => void;
 }) {
+  const [tab, setTab] = useState<"overview" | "files">("overview");
   const [listing, setListing] = useState<DesktopDirectoryListing>();
   const [launcher, setLauncher] = useState<DesktopProjectLauncherDescriptor>();
   const [runs, setRuns] = useState<DesktopManagedProjectRun[]>([]);
@@ -79,6 +83,8 @@ export function ProjectWorkspace(props: {
   const workspaceRoot = props.workspace?.workspaceRoot ?? props.project?.path;
   const workspaceThreadId = props.workspace === undefined ? undefined : props.threadId;
 
+  useEffect(() => setTab("overview"), [props.project?.path]);
+
   const projectRuns = useMemo(
     () => runs.filter((run) => run.projectPath === workspaceRoot),
     [runs, workspaceRoot]
@@ -99,7 +105,7 @@ export function ProjectWorkspace(props: {
     setManagedCleanup(undefined);
     setSkills([]);
     setEditingSkillId(undefined);
-    if (props.project === undefined || workspaceRoot === undefined) {
+    if (tab !== "files" || props.project === undefined || workspaceRoot === undefined) {
       return;
     }
 
@@ -150,10 +156,10 @@ export function ProjectWorkspace(props: {
       unsubscribeRuns();
       void window.kestrelDesktop.unwatchProjectFiles(workspaceRoot);
     };
-  }, [props.project?.path, workspaceRoot, workspaceThreadId]);
+  }, [tab, props.project?.path, workspaceRoot, workspaceThreadId]);
 
   useEffect(() => {
-    if (props.project === undefined || workspaceRoot === undefined) {
+    if (tab !== "files" || props.project === undefined || workspaceRoot === undefined) {
       return;
     }
     return window.kestrelDesktop.onProjectFilesChanged((event) => {
@@ -164,7 +170,7 @@ export function ProjectWorkspace(props: {
         props.onError(errorMessage(cause));
       });
     });
-  }, [listing?.directoryPath, props.project?.path, workspaceRoot]);
+  }, [tab, listing?.directoryPath, props.project?.path, workspaceRoot]);
 
   async function loadDirectory(directoryPath?: string): Promise<void> {
     if (props.project === undefined || workspaceRoot === undefined) {
@@ -219,7 +225,7 @@ export function ProjectWorkspace(props: {
       return;
     }
     try {
-      props.onOpenFile(filePath);
+      props.onOpenFile?.(filePath);
       await window.kestrelDesktop.openFileEditor({
         filePath,
         projectPath: workspaceRoot,
@@ -540,14 +546,52 @@ export function ProjectWorkspace(props: {
   const parentPath = listing === undefined
     ? undefined
     : parentDirectory(listing.rootPath, listing.directoryPath);
+  const threadSummary = {
+    total: props.threads.length,
+    running: props.threads.filter((entry) => entry.status === "running").length,
+    waiting: props.threads.filter((entry) => entry.status === "waiting").length,
+    failed: props.threads.filter((entry) => entry.status === "failed").length,
+  };
+
+  if (tab === "overview") {
+    return (
+      <main className="surface-pane project-surface" id="app-main">
+        <header className="surface-header project-surface-header">
+          <div><h1>{props.project.label}</h1><p>{renderedWorkspaceRoot}</p></div>
+          <ProjectWorkspaceTabs tab={tab} onChange={setTab} />
+          <button className="primary-button" type="button" onClick={() => props.onChat(props.project!)}>New conversation</button>
+        </header>
+        <section className="project-overview" aria-label={`${props.project.label} overview`}>
+          <div className="project-overview-stats" aria-label="Conversation status">
+            <ProjectStat label="Total" value={threadSummary.total} />
+            <ProjectStat label="Running" value={threadSummary.running} tone="running" />
+            <ProjectStat label="Waiting" value={threadSummary.waiting} tone="waiting" />
+            <ProjectStat label="Failed" value={threadSummary.failed} tone="failed" />
+          </div>
+          <div className="project-overview-heading"><div><h2>Conversations</h2><p>Work continues while you move between projects.</p></div><button type="button" onClick={() => props.onChat(props.project!)}>New conversation</button></div>
+          <div className="project-overview-threads">
+            {props.threads.map(({ thread, status, activity, updatedAt }) => (
+              <button key={thread.id} type="button" onClick={() => props.onSelectThread(thread.id)}>
+                <span className={`project-thread-status status-${status}`} aria-label={status} />
+                <span><strong>{thread.title}</strong><small>{activity}</small></span>
+                <time>{formatProjectThreadTime(updatedAt)}</time>
+              </button>
+            ))}
+            {props.threads.length === 0 ? <div className="project-overview-empty"><MessageSquare size={20} /><strong>No conversations yet</strong><span>Start the first conversation in this project.</span><button type="button" onClick={() => props.onChat(props.project!)}>New conversation</button></div> : null}
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="surface-pane project-surface" id="app-main">
-      <header className="surface-header">
+      <header className="surface-header project-surface-header">
         <div>
           <h1>{props.project.label}</h1>
           <p>{renderedWorkspaceRoot}</p>
         </div>
+        <ProjectWorkspaceTabs tab={tab} onChange={setTab} />
         <div className="surface-header-actions">
           <button
             className="icon-button"
@@ -670,13 +714,13 @@ export function ProjectWorkspace(props: {
                       ? <small>{formatBytes(entry.sizeBytes)}</small>
                       : null}
                   </button>
-                  {isDirectory === false ? (
+                  {isDirectory === false && props.onAttachFile !== undefined ? (
                     <div className="file-row-actions">
                       <button
                         type="button"
                         title={`Attach ${entry.name}`}
                         aria-label={`Attach ${entry.name}`}
-                        onClick={() => props.onAttachFile(entry.path, renderedWorkspaceRoot, workspaceThreadId, "attach")}
+                        onClick={() => props.onAttachFile?.(entry.path, renderedWorkspaceRoot, workspaceThreadId, "attach")}
                       >
                         <Paperclip size={13} />
                       </button>
@@ -684,7 +728,7 @@ export function ProjectWorkspace(props: {
                         type="button"
                         title={`Ask Kestrel about ${entry.name}`}
                         aria-label={`Ask Kestrel about ${entry.name}`}
-                        onClick={() => props.onAttachFile(entry.path, renderedWorkspaceRoot, workspaceThreadId, "ask")}
+                        onClick={() => props.onAttachFile?.(entry.path, renderedWorkspaceRoot, workspaceThreadId, "ask")}
                       >
                         <MessageSquare size={13} />
                       </button>
@@ -1140,6 +1184,31 @@ export function ProjectWorkspace(props: {
       </div>
     </main>
   );
+}
+
+function ProjectWorkspaceTabs(props: {
+  tab: "overview" | "files";
+  onChange: (tab: "overview" | "files") => void;
+}) {
+  return <div className="project-workspace-tabs" role="tablist" aria-label="Project view">
+    {(["overview", "files"] as const).map((tab) => <button
+      key={tab}
+      type="button"
+      role="tab"
+      aria-selected={props.tab === tab}
+      className={props.tab === tab ? "active" : ""}
+      onClick={() => props.onChange(tab)}
+    >{tab === "overview" ? "Overview" : "Files"}</button>)}
+  </div>;
+}
+
+function ProjectStat(props: { label: string; value: number; tone?: "running" | "waiting" | "failed" }) {
+  return <div className={`project-overview-stat ${props.tone === undefined ? "" : `status-${props.tone}`}`}><strong>{props.value}</strong><span>{props.label}</span></div>;
+}
+
+function formatProjectThreadTime(timestamp: string): string {
+  const date = new Date(timestamp);
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function isContentSearchResult(

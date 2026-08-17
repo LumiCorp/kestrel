@@ -62,6 +62,19 @@ test("workspace skills package exports only published build artifacts", async ()
   assert.equal(pkg.files?.includes("src"), false);
 });
 
+test("AI SDK builds its conversation dependency before compiling itself", async () => {
+  const pkg = JSON.parse(
+    await readFile(path.join(process.cwd(), "packages/ai-sdk/package.json"), "utf8"),
+  ) as { scripts?: Record<string, string> };
+  const build = pkg.scripts?.build ?? "";
+
+  assert.match(build, /--filter @kestrel-agents\/conversation build/u);
+  assert.ok(
+    build.indexOf("--filter @kestrel-agents/conversation build") < build.indexOf("build:self"),
+    "conversation must build before AI SDK compiles itself",
+  );
+});
+
 test("every cron runtime uses the DST-correct parser version", async () => {
   const manifests = await Promise.all(
     [

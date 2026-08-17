@@ -12,10 +12,11 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
   process.env.POSTGRES_URL = databaseUrl;
   process.env.DB_DRIZZLE_MAX_CONNECTIONS = "1";
 
-  const [{ resetDbRuntimeForTests }, schedules, projects] = await Promise.all([
+  const [{ resetDbRuntimeForTests }, schedules, projects, environments] = await Promise.all([
     import("@/lib/db/runtime"),
     import("./store"),
     import("@/lib/projects/store"),
+    import("@/lib/environments/store"),
   ]);
   const { materializeProjectPromptScheduleRun } = await import("./runtime");
   const sql = postgres(databaseUrl, { max: 6 });
@@ -23,8 +24,15 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
   const ids = {
     organization: `schedule-org-${suffix}`,
     environment: `schedule-environment-${suffix}`,
+    targetEnvironment: `schedule-target-environment-${suffix}`,
     project: `schedule-project-${suffix}`,
+    rebindProject: `schedule-rebind-project-${suffix}`,
     context: `schedule-context-${suffix}`,
+    rebindContext: `schedule-rebind-context-${suffix}`,
+    gateway: `schedule-gateway-${suffix}`,
+    scopedGateway: `schedule-scoped-gateway-${suffix}`,
+    model: `schedule-model-${suffix}`,
+    scopedModel: `schedule-scoped-model-${suffix}`,
     owner: `schedule-owner-${suffix}`,
     creator: `schedule-creator-${suffix}`,
     member: `schedule-member-${suffix}`,
@@ -75,19 +83,30 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       INSERT INTO "environments" (
         "id", "organization_id", "created_by_user_id", "name", "slug",
         "region", "status", "is_default", "fly_app_name", "router_url"
-      ) VALUES (
-        ${ids.environment}, ${ids.organization}, ${ids.owner},
-        'Schedule Environment', 'schedule', 'iad', 'ready', true,
-        ${`schedule-app-${suffix}`}, 'https://environment.example'
-      )
+      ) VALUES
+        (
+          ${ids.environment}, ${ids.organization}, ${ids.owner},
+          'Schedule Environment', 'schedule', 'iad', 'ready', true,
+          ${`schedule-app-${suffix}`}, 'https://environment.example'
+        ),
+        (
+          ${ids.targetEnvironment}, ${ids.organization}, ${ids.owner},
+          'Schedule Target Environment', 'schedule-target', 'iad', 'ready', false,
+          ${`schedule-target-app-${suffix}`}, 'https://target-environment.example'
+        )
     `;
     await transaction`
       INSERT INTO "projects" (
         "id", "organization_id", "environment_id", "created_by_user_id", "name"
-      ) VALUES (
-        ${ids.project}, ${ids.organization}, ${ids.environment},
-        ${ids.owner}, 'Schedule Project'
-      )
+      ) VALUES
+        (
+          ${ids.project}, ${ids.organization}, ${ids.environment},
+          ${ids.owner}, 'Schedule Project'
+        ),
+        (
+          ${ids.rebindProject}, ${ids.organization}, ${ids.environment},
+          ${ids.owner}, 'Schedule Rebind Project'
+        )
     `;
     await transaction`
       INSERT INTO "project_members" (
@@ -96,16 +115,50 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
         (${ids.project}, ${ids.ownerMember}, 'owner'),
         (${ids.project}, ${ids.creatorMember}, 'editor'),
         (${ids.project}, ${ids.memberMember}, 'member'),
-        (${ids.project}, ${ids.lifecycleCreatorMember}, 'editor')
+        (${ids.project}, ${ids.lifecycleCreatorMember}, 'editor'),
+        (${ids.rebindProject}, ${ids.ownerMember}, 'owner'),
+        (${ids.rebindProject}, ${ids.creatorMember}, 'editor')
     `;
     await transaction`
       INSERT INTO "project_context_revisions" (
         "id", "project_id", "revision", "project_name", "instructions",
         "created_by_user_id", "created_at"
-      ) VALUES (
-        ${ids.context}, ${ids.project}, 1, 'Schedule Project',
-        'Answer scheduled requests concisely.', ${ids.owner}, ${now}
-      )
+      ) VALUES
+        (
+          ${ids.context}, ${ids.project}, 1, 'Schedule Project',
+          'Answer scheduled requests concisely.', ${ids.owner}, ${now}
+        ),
+        (
+          ${ids.rebindContext}, ${ids.rebindProject}, 1, 'Schedule Rebind Project',
+          'Keep scheduled model selections valid.', ${ids.owner}, ${now}
+        )
+    `;
+    await transaction`
+      INSERT INTO "ai_gateways" (
+        "id", "organization_id", "environment_id", "provider", "display_name"
+      ) VALUES
+        (
+          ${ids.gateway}, ${ids.organization}, NULL,
+          'openrouter', 'Schedule Gateway'
+        ),
+        (
+          ${ids.scopedGateway}, ${ids.organization}, ${ids.environment},
+          'openrouter', 'Environment-scoped Schedule Gateway'
+        )
+    `;
+    await transaction`
+      INSERT INTO "ai_gateway_models" (
+        "id", "organization_id", "gateway_id", "raw_model_id", "modality",
+        "approved", "is_default"
+      ) VALUES
+        (
+          ${ids.model}, ${ids.organization}, ${ids.gateway},
+          'test-schedule-model', 'language', true, true
+        ),
+        (
+          ${ids.scopedModel}, ${ids.organization}, ${ids.scopedGateway},
+          'environment-only-schedule-model', 'language', true, false
+        )
     `;
   });
 
@@ -142,6 +195,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       cronExpression: "0 * * * *",
       timeZone: "UTC",
       prompt: "Must not be created while the Project is being archived.",
+      modelId: "openrouter/test-schedule-model",
     })
     .then(
       (value) => {
@@ -177,6 +231,19 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     archived: false,
   });
 
+  await assert.rejects(
+    schedules.createProjectPromptSchedule({
+      organizationId: ids.organization,
+      projectId: ids.project,
+      userId: ids.creator,
+      cronExpression: "0 * * * *",
+      timeZone: "UTC",
+      prompt: "Do not persist an unavailable model.",
+      modelId: "openrouter/not-approved-for-this-environment",
+    }),
+    /model is not available in this Project Environment/u,
+  );
+
   let releaseMembershipRemoval = () => {};
   const membershipRemovalGate = new Promise<void>((resolve) => {
     releaseMembershipRemoval = resolve;
@@ -204,6 +271,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       cronExpression: "0 * * * *",
       timeZone: "UTC",
       prompt: "Must not survive concurrent membership removal.",
+      modelId: "openrouter/test-schedule-model",
     })
     .then(
       (value) => {
@@ -242,6 +310,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     cronExpression: "*/5 * * * *",
     timeZone: "America/New_York",
     prompt: "Prepare the scheduled review.",
+    modelId: "openrouter/test-schedule-model",
   });
   const [memberView] = await schedules.listProjectPromptSchedulesForUser({
     organizationId: ids.organization,
@@ -249,6 +318,17 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     userId: ids.member,
   });
   assert.equal(memberView?.prompt, "Prepare the scheduled review.");
+  assert.equal(memberView?.modelId, "openrouter/test-schedule-model");
+  await assert.rejects(
+    schedules.updateProjectPromptSchedule({
+      scheduleId: created.id,
+      projectId: ids.project,
+      organizationId: ids.organization,
+      userId: ids.creator,
+      modelId: "openrouter/not-approved-for-this-environment",
+    }),
+    /model is not available in this Project Environment/u,
+  );
   assert.deepEqual(memberView?.permissions, {
     canEdit: false,
     canEnable: false,
@@ -291,6 +371,16 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     enabled: false,
   });
   assert.equal(paused.nextRunAt, null);
+  await assert.rejects(
+    schedules.updateProjectPromptSchedule({
+      scheduleId: created.id,
+      projectId: ids.project,
+      organizationId: ids.organization,
+      userId: ids.creator,
+      modelId: "openrouter/not-approved-while-paused",
+    }),
+    /model is not available in this Project Environment/u,
+  );
   const enabled = await schedules.updateProjectPromptSchedule({
     scheduleId: created.id,
     projectId: ids.project,
@@ -318,17 +408,20 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       scheduledFor: Date;
       catchUpFrom: Date | null;
       promptSnapshot: string;
+      modelIdSnapshot: string | null;
       threadId: string;
     }>
   >`
     SELECT
       "id", "scheduled_for" AS "scheduledFor", "catch_up_from" AS "catchUpFrom",
-      "prompt_snapshot" AS "promptSnapshot", "thread_id" AS "threadId"
+      "prompt_snapshot" AS "promptSnapshot",
+      "model_id_snapshot" AS "modelIdSnapshot", "thread_id" AS "threadId"
     FROM "project_prompt_schedule_runs"
     WHERE "schedule_id" = ${created.id}
   `;
   assert.ok(claimed);
   assert.equal(claimed.promptSnapshot, "Prepare the scheduled review.");
+  assert.equal(claimed.modelIdSnapshot, "openrouter/test-schedule-model");
   assert.equal(claimed.catchUpFrom?.getTime(), firstDueAt.getTime());
   assert.ok(claimed.scheduledFor.getTime() > firstDueAt.getTime());
 
@@ -337,14 +430,25 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
   assert.ok(firstTurnId);
   assert.equal(retriedTurnId, firstTurnId);
   const [materialized] = await sql<
-    Array<{ threads: number; messages: number; turns: number }>
+    Array<{
+      threads: number;
+      messages: number;
+      turns: number;
+      requestedModelId: string | null;
+    }>
   >`
     SELECT
       (SELECT count(*)::int FROM "threads" WHERE "id" = ${claimed.threadId}) AS "threads",
       (SELECT count(*)::int FROM "thread_messages" WHERE "thread_id" = ${claimed.threadId}) AS "messages",
-      (SELECT count(*)::int FROM "thread_turns" WHERE "thread_id" = ${claimed.threadId}) AS "turns"
+      (SELECT count(*)::int FROM "thread_turns" WHERE "thread_id" = ${claimed.threadId}) AS "turns",
+      (SELECT "requested_model_id" FROM "thread_turns" WHERE "thread_id" = ${claimed.threadId}) AS "requestedModelId"
   `;
-  assert.deepEqual(materialized, { threads: 1, messages: 1, turns: 1 });
+  assert.deepEqual(materialized, {
+    threads: 1,
+    messages: 1,
+    turns: 1,
+    requestedModelId: "openrouter/test-schedule-model",
+  });
 
   const failedRunId = `schedule-failed-run-${suffix}`;
   const reservedFailedThreadId = `schedule-failed-thread-${suffix}`;
@@ -426,6 +530,7 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     cronExpression: "0 * * * *",
     timeZone: "UTC",
     prompt: "Archive behavior.",
+    modelId: "openrouter/test-schedule-model",
   });
   await projects.setProjectArchived({
     projectId: ids.project,
@@ -500,6 +605,55 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     false,
     "a prompt edit must not overwrite a concurrent pause",
   );
+
+  const portableSchedule = await schedules.createProjectPromptSchedule({
+    organizationId: ids.organization,
+    projectId: ids.rebindProject,
+    userId: ids.creator,
+    cronExpression: "0 * * * *",
+    timeZone: "UTC",
+    prompt: "Remain enabled because this model is organization-scoped.",
+    modelId: "openrouter/test-schedule-model",
+  });
+  const environmentScopedSchedule =
+    await schedules.createProjectPromptSchedule({
+      organizationId: ids.organization,
+      projectId: ids.rebindProject,
+      userId: ids.creator,
+      cronExpression: "0 * * * *",
+      timeZone: "UTC",
+      prompt: "Pause after the Project leaves this model's Environment.",
+      modelId: "openrouter/environment-only-schedule-model",
+    });
+  await environments.bindProjectToEnvironment({
+    organizationId: ids.organization,
+    projectId: ids.rebindProject,
+    environmentId: ids.targetEnvironment,
+    userId: ids.creator,
+  });
+  const [afterEnvironmentMove] = await sql<
+    Array<{ enabled: boolean; pauseReason: string; nextRunAt: Date | null }>
+  >`
+    SELECT "enabled", "pause_reason" AS "pauseReason", "next_run_at" AS "nextRunAt"
+    FROM "project_prompt_schedules"
+    WHERE "id" = ${environmentScopedSchedule.id}
+  `;
+  assert.deepEqual(afterEnvironmentMove, {
+    enabled: false,
+    pauseReason: "environment_model_unavailable",
+    nextRunAt: null,
+  });
+  const [portableAfterEnvironmentMove] = await sql<
+    Array<{ enabled: boolean; pauseReason: string | null }>
+  >`
+    SELECT "enabled", "pause_reason" AS "pauseReason"
+    FROM "project_prompt_schedules"
+    WHERE "id" = ${portableSchedule.id}
+  `;
+  assert.deepEqual(portableAfterEnvironmentMove, {
+    enabled: true,
+    pauseReason: null,
+  });
 
   await schedules.updateProjectPromptSchedule({
     scheduleId: archivedSchedule.id,

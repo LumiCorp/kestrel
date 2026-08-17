@@ -22,7 +22,7 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
   await mkdir(paths.stateRootPath, { recursive: true, mode: 0o700 });
   await chmod(paths.stateRootPath, 0o700);
   const schemaVersion = options.schemaVersion ?? LOCAL_CORE_SCHEMA_VERSION;
-  const isPidAlive = options.isPidAlive ?? isProcessAlive;
+  const isPidAlive = options.isPidAlive ?? isLocalCoreProcessAlive;
   const lock = await acquireCoreLock({
     homePath: home.homePath,
     coreVersion: options.coreVersion,
@@ -437,14 +437,14 @@ function normalizeString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function isProcessAlive(pid: number): boolean {
+export function isLocalCoreProcessAlive(pid: number): boolean {
   if (pid <= 0 || Number.isInteger(pid) === false) {
     return false;
   }
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }

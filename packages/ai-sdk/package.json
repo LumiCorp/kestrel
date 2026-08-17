@@ -30,6 +30,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@kestrel-agents/conversation": "workspace:*",
     "@kestrel-agents/protocol": "workspace:*",
     "@kestrel-agents/sdk": "workspace:*"
   },
@@ -41,7 +42,7 @@
   },
   "scripts": {
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
-    "build": "pnpm --filter @kestrel-agents/sdk build && pnpm run build:self",
+    "build": "pnpm --filter @kestrel-agents/conversation build && pnpm --filter @kestrel-agents/sdk build && pnpm run build:self",
     "build:self": "pnpm run clean && tsc -p tsconfig.json",
     "test": "pnpm run test:unit",
     "test:unit": "node ../../scripts/validate.mjs --leaf hermetic packages/ai-sdk",

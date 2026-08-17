@@ -77,7 +77,9 @@ import {
   currentDesktopModelConfigurationRef,
   formatDesktopWorkflowInstructions,
   getDesktopAppDefinition,
+  validateDesktopRendererWorkflowSelection,
   resolveDesktopWorkflowSelections,
+  type DesktopExecutionSelection,
 } from "../../../src/desktopShell/configuration.js";
 import {
   desktopStandardAppToolRequiresApproval,
@@ -87,6 +89,10 @@ import {
   resolveDesktopLibexecRoot,
   resolveDesktopPathConfig,
 } from "./config.js";
+import {
+  LinkPreviewService,
+  parseDesktopLinkPreviewInput,
+} from "./linkPreview.js";
 import type { DatabaseUrlSource } from "../../../src/runtime/databasePreflight.js";
 import type {
   DesktopBootState,
@@ -374,6 +380,34 @@ let databaseStatus: DesktopDatabaseStatus = {
   running: false,
 };
 let desktopSettings: DesktopSettings = createDefaultDesktopSettings();
+const linkPreviewService = new LinkPreviewService();
+
+function resolveAuthoritativeDesktopExecutionSelection(
+  requested: DesktopExecutionSelection,
+): DesktopExecutionSelection {
+  const authoritativeIds = getEffectiveDesktopEnabledAppIds(desktopSettings);
+  let selectedWorkflowIds: string[];
+  try {
+    selectedWorkflowIds = validateDesktopRendererWorkflowSelection(
+      requested.apps.map((app) => app.id),
+      authoritativeIds,
+    );
+  } catch (cause) {
+    throw createDesktopError({
+      code: "desktop.invalid_execution_selection",
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+  return {
+    modelConfiguration: requested.modelConfiguration,
+    apps: [...new Set([...authoritativeIds, ...selectedWorkflowIds])].flatMap((id) => {
+      const definition = getDesktopAppDefinition(id, undefined, desktopSettings.mcpServers);
+      return definition === undefined
+        ? []
+        : [{ id: definition.id, contractVersion: definition.contractVersion }];
+    }),
+  };
+}
 let desktopModelPolicy: ResolvedModelPolicy = createDefaultModelPolicy();
 let localCoreConnectionManager: LocalCoreConnectionManager | undefined;
 const desktopRunnerAdapters = new Map<string, WebRunnerAdapter>();
@@ -689,11 +723,11 @@ async function startDesktopExecutionServicesOnce(): Promise<void> {
     return runnerTransport;
   };
 
-  await bootDesktop({ runnerTransport });
   if (executionIpcRegistered === false) {
     registerIpcHandlers(runnerTransport);
     executionIpcRegistered = true;
   }
+  await bootDesktop({ runnerTransport });
 }
 
 function installDesktopLifecycleHandlers(
@@ -764,6 +798,13 @@ function createMainDesktopUpdateCoordinator(
 }
 
 async function reportDesktopStartupFailure(error: unknown): Promise<void> {
+  const recovery = await requireDesktopStartupRecoveryCoordinator()
+    .recoverStartupFailure()
+    .catch(() => undefined);
+  if (recovery?.status === "restarting") return;
+  const recoveryDetails = recovery?.status === "blocked"
+    ? recovery.blockers.map((blocker) => blocker.message).join("\n")
+    : undefined;
   if (databaseController !== undefined) {
     databaseStatus = await databaseController
       .getStatus()
@@ -776,7 +817,7 @@ async function reportDesktopStartupFailure(error: unknown): Promise<void> {
       ...(readDesktopErrorCode(error) !== undefined
         ? { code: readDesktopErrorCode(error) }
         : {}),
-      details: error instanceof Error ? error.message : String(error),
+      details: recoveryDetails ?? (error instanceof Error ? error.message : String(error)),
       database: databaseStatus,
     },
     mainWindow?.webContents,
@@ -787,7 +828,7 @@ async function reportDesktopStartupFailure(error: unknown): Promise<void> {
     ...(readDesktopErrorCode(error) !== undefined
       ? { code: readDesktopErrorCode(error) }
       : {}),
-    details: error instanceof Error ? error.message : String(error),
+    details: recoveryDetails ?? (error instanceof Error ? error.message : String(error)),
   });
 }
 
@@ -872,6 +913,12 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
       nodeIntegration: false,
       webviewTag: true,
     },
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event) => {
+    if (event.url !== window.webContents.getURL()) {
+      event.preventDefault();
+    }
   });
   window.webContents.on(
     "will-attach-webview",
@@ -1406,13 +1453,39 @@ function registerBootIpcHandlers(): void {
     },
   );
   ipcMain.handle("desktop:open-external", async (_event, url: unknown) => {
-    if (typeof url !== "string" || /^https?:\/\//u.test(url) === false) {
+    requireCurrentMainWindowIpcSender(_event);
+    let parsedUrl: URL | undefined;
+    try {
+      parsedUrl = typeof url === "string" ? new URL(url) : undefined;
+    } catch {
+      parsedUrl = undefined;
+    }
+    if (
+      parsedUrl === undefined ||
+      (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") ||
+      parsedUrl.username.length > 0 ||
+      parsedUrl.password.length > 0
+    ) {
       throw createDesktopError({
         code: "desktop.invalid_external_url",
-        message: "desktop.openExternal requires an http(s) URL.",
+        message:
+          "desktop.openExternal requires a credential-free http(s) URL.",
       });
     }
-    await shell.openExternal(url);
+    await shell.openExternal(url as string);
+  });
+  ipcMain.handle("desktop:get-link-previews", async (event, input: unknown) => {
+    requireCurrentMainWindowIpcSender(event);
+    let request;
+    try {
+      request = parseDesktopLinkPreviewInput(input);
+    } catch (cause) {
+      throw createDesktopError({
+        code: "desktop.invalid_link_preview_input",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+    return await linkPreviewService.getPreviews(request);
   });
   ipcMain.handle("desktop:get-boot-state", () => bootState);
   ipcMain.handle(
@@ -2008,15 +2081,7 @@ function registerIpcHandlers(
         message: "Desktop conversation thread does not match its Local Core session.",
       });
     }
-    const globalExecutionSelection = {
-      ...executionSelection,
-      apps: getEffectiveDesktopEnabledAppIds(desktopSettings).flatMap((id) => {
-        const definition = getDesktopAppDefinition(id, undefined, desktopSettings.mcpServers);
-        return definition === undefined
-          ? []
-          : [{ id: definition.id, contractVersion: definition.contractVersion }];
-      }),
-    };
+    const globalExecutionSelection = resolveAuthoritativeDesktopExecutionSelection(executionSelection);
     const executionProfile = await requireLocalCoreConnectionManager().executeIdempotent(
       async (client) => await client.resolveExecutionProfile({
         client: "desktop",
@@ -2120,19 +2185,7 @@ function registerIpcHandlers(
       executionSelection,
       ...turnRequest
     } = request;
-    const globalExecutionSelection = {
-      ...executionSelection,
-      apps: getEffectiveDesktopEnabledAppIds(desktopSettings).flatMap((id) => {
-        const definition = getDesktopAppDefinition(
-          id,
-          undefined,
-          desktopSettings.mcpServers,
-        );
-        return definition === undefined
-          ? []
-          : [{ id: definition.id, contractVersion: definition.contractVersion }];
-      }),
-    };
+    const globalExecutionSelection = resolveAuthoritativeDesktopExecutionSelection(executionSelection);
     const executionProfile =
       await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) =>
@@ -2447,6 +2500,27 @@ function registerIpcHandlers(
       });
     },
   );
+  ipcMain.handle(
+    "desktop:conversation-activity",
+    async (_event, sessionId: unknown, afterCursor: unknown, limit: unknown) => {
+      if (typeof sessionId !== "string" || sessionId.trim().length === 0) {
+        throw createDesktopError({ code: "desktop.invalid_session_id", message: "Conversation activity sessionId is required." });
+      }
+      if (afterCursor !== undefined && typeof afterCursor !== "string") {
+        throw createDesktopError({ code: "desktop.invalid_activity_cursor", message: "Conversation activity cursor is invalid." });
+      }
+      if (limit !== undefined && (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 500)) {
+        throw createDesktopError({ code: "desktop.invalid_activity_limit", message: "Conversation activity limit must be from 1 to 500." });
+      }
+      return requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.listDesktopConversationActivity({
+          sessionId: sessionId.trim(),
+          ...(typeof afterCursor === "string" ? { afterCursor } : {}),
+          ...(typeof limit === "number" ? { limit } : {}),
+        }),
+      );
+    },
+  );
   ipcMain.handle("desktop:cancel-run", async (_event, input: unknown) => {
     let request: DesktopRunCancelRequest;
     try {
@@ -2517,8 +2591,9 @@ function registerIpcHandlers(
           defaultModelConfigurationId:
             update.defaultModelConfigurationId ??
             desktopSettings.defaultModelConfigurationId,
-          defaultEnabledAppIds:
-            update.defaultEnabledAppIds ?? desktopSettings.defaultEnabledAppIds,
+          defaultEnabledBuiltInAppIds:
+            update.defaultEnabledBuiltInAppIds ?? desktopSettings.defaultEnabledBuiltInAppIds,
+          legacyDefaultWorkflowAppIds: undefined,
           appearanceTheme:
             update.appearanceTheme ?? desktopSettings.appearanceTheme,
         },

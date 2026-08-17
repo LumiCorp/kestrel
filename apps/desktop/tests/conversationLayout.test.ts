@@ -37,6 +37,43 @@ test("conversation timeline and composer share the conversation width", async ()
   assert.match(source, /\.conversation-timeline-list::before\s*\{[^}]*width:\s*1px;/su);
   assert.doesNotMatch(source, /\.activity-line\s*\{/u);
   assert.match(source, /\.composer\s*\{[^}]*width:\s*min\(var\(--conversation-content-width\),/su);
+  assert.match(source, /\.conversation-timeline-list\s*\{[^}]*max-width:\s*none;/su);
+});
+
+test("conversation scrolling and motion use one visible, reduced-motion-safe system", async () => {
+  const source = await readDesktopStyles();
+
+  assert.match(
+    source,
+    /\.conversation-timeline\s*\{[^}]*overscroll-behavior-y:\s*contain;[^}]*scrollbar-gutter:\s*stable;/su,
+  );
+  assert.match(
+    source,
+    /\.timeline-details\s*>\s*ol,[\s\S]*?\.composer textarea\s*\{[^}]*scrollbar-gutter:\s*stable;/su,
+  );
+  assert.match(source, /::-webkit-scrollbar-thumb\s*\{[^}]*background-clip:\s*padding-box;/su);
+  assert.match(source, /@keyframes conversation-disclosure-in/u);
+  assert.match(
+    source,
+    /@media \(prefers-reduced-motion:\s*reduce\)\s*\{[\s\S]*?\.timeline-details\.is-open\s*>\s*ol,[\s\S]*?animation:\s*none;/su,
+  );
+});
+
+test("external-link confirmation keeps actions visible for long destinations", async () => {
+  const source = await readDesktopStyles();
+
+  assert.match(
+    source,
+    /\.external-link-dialog\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto auto;[^}]*max-height:\s*calc\(100vh - 48px\);[^}]*overflow:\s*hidden;/su,
+  );
+  assert.match(
+    source,
+    /\.external-link-destination\s*\{[^}]*overflow:\s*auto;[^}]*overscroll-behavior:\s*contain;/su,
+  );
+  assert.match(
+    source,
+    /\.external-link-destination code\s*\{[^}]*overflow-wrap:\s*anywhere;/su,
+  );
 });
 
 test("conversation work is a semantic timeline with collapsed operational detail", async () => {
@@ -48,9 +85,27 @@ test("conversation work is a semantic timeline with collapsed operational detail
   assert.match(app, /<ConversationTimeline/u);
   assert.doesNotMatch(app, /className="activity-shell"/u);
   assert.match(timeline, /className=\{`conversation-timeline-list/u);
-  assert.match(timeline, /<details className="timeline-details">/u);
-  assert.match(timeline, /entry\.item\.kind !== "assistant"/u);
+  assert.ok(timeline.includes('className={`timeline-details ${open ? "is-open" : ""}`}'));
+  assert.ok(timeline.includes("const [open, setOpen] = useState(false)"));
+  assert.ok(timeline.includes("aria-expanded={open}"));
+  assert.ok(timeline.includes("{open ? ("));
+  assert.match(timeline, /item\.kind !== "agent_progress"/u);
+  assert.match(timeline, /className="timeline-progress"/u);
+  assert.match(timeline, /Agent progress/u);
   assert.match(timeline, /aria-live="polite"/u);
+});
+
+test("expanded operational details keep their disclosure control visible while scrolling", async () => {
+  const styles = await readDesktopStyles();
+
+  assert.match(
+    styles,
+    /\.timeline-details\.is-open > \.timeline-details-toggle\s*\{[^}]*position:\s*sticky;[^}]*top:\s*var\(--space-1\);[^}]*z-index:\s*2;/su,
+  );
+  assert.match(
+    styles,
+    /\.timeline-details\.is-open > \.timeline-details-toggle\s*\{[^}]*background:\s*var\(--bg-pane\);/su,
+  );
 });
 
 test("context sidebar joins the full-width work canvas without an empty resizer column", async () => {
@@ -219,6 +274,16 @@ test("user-input requests are composer-owned without a duplicate timeline card",
   assert.doesNotMatch(app, /Kestrel needs your input/u);
 });
 
+test("unavailable-project conversations are read-only across work surfaces", async () => {
+  const app = await readFile(appPath, "utf8");
+
+  assert.match(app, /isDesktopThreadProjectUnavailable\(activeThread, settings\.projects\)/u);
+  assert.match(app, /const threadReadOnlySelected = archivedThreadSelected \|\| unavailableProjectThreadSelected;/u);
+  assert.match(app, /disabled=\{threadReadOnlySelected\}/u);
+  assert.match(app, /\{threadReadOnlySelected \? null : \(/u);
+  assert.match(app, /This conversation is read-only because its project is no longer registered\./u);
+});
+
 test("find work drawer groups conversations and keeps row selection separate from actions", async () => {
   const [app, explorer] = await Promise.all([readFile(appPath, "utf8"), readFile(explorerPath, "utf8")]);
   assert.match(app, /conversation-rail work-navigator/u);
@@ -230,9 +295,13 @@ test("find work drawer groups conversations and keeps row selection separate fro
   assert.match(app, /workNavigatorSearchRef\.current\?\.focus\(\)/u);
   assert.match(app, /trigger\?\.isConnected/u);
   assert.match(app, /workNavigatorFallbackRef\.current\?\.focus\(\)/u);
-  assert.doesNotMatch(app, /closeWorkNavigator\(false\)/u);
+  assert.match(app, /closeWorkNavigator\(false\)/u);
+  assert.match(app, /createConversationForProject\(projectPath: string \| null\)/u);
+  assert.match(app, /newConversationRequestId=\{newConversationRequestId\}/u);
   assert.match(app, /keepFocusInsideDialog\(event\.nativeEvent, workNavigatorRef\.current\)/u);
-  assert.match(explorer, /groupRendererThreads\(/u);
+  assert.match(explorer, /projectDesktopWorkNavigator\(/u);
+  assert.match(explorer, /className="explorer-project-select"/u);
+  assert.match(explorer, /aria-label=\{`New conversation in/u);
   assert.match(explorer, /className="explorer-thread-select"/u);
   assert.match(explorer, /className="explorer-thread-menu-button"/u);
   assert.match(explorer, /Archived \(\$\{archivedCount\}\)/u);
@@ -294,7 +363,8 @@ test("settings navigation mounts one bounded category page at a time", async () 
   const app = await readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8");
   const styles = await readDesktopStyles();
 
-  assert.match(app, /type SettingsPage = "general" \| DesktopCapabilityCategory;/u);
+  assert.match(app, /type SettingsPage = "general" \| Exclude<DesktopCapabilityCategory, "tools_services">;/u);
+  assert.doesNotMatch(app, /tools_services: "Tools & services"/u);
   assert.match(app, /const \[activePage, setActivePage\] = useState<SettingsPage>/u);
   assert.match(app, /aria-current=\{activePage === page \? "page" : undefined\}/u);
   assert.match(app, /activePage === "general" && attentionCapabilities\.length > 0/u);
@@ -343,24 +413,40 @@ test("conversation menus and rename dialog expose keyboard and focus behavior", 
 
 test("archived conversations are read-only and thread-scoped surfaces are disabled", async () => {
   const app = await readFile(appPath, "utf8");
-  assert.match(app, /const archivedThreadSelected = activeThread\.archivedAt !== undefined/u);
+  assert.match(app, /const archivedThreadSelected = activeThread\?\.archivedAt !== undefined/u);
   assert.match(app, /className="timeline-entry timeline-entry-archived"/u);
   assert.match(app, /className="timeline-entry-content archived-conversation-banner"/u);
   assert.match(app, /This transcript is read-only\./u);
-  assert.match(app, /disabled=\{archivedThreadSelected\}/u);
-  assert.match(app, /if \(activeThread\?\.archivedAt !== undefined\) setSurface\("chat"\)/u);
+  assert.match(app, /disabled=\{threadReadOnlySelected\}/u);
+  assert.match(app, /if \(threadReadOnlySelected\) setSurface\("chat"\)/u);
 });
 
 test("conversation header keeps project context in the project switcher without sidebar reassignment", async () => {
   const [app, sidebar] = await Promise.all([readFile(appPath, "utf8"), readFile(contextSidebarPath, "utf8")]);
-  assert.match(app, /className="project-switcher"[\s\S]*\{conversationProjectLabel\}/u);
+  assert.match(app, /const titlebarProjectLabel = surface === "projects" \? selectedProjectLabel : conversationProjectLabel/u);
+  assert.match(app, /className="project-switcher"[\s\S]*\{titlebarProjectLabel\}/u);
   assert.doesNotMatch(app, /<small>\{conversationProjectLabel\}<\/small>/u);
   assert.doesNotMatch(app, /onProjectChange=/u);
   assert.doesNotMatch(sidebar, /Conversation project/u);
   assert.doesNotMatch(app, /activeProjectPath/u);
 });
 
-test("composer selects configured models while Apps remain globally settings-owned", async () => {
+test("selected project persistence waits for renderer bootstrap", async () => {
+  const app = await readFile(appPath, "utf8");
+  assert.match(app, /const \[selectedProjectPersistenceReady, setSelectedProjectPersistenceReady\] = useState\(false\)/u);
+  assert.match(app, /if \(!selectedProjectPersistenceReady\) return;[\s\S]*writeDesktopSelectedProjectPath\(selectedProjectPath\)/u);
+  assert.match(app, /setSelectedProjectPersistenceReady\(true\)/u);
+});
+
+test("project Files expose conversation actions only to the owning project thread", async () => {
+  const app = await readFile(appPath, "utf8");
+  assert.match(app, /const projectConversationMatchesActiveThread = selectedProject\?\.path === activeThread\.projectPath/u);
+  assert.match(app, /openFiles=\{projectConversationMatchesActiveThread \? activeThread\.openFiles : \[\]\}/u);
+  assert.match(app, /onAttachFile=\{projectConversationMatchesActiveThread \?/u);
+  assert.match(app, /onOpenFile=\{projectConversationMatchesActiveThread \?/u);
+});
+
+test("composer owns conversation workflows while Apps own global availability", async () => {
   const [app, state, settings, sidebar, main] = await Promise.all([
     readFile(appPath, "utf8"),
     readFile(path.join(testDir, "..", "renderer", "src", "state.ts"), "utf8"),
@@ -370,14 +456,14 @@ test("composer selects configured models while Apps remain globally settings-own
   ]);
 
   assert.match(app, /aria-label="Conversation model"/u);
-  assert.match(app, /settings\.defaultEnabledAppIds/u);
-  assert.match(state, /toDesktopExecutionSelection\([\s\S]*enabledAppIds: readonly string\[\]/u);
-  assert.match(state, /const enabled = new Set\(enabledAppIds\);/u);
-  assert.doesNotMatch(state, /const enabled = new Set\(thread\.enabledAppIds\);/u);
-  assert.match(settings, /<strong>Enabled Apps<\/strong>/u);
+  assert.match(app, /<ConversationWorkflowControl/u);
+  assert.match(state, /enabledWorkflowAppIds: string\[\]/u);
+  assert.match(state, /const enabled = new Set\(thread\.enabledWorkflowAppIds\);/u);
+  assert.doesNotMatch(settings, /<strong>Enabled Apps<\/strong>/u);
+  assert.match(settings, /<legend>Appearance<\/legend>/u);
   assert.doesNotMatch(sidebar, /aria-label="Model configuration"/u);
   assert.doesNotMatch(sidebar, /<span>Apps<\/span>/u);
-  assert.match(main, /getEffectiveDesktopEnabledAppIds\(desktopSettings\)\.flatMap/u);
+  assert.match(main, /resolveAuthoritativeDesktopExecutionSelection/u);
   assert.match(main, /selection: globalExecutionSelection/u);
 });
 

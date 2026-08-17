@@ -185,6 +185,7 @@ export interface StartLocalCoreApiServerOptions extends EnsureLocalCoreReadyOpti
 
 interface LocalCoreExecutionBundle {
   handler: RunnerServiceHttpHandler;
+  eventJournal: LocalCoreProtocolEventJournal;
   store: RuntimeSessionStore;
   runtimeConfiguration: LocalCoreRuntimeConfigurationV1;
   credentialReadiness: LocalCoreRuntimeCredentialReadiness;
@@ -714,6 +715,7 @@ export async function startLocalCoreApiServer(
           getSystemLifecycle,
           getRuntimeCredentialReadiness: () =>
             executionBundle?.credentialReadiness,
+          getEventJournal: () => executionBundle?.eventJournal,
           requestSystemShutdown,
           projectRunRegistry: projectRunRegistry!,
           projectRunEventClients,
@@ -913,6 +915,7 @@ async function createExecutionBundle(input: {
         : {}),
     });
   }
+  const eventJournal = new LocalCoreProtocolEventJournal(storeHandle.executor);
   const handler = createRunnerServiceHttpHandler({
     pathPrefix: "/runtime/v2",
     authToken: input.token,
@@ -923,12 +926,13 @@ async function createExecutionBundle(input: {
       { runtimeConfiguration },
     ),
     profileSourcePolicy: "registered-only",
-    eventJournal: new LocalCoreProtocolEventJournal(storeHandle.executor),
+    eventJournal,
   });
   try {
     await handler.ready();
     return {
       handler,
+      eventJournal,
       store: storeHandle.store,
       runtimeConfiguration,
       credentialReadiness,
@@ -1192,6 +1196,7 @@ async function handleRequest(input: {
   getRuntimeCredentialReadiness():
     | LocalCoreRuntimeCredentialReadiness
     | undefined;
+  getEventJournal(): LocalCoreProtocolEventJournal | undefined;
   requestSystemShutdown(
     reason: LocalCoreSystemShutdownRequest["reason"],
   ): LocalCoreSystemShutdownResult;
@@ -2228,6 +2233,36 @@ async function handleRequest(input: {
           async (runtimeStore) =>
             await runtimeStore.listRunSummaries({ limit: 100 }),
         ),
+      });
+      return;
+    }
+    if (method === "GET" && url.pathname === "/v1/desktop/conversation-activity") {
+      const sessionId = normalizeString(url.searchParams.get("sessionId"));
+      if (sessionId === undefined) {
+        throw new LocalCoreApiRequestError(
+          400,
+          "LOCAL_CORE_CONVERSATION_ACTIVITY_SESSION_REQUIRED",
+          "sessionId is required.",
+        );
+      }
+      const afterCursor = normalizeString(url.searchParams.get("afterCursor"));
+      const limit = parseDesktopActivityLimit(url.searchParams.get("limit"));
+      const journal = input.getEventJournal();
+      if (journal === undefined) {
+        throw new LocalCoreApiRequestError(
+          503,
+          "LOCAL_CORE_EXECUTION_UNAVAILABLE",
+          "Conversation activity is unavailable until execution is healthy.",
+        );
+      }
+      writeJson(input.response, 200, {
+        ok: true,
+        sessionId,
+        ...(await journal.listDesktopConversationActivity({
+          sessionId,
+          ...(afterCursor !== undefined ? { afterCursor } : {}),
+          ...(limit !== undefined ? { limit } : {}),
+        })),
       });
       return;
     }
@@ -3480,6 +3515,19 @@ function normalizeString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;
+}
+
+function parseDesktopActivityLimit(value: string | null): number | undefined {
+  if (value === null || value.trim().length === 0) return;
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) === false || parsed < 1 || parsed > 500) {
+    throw new LocalCoreApiRequestError(
+      400,
+      "LOCAL_CORE_CONVERSATION_ACTIVITY_LIMIT_INVALID",
+      "Conversation activity limit must be from 1 to 500.",
+    );
+  }
+  return parsed;
 }
 
 function decodeStrictBase64(value: string): Buffer {

@@ -7,10 +7,7 @@ import type {
   RunTurnAttachment,
 } from "../../src/contracts";
 import { extractWaitPrompt } from "../../../../src/runtime/waitForPrompt";
-import {
-  DESKTOP_DEFAULT_ENABLED_APP_IDS,
-  normalizeDesktopAppId,
-} from "../../../../src/desktopShell/configuration";
+import { filterDesktopWorkflowAppIds } from "../../../../src/desktopShell/configuration";
 
 const THREADS_STORAGE_KEY = "kchat:web:threads:v2";
 const ACTIVE_THREAD_STORAGE_KEY = "kchat:web:active-thread:v1";
@@ -47,6 +44,7 @@ export interface RendererTranscriptLine {
   dialog?: {
     messageId: string;
     dialogId: string;
+    parentRunId?: string | undefined;
     name: string;
     childSessionId: string;
     sender: "kestrel" | "collaborator" | "system";
@@ -81,7 +79,7 @@ export interface RendererThread {
   promptHistory: string[];
   modelConfigurationId: string;
   modelConfigurationRevision: number;
-  enabledAppIds: string[];
+  enabledWorkflowAppIds: string[];
   rawSummary: Record<string, unknown>;
   rawState: Record<string, unknown>;
 }
@@ -107,7 +105,7 @@ export function readDesktopRendererState(
     projectPath?: string | undefined;
     modelConfigurationId?: string | undefined;
     modelConfigurationRevision?: number | undefined;
-    enabledAppIds?: string[] | undefined;
+    legacyDefaultWorkflowAppIds?: string[] | undefined;
     theme?: RendererTheme | undefined;
   } = {},
 ): DesktopRendererState {
@@ -147,7 +145,7 @@ export function createRendererThread(input: {
   projectPath?: string | undefined;
   modelConfigurationId?: string | undefined;
   modelConfigurationRevision?: number | undefined;
-  enabledAppIds?: string[] | undefined;
+  enabledWorkflowAppIds?: string[] | undefined;
 } = {}): RendererThread {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
@@ -175,11 +173,7 @@ export function createRendererThread(input: {
     promptHistory: [],
     modelConfigurationId: input.modelConfigurationId ?? "desktop-default",
     modelConfigurationRevision: input.modelConfigurationRevision ?? 1,
-    enabledAppIds: [
-      ...new Set(
-        (input.enabledAppIds ?? DESKTOP_DEFAULT_ENABLED_APP_IDS).map(normalizeDesktopAppId),
-      ),
-    ],
+    enabledWorkflowAppIds: filterDesktopWorkflowAppIds(input.enabledWorkflowAppIds ?? []),
     rawSummary: {},
     rawState: {},
   };
@@ -193,7 +187,7 @@ export function applyDesktopOnboardingHandoff(
     replaceInitialThread: boolean;
     modelConfigurationId?: string | undefined;
     modelConfigurationRevision?: number | undefined;
-    enabledAppIds?: string[] | undefined;
+    enabledWorkflowAppIds?: string[] | undefined;
   },
 ): DesktopRendererState {
   const existing = state.threads.find(
@@ -210,8 +204,8 @@ export function applyDesktopOnboardingHandoff(
     ...(input.modelConfigurationRevision !== undefined
       ? { modelConfigurationRevision: input.modelConfigurationRevision }
       : {}),
-    ...(input.enabledAppIds !== undefined
-      ? { enabledAppIds: input.enabledAppIds }
+    ...(input.enabledWorkflowAppIds !== undefined
+      ? { enabledWorkflowAppIds: input.enabledWorkflowAppIds }
       : {}),
   });
   thread.rawState = { onboardingHandoffId: input.id };
@@ -235,6 +229,13 @@ export function appendRendererTranscript(
     }
     const runId = terminalRunId(line);
     if (runId !== undefined && thread.transcript.some((item) => terminalRunId(item) === runId)) {
+      return thread;
+    }
+    const messageId = userMessageId(line);
+    if (
+      messageId !== undefined &&
+      thread.transcript.some((item) => userMessageId(item) === messageId)
+    ) {
       return thread;
     }
     const firstUserText =
@@ -561,7 +562,8 @@ export function serializeDesktopRendererState(
         diffView: thread.diffView,
         modelConfigurationId: thread.modelConfigurationId,
         modelConfigurationRevision: thread.modelConfigurationRevision,
-        enabledAppIds: [...thread.enabledAppIds],
+        enabledWorkflowAppIds: [...thread.enabledWorkflowAppIds],
+        enabledAppIds: undefined,
         ...(thread.mode === "build"
           ? { actSubmode: "safe" }
           : { actSubmode: undefined }),
@@ -587,9 +589,8 @@ export function serializeDesktopRendererState(
 export function toDesktopExecutionSelection(
   thread: RendererThread,
   apps: readonly { id: string; contractVersion: number }[],
-  enabledAppIds: readonly string[],
 ): DesktopExecutionSelection {
-  const enabled = new Set(enabledAppIds);
+  const enabled = new Set(thread.enabledWorkflowAppIds);
   return {
     modelConfiguration: {
       id: thread.modelConfigurationId,
@@ -756,7 +757,7 @@ function collectThreads(store: {
 }, defaults: {
   modelConfigurationId?: string | undefined;
   modelConfigurationRevision?: number | undefined;
-  enabledAppIds?: string[] | undefined;
+  legacyDefaultWorkflowAppIds?: string[] | undefined;
 }): RendererThread[] {
   const summaries = new Map<string, Record<string, unknown>>();
   for (const candidate of store.summaries) {
@@ -874,13 +875,16 @@ function collectThreads(store: {
             rawState.modelConfigurationRevision > 0
               ? rawState.modelConfigurationRevision
               : defaults.modelConfigurationRevision ?? 1,
-          enabledAppIds: Array.isArray(rawState.enabledAppIds)
-            ? [...new Set(rawState.enabledAppIds.flatMap((appId) =>
-                typeof appId === "string" ? [normalizeDesktopAppId(appId)] : []
-              ))]
-            : [...new Set(
-                (defaults.enabledAppIds ?? DESKTOP_DEFAULT_ENABLED_APP_IDS).map(normalizeDesktopAppId),
-              )],
+          enabledWorkflowAppIds: filterDesktopWorkflowAppIds(
+            Array.isArray(rawState.enabledWorkflowAppIds)
+              ? rawState.enabledWorkflowAppIds.flatMap((appId) => typeof appId === "string" ? [appId] : [])
+              : [
+                  ...(Array.isArray(rawState.enabledAppIds)
+                    ? rawState.enabledAppIds.flatMap((appId) => typeof appId === "string" ? [appId] : [])
+                    : []),
+                  ...(defaults.legacyDefaultWorkflowAppIds ?? []),
+                ],
+          ),
           rawSummary,
           rawState,
         },
@@ -1018,12 +1022,25 @@ function terminalRunId(line: RendererTranscriptLine): string | undefined {
     : undefined;
 }
 
+function userMessageId(line: RendererTranscriptLine): string | undefined {
+  const data = asRecord(line.data);
+  return line.role === "user" &&
+    data?.kind === "desktop.user-message.v1" &&
+    typeof data.messageId === "string" &&
+    data.messageId.trim().length > 0
+    ? data.messageId
+    : undefined;
+}
+
 function parseDialogTranscriptData(value: unknown): RendererTranscriptLine["dialog"] {
   const dialog = asRecord(value);
   if (typeof dialog?.messageId !== "string" || typeof dialog.dialogId !== "string" || typeof dialog.name !== "string" || typeof dialog.childSessionId !== "string" || (dialog.sender !== "kestrel" && dialog.sender !== "collaborator" && dialog.sender !== "system")) return undefined;
   return {
     messageId: dialog.messageId,
     dialogId: dialog.dialogId,
+    ...(typeof dialog.parentRunId === "string" && dialog.parentRunId.trim().length > 0
+      ? { parentRunId: dialog.parentRunId }
+      : {}),
     name: dialog.name,
     childSessionId: dialog.childSessionId,
     sender: dialog.sender,
