@@ -19,6 +19,17 @@ import {
 
 const tag = "operator-aug16";
 
+const previewEdgeServices = [
+  {
+    protocol: "tcp",
+    internal_port: 8080,
+    ports: [
+      { port: 80, handlers: ["http"], force_https: true },
+      { port: 443, handlers: ["tls", "http"] },
+    ],
+  },
+];
+
 test("operator tags follow the ordinary container tag contract", () => {
   assert.equal(
     productionImageTagSchema.parse("operator-aug16"),
@@ -109,6 +120,7 @@ test("local Fly deployment selects the exact Machine from provider lists", async
               id: "e2865",
               state: "started",
               image_ref: { tag: listCount === 1 ? "old" : tag },
+              config: { services: previewEdgeServices },
             },
           ]),
         };
@@ -126,6 +138,123 @@ test("local Fly deployment selects the exact Machine from provider lists", async
   assert.equal(calls.filter(({ args }) => args[1] === "list").length, 2);
   assert.equal(calls.filter(({ args }) => args[1] === "update").length, 1);
   assert.ok(calls.every(({ args }) => !args.includes("status")));
+});
+
+test("Preview Edge image deployment refuses missing or invalid ingress before mutation", async () => {
+  const invalidServices = [
+    undefined,
+    [
+      {
+        protocol: "tcp",
+        internal_port: 8080,
+        ports: [{ port: 80, handlers: ["http"], force_https: true }],
+      },
+    ],
+    [
+      {
+        protocol: "tcp",
+        internal_port: 8081,
+        ports: [
+          { port: 80, handlers: ["http"], force_https: false },
+          { port: 443, handlers: ["tls", "http"] },
+        ],
+      },
+    ],
+  ];
+
+  for (const services of invalidServices) {
+    let updates = 0;
+    await assert.rejects(
+      deployProductionFlyMachine(
+        ["--role", "preview-edge", "--machine", "e2865", "--tag", tag],
+        (_command, args) => {
+          if (args[0] === "auth")
+            return { status: 0, stdout: "operator@example.com\n" };
+          if (args[0] === "machine" && args[1] === "list") {
+            return {
+              status: 0,
+              stdout: JSON.stringify([
+                { id: "e2865", state: "started", config: { services } },
+              ]),
+            };
+          }
+          if (args[0] === "machine" && args[1] === "update") updates += 1;
+          return { status: 0, stdout: "" };
+        },
+        async () => undefined,
+      ),
+      /Preview Edge Machine e2865 is missing its public ingress contract before image update/u,
+    );
+    assert.equal(updates, 0);
+  }
+});
+
+test("Preview Edge image deployment rejects ingress stripped by the provider update", async () => {
+  let lists = 0;
+  let updates = 0;
+  await assert.rejects(
+    deployProductionFlyMachine(
+      ["--role", "preview-edge", "--machine", "e2865", "--tag", tag],
+      (_command, args) => {
+        if (args[0] === "auth")
+          return { status: 0, stdout: "operator@example.com\n" };
+        if (args[0] === "machine" && args[1] === "list") {
+          lists += 1;
+          return {
+            status: 0,
+            stdout: JSON.stringify([
+              {
+                id: "e2865",
+                state: "started",
+                config: {
+                  services: lists === 1 ? previewEdgeServices : undefined,
+                },
+              },
+            ]),
+          };
+        }
+        if (args[0] === "machine" && args[1] === "update") {
+          updates += 1;
+          return { status: 0, stdout: "" };
+        }
+        return { status: 1, stdout: "" };
+      },
+      async () => undefined,
+    ),
+    /Preview Edge Machine e2865 is missing its public ingress contract after image update/u,
+  );
+  assert.equal(updates, 1);
+});
+
+test("service-less worker image deployment remains supported", async () => {
+  let lists = 0;
+  const result = await deployProductionFlyMachine(
+    ["--role", "control-worker", "--machine", "worker1", "--tag", tag],
+    (_command, args) => {
+      if (args[0] === "auth")
+        return { status: 0, stdout: "operator@example.com\n" };
+      if (args[0] === "machine" && args[1] === "list") {
+        lists += 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              id: "worker1",
+              state: "started",
+              image_ref: { tag: lists === 1 ? "old" : tag },
+            },
+          ]),
+        };
+      }
+      if (args[0] === "machine" && args[1] === "update")
+        return { status: 0, stdout: "" };
+      return { status: 1, stdout: "" };
+    },
+    async () => undefined,
+  );
+
+  assert.equal(result.role, "control-worker");
+  assert.equal(lists, 2);
 });
 
 test("tenant runtime catalog roles publish from exact public GHCR repositories", async () => {
