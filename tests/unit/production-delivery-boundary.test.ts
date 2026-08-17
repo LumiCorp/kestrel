@@ -14,6 +14,8 @@ const runtimeActivation = source(
   "apps/web/scripts/activate-production-runtime.ts",
 );
 const vercel = source("apps/web/vercel.json");
+const webPackage = JSON.parse(source("apps/web/package.json"));
+const docsPackage = JSON.parse(source("apps/docs/package.json"));
 
 test("production pushes have no Fly, RunPod, runtime, or migration workflow", () => {
   for (const path of [
@@ -31,6 +33,11 @@ test("Vercel production build retains configuration validation and migration", (
   const migrate = vercel.indexOf("db:migrate:deploy");
   assert.ok(validateConfiguration >= 0 && validateConfiguration < migrate);
   assert.match(vercel, /VERCEL_ENV/u);
+});
+
+test("Vercel project roots select Node.js 22", () => {
+  assert.equal(webPackage.engines?.node, "22.x");
+  assert.equal(docsPackage.engines?.node, "22.x");
 });
 
 test("local image publication smokes before push and never deploys or notifies", () => {
