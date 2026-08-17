@@ -10,6 +10,10 @@ export function threadEnvironmentBindingLockKey(threadId: string): string {
   return `kestrel:thread-environment:${threadId}`;
 }
 
+export function projectEnvironmentBindingLockKey(projectId: string): string {
+  return `kestrel:project-environment:${projectId}`;
+}
+
 export function organizationEnvironmentDefaultLockKey(
   organizationId: string,
 ): string {

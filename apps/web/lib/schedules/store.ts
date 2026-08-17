@@ -1,8 +1,9 @@
 import "server-only";
 
-import { and, asc, desc, eq, inArray, isNotNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { isKestrelRuntimeModelSelectionAvailableInTransaction } from "@/lib/ai/runtime-model-selection";
+import { projectEnvironmentBindingLockKey } from "@/lib/environments/lifecycle-lock";
 import {
   type ProjectRole,
   ProjectAccessError,
@@ -30,6 +31,7 @@ export type ProjectPromptScheduleSummary = {
   organizationId: string;
   project: { id: string; name: string };
   creator: { id: string; name: string } | null;
+  title: string;
   cronExpression: string;
   timeZone: string;
   prompt: string;
@@ -41,14 +43,17 @@ export type ProjectPromptScheduleSummary = {
   updatedAt: Date;
   permissions: {
     canEdit: boolean;
+    canTest: boolean;
     canEnable: boolean;
     canPause: boolean;
     canDelete: boolean;
   };
+  activeStatus: "waiting_for_input" | "running" | null;
   latestRun: {
     id: string;
     scheduledFor: Date;
     catchUpFrom: Date | null;
+    trigger: "scheduled" | "test";
     status: "queued" | "materialized" | "failed" | "cancelled";
     threadId: string | null;
     threadTitle: string | null;
@@ -73,24 +78,94 @@ function schedulePermissions(input: {
   const isOwner = input.role === "owner";
   return {
     canEdit: isCreator,
+    canTest: isCreator,
     canEnable: isCreator,
     canPause: isCreator || isOwner,
     canDelete: isCreator || isOwner,
   };
 }
 
-async function latestScheduleRun(scheduleId: string) {
+async function lockProjectPromptScheduleAccessInTransaction(
+  tx: Parameters<Parameters<typeof knowledgeDb.transaction>[0]>[0],
+  input: {
+    organizationId: string;
+    projectId: string;
+    userId: string;
+  },
+) {
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtextextended(${projectEnvironmentBindingLockKey(input.projectId)}, 0))`,
+  );
+  const [project] = await tx
+    .select({
+      archivedAt: schema.projects.archivedAt,
+      environmentId: schema.projects.environmentId,
+    })
+    .from(schema.projects)
+    .where(
+      and(
+        eq(schema.projects.id, input.projectId),
+        eq(schema.projects.organizationId, input.organizationId),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (!project) return null;
+
+  const [access] = await tx
+    .select({ role: schema.projectMembers.role })
+    .from(schema.projectMembers)
+    .innerJoin(
+      schema.members,
+      and(
+        eq(schema.members.id, schema.projectMembers.organizationMemberId),
+        eq(schema.members.organizationId, input.organizationId),
+        eq(schema.members.userId, input.userId),
+      ),
+    )
+    .where(eq(schema.projectMembers.projectId, input.projectId))
+    .limit(1)
+    .for("update");
+  if (!access) return null;
+
+  return {
+    projectArchivedAt: project.archivedAt,
+    projectEnvironmentId: project.environmentId,
+    role: access.role,
+  };
+}
+
+async function scheduleRunState(scheduleId: string) {
   const [latest] = await knowledgeDb
     .select({
       id: schema.projectPromptScheduleRuns.id,
       scheduledFor: schema.projectPromptScheduleRuns.scheduledFor,
       catchUpFrom: schema.projectPromptScheduleRuns.catchUpFrom,
+      trigger: schema.projectPromptScheduleRuns.trigger,
       status: schema.projectPromptScheduleRuns.status,
       threadId: schema.threads.id,
       threadTitle: schema.threads.title,
       turnStatus: schema.threadTurns.status,
       failureCode: schema.projectPromptScheduleRuns.failureCode,
       failureMessage: schema.projectPromptScheduleRuns.failureMessage,
+      turnFailureCode: schema.threadTurns.failureCode,
+      turnFailureMessage: schema.threadTurns.failureMessage,
+      activeStatus: sql<"waiting_for_input" | "running" | null>`(
+        SELECT
+          CASE
+            WHEN bool_or("active_turns"."status" = 'waiting_for_input')
+              THEN 'waiting_for_input'
+            WHEN bool_or(
+              "active_runs"."status" = 'queued'
+              OR "active_turns"."status" IN ('queued', 'running')
+            ) THEN 'running'
+            ELSE NULL
+          END
+        FROM ${schema.projectPromptScheduleRuns} AS "active_runs"
+        LEFT JOIN ${schema.threadTurns} AS "active_turns"
+          ON "active_turns"."id" = "active_runs"."turn_id"
+        WHERE "active_runs"."schedule_id" = ${schema.projectPromptScheduleRuns.scheduleId}
+      )`,
     })
     .from(schema.projectPromptScheduleRuns)
     .leftJoin(
@@ -104,19 +179,30 @@ async function latestScheduleRun(scheduleId: string) {
     .where(eq(schema.projectPromptScheduleRuns.scheduleId, scheduleId))
     .orderBy(desc(schema.projectPromptScheduleRuns.scheduledFor))
     .limit(1);
-  if (!latest) return null;
+  if (!latest) return { activeStatus: null, latestRun: null };
+  const activeStatus = latest.activeStatus ?? null;
+  const failure =
+    latest.failureCode || latest.failureMessage
+      ? { code: latest.failureCode, message: latest.failureMessage }
+      : latest.turnFailureCode || latest.turnFailureMessage
+        ? {
+            code: latest.turnFailureCode,
+            message: latest.turnFailureMessage,
+          }
+        : null;
   return {
-    id: latest.id,
-    scheduledFor: latest.scheduledFor,
-    catchUpFrom: latest.catchUpFrom,
-    status: latest.status,
-    threadId: latest.threadId,
-    threadTitle: latest.threadTitle,
-    turnStatus: latest.turnStatus,
-    failure:
-      latest.failureCode || latest.failureMessage
-        ? { code: latest.failureCode, message: latest.failureMessage }
-        : null,
+    activeStatus,
+    latestRun: {
+      id: latest.id,
+      scheduledFor: latest.scheduledFor,
+      catchUpFrom: latest.catchUpFrom,
+      trigger: latest.trigger,
+      status: latest.status,
+      threadId: latest.threadId,
+      threadTitle: latest.threadTitle,
+      turnStatus: latest.turnStatus,
+      failure,
+    },
   };
 }
 
@@ -184,19 +270,22 @@ export async function listProjectPromptSchedulesForUser(input: {
     );
 
   return Promise.all(
-    rows.map(async ({ schedule, projectName, role, creatorName }) => ({
-      ...schedule,
-      project: { id: schedule.projectId, name: projectName },
-      creator: schedule.createdByUserId
-        ? { id: schedule.createdByUserId, name: creatorName ?? "Former member" }
-        : null,
-      permissions: schedulePermissions({
-        creatorUserId: schedule.createdByUserId,
-        role,
-        userId: input.userId,
-      }),
-      latestRun: await latestScheduleRun(schedule.id),
-    })),
+    rows.map(async ({ schedule, projectName, role, creatorName }) => {
+      const runState = await scheduleRunState(schedule.id);
+      return {
+        ...schedule,
+        project: { id: schedule.projectId, name: projectName },
+        creator: schedule.createdByUserId
+          ? { id: schedule.createdByUserId, name: creatorName ?? "Former member" }
+          : null,
+        permissions: schedulePermissions({
+          creatorUserId: schedule.createdByUserId,
+          role,
+          userId: input.userId,
+        }),
+        ...runState,
+      };
+    }),
   ) satisfies Promise<ProjectPromptScheduleSummary[]>;
 }
 
@@ -204,56 +293,24 @@ export async function createProjectPromptSchedule(input: {
   organizationId: string;
   projectId: string;
   userId: string;
+  title: string;
   cronExpression: string;
   timeZone: string;
   prompt: string;
   modelId: string;
 }) {
   const validated = validateProjectPromptSchedule(input);
+  const title = input.title.trim();
+  if (!title) throw new Error("A title is required.");
+  if (title.length > 120) throw new Error("Title must be 120 characters or fewer.");
   const prompt = input.prompt.trim();
   if (!prompt) throw new Error("A prompt is required.");
   const modelId = input.modelId.trim();
   if (!modelId) throw new Error("A model is required.");
   const now = new Date();
   const schedule = await knowledgeDb.transaction(async (tx) => {
-    const [project] = await tx
-      .select({
-        archivedAt: schema.projects.archivedAt,
-        environmentId: schema.projects.environmentId,
-      })
-      .from(schema.projects)
-      .where(
-        and(
-          eq(schema.projects.id, input.projectId),
-          eq(schema.projects.organizationId, input.organizationId),
-        ),
-      )
-      .limit(1)
-      .for("update");
-    if (!project || project.archivedAt) {
-      throw new ProjectAccessError(
-        "PROJECT_NOT_FOUND",
-        "Project not found or unavailable.",
-      );
-    }
-    const [access] = await tx
-      .select({ role: schema.projectMembers.role })
-      .from(schema.projectMembers)
-      .innerJoin(
-        schema.members,
-        and(
-          eq(
-            schema.members.id,
-            schema.projectMembers.organizationMemberId,
-          ),
-          eq(schema.members.organizationId, input.organizationId),
-          eq(schema.members.userId, input.userId),
-        ),
-      )
-      .where(eq(schema.projectMembers.projectId, input.projectId))
-      .limit(1)
-      .for("update");
-    if (!access) {
+    const access = await lockProjectPromptScheduleAccessInTransaction(tx, input);
+    if (!access || access.projectArchivedAt) {
       throw new ProjectAccessError(
         "PROJECT_NOT_FOUND",
         "Project not found or unavailable.",
@@ -268,7 +325,7 @@ export async function createProjectPromptSchedule(input: {
     if (
       !(await isKestrelRuntimeModelSelectionAvailableInTransaction(tx, {
         organizationId: input.organizationId,
-        environmentId: project.environmentId,
+        environmentId: access.projectEnvironmentId,
         modelId,
       }))
     ) {
@@ -284,6 +341,7 @@ export async function createProjectPromptSchedule(input: {
         organizationId: input.organizationId,
         projectId: input.projectId,
         createdByUserId: input.userId,
+        title,
         cronExpression: validated.cronExpression,
         timeZone: validated.timeZone,
         prompt,
@@ -318,6 +376,7 @@ export async function updateProjectPromptSchedule(input: {
   projectId: string;
   organizationId: string;
   userId: string;
+  title?: string;
   cronExpression?: string;
   timeZone?: string;
   prompt?: string;
@@ -325,6 +384,13 @@ export async function updateProjectPromptSchedule(input: {
   enabled?: boolean;
 }) {
   return knowledgeDb.transaction(async (tx) => {
+    const access = await lockProjectPromptScheduleAccessInTransaction(tx, input);
+    if (!access) {
+      throw new ProjectAccessError(
+        "PROJECT_NOT_FOUND",
+        "Schedule not found or unavailable.",
+      );
+    }
     const [schedule] = await tx
       .select()
       .from(schema.projectPromptSchedules)
@@ -346,46 +412,16 @@ export async function updateProjectPromptSchedule(input: {
         "Schedule not found or unavailable.",
       );
     }
-    const [access] = await tx
-      .select({
-        projectArchivedAt: schema.projects.archivedAt,
-        projectEnvironmentId: schema.projects.environmentId,
-        role: schema.projectMembers.role,
-      })
-      .from(schema.projects)
-      .innerJoin(
-        schema.projectMembers,
-        eq(schema.projectMembers.projectId, schema.projects.id),
-      )
-      .innerJoin(
-        schema.members,
-        and(
-          eq(
-            schema.members.id,
-            schema.projectMembers.organizationMemberId,
-          ),
-          eq(schema.members.organizationId, input.organizationId),
-          eq(schema.members.userId, input.userId),
-        ),
-      )
-      .where(
-        and(
-          eq(schema.projects.id, input.projectId),
-          eq(schema.projects.organizationId, input.organizationId),
-        ),
-      )
-      .limit(1)
-      .for("update");
-    if (!access) {
-      throw new ProjectAccessError(
-        "PROJECT_NOT_FOUND",
-        "Schedule not found or unavailable.",
-      );
-    }
 
     const isCreator = schedule.createdByUserId === input.userId;
     const isOwner = access.role === "owner";
     const changesDefinition =
+      input.title !== undefined ||
+      input.cronExpression !== undefined ||
+      input.timeZone !== undefined ||
+      input.prompt !== undefined ||
+      input.modelId !== undefined;
+    const changesExecution =
       input.cronExpression !== undefined ||
       input.timeZone !== undefined ||
       input.prompt !== undefined ||
@@ -419,6 +455,11 @@ export async function updateProjectPromptSchedule(input: {
       cronExpression,
       timeZone,
     });
+    const title = (input.title ?? schedule.title).trim();
+    if (!title) throw new Error("A title is required.");
+    if (title.length > 120) {
+      throw new Error("Title must be 120 characters or fewer.");
+    }
     const prompt = (input.prompt ?? schedule.prompt).trim();
     if (!prompt) throw new Error("A prompt is required.");
     const modelId = (input.modelId ?? schedule.modelId)?.trim() || null;
@@ -442,13 +483,14 @@ export async function updateProjectPromptSchedule(input: {
     }
     const now = new Date();
     const nextRunAt = enabled
-      ? input.enabled === true || changesDefinition || !schedule.nextRunAt
+      ? input.enabled === true || changesExecution || !schedule.nextRunAt
         ? nextProjectPromptScheduleOccurrence({ ...validated, after: now })
         : schedule.nextRunAt
       : null;
     const [updatedSchedule] = await tx
       .update(schema.projectPromptSchedules)
       .set({
+        title,
         cronExpression: validated.cronExpression,
         timeZone: validated.timeZone,
         prompt,
@@ -603,6 +645,166 @@ async function pauseScheduleInTransaction(
   });
 }
 
+export async function createProjectPromptScheduleTestRun(input: {
+  scheduleId: string;
+  projectId: string;
+  organizationId: string;
+  userId: string;
+  requestId: string;
+  receivedAt?: Date;
+}) {
+  const now = input.receivedAt ?? new Date();
+  return knowledgeDb.transaction(async (tx) => {
+    const access = await lockProjectPromptScheduleAccessInTransaction(tx, input);
+    if (!access) {
+      throw new ProjectAccessError(
+        "PROJECT_NOT_FOUND",
+        "Schedule not found or unavailable.",
+      );
+    }
+    const [schedule] = await tx
+      .select()
+      .from(schema.projectPromptSchedules)
+      .where(
+        and(
+          eq(schema.projectPromptSchedules.id, input.scheduleId),
+          eq(schema.projectPromptSchedules.projectId, input.projectId),
+          eq(
+            schema.projectPromptSchedules.organizationId,
+            input.organizationId,
+          ),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!schedule) {
+      throw new ProjectAccessError(
+        "PROJECT_NOT_FOUND",
+        "Schedule not found or unavailable.",
+      );
+    }
+    if (schedule.createdByUserId !== input.userId) {
+      throw new ProjectAccessError(
+        "PROJECT_FORBIDDEN",
+        "Only the schedule creator can test it.",
+      );
+    }
+
+    const [existing] = await tx
+      .select({
+        id: schema.projectPromptScheduleRuns.id,
+        threadId: schema.projectPromptScheduleRuns.threadId,
+      })
+      .from(schema.projectPromptScheduleRuns)
+      .where(
+        and(
+          eq(schema.projectPromptScheduleRuns.scheduleId, schedule.id),
+          eq(schema.projectPromptScheduleRuns.requestId, input.requestId),
+        ),
+      )
+      .limit(1);
+    if (existing?.threadId) {
+      return { runId: existing.id, threadId: existing.threadId };
+    }
+
+    if (access.projectArchivedAt) {
+      throw new Error("Restore the Project before testing this schedule.");
+    }
+    if (
+      schedule.modelId &&
+      !(await isKestrelRuntimeModelSelectionAvailableInTransaction(tx, {
+        organizationId: input.organizationId,
+        environmentId: access.projectEnvironmentId,
+        modelId: schedule.modelId,
+      }))
+    ) {
+      throw Object.assign(
+        new Error("The selected model is not available in this Project Environment."),
+        { code: "SCHEDULE_MODEL_UNAVAILABLE" },
+      );
+    }
+
+    let scheduledFor = now;
+    for (;;) {
+      const [occurrence] = await tx
+        .select({ id: schema.projectPromptScheduleRuns.id })
+        .from(schema.projectPromptScheduleRuns)
+        .where(
+          and(
+            eq(schema.projectPromptScheduleRuns.scheduleId, schedule.id),
+            eq(schema.projectPromptScheduleRuns.scheduledFor, scheduledFor),
+          ),
+        )
+        .limit(1);
+      if (!occurrence) break;
+      scheduledFor = new Date(scheduledFor.getTime() + 1);
+    }
+
+    const runId = crypto.randomUUID();
+    const threadId = crypto.randomUUID();
+    const [inserted] = await tx
+      .insert(schema.projectPromptScheduleRuns)
+      .values({
+        id: runId,
+        scheduleId: schedule.id,
+        scheduledFor,
+        catchUpFrom: null,
+        titleSnapshot: schedule.title,
+        promptSnapshot: schedule.prompt,
+        modelIdSnapshot: schedule.modelId,
+        trigger: "test",
+        requestId: input.requestId,
+        threadId,
+        messageId: crypto.randomUUID(),
+        status: "queued",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoNothing({
+        target: [
+          schema.projectPromptScheduleRuns.scheduleId,
+          schema.projectPromptScheduleRuns.requestId,
+        ],
+      })
+      .returning({
+        id: schema.projectPromptScheduleRuns.id,
+        threadId: schema.projectPromptScheduleRuns.threadId,
+      });
+    const [conflicted] = inserted
+      ? []
+      : await tx
+          .select({
+            id: schema.projectPromptScheduleRuns.id,
+            threadId: schema.projectPromptScheduleRuns.threadId,
+          })
+          .from(schema.projectPromptScheduleRuns)
+          .where(
+            and(
+              eq(schema.projectPromptScheduleRuns.scheduleId, schedule.id),
+              eq(schema.projectPromptScheduleRuns.requestId, input.requestId),
+            ),
+          )
+          .limit(1);
+    const run = inserted ?? conflicted;
+    if (!run?.threadId) {
+      throw new Error("The schedule test run could not be created.");
+    }
+    if (inserted) {
+      await tx.insert(schema.projectAuditEvents).values({
+        id: crypto.randomUUID(),
+        projectId: schedule.projectId,
+        actorUserId: input.userId,
+        action: "project.schedule.tested",
+        targetType: "project_prompt_schedule",
+        targetId: schedule.id,
+        metadata: { runId: run.id, trigger: "test" },
+        createdAt: now,
+      });
+    }
+    return { runId: run.id, threadId: run.threadId };
+  });
+}
+
 export async function claimDueProjectPromptScheduleRuns(now = new Date()) {
   const due = await knowledgeDb
     .select({ id: schema.projectPromptSchedules.id })
@@ -710,8 +912,11 @@ export async function claimDueProjectPromptScheduleRuns(now = new Date()) {
           scheduleId: schedule.id,
           scheduledFor: occurrence.scheduledFor,
           catchUpFrom: occurrence.catchUpFrom,
+          titleSnapshot: schedule.title,
           promptSnapshot: schedule.prompt,
           modelIdSnapshot: schedule.modelId,
+          trigger: "scheduled",
+          requestId: null,
           threadId: crypto.randomUUID(),
           messageId: crypto.randomUUID(),
           status: "queued",
