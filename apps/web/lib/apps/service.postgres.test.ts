@@ -82,6 +82,7 @@ test(
     const threadId = `apps-thread-${suffix}`;
     const workspaceId = `apps-workspace-${suffix}`;
     const runId = `apps-run-${suffix}`;
+    const replayRunId = `apps-replay-run-${suffix}`;
     const googleAuthAccountId = `apps-google-auth-${suffix}`;
     const googleProviderAccountId = `apps-google-provider-${suffix}`;
     const isolatedGoogleConnectionId = `apps-isolated-google-${suffix}`;
@@ -705,6 +706,27 @@ test(
     });
     assert.match(requestedApproval.authorityRevision ?? "", /^sha256:[0-9a-f]{64}$/u);
     assert.equal(requestedApproval.externalApprovalBinding?.authorityKind, "hosted_app_policy");
+    await sql`
+      INSERT INTO "environment_run_executions" (
+        "id", "organization_id", "environment_id", "workspace_id", "thread_id",
+        "project_id", "actor_id", "runtime_image", "effective_capabilities"
+      ) VALUES (
+        ${replayRunId}, ${organizationId}, ${environmentId}, ${workspaceId}, ${threadId},
+        ${projectId}, ${userId}, 'apps-runtime-test', ${sql.json([
+          "app:tavily.search:auto",
+          "app:tavily.research:ask",
+        ])}
+      )
+    `;
+    const replayedApproval =
+      await appApprovals.recordAppOperationApprovalRequest({
+        binding: approvalBinding,
+        projectId,
+        requestedExecutionId: replayRunId,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+    assert.equal(replayedApproval.id, requestedApproval.id);
+    assert.equal(replayedApproval.requestedExecutionId, runId);
     await assert.rejects(
       appApprovals.decideAppOperationApproval({
         organizationId,
@@ -717,13 +739,22 @@ test(
         error instanceof appApprovals.AppOperationApprovalError &&
         error.code === "APP_OPERATION_APPROVAL_NOT_PENDING",
     );
-    await appApprovals.decideAppOperationApproval({
+    const approved = await appApprovals.decideAppOperationApproval({
       organizationId,
       threadId,
       userId,
       runtimeApprovalId: approvalBinding.runtimeApprovalId,
       approved: true,
     });
+    const repeatedApproval = await appApprovals.decideAppOperationApproval({
+      organizationId,
+      threadId,
+      userId,
+      runtimeApprovalId: approvalBinding.runtimeApprovalId,
+      approved: true,
+    });
+    assert.equal(repeatedApproval.id, approved.id);
+    assert.equal(repeatedApproval.status, "approved");
     const concurrentConsumption = await Promise.allSettled([
       appApprovals.consumeAppOperationApproval({
         binding: approvalBinding,
@@ -738,6 +769,15 @@ test(
       concurrentConsumption.map((result) => result.status).sort(),
       ["fulfilled", "rejected"],
     );
+    const consumedReplay = await appApprovals.decideAppOperationApproval({
+      organizationId,
+      threadId,
+      userId,
+      runtimeApprovalId: approvalBinding.runtimeApprovalId,
+      approved: true,
+    });
+    assert.equal(consumedReplay.id, approved.id);
+    assert.equal(consumedReplay.status, "consumed");
 
     const changedPolicyBinding = {
       ...approvalBinding,
