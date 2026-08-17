@@ -33,3 +33,13 @@ test("nested Environment App details preserve the Environment as the sole h1", (
   assert.match(layout, /<h2 className=/u);
   assert.match(environmentDetail, /headingLevel=\{2\}/u);
 });
+
+test("Environment capability switches show their current on or off state", () => {
+  const environmentDetail = read("components/apps/environment-apps-panel.tsx");
+
+  assert.match(
+    environmentDetail,
+    /capability\.enabled \? "On" : "Off"/u,
+  );
+  assert.match(environmentDetail, /aria-label=\{`Enable \$\{capability\.displayName\}`\}/u);
+});

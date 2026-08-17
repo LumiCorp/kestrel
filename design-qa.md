@@ -52,6 +52,69 @@ final result: passed
 
 ---
 
+# Recent Threads fixed-action layout design QA
+
+## Comparison target
+
+- Source visual truth: `/var/folders/cl/_t5qmxn134j19nhj0pj1zqj40000gn/T/codex-clipboard-e96adb23-73f6-4d46-8fc2-3dae06df6c0c.png`
+- Local implementation capture: `/private/tmp/kestrel-recent-threads-implementation.png`
+- Open-menu interaction capture: `/private/tmp/kestrel-recent-threads-menu-open-crop.png`
+- Combined comparison: `/private/tmp/kestrel-recent-threads-comparison.png`
+- Source dimensions: `384 x 194` pixels.
+- Browser viewport: `1280 x 720` CSS pixels at the in-app browser's default density.
+- Focused implementation crop: `288 x 360` pixels from the authenticated standalone Thread workspace rail.
+- State: authenticated `/threads/88cb1930-2f68-4ed1-8e2b-d49363e8dcc5`, light theme, two Recent Thread rows, first row selected, menu closed for the primary comparison.
+
+## Findings
+
+- No actionable P0, P1, or P2 differences remain for the requested responsive row behavior.
+- The long title is constrained to the title column and renders a visible ellipsis instead of displacing the action trigger.
+- The action trigger remains fully visible in the selected and unselected rows and aligns with the supplied reference.
+- The implementation preserves the application's current standalone Thread rail controls above Recent Threads; those controls are outside the affected component shown in the source crop.
+
+## Required fidelity surfaces
+
+- Fonts and typography: the existing sidebar font, weight, size, and uppercase section label are unchanged; the title keeps a single-line ellipsis at constrained widths.
+- Spacing and layout rhythm: the row uses a two-column grid with `minmax(0, 1fr)` for the title and a fixed `2rem` action column. The title link clips its own overflow and the action button cannot shrink.
+- Colors and visual tokens: existing sidebar accent, foreground, border, and muted tokens are unchanged and match the reference's selected-row treatment.
+- Image quality and asset fidelity: not applicable; the component contains no raster imagery or custom visual assets.
+- Copy and content: Thread titles, empty-title fallback, and action labels are unchanged.
+
+## Focused comparison evidence
+
+- The side-by-side comparison includes the supplied `384 x 194` source and the complete `288 x 360` local workspace rail crop without scaling the implementation.
+- The selected long-title row measures `263px` wide: `231px` title-link column plus a fixed `32px` action column.
+- The title span measures `191px` visible against `487px` intrinsic width, with computed `overflow: hidden`, `white-space: nowrap`, and `text-overflow: ellipsis`.
+- The action button's right edge is `527px`, inside the row's `531px` right edge.
+
+## Verification completed
+
+- The focused Workspace rail contract test passes.
+- Focused Ultracite checks pass for the changed component and contract test.
+- Kestrel One TypeScript compilation passes.
+- The current database migrations and supported development account were applied to an isolated local QA database; the pre-existing local databases were left intact.
+- The local Next.js Thread workspace renders against the isolated database with the local Environment runtime.
+- Clicking the long-title row's action trigger sets `aria-expanded="true"` and exposes the visible `Archive thread` menu item.
+- No application error boundary or browser-visible runtime error appeared during the exercised state.
+
+## Implementation checklist
+
+- [x] Reserve a persistent fixed-width action column.
+- [x] Constrain the title to the remaining visible width.
+- [x] Keep the action trigger outside the title's clipping boundary.
+- [x] Preserve the existing always-visible trigger and accessible action label.
+- [x] Recapture and exercise the menu after the local database is migrated.
+
+## Comparison history
+
+1. The initial local comparison was blocked because the shared development database was behind the checkout's current migrations.
+2. A fresh isolated QA database was migrated and seeded without changing either pre-existing local database.
+3. The authenticated Thread workspace then rendered the updated rail; the final comparison and interaction check confirmed responsive truncation and an always-visible, operable action menu.
+
+final result: passed
+
+---
+
 # Desktop navigation and title bar design QA
 
 **Source visual truth**
