@@ -56,6 +56,16 @@ test("Workspace rail requests the authoritative Thread scope and distinguishes l
   assert.match(source, /Threads could not be loaded\./u);
   assert.match(source, /pathname === "\/projects"/u);
   assert.match(source, /routeProjectId \? null : newThreadHref/u);
+  assert.match(
+    source,
+    /grid-cols-\[minmax\(0,1fr\)_2rem\]/u,
+  );
+  assert.match(source, /mr-1 size-7 shrink-0 text-muted-foreground/u);
+  assert.match(
+    source,
+    /className="flex min-w-0 items-center gap-2 overflow-hidden px-2 py-2 text-sm"/u,
+  );
+  assert.match(source, /"min-w-0 flex-1 truncate"/u);
   assert.doesNotMatch(source, /thread\.projectId === activeProjectId/u);
   assert.doesNotMatch(source, /opacity-0/u);
 });
@@ -109,6 +119,23 @@ test("Schedules live in primary navigation under Work instead of Project tabs", 
   assert.match(schedules, /scheduleOperationalStatus\(schedule\)/u);
   assert.doesNotMatch(schedules, /schedule\.enabled \? "Enabled"/u);
   assert.match(schedules, /aria-label="Latest run failure"/u);
+});
+
+test("Schedule editor keeps actions visible while its form scrolls", () => {
+  const schedules = read("schedules/schedules-client.tsx");
+
+  assert.match(
+    schedules,
+    /DialogContent className="[^"]*max-h-\[calc\(100dvh-2rem\)\][^"]*overflow-hidden/u,
+  );
+  assert.match(
+    schedules,
+    /className="[^"]*min-h-0[^"]*overflow-y-auto[^"]*"/u,
+  );
+  assert.match(
+    schedules,
+    /Textarea[\s\S]*className="[^"]*min-h-48[^"]*"[\s\S]*id="schedule-prompt"/u,
+  );
 });
 
 test("Project Workspace uses the standard page heading", () => {

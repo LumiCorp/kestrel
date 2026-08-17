@@ -351,14 +351,14 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
               visibleThreads.map((thread) => (
                 <div
                   className={cn(
-                    "group/thread flex items-center rounded-md transition-colors hover:bg-sidebar-accent",
+                    "group/thread grid w-full min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center overflow-hidden rounded-md transition-colors hover:bg-sidebar-accent",
                     pathname === `/threads/${thread.id}` &&
                       "bg-sidebar-accent text-sidebar-accent-foreground",
                   )}
                   key={thread.id}
                 >
                   <Link
-                    className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-sm"
+                    className="flex min-w-0 items-center gap-2 overflow-hidden px-2 py-2 text-sm"
                     href={`/threads/${thread.id}`}
                   >
                     <span
@@ -388,7 +388,7 @@ export function WorkspaceRail({ organizationId }: { organizationId: string }) {
                     <DropdownMenuTrigger asChild>
                       <Button
                         aria-label={`Thread actions for ${thread.title || "New thread"}`}
-                        className="mr-1 size-7 text-muted-foreground"
+                        className="mr-1 size-7 shrink-0 text-muted-foreground"
                         size="icon"
                         variant="ghost"
                       >

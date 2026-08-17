@@ -403,7 +403,7 @@ function CapabilityRow({
   }
 
   return (
-    <div className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_9rem_3rem] md:items-center">
+    <div className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_9rem_auto] md:items-center">
       <div>
         <div className="flex flex-wrap items-center gap-2">
           <p className="font-medium text-sm">{capability.displayName}</p>
@@ -434,17 +434,22 @@ function CapabilityRow({
           <SelectItem value="deny">Blocked</SelectItem>
         </SelectContent>
       </Select>
-      <Switch
-        aria-label={`Enable ${capability.displayName}`}
-        checked={capability.enabled}
-        disabled={saving}
-        onCheckedChange={(enabled) =>
-          void save({
-            enabled,
-            approvalMode: enabled ? capability.defaultApprovalMode : "deny",
-          })
-        }
-      />
+      <div className="flex items-center justify-end gap-2">
+        <span className="min-w-5 text-right text-muted-foreground text-xs">
+          {capability.enabled ? "On" : "Off"}
+        </span>
+        <Switch
+          aria-label={`Enable ${capability.displayName}`}
+          checked={capability.enabled}
+          disabled={saving}
+          onCheckedChange={(enabled) =>
+            void save({
+              enabled,
+              approvalMode: enabled ? capability.defaultApprovalMode : "deny",
+            })
+          }
+        />
+      </div>
     </div>
   );
 }

@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { threadTurnBodySchema } from "./thread-turn-request-contract";
+
+const webRoot = path.resolve(import.meta.dirname, "../..");
 
 const userMessage = {
   id: "user-1",
@@ -65,3 +69,15 @@ test(
     );
   }
 );
+
+test("Approval turns use one server-owned idempotency key", () => {
+  const route = fs.readFileSync(
+    path.join(webRoot, "app/api/threads/[id]/route.ts"),
+    "utf8"
+  );
+
+  assert.match(
+    route,
+    /const idempotencyKey = approvalResponse\s+\? `approval:\$\{approvalResponse\.approvalId\}`\s+: request\.headers\.get\("idempotency-key"\)/u
+  );
+});
