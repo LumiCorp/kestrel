@@ -738,6 +738,13 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
             state: "stopped",
             timeoutSeconds: 60,
           });
+        } else if (machine?.state === "replacing") {
+          await this.waitForMachine({
+            ...input,
+            state: "started",
+            timeoutSeconds: 60,
+          });
+          return;
         } else if (
           machine?.state !== "stopped" &&
           machine?.state !== "created"

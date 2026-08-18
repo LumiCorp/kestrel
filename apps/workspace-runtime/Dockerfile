@@ -3,6 +3,7 @@ WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 COPY apps/workspace-runtime/package.json apps/workspace-runtime/package.json
+COPY packages/conversation/package.json packages/conversation/package.json
 COPY packages/environment-auth/package.json packages/environment-auth/package.json
 COPY packages/memory/package.json packages/memory/package.json
 COPY packages/mcp-security/package.json packages/mcp-security/package.json
@@ -11,6 +12,7 @@ COPY packages/protocol/package.json packages/protocol/package.json
 COPY packages/workspace-skills/package.json packages/workspace-skills/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/workspace-runtime apps/workspace-runtime
+COPY packages/conversation packages/conversation
 COPY packages/environment-auth packages/environment-auth
 COPY packages/memory packages/memory
 COPY packages/mcp-security packages/mcp-security
@@ -24,6 +26,7 @@ COPY src src
 COPY tools tools
 COPY db db
 RUN pnpm --filter @lumi/kestrel-environment-auth build \
+    && pnpm --filter @kestrel-agents/conversation build \
     && pnpm --filter @kestrel-agents/memory build \
     && pnpm --filter @kestrel-agents/workspace-skills build \
     && pnpm --filter @kestrel-agents/sdk build \
@@ -42,6 +45,7 @@ COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/db ./dist/db
 COPY --from=build /app/apps/workspace-runtime ./apps/workspace-runtime
+COPY --from=build /app/packages/conversation ./packages/conversation
 COPY --from=build /app/packages/environment-auth ./packages/environment-auth
 COPY --from=build /app/packages/memory ./packages/memory
 COPY --from=build /app/packages/protocol ./packages/protocol
