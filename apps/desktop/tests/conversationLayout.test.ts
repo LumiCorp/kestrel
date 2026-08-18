@@ -169,6 +169,26 @@ test("composer activity stays visible only while the agent is executing", async 
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.composer-running::before \{ animation: none; transform: translateX\(40%\); \}/su);
 });
 
+test("active Desktop runs reconcile durable terminal messages after a missed IPC event", async () => {
+  const app = await readFile(appPath, "utf8");
+
+  assert.match(app, /const DESKTOP_ACTIVE_RUN_RECONCILIATION_MS = 1_000;/u);
+  assert.match(
+    app,
+    /if \(agentWorking === false \|\| activeRun === undefined \|\| activeThread === undefined\) \{\s*return;\s*\}/u,
+  );
+  assert.match(app, /const currentThread = threadsRef\.current\.find\(/u);
+  assert.match(
+    app,
+    /void refreshThreadAuthority\(currentThread, \{ recoverActivity: false \}\)\s*\.catch\(\(\) => undefined\)/u,
+  );
+  assert.match(app, /\};\s*reconcile\(\);\s*const interval = window\.setInterval\(/u);
+  assert.match(
+    app,
+    /window\.setInterval\(\s*reconcile,\s*DESKTOP_ACTIVE_RUN_RECONCILIATION_MS,\s*\)/u,
+  );
+});
+
 test("composer keeps mode and model semantics without redundant visible chrome", async () => {
   const [styles, app] = await Promise.all([
     readDesktopStyles(),

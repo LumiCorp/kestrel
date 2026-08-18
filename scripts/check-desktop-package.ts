@@ -34,6 +34,7 @@ for (const required of [
   path.join(runtimeRoot, "package.json"),
   path.join(runtimeRoot, "node_modules", "tsx"),
   path.join(runtimeRoot, "node_modules", "@electric-sql", "pglite"),
+  path.join(payloadRoot, "package.json"),
   path.join(payloadRoot, "cli", "runner", "main.ts"),
   path.join(payloadRoot, "db", "migrations"),
   path.join(payloadRoot, "src", "localCore", "api.ts"),
