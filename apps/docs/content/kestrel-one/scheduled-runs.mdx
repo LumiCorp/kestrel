@@ -1,0 +1,51 @@
+---
+title: Scheduled runs
+summary: Create, test, inspect, and operate titled Kestrel One schedules with explicit model and interaction mode.
+section: kestrel-one
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-18
+---
+
+A Project schedule starts a new run from a saved prompt at a cron-defined time.
+Each schedule has a title, prompt, timezone, cron expression, selected model,
+and Chat or Build interaction mode.
+
+## Create a schedule
+
+Open the Project’s **Schedules** surface, give the schedule a recognizable
+title, enter the prompt, choose the model and interaction mode, set the cron
+expression and timezone, then save it. Review the displayed next-run time,
+especially around daylight-saving transitions.
+
+Choose **Build** only when the scheduled work needs the mutation authority of
+Build mode. A schedule does not widen App, Environment, network, credential, or
+approval policy.
+
+## Test without waiting
+
+Use **Run test** to execute the saved schedule immediately through the same
+runtime contract. Test runs record `trigger: test`; ordinary timer starts record
+`trigger: scheduled`. Each accepted test request carries a request identifier so
+a retry cannot create a duplicate schedule run.
+
+## Inspect a run
+
+Run history preserves the schedule title at execution time, trigger, request
+identity when present, selected model, interaction mode, status, Thread, and
+terminal result. Renaming a schedule does not rewrite earlier title snapshots.
+
+## Operate safely
+
+Before relying on a schedule, run one manual test, confirm the selected model
+and Environment are ready, verify required plugins and approvals, and inspect
+the resulting Thread. If a run is waiting for approval or operator input, use
+the normal operator controls instead of starting a duplicate run.
+
+<Outcome>
+  <p>You have a titled schedule whose next run, test execution, model, mode, and resulting Thread can be verified.</p>
+</Outcome>
+
+Continue with [Projects](/kestrel-one/projects), [Apps](/kestrel-one/apps), or
+[Environments](/kestrel-one/environments).

@@ -34,10 +34,10 @@ higher-level agent client, use `@kestrel-agents/sdk/runner`.
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/sdk@0.8.0
-npm install @kestrel-agents/sdk@0.8.0
-yarn add @kestrel-agents/sdk@0.8.0
-bun add @kestrel-agents/sdk@0.8.0
+pnpm add @kestrel-agents/sdk@0.8.5
+npm install @kestrel-agents/sdk@0.8.5
+yarn add @kestrel-agents/sdk@0.8.5
+bun add @kestrel-agents/sdk@0.8.5
 ```
 
 Use an exact compatible release line across the runtime and public packages.

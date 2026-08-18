@@ -53,6 +53,40 @@ test("LocalCoreClient keeps the generic timeout for ordinary requests", async ()
   }
 });
 
+test("LocalCoreClient lets runner commands outlive the health probe timeout", async () => {
+  const genericTimeoutMs = 20;
+  const responseDelayMs = 80;
+  const fixture = await startDelayedRunnerLocalCore(responseDelayMs);
+  try {
+    const client = new LocalCoreClient({
+      socketPath: fixture.socketPath,
+      token: "test-token",
+      timeoutMs: genericTimeoutMs,
+    });
+    const events: string[] = [];
+
+    const startedAt = Date.now();
+    await client.sendRunnerCommand(
+      JSON.stringify({
+        id: "mission-control-project-command",
+        type: "mission_control.project.get",
+        payload: {
+          projectId: "11111111-1111-4111-8111-111111111111",
+        },
+      }),
+      { onLine: (line) => events.push(line) },
+    );
+
+    assert.ok(Date.now() - startedAt >= responseDelayMs);
+    assert.equal(
+      (JSON.parse(events[0] ?? "{}") as { type?: string }).type,
+      "mission_control.project",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("LocalCoreClient strictly parses nested runtime configuration and credential status", async () => {
   const fixture = await startStaticLocalCore((requestPath) => {
     if (requestPath === "/v1/runtime/configuration") {
@@ -288,6 +322,61 @@ async function startStaticLocalCore(
   const server = createServer((request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(responseForPath(request.url)));
+  });
+  await listen(server, socketPath);
+  return {
+    socketPath,
+    async close(): Promise<void> {
+      await close(server);
+      await rm(root, { recursive: true, force: true });
+    },
+  };
+}
+
+async function startDelayedRunnerLocalCore(responseDelayMs: number): Promise<{
+  socketPath: string;
+  close(): Promise<void>;
+}> {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-core-client-runner-"),
+  );
+  const socketPath = path.join(root, "api.sock");
+  const server = createServer((request, response) => {
+    let raw = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => {
+      raw += chunk;
+    });
+    request.on("end", () => {
+      const command = JSON.parse(raw) as { id: string; payload: { projectId: string } };
+      setTimeout(() => {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          id: "mission-control-project-event",
+          type: "mission_control.project",
+          ts: "2026-08-18T12:00:00.000Z",
+          commandId: command.id,
+          payload: {
+            projectId: command.payload.projectId,
+            project: {
+              projectId: command.payload.projectId,
+              schemaVersion: 1,
+              revision: 0,
+              authorityEpoch: 1,
+              document: {
+                schemaVersion: 1,
+                projectId: command.payload.projectId,
+                autopilot: { enabled: false, wipLimit: 1 },
+                items: {},
+                history: [],
+              },
+              createdAt: "1970-01-01T00:00:00.000Z",
+              updatedAt: "1970-01-01T00:00:00.000Z",
+            },
+          },
+        }));
+      }, responseDelayMs);
+    });
   });
   await listen(server, socketPath);
   return {

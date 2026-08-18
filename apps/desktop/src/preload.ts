@@ -483,6 +483,21 @@ const desktopBridge: DesktopBridge = {
   ): Promise<DesktopMissionControlProjectResponse> {
     return ipcRenderer.invoke("desktop:get-mission-control-project", projectId);
   },
+  inspectMissionControlProjectSetup(projectId) {
+    return ipcRenderer.invoke(
+      "desktop:inspect-mission-control-project-setup",
+      projectId,
+    );
+  },
+  onMissionControlProject(listener) {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      project: DesktopMissionControlProjectResponse,
+    ) => listener(project);
+    ipcRenderer.on("desktop:mission-control-project", handler);
+    return () =>
+      ipcRenderer.removeListener("desktop:mission-control-project", handler);
+  },
   executeMissionControlAction(intent) {
     return ipcRenderer.invoke("desktop:execute-mission-control-action", intent);
   },

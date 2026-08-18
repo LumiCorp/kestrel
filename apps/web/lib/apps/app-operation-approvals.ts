@@ -145,7 +145,7 @@ export async function recordAppOperationApprovalRequest(input: {
         equals(table.runtimeApprovalId, input.binding.runtimeApprovalId)
       ),
   });
-  if (!existing || existing.requestedExecutionId !== input.requestedExecutionId) {
+  if (!existing) {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
   }
   try {
@@ -172,7 +172,7 @@ export async function recordAppOperationApprovalRequest(input: {
     assertAppExternalApprovalBinding({
       stored: existing.externalApprovalBinding,
       actual: input.binding,
-      requestedExecutionId: input.requestedExecutionId,
+      requestedExecutionId: existing.requestedExecutionId,
       authorityRevision,
     });
   } catch {
@@ -218,6 +218,28 @@ export async function decideAppOperationApproval(input: {
     )
     .returning();
   if (decision) return decision;
+  const repeatedDecision = await knowledgeDb.query.appOperationApprovals.findFirst(
+    {
+      where: (
+        table,
+        { and: all, eq: equals, gt: greaterThan, isNotNull: present }
+      ) =>
+        all(
+          equals(table.organizationId, input.organizationId),
+          equals(table.threadId, input.threadId),
+          equals(table.actorUserId, input.userId),
+          equals(table.runtimeApprovalId, input.runtimeApprovalId),
+          input.approved
+            ? inArray(table.status, ["approved", "consumed"])
+            : equals(table.status, "denied"),
+          equals(table.decidedByUserId, input.userId),
+          present(table.externalApprovalBinding),
+          present(table.authorityRevision),
+          greaterThan(table.expiresAt, now),
+        ),
+    },
+  );
+  if (repeatedDecision) return repeatedDecision;
   await expireAppOperationApproval({
     organizationId: input.organizationId,
     runtimeApprovalId: input.runtimeApprovalId,

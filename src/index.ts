@@ -79,6 +79,7 @@ export * from "./project/RuntimeService.js";
 export * from "./project/workspace.js";
 export * from "./missionControl/legacyContracts.js";
 export * from "./missionControl/projectAuthority.js";
+export * from "./missionControl/projectChanges.js";
 export * from "./missionControl/migrationContracts.js";
 export * from "./missionControl/executionAuthority.js";
 export * from "./missionControl/executionRuntime.js";

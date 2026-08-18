@@ -114,6 +114,7 @@ test(
           "kestrel_one.google_calendar_list_events": "ask",
           "kestrel_one.search_knowledge_documents": "auto",
         },
+        kestrelOneAppApprovalPolicies: {},
         reasoning: {
           request: { mode: "summary", effort: "high" },
           retention: { mode: "provider_visible", days: 7 },
@@ -201,6 +202,7 @@ test(
       label: "Kestrel One",
       additionalToolNames: [],
       kestrelOneAppApprovalModes: {},
+      kestrelOneAppApprovalPolicies: {},
       modelProvider: "ollama",
       model: "llama3.2",
       agentStageConfig: {

@@ -12,6 +12,7 @@ import {
 } from "../../../src/runtime/devshellLifecycle.js";
 import type { AgentToolEvidenceIdentityV1 } from "../../../src/kestrel/contracts/model-io.js";
 import { buildFilesystemInspectionActionKey } from "./filesystemInspection.js";
+import { isFileTextReadToolName } from "../../../src/runtime/fileTextReadTools.js";
 import type {
   ActiveControllerFailure,
   EvidenceClaimImpact,
@@ -595,7 +596,7 @@ function inferToolEvidenceKind(toolName: string, output: Record<string, unknown>
   if (toolName === "fs.list") {
     return "file_listing";
   }
-  if (toolName === "fs.read_text" || toolName === "fs.search_text") {
+  if (isFileTextReadToolName(toolName) || toolName === "fs.search_text") {
     return "file_content";
   }
   if (isDevShellLifecycleTool(toolName)) {
@@ -675,7 +676,7 @@ function buildToolFacts(
   const response = toolName === "dev.process.write" || toolName === "dev.process.write_and_read" || toolName === "exec_command"
     ? asString(output?.output) ?? asString(output?.text) ?? asString(output?.chunk) ?? asString(output?.stderr) ?? asString(output?.stdout)
     : undefined;
-  const readContent = toolName === "fs.read_text" || toolName === "fs.search_text"
+  const readContent = isFileTextReadToolName(toolName) || toolName === "fs.search_text"
     ? asString(output?.content) ?? asString(output?.contentPreview) ?? asString(output?.text)
     : undefined;
   const processIdFact =
@@ -700,7 +701,7 @@ function buildToolFacts(
     ...(toolName === "fs.list" && typeof input?.maxDepth === "number" && Number.isFinite(input.maxDepth)
       ? { inputMaxDepth: Math.max(0, Math.trunc(input.maxDepth)) }
       : {}),
-    ...(toolName === "fs.read_text" && typeof input?.maxBytes === "number" && Number.isFinite(input.maxBytes)
+    ...(isFileTextReadToolName(toolName) && typeof input?.maxBytes === "number" && Number.isFinite(input.maxBytes)
       ? { inputMaxBytes: Math.max(1, Math.trunc(input.maxBytes)) }
       : {}),
     ...(readContent !== undefined
@@ -1704,7 +1705,7 @@ function buildRuntimeToolEvidenceIdentity(
   toolInput: Record<string, unknown> | undefined,
   output: Record<string, unknown> | undefined,
 ): AgentToolEvidenceIdentityV1 | undefined {
-  if (toolName === "fs.read_text" || toolName === "fs.search_text" || toolName === "fs.list") {
+  if (isFileTextReadToolName(toolName) || toolName === "fs.search_text" || toolName === "fs.list") {
     const path = asString(output?.path) ?? asString(toolInput?.path);
     if (path === undefined) {
       return undefined;

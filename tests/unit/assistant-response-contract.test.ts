@@ -60,7 +60,20 @@ test("finalizeRuntimeAssistantResponse canonicalizes an approval wait over stale
     approval: {
       toolCallId: "call-package-json",
       toolName: "fs.write_text",
-      input: { path: "package.json" },
+      presentation: {
+        title: "Approve tool operation",
+        summary:
+          "Request details are hidden because this tool does not provide a safe approval preview.",
+        fields: [],
+        warnings: [],
+        policy: {
+          mode: "ask",
+          reasonCode: "tool_minimum",
+          authorityKind: "runtime_policy",
+          authorityRevision: "legacy-external-confirm",
+          explanation: "This invocation requires approval.",
+        },
+      },
     },
   });
 });

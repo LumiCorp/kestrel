@@ -5,6 +5,23 @@ import { schema } from "@/lib/knowledge/db";
 import { createDurableThreadTurnInTransaction } from "@/lib/turns/store";
 import { withLockedProjectPromptScheduleRun } from "./store";
 
+export function formatProjectPromptScheduleRunTitle(input: {
+  title: string;
+  trigger: "scheduled" | "test";
+  scheduledFor: Date;
+  timeZone: string;
+}) {
+  const occurrence = new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: input.timeZone,
+  }).format(input.scheduledFor);
+  return `${input.title} · ${input.trigger === "test" ? "Test · " : ""}${occurrence}`;
+}
+
 export async function materializeProjectPromptScheduleRun(runId: string) {
   return withLockedProjectPromptScheduleRun(
     runId,
@@ -13,15 +30,27 @@ export async function materializeProjectPromptScheduleRun(runId: string) {
         return current.run.turnId;
       }
       if (current.run.status !== "queued") return null;
-      if (!current.schedule.enabled) {
+      if (current.run.trigger === "scheduled" && !current.schedule.enabled) {
         await cancel("manual");
         return null;
       }
       if (!current.schedule.createdByUserId) {
+        if (current.run.trigger === "test") {
+          throw Object.assign(
+            new Error("The schedule creator is no longer available."),
+            { code: "SCHEDULE_CREATOR_UNAVAILABLE" },
+          );
+        }
         await cancel("creator_access_lost");
         return null;
       }
       if (current.projectArchivedAt) {
+        if (current.run.trigger === "test") {
+          throw Object.assign(
+            new Error("Restore the Project before testing this schedule."),
+            { code: "SCHEDULE_PROJECT_ARCHIVED" },
+          );
+        }
         await cancel("project_archived");
         return null;
       }
@@ -53,6 +82,12 @@ export async function materializeProjectPromptScheduleRun(runId: string) {
         )
         .limit(1);
       if (!creatorMembership) {
+        if (current.run.trigger === "test") {
+          throw Object.assign(
+            new Error("The schedule creator no longer has Project access."),
+            { code: "SCHEDULE_CREATOR_ACCESS_LOST" },
+          );
+        }
         await cancel("creator_access_lost");
         return null;
       }
@@ -129,7 +164,12 @@ export async function materializeProjectPromptScheduleRun(runId: string) {
             origin: "web",
             workspaceMode: "primary",
             activeStreamId: null,
-            title: "",
+            title: formatProjectPromptScheduleRunTitle({
+              title: current.run.titleSnapshot,
+              trigger: current.run.trigger,
+              scheduledFor: current.run.scheduledFor,
+              timeZone: current.schedule.timeZone,
+            }),
             isPublic: false,
             shareToken: null,
             createdAt: now,
@@ -171,11 +211,11 @@ export async function materializeProjectPromptScheduleRun(runId: string) {
         authorUserId: creatorUserId,
         messageId: current.run.messageId,
         messageParts: [{ type: "text", text: current.run.promptSnapshot }],
-        idempotencyKey: `schedule:${current.schedule.id}:${current.run.scheduledFor.toISOString()}`,
+        idempotencyKey: `schedule-run:${current.run.id}`,
         requestedEnvironmentId: environment.id,
         projectContextRevisionId: projectContext.id,
         requestedModelId: current.run.modelIdSnapshot,
-        requestedInteractionMode: "chat",
+        requestedInteractionMode: "build",
         source: "web",
       });
       await complete(durable.turn.id);

@@ -144,6 +144,7 @@ test("InteractionManager grants only an exact, current, same-actor external appr
   });
   const request = await manager.syncWaitState({
     threadId: "thread-exact",
+    turnId: "turn-exact",
     runId: "run-exact",
     actor,
     waitFor: {
@@ -158,6 +159,8 @@ test("InteractionManager grants only an exact, current, same-actor external appr
     },
   });
   assert.ok(request);
+  assert.equal(request.metadata?.conversationTurnId, "turn-exact");
+  assert.equal(request.metadata?.conversationRunId, "run-exact");
 
   await assert.rejects(
     () =>
@@ -191,6 +194,77 @@ test("InteractionManager grants only an exact, current, same-actor external appr
         actor,
       }),
     { code: "INTERACTION_REQUEST_NOT_PENDING" },
+  );
+});
+
+test("InteractionManager replaces a pending approval when the exact approval identity changes", async () => {
+  const store = new InMemorySessionStore();
+  const manager = new InteractionManager(store);
+  const actor = {
+    actorType: "end_user" as const,
+    actorId: "user-1",
+    tenantId: "org-1",
+  };
+  const payload = {
+    to: ["operator@example.test"],
+    subject: "Test",
+    text: "Hello",
+  };
+  const firstBinding = buildApprovalBinding({
+    approvalId: "approval-email-first",
+    threadId: "thread-email",
+    runId: "run-email-first",
+    actionKey: "kestrel_one.email_send",
+    payload,
+  });
+  const first = await manager.syncWaitState({
+    threadId: firstBinding.threadId,
+    runId: firstBinding.runId,
+    actor,
+    waitFor: {
+      kind: "approval",
+      eventType: "user.approval",
+      metadata: {
+        approvalId: firstBinding.approvalId,
+        toolName: firstBinding.actionKey,
+        toolInput: payload,
+        reason: "Build: Ask First requires per-call approval",
+        externalApprovalBinding: firstBinding,
+      },
+    },
+  });
+  assert.ok(first);
+
+  const secondBinding = buildApprovalBinding({
+    approvalId: "approval-email-second",
+    threadId: "thread-email",
+    runId: "run-email-second",
+    actionKey: "kestrel_one.email_send",
+    payload,
+  });
+  const second = await manager.syncWaitState({
+    threadId: secondBinding.threadId,
+    runId: secondBinding.runId,
+    actor,
+    waitFor: {
+      kind: "approval",
+      eventType: "user.approval",
+      metadata: {
+        approvalId: secondBinding.approvalId,
+        toolName: secondBinding.actionKey,
+        toolInput: payload,
+        reason: "Build: Ask First requires per-call approval",
+        externalApprovalBinding: secondBinding,
+      },
+    },
+  });
+  assert.ok(second);
+  assert.notEqual(second.requestId, first.requestId);
+  assert.equal(second.runId, secondBinding.runId);
+  assert.equal(second.metadata?.approvalId, secondBinding.approvalId);
+  assert.equal(
+    (await store.getInteractionRequest(first.requestId))?.status,
+    "CANCELLED",
   );
 });
 

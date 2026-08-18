@@ -350,6 +350,12 @@ export interface RunnerProfile {
   defaultActSubmode?: RunnerActSubmode | undefined;
   toolAllowlist?: string[] | undefined;
   kestrelOneAppApprovalModes?: Record<string, "auto" | "ask"> | undefined;
+  kestrelOneAppApprovalPolicies?: Record<string, {
+    environment: "auto" | "ask" | "deny";
+    project?: "auto" | "ask" | "deny" | undefined;
+    subject?: "auto" | "ask" | "deny" | undefined;
+    minimum: "auto" | "ask";
+  }> | undefined;
   mcpServers?: RunnerMcpServerConfig[] | undefined;
   toolQueue?: RunnerToolQueueProfileConfig | undefined;
   guardrails?: RunnerGuardrailConfig | undefined;
@@ -563,7 +569,8 @@ export interface RunnerInteractionRequestV1 extends Record<string, unknown> {
   approval?: {
     toolCallId: string;
     toolName: string;
-    input: unknown;
+    input?: unknown;
+    presentation?: unknown;
   } | undefined;
 }
 
@@ -1165,6 +1172,7 @@ export interface ConversationMessagesListCommandPayload {
   afterCursor?: string | undefined;
   limit?: number | undefined;
   includeFinalizedPayload?: boolean | undefined;
+  includeTerminalOutcomes?: boolean | undefined;
 }
 
 export interface RunnerConversationMessage {
@@ -1181,9 +1189,28 @@ export interface RunnerConversationMessage {
   };
 }
 
+export interface RunnerConversationTerminalOutcome {
+  messageId: string;
+  turnId: string;
+  threadId: string;
+  sessionId: string;
+  runId: string;
+  completedAt: string;
+  terminalStatus: "COMPLETED" | "FAILED";
+  outcomeStatus: "completed" | "failed" | "cancelled" | "contract_failure";
+  handoffState: "delivered" | "failed";
+  result?: {
+    assistantText: string | null;
+    output: unknown;
+    finalizedPayload?: unknown | undefined;
+  } | undefined;
+  finalizationError?: { code: string; message: string; details?: unknown | undefined } | undefined;
+}
+
 export interface ConversationMessagesEventPayload {
   threadId: string;
   messages: RunnerConversationMessage[];
+  terminalOutcomes?: RunnerConversationTerminalOutcome[] | undefined;
   nextCursor?: string | undefined;
   hasMore: boolean;
 }
@@ -2539,6 +2566,7 @@ function parseRunnerCommandPayloadV2(
         "afterCursor",
         "limit",
         "includeFinalizedPayload",
+        "includeTerminalOutcomes",
       ]);
       requireNonEmptyString(payload.threadId, `${label}.threadId`);
       if (payload.afterCursor !== undefined) {
@@ -2548,6 +2576,10 @@ function parseRunnerCommandPayloadV2(
       validateOptionalBoolean(
         payload.includeFinalizedPayload,
         `${label}.includeFinalizedPayload`,
+      );
+      validateOptionalBoolean(
+        payload.includeTerminalOutcomes,
+        `${label}.includeTerminalOutcomes`,
       );
       break;
     case "operator.runs":
@@ -3123,6 +3155,58 @@ function parseRunnerEventPayloadV2(
           throw new RunnerProtocolContractError(`${label}.messages must be strictly chronological`);
         }
       }
+      if (payload.terminalOutcomes !== undefined) {
+        if (!Array.isArray(payload.terminalOutcomes)) {
+          throw new RunnerProtocolContractError(`${label}.terminalOutcomes must be an array`);
+        }
+        payload.terminalOutcomes.forEach((entry, index) => {
+          const outcome = requireRecord(entry, `${label}.terminalOutcomes[${index}]`);
+          requireNonEmptyString(outcome.messageId, `${label}.terminalOutcomes[${index}].messageId`);
+          requireNonEmptyString(outcome.turnId, `${label}.terminalOutcomes[${index}].turnId`);
+          requireNonEmptyString(outcome.threadId, `${label}.terminalOutcomes[${index}].threadId`);
+          requireNonEmptyString(outcome.sessionId, `${label}.terminalOutcomes[${index}].sessionId`);
+          requireNonEmptyString(outcome.runId, `${label}.terminalOutcomes[${index}].runId`);
+          if (outcome.messageId !== `terminal:${outcome.runId as string}`) {
+            throw new RunnerProtocolContractError(`${label}.terminalOutcomes[${index}].messageId must match its runId`);
+          }
+          if (outcome.threadId !== payload.threadId) {
+            throw new RunnerProtocolContractError(`${label}.terminalOutcomes[${index}].threadId must match payload.threadId`);
+          }
+          requireIsoTimestamp(outcome.completedAt, `${label}.terminalOutcomes[${index}].completedAt`);
+          validateEnum(outcome.terminalStatus, `${label}.terminalOutcomes[${index}].terminalStatus`, ["COMPLETED", "FAILED"]);
+          validateEnum(outcome.outcomeStatus, `${label}.terminalOutcomes[${index}].outcomeStatus`, ["completed", "failed", "cancelled", "contract_failure"]);
+          validateEnum(outcome.handoffState, `${label}.terminalOutcomes[${index}].handoffState`, ["delivered", "failed"]);
+          if (outcome.handoffState === "failed" && outcome.outcomeStatus !== "contract_failure") {
+            throw new RunnerProtocolContractError(`${label}.terminalOutcomes[${index}].outcomeStatus must be 'contract_failure' when handoff failed`);
+          }
+          if (outcome.handoffState === "delivered") {
+            const result = requireRecord(outcome.result, `${label}.terminalOutcomes[${index}].result`);
+            if (outcome.terminalStatus === "COMPLETED") {
+              requireNonEmptyString(result.assistantText, `${label}.terminalOutcomes[${index}].result.assistantText`);
+            } else if (result.assistantText !== null) {
+              throw new RunnerProtocolContractError(`${label}.terminalOutcomes[${index}].result.assistantText must be null for failed outcomes`);
+            }
+            validateRunnerRunOutput(result.output, `${label}.terminalOutcomes[${index}].result.output`);
+            const output = requireRecord(result.output, `${label}.terminalOutcomes[${index}].result.output`);
+            if (output.runId !== outcome.runId || output.sessionId !== outcome.sessionId) {
+              throw new RunnerProtocolContractError(`${label}.terminalOutcomes[${index}].result.output identity must match the outcome`);
+            }
+          } else {
+            const error = requireRecord(outcome.finalizationError, `${label}.terminalOutcomes[${index}].finalizationError`);
+            requireNonEmptyString(error.code, `${label}.terminalOutcomes[${index}].finalizationError.code`);
+            requireNonEmptyString(error.message, `${label}.terminalOutcomes[${index}].finalizationError.message`);
+          }
+        });
+        for (let index = 1; index < payload.terminalOutcomes.length; index += 1) {
+          const previous = requireRecord(payload.terminalOutcomes[index - 1], `${label}.terminalOutcomes[${index - 1}]`);
+          const current = requireRecord(payload.terminalOutcomes[index], `${label}.terminalOutcomes[${index}]`);
+          const ordered = String(previous.completedAt).localeCompare(String(current.completedAt))
+            || String(previous.turnId).localeCompare(String(current.turnId));
+          if (ordered >= 0) {
+            throw new RunnerProtocolContractError(`${label}.terminalOutcomes must be strictly chronological`);
+          }
+        }
+      }
       if (payload.nextCursor !== undefined) {
         parseConversationMessageCursor(payload.nextCursor, `${label}.nextCursor`);
       }
@@ -3637,8 +3721,16 @@ function validateRunnerInteractionRequest(
     const approval = requireRecord(interaction.approval, `${label}.approval`);
     requireNonEmptyString(approval.toolCallId, `${label}.approval.toolCallId`);
     requireNonEmptyString(approval.toolName, `${label}.approval.toolName`);
-    if (Object.hasOwn(approval, "input") === false) {
-      throw new RunnerProtocolContractError(`${label}.approval.input is required`);
+    if (
+      Object.hasOwn(approval, "input") === false &&
+      Object.hasOwn(approval, "presentation") === false
+    ) {
+      throw new RunnerProtocolContractError(
+        `${label}.approval.input or .presentation is required`,
+      );
+    }
+    if (approval.presentation !== undefined) {
+      requireRecord(approval.presentation, `${label}.approval.presentation`);
     }
   }
 }
@@ -3758,6 +3850,10 @@ function validateRunnerProfile(
     `${label}.kestrelOneAppApprovalModes`,
     ["auto", "ask"],
   );
+  validateOptionalAppApprovalPolicyRecord(
+    profile.kestrelOneAppApprovalPolicies,
+    `${label}.kestrelOneAppApprovalPolicies`,
+  );
   validateOptionalRecordArray(profile.mcpServers, `${label}.mcpServers`);
   validateOptionalRecord(profile.toolQueue, `${label}.toolQueue`);
   validateOptionalRecord(profile.guardrails, `${label}.guardrails`);
@@ -3775,6 +3871,34 @@ function validateRunnerProfile(
     }
   }
   validateOptionalBoolean(profile.default, `${label}.default`);
+}
+
+function validateOptionalAppApprovalPolicyRecord(
+  value: unknown,
+  label: string,
+): void {
+  if (value === undefined) return;
+  const policies = requireRecord(value, label);
+  for (const [toolName, rawPolicy] of Object.entries(policies)) {
+    requireNonEmptyString(toolName, `${label} tool name`);
+    const policy = requireRecord(rawPolicy, `${label}.${toolName}`);
+    validateEnum(policy.environment, `${label}.${toolName}.environment`, [
+      "auto",
+      "ask",
+      "deny",
+    ]);
+    validateOptionalEnum(policy.project, `${label}.${toolName}.project`, [
+      "auto",
+      "ask",
+      "deny",
+    ]);
+    validateOptionalEnum(policy.subject, `${label}.${toolName}.subject`, [
+      "auto",
+      "ask",
+      "deny",
+    ]);
+    validateEnum(policy.minimum, `${label}.${toolName}.minimum`, ["auto", "ask"]);
+  }
 }
 
 function validateWorkspaceCheckpointRecord(

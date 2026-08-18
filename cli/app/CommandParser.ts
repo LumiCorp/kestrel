@@ -17,6 +17,7 @@ const INTERACTIVE_OPERATOR_COMMANDS = new Set<TuiSlashCommand>([
   "child",
   "fanin",
   "operator",
+  "queue",
 ]);
 
 export function parseInput(rawLine: string): ParsedInput {

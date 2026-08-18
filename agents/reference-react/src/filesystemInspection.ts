@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 
 import type { ToolExecutionClass } from "../../../src/mode/contracts.js";
+import { isFileTextReadToolName, type FileTextReadToolName } from "../../../src/runtime/fileTextReadTools.js";
 import { asArray, asRecord, asString } from "../../shared/valueAccess.js";
 
-export type FilesystemInspectionToolName = "fs.list" | "fs.read_text" | "fs.search_text";
+export type FilesystemInspectionToolName = "fs.list" | FileTextReadToolName | "fs.search_text";
 
 export interface FilesystemInspectionCacheEntry {
   key: string;
@@ -39,7 +40,7 @@ export function buildFilesystemInspectionPathKey(
 }
 
 export function isFilesystemInspectionToolName(toolName: string): toolName is FilesystemInspectionToolName {
-  return toolName === "fs.list" || toolName === "fs.read_text" || toolName === "fs.search_text";
+  return toolName === "fs.list" || isFileTextReadToolName(toolName) || toolName === "fs.search_text";
 }
 
 export function buildFilesystemInspectionActionKey(
@@ -61,7 +62,7 @@ export function buildFilesystemInspectionActionKey(
       maxDepth: normalizeNonNegativeInt(input?.maxDepth),
     });
   }
-  if (toolName === "fs.read_text") {
+  if (isFileTextReadToolName(toolName)) {
     return buildStableInspectionKey(toolName, {
       path: normalizedPath,
       offsetBytes: normalizeNonNegativeInt(input?.offsetBytes),

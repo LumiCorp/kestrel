@@ -41,7 +41,6 @@ input[type="radio"] {
 code,
 pre,
 kbd,
-.terminal-identity,
 .diff-view pre,
 .side-by-side-diff,
 .editor-workspace textarea {
@@ -125,14 +124,12 @@ textarea {
 
 .health-healthy > span,
 .titlebar-status-dot.health-healthy,
-.status-dot.health-healthy,
-.preview-status-ready {
+.status-dot.health-healthy {
   background: var(--status-ready);
 }
 
 .health-blocked > span,
 .titlebar-status-dot.health-blocked,
-.status-dot.health-blocked,
-.preview-status-failed {
+.status-dot.health-blocked {
   background: var(--status-failed);
 }

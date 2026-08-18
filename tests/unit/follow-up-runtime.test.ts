@@ -83,19 +83,21 @@ test("ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses d
   const started = await runtime.startThread({ threadId: "thread-fifo", sessionId: "session-fifo", title: "FIFO" });
   await store.upsertThread({ ...started, status: "RUNNING", updatedAt: new Date().toISOString() });
 
-  await runtime.enqueueFollowUp({
+  await runtime.submitConversationMessage({
     threadId: started.threadId,
-    followUpId: "follow-up-1",
+    messageId: "message-1",
     message: "first",
-    sourceMessageId: "message-1",
   });
-  await runtime.enqueueFollowUp({
+  await runtime.submitConversationMessage({
     threadId: started.threadId,
-    followUpId: "follow-up-2",
+    messageId: "message-2",
     message: "second",
-    sourceMessageId: "message-2",
   });
-  await runtime.enqueueFollowUp({ threadId: started.threadId, followUpId: "follow-up-1", message: "duplicate" });
+  await runtime.submitConversationMessage({
+    threadId: started.threadId,
+    messageId: "message-1",
+    message: "duplicate",
+  });
   const queued = await runtime.getOperatorThreadView(started.threadId);
   assert.deepEqual(queued?.followUpQueue?.items.map((entry) => entry.message), ["first", "second"]);
 
@@ -106,7 +108,10 @@ test("ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses d
   await waitUntil(async () => (await runtime.getOperatorThreadView(started.threadId))?.followUpQueue?.items.length === 0);
 
   assert.deepEqual(executor.inputs.map((input) => input.message), ["first", "second"]);
-  assert.deepEqual(executor.inputs.map((input) => input.metadata?.followUpId), ["follow-up-1", "follow-up-2"]);
+  assert.deepEqual(executor.inputs.map((input) => input.metadata?.followUpId), [
+    "follow-up:message-1",
+    "follow-up:message-2",
+  ]);
   assert.deepEqual(detachedEvents.map((event) => [event.type, event.runId, event.status]), [
     ["started", executor.inputs[0]?.runtimeTurn?.runId, undefined],
     ["completed", executor.inputs[0]?.runtimeTurn?.runId, "COMPLETED"],
@@ -118,8 +123,8 @@ test("ThreadRuntime dispatches durable follow-ups in FIFO order and suppresses d
       .filter((event) => event.type === "started")
       .map((event) => [event.followUpId, event.sourceMessageId]),
     [
-      ["follow-up-1", "message-1"],
-      ["follow-up-2", "message-2"],
+      ["follow-up:message-1", "message-1"],
+      ["follow-up:message-2", "message-2"],
     ],
   );
   const completedView = await runtime.getOperatorThreadView(started.threadId);

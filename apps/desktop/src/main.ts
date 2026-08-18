@@ -43,7 +43,10 @@ import {
 } from "../../../src/localCore/daemon.js";
 import { resolveKestrelCoreHome } from "../../../src/localCore/home.js";
 import type { LocalCoreClient } from "../../../src/localCore/client.js";
-import { LocalCoreConnectionManager } from "../../../src/localCore/connectionManager.js";
+import {
+  LocalCoreConnectionManager,
+  type LocalCoreConnectionState,
+} from "../../../src/localCore/connectionManager.js";
 import type { LocalCoreStatus } from "../../../src/localCore/contracts.js";
 import { parseLocalCoreBuildIdentity } from "../../../src/localCore/contracts.js";
 import { LOCAL_CORE_BUILD_MANIFEST_NAME } from "../../../src/localCore/buildIdentity.js";
@@ -75,10 +78,7 @@ import { resolveProviderModelCatalog } from "../../../src/profile/modelCatalogDi
 import {
   assertDesktopModelConfigurationHistoryPreserved,
   currentDesktopModelConfigurationRef,
-  formatDesktopWorkflowInstructions,
   getDesktopAppDefinition,
-  validateDesktopRendererWorkflowSelection,
-  resolveDesktopWorkflowSelections,
   type DesktopExecutionSelection,
 } from "../../../src/desktopShell/configuration.js";
 import {
@@ -227,6 +227,8 @@ import {
   resolveDesktopThreadWorkspace,
 } from "./threadWorkspace.js";
 import { WorkspaceSkillManager } from "../../../src/skills/WorkspaceSkillStore.js";
+import { requireMissionControlProjectId } from "../../../src/missionControl/projectAuthority.js";
+import { discoverWorkspaceValidationCatalog } from "../../../src/validation/WorkspaceValidationService.js";
 import type { WorkspaceSkillSource } from "../../../src/skills/contracts.js";
 import { resolveDesktopWorkspaceAccessRoot } from "./workspaceAccess.js";
 import {
@@ -368,6 +370,7 @@ let desktopConfig: ReturnType<typeof resolveDesktopPathConfig> | undefined;
 let localCoreStatus: LocalCoreStatus | undefined;
 let runtimeHealth: DesktopRuntimeHealth = {
   state: "degraded",
+  connection: "disconnected",
   summary: "Preparing desktop app…",
   running: false,
 };
@@ -386,21 +389,9 @@ function resolveAuthoritativeDesktopExecutionSelection(
   requested: DesktopExecutionSelection,
 ): DesktopExecutionSelection {
   const authoritativeIds = getEffectiveDesktopEnabledAppIds(desktopSettings);
-  let selectedWorkflowIds: string[];
-  try {
-    selectedWorkflowIds = validateDesktopRendererWorkflowSelection(
-      requested.apps.map((app) => app.id),
-      authoritativeIds,
-    );
-  } catch (cause) {
-    throw createDesktopError({
-      code: "desktop.invalid_execution_selection",
-      message: cause instanceof Error ? cause.message : String(cause),
-    });
-  }
   return {
     modelConfiguration: requested.modelConfiguration,
-    apps: [...new Set([...authoritativeIds, ...selectedWorkflowIds])].flatMap((id) => {
+    apps: authoritativeIds.flatMap((id) => {
       const definition = getDesktopAppDefinition(id, undefined, desktopSettings.mcpServers);
       return definition === undefined
         ? []
@@ -410,6 +401,7 @@ function resolveAuthoritativeDesktopExecutionSelection(
 }
 let desktopModelPolicy: ResolvedModelPolicy = createDefaultModelPolicy();
 let localCoreConnectionManager: LocalCoreConnectionManager | undefined;
+let localCoreConnectionState: LocalCoreConnectionState = "disconnected";
 const desktopRunnerAdapters = new Map<string, WebRunnerAdapter>();
 let defaultDesktopRunnerProfileId: string | undefined;
 let unsubscribeProjectRunEvents: (() => void) | undefined;
@@ -556,6 +548,7 @@ async function startDesktopServices(): Promise<void> {
   );
   const ready = await ensureDesktopLocalCoreReady(localCoreConfig);
   localCoreStatus = ready.status;
+  localCoreConnectionState = "connected";
   localCoreConnectionManager = new LocalCoreConnectionManager({
     initialConnection: ready,
     connect: async () => await ensureDesktopLocalCoreReady(localCoreConfig),
@@ -563,6 +556,10 @@ async function startDesktopServices(): Promise<void> {
       localCoreStatus = connection.status;
       currentDatabaseUrl = connection.status.databaseUrl;
       subscribeToCoreProjectRuns(connection.client);
+    },
+    onStateChanged(state) {
+      localCoreConnectionState = state;
+      publishDesktopRuntimeHealth();
     },
   });
   updateBootState(
@@ -694,10 +691,19 @@ async function startDesktopExecutionServicesOnce(): Promise<void> {
       try {
         const event = parseRunnerEventV2(JSON.parse(line));
         if (
-          (event.type.startsWith("run.") || event.type === "task.updated") &&
+          (event.type.startsWith("run.") ||
+            event.type === "task.updated" ||
+            event.type === "mission_control.project") &&
           mainWindow?.isDestroyed() === false
         ) {
-          mainWindow.webContents.send("desktop:runner-event", event);
+          if (event.type === "mission_control.project") {
+            mainWindow.webContents.send("desktop:mission-control-project", {
+              projectId: event.payload.projectId,
+              project: event.payload.project,
+            });
+          } else {
+            mainWindow.webContents.send("desktop:runner-event", event);
+          }
         }
       } catch {
         // Protocol parsing and command-specific error handling remain owned by the adapter.
@@ -1231,13 +1237,6 @@ function installApplicationMenu(): void {
           accelerator: "CmdOrCtrl+\\",
           click: () => {
             void sendDesktopCommand("toggle-left-sidebar");
-          },
-        },
-        {
-          label: "Toggle File Inspector",
-          accelerator: "Alt+CmdOrCtrl+\\",
-          click: () => {
-            void sendDesktopCommand("toggle-right-sidebar");
           },
         },
         { type: "separator" },
@@ -2089,21 +2088,6 @@ function registerIpcHandlers(
       }),
     );
     const runProfile = executionProfile.resolvedProfile;
-    const workflows = resolveDesktopWorkflowSelections(
-      globalExecutionSelection,
-      desktopSettings.mcpServers,
-    );
-    const unavailableWorkflow = workflows.find((workflow) => !workflow.ready);
-    if (unavailableWorkflow !== undefined) {
-      const missingRoles = unavailableWorkflow.dependencies
-        .filter((dependency) => dependency.missing)
-        .map((dependency) => dependency.role);
-      throw createDesktopError({
-        code: "desktop.workflow_dependencies_unavailable",
-        message: `${unavailableWorkflow.name} needs selected, connected Apps for: ${missingRoles.join(", ")}.`,
-      });
-    }
-    const workflowInstructions = formatDesktopWorkflowInstructions(workflows);
     if (attachmentIds !== undefined) {
       const listed = await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) => await client.listDesktopAttachments(canonicalThreadId),
@@ -2151,9 +2135,6 @@ function registerIpcHandlers(
       turn: {
         ...turnRequest,
         ...(attachments !== undefined ? { attachments } : {}),
-        ...(workflowInstructions !== undefined
-          ? { systemInstructions: [workflowInstructions] }
-          : {}),
         workspace,
         metadata: { desktopExecutionSelection: globalExecutionSelection },
       },
@@ -2195,21 +2176,6 @@ function registerIpcHandlers(
           }),
       );
     const runProfile = executionProfile.resolvedProfile;
-    const workflows = resolveDesktopWorkflowSelections(
-      globalExecutionSelection,
-      desktopSettings.mcpServers,
-    );
-    const unavailableWorkflow = workflows.find((workflow) => !workflow.ready);
-    if (unavailableWorkflow !== undefined) {
-      const missingRoles = unavailableWorkflow.dependencies
-        .filter((dependency) => dependency.missing)
-        .map((dependency) => dependency.role);
-      throw createDesktopError({
-        code: "desktop.workflow_dependencies_unavailable",
-        message: `${unavailableWorkflow.name} needs selected, connected Apps for: ${missingRoles.join(", ")}.`,
-      });
-    }
-    const workflowInstructions = formatDesktopWorkflowInstructions(workflows);
     const canonicalThreadId = `thread-main:${request.sessionId}`;
     if (threadId !== undefined && threadId !== canonicalThreadId) {
       throw createDesktopError({
@@ -2283,9 +2249,6 @@ function registerIpcHandlers(
         {
           ...turnRequest,
           ...(attachments !== undefined ? { attachments } : {}),
-          ...(workflowInstructions !== undefined
-            ? { systemInstructions: [workflowInstructions] }
-            : {}),
           workspace,
           metadata: { desktopExecutionSelection: globalExecutionSelection },
         },
@@ -2593,7 +2556,6 @@ function registerIpcHandlers(
             desktopSettings.defaultModelConfigurationId,
           defaultEnabledBuiltInAppIds:
             update.defaultEnabledBuiltInAppIds ?? desktopSettings.defaultEnabledBuiltInAppIds,
-          legacyDefaultWorkflowAppIds: undefined,
           appearanceTheme:
             update.appearanceTheme ?? desktopSettings.appearanceTheme,
         },
@@ -3703,6 +3665,27 @@ function registerIpcHandlers(
         projectId,
         context: DESKTOP_RUNNER_REQUEST_CONTEXT,
       }),
+  );
+  ipcMain.handle(
+    "desktop:inspect-mission-control-project-setup",
+    async (_event, projectIdValue: unknown) => {
+      const projectId = requireMissionControlProjectId(projectIdValue);
+      const project = desktopSettings.projects.find(
+        (candidate) => candidate.id === projectId,
+      );
+      if (project === undefined) {
+        throw createDesktopError({
+          code: "desktop.unregistered_mission_control_project",
+          message: "Mission Control project setup requires a registered project.",
+        });
+      }
+      const catalog = await discoverWorkspaceValidationCatalog(project.path);
+      return {
+        projectId,
+        projectPath: project.path,
+        ...catalog,
+      };
+    },
   );
   ipcMain.handle(
     "desktop:execute-mission-control-action",
@@ -5212,9 +5195,11 @@ function deriveRuntimeHealth(
   nextBootState: DesktopBootState,
 ): DesktopRuntimeHealth {
   const status = runnerTransport?.getStatus();
+  const connection = localCoreConnectionState;
   if (databaseStatus.state === "blocked") {
     return {
       state: "blocked",
+      connection,
       summary: databaseStatus.summary,
       details: databaseStatus.lastError?.details?.recommendedAction as
         | string
@@ -5231,6 +5216,7 @@ function deriveRuntimeHealth(
     ) {
       return {
         state: "blocked",
+        connection,
         summary: "Kestrel Local Core needs an update.",
         code: nextBootState.code,
         details: nextBootState.details,
@@ -5241,6 +5227,7 @@ function deriveRuntimeHealth(
     }
     return {
       state: "blocked",
+      connection,
       summary: nextBootState.message,
       ...(nextBootState.code !== undefined ? { code: nextBootState.code } : {}),
       ...(nextBootState.details !== undefined
@@ -5251,9 +5238,22 @@ function deriveRuntimeHealth(
       database: databaseStatus,
     };
   }
+  if (nextBootState.phase === "ready" && connection !== "connected") {
+    return {
+      state: "degraded",
+      connection,
+      summary: connection === "connecting"
+        ? "Reconnecting to Kestrel Local Core…"
+        : "Kestrel Local Core is disconnected.",
+      running: status?.running ?? false,
+      ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
+      database: databaseStatus,
+    };
+  }
   if (nextBootState.phase === "ready") {
     return {
       state: "healthy",
+      connection,
       summary: "Runtime ready.",
       running: status?.running ?? false,
       ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
@@ -5262,6 +5262,7 @@ function deriveRuntimeHealth(
   }
   return {
     state: "degraded",
+    connection,
     summary: nextBootState.message,
     ...(nextBootState.code !== undefined ? { code: nextBootState.code } : {}),
     ...(nextBootState.details !== undefined
@@ -5271,6 +5272,11 @@ function deriveRuntimeHealth(
     ...(status?.logPath !== undefined ? { logPath: status.logPath } : {}),
     database: databaseStatus,
   };
+}
+
+function publishDesktopRuntimeHealth(): void {
+  runtimeHealth = deriveRuntimeHealth(bootState);
+  mainWindow?.webContents.send("desktop:runtime-health", runtimeHealth);
 }
 
 function updateBootState(

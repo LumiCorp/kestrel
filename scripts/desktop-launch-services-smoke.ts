@@ -601,6 +601,7 @@ async function openConversationSurface(page: Page): Promise<void> {
   await page.getByRole("button", { name: /Find work/u }).click();
   await page
     .getByRole("dialog", { name: "Find work" })
+    .getByRole("navigation", { name: "Kestrel views" })
     .getByRole("button", { name: "Conversations", exact: true })
     .click();
   await page

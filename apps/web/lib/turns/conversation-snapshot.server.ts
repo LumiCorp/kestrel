@@ -2,6 +2,7 @@ import "server-only";
 
 import { parseRunnerStructuredReviewInteractionV1 } from "@kestrel-agents/protocol";
 import { and, asc, eq, inArray } from "drizzle-orm";
+import { resolveRuntimeApprovalPolicies } from "@/lib/apps/runtime-approval-policy";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import type { ProjectRole } from "@/lib/projects/access";
 import { projectRoleAllows } from "@/lib/projects/access";
@@ -41,7 +42,7 @@ export async function readThreadConversationSnapshotForUser(input: {
   includeArchived?: boolean;
 }): Promise<ConversationSnapshotRead | null> {
   try {
-    return await knowledgeDb.transaction(
+    const read = await knowledgeDb.transaction(
       async (tx) => {
         const thread = await tx.query.threads.findFirst({
           where: and(
@@ -252,6 +253,31 @@ export async function readThreadConversationSnapshotForUser(input: {
       },
       { isolationLevel: "repeatable read", accessMode: "read only" },
     );
+    if (!read?.thread.projectId) return read;
+
+    const approvalPolicies = await resolveRuntimeApprovalPolicies({
+      threadId: input.threadId,
+      organizationId: input.organizationId,
+      projectId: read.thread.projectId,
+      userId: input.userId,
+      canEditProject:
+        read.thread.access.projectRole !== null &&
+        projectRoleAllows(read.thread.access.projectRole, "editor"),
+      interactions: read.snapshot.interactions,
+    });
+    if (approvalPolicies.size === 0) return read;
+    return {
+      ...read,
+      snapshot: {
+        ...read.snapshot,
+        interactions: read.snapshot.interactions.map((interaction) => ({
+          ...interaction,
+          ...(approvalPolicies.has(interaction.requestId)
+            ? { approvalPolicy: approvalPolicies.get(interaction.requestId) }
+            : {}),
+        })),
+      },
+    };
   } catch (error) {
     if (error instanceof ThreadConversationSnapshotError) {
       console.error("Thread conversation snapshot rejected.", {

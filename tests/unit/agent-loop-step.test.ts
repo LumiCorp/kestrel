@@ -57,6 +57,22 @@ const READ_TEXT_TOOL: ModelToolSpec = {
   },
 };
 
+const READ_TEXT_PAGE_TOOL: ModelToolSpec = {
+  name: "fs.read_text_page",
+  description: "Continue a text file read from an exact nextPage action.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      path: { type: "string" },
+      offsetBytes: { type: "number", minimum: 1 },
+      expectedRevision: { type: "string" },
+      maxBytes: { type: "number" },
+    },
+    required: ["path", "offsetBytes", "expectedRevision"],
+  },
+};
+
 function setKestrelHomeForTest(kestrelHome: string): () => void {
   const original = process.env.KESTREL_HOME;
   process.env.KESTREL_HOME = kestrelHome;
@@ -460,14 +476,19 @@ function buildStep(input?: {
   agentProvider?: string;
   agentModel?: string;
   maintenanceModel?: string;
-    capabilityManifest?: Array<{
-      name: string;
-      description: string;
-      capabilityClasses: string[];
-      approvalCapabilities?: string[];
-      executionClass: "read_only" | "planning_write" | "sandboxed_only" | "external_side_effect";
-      allowedInteractionModes?: Array<"chat" | "plan" | "build">;
-      toolFamily?: string;
+  capabilityManifest?: Array<{
+    name: string;
+    description: string;
+    capabilityClasses: string[];
+    approvalCapabilities?: string[];
+    approvalDisposition?: import("../../src/mode/contracts.js").ToolApprovalDispositionV1;
+    executionClass:
+      | "read_only"
+      | "planning_write"
+      | "sandboxed_only"
+      | "external_side_effect";
+    allowedInteractionModes?: Array<"chat" | "plan" | "build">;
+    toolFamily?: string;
   }>;
 }) {
   return createAgentLoopStep({
@@ -2437,6 +2458,70 @@ test("agent loop disables parallel tool calls under strict per-call approval pol
   assert.equal(capturedRequest?.providerOptions?.anthropic?.parallelToolCalls, false);
 });
 
+test("agent loop keeps parallel calls enabled for explicit Automatic App tools with legacy confirmation metadata", async () => {
+  let capturedRequest: ModelRequest | undefined;
+  const buildContext = context();
+  buildContext.event.payload = {
+    ...buildContext.event.payload,
+    interactionMode: "build",
+  };
+  buildContext.session.state.agent = { interactionMode: "build" };
+  const tool: ModelToolSpec = {
+    name: "calendar.create_event",
+    description: "Create a calendar event.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  };
+
+  await buildStep({
+    tools: [tool],
+    capabilityManifest: [
+      {
+        name: tool.name,
+        description: tool.description,
+        capabilityClasses: ["calendar.write"],
+        approvalCapabilities: ["network.call", "external.confirm"],
+        approvalDisposition: {
+          mode: "auto",
+          reasonCode: "environment_policy",
+          authority: { kind: "hosted_app_policy", revision: "revision-1" },
+        },
+        executionClass: "external_side_effect",
+        allowedInteractionModes: ["build"],
+      },
+    ],
+  })(buildContext, {
+    useModel: async (request) => {
+      capturedRequest = request;
+      return modelResponse({
+        version: "v1",
+        reason: "No calendar change is needed.",
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "Done.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(
+    capturedRequest?.providerOptions?.openrouter?.parallelToolCalls,
+    true,
+  );
+  assert.equal(
+    capturedRequest?.providerOptions?.openai?.parallelToolCalls,
+    true,
+  );
+  assert.equal(
+    capturedRequest?.providerOptions?.anthropic?.parallelToolCalls,
+    true,
+  );
+});
+
 test("agent loop fails immediately when a required structured action is missing", async () => {
   const buildContext = context();
   buildContext.event.payload = {
@@ -4279,6 +4364,62 @@ test("agent loop commits a valid first action directly to exec dispatch", async 
   ]) {
     assert.equal(Object.hasOwn(agent, key), false);
   }
+});
+
+test("agent loop dispatches the exact typed continuation read without shell fallback", async () => {
+  const buildContext = context();
+  buildContext.event.payload = {
+    ...buildContext.event.payload,
+    interactionMode: "build",
+  };
+  buildContext.session.state.agent = { interactionMode: "build" };
+  const continuationInput = {
+    path: "large.txt",
+    offsetBytes: 8192,
+    expectedRevision: `sha256:${"a".repeat(64)}`,
+    maxBytes: 8192,
+  };
+  const transition = await buildStep({
+    tools: [READ_TEXT_TOOL, READ_TEXT_PAGE_TOOL, DEV_SHELL_RUN_TOOL],
+    capabilityManifest: [
+      {
+        name: "fs.read_text",
+        description: "Read the first page.",
+        capabilityClasses: ["filesystem.read"],
+        executionClass: "read_only",
+      },
+      {
+        name: "fs.read_text_page",
+        description: "Continue the exact read.",
+        capabilityClasses: ["filesystem.read"],
+        executionClass: "read_only",
+      },
+      {
+        name: "dev.shell.run",
+        description: "Run a shell command.",
+        capabilityClasses: ["dev.shell"],
+        executionClass: "external_side_effect",
+      },
+    ],
+  })(buildContext, {
+    useModel: async () => modelResponse({
+      version: "v1",
+      reason: "Follow the exact typed nextPage action.",
+      nextAction: {
+        kind: "tool",
+        name: "fs.read_text_page",
+        input: continuationInput,
+      },
+    }),
+  } satisfies StepIO);
+
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  assert.deepEqual(agent.nextAction, {
+    kind: "tool",
+    name: "fs.read_text_page",
+    input: continuationInput,
+  });
 });
 
 test("agent loop preserves model text reason from native tool-call responses", async () => {

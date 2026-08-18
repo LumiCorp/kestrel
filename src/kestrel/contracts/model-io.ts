@@ -1,9 +1,7 @@
 import type { RunConsoleChannel } from "./events.js";
 import type { RuntimeEvent } from "./events.js";
 import type { SessionRecord } from "./store.js";
-import type {
-  ToolSurfaceSnapshotV1,
-} from "./tool-contract.js";
+import type { ToolSurfaceSnapshotV1 } from "./tool-contract.js";
 import type {
   AgentToolResultV2,
   PreparedToolApprovalAuthorityV1,
@@ -233,13 +231,15 @@ export interface AgentToolResult {
   status: "OK" | "FAILED";
   modelContext: AgentToolModelContext;
   auditRecord: AgentToolAuditRecord;
-  projections?: {
-    rawReceived: { sha256: string; bytes: number; tokens: number };
-    durableRawArtifactRef?: string | undefined;
-    persistedOutput: unknown;
-    verificationOutput: unknown;
-    modelVisibleOutput: unknown;
-  } | undefined;
+  projections?:
+    | {
+        rawReceived: { sha256: string; bytes: number; tokens: number };
+        durableRawArtifactRef?: string | undefined;
+        persistedOutput: unknown;
+        verificationOutput: unknown;
+        modelVisibleOutput: unknown;
+      }
+    | undefined;
   presentation?: AgentToolPresentation | undefined;
   evidenceIdentity?: AgentToolEvidenceIdentityV1 | undefined;
 }
@@ -304,10 +304,12 @@ export interface ModelResponse<TOutput = unknown> {
   text?: string | undefined;
   toolIntents: ModelToolIntent[];
   usage?: ModelUsage | undefined;
-  reasoning?: {
-    visible: ModelVisibleReasoning[];
-    continuation: ModelReasoningContinuation[];
-  } | undefined;
+  reasoning?:
+    | {
+        visible: ModelVisibleReasoning[];
+        continuation: ModelReasoningContinuation[];
+      }
+    | undefined;
   rawResponse?: unknown;
   provider: {
     name:
@@ -324,7 +326,11 @@ export interface ModelResponse<TOutput = unknown> {
     structuredOutput?:
       | {
           mode: "constrained" | "json_object";
-          outcome: "success" | "provider_parsed" | "text_fallback_parsed" | "parse_failed";
+          outcome:
+            | "success"
+            | "provider_parsed"
+            | "text_fallback_parsed"
+            | "parse_failed";
           source?: "provider" | "text_fallback" | "none" | undefined;
           schemaRequested?: boolean | undefined;
           schemaName?: string | undefined;
@@ -342,6 +348,14 @@ export interface ToolGateway {
     snapshot: ToolSurfaceSnapshotV1;
     toolCall: ModelMessageToolCall;
   }): ResolvedModelToolIntentV1;
+  inspectToolCall?(
+    input: {
+      activation: ResolvedModelToolIntentV1["activation"];
+      origin: PreparedToolCallOriginV1;
+      rawInput: Record<string, unknown>;
+    },
+    options?: ToolGatewayCallOptions,
+  ): Promise<{ effectiveInput: Record<string, unknown> }>;
   prepareToolCall(
     input: {
       runId: string;

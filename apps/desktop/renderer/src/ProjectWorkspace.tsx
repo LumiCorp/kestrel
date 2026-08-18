@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Search,
   Square,
+  Trash2,
 } from "lucide-react";
 import React, { type FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -42,6 +43,7 @@ export function ProjectWorkspace(props: {
   workspace?: DesktopThreadWorkspaceContext | undefined;
   openFiles: string[];
   onChat: (project: DesktopProjectRegistration) => void;
+  onRemoveProject?: (project: DesktopProjectRegistration) => Promise<void> | void;
   onSelectThread: (threadId: string) => void;
   onAttachFile?: ((
     filePath: string,
@@ -80,6 +82,9 @@ export function ProjectWorkspace(props: {
   const [skillPath, setSkillPath] = useState("");
   const [editingSkillId, setEditingSkillId] = useState<string>();
   const [pendingSkillAction, setPendingSkillAction] = useState<string>();
+  const [removeProjectOpen, setRemoveProjectOpen] = useState(false);
+  const [removeProjectPending, setRemoveProjectPending] = useState(false);
+  const [removeProjectError, setRemoveProjectError] = useState<string>();
   const workspaceRoot = props.workspace?.workspaceRoot ?? props.project?.path;
   const workspaceThreadId = props.workspace === undefined ? undefined : props.threadId;
 
@@ -559,7 +564,20 @@ export function ProjectWorkspace(props: {
         <header className="surface-header project-surface-header">
           <div><h1>{props.project.label}</h1><p>{renderedWorkspaceRoot}</p></div>
           <ProjectWorkspaceTabs tab={tab} onChange={setTab} />
-          <button className="primary-button" type="button" onClick={() => props.onChat(props.project!)}>New conversation</button>
+          <div className="surface-header-actions">
+            <button className="primary-button" type="button" onClick={() => props.onChat(props.project!)}>New conversation</button>
+            {props.onRemoveProject !== undefined ? (
+              <button
+                className="icon-button"
+                type="button"
+                title="Remove project from Kestrel"
+                aria-label="Remove project from Kestrel"
+                onClick={() => { setRemoveProjectError(undefined); setRemoveProjectOpen(true); }}
+              >
+                <Trash2 size={16} />
+              </button>
+            ) : null}
+          </div>
         </header>
         <section className="project-overview" aria-label={`${props.project.label} overview`}>
           <div className="project-overview-stats" aria-label="Conversation status">
@@ -568,7 +586,7 @@ export function ProjectWorkspace(props: {
             <ProjectStat label="Waiting" value={threadSummary.waiting} tone="waiting" />
             <ProjectStat label="Failed" value={threadSummary.failed} tone="failed" />
           </div>
-          <div className="project-overview-heading"><div><h2>Conversations</h2><p>Work continues while you move between projects.</p></div><button type="button" onClick={() => props.onChat(props.project!)}>New conversation</button></div>
+          <div className="project-overview-heading"><div><h2>Conversations</h2><p>Work continues while you move between projects.</p></div></div>
           <div className="project-overview-threads">
             {props.threads.map(({ thread, status, activity, updatedAt }) => (
               <button key={thread.id} type="button" onClick={() => props.onSelectThread(thread.id)}>
@@ -580,6 +598,32 @@ export function ProjectWorkspace(props: {
             {props.threads.length === 0 ? <div className="project-overview-empty"><MessageSquare size={20} /><strong>No conversations yet</strong><span>Start the first conversation in this project.</span><button type="button" onClick={() => props.onChat(props.project!)}>New conversation</button></div> : null}
           </div>
         </section>
+        {removeProjectOpen ? (
+          <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setRemoveProjectOpen(false);
+          }}>
+            <div className="rename-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-project-title">
+              <h2 id="remove-project-title">Remove project from Kestrel?</h2>
+              <p>This removes the project from Kestrel Desktop. It does not delete the folder, repository, or local files.</p>
+              <p>Its conversations will remain available under No project.</p>
+              {removeProjectError !== undefined ? <p className="field-error">{removeProjectError}</p> : null}
+              <div className="dialog-actions">
+                <button type="button" disabled={removeProjectPending} onClick={() => setRemoveProjectOpen(false)}>Cancel</button>
+                <button className="danger-button" type="button" disabled={removeProjectPending} onClick={() => void (async () => {
+                  setRemoveProjectPending(true);
+                  try {
+                    await props.onRemoveProject?.(props.project!);
+                    setRemoveProjectOpen(false);
+                  } catch (cause) {
+                    setRemoveProjectError(cause instanceof Error ? cause.message : String(cause));
+                  } finally {
+                    setRemoveProjectPending(false);
+                  }
+                })()}>Remove project</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </main>
     );
   }

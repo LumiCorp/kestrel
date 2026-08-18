@@ -50,6 +50,10 @@ import type { ResolvedProviderModelCatalog } from "../profile/modelCatalogDiscov
 import { getDesktopStandardAppConnection } from "./standardAppConnections.js";
 
 export type DesktopRuntimeHealthState = "healthy" | "degraded" | "blocked";
+export type DesktopRuntimeConnectionState =
+  | "connected"
+  | "connecting"
+  | "disconnected";
 export type DesktopDatabaseState =
   | "starting"
   | "healthy"
@@ -298,7 +302,7 @@ export interface DesktopConversationTurn {
   turnId: string;
   threadId: string;
   sessionId: string;
-  sequence: number;
+  sequence: number | null;
   status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
   sourceMessageId?: string | undefined;
   rootRunId?: string | undefined;
@@ -1376,6 +1380,7 @@ export interface DesktopDatabaseStatus {
 
 export interface DesktopRuntimeHealth {
   state: DesktopRuntimeHealthState;
+  connection: DesktopRuntimeConnectionState;
   summary: string;
   code?: string | undefined;
   details?: string | undefined;
@@ -1971,6 +1976,7 @@ export interface DesktopSettings {
     removedAt: string;
   }>;
   mcpServers: DesktopMcpServerConfig[];
+  plugins: DesktopPluginInstallation[];
   capabilityVerifications: Partial<Record<DesktopCapabilityId, string>>;
   developerShellPath?: string | undefined;
   developerPath?: string | undefined;
@@ -2010,7 +2016,6 @@ export interface DesktopSettings {
   modelConfigurations: DesktopModelConfiguration[];
   defaultModelConfigurationId: string;
   defaultEnabledBuiltInAppIds: string[];
-  legacyDefaultWorkflowAppIds?: string[] | undefined;
   appearanceTheme: DesktopAppearanceTheme;
 }
 
@@ -2033,7 +2038,6 @@ export interface DesktopRendererSettings {
   modelConfigurations: DesktopModelConfiguration[];
   defaultModelConfigurationId: string;
   defaultEnabledBuiltInAppIds: string[];
-  legacyDefaultWorkflowAppIds?: string[] | undefined;
   enabledConnectedAppIds: string[];
   appearanceTheme: DesktopAppearanceTheme;
   apps: DesktopAppDefinition[];
@@ -2146,7 +2150,6 @@ export type DesktopShellCommand =
   | "new-thread"
   | "stop-agent"
   | "toggle-left-sidebar"
-  | "toggle-right-sidebar"
   | "restart-runtime";
 
 export type DesktopFileEntryKind = "file" | "directory";
@@ -2291,6 +2294,23 @@ export interface DesktopMcpServerConfig {
   capabilityPacks?: string[] | undefined;
   setupWarning?: string | undefined;
   verifiedAt?: string | undefined;
+}
+
+/** One Desktop-owned installation record. The driver payload stays internal. */
+export interface DesktopPluginInstallation {
+  id: string;
+  pluginId: string;
+  version: number;
+  installScope: "desktop";
+  driver: "builtin" | "cli" | "mcp-stdio" | "mcp-http" | "api";
+  source: "included" | "standard" | "custom";
+  installed: boolean;
+  configured: boolean;
+  verifiedAt?: string | undefined;
+  enabled: boolean;
+  capabilityPacks?: string[] | undefined;
+  credentialIds?: string[] | undefined;
+  mcpServer?: DesktopMcpServerConfig | undefined;
 }
 
 export interface DesktopMcpDiscoveryDiagnostic {

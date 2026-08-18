@@ -5,7 +5,7 @@ section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-18
 ---
 
 ## Which Kestrel product should I start with?
@@ -22,19 +22,19 @@ The Lumi-hosted service is available to invited teams. Use the invitation from y
 
 ## How is Kestrel One downloadable if hosted access is invitation-only?
 
-Kestrel One is a versioned source product. You may clone `v0.8.0`, build it, test it, and run its development environment. Lumi hosting is one operated deployment of that source and requires an organization invitation. See [Source and hosting](/kestrel-one/source-and-hosting).
+Kestrel One is a versioned source product. You may clone `v0.8.5`, build it, test it, and run its development environment. Lumi hosting is one operated deployment of that source and requires an organization invitation. See [Source and hosting](/kestrel-one/source-and-hosting).
 
 ## Which platforms does the 0.8 CLI support?
 
-Release verification covers macOS arm64 and Linux x64 with Node.js 22. Install it with `npm install -g @kestrel-agents/kestrel@0.8.2`. Other platforms are not release-verified for 0.8.
+Release verification covers macOS arm64 and Linux x64 with Node.js 22. Install it with `npm install -g @kestrel-agents/kestrel@0.8.5`. Other platforms are not release-verified for 0.8.
 
 ## Does installing Desktop 0.8 preserve existing data?
 
 Yes. Replacing the signed application preserves Desktop and Local Core settings, Keychain credentials, projects, sessions, conversations, Mission Control records, and owned persistence. Do not uninstall or delete application data as part of the upgrade.
 
-## Why is Desktop 0.8.0 manual-install only?
+## Can Desktop update from an earlier release?
 
-The 0.8.0 release establishes the installed base without moving stable OTA metadata. The first OTA proof is a controlled `0.8.0` to `0.8.1` patch that must verify signature, relaunch, state preservation, and cleanup.
+Yes. Signed Desktop 0.7.0 and 0.8.0 installations can update to 0.8.5 through the stable channel. Desktop preserves a one-time pre-v12 settings backup before migrating App and MCP settings; use that backup before launching an older application after a downgrade.
 
 ## Why must Kestrel packages use the exact same version?
 

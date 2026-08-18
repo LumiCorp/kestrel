@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/protocol",
-  "version": "0.8.0",
+  "version": "0.8.5",
   "description": "Canonical public protocol contracts for Kestrel runner services",
   "license": "MIT",
   "repository": {

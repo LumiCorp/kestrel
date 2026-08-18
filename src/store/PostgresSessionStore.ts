@@ -2217,6 +2217,7 @@ export class PostgresSessionStore implements SessionStore {
     status?: ConversationTurnRecord["status"] | undefined;
     completedAfter?: { completedAt: string; turnId: string } | undefined;
     terminalMessagesOnly?: boolean | undefined;
+    terminalOutcomesOnly?: boolean | undefined;
     limit?: number | undefined;
   } = {}): Promise<ConversationTurnRecord[]> {
     await this.ensureSchemaV3();
@@ -2245,6 +2246,11 @@ export class PostgresSessionStore implements SessionStore {
       clauses.push(`jsonb_typeof(metadata_json->'terminalEnvelope'->'handoff'->'assistantText') = 'string'`);
       clauses.push(`btrim(metadata_json->'terminalEnvelope'->'handoff'->>'assistantText') <> ''`);
     }
+    if (input.terminalOutcomesOnly === true) {
+      clauses.push(`status IN ('COMPLETED', 'FAILED')`);
+      clauses.push(`completed_at IS NOT NULL`);
+      clauses.push(`metadata_json->'terminalEnvelope'->'handoff'->>'state' IN ('delivered', 'failed')`);
+    }
     const limit = Math.max(1, Math.min(501, Math.trunc(input.limit ?? 100)));
     values.push(limit);
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
@@ -2256,7 +2262,7 @@ export class PostgresSessionStore implements SessionStore {
          ${whereClause}
         ORDER BY ${input.completedAfter !== undefined
           ? "completed_at ASC, turn_id ASC"
-          : input.terminalMessagesOnly === true
+          : input.terminalMessagesOnly === true || input.terminalOutcomesOnly === true
             ? "completed_at DESC NULLS LAST, turn_id DESC"
             : "updated_at DESC, turn_id ASC"}
         LIMIT $${values.length}`,

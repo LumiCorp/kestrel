@@ -331,9 +331,9 @@ test(
         )
       `;
     });
-    let healthCheckingObserved!: () => void;
-    const healthChecking = new Promise<void>((resolve) => {
-      healthCheckingObserved = resolve;
+    let machineStartingObserved!: () => void;
+    const machineStarting = new Promise<void>((resolve) => {
+      machineStartingObserved = resolve;
     });
     const routePromise = executionRoute.resolveEnvironmentExecutionRoute({
       organizationId: organizationA,
@@ -342,12 +342,12 @@ test(
       agentId: "kestrel-one",
       recordExecution: { projectContextRevisionId: revisionId },
       onProgress(progress) {
-        if (progress.stage === "environment.health.checking") {
-          healthCheckingObserved();
+        if (progress.stage === "environment.machine.starting") {
+          machineStartingObserved();
         }
       },
     });
-    await healthChecking;
+    await machineStarting;
     const [executionBeforeReady] = await sql<Array<{ count: number }>>`
       SELECT count(*)::integer AS "count"
       FROM "environment_run_executions"

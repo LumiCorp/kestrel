@@ -49,6 +49,7 @@ const definition: SharedToolDefinition = {
     allowedInteractionModes: ["chat", "build"],
     capabilityClasses: ["email.send", "network.call"],
     approvalCapabilities: ["network.call", "external.confirm"],
+    minimumApprovalMode: "ask",
     suitability: {
       supportsAttribution: true,
       supportsAggregation: false,

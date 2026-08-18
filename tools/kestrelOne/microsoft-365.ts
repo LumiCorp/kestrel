@@ -196,9 +196,17 @@ async function invokeMicrosoft365(
     context,
     "/api/runtime/microsoft-365/action",
   );
-  const approvalConfirmed =
-    input.requiresApproval ||
-    context.kestrelOne?.appApprovalModes?.[input.toolName] === "ask";
+  const explicitApprovalMode =
+    context.kestrelOne?.appApprovalModes?.[input.toolName];
+  const approvalRequired =
+    explicitApprovalMode === "ask" ||
+    (explicitApprovalMode === undefined && input.requiresApproval);
+  const approvalId = approvalRequired
+    ? requireContextValue(
+        context.runtime?.approvalId,
+        "Runtime Microsoft 365 approval ID",
+      )
+    : undefined;
   const response = await (context.fetchImpl ?? fetch)(
     transport.url,
     {
@@ -206,9 +214,7 @@ async function invokeMicrosoft365(
       headers: {
         authorization: `Bearer ${transport.authorization}`,
         "content-type": "application/json",
-        ...(approvalConfirmed
-          ? { "x-kestrel-runtime-approval": "confirmed" }
-          : {}),
+        ...(approvalId ? { "x-kestrel-approval-id": approvalId } : {}),
       },
       body: JSON.stringify({ operation: input.operation, ...input.input }),
     }

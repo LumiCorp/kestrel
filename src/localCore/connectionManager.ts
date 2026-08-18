@@ -6,10 +6,16 @@ export interface LocalCoreClientConnection {
   client: LocalCoreClient;
 }
 
+export type LocalCoreConnectionState =
+  | "connected"
+  | "connecting"
+  | "disconnected";
+
 export interface LocalCoreConnectionManagerOptions {
   initialConnection?: LocalCoreClientConnection | undefined;
   connect(): Promise<LocalCoreClientConnection>;
   onConnected?(connection: LocalCoreClientConnection): void;
+  onStateChanged?(state: LocalCoreConnectionState): void;
 }
 
 /**
@@ -21,11 +27,19 @@ export class LocalCoreConnectionManager {
   private connecting: Promise<LocalCoreClientConnection> | undefined;
   private readonly connectToCore: () => Promise<LocalCoreClientConnection>;
   private readonly onConnected: ((connection: LocalCoreClientConnection) => void) | undefined;
+  private readonly onStateChanged:
+    | ((state: LocalCoreConnectionState) => void)
+    | undefined;
+  private state: LocalCoreConnectionState;
 
   constructor(options: LocalCoreConnectionManagerOptions) {
     this.connection = options.initialConnection;
     this.connectToCore = options.connect;
     this.onConnected = options.onConnected;
+    this.onStateChanged = options.onStateChanged;
+    this.state = options.initialConnection === undefined
+      ? "disconnected"
+      : "connected";
   }
 
   current(): LocalCoreClientConnection | undefined {
@@ -40,11 +54,18 @@ export class LocalCoreConnectionManager {
       return await this.connecting;
     }
 
-    const connecting = this.connectToCore().then((connection) => {
-      this.connection = connection;
-      this.onConnected?.(connection);
-      return connection;
-    });
+    this.setState("connecting");
+    const connecting = this.connectToCore()
+      .then((connection) => {
+        this.connection = connection;
+        this.setState("connected");
+        this.onConnected?.(connection);
+        return connection;
+      })
+      .catch((error: unknown) => {
+        this.setState("disconnected");
+        throw error;
+      });
     this.connecting = connecting;
     try {
       return await connecting;
@@ -65,7 +86,14 @@ export class LocalCoreConnectionManager {
       }
       this.invalidate(connection.client);
       const recovered = await this.ensureConnected();
-      return await operation(recovered.client);
+      try {
+        return await operation(recovered.client);
+      } catch (recoveredError) {
+        if (isStaleLocalCoreConnectionError(recoveredError)) {
+          this.invalidate(recovered.client);
+        }
+        throw recoveredError;
+      }
     }
   }
 
@@ -76,14 +104,37 @@ export class LocalCoreConnectionManager {
    */
   async executeOnce<T>(operation: (client: LocalCoreClient) => Promise<T>): Promise<T> {
     await this.executeIdempotent(async (client) => await client.health());
+    return await this.executeConnectedOnce(operation);
+  }
+
+  /**
+   * Invokes an operation once on the current connection without a separate
+   * health request. Use when the operation itself is the liveness check and a
+   * preflight request would incorrectly gate or delay it.
+   */
+  async executeConnectedOnce<T>(operation: (client: LocalCoreClient) => Promise<T>): Promise<T> {
     const connection = await this.ensureConnected();
-    return await operation(connection.client);
+    try {
+      return await operation(connection.client);
+    } catch (error) {
+      if (isStaleLocalCoreConnectionError(error)) {
+        this.invalidate(connection.client);
+      }
+      throw error;
+    }
   }
 
   invalidate(client?: LocalCoreClient): void {
     if (client === undefined || this.connection?.client === client) {
       this.connection = undefined;
+      this.setState("disconnected");
     }
+  }
+
+  private setState(state: LocalCoreConnectionState): void {
+    if (this.state === state) return;
+    this.state = state;
+    this.onStateChanged?.(state);
   }
 }
 

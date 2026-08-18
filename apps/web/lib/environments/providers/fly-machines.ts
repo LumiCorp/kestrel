@@ -1,6 +1,5 @@
 import { createPublicKey, randomBytes } from "node:crypto";
 import { z } from "zod";
-import { WORKSPACE_READINESS_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
 import {
   type EnvironmentInfrastructureProvider,
   type EnvironmentProviderApp,
@@ -18,6 +17,8 @@ import {
   type EnvironmentProviderMachineStopConfig,
   type WorkspaceMachineProvisioningInput,
 } from "./contracts";
+
+const FLY_RESOURCE_PERSISTENCE_TIMEOUT_MS = 120_000;
 
 const appDetailsSchema = z.object({
   id: z.string().min(1),
@@ -521,7 +522,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
   }
 
   private async waitForVolumeCreated(appName: string, volumeId: string) {
-    const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
+    const deadline = Date.now() + FLY_RESOURCE_PERSISTENCE_TIMEOUT_MS;
     while (true) {
       const volume = parseResponse(
         volumeSchema,
@@ -1151,7 +1152,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
     healthCheck?: FlyMachineHealthCheck | undefined;
   }) {
-    const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
+    const deadline = Date.now() + FLY_RESOURCE_PERSISTENCE_TIMEOUT_MS;
     while (true) {
       const machine = parseResponse(
         machineSchema,

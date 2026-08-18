@@ -13,6 +13,7 @@ import {
   type MissionControlOutboxIntent,
   type MissionControlProjectDocument,
   type MissionControlProjectMutationResult,
+  type MissionControlProjectStateRecord,
   type MissionControlWorkItem,
   parseMissionControlProjectDocument,
   requireMissionControlActionId,
@@ -173,10 +174,13 @@ export class MissionControlReviewService {
       "getMissionControlProjectState" | "updateMissionControlProjectState"
     >,
     evidence: MissionControlReviewEvidenceResolver,
+    private readonly onProjectChanged?: (
+      project: MissionControlProjectStateRecord,
+    ) => void,
   ) {
     this.store = store;
     this.evidence = evidence;
-    this.projects = new MissionControlProjectService(store);
+    this.projects = new MissionControlProjectService(store, onProjectChanged);
   }
 
   async execute(
@@ -203,13 +207,15 @@ export class MissionControlReviewService {
   private async persist(
     action: MissionControlReviewAction,
   ): Promise<MissionControlProjectMutationResult> {
-    return this.store.updateMissionControlProjectState({
+    const result = await this.store.updateMissionControlProjectState({
       projectId: action.projectId,
       actionId: action.actionId,
       requestFingerprint: fingerprint(action),
       expectedRevision: action.expectedRevision,
       apply: (current) => reduceMissionControlReviewAction(current, action),
     });
+    if (result.duplicate === false) this.publish(result.project);
+    return result;
   }
 
   private async admit(
@@ -248,7 +254,7 @@ export class MissionControlReviewService {
       run,
       resolved,
     });
-    return this.store.updateMissionControlProjectState({
+    const result = await this.store.updateMissionControlProjectState({
       projectId: action.projectId,
       actionId: action.actionId,
       requestFingerprint: fingerprint(action),
@@ -256,6 +262,16 @@ export class MissionControlReviewService {
       apply: (current) =>
         reduceMissionControlReviewAction(current, action, bundle),
     });
+    if (result.duplicate === false) this.publish(result.project);
+    return result;
+  }
+
+  private publish(project: MissionControlProjectStateRecord): void {
+    try {
+      this.onProjectChanged?.(project);
+    } catch {
+      // Observers cannot turn a committed authoritative mutation into failure.
+    }
   }
 
   private async assertCurrentCandidate(

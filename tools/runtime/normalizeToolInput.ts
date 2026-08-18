@@ -241,6 +241,16 @@ export function normalizeToolActionInput(
   }
 
   if (name === "fs.read_text") {
+    const { maxBytes: _maxBytes } = input;
+    return {
+      path: normalizeFilesystemPathField(input),
+      ...(normalizeOptionalInteger(_maxBytes) !== undefined
+        ? { maxBytes: normalizeOptionalInteger(_maxBytes) }
+        : {}),
+    };
+  }
+
+  if (name === "fs.read_text_page") {
     const {
       maxBytes: _maxBytes,
       offsetBytes: _offsetBytes,

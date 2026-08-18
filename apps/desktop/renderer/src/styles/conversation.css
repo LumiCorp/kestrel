@@ -1,5 +1,5 @@
 .conversation-pane {
-  --conversation-content-width: 640px;
+  --conversation-content-width: 880px;
   --conversation-gutter: var(--space-3);
   --conversation-total-gutter: 24px;
   --conversation-motion-duration: 180ms;

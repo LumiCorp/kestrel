@@ -105,9 +105,9 @@ const capabilities = [
 ] as const;
 
 const betaNotes = [
-  "Products and contracts share version 0.8.0; the corrected Runtime npm package is 0.8.2.",
+  "Products, packages, and contracts share the canonical 0.8.5 release.",
   "Kestrel One source is public; Lumi-hosted signup requires an invite code.",
-  "Desktop 0.8.0 is a signed manual download; stable OTA proof is deferred to 0.8.1.",
+  "Desktop 0.8.5 is signed and notarized, with stable OTA support from 0.7.0 and 0.8.0.",
   "Release identity, known Beta limitations, and compatibility remain public.",
 ] as const;
 
@@ -316,7 +316,7 @@ export function LandingPage() {
                   </Link>
                 </Button>
                 <Button asChild className="h-11 px-5" size="lg" variant="ghost">
-                  <Link href="https://github.com/LumiCorp/kestrel/tree/v0.8.0/apps/web">
+                  <Link href="https://github.com/LumiCorp/kestrel/tree/v0.8.5/apps/web">
                     <Github />
                     View Kestrel One source
                   </Link>
@@ -496,7 +496,7 @@ export function LandingPage() {
                 <Button asChild variant="outline">
                   <Link href="https://docs.kestrelagents.dev/cli/install">
                     <Terminal />
-                    npm install -g @kestrel-agents/kestrel@0.8.2
+                    npm install -g @kestrel-agents/kestrel@0.8.5
                   </Link>
                 </Button>
                 <Button asChild variant="outline">
@@ -589,7 +589,7 @@ export function LandingPage() {
                 size="lg"
                 variant="outline"
               >
-                <Link href="https://github.com/LumiCorp/kestrel/tree/v0.8.0/apps/web">
+                <Link href="https://github.com/LumiCorp/kestrel/tree/v0.8.5/apps/web">
                   <Github />
                   Kestrel One source
                 </Link>

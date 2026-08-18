@@ -1,12 +1,15 @@
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
   signEnvironmentExecutionTicket,
-  WORKSPACE_READINESS_TIMEOUT_MS,
+  WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_MS,
 } from "@lumi/kestrel-environment-auth";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { isGatewayCredentialReadyForRuntime } from "@/lib/ai/gateway-credential-health";
+import type { KestrelOneCapabilityApprovalPolicyEvidence } from "@/lib/agent/kestrel-tool-profile";
 import { resolveEffectiveProjectAppsAccess } from "@/lib/apps/project-service";
 import { ensureEnvironmentAppPolicies } from "@/lib/apps/service";
+import { getCoreAppDefinition } from "@/lib/apps/catalog";
+import { applyMinimumApprovalMode } from "@/lib/apps/policy";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { resolveKestrelAppUrl } from "@/lib/app-url";
@@ -177,13 +180,14 @@ export async function resolveEnvironmentExecutionRoute(input: {
       owningLifecycleOperationIds: input.owningLifecycleOperationIds,
       onProgress: input.onProgress,
     });
-    const effectiveCapabilities = await snapshotEffectiveCapabilities({
-      organizationId: input.organizationId,
-      environmentId: environment.id,
-      threadId: input.threadId,
-      actorId: input.actorUserId,
-      agentId: input.agentId ?? "kestrel-one-ui",
-    });
+    const { effectiveCapabilities, approvalPolicies } =
+      await snapshotEffectiveCapabilities({
+        organizationId: input.organizationId,
+        environmentId: environment.id,
+        threadId: input.threadId,
+        actorId: input.actorUserId,
+        agentId: input.agentId ?? "kestrel-one-ui",
+      });
     const reasoningPolicy = await readEnvironmentReasoningPolicy({
       organizationId: input.organizationId,
       environmentId: environment.id,
@@ -197,6 +201,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
       actorUserId: input.actorUserId,
       agentId: input.agentId ?? "kestrel-one-ui",
       effectiveCapabilities,
+      approvalPolicies,
       reasoningPolicy,
       recordExecution: input.recordExecution,
       owningLifecycleOperationIds: input.owningLifecycleOperationIds,
@@ -225,6 +230,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     workspaceId: authorization.workspaceId,
     projectId: authorization.projectId,
     effectiveCapabilities: authorization.effectiveCapabilities,
+    approvalPolicies: authorization.approvalPolicies,
     reasoningPolicy: authorization.reasoningPolicy,
     ...(authorization.authorizationRenewal
       ? { authorizationRenewal: authorization.authorizationRenewal }
@@ -292,13 +298,14 @@ async function resolveDesktopEnvironmentExecutionRoute(input: {
     );
   }
   const runId = crypto.randomUUID();
-  const effectiveCapabilities = await snapshotEffectiveCapabilities({
-    organizationId: input.organizationId,
-    environmentId: environment.id,
-    threadId: input.threadId,
-    actorId: input.actorUserId,
-    agentId: input.agentId ?? "kestrel-one-ui",
-  });
+  const { effectiveCapabilities, approvalPolicies } =
+    await snapshotEffectiveCapabilities({
+      organizationId: input.organizationId,
+      environmentId: environment.id,
+      threadId: input.threadId,
+      actorId: input.actorUserId,
+      agentId: input.agentId ?? "kestrel-one-ui",
+    });
   const reasoningPolicy = await readEnvironmentReasoningPolicy({
     organizationId: input.organizationId,
     environmentId: environment.id,
@@ -356,6 +363,7 @@ async function resolveDesktopEnvironmentExecutionRoute(input: {
     workspaceId: input.workspace.id,
     projectId,
     effectiveCapabilities,
+    approvalPolicies,
     reasoningPolicy,
     ...(mcpPolicy ? { mcpPolicy } : {}),
   };
@@ -370,6 +378,11 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
   actorUserId: string;
   agentId: string;
   effectiveCapabilities: string[];
+  approvalPolicies?:
+    | Awaited<
+        ReturnType<typeof snapshotEffectiveCapabilities>
+      >["approvalPolicies"]
+    | undefined;
   reasoningPolicy: Awaited<ReturnType<typeof readEnvironmentReasoningPolicy>>;
   recordExecution?:
     | {
@@ -387,44 +400,45 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
     );
-    const [environment, workspace, activeLifecycleOperation] = await Promise.all([
-      transaction.query.environments.findFirst({
-        where: (table, { and, eq, isNull }) =>
-          and(
-            eq(table.id, input.environmentId),
-            eq(table.organizationId, input.organizationId),
-            eq(table.status, "ready"),
-            isNull(table.archivedAt),
-          ),
-        columns: {
-          id: true,
-          flyAppName: true,
-          routerUrl: true,
-          flyGatewayMachineId: true,
-        },
-      }),
-      transaction.query.environmentWorkspaces.findFirst({
-        where: (table, { and, eq, isNull }) =>
-          and(
-            eq(table.id, input.workspaceId),
-            eq(table.organizationId, input.organizationId),
-            eq(table.environmentId, input.environmentId),
-            eq(table.status, "ready"),
-            isNull(table.deletedAt),
-          ),
-        columns: {
-          id: true,
-          flyMachineId: true,
-          runtimeImage: true,
-        },
-      }),
-      findActiveWorkspaceLifecycleOperation(transaction, {
-        organizationId: input.organizationId,
-        environmentId: input.environmentId,
-        workspaceId: input.workspaceId,
-        excludedOperationIds: input.owningLifecycleOperationIds,
-      }),
-    ]);
+    const [environment, workspace, activeLifecycleOperation] =
+      await Promise.all([
+        transaction.query.environments.findFirst({
+          where: (table, { and, eq, isNull }) =>
+            and(
+              eq(table.id, input.environmentId),
+              eq(table.organizationId, input.organizationId),
+              eq(table.status, "ready"),
+              isNull(table.archivedAt),
+            ),
+          columns: {
+            id: true,
+            flyAppName: true,
+            routerUrl: true,
+            flyGatewayMachineId: true,
+          },
+        }),
+        transaction.query.environmentWorkspaces.findFirst({
+          where: (table, { and, eq, isNull }) =>
+            and(
+              eq(table.id, input.workspaceId),
+              eq(table.organizationId, input.organizationId),
+              eq(table.environmentId, input.environmentId),
+              eq(table.status, "ready"),
+              isNull(table.deletedAt),
+            ),
+          columns: {
+            id: true,
+            flyMachineId: true,
+            runtimeImage: true,
+          },
+        }),
+        findActiveWorkspaceLifecycleOperation(transaction, {
+          organizationId: input.organizationId,
+          environmentId: input.environmentId,
+          workspaceId: input.workspaceId,
+          excludedOperationIds: input.owningLifecycleOperationIds,
+        }),
+      ]);
     if (
       !(
         environment?.flyAppName &&
@@ -492,6 +506,7 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
       workspaceId: workspace.id,
       projectId,
       effectiveCapabilities: input.effectiveCapabilities,
+      approvalPolicies: input.approvalPolicies ?? [],
       reasoningPolicy: input.reasoningPolicy,
       ...(renewal
         ? {
@@ -541,13 +556,14 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     );
   }
   const runId = crypto.randomUUID();
-  const effectiveCapabilities = await snapshotEffectiveCapabilities({
-    organizationId: input.organizationId,
-    environmentId: resolved.binding.environmentId,
-    threadId: input.threadId,
-    actorId: input.actorUserId,
-    agentId: input.agentId ?? "kestrel-one-ui",
-  });
+  const { effectiveCapabilities, approvalPolicies } =
+    await snapshotEffectiveCapabilities({
+      organizationId: input.organizationId,
+      environmentId: resolved.binding.environmentId,
+      threadId: input.threadId,
+      actorId: input.actorUserId,
+      agentId: input.agentId ?? "kestrel-one-ui",
+    });
   const reasoningPolicy = await readEnvironmentReasoningPolicy({
     organizationId: input.organizationId,
     environmentId: resolved.binding.environmentId,
@@ -590,6 +606,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     workspaceId: resolved.binding.workspaceId,
     projectId,
     effectiveCapabilities,
+    approvalPolicies,
     reasoningPolicy,
     ...(mcpPolicy ? { mcpPolicy } : {}),
   };
@@ -603,33 +620,34 @@ async function waitForExecutionResources(input: {
   owningLifecycleOperationIds?: readonly string[] | undefined;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
-  const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
+  const deadline = Date.now() + WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_MS;
   let lastDetail = "";
   let startRequested = false;
   while (Date.now() < deadline) {
-    const [environment, workspace, activeLifecycleOperation] = await Promise.all([
-      knowledgeDb.query.environments.findFirst({
-        where: (table, { and, eq }) =>
-          and(
-            eq(table.id, input.environmentId),
-            eq(table.organizationId, input.organizationId),
-          ),
-      }),
-      knowledgeDb.query.environmentWorkspaces.findFirst({
-        where: (table, { and, eq }) =>
-          and(
-            eq(table.id, input.workspaceId),
-            eq(table.organizationId, input.organizationId),
-            eq(table.environmentId, input.environmentId),
-          ),
-      }),
-      hasActiveWorkspaceLifecycleOperation({
-        organizationId: input.organizationId,
-        environmentId: input.environmentId,
-        workspaceId: input.workspaceId,
-        excludedOperationIds: input.owningLifecycleOperationIds,
-      }),
-    ]);
+    const [environment, workspace, activeLifecycleOperation] =
+      await Promise.all([
+        knowledgeDb.query.environments.findFirst({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.id, input.environmentId),
+              eq(table.organizationId, input.organizationId),
+            ),
+        }),
+        knowledgeDb.query.environmentWorkspaces.findFirst({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.id, input.workspaceId),
+              eq(table.organizationId, input.organizationId),
+              eq(table.environmentId, input.environmentId),
+            ),
+        }),
+        hasActiveWorkspaceLifecycleOperation({
+          organizationId: input.organizationId,
+          environmentId: input.environmentId,
+          workspaceId: input.workspaceId,
+          excludedOperationIds: input.owningLifecycleOperationIds,
+        }),
+      ]);
     if (!(environment && workspace)) {
       throw new Error("Environment execution binding is unavailable.");
     }
@@ -680,18 +698,11 @@ async function waitForExecutionResources(input: {
       }
       startRequested = true;
     }
-    const progress = activeLifecycleOperation
-        ? {
-            stage: "environment.health.checking" as const,
-            detail: "Checking Workspace health…",
-            status: "pending" as const,
-          }
-        : describeEnvironmentActivation({
-            environmentStatus: environment.status,
-            workspaceStatus: workspace.status,
-            failureMessage:
-              workspace.failureMessage ?? environment.failureMessage,
-          });
+    const progress = describeEnvironmentActivation({
+      environmentStatus: environment.status,
+      workspaceStatus: workspace.status,
+      failureMessage: workspace.failureMessage ?? environment.failureMessage,
+    });
     if (progress.detail !== lastDetail) {
       lastDetail = progress.detail;
       input.onProgress?.(progress);
@@ -990,22 +1001,22 @@ export async function settleEnvironmentExecutionRuntimeEvent(input: {
     }
     const now = new Date();
     await transaction
-    .update(schema.environmentRunExecutions)
-    .set({
-      lastRuntimeEventId: input.eventId,
+      .update(schema.environmentRunExecutions)
+      .set({
+        lastRuntimeEventId: input.eventId,
         ...(input.terminalStatus
           ? { status: input.terminalStatus, completedAt: now }
           : {}),
         updatedAt: now,
-    })
-    .where(
-      and(
-        eq(schema.environmentRunExecutions.id, input.executionId),
-        eq(
-          schema.environmentRunExecutions.organizationId,
-          input.organizationId,
+      })
+      .where(
+        and(
+          eq(schema.environmentRunExecutions.id, input.executionId),
+          eq(
+            schema.environmentRunExecutions.organizationId,
+            input.organizationId,
+          ),
         ),
-      ),
       );
     if (!input.terminalStatus) return;
     await transaction
@@ -1337,7 +1348,10 @@ async function snapshotEffectiveCapabilities(input: {
   threadId: string;
   actorId: string;
   agentId: string;
-}) {
+}): Promise<{
+  effectiveCapabilities: string[];
+  approvalPolicies: KestrelOneCapabilityApprovalPolicyEvidence[];
+}> {
   await ensureEnvironmentAppPolicies({
     organizationId: input.organizationId,
     environmentId: input.environmentId,
@@ -1387,11 +1401,10 @@ async function snapshotEffectiveCapabilities(input: {
       installationByApp.get(definition.key)?.status === "installed",
   );
 
-  function restrictApprovalMode(inputApproval: {
+  function subjectApprovalMode(inputApproval: {
     appKey: string;
     capabilityKey: string;
-    approvalMode: "auto" | "ask" | "deny";
-  }) {
+  }): "ask" | "deny" | undefined {
     const matchingRestrictions = subjectRestrictions.filter(
       (restriction) =>
         restriction.providerKey === inputApproval.appKey &&
@@ -1404,13 +1417,23 @@ async function snapshotEffectiveCapabilities(input: {
           !restriction.enabled || restriction.approvalMode === "deny",
       )
     ) {
-      return null;
+      return "deny";
     }
     return matchingRestrictions.some(
       (restriction) => restriction.approvalMode === "ask",
     )
       ? "ask"
-      : inputApproval.approvalMode;
+      : undefined;
+  }
+
+  function restrictApprovalMode(inputApproval: {
+    appKey: string;
+    capabilityKey: string;
+    approvalMode: "auto" | "ask" | "deny";
+  }) {
+    const subject = subjectApprovalMode(inputApproval);
+    if (subject === "deny") return null;
+    return subject === "ask" ? "ask" : inputApproval.approvalMode;
   }
 
   if (!thread.projectId) {
@@ -1429,7 +1452,7 @@ async function snapshotEffectiveCapabilities(input: {
         capability,
       ]),
     );
-    return grants.flatMap((grant) => {
+    const entries = grants.flatMap((grant) => {
       const definition = definitionByKey.get(grant.appKey);
       const capability = capabilityByKey.get(
         `${grant.appKey}:${grant.capabilityKey}`,
@@ -1442,15 +1465,41 @@ async function snapshotEffectiveCapabilities(input: {
       ) {
         return [];
       }
+      const minimum =
+        getCoreAppDefinition(grant.appKey)?.capabilities.find(
+          (candidate) => candidate.key === grant.capabilityKey,
+        )?.minimumApprovalMode ?? "auto";
+      const subject = subjectApprovalMode({
+        appKey: grant.appKey,
+        capabilityKey: grant.capabilityKey,
+      });
       const approvalMode = restrictApprovalMode({
         appKey: grant.appKey,
         capabilityKey: grant.capabilityKey,
-        approvalMode: grant.approvalMode,
+        approvalMode: applyMinimumApprovalMode({
+          requested: grant.approvalMode,
+          minimum,
+        }),
       });
       return approvalMode
-        ? [`app:${grant.appKey}.${grant.capabilityKey}:${approvalMode}`]
+        ? [
+            {
+              capability: `app:${grant.appKey}.${grant.capabilityKey}:${approvalMode}`,
+              policy: {
+                appKey: grant.appKey,
+                capabilityKey: grant.capabilityKey,
+                environment: grant.approvalMode,
+                ...(subject === undefined ? {} : { subject }),
+                minimum,
+              },
+            },
+          ]
         : [];
     });
+    return {
+      effectiveCapabilities: entries.map((entry) => entry.capability),
+      approvalPolicies: entries.map((entry) => entry.policy),
+    };
   }
 
   const appAccess = await resolveEffectiveProjectAppsAccess({
@@ -1458,21 +1507,40 @@ async function snapshotEffectiveCapabilities(input: {
     projectId: thread.projectId,
     userId: input.actorId,
   });
-  const appCapabilities = appAccess.flatMap((access) =>
+  const entries = appAccess.flatMap((access) =>
     access
       ? access.capabilities.flatMap((capability) => {
+          const subject = subjectApprovalMode({
+            appKey: access.appKey,
+            capabilityKey: capability.key,
+          });
           const approvalMode = restrictApprovalMode({
             appKey: access.appKey,
             capabilityKey: capability.key,
             approvalMode: capability.approvalMode,
           });
           return approvalMode
-            ? [`app:${access.appKey}.${capability.key}:${approvalMode}`]
+            ? [
+                {
+                  capability: `app:${access.appKey}.${capability.key}:${approvalMode}`,
+                  policy: {
+                    appKey: access.appKey,
+                    capabilityKey: capability.key,
+                    environment: capability.environmentApprovalMode,
+                    project: capability.projectApprovalMode,
+                    ...(subject === undefined ? {} : { subject }),
+                    minimum: capability.minimumApprovalMode,
+                  },
+                },
+              ]
             : [];
         })
       : [],
   );
-  return appCapabilities;
+  return {
+    effectiveCapabilities: entries.map((entry) => entry.capability),
+    approvalPolicies: entries.map((entry) => entry.policy),
+  };
 }
 
 export function describeEnvironmentActivation(input: {
@@ -1514,10 +1582,16 @@ export function describeEnvironmentActivation(input: {
       status: "pending",
     };
   }
+  if (input.workspaceStatus === "degraded") {
+    return {
+      stage: "environment.health.checking",
+      detail: "Reconnecting to the Workspace Runtime…",
+      status: "pending",
+    };
+  }
   if (
     input.workspaceStatus === "stopped" ||
-    input.workspaceStatus === "starting" ||
-    input.workspaceStatus === "degraded"
+    input.workspaceStatus === "starting"
   ) {
     return {
       stage: "environment.machine.starting",

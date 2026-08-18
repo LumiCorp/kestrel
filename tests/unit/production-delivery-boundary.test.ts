@@ -4,6 +4,7 @@ import test from "node:test";
 
 const publishImage = source("scripts/publish-production-image.ts");
 const deployFlyMachine = source("scripts/deploy-production-fly-machine.ts");
+const cutoverPreflight = source("scripts/production-cutover-preflight.ts");
 const reconcileSchedule = source(
   "apps/web/lib/environments/reconcile-schedule.ts",
 );
@@ -38,6 +39,18 @@ test("Vercel production build retains configuration validation and migration", (
 test("Vercel project roots select Node.js 22", () => {
   assert.equal(webPackage.engines?.node, "22.x");
   assert.equal(docsPackage.engines?.node, "22.x");
+});
+
+test("production cutover preflight loads and removes the temporary One environment", () => {
+  assert.match(cutoverPreflight, /loadProductionEnvironment/u);
+  assert.match(cutoverPreflight, /POSTGRES_URL_NON_POOLING/u);
+  assert.match(cutoverPreflight, /environment_runtime_channels/u);
+  assert.match(cutoverPreflight, /fly-image\.release/u);
+  assert.doesNotMatch(
+    cutoverPreflight,
+    /fly_image_releases|fly_image_release_targets|fly_image_release_settings/u,
+  );
+  assert.doesNotMatch(cutoverPreflight, /vercel env pull|production\.env/u);
 });
 
 test("local image publication smokes before push and never deploys or notifies", () => {

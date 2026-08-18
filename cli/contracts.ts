@@ -254,6 +254,12 @@ export interface TuiProfile {
   guardrails?: Partial<GuardrailConfig> | undefined;
   toolAllowlist?: string[] | undefined;
   kestrelOneAppApprovalModes?: Record<string, "auto" | "ask"> | undefined;
+  kestrelOneAppApprovalPolicies?:
+    | Record<
+        string,
+        import("../src/mode/contracts.js").ToolApprovalPolicyEvidenceV1
+      >
+    | undefined;
   mcpServers?: McpServerConfig[] | undefined;
   ociMcpEgressBindings?: ResolvedOciMcpEgressBindingV1[] | undefined;
   toolQueue?: ToolQueueProfileConfig | undefined;
@@ -438,6 +444,7 @@ export interface TuiHistoryRecord {
 }
 
 export interface TranscriptLine {
+  eventId?: string | undefined;
   role: HistoryRole;
   text: string;
   data?: Record<string, unknown> | undefined;

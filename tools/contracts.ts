@@ -22,6 +22,8 @@ import type { SessionStore } from "../src/kestrel/contracts/store.js";
 import type {
   ApprovalCapabilityClass,
   InteractionMode,
+  ToolApprovalDispositionV1,
+  ToolApprovalPolicyEvidenceV1,
   ToolExecutionClass,
 } from "../src/mode/contracts.js";
 import type {
@@ -64,11 +66,16 @@ export interface ToolCapabilityMetadata {
   allowedInteractionModes?: InteractionMode[] | undefined;
   capabilityClasses: string[];
   approvalCapabilities?: ApprovalCapabilityClass[] | undefined;
+  minimumApprovalMode?: "auto" | "ask" | undefined;
+  /** Effective runtime prompt policy after hosted policy resolution. */
+  approvalDisposition?: ToolApprovalDispositionV1 | undefined;
   /** Trusted runtime authority. This field must never be rendered to the model. */
-  approvalAuthority?: {
-    kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
-    revision: string;
-  } | undefined;
+  approvalAuthority?:
+    | {
+        kind: "runtime_policy" | "hosted_mcp_grant" | "hosted_app_policy";
+        revision: string;
+      }
+    | undefined;
   /** Exact immutable descriptor used by runtime approval and execution checks. */
   descriptorRef?: ToolDescriptorRefV1 | undefined;
   requires?: string[] | undefined;
@@ -246,6 +253,9 @@ export interface SharedToolContext {
         executionRunId?: string | undefined;
         workspaceRuntimeUrl?: string | undefined;
         appApprovalModes?: Record<string, "auto" | "ask"> | undefined;
+        appApprovalPolicies?:
+          | Record<string, ToolApprovalPolicyEvidenceV1>
+          | undefined;
       }
     | undefined;
 }
@@ -262,10 +272,12 @@ export interface SharedToolModule {
 export interface SharedToolNormalizedResult {
   output: unknown;
   presentation?: AgentToolPresentation | undefined;
-  partial?: {
-    normalizedFailureCode: string;
-    retryable: boolean;
-  } | undefined;
+  partial?:
+    | {
+        normalizedFailureCode: string;
+        retryable: boolean;
+      }
+    | undefined;
 }
 
 export interface ToolCatalog {
@@ -287,15 +299,18 @@ export interface ToolCatalog {
   >;
   createHandlers(
     names: string[],
-    context: SharedToolContext
+    context: SharedToolContext,
   ): Record<string, SharedToolHandler>;
   createRawHandlers(
     names: string[],
-    context: SharedToolContext
+    context: SharedToolContext,
   ): Record<string, SharedToolRawHandler>;
   createResultNormalizers(
     names: string[],
-  ): Record<string, (output: unknown, input: unknown) => SharedToolNormalizedResult>;
+  ): Record<
+    string,
+    (output: unknown, input: unknown) => SharedToolNormalizedResult
+  >;
 }
 
 export interface ToolRegistryListOptions {

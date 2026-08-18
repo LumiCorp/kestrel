@@ -227,7 +227,10 @@ test("Desktop starts each accepted run without clearing earlier run groups", () 
     sessionId: "session-1",
     eventType: "user.message",
   }));
-  assert.deepEqual(next.map((item) => [item.runId, item.text]), [["run-old", "Old progress"]]);
+  assert.deepEqual(
+    next.filter((item) => item.visible !== false).map((item) => [item.runId, item.text]),
+    [["run-old", "Old progress"]],
+  );
 });
 
 test("Desktop retains runtime progress as operational timeline detail", () => {
@@ -266,6 +269,17 @@ test("Desktop describes the current runtime progress message for transient feedb
   });
 
   assert.equal(describeDesktopRunnerActivity(progress), "Calling decision model…");
+});
+
+test("Desktop retires terminal run activity without clearing another live run", () => {
+  const active = [
+    event("run.agent_progress", { update: baseUpdate({ runId: "run-1", message: "First run." }) }),
+    { ...event("run.agent_progress", { update: baseUpdate({ runId: "run-2", message: "Second run." }) }), runId: "run-2" },
+  ].reduce(projectDesktopRunStream, []);
+  const completed = projectDesktopRunStream(active, event("run.completed", {
+    result: { output: { runId: "run-1" } },
+  }));
+  assert.deepEqual(completed.map((item) => [item.runId, item.text]), [["run-2", "Second run."]]);
 });
 
 test("Desktop interleaves live run items before the terminal assistant response", () => {

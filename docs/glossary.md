@@ -2,9 +2,9 @@
 
 ## Environment Runtime Version
 
-An immutable record containing one exact public GHCR Environment Router digest
-and one exact public GHCR Workspace Runtime digest, plus diagnostic source
-revisions and originating workflow identity.
+An immutable record containing one exact public GHCR Environment Router image
+and one exact public GHCR Workspace Runtime image, plus the operator-selected
+tag and provider records used to diagnose the rollout.
 
 ## Environment Runtime Channel
 

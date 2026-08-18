@@ -3,12 +3,19 @@
   "mutations": [
     {
       "id": "conversation-refresh-message-discard",
-      "target": "apps/web/lib/turns/message-reconciliation.ts",
-      "find": "return turnStatus === \"running\" ? live : persisted;",
+      "target": "packages/conversation/src/projector.ts",
+      "find": "return status === \"running\" ? live : persisted;",
       "replace": "return live;",
       "command": "pnpm",
-      "args": ["--dir", "apps/web", "exec", "tsx", "--test", "lib/turns/message-reconciliation.test.ts"],
-      "testFiles": ["apps/web/lib/turns/message-reconciliation.test.ts"]
+      "args": [
+        "--dir",
+        "packages/conversation",
+        "exec",
+        "tsx",
+        "--test",
+        "tests/conversation.test.ts"
+      ],
+      "testFiles": ["packages/conversation/tests/conversation.test.ts"]
     },
     {
       "id": "conversation-snapshot-orphan-interaction",
@@ -256,8 +263,8 @@
     {
       "id": "execution-boundary-missing-policy-fail-open",
       "target": "src/security/ExecutionBoundaryPolicy.ts",
-      "find": "    if (!this.policy.boundaries.includes(input.boundary)) {",
-      "replace": "    if (false && !this.policy.boundaries.includes(input.boundary)) {",
+      "find": "    if (!this.policy.boundaries.includes(boundary)) {",
+      "replace": "    if (false && !this.policy.boundaries.includes(boundary)) {",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=missing policy boundary declarations fail closed", "tests/unit/execution-boundary-policy.test.ts"],
       "testFiles": ["tests/unit/execution-boundary-policy.test.ts"]
@@ -337,8 +344,8 @@
     {
       "id": "execution-boundary-quarantine-converted-to-redact",
       "target": "src/security/ExecutionBoundaryPolicy.ts",
-      "find": "  { boundary: \"tool_request\", handling: \"quarantine\" },",
-      "replace": "  { boundary: \"tool_request\", handling: \"redact\" },",
+      "find": "  { boundary: \"tool_request\", handling: \"quarantine\", evidenceMode: \"durable_decision\" },",
+      "replace": "  { boundary: \"tool_request\", handling: \"redact\", evidenceMode: \"durable_decision\" },",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=every adversarial fixture traverses", "tests/unit/execution-boundary-conformance.test.ts"],
       "testFiles": ["tests/unit/execution-boundary-conformance.test.ts", "tests/proof/execution-boundary-adversarial-corpus.ts"]
@@ -351,6 +358,33 @@
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=remains blocked until durable decision persistence settles", "tests/unit/execution-boundary-policy.test.ts"],
       "testFiles": ["tests/unit/execution-boundary-policy.test.ts"]
+    },
+    {
+      "id": "execution-boundary-live-stream-per-chunk-persistence-restoration",
+      "target": "src/engine/RuntimeIO.ts",
+      "find": "      safeDelta = stream.push(event.delta);",
+      "replace": "      await this.persistBoundaryDecision(this.options.executionBoundaryRuntime.evaluate({ boundary: \"model_stream\", identity: { runId: progress.runId, sessionId: progress.sessionId, callId, stepIndex: progress.stepIndex }, source: \"model\", trust: \"data\", sourceId: streamKey, value: event.delta }).decision);\n      safeDelta = stream.push(event.delta);",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=reasoning stream volume does not change durable boundary cardinality", "tests/unit/runtime-io-cancellation.test.ts"],
+      "testFiles": ["tests/unit/runtime-io-cancellation.test.ts"]
+    },
+    {
+      "id": "execution-boundary-live-stream-redaction-bypass",
+      "target": "src/security/ExecutionBoundaryPolicy.ts",
+      "find": "        return redactor.push(chunk);",
+      "replace": "        return chunk;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=live execution boundaries redact split values", "tests/unit/execution-boundary-policy.test.ts"],
+      "testFiles": ["tests/unit/execution-boundary-policy.test.ts"]
+    },
+    {
+      "id": "filesystem-read-page-continuation-schema-weakening",
+      "target": "tools/filesystem/readText.ts",
+      "find": "        offsetBytes: { type: \"number\", minimum: 1 },",
+      "replace": "        offsetBytes: { type: \"number\", minimum: 0 },",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=filesystem read schemas separate initial and continuation pages", "tests/unit/filesystem-tools.test.ts"],
+      "testFiles": ["tests/unit/filesystem-tools.test.ts"]
     },
     {
       "id": "docker-capability-drop-removal",
@@ -427,8 +461,8 @@
     {
       "id": "tool-inflight-generation-name-switch",
       "target": "tools/runtime/UnifiedToolRegistry.ts",
-      "find": "        (toolInput: unknown) => pinnedHandle.call(toolInput),",
-      "replace": "        (toolInput: unknown) => manager.callTool(descriptor.toolId, toolInput),",
+      "find": "          pinnedHandle.call(toolInput),",
+      "replace": "          manager.callTool(descriptor.toolId, toolInput),",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=model snapshot, preparation, and execution retain one exact MCP activation", "tests/unit/tool-invocation-integrity.test.ts"],
       "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
@@ -463,8 +497,8 @@
     {
       "id": "tool-approval-descriptor-revision-omission",
       "target": "src/io/ToolInvocationSupport.ts",
-      "find": "          version: \"prepared-tool-approval-authority-v1\",\n          activation: input.activation,\n          effectiveInput: input.effectiveInput,",
-      "replace": "          version: \"prepared-tool-approval-authority-v1\",\n          activation: { ...input.activation, descriptor: { ...input.activation.descriptor, contractRevision: `sha256:${\"0\".repeat(64)}` } },\n          effectiveInput: input.effectiveInput,",
+      "find": "            version: \"prepared-tool-approval-authority-v1\",\n            activation: input.activation,\n            effectiveInput: input.effectiveInput,",
+      "replace": "            version: \"prepared-tool-approval-authority-v1\",\n            activation: { ...input.activation, descriptor: { ...input.activation.descriptor, contractRevision: `sha256:${\"0\".repeat(64)}` } },\n            effectiveInput: input.effectiveInput,",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=approval authority includes the exact descriptor revision", "tests/unit/tool-invocation-integrity.test.ts"],
       "testFiles": ["tests/unit/tool-invocation-integrity.test.ts"]
@@ -592,7 +626,13 @@
       "find": "db:migrate:deploy",
       "replace": "db:migrate",
       "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=production database migration belongs", "tests/unit/production-delivery-boundary.test.ts"],
+      "args": [
+        "--import",
+        "tsx",
+        "--test",
+        "--test-name-pattern=Vercel production build retains configuration validation and migration",
+        "tests/unit/production-delivery-boundary.test.ts"
+      ],
       "testFiles": ["tests/unit/production-delivery-boundary.test.ts"]
     },
     {
@@ -601,8 +641,18 @@
       "find": "    version?.workspaceRuntimeImage !== images.runtimeImage ||",
       "replace": "    false ||",
       "command": "pnpm",
-      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "lib/environments/runtime-channel.postgres.test.ts"],
-      "testFiles": ["apps/web/lib/environments/runtime-channel.postgres.test.ts"]
+      "args": [
+        "--dir",
+        "apps/web",
+        "exec",
+        "tsx",
+        "--test",
+        "--test-name-pattern=ordinary hosted runtime paths",
+        "lib/environments/runtime-channel-authority-boundary.test.ts"
+      ],
+      "testFiles": [
+        "apps/web/lib/environments/runtime-channel-authority-boundary.test.ts"
+      ]
     },
     {
       "id": "environment-update-stopped-state-restoration-bypass",

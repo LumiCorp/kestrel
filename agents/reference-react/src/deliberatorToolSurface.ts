@@ -1,4 +1,5 @@
 import type { ModelToolSpec } from "../../../src/kestrel/contracts/model-io.js";
+import { isFileTextReadToolName } from "../../../src/runtime/fileTextReadTools.js";
 
 import { asRecord, asString } from "../../shared/valueAccess.js";
 import type { LatestToolEvidence as ProcessToolState } from "./types.js";
@@ -189,7 +190,7 @@ export function isHelperWorkTool(toolName: string): boolean {
   return toolName === "exec_command" ||
     toolName === "dev.process.start" ||
     toolName === "code.execute" ||
-    toolName === "fs.read_text" ||
+    isFileTextReadToolName(toolName) ||
     toolName === "fs.list" ||
     toolName === "fs.search_text" ||
     toolName === "repo.trace" ||
@@ -210,7 +211,7 @@ export function isRunHelperContinuationTool(toolName: string): boolean {
 }
 
 export function isHelperSourceInspectionTool(toolName: string): boolean {
-  return toolName === "fs.read_text" ||
+  return isFileTextReadToolName(toolName) ||
     toolName === "repo.trace" ||
     toolName === "exec_command";
 }

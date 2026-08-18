@@ -29,6 +29,13 @@ test("Desktop Tools and services uses a cardless guided connector surface", asyn
   assert.match(toolServicesSource, /<SetupStep number=\{3\}/u);
 });
 
+test("Desktop Apps routes Tavily through its standard App detail", async () => {
+  const appsSource = await readFile(path.join(rendererDirectory, "McpWorkspace.tsx"), "utf8");
+
+  assert.match(appsSource, /selectedStandardApp\?\.id === "tavily"/u);
+  assert.match(appsSource, /<section[\s\S]*aria-label="App details"/u);
+});
+
 test("guided recovery requests select and focus the requested connector", async () => {
   const toolServicesSource = await readFile(path.join(rendererDirectory, "ToolServicesSettings.tsx"), "utf8");
 

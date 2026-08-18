@@ -50,13 +50,18 @@ export interface PinnedToolExecutionV1 {
   activation: ToolActivationRefV1;
   validator: ValidateFunction;
   handler: (input: unknown) => Promise<unknown>;
-  normalizer: (output: unknown, input: unknown) => {
+  normalizer: (
+    output: unknown,
+    input: unknown,
+  ) => {
     output: unknown;
     presentation?: AgentToolPresentation | undefined;
-    partial?: {
-      normalizedFailureCode: string;
-      retryable: boolean;
-    } | undefined;
+    partial?:
+      | {
+          normalizedFailureCode: string;
+          retryable: boolean;
+        }
+      | undefined;
   };
 }
 
@@ -148,21 +153,22 @@ export function createPreparedToolCallV1(input: {
     );
   }
   const inputAdapters = input.inputAdapters ?? [];
-  const approval = input.approval === undefined
-    ? undefined
-    : {
-        ...(input.approval.approvalId === undefined
-          ? {}
-          : { approvalId: input.approval.approvalId }),
-        authorityRevision: hashCanonical({
-          version: "prepared-tool-approval-authority-v1",
-          activation: input.activation,
-          effectiveInput: input.effectiveInput,
-          inputAdapters,
-          policyRevision: input.policy.policyRevision,
-          upstreamAuthorityRevision: input.approval.authorityRevision,
-        }),
-      };
+  const approval =
+    input.approval === undefined
+      ? undefined
+      : {
+          ...(input.approval.approvalId === undefined
+            ? {}
+            : { approvalId: input.approval.approvalId }),
+          authorityRevision: hashCanonical({
+            version: "prepared-tool-approval-authority-v1",
+            activation: input.activation,
+            effectiveInput: input.effectiveInput,
+            inputAdapters,
+            policyRevision: input.policy.policyRevision,
+            upstreamAuthorityRevision: input.approval.authorityRevision,
+          }),
+        };
   return parsePreparedToolCallV1({
     version: PREPARED_TOOL_CALL_VERSION,
     runId: input.runId,
@@ -195,7 +201,8 @@ export async function executePinnedToolCallV1(input: {
       throw error;
     }
     const effectState =
-      input.pinned.descriptor.capability.executionClass === "external_side_effect"
+      input.pinned.descriptor.capability.executionClass ===
+      "external_side_effect"
         ? "unknown"
         : "not_started";
     return buildFailureResult({
@@ -272,29 +279,31 @@ export async function executePinnedToolCallV1(input: {
       ? {}
       : { presentation: normalized.presentation }),
   });
-  const outcome: ToolExecutionOutcomeV1 = normalized.partial === undefined ? {
-    version: TOOL_EXECUTION_OUTCOME_VERSION,
-    callId: prepared.callId,
-    activation: prepared.activation,
-    kind: "success",
-    startedAt,
-    completedAt,
-    effectState,
-    rawOutput: normalized.output,
-  } : {
-    version: TOOL_EXECUTION_OUTCOME_VERSION,
-    callId: prepared.callId,
-    activation: prepared.activation,
-    kind: "partial",
-    startedAt,
-    completedAt,
-    effectState,
-    rawOutput: normalized.output,
-    normalizedFailureCode: normalized.partial.normalizedFailureCode,
-    retryable: effectState === "committed"
-      ? false
-      : normalized.partial.retryable,
-  };
+  const outcome: ToolExecutionOutcomeV1 =
+    normalized.partial === undefined
+      ? {
+          version: TOOL_EXECUTION_OUTCOME_VERSION,
+          callId: prepared.callId,
+          activation: prepared.activation,
+          kind: "success",
+          startedAt,
+          completedAt,
+          effectState,
+          rawOutput: normalized.output,
+        }
+      : {
+          version: TOOL_EXECUTION_OUTCOME_VERSION,
+          callId: prepared.callId,
+          activation: prepared.activation,
+          kind: "partial",
+          startedAt,
+          completedAt,
+          effectState,
+          rawOutput: normalized.output,
+          normalizedFailureCode: normalized.partial.normalizedFailureCode,
+          retryable:
+            effectState === "committed" ? false : normalized.partial.retryable,
+        };
   return Object.freeze({
     ...legacy,
     version: AGENT_TOOL_RESULT_VERSION,
@@ -329,41 +338,48 @@ export function fingerprintToolRunScopeV1(
     readString(metadata?.threadId);
   const toolAllowlist = Array.isArray(runtimeAssembly?.toolAllowlist)
     ? runtimeAssembly.toolAllowlist
-        .filter((value): value is string =>
-          typeof value === "string" && value.trim().length > 0
+        .filter(
+          (value): value is string =>
+            typeof value === "string" && value.trim().length > 0,
         )
         .map((value) => value.trim())
         .sort()
     : undefined;
   const appApprovalModes = asRecord(kestrelOne?.appApprovalModes);
+  const appApprovalPolicies = asRecord(kestrelOne?.appApprovalPolicies);
   const sourceWriteGrants = Array.isArray(
     orchestration?.devShellSourceWriteApprovalGrants,
   )
-    ? orchestration.devShellSourceWriteApprovalGrants.flatMap((value) => {
-        const grant = asRecord(value);
-        const grantId = readString(grant?.grantId);
-        if (grantId === undefined) return [];
-        return [{
-          grantId,
-          ...(readString(grant?.command) === undefined
-            ? {}
-            : { command: readString(grant?.command) }),
-          ...(readString(grant?.cwd) === undefined
-            ? {}
-            : { cwd: readString(grant?.cwd) }),
-          ...(readString(grant?.expiresAt) === undefined
-            ? {}
-            : { expiresAt: readString(grant?.expiresAt) }),
-          writablePaths: Array.isArray(grant?.writablePaths)
-            ? grant.writablePaths
-                .filter((path): path is string =>
-                  typeof path === "string" && path.trim().length > 0
-                )
-                .map((path) => path.trim())
-                .sort()
-            : [],
-        }];
-      }).sort((left, right) => left.grantId.localeCompare(right.grantId))
+    ? orchestration.devShellSourceWriteApprovalGrants
+        .flatMap((value) => {
+          const grant = asRecord(value);
+          const grantId = readString(grant?.grantId);
+          if (grantId === undefined) return [];
+          return [
+            {
+              grantId,
+              ...(readString(grant?.command) === undefined
+                ? {}
+                : { command: readString(grant?.command) }),
+              ...(readString(grant?.cwd) === undefined
+                ? {}
+                : { cwd: readString(grant?.cwd) }),
+              ...(readString(grant?.expiresAt) === undefined
+                ? {}
+                : { expiresAt: readString(grant?.expiresAt) }),
+              writablePaths: Array.isArray(grant?.writablePaths)
+                ? grant.writablePaths
+                    .filter(
+                      (path): path is string =>
+                        typeof path === "string" && path.trim().length > 0,
+                    )
+                    .map((path) => path.trim())
+                    .sort()
+                : [],
+            },
+          ];
+        })
+        .sort((left, right) => left.grantId.localeCompare(right.grantId))
     : [];
   return fingerprintToolScopeV1({
     version: "v1",
@@ -375,18 +391,28 @@ export function fingerprintToolRunScopeV1(
     ...(grantId === undefined ? {} : { grantId }),
     ...(projectId === undefined ? {} : { projectId }),
     ...(threadId === undefined ? {} : { threadId }),
-    ...(readString(kestrelOne?.tenantId ?? kestrelOne?.organizationId) === undefined
+    ...(readString(kestrelOne?.tenantId ?? kestrelOne?.organizationId) ===
+    undefined
       ? {}
-      : { tenantId: readString(kestrelOne?.tenantId ?? kestrelOne?.organizationId) }),
+      : {
+          tenantId: readString(
+            kestrelOne?.tenantId ?? kestrelOne?.organizationId,
+          ),
+        }),
     ...(readString(kestrelOne?.contextGrantId) === undefined
       ? {}
       : { contextGrantId: readString(kestrelOne?.contextGrantId) }),
     ...(appApprovalModes === undefined ? {} : { appApprovalModes }),
+    ...(appApprovalPolicies === undefined ? {} : { appApprovalPolicies }),
     ...(toolAllowlist === undefined ? {} : { toolAllowlist }),
     assembly: {
       ...(readString(runtimeAssembly?.effectiveAssemblyId) === undefined
         ? {}
-        : { effectiveAssemblyId: readString(runtimeAssembly?.effectiveAssemblyId) }),
+        : {
+            effectiveAssemblyId: readString(
+              runtimeAssembly?.effectiveAssemblyId,
+            ),
+          }),
       ...(readString(runtimeAssembly?.bundleId) === undefined
         ? {}
         : { bundleId: readString(runtimeAssembly?.bundleId) }),
@@ -410,11 +436,13 @@ export function fingerprintToolRunScopeV1(
         : {}),
     },
     authorization: {
-      ...(sourceWriteGrants.length === 0
-        ? {}
-        : { sourceWriteGrants }),
+      ...(sourceWriteGrants.length === 0 ? {} : { sourceWriteGrants }),
     },
-    ...(readString(payload?.interactionMode ?? metadata?.interactionMode ?? orchestration?.interactionMode) === undefined
+    ...(readString(
+      payload?.interactionMode ??
+        metadata?.interactionMode ??
+        orchestration?.interactionMode,
+    ) === undefined
       ? {}
       : {
           interactionMode: readString(
@@ -441,19 +469,18 @@ function buildFailureResult(input: {
     startedAt: input.startedAt,
     completedAt,
   });
-  const runtimeFailure = input.error instanceof RuntimeFailure
-    ? input.error
-    : undefined;
-  const genericFailureDetails = input.error instanceof Error
-    ? asRecord((input.error as Error & { details?: unknown }).details)
-    : undefined;
+  const runtimeFailure =
+    input.error instanceof RuntimeFailure ? input.error : undefined;
+  const genericFailureDetails =
+    input.error instanceof Error
+      ? asRecord((input.error as Error & { details?: unknown }).details)
+      : undefined;
   const failureDetails = runtimeFailure?.details ?? genericFailureDetails;
   const retryable =
     input.effectState !== "committed" &&
     input.effectState !== "unknown" &&
     runtimeFailure?.details?.recoverable === true;
-  const normalizedFailureCode =
-    runtimeFailure?.code ?? "TOOL_EXECUTION_FAILED";
+  const normalizedFailureCode = runtimeFailure?.code ?? "TOOL_EXECUTION_FAILED";
   const outcome: ToolExecutionOutcomeV1 = {
     version: TOOL_EXECUTION_OUTCOME_VERSION,
     callId: input.prepared.callId,
@@ -466,10 +493,10 @@ function buildFailureResult(input: {
     retryable,
     error: {
       message:
-        input.error instanceof Error ? input.error.message : String(input.error),
-      ...(failureDetails === undefined
-        ? {}
-        : { details: failureDetails }),
+        input.error instanceof Error
+          ? input.error.message
+          : String(input.error),
+      ...(failureDetails === undefined ? {} : { details: failureDetails }),
     },
   };
   return Object.freeze({

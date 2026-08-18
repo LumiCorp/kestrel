@@ -252,6 +252,96 @@ test(
 );
 
 test(
+  "pre-run editing, complete phase resequencing, and immutable follow-ups are authoritative",
+  async () => {
+    const store = new InMemorySessionStore();
+    const service = new MissionControlProjectService(store);
+    await service.execute(action({
+      type: "item.create",
+      projectId: PROJECT_A,
+      actionId: "create-first",
+      expectedRevision: 0,
+      itemId: "first",
+      title: "First",
+      instructions: "First instructions.",
+      createdBy: "operator",
+      completionContract: nonCodeContract(),
+      order: 8,
+    }));
+    await service.execute(action({
+      type: "item.create",
+      projectId: PROJECT_A,
+      actionId: "create-second",
+      expectedRevision: 1,
+      itemId: "second",
+      title: "Second",
+      instructions: "Second instructions.",
+      createdBy: "operator",
+      completionContract: nonCodeContract(),
+      order: 3,
+    }));
+    const updated = await service.execute(action({
+      type: "item.update",
+      projectId: PROJECT_A,
+      actionId: "update-first",
+      expectedRevision: 2,
+      itemId: "first",
+      expectedItemVersion: 1,
+      title: "First, clarified",
+      instructions: "Clarified before the first run.",
+      completionContract: nonCodeContract(),
+    }));
+    assert.equal(updated.project.document.items.first?.title, "First, clarified");
+
+    const resequenced = await service.execute(action({
+      type: "item.resequence",
+      projectId: PROJECT_A,
+      actionId: "resequence-ready",
+      expectedRevision: 3,
+      targetPhase: "ready",
+      orderedItemIds: ["first", "second"],
+    }));
+    assert.equal(resequenced.project.document.items.first?.order, 0);
+    assert.equal(resequenced.project.document.items.second?.order, 1);
+    await assert.rejects(
+      service.execute(action({
+        type: "item.resequence",
+        projectId: PROJECT_A,
+        actionId: "incomplete-resequence",
+        expectedRevision: 4,
+        targetPhase: "ready",
+        orderedItemIds: ["first"],
+      })),
+      MissionControlTransitionError,
+    );
+
+    const seededDone = structuredClone(resequenced.project.document);
+    seededDone.items.first = {
+      ...seededDone.items.first!,
+      phase: "done",
+    };
+    const followUp = reduceMissionControlProjectAction(
+      seededDone,
+      action({
+        type: "item.create",
+        projectId: PROJECT_A,
+        actionId: "create-follow-up",
+        expectedRevision: 4,
+        itemId: "follow-up",
+        title: "Follow up: First",
+        instructions: "Correct the accepted outcome without reopening it.",
+        createdBy: "operator",
+        completionContract: nonCodeContract(),
+        followUpToItemId: "first",
+        order: 2,
+      }),
+    ).document;
+    assert.equal(followUp.items.first?.phase, "done");
+    assert.equal(followUp.items["follow-up"]?.followUpToItemId, "first");
+  },
+);
+
+test(
   "active project authority never dual-writes a session project snapshot",
   async () => {
     const store = new InMemorySessionStore();
@@ -272,12 +362,55 @@ test(
   },
 );
 
+test("project subscribers receive committed revisions only", async () => {
+  const store = new InMemorySessionStore();
+  const revisions: number[] = [];
+  const service = new MissionControlProjectService(
+    store,
+    (project) => revisions.push(project.revision),
+  );
+  const createdAction = action({
+    type: "item.create",
+    projectId: PROJECT_A,
+    actionId: "published-create",
+    expectedRevision: 0,
+    itemId: "published-item",
+    title: "Published item",
+    instructions: "Publish only after the store commits.",
+    createdBy: "operator",
+    order: 0,
+  });
+  await service.execute(createdAction);
+  await service.execute(createdAction);
+  await assert.rejects(service.execute(action({
+    type: "item.discard",
+    projectId: PROJECT_A,
+    actionId: "stale-unpublished",
+    expectedRevision: 0,
+    itemId: "published-item",
+    expectedItemVersion: 1,
+  })), MissionControlRevisionConflictError);
+  assert.deepEqual(revisions, [1]);
+});
+
 type MissionControlActionInput =
   MissionControlProjectAction extends infer Action
     ? Action extends MissionControlProjectAction
       ? Omit<Action, "actionTs"> & { actionTs?: string }
       : never
     : never;
+
+function nonCodeContract() {
+  return {
+    workType: "non_code" as const,
+    changeOutcome: "no_change" as const,
+    validation: {
+      mode: "not_applicable" as const,
+      reason: "No project files change.",
+    },
+    requiredEvidence: [],
+  };
+}
 
 function action(
   value: MissionControlActionInput,

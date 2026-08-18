@@ -42,6 +42,7 @@ import type { ExecutionBoundaryPolicyRuntime } from "../security/ExecutionBounda
 export interface KestrelOptions {
   store: SessionStore;
   modelGateway: ModelGateway;
+  continuationCheckpointModel?: string | undefined;
   providerReasoningVault?: ProviderReasoningVault | undefined;
   toolGateway: ToolGateway;
   workspaceCheckpointService?: RuntimeWorkspaceCheckpointService | undefined;
@@ -123,6 +124,9 @@ export class Kestrel {
           ? { managedTaskWorktreeService: options.managedTaskWorktreeService }
           : {}),
         modelGateway: options.modelGateway,
+        ...(options.continuationCheckpointModel !== undefined
+          ? { continuationCheckpointModel: options.continuationCheckpointModel }
+          : {}),
         ...(options.providerReasoningVault !== undefined
           ? { providerReasoningVault: options.providerReasoningVault }
           : {}),

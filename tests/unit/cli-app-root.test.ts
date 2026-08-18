@@ -219,19 +219,30 @@ test("AppRoot surfaces live reasoning updates while a run is active", () => {
   state.splashVisible = false;
   state.viewport = { columns: 120, rows: 40 };
   state.running = true;
-  state.latestReasoningForSession = {
-    version: "v1",
-    runId: "run-123",
-    sessionId: "thread-reasoning",
-    ts: now,
-    seq: 2,
-    milestone: "tool_activity",
-    message: "I am narrowing the next tool call to keep evidence quality high.",
-  };
-
+  state.conversationActivity = [
+    {
+      id: "reasoning:run-1:1",
+      kind: "reasoning",
+      label: "Provider reasoning summary",
+      text: "I am narrowing the next tool call to keep evidence quality high.",
+      timestamp: now,
+      status: "active",
+      runId: "run-1",
+    },
+    {
+      id: "tool:call-1",
+      kind: "tool",
+      label: "Tool action",
+      text: "Running inspect_workspace",
+      timestamp: now,
+      status: "active",
+      runId: "run-1",
+    },
+  ];
   const text = renderToString(React.createElement(AppRoot, { controller: buildController(state) }));
 
-  assert.doesNotMatch(text, /Thinking: I am narrowing the next tool call to keep evidence quality high\./);
+  assert.match(text, /Provider reasoning summary: I am narrowing the next tool call to keep evidence quality high\./);
+  assert.match(text, /Tool action: Running inspect_workspace/);
 });
 
 test("AppRoot omits adaptation and evidence summary from the compact header", () => {

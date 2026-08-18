@@ -24,6 +24,14 @@ test("ordinary hosted runtime paths use the Environment Runtime Channel without 
   assert.match(runtime, /resolveEnvironmentUpdateImages/u);
   assert.match(runtime, /resolveAppliedEnvironmentImages/u);
   assert.match(runtime, /runtimeVersionId/u);
+  assert.match(
+    runtime,
+    /version\?\.workspaceRuntimeImage !== images\.runtimeImage/u,
+  );
+  assert.match(
+    runtime,
+    /version\.environmentRouterImage !== images\.routerImage/u,
+  );
   assert.match(store, /requireCurrentEnvironmentRuntime/u);
   assert.doesNotMatch(runtime, /flyImageReleaseTargets/u);
   assert.doesNotMatch(runtime, /flyImageReleaseComponents/u);

@@ -3,11 +3,11 @@ id: unified-suite-version-and-release-channels
 domain: architecture
 status: active
 owner: kestrel-runtime
-last_verified_at: 2026-08-04
+last_verified_at: 2026-08-18
 depends_on:
   - ../../package.json
   - ../../apps/docs/lib/release.ts
-  - ../plans/2026-08-04-kestrel-0.8.0-unified-integration-release.md
+  - ../plans/2026-08-18-kestrel-0.8.5-release-and-production-promotion.md
 ---
 
 # Unified Suite Version and Distinct Release Channels
@@ -18,17 +18,19 @@ Kestrel uses one numeric suite version across the root package and every first-p
 
 A shared version does not imply one distribution mechanism or one access policy:
 
-| Surface | 0.8 distribution and access |
+| Surface | 0.8.5 distribution and access |
 | --- | --- |
 | Runtime and CLI | Public npm package; macOS arm64 archive is secondary |
-| Protocol, SDK, Memory, and adapters | Public npm packages |
-| Desktop | Signed and notarized manual download; Beta; stable OTA remains on 0.7.0 |
-| Kestrel One | Public source at `v0.8.0`; Beta; Lumi-hosted deployment is invitation-only |
+| Protocol, Conversation, SDK, Memory, Next, AI SDK, Observability, and Workspace Skills | Public npm packages |
+| Desktop | Signed and notarized download; Beta; stable OTA supports signed 0.7.0 and 0.8.0 clients |
+| Kestrel One | Public source at `v0.8.5`; Beta; Lumi-hosted deployment is invitation-only |
 | Internal services | Versioned with the suite; not independently published |
 
-The unified annotated `v0.8.0` tag identifies the source for every artifact and deployment. There is no separate Desktop tag.
-
-A published distribution may receive a packaging-only patch without changing the suite contract version. That exception must be explicit in release metadata and evidence, keep first-party dependencies pinned to the canonical suite version, and must not imply a product-wide bump. For this release, `@kestrel-agents/kestrel@0.8.2` corrects the immutable earlier npm artifacts while the suite contracts and products remain 0.8.0.
+The ordinary `v0.8.5` Git tag and GitHub release identify the release. There is
+no separate Desktop tag. Public package versions, product versions, release
+metadata, and exact first-party dependencies must not diverge from the suite
+version. An immutable bad publication is corrected by advancing the entire
+suite to a new patch version rather than creating a package-only release line.
 
 ## Consequences
 
@@ -37,10 +39,16 @@ A published distribution may receive a packaging-only patch without changing the
 - A unified product version does not create one hosted distribution unit;
   database, Vercel, Fly components, and the managed RunPod worker advance and
   roll back through independent production delivery channels.
-- Desktop OTA promotion is a separate proof and may remain behind the suite version.
+- Desktop candidate artifacts may exist while stable remains unchanged. Release
+  closeout requires Desktop stable to report the suite version and both required
+  upgrade paths to pass.
 - Hosted access restrictions do not restrict repository cloning or tagged source availability.
-- Release evidence records a packaging-only distribution patch separately from the suite version.
+- Release evidence uses versions, artifact checksums, signatures, notarization,
+  dist-tags, migrations, health, and canary results. It does not require source
+  commit identities to match provider revisions or package metadata.
 
 ## Release control
 
-The implementation and cutover sequence is recorded in the [Kestrel 0.8.0 unified integration release plan](../plans/2026-08-04-kestrel-0.8.0-unified-integration-release.md).
+The current implementation and cutover sequence is recorded in the [Kestrel
+0.8.5 release and production promotion
+plan](../plans/2026-08-18-kestrel-0.8.5-release-and-production-promotion.md).

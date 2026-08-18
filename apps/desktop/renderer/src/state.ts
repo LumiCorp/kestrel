@@ -7,7 +7,6 @@ import type {
   RunTurnAttachment,
 } from "../../src/contracts";
 import { extractWaitPrompt } from "../../../../src/runtime/waitForPrompt";
-import { filterDesktopWorkflowAppIds } from "../../../../src/desktopShell/configuration";
 
 const THREADS_STORAGE_KEY = "kchat:web:threads:v2";
 const ACTIVE_THREAD_STORAGE_KEY = "kchat:web:active-thread:v1";
@@ -79,7 +78,6 @@ export interface RendererThread {
   promptHistory: string[];
   modelConfigurationId: string;
   modelConfigurationRevision: number;
-  enabledWorkflowAppIds: string[];
   rawSummary: Record<string, unknown>;
   rawState: Record<string, unknown>;
 }
@@ -105,7 +103,6 @@ export function readDesktopRendererState(
     projectPath?: string | undefined;
     modelConfigurationId?: string | undefined;
     modelConfigurationRevision?: number | undefined;
-    legacyDefaultWorkflowAppIds?: string[] | undefined;
     theme?: RendererTheme | undefined;
   } = {},
 ): DesktopRendererState {
@@ -142,19 +139,27 @@ export function readDesktopRendererState(
 }
 
 export function createRendererThread(input: {
+  sessionId?: string | undefined;
+  title?: string | undefined;
+  titleLocked?: boolean | undefined;
   projectPath?: string | undefined;
   modelConfigurationId?: string | undefined;
   modelConfigurationRevision?: number | undefined;
-  enabledWorkflowAppIds?: string[] | undefined;
+  rawState?: Record<string, unknown> | undefined;
 } = {}): RendererThread {
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
   return {
     id,
-    title: "New conversation",
-    sessionId: crypto.randomUUID(),
+    title: input.title === undefined
+      ? "New conversation"
+      : normalizeRendererThreadTitle(input.title),
+    sessionId: input.sessionId ?? crypto.randomUUID(),
     ...(input.projectPath !== undefined
       ? { projectPath: input.projectPath }
+      : {}),
+    ...(input.titleLocked !== undefined
+      ? { titleLocked: input.titleLocked }
       : {}),
     updatedAt: now,
     transcript: [],
@@ -173,9 +178,8 @@ export function createRendererThread(input: {
     promptHistory: [],
     modelConfigurationId: input.modelConfigurationId ?? "desktop-default",
     modelConfigurationRevision: input.modelConfigurationRevision ?? 1,
-    enabledWorkflowAppIds: filterDesktopWorkflowAppIds(input.enabledWorkflowAppIds ?? []),
     rawSummary: {},
-    rawState: {},
+    rawState: input.rawState ?? {},
   };
 }
 
@@ -187,7 +191,6 @@ export function applyDesktopOnboardingHandoff(
     replaceInitialThread: boolean;
     modelConfigurationId?: string | undefined;
     modelConfigurationRevision?: number | undefined;
-    enabledWorkflowAppIds?: string[] | undefined;
   },
 ): DesktopRendererState {
   const existing = state.threads.find(
@@ -203,9 +206,6 @@ export function applyDesktopOnboardingHandoff(
       : {}),
     ...(input.modelConfigurationRevision !== undefined
       ? { modelConfigurationRevision: input.modelConfigurationRevision }
-      : {}),
-    ...(input.enabledWorkflowAppIds !== undefined
-      ? { enabledWorkflowAppIds: input.enabledWorkflowAppIds }
       : {}),
   });
   thread.rawState = { onboardingHandoffId: input.id };
@@ -280,6 +280,58 @@ export function addRendererThread(
   };
 }
 
+export function ensureRendererThread(
+  state: DesktopRendererState,
+  input: Parameters<typeof createRendererThread>[0] & { sessionId: string },
+): DesktopRendererState {
+  const existing = state.threads.find(
+    (thread) => thread.sessionId === input.sessionId,
+  );
+  if (existing !== undefined) {
+    const title = input.title === undefined
+      ? existing.title
+      : normalizeRendererThreadTitle(input.title);
+    const rawState = input.rawState === undefined
+      ? existing.rawState
+      : { ...existing.rawState, ...input.rawState };
+    const changed =
+      title !== existing.title ||
+      (input.titleLocked !== undefined && input.titleLocked !== existing.titleLocked) ||
+      (input.projectPath !== undefined && input.projectPath !== existing.projectPath) ||
+      (input.rawState !== undefined && rendererStateValuesEqual(rawState, existing.rawState) === false);
+    if (changed === false) return state;
+    return {
+      ...state,
+      threads: state.threads.map((thread) => thread.id === existing.id
+        ? {
+            ...thread,
+            title,
+            ...(input.titleLocked === undefined
+              ? {}
+              : { titleLocked: input.titleLocked }),
+            ...(input.projectPath === undefined
+              ? {}
+              : { projectPath: input.projectPath }),
+            rawState,
+          }
+        : thread),
+    };
+  }
+  const thread = createRendererThread(input);
+  return {
+    ...state,
+    threads: [thread, ...state.threads],
+  };
+}
+
+function rendererStateValuesEqual(left: unknown, right: unknown): boolean {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return left === right;
+  }
+}
+
 export function selectRendererThread(
   state: DesktopRendererState,
   threadId: string,
@@ -343,6 +395,38 @@ export function restoreRendererThread(
       ? { ...thread, archivedAt: undefined }
       : thread),
   };
+}
+
+/**
+ * Projects are local Desktop registrations. Removing one preserves its
+ * conversations but returns them to the unscoped "No project" group.
+ */
+export function detachRendererProject(
+  state: DesktopRendererState,
+  projectPath: string,
+): DesktopRendererState {
+  let changed = false;
+  const threads = state.threads.map((thread) => {
+    if (thread.projectPath !== projectPath) return thread;
+    changed = true;
+    return { ...thread, projectPath: undefined };
+  });
+  return changed ? { ...state, threads } : state;
+}
+
+/** Remove a conversation from the Desktop-owned conversation index. */
+export function deleteRendererThread(
+  state: DesktopRendererState,
+  threadId: string,
+): DesktopRendererState {
+  const threads = state.threads.filter((thread) => thread.id !== threadId);
+  if (threads.length === state.threads.length) return state;
+  const activeThreadId = state.activeThreadId === threadId
+    ? (threads.find((thread) => thread.archivedAt === undefined) ?? threads[0])?.id
+    : state.activeThreadId;
+  if (activeThreadId !== undefined) return { ...state, activeThreadId, threads };
+  const replacement = createRendererThread();
+  return { ...state, activeThreadId: replacement.id, threads: [replacement] };
 }
 
 export function undoArchiveRendererThread(
@@ -535,10 +619,10 @@ export function serializeDesktopRendererState(
     lastPreview: thread.transcript.at(-1)?.text.slice(0, 160) ?? "",
   }));
   const states = Object.fromEntries(
-    state.threads.map((thread) => [
-      thread.id,
-      {
-        ...thread.rawState,
+    state.threads.map((thread) => {
+      const { enabledWorkflowAppIds: _discardedSelection, enabledAppIds: _discardedLegacyApps, ...rawState } = thread.rawState;
+      return [thread.id, {
+        ...rawState,
         sessionId: thread.sessionId,
         ...(thread.projectPath !== undefined
           ? { projectPath: thread.projectPath }
@@ -562,13 +646,11 @@ export function serializeDesktopRendererState(
         diffView: thread.diffView,
         modelConfigurationId: thread.modelConfigurationId,
         modelConfigurationRevision: thread.modelConfigurationRevision,
-        enabledWorkflowAppIds: [...thread.enabledWorkflowAppIds],
-        enabledAppIds: undefined,
         ...(thread.mode === "build"
           ? { actSubmode: "safe" }
           : { actSubmode: undefined }),
-      },
-    ]),
+      }] as const;
+    }),
   );
   return {
     ...state.entries,
@@ -590,15 +672,12 @@ export function toDesktopExecutionSelection(
   thread: RendererThread,
   apps: readonly { id: string; contractVersion: number }[],
 ): DesktopExecutionSelection {
-  const enabled = new Set(thread.enabledWorkflowAppIds);
   return {
     modelConfiguration: {
       id: thread.modelConfigurationId,
       revision: thread.modelConfigurationRevision,
     },
-    apps: apps
-      .filter((app) => enabled.has(app.id))
-      .map((app) => ({ id: app.id, contractVersion: app.contractVersion })),
+    apps: apps.map((app) => ({ id: app.id, contractVersion: app.contractVersion })),
   };
 }
 
@@ -757,7 +836,6 @@ function collectThreads(store: {
 }, defaults: {
   modelConfigurationId?: string | undefined;
   modelConfigurationRevision?: number | undefined;
-  legacyDefaultWorkflowAppIds?: string[] | undefined;
 }): RendererThread[] {
   const summaries = new Map<string, Record<string, unknown>>();
   for (const candidate of store.summaries) {
@@ -875,16 +953,6 @@ function collectThreads(store: {
             rawState.modelConfigurationRevision > 0
               ? rawState.modelConfigurationRevision
               : defaults.modelConfigurationRevision ?? 1,
-          enabledWorkflowAppIds: filterDesktopWorkflowAppIds(
-            Array.isArray(rawState.enabledWorkflowAppIds)
-              ? rawState.enabledWorkflowAppIds.flatMap((appId) => typeof appId === "string" ? [appId] : [])
-              : [
-                  ...(Array.isArray(rawState.enabledAppIds)
-                    ? rawState.enabledAppIds.flatMap((appId) => typeof appId === "string" ? [appId] : [])
-                    : []),
-                  ...(defaults.legacyDefaultWorkflowAppIds ?? []),
-                ],
-          ),
           rawSummary,
           rawState,
         },

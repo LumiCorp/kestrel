@@ -72,6 +72,11 @@ import { validateBuiltInToolInputContract } from "./builtInToolInputContracts.js
 import { normalizeToolActionInput } from "./normalizeToolInput.js";
 import type { SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { applyExternalDeadlineToolBudget } from "../../src/engine/ExecutionEngineSupport.js";
+import {
+  resolveToolApprovalDispositionV1,
+  type ToolApprovalDispositionV1,
+} from "../../src/mode/contracts.js";
+import { isFileTextReadToolName } from "../../src/runtime/fileTextReadTools.js";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
   name: string;
@@ -124,7 +129,9 @@ type PinnedExecutionSource = {
   ) => (input: unknown) => Promise<unknown>;
   retain?: (() => void) | undefined;
   release?: (() => Promise<void> | void) | undefined;
-  transformInput?: ((input: Record<string, unknown>) => Record<string, unknown>) | undefined;
+  transformInput?:
+    | ((input: Record<string, unknown>) => Record<string, unknown>)
+    | undefined;
   inputAdapterId?: string | undefined;
 };
 
@@ -175,15 +182,21 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     string,
     ToolSurfaceSnapshotV1
   >();
-  private readonly toolSurfaceRunIds = new Map<string, {
-    runId: string;
-    sessionId: string;
-  }>();
+  private readonly toolSurfaceRunIds = new Map<
+    string,
+    {
+      runId: string;
+      sessionId: string;
+    }
+  >();
   private readonly toolSurfaceExecutions = new Map<
     string,
     Map<string, PinnedExecutionSource>
   >();
-  private readonly preparedExecutions = new Map<string, PinnedExecutionSource>();
+  private readonly preparedExecutions = new Map<
+    string,
+    PinnedExecutionSource
+  >();
   private registryGenerationSequence = 0;
   private registryGeneration = "tool-registry:uninitialized";
 
@@ -258,13 +271,17 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       await this.refresh();
     }
     if (input.mcpAuthorization !== undefined && input.runId !== undefined) {
-      const authorization = parseHostedExecutionAuthorization(input.mcpAuthorization);
+      const authorization = parseHostedExecutionAuthorization(
+        input.mcpAuthorization,
+      );
       const executionTicket = authorization.executionTicket;
       this.authorizationProvidersByRun.get(input.runId)?.close();
       this.authorizationProvidersByRun.delete(input.runId);
-      for (const [sessionId, providers] of this.authorizationProvidersBySession) {
+      for (const [sessionId, providers] of this
+        .authorizationProvidersBySession) {
         providers.delete(input.runId);
-        if (providers.size === 0) this.authorizationProvidersBySession.delete(sessionId);
+        if (providers.size === 0)
+          this.authorizationProvidersBySession.delete(sessionId);
       }
       if (authorization.renewal !== undefined) {
         const provider = new ExecutionAuthorizationProvider({
@@ -278,7 +295,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             );
             this.executionTicketsByRun.set(input.runId!, ticket);
             if (input.sessionId !== undefined) {
-              this.executionTicketsBySession.get(input.sessionId)?.set(input.runId!, ticket);
+              this.executionTicketsBySession
+                .get(input.sessionId)
+                ?.set(input.runId!, ticket);
             }
             if (input.mcpContext !== undefined) {
               await this.replaceHostedMcpScope(
@@ -291,7 +310,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         });
         this.authorizationProvidersByRun.set(input.runId, provider);
         if (input.sessionId !== undefined) {
-          const providers = this.authorizationProvidersBySession.get(input.sessionId) ?? new Map();
+          const providers =
+            this.authorizationProvidersBySession.get(input.sessionId) ??
+            new Map();
           providers.set(input.runId, provider);
           this.authorizationProvidersBySession.set(input.sessionId, providers);
         }
@@ -457,14 +478,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     if (this.initialized === false) {
       await this.refreshRuntime();
     }
-    const requestedNames = options.toolNames === undefined
-      ? undefined
-      : new Set(options.toolNames);
-    const descriptors = (requestedNames === undefined
-      ? this.listExposedDescriptors(options.runContext)
-      : this.listActivatableDescriptors(options.runContext)).filter(
-      (descriptor) => requestedNames?.has(descriptor.toolId) ?? true,
-    );
+    const requestedNames =
+      options.toolNames === undefined ? undefined : new Set(options.toolNames);
+    const descriptors = (
+      requestedNames === undefined
+        ? this.listExposedDescriptors(options.runContext)
+        : this.listActivatableDescriptors(options.runContext)
+    ).filter((descriptor) => requestedNames?.has(descriptor.toolId) ?? true);
     const snapshotGeneration = hashCanonical({
       version: "tool-snapshot-generation-v1",
       activeGeneration: this.registryGeneration,
@@ -520,7 +540,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         { recoverable: false },
       );
     }
-    return resolveModelToolIntentV1({ snapshot: active, toolCall: input.toolCall });
+    return resolveModelToolIntentV1({
+      snapshot: active,
+      toolCall: input.toolCall,
+    });
   }
 
   async prepareToolCall(
@@ -530,11 +553,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     const authorizationProvider = await this.ensureExecutionAuthorization(
       options.runContext,
     );
-    const snapshotSource = input.origin.kind === "model"
-      ? this.toolSurfaceExecutions
-          .get(input.origin.snapshotId)
-          ?.get(input.activation.descriptor.toolId)
-      : this.findPinnedExecutionSource(input.activation);
+    const snapshotSource =
+      input.origin.kind === "model"
+        ? this.toolSurfaceExecutions
+            .get(input.origin.snapshotId)
+            ?.get(input.activation.descriptor.toolId)
+        : this.findPinnedExecutionSource(input.activation);
     let source = snapshotSource;
     if (source === undefined) {
       throw createRuntimeFailure(
@@ -549,7 +573,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         },
       );
     }
-    if (authorizationProvider !== undefined && options.runContext !== undefined) {
+    if (
+      authorizationProvider !== undefined &&
+      options.runContext !== undefined
+    ) {
       source = this.createPinnedExecutionSource(
         source.pinned.descriptor,
         input.activation,
@@ -560,7 +587,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     try {
       if (
         hashCanonical(source.pinned.activation) !==
-          hashCanonical(input.activation)
+        hashCanonical(input.activation)
       ) {
         throw createRuntimeFailure(
           "TOOL_ACTIVATION_STALE",
@@ -580,22 +607,28 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         inputValidator,
         this.builtInDescriptors.has(source.pinned.descriptor.toolId),
       );
-      const transformedInput = source.transformInput === undefined
-        ? validatedInput
-        : source.transformInput(validatedInput);
+      const transformedInput =
+        source.transformInput === undefined
+          ? validatedInput
+          : source.transformInput(validatedInput);
       const transformedValidatedInput = validatePinnedInput(
         source.pinned.descriptor.toolId,
         transformedInput,
         inputValidator,
         this.builtInDescriptors.has(source.pinned.descriptor.toolId),
       );
-      const budgeted = options.runtimeBudgetRemainingMs === undefined
-        ? { input: transformedValidatedInput, metadata: {}, shortCircuitResult: undefined }
-        : applyExternalDeadlineToolBudget({
-            toolName: input.activation.descriptor.toolId,
-            input: transformedValidatedInput,
-            runtimeBudgetRemainingMs: options.runtimeBudgetRemainingMs,
-          });
+      const budgeted =
+        options.runtimeBudgetRemainingMs === undefined
+          ? {
+              input: transformedValidatedInput,
+              metadata: {},
+              shortCircuitResult: undefined,
+            }
+          : applyExternalDeadlineToolBudget({
+              toolName: input.activation.descriptor.toolId,
+              input: transformedValidatedInput,
+              runtimeBudgetRemainingMs: options.runtimeBudgetRemainingMs,
+            });
       const effectiveInput = validatePinnedInput(
         source.pinned.descriptor.toolId,
         budgeted.input,
@@ -605,8 +638,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       if (budgeted.shortCircuitResult !== undefined) {
         source = {
           ...source,
-          createHandler: (_handlerOptions: ToolGatewayCallOptions) =>
-            async (_toolInput: unknown) => budgeted.shortCircuitResult,
+          createHandler:
+            (_handlerOptions: ToolGatewayCallOptions) =>
+            async (_toolInput: unknown) =>
+              budgeted.shortCircuitResult,
         };
       }
       const prepared = createPreparedToolCallV1({
@@ -615,16 +650,20 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         inputAdapters: [
           ...(source.inputAdapterId === undefined
             ? []
-            : [{
-                adapterId: source.inputAdapterId,
-                metadata: {},
-              }]),
+            : [
+                {
+                  adapterId: source.inputAdapterId,
+                  metadata: {},
+                },
+              ]),
           ...(input.activation.descriptor.toolId === "dev.shell.run" ||
           input.activation.descriptor.toolId === "exec_command"
-            ? [{
-              adapterId: RUNTIME_DEADLINE_BUDGET_ADAPTER_ID,
-              metadata: budgeted.metadata,
-            }]
+            ? [
+                {
+                  adapterId: RUNTIME_DEADLINE_BUDGET_ADAPTER_ID,
+                  metadata: budgeted.metadata,
+                },
+              ]
             : []),
         ],
       });
@@ -633,7 +672,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         throw createRuntimeFailure(
           "TOOL_PREPARED_CALL_COLLISION",
           `Prepared tool call '${prepared.callId}' is already active.`,
-          { recoverable: false, toolName: prepared.activation.descriptor.toolId },
+          {
+            recoverable: false,
+            toolName: prepared.activation.descriptor.toolId,
+          },
         );
       }
       this.preparedExecutions.set(preparedKey, source);
@@ -644,12 +686,102 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     }
   }
 
+  async inspectToolCall(
+    input: Parameters<NonNullable<ToolGateway["inspectToolCall"]>>[0],
+    options: ToolGatewayCallOptions = {},
+  ): Promise<{ effectiveInput: Record<string, unknown> }> {
+    const authorizationProvider = await this.ensureExecutionAuthorization(
+      options.runContext,
+    );
+    const snapshotSource =
+      input.origin.kind === "model"
+        ? this.toolSurfaceExecutions
+            .get(input.origin.snapshotId)
+            ?.get(input.activation.descriptor.toolId)
+        : this.findPinnedExecutionSource(input.activation);
+    let source = snapshotSource;
+    if (source === undefined) {
+      throw createRuntimeFailure(
+        "TOOL_PINNED_HANDLER_UNAVAILABLE",
+        `Pinned handler for tool '${input.activation.descriptor.toolId}' is unavailable.`,
+        {
+          subsystem: "tooling",
+          classification: "configuration",
+          recoverable: false,
+          toolName: input.activation.descriptor.toolId,
+          registryGeneration: input.activation.registryGeneration,
+        },
+      );
+    }
+    if (
+      authorizationProvider !== undefined &&
+      options.runContext !== undefined
+    ) {
+      source = this.createPinnedExecutionSource(
+        source.pinned.descriptor,
+        input.activation,
+        options.runContext,
+      );
+    }
+    try {
+      if (
+        hashCanonical(source.pinned.activation) !==
+        hashCanonical(input.activation)
+      ) {
+        throw createRuntimeFailure(
+          "TOOL_ACTIVATION_STALE",
+          `Tool '${input.activation.descriptor.toolId}' activation is stale or divergent.`,
+          { recoverable: false, toolName: input.activation.descriptor.toolId },
+        );
+      }
+      const inputValidator = compileToolJsonSchemaV1(
+        source.pinned.descriptor.inputSchema,
+        { surface: "input" },
+      );
+      const validatedInput = validatePinnedInput(
+        source.pinned.descriptor.toolId,
+        input.rawInput,
+        inputValidator,
+        this.builtInDescriptors.has(source.pinned.descriptor.toolId),
+      );
+      const transformedInput =
+        source.transformInput === undefined
+          ? validatedInput
+          : source.transformInput(validatedInput);
+      const transformedValidatedInput = validatePinnedInput(
+        source.pinned.descriptor.toolId,
+        transformedInput,
+        inputValidator,
+        this.builtInDescriptors.has(source.pinned.descriptor.toolId),
+      );
+      const budgeted =
+        options.runtimeBudgetRemainingMs === undefined
+          ? { input: transformedValidatedInput }
+          : applyExternalDeadlineToolBudget({
+              toolName: input.activation.descriptor.toolId,
+              input: transformedValidatedInput,
+              runtimeBudgetRemainingMs: options.runtimeBudgetRemainingMs,
+            });
+      return {
+        effectiveInput: validatePinnedInput(
+          source.pinned.descriptor.toolId,
+          budgeted.input,
+          inputValidator,
+          this.builtInDescriptors.has(source.pinned.descriptor.toolId),
+        ),
+      };
+    } finally {
+      if (source !== snapshotSource) await source.release?.();
+    }
+  }
+
   async executePreparedToolCall(
     prepared: PreparedToolCallV1,
     options: ToolGatewayCallOptions = {},
   ): Promise<AgentToolResultV2> {
     const key = preparedExecutionKey(prepared);
-    const source = this.preparedExecutions.get(key) ??
+    const source =
+      this.preparedExecutions.get(key) ??
       this.rehydrateStaticBuiltInExecution(prepared, options.runContext);
     if (source === undefined) {
       throw createRuntimeFailure(
@@ -702,13 +834,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           }
         }
       }
-      return await annotateWorkspaceSkillRead({
+      return (await annotateWorkspaceSkillRead({
         toolName: result.toolName,
         input: prepared.effectiveInput,
         output: result,
         runContext: options.runContext,
         progress: this.workspaceSkillReadProgress,
-      }) as AgentToolResultV2;
+      })) as AgentToolResultV2;
     } finally {
       this.preparedExecutions.delete(key);
       await source.release?.();
@@ -812,34 +944,73 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         if (isBuiltInToolDisabledByContext(name, activeBuiltInContext)) {
           continue;
         }
-        const appApprovalMode =
+        const configuredAppApprovalMode =
           activeBuiltInContext.kestrelOne?.appApprovalModes?.[name];
+        const approvalPolicyEvidence =
+          activeBuiltInContext.kestrelOne?.appApprovalPolicies?.[name];
         const descriptor = this.builtInDescriptors.get(name)!;
-        const upstreamAuthority = appApprovalMode === "ask"
+        const hasHostedAppPolicy =
+          configuredAppApprovalMode !== undefined ||
+          approvalPolicyEvidence !== undefined;
+        const upstreamAuthority = hasHostedAppPolicy
           ? {
               kind: "hosted_app_policy" as const,
-              revision: hashCanonical({ toolId: name, appApprovalMode }),
+              revision: hashCanonical({
+                toolId: name,
+                configuredAppApprovalMode,
+                approvalPolicyEvidence,
+                minimumApprovalMode: builtIn.minimumApprovalMode ?? "auto",
+              }),
             }
-          : builtIn.approvalAuthority ?? {
+          : (builtIn.approvalAuthority ?? {
               kind: "runtime_policy" as const,
               revision: hashCanonical({ toolId: name, policy: "runtime" }),
-            };
+            });
+        const approvalAuthority = this.bindApprovalAuthorityToDescriptor(
+          descriptor,
+          upstreamAuthority,
+          options.runContext,
+        );
+        const approvalDisposition: ToolApprovalDispositionV1 | undefined =
+          approvalPolicyEvidence !== undefined
+            ? resolveToolApprovalDispositionV1({
+                environment: approvalPolicyEvidence.environment,
+                project: approvalPolicyEvidence.project,
+                subject: approvalPolicyEvidence.subject,
+                minimum:
+                  builtIn.minimumApprovalMode ?? approvalPolicyEvidence.minimum,
+                authority: approvalAuthority,
+              })
+            : configuredAppApprovalMode === undefined
+              ? undefined
+              : resolveToolApprovalDispositionV1({
+                  environment: configuredAppApprovalMode!,
+                  minimum: builtIn.minimumApprovalMode ?? "auto",
+                  authority: approvalAuthority,
+                });
+        if (approvalDisposition?.mode === "deny") continue;
+        const appApprovalMode =
+          approvalDisposition?.mode ?? configuredAppApprovalMode;
+        const approvalCapabilities =
+          appApprovalMode === undefined
+            ? builtIn.approvalCapabilities
+            : [
+                ...(builtIn.approvalCapabilities ?? []).filter(
+                  (capability) => capability !== "external.confirm",
+                ),
+                ...(appApprovalMode === "ask"
+                  ? (["external.confirm"] as const)
+                  : []),
+              ];
         manifest.push({
           ...builtIn,
           descriptorRef: toToolDescriptorRefV1(descriptor),
-          approvalAuthority: this.bindApprovalAuthorityToDescriptor(
-            descriptor,
-            upstreamAuthority,
-            options.runContext,
-          ),
-          ...(appApprovalMode === "ask"
-            ? {
-                approvalCapabilities: [
-                  ...(builtIn.approvalCapabilities ?? []),
-                  "external.confirm" as const,
-                ],
-              }
-            : {}),
+          approvalAuthority,
+          ...(approvalDisposition === undefined ? {} : { approvalDisposition }),
+          ...(approvalCapabilities === undefined ||
+          approvalCapabilities.length === 0
+            ? { approvalCapabilities: undefined }
+            : { approvalCapabilities: [...new Set(approvalCapabilities)] }),
         });
         continue;
       }
@@ -853,7 +1024,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       const capability = mcpTool.descriptor.capability;
       const presentation = mcpTool.descriptor.presentation;
       const upstreamAuthority =
-        mcpTool.serverId === "kestrel-one-hosted" && hostedMcpGrantId !== undefined
+        mcpTool.serverId === "kestrel-one-hosted" &&
+        hostedMcpGrantId !== undefined
           ? {
               kind: "hosted_mcp_grant" as const,
               revision: hostedMcpGrantId,
@@ -874,9 +1046,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         executionClass: capability.executionClass,
         ...(capability.allowedInteractionModes !== undefined
           ? {
-              allowedInteractionModes: [
-                ...capability.allowedInteractionModes,
-              ],
+              allowedInteractionModes: [...capability.allowedInteractionModes],
             }
           : {}),
         capabilityClasses: [...capability.capabilityClasses],
@@ -936,7 +1106,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       release();
     }
     this.releaseExecutionTicketRegistrationByRun.clear();
-    for (const provider of this.authorizationProvidersByRun.values()) provider.close();
+    for (const provider of this.authorizationProvidersByRun.values())
+      provider.close();
     this.authorizationProvidersByRun.clear();
     this.authorizationProvidersBySession.clear();
     this.toolSurfaceSnapshots.clear();
@@ -981,7 +1152,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       if (isInternalOnlyRuntimeToolName(name)) return [];
       const builtIn = this.builtInDescriptors.get(name);
       if (builtIn !== undefined) {
-        return isBuiltInToolDisabledByContext(name, scopedContext.builtInContext)
+        return isBuiltInToolDisabledByContext(
+          name,
+          scopedContext.builtInContext,
+        )
           ? []
           : [builtIn];
       }
@@ -1029,12 +1203,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     activation: Parameters<ToolGateway["prepareToolCall"]>[0]["activation"],
     runContext: ToolRunContext | undefined,
   ): PinnedExecutionSource {
-    const validator = compileToolJsonSchemaV1(
-      descriptor.runtimeOutput.schema,
-      { surface: "output" },
-    );
+    const validator = compileToolJsonSchemaV1(descriptor.runtimeOutput.schema, {
+      surface: "output",
+    });
     if (this.builtInDescriptors.has(descriptor.toolId)) {
-      const activeContext = this.resolveScopedContext(runContext).builtInContext;
+      const activeContext =
+        this.resolveScopedContext(runContext).builtInContext;
       const normalizer = defaultToolCatalog.createResultNormalizers([
         descriptor.toolId,
       ])[descriptor.toolId];
@@ -1112,8 +1286,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         validator,
         normalizer,
       },
-      createHandler: (_handlerOptions: ToolGatewayCallOptions) =>
-        (toolInput: unknown) => pinnedHandle.call(toolInput),
+      createHandler:
+        (_handlerOptions: ToolGatewayCallOptions) => (toolInput: unknown) =>
+          pinnedHandle.call(toolInput),
       retain: () => pinnedHandle.retain(),
       release: () => pinnedHandle.release(),
     };
@@ -1130,7 +1305,8 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       descriptor === undefined ||
       hashCanonical(toToolDescriptorRefV1(descriptor)) !==
         hashCanonical(prepared.activation.descriptor) ||
-      prepared.activation.scopeFingerprint !== fingerprintToolRunScopeV1(runContext)
+      prepared.activation.scopeFingerprint !==
+        fingerprintToolRunScopeV1(runContext)
     ) {
       return;
     }
@@ -1235,10 +1411,12 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       .filter(([grantId]) => grantId !== activeGrantId)
       .sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt)
       .slice(0, this.hostedMcpScopes.size - maximumScopes);
-    await Promise.all(stale.map(async ([, scope]) => {
-      this.retiredHostedMcpManagers.add(scope.manager);
-      await scope.manager.retire();
-    }));
+    await Promise.all(
+      stale.map(async ([, scope]) => {
+        this.retiredHostedMcpManagers.add(scope.manager);
+        await scope.manager.retire();
+      }),
+    );
     for (const [grantId] of stale) {
       this.hostedMcpScopes.delete(grantId);
     }
@@ -1257,8 +1435,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   private resolveExecutionAuthorizationProvider(
     runContext: ToolRunContext,
   ): ExecutionAuthorizationProvider | undefined {
-    return this.authorizationProvidersByRun.get(runContext.runId) ??
-      this.resolveUnambiguousSessionAuthorizationProvider(runContext.sessionId);
+    return (
+      this.authorizationProvidersByRun.get(runContext.runId) ??
+      this.resolveUnambiguousSessionAuthorizationProvider(runContext.sessionId)
+    );
   }
 
   private registerSensitiveExecutionAuthorization(
@@ -1278,18 +1458,19 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       }),
       ...(renewalToken === undefined
         ? []
-        : [this.sensitiveValueRegistry?.register({
-            reference: {
-              referenceId: `execution-renewal-token:${runId}`,
-              kind: "credential",
-              scope: "tool",
-            },
-            value: renewalToken,
-          })]),
+        : [
+            this.sensitiveValueRegistry?.register({
+              reference: {
+                referenceId: `execution-renewal-token:${runId}`,
+                kind: "credential",
+                scope: "tool",
+              },
+              value: renewalToken,
+            }),
+          ]),
     ].filter((release): release is () => void => release !== undefined);
-    this.releaseExecutionTicketRegistrationByRun.set(
-      runId,
-      () => releases.forEach((release) => release()),
+    this.releaseExecutionTicketRegistrationByRun.set(runId, () =>
+      releases.forEach((release) => release()),
     );
   }
 
@@ -1412,7 +1593,7 @@ async function annotateWorkspaceSkillRead(input: {
         input: input.input,
         output: input.output,
       });
-  if (input.toolName !== "fs.read_text") return wrapped;
+  if (isFileTextReadToolName(input.toolName) === false) return wrapped;
   const request = asRecord(input.input);
   const result = asRecord(wrapped.auditRecord.output);
   if (result?.range === undefined) return wrapped;
@@ -1880,13 +2061,13 @@ function combineMcpSnapshots(
       ...base.tools.map((tool) => ({ ...tool })),
       ...hosted.tools.map((tool) => ({ ...tool })),
     ],
-    ...(hosted.refreshDiagnostic ?? base.refreshDiagnostic) === undefined
+    ...((hosted.refreshDiagnostic ?? base.refreshDiagnostic) === undefined
       ? {}
       : {
           refreshDiagnostic: {
             ...(hosted.refreshDiagnostic ?? base.refreshDiagnostic)!,
           },
-        },
+        }),
   };
 }
 
@@ -1971,16 +2152,37 @@ function createBuiltInSchemaValidationError(
   input: unknown,
   errors: ErrorObject[],
 ): RuntimeFailure {
+  const inputRecord = asRecord(input);
+  if (
+    toolName === "fs.read_text" &&
+    (Object.hasOwn(inputRecord ?? {}, "offsetBytes") ||
+      Object.hasOwn(inputRecord ?? {}, "expectedRevision"))
+  ) {
+    return createToolInputError(
+      toolName,
+      "fs.read_text only reads the first page. Continue with fs.read_text_page using the exact returned nextPage.input.",
+      {
+        nextSuggestedAction: "Call fs.read_text_page with the exact nextPage.input returned by fs.read_text.",
+        validationErrors: errors.map((error) => ({
+          instancePath: error.instancePath,
+          schemaPath: error.schemaPath,
+          keyword: error.keyword,
+          message: error.message,
+        })),
+      },
+    );
+  }
   const firstError = errors[0];
-  const field = firstError === undefined
-    ? "input"
-    : readAjvErrorField(firstError);
-  const expected = firstError === undefined
-    ? "input satisfying tool schema"
-    : readAjvErrorExpectation(firstError);
-  const invalidValues = firstError === undefined
-    ? []
-    : readAjvErrorInvalidValues(input, firstError);
+  const field =
+    firstError === undefined ? "input" : readAjvErrorField(firstError);
+  const expected =
+    firstError === undefined
+      ? "input satisfying tool schema"
+      : readAjvErrorExpectation(firstError);
+  const invalidValues =
+    firstError === undefined
+      ? []
+      : readAjvErrorInvalidValues(input, firstError);
   const location = field === "input" ? "input" : `input.${field}`;
   return createToolInputError(
     toolName,
@@ -2000,7 +2202,10 @@ function createBuiltInSchemaValidationError(
 }
 
 function readAjvErrorField(error: ErrorObject): string {
-  if (error.keyword === "required" && typeof error.params.missingProperty === "string") {
+  if (
+    error.keyword === "required" &&
+    typeof error.params.missingProperty === "string"
+  ) {
     return error.params.missingProperty;
   }
   if (
@@ -2017,12 +2222,18 @@ function readAjvErrorField(error: ErrorObject): string {
 
 function readAjvErrorExpectation(error: ErrorObject): string {
   switch (error.keyword) {
-    case "minimum": return `value >= ${String(error.params.limit)}`;
-    case "maximum": return `value <= ${String(error.params.limit)}`;
-    case "minLength": return `string length >= ${String(error.params.limit)}`;
-    case "maxLength": return `string length <= ${String(error.params.limit)}`;
-    case "minItems": return `array length >= ${String(error.params.limit)}`;
-    case "maxItems": return `array length <= ${String(error.params.limit)}`;
+    case "minimum":
+      return `value >= ${String(error.params.limit)}`;
+    case "maximum":
+      return `value <= ${String(error.params.limit)}`;
+    case "minLength":
+      return `string length >= ${String(error.params.limit)}`;
+    case "maxLength":
+      return `string length <= ${String(error.params.limit)}`;
+    case "minItems":
+      return `array length >= ${String(error.params.limit)}`;
+    case "maxItems":
+      return `array length <= ${String(error.params.limit)}`;
     case "enum":
       return Array.isArray(error.params.allowedValues)
         ? `one of ${error.params.allowedValues.map(String).join(", ")}`
@@ -2031,13 +2242,19 @@ function readAjvErrorExpectation(error: ErrorObject): string {
       return typeof error.params.type === "string"
         ? `type ${error.params.type}`
         : "the expected JSON type";
-    case "required": return "required field";
-    case "additionalProperties": return "no unknown fields";
-    default: return error.message ?? `input satisfying ${error.keyword}`;
+    case "required":
+      return "required field";
+    case "additionalProperties":
+      return "no unknown fields";
+    default:
+      return error.message ?? `input satisfying ${error.keyword}`;
   }
 }
 
-function readAjvErrorInvalidValues(input: unknown, error: ErrorObject): unknown[] {
+function readAjvErrorInvalidValues(
+  input: unknown,
+  error: ErrorObject,
+): unknown[] {
   if (error.keyword === "required") return [];
   if (
     error.keyword === "additionalProperties" &&
@@ -2066,7 +2283,10 @@ function encodeJsonPointerSegment(value: string): string {
 function readValueAtJsonPointer(input: unknown, pointer: string): unknown {
   if (pointer.length === 0) return input;
   let current: unknown = input;
-  for (const segment of pointer.slice(1).split("/").map(decodeJsonPointerSegment)) {
+  for (const segment of pointer
+    .slice(1)
+    .split("/")
+    .map(decodeJsonPointerSegment)) {
     if (typeof current !== "object" || current === null) return;
     if (Array.isArray(current)) {
       const index = Number(segment);

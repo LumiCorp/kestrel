@@ -6,7 +6,6 @@ import { FileEditorApp } from "./FileEditorApp";
 import { RendererErrorBoundary } from "./RendererErrorBoundary";
 import { ensureBrowserPreviewBridge } from "./browserPreview";
 import { reportRendererBootstrapReadyAfterCommit } from "./rendererBootstrap";
-import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
 const root = document.getElementById("root");

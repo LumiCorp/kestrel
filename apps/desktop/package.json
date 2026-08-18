@@ -1,7 +1,7 @@
 {
   "name": "@kestrel/desktop",
   "private": true,
-  "version": "0.8.0",
+  "version": "0.8.5",
   "type": "module",
   "main": "dist/apps/desktop/src/main.js",
   "files": [
@@ -17,8 +17,8 @@
     "renderer:dev": "vite --config vite.config.ts --host 127.0.0.1",
     "build": "pnpm run prepare:workspace && pnpm run typecheck:self && pnpm run build:self",
     "build:self": "pnpm run clean:dist && pnpm run renderer:build && pnpm run prepare:resources && tsc -p tsconfig.json --noCheck",
-    "package:dir": "pnpm run build && pnpm run prepare:package-stage && KESTREL_DESKTOP_PACKAGE_MODE=dir node --import tsx ../../scripts/package-desktop.ts",
-    "package": "pnpm run build && pnpm run prepare:package-stage && KESTREL_DESKTOP_PACKAGE_MODE=release node --import tsx ../../scripts/package-desktop.ts",
+    "package:dir": "pnpm run build && pnpm run prepare:package-stage && KESTREL_DESKTOP_PACKAGE_MODE=dir node --import tsx ../../scripts/package-desktop.ts && pnpm -w run desktop:package:preflight",
+    "package": "pnpm run build && pnpm run prepare:package-stage && KESTREL_DESKTOP_PACKAGE_MODE=release node --import tsx ../../scripts/package-desktop.ts && pnpm -w run desktop:package:preflight",
     "make": "pnpm run package",
     "typecheck": "pnpm run prepare:workspace && pnpm run typecheck:self",
     "typecheck:self": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
@@ -33,7 +33,6 @@
     "@lumi/kestrel-environment-auth": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@tavily/core": "^0.7.2",
-    "@xterm/xterm": "6.0.0",
     "ajv": "^8.18.0",
     "content-type": "^1.0.5",
     "cross-spawn": "^7.0.5",

@@ -34,6 +34,7 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "evidence.extract": { mode: "schema-only" },
   "fs.list": { mode: "schema-only" },
   "fs.read_text": { mode: "schema-only" },
+  "fs.read_text_page": { mode: "schema-only" },
   "fs.create_text": { mode: "schema-only" },
   "fs.edit_text": { mode: "schema-only" },
   "fs.apply_patch": { mode: "schema-only" },

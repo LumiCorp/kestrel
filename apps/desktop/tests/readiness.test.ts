@@ -50,6 +50,7 @@ test("provider setup is an explicit starting state rather than degraded runtime"
     },
     runtimeHealth: {
       state: "healthy",
+      connection: "connected",
       summary: "Runtime is ready.",
       running: true,
       recentStdout: [],
@@ -87,6 +88,7 @@ test("capability verification evidence overrides legacy plaintext-key readiness"
     },
     runtimeHealth: {
       state: "healthy",
+      connection: "connected",
       summary: "Runtime is ready.",
       running: true,
       recentStdout: [],
@@ -118,6 +120,7 @@ test("Local Core profile incompatibility directs the user to update Desktop", ()
     },
     runtimeHealth: {
       state: "blocked",
+      connection: "disconnected",
       summary: "Kestrel Local Core needs an update.",
       code: "desktop.local_core_execution_profile_incompatible",
       running: false,

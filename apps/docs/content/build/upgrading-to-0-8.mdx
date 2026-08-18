@@ -8,7 +8,7 @@ sourceKind: curated
 updatedAt: 2026-08-04
 ---
 
-Kestrel 0.8 is an exact-contract upgrade. Runtime, Protocol, Conversation, SDK, Memory, Next.js, AI SDK, Observability, Workspace Skills, and any deployed clients must use compatible `0.8.0` contracts together. Install the Runtime/CLI npm distribution at `0.8.2`; that packaging-only patch pins the first-party contracts to 0.8.0.
+Kestrel 0.8 is an exact-contract upgrade. Runtime, Protocol, Conversation, SDK, Memory, Next.js, AI SDK, Observability, Workspace Skills, and any deployed clients must use `0.8.5` contracts together.
 
 ## Who must upgrade
 
@@ -34,9 +34,13 @@ Read authoritative project state through `mission_control.project.get` and execu
 
 Resume the exact pending request using its request and option identifiers. Bind external authorization to the exact action/effect being executed; a broad approval token is not a substitute.
 
+## Replace workflow Apps with executable plugins
+
+Consume the executable plugin manifest and its installed, configured, enabled, driver, version, and capability state. Remove callers that select workflow Apps, inspect workflow dependencies, or inject workflow instructions. Installing a plugin exposes governed capabilities; it does not grant an effect or add a conversation procedure.
+
 ## Adopt public Memory where applicable
 
-Use `@kestrel-agents/memory@0.8.0` for governed memory contracts and gateways. Preserve tenant, subject, issuer, query authority, provenance, and application-owned persistence decisions.
+Use `@kestrel-agents/memory@0.8.5` for governed memory contracts and gateways. Preserve tenant, subject, issuer, query authority, provenance, and application-owned persistence decisions.
 
 ## Update event and observability consumers
 
@@ -52,4 +56,4 @@ Run one successful turn, one waiting-and-resume path, one cancellation, one deni
 
 ## Rollback and fix-forward constraints
 
-Package versions and signed artifacts are immutable. Do not unpublish or overwrite earlier artifacts; use the corrected Runtime npm patch at 0.8.2. Do not reverse a data migration destructively; roll application code back only when compatibility is proven, otherwise stop and fix forward.
+Package versions and signed artifacts are immutable. Do not unpublish or overwrite earlier artifacts. Do not reverse a data migration destructively; roll application code back only when compatibility is proven, otherwise stop and fix forward.

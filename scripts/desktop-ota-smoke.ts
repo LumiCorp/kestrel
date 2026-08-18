@@ -429,7 +429,6 @@ try {
   const updaterLog = collectUpdaterLogs(smokeRoot, coreHome);
   pendingEvidence = {
     finalVersion,
-    sourceCommit: runChecked("git", ["rev-parse", "HEAD"]).stdout.trim(),
     artifactEvidence: [
       ...artifactEvidence,
       {

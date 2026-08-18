@@ -153,7 +153,6 @@ export function sanitizeDesktopUpdaterLog(value: string): string[] {
 
 export function shapeDesktopOtaEvidence(input: {
   finalVersion: string;
-  sourceCommit: string;
   artifactEvidence: readonly Record<string, unknown>[];
   transitions: readonly DesktopUpdateState[];
   requestLedger: readonly DesktopOtaRequestLedgerEntry[];
@@ -165,9 +164,6 @@ export function shapeDesktopOtaEvidence(input: {
   finalFeedUrl: string;
   cleanup: DesktopOtaCleanupResult;
 }): Record<string, unknown> {
-  if (!/^[a-f0-9]{40}$/u.test(input.sourceCommit)) {
-    throw new Error("Desktop OTA evidence requires a full source commit SHA.");
-  }
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(input.finalVersion)) {
     throw new Error("Desktop OTA evidence requires an explicit target version.");
   }
@@ -178,7 +174,6 @@ export function shapeDesktopOtaEvidence(input: {
   return {
     schema: DESKTOP_OTA_EVIDENCE_SCHEMA,
     capturedAt: new Date().toISOString(),
-    sourceCommit: input.sourceCommit,
     artifacts: input.artifactEvidence.map((entry) => ({ ...entry })),
     updater: {
       transitions: input.transitions.map((state) => ({

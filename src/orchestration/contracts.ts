@@ -699,7 +699,7 @@ export interface OperatorConversationTurnView {
   turnId: string;
   threadId: string;
   sessionId: string;
-  sequence: number;
+  sequence: number | null;
   status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
   sourceMessageId?: string | undefined;
   rootRunId?: string | undefined;
@@ -731,6 +731,22 @@ export interface DialogView {
 
 export type FollowUpQueuePauseReason = "waiting" | "failed" | "cancelled" | "operator";
 
+export type FollowUpRuntimeContext = Omit<
+  RuntimeTurnInput,
+  | "sessionId"
+  | "runId"
+  | "eventId"
+  | "message"
+  | "eventType"
+  | "attachments"
+  | "resumeBlockedRun"
+  | "resumeRequestId"
+  | "recoveryOptionId"
+  | "mcpAuthorization"
+  | "missionControl"
+  | "actor"
+>;
+
 export interface FollowUpQueueEntry {
   followUpId: string;
   message: string;
@@ -744,6 +760,10 @@ export interface FollowUpQueueEntry {
   dialogId?: string | undefined;
   dialogName?: string | undefined;
   sourceMessageId?: string | undefined;
+  /** Durable execution context used only when promoting this queue entry. */
+  runtimeContext?: FollowUpRuntimeContext | undefined;
+  /** Trusted actor captured when the queue entry was accepted. */
+  runtimeActor?: RuntimeTurnActor | undefined;
 }
 
 export interface FollowUpQueueView {

@@ -230,11 +230,9 @@ export async function POST(
       ]);
     }
 
-    const idempotencyKey =
-      request.headers.get("idempotency-key")?.trim() ||
-      (approvalResponse
-        ? `approval:${approvalResponse.approvalId}`
-        : newUserMessage?.id);
+    const idempotencyKey = approvalResponse
+      ? `approval:${approvalResponse.approvalId}`
+      : request.headers.get("idempotency-key")?.trim() || newUserMessage?.id;
     if (!idempotencyKey) {
       return NextResponse.json(
         { error: "An idempotency key is required." },

@@ -1,20 +1,26 @@
 ---
 title: Apps and agent capabilities
-summary: Discover the services Kestrel One agents can use and understand how connections and access are governed.
+summary: Discover executable Kestrel plugins and understand their installation, connection, capability, and approval state.
 section: kestrel-one
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-18
 ---
 
-An **App** gives Kestrel One agents a set of named capabilities. An App may be
-built into Kestrel, connect to an external service, or come from a custom MCP
-server. Open **Apps** at `/apps` to browse the catalog.
+An **App** is an executable plugin manifest that gives Kestrel One agents a set
+of named capabilities. Its driver may be built into Kestrel, call an API or CLI,
+or connect through MCP. Open **Apps** at `/apps` to browse the catalog.
+
+Apps are capability providers, not workflow prompts. Installing or enabling an
+App does not inject a procedure into the conversation or grant an effect by
+itself.
 
 ## Read an App card
 
-Each card identifies what the App does and its current readiness:
+Each card combines three independent lifecycle states: installed, configured,
+and enabled. It also identifies the plugin driver, version, capabilities, and
+current readiness:
 
 | Status | Meaning |
 | --- | --- |
@@ -24,9 +30,9 @@ Each card identifies what the App does and its current readiness:
 | Needs attention | A connection is degraded |
 | Disabled | The organization has disabled the App |
 
-Open an App to see its capabilities, connection requirements, and advanced
-runtime names. The catalog is the current source for which Apps and operations
-are available in your organization.
+Open an App to see its capabilities, connection requirements, driver, plugin
+version, and advanced runtime names. The catalog is the current source for
+which Apps and operations are available in your organization.
 
 ## Personal and shared connections
 
@@ -70,7 +76,7 @@ An installed App can make a capability visible without pre-authorizing every eff
 
 ## Confirm availability
 
-Verify the App is installed, its connection is ready, the Environment allows the capability, the Project has not narrowed it, and the effective agent can see the expected descriptor.
+Verify the plugin is installed, configured, and enabled; its connection is ready; the Environment allows the capability; the Project has not narrowed it; and the effective agent can see the expected descriptor.
 
 <Outcome>
   <p>You can identify whether an App is ready, which connection it uses, and where an administrator controls the maximum access available to a Project.</p>

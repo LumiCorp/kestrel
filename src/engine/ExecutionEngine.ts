@@ -131,9 +131,9 @@ export { readModelRequestSchemaName } from "./ExecutionEngineSupport.js";
 export { FRESH_TURN_AGENT_CONTROL_KEYS } from "./ContinuationCoordinator.js";
 
 const DEFAULT_GUARDRAILS: GuardrailConfig = {
-  maxStepsPerRun: 500,
+  maxStepsPerRun: 1000,
   maxToolCallsPerRun: 500,
-  maxModelCallsPerRun: 50,
+  maxModelCallsPerRun: 100,
   maxMaintenanceModelCallsPerRun: 8,
   maxStepVisits: 80,
   maxConcurrentToolJobsPerRun: 8,
@@ -443,6 +443,10 @@ export class ExecutionEngine {
       appendRunEvent: (runId, sessionId, type, level, metadata, stepIndex) =>
         this.appendRunEvent(runId, sessionId, type, level, metadata, stepIndex),
       mapError: (error) => this.mapError(error),
+      ...(this.deps.continuationCheckpointModel !== undefined
+        ? { checkpointModel: this.deps.continuationCheckpointModel }
+        : {}),
+      callMaintenanceModel: (input) => this.callContinuationMaintenanceModel(input),
       returnTerminal: (
         runId,
         sessionId,
@@ -984,6 +988,11 @@ export class ExecutionEngine {
                 runtimeError.code === "MAX_MODEL_CALLS_EXCEEDED"
                   ? "max_model_calls_continuation"
                   : "max_steps_continuation",
+              ...(options.signal !== undefined ? { signal: options.signal } : {}),
+              onCheckpointStateUpdated: (updated) => {
+                session = updated.session;
+                progressSeq = updated.progressSeq;
+              },
             });
             if (continuationOutput !== undefined) {
               return continuationOutput;
@@ -1112,8 +1121,23 @@ export class ExecutionEngine {
           session,
           continuation,
         });
-      } catch {
-        // Intentionally ignored: preserve original failure for caller.
+      } catch (recoveryError) {
+        const recoveryRuntimeError = this.mapError(recoveryError);
+        if (recoveryRuntimeError.code === "RUN_CANCELLED") {
+          errors.splice(0, errors.length, recoveryRuntimeError);
+          return await this.runLifecycleController.failRun({
+            runId,
+            event,
+            runtimeError: recoveryRuntimeError,
+            errors,
+            guardrails,
+            progressSeq,
+            lastStepAgent,
+            session,
+            continuation,
+          });
+        }
+        // Preserve the original runtime failure when recovery itself cannot complete.
       }
 
       return this.deps.outputNormalizer.normalize({
@@ -1910,7 +1934,82 @@ export class ExecutionEngine {
           });
         }
       },
+      inspectTool: (name, input, intent) =>
+        runtimeIO.inspectTool(name, input, intent),
     };
+  }
+
+  private async callContinuationMaintenanceModel(input: {
+    request: ModelRequest;
+    runId: string;
+    event: RuntimeEvent;
+    session: SessionRecord;
+    currentStep: string;
+    stepIndex: number;
+    guardrails: Guardrails;
+    progressSeq: number;
+    signal?: AbortSignal | undefined;
+  }): Promise<
+    | {
+        ok: true;
+        value: unknown;
+        session: SessionRecord;
+        progressSeq: number;
+      }
+    | {
+        ok: false;
+        error: unknown;
+        session: SessionRecord;
+        progressSeq: number;
+      }
+  > {
+    let currentSession = input.session;
+    let progressSeq = input.progressSeq;
+    const runtimeMetadata = {
+      ...(this.asRecord(input.event.payload.orchestration) ?? {}),
+      ...(this.asRecord(input.event.payload.metadata) ?? {}),
+      ...(this.asRecord(input.event.payload.workspace) !== undefined
+        ? { workspace: this.asRecord(input.event.payload.workspace) }
+        : {}),
+    };
+    try {
+      const io = this.createStepIO(
+        input.guardrails,
+        {
+          runId: input.runId,
+          sessionId: currentSession.sessionId,
+          stepIndex: input.stepIndex,
+          stepAgent: input.currentStep,
+          phase: this.resolveProgressPhase(input.currentStep),
+          ...(input.signal !== undefined ? { signal: input.signal } : {}),
+          sequence: () => {
+            progressSeq += 1;
+            return progressSeq;
+          },
+        },
+        currentSession,
+        runtimeMetadata,
+        input.event.payload,
+        (session) => {
+          currentSession = session;
+        },
+      );
+      this.throwIfAborted(input.signal);
+      const value = await io.useModel(input.request);
+      return {
+        ok: true,
+        value,
+        session: currentSession,
+        progressSeq,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error,
+        session: currentSession,
+        progressSeq,
+      };
+    }
   }
 
   private async enforceHeapAdmission(input: {
@@ -2996,10 +3095,12 @@ export class ExecutionEngine {
           ? { authority: "automatic" }
           : { authority: bindingAuthorityRevision }),
       });
+      let exactApprovalBinding:
+        | ReturnType<typeof parseRunnerExternalApprovalBindingV1>
+        | undefined;
       if (approvalId !== undefined) {
-        let exactBinding;
         try {
-          exactBinding = parseRunnerExternalApprovalBindingV1(approvalBinding);
+          exactApprovalBinding = parseRunnerExternalApprovalBindingV1(approvalBinding);
         } catch (error) {
           throw createRuntimeFailure(
             "TOOL_APPROVAL_BINDING_INVALID",
@@ -3011,11 +3112,9 @@ export class ExecutionEngine {
             },
           );
         }
-        const preparedPayloadHash = digestExternalApprovalPayload(rawInput);
         if (
-          exactBinding.actionKey !== toolName ||
-          exactBinding.payloadHash !== preparedPayloadHash ||
-          Date.parse(exactBinding.expiresAt) <= Date.now()
+          exactApprovalBinding.actionKey !== toolName ||
+          Date.parse(exactApprovalBinding.expiresAt) <= Date.now()
         ) {
           throw createRuntimeFailure(
             "TOOL_APPROVAL_BINDING_CHANGED",
@@ -3023,12 +3122,10 @@ export class ExecutionEngine {
             {
               recoverable: true,
               toolName,
-              approvalId: exactBinding.approvalId,
-              bindingRunId: exactBinding.runId,
+              approvalId: exactApprovalBinding.approvalId,
+              bindingRunId: exactApprovalBinding.runId,
               preparedRunId: runId,
-              bindingActionKey: exactBinding.actionKey,
-              bindingPayloadHash: exactBinding.payloadHash,
-              preparedPayloadHash,
+              bindingActionKey: exactApprovalBinding.actionKey,
               descriptorRevision: activation.descriptor.contractRevision,
               scopeFingerprint: activation.scopeFingerprint,
             },
@@ -3038,7 +3135,7 @@ export class ExecutionEngine {
         // prepared invocation retains the run identity that the operator
         // actually approved instead of silently rebinding that authority to
         // the continuation run.
-        preparedRunId = exactBinding.runId;
+        preparedRunId = exactApprovalBinding.runId;
       }
       const approval = approvalId === undefined
         ? undefined
@@ -3062,6 +3159,29 @@ export class ExecutionEngine {
         },
         { runContext, runtimeBudgetRemainingMs },
       );
+      if (exactApprovalBinding !== undefined) {
+        const preparedPayloadHash = digestExternalApprovalPayload(
+          preparedToolCall.effectiveInput,
+        );
+        if (exactApprovalBinding.payloadHash !== preparedPayloadHash) {
+          throw createRuntimeFailure(
+            "TOOL_APPROVAL_BINDING_CHANGED",
+            "External approval no longer matches the normalized executable tool action.",
+            {
+              recoverable: true,
+              toolName,
+              approvalId: exactApprovalBinding.approvalId,
+              bindingRunId: exactApprovalBinding.runId,
+              preparedRunId,
+              bindingActionKey: exactApprovalBinding.actionKey,
+              bindingPayloadHash: exactApprovalBinding.payloadHash,
+              preparedPayloadHash,
+              descriptorRevision: activation.descriptor.contractRevision,
+              scopeFingerprint: activation.scopeFingerprint,
+            },
+          );
+        }
+      }
       const {
         toolName: _toolName,
         toolInput: _toolInput,
@@ -3519,6 +3639,11 @@ export class ExecutionEngine {
     guardrails: Guardrails;
     progressSeq: number;
     reason: ContinuationWaitReason;
+    signal?: AbortSignal | undefined;
+    onCheckpointStateUpdated: (input: {
+      session: SessionRecord;
+      progressSeq: number;
+    }) => void;
   }): Promise<NormalizedOutput | undefined> {
     return this.continuationCoordinator.maybeRequestContinuation(input);
   }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   runnerStructuredReviewOptionLabel,
   type RunnerStructuredReviewOptionId,
@@ -13,7 +14,6 @@ import type { ThreadInteractionView } from "@/lib/turns/client-contract";
 import { readEvaluationReview } from "./evaluation-review";
 import { readThreadStructuredReview } from "@/lib/turns/structured-review";
 import {
-  createModeSwitchRetryGuard,
   resolveConversationModeSwitch,
   type ConversationMode,
 } from "@kestrel-agents/conversation";
@@ -49,7 +49,6 @@ export function InteractionPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const firstControlRef = useRef<HTMLTextAreaElement | null>(null);
-  const modeSwitchRetryGuardRef = useRef(createModeSwitchRetryGuard());
 
   useEffect(() => {
     firstControlRef.current?.focus();
@@ -212,6 +211,7 @@ export function InteractionPanel({
         const modeSwitch = readModeSwitch(interaction, currentMode);
         const structuredReview = readThreadStructuredReview(interaction);
         const evaluationReview = readEvaluationReview(interaction);
+        const approvalDetails = readRuntimeApprovalDetails(interaction);
         const urlElicitation =
           interaction.kind === "mcp_elicitation"
             ? parseUrlElicitation(interaction.requestEnvelope)
@@ -223,13 +223,13 @@ export function InteractionPanel({
                 {structuredReview.kind === "invalid_review"
                   ? "This request cannot be answered safely"
                   : modeSwitch !== undefined
-                  ? `Continue in ${modeSwitch.toMode === "build" ? "Build" : "Plan"}`
-                  : evaluationReview !== null
-                  ? "Result requires review"
-                  : interaction.kind === "approval" ||
-                interaction.kind === "mcp_sampling"
-                  ? "Approval required"
-                  : "The agent needs your response"}
+                    ? `Continue in ${modeSwitch.toMode === "build" ? "Build" : "Plan"}`
+                    : evaluationReview !== null
+                      ? "Result requires review"
+                      : interaction.kind === "approval" ||
+                          interaction.kind === "mcp_sampling"
+                        ? (approvalDetails?.title ?? "Approval required")
+                        : "The agent needs your response"}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -309,6 +309,76 @@ export function InteractionPanel({
                   value={content[interaction.requestId] ?? "{}"}
                 />
               ) : null}
+              {approvalDetails !== null ? (
+                <section
+                  aria-label="Approval request details"
+                  className="rounded-md border bg-muted/35 p-3 text-sm"
+                >
+                  <p className="font-medium">{approvalDetails.summary}</p>
+                  <dl className="mt-2 grid gap-2">
+                    <div>
+                      <dt className="text-muted-foreground text-xs">Tool</dt>
+                      <dd className="font-mono text-xs">
+                        {approvalDetails.toolName}
+                      </dd>
+                    </div>
+                    {approvalDetails.fields.map((field) => (
+                      <div key={field.label}>
+                        <dt className="text-muted-foreground text-xs">
+                          {field.label}
+                        </dt>
+                        <dd className="mt-0.5 whitespace-pre-wrap break-words">
+                          {field.value}
+                        </dd>
+                      </div>
+                    ))}
+                    <div>
+                      <dt className="text-muted-foreground text-xs">
+                        Why approval is required
+                      </dt>
+                      <dd className="mt-0.5">
+                        {interaction.approvalPolicy
+                          ?.approvalRequirementExplanation ??
+                          approvalDetails.policyExplanation}
+                      </dd>
+                    </div>
+                    {interaction.approvalPolicy ? (
+                      <div>
+                        <dt className="text-muted-foreground text-xs">
+                          Approval policy
+                        </dt>
+                        <dd className="mt-0.5">
+                          Environment:{" "}
+                          {approvalModeLabel(
+                            interaction.approvalPolicy.environmentApprovalMode,
+                          )}
+                          {" · "}
+                          Project:{" "}
+                          {approvalModeLabel(
+                            interaction.approvalPolicy.projectApprovalMode,
+                          )}
+                        </dd>
+                        {interaction.approvalPolicy.alwaysApprovalAction ===
+                        "open_environment_apps" ? (
+                          <p className="mt-1 text-muted-foreground text-xs">
+                            Always Approve requires changing{" "}
+                            {interaction.approvalPolicy.capabilityDisplayName}{" "}
+                            to Automatic in Environment Apps.
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </dl>
+                  {approvalDetails.warnings.map((warning) => (
+                    <p
+                      className="mt-2 text-amber-700 text-xs dark:text-amber-300"
+                      key={warning}
+                    >
+                      {warning}
+                    </p>
+                  ))}
+                </section>
+              ) : null}
               <div className="flex justify-end gap-2">
                 {modeSwitch !== undefined && onModeSwitch !== undefined ? (
                   <Button
@@ -316,12 +386,7 @@ export function InteractionPanel({
                     onClick={() => {
                       setBusy(interaction.requestId);
                       setError(null);
-                      void modeSwitchRetryGuardRef.current.run({
-                        recommendationId: modeSwitch.recommendationId,
-                        mode: modeSwitch.toMode,
-                        switchMode: () => undefined,
-                        retry: () => onModeSwitch(interaction, modeSwitch.toMode),
-                      }).then(onResolved).catch((caught) => {
+                      void onModeSwitch(interaction, modeSwitch.toMode).then(onResolved).catch((caught) => {
                         setError(caught instanceof Error ? caught.message : "The mode could not be changed.");
                       }).finally(() => setBusy(null));
                     }}
@@ -371,9 +436,34 @@ export function InteractionPanel({
                         disabled={busy !== null}
                         onClick={() => void resolveRuntime(interaction, true)}
                         size="sm"
+                        variant="outline"
                       >
-                        Approve
+                        Approve Once
                       </Button>
+                      {interaction.approvalPolicy?.alwaysApprovalAction ===
+                      "open_environment_apps" ? (
+                        <Button
+                          asChild
+                          size="sm"
+                          title={alwaysApprovalTitle(interaction)}
+                        >
+                          <Link
+                            href={
+                              interaction.approvalPolicy.environmentAppsHref
+                            }
+                          >
+                            Always Approve
+                          </Link>
+                        </Button>
+                      ) : (
+                        <Button
+                          disabled
+                          size="sm"
+                          title={alwaysApprovalTitle(interaction)}
+                        >
+                          Always Approve
+                        </Button>
+                      )}
                     </>
                   ) : (
                     <Button
@@ -420,6 +510,79 @@ export function InteractionPanel({
       ) : null}
     </section>
   );
+}
+
+function readRuntimeApprovalDetails(interaction: ThreadInteractionView): {
+  toolName: string;
+  title: string;
+  summary: string;
+  fields: Array<{ label: string; value: string }>;
+  warnings: string[];
+  policyExplanation: string;
+} | null {
+  if (interaction.source !== "runtime" || interaction.kind !== "approval") {
+    return null;
+  }
+  const approval = readRecord(interaction.requestEnvelope.approval);
+  const toolName = approval?.toolName;
+  if (typeof toolName !== "string" || toolName.trim().length === 0) {
+    return null;
+  }
+  const presentation = readRecord(approval?.presentation);
+  const policy = readRecord(presentation?.policy);
+  const fields = Array.isArray(presentation?.fields)
+    ? presentation.fields.flatMap((value) => {
+        const field = readRecord(value);
+        return typeof field?.label === "string" &&
+          typeof field.value === "string"
+          ? [{ label: field.label, value: field.value }]
+          : [];
+      })
+    : [];
+  return {
+    toolName,
+    title:
+      typeof presentation?.title === "string"
+        ? presentation.title
+        : "Approve tool operation",
+    summary:
+      typeof presentation?.summary === "string"
+        ? presentation.summary
+        : "Request details are hidden because this tool does not provide a safe approval preview.",
+    fields,
+    warnings: Array.isArray(presentation?.warnings)
+      ? presentation.warnings.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : [],
+    policyExplanation:
+      typeof policy?.explanation === "string"
+        ? policy.explanation
+        : "This invocation requires approval.",
+  };
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function approvalModeLabel(mode: "auto" | "ask" | "deny") {
+  if (mode === "auto") return "Automatic";
+  if (mode === "ask") return "Ask first";
+  return "Blocked";
+}
+
+function alwaysApprovalTitle(interaction: ThreadInteractionView) {
+  const action = interaction.approvalPolicy?.alwaysApprovalAction;
+  if (action === "open_environment_apps") {
+    return "Open this capability in Environment Apps";
+  }
+  if (action === "minimum_ask") {
+    return "This capability requires approval for every invocation";
+  }
+  return "Persistent approval is unavailable for this request";
 }
 
 function readModeSwitch(

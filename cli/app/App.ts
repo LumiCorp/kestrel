@@ -59,6 +59,7 @@ import {
   resolveChatVisualCursorFromAnchor,
 } from "../ink/views/chatRows.js";
 import {
+  resolveChatActivityRows,
   resolveChatComposerInputRows,
   resolveChatLayoutBudget,
   type ChatLayoutBudget,
@@ -117,7 +118,6 @@ import {
   toCanonicalInteractionMode,
   type ModelProviderId,
   type McpStatusSnapshot,
-  type AgentProgressUpdateV1,
 } from "../../src/index.js";
 import type { ResolvedModelPolicy } from "../../src/profile/modelPolicy.js";
 import {
@@ -148,6 +148,7 @@ import {
   resolveExactReviewOptionId,
   resolveBlockedWaitModeReply,
 } from "./waitForPrompt.js";
+import { projectTuiTerminalOutcome } from "./TuiConversationAdapter.js";
 import {
   decorateOperatorAffordance,
   formatOperatorAffordance,
@@ -263,9 +264,6 @@ export class App {
   };
   private bootstrapHintShown = false;
   private transcriptAppendQueue: Promise<void> = Promise.resolve();
-  private readonly pendingAgentProgressTranscriptUpdates = new Map<string, AgentProgressUpdateV1>();
-  private readonly activeAgentProgressTranscriptDrains = new Set<string>();
-  private readonly terminalProjectionRunIds = new Set<string>();
   private startTaskJourney: StartTaskJourneyState | undefined;
   private childMissionJourney: ChildMissionJourneyState | undefined;
   private scriptedInputsEnqueued = false;
@@ -301,8 +299,8 @@ export class App {
       setLaunchWorkspace: (workspace) => {
         this.launchWorkspace = workspace;
       },
-      appendHistoryLine: (role, text, data, output) =>
-        this.appendHistoryLine(role, text, data, output),
+      appendHistoryLine: (role, text, data, output, eventId) =>
+        this.appendHistoryLine(role, text, data, output, eventId),
       persistSessionAndUi: () => this.persistSessionAndUi(),
       persistUiState: () => this.persistUiState(),
       persistActiveProfile: (profile) => this.persistActiveProfile(profile),
@@ -1551,7 +1549,13 @@ export class App {
   }
 
   private submitInput(line: string): void {
-    if (this.shouldDispatchImmediateOperatorCommand(line)) {
+    if (
+      this.shouldDispatchImmediateOperatorCommand(line)
+      || (
+        this.uiStore.getState().running === true
+        && parseInput(line).kind === "message"
+      )
+    ) {
       void this.handleLine(line).catch((error: unknown) => {
         void this.handleInputProcessingFailure(line, error);
       });
@@ -1627,6 +1631,10 @@ export class App {
         getChatWrappedBodyWidth: () => this.getChatLayout(this.uiStore.getState()).wrappedBodyWidth,
         getChatListRows: () => this.getListRowsForScroll(this.uiStore.getState(), "chat"),
         recoverTerminalMessages: (session) => this.recoverTerminalMessages(session),
+        getConversationActivity: (sessionId) =>
+          this.getRunController().getConversationActivity(sessionId),
+        getConversationRunState: (sessionId) =>
+          this.getRunController().getConversationRunState(sessionId),
       });
     }
     return this.sessionController;
@@ -1693,14 +1701,11 @@ export class App {
         syncBackgroundSessionFailure: (sessionId, message) =>
           this.syncBackgroundSessionFailure(sessionId, message),
         applyTerminalResult: (sessionId, result, finalizedPayload) => this.applyTerminalResult(sessionId, result, finalizedPayload),
-        clearProgressForRun: (runId) => {
-          this.clearProgressForRun(runId);
-        },
+        recoverTerminalMessages: (session) => this.recoverTerminalMessages(session),
+        getChatWrappedBodyWidth: () => this.getChatLayout(this.uiStore.getState()).wrappedBodyWidth,
+        getChatListRows: () => this.getListRowsForScroll(this.uiStore.getState(), "chat"),
         pushRunLog: (line) => {
           this.pushRunLog(line);
-        },
-        enqueueAgentProgressTranscriptUpdate: (update) => {
-          this.enqueueAgentProgressTranscriptUpdate(update);
         },
       });
     }
@@ -1832,9 +1837,6 @@ export class App {
     this.uiStore.patch({
       running: false,
       statusLine: this.withMcpSummary("failed"),
-      activeProgressByRun: {},
-      latestProgressForSession: undefined,
-      latestReasoningForSession: undefined,
       errorOverlay: {
         message,
         code,
@@ -2360,8 +2362,6 @@ export class App {
       return;
     }
 
-    this.uiStore.patch({ chatDraft: "" });
-
     const initialState = this.uiStore.getState();
     const exactReview = readExactReview(
       initialState.activeSession.pendingWaitFor,
@@ -2391,16 +2391,30 @@ export class App {
       initialState.activeSession.pendingWaitFor,
       rawLine,
     );
+    const composerPolicy = this.getRunController().getConversationComposerPolicy();
+    if (
+      initialState.activeSession.pendingWaitFor?.kind === "approval"
+      || composerPolicy.mode === "blocked_interaction"
+    ) {
+      this.uiStore.patch({
+        statusLine: this.withMcpSummary("approval requires explicit /approve or /reject"),
+      });
+      return;
+    }
+    this.uiStore.patch({ chatDraft: "" });
     const shouldResumeBlockedRun =
       blockedModeReply?.resumeBlockedRun === true ||
       exactReviewOptionId !== undefined ||
-      this.isPendingApprovalWaitReply(initialState.activeSession.pendingWaitFor) ||
-      this.isBlockedRunResumeReply(initialState.activeSession.pendingWaitFor, rawLine);
-    const shouldUsePendingWait =
-      shouldResumeBlockedRun ||
-      this.isAcceptedPendingWaitReply(initialState.activeSession.pendingWaitFor, rawLine);
+      initialState.activeSession.pendingWaitFor?.eventType === "user.reply";
+    const shouldUsePendingWait = shouldResumeBlockedRun;
     const shouldForceFreshTurn =
       initialState.activeSession.pendingWaitFor !== undefined && shouldUsePendingWait === false;
+    let optimisticMessageId: string | undefined;
+    const interactionTurnId = shouldResumeBlockedRun
+      ? this.getRunController().resolveInteractionTurnId(
+          initialState.activeSession.pendingWaitFor?.interaction?.requestId?.trim() ?? "",
+        )
+      : undefined;
     if (blockedModeReply !== undefined) {
       const nextExecutionPolicy = alignExecutionPolicyWithMode({
         executionPolicy: initialState.activeSession.executionPolicy,
@@ -2415,7 +2429,14 @@ export class App {
       });
       await this.appendHistoryLine("system", blockedModeReply.acknowledgement);
     } else {
-      await this.appendHistoryLine("user", rawLine);
+      const messageId = `tui:${randomUUID()}`;
+      optimisticMessageId = messageId;
+      await this.appendHistoryLine("user", rawLine, {
+        kind: "tui.user-message.v1",
+        messageId,
+        deliveryState: "submitting",
+        ...(interactionTurnId !== undefined ? { turnId: interactionTurnId } : {}),
+      }, undefined, messageId);
     }
 
     const submittedMessage = this.resolveBlockedRunSubmittedMessage(
@@ -2423,6 +2444,7 @@ export class App {
       rawLine,
     );
     await this.startActiveTurn({
+      ...(optimisticMessageId !== undefined ? { messageId: optimisticMessageId } : {}),
       submittedMessage,
       ...(submittedMessage !== rawLine ? { modelHistoryMessage: submittedMessage } : {}),
       ...(shouldResumeBlockedRun ? { resumeBlockedRun: true } : {}),
@@ -2438,68 +2460,6 @@ export class App {
     return reply;
   }
 
-  private isBlockedRunResumeReply(
-    waitFor: TuiSessionMeta["pendingWaitFor"],
-    reply: string,
-  ): boolean {
-    if (waitFor?.eventType !== "user.reply") {
-      return false;
-    }
-    const normalizedReply = normalizeSubmittedLine(reply).trim();
-    const reason = waitFor.metadata?.reason;
-    const resumeReply =
-      typeof waitFor.metadata?.resumeReply === "string"
-        ? waitFor.metadata.resumeReply.trim()
-        : undefined;
-    if (resumeReply !== undefined && resumeReply.length > 0) {
-      return normalizedReply === normalizeSubmittedLine(resumeReply).trim();
-    }
-    if (reason === "max_steps_continuation" || reason === "max_model_calls_continuation") {
-      return false;
-    }
-    if (normalizedReply === "continue" || normalizedReply === "proceed" || normalizedReply === "yes") {
-      return true;
-    }
-    return false;
-  }
-
-  private isPendingApprovalWaitReply(
-    waitFor: TuiSessionMeta["pendingWaitFor"],
-  ): boolean {
-    return waitFor?.eventType === "user.approval";
-  }
-
-  private isAcceptedPendingWaitReply(
-    waitFor: TuiSessionMeta["pendingWaitFor"],
-    reply: string,
-  ): boolean {
-    if (waitFor?.eventType !== "user.reply") {
-      return false;
-    }
-    if (this.isBlockedRunResumeReply(waitFor, reply)) {
-      return true;
-    }
-    const reason = waitFor.metadata?.reason;
-    if (
-      reason === "route_mode_blocked" ||
-      reason === "planner_mode_blocked" ||
-      reason === "acter_mode_blocked"
-    ) {
-      return true;
-    }
-    if (reason !== "max_steps_continuation" && reason !== "max_model_calls_continuation") {
-      return false;
-    }
-    const normalizedReply = normalizeSubmittedLine(reply).trim();
-    if (normalizedReply === "continue" || normalizedReply === "proceed" || normalizedReply === "yes") {
-      return true;
-    }
-    if (normalizedReply === "resume") {
-      return true;
-    }
-    return false;
-  }
-
   private async handleCommand(parsed: Extract<ParsedInput, { kind: "command" }>): Promise<void> {
     await this.getCommandRouter().handle(parsed);
   }
@@ -2510,13 +2470,16 @@ export class App {
       await this.appendHistoryLine("system", "Usage: /queue <message>");
       return;
     }
-    if (this.uiStore.getState().running === true) {
-      this.enqueueInput(message);
-      return;
-    }
-    await this.appendHistoryLine("user", message);
+    const messageId = `tui:${randomUUID()}`;
+    await this.appendHistoryLine("user", message, {
+      kind: "tui.user-message.v1",
+      messageId,
+      deliveryState: "submitting",
+    }, undefined, messageId);
     await this.startActiveTurn({
+      messageId,
       submittedMessage: message,
+      queueRequested: true,
     });
   }
 
@@ -3305,22 +3268,33 @@ export class App {
         interactionMode: subcommand,
         actSubmode: undefined,
       });
-      await this.setActiveSessionState({
-        interactionMode: subcommand,
-        actSubmode: undefined,
-        ...(nextExecutionPolicy !== undefined ? { executionPolicy: nextExecutionPolicy } : {}),
-        updatedAt: new Date().toISOString(),
-      });
-      this.resetModeChangeComposerState();
-      await this.refreshActiveSessionOperatorState();
-      await this.persistSessionAndUi();
-      await this.appendHistoryLine("system", acknowledgement);
-      if (shouldResumeBlockedRun) {
-        await this.startActiveTurn({
+      const switchMode = async () => {
+        await this.setActiveSessionState({
+          interactionMode: subcommand,
+          actSubmode: undefined,
+          ...(nextExecutionPolicy !== undefined ? { executionPolicy: nextExecutionPolicy } : {}),
+          updatedAt: new Date().toISOString(),
+        });
+        this.resetModeChangeComposerState();
+        await this.refreshActiveSessionOperatorState();
+        await this.persistSessionAndUi();
+        await this.appendHistoryLine("system", acknowledgement);
+      };
+      if (!shouldResumeBlockedRun) {
+        await switchMode();
+        return;
+      }
+      const requestId = state.activeSession.pendingWaitFor?.interaction?.requestId?.trim();
+      if (!requestId) throw new Error("The mode-blocked interaction has no authoritative request identity.");
+      await this.getRunController().switchModeAndRetry({
+        recommendationId: requestId,
+        mode: subcommand,
+        switchMode,
+        retry: () => this.startActiveTurn({
           submittedMessage: `/mode ${subcommand}`,
           resumeBlockedRun: true,
-        });
-      }
+        }),
+      });
       return;
     }
 
@@ -3336,24 +3310,33 @@ export class App {
         executionPolicy: state.activeSession.executionPolicy,
         interactionMode: "build",
       });
-      await this.setActiveSessionState({
-        interactionMode: "build",
-        actSubmode: undefined,
-        ...(nextExecutionPolicy !== undefined ? { executionPolicy: nextExecutionPolicy } : {}),
-        updatedAt: new Date().toISOString(),
-      });
-      this.resetModeChangeComposerState();
-      await this.refreshActiveSessionOperatorState();
-      await this.persistSessionAndUi();
-      await this.appendHistoryLine("system", acknowledgement);
-      if (shouldResumeBlockedRun) {
-        await this.startActiveTurn({
-          submittedMessage: formatModeSwitchCommand({
-            interactionMode: "build",
-          }),
-          resumeBlockedRun: true,
+      const switchMode = async () => {
+        await this.setActiveSessionState({
+          interactionMode: "build",
+          actSubmode: undefined,
+          ...(nextExecutionPolicy !== undefined ? { executionPolicy: nextExecutionPolicy } : {}),
+          updatedAt: new Date().toISOString(),
         });
+        this.resetModeChangeComposerState();
+        await this.refreshActiveSessionOperatorState();
+        await this.persistSessionAndUi();
+        await this.appendHistoryLine("system", acknowledgement);
+      };
+      if (!shouldResumeBlockedRun) {
+        await switchMode();
+        return;
       }
+      const requestId = state.activeSession.pendingWaitFor?.interaction?.requestId?.trim();
+      if (!requestId) throw new Error("The mode-blocked interaction has no authoritative request identity.");
+      await this.getRunController().switchModeAndRetry({
+        recommendationId: requestId,
+        mode: "build",
+        switchMode,
+        retry: () => this.startActiveTurn({
+          submittedMessage: formatModeSwitchCommand({ interactionMode: "build" }),
+          resumeBlockedRun: true,
+        }),
+      });
       return;
     }
 
@@ -3364,13 +3347,15 @@ export class App {
   }
 
   private async startActiveTurn(input: {
+    messageId?: string | undefined;
     submittedMessage: string;
     modelHistoryMessage?: string | undefined;
     resumeBlockedRun?: boolean | undefined;
     forceFreshTurn?: boolean | undefined;
-  }): Promise<void> {
+    queueRequested?: boolean | undefined;
+  }): Promise<boolean> {
     try {
-      await this.getRunController().startActiveTurn(input);
+      return await this.getRunController().startActiveTurn(input);
     } finally {
       void this.drainQueue();
     }
@@ -3708,13 +3693,7 @@ export class App {
     result: { assistantText: string | null; output: import("../../src/index.js").NormalizedOutput },
     finalizedPayload?: unknown | undefined,
   ): Promise<void> {
-    if (this.terminalProjectionRunIds.has(result.output.runId)) return;
-    this.terminalProjectionRunIds.add(result.output.runId);
-    try {
-      await this.applyTerminalResultOnce(sessionId, result, finalizedPayload);
-    } finally {
-      this.terminalProjectionRunIds.delete(result.output.runId);
-    }
+    await this.applyTerminalResultOnce(sessionId, result, finalizedPayload);
   }
 
   private async applyTerminalResultOnce(
@@ -3728,10 +3707,11 @@ export class App {
     let history = state.activeSession.sessionId === sessionId
       ? state.transcript
       : await this.historyStore.readTranscript(sessionId, 100_000);
-    if (!history.some((line) => line.run?.runId === result.output.runId)) {
+    const terminalEventId = `terminal:${result.output.runId}`;
+    if (!history.some((line) => line.eventId === terminalEventId)) {
       history = await this.historyStore.readTranscript(sessionId, 100_000);
     }
-    if (history.some((line) => line.run?.runId === result.output.runId)) {
+    if (history.some((line) => line.eventId === terminalEventId)) {
       await this.appendDiagnosticsLog({
         scope: "terminal_message.duplicate_suppressed",
         summary: "Suppressed a duplicate terminal message.",
@@ -3746,7 +3726,23 @@ export class App {
         runId: result.output.runId,
         waitEventType: result.output.waitFor?.eventType ?? "unknown",
         ...(waitPrompt === undefined ? {} : { prompt: waitPrompt }),
-      }, result.output);
+      }, result.output, terminalEventId);
+    } else if (
+      result.output.status === "FAILED"
+      && result.output.errors.some((error) => error.code === "RUN_CANCELLED")
+    ) {
+      await this.appendSessionHistoryLine(
+        session,
+        "system",
+        "Run cancelled.",
+        {
+          kind: "runtime.terminal.v1",
+          runId: result.output.runId,
+          terminalStatus: "cancelled",
+        },
+        result.output,
+        terminalEventId,
+      );
     } else if (result.output.status === "FAILED") {
       await this.appendSessionHistoryLine(
         session,
@@ -3754,14 +3750,15 @@ export class App {
         `Run failed: ${result.output.errors[0]?.message ?? "Run failed."}`,
         undefined,
         result.output,
+        terminalEventId,
       );
     } else if (result.assistantText !== null && result.assistantText.trim().length > 0) {
       const parsed = parseFinalizePayload(finalizedPayload);
       const structuredData = parsed.ok ? parsed.payload?.data : undefined;
-      await this.appendSessionHistoryLine(session, "assistant", result.assistantText, structuredData, result.output);
+      await this.appendSessionHistoryLine(session, "assistant", result.assistantText, structuredData, result.output, terminalEventId);
       const notice = structuredData === undefined ? undefined : buildFinalizeReportingGroundingNotice(structuredData);
       if (notice !== undefined) {
-        await this.appendSessionHistoryLine(session, "system", notice, undefined, result.output);
+        await this.appendSessionHistoryLine(session, "system", notice, undefined, result.output, `${terminalEventId}:grounding`);
       }
     } else {
       await this.appendSessionHistoryLine(
@@ -3770,6 +3767,7 @@ export class App {
         "The run completed, but its final response could not be delivered. Refocus this session to retry recovery.",
         undefined,
         result.output,
+        terminalEventId,
       );
     }
     await this.appendDiagnosticsLog({
@@ -3786,6 +3784,7 @@ export class App {
         threadId: terminalMessageRecoveryThreadId(session.sessionId),
         ...(afterCursor !== undefined ? { afterCursor } : {}),
         limit,
+        includeTerminalOutcomes: true,
       });
       if (response.type !== "conversation.messages") {
         throw new Error(`Unexpected conversation recovery response '${response.type}'.`);
@@ -3796,15 +3795,40 @@ export class App {
       page: Awaited<ReturnType<typeof fetch>>,
       resetCursor = false,
     ) => {
-      for (const message of page.messages) {
-        await this.applyTerminalResult(message.sessionId, message.result);
+      if (page.terminalOutcomes !== undefined) {
+        for (const outcome of page.terminalOutcomes) {
+          if (outcome.outcomeStatus === "completed" && outcome.result !== undefined) {
+            await this.applyTerminalResult(outcome.sessionId, outcome.result, outcome.result.finalizedPayload);
+            continue;
+          }
+          const line = projectTuiTerminalOutcome(outcome);
+          const target = this.sessionsFile.sessions.find((entry) => entry.sessionId === outcome.sessionId);
+          if (target !== undefined) {
+            const currentHistory = this.uiStore.getState().activeSession.sessionId === outcome.sessionId
+              ? this.uiStore.getState().transcript
+              : await this.historyStore.readTranscript(outcome.sessionId, 100_000);
+            if (currentHistory.some((entry) => entry.eventId === line.eventId)) continue;
+            await this.appendSessionHistoryLine(
+              target,
+              line.role,
+              line.text,
+              line.data,
+              outcome.result?.output,
+              line.eventId,
+            );
+          }
+        }
+      } else {
+        for (const message of page.messages) {
+          await this.applyTerminalResult(message.sessionId, message.result);
+        }
       }
       await this.appendDiagnosticsLog({
         scope: "terminal_message.recovered",
         summary: "Recovered terminal messages for a session.",
         details: stringifyDiagnosticDetails({
           sessionId: session.sessionId,
-          count: page.messages.length,
+          count: page.terminalOutcomes?.length ?? page.messages.length,
         }),
       });
       if (page.nextCursor !== undefined || resetCursor) {
@@ -4365,12 +4389,18 @@ export class App {
     text: string,
     data?: Record<string, unknown> | undefined,
     output?: import("../../src/index.js").NormalizedOutput | undefined,
+    eventId?: string | undefined,
   ): Promise<void> {
     await this.enqueueTranscriptAppend(async () => {
       const state = this.uiStore.getState();
+      if (eventId !== undefined && state.transcript.some((line) => line.eventId === eventId)) {
+        return;
+      }
       const segments = splitTranscriptMessage(role, text);
       const timestamp = new Date().toISOString();
+      const rootEventId = eventId ?? randomUUID();
       const lines: TranscriptLine[] = segments.map((segment, index) => ({
+        eventId: index === 0 ? rootEventId : `${rootEventId}:segment:${index}`,
         role,
         text: segment,
         ...(index === 0 && data !== undefined ? { data } : {}),
@@ -4471,7 +4501,7 @@ export class App {
         for (const line of lines) {
           await this.historyStore.append({
             source: "runner",
-            eventId: randomUUID(),
+            eventId: line.eventId ?? randomUUID(),
             timestamp: line.timestamp,
             sessionName: state.activeSession.name,
             sessionId: state.activeSession.sessionId,
@@ -4494,18 +4524,23 @@ export class App {
     text: string,
     data?: Record<string, unknown> | undefined,
     output?: import("../../src/index.js").NormalizedOutput | undefined,
+    eventId?: string | undefined,
   ): Promise<void> {
     const state = this.uiStore.getState();
     if (state.activeSession.sessionId === session.sessionId) {
-      await this.appendHistoryLine(role, text, data, output);
+      await this.appendHistoryLine(role, text, data, output, eventId);
       return;
     }
 
     await this.enqueueTranscriptAppend(async () => {
       try {
+        if (eventId !== undefined) {
+          const transcript = await this.historyStore.readTranscript(session.sessionId, 100_000);
+          if (transcript.some((line) => line.eventId === eventId)) return;
+        }
         await this.historyStore.append({
           source: "runner",
-          eventId: randomUUID(),
+          eventId: eventId ?? randomUUID(),
           timestamp: new Date().toISOString(),
           sessionName: session.name,
           sessionId: session.sessionId,
@@ -4675,112 +4710,6 @@ export class App {
       errorMessage: message,
       updatedAt: new Date().toISOString(),
     });
-  }
-
-  private clearProgressForRun(runId: string): void {
-    const state = this.uiStore.getState();
-    const nextProgressByRun = { ...state.activeProgressByRun };
-    delete nextProgressByRun[runId];
-    const latestProgress =
-      state.latestProgressForSession?.runId === runId
-        ? undefined
-        : state.latestProgressForSession;
-    const latestReasoning =
-      state.latestReasoningForSession?.runId === runId
-        ? undefined
-        : state.latestReasoningForSession;
-    this.uiStore.patch({
-      activeProgressByRun: nextProgressByRun,
-      latestProgressForSession: latestProgress,
-      latestReasoningForSession: latestReasoning,
-    });
-  }
-
-  private async appendAgentProgressTranscriptLine(update: AgentProgressUpdateV1): Promise<void> {
-    const state = this.uiStore.getState();
-    if (state.activeSession.sessionId === update.sessionId) {
-      if (this.isDuplicateAgentProgressTranscriptLine(state.transcript, update)) {
-        return;
-      }
-      await this.appendHistoryLine("assistant", update.message, this.buildAgentProgressTranscriptData(update));
-      return;
-    }
-
-    const session = this.sessionsFile.sessions.find((item) => item.sessionId === update.sessionId);
-    if (session === undefined) {
-      return;
-    }
-
-    await this.appendSessionHistoryLine(
-      session,
-      "assistant",
-      update.message,
-      this.buildAgentProgressTranscriptData(update),
-    );
-  }
-
-  private enqueueAgentProgressTranscriptUpdate(update: AgentProgressUpdateV1): void {
-    const key = this.getAgentProgressTranscriptKey(update);
-    const pending = this.pendingAgentProgressTranscriptUpdates.get(key);
-    if (pending !== undefined && pending.seq >= update.seq) {
-      return;
-    }
-    this.pendingAgentProgressTranscriptUpdates.set(key, update);
-    if (this.activeAgentProgressTranscriptDrains.has(key)) {
-      return;
-    }
-    this.activeAgentProgressTranscriptDrains.add(key);
-    void this.drainAgentProgressTranscriptUpdates(key);
-  }
-
-  private async drainAgentProgressTranscriptUpdates(key: string): Promise<void> {
-    try {
-      while (true) {
-        const update = this.pendingAgentProgressTranscriptUpdates.get(key);
-        if (update === undefined) {
-          break;
-        }
-        this.pendingAgentProgressTranscriptUpdates.delete(key);
-        await this.appendAgentProgressTranscriptLine(update);
-      }
-    } finally {
-      this.activeAgentProgressTranscriptDrains.delete(key);
-      if (this.pendingAgentProgressTranscriptUpdates.has(key)) {
-        this.activeAgentProgressTranscriptDrains.add(key);
-        void this.drainAgentProgressTranscriptUpdates(key);
-      }
-    }
-  }
-
-  private getAgentProgressTranscriptKey(update: Pick<AgentProgressUpdateV1, "sessionId" | "runId">): string {
-    return `${update.sessionId}:${update.runId}`;
-  }
-
-  private buildAgentProgressTranscriptData(update: AgentProgressUpdateV1): Record<string, unknown> {
-    return {
-      agentProgress: true,
-      label: "Agent progress",
-      runId: update.runId,
-      seq: update.seq,
-      ...(update.stepIndex !== undefined ? { stepIndex: update.stepIndex } : {}),
-      ...(update.stepAgent !== undefined ? { stepAgent: update.stepAgent } : {}),
-    };
-  }
-
-  private isDuplicateAgentProgressTranscriptLine(
-    transcript: TranscriptLine[],
-    update: AgentProgressUpdateV1,
-  ): boolean {
-    const previous = transcript[transcript.length - 1];
-    if (previous === undefined || previous.role !== "assistant" || previous.text !== update.message) {
-      return false;
-    }
-
-    return (
-      previous.data?.agentProgress === true &&
-      previous.data.runId === update.runId &&
-      previous.data.seq === update.seq
-    );
   }
 
   private pushRunLog(line: AgentRunLogLine): void {
@@ -5177,7 +5106,7 @@ export class App {
   }
 
   private getChatVisualRowCount(
-    state: Pick<UiRuntimeState, "transcript" | "viewport" | "detailDrawer" | "activeRegion" | "chatDraft">,
+    state: Pick<UiRuntimeState, "transcript" | "viewport" | "detailDrawer" | "activeRegion" | "chatDraft" | "conversationActivity">,
   ): number {
     return countChatVisualRows(
       state.transcript,
@@ -5186,13 +5115,13 @@ export class App {
   }
 
   private getChatLayout(
-    state: Pick<UiRuntimeState, "viewport" | "detailDrawer" | "activeRegion" | "chatDraft">,
+    state: Pick<UiRuntimeState, "viewport" | "detailDrawer" | "activeRegion" | "chatDraft" | "conversationActivity">,
   ): ChatLayoutBudget {
     return this.getChatLayoutForViewport(state, state.viewport);
   }
 
   private getChatLayoutForViewport(
-    state: Pick<UiRuntimeState, "detailDrawer" | "activeRegion" | "chatDraft">,
+    state: Pick<UiRuntimeState, "detailDrawer" | "activeRegion" | "chatDraft" | "conversationActivity">,
     viewport: { columns: number; rows: number },
   ): ChatLayoutBudget {
     const provisionalLayout = resolveChatLayoutBudget({
@@ -5210,7 +5139,7 @@ export class App {
       viewportColumns: viewport.columns,
       viewportRows: viewport.rows,
       detailDrawerOpen: false,
-      composerRows: composerInputRows + 1,
+      composerRows: composerInputRows + 1 + resolveChatActivityRows(state.conversationActivity),
     });
   }
 

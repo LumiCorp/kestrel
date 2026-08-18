@@ -262,6 +262,12 @@ export interface RunnerRuntime {
       finalizedPayload?: unknown | undefined;
     };
   }>>) | undefined;
+  listConversationTerminalOutcomes?: ((input: {
+    threadId: string;
+    completedAfter?: { completedAt: string; turnId: string } | undefined;
+    limit: number;
+    includeFinalizedPayload?: boolean | undefined;
+  }) => Promise<import("../../src/orchestration/ThreadRuntime.js").ConversationTerminalOutcome[]>) | undefined;
   submitConversationMessage?: ((input: import("../../src/orchestration/contracts.js").SubmitConversationMessageInput) => Promise<
     import("../../src/orchestration/contracts.js").ConversationMessageRouteResult
   >) | undefined;
@@ -517,6 +523,9 @@ export type RunnerRuntimeFactory = (
   onTaskUpdate: (update: DelegationTaskUpdate) => void,
   onRunEvent: (event: RunEvent) => void,
   onDetachedTurnEvent: (event: DetachedTurnLifecycleEvent) => void,
+  onMissionControlProject: (
+    project: MissionControlProjectStateRecord,
+  ) => void,
 ) => RunnerRuntime;
 
 export function createLiveOnlyProgressListener(
@@ -543,6 +552,7 @@ export function createDefaultRunnerRuntimeFactory(
     onTaskUpdate,
     onRunEvent,
     onDetachedTurnEvent,
+    onMissionControlProject,
   ) =>
     createRuntime(profile, {
       onRunLog,
@@ -552,6 +562,7 @@ export function createDefaultRunnerRuntimeFactory(
       onTaskUpdate,
       onRunEvent,
       onDetachedTurnEvent,
+      onMissionControlProject,
     });
 }
 
@@ -789,6 +800,7 @@ export class RunnerHost {
               : {}),
           },
         });
+        this.retireCompletedExecutionProfileRuntime(profile);
         return;
       } finally {
         if (this.orphanRecoveryBySession.get(turn.sessionId) === recovery) {
@@ -1035,6 +1047,7 @@ export class RunnerHost {
       this.commandBySession.delete(turn.sessionId);
       this.commandTypeBySession.delete(turn.sessionId);
       this.activeRuns.delete(turn.sessionId);
+      this.retireCompletedExecutionProfileRuntime(profile);
     }
   }
 
@@ -1260,6 +1273,7 @@ export class RunnerHost {
       this.commandTypeBySession.delete(turn.sessionId);
       this.threadIdBySession.delete(turn.sessionId);
       this.activeRuns.delete(turn.sessionId);
+      this.retireCompletedExecutionProfileRuntime(profile);
     }
   }
 
@@ -1555,26 +1569,64 @@ export class RunnerHost {
       : parseConversationMessageCursor(payload.afterCursor);
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.listCompletedConversationMessages !== "function") continue;
-      const page = await runtime.listCompletedConversationMessages({
-        threadId: payload.threadId,
-        ...(completedAfter !== undefined ? { completedAfter } : {}),
-        limit: limit + 1,
-        ...(payload.includeFinalizedPayload === true
-          ? { includeFinalizedPayload: true }
-          : {}),
-      });
-      const hasMore = payload.afterCursor !== undefined && page.length > limit;
-      const messages = page.slice(0, limit);
-      if (payload.afterCursor === undefined) messages.reverse();
-      const cursorMessage = messages.at(-1);
+      const includeTerminalOutcomes = payload.includeTerminalOutcomes === true
+        && typeof runtime.listConversationTerminalOutcomes === "function";
+      const terminalOutcomePage = includeTerminalOutcomes
+        ? await runtime.listConversationTerminalOutcomes!({
+            threadId: payload.threadId,
+            ...(completedAfter !== undefined ? { completedAfter } : {}),
+            limit: limit + 1,
+            ...(payload.includeFinalizedPayload === true ? { includeFinalizedPayload: true } : {}),
+          })
+        : undefined;
+      const completedMessagePage = terminalOutcomePage === undefined
+        ? await runtime.listCompletedConversationMessages({
+            threadId: payload.threadId,
+            ...(completedAfter !== undefined ? { completedAfter } : {}),
+            limit: limit + 1,
+            ...(payload.includeFinalizedPayload === true ? { includeFinalizedPayload: true } : {}),
+          })
+        : undefined;
+      const hasMore = payload.afterCursor !== undefined
+        && (terminalOutcomePage ?? completedMessagePage ?? []).length > limit;
+      const terminalOutcomes = terminalOutcomePage?.slice(0, limit);
+      const messages = completedMessagePage !== undefined
+        ? completedMessagePage.slice(0, limit)
+        : terminalOutcomes!.flatMap((outcome) =>
+            outcome.terminalStatus === "COMPLETED"
+              && outcome.handoffState === "delivered"
+              && outcome.result !== undefined
+              && typeof outcome.result.assistantText === "string"
+              ? [{
+                  messageId: outcome.messageId,
+                  turnId: outcome.turnId,
+                  threadId: outcome.threadId,
+                  sessionId: outcome.sessionId,
+                  runId: outcome.runId,
+                  completedAt: outcome.completedAt,
+                  result: {
+                    assistantText: outcome.result.assistantText,
+                    output: outcome.result.output,
+                    ...(outcome.result.finalizedPayload !== undefined
+                      ? { finalizedPayload: outcome.result.finalizedPayload }
+                      : {}),
+                  },
+                }]
+              : []);
+      if (payload.afterCursor === undefined) {
+        messages.reverse();
+        terminalOutcomes?.reverse();
+      }
+      const cursorEntry = terminalOutcomes?.at(-1) ?? messages.at(-1);
       this.writer.emit("conversation.messages", {
         threadId: payload.threadId,
         messages,
+        ...(terminalOutcomes !== undefined ? { terminalOutcomes } : {}),
         hasMore,
-        ...(cursorMessage !== undefined ? {
+        ...(cursorEntry !== undefined ? {
           nextCursor: encodeConversationMessageCursor({
-            completedAt: cursorMessage.completedAt,
-            turnId: cursorMessage.turnId,
+            completedAt: cursorEntry.completedAt,
+            turnId: cursorEntry.turnId,
           }),
         } : {}),
       }, { commandId, threadId: payload.threadId });
@@ -1916,6 +1968,9 @@ export class RunnerHost {
               this.threadIdBySession.delete(sessionId);
               this.activeRuns.delete(sessionId);
             }
+            if (metadata?.profile !== undefined) {
+              this.retireCompletedExecutionProfileRuntime(metadata.profile);
+            }
           });
         void this.trackExecution(completion);
         return;
@@ -2059,9 +2114,19 @@ export class RunnerHost {
     payload: MissionControlProjectGetCommandPayload,
     metadata?: RunnerCommandMetadata
   ): Promise<void> {
-    for (const runtime of this.selectRuntimes(metadata)) {
+    // Mission Control documents are project-scoped, not profile-scoped. A
+    // Desktop request can carry a profile whose runtime has not yet exposed
+    // this capability; fall back to another registered project authority
+    // before reporting that no authority exists.
+    for (const runtime of this.selectMissionControlRuntimes(metadata)) {
       if (typeof runtime.getMissionControlProject === "function") {
-        const project = await runtime.getMissionControlProject(payload);
+        let project: MissionControlProjectStateRecord;
+        try {
+          project = await runtime.getMissionControlProject(payload);
+        } catch (cause) {
+          if (isMissionControlProjectUnavailable(cause)) continue;
+          throw cause;
+        }
         this.writer.emit(
           "mission_control.project",
           { projectId: project.projectId, project: { ...project } },
@@ -2085,9 +2150,15 @@ export class RunnerHost {
     payload: MissionControlActionExecuteCommandPayload,
     metadata?: RunnerCommandMetadata
   ): Promise<void> {
-    for (const runtime of this.selectRuntimes(metadata)) {
+    for (const runtime of this.selectMissionControlRuntimes(metadata)) {
       if (typeof runtime.executeMissionControlAction === "function") {
-        const project = await runtime.executeMissionControlAction(payload);
+        let project: MissionControlProjectStateRecord;
+        try {
+          project = await runtime.executeMissionControlAction(payload);
+        } catch (cause) {
+          if (isMissionControlProjectUnavailable(cause)) continue;
+          throw cause;
+        }
         this.writer.emit(
           "mission_control.project",
           { projectId: project.projectId, project: { ...project } },
@@ -3017,6 +3088,12 @@ export class RunnerHost {
       (event) => {
         this.onDetachedTurnEvent(event);
       },
+      (project) => {
+        this.writer.emit("mission_control.project", {
+          projectId: project.projectId,
+          project: { ...project },
+        });
+      },
     );
 
     let entry: RuntimeEntry;
@@ -3048,6 +3125,22 @@ export class RunnerHost {
     return false;
   }
 
+  private retireCompletedExecutionProfileRuntime(profile: TuiProfile): void {
+    if (
+      profile.modelCredential?.source !== "kestrel-one" ||
+      this.hasActiveRunForProfile(profile.id)
+    ) {
+      return;
+    }
+    const entry = this.runtimes.get(profile.id);
+    if (entry === undefined || entry.key !== JSON.stringify(profile)) {
+      return;
+    }
+    if (this.runtimes.delete(profile.id)) {
+      this.retireRuntime(entry);
+    }
+  }
+
   private async cancelPersistedActiveRun(
     sessionId: string,
     metadata?: RunnerCommandMetadata | undefined
@@ -3071,6 +3164,15 @@ export class RunnerHost {
       this.registerRuntimeUsage(entry);
     }
     return entries.map((entry) => entry.runtime);
+  }
+
+  private selectMissionControlRuntimes(metadata?: RunnerCommandMetadata): RunnerRuntime[] {
+    const selected = this.selectRuntimes(metadata);
+    if (metadata?.profile === undefined) return selected;
+    return [
+      ...selected,
+      ...this.selectRuntimes().filter((runtime) => selected.includes(runtime) === false),
+    ];
   }
 
   private async resolveProfileOrThrow(
@@ -3601,6 +3703,13 @@ async function resolveDefaultExecutionProfile(
     );
   }
   return selected;
+}
+
+function isMissionControlProjectUnavailable(cause: unknown): boolean {
+  return typeof cause === "object"
+    && cause !== null
+    && "code" in cause
+    && (cause as { code?: unknown }).code === "MISSION_CONTROL_PROJECT_UNAVAILABLE";
 }
 
 function buildDefaultExecutionProfileProvenance(

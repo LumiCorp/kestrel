@@ -75,6 +75,141 @@ function createTestRuntime(profile: TuiProfile, factory: RuntimeFactory): Kestre
   });
 }
 
+test("KestrelChatRuntime returns canonical Mission Control state while runtime refresh remains pending", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  const project = {
+    projectId,
+    schemaVersion: 1 as const,
+    revision: 0,
+    authorityEpoch: 1,
+    document: {
+      schemaVersion: 1 as const,
+      projectId,
+      autopilot: { enabled: false, wipLimit: 1 },
+      items: {},
+      history: [],
+    },
+    createdAt: "1970-01-01T00:00:00.000Z",
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  };
+  let reconciliationStarted = false;
+  const runtime = Object.create(
+    KestrelChatRuntime.prototype,
+  ) as KestrelChatRuntime;
+  Object.assign(runtime, {
+    missionControlProjectService: {
+      async getProject() {
+        return project;
+      },
+    },
+    missionControlExecutionRuntime: {
+      async reconcile() {
+        reconciliationStarted = true;
+        return await new Promise<void>(() => {});
+      },
+    },
+  });
+
+  const response = await Promise.race([
+    runtime.getMissionControlProject({ projectId }),
+    new Promise<never>((_resolve, reject) => {
+      setTimeout(
+        () => reject(new Error("Mission Control read waited for runtime refresh.")),
+        100,
+      );
+    }),
+  ]);
+
+  assert.equal(reconciliationStarted, true);
+  assert.deepEqual(response, project);
+});
+
+test("KestrelChatRuntime exposes ThreadRuntime terminal outcomes to the production runner surface", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const output = completedOutput("session-1", "run-1");
+  const completed = {
+    messageId: "terminal:run-1",
+    turnId: "turn-1",
+    threadId: "thread-1",
+    sessionId: "session-1",
+    runId: "run-1",
+    completedAt: "2026-08-17T12:00:00.000Z",
+    terminalStatus: "COMPLETED" as const,
+    outcomeStatus: "completed" as const,
+    handoffState: "delivered" as const,
+    result: {
+      assistantText: "Done.",
+      output,
+      finalizedPayload: { source: "artifact" },
+    },
+  };
+  const failedOutput: NormalizedOutput = {
+    ...completedOutput("session-1", "run-failed"),
+    status: "FAILED",
+    errors: [{ code: "MODEL_FAILED", message: "failed" }],
+  };
+  const cancelledOutput: NormalizedOutput = {
+    ...completedOutput("session-1", "run-cancelled"),
+    status: "FAILED",
+    errors: [{ code: "RUN_CANCELLED", message: "cancelled" }],
+  };
+  const expected = [completed, {
+    ...completed,
+    messageId: "terminal:run-failed",
+    turnId: "turn-failed",
+    runId: "run-failed",
+    terminalStatus: "FAILED" as const,
+    outcomeStatus: "failed" as const,
+    result: { assistantText: null, output: failedOutput },
+  }, {
+    ...completed,
+    messageId: "terminal:run-cancelled",
+    turnId: "turn-cancelled",
+    runId: "run-cancelled",
+    terminalStatus: "FAILED" as const,
+    outcomeStatus: "cancelled" as const,
+    result: { assistantText: null, output: cancelledOutput },
+  }, {
+    ...completed,
+    messageId: "terminal:run-contract",
+    turnId: "turn-contract",
+    runId: "run-contract",
+    outcomeStatus: "contract_failure" as const,
+    handoffState: "failed" as const,
+    finalizationError: { code: "ASSISTANT_RESPONSE_INVALID", message: "invalid" },
+    result: undefined,
+  }];
+  const runtime = createTestRuntime(profile, {
+    create: () => ({
+      kestrel: { getSession: async () => null } as unknown as Kestrel,
+      threadRuntime: {
+        listConversationTerminalOutcomes: async (input: Record<string, unknown>) => {
+          calls.push(input);
+          return expected;
+        },
+      } as unknown as ThreadRuntime,
+      entryStepAgent: "example.step",
+      close: async () => {},
+    }),
+  });
+
+  const outcomes = await runtime.listConversationTerminalOutcomes({
+    threadId: "thread-1",
+    completedAfter: { completedAt: "2026-08-17T11:00:00.000Z", turnId: "turn-0" },
+    limit: 101,
+    includeFinalizedPayload: true,
+  });
+
+  assert.deepEqual(outcomes, expected);
+  assert.deepEqual(calls, [{
+    threadId: "thread-1",
+    completedAfter: { completedAt: "2026-08-17T11:00:00.000Z", turnId: "turn-0" },
+    limit: 101,
+    includeFinalizedPayload: true,
+  }]);
+  await runtime.close();
+});
+
 test("KestrelChatRuntime rejects non-string turn messages at the runtime boundary", async () => {
   const runtime = createTestRuntime(profile, {
     create: () => {

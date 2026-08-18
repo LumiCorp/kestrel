@@ -68,6 +68,65 @@ test("completed conversation message reads use durable handoff filters and curso
   sql.assertExhausted();
 });
 
+test("terminal outcome reads filter finalized handoffs before completed-time pagination", async () => {
+  const row = {
+    turn_id: "turn-2",
+    thread_id: "thread-1",
+    session_id: "session-1",
+    root_run_id: "run-2",
+    status: "FAILED",
+    initial_event_type: "user.message",
+    active_run_id: null,
+    terminal_run_id: "run-2",
+    terminal_status: "FAILED",
+    metadata_json: {
+      terminalEnvelope: {
+        version: "v1",
+        turnRequestIdentity: "request-2",
+        terminalSubmissionIdentity: "submission-2",
+        runId: "run-2",
+        status: "FAILED",
+        output: { status: "FAILED", sessionId: "session-1", runId: "run-2", errors: [] },
+        handoff: { state: "delivered", assistantText: null },
+      },
+    },
+    started_at: new Date("2026-08-17T10:00:00.000Z"),
+    updated_at: new Date("2026-08-17T10:10:00.000Z"),
+    completed_at: new Date("2026-08-17T10:02:00.000Z"),
+  };
+  const sql = new ScriptedSqlExecutor([{
+    match: /status IN \('COMPLETED', 'FAILED'\)[\s\S]*handoff'[\s\S]*IN \('delivered', 'failed'\)[\s\S]*ORDER BY completed_at DESC NULLS LAST, turn_id DESC/u,
+    rows: [row],
+  }, {
+    match: /completed_at, turn_id\) >[\s\S]*status IN \('COMPLETED', 'FAILED'\)[\s\S]*ORDER BY completed_at ASC, turn_id ASC/u,
+    rows: [row],
+  }]);
+  const store = new PostgresSessionStore(sql);
+
+  const initial = await store.listConversationTurns({
+    threadId: "thread-1",
+    terminalOutcomesOnly: true,
+    limit: 5,
+  });
+  const cursor = await store.listConversationTurns({
+    threadId: "thread-1",
+    terminalOutcomesOnly: true,
+    completedAfter: { completedAt: "2026-08-17T10:01:00.000Z", turnId: "turn-1" },
+    limit: 5,
+  });
+
+  assert.deepEqual(initial.map((turn) => turn.turnId), ["turn-2"]);
+  assert.deepEqual(cursor.map((turn) => turn.turnId), ["turn-2"]);
+  assert.deepEqual(sql.queries[0]?.values, ["thread-1", 5]);
+  assert.deepEqual(sql.queries[1]?.values, [
+    "thread-1",
+    "2026-08-17T10:01:00.000Z",
+    "turn-1",
+    5,
+  ]);
+  sql.assertExhausted();
+});
+
 
 test("getSession normalizes database Date timestamps before protocol projection", async () => {
   const updatedAt = new Date("2026-07-14T23:27:08.000Z");

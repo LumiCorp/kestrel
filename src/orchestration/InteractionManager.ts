@@ -29,28 +29,36 @@ export class InteractionManager {
 
   async syncWaitState(input: {
     threadId: string;
+    turnId?: string | undefined;
     runId?: string | undefined;
     actor?: RuntimeTurnActor | undefined;
     delegationId?: string | undefined;
-    waitFor?: {
-      kind?: string | undefined;
-      eventType?: string | undefined;
-      metadata?: Record<string, unknown> | undefined;
-      interaction?: {
-        version?: string | undefined;
-        requestId?: string | undefined;
-        kind?: string | undefined;
-        eventType?: string | undefined;
-        prompt?: string | undefined;
-        inputSchema?: Record<string, unknown> | undefined;
-        metadata?: Record<string, unknown> | undefined;
-        approval?: {
-          toolCallId: string;
-          toolName: string;
-          input: unknown;
-        } | undefined;
-      } | undefined;
-    } | undefined;
+    waitFor?:
+      | {
+          kind?: string | undefined;
+          eventType?: string | undefined;
+          metadata?: Record<string, unknown> | undefined;
+          interaction?:
+            | {
+                version?: string | undefined;
+                requestId?: string | undefined;
+                kind?: string | undefined;
+                eventType?: string | undefined;
+                prompt?: string | undefined;
+                inputSchema?: Record<string, unknown> | undefined;
+                metadata?: Record<string, unknown> | undefined;
+                approval?:
+                  | {
+                      toolCallId: string;
+                      toolName: string;
+                      input?: unknown;
+                      presentation?: unknown;
+                    }
+                  | undefined;
+              }
+            | undefined;
+        }
+      | undefined;
   }): Promise<InteractionRequestRecord | undefined> {
     const pending = await this.store.listInteractionRequests({
       threadId: input.threadId,
@@ -78,7 +86,17 @@ export class InteractionManager {
     );
     await this.cancelPendingRequests(pending.filter((request) => request.requestId !== existing?.requestId));
     if (existing !== undefined) {
-      return existing;
+      const updated: InteractionRequestRecord = {
+        ...existing,
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        metadata: {
+          ...(existing.metadata ?? {}),
+          ...(input.turnId !== undefined ? { conversationTurnId: input.turnId } : {}),
+          ...(input.runId !== undefined ? { conversationRunId: input.runId } : {}),
+        },
+      };
+      await this.store.upsertInteractionRequest(updated);
+      return updated;
     }
 
     const metadata = waitFor.metadata ?? {};
@@ -114,6 +132,8 @@ export class InteractionManager {
         : {}),
       metadata: {
         ...metadata,
+        ...(input.turnId !== undefined ? { conversationTurnId: input.turnId } : {}),
+        ...(input.runId !== undefined ? { conversationRunId: input.runId } : {}),
         ...(input.actor !== undefined
           ? { trustedRequestActor: normalizeTrustedActor(input.actor) }
           : {}),
@@ -497,6 +517,13 @@ function requestMatchesWaitFor(
   }
 
   const requestMetadata = request.metadata ?? {};
+  if (request.kind === "approval" && waitFor.kind === "approval") {
+    const approvalId = readNonEmptyString(waitFor.metadata.approvalId);
+    const requestApprovalId = readNonEmptyString(requestMetadata.approvalId);
+    if (approvalId !== undefined || requestApprovalId !== undefined) {
+      return approvalId !== undefined && approvalId === requestApprovalId;
+    }
+  }
   const blockedActionId = readNonEmptyString(waitFor.metadata.blockedActionId);
   const requestBlockedActionId = readNonEmptyString(requestMetadata.blockedActionId);
   if (blockedActionId !== undefined || requestBlockedActionId !== undefined) {

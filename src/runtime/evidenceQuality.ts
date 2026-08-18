@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { isLowValueInternetResultUrl } from "../shared/internetResultHygiene.js";
 import { canonicalizeDuplicateUrl } from "./readOnlyResultDuplicates.js";
+import { isFileTextReadToolName } from "./fileTextReadTools.js";
 import { readWebExtractionDiagnostics } from "./webExtraction.js";
 import {
   isBroadResumeBudgetExhausted,
@@ -737,7 +738,7 @@ function inferEvidenceRecoveryFamily(toolName: string | undefined): EvidenceReco
   ) {
     return "web_research";
   }
-  if (toolName === "fs.list" || toolName === "fs.read_text" || toolName === "fs.search_text") {
+  if (toolName === "fs.list" || (toolName !== undefined && isFileTextReadToolName(toolName)) || toolName === "fs.search_text") {
     return "filesystem_retrieval";
   }
   if (
@@ -797,7 +798,7 @@ function updateFilesystemInspectionSummary(input: {
 }): FilesystemInspectionSummary | undefined {
   const toolName = input.toolName;
   const prior = input.prior;
-  if (toolName !== "fs.list" && toolName !== "fs.read_text" && toolName !== "fs.search_text") {
+  if (toolName !== "fs.list" && (toolName === undefined || isFileTextReadToolName(toolName) === false) && toolName !== "fs.search_text") {
     return ;
   }
   const inventoryActions = prior?.inventoryActions ?? 0;
@@ -820,7 +821,7 @@ function updateFilesystemInspectionSummary(input: {
   }
   const targetPath = readFilesystemTargetPath(input.output, input.action);
   const explicitReadTextPath =
-    toolName === "fs.read_text" &&
+    toolName !== undefined && isFileTextReadToolName(toolName) &&
     targetPath !== undefined &&
     targetPath !== ".";
   const grounded =

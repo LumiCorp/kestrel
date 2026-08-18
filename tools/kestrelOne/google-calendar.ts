@@ -279,23 +279,26 @@ async function invokeGoogleCalendar(
     context,
     "/api/runtime/google-calendar/action",
   );
-  const approvalConfirmed =
-    input.requiresApproval ||
-    context.kestrelOne?.appApprovalModes?.[input.toolName] === "ask";
-  const response = await (context.fetchImpl ?? fetch)(
-    transport.url,
-    {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${transport.authorization}`,
-        "content-type": "application/json",
-        ...(approvalConfirmed
-          ? { "x-kestrel-runtime-approval": "confirmed" }
-          : {}),
-      },
-      body: JSON.stringify({ operation: input.operation, ...input.input }),
-    }
-  );
+  const explicitApprovalMode =
+    context.kestrelOne?.appApprovalModes?.[input.toolName];
+  const approvalRequired =
+    explicitApprovalMode === "ask" ||
+    (explicitApprovalMode === undefined && input.requiresApproval);
+  const approvalId = approvalRequired
+    ? requireContextValue(
+        context.runtime?.approvalId,
+        "Runtime Google Calendar approval ID",
+      )
+    : undefined;
+  const response = await (context.fetchImpl ?? fetch)(transport.url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${transport.authorization}`,
+      "content-type": "application/json",
+      ...(approvalId ? { "x-kestrel-approval-id": approvalId } : {}),
+    },
+    body: JSON.stringify({ operation: input.operation, ...input.input }),
+  });
   const body = parseObjectInput(
     `${input.toolName} response`,
     await response.json().catch(() => ({}))

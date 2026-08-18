@@ -12,7 +12,10 @@ export interface DesktopRunnerControlTransport extends DesktopProtocolTransport 
 }
 
 export class LocalCoreRunnerTransport implements DesktopRunnerControlTransport {
-  private readonly connectionManager: Pick<LocalCoreConnectionManager, "executeOnce">;
+  private readonly connectionManager: Pick<
+    LocalCoreConnectionManager,
+    "executeConnectedOnce" | "executeOnce"
+  >;
   private readonly logPath: string;
   private readonly controllers = new Map<string, AbortController>();
   private readonly observers = new Set<RunnerProtocolObserver>();
@@ -27,7 +30,10 @@ export class LocalCoreRunnerTransport implements DesktopRunnerControlTransport {
   private recentStderr: string[] = [];
 
   constructor(input: {
-    connectionManager: Pick<LocalCoreConnectionManager, "executeOnce">;
+    connectionManager: Pick<
+      LocalCoreConnectionManager,
+      "executeConnectedOnce" | "executeOnce"
+    >;
     logPath: string;
   }) {
     this.connectionManager = input.connectionManager;
@@ -61,7 +67,7 @@ export class LocalCoreRunnerTransport implements DesktopRunnerControlTransport {
     const commandId = readCommandId(line);
     const controller = new AbortController();
     this.controllers.set(commandId, controller);
-    void this.connectionManager.executeOnce(async (client) => await client.sendRunnerCommand(line, {
+    void this.connectionManager.executeConnectedOnce(async (client) => await client.sendRunnerCommand(line, {
       signal: controller.signal,
       onLine: (eventLine) => this.emitLine(eventLine),
     })).catch((error: unknown) => {

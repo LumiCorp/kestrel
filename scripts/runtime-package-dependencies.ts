@@ -10,6 +10,16 @@ const RUNTIME_WORKSPACE_PACKAGES = [
     tarballPrefix: "kestrel-agents-protocol-",
   },
   {
+    name: "@kestrel-agents/conversation",
+    directory: "packages/conversation",
+    tarballPrefix: "kestrel-agents-conversation-",
+  },
+  {
+    name: "@kestrel-agents/sdk",
+    directory: "packages/sdk",
+    tarballPrefix: "kestrel-agents-sdk-",
+  },
+  {
     name: "@kestrel-agents/workspace-skills",
     directory: "packages/workspace-skills",
     tarballPrefix: "kestrel-agents-workspace-skills-",

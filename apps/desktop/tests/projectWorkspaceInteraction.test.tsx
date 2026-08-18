@@ -42,6 +42,7 @@ test("project overview summarizes work and routes thread and creation actions", 
   const waiting = { ...createRendererThread({ projectPath: "/project" }), id: "waiting", title: "Deploy" };
   const selected: string[] = [];
   let created = 0;
+  let removed = 0;
   await act(async () => root.render(<ProjectWorkspace
     project={{ id: "project-1", path: "/project", label: "Kestrel" }}
     threads={[
@@ -50,6 +51,7 @@ test("project overview summarizes work and routes thread and creation actions", 
     ]}
     openFiles={[]}
     onChat={() => { created += 1; }}
+    onRemoveProject={() => { removed += 1; }}
     onSelectThread={(threadId) => selected.push(threadId)}
     onError={() => {}}
   />));
@@ -59,10 +61,18 @@ test("project overview summarizes work and routes thread and creation actions", 
   assert.match(container.textContent ?? "", /Running tests/u);
   assert.match(container.textContent ?? "", /Approve deployment/u);
   assert.match(container.textContent ?? "", /2Total/u);
+  assert.equal(
+    [...container.querySelectorAll("button")].filter((entry) => entry.textContent === "New conversation").length,
+    1,
+  );
   await act(async () => [...container.querySelectorAll("button")].find((entry) => entry.textContent?.startsWith("Deploy"))?.click());
   assert.deepEqual(selected, ["waiting"]);
   await act(async () => [...container.querySelectorAll("button")].find((entry) => entry.textContent === "New conversation")?.click());
   assert.equal(created, 1);
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Remove project from Kestrel"]')?.click());
+  assert.match(container.textContent ?? "", /does not delete the folder, repository, or local files/u);
+  await act(async () => [...container.querySelectorAll("button")].find((entry) => entry.textContent === "Remove project")?.click());
+  assert.equal(removed, 1);
   await act(async () => [...container.querySelectorAll("button")].find((entry) => entry.textContent === "Files")?.click());
   await act(async () => Promise.resolve());
   assert.match(container.textContent ?? "", /README\.md/u);

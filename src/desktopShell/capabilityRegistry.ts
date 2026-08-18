@@ -108,6 +108,7 @@ const FREE_NETWORK_TOOLS = [
 const FILESYSTEM_TOOLS = [
   "fs.list_directory",
   "fs.read_text",
+  "fs.read_text_page",
   "fs.search_text",
   "artifact.read",
 ];
@@ -410,7 +411,7 @@ export function resolveDesktopCapabilityView(
       id: "permission.microphone", category: "permissions", name: "Microphone",
       description: "macOS microphone access for voice-capable Desktop features.", toolNames: [], enabled: input.probes.microphone === "granted",
       readiness: input.probes.microphone === "granted" ? "ready" : input.probes.microphone === "not-determined" ? "setup_required" : "unavailable",
-      detail: `Operating-system permission is ${input.probes.microphone}.`,
+      detail: microphonePermissionDetail(input.probes.microphone),
       requirementKind: "permission", requirementLabel: "Microphone permission", requirementSatisfied: input.probes.microphone === "granted",
       verificationStrategy: "Read the operating-system permission state and offer the native request or recovery path.", settingsSection: "settings/permissions/microphone",
     }),
@@ -429,6 +430,21 @@ export function resolveDesktopCapabilityView(
     },
     refreshedAt: (input.now ?? new Date()).toISOString(),
   };
+}
+
+function microphonePermissionDetail(state: DesktopMicrophoneAccessState): string {
+  switch (state) {
+    case "granted":
+      return "Microphone access is allowed.";
+    case "denied":
+      return "Microphone access is blocked in macOS Settings.";
+    case "restricted":
+      return "Microphone access is restricted by macOS.";
+    case "not-determined":
+      return "Microphone access has not been requested yet.";
+    case "unknown":
+      return "Microphone access status is unavailable.";
+  }
 }
 
 function field(

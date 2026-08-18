@@ -44,6 +44,11 @@ test("Calendar tool handler uses the execution ticket and omits notifications un
   let capturedHeaders: unknown;
   let capturedBody = "";
   const handler = kestrelOneGoogleCalendarCreateEventTool.createHandler({
+    runtime: {
+      runId: "run-1",
+      sessionId: "session-1",
+      approvalId: "approval-1",
+    },
     kestrelOne: {
       appUrl: "https://app.example.test",
       executionTicket: "signed-ticket",
@@ -70,7 +75,7 @@ test("Calendar tool handler uses the execution ticket and omits notifications un
   assert.deepEqual(capturedHeaders, {
     authorization: "Bearer signed-ticket",
     "content-type": "application/json",
-    "x-kestrel-runtime-approval": "confirmed",
+    "x-kestrel-approval-id": "approval-1",
   });
   const body = JSON.parse(capturedBody) as Record<string, unknown>;
   assert.equal(body.operation, "events.create");
@@ -80,6 +85,11 @@ test("Calendar tool handler uses the execution ticket and omits notifications un
 test("Google Calendar reads forward a completed App approval when configured to ask", async () => {
   let capturedHeaders = new Headers();
   const handler = kestrelOneGoogleCalendarListEventsTool.createHandler({
+    runtime: {
+      runId: "run-1",
+      sessionId: "session-1",
+      approvalId: "approval-2",
+    },
     kestrelOne: {
       appUrl: "https://app.example.test",
       executionTicket: "signed-ticket",
@@ -98,8 +108,30 @@ test("Google Calendar reads forward a completed App approval when configured to 
     timeMax: "2026-07-15T00:00:00Z",
   });
 
-  assert.equal(
-    capturedHeaders.get("x-kestrel-runtime-approval"),
-    "confirmed"
-  );
+  assert.equal(capturedHeaders.get("x-kestrel-approval-id"), "approval-2");
+});
+
+test("Google Calendar writes configured Automatic do not require a runtime approval ID", async () => {
+  let capturedHeaders = new Headers();
+  const handler = kestrelOneGoogleCalendarCreateEventTool.createHandler({
+    kestrelOne: {
+      appUrl: "https://app.example.test",
+      executionTicket: "signed-ticket",
+      appApprovalModes: {
+        "kestrel_one.google_calendar_create_event": "auto",
+      },
+    },
+    fetchImpl: async (_url, init) => {
+      capturedHeaders = new Headers(init?.headers);
+      return Response.json({ operation: "events.create", result: {} });
+    },
+  });
+  await handler({
+    event: {
+      summary: "Planning",
+      start: { dateTime: "2026-07-14T13:00:00Z" },
+      end: { dateTime: "2026-07-14T13:30:00Z" },
+    },
+  });
+  assert.equal(capturedHeaders.get("x-kestrel-approval-id"), null);
 });

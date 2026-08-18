@@ -130,34 +130,24 @@ function createOperatorHarness(input: {
   };
 }
 
-test("OperatorController stop cancels an active run before sending default steering", async () => {
+test("OperatorController stop uses authoritative cancellation without synthetic steering", async () => {
   const harness = createOperatorHarness({ running: true, focusedThreadId: "thread-1" });
 
   await harness.controller.handleOperatorControlCommand("stop", []);
 
   assert.equal(harness.commands[0]?.type, "run.cancel");
-  assert.equal(harness.commands[1]?.type, "operator.control");
-  assert.deepEqual(harness.commands[1]?.payload, {
-    action: "steer",
-    threadId: "thread-1",
-    message: "Stop your current work immediately and wait for further instructions.",
-  });
-  assert.equal((harness.commands[1]?.metadata as { profile?: { id?: string } } | undefined)?.profile?.id, "reference");
-  assert.equal(harness.applied[0]?.action, "stop");
+  assert.equal(harness.commands.length, 1);
+  assert.equal(harness.applied.length, 0);
 });
 
-test("OperatorController stop attempts cancellation before steering even when UI is not running", async () => {
+test("OperatorController stop still uses authoritative cancellation when UI is not running", async () => {
   const harness = createOperatorHarness({ running: false, focusedThreadId: "thread-1" });
 
   await harness.controller.handleOperatorControlCommand("stop", []);
 
   assert.equal(harness.commands[0]?.type, "run.cancel");
-  assert.equal(harness.commands[1]?.type, "operator.control");
-  assert.deepEqual(harness.commands[1]?.payload, {
-    action: "steer",
-    threadId: "thread-1",
-    message: "Stop your current work immediately and wait for further instructions.",
-  });
+  assert.equal(harness.commands.length, 1);
+  assert.equal(harness.applied.length, 0);
 });
 
 test("OperatorController assembly approve resolves missing proposal id from inbox", async () => {

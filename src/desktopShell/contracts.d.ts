@@ -1,6 +1,7 @@
 import type { RunnerEvent } from "../../cli/protocol/contracts.js";
 import type { RunnerAssistantTextHistoryDataV2, RunnerWaitingPromptHistoryDataV2 } from "@kestrel-agents/protocol";
 export type DesktopRuntimeHealthState = "healthy" | "degraded" | "blocked";
+export type DesktopRuntimeConnectionState = "connected" | "connecting" | "disconnected";
 export type DesktopDatabaseState = "starting" | "healthy" | "degraded" | "blocked";
 export type { SupportBundle as DesktopSupportBundle } from "../diagnostics/supportBundle.js";
 export type DesktopBridgeCapabilityId = "app_info" | "settings" | "provider_credentials" | "ui_state" | "runner_commands" | "support_bundle" | "project_picker" | "workspace_picker" | "runtime_control" | "database_control" | "file_browser" | "file_editor" | "file_write" | "file_watch" | "mcp_discovery" | "project_launcher" | "project_runs" | "project_run_preview" | "mission_control" | "runtime_inspection" | "attachments" | "operator_control" | "external_open" | "path_open" | "microphone" | "commands";
@@ -101,7 +102,7 @@ export interface DesktopConversationTurn {
     turnId: string;
     threadId: string;
     sessionId: string;
-    sequence: number;
+    sequence: number | null;
     status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
     sourceMessageId?: string | undefined;
     rootRunId?: string | undefined;
@@ -382,6 +383,7 @@ export interface DesktopDatabaseStatus {
 }
 export interface DesktopRuntimeHealth {
     state: DesktopRuntimeHealthState;
+    connection: DesktopRuntimeConnectionState;
     summary: string;
     code?: string | undefined;
     details?: string | undefined;
@@ -630,7 +632,7 @@ export declare function parseDesktopRendererSettingsUpdate(value: unknown): Desk
 export declare function parseDesktopProviderCredentialInput(value: unknown): DesktopProviderCredentialInput;
 export declare function parseDesktopToolCredentialProvider(value: unknown): DesktopToolCredentialProvider;
 export declare function parseDesktopToolCredentialInput(value: unknown): DesktopToolCredentialInput;
-export type DesktopShellCommand = "add-project" | "new-thread" | "stop-agent" | "toggle-left-sidebar" | "toggle-right-sidebar" | "restart-runtime";
+export type DesktopShellCommand = "add-project" | "new-thread" | "stop-agent" | "toggle-left-sidebar" | "restart-runtime";
 export type DesktopFileEntryKind = "file" | "directory";
 export type DesktopFileViewKind = "markdown" | "code" | "text" | "binary";
 export interface DesktopFileEntry {

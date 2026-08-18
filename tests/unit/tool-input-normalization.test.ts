@@ -87,6 +87,21 @@ const FILESYSTEM_TOOLS: ModelToolSpec[] = [
     },
   },
   {
+    name: "fs.read_text_page",
+    description: "Continue a revision-bound UTF-8 text read.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        path: { type: "string" },
+        offsetBytes: { type: "number", minimum: 1 },
+        expectedRevision: { type: "string" },
+        maxBytes: { type: "number" },
+      },
+      required: ["path", "offsetBytes", "expectedRevision"],
+    },
+  },
+  {
     name: "fs.search_text",
     description: "Search UTF-8 text files within the workspace or temp roots.",
     inputSchema: {
@@ -826,6 +841,12 @@ test("normalizeToolActionInput strips unsupported fs.list fields and preserves s
 
 test("normalizeToolActionInput defaults read and edit filesystem tools to dot", () => {
   const readText = normalizeToolActionInput("fs.read_text", {});
+  const readTextPage = normalizeToolActionInput("fs.read_text_page", {
+    path: "large.txt",
+    offsetBytes: 8192,
+    expectedRevision: `sha256:${"a".repeat(64)}`,
+    maxBytes: 8192,
+  });
   const searchText = normalizeToolActionInput("fs.search_text", {
     query: "TODO",
   });
@@ -838,11 +859,18 @@ test("normalizeToolActionInput defaults read and edit filesystem tools to dot", 
   });
 
   assert.deepEqual(readText, { path: "." });
+  assert.deepEqual(readTextPage, {
+    path: "large.txt",
+    offsetBytes: 8192,
+    expectedRevision: `sha256:${"a".repeat(64)}`,
+    maxBytes: 8192,
+  });
   assert.deepEqual(searchText, { path: ".", query: "TODO" });
   assert.deepEqual(writeText, { path: ".", content: "hello" });
   assert.deepEqual(replaceText, { path: ".", find: "a", replace: "b" });
 
   assertToolSchemaValid("fs.read_text", readText);
+  assertToolSchemaValid("fs.read_text_page", readTextPage);
   assertToolSchemaValid("fs.search_text", searchText);
   assertToolSchemaValid("fs.write_text", writeText);
   assertToolSchemaValid("fs.replace_text", replaceText);

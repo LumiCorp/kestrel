@@ -44,10 +44,10 @@ export async function POST(request: Request) {
     const capability = capabilityForMicrosoft365Operation(input.operation);
     const policy = await authorizeMicrosoft365Capability({ ticket, capability });
     connectionId = policy.connection.id;
-    if (
-      policy.approvalMode === "ask" &&
-      request.headers.get("x-kestrel-runtime-approval") !== "confirmed"
-    ) {
+    const runtimeApprovalId = readApprovalId(
+      request.headers.get("x-kestrel-approval-id"),
+    );
+    if (policy.approvalMode === "ask" && runtimeApprovalId === null) {
       throw new Microsoft365PolicyError("MICROSOFT_365_APPROVAL_REQUIRED", 409);
     }
     const accessToken = await getAccessToken({
@@ -71,6 +71,7 @@ export async function POST(request: Request) {
         agentId: ticket.agentId,
         capability,
         approvalMode: policy.approvalMode,
+        ...(runtimeApprovalId === null ? {} : { runtimeApprovalId }),
         loggingMode: policy.loggingMode,
       },
     });
@@ -104,6 +105,11 @@ export async function POST(request: Request) {
     }
     return errorResponse(error, ticket ? 400 : 401);
   }
+}
+
+function readApprovalId(value: string | null) {
+  const normalized = value?.trim();
+  return normalized && normalized.length <= 200 ? normalized : null;
 }
 
 async function executeOperation(

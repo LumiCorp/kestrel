@@ -274,6 +274,28 @@ test("App appends surfaced timeout details to the diagnostics log", async () => 
   assert.match(rawDiagnostics, /internet\.news/u);
 });
 
+test("App serializes terminal identity deduplication across concurrent delivery paths", async () => {
+  const { app, home } = await createAppHarness();
+  const appState = app as unknown as Record<string, unknown>;
+  const append = appState.appendHistoryLine as (
+    role: "assistant",
+    text: string,
+    data: Record<string, unknown>,
+    output: undefined,
+    eventId: string,
+  ) => Promise<void>;
+
+  await Promise.all([
+    append.call(app, "assistant", "Completed once.", { kind: "runtime.terminal.v1" }, undefined, "terminal:run-race"),
+    append.call(app, "assistant", "Completed once.", { kind: "runtime.terminal.v1" }, undefined, "terminal:run-race"),
+  ]);
+
+  const state = (appState.uiStore as UiStore).getState();
+  assert.equal(state.transcript.filter((line) => line.eventId === "terminal:run-race").length, 1);
+  const persisted = await new HistoryStore(home).readTranscript("session-1", 100);
+  assert.equal(persisted.filter((line) => line.eventId === "terminal:run-race").length, 1);
+});
+
 test("bootstrapTuiApp expands ~/ KESTREL_HOME for default stores", async () => {
   const root = await mkdtemp(path.join("/tmp", "kbth-"));
   const cwd = path.join(root, "cwd");
@@ -1385,7 +1407,6 @@ test("/mcp opens the MCP workspace and stores the latest MCP snapshot", async ()
       };
     },
   };
-
   await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
     kind: "command",
     command: "mcp",
@@ -1429,7 +1450,6 @@ test("/child opens delegation review by default", async () => {
       throw new Error(`Unexpected command ${type}`);
     },
   };
-
   await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
     kind: "command",
     command: "child",
@@ -2332,7 +2352,7 @@ test("palette draft actions seed the composer instead of executing immediately",
   assert.equal(next.paletteOpen, false);
 });
 
-test("stop command aliases to operator steer with a default stop message", async () => {
+test("stop command cancels the authoritative active run without synthesizing steering", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -2345,17 +2365,15 @@ test("stop command aliases to operator steer with a default stop message", async
           type: "run.cancelled",
           payload: {
             sessionId: "session-1",
+            result: makeAppCancelledResult("run-stop-1"),
           },
         };
       }
-      return {
-        type: "operator.controlled",
-        payload: {
-          threadId: "session-1",
-        },
-      };
+      assert.equal(type, "operator.thread");
+      return { type: "operator.thread", payload: { view: makeAppConversationView(false) } };
     },
   };
+  installAppActiveConversationView(appState);
 
   await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
     kind: "command",
@@ -2364,15 +2382,11 @@ test("stop command aliases to operator steer with a default stop message", async
   });
 
   assert.equal(sent[0]?.type, "run.cancel");
-  assert.equal(sent[1]?.type, "operator.control");
-  assert.equal(sent[1]?.payload.action, "steer");
-  assert.equal(
-    sent[1]?.payload.message,
-    "Stop your current work immediately and wait for further instructions.",
-  );
+  assert.equal(sent[1]?.type, "operator.thread");
+  assert.equal(sent.some((command) => command.type === "operator.control"), false);
 });
 
-test("stop command cancels the active run before sending steering when the session is running", async () => {
+test("stop command reconciles cancellation before refreshing the thread", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -2382,21 +2396,16 @@ test("stop command cancels the active run before sending steering when the sessi
   appState.client = {
     sendCommand: async (type: string, payload: Record<string, unknown>) => {
       sent.push({ type, payload });
-      return type === "run.cancel"
-        ? {
+      return type === "run.cancel" ? {
             type: "run.cancelled",
             payload: {
               sessionId: "session-1",
+              result: makeAppCancelledResult("run-stop-1"),
             },
-          }
-        : {
-            type: "operator.controlled",
-            payload: {
-              threadId: "session-1",
-            },
-          };
+          } : { type: "operator.thread", payload: { view: makeAppConversationView(false) } };
     },
   };
+  installAppActiveConversationView(appState);
 
   await (appState.handleCommand as (parsed: unknown) => Promise<void>)({
     kind: "command",
@@ -2406,9 +2415,76 @@ test("stop command cancels the active run before sending steering when the sessi
 
   assert.equal(sent[0]?.type, "run.cancel");
   assert.equal(sent[0]?.payload.sessionId, "session-1");
-  assert.equal(sent[1]?.type, "operator.control");
-  assert.equal(sent[1]?.payload.action, "steer");
+  assert.equal(sent[0]?.payload.runId, "run-stop-1");
+  assert.equal(sent[1]?.type, "operator.thread");
+  assert.equal(uiStore.getState().running, false);
+  assert.equal(uiStore.getState().statusLine.includes("cancelled"), true);
 });
+
+function makeAppCancelledResult(runId: string) {
+  return {
+    assistantText: null,
+    output: {
+      status: "FAILED",
+      sessionId: "session-1",
+      runId,
+      quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+      errors: [{ code: "RUN_CANCELLED", message: "Run cancelled." }],
+      telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+    },
+  };
+}
+
+function makeAppConversationView(active: boolean) {
+  return {
+    thread: {
+      threadId: "thread-main:session-1",
+      sessionId: "session-1",
+      title: "Main",
+      status: active ? "RUNNING" : "FAILED",
+      lastRunStatus: active ? undefined : "FAILED",
+      createdAt: "2026-08-17T10:00:00.000Z",
+      updatedAt: "2026-08-17T10:00:01.000Z",
+    },
+    childThreads: [],
+    childBlockerChain: [],
+    conversationTurns: active ? [{
+      turnId: "turn-stop-1",
+      threadId: "thread-main:session-1",
+      sessionId: "session-1",
+      sequence: 1,
+      status: "RUNNING",
+      rootRunId: "run-stop-1",
+      activeRunId: "run-stop-1",
+      startedAt: "2026-08-17T10:00:00.000Z",
+      updatedAt: "2026-08-17T10:00:00.000Z",
+    }] : [{
+      turnId: "turn-stop-1",
+      threadId: "thread-main:session-1",
+      sessionId: "session-1",
+      sequence: 1,
+      status: "FAILED",
+      rootRunId: "run-stop-1",
+      terminalRunId: "run-stop-1",
+      startedAt: "2026-08-17T10:00:00.000Z",
+      completedAt: "2026-08-17T10:00:01.000Z",
+      updatedAt: "2026-08-17T10:00:01.000Z",
+    }],
+    activeRun: active ? { runId: "run-stop-1", status: "RUNNING" } : undefined,
+    followUpQueue: { state: active ? "ready" : "paused", pauseReason: active ? undefined : "cancelled", items: [] },
+  };
+}
+
+function installAppActiveConversationView(appState: Record<string, unknown>): void {
+  (appState.onRunnerEvent as (event: unknown) => void)({
+    id: "operator-thread-stop",
+    type: "operator.thread",
+    ts: "2026-08-17T10:00:00.000Z",
+    payload: {
+      view: makeAppConversationView(true),
+    },
+  });
+}
 
 test("interactive operator commands bypass the queued input drain while a run is active", async () => {
   const { app } = await createAppHarness();
@@ -2509,20 +2585,21 @@ test("interactive operator command failures surface in the TUI instead of escapi
   assert.match(rawHistory, /Input failed: Postgres is not reachable/u);
 });
 
-test("plain submissions during a running turn stay on the queued turn path", async () => {
+test("plain submissions during a running turn reach authoritative conversation routing immediately", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
-  let queued: string | undefined;
+  let handled: string | undefined;
 
   uiStore.patch({ running: true });
-  appState.enqueueInput = (line: string) => {
-    queued = line;
+  appState.handleLine = async (line: string) => {
+    handled = line;
   };
 
   (appState.submitInput as (line: string) => void)("also check the failing test output");
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.equal(queued, "also check the failing test output");
+  assert.equal(handled, "also check the failing test output");
 });
 
 test("queue command strips the control prefix before starting the queued turn", async () => {
@@ -2540,26 +2617,22 @@ test("queue command strips the control prefix before starting the queued turn", 
   assert.equal(turns[0]?.submittedMessage, "also check the failing test output");
 });
 
-test("queue command during a running turn waits for queue drain before starting", async () => {
+test("queue command during a running turn delegates immediately with explicit queue intent", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
-  const turns: Array<{ submittedMessage: string }> = [];
+  const turns: Array<{ submittedMessage: string; queueRequested?: boolean }> = [];
 
   uiStore.patch({ running: true });
-  appState.startActiveTurn = async (input: { submittedMessage: string }) => {
+  appState.startActiveTurn = async (input: { submittedMessage: string; queueRequested?: boolean }) => {
     turns.push(input);
   };
 
   await (appState.handleLine as (line: string) => Promise<void>)("/queue also check the failing test output");
 
-  assert.equal(turns.length, 0);
-
-  uiStore.patch({ running: false });
-  await (appState.drainQueue as () => Promise<void>).call(app);
-
   assert.equal(turns.length, 1);
   assert.equal(turns[0]?.submittedMessage, "also check the failing test output");
+  assert.equal(turns[0]?.queueRequested, true);
 });
 
 test("delegation workspace renders result-only error and reference child outcomes", async () => {
@@ -3759,6 +3832,7 @@ test("natural-language mode switches are forwarded for runtime intent classifica
         type: "run.completed",
         payload: {
           result: {
+            assistantText: null,
             output: {
               status: "COMPLETED",
               sessionId: "session-1",
@@ -3821,11 +3895,11 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
   });
 
   let capturedCommandType: string | undefined;
-  let capturedTurn: Record<string, unknown> | undefined;
+  let capturedPayload: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
       capturedCommandType = type;
-      capturedTurn = payload.turn;
+      capturedPayload = payload;
       return {
         type: "run.completed",
         payload: {
@@ -3863,11 +3937,10 @@ test("mode command resumes blocked runs with an explicit resume flag", async () 
     args: ["build"],
   });
 
-  assert.equal(capturedCommandType, "conversation.message.submit");
-  assert.equal(capturedTurn?.eventType, undefined);
-  assert.equal(capturedTurn?.message, "/mode build");
-  assert.equal(capturedTurn?.resumeBlockedRun, undefined);
-  assert.equal(capturedTurn?.resumeRequestId, undefined);
+  assert.equal(capturedCommandType, "operator.control");
+  assert.equal(capturedPayload?.action, "reply");
+  assert.equal(capturedPayload?.requestId, "request-mode-command");
+  assert.equal(capturedPayload?.message, "/mode build");
 
   const rawHistory = await readFile(historyPath, "utf8");
   assert.match(rawHistory, /Mode set to Build\. Resuming blocked run\./u);
@@ -4094,7 +4167,7 @@ test("run completion appends finalize provenance notice when reporting grounding
   assert.match(rawHistory, /model_authored are narrative and not runtime-verified facts\./u);
 });
 
-test("continuation grant history line is driven by runtime output", async () => {
+test("continuation grant history line confirms resumption without raw counters", async () => {
   const { app, historyPath } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
@@ -4152,7 +4225,8 @@ test("continuation grant history line is driven by runtime output", async () => 
   await (appState.handleLine as (line: string) => Promise<void>)("go on");
 
   const rawHistory = await readFile(historyPath, "utf8");
-  assert.match(rawHistory, /Granted 10 more steps\. Resuming run\./u);
+  assert.match(rawHistory, /Continuation approved\. Resuming from the checkpoint\./u);
+  assert.doesNotMatch(rawHistory, /10 more steps/u);
 });
 
 test("assembly command resolves the pending proposal id from operator inbox when omitted", async () => {
@@ -4311,6 +4385,7 @@ test("non-continuation text during an ordinary wait leaves routing to the runtim
         type: "run.completed",
         payload: {
           result: {
+            assistantText: null,
             output: {
               status: "COMPLETED",
               sessionId: "session-1",
@@ -4370,11 +4445,11 @@ test("exact continuation text during ordinary waits is routed by the runtime", a
   });
 
   let capturedCommandType: string | undefined;
-  let capturedTurn: Record<string, unknown> | undefined;
+  let capturedPayload: Record<string, unknown> | undefined;
   appState.client = {
-    sendCommand: async (type: string, payload: { turn: Record<string, unknown> }) => {
+    sendCommand: async (type: string, payload: Record<string, unknown>) => {
       capturedCommandType = type;
-      capturedTurn = payload.turn;
+      capturedPayload = payload;
       return {
         type: "run.completed",
         payload: {
@@ -4408,26 +4483,25 @@ test("exact continuation text during ordinary waits is routed by the runtime", a
 
   await (appState.handleLine as (line: string) => Promise<void>)("continue");
 
-  assert.equal(capturedCommandType, "conversation.message.submit");
-  assert.equal(capturedTurn?.eventType, undefined);
-  assert.equal(capturedTurn?.message, "continue");
-  assert.equal(capturedTurn?.resumeBlockedRun, undefined);
-  assert.equal(capturedTurn?.resumeRequestId, undefined);
+  assert.equal(capturedCommandType, "operator.control");
+  assert.equal(capturedPayload?.action, "reply");
+  assert.equal(capturedPayload?.requestId, "request-continuation");
+  assert.equal(capturedPayload?.message, "continue");
 });
 
-test("ordinary approval text does not forge an exact approval reply", async () => {
+test("ordinary approval text does not forge or persist an approval reply", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
 
   await (appState.setActiveSessionState as (patch: Record<string, unknown>) => Promise<void>)({
     pendingWaitFor: {
       kind: "approval",
-      eventType: "user.approval",
+      eventType: "runtime.assembly_change",
       interaction: {
         version: "v1",
         requestId: "request-approval",
         kind: "approval",
-        eventType: "user.approval",
+        eventType: "runtime.assembly_change",
         prompt: "Approve?",
       },
       metadata: {
@@ -4474,14 +4548,19 @@ test("ordinary approval text does not forge an exact approval reply", async () =
       };
     },
   };
+  (appState.uiStore as UiStore).patch({ chatDraft: "approve" });
+  const transcriptLength = (appState.uiStore as UiStore).getState().transcript.length;
 
   await (appState.handleLine as (line: string) => Promise<void>)("approve");
 
-  assert.equal(capturedCommandType, "conversation.message.submit");
-  assert.equal(capturedTurn?.eventType, undefined);
-  assert.equal(capturedTurn?.message, "approve");
-  assert.equal(capturedTurn?.resumeBlockedRun, undefined);
-  assert.equal(capturedTurn?.resumeRequestId, undefined);
+  assert.equal(capturedCommandType, undefined);
+  assert.equal(capturedTurn, undefined);
+  assert.equal((appState.uiStore as UiStore).getState().chatDraft, "approve");
+  assert.equal((appState.uiStore as UiStore).getState().transcript.length, transcriptLength);
+  assert.match(
+    (appState.uiStore as UiStore).getState().statusLine,
+    /explicit \/approve or \/reject/u,
+  );
 });
 
 test("continuation replies apply manual compaction when adaptation already recommends compact", async () => {
@@ -4626,7 +4705,7 @@ test("continuation-like replies do not synthesize a grant line without runtime c
   assert.doesNotMatch(rawHistory, /Granted(?: \d+)? more steps\. Resuming run\./u);
 });
 
-test("run.agent_progress appends durable assistant progress transcript lines", async () => {
+test("run.agent_progress reduces into shared conversation activity", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -4647,24 +4726,15 @@ test("run.agent_progress appends durable assistant progress transcript lines", a
     },
   });
 
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const state = uiStore.getState();
-    const last = state.transcript[state.transcript.length - 1];
-    if (last?.text === "Evaluating whether context compaction is needed before tool execution.") {
-      assert.equal(last.role, "assistant");
-      assert.equal(last.data?.agentProgress, true);
-      assert.equal(last.data?.label, "Agent progress");
-      assert.equal(last.data?.runId, "run-reasoning-1");
-      assert.equal(last.data?.seq, 7);
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-
-  assert.fail("expected reasoning line to be appended to transcript");
+  const activity = uiStore.getState().conversationActivity;
+  assert.equal(activity.length, 1);
+  assert.equal(activity[0]?.kind, "agent_progress");
+  assert.equal(activity[0]?.text, "Evaluating whether context compaction is needed before tool execution.");
+  assert.equal(activity[0]?.runId, "run-reasoning-1");
+  assert.equal(activity[0]?.sequence, 7);
 });
 
-test("run.agent_progress coalesces bursty durable transcript updates", async () => {
+test("run.agent_progress coalesces bursty shared activity without history writes", async () => {
   const { app } = await createAppHarness();
   const appState = app as unknown as Record<string, unknown>;
   const uiStore = appState.uiStore as UiStore;
@@ -4714,24 +4784,13 @@ test("run.agent_progress coalesces bursty durable transcript updates", async () 
 
   releaseAppend();
 
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const transcript = uiStore.getState().transcript;
-    const last = transcript[transcript.length - 1];
-    if (last?.text === "Reasoning update 40") {
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-
   const state = uiStore.getState();
-  const reasoningLines = state.transcript.filter((line) => line.data?.agentProgress === true);
   assert.equal(state.runLogs.filter((line) => line.eventName === "reasoning_update").length, 0);
-  assert.equal(reasoningLines.length, 2);
-  assert.equal(reasoningLines[0]?.text, "Reasoning update 1");
-  assert.equal(reasoningLines[1]?.text, "Reasoning update 40");
-  assert.equal(reasoningLines[1]?.data?.seq, 40);
-  assert.equal(appendCalls, 2);
-  assert.equal(maxConcurrentAppends, 1);
+  assert.equal(state.conversationActivity.length, 1);
+  assert.equal(state.conversationActivity[0]?.text, "Reasoning update 40");
+  assert.equal(state.conversationActivity[0]?.sequence, 40);
+  assert.equal(appendCalls, 0);
+  assert.equal(maxConcurrentAppends, 0);
 });
 
 test("chat resize and append preserve tail visibility using shared chat layout budget", async () => {

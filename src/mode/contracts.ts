@@ -13,6 +13,76 @@ export type ApprovalCapabilityClass =
   | "delegation.control"
   | "external.confirm";
 
+export type ToolApprovalMode = "auto" | "ask" | "deny";
+export type ToolApprovalReasonCode =
+  | "tool_minimum"
+  | "environment_policy"
+  | "project_restriction"
+  | "subject_restriction"
+  | "runtime_strict";
+export type ToolApprovalAuthorityKind =
+  | "runtime_policy"
+  | "hosted_mcp_grant"
+  | "hosted_app_policy";
+
+export interface ToolApprovalDispositionV1 {
+  mode: ToolApprovalMode;
+  reasonCode: ToolApprovalReasonCode;
+  authority: {
+    kind: ToolApprovalAuthorityKind;
+    revision: string;
+  };
+}
+
+export interface ToolApprovalPolicyEvidenceV1 {
+  environment: ToolApprovalMode;
+  project?: ToolApprovalMode | undefined;
+  subject?: ToolApprovalMode | undefined;
+  minimum: Exclude<ToolApprovalMode, "deny">;
+}
+
+export function resolveToolApprovalDispositionV1(input: {
+  environment: ToolApprovalMode;
+  project?: ToolApprovalMode | undefined;
+  subject?: ToolApprovalMode | undefined;
+  minimum?: Exclude<ToolApprovalMode, "deny"> | undefined;
+  strictApprovalPerCall?: boolean | undefined;
+  authority: ToolApprovalDispositionV1["authority"];
+}): ToolApprovalDispositionV1 {
+  let mode = input.environment;
+  let reasonCode: ToolApprovalReasonCode = "environment_policy";
+  if (isStricterApprovalMode(input.project, mode)) {
+    mode = input.project!;
+    reasonCode = "project_restriction";
+  }
+  if (isStricterApprovalMode(input.subject, mode)) {
+    mode = input.subject!;
+    reasonCode = "subject_restriction";
+  }
+  if (input.minimum === "ask" && mode === "auto") {
+    mode = "ask";
+    reasonCode = "tool_minimum";
+  }
+  if (input.strictApprovalPerCall === true && mode === "auto") {
+    mode = "ask";
+    reasonCode = "runtime_strict";
+  }
+  return { mode, reasonCode, authority: { ...input.authority } };
+}
+
+function isStricterApprovalMode(
+  candidate: ToolApprovalMode | undefined,
+  current: ToolApprovalMode,
+) {
+  if (candidate === undefined) return false;
+  const strictness: Record<ToolApprovalMode, number> = {
+    auto: 0,
+    ask: 1,
+    deny: 2,
+  };
+  return strictness[candidate] > strictness[current];
+}
+
 export interface ExecutionPolicyOverride {
   toolClassPolicy?: Partial<Record<ToolExecutionClass, boolean>> | undefined;
   capabilityPolicy?: Partial<Record<ApprovalCapabilityClass, boolean>> | undefined;

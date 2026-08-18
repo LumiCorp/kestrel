@@ -264,11 +264,11 @@ export async function cancelInterruptedKestrelOneExecution(input: {
       for await (const event of stream) {
         const terminalStatus = runtimeTerminalStatus(event.type);
         await settleEnvironmentExecutionRuntimeEvent({
-      organizationId: input.organizationId,
-      executionId: input.executionId,
+          organizationId: input.organizationId,
+          executionId: input.executionId,
           eventId: event.id,
           ...(terminalStatus !== undefined ? { terminalStatus } : {}),
-    });
+        });
         if (terminalStatus !== undefined) return terminalStatus === "cancelled";
       }
       return false;
@@ -457,16 +457,16 @@ function createModelAwareKestrelOneAgent(input: {
           await input.onExecutionRouted?.(executionId);
           const projectSkills =
             route.provider !== "desktop" && route.projectId
-            ? await synchronizeProjectSkills({
-                organizationId: input.organizationId,
-                projectId: route.projectId,
-                actorUserId: input.actorUserId,
-                route: {
-                  baseUrl: route.baseUrl,
-                  authToken: route.authToken,
-                },
-              })
-            : null;
+              ? await synchronizeProjectSkills({
+                  organizationId: input.organizationId,
+                  projectId: route.projectId,
+                  actorUserId: input.actorUserId,
+                  route: {
+                    baseUrl: route.baseUrl,
+                    authToken: route.authToken,
+                  },
+                })
+              : null;
           if (runtimeModel && isKestrelOneManagedRuntimeModel(runtimeModel)) {
             await activateEnvironmentModelGrant({
               organizationId: input.organizationId,
@@ -538,6 +538,7 @@ function createModelAwareKestrelOneAgent(input: {
               runId: route.runId,
               environmentId: route.environmentId,
               effectiveCapabilities: route.effectiveCapabilities,
+              approvalPolicies: route.approvalPolicies,
               reasoningPolicy: route.reasoningPolicy,
               ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
             },
@@ -700,6 +701,9 @@ export async function resolveHostedKestrelExecutionProfile(input: {
     organizationId?: string | undefined;
     environmentId: string;
     effectiveCapabilities: string[];
+    approvalPolicies?:
+      | import("@/lib/agent/kestrel-tool-profile").KestrelOneCapabilityApprovalPolicyEvidence[]
+      | undefined;
     reasoningPolicy?: RunnerProfile["reasoning"] | undefined;
     ociMcpEgressBindings?: ResolvedOciMcpEgressBindingV1[] | undefined;
   };
@@ -719,6 +723,7 @@ export async function resolveHostedKestrelExecutionProfile(input: {
   const toolConfiguration = resolveKestrelOneToolProfileConfiguration({
     availableToolNames: [...KESTREL_ONE_HOSTED_RUNTIME_TOOL_NAMES],
     effectiveCapabilities: input.route.effectiveCapabilities,
+    approvalPolicies: input.route.approvalPolicies,
   });
   try {
     return await input.client.resolveExecutionProfile(
@@ -729,6 +734,8 @@ export async function resolveHostedKestrelExecutionProfile(input: {
           additionalToolNames: toolConfiguration.additionalToolNames,
           kestrelOneAppApprovalModes:
             toolConfiguration.kestrelOneAppApprovalModes,
+          kestrelOneAppApprovalPolicies:
+            toolConfiguration.kestrelOneAppApprovalPolicies,
           ...(input.route.reasoningPolicy !== undefined
             ? { reasoning: input.route.reasoningPolicy }
             : {}),
@@ -899,16 +906,16 @@ export async function generateKestrelOneExternalReply(input: {
   try {
     const projectSkills =
       route.provider !== "desktop" && route.projectId
-      ? await synchronizeProjectSkills({
-          organizationId: input.organizationId,
-          projectId: route.projectId,
-          actorUserId: input.actor.actorId,
-          route: {
-            baseUrl: route.baseUrl,
-            authToken: route.authToken,
-          },
-        })
-      : null;
+        ? await synchronizeProjectSkills({
+            organizationId: input.organizationId,
+            projectId: route.projectId,
+            actorUserId: input.actor.actorId,
+            route: {
+              baseUrl: route.baseUrl,
+              authToken: route.authToken,
+            },
+          })
+        : null;
     if (route.provider !== "desktop") {
       await updateEnvironmentExecutionStatus({
         organizationId: input.organizationId,
@@ -948,6 +955,7 @@ export async function generateKestrelOneExternalReply(input: {
         runId: route.runId,
         environmentId: route.environmentId,
         effectiveCapabilities: route.effectiveCapabilities,
+        approvalPolicies: route.approvalPolicies,
         reasoningPolicy: route.reasoningPolicy,
         ociMcpEgressBindings: route.mcpPolicy?.ociEgressBindings,
       },
@@ -1060,11 +1068,11 @@ function createExecutionTransportObserver(input: {
   return (event: { type: string; [key: string]: unknown }) => {
     process.stdout.write(
       `${JSON.stringify({
-      ...event,
-      type: `agent.runtime.${event.type}`,
-      organizationId: input.organizationId,
-      executionId: input.executionId,
-      occurredAt: new Date().toISOString(),
+        ...event,
+        type: `agent.runtime.${event.type}`,
+        organizationId: input.organizationId,
+        executionId: input.executionId,
+        occurredAt: new Date().toISOString(),
       })}\n`,
     );
   };
@@ -1268,13 +1276,7 @@ export async function createKestrelOneRecoveredCompletionResponse(
     organizationId: input.organizationId,
     executionId: input.executionId,
   });
-  if (
-    !(
-      route?.runtimeRunId &&
-      route.lastRuntimeEventId &&
-      route.completedAt
-    )
-  ) {
+  if (!(route?.runtimeRunId && route.lastRuntimeEventId && route.completedAt)) {
     throw connectionInterruptedError(
       "The completed agent result is unavailable for durable recovery.",
       "RUNNER_TERMINAL_RESULT_UNAVAILABLE",

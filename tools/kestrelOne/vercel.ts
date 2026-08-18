@@ -140,38 +140,42 @@ async function invokeVercel(
 		toolName: string;
 	},
 ) {
-	const approval =
-		context.kestrelOne?.appApprovalModes?.[input.toolName] === "ask"
-			? "confirmed"
-			: "auto";
-	const transport = resolveKestrelOneAppRequest(
-		context,
-		`/api/runtime/apps/vercel/${encodeURIComponent(input.capability)}/${approval}/${input.path}`,
-	);
-	const response = await (context.fetchImpl ?? fetch)(transport.url, {
-		method: "POST",
-		headers: {
-			authorization: `Bearer ${transport.authorization}`,
-			"content-type": "application/json",
-		},
-		body: JSON.stringify(input.body),
-	});
-	const body: unknown = await response.json().catch(() => ({}));
-	await throwIfExecutionAuthorizationRejected({ response, body, toolName: input.toolName });
-	if (!response.ok) {
-		throw new RuntimeFailure(
-			"KESTREL_ONE_VERCEL_ACTION_FAILED",
-			`Kestrel One rejected ${input.toolName} with HTTP ${response.status}.`,
-			{
-				subsystem: "tooling",
-				toolName: input.toolName,
-				status: response.status,
-				classification: response.status >= 500 ? "runtime" : "policy",
-				recoverable: response.status >= 500 || response.status === 429,
-			},
-		);
-	}
-	return body;
+  const approval =
+    context.kestrelOne?.appApprovalModes?.[input.toolName] === "ask"
+      ? `confirmed:${requireContextValue(context.runtime?.approvalId, "Runtime Vercel approval ID")}`
+      : "auto";
+  const transport = resolveKestrelOneAppRequest(
+    context,
+    `/api/runtime/apps/vercel/${encodeURIComponent(input.capability)}/${encodeURIComponent(approval)}/${input.path}`,
+  );
+  const response = await (context.fetchImpl ?? fetch)(transport.url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${transport.authorization}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(input.body),
+  });
+  const body: unknown = await response.json().catch(() => ({}));
+  await throwIfExecutionAuthorizationRejected({
+    response,
+    body,
+    toolName: input.toolName,
+  });
+  if (!response.ok) {
+    throw new RuntimeFailure(
+      "KESTREL_ONE_VERCEL_ACTION_FAILED",
+      `Kestrel One rejected ${input.toolName} with HTTP ${response.status}.`,
+      {
+        subsystem: "tooling",
+        toolName: input.toolName,
+        status: response.status,
+        classification: response.status >= 500 ? "runtime" : "policy",
+        recoverable: response.status >= 500 || response.status === 429,
+      },
+    );
+  }
+  return body;
 }
 
 function requireContextValue(value: string | undefined, label: string) {
