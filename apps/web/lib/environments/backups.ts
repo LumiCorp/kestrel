@@ -6,7 +6,7 @@ import {
   KestrelSdkError,
   type KestrelRequestContext,
 } from "@kestrel-agents/sdk/runner";
-import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
+import { WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { requireCurrentEnvironmentRuntime } from "./runtime-channel";
@@ -184,14 +184,14 @@ export async function createWorkspaceBackup(input: {
         appName: environment.flyAppName,
         machineId: exportMachine.id,
         state: "started",
-        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+        timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
       });
     }
     await provider.waitForMachineHealth({
       appName: environment.flyAppName,
       machineId: exportMachine.id,
       checkName: "workspace",
-      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+      timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
     });
     const route = createEnvironmentMachineRoute({
       organizationId: input.organizationId,
@@ -1697,14 +1697,14 @@ export async function restoreWorkspaceBackup(input: {
         appName: flyAppName,
         machineId: replacementMachine.id,
         state: "started",
-        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+        timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
       });
     }
     await provider.waitForMachineHealth({
       appName: flyAppName,
       machineId: replacementMachine.id,
       checkName: "workspace",
-      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+      timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
     });
     const replacementRoute = () =>
       createEnvironmentMachineRoute({
@@ -1742,13 +1742,13 @@ export async function restoreWorkspaceBackup(input: {
         appName: flyAppName,
         machineId: replacementMachine.id,
         state: "started",
-        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+        timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
       });
       await provider.waitForMachineHealth({
         appName: flyAppName,
         machineId: replacementMachine.id,
         checkName: "workspace",
-        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+        timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
       });
     }
     await waitForWorkspaceService(replacementRoute);

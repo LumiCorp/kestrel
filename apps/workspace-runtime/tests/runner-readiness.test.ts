@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import {
   createWorkspaceRunnerReadiness,
+  waitForWorkspaceRunnerHealth,
   type WorkspaceRunnerProcess,
   type WorkspaceRunnerReadinessEvent,
   workspaceRunnerHealthStatus,
@@ -68,22 +69,21 @@ test(
 );
 
 test(
-  "Workspace runner loss downgrades health and permits one replacement start",
+  "Unexpected Workspace runner exit downgrades health and exits nonzero",
   async () => {
     const firstRunner = fakeRunner();
-    const secondRunner = fakeRunner();
-    const runners = [firstRunner, secondRunner];
     let starts = 0;
+    const fatalExitCodes: number[] = [];
     const readiness = createWorkspaceRunnerReadiness({
       startRunner: () => {
-        const runner = runners[starts];
         starts += 1;
-        assert.ok(runner);
-        return runner;
+        return firstRunner;
       },
       waitUntilHealthy: async () => {},
       probeHealth: async () => {},
-      onFatalExit() {},
+      onFatalExit(code) {
+        fatalExitCodes.push(code);
+      },
       log() {},
     });
 
@@ -93,12 +93,8 @@ test(
       status: 503,
       code: "WORKSPACE_RUNNER_UNAVAILABLE",
     });
-    await Promise.all([readiness.ensureReady(), readiness.ensureReady()]);
-    assert.equal(starts, 2);
-    assert.deepEqual(workspaceRunnerHealthStatus(readiness.state()), {
-      status: 200,
-      code: null,
-    });
+    assert.equal(starts, 1);
+    assert.deepEqual(fatalExitCodes, [1]);
   },
 );
 
@@ -249,3 +245,39 @@ test(
     await stopping;
   },
 );
+
+for (const readyAtMs of [122_000, 299_000]) {
+  test(`Workspace runner recovery remains retryable until ${readyAtMs / 1000} seconds`, async () => {
+    let nowMs = 0;
+    const ready = await waitForWorkspaceRunnerHealth({
+      probe: async () => {
+        if (nowMs < readyAtMs) throw new Error("store is recovering");
+      },
+      now: () => nowMs,
+      sleep: async (delayMs) => {
+        nowMs += delayMs;
+      },
+      pollIntervalMs: 1_000,
+    });
+
+    assert.equal(ready, true);
+    assert.equal(nowMs, readyAtMs);
+  });
+}
+
+test("Workspace runner recovery fails closed at its 300 second deadline", async () => {
+  let nowMs = 0;
+  const ready = await waitForWorkspaceRunnerHealth({
+    probe: async () => {
+      throw new Error("store is still recovering");
+    },
+    now: () => nowMs,
+    sleep: async (delayMs) => {
+      nowMs += delayMs;
+    },
+    pollIntervalMs: 1_000,
+  });
+
+  assert.equal(ready, false);
+  assert.equal(nowMs, 300_000);
+});

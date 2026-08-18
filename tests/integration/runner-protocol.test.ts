@@ -44,6 +44,278 @@ function completedOutput(sessionId: string, runId: string) {
   };
 }
 
+function kestrelOneProfile(id: string, runId: string): TuiProfile {
+  return {
+    ...profile,
+    id,
+    label: `Kestrel One ${id}`,
+    sessionPrefix: id,
+    modelProvider: "openrouter",
+    model: "openai/gpt-5.4",
+    modelCredential: {
+      source: "kestrel-one",
+      runId,
+      organizationId: "org-acme",
+      environmentId: "env-production",
+      gatewayId: "gateway-openrouter",
+      rawModelId: "openai/gpt-5.4",
+      provider: "openrouter",
+    },
+  };
+}
+
+test("completed Kestrel One runs retire every execution-scoped runtime", async () => {
+  const writer = new EventWriter(new PassThrough());
+  let runtimeCount = 0;
+  let closeCount = 0;
+  const host = new RunnerHost(writer, () => {
+    runtimeCount += 1;
+    return {
+      runTurn: async (turn) => ({
+        assistantText: "Done.",
+        output: completedOutput(turn.sessionId, `runtime-${turn.sessionId}`),
+      }),
+      close: async () => {
+        closeCount += 1;
+      },
+    };
+  });
+
+  for (let index = 0; index < 101; index += 1) {
+    await host.runStart(
+      `command-${index}`,
+      {
+        profile: kestrelOneProfile(`profile-${index}`, `credential-${index}`),
+        turn: {
+          sessionId: `session-${index}`,
+          message: "Run",
+          eventType: "user.message",
+        },
+      },
+      { tenantId: "org-acme" },
+    );
+  }
+
+  assert.equal(runtimeCount, 101);
+  assert.equal(closeCount, 101);
+  await host.close();
+  assert.equal(closeCount, 101);
+});
+
+test("stable profiles remain cached after completed runs", async () => {
+  const writer = new EventWriter(new PassThrough());
+  let runtimeCount = 0;
+  let closeCount = 0;
+  const host = new RunnerHost(writer, () => {
+    runtimeCount += 1;
+    return {
+      runTurn: async (turn) => ({
+        assistantText: "Done.",
+        output: completedOutput(turn.sessionId, `run-${turn.sessionId}`),
+      }),
+      close: async () => {
+        closeCount += 1;
+      },
+    };
+  });
+
+  await host.runStart("stable-1", {
+    profile,
+    turn: { sessionId: "stable-1", message: "One", eventType: "user.message" },
+  });
+  await host.runStart("stable-2", {
+    profile,
+    turn: { sessionId: "stable-2", message: "Two", eventType: "user.message" },
+  });
+
+  assert.equal(runtimeCount, 1);
+  assert.equal(closeCount, 0);
+  await host.close();
+  assert.equal(closeCount, 1);
+});
+
+test("shared Kestrel One runtimes retire only after their final active run", async () => {
+  const writer = new EventWriter(new PassThrough());
+  const releases = new Map<string, () => void>();
+  let closeCount = 0;
+  const managedProfile = kestrelOneProfile("shared-managed", "shared-credential");
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async (turn) => {
+      await new Promise<void>((resolve) => {
+        releases.set(turn.sessionId, resolve);
+      });
+      return {
+        assistantText: "Done.",
+        output: completedOutput(turn.sessionId, `run-${turn.sessionId}`),
+      };
+    },
+    close: async () => {
+      closeCount += 1;
+    },
+  }));
+
+  const first = host.runStart(
+    "shared-1",
+    {
+      profile: managedProfile,
+      turn: { sessionId: "shared-1", message: "One", eventType: "user.message" },
+    },
+    { tenantId: "org-acme" },
+  );
+  const second = host.runStart(
+    "shared-2",
+    {
+      profile: managedProfile,
+      turn: { sessionId: "shared-2", message: "Two", eventType: "user.message" },
+    },
+    { tenantId: "org-acme" },
+  );
+  await waitForCondition(() => releases.size === 2, 1_000);
+
+  releases.get("shared-1")?.();
+  await first;
+  assert.equal(closeCount, 0);
+
+  releases.get("shared-2")?.();
+  await second;
+  assert.equal(closeCount, 1);
+  await host.close();
+  assert.equal(closeCount, 1);
+});
+
+test("failed Kestrel One jobs retire their execution-scoped runtime", async () => {
+  const writer = new EventWriter(new PassThrough());
+  let closeCount = 0;
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => {
+      throw Object.assign(new Error("job failed"), { code: "JOB_FAILED" });
+    },
+    describeSession: async (sessionId) => ({
+      sessionId,
+      version: 1,
+      threadId: sessionId,
+    }),
+    close: async () => {
+      closeCount += 1;
+    },
+  }));
+
+  await host.jobRun("managed-job", {
+    profile: kestrelOneProfile("managed-job", "managed-job-credential"),
+    input: {
+      version: "job_input_v1",
+      turn: {
+        sessionId: "managed-job-session",
+        message: "Run job",
+        eventType: "job.run",
+      },
+    },
+  });
+
+  assert.equal(closeCount, 1);
+  await host.close();
+  assert.equal(closeCount, 1);
+});
+
+test("cancelled Kestrel One runs retire their execution-scoped runtime", async () => {
+  const writer = new EventWriter(new PassThrough());
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  let closeCount = 0;
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async (_turn, options) => {
+      markStarted();
+      return await new Promise<RunTurnResult>((_resolve, reject) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () => reject(Object.assign(new Error("cancelled"), { code: "RUN_CANCELLED" })),
+          { once: true },
+        );
+      });
+    },
+    close: async () => {
+      closeCount += 1;
+    },
+  }));
+  const managedProfile = kestrelOneProfile(
+    "managed-cancel",
+    "managed-cancel-credential",
+  );
+  const running = host.runStart(
+    "managed-cancel",
+    {
+      profile: managedProfile,
+      turn: {
+        sessionId: "managed-cancel-session",
+        message: "Run",
+        eventType: "user.message",
+      },
+    },
+    { tenantId: "org-acme" },
+  );
+  await started;
+  await host.runCancel("cancel-managed", {
+    sessionId: "managed-cancel-session",
+  });
+  await running;
+
+  assert.equal(closeCount, 1);
+  await host.close();
+  assert.equal(closeCount, 1);
+});
+
+test("accepted Kestrel One operator actions retire after terminal completion", async () => {
+  const writer = new EventWriter(new PassThrough());
+  let resolveCompletion!: (result: RunTurnResult) => void;
+  const completion = new Promise<RunTurnResult>((resolve) => {
+    resolveCompletion = resolve;
+  });
+  let closeCount = 0;
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => {
+      throw new Error("runTurn is not used by accepted operator controls");
+    },
+    performAcceptedOperatorAction: async (input) => ({
+      accepted: {
+        sessionId: "managed-operator-session",
+        threadId: input.threadId,
+        disposition: "accepted",
+        runId: "managed-operator-run",
+      },
+      completion,
+    }),
+    close: async () => {
+      closeCount += 1;
+    },
+  }));
+  const managedProfile = kestrelOneProfile(
+    "managed-operator",
+    "managed-operator-credential",
+  );
+
+  await host.executeCommand(() => host.operatorControl(
+    "managed-operator-command",
+    {
+      action: "reply",
+      threadId: "managed-operator-thread",
+      message: "Continue",
+      completionMode: "accepted",
+    },
+    { profile: managedProfile, tenantId: "org-acme" },
+  ));
+  assert.equal(closeCount, 0);
+
+  resolveCompletion({
+    assistantText: "Done.",
+    output: completedOutput("managed-operator-session", "managed-operator-run"),
+  });
+  await waitForCondition(() => closeCount === 1, 1_000);
+  await host.close();
+  assert.equal(closeCount, 1);
+});
+
 test("default runner progress callback forwards only live-only updates", () => {
   const forwarded: ProgressUpdateV1[] = [];
   const listener = createLiveOnlyProgressListener((update) => {

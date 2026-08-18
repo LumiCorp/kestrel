@@ -1,7 +1,7 @@
 import {
   ENVIRONMENT_ROUTER_AUDIENCE,
   signEnvironmentExecutionTicket,
-  WORKSPACE_READINESS_TIMEOUT_MS,
+  WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_MS,
 } from "@lumi/kestrel-environment-auth";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { isGatewayCredentialReadyForRuntime } from "@/lib/ai/gateway-credential-health";
@@ -620,7 +620,7 @@ async function waitForExecutionResources(input: {
   owningLifecycleOperationIds?: readonly string[] | undefined;
   onProgress?: (progress: EnvironmentActivationProgress) => void;
 }) {
-  const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
+  const deadline = Date.now() + WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_MS;
   let lastDetail = "";
   let startRequested = false;
   while (Date.now() < deadline) {

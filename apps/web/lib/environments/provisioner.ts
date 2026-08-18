@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
+import { WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { classifyDbError } from "@/lib/db/runtime";
 import {
@@ -1018,14 +1018,14 @@ export class EnvironmentProvisioner {
           appName: input.appName,
           machineId: input.machineId,
           state: "started",
-          timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+          timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
         });
       }
       await this.provider.waitForMachineHealth({
         appName: input.appName,
         machineId: input.machineId,
         checkName: "workspace",
-        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+        timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
       });
       if (input.restoreStopped) {
         await this.repository.setWorkspaceStopping(input.workspaceId);
@@ -1170,7 +1170,7 @@ export class EnvironmentProvisioner {
           appName: environment.flyAppName,
           machineId: machine.id,
           state: "started",
-          timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+          timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
         });
       }
       await this.repository.updateOperationStage({
@@ -1185,7 +1185,7 @@ export class EnvironmentProvisioner {
         appName: environment.flyAppName,
         machineId: machine.id,
         checkName: "workspace",
-        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+        timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
       });
       await this.repository.completeWorkspace({
         workspaceId: workspace.id,
@@ -1264,7 +1264,7 @@ export class EnvironmentProvisioner {
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,
       state: "started",
-      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+      timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
     });
     await this.repository.updateOperationStage({
       operationId: operation.id,
@@ -1274,7 +1274,7 @@ export class EnvironmentProvisioner {
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,
       checkName: "workspace",
-      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+      timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
     });
     await this.repository.completeWorkspaceStart(workspace.id);
     await this.repository.completeOperation({
@@ -1462,7 +1462,7 @@ export class EnvironmentProvisioner {
         appName: environment.flyAppName,
         machineId: workspace.flyMachineId,
         state: "started",
-        timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+        timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
       });
     }
     await this.repository.updateOperationStage({
@@ -1473,7 +1473,7 @@ export class EnvironmentProvisioner {
       appName: environment.flyAppName,
       machineId: workspace.flyMachineId,
       checkName: "workspace",
-      timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+      timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
     });
     await this.repository.completeWorkspaceRebuild({
       workspaceId: workspace.id,

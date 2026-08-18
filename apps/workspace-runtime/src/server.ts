@@ -3,13 +3,13 @@ import {
   KestrelClient,
   type KestrelRequestContext
 } from "@kestrel-agents/sdk/runner";
-import { WORKSPACE_READINESS_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
 import {
   createServer,
   request as httpRequest,
   type IncomingMessage,
   type ServerResponse
 } from "node:http";
+import type { Socket } from "node:net";
 import { createReadStream } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -43,8 +43,13 @@ import {
 import { resolveRunnerServiceEntrypoint } from "./runner-entrypoint.js";
 import {
   createWorkspaceRunnerReadiness,
+  waitForWorkspaceRunnerHealth,
   workspaceRunnerHealthStatus
 } from "./runner-readiness.js";
+import {
+  createWorkspaceShutdownCoordinator,
+  type WorkspaceShutdownMode,
+} from "./shutdown.js";
 import {
   authorizeWorkspaceRequest,
   resolveWorkspacePath,
@@ -93,7 +98,7 @@ const runnerReadiness = createWorkspaceRunnerReadiness({
   waitUntilHealthy: waitForRunnerService,
   probeHealth: probeRunnerService,
   onFatalExit: (code) => {
-    void shutdown(code);
+    void shutdown(code, "fatal");
   },
   log: (event) => {
     process.stdout.write(
@@ -581,6 +586,12 @@ const server = createServer(async (request, response) => {
   }
 });
 
+const workspaceSockets = new Set<Socket>();
+server.on("connection", (socket) => {
+  workspaceSockets.add(socket);
+  socket.once("close", () => workspaceSockets.delete(socket));
+});
+
 server.listen(config.port, config.listenHost);
 void runnerReadiness.ensureReady().catch(() => {});
 server.on("upgrade", (request, socket, head) => {
@@ -639,10 +650,10 @@ const idleTimer = setInterval(() => {
 idleTimer.unref();
 
 process.on("SIGTERM", () => {
-  void shutdown(0);
+  void shutdown(0, "normal");
 });
 process.on("SIGINT", () => {
-  void shutdown(0);
+  void shutdown(0, "normal");
 });
 
 function startRunner(authToken: string): ChildProcess {
@@ -725,16 +736,12 @@ async function withRunnerClient<T>(
 }
 
 async function waitForRunner(client: KestrelClient) {
-  const deadline = Date.now() + WORKSPACE_READINESS_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    try {
-      await client.getHealth();
-      return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+  const ready = await waitForWorkspaceRunnerHealth({
+    probe: () => client.getHealth(),
+  });
+  if (!ready) {
+    throw new WorkspaceRequestError(503, "WORKSPACE_RUNNER_UNAVAILABLE");
   }
-  throw new WorkspaceRequestError(503, "WORKSPACE_RUNNER_UNAVAILABLE");
 }
 
 async function ensureWorkspaceSource(authorization: string) {
@@ -1221,23 +1228,22 @@ function writeJson(response: ServerResponse, status: number, body: unknown) {
   response.end(JSON.stringify(body));
 }
 
-let shutdownPromise: Promise<void> | null = null;
-function shutdown(code: number): Promise<void> {
-  shutdownPromise ??= (async () => {
+const shutdownCoordinator = createWorkspaceShutdownCoordinator({
+  server,
+  sockets: workspaceSockets,
+  enterDraining: () => {
     drainingForIdleStop = true;
-    clearInterval(idleTimer);
-    terminals.closeAll();
-    const serverClosed = new Promise<void>((resolve) => {
-      server.close(() => resolve());
-      server.closeIdleConnections();
-    });
-    await Promise.allSettled([
-      runnerReadiness.stop(),
-      applications.stopAll(),
-      backupImports.closeAll()
-    ]);
-    await serverClosed;
-    process.exit(code);
-  })();
-  return shutdownPromise;
+  },
+  clearIdleTimer: () => clearInterval(idleTimer),
+  closeTerminals: () => terminals.closeAll(),
+  stopServices: [
+    () => runnerReadiness.stop(),
+    () => applications.stopAll(),
+    () => backupImports.closeAll(),
+  ],
+  exit: (code) => process.exit(code),
+});
+
+function shutdown(code: number, mode: WorkspaceShutdownMode): Promise<void> {
+  return shutdownCoordinator.shutdown(code, mode);
 }

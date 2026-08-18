@@ -800,6 +800,7 @@ export class RunnerHost {
               : {}),
           },
         });
+        this.retireCompletedExecutionProfileRuntime(profile);
         return;
       } finally {
         if (this.orphanRecoveryBySession.get(turn.sessionId) === recovery) {
@@ -1046,6 +1047,7 @@ export class RunnerHost {
       this.commandBySession.delete(turn.sessionId);
       this.commandTypeBySession.delete(turn.sessionId);
       this.activeRuns.delete(turn.sessionId);
+      this.retireCompletedExecutionProfileRuntime(profile);
     }
   }
 
@@ -1271,6 +1273,7 @@ export class RunnerHost {
       this.commandTypeBySession.delete(turn.sessionId);
       this.threadIdBySession.delete(turn.sessionId);
       this.activeRuns.delete(turn.sessionId);
+      this.retireCompletedExecutionProfileRuntime(profile);
     }
   }
 
@@ -1964,6 +1967,9 @@ export class RunnerHost {
               this.commandTypeBySession.delete(sessionId);
               this.threadIdBySession.delete(sessionId);
               this.activeRuns.delete(sessionId);
+            }
+            if (metadata?.profile !== undefined) {
+              this.retireCompletedExecutionProfileRuntime(metadata.profile);
             }
           });
         void this.trackExecution(completion);
@@ -3101,6 +3107,22 @@ export class RunnerHost {
       }
     }
     return false;
+  }
+
+  private retireCompletedExecutionProfileRuntime(profile: TuiProfile): void {
+    if (
+      profile.modelCredential?.source !== "kestrel-one" ||
+      this.hasActiveRunForProfile(profile.id)
+    ) {
+      return;
+    }
+    const entry = this.runtimes.get(profile.id);
+    if (entry === undefined || entry.key !== JSON.stringify(profile)) {
+      return;
+    }
+    if (this.runtimes.delete(profile.id)) {
+      this.retireRuntime(entry);
+    }
   }
 
   private async cancelPersistedActiveRun(
