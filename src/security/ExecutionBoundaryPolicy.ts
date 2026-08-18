@@ -15,7 +15,7 @@ import {
   type SensitiveValueReferenceV1,
 } from "../kestrel/contracts/execution-boundary-policy.js";
 
-export const KESTREL_EXECUTION_BOUNDARY_POLICY = createExecutionBoundaryPolicyV1({
+const KESTREL_EXECUTION_BOUNDARY_POLICY_V1 = createExecutionBoundaryPolicyV1({
   policyId: "execution-boundary:kestrel",
   owner: "kestrel.runtime-security",
   changeId: "execution-boundary-integrity-v1",
@@ -23,23 +23,39 @@ export const KESTREL_EXECUTION_BOUNDARY_POLICY = createExecutionBoundaryPolicyV1
   boundaries: [...EXECUTION_BOUNDARIES],
 });
 
+export const KESTREL_EXECUTION_BOUNDARY_POLICY = createExecutionBoundaryPolicyV1({
+  policyId: "execution-boundary:kestrel",
+  owner: "kestrel.runtime-security",
+  changeId: "execution-boundary-integrity-v2",
+  supersedesRevision: KESTREL_EXECUTION_BOUNDARY_POLICY_V1.revision,
+  enforcement: "enforce",
+  boundaries: [...EXECUTION_BOUNDARIES],
+});
+
 export type ExecutionBoundaryHandlingV1 = "redact" | "quarantine";
+/**
+ * durable_decision crossings retain a typed decision before downstream use.
+ * live_enforced crossings redact presentation streams in memory and are
+ * intentionally not retained as per-chunk execution-boundary evidence.
+ */
+export type ExecutionBoundaryEvidenceModeV1 = "durable_decision" | "live_enforced";
 
 export interface ExecutionBoundaryAdapterV1 {
   boundary: ExecutionBoundaryV1;
   handling: ExecutionBoundaryHandlingV1;
+  evidenceMode: ExecutionBoundaryEvidenceModeV1;
 }
 
 export const EXECUTION_BOUNDARY_ADAPTERS = Object.freeze([
-  { boundary: "user_input", handling: "redact" },
-  { boundary: "model_request", handling: "redact" },
-  { boundary: "model_stream", handling: "redact" },
-  { boundary: "model_action", handling: "redact" },
-  { boundary: "assembly_change", handling: "quarantine" },
-  { boundary: "tool_request", handling: "quarantine" },
-  { boundary: "tool_stream", handling: "redact" },
-  { boundary: "tool_result", handling: "redact" },
-  { boundary: "assistant_output", handling: "redact" },
+  { boundary: "user_input", handling: "redact", evidenceMode: "durable_decision" },
+  { boundary: "model_request", handling: "redact", evidenceMode: "durable_decision" },
+  { boundary: "model_stream", handling: "redact", evidenceMode: "live_enforced" },
+  { boundary: "model_action", handling: "redact", evidenceMode: "durable_decision" },
+  { boundary: "assembly_change", handling: "quarantine", evidenceMode: "durable_decision" },
+  { boundary: "tool_request", handling: "quarantine", evidenceMode: "durable_decision" },
+  { boundary: "tool_stream", handling: "redact", evidenceMode: "live_enforced" },
+  { boundary: "tool_result", handling: "redact", evidenceMode: "durable_decision" },
+  { boundary: "assistant_output", handling: "redact", evidenceMode: "durable_decision" },
 ] as const satisfies readonly ExecutionBoundaryAdapterV1[]);
 
 assertCanonicalBoundaryAdapters(EXECUTION_BOUNDARY_ADAPTERS);
@@ -82,6 +98,12 @@ export interface ExecutionBoundaryEvaluateInput<T> {
 export type ExecutionBoundaryDecisionSink = (
   decision: ExecutionBoundaryDecisionV1,
 ) => void | Promise<void>;
+
+export interface LiveExecutionBoundaryStream {
+  push(chunk: string): string;
+  close(): string;
+  discard(): void;
+}
 
 export class SensitiveValueRegistry {
   private readonly entries = new Map<string, RegisteredSensitiveValue>();
@@ -220,11 +242,7 @@ export class ExecutionBoundaryPolicyRuntime {
   }
 
   evaluate<T>(input: ExecutionBoundaryEvaluateInput<T>): ExecutionBoundaryEvaluation<T> {
-    if (!this.policy.boundaries.includes(input.boundary)) {
-      throw new Error(
-        `Execution-boundary policy '${this.policy.policyId}' does not declare '${input.boundary}'.`,
-      );
-    }
+    this.assertDeclaredBoundary(input.boundary);
     const inputDigest = digestCanonicalValue(input.value);
     const redaction = this.sensitiveValues.redact(input.value);
     const matched = redaction.references.length > 0;
@@ -286,6 +304,11 @@ export class ExecutionBoundaryPolicyRuntime {
   async evaluateAndPersist<T>(input: ExecutionBoundaryEvaluateInput<T> & {
     persist: ExecutionBoundaryDecisionSink;
   }): Promise<ExecutionBoundaryEvaluation<T>> {
+    if (executionBoundaryEvidenceMode(input.boundary) === "live_enforced") {
+      throw new Error(
+        `Execution boundary '${input.boundary}' uses live enforcement and cannot persist durable decisions.`,
+      );
+    }
     if (typeof input.persist !== "function") {
       throw new Error("Execution-boundary decision persistence is required.");
     }
@@ -293,18 +316,82 @@ export class ExecutionBoundaryPolicyRuntime {
     await input.persist(evaluated.decision);
     return evaluated;
   }
+
+  openLiveStream(
+    input: Omit<ExecutionBoundaryEvaluateInput<string>, "value">,
+  ): LiveExecutionBoundaryStream {
+    this.assertDeclaredBoundary(input.boundary);
+    if (executionBoundaryEvidenceMode(input.boundary) !== "live_enforced") {
+      throw new Error(
+        `Execution boundary '${input.boundary}' requires a durable decision and cannot open a live stream.`,
+      );
+    }
+    const trust = input.trust ?? (input.source === "runtime" ? "control" : "data");
+    if (trust === "control" && input.source !== "runtime") {
+      throw new Error("Only runtime-owned content may be assigned control trust.");
+    }
+    if (input.sourceId.length === 0) {
+      throw new Error("Execution-boundary live stream sourceId must not be empty.");
+    }
+
+    const redactor = new DeterministicStreamingRedactor(this.sensitiveValues);
+    let closed = false;
+    const assertOpen = (): void => {
+      if (closed) {
+        throw new Error(
+          `Execution-boundary live stream '${input.sourceId}' is already closed.`,
+        );
+      }
+    };
+    return {
+      push(chunk: string): string {
+        assertOpen();
+        return redactor.push(chunk);
+      },
+      close(): string {
+        assertOpen();
+        closed = true;
+        return redactor.flush();
+      },
+      discard(): void {
+        assertOpen();
+        closed = true;
+        redactor.flush();
+      },
+    };
+  }
+
+  private assertDeclaredBoundary(boundary: ExecutionBoundaryV1): void {
+    if (!this.policy.boundaries.includes(boundary)) {
+      throw new Error(
+        `Execution-boundary policy '${this.policy.policyId}' does not declare '${boundary}'.`,
+      );
+    }
+  }
 }
 
 export function executionBoundaryHandling(
   boundary: ExecutionBoundaryV1,
 ): ExecutionBoundaryHandlingV1 {
+  return executionBoundaryAdapter(boundary).handling;
+}
+
+export function executionBoundaryEvidenceMode(
+  boundary: ExecutionBoundaryV1,
+): ExecutionBoundaryEvidenceModeV1 {
+  return executionBoundaryAdapter(boundary).evidenceMode;
+}
+
+function executionBoundaryAdapter(
+  boundary: ExecutionBoundaryV1,
+): ExecutionBoundaryAdapterV1 {
   const adapter = EXECUTION_BOUNDARY_ADAPTERS.find(
     (candidate) => candidate.boundary === boundary,
   );
   if (adapter === undefined) {
     throw new Error(`Execution boundary '${boundary}' has no registered adapter.`);
   }
-  return adapter.handling;
+  return adapter;
 }
 
 export function deriveSensitiveRepresentations(value: string): string[] {

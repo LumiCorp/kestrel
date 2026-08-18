@@ -21,6 +21,7 @@ import {
   deriveWorkspaceFreshness,
 } from "../../../../src/runtime/workspaceFreshness.js";
 import { resolveWorkspaceTarget } from "../../../../src/runtime/workspaceCoordinates.js";
+import { isFileTextReadToolName } from "../../../../src/runtime/fileTextReadTools.js";
 import { asArray, asRecord, asString } from "../../../shared/valueAccess.js";
 import { isShellFilesystemInspectionCommand } from "../filesystemInspection.js";
 export {
@@ -1139,10 +1140,10 @@ function toolMatchesOperationIntent(
     return toolName === "code.execute";
   }
   if (operationKind === "read_file") {
-    return toolName === "fs.read_text";
+    return isFileTextReadToolName(toolName);
   }
   if (operationKind === "inspect_repo") {
-    return toolName === "fs.list" || toolName === "fs.search_text" || toolName === "fs.read_text" || toolName === "repo.trace";
+    return toolName === "fs.list" || toolName === "fs.search_text" || isFileTextReadToolName(toolName) || toolName === "repo.trace";
   }
   return false;
 }

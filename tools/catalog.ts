@@ -35,7 +35,7 @@ import { fsDeleteTool } from "./filesystem/delete.js";
 import { fsListTool } from "./filesystem/list.js";
 import { fsMkdirTool } from "./filesystem/mkdir.js";
 import { fsMoveTool } from "./filesystem/move.js";
-import { fsReadTextTool } from "./filesystem/readText.js";
+import { fsReadTextPageTool, fsReadTextTool } from "./filesystem/readText.js";
 import { fsCreateTextTool } from "./filesystem/createText.js";
 import { fsEditTextTool } from "./filesystem/editText.js";
 import { fsApplyPatchTool } from "./filesystem/applyPatch.js";
@@ -143,6 +143,7 @@ const DEFAULT_MODULES: SharedToolModule[] = [
   evidenceExtractTool,
   fsListTool,
   fsReadTextTool,
+  fsReadTextPageTool,
   fsCreateTextTool,
   fsEditTextTool,
   fsApplyPatchTool,

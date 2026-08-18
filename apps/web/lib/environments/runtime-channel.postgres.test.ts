@@ -8,9 +8,10 @@ test("manual runtime activation changes only the exact canary and channel pointe
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
   process.env.DATABASE_URL = databaseUrl;
   process.env.POSTGRES_URL = databaseUrl;
-  const [{ resetDbRuntimeForTests }, runtime] = await Promise.all([
+  const [{ resetDbRuntimeForTests }, runtime, processRuntime] = await Promise.all([
     import("@/lib/db/runtime"),
     import("./runtime-channel"),
+    import("./process-runtime"),
   ]);
   const pool = postgres(databaseUrl, { max: 1 });
   const connection = await pool.reserve();
@@ -139,6 +140,30 @@ test("manual runtime activation changes only the exact canary and channel pointe
     runtimeVersionId: proposed.id,
     actorUserId: userId,
   });
+  await connection`
+    UPDATE environment_operations
+    SET input = jsonb_set(
+      input,
+      '{runtimeImage}',
+      to_jsonb(${initial.runtimeImage}::text),
+      false
+    )
+    WHERE id = ${requested.operation.id}
+  `;
+  await assert.rejects(
+    processRuntime.processEnvironmentOperation(requested.operation.id),
+    /images do not match the immutable Runtime Version/u,
+  );
+  await connection`
+    UPDATE environment_operations
+    SET input = jsonb_set(
+      input,
+      '{runtimeImage}',
+      to_jsonb(${proposed.runtimeImage}::text),
+      false
+    )
+    WHERE id = ${requested.operation.id}
+  `;
   const [siblingOperations] = await connection<Array<{ count: number }>>`
     SELECT count(*)::int AS count
     FROM environment_operations

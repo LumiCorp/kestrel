@@ -1033,7 +1033,12 @@ test("DevShellSupervisor rejects promotion after the process has settled", async
       kind: "workspace_preview_provisional",
       expiresAt: new Date(Date.now() + 600_000).toISOString(),
     });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await readProcessUntilTerminal({
+      supervisor,
+      processId,
+      timeoutMs: 5000,
+      pollWaitMs: 25,
+    });
     const before = await store.getProcess(processId);
     assert.notEqual(before?.status, "RUNNING");
 

@@ -698,18 +698,11 @@ async function waitForExecutionResources(input: {
       }
       startRequested = true;
     }
-    const progress = activeLifecycleOperation
-      ? {
-          stage: "environment.health.checking" as const,
-          detail: "Checking Workspace health…",
-          status: "pending" as const,
-        }
-      : describeEnvironmentActivation({
-          environmentStatus: environment.status,
-          workspaceStatus: workspace.status,
-          failureMessage:
-            workspace.failureMessage ?? environment.failureMessage,
-        });
+    const progress = describeEnvironmentActivation({
+      environmentStatus: environment.status,
+      workspaceStatus: workspace.status,
+      failureMessage: workspace.failureMessage ?? environment.failureMessage,
+    });
     if (progress.detail !== lastDetail) {
       lastDetail = progress.detail;
       input.onProgress?.(progress);
@@ -1589,10 +1582,16 @@ export function describeEnvironmentActivation(input: {
       status: "pending",
     };
   }
+  if (input.workspaceStatus === "degraded") {
+    return {
+      stage: "environment.health.checking",
+      detail: "Reconnecting to the Workspace Runtime…",
+      status: "pending",
+    };
+  }
   if (
     input.workspaceStatus === "stopped" ||
-    input.workspaceStatus === "starting" ||
-    input.workspaceStatus === "degraded"
+    input.workspaceStatus === "starting"
   ) {
     return {
       stage: "environment.machine.starting",

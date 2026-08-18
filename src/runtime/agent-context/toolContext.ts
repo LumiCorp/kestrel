@@ -4,6 +4,7 @@ import type {
 } from "../../kestrel/contracts/model-io.js";
 import { renderWorkspaceRelativeTarget } from "../workspaceCoordinates.js";
 import { isDevShellLifecycleTool, normalizeDevShellLifecycle } from "../devshellLifecycle.js";
+import { isFileTextReadToolName } from "../fileTextReadTools.js";
 import { sanitizeJsonValue, stringifySanitizedJson } from "../jsonSanitizer.js";
 import { VISIBLE_TODOS_SCHEMA } from "../visibleTodos.js";
 
@@ -693,7 +694,7 @@ function renderFilesystemFacts(
   status: "OK" | "FAILED",
   error: unknown,
 ): string[] {
-  if (toolName === "fs.read_text") {
+  if (isFileTextReadToolName(toolName)) {
     const content = asString(output.content) ?? "";
     const contentEnd = resolveExactContentEnd(content, LEGACY_READ_TEXT_CONTENT_LIMIT);
     const visibleContent = content.slice(0, contentEnd);
@@ -707,6 +708,7 @@ function renderFilesystemFacts(
       ...field("totalBytes", output.totalBytes),
       ...field("complete", output.complete),
       ...field("nextOffsetBytes", output.nextOffsetBytes),
+      ...field("nextPage", output.nextPage),
       ...field("truncated", output.truncated),
       ...field("contentBytes", Buffer.byteLength(content, "utf8")),
       output.complete === false || output.truncated === true || modelContextTruncated

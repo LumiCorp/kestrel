@@ -130,6 +130,80 @@ test("shared runner service handler mounts under a prefix and reports active exe
   }
 });
 
+test("runner health stays responsive during a synthetic stream-heavy execution", async (t) => {
+  let markRunEntered: (() => void) | undefined;
+  const runEntered = new Promise<void>((resolve) => {
+    markRunEntered = resolve;
+  });
+  const handler = createRunnerServiceHttpHandler({
+    runtimeFactory: () => ({
+      runTurn: async () => {
+        markRunEntered?.();
+        for (let chunk = 0; chunk < 500; chunk += 1) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        return {
+          assistantText: "stream complete",
+          output: {
+            status: "COMPLETED",
+            sessionId: "session-stream-health",
+            runId: "run-stream-health",
+            errors: [],
+            quality: {
+              citationCoverage: 1,
+              unresolvedClaims: 0,
+              reworkRate: 0,
+              thrashIndex: 0,
+            },
+            telemetry: {
+              stepsExecuted: 1,
+              toolCalls: 1,
+              modelCalls: 1,
+              durationMs: 1,
+            },
+          },
+        };
+      },
+      close: async () => {},
+    }),
+  });
+  const mounted = await mountRunnerHandlerOrSkip(t, handler.handle);
+  if (mounted === undefined) {
+    await handler.close();
+    return;
+  }
+
+  try {
+    const execution = fetch(`${mounted.url}/commands/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json", connection: "close" },
+      body: JSON.stringify({
+        id: "cmd-stream-health",
+        type: "run.start",
+        metadata: { ...actorMetadata, profile },
+        payload: {
+          profile,
+          turn: {
+            sessionId: "session-stream-health",
+            runId: "run-stream-health",
+            message: "emit 500 chunks",
+            eventType: "user.message",
+          },
+        },
+      }),
+    });
+    await runEntered;
+    const healthResponses = await Promise.all(
+      Array.from({ length: 8 }, () => fetch(`${mounted.url}/health`)),
+    );
+    assert.deepEqual(healthResponses.map((response) => response.status), Array(8).fill(200));
+    assert.equal((await execution).status, 200);
+  } finally {
+    await handler.close();
+    await closeHttpServer(mounted.server);
+  }
+});
+
 test("shared runner service close waits for aborted execution cleanup", async (t) => {
   let markRunEntered: (() => void) | undefined;
   const runEntered = new Promise<void>((resolve) => {

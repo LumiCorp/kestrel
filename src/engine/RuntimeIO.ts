@@ -50,8 +50,8 @@ import {
 import { RunCancelledError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import type { RuntimeEvaluationCoordinator } from "../evaluation/RuntimeEvaluationCoordinator.js";
 import {
-  DeterministicStreamingRedactor,
   ExecutionBoundaryPolicyRuntime,
+  type LiveExecutionBoundaryStream,
 } from "../security/ExecutionBoundaryPolicy.js";
 import type { ExecutionBoundaryDecisionV1 } from "../kestrel/contracts/execution-boundary-policy.js";
 import { deleteTextArtifact } from "../../tools/runtime/artifactStore.js";
@@ -193,7 +193,7 @@ interface RuntimeIOOptions {
 export class RuntimeIO {
   private readonly options: RuntimeIOOptions;
   private previousStablePrefixHash: string | undefined;
-  private readonly modelReasoningRedactors = new Map<string, DeterministicStreamingRedactor>();
+  private readonly modelReasoningStreams = new Map<string, LiveExecutionBoundaryStream>();
 
   constructor(options: RuntimeIOOptions) {
     this.options = options;
@@ -719,21 +719,25 @@ export class RuntimeIO {
     requestedProvider: string | undefined;
     requestedModel: string | undefined;
   }): Promise<T> {
-    return this.options.deps.modelGateway.call<T>(input.request, {
-      ...(this.options.progress.signal !== undefined
-        ? { signal: this.options.progress.signal }
-        : {}),
-      ...(readModelBudgetClass(input.request) === "maintenance"
-        ? { retryCount: 0 }
-        : {}),
-      onEvent: async (event) => {
-        await this.emitModelGatewayEvent(event, {
-          callId: input.callId,
-          provider: input.requestedProvider,
-          model: input.requestedModel,
-        });
-      },
-    });
+    try {
+      return await this.options.deps.modelGateway.call<T>(input.request, {
+        ...(this.options.progress.signal !== undefined
+          ? { signal: this.options.progress.signal }
+          : {}),
+        ...(readModelBudgetClass(input.request) === "maintenance"
+          ? { retryCount: 0 }
+          : {}),
+        onEvent: async (event) => {
+          await this.emitModelGatewayEvent(event, {
+            callId: input.callId,
+            provider: input.requestedProvider,
+            model: input.requestedModel,
+          });
+        },
+      });
+    } finally {
+      this.discardModelReasoningStreams(input.callId);
+    }
   }
 
   private async appendEconomicsEvent(
@@ -816,11 +820,12 @@ export class RuntimeIO {
         });
       }
     }
-    await this.emitModelReasoningEvent(event, model.provider, model.model);
+    await this.emitModelReasoningEvent(event, model.callId, model.provider, model.model);
   }
 
   private async emitModelReasoningEvent(
     event: ModelGatewayStreamEvent,
+    callId: string,
     provider: string | undefined,
     model: string | undefined,
   ): Promise<void> {
@@ -828,36 +833,17 @@ export class RuntimeIO {
       return;
     }
     const progress = this.options.progress;
-    const streamKey = `${progress.runId}:${event.attempt}:${event.format}`;
+    const streamKey = `${progress.runId}:${callId}:${event.attempt}:${event.format}`;
     if (event.type === "reasoning.started") {
-      this.modelReasoningRedactors.set(
-        streamKey,
-        new DeterministicStreamingRedactor(
-          this.options.executionBoundaryRuntime.sensitiveValues,
-        ),
-      );
+      this.modelReasoningStreams.get(streamKey)?.discard();
+      this.modelReasoningStreams.set(streamKey, this.openReasoningStream(streamKey, callId));
     }
     let safeDelta: string | undefined;
     if (event.type === "reasoning.delta") {
-      await this.options.executionBoundaryRuntime.evaluateAndPersist({
-        boundary: "model_stream",
-        identity: {
-          runId: progress.runId,
-          sessionId: progress.sessionId,
-          stepIndex: progress.stepIndex,
-        },
-        source: "model",
-        trust: "data",
-        sourceId: streamKey,
-        value: event.delta,
-        persist: (decision) => this.persistBoundaryDecision(decision),
-      });
-      const redactor = this.modelReasoningRedactors.get(streamKey) ??
-        new DeterministicStreamingRedactor(
-          this.options.executionBoundaryRuntime.sensitiveValues,
-        );
-      this.modelReasoningRedactors.set(streamKey, redactor);
-      safeDelta = redactor.push(event.delta);
+      const stream = this.modelReasoningStreams.get(streamKey) ??
+        this.openReasoningStream(streamKey, callId);
+      this.modelReasoningStreams.set(streamKey, stream);
+      safeDelta = stream.push(event.delta);
       if (safeDelta.length === 0) return;
     }
     if (
@@ -865,9 +851,9 @@ export class RuntimeIO {
       event.type === "reasoning.failed" ||
       event.type === "reasoning.unavailable"
     ) {
-      const redactor = this.modelReasoningRedactors.get(streamKey);
-      const tail = redactor?.flush() ?? "";
-      this.modelReasoningRedactors.delete(streamKey);
+      const stream = this.modelReasoningStreams.get(streamKey);
+      const tail = stream?.close() ?? "";
+      this.modelReasoningStreams.delete(streamKey);
       if (tail.length > 0) {
         await this.options.deps.reasoningReporter?.emit({
           version: "v1",
@@ -913,6 +899,34 @@ export class RuntimeIO {
     });
   }
 
+  private openReasoningStream(
+    sourceId: string,
+    callId: string,
+  ): LiveExecutionBoundaryStream {
+    const progress = this.options.progress;
+    return this.options.executionBoundaryRuntime.openLiveStream({
+      boundary: "model_stream",
+      identity: {
+        runId: progress.runId,
+        sessionId: progress.sessionId,
+        callId,
+        stepIndex: progress.stepIndex,
+      },
+      source: "model",
+      trust: "data",
+      sourceId,
+    });
+  }
+
+  private discardModelReasoningStreams(callId: string): void {
+    const prefix = `${this.options.progress.runId}:${callId}:`;
+    for (const [streamKey, stream] of this.modelReasoningStreams) {
+      if (streamKey.startsWith(prefix) === false) continue;
+      stream.discard();
+      this.modelReasoningStreams.delete(streamKey);
+    }
+  }
+
   async tool(
     name: string,
     input: unknown,
@@ -932,6 +946,8 @@ export class RuntimeIO {
     let queueDepthGlobal: number | undefined;
     let queueWaitMs: number | undefined;
     let preparedToolCall: import("../kestrel/contracts/tool-invocation.js").PreparedToolCallV1 | undefined;
+    let consoleBridge: ReturnType<typeof createToolConsoleBridge> | undefined;
+    let toolConsoleStream: LiveExecutionBoundaryStream | undefined;
     const queueEventTasks: Promise<void>[] = [];
     try {
       const inputBoundary = await this.options.executionBoundaryRuntime.evaluateAndPersist({
@@ -1068,10 +1084,7 @@ export class RuntimeIO {
         },
         progress.stepIndex,
       );
-      const consoleRedactor = new DeterministicStreamingRedactor(
-        this.options.executionBoundaryRuntime.sensitiveValues,
-      );
-      const consoleBridge = createToolConsoleBridge({
+      const activeConsoleBridge = createToolConsoleBridge({
         consoleReporter: this.options.deps.consoleReporter,
         runId: progress.runId,
         sessionId: progress.sessionId,
@@ -1080,8 +1093,8 @@ export class RuntimeIO {
         toolName: name,
         input: effectiveToolInput,
         sequence: progress.sequence,
-        transformText: async (text) => {
-          await this.options.executionBoundaryRuntime.evaluateAndPersist({
+        transformText: (text) => {
+          toolConsoleStream ??= this.options.executionBoundaryRuntime.openLiveStream({
             boundary: "tool_stream",
             identity: {
               runId: progress.runId,
@@ -1092,14 +1105,17 @@ export class RuntimeIO {
             source: "tool",
             trust: "data",
             sourceId: `tool-stream:${toolCallId}:${name}`,
-            value: text,
-            persist: (decision) => this.persistBoundaryDecision(decision),
           });
-          return consoleRedactor.push(text);
+          return toolConsoleStream.push(text);
         },
-        flushText: () => consoleRedactor.flush(),
+        flushText: () => {
+          const stream = toolConsoleStream;
+          toolConsoleStream = undefined;
+          return stream?.close() ?? "";
+        },
       });
-      await consoleBridge.emitStatus("started");
+      consoleBridge = activeConsoleBridge;
+      await activeConsoleBridge.emitStatus("started");
       const executeToolCall = () => {
         throwIfRuntimeIOAborted(progress.signal);
         return this.options.callTool({
@@ -1112,7 +1128,7 @@ export class RuntimeIO {
           runtimePayload: this.options.runtimePayload,
           sessionState,
           signal: progress.signal,
-          ...(consoleBridge.sink !== undefined ? { console: consoleBridge.sink } : {}),
+          ...(activeConsoleBridge.sink !== undefined ? { console: activeConsoleBridge.sink } : {}),
         });
       };
       let result = this.options.toolQueueEnabled
@@ -1474,15 +1490,19 @@ export class RuntimeIO {
               },
             }),
       });
-      await emitDevShellConsoleStatus({
-        consoleReporter: this.options.deps.consoleReporter,
-        runId: progress.runId,
-        sessionId: progress.sessionId,
-        seq: progress.sequence(),
-        toolName: name,
-        input: safeFailureInput,
-        status: "failed",
-      });
+      if (consoleBridge !== undefined) {
+        await consoleBridge.emitStatus("failed");
+      } else {
+        await emitDevShellConsoleStatus({
+          consoleReporter: this.options.deps.consoleReporter,
+          runId: progress.runId,
+          sessionId: progress.sessionId,
+          seq: progress.sequence(),
+          toolName: name,
+          input: safeFailureInput,
+          status: "failed",
+        });
+      }
       const safeError = failureBoundary.decision.outcome === "REDACT"
         ? createRuntimeFailure(
             mappedError.code,
@@ -1491,6 +1511,9 @@ export class RuntimeIO {
           )
         : error;
       throw safeError;
+    } finally {
+      toolConsoleStream?.discard();
+      toolConsoleStream = undefined;
     }
   }
 

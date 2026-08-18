@@ -13,6 +13,7 @@ const LEGACY_ALIASES: Readonly<
   },
   "fs.list": { path: ["filePath", "targetPath"] },
   "fs.read_text": { path: ["filePath", "targetPath"] },
+  "fs.read_text_page": { path: ["filePath", "targetPath"] },
   "fs.verify_json": { path: ["filePath", "targetPath"] },
   "fs.search_text": {
     path: ["filePath", "targetPath"],

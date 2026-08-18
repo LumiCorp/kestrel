@@ -76,6 +76,7 @@ import {
   resolveToolApprovalDispositionV1,
   type ToolApprovalDispositionV1,
 } from "../../src/mode/contracts.js";
+import { isFileTextReadToolName } from "../../src/runtime/fileTextReadTools.js";
 
 type CapabilityManifestItem = ToolCapabilityMetadata & {
   name: string;
@@ -1592,7 +1593,7 @@ async function annotateWorkspaceSkillRead(input: {
         input: input.input,
         output: input.output,
       });
-  if (input.toolName !== "fs.read_text") return wrapped;
+  if (isFileTextReadToolName(input.toolName) === false) return wrapped;
   const request = asRecord(input.input);
   const result = asRecord(wrapped.auditRecord.output);
   if (result?.range === undefined) return wrapped;
@@ -2151,6 +2152,26 @@ function createBuiltInSchemaValidationError(
   input: unknown,
   errors: ErrorObject[],
 ): RuntimeFailure {
+  const inputRecord = asRecord(input);
+  if (
+    toolName === "fs.read_text" &&
+    (Object.hasOwn(inputRecord ?? {}, "offsetBytes") ||
+      Object.hasOwn(inputRecord ?? {}, "expectedRevision"))
+  ) {
+    return createToolInputError(
+      toolName,
+      "fs.read_text only reads the first page. Continue with fs.read_text_page using the exact returned nextPage.input.",
+      {
+        nextSuggestedAction: "Call fs.read_text_page with the exact nextPage.input returned by fs.read_text.",
+        validationErrors: errors.map((error) => ({
+          instancePath: error.instancePath,
+          schemaPath: error.schemaPath,
+          keyword: error.keyword,
+          message: error.message,
+        })),
+      },
+    );
+  }
   const firstError = errors[0];
   const field =
     firstError === undefined ? "input" : readAjvErrorField(firstError);
