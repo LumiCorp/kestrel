@@ -1,10 +1,4 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import {
-  getKestrelStandardAppManifest,
-  KESTREL_APP_IDS,
-  type KestrelAppDependency,
-  type KestrelAppId,
-} from "@kestrel-agents/protocol";
 import { getProjectEnvironmentBinding } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
@@ -72,11 +66,7 @@ export type ProjectAppDependencyStatus = {
   role: string;
   minimum: number;
   satisfied: boolean;
-  alternatives: Array<{
-    appKey: string;
-    displayName: string;
-    ready: boolean;
-  }>;
+  alternatives: Array<{ appKey: string; displayName: string; ready: boolean }>;
 };
 
 export class ProjectAppError extends Error {
@@ -86,7 +76,6 @@ export class ProjectAppError extends Error {
     | "APP_CONNECTION_NOT_FOUND"
     | "APP_CONNECTION_SCOPE_INVALID"
     | "APP_CAPABILITY_NOT_AVAILABLE"
-    | "APP_DEPENDENCIES_NOT_READY"
     | "APP_POLICY_WIDENS_ENVIRONMENT"
     | "PROJECT_NOT_FOUND";
 
@@ -97,94 +86,10 @@ export class ProjectAppError extends Error {
   }
 }
 
-const WORKFLOW_APP_IDS = new Set<string>([
-  KESTREL_APP_IDS.SOFTWARE_DELIVERY,
-  KESTREL_APP_IDS.MEETING_FOLLOW_THROUGH,
-  KESTREL_APP_IDS.INCIDENT_RESPONSE,
-  KESTREL_APP_IDS.CUSTOMER_ESCALATION,
-]);
-
-function appConfigurationIsReady(
-  configuration: ProjectAppConfiguration,
-  requiredCapabilityPacks?: readonly string[],
-) {
-  if (!configuration.enabled) return false;
-  if (
-    configuration.app.connectionRequirement === "required" &&
-    !selectEffectiveConnection({
-      connectionModel: configuration.app.connectionModel,
-      connections: configuration.attachedConnections,
-    })
-  ) {
-    return false;
-  }
-  return configuration.capabilities.some(
-    (capability) =>
-      capability.enabled &&
-      Boolean(capability.runtimeName) &&
-      (!requiredCapabilityPacks?.length ||
-        requiredCapabilityPacks.includes(capability.groupKey)),
-  );
-}
-
-function dependencyStatuses(input: {
-  dependencies: readonly KestrelAppDependency[];
-  configurations: ProjectAppConfiguration[];
-}): ProjectAppDependencyStatus[] {
-  const configurationByKey = new Map(
-    input.configurations.map((configuration) => [
-      configuration.app.key,
-      configuration,
-    ]),
-  );
-  return input.dependencies.map((dependency) => {
-    const alternatives = dependency.appIds.map((appKey) => {
-      const configuration = configurationByKey.get(appKey);
-      const manifest = getKestrelStandardAppManifest(appKey);
-      return {
-        appKey,
-        displayName: configuration?.app.displayName ?? manifest?.name ?? appKey,
-        ready: configuration
-          ? appConfigurationIsReady(
-              configuration,
-              dependency.requiredCapabilityPacks?.[appKey],
-            )
-          : false,
-      };
-    });
-    return {
-      role: dependency.role,
-      minimum: dependency.minimum,
-      satisfied:
-        alternatives.filter((alternative) => alternative.ready).length >=
-        dependency.minimum,
-      alternatives,
-    };
-  });
-}
-
 export function addProjectAppDependencyStatuses(
   configurations: ProjectAppConfiguration[],
 ) {
-  return configurations.map<ProjectAppConfiguration>((configuration) => {
-    if (!WORKFLOW_APP_IDS.has(configuration.app.key)) return configuration;
-    const manifest = getKestrelStandardAppManifest(
-      configuration.app.key as
-        | typeof KESTREL_APP_IDS.SOFTWARE_DELIVERY
-        | typeof KESTREL_APP_IDS.MEETING_FOLLOW_THROUGH
-        | typeof KESTREL_APP_IDS.INCIDENT_RESPONSE
-        | typeof KESTREL_APP_IDS.CUSTOMER_ESCALATION,
-    );
-    const dependencies = dependencyStatuses({
-      dependencies: manifest?.dependencies ?? [],
-      configurations,
-    });
-    return {
-      ...configuration,
-      dependencies,
-      dependencyReady: dependencies.every((dependency) => dependency.satisfied),
-    };
-  });
+  return configurations.map((configuration) => ({ ...configuration, dependencies: [], dependencyReady: true }));
 }
 
 function toConnectionSummary(
@@ -509,48 +414,6 @@ export async function resolveEffectiveProjectAppsAccess(input: {
   });
 }
 
-export function formatActiveProjectWorkflowContext(
-  configurations: ProjectAppConfiguration[],
-) {
-  const workflows = configurations.filter(
-    (configuration) =>
-      WORKFLOW_APP_IDS.has(configuration.app.key) &&
-      configuration.enabled &&
-      configuration.dependencyReady &&
-      configuration.capabilities.some((capability) => capability.enabled),
-  );
-  if (!workflows.length) return null;
-  return [
-    "## Enabled Workflow Apps",
-    "These workflows coordinate only the App capabilities already available to this Project. They do not grant additional access.",
-    ...workflows.map((workflow) => {
-      const dependencies = workflow.dependencies
-        .map((dependency) => {
-          const readyApps = dependency.alternatives
-            .filter((alternative) => alternative.ready)
-            .map((alternative) => alternative.displayName)
-            .join(" or ");
-          return `${dependency.role}: ${readyApps}`;
-        })
-        .join("; ");
-      const manifest = getKestrelStandardAppManifest(
-        workflow.app.key as KestrelAppId,
-      );
-      return `- ${workflow.app.displayName}: ${manifest?.workflowInstructions ?? workflow.app.description} Available Apps: ${dependencies}.`;
-    }),
-  ].join("\n");
-}
-
-export async function resolveActiveProjectWorkflowContext(input: {
-  organizationId: string;
-  projectId: string;
-  userId: string;
-}) {
-  return formatActiveProjectWorkflowContext(
-    await listProjectAppConfigurations(input),
-  );
-}
-
 export async function setProjectAppEnabled(input: {
   organizationId: string;
   projectId: string;
@@ -559,32 +422,6 @@ export async function setProjectAppEnabled(input: {
   enabled: boolean;
 }) {
   const { binding } = await requireProjectAppContext(input);
-  if (input.enabled && WORKFLOW_APP_IDS.has(input.appKey)) {
-    const configurations = await listProjectAppConfigurations({
-      organizationId: input.organizationId,
-      projectId: input.projectId,
-      userId: input.actorUserId,
-    });
-    const workflow = configurations.find(
-      (configuration) => configuration.app.key === input.appKey,
-    );
-    if (!(workflow?.dependencyReady ?? false)) {
-      const missing = workflow?.dependencies
-        .filter((dependency) => !dependency.satisfied)
-        .map((dependency) => dependency.role)
-        .join(", ");
-      throw new ProjectAppError(
-        "APP_DEPENDENCIES_NOT_READY",
-        `Connect and enable the required Apps first${missing ? `: ${missing}` : "."}`,
-      );
-    }
-    if (!workflow?.capabilities.some((capability) => capability.enabled)) {
-      throw new ProjectAppError(
-        "APP_CAPABILITY_NOT_AVAILABLE",
-        "The Project Environment must enable this workflow before it can be added.",
-      );
-    }
-  }
   const now = new Date();
   return knowledgeDb.transaction(async (transaction) => {
     const [projectApp] = await transaction

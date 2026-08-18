@@ -78,10 +78,7 @@ import { resolveProviderModelCatalog } from "../../../src/profile/modelCatalogDi
 import {
   assertDesktopModelConfigurationHistoryPreserved,
   currentDesktopModelConfigurationRef,
-  formatDesktopWorkflowInstructions,
   getDesktopAppDefinition,
-  validateDesktopRendererWorkflowSelection,
-  resolveDesktopWorkflowSelections,
   type DesktopExecutionSelection,
 } from "../../../src/desktopShell/configuration.js";
 import {
@@ -392,21 +389,9 @@ function resolveAuthoritativeDesktopExecutionSelection(
   requested: DesktopExecutionSelection,
 ): DesktopExecutionSelection {
   const authoritativeIds = getEffectiveDesktopEnabledAppIds(desktopSettings);
-  let selectedWorkflowIds: string[];
-  try {
-    selectedWorkflowIds = validateDesktopRendererWorkflowSelection(
-      requested.apps.map((app) => app.id),
-      authoritativeIds,
-    );
-  } catch (cause) {
-    throw createDesktopError({
-      code: "desktop.invalid_execution_selection",
-      message: cause instanceof Error ? cause.message : String(cause),
-    });
-  }
   return {
     modelConfiguration: requested.modelConfiguration,
-    apps: [...new Set([...authoritativeIds, ...selectedWorkflowIds])].flatMap((id) => {
+    apps: authoritativeIds.flatMap((id) => {
       const definition = getDesktopAppDefinition(id, undefined, desktopSettings.mcpServers);
       return definition === undefined
         ? []
@@ -1252,13 +1237,6 @@ function installApplicationMenu(): void {
           accelerator: "CmdOrCtrl+\\",
           click: () => {
             void sendDesktopCommand("toggle-left-sidebar");
-          },
-        },
-        {
-          label: "Toggle File Inspector",
-          accelerator: "Alt+CmdOrCtrl+\\",
-          click: () => {
-            void sendDesktopCommand("toggle-right-sidebar");
           },
         },
         { type: "separator" },
@@ -2110,21 +2088,6 @@ function registerIpcHandlers(
       }),
     );
     const runProfile = executionProfile.resolvedProfile;
-    const workflows = resolveDesktopWorkflowSelections(
-      globalExecutionSelection,
-      desktopSettings.mcpServers,
-    );
-    const unavailableWorkflow = workflows.find((workflow) => !workflow.ready);
-    if (unavailableWorkflow !== undefined) {
-      const missingRoles = unavailableWorkflow.dependencies
-        .filter((dependency) => dependency.missing)
-        .map((dependency) => dependency.role);
-      throw createDesktopError({
-        code: "desktop.workflow_dependencies_unavailable",
-        message: `${unavailableWorkflow.name} needs selected, connected Apps for: ${missingRoles.join(", ")}.`,
-      });
-    }
-    const workflowInstructions = formatDesktopWorkflowInstructions(workflows);
     if (attachmentIds !== undefined) {
       const listed = await requireLocalCoreConnectionManager().executeIdempotent(
         async (client) => await client.listDesktopAttachments(canonicalThreadId),
@@ -2172,9 +2135,6 @@ function registerIpcHandlers(
       turn: {
         ...turnRequest,
         ...(attachments !== undefined ? { attachments } : {}),
-        ...(workflowInstructions !== undefined
-          ? { systemInstructions: [workflowInstructions] }
-          : {}),
         workspace,
         metadata: { desktopExecutionSelection: globalExecutionSelection },
       },
@@ -2216,21 +2176,6 @@ function registerIpcHandlers(
           }),
       );
     const runProfile = executionProfile.resolvedProfile;
-    const workflows = resolveDesktopWorkflowSelections(
-      globalExecutionSelection,
-      desktopSettings.mcpServers,
-    );
-    const unavailableWorkflow = workflows.find((workflow) => !workflow.ready);
-    if (unavailableWorkflow !== undefined) {
-      const missingRoles = unavailableWorkflow.dependencies
-        .filter((dependency) => dependency.missing)
-        .map((dependency) => dependency.role);
-      throw createDesktopError({
-        code: "desktop.workflow_dependencies_unavailable",
-        message: `${unavailableWorkflow.name} needs selected, connected Apps for: ${missingRoles.join(", ")}.`,
-      });
-    }
-    const workflowInstructions = formatDesktopWorkflowInstructions(workflows);
     const canonicalThreadId = `thread-main:${request.sessionId}`;
     if (threadId !== undefined && threadId !== canonicalThreadId) {
       throw createDesktopError({
@@ -2304,9 +2249,6 @@ function registerIpcHandlers(
         {
           ...turnRequest,
           ...(attachments !== undefined ? { attachments } : {}),
-          ...(workflowInstructions !== undefined
-            ? { systemInstructions: [workflowInstructions] }
-            : {}),
           workspace,
           metadata: { desktopExecutionSelection: globalExecutionSelection },
         },
@@ -2614,7 +2556,6 @@ function registerIpcHandlers(
             desktopSettings.defaultModelConfigurationId,
           defaultEnabledBuiltInAppIds:
             update.defaultEnabledBuiltInAppIds ?? desktopSettings.defaultEnabledBuiltInAppIds,
-          legacyDefaultWorkflowAppIds: undefined,
           appearanceTheme:
             update.appearanceTheme ?? desktopSettings.appearanceTheme,
         },

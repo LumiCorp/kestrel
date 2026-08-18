@@ -31,9 +31,8 @@
   opacity: 0.78;
 }
 
-.project-switcher,
-.topbar-find,
-.details-button {
+.navigation-toggle,
+.topbar-find {
   height: var(--control-height);
   gap: var(--space-1);
   padding: 0 var(--space-2);
@@ -42,13 +41,12 @@
   font-size: 12px;
 }
 
-.project-switcher {
+.navigation-toggle {
   margin-left: var(--space-1);
 }
 
-.project-switcher:hover,
+.navigation-toggle:hover,
 .topbar-find:hover,
-.details-button:hover,
 .icon-button:hover,
 .surface-tabs button:hover {
   border-color: var(--border-subtle);
@@ -93,17 +91,7 @@
   background: var(--bg-app);
 }
 
-.workspace.with-inspector {
-  grid-template-columns: minmax(0, 1fr) var(--inspector-width);
-}
-
-.inspector-resizer {
-  width: var(--border-width);
-  background: var(--border-subtle);
-}
-
-.conversation-rail,
-.inspector {
+.conversation-rail {
   background: var(--bg-pane);
 }
 
@@ -183,6 +171,26 @@
   text-transform: none;
 }
 
+.explorer-view-navigation {
+  display: grid;
+  gap: 1px;
+}
+
+.explorer-view-navigation button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.explorer-view-navigation button.active { color: var(--text-primary); font-weight: 600; }
+
 .explorer-search {
   margin: var(--space-2) var(--space-3);
   border-color: var(--border-subtle);
@@ -239,11 +247,6 @@
 .explorer-thread-copy strong {
   font-size: 12px;
   font-weight: 500;
-}
-
-.explorer-thread-copy small {
-  color: var(--text-tertiary);
-  font-size: 10px;
 }
 
 .explorer-thread-select time {

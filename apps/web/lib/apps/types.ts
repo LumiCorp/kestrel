@@ -11,6 +11,7 @@ export type AppCategory =
   | "productivity"
   | "engineering"
   | "communication"
+  /** Persisted database compatibility; no executable App uses this category. */
   | "workflow"
   | "custom";
 

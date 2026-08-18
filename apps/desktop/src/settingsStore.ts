@@ -25,7 +25,6 @@ import {
   DESKTOP_DEFAULT_MODEL_CONFIGURATION_ID,
   DESKTOP_DEFAULT_ENABLED_APP_IDS,
   filterDesktopBuiltInAppIds,
-  filterDesktopWorkflowAppIds,
   getDesktopAppDefinition,
   listDesktopAppDefinitions,
   normalizeDesktopAppId,
@@ -38,12 +37,14 @@ import {
   selectDesktopStandardAppTools,
 } from "../../../src/desktopShell/standardAppConnections.js";
 import type { McpServerConfig } from "../../../src/mcp/contracts.js";
+import { KESTREL_STANDARD_APP_MANIFESTS } from "@kestrel-agents/protocol";
 import type {
   DesktopCapabilityPackId,
   DesktopDatabaseMode,
   DesktopModelProvider,
   DesktopProjectRegistration,
   DesktopMcpServerConfig,
+  DesktopPluginInstallation,
   DesktopSettings,
 } from "./contracts.js";
 
@@ -81,6 +82,7 @@ type DesktopSettingsFileBase = {
   desktopOnboarding?: DesktopSettings["desktopOnboarding"] | undefined;
   advancedWorkspaceEnabled?: boolean | undefined;
   mcpServers?: DesktopSettings["mcpServers"] | undefined;
+  plugins?: DesktopPluginInstallation[] | undefined;
   capabilityVerifications?:
     | DesktopSettings["capabilityVerifications"]
     | undefined;
@@ -166,7 +168,8 @@ type DesktopSettingsFileV10 = DesktopSettingsFileBase & {
 };
 
 type DesktopSettingsFileV11 = DesktopSettingsFileBase & {
-  version: 11;
+  version: 12;
+  plugins?: DesktopPluginInstallation[] | undefined;
   presetId?: DesktopSettings["presetId"] | undefined;
   capabilityPacks?: DesktopSettings["capabilityPacks"] | undefined;
   projects?: DesktopProjectRegistration[] | undefined;
@@ -212,6 +215,7 @@ export function createDefaultDesktopSettings(
     projects: [],
     projectTombstones: [],
     mcpServers: [],
+    plugins: buildDesktopPluginInstallations([], DESKTOP_DEFAULT_ENABLED_APP_IDS),
     capabilityVerifications: {},
     developerShellEnvMode: "inherit",
     developerShellAllowedEnvNames: [],
@@ -398,7 +402,10 @@ export function normalizeDesktopSettings(
     : (modelConfigurations.find(
         (configuration) => configuration.archivedAt === undefined,
       )?.id ?? modelConfigurations[0]!.id);
-  const mcpServers = normalizeDesktopMcpServers(settings?.mcpServers);
+  const persistedPlugins = normalizeDesktopPluginInstallations(settings?.plugins);
+  const mcpServers = persistedPlugins === undefined
+    ? normalizeDesktopMcpServers(settings?.mcpServers)
+    : persistedPlugins.flatMap((plugin) => plugin.mcpServer === undefined ? [] : [plugin.mcpServer]);
   const legacyDefaultAppIds = Array.isArray(settings?.defaultEnabledAppIds)
     ? settings.defaultEnabledAppIds.flatMap((id) => typeof id === "string" ? [id] : [])
     : undefined;
@@ -407,11 +414,6 @@ export function normalizeDesktopSettings(
     : legacyDefaultAppIds !== undefined
       ? filterDesktopBuiltInAppIds(legacyDefaultAppIds)
       : [...DESKTOP_DEFAULT_ENABLED_APP_IDS];
-  const legacyDefaultWorkflowAppIds = settings?.legacyDefaultWorkflowAppIds !== undefined
-    ? filterDesktopWorkflowAppIds(settings.legacyDefaultWorkflowAppIds)
-    : legacyDefaultAppIds !== undefined
-      ? filterDesktopWorkflowAppIds(legacyDefaultAppIds)
-      : undefined;
   const appearanceTheme =
     settings?.appearanceTheme === "light" ||
     settings?.appearanceTheme === "dark"
@@ -443,6 +445,7 @@ export function normalizeDesktopSettings(
       settings?.projectTombstones,
     ),
     mcpServers,
+    plugins: persistedPlugins ?? buildDesktopPluginInstallations(mcpServers, defaultEnabledBuiltInAppIds, tavilyApiKey),
     capabilityVerifications: normalizeCapabilityVerifications(
       settings?.capabilityVerifications,
     ),
@@ -489,9 +492,6 @@ export function normalizeDesktopSettings(
     modelConfigurations,
     defaultModelConfigurationId,
     defaultEnabledBuiltInAppIds,
-    ...(legacyDefaultWorkflowAppIds !== undefined
-      ? { legacyDefaultWorkflowAppIds }
-      : {}),
     appearanceTheme,
   };
 }
@@ -651,7 +651,8 @@ export async function readDesktopSettings(
       parsed.version !== 8 &&
       parsed.version !== 9 &&
       parsed.version !== 10 &&
-      parsed.version !== 11
+      parsed.version !== 11 &&
+      parsed.version !== 12
     ) {
       return createDefaultDesktopSettings();
     }
@@ -787,7 +788,7 @@ export async function readDesktopSettings(
         ? parsed.setupCompletedAt
         : undefined;
     const desktopOnboarding =
-      (parsed.version === 10 || parsed.version === 11)
+      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12)
         ? normalizeDesktopOnboardingRecord(parsed.desktopOnboarding)
         : undefined;
     const advancedWorkspaceEnabled =
@@ -796,11 +797,11 @@ export async function readDesktopSettings(
         ? parsed.advancedWorkspaceEnabled
         : undefined;
     const modelConfigurations =
-      (parsed.version === 10 || parsed.version === 11) && Array.isArray(parsed.modelConfigurations)
+      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12) && Array.isArray(parsed.modelConfigurations)
         ? parsed.modelConfigurations
         : undefined;
     const defaultModelConfigurationId =
-      (parsed.version === 10 || parsed.version === 11) &&
+      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12) &&
       typeof parsed.defaultModelConfigurationId === "string"
         ? parsed.defaultModelConfigurationId
         : undefined;
@@ -809,17 +810,13 @@ export async function readDesktopSettings(
         ? parsed.defaultEnabledAppIds.flatMap((entry) => typeof entry === "string" ? [entry] : [])
         : [];
     const defaultEnabledBuiltInAppIds =
-      parsed.version === 11 && Array.isArray(parsed.defaultEnabledBuiltInAppIds)
+      (parsed.version === 11 || parsed.version === 12) && Array.isArray(parsed.defaultEnabledBuiltInAppIds)
         ? parsed.defaultEnabledBuiltInAppIds
         : parsed.version === 10
           ? filterDesktopBuiltInAppIds(legacyDefaultAppIds)
           : undefined;
-    const legacyDefaultWorkflowAppIds =
-      parsed.version === 10
-        ? filterDesktopWorkflowAppIds(legacyDefaultAppIds)
-        : undefined;
     const appearanceTheme =
-      (parsed.version === 10 || parsed.version === 11) &&
+      (parsed.version === 10 || parsed.version === 11 || parsed.version === 12) &&
       (parsed.appearanceTheme === "system" ||
         parsed.appearanceTheme === "light" ||
         parsed.appearanceTheme === "dark")
@@ -853,6 +850,7 @@ export async function readDesktopSettings(
     const mcpServers = Array.isArray(parsed.mcpServers)
       ? normalizeDesktopMcpServers(parsed.mcpServers)
       : undefined;
+    const plugins = normalizeDesktopPluginInstallations(parsed.plugins);
     const capabilityVerifications = normalizeCapabilityVerifications(
       parsed.capabilityVerifications,
     );
@@ -863,6 +861,7 @@ export async function readDesktopSettings(
         ...(projects !== undefined ? { projects } : {}),
         projectTombstones,
         ...(mcpServers !== undefined ? { mcpServers } : {}),
+        ...(plugins !== undefined ? { plugins } : {}),
         capabilityVerifications,
         ...(selectedProvider !== undefined ? { selectedProvider } : {}),
         ...(databaseMode !== undefined ? { databaseMode } : {}),
@@ -912,12 +911,11 @@ export async function readDesktopSettings(
           ? { defaultModelConfigurationId }
           : {}),
         ...(defaultEnabledBuiltInAppIds !== undefined ? { defaultEnabledBuiltInAppIds } : {}),
-        ...(legacyDefaultWorkflowAppIds !== undefined ? { legacyDefaultWorkflowAppIds } : {}),
         ...(appearanceTheme !== undefined ? { appearanceTheme } : {}),
       },
       {
         backfillProviderSelection:
-          parsed.version !== 9 && parsed.version !== 10 && parsed.version !== 11,
+          parsed.version !== 9 && parsed.version !== 10 && parsed.version !== 11 && parsed.version !== 12,
       },
     );
   } catch {
@@ -931,7 +929,7 @@ export async function writeDesktopSettings(
 ): Promise<DesktopSettings> {
   const normalized = normalizeDesktopSettings(settings);
   const payload: DesktopSettingsFileV11 = {
-    version: 11,
+    version: 12,
     selectedProvider: normalized.selectedProvider,
     databaseMode: normalized.databaseMode,
     presetId: normalized.presetId,
@@ -940,17 +938,11 @@ export async function writeDesktopSettings(
     projectTombstones: normalized.projectTombstones.map((tombstone) => ({
       ...tombstone,
     })),
-    mcpServers: normalized.mcpServers.map((server) => ({
-      ...server,
-      args: server.args !== undefined ? [...server.args] : undefined,
-      tools: server.tools?.map((tool) => ({
-        ...tool,
-        allowedInteractionModes:
-          tool.allowedInteractionModes !== undefined
-            ? [...tool.allowedInteractionModes]
-            : undefined,
-      })),
-      credentials: server.credentials?.map((binding) => ({ ...binding })),
+    plugins: normalized.plugins.map((plugin) => ({
+      ...plugin,
+      capabilityPacks: plugin.capabilityPacks !== undefined ? [...plugin.capabilityPacks] : undefined,
+      credentialIds: plugin.credentialIds !== undefined ? [...plugin.credentialIds] : undefined,
+      mcpServer: plugin.mcpServer === undefined ? undefined : { ...plugin.mcpServer },
     })),
     capabilityVerifications: { ...normalized.capabilityVerifications },
     ...(normalized.developerShellPath !== undefined
@@ -1050,7 +1042,6 @@ export async function writeDesktopSettings(
     openaiApiKey: _openaiApiKey,
     anthropicApiKey: _anthropicApiKey,
     tavilyApiKey: _tavilyApiKey,
-    legacyDefaultWorkflowAppIds: _legacyDefaultWorkflowAppIds,
     ...sanitized
   } = normalized;
   return sanitized;
@@ -1431,6 +1422,72 @@ function normalizeCapabilityVerifications(
       new Date(timestamp).toISOString();
   }
   return normalized;
+}
+
+function buildDesktopPluginInstallations(
+  servers: readonly DesktopMcpServerConfig[],
+  enabledBuiltIns: readonly string[],
+  tavilyApiKey?: string,
+): DesktopPluginInstallation[] {
+  const installed = new Map<string, DesktopPluginInstallation>();
+  for (const manifest of KESTREL_STANDARD_APP_MANIFESTS) {
+    if (!manifest.preinstalled) continue;
+    installed.set(manifest.id, {
+      id: manifest.id, pluginId: manifest.id, version: manifest.version,
+      installScope: "desktop", driver: "builtin", source: "included", installed: true,
+      configured: true, enabled: enabledBuiltIns.includes(manifest.id),
+      capabilityPacks: manifest.capabilityPacks.map((pack) => pack.key),
+    });
+  }
+  if (tavilyApiKey?.trim()) installed.set("tavily", {
+    id: "tavily", pluginId: "tavily", version: 1, installScope: "desktop", driver: "api",
+    source: "standard", installed: true, configured: true, verifiedAt: undefined, enabled: true,
+    capabilityPacks: ["search"], credentialIds: ["tavily"],
+  });
+  for (const server of servers) {
+    const pluginId = server.appId ?? `custom.${server.id}`;
+    installed.set(pluginId, {
+      id: server.id, pluginId, version: 1, installScope: "desktop",
+      driver: server.transport === "stdio" ? "mcp-stdio" : "mcp-http",
+      source: server.appId === undefined ? "custom" : "standard", installed: true,
+      configured: Boolean(server.verifiedAt || server.credentials?.every((binding) => binding.configured) || server.oauthCredentialPrefix),
+      ...(server.verifiedAt !== undefined ? { verifiedAt: server.verifiedAt } : {}), enabled: server.enabled,
+      capabilityPacks: server.capabilityPacks, credentialIds: server.credentials?.flatMap((binding) => binding.credentialId ? [binding.credentialId] : []), mcpServer: { ...server },
+    });
+  }
+  return [...installed.values()];
+}
+
+function normalizeDesktopPluginInstallations(
+  value: unknown,
+): DesktopPluginInstallation[] | undefined {
+  if (!Array.isArray(value)) return;
+  const plugins = new Map<string, DesktopPluginInstallation>();
+  for (const candidate of value) {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) continue;
+    const plugin = candidate as Partial<DesktopPluginInstallation>;
+    const version = plugin.version;
+    if (typeof plugin.id !== "string" || typeof plugin.pluginId !== "string" ||
+      typeof version !== "number" || !Number.isSafeInteger(version) || version < 1 ||
+      plugin.installScope !== "desktop" ||
+      !["builtin", "cli", "mcp-stdio", "mcp-http", "api"].includes(plugin.driver ?? "") ||
+      !["included", "standard", "custom"].includes(plugin.source ?? "") ||
+      typeof plugin.installed !== "boolean" || typeof plugin.configured !== "boolean" || typeof plugin.enabled !== "boolean") continue;
+    const mcpServer = plugin.mcpServer === undefined
+      ? undefined
+      : normalizeDesktopMcpServers([plugin.mcpServer])[0];
+    plugins.set(plugin.pluginId, {
+      id: plugin.id, pluginId: plugin.pluginId, version,
+      installScope: "desktop", driver: plugin.driver!, source: plugin.source!,
+      installed: plugin.installed, configured: plugin.configured, enabled: plugin.enabled,
+      ...(typeof plugin.verifiedAt === "string" && !Number.isNaN(Date.parse(plugin.verifiedAt))
+        ? { verifiedAt: new Date(plugin.verifiedAt).toISOString() } : {}),
+      ...(Array.isArray(plugin.capabilityPacks) ? { capabilityPacks: plugin.capabilityPacks.filter((pack): pack is string => typeof pack === "string") } : {}),
+      ...(Array.isArray(plugin.credentialIds) ? { credentialIds: plugin.credentialIds.filter((id): id is string => typeof id === "string") } : {}),
+      ...(mcpServer !== undefined ? { mcpServer } : {}),
+    });
+  }
+  return [...plugins.values()];
 }
 
 function toRuntimeMcpServer(server: DesktopMcpServerConfig): McpServerConfig {

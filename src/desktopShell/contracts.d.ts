@@ -632,7 +632,7 @@ export declare function parseDesktopRendererSettingsUpdate(value: unknown): Desk
 export declare function parseDesktopProviderCredentialInput(value: unknown): DesktopProviderCredentialInput;
 export declare function parseDesktopToolCredentialProvider(value: unknown): DesktopToolCredentialProvider;
 export declare function parseDesktopToolCredentialInput(value: unknown): DesktopToolCredentialInput;
-export type DesktopShellCommand = "add-project" | "new-thread" | "stop-agent" | "toggle-left-sidebar" | "toggle-right-sidebar" | "restart-runtime";
+export type DesktopShellCommand = "add-project" | "new-thread" | "stop-agent" | "toggle-left-sidebar" | "restart-runtime";
 export type DesktopFileEntryKind = "file" | "directory";
 export type DesktopFileViewKind = "markdown" | "code" | "text" | "binary";
 export interface DesktopFileEntry {

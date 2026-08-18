@@ -29,6 +29,15 @@ test("Desktop Tools and services uses a cardless guided connector surface", asyn
   assert.match(toolServicesSource, /<SetupStep number=\{3\}/u);
 });
 
+test("Desktop Apps keeps Tools and services permanently reachable", async () => {
+  const appsSource = await readFile(path.join(rendererDirectory, "McpWorkspace.tsx"), "utf8");
+
+  assert.match(appsSource, /const TOOL_SERVICES_SELECTION = "tools-services";/u);
+  assert.match(appsSource, /<strong>Tools &amp; services<\/strong>/u);
+  assert.match(appsSource, /selectedId === TOOL_SERVICES_SELECTION/u);
+  assert.match(appsSource, /selectedId === TOOL_SERVICES_SELECTION && capabilityView !== undefined/u);
+});
+
 test("guided recovery requests select and focus the requested connector", async () => {
   const toolServicesSource = await readFile(path.join(rendererDirectory, "ToolServicesSettings.tsx"), "utf8");
 

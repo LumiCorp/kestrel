@@ -194,10 +194,15 @@ export function UnifiedMissionControlWorkspace({
       })
       .catch((error) => {
         if (disposed) return;
-        const message = errorMessage(error);
+        const cause = errorMessage(error);
+        const message = cause.includes("Mission Control project authority is unavailable")
+          ? "Mission Control is reconnecting to its project authority. Retry in a moment."
+          : cause;
         setLoadError(message);
         setAuthorityAvailable(false);
-        onErrorRef.current(message);
+        // This workspace owns the actionable retry state; reporting it to the
+        // shell as well creates a duplicate raw runner error.
+        onErrorRef.current(undefined);
       })
       .finally(() => {
         if (disposed) return;

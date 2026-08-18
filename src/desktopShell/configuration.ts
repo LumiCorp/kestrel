@@ -83,36 +83,13 @@ export function isPublishedStandardAppId(appId: string): appId is KestrelAppId {
   return KESTREL_STANDARD_APP_MANIFESTS.some((app) => app.id === appId);
 }
 
-export function isDesktopWorkflowAppId(appId: string): appId is KestrelAppId {
-  const normalized = normalizeDesktopAppId(appId);
-  return isPublishedStandardAppId(normalized) && getKestrelStandardAppManifest(normalized)?.category === "workflow";
-}
-
 export function isDesktopBuiltInAppId(appId: string): appId is KestrelAppId {
   const normalized = normalizeDesktopAppId(appId);
-  return isPublishedStandardAppId(normalized) && getKestrelStandardAppManifest(normalized)?.category === "built_in";
-}
-
-export function filterDesktopWorkflowAppIds(appIds: readonly string[]): KestrelAppId[] {
-  return [...new Set(appIds.map(normalizeDesktopAppId).filter(isDesktopWorkflowAppId))].sort();
+  return isPublishedStandardAppId(normalized) && getKestrelStandardAppManifest(normalized)?.preinstalled === true;
 }
 
 export function filterDesktopBuiltInAppIds(appIds: readonly string[]): KestrelAppId[] {
   return [...new Set(appIds.map(normalizeDesktopAppId).filter(isDesktopBuiltInAppId))].sort();
-}
-
-export function validateDesktopRendererWorkflowSelection(
-  requestedAppIds: readonly string[],
-  authoritativeGlobalAppIds: readonly string[],
-): KestrelAppId[] {
-  const authoritative = new Set(authoritativeGlobalAppIds.map(normalizeDesktopAppId));
-  const forged = requestedAppIds
-    .map(normalizeDesktopAppId)
-    .find((id) => !isDesktopWorkflowAppId(id) && !authoritative.has(id));
-  if (forged !== undefined) {
-    throw new Error(`Desktop renderer selected non-workflow App '${forged}'.`);
-  }
-  return filterDesktopWorkflowAppIds(requestedAppIds);
 }
 
 export function desktopAppIdForServer(
@@ -173,113 +150,7 @@ const DESKTOP_APP_DEFINITIONS: readonly DesktopAppDefinition[] = Object.freeze([
       "internet.usage",
     ]) as unknown as string[],
   }),
-  ...KESTREL_STANDARD_APP_MANIFESTS.filter(
-    (manifest) => manifest.category === "workflow",
-  ).map((manifest) =>
-    Object.freeze({
-      id: manifest.id,
-      contractVersion: 1,
-      label: manifest.name,
-      description: manifest.description,
-      toolNames: Object.freeze([]) as unknown as string[],
-    }),
-  ),
 ]);
-
-export interface DesktopWorkflowDependencyStatus {
-  role: string;
-  minimum: number;
-  readyAppIds: KestrelAppId[];
-  missing: boolean;
-}
-
-export interface DesktopWorkflowSelectionStatus {
-  appId: KestrelAppId;
-  name: string;
-  instructions: string;
-  dependencies: DesktopWorkflowDependencyStatus[];
-  ready: boolean;
-}
-
-export function resolveDesktopWorkflowSelections(
-  selection: DesktopExecutionSelection,
-  customApps: readonly DesktopCustomAppDefinitionSource[] = [],
-): DesktopWorkflowSelectionStatus[] {
-  const selectedAppIds = new Set(
-    selection.apps.map((app) => normalizeDesktopAppId(app.id)),
-  );
-  const executableAppIds = new Set<string>();
-  const capabilityPacksByAppId = new Map<string, Set<string>>();
-  for (const app of customApps) {
-    if (app.enabled && (app.tools?.length ?? 0) > 0) {
-      const appId = desktopAppIdForServer(app);
-      executableAppIds.add(appId);
-      const manifest = isPublishedStandardAppId(appId)
-        ? getKestrelStandardAppManifest(appId)
-        : undefined;
-      capabilityPacksByAppId.set(
-        appId,
-        new Set(
-          app.capabilityPacks ??
-            manifest?.capabilityPacks.map((pack) => pack.key) ??
-            [],
-        ),
-      );
-    }
-  }
-  const selectedExecutableAppIds = new Set(
-    [...selectedAppIds].filter((appId) => executableAppIds.has(appId)),
-  );
-
-  return KESTREL_STANDARD_APP_MANIFESTS.filter(
-    (manifest) =>
-      manifest.category === "workflow" && selectedAppIds.has(manifest.id),
-  ).map((manifest) => {
-    const dependencies = (manifest.dependencies ?? []).map((dependency) => {
-      const readyAppIds = dependency.appIds.filter((appId) => {
-        if (!selectedExecutableAppIds.has(appId)) return false;
-        const requiredPacks = dependency.requiredCapabilityPacks?.[appId];
-        if (!requiredPacks?.length) return true;
-        const configuredPacks = capabilityPacksByAppId.get(appId);
-        return requiredPacks.some((pack) => configuredPacks?.has(pack));
-      });
-      return {
-        role: dependency.role,
-        minimum: dependency.minimum,
-        readyAppIds,
-        missing: readyAppIds.length < dependency.minimum,
-      };
-    });
-    return {
-      appId: manifest.id,
-      name: manifest.name,
-      instructions: manifest.workflowInstructions ?? manifest.description,
-      dependencies,
-      ready: dependencies.every((dependency) => !dependency.missing),
-    };
-  });
-}
-
-export function formatDesktopWorkflowInstructions(
-  workflows: readonly DesktopWorkflowSelectionStatus[],
-): string | undefined {
-  if (workflows.length === 0) return undefined;
-  return [
-    "## Enabled Workflow Apps",
-    "These workflows coordinate only the App capabilities selected for this conversation. They do not grant additional access or change any App approval requirement.",
-    ...workflows.map((workflow) => {
-      const dependencies = workflow.dependencies
-        .map((dependency) => {
-          const names = dependency.readyAppIds
-            .map((appId) => getKestrelStandardAppManifest(appId)?.name ?? appId)
-            .join(" or ");
-          return `${dependency.role}: ${names}`;
-        })
-        .join("; ");
-      return `- ${workflow.name}: ${workflow.instructions} Available Apps: ${dependencies}.`;
-    }),
-  ].join("\n");
-}
 
 export function desktopCustomAppId(serverId: string): string {
   return `custom.${serverId}`;

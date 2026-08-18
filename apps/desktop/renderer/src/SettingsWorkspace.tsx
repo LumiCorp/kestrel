@@ -173,7 +173,7 @@ export function SettingsWorkspace({
     [view],
   );
   const includedAppCount = settings.apps.filter(
-    (app) => KESTREL_STANDARD_APP_MANIFESTS.find((manifest) => manifest.id === app.id)?.category === "built_in",
+    (app) => KESTREL_STANDARD_APP_MANIFESTS.find((manifest) => manifest.id === app.id)?.preinstalled === true,
   ).length;
   const connectedAppCount = settings.enabledConnectedAppIds.length;
   const attentionCapabilities = useMemo(
