@@ -268,7 +268,6 @@ test("Desktop OTA evidence is bounded and excludes unselected log content", () =
   });
   const evidence = shapeDesktopOtaEvidence({
     finalVersion: "0.7.0",
-    sourceCommit: "a".repeat(40),
     artifactEvidence: [],
     transitions: [blocked],
     requestLedger: [],
@@ -286,6 +285,7 @@ test("Desktop OTA evidence is bounded and excludes unselected log content", () =
   });
   const serialized = JSON.stringify(evidence);
   assert.match(serialized, /desktop-ota-smoke-v1/u);
+  assert.doesNotMatch(serialized, /sourceCommit/u);
   assert.doesNotMatch(serialized, /top-secret|public-but-not-evidence/u);
   assert.deepEqual(
     sanitizeDesktopUpdaterLog(

@@ -131,7 +131,6 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
     version?: unknown;
     package?: unknown;
     packageVersion?: unknown;
-    sourceCommit?: unknown;
     platform?: unknown;
     arch?: unknown;
     entrypoint?: unknown;
@@ -143,9 +142,6 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
   }
   if (bundleManifest.package !== "@kestrel-agents/kestrel" || bundleManifest.packageVersion !== TARGET_VERSION) {
     errors.push("artifact bundle manifest package identity is invalid");
-  }
-  if (typeof bundleManifest.sourceCommit !== "string" || !/^[0-9a-f]{40}$/u.test(bundleManifest.sourceCommit)) {
-    errors.push("artifact bundle manifest sourceCommit must be a full Git commit");
   }
   if (bundleManifest.platform !== TARGET_PLATFORM || bundleManifest.arch !== TARGET_ARCH) {
     errors.push("artifact bundle manifest target does not match the release artifact");
