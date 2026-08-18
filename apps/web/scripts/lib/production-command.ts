@@ -39,9 +39,30 @@ export async function loadProductionEnvironment() {
 export function productionRuntimeImages(tag: string) {
   const parsed = productionTag(tag);
   return {
-    runtimeImage: `ghcr.io/lumicorp/kestrel-workspace-runtime:${parsed}`,
-    routerImage: `ghcr.io/lumicorp/kestrel-environment-router:${parsed}`,
+    runtimeImage: immutableImageReference(
+      "ghcr.io/lumicorp/kestrel-workspace-runtime",
+      parsed,
+    ),
+    routerImage: immutableImageReference(
+      "ghcr.io/lumicorp/kestrel-environment-router",
+      parsed,
+    ),
   };
+}
+
+export function immutableImageReference(
+  repository: string,
+  tag: string,
+  inspect: (image: string) => unknown = inspectDockerManifest,
+) {
+  const image = `${repository}:${tag}`;
+  const manifest = inspect(image);
+  const descriptor = record(manifest)?.Descriptor;
+  const digest = record(descriptor)?.digest;
+  if (typeof digest !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(digest)) {
+    throw new Error(`Docker did not return an immutable digest for ${image}.`);
+  }
+  return `${repository}@${digest}`;
 }
 
 export function productionTag(value: string) {
@@ -98,4 +119,25 @@ function capture(command: string, args: string[]) {
 function run(command: string, args: string[]) {
   const result = spawnSync(command, args, { stdio: ["ignore", "ignore", "pipe"] });
   if (result.status !== 0) throw new Error(`${command} ${args[0] ?? ""} failed.`);
+}
+
+function inspectDockerManifest(image: string): unknown {
+  const result = spawnSync("docker", ["manifest", "inspect", image, "--verbose"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(`Docker could not inspect ${image}.`);
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    throw new Error(`Docker returned an invalid manifest for ${image}.`);
+  }
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
