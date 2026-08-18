@@ -75,6 +75,55 @@ function createTestRuntime(profile: TuiProfile, factory: RuntimeFactory): Kestre
   });
 }
 
+test("KestrelChatRuntime returns canonical Mission Control state while runtime refresh remains pending", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  const project = {
+    projectId,
+    schemaVersion: 1 as const,
+    revision: 0,
+    authorityEpoch: 1,
+    document: {
+      schemaVersion: 1 as const,
+      projectId,
+      autopilot: { enabled: false, wipLimit: 1 },
+      items: {},
+      history: [],
+    },
+    createdAt: "1970-01-01T00:00:00.000Z",
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  };
+  let reconciliationStarted = false;
+  const runtime = Object.create(
+    KestrelChatRuntime.prototype,
+  ) as KestrelChatRuntime;
+  Object.assign(runtime, {
+    missionControlProjectService: {
+      async getProject() {
+        return project;
+      },
+    },
+    missionControlExecutionRuntime: {
+      async reconcile() {
+        reconciliationStarted = true;
+        return await new Promise<void>(() => {});
+      },
+    },
+  });
+
+  const response = await Promise.race([
+    runtime.getMissionControlProject({ projectId }),
+    new Promise<never>((_resolve, reject) => {
+      setTimeout(
+        () => reject(new Error("Mission Control read waited for runtime refresh.")),
+        100,
+      );
+    }),
+  ]);
+
+  assert.equal(reconciliationStarted, true);
+  assert.deepEqual(response, project);
+});
+
 test("KestrelChatRuntime exposes ThreadRuntime terminal outcomes to the production runner surface", async () => {
   const calls: Array<Record<string, unknown>> = [];
   const output = completedOutput("session-1", "run-1");

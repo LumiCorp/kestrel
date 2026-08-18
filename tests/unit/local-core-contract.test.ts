@@ -23,7 +23,6 @@ import {
   writeCoreLockHeartbeat,
   writeCoreManifest,
 } from "../../src/localCore/index.js";
-import { desktopRunnerCommandTimeoutMs } from "../../src/localCore/client.js";
 import { closeLocalCoreStore } from "../../src/localCore/store.js";
 
 
@@ -97,13 +96,6 @@ function canonicalLocalCoreStatus(): Record<string, unknown> {
     logsPath: paths.logsPath,
   };
 }
-
-test("Desktop applies the standard command timeout only to Mission Control requests", () => {
-  assert.equal(desktopRunnerCommandTimeoutMs("mission_control.project.get", 10_000), 10_000);
-  assert.equal(desktopRunnerCommandTimeoutMs("mission_control.action.execute", 10_000), 10_000);
-  assert.equal(desktopRunnerCommandTimeoutMs("operator.thread.get", 10_000), undefined);
-  assert.equal(desktopRunnerCommandTimeoutMs("operator.control", 10_000), undefined);
-});
 
 test("Local Core accepts the exact Desktop restart shutdown contract", () => {
   assert.deepEqual(

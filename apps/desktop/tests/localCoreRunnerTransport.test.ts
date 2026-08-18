@@ -8,6 +8,7 @@ import { LocalCoreRunnerTransport } from "../src/localCoreRunnerTransport.js";
 
 test("LocalCoreRunnerTransport sends Desktop protocol commands through Local Core", async () => {
   const sent: string[] = [];
+  let verifiedExecutionCalls = 0;
   let restartCalls = 0;
   const client = {
     async sendRunnerCommand(line: string, input: { onLine(line: string): void }): Promise<void> {
@@ -26,7 +27,11 @@ test("LocalCoreRunnerTransport sends Desktop protocol commands through Local Cor
     },
   } as unknown as LocalCoreClient;
   const transport = new LocalCoreRunnerTransport({
-    connectionManager: createConnectionManager(client),
+    connectionManager: createConnectionManager(client, {
+      onVerifiedExecution: () => {
+        verifiedExecutionCalls += 1;
+      },
+    }),
     logPath: "/tmp/kestrel-core.log",
   });
   const events: string[] = [];
@@ -38,8 +43,10 @@ test("LocalCoreRunnerTransport sends Desktop protocol commands through Local Cor
 
   assert.equal(sent.length, 1);
   assert.equal((JSON.parse(events[0] ?? "{}") as { type?: string }).type, "runner.pong");
+  assert.equal(verifiedExecutionCalls, 0);
   assert.equal(transport.getStatus().running, true);
   assert.equal((await transport.restart()).running, true);
+  assert.equal(verifiedExecutionCalls, 1);
   assert.equal(restartCalls, 1);
 });
 
@@ -148,9 +155,18 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 
 function createConnectionManager(
   client: LocalCoreClient,
-): Pick<LocalCoreConnectionManager, "executeOnce"> {
+  options: {
+    onVerifiedExecution?(): void;
+  } = {},
+): Pick<LocalCoreConnectionManager, "executeOnce"> & {
+  executeConnectedOnce<T>(operation: (current: LocalCoreClient) => Promise<T>): Promise<T>;
+} {
   return {
     async executeOnce<T>(operation: (current: LocalCoreClient) => Promise<T>): Promise<T> {
+      options.onVerifiedExecution?.();
+      return await operation(client);
+    },
+    async executeConnectedOnce<T>(operation: (current: LocalCoreClient) => Promise<T>): Promise<T> {
       return await operation(client);
     },
   };

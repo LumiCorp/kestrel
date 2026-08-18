@@ -909,17 +909,24 @@ export class KestrelChatRuntime {
         "Mission Control project authority is unavailable.",
       );
     }
-    let project = await this.missionControlProjectService.getProject(
+    const project = await this.missionControlProjectService.getProject(
       input.projectId,
     );
     if (this.missionControlExecutionRuntime !== undefined) {
-      await this.missionControlExecutionRuntime.reconcile(project.projectId);
-      await this.driveMissionControlAutopilot(project.projectId);
-      project = await this.missionControlProjectService.getProject(
-        project.projectId,
-      );
+      void this.refreshMissionControlProject(project.projectId);
     }
     return project;
+  }
+
+  private async refreshMissionControlProject(projectId: string): Promise<void> {
+    try {
+      await this.missionControlExecutionRuntime?.reconcile(projectId);
+      await this.driveMissionControlAutopilot(projectId);
+    } catch {
+      // Canonical project reads must remain available while background runtime
+      // reconciliation is unavailable. A later read retries the same durable
+      // reconciliation and project changes publish their authoritative state.
+    }
   }
 
   async executeMissionControlAction(input: {
