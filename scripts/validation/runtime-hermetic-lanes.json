@@ -194,6 +194,7 @@
         "tests/unit/cli-command-mode.test.ts",
         "tests/unit/cli-command-parser.test.ts",
         "tests/unit/cli-configured-transport.test.ts",
+        "tests/unit/cli-conversation-adapter.test.ts",
         "tests/unit/cli-diagnostic-log-store.test.ts",
         "tests/unit/cli-env-loader.test.ts",
         "tests/unit/cli-finalize-payload.test.ts",

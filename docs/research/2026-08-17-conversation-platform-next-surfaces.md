@@ -15,7 +15,7 @@ Confidence is high for the in-repository TUI and Discord findings. Mobile sequen
 - `ConversationCommandAdapter` is defined but has no concrete implementation anywhere in the current repository (`packages/conversation/src/contracts.ts:230-240`).
 - The TUI directly submits `conversation.message.submit`, assigns its own message ID, and branches on queued versus started responses (`cli/app/TuiRunController.ts:189-243`). It also independently mutates transcript history before dispatch (`cli/app/App.ts:2390-2430`), reduces progress/reasoning into TUI state (`cli/app/TuiRunController.ts:700-759`), and recovers terminal messages into the transcript (`cli/app/App.ts:3750-3830`).
 - Discord invokes `generateExternalReply`, posts returned text, and persists a synthetic user/assistant message pair (`apps/web/lib/bots/runtime.ts:255-329`, `apps/web/lib/bots/shared.ts:115-180`). That path does not consume the durable turn/queue/interaction lifecycle used by the full clients.
-- The separate mobile client still owns its own timestamp-based turn projector, optimistic delivery, transient-part filtering, composer-state derivation, and stream replay (`/Users/gregasher/Projects/kestrel-one-mobile/src/lib/thread-presentation.ts:16-211`, `/Users/gregasher/Projects/kestrel-one-mobile/src/lib/thread-state.ts:9-215`). Its negotiation request currently advertises only v2 and refuses v3 unless an exact installed v3 adapter/revision exists (`/Users/gregasher/Projects/kestrel-one-mobile/src/lib/api/conversation-client.ts:66-129`).
+- The separate mobile client still owns its own timestamp-based turn projector, optimistic delivery, transient-part filtering, composer-state derivation, and stream replay (`kestrel-one-mobile/src/lib/thread-presentation.ts:16-211`, `kestrel-one-mobile/src/lib/thread-state.ts:9-215`). Its negotiation request currently advertises only v2 and refuses v3 unless an exact installed v3 adapter/revision exists (`kestrel-one-mobile/src/lib/api/conversation-client.ts:66-129`).
 - The mobile checkout is not a clean baseline; it contains extensive tracked and untracked conversation work. Any migration must reconcile that work rather than overwrite it.
 
 ### Inferred
@@ -55,6 +55,6 @@ Surfaces that should not be converted merely for symmetry: Docs, raw SDK clients
 - `cli/app/App.ts`
 - `apps/web/lib/bots/runtime.ts`
 - `apps/web/lib/bots/shared.ts`
-- `/Users/gregasher/Projects/kestrel-one-mobile/src/lib/thread-presentation.ts`
-- `/Users/gregasher/Projects/kestrel-one-mobile/src/lib/thread-state.ts`
-- `/Users/gregasher/Projects/kestrel-one-mobile/src/lib/api/conversation-client.ts`
+- `kestrel-one-mobile/src/lib/thread-presentation.ts`
+- `kestrel-one-mobile/src/lib/thread-state.ts`
+- `kestrel-one-mobile/src/lib/api/conversation-client.ts`
