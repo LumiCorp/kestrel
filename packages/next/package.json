@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/next",
-  "version": "0.8.0",
+  "version": "0.8.4",
   "description": "Next.js integration helpers for Kestrel agents",
   "license": "MIT",
   "repository": {

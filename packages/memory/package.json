@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/memory",
-  "version": "0.8.0",
+  "version": "0.8.4",
   "description": "Governed memory contracts and retrieval gateway for Kestrel agents",
   "license": "MIT",
   "repository": {

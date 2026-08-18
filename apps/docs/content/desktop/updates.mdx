@@ -1,43 +1,46 @@
 ---
 title: Update Kestrel Desktop
-summary: Install Kestrel Desktop 0.8 manually, preserve local state, verify the signed application, and understand the later OTA proof.
+summary: Update Kestrel Desktop to 0.8.4, preserve local state, verify the signed application, and restore the pre-v12 settings backup when downgrading.
 section: desktop
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-18
 ---
 
-Kestrel Desktop 0.8.0 is a signed, notarized manual download for macOS 13 or later on Apple silicon. Installing it over 0.7 preserves the application-owned settings, credentials, projects, sessions, and Local Core data used by the existing installation.
+Kestrel Desktop 0.8.4 is a signed and notarized release for macOS 13 or later on Apple silicon. Signed 0.7.0 and 0.8.0 installations can update through the stable channel; the DMG remains available for direct installation.
 
-## Current 0.8 distribution model
+## Update through the stable channel
 
-Download Desktop from the unified [`v0.8.0` release](https://github.com/LumiCorp/kestrel/releases/tag/v0.8.0). The release supplies the DMG, ZIP, checksum, and source revision. Do not use an updater feed to install 0.8.0.
+Quit or finish active work, choose **Check for Updates**, download 0.8.4, and allow Kestrel to relaunch. Kestrel refuses to restart while Desktop or Local Core work is active and never cancels that work to install an update.
 
 ## Download and verify the release
 
-Compare the downloaded DMG with the published checksum, open it, and move Kestrel to Applications. macOS should report the Developer ID signature and notarization as valid. Stop if the checksum, signing identity, version, or release revision does not match.
+Compare the downloaded DMG with the published checksum, open it, and move Kestrel to Applications. macOS should report the Developer ID signature and notarization as valid. Stop if the checksum, signing identity, or version does not match.
 
-## Install over 0.7
+## Install from the DMG
 
-Quit Kestrel, replace the application in Applications, and reopen it. Do not delete application data or run the uninstall workflow as part of an upgrade.
+Download Desktop from the unified [`v0.8.4` release](https://github.com/LumiCorp/kestrel/releases/tag/v0.8.4). Compare the DMG with its published checksum, quit Kestrel, replace the application in Applications, and reopen it. Do not delete application data or run the uninstall workflow as part of an upgrade.
 
 ## What data is preserved
 
-The upgrade keeps provider settings, Keychain-backed credentials, registered projects, conversations, Mission Control records, and Local Core persistence. Schema migrations run against the existing owned stores; they do not create a replacement identity for the same project or session.
+The upgrade keeps provider settings, Keychain-backed credentials, registered projects, conversations, Mission Control records, and Local Core persistence. Desktop converts legacy App and MCP settings into executable plugin records, preserves connection and credential registrations, and removes retired workflow-App selections.
+
+Before Desktop first writes schema 12, it preserves the recognized version 1–11 settings file beside the active file as `desktop-settings.pre-v12.json`. The backup is not a second active settings authority and is not included in support bundles.
 
 ## Confirm the installed version
 
-Confirm Desktop reports `0.8.0`, Local Core becomes ready, the existing project library appears, and one prior session can be opened before starting new work.
-
-## Why 0.8.0 does not use stable OTA
-
-The 0.8.0 release establishes the installed base. It does not move the stable Desktop update pointer, so existing installations will not receive it silently or through an automatic update check.
-
-## Planned 0.8.1 OTA proof
-
-The first 0.8 OTA exercise will test a controlled `0.8.0` to `0.8.1` update. That patch must prove download, signature verification, relaunch, state preservation, and cleanup before its metadata is promoted.
+Confirm Desktop reports `0.8.4`, Local Core becomes ready, the existing project library appears, and one prior session can be opened before starting new work.
 
 ## Troubleshooting and rollback
 
-If the new application does not open or Local Core cannot become ready, keep the existing data in place and use [Desktop troubleshooting](/desktop/troubleshooting). Reinstalling the previous signed application is safer than deleting state; do not reverse a data migration unless its compatibility has been proven.
+If the new application does not open or Local Core cannot become ready, keep the existing data in place and use [Desktop troubleshooting](/desktop/troubleshooting).
+
+To return to an older signed Desktop after schema 12 has been written:
+
+1. Quit Kestrel completely.
+2. Preserve the current schema-12 file for diagnosis.
+3. Restore `desktop-settings.pre-v12.json` as `desktop-settings.json` in the same settings directory.
+4. Reinstall the previous signed application and reopen it.
+
+Never delete the settings directory, Keychain credentials, Local Core state, or project data as part of rollback.

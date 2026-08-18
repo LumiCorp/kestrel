@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -167,7 +167,7 @@ type DesktopSettingsFileV10 = DesktopSettingsFileBase & {
   projects?: DesktopProjectRegistration[] | undefined;
 };
 
-type DesktopSettingsFileV11 = DesktopSettingsFileBase & {
+type DesktopSettingsFileV12 = DesktopSettingsFileBase & {
   version: 12;
   plugins?: DesktopPluginInstallation[] | undefined;
   presetId?: DesktopSettings["presetId"] | undefined;
@@ -226,6 +226,15 @@ export function createDefaultDesktopSettings(
     defaultEnabledBuiltInAppIds: [...DESKTOP_DEFAULT_ENABLED_APP_IDS],
     appearanceTheme: "system",
   };
+}
+
+export function desktopPreV12SettingsBackupPath(settingsPath: string): string {
+  const extension = path.extname(settingsPath);
+  const basename = path.basename(settingsPath, extension);
+  return path.join(
+    path.dirname(settingsPath),
+    `${basename}.pre-v12${extension || ".json"}`,
+  );
 }
 
 export function hasConfiguredDesktopProviderCredential(
@@ -928,7 +937,7 @@ export async function writeDesktopSettings(
   settings: DesktopSettings,
 ): Promise<DesktopSettings> {
   const normalized = normalizeDesktopSettings(settings);
-  const payload: DesktopSettingsFileV11 = {
+  const payload: DesktopSettingsFileV12 = {
     version: 12,
     selectedProvider: normalized.selectedProvider,
     databaseMode: normalized.databaseMode,
@@ -1031,6 +1040,7 @@ export async function writeDesktopSettings(
     appearanceTheme: normalized.appearanceTheme,
   };
   await mkdir(path.dirname(settingsPath), { recursive: true });
+  await preservePreV12SettingsBackup(settingsPath);
   await writeFile(
     settingsPath,
     `${JSON.stringify(payload, null, 2)}\n`,
@@ -1045,6 +1055,69 @@ export async function writeDesktopSettings(
     ...sanitized
   } = normalized;
   return sanitized;
+}
+
+async function preservePreV12SettingsBackup(settingsPath: string): Promise<void> {
+  let source: Buffer;
+  try {
+    source = await readFile(settingsPath);
+  } catch (error) {
+    if (isFileSystemError(error, "ENOENT")) return;
+    throw error;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source.toString("utf8")) as unknown;
+  } catch {
+    return;
+  }
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed) ||
+    typeof (parsed as { version?: unknown }).version !== "number" ||
+    !Number.isInteger((parsed as { version: number }).version) ||
+    (parsed as { version: number }).version < 1 ||
+    (parsed as { version: number }).version > 11
+  ) {
+    return;
+  }
+
+  const backupPath = desktopPreV12SettingsBackupPath(settingsPath);
+  try {
+    await writeFile(backupPath, source, {
+      flag: "wx",
+      mode: 0o600,
+    });
+  } catch (error) {
+    if (isFileSystemError(error, "EEXIST")) {
+      try {
+        const existing = await stat(backupPath);
+        if (!existing.isFile()) {
+          throw new Error("the existing backup path is not a file");
+        }
+        await chmod(backupPath, 0o600);
+        return;
+      } catch (existingError) {
+        throw new Error("Desktop could not verify its pre-v12 settings backup.", {
+          cause: existingError,
+        });
+      }
+    }
+    throw new Error("Desktop could not preserve pre-v12 settings before migration.", {
+      cause: error,
+    });
+  }
+}
+
+function isFileSystemError(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
 }
 
 function normalizeDesktopOnboardingRecord(

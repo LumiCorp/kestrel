@@ -1,0 +1,55 @@
+---
+title: Apps and plugins in Desktop
+summary: Understand built-in, API, CLI, and MCP plugins, their lifecycle state, and the 0.8.4 settings migration.
+section: desktop
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-18
+---
+
+Desktop Apps are executable plugin records. Each record identifies its plugin,
+version, driver, installation source, capability packs, credential references,
+and installed, configured, and enabled state.
+
+## Plugin drivers
+
+| Driver | Use |
+| --- | --- |
+| Built-in | Capabilities shipped with Desktop |
+| API | A directly integrated service |
+| CLI | A locally installed command-line capability |
+| MCP stdio or HTTP | A local or remote MCP service |
+
+Installing or enabling a plugin makes approved capabilities available; it does
+not inject a workflow prompt or bypass per-action approval.
+
+## Configure a plugin
+
+Open **Settings → Apps**, choose the App, configure its connection or command,
+verify it when required, select the capability packs it may expose, and enable
+it. Credentials remain in Keychain or the owning secure credential store and
+are represented in settings only by credential identifiers.
+
+## Upgrade migration
+
+On the first 0.8.4 settings write, Desktop converts recognized legacy MCP and
+direct App settings into plugin records. Custom server definitions, connection
+registrations, verification state, selected capability packs, and credential
+identifiers are retained. Retired workflow-App identifiers are discarded
+because workflows are no longer executable App definitions.
+
+Desktop first preserves the recognized version 1–11 settings file as
+`desktop-settings.pre-v12.json`. Read [Desktop updates](/desktop/updates) before
+downgrading after the migration.
+
+## Confirm readiness
+
+Confirm the plugin is installed, configured, and enabled; its connection is
+healthy; its intended capability packs are selected; and an actual conversation
+can see the expected tool descriptor. Consequential operations may still ask
+for an approval bound to the exact action.
+
+<Outcome>
+  <p>You can tell whether a Desktop plugin is installed, configured, enabled, and authorized for the current work.</p>
+</Outcome>

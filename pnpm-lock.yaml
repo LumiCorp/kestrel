@@ -511,25 +511,25 @@ importers:
         specifier: ^13.7.0
         version: 13.13.0(react@19.2.4)
       '@kestrel-agents/ai-sdk':
-        specifier: 0.8.0
+        specifier: 0.8.4
         version: link:../../packages/ai-sdk
       '@kestrel-agents/conversation':
-        specifier: 0.8.0
+        specifier: 0.8.4
         version: link:../../packages/conversation
       '@kestrel-agents/memory':
-        specifier: 0.8.0
+        specifier: 0.8.4
         version: link:../../packages/memory
       '@kestrel-agents/next':
-        specifier: 0.8.0
+        specifier: 0.8.4
         version: link:../../packages/next
       '@kestrel-agents/protocol':
-        specifier: 0.8.0
+        specifier: 0.8.4
         version: link:../../packages/protocol
       '@kestrel-agents/sdk':
-        specifier: 0.8.0
+        specifier: 0.8.4
         version: link:../../packages/sdk
       '@kestrel-agents/workspace-skills':
-        specifier: 0.8.0
+        specifier: 0.8.4
         version: link:../../packages/workspace-skills
       '@kestrel/mcp-security':
         specifier: workspace:*

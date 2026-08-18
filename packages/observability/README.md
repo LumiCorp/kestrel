@@ -28,8 +28,8 @@ It is not the runtime's internal observability system. It is the application-fac
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/observability@0.8.0 \
-  @kestrel-agents/sdk@0.8.0
+pnpm add @kestrel-agents/observability@0.8.4 \
+  @kestrel-agents/sdk@0.8.4
 ```
 
 Check [0.8 release status](../../apps/docs/content/start/release-status.mdx)

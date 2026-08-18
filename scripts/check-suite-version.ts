@@ -99,6 +99,11 @@ requireNumericVersion(
   "docs Runtime npm package release metadata",
 );
 assert.equal(
+  DOCS_RELEASE.packages.runtimeNpmVersion,
+  suiteVersion,
+  "docs Runtime npm package release metadata must match the canonical suite version",
+);
+assert.equal(
   DOCS_RELEASE.products.cli.npmVersion,
   DOCS_RELEASE.packages.runtimeNpmVersion,
   "docs CLI npm version must match the Runtime npm package version",

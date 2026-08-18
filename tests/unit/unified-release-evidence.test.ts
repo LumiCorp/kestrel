@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { validateUnifiedReleaseEvidence } from "../../scripts/check-unified-release-evidence.js";
 
-const sourceSha = "a".repeat(40);
 const checksum = "b".repeat(64);
 const timestamp = "2026-08-04T16:00:00.000Z";
 const packageNames = [
@@ -21,6 +20,7 @@ const flyRoles = [
   "environment-router",
   "preview-edge",
   "turn-worker",
+  "control-worker",
   "runpod-worker",
 ];
 
@@ -28,7 +28,7 @@ test("accepts a complete immutable candidate evidence bundle", () => {
   assert.doesNotThrow(() => validateUnifiedReleaseEvidence(validEvidence()));
 });
 
-test("rejects package and source revision mismatches", () => {
+test("rejects package version mismatches", () => {
   const evidence = validEvidence();
   const packageEvidence = evidence.npm.packages[0];
   assert.ok(packageEvidence);
@@ -44,13 +44,13 @@ test("rejects mutable Fly references", () => {
   assert.throws(() => validateUnifiedReleaseEvidence(evidence), /image is mutable/u);
 });
 
-test("rejects a changed stable OTA pointer", () => {
+test("rejects a changed candidate stable OTA pointer", () => {
   const evidence = validEvidence();
-  evidence.desktopOta.afterSha256 = "c".repeat(64);
-  assert.throws(() => validateUnifiedReleaseEvidence(evidence), /OTA metadata changed/u);
+  evidence.desktopOta.stableAfterSha256 = "c".repeat(64);
+  assert.throws(() => validateUnifiedReleaseEvidence(evidence), /candidate stable Desktop OTA metadata changed/u);
 });
 
-test("requires both exact-revision production deployments", () => {
+test("requires both production deployments", () => {
   const evidence = validEvidence();
   const incompleteDeployments = {
     ...evidence,
@@ -70,10 +70,18 @@ test("requires latest to match only for cutover evidence", () => {
   for (const packageEvidence of candidate.npm.packages) {
     packageEvidence.distTags.latest = packageEvidence.version;
   }
+  candidate.desktopOta.stableAfterSha256 = "c".repeat(64);
+  candidate.desktopOta.stableAfterVersion = candidate.version;
+  candidate.desktopOta.transitions = ["0.7.0", "0.8.0"].map((fromVersion) => ({
+    fromVersion,
+    toVersion: candidate.version,
+    status: "passed",
+    completedAt: timestamp,
+  }));
   assert.doesNotThrow(() => validateUnifiedReleaseEvidence(candidate));
 });
 
-test("requires the explicit Runtime npm patch version", () => {
+test("requires Runtime to use the canonical suite version", () => {
   const evidence = validEvidence();
   const runtime = evidence.npm.packages.find(({ name }) => name === "@kestrel-agents/kestrel");
   assert.ok(runtime);
@@ -81,39 +89,51 @@ test("requires the explicit Runtime npm patch version", () => {
   assert.throws(() => validateUnifiedReleaseEvidence(evidence), /kestrel version mismatch/u);
 });
 
+test("cutover requires both public Desktop OTA transitions", () => {
+  const evidence = validEvidence();
+  evidence.phase = "cutover";
+  for (const packageEvidence of evidence.npm.packages) {
+    packageEvidence.distTags.latest = evidence.version;
+  }
+  evidence.desktopOta.stableAfterSha256 = "c".repeat(64);
+  evidence.desktopOta.stableAfterVersion = evidence.version;
+  evidence.desktopOta.transitions = [{
+    fromVersion: "0.8.0",
+    toVersion: evidence.version,
+    status: "passed",
+    completedAt: timestamp,
+  }];
+  assert.throws(() => validateUnifiedReleaseEvidence(evidence), /Desktop OTA transitions/u);
+});
+
 function validEvidence() {
   return {
     phase: "candidate" as "candidate" | "cutover",
-    version: "0.8.0",
-    sourceSha,
+    version: "0.8.4",
     npm: {
-      runtimeVersion: "0.8.2",
       packages: packageNames.map((name) => ({
         name,
-        version: name === "@kestrel-agents/kestrel" ? "0.8.2" : "0.8.0",
-        gitHead: sourceSha,
+        version: "0.8.4",
         integrity: "sha512-YWJjZA==",
         distTags: {
-          "release-0.8.0": name === "@kestrel-agents/kestrel" ? "0.8.2" : "0.8.0",
+          "release-0.8.4": "0.8.4",
           latest: "0.7.0",
         },
       })),
       consumerSmokes: ["darwin-arm64", "linux-x64"].map((platform) => ({
         platform,
-        version: "0.8.2",
+        version: "0.8.4",
         status: "passed",
         completedAt: timestamp,
       })),
     },
     cli: {
       platform: "darwin-arm64",
-      version: "0.8.0",
-      sourceSha,
+      version: "0.8.4",
       archiveSha256: checksum,
     },
     desktop: {
-      version: "0.8.0",
-      sourceSha,
+      version: "0.8.4",
       artifacts: ["dmg", "zip"].map((type) => ({ type, sha256: checksum })),
       signingIdentity: "Developer ID Application: Lumi",
       notarization: "passed",
@@ -121,21 +141,25 @@ function validEvidence() {
       launchServices: "passed",
     },
     desktopOta: {
-      expectedStableVersion: "0.7.0",
-      beforeVersion: "0.7.0",
-      afterVersion: "0.7.0",
-      beforeSha256: checksum,
-      afterSha256: checksum,
+      stableBeforeVersion: "0.7.0",
+      stableAfterVersion: "0.7.0",
+      stableBeforeSha256: checksum,
+      stableAfterSha256: checksum,
+      transitions: [] as Array<{
+        completedAt: string;
+        fromVersion: string;
+        status: string;
+        toVersion: string;
+      }>,
     },
     deployments: {
-      kestrelOne: { deploymentId: "dpl_one", revision: sourceSha, status: "passed" },
-      docs: { deploymentId: "dpl_docs", revision: sourceSha, status: "passed" },
+      kestrelOne: { deploymentId: "dpl_one", status: "passed" },
+      docs: { deploymentId: "dpl_docs", status: "passed" },
     },
     migrations: { preflightStatus: "passed", applied: ["0001_release"] },
     fly: flyRoles.map((role) => ({
       role,
       image: `registry.fly.io/kestrel-one@sha256:${checksum}`,
-      sourceSha,
       smoke: { status: "passed", completedAt: timestamp },
     })),
     canaries: [

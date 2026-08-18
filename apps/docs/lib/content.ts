@@ -314,11 +314,11 @@ export const getNavigation = cache(async (): Promise<NavGroup[]> => {
       ["Understand Kestrel", ["/start/concepts", "/start/architecture", "/start/runtime-model", "/start/faq", "/start/release-status"]],
     ]),
     group("desktop", "Desktop", "/desktop", [
-      ["Get Desktop", ["/desktop", "/desktop/install", "/desktop/updates", "/desktop/first-run", "/desktop/providers"]],
+      ["Get Desktop", ["/desktop", "/desktop/install", "/desktop/updates", "/desktop/first-run", "/desktop/providers", "/desktop/apps"]],
       ["Work and recover", ["/desktop/workspaces-and-sessions", "/desktop/operator-control", "/desktop/recovery", "/desktop/troubleshooting"]],
     ]),
     group("kestrel-one", "Kestrel One", "/kestrel-one", [
-      ["Start collaborating", ["/kestrel-one", "/kestrel-one/getting-started", "/kestrel-one/source-and-hosting", "/kestrel-one/threads", "/kestrel-one/projects", "/kestrel-one/apps"]],
+      ["Start collaborating", ["/kestrel-one", "/kestrel-one/getting-started", "/kestrel-one/source-and-hosting", "/kestrel-one/threads", "/kestrel-one/projects", "/kestrel-one/scheduled-runs", "/kestrel-one/apps"]],
       ["Context and Knowledge", ["/kestrel-one/context-revisions", "/kestrel-one/knowledge", "/kestrel-one/artifacts-and-sharing"]],
       ["Models and administration", ["/kestrel-one/organizations-and-access", "/kestrel-one/environments", "/kestrel-one/models-and-gateways", "/kestrel-one/managed-model-deployments", "/kestrel-one/administration", "/kestrel-one/production-operations"]],
     ]),

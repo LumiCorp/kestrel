@@ -1,4 +1,4 @@
-# ADR 0002: Application-owned production delivery
+# ADR 0002: Manual production delivery
 
 - Status: accepted
 - Date: 2026-08-15
@@ -11,34 +11,34 @@ coordinated provider revisions, database state, signatures, configuration,
 canaries, and rollback. That control plane was larger than the requirement and
 failed before it ever established a dependable production path.
 
-The actual requirement is smaller: build changed images after the protected
-`production` decision, deploy each platform component safely, and advance the
-default tenant runtime pair only after the existing tenant lifecycle proves it.
+The actual requirement is smaller: let Vercel deploy from the protected
+`production` branch, then let an authenticated operator publish and move each
+selected Fly, RunPod, or tenant runtime target independently.
 
 ## Decision
 
-GitHub builds, smokes, and publishes images. Kestrel deploys them.
-
-One authenticated application endpoint accepts either one platform role image
-or one Workspace Runtime/Router pair. Platform images are applied directly
-through the Fly Machines API after establishing an active Machine, a stopped
-standby, and the role's named readiness check from the existing app.
-Runtime pairs reuse the existing Environment Runtime Version, channel, canary,
-and `environment.update` lifecycle; the channel adds only a nullable desired
-pointer.
+GitHub does not build or deploy production images. An authenticated operator
+publishes one selected role and changes one selected provider target at a time.
+Platform images use the provider-native Fly Machine update after the operator
+reviews the current record and confirms the exact target. Runtime pairs reuse
+the existing Environment Runtime Version, channel, canary, and
+`environment.update` lifecycle.
 
 Vercel's production build owns ordered database migration. Worker and platform
 configuration remains at its provider and is never synchronized by an image
-workflow. Production image identity is the fixed GitHub run-number tag.
+command. Production image identity is the operator-selected tag and provider
+record.
 
 ## Consequences
 
-- There is no release candidate, rollout controller, deployment queue, lease,
-  heartbeat, cross-provider SHA condition, signature gate, or custom rollback.
+- There is no rollout controller, deployment queue, cross-provider revision
+  condition, or automatic fleet promotion.
 - GitHub has no Machine or database mutation logic.
-- One platform failure affects only that platform component.
+- One platform failure affects only that explicitly selected component.
 - Runtime canary success uses the product's existing durable lifecycle proof.
 - Runtime promotion changes the default for new Environments and never updates
   the remaining fleet automatically.
+- Fly and RunPod changes remain manual until another ADR explicitly replaces
+  this decision.
 - Existing release tables remain only for the already-agreed rollback window
   and are removed in the later cleanup migration.
