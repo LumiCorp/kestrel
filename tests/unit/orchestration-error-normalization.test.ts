@@ -144,6 +144,7 @@ test("InteractionManager grants only an exact, current, same-actor external appr
   });
   const request = await manager.syncWaitState({
     threadId: "thread-exact",
+    turnId: "turn-exact",
     runId: "run-exact",
     actor,
     waitFor: {
@@ -158,6 +159,8 @@ test("InteractionManager grants only an exact, current, same-actor external appr
     },
   });
   assert.ok(request);
+  assert.equal(request.metadata?.conversationTurnId, "turn-exact");
+  assert.equal(request.metadata?.conversationRunId, "run-exact");
 
   await assert.rejects(
     () =>

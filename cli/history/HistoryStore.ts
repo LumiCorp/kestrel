@@ -45,18 +45,24 @@ export class HistoryStore {
     }
 
     const records = await this.readRecords();
-    const lines = records
-      .filter((record) => record.sessionId === sessionId)
+    const seenEventIds = new Set<string>();
+    return records
+      .filter((record) => {
+        if (record.sessionId !== sessionId || seenEventIds.has(record.eventId)) {
+          return false;
+        }
+        seenEventIds.add(record.eventId);
+        return true;
+      })
       .slice(-maxItems)
       .map((record) => ({
+        eventId: record.eventId,
         role: record.role,
         text: record.text,
         data: record.data,
         timestamp: record.timestamp,
         run: record.run,
       }));
-
-    return mergeLegacyAssistantSegments(lines);
   }
 
   async readSessionOverviews(sessionIds?: string[]): Promise<Record<string, SessionHistoryOverview>> {
@@ -125,53 +131,6 @@ export interface SessionHistoryOverview {
   hasArtifacts: boolean;
   hasSummary: boolean;
   restartAvailable: boolean;
-}
-
-function mergeLegacyAssistantSegments(lines: TranscriptLine[]): TranscriptLine[] {
-  const merged: TranscriptLine[] = [];
-
-  for (const line of lines) {
-    const previous = merged[merged.length - 1];
-    if (shouldMergeAssistantSegment(previous, line)) {
-      previous.text = `${previous.text}\n${line.text}`;
-      continue;
-    }
-
-    merged.push({
-      role: line.role,
-      text: line.text,
-      ...(line.data !== undefined ? { data: line.data } : {}),
-      timestamp: line.timestamp,
-      ...(line.run !== undefined ? { run: line.run } : {}),
-    });
-  }
-
-  return merged;
-}
-
-function shouldMergeAssistantSegment(
-  previous: TranscriptLine | undefined,
-  current: TranscriptLine,
-): previous is TranscriptLine {
-  if (previous === undefined) {
-    return false;
-  }
-
-  if (previous.role !== "assistant" || current.role !== "assistant") {
-    return false;
-  }
-
-  if (current.data !== undefined || current.run !== undefined) {
-    return false;
-  }
-
-  const previousTime = Date.parse(previous.timestamp);
-  const currentTime = Date.parse(current.timestamp);
-  if (Number.isNaN(previousTime) || Number.isNaN(currentTime)) {
-    return false;
-  }
-
-  return currentTime - previousTime >= 0 && currentTime - previousTime <= 1000;
 }
 
 function isNonFatalFsError(error: unknown, extraCodes: string[] = []): boolean {

@@ -514,6 +514,7 @@ export interface ThreadStore {
     status?: ConversationTurnStatus | undefined;
     completedAfter?: { completedAt: string; turnId: string } | undefined;
     terminalMessagesOnly?: boolean | undefined;
+    terminalOutcomesOnly?: boolean | undefined;
     limit?: number | undefined;
   }): Promise<ConversationTurnRecord[]>;
   listConversationTurnSegments?(turnId: string): Promise<ConversationTurnSegmentRecord[]>;

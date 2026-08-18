@@ -5,7 +5,6 @@ import { runnerStructuredReviewOptionLabel } from "@kestrel-agents/protocol";
 
 import type {
   AgentRunLogLine,
-  ProgressUpdateV1,
   TranscriptLine,
   TuiSessionMeta,
 } from "../../contracts.js";
@@ -19,19 +18,24 @@ import {
   readExactReview,
 } from "../../app/waitForPrompt.js";
 import { buildChatVisualRows, buildChatWindow, type ChatVisualRow } from "./chatRows.js";
-import { resolveChatComposerInputRows, resolveChatLayoutBudget } from "./chatLayout.js";
+import {
+  resolveChatActivityRows,
+  resolveChatComposerInputRows,
+  resolveChatLayoutBudget,
+} from "./chatLayout.js";
 import type { ViewScrollState } from "../../contracts.js";
+import type { ConversationActivityItem } from "@kestrel-agents/conversation";
 
 interface ChatViewProps {
   session: TuiSessionMeta;
   transcript: TranscriptLine[];
   runLogs: AgentRunLogLine[];
+  activity?: ConversationActivityItem[] | undefined;
   scroll: ViewScrollState;
   statusLine: string;
   draft: string;
   running: boolean;
   composerFocused: boolean;
-  progress?: ProgressUpdateV1 | undefined;
   viewportColumns: number;
   viewportRows: number;
   unreadCount: number;
@@ -73,11 +77,13 @@ export function ChatView(props: ChatViewProps): React.JSX.Element {
         viewportRows: props.viewportRows,
         detailDrawerOpen: false,
       });
+  const visibleActivity = (props.activity ?? []).filter((item) => item.visible !== false).slice(-3);
+  const activityRows = resolveChatActivityRows(props.activity);
   const { conversationWidth, bubbleWidth, wrappedBodyWidth, transcriptRows } = resolveChatLayoutBudget({
     viewportColumns: props.viewportColumns,
     viewportRows: props.viewportRows,
     detailDrawerOpen: false,
-    composerRows: composerInputRows + 1,
+    composerRows: composerInputRows + 1 + activityRows,
   });
   const visualRows = buildChatVisualRows(props.transcript, wrappedBodyWidth);
   const windowed = buildChatWindow(visualRows, props.scroll, transcriptRows);
@@ -135,6 +141,19 @@ export function ChatView(props: ChatViewProps): React.JSX.Element {
       <Box height={1} overflow="hidden" paddingX={1}>
         <Text color={theme.muted}>{clippedSelectionSummary ?? " "}</Text>
       </Box>
+
+      {activityRows > 0 ? (
+        <Box height={activityRows} flexDirection="column" overflow="hidden" paddingX={1}>
+          {visibleActivity.map((item) => (
+            <Text
+              key={item.id}
+              color={item.status === "failed" ? theme.error : item.status === "active" ? theme.brand : theme.muted}
+            >
+              {truncate(`${item.label}: ${item.text}`, conversationWidth)}
+            </Text>
+          ))}
+        </Box>
+      ) : null}
 
       <Box
         height={composerInputRows + 1}

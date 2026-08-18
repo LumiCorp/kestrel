@@ -1,4 +1,5 @@
 import type { ResolvedWorkspace, TuiProfile, TuiSessionMeta } from "../contracts.js";
+import { randomUUID } from "node:crypto";
 import {
   buildChatVisualRows,
   countChatVisualRows,
@@ -19,6 +20,7 @@ import {
 import { describeResolvedWorkspace } from "../workspace/WorkspaceResolver.js";
 import type { TuiAppContext } from "./TuiAppContext.js";
 import type { SessionDescribedEventPayload } from "../protocol/contracts.js";
+import type { ConversationActivityItem } from "@kestrel-agents/conversation";
 
 export interface CreateSessionOptions {
   launch: OperatorResolvedStartTask;
@@ -41,12 +43,18 @@ export interface SessionControllerContext extends TuiAppContext {
   resolveWorkspaceForSession(session: TuiSessionMeta): Promise<ResolvedWorkspace | undefined>;
   syncSessionFromDescribePayload(payload: SessionDescribedEventPayload): Promise<void>;
   startActiveTurn(input: {
+    messageId?: string | undefined;
     submittedMessage: string;
     resumeBlockedRun?: boolean | undefined;
-  }): Promise<void>;
+  }): Promise<boolean>;
   getChatWrappedBodyWidth(): number;
   getChatListRows(): number;
   recoverTerminalMessages(session: TuiSessionMeta): Promise<void>;
+  getConversationActivity(sessionId: string): ConversationActivityItem[];
+  getConversationRunState(sessionId: string): {
+    running: boolean;
+    status: "running" | "waiting" | "completed" | "failed" | "ready";
+  };
 }
 
 export class SessionController {
@@ -132,9 +140,7 @@ export class SessionController {
       runLogs: [],
       statusLine: this.context.withMcpSummary(`new session '${options.launch.title}'`),
       chatUnreadCount: 0,
-      activeProgressByRun: {},
-      latestProgressForSession: undefined,
-      latestReasoningForSession: undefined,
+      conversationActivity: [],
       lastSelectedSession: options.launch.title,
       sessionQuery: "",
       activeView: "chat",
@@ -178,8 +184,14 @@ export class SessionController {
     await this.context.appendHistoryLine("system", formatOperatorLaunchSummary(options.launch));
     await this.context.persistUiState();
     if (options.launch.initialPrompt !== undefined) {
-      await this.context.appendHistoryLine("user", options.launch.initialPrompt);
+      const messageId = `tui:${randomUUID()}`;
+      await this.context.appendHistoryLine("user", options.launch.initialPrompt, {
+        kind: "tui.user-message.v1",
+        messageId,
+        deliveryState: "submitting",
+      }, undefined, messageId);
       await this.context.startActiveTurn({
+        messageId,
         submittedMessage: options.launch.initialPrompt,
       });
     }
@@ -232,17 +244,25 @@ export class SessionController {
       mode: state.themeMode,
       overrides: profile.theme,
     });
+    const conversationActivity = this.context.getConversationActivity(target.sessionId);
+    const conversationRunState = this.context.getConversationRunState(target.sessionId);
+    const latestActivity = conversationActivity.at(-1);
     this.context.uiStore.patch({
       activeProfile: profile,
       activeSession: decoratedTarget,
       sessions: this.context.getSessionsFile().sessions,
       transcript,
       runLogs: [],
-      statusLine: this.context.withMcpSummary(`resumed '${target.name}'`),
+      statusLine: this.context.withMcpSummary(
+        latestActivity === undefined
+          ? conversationRunState.status === "ready"
+            ? `resumed '${target.name}'`
+            : conversationRunState.status
+          : `${latestActivity.label}: ${latestActivity.text}`,
+      ),
+      running: conversationRunState.running,
       chatUnreadCount: 0,
-      activeProgressByRun: {},
-      latestProgressForSession: undefined,
-      latestReasoningForSession: undefined,
+      conversationActivity,
       lastSelectedSession: target.name,
       sessionQuery: "",
       activeView: "chat",

@@ -722,7 +722,10 @@ function parseConversationTurn(
     throw new Error(`operator thread view.conversationTurns[${index}].status is invalid.`);
   }
   const sequence = turn.sequence;
-  if (typeof sequence !== "number" || Number.isSafeInteger(sequence) === false || sequence < 1) {
+  if (
+    sequence !== null &&
+    (typeof sequence !== "number" || Number.isSafeInteger(sequence) === false || sequence < 1)
+  ) {
     throw new Error(`operator thread view.conversationTurns[${index}].sequence is invalid.`);
   }
   return {

@@ -2,13 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  conversationActivityConformanceScenarios,
+  conversationComposerConformanceScenarios,
+  conversationProjectionConformanceScenarios,
   createModeSwitchRetryGuard,
   describeConversationLink,
+  normalizeConversationProjectionConformance,
   resolveConversationModeSwitch,
   projectConversation,
   reconcileConversationMessages,
   reduceConversationActivity,
   resolveConversationComposerKeyboardAction,
+  resolveConversationComposerPolicy,
   resolveConversationComposerPresentation,
   type ConversationInteraction,
   type ConversationMessageLike,
@@ -54,6 +59,95 @@ test("reports conflicting explicit message ownership", () => {
   assert.equal(projected.issues[0]?.code, "MESSAGE_TURN_CONFLICT");
 });
 
+test("reports duplicate authoritative turn sequences without timestamp ordering", () => {
+  const projected = projectConversation({
+    messages: [],
+    turns: [
+      { ...turn("turn-z", 1, "user-z"), createdAt: "2026-01-01T00:00:00.000Z" },
+      { ...turn("turn-a", 1, "user-a"), createdAt: "2027-01-01T00:00:00.000Z" },
+    ],
+    interactions: [],
+  });
+  assert.deepEqual(projected.items.map((item) => item.kind === "durable_turn" ? item.turnId : ""), ["turn-a", "turn-z"]);
+  assert.equal(projected.issues[0]?.code, "TURN_SEQUENCE_CONFLICT");
+});
+
+test("reports and deterministically orders turns without authoritative sequence", () => {
+  const projected = projectConversation({
+    messages: [],
+    turns: [
+      { ...turn("turn-z", 2, "user-z"), createdAt: "2025-01-01T00:00:00.000Z" },
+      { ...turn("turn-b", 3, "user-b"), sequence: null, createdAt: "2024-01-01T00:00:00.000Z" },
+      { ...turn("turn-a", 1, "user-a"), sequence: null, createdAt: "2027-01-01T00:00:00.000Z" },
+      { ...turn("turn-c", 1, "user-c"), createdAt: "2028-01-01T00:00:00.000Z" },
+    ],
+    interactions: [],
+  });
+  assert.deepEqual(
+    projected.items.map((item) => item.kind === "durable_turn" ? item.turnId : ""),
+    ["turn-c", "turn-z", "turn-a", "turn-b"],
+  );
+  assert.deepEqual(
+    projected.issues.filter((issue) => issue.code === "TURN_SEQUENCE_MISSING").map((issue) => issue.turnId),
+    ["turn-a", "turn-b"],
+  );
+});
+
+test("runs every shared projection conformance scenario", () => {
+  for (const fixture of conversationProjectionConformanceScenarios) {
+    const projected = projectConversation(fixture);
+    assert.deepEqual(normalizeConversationProjectionConformance(projected), fixture.expected, fixture.name);
+  }
+});
+
+test("orders an explicit historical interaction request before its response", () => {
+  const interaction: ConversationInteraction = {
+    id: "interaction-1",
+    requestId: "request-1",
+    source: "runtime",
+    kind: "user_input",
+    eventType: "user.reply",
+    prompt: "Continue?",
+    status: "resolved",
+    turnId: "turn-1",
+    assistantMessageId: "assistant-request",
+    responseMessageId: "user-response",
+    createdAt,
+    resolvedAt: createdAt,
+  };
+  const projected = projectConversation({
+    turns: [turn("turn-1", 1, "user-input")],
+    interactions: [interaction],
+    messages: [
+      message("user-response", "user", "turn-1"),
+      message("assistant-request", "assistant", "turn-1"),
+      message("user-input", "user", "turn-1"),
+    ],
+  });
+  const item = projected.items[0];
+  assert.equal(item?.kind, "durable_turn");
+  if (item?.kind !== "durable_turn") assert.fail("expected durable turn");
+  assert.deepEqual(item.messages.map((entry) => entry.id), ["user-input", "assistant-request", "user-response"]);
+});
+
+test("runs every shared activity conformance scenario", () => {
+  for (const fixture of conversationActivityConformanceScenarios) {
+    const result = fixture.events.reduce(reduceConversationActivity, []);
+    assert.deepEqual(result.map((item) => ({
+      kind: item.kind,
+      runId: item.runId,
+      status: item.status,
+      text: item.text,
+    })), fixture.expected, fixture.name);
+  }
+});
+
+test("runs every shared composer conformance scenario", () => {
+  for (const fixture of conversationComposerConformanceScenarios) {
+    assert.equal(resolveConversationComposerPolicy(fixture).mode, fixture.expectedMode, fixture.name);
+  }
+});
+
 test("terminal persisted messages replace stale live messages", () => {
   const turns = [{ ...turn("turn-1", 1, "user-1"), status: "completed" as const }];
   const persisted = [{ ...message("assistant-1", "assistant", "turn-1"), value: "final" }];
@@ -63,14 +157,105 @@ test("terminal persisted messages replace stale live messages", () => {
 
 test("interleaved reasoning formats update one reasoning stream", () => {
   const events = [
-    runtimeEvent("run.model.reasoning.started", { attempt: 1, format: "summary", contentState: "live" }),
-    runtimeEvent("run.model.reasoning.delta", { attempt: 1, format: "summary", contentState: "live", delta: "Inspecting " }),
-    runtimeEvent("run.agent_progress", { message: "Still working.", stepAgent: "agent.loop" }),
-    runtimeEvent("run.model.reasoning.delta", { attempt: 1, format: "provider_reasoning_text", contentState: "live", delta: "the workspace." }),
+    runtimeEvent("run.model.reasoning.started", { attempt: 1, format: "summary", contentState: "live" }, { sequence: 1 }),
+    runtimeEvent("run.model.reasoning.delta", { attempt: 1, format: "summary", contentState: "live", delta: "Inspecting " }, { sequence: 2 }),
+    runtimeEvent("run.agent_progress", { message: "Still working.", stepAgent: "agent.loop" }, { sequence: 3 }),
+    runtimeEvent("run.model.reasoning.delta", { attempt: 1, format: "provider_reasoning_text", contentState: "live", delta: "the workspace." }, { sequence: 4 }),
   ];
   const result = events.reduce(reduceConversationActivity, []);
   assert.equal(result.filter((item) => item.kind === "reasoning").length, 1);
   assert.equal(result.find((item) => item.kind === "reasoning")?.text, "Inspecting the workspace.");
+});
+
+test("activity replay is idempotent and run starts are isolated", () => {
+  const first = runtimeEvent("run.model.reasoning.delta", {
+    attempt: 1,
+    format: "summary",
+    contentState: "live",
+    delta: "Inspecting.",
+  }, { id: "reasoning-1", runId: "run-1", sequence: 1 });
+  const other = runtimeEvent("run.agent_progress", { message: "Other run." }, {
+    id: "progress-2",
+    runId: "run-2",
+    sequence: 1,
+  });
+  const replayed = [first, other, first].reduce(reduceConversationActivity, []);
+  assert.equal(replayed.find((item) => item.kind === "reasoning")?.text, "Inspecting.");
+  const restarted = reduceConversationActivity(replayed, {
+    id: "started-1",
+    type: "run.started",
+    ts: createdAt,
+    runId: "run-1",
+    payload: {},
+  });
+  const replayedStart = reduceConversationActivity([
+    ...restarted,
+    {
+      id: "progress-after-start",
+      kind: "agent_progress",
+      label: "Agent progress",
+      text: "Still working.",
+      timestamp: createdAt,
+      status: "active",
+      runId: "run-1",
+      sourceEventId: "progress-after-start",
+    } as const,
+  ], {
+    id: "started-1",
+    type: "run.started",
+    ts: createdAt,
+    runId: "run-1",
+    payload: {},
+  });
+  assert.deepEqual(
+    replayedStart.filter((item) => item.visible !== false).map((item) => [item.runId, item.text]),
+    [["run-2", "Other run."], ["run-1", "Still working."]],
+  );
+});
+
+test("terminal events retire only the activity owned by their run", () => {
+  const active = [
+    runtimeEvent("run.agent_progress", { message: "First run." }, { id: "progress-1", runId: "run-1", sequence: 1 }),
+    runtimeEvent("run.agent_progress", { message: "Second run." }, { id: "progress-2", runId: "run-2", sequence: 1 }),
+  ].reduce(reduceConversationActivity, []);
+  const completed = reduceConversationActivity(active, {
+    id: "completed-1",
+    type: "run.completed",
+    ts: createdAt,
+    runId: "run-1",
+    payload: { result: { output: { runId: "run-1" } } },
+  });
+  assert.deepEqual(completed.filter((item) => item.visible !== false).map((item) => [item.runId, item.text]), [
+    ["run-2", "Second run."],
+  ]);
+});
+
+test("run-start replay identity survives visible activity compaction", () => {
+  const started = reduceConversationActivity([], {
+    id: "started-long-run",
+    type: "run.started",
+    ts: createdAt,
+    runId: "run-long",
+    payload: {},
+  });
+  const crowded = Array.from({ length: 81 }, (_, index) => runtimeEvent(
+    "run.agent_progress",
+    { message: `Other ${index}` },
+    { runId: "run-other", sequence: index + 1 },
+  )).reduce(reduceConversationActivity, started);
+  const withOwnProgress = reduceConversationActivity(crowded, runtimeEvent(
+    "run.agent_progress",
+    { message: "Long run progress" },
+    { id: "long-progress", runId: "run-long", sequence: 1 },
+  ));
+  const replayed = reduceConversationActivity(withOwnProgress, {
+    id: "started-long-run",
+    type: "run.started",
+    ts: createdAt,
+    runId: "run-long",
+    payload: {},
+  });
+  assert.equal(replayed.some((item) => item.sourceEventId === "long-progress"), true);
 });
 
 test("composer queues content during active work", () => {
@@ -167,12 +352,20 @@ function message(id: string, role: ConversationMessageLike["role"], kestrelTurnI
   return { id, role, ...(kestrelTurnId ? { metadata: { kestrelTurnId } } : {}) };
 }
 
-function runtimeEvent(type: string, extra: Record<string, unknown>) {
+function runtimeEvent(
+  type: string,
+  extra: Record<string, unknown>,
+  identity: { id?: string; runId?: string; sequence?: number } = {},
+) {
+  runtimeEventId += 1;
+  const runId = identity.runId ?? "run-1";
   return {
-    id: `${type}:${Math.random()}`,
+    id: identity.id ?? `${type}:${runtimeEventId}`,
     type,
     ts: createdAt,
-    runId: "run-1",
-    payload: { update: { runId: "run-1", ts: createdAt, seq: 1, ...extra } },
+    runId,
+    payload: { update: { runId, ts: createdAt, seq: identity.sequence ?? 1, ...extra } },
   };
 }
+
+let runtimeEventId = 0;

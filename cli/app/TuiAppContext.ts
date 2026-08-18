@@ -54,6 +54,7 @@ export interface TuiAppContext {
     text: string,
     data?: Record<string, unknown> | undefined,
     output?: NormalizedOutput | undefined,
+    eventId?: string | undefined,
   ): Promise<void>;
   persistSessionAndUi(): Promise<void>;
   persistUiState(): Promise<void>;

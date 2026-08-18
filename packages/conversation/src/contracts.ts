@@ -40,7 +40,7 @@ export interface ConversationMessageLike {
 export interface ConversationTurn {
   id: string;
   threadId?: string | undefined;
-  sequence: number;
+  sequence: number | null;
   inputMessageId: string | null;
   status: ConversationTurnStatus;
   rootRunId?: string | null | undefined;
@@ -227,14 +227,18 @@ export type ConversationRendererMap<Output> = {
   ) => Output;
 };
 
-export interface ConversationCommandAdapter<Submission, Result = void> {
-  startTurn(submission: Submission): Promise<Result>;
-  queueTurn(submission: Submission): Promise<Result>;
-  answerInteraction(submission: Submission & { requestId: string }): Promise<Result>;
+export interface ConversationCommandAdapter<
+  TurnSubmission,
+  InteractionAnswer extends { requestId: string },
+  Result = void,
+> {
+  startTurn(submission: TurnSubmission): Promise<Result>;
+  queueTurn(submission: TurnSubmission): Promise<Result>;
+  answerInteraction(answer: InteractionAnswer): Promise<Result>;
   interruptTurn(input: { threadId: string; turnId: string }): Promise<Result>;
   switchModeAndRetry(input: {
     recommendationId: string;
     mode: ConversationMode;
-    submission: Submission;
+    answer: InteractionAnswer;
   }): Promise<Result>;
 }

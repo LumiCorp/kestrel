@@ -87,6 +87,7 @@ export function projectDesktopConversationTimeline(
   const activityByTurnId = new Map<string, DesktopRunStreamItem[]>();
   const standaloneActivity: DesktopRunStreamItem[] = [];
   for (const item of runStream) {
+    if (item.visible === false) continue;
     const turnId = item.runId === undefined ? undefined : turnByRunId.get(item.runId);
     if (turnId === undefined) {
       standaloneActivity.push(item);
@@ -99,7 +100,8 @@ export function projectDesktopConversationTimeline(
 
   const segments = new Map<string, {
     id: string;
-    turnSequence: number;
+    turnId: string;
+    turnSequence: number | null;
     segmentOrder: number;
     timestamp: string;
     items: DesktopConversationTimelineItem[];
@@ -157,7 +159,8 @@ export function projectDesktopConversationTimeline(
       const key = `turn:${item.turnId}:run:${runId}`;
       segments.set(key, {
         id: key,
-        turnSequence: item.turn?.sequence ?? Number.MAX_SAFE_INTEGER,
+        turnId: item.turnId,
+        turnSequence: item.turn?.sequence ?? null,
         segmentOrder,
         timestamp: earliestTimelineTimestamp(timelineItems),
         items: timelineItems,
@@ -180,7 +183,8 @@ export function projectDesktopConversationTimeline(
       const key = `turn:${item.turnId}:unsegmented`;
       segments.set(key, {
         id: key,
-        turnSequence: item.turn?.sequence ?? Number.MAX_SAFE_INTEGER,
+        turnId: item.turnId,
+        turnSequence: item.turn?.sequence ?? null,
         segmentOrder,
         timestamp: earliestTimelineTimestamp(timelineItems),
         items: timelineItems,
@@ -189,12 +193,20 @@ export function projectDesktopConversationTimeline(
   }
 
   const orderedSegments = [...segments.values()]
-    .sort((left, right) =>
-      left.turnSequence - right.turnSequence ||
-      left.segmentOrder - right.segmentOrder ||
-      left.timestamp.localeCompare(right.timestamp) ||
-      left.id.localeCompare(right.id)
-  );
+    .sort((left, right) => {
+      if (left.turnSequence === null || right.turnSequence === null) {
+        if (left.turnSequence === null && right.turnSequence === null) {
+          return left.turnId.localeCompare(right.turnId)
+            || left.segmentOrder - right.segmentOrder
+            || left.id.localeCompare(right.id);
+        }
+        return left.turnSequence === null ? 1 : -1;
+      }
+      return left.turnSequence - right.turnSequence
+        || left.turnId.localeCompare(right.turnId)
+        || left.segmentOrder - right.segmentOrder
+        || left.id.localeCompare(right.id);
+    });
   const unownedItems = [
     ...standaloneMessages,
     ...provisionalMessages,
@@ -229,7 +241,7 @@ function projectLegacyTimeline(
   const activeTurnStart = findLastIndex(transcript, (line) => line.role === "user");
   return [
     ...transcript.slice(0, activeTurnStart + 1).map(toTranscriptTimelineItem),
-    ...runStream.map(toRunStreamTimelineItem),
+    ...runStream.filter((item) => item.visible !== false).map(toRunStreamTimelineItem),
     ...transcript.slice(activeTurnStart + 1).map((line, index) =>
       toTranscriptTimelineItem(line, activeTurnStart + 1 + index)),
   ];
