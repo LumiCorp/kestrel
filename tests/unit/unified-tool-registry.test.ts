@@ -2535,6 +2535,19 @@ test("UnifiedToolRegistry rejects legacy aliases and accepts canonical model inp
     },
   );
 
+  await assert.rejects(
+    () => validateToolInput(registry, "fs.read_text", {
+      path: "README.md",
+      offsetBytes: 8192,
+      expectedRevision: `sha256:${"a".repeat(64)}`,
+    }),
+    (error: unknown) => {
+      assert.equal(error instanceof RuntimeFailure, true);
+      assert.match((error as RuntimeFailure).message, /fs\.read_text_page/u);
+      return true;
+    },
+  );
+
   const normalized = await validateToolInput(registry, "evidence.extract", {
     text: "Deterministic validation reduced approval rework by 18 percent.",
     sourceId: "benchmark-1",
@@ -3058,7 +3071,7 @@ test("UnifiedToolRegistry records exact provenance when an installed SKILL.md is
     )
   ).contentDigest;
   const registry = new UnifiedToolRegistry({
-    allowlist: ["fs.read_text", "fs.write_text"],
+    allowlist: ["fs.read_text", "fs.read_text_page", "fs.write_text"],
     context: { fileSystem: { workspaceRoot, tempRoots: [os.tmpdir()] } },
     mcpManager: new MockMcpProvider({
       healthy: true,
@@ -3106,15 +3119,12 @@ test("UnifiedToolRegistry records exact provenance when an installed SKILL.md is
   const firstOutput = firstPage.auditRecord.output as {
     nextOffsetBytes: number;
     revision: string;
+    nextPage: { input: Record<string, unknown> };
   };
   const result = await callTool(
     registry,
-    "fs.read_text",
-    {
-      path: skillFile,
-      offsetBytes: firstOutput.nextOffsetBytes,
-      expectedRevision: firstOutput.revision,
-    },
+    "fs.read_text_page",
+    firstOutput.nextPage.input,
     { runContext },
   );
   assert.deepEqual(

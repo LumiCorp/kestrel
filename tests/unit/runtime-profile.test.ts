@@ -20,6 +20,7 @@ test("CLI defaults resolve to the isolated local preset", () => {
   assert.equal(resolved.toolAllowlist.includes("fs.create_text"), true);
   assert.equal(resolved.toolAllowlist.includes("fs.edit_text"), true);
   assert.equal(resolved.toolAllowlist.includes("fs.apply_patch"), true);
+  assert.equal(resolved.toolAllowlist.includes("fs.read_text_page"), true);
   assert.equal(resolved.toolAllowlist.includes("artifact.read"), true);
   assert.equal(resolved.toolAllowlist.includes("repo.trace"), true);
   assert.equal(resolved.toolAllowlist.includes("dev.shell.run"), false);

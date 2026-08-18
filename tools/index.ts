@@ -120,7 +120,11 @@ export {
   withDefaultFileSystemPolicy,
 } from "./filesystem/shared.js";
 export { fsListTool } from "./filesystem/list.js";
-export { fsReadTextTool } from "./filesystem/readText.js";
+export {
+  fsReadTextPageTool,
+  fsReadTextTool,
+  isFileTextReadToolName,
+} from "./filesystem/readText.js";
 export { fsCreateTextTool } from "./filesystem/createText.js";
 export { fsEditTextTool } from "./filesystem/editText.js";
 export { fsApplyPatchTool } from "./filesystem/applyPatch.js";

@@ -23,10 +23,13 @@ test("execution-boundary policy is canonical, immutable, and rejects unsupported
     policyId: KESTREL_EXECUTION_BOUNDARY_POLICY.policyId,
     owner: KESTREL_EXECUTION_BOUNDARY_POLICY.owner,
     changeId: KESTREL_EXECUTION_BOUNDARY_POLICY.changeId,
+    supersedesRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.supersedesRevision,
     enforcement: "enforce",
     boundaries: [...EXECUTION_BOUNDARIES],
   });
   assert.deepEqual(recreated, KESTREL_EXECUTION_BOUNDARY_POLICY);
+  assert.equal(recreated.changeId, "execution-boundary-integrity-v2");
+  assert.match(recreated.supersedesRevision ?? "", /^sha256:[a-f0-9]{64}$/u);
   assert.throws(
     () => parseExecutionBoundaryPolicyV1({
       ...recreated,
@@ -145,6 +148,83 @@ test("streaming redactor catches a registered value split across chunks", () => 
     stream.flush(),
   ].join("");
   assert.equal(output, "prefix [REDACTED] suffix");
+});
+
+test("live execution boundaries redact split values without durable decisions", async () => {
+  const registry = new SensitiveValueRegistry();
+  registry.register({
+    reference: {
+      referenceId: "credential:live-stream",
+      kind: "credential",
+      scope: "test",
+    },
+    value: "live-stream-secret",
+  });
+  const runtime = new ExecutionBoundaryPolicyRuntime({ sensitiveValues: registry });
+  const stream = runtime.openLiveStream({
+    boundary: "model_stream",
+    identity: { runId: "run-live", sessionId: "session-live", stepIndex: 1 },
+    source: "model",
+    trust: "data",
+    sourceId: "reasoning:run-live:1:summary",
+  });
+
+  const output = [
+    stream.push("prefix live-stream-se"),
+    stream.push("cret suffix"),
+    stream.close(),
+  ].join("");
+
+  assert.equal(output, "prefix [REDACTED] suffix");
+  assert.throws(() => stream.push("late"), /already closed/u);
+  assert.throws(() => stream.close(), /already closed/u);
+  await assert.rejects(
+    () => runtime.evaluateAndPersist({
+      boundary: "model_stream",
+      identity: { runId: "run-live", sessionId: "session-live" },
+      source: "model",
+      trust: "data",
+      sourceId: "reasoning:run-live:1:summary",
+      value: "safe",
+      persist: async () => {},
+    }),
+    /live enforcement/u,
+  );
+  assert.throws(
+    () => runtime.openLiveStream({
+      boundary: "model_request",
+      identity: { runId: "run-live", sessionId: "session-live" },
+      source: "runtime",
+      trust: "data",
+      sourceId: "request:run-live:1",
+    }),
+    /durable decision/u,
+  );
+});
+
+test("discarded live execution boundaries release buffered material and close", () => {
+  const registry = new SensitiveValueRegistry();
+  registry.register({
+    reference: {
+      referenceId: "credential:discarded-stream",
+      kind: "credential",
+      scope: "test",
+    },
+    value: "discarded-stream-secret",
+  });
+  const runtime = new ExecutionBoundaryPolicyRuntime({ sensitiveValues: registry });
+  const stream = runtime.openLiveStream({
+    boundary: "tool_stream",
+    identity: { runId: "run-discard", sessionId: "session-discard", callId: "tool-1" },
+    source: "tool",
+    trust: "data",
+    sourceId: "tool-stream:tool-1:dev.shell.run",
+  });
+
+  assert.equal(stream.push("discarded-stream-se"), "");
+  stream.discard();
+  assert.throws(() => stream.push("cret"), /already closed/u);
+  assert.throws(() => stream.close(), /already closed/u);
 });
 
 test("boundary decisions redact output, quarantine executable input, and persist before return", async () => {

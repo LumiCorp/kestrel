@@ -2823,6 +2823,7 @@ function compactToolInputForDecision(
   const keysByTool: Record<string, string[]> = {
     "fs.list": ["path", "recursive", "includeHidden", "maxDepth"],
     "fs.read_text": ["path", "maxBytes"],
+    "fs.read_text_page": ["path", "offsetBytes", "expectedRevision", "maxBytes"],
     "fs.search_text": ["path", "query", "glob", "caseSensitive", "maxResults", "maxPreviewChars", "maxTotalPreviewChars"],
     "repo.trace": ["path", "seeds", "includeGlobs", "excludeGlobs", "maxResults", "contextLines"],
     "fs.write_text": ["path"],

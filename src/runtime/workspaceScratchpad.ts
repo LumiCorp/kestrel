@@ -1,6 +1,7 @@
 import type { NormalizedOutput } from "../kestrel/contracts/execution.js";
 import type { SessionRecord } from "../kestrel/contracts/store.js";
 import { readActiveTaskGoalFromState } from "./turnObjective.js";
+import { isFileTextReadToolName } from "./fileTextReadTools.js";
 
 export const WORKSPACE_SCRATCHPAD_RELATIVE_PATH = "workspaces";
 
@@ -279,21 +280,21 @@ function summarizeFilesystemToolResult(
   toolName: string,
   lastAction: Record<string, unknown>,
 ): string | undefined {
-  if (toolName !== "fs.read_text" && toolName !== "fs.search_text" && toolName !== "fs.list") {
+  if (isFileTextReadToolName(toolName) === false && toolName !== "fs.search_text" && toolName !== "fs.list") {
     return ;
   }
   const input = asRecord(lastAction.input);
   const output = asRecord(lastAction.output);
-  if (toolName === "fs.read_text") {
+  if (isFileTextReadToolName(toolName)) {
     const targetPath = asString(output?.path) ?? asString(input?.path);
     const content = asString(output?.content);
     if (targetPath === undefined) {
-      return "Ran fs.read_text.";
+      return `Ran ${toolName}.`;
     }
     if (content === undefined) {
-      return `Ran fs.read_text on ${targetPath}.`;
+      return `Ran ${toolName} on ${targetPath}.`;
     }
-    return `Ran fs.read_text on ${targetPath}: ${content}`;
+    return `Ran ${toolName} on ${targetPath}: ${content}`;
   }
   if (toolName === "fs.search_text") {
     const targetPath = asString(output?.path) ?? asString(input?.path) ?? ".";

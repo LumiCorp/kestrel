@@ -23,6 +23,7 @@ import { isAgentToolResult, unwrapAgentToolOutput } from "../../tools/toolResult
 interface FsTestHandlers {
   "fs.list": (input: unknown) => Promise<unknown>;
   "fs.read_text": (input: unknown) => Promise<unknown>;
+  "fs.read_text_page": (input: unknown) => Promise<unknown>;
   "fs.create_text": (input: unknown) => Promise<unknown>;
   "fs.edit_text": (input: unknown) => Promise<unknown>;
   "fs.apply_patch": (input: unknown) => Promise<unknown>;
@@ -38,20 +39,31 @@ interface FsTestHandlers {
 
 const execFileAsync = promisify(execFile);
 
-test("filesystem mutation schemas require exact read revisions instead of placeholders", () => {
+test("filesystem read schemas separate initial and continuation pages", () => {
   const definitions = defaultToolCatalog.list();
   const editText = definitions.find((definition) => definition.name === "fs.edit_text");
   const readText = definitions.find((definition) => definition.name === "fs.read_text");
+  const readTextPage = definitions.find((definition) => definition.name === "fs.read_text_page");
   const editProperties = editText?.inputSchema.properties as
     | Record<string, { description?: string }>
     | undefined;
   const readProperties = readText?.inputSchema.properties as
     | Record<string, { description?: string }>
     | undefined;
+  const readPageProperties = readTextPage?.inputSchema.properties as
+    | Record<string, { description?: string; minimum?: number }>
+    | undefined;
 
   assert.match(editText?.description ?? "", /copy its exact revision value/u);
   assert.match(editProperties?.expectedRevision?.description ?? "", /Do not use placeholders such as "latest"/u);
-  assert.match(readProperties?.expectedRevision?.description ?? "", /Do not use placeholders such as "latest"/u);
+  assert.deepEqual(Object.keys(readProperties ?? {}).sort(), ["maxBytes", "path"]);
+  assert.deepEqual(readText?.inputSchema.required, ["path"]);
+  assert.deepEqual(
+    [...((readTextPage?.inputSchema.required ?? []) as string[])].sort(),
+    ["expectedRevision", "offsetBytes", "path"],
+  );
+  assert.equal(readPageProperties?.offsetBytes?.minimum, 1);
+  assert.match(readPageProperties?.expectedRevision?.description ?? "", /Do not use placeholders such as "latest"/u);
 });
 
 test("filesystem tools allow workspace-relative and temp-root paths and reject escapes", async () => {
@@ -123,28 +135,53 @@ test("filesystem read_text pages a large file without losing mutation authority"
     revision: string;
     complete: boolean;
     nextOffsetBytes: number;
+    nextPage: {
+      tool: "fs.read_text_page";
+      input: { path: string; offsetBytes: number; expectedRevision: string; maxBytes: number };
+    };
     totalBytes: number;
   }>(handlers["fs.read_text"]({ path: "sphinx.py", maxBytes: 20_000 }));
   assert.equal(first.complete, false);
   assert.equal(first.content.length, 8 * 1024);
   assert.equal(first.totalBytes, Buffer.byteLength(content));
 
+  assert.deepEqual(first.nextPage, {
+    tool: "fs.read_text_page",
+    input: {
+      path: "sphinx.py",
+      offsetBytes: first.nextOffsetBytes,
+      expectedRevision: first.revision,
+      maxBytes: 8 * 1024,
+    },
+  });
+
   const second = await rawToolOutput<{
     content: string;
     revision: string;
     complete: boolean;
-  }>(handlers["fs.read_text"]({
-    path: "sphinx.py",
-    offsetBytes: first.nextOffsetBytes,
-    expectedRevision: first.revision,
-  }));
+  }>(handlers["fs.read_text_page"](first.nextPage.input));
   assert.equal(second.complete, true);
   assert.equal(second.revision, first.revision);
   assert.equal(first.content + second.content, content);
   assert.match(second.content, /setup\(\)/u);
 });
 
-test("filesystem read_text enforces first-page and continuation revision contracts", async () => {
+test("filesystem read_text rejects legacy continuation fields with an exact migration action", async () => {
+  const { handlers, policyRoots } = await createFsHarness();
+  await writeFile(path.join(policyRoots.workspaceRoot, "legacy.txt"), "legacy", "utf8");
+
+  const result = await failedToolResult(handlers["fs.read_text"]({
+    path: "legacy.txt",
+    offsetBytes: 1,
+    expectedRevision: `sha256:${"a".repeat(64)}`,
+  }));
+
+  const error = result.auditRecord.error as { code?: string; message?: string };
+  assert.equal(error.code, "TOOL_INPUT_INVALID");
+  assert.match(error.message ?? "", /fs\.read_text_page/u);
+});
+
+test("filesystem read_text_page enforces continuation revision contracts", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(path.join(policyRoots.workspaceRoot, "paged.txt"), "abcdefghij", "utf8");
 
@@ -156,28 +193,23 @@ test("filesystem read_text enforces first-page and continuation revision contrac
   }));
   assert.match(
     String((firstPageRevision.auditRecord.error as { message?: unknown }).message),
-    /first page.*omit expectedRevision/iu,
+    /only reads the first page/iu,
   );
-  assert.match(firstPageRevision.modelContext.text, /- offsetBytes: 0/u);
   assert.match(
     firstPageRevision.modelContext.text,
-    /- nextSuggestedAction: Retry at offsetBytes 0 without expectedRevision\./u,
+    /- nextSuggestedAction: Call fs\.read_text_page with the exact nextPage\.input returned by fs\.read_text\./u,
   );
 
-  const missingContinuationRevision = await failedToolResult(handlers["fs.read_text"]({
+  const missingContinuationRevision = await failedToolResult(handlers["fs.read_text_page"]({
     path: "paged.txt",
     offsetBytes: 5,
     maxBytes: 5,
   }));
   assert.match(
     String((missingContinuationRevision.auditRecord.error as { message?: unknown }).message),
-    /continuation.*requires expectedRevision/iu,
+    /expectedRevision is required/iu,
   );
   assert.match(missingContinuationRevision.modelContext.text, /- offsetBytes: 5/u);
-  assert.match(
-    missingContinuationRevision.modelContext.text,
-    /- nextSuggestedAction: Copy the exact revision returned by the first page\./u,
-  );
 
   const firstPage = await rawToolOutput<{
     revision: string;
@@ -191,7 +223,7 @@ test("filesystem read_text enforces first-page and continuation revision contrac
     "changed-file",
     "utf8",
   );
-  const staleContinuation = await failedToolResult(handlers["fs.read_text"]({
+  const staleContinuation = await failedToolResult(handlers["fs.read_text_page"]({
     path: "paged.txt",
     offsetBytes: firstPage.nextOffsetBytes,
     expectedRevision: firstPage.revision,
@@ -203,8 +235,41 @@ test("filesystem read_text enforces first-page and continuation revision contrac
   assert.match(staleContinuation.modelContext.text, /- actualRevision: sha256:[a-f0-9]+/u);
   assert.match(
     staleContinuation.modelContext.text,
-    /- nextSuggestedAction: Restart the read at offsetBytes 0\./u,
+    /- nextSuggestedAction: Restart the read with fs\.read_text\./u,
   );
+});
+
+test("filesystem read pages preserve UTF-8 boundaries and reject forged offsets", async () => {
+  const { handlers, policyRoots } = await createFsHarness();
+  const content = "ab🙂cd";
+  await writeFile(path.join(policyRoots.workspaceRoot, "utf8.txt"), content, "utf8");
+
+  const first = await rawToolOutput<{
+    content: string;
+    nextPage: {
+      input: { path: string; offsetBytes: number; expectedRevision: string; maxBytes: number };
+    };
+  }>(handlers["fs.read_text"]({ path: "utf8.txt", maxBytes: 3 }));
+  assert.equal(first.content, "ab");
+  assert.equal(first.nextPage.input.offsetBytes, 2);
+
+  const forged = await failedToolResult(handlers["fs.read_text_page"]({
+    ...first.nextPage.input,
+    offsetBytes: 3,
+  }));
+  assert.match(
+    String((forged.auditRecord.error as { message?: unknown }).message),
+    /exact nextPage\.input value/u,
+  );
+
+  const second = await rawToolOutput<{
+    content: string;
+    nextPage: { input: Record<string, unknown> };
+  }>(handlers["fs.read_text_page"](first.nextPage.input));
+  const third = await rawToolOutput<{ content: string }>(
+    handlers["fs.read_text_page"](second.nextPage.input),
+  );
+  assert.equal(first.content + second.content + third.content, content);
 });
 
 test("structured text tools reject collisions, ambiguity, and stale revisions", async () => {

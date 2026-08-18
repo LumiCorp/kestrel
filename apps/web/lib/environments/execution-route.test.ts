@@ -29,6 +29,17 @@ test("Environment activation reports the user-visible wake sequence", () => {
   assert.deepEqual(
     describeEnvironmentActivation({
       environmentStatus: "ready",
+      workspaceStatus: "degraded",
+    }),
+    {
+      stage: "environment.health.checking",
+      detail: "Reconnecting to the Workspace Runtime…",
+      status: "pending",
+    }
+  );
+  assert.deepEqual(
+    describeEnvironmentActivation({
+      environmentStatus: "ready",
       workspaceStatus: "stopping",
     }),
     {

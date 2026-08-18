@@ -57,6 +57,22 @@ const READ_TEXT_TOOL: ModelToolSpec = {
   },
 };
 
+const READ_TEXT_PAGE_TOOL: ModelToolSpec = {
+  name: "fs.read_text_page",
+  description: "Continue a text file read from an exact nextPage action.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      path: { type: "string" },
+      offsetBytes: { type: "number", minimum: 1 },
+      expectedRevision: { type: "string" },
+      maxBytes: { type: "number" },
+    },
+    required: ["path", "offsetBytes", "expectedRevision"],
+  },
+};
+
 function setKestrelHomeForTest(kestrelHome: string): () => void {
   const original = process.env.KESTREL_HOME;
   process.env.KESTREL_HOME = kestrelHome;
@@ -4348,6 +4364,62 @@ test("agent loop commits a valid first action directly to exec dispatch", async 
   ]) {
     assert.equal(Object.hasOwn(agent, key), false);
   }
+});
+
+test("agent loop dispatches the exact typed continuation read without shell fallback", async () => {
+  const buildContext = context();
+  buildContext.event.payload = {
+    ...buildContext.event.payload,
+    interactionMode: "build",
+  };
+  buildContext.session.state.agent = { interactionMode: "build" };
+  const continuationInput = {
+    path: "large.txt",
+    offsetBytes: 8192,
+    expectedRevision: `sha256:${"a".repeat(64)}`,
+    maxBytes: 8192,
+  };
+  const transition = await buildStep({
+    tools: [READ_TEXT_TOOL, READ_TEXT_PAGE_TOOL, DEV_SHELL_RUN_TOOL],
+    capabilityManifest: [
+      {
+        name: "fs.read_text",
+        description: "Read the first page.",
+        capabilityClasses: ["filesystem.read"],
+        executionClass: "read_only",
+      },
+      {
+        name: "fs.read_text_page",
+        description: "Continue the exact read.",
+        capabilityClasses: ["filesystem.read"],
+        executionClass: "read_only",
+      },
+      {
+        name: "dev.shell.run",
+        description: "Run a shell command.",
+        capabilityClasses: ["dev.shell"],
+        executionClass: "external_side_effect",
+      },
+    ],
+  })(buildContext, {
+    useModel: async () => modelResponse({
+      version: "v1",
+      reason: "Follow the exact typed nextPage action.",
+      nextAction: {
+        kind: "tool",
+        name: "fs.read_text_page",
+        input: continuationInput,
+      },
+    }),
+  } satisfies StepIO);
+
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  assert.deepEqual(agent.nextAction, {
+    kind: "tool",
+    name: "fs.read_text_page",
+    input: continuationInput,
+  });
 });
 
 test("agent loop preserves model text reason from native tool-call responses", async () => {

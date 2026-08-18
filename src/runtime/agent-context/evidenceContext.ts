@@ -1,5 +1,6 @@
 import type { ModelTranscript, ModelTranscriptItem } from "../modelTranscript.js";
 import { renderWorkspaceRelativeTarget } from "../workspaceCoordinates.js";
+import { isFileTextReadToolName } from "../fileTextReadTools.js";
 
 const MAX_RECENT_FILESYSTEM_EVIDENCE_ITEMS = 4;
 const MAX_RECENT_FILESYSTEM_PREVIEW_CHARS = 1200;
@@ -95,7 +96,7 @@ function collectFilesystemResultRecords(value: unknown): Record<string, unknown>
   const records = [record, ...asArray(record.items).map(asRecord).filter((item): item is Record<string, unknown> => item !== undefined)];
   return records.filter((item) => {
     const toolName = asString(item.toolName) ?? asString(item.name);
-    return toolName === "fs.read_text" || toolName === "fs.search_text" || toolName === "fs.list";
+    return (toolName !== undefined && isFileTextReadToolName(toolName)) || toolName === "fs.search_text" || toolName === "fs.list";
   });
 }
 
@@ -287,11 +288,11 @@ function describeLedgerFilesystemEntry(entry: Record<string, unknown>): string |
       return `${toolName} changed files: ${changedFiles.join(", ")}.`;
     }
   }
-  if (toolName === "fs.read_text") {
+  if (isFileTextReadToolName(toolName)) {
     const preview = asString(facts.contentPreview);
     return preview !== undefined
-      ? `fs.read_text ${targetPath ?? "."}: ${clampEvidencePreview(preview)}`
-      : `fs.read_text ${targetPath ?? "."}.`;
+      ? `${toolName} ${targetPath ?? "."}: ${clampEvidencePreview(preview)}`
+      : `${toolName} ${targetPath ?? "."}.`;
   }
   if (toolName === "fs.list") {
     const count = typeof facts.entryCount === "number" ? Math.trunc(facts.entryCount) : undefined;
@@ -354,14 +355,14 @@ function describeFilesystemResult(record: Record<string, unknown>): string | und
   if (toolName === undefined) {
     return ;
   }
-  if (toolName === "fs.read_text") {
+  if (isFileTextReadToolName(toolName)) {
     const targetPath = asString(output?.path) ?? asString(input?.path);
     const content = asString(output?.content);
     const truncated = output?.truncated === true ? " (truncated)" : "";
     if (targetPath !== undefined && content !== undefined) {
-      return `fs.read_text ${targetPath}${truncated}: ${clampEvidencePreview(content)}`;
+      return `${toolName} ${targetPath}${truncated}: ${clampEvidencePreview(content)}`;
     }
-    return targetPath !== undefined ? `fs.read_text ${targetPath}${truncated}.` : undefined;
+    return targetPath !== undefined ? `${toolName} ${targetPath}${truncated}.` : undefined;
   }
   if (toolName === "fs.search_text") {
     const targetPath = asString(output?.path) ?? asString(input?.path);

@@ -108,6 +108,7 @@ const FREE_NETWORK_TOOLS = [
 const FILESYSTEM_TOOLS = [
   "fs.list_directory",
   "fs.read_text",
+  "fs.read_text_page",
   "fs.search_text",
   "artifact.read",
 ];

@@ -64,13 +64,13 @@ export function createToolConsoleBridge(input: {
     });
   };
   const sink: ToolConsoleSink = async (event) => {
+    if (truncated) {
+      return;
+    }
     const transformedText = input.transformText === undefined
       ? event.text
       : await input.transformText(event.text);
     if (transformedText.length === 0) {
-      return;
-    }
-    if (truncated) {
       return;
     }
     const remainingBytes = DEV_SHELL_CONSOLE_TOTAL_MAX_BYTES - emittedBytes;

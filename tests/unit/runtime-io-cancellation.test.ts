@@ -9,10 +9,11 @@ import type { HarnessEconomicsPolicyV1 } from "../../src/economics/index.js";
 import type { RunEventType } from "../../src/kestrel/contracts/base.js";
 import type {
   ProgressUpdateV1,
+  ModelReasoningUpdateV1,
   RunConsoleUpdateV1,
   RunEvent,
 } from "../../src/kestrel/contracts/events.js";
-import type { ModelGatewayCallOptions, ModelRequest, ModelUsage, ToolGateway } from "../../src/kestrel/contracts/model-io.js";
+import type { ModelGatewayCallOptions, ModelRequest, ModelUsage, ToolGateway, ToolGatewayCallOptions } from "../../src/kestrel/contracts/model-io.js";
 import type { AgentToolResultV2 } from "../../src/kestrel/contracts/tool-invocation.js";
 import type { RuntimeStore } from "../../src/kestrel/contracts/store.js";
 import type { ModelCallProvenanceRecord } from "../../src/kestrel/contracts/orchestration.js";
@@ -194,6 +195,124 @@ test("RuntimeIO persists provider-boundary decisions and redacts requests and re
   assert.ok(
     emitted.indexOf("execution_boundary.decision") < emitted.indexOf("model.requested"),
   );
+});
+
+test("RuntimeIO reasoning stream volume does not change durable boundary cardinality", async () => {
+  const run = async (chunkCount: number) => {
+    const runEvents: RunEvent[] = [];
+    const reasoningUpdates: ModelReasoningUpdateV1[] = [];
+    const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+    boundaryRuntime.sensitiveValues.register({
+      reference: {
+        referenceId: "credential:reasoning-stream",
+        kind: "credential",
+        scope: "model",
+      },
+      value: "reasoning-stream-secret",
+    });
+    const openLiveStream = boundaryRuntime.openLiveStream.bind(boundaryRuntime);
+    let closedStreams = 0;
+    let discardedStreams = 0;
+    boundaryRuntime.openLiveStream = (streamInput) => {
+      const stream = openLiveStream(streamInput);
+      return {
+        push: (chunk) => stream.push(chunk),
+        close() {
+          closedStreams += 1;
+          return stream.close();
+        },
+        discard() {
+          discardedStreams += 1;
+          stream.discard();
+        },
+      };
+    };
+    const io = createRuntimeIO({
+      signal: new AbortController().signal,
+      emitted: [],
+      runEvents,
+      reasoningUpdates,
+      executionBoundaryRuntime: boundaryRuntime,
+      modelCall: async (options) => {
+        await options?.onEvent?.({ type: "reasoning.started", attempt: 1, format: "summary" });
+        for (let index = 0; index < chunkCount; index += 1) {
+          const delta = chunkCount === 2
+            ? index === 0 ? "reasoning-stream-se" : "cret"
+            : `chunk-${index}\n`;
+          await options?.onEvent?.({ type: "reasoning.delta", attempt: 1, format: "summary", delta });
+        }
+        await options?.onEvent?.({ type: "reasoning.completed", attempt: 1, format: "summary" });
+        return { ok: true };
+      },
+    });
+    await io.model(modelRequest());
+    return {
+      durableDecisions: runEvents.filter((event) => event.type === "execution_boundary.decision"),
+      storeInsertCount: runEvents.length,
+      reasoningUpdates,
+      closedStreams,
+      discardedStreams,
+    };
+  };
+
+  const one = await run(1);
+  const fiveHundred = await run(500);
+  const splitSecret = await run(2);
+  assert.equal(fiveHundred.durableDecisions.length, one.durableDecisions.length);
+  assert.equal(fiveHundred.storeInsertCount, one.storeInsertCount);
+  assert.equal(fiveHundred.closedStreams, 1);
+  assert.equal(fiveHundred.discardedStreams, 0);
+  assert.equal(
+    fiveHundred.durableDecisions.some((event) => event.metadata?.boundary === "model_stream"),
+    false,
+  );
+  assert.equal(
+    splitSecret.reasoningUpdates
+      .filter((update) => update.event === "delta")
+      .map((update) => update.delta ?? "")
+      .join(""),
+    "[REDACTED]",
+  );
+});
+
+test("RuntimeIO discards an unterminated reasoning stream exactly once on cancellation", async () => {
+  const controller = new AbortController();
+  const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  const openLiveStream = boundaryRuntime.openLiveStream.bind(boundaryRuntime);
+  let closeCalls = 0;
+  let discardCalls = 0;
+  boundaryRuntime.openLiveStream = (streamInput) => {
+    const stream = openLiveStream(streamInput);
+    return {
+      push: (chunk) => stream.push(chunk),
+      close() {
+        closeCalls += 1;
+        return stream.close();
+      },
+      discard() {
+        discardCalls += 1;
+        stream.discard();
+      },
+    };
+  };
+  const io = createRuntimeIO({
+    signal: controller.signal,
+    emitted: [],
+    executionBoundaryRuntime: boundaryRuntime,
+    modelCall: async (options) => {
+      await options?.onEvent?.({ type: "reasoning.started", attempt: 1, format: "summary" });
+      await options?.onEvent?.({ type: "reasoning.delta", attempt: 1, format: "summary", delta: "pending" });
+      controller.abort();
+      return { ok: true };
+    },
+  });
+
+  await assert.rejects(
+    () => io.model(modelRequest()),
+    (error) => readErrorCode(error) === "RUN_CANCELLED",
+  );
+  assert.equal(closeCalls, 0);
+  assert.equal(discardCalls, 1);
 });
 
 test("RuntimeIO waits for provider-boundary persistence before provider dispatch", async () => {
@@ -782,6 +901,20 @@ test("RuntimeIO does not enforce estimated tool-schema pressure without explicit
 test("RuntimeIO projects returned structured tool failures as failed activity", async () => {
   const emitted: string[] = [];
   const consoleUpdates: RunConsoleUpdateV1[] = [];
+  const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  const openLiveStream = boundaryRuntime.openLiveStream.bind(boundaryRuntime);
+  let closeCalls = 0;
+  boundaryRuntime.openLiveStream = (streamInput) => {
+    const stream = openLiveStream(streamInput);
+    return {
+      push: (chunk) => stream.push(chunk),
+      close() {
+        closeCalls += 1;
+        return stream.close();
+      },
+      discard: () => stream.discard(),
+    };
+  };
   const failedResult = buildAgentToolFailedOutputResult({
     toolName: "dev.shell.run",
     input: { command: "false" },
@@ -796,7 +929,15 @@ test("RuntimeIO projects returned structured tool failures as failed activity", 
     signal: new AbortController().signal,
     emitted,
     consoleUpdates,
-    toolCall: async () => failedResult,
+    executionBoundaryRuntime: boundaryRuntime,
+    toolCall: async (options) => {
+      await options?.console?.({
+        status: "chunk",
+        channel: "stderr",
+        text: "command failed\n",
+      });
+      return failedResult;
+    },
   });
 
   const result = await io.tool("dev.shell.run", { command: "false" }) as AgentToolResultV2;
@@ -810,13 +951,86 @@ test("RuntimeIO projects returned structured tool failures as failed activity", 
   assert.equal(emitted.includes("TOOL_CALL_DONE"), false);
   assert.equal(emitted.includes("run.tool.completed"), false);
   assert.equal(consoleUpdates.at(-1)?.status, "failed");
+  assert.equal(closeCalls, 1);
+});
+
+test("RuntimeIO console stream volume does not change durable boundary cardinality", async () => {
+  const run = async (chunkCount: number) => {
+    const runEvents: RunEvent[] = [];
+    const consoleUpdates: RunConsoleUpdateV1[] = [];
+    const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+    const openLiveStream = boundaryRuntime.openLiveStream.bind(boundaryRuntime);
+    let transformedChunks = 0;
+    let closedStreams = 0;
+    let discardedStreams = 0;
+    boundaryRuntime.openLiveStream = (streamInput) => {
+      const stream = openLiveStream(streamInput);
+      return {
+        push(chunk) {
+          transformedChunks += 1;
+          return stream.push(chunk);
+        },
+        close: () => {
+          closedStreams += 1;
+          return stream.close();
+        },
+        discard: () => {
+          discardedStreams += 1;
+          stream.discard();
+        },
+      };
+    };
+    const io = createRuntimeIO({
+      signal: new AbortController().signal,
+      emitted: [],
+      runEvents,
+      consoleUpdates,
+      executionBoundaryRuntime: boundaryRuntime,
+      toolCall: async (options) => {
+        for (let index = 0; index < chunkCount; index += 1) {
+          await options?.console?.({
+            status: "chunk",
+            channel: "stdout",
+            text: "x".repeat(8 * 1024),
+          });
+        }
+        return buildAgentToolSuccessResult({
+          toolName: "dev.shell.run",
+          input: { command: "stream" },
+          output: { status: "COMPLETED", exitCode: 0 },
+        });
+      },
+    });
+    await io.tool("dev.shell.run", { command: "stream" });
+    return {
+      durableDecisions: runEvents.filter((event) => event.type === "execution_boundary.decision"),
+      storeInsertCount: runEvents.length,
+      consoleUpdates,
+      transformedChunks,
+      closedStreams,
+      discardedStreams,
+    };
+  };
+
+  const one = await run(1);
+  const fiveHundred = await run(500);
+  assert.equal(fiveHundred.durableDecisions.length, one.durableDecisions.length);
+  assert.equal(fiveHundred.storeInsertCount, one.storeInsertCount);
+  assert.equal(
+    fiveHundred.durableDecisions.some((event) => event.metadata?.boundary === "tool_stream"),
+    false,
+  );
+  assert.ok(fiveHundred.consoleUpdates.some((update) => update.status === "truncated"));
+  assert.ok(fiveHundred.transformedChunks < 500);
+  assert.equal(fiveHundred.closedStreams, 1);
+  assert.equal(fiveHundred.discardedStreams, 0);
 });
 
 function createRuntimeIO(input: {
   signal: AbortSignal;
   emitted: string[];
   modelCall?: ((options?: ModelGatewayCallOptions) => Promise<unknown>) | undefined;
-  toolCall?: (() => Promise<unknown>) | undefined;
+  toolCall?: ((options?: ToolGatewayCallOptions) => Promise<unknown>) | undefined;
   toolQueueEnabled?: boolean | undefined;
   toolCallRetryCount?: number | undefined;
   retryableToolErrors?: boolean | undefined;
@@ -825,6 +1039,7 @@ function createRuntimeIO(input: {
   runtimeMetadata?: Record<string, unknown> | undefined;
   consoleUpdates?: RunConsoleUpdateV1[] | undefined;
   progressUpdates?: ProgressUpdateV1[] | undefined;
+  reasoningUpdates?: ModelReasoningUpdateV1[] | undefined;
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
   appendRunEvent?: ((type: RunEventType) => Promise<void>) | undefined;
   afterToolResult?: (() => Promise<void>) | undefined;
@@ -845,8 +1060,8 @@ function createRuntimeIO(input: {
     },
   } as unknown as RuntimeStore;
   const toolGateway: ToolGateway = adaptLegacyTestToolGateway({
-    call: async <T>() => {
-      const result = input.toolCall === undefined ? { ok: true } : await input.toolCall();
+    call: async <T>(_name: string, _toolInput: unknown, options?: ToolGatewayCallOptions) => {
+      const result = input.toolCall === undefined ? { ok: true } : await input.toolCall(options);
       return result as T;
     },
   });
@@ -868,6 +1083,15 @@ function createRuntimeIO(input: {
               input.consoleUpdates?.push(structuredClone(update));
             },
           },
+      ...(input.reasoningUpdates === undefined
+        ? {}
+        : { reasoningReporter: {
+            emit: async (update) => {
+              if ("event" in update) {
+                input.reasoningUpdates?.push(structuredClone(update));
+              }
+            },
+          } }),
     },
     guardrailConfig: {
       ...guardrailConfig,
