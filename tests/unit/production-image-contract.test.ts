@@ -335,3 +335,39 @@ test("workspace-runtime image builds and carries the shared memory package", asy
     "the memory package must be present behind the production workspace symlink",
   );
 });
+
+test("workspace-runtime image carries the Conversation package used by the CLI", async () => {
+  const dockerfile = await readFile(
+    path.join(process.cwd(), "apps/workspace-runtime/Dockerfile"),
+    "utf8",
+  );
+  const conversationManifestCopy = dockerfile.indexOf(
+    "COPY packages/conversation/package.json packages/conversation/package.json",
+  );
+  const dependencyInstall = dockerfile.indexOf(
+    "RUN pnpm install --frozen-lockfile",
+  );
+  assert.ok(
+    conversationManifestCopy >= 0 && conversationManifestCopy < dependencyInstall,
+    "the Conversation manifest must be present before pnpm install",
+  );
+  const conversationSourceCopy = dockerfile.indexOf(
+    "COPY packages/conversation packages/conversation",
+  );
+  const conversationBuild = dockerfile.indexOf(
+    "pnpm --filter @kestrel-agents/conversation build",
+  );
+  assert.ok(
+    conversationSourceCopy >= 0 && conversationSourceCopy < conversationBuild,
+    "the Conversation sources must be present in the build stage",
+  );
+  assert.ok(
+    conversationBuild >= 0 && conversationBuild < dockerfile.indexOf("pnpm run clean"),
+    "the Conversation package must be built before the root runtime",
+  );
+  assert.match(
+    dockerfile,
+    /COPY --from=build \/app\/packages\/conversation \.\/packages\/conversation/u,
+    "the Conversation package must be present behind the production workspace symlink",
+  );
+});

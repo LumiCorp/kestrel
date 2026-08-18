@@ -431,6 +431,37 @@ test("Fly start retries while a replacement Machine is created", async () => {
   assert.deepEqual(sleeps, [1000]);
 });
 
+test("Fly start waits for an authoritative replacement to finish", async () => {
+  const requests: Array<{ method: string; url: string }> = [];
+  const client = new FlyMachinesClient({
+    token: "test-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (url: string | URL | Request, init?: RequestInit) => {
+      const request = { method: init?.method ?? "GET", url: String(url) };
+      requests.push(request);
+      if (request.method === "POST") return new Response(null, { status: 412 });
+      if (request.url.includes("/wait?")) return Response.json({ ok: true });
+      return Response.json({
+        id: "machine-1",
+        state: "replacing",
+        region: "iad",
+        config: {},
+      });
+    }) as typeof fetch,
+  });
+
+  await client.startMachine({
+    appName: "kestrel-env-abc",
+    machineId: "machine-1",
+  });
+
+  assert.deepEqual(
+    requests.map((request) => request.method),
+    ["POST", "GET", "GET"],
+  );
+  assert.match(requests[2]?.url ?? "", /[?&]state=started(?:&|$)/u);
+});
+
 test("Fly start fails closed after ten stopped-state retries", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const sleeps: number[] = [];
