@@ -10,8 +10,8 @@ development and tests. Applications can use the contracts directly or place a
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/memory@0.8.4
-npm install @kestrel-agents/memory@0.8.4
+pnpm add @kestrel-agents/memory@0.8.5
+npm install @kestrel-agents/memory@0.8.5
 ```
 
 ## Query Authorized Memory

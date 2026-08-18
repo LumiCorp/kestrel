@@ -24,8 +24,8 @@ Use this package when your application already has a Kestrel agent client and yo
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/next@0.8.4 \
-  @kestrel-agents/sdk@0.8.4
+pnpm add @kestrel-agents/next@0.8.5 \
+  @kestrel-agents/sdk@0.8.5
 ```
 
 Check [0.8 release status](../../apps/docs/content/start/release-status.mdx)

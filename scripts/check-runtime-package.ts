@@ -46,7 +46,13 @@ const bundledDependencyPrefixes = [
   "node_modules/@lumi/kestrel-environment-auth/",
 ] as const;
 
-const allowedWorkspacePackagePrefixes = ["packages/mcp-security/"] as const;
+const allowedWorkspacePackagePrefixes = [
+  "packages/protocol/",
+  "packages/workspace-skills/",
+  "packages/memory/",
+  "packages/environment-auth/",
+  "packages/mcp-security/",
+] as const;
 
 const requiredFiles = [
   "package.json",
@@ -61,6 +67,14 @@ const requiredFiles = [
   "db/migrations/001_sessions_runs.sql",
   "db/migrations/023_runner_protocol_events.sql",
   "db/migrations/024_provider_reasoning_state.sql",
+  "packages/protocol/package.json",
+  "packages/protocol/dist/index.js",
+  "packages/workspace-skills/package.json",
+  "packages/workspace-skills/dist/index.js",
+  "packages/memory/package.json",
+  "packages/memory/dist/index.js",
+  "packages/environment-auth/package.json",
+  "packages/environment-auth/dist/index.js",
   "packages/mcp-security/package.json",
   "packages/mcp-security/src/index.ts",
   "packages/mcp-security/dist/index.js",
@@ -74,6 +88,7 @@ const requiredFiles = [
   "src/localCore/store.ts",
   "scripts/start.ts",
   "scripts/migrate.ts",
+  "scripts/kchat-smoke.ts",
   "README.md",
   "LICENSE",
 ] as const;
@@ -182,7 +197,27 @@ try {
     cwd: repoRoot,
     stdio: "pipe",
   });
-  const packedWorkspaceFiles = listFilesRecursively(path.join(extractDir, "package")).filter(
+  const packedFiles = listFilesRecursively(path.join(extractDir, "package"));
+  const packedFileSet = new Set(packedFiles);
+  for (const requiredPackedFile of [
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "packages/protocol/package.json",
+    "packages/protocol/dist/index.js",
+    "packages/workspace-skills/package.json",
+    "packages/workspace-skills/dist/index.js",
+    "packages/memory/package.json",
+    "packages/memory/dist/index.js",
+    "packages/environment-auth/package.json",
+    "packages/environment-auth/dist/index.js",
+    "scripts/kchat-smoke.ts",
+  ]) {
+    assert.ok(
+      packedFileSet.has(requiredPackedFile),
+      `pnpm-packed runtime is missing Local Core build input '${requiredPackedFile}'`,
+    );
+  }
+  const packedWorkspaceFiles = packedFiles.filter(
     (filePath) => filePath.startsWith("packages/"),
   );
   for (const packedFilePath of packedWorkspaceFiles) {
@@ -268,18 +303,75 @@ try {
     "bin",
     process.platform === "win32" ? "kestrel.cmd" : "kestrel",
   );
+  const runtimePackageRoot = path.join(
+    consumerDir,
+    process.platform === "win32" ? "node_modules" : "lib/node_modules",
+    "@kestrel-agents",
+    "kestrel",
+  );
+  const cliEnv = {
+    ...process.env,
+    KESTREL_HOME: path.join(consumerDir, ".kestrel"),
+    KESTREL_CORE_HOME: path.join(consumerDir, ".kestrel"),
+    KESTREL_CORE_IDLE_TIMEOUT_MS: "500",
+    KESTREL_DISABLE_DOTENV: "1",
+    DATABASE_URL: "",
+    FORCE_COLOR: "0",
+  };
   const cliVersion = execFileSync(cliCommand, ["--version"], {
     cwd: consumerDir,
     encoding: "utf8",
-    env: {
-      ...process.env,
-      KESTREL_HOME: path.join(consumerDir, ".kestrel"),
-    },
+    env: cliEnv,
   });
   assert.equal(
     cliVersion.trim(),
     `kestrel ${packedManifest.version ?? "unknown"}`,
     "clean-installed runtime CLI must report the packed version",
+  );
+  const coreStatus = execFileSync(cliCommand, ["core", "status"], {
+    cwd: consumerDir,
+    encoding: "utf8",
+    env: cliEnv,
+  });
+  assert.match(
+    coreStatus,
+    /Expected build: sha256:[a-f0-9]{64}/u,
+    "clean-installed runtime CLI must resolve its Local Core build identity",
+  );
+  const importSmoke = execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      `await Promise.all(${JSON.stringify([
+        "@kestrel-agents/conversation",
+        "@kestrel-agents/protocol",
+        "@kestrel-agents/sdk",
+        "@kestrel-agents/workspace-skills",
+        "@kestrel-agents/memory",
+      ])}.map((name) => import(name))); console.log("runtime imports: ok");`,
+    ],
+    {
+      cwd: runtimePackageRoot,
+      encoding: "utf8",
+      env: cliEnv,
+    },
+  );
+  assert.match(importSmoke, /runtime imports: ok/u);
+  const protocolSmoke = execFileSync(
+    process.execPath,
+    ["--import", "tsx", path.join(runtimePackageRoot, "scripts", "kchat-smoke.ts")],
+    {
+      cwd: runtimePackageRoot,
+      encoding: "utf8",
+      env: cliEnv,
+      timeout: 30_000,
+    },
+  );
+  assert.match(
+    protocolSmoke,
+    /kchat smoke: protocol ok/u,
+    "clean-installed runtime CLI must start Local Core and round-trip protocol commands",
   );
 
   console.log(`runtime release-check passed (${filePaths.size} files)`);

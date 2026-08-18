@@ -68,20 +68,20 @@ interface ReleaseEvidence {
       toVersion: string;
     }>;
   };
-  deployments: {
+  deployments?: {
     docs: DeploymentEvidence;
     kestrelOne: DeploymentEvidence;
   };
-  migrations: {
+  migrations?: {
     applied: string[];
     preflightStatus: string;
   };
-  fly: Array<{
+  fly?: Array<{
     image: string;
     role: string;
     smoke: { completedAt: string; status: string };
   }>;
-  canaries: Array<{
+  canaries?: Array<{
     completedAt: string;
     name: string;
     status: string;
@@ -94,8 +94,8 @@ interface DeploymentEvidence {
 }
 
 const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/u;
-const IMMUTABLE_FLY_IMAGE_PATTERN =
-  /^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u;
+const IMMUTABLE_PRODUCTION_IMAGE_PATTERN =
+  /^(?:registry\.fly\.io|ghcr\.io)\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u;
 
 export function validateUnifiedReleaseEvidence(input: unknown): void {
   assertRecord(input, "release evidence");
@@ -193,39 +193,50 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
     }
   }
 
-  assertRecord(evidence.deployments, "deployment evidence");
+  if (evidence.phase === "cutover") {
+    validateCutoverEvidence(evidence);
+  }
+}
+
+function validateCutoverEvidence(evidence: ReleaseEvidence): void {
+  const deployments = evidence.deployments;
+  assertRecord(deployments, "deployment evidence");
   assertExactNames(
-    Object.entries(evidence.deployments),
+    Object.entries(deployments),
     ["docs", "kestrelOne"],
     ([name]) => name,
     "deployments",
   );
-  for (const [name, deployment] of Object.entries(evidence.deployments)) {
+  for (const [name, deployment] of Object.entries(deployments)) {
     assertNonEmpty(deployment.deploymentId, `${name} deployment ID`);
     assertPassed(deployment.status, `${name} deployment`);
   }
 
-  assertRecord(evidence.migrations, "migration evidence");
-  assertPassed(evidence.migrations.preflightStatus, "migration preflight");
-  assert.ok(Array.isArray(evidence.migrations.applied), "applied migrations must be an array");
+  const migrations = evidence.migrations;
+  assertRecord(migrations, "migration evidence");
+  assertPassed(migrations.preflightStatus, "migration preflight");
+  assert.ok(Array.isArray(migrations.applied), "applied migrations must be an array");
   assert.equal(
-    new Set(evidence.migrations.applied).size,
-    evidence.migrations.applied.length,
+    new Set(migrations.applied).size,
+    migrations.applied.length,
     "applied migrations must be unique",
   );
-  for (const migration of evidence.migrations.applied) {
+  for (const migration of migrations.applied) {
     assertNonEmpty(migration, "applied migration identifier");
   }
 
-  assertExactNames(evidence.fly, FLY_ROLES, (entry) => entry.role, "Fly roles");
-  for (const component of evidence.fly) {
-    assert.match(component.image, IMMUTABLE_FLY_IMAGE_PATTERN, `${component.role} image is mutable`);
+  const fly = evidence.fly;
+  assert.ok(Array.isArray(fly), "production image roles must be an array");
+  assertExactNames(fly, FLY_ROLES, (entry) => entry.role, "production image roles");
+  for (const component of fly) {
+    assert.match(component.image, IMMUTABLE_PRODUCTION_IMAGE_PATTERN, `${component.role} image is mutable`);
     assertPassed(component.smoke.status, `${component.role} smoke`);
     assertTimestamp(component.smoke.completedAt, `${component.role} smoke`);
   }
 
-  assert.ok(Array.isArray(evidence.canaries) && evidence.canaries.length > 0, "hosted canary evidence is required");
-  for (const canary of evidence.canaries) {
+  const canaries = evidence.canaries;
+  assert.ok(Array.isArray(canaries) && canaries.length > 0, "hosted canary evidence is required");
+  for (const canary of canaries) {
     assertNonEmpty(canary.name, "canary name");
     assertPassed(canary.status, `canary ${canary.name}`);
     assertTimestamp(canary.completedAt, `canary ${canary.name}`);

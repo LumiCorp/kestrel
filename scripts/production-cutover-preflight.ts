@@ -1,6 +1,9 @@
 import postgres from "postgres";
 
+import { loadProductionEnvironment } from "../apps/web/scripts/lib/production-command.js";
+
 async function main() {
+  const operator = await loadProductionEnvironment();
   const databaseUrl =
     process.env.POSTGRES_URL_NON_POOLING?.trim() ||
     process.env.DATABASE_URL_UNPOOLED?.trim();
@@ -94,7 +97,9 @@ async function main() {
         `Production cutover is blocked: canary Environment ${canary.canaryEnvironmentId} is not an active Fly Environment.`,
       );
     }
-    process.stdout.write("Production cutover release-state preflight passed.\n");
+    process.stdout.write(
+      `Production cutover release-state preflight passed (${operator}).\n`,
+    );
   } finally {
     await sql.end({ timeout: 0 });
   }

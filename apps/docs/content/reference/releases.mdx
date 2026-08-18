@@ -8,9 +8,9 @@ sourceKind: curated
 updatedAt: 2026-08-18
 ---
 
-## Kestrel 0.8.4 overview
+## Kestrel 0.8.5 overview
 
-Kestrel 0.8.4 is one canonical version across Desktop, CLI/TUI, Kestrel One, Runtime, Protocol, Conversation, SDK, Memory, adapters, Observability, and Workspace Skills. It incorporates the complete public change since v0.8.0 while retaining Beta product status.
+Kestrel 0.8.5 is one canonical version across Desktop, CLI/TUI, Kestrel One, Runtime, Protocol, Conversation, SDK, Memory, adapters, Observability, and Workspace Skills. It incorporates the complete public change since v0.8.0 while retaining Beta product status.
 
 ## Runtime and Protocol
 
@@ -23,19 +23,19 @@ Kestrel 0.8.4 is one canonical version across Desktop, CLI/TUI, Kestrel One, Run
 
 ## SDK, Memory, and adapters
 
-All nine public packages use version 0.8.4. Conversation is now a public package and supplies the framework-neutral thread, streaming, queue, composer, activity, and interaction kernel used by first-party clients. Upgrade installed Kestrel packages together.
+All nine public packages use version 0.8.5. Conversation is now a public package and supplies the framework-neutral thread, streaming, queue, composer, activity, and interaction kernel used by first-party clients. Upgrade installed Kestrel packages together.
 
 ## CLI/TUI
 
-Install with `npm install -g @kestrel-agents/kestrel@0.8.4` on Node.js 22. Release verification covers macOS arm64 and Linux x64. The TUI now uses the shared Conversation platform for durable turns, streaming activity, composer behavior, cancellation, reconnect, and readable history.
+Install with `npm install -g @kestrel-agents/kestrel@0.8.5` on Node.js 22. Release verification covers macOS arm64 and Linux x64. The TUI now uses the shared Conversation platform for durable turns, streaming activity, composer behavior, cancellation, reconnect, and readable history.
 
 ## Desktop
 
-Desktop 0.8.4 simplifies navigation, strengthens authoritative Mission Control and active-run presentation, and unifies Apps around executable plugin records. Legacy MCP and direct App settings migrate while credential registrations remain in Keychain; retired workflow-App selections are removed. A one-time pre-v12 settings backup supports downgrade recovery. Desktop ships as a signed and notarized macOS arm64 download and stable OTA update from 0.7.0 and 0.8.0.
+Desktop 0.8.5 simplifies navigation, strengthens authoritative Mission Control and active-run presentation, and unifies Apps around executable plugin records. Legacy MCP and direct App settings migrate while credential registrations remain in Keychain; retired workflow-App selections are removed. A one-time pre-v12 settings backup supports downgrade recovery. Desktop ships as a signed and notarized macOS arm64 download and stable OTA update from 0.7.0 and 0.8.0.
 
 ## Kestrel One source and hosted service
 
-Kestrel One carries product/source version 0.8.4. Scheduled runs now have titles, selected models, Chat or Build mode, manual test execution, trigger and request identity, and corrected DST handling. Apps use executable manifests and action-bound approval policy instead of workflow selection or prompt injection. The Lumi-hosted service remains invitation-only.
+Kestrel One carries product/source version 0.8.5. Scheduled runs now have titles, selected models, Chat or Build mode, manual test execution, trigger and request identity, and corrected DST handling. Apps use executable manifests and action-bound approval policy instead of workflow selection or prompt injection. The Lumi-hosted service remains invitation-only.
 
 ## Mission Control, approvals, and recovery
 
@@ -51,7 +51,7 @@ Upgrade all Kestrel packages and clients together. Consumers of the previous wor
 
 ## Artifacts and evidence
 
-The unified [`v0.8.4` release](https://github.com/LumiCorp/kestrel/releases/tag/v0.8.4) owns source archives, package notes, CLI archive/checksum, signed Desktop assets, and Kestrel One deployment evidence. Artifacts are immutable and tied to the tagged revision.
+The unified [`v0.8.5` release](https://github.com/LumiCorp/kestrel/releases/tag/v0.8.5) owns source archives, package notes, CLI archive/checksum, signed Desktop assets, and Kestrel One deployment evidence. Artifacts are immutable and tied to the tagged revision.
 
 ## Known limitations
 
@@ -63,7 +63,7 @@ The unified [`v0.8.4` release](https://github.com/LumiCorp/kestrel/releases/tag/
 
 ## Earlier 0.8 history
 
-The v0.8.0 release established the coordinated 0.8 contracts and signed Desktop installed base. Runtime npm versions 0.8.1 and 0.8.2 were packaging corrections and are superseded by the canonical 0.8.4 package line.
+The v0.8.0 release established the coordinated 0.8 contracts and signed Desktop installed base. Runtime npm versions 0.8.1 and 0.8.2 were packaging corrections. Version 0.8.4 was staged on npm and tagged for provenance but was never promoted to GitHub Latest, npm latest, Desktop stable, or production because its Runtime package was incomplete. The canonical 0.8.5 line supersedes all of them.
 
 ## Kestrel 0.7.0 history
 

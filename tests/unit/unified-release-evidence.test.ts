@@ -28,6 +28,23 @@ test("accepts a complete immutable candidate evidence bundle", () => {
   assert.doesNotThrow(() => validateUnifiedReleaseEvidence(validEvidence()));
 });
 
+test("candidate evidence does not require production rollout results", () => {
+  const evidence = validEvidence();
+  Reflect.deleteProperty(evidence, "deployments");
+  Reflect.deleteProperty(evidence, "migrations");
+  Reflect.deleteProperty(evidence, "fly");
+  Reflect.deleteProperty(evidence, "canaries");
+  assert.doesNotThrow(() => validateUnifiedReleaseEvidence(evidence));
+});
+
+test("cutover evidence accepts immutable GHCR runtime images", () => {
+  const evidence = cutoverEvidence();
+  assert.ok(evidence.fly);
+  evidence.fly[0]!.image = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${checksum}`;
+  evidence.fly[1]!.image = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${checksum}`;
+  assert.doesNotThrow(() => validateUnifiedReleaseEvidence(evidence));
+});
+
 test("rejects package version mismatches", () => {
   const evidence = validEvidence();
   const packageEvidence = evidence.npm.packages[0];
@@ -37,7 +54,8 @@ test("rejects package version mismatches", () => {
 });
 
 test("rejects mutable Fly references", () => {
-  const evidence = validEvidence();
+  const evidence = cutoverEvidence();
+  assert.ok(evidence.fly);
   const flyEvidence = evidence.fly[0];
   assert.ok(flyEvidence);
   flyEvidence.image = "registry.fly.io/kestrel-one-runner:0.8.0";
@@ -51,7 +69,8 @@ test("rejects a changed candidate stable OTA pointer", () => {
 });
 
 test("requires both production deployments", () => {
-  const evidence = validEvidence();
+  const evidence = cutoverEvidence();
+  assert.ok(evidence.deployments);
   const incompleteDeployments = {
     ...evidence,
     deployments: { docs: evidence.deployments.docs },
@@ -90,13 +109,7 @@ test("requires Runtime to use the canonical suite version", () => {
 });
 
 test("cutover requires both public Desktop OTA transitions", () => {
-  const evidence = validEvidence();
-  evidence.phase = "cutover";
-  for (const packageEvidence of evidence.npm.packages) {
-    packageEvidence.distTags.latest = evidence.version;
-  }
-  evidence.desktopOta.stableAfterSha256 = "c".repeat(64);
-  evidence.desktopOta.stableAfterVersion = evidence.version;
+  const evidence = cutoverEvidence();
   evidence.desktopOta.transitions = [{
     fromVersion: "0.8.0",
     toVersion: evidence.version,
@@ -106,34 +119,51 @@ test("cutover requires both public Desktop OTA transitions", () => {
   assert.throws(() => validateUnifiedReleaseEvidence(evidence), /Desktop OTA transitions/u);
 });
 
+function cutoverEvidence() {
+  const evidence = validEvidence();
+  evidence.phase = "cutover";
+  for (const packageEvidence of evidence.npm.packages) {
+    packageEvidence.distTags.latest = evidence.version;
+  }
+  evidence.desktopOta.stableAfterSha256 = "c".repeat(64);
+  evidence.desktopOta.stableAfterVersion = evidence.version;
+  evidence.desktopOta.transitions = ["0.7.0", "0.8.0"].map((fromVersion) => ({
+    fromVersion,
+    toVersion: evidence.version,
+    status: "passed",
+    completedAt: timestamp,
+  }));
+  return evidence;
+}
+
 function validEvidence() {
   return {
     phase: "candidate" as "candidate" | "cutover",
-    version: "0.8.4",
+    version: "0.8.5",
     npm: {
       packages: packageNames.map((name) => ({
         name,
-        version: "0.8.4",
+        version: "0.8.5",
         integrity: "sha512-YWJjZA==",
         distTags: {
-          "release-0.8.4": "0.8.4",
+          "release-0.8.5": "0.8.5",
           latest: "0.7.0",
         },
       })),
       consumerSmokes: ["darwin-arm64", "linux-x64"].map((platform) => ({
         platform,
-        version: "0.8.4",
+        version: "0.8.5",
         status: "passed",
         completedAt: timestamp,
       })),
     },
     cli: {
       platform: "darwin-arm64",
-      version: "0.8.4",
+      version: "0.8.5",
       archiveSha256: checksum,
     },
     desktop: {
-      version: "0.8.4",
+      version: "0.8.5",
       artifacts: ["dmg", "zip"].map((type) => ({ type, sha256: checksum })),
       signingIdentity: "Developer ID Application: Lumi",
       notarization: "passed",

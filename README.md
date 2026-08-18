@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  Kestrel 0.8.4 is one coordinated release across Desktop, Kestrel One,
+  Kestrel 0.8.5 is one coordinated release across Desktop, Kestrel One,
   the CLI/TUI, Runtime, Protocol, SDK, Memory, adapters, and observability.
   Each surface uses the same execution, Mission Control, recovery, approval,
   memory, and evidence contracts.
@@ -26,15 +26,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/LumiCorp/kestrel/releases/tag/v0.8.4">Get Kestrel 0.8.4</a> ·
+  <a href="https://github.com/LumiCorp/kestrel/releases/tag/v0.8.5">Get Kestrel 0.8.5</a> ·
   <a href="https://docs.kestrelagents.dev">Read the docs</a> ·
-  <a href="https://github.com/LumiCorp/kestrel/tree/v0.8.4/apps/web">View Kestrel One source</a>
+  <a href="https://github.com/LumiCorp/kestrel/tree/v0.8.5/apps/web">View Kestrel One source</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml"><img src="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1f6f5f.svg" alt="MIT license" /></a>
-  <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/Kestrel-0.8.4-2f7d32.svg" alt="Kestrel 0.8.4" /></a>
+  <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/Kestrel-0.8.5-2f7d32.svg" alt="Kestrel 0.8.5" /></a>
   <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/status-Beta-245b78.svg" alt="Kestrel Beta" /></a>
 </p>
 
@@ -48,37 +48,37 @@
   <img src=".github/assets/kestrel-desktop-night-flight.gif" alt="Kestrel Desktop creating a launch codename and rally cry in a completed conversation." width="1000" />
 </p>
 
-Kestrel Desktop 0.8.4 is the signed and notarized macOS application for local
+Kestrel Desktop 0.8.5 is the signed and notarized macOS application for local
 project work. Give it a folder, connect a compatible provider/model, and work
 through one durable conversation while Local Core owns execution, credentials,
 sessions, recovery, and project evidence. Mission Control keeps work items,
 attempts, validation, review, and acceptance visible without turning the
 conversation into a status database.
 
-Desktop 0.8.4 supports macOS 13 or newer on Apple silicon. Install the signed
+Desktop 0.8.5 supports macOS 13 or newer on Apple silicon. Install the signed
 DMG directly or update through the stable channel from Desktop 0.7.0 or 0.8.0.
 The upgrade preserves settings, credentials, projects, conversations, Mission
 Control, and Local Core state while migrating Apps to executable plugin records.
 
 [Learn about Desktop](https://docs.kestrelagents.dev/desktop) ·
-[Install Desktop 0.8.4](https://docs.kestrelagents.dev/desktop/install) ·
+[Install Desktop 0.8.5](https://docs.kestrelagents.dev/desktop/install) ·
 [Desktop updates](https://docs.kestrelagents.dev/desktop/updates)
 
 ## Kestrel One
 
-Kestrel One is a real versioned product at 0.8.4. Its source is available in
-this repository and from the `v0.8.4` tag. You can inspect it, clone it, and run
+Kestrel One is a real versioned product at 0.8.5. Its source is available in
+this repository and from the `v0.8.5` tag. You can inspect it, clone it, and run
 the documented local-development setup without joining the hosted service.
 
 Kestrel One adds organizations, shared Projects and Threads, context revisions,
 Knowledge, Apps, Environments, Mission Control, governed model access, workers,
 and operator evidence. Lumi-hosted Kestrel One is an invitation-only deployment
-of the same 0.8.4 source/product line. Invitation-only describes hosted access;
+of the same 0.8.5 source/product line. Invitation-only describes hosted access;
 it is not Kestrel One's version or the only way its source exists.
 
 [Learn about Kestrel One](https://docs.kestrelagents.dev/kestrel-one) ·
 [Source and hosting](https://docs.kestrelagents.dev/kestrel-one/source-and-hosting) ·
-[View the 0.8.4 source](https://github.com/LumiCorp/kestrel/tree/v0.8.4/apps/web) ·
+[View the 0.8.5 source](https://github.com/LumiCorp/kestrel/tree/v0.8.5/apps/web) ·
 [Hosted getting started](https://docs.kestrelagents.dev/kestrel-one/getting-started)
 
 ## Install the CLI/TUI
@@ -89,13 +89,13 @@ operator control, Mission Control, profiles, tools, jobs, and Local Core.
 Requirements: Node.js 22 on macOS arm64 or Linux x64.
 
 ```bash
-npm install -g @kestrel-agents/kestrel@0.8.4
+npm install -g @kestrel-agents/kestrel@0.8.5
 kestrel --version
 kestrel
 ```
 
 A checksum-bearing macOS arm64 standalone archive is also attached to the
-unified `v0.8.4` GitHub release and reports product version `0.8.4`.
+unified `v0.8.5` GitHub release and reports product version `0.8.5`.
 
 [CLI installation](https://docs.kestrelagents.dev/cli/install) ·
 [Command suite](https://docs.kestrelagents.dev/cli/command-suite) ·
@@ -108,7 +108,7 @@ compatibility shim around the current Runtime, Protocol, SDK, adapters, or
 clients.
 
 ```bash
-pnpm add @kestrel-agents/sdk@0.8.4 @kestrel-agents/protocol@0.8.4
+pnpm add @kestrel-agents/sdk@0.8.5 @kestrel-agents/protocol@0.8.5
 ```
 
 The nine public artifacts are:

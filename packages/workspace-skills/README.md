@@ -9,7 +9,7 @@ commit and content digest used in a runtime turn. Installation does not execute
 repository hooks or package code.
 
 ```bash
-pnpm add @kestrel-agents/workspace-skills@0.8.4
+pnpm add @kestrel-agents/workspace-skills@0.8.5
 ```
 
 ```ts

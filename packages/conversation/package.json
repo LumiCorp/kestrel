@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/conversation",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "Framework-neutral conversation projection and presentation kernel for Kestrel clients",
   "license": "MIT",
   "type": "module",

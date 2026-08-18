@@ -239,7 +239,16 @@ async function createThread(page: Page, text: string) {
 }
 
 async function expectThreadTitle(page: Page, threadId: string, title: string) {
-  const response = await page.context().request.get(`/api/threads/${threadId}`);
-  expect(response.ok()).toBe(true);
-  expect(await response.json()).toMatchObject({ title });
+  await expect
+    .poll(async () => {
+      const response = await page.context().request.get(
+        `/api/threads/${threadId}`,
+      );
+      if (!response.ok()) {
+        return `HTTP ${response.status()}`;
+      }
+      const thread = (await response.json()) as { title?: string };
+      return thread.title;
+    })
+    .toBe(title);
 }

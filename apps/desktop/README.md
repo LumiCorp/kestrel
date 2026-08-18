@@ -82,7 +82,7 @@ The Vite renderer owns one full-window launch experience from the first frame. T
 
 - macOS is the first clean-machine proof target.
 - Release packaging fails unless the app is Developer ID signed, hardened, notarized, stapled, and accepted by Gatekeeper.
-- Desktop 0.8.4 is a signed download and the stable OTA target for signed 0.7.0 and 0.8.0 clients.
+- Desktop 0.8.5 is a signed download and the stable OTA target for signed 0.7.0 and 0.8.0 clients.
 - Before the first schema-12 settings write, Desktop preserves a one-time `desktop-settings.pre-v12.json` backup for downgrade recovery.
 - Kestrel refuses restart while Desktop or Local Core work is active and never cancels that work to install.
 - Local Core owns PGlite storage and execution; Desktop does not launch independent Postgres or runner processes.
@@ -151,7 +151,7 @@ model turn and persistence across relaunch, writes evidence under
 removes only the exact installation it created. It refuses to overwrite an
 existing application and is not a CI task.
 
-Desktop update publication has two explicit operator phases for the 0.8.4 release:
+Desktop update publication has two explicit operator phases for the 0.8.5 release:
 
 ```bash
 # Upload and verify immutable versioned artifacts. This cannot move stable.
@@ -160,7 +160,7 @@ pnpm run desktop:upload-update
 # After independent inspection and approval, move the stable channel pointer.
 KESTREL_DESKTOP_PROMOTION_APPROVED=1 \
 KESTREL_DESKTOP_UPDATE_CHANNEL=stable \
-pnpm run desktop:promote-update -- --version 0.8.4
+pnpm run desktop:promote-update -- --version 0.8.5
 ```
 
 Upload validates every updater file entry against the local artifact's
