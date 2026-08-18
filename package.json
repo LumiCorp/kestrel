@@ -14,6 +14,7 @@
     "dist/models",
     "dist/tools",
     "dist/cli",
+    "dist/packages/mcp-security/src",
     "bin",
     "cli",
     "src",

@@ -58,6 +58,8 @@ const requiredFiles = [
   "package.json",
   "dist/src/index.js",
   "dist/src/index.d.ts",
+  "dist/packages/mcp-security/src/index.js",
+  "dist/packages/mcp-security/src/index.d.ts",
   "bin/kestrel.js",
   "bin/kcron.js",
   "cli/tui.ts",
@@ -344,6 +346,7 @@ try {
       "--input-type=module",
       "--eval",
       `await Promise.all(${JSON.stringify([
+        "@kestrel-agents/kestrel",
         "@kestrel-agents/conversation",
         "@kestrel-agents/protocol",
         "@kestrel-agents/sdk",
