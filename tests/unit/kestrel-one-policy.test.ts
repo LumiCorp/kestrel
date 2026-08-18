@@ -164,6 +164,27 @@ test("canonical Kestrel One policy and presets are immutable versioned definitio
       cache: { behavior: "provider_automatic" },
     },
   );
+  assert.deepEqual(
+    KESTREL_HARNESS_ECONOMICS.modelProfiles.find(
+      (profile) =>
+        profile.provider === "openai" && profile.model === "Qwen/Qwen3-8B",
+    ),
+    {
+      version: 1,
+      profileId: "openai:Qwen/Qwen3-8B:v1",
+      provider: "openai",
+      model: "Qwen/Qwen3-8B",
+      contextWindowTokens: 32_768,
+      maxOutputTokens: 8_192,
+      counting: {
+        counter: "utf8-byte-upper-bound",
+        counterVersion: "1",
+        method: "conservative_estimate",
+        confidence: "conservative",
+      },
+      cache: { behavior: "none" },
+    },
+  );
 });
 
 test("hosted execution preflight requires one internally consistent exact economics route", () => {
