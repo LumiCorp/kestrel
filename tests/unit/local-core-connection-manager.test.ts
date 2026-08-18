@@ -147,6 +147,33 @@ test("Local Core connection manager reconnects before a non-idempotent operation
   ]);
 });
 
+test("Local Core connection manager can invoke a connected operation without a health preflight", async () => {
+  let healthCalls = 0;
+  const client = {
+    async health(): Promise<{ ok: true }> {
+      healthCalls += 1;
+      return { ok: true };
+    },
+  } as unknown as LocalCoreClient;
+  const manager = new LocalCoreConnectionManager({
+    initialConnection: {
+      status: {} as LocalCoreStatus,
+      client,
+    },
+    connect: async () => {
+      throw new Error("unexpected reconnect");
+    },
+  });
+
+  const result = await manager.executeConnectedOnce(async (current) => {
+    assert.equal(current, client);
+    return "sent";
+  });
+
+  assert.equal(result, "sent");
+  assert.equal(healthCalls, 0);
+});
+
 test("Local Core connection manager reports exhausted reconnect attempts", async () => {
   const states: string[] = [];
   const failure = Object.assign(new Error("socket unavailable"), {
