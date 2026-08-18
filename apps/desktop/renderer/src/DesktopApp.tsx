@@ -174,6 +174,7 @@ type DesktopSurface =
   | "diagnostics";
 const SURFACE_STATE_KEY = "kestrel:desktop:surface:v1" as const;
 const SELECTED_PROJECT_KEY = "kestrel:desktop:selected-project:v1" as const;
+const DESKTOP_ACTIVE_RUN_RECONCILIATION_MS = 1_000;
 
 export function DesktopApp(props: {
   onboardingHandoff?: {
@@ -796,7 +797,10 @@ export function DesktopApp(props: {
     };
   }, [activeThread?.id, activeThreadAuthorityStatus, runtimeHealth?.state]);
 
-  async function refreshThreadAuthority(thread: DesktopRendererState["threads"][number]): Promise<DesktopThreadAuthorityResult> {
+  async function refreshThreadAuthority(
+    thread: DesktopRendererState["threads"][number],
+    options: { recoverActivity?: boolean | undefined } = {},
+  ): Promise<DesktopThreadAuthorityResult> {
     const result = await window.kestrelDesktop.inspectThreadAuthority(localCoreThreadId(thread.sessionId));
     setAuthorityCaches((current) => reconcileDesktopThreadAuthority({
       caches: current,
@@ -861,12 +865,44 @@ export function DesktopApp(props: {
       await recoverConversationMessages(thread).catch(() => {
         setThreadActivity(thread.id, "Conversation history is partially available");
       });
-      await recoverConversationActivity(thread).catch(() => {
-        setThreadActivity(thread.id, "Conversation history is partially available");
-      });
+      if (options.recoverActivity !== false) {
+        await recoverConversationActivity(thread).catch(() => {
+          setThreadActivity(thread.id, "Conversation history is partially available");
+        });
+      }
     }
     return result;
   }
+
+  useEffect(() => {
+    // Runner events make the active conversation responsive, but they are not
+    // durable delivery. Reconcile the Core-owned thread while it is executing
+    // so a renderer reload or a missed IPC event cannot leave a completed
+    // answer hidden behind a stale Stop button.
+    if (agentWorking === false || activeRun === undefined || activeThread === undefined) {
+      return;
+    }
+    let reconciliationInFlight = false;
+    const reconcile = () => {
+      if (reconciliationInFlight) return;
+      const currentThread = threadsRef.current.find(
+        (thread) => thread.id === activeThread.id,
+      );
+      if (currentThread === undefined) return;
+      reconciliationInFlight = true;
+      void refreshThreadAuthority(currentThread, { recoverActivity: false })
+        .catch(() => undefined)
+        .finally(() => {
+          reconciliationInFlight = false;
+        });
+    };
+    reconcile();
+    const interval = window.setInterval(
+      reconcile,
+      DESKTOP_ACTIVE_RUN_RECONCILIATION_MS,
+    );
+    return () => window.clearInterval(interval);
+  }, [activeRun?.runId, activeRun?.sessionId, activeThread?.id, agentWorking]);
 
   async function recoverConversationActivity(
     thread: DesktopRendererState["threads"][number],
