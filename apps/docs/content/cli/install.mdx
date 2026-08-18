@@ -5,7 +5,7 @@ section: cli
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-18
 ---
 
 Install the Kestrel CLI/TUI when you want the same 0.8 runtime and project workflows from a terminal. The supported 0.8 targets are macOS arm64 and Linux x64 with Node.js 22.
@@ -25,7 +25,7 @@ Install Node.js 22 and npm, confirm the terminal can run global npm binaries, an
 ## Install from npm
 
 ```bash
-npm install -g @kestrel-agents/kestrel@0.8.2
+npm install -g @kestrel-agents/kestrel@0.8.4
 ```
 
 ## Verify version and runtime
@@ -35,7 +35,7 @@ kestrel --version
 kestrel status
 ```
 
-The npm installation must report `0.8.2`. Resolve provider, Local Core, or workspace readiness failures before starting real work.
+The npm installation must report `0.8.4`. Resolve provider, Local Core, or workspace readiness failures before starting real work.
 
 ## Start the TUI
 
@@ -52,7 +52,7 @@ Run the exact install command again. Keep the existing local configuration and p
 
 ## Install the macOS standalone archive
 
-The unified GitHub release also provides `kestrel-cli-0.8.0-darwin-arm64.tar.gz` and its checksum. That standalone product artifact reports `0.8.0`; the npm-only 0.8.2 patch corrects Runtime packaging and global installation. Verify the checksum, unpack it into an owned location, and ensure it is earlier on `PATH` than an older installation.
+The unified GitHub release also provides `kestrel-cli-0.8.4-darwin-arm64.tar.gz` and its checksum. Verify the checksum, unpack it into an owned location, and ensure it is earlier on `PATH` than an older installation.
 
 ## Uninstall safely
 

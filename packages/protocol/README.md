@@ -14,7 +14,7 @@ transport, gateway, or contract-aware diagnostic tool.
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/protocol@0.8.0
+pnpm add @kestrel-agents/protocol@0.8.4
 ```
 
 Use the same release line as the runtime and SDK. Check

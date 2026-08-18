@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createDefaultModelPolicy } from "../../../src/profile/modelPolicy.js";
@@ -11,6 +11,7 @@ import {
   buildDesktopRunnerProfile,
   buildDesktopModelEnvironment,
   createDefaultDesktopSettings,
+  desktopPreV12SettingsBackupPath,
   describeDesktopProviderCredentialRequirement,
   hasConfiguredDesktopProviderCredential,
   readDesktopSettings,
@@ -288,6 +289,51 @@ test("active Local Core settings normalization discards retired workflow IDs", (
   assert.deepEqual(restored.defaultEnabledBuiltInAppIds, ["built_in.weather"]);
   assert.equal("legacyDefaultWorkflowAppIds" in restored, false);
   assert.equal(restored.plugins.some((plugin) => plugin.id.startsWith("workflow.")), false);
+});
+
+test("the first schema-12 write preserves pre-v12 settings exactly once", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-backup-"));
+  const settingsPath = path.join(tempDir, "desktop-settings.json");
+  const backupPath = desktopPreV12SettingsBackupPath(settingsPath);
+  const original = `${JSON.stringify({
+    version: 10,
+    selectedProvider: "ollama",
+    ollamaModel: "qwen2.5-coder",
+    projects: [{ path: "/workspace/kestrel", label: "Kestrel" }],
+    mcpServers: [{
+      id: "custom",
+      name: "Custom",
+      transport: "stdio",
+      command: "custom-mcp",
+      enabled: true,
+    }],
+  }, null, 2)}\n`;
+  await writeFile(settingsPath, original, "utf8");
+
+  const migrated = await readDesktopSettings(settingsPath);
+  await writeDesktopSettings(settingsPath, migrated);
+
+  assert.equal(await readFile(backupPath, "utf8"), original);
+  assert.equal((await stat(backupPath)).mode & 0o777, 0o600);
+  assert.match(await readFile(settingsPath, "utf8"), /"version": 12/u);
+
+  await writeFile(settingsPath, `${JSON.stringify({ version: 10, selectedProvider: "openai" })}\n`, "utf8");
+  await writeDesktopSettings(settingsPath, await readDesktopSettings(settingsPath));
+  assert.equal(await readFile(backupPath, "utf8"), original);
+});
+
+test("schema-12 migration aborts when the pre-v12 backup path is unusable", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-settings-backup-failure-"));
+  const settingsPath = path.join(tempDir, "desktop-settings.json");
+  const original = `${JSON.stringify({ version: 10, selectedProvider: "openrouter" })}\n`;
+  await writeFile(settingsPath, original, "utf8");
+  await mkdir(desktopPreV12SettingsBackupPath(settingsPath));
+
+  await assert.rejects(
+    writeDesktopSettings(settingsPath, await readDesktopSettings(settingsPath)),
+    /could not verify its pre-v12 settings backup/u,
+  );
+  assert.equal(await readFile(settingsPath, "utf8"), original);
 });
 
 test(

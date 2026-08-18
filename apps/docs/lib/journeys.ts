@@ -22,6 +22,7 @@ export const DOCS_JOURNEYS: Record<DocsJourneyId, JourneyDefinition> = {
       "/kestrel-one/getting-started",
       "/kestrel-one/threads",
       "/kestrel-one/projects",
+      "/kestrel-one/scheduled-runs",
       "/kestrel-one/apps",
       "/kestrel-one/context-revisions",
       "/kestrel-one/knowledge",

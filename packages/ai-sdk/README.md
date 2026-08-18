@@ -28,8 +28,8 @@ or browser client. Start and control the run through
 ## Install
 
 ```bash
-pnpm add @kestrel-agents/ai-sdk@0.8.0 \
-  @kestrel-agents/sdk@0.8.0 \
+pnpm add @kestrel-agents/ai-sdk@0.8.4 \
+  @kestrel-agents/sdk@0.8.4 \
   ai@^6
 ```
 

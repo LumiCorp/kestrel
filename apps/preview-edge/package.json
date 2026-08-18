@@ -1,6 +1,6 @@
 {
   "name": "@kestrel/preview-edge",
-  "version": "0.8.0",
+  "version": "0.8.4",
   "private": true,
   "type": "module",
   "scripts": {

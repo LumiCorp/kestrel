@@ -25,6 +25,13 @@ const packDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-pack-"));
 const extractDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-extract-"));
 const consumerDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-consumer-"));
 
+const externalRuntimeWorkspacePackages = [
+  { directory: "packages/conversation", tarballPrefix: "kestrel-agents-conversation-" },
+  { directory: "packages/protocol", tarballPrefix: "kestrel-agents-protocol-" },
+  { directory: "packages/sdk", tarballPrefix: "kestrel-agents-sdk-" },
+  { directory: "packages/workspace-skills", tarballPrefix: "kestrel-agents-workspace-skills-" },
+] as const;
+
 const forbiddenPrefixes = [
   "apps/",
   "tests/",
@@ -193,9 +200,19 @@ try {
     readFileSync(path.join(extractDir, "package", "package.json"), "utf8"),
   ) as { dependencies?: Record<string, string>; version?: string };
   assert.equal(
+    packedManifest.dependencies?.["@kestrel-agents/conversation"],
+    packedManifest.version,
+    "packed runtime must depend on the exact matching Conversation version",
+  );
+  assert.equal(
     packedManifest.dependencies?.["@kestrel-agents/protocol"],
     packedManifest.version,
     "packed runtime must depend on the exact matching protocol version",
+  );
+  assert.equal(
+    packedManifest.dependencies?.["@kestrel-agents/sdk"],
+    packedManifest.version,
+    "packed runtime must depend on the exact matching SDK version",
   );
   assert.equal(
     packedManifest.dependencies?.["@kestrel-agents/workspace-skills"],
@@ -221,6 +238,9 @@ try {
     );
   }
 
+  const localDependencyTarballs = externalRuntimeWorkspacePackages.map((workspacePackage) =>
+    packWorkspacePackage(workspacePackage),
+  );
   execFileSync(
     resolveNpmCommand(),
     [
@@ -230,6 +250,7 @@ try {
       consumerDir,
       "--no-audit",
       "--no-fund",
+      ...localDependencyTarballs,
       tarballPath,
     ],
     {
@@ -293,4 +314,26 @@ function listFilesRecursively(rootPath: string, relativePath = ""): string[] {
 
 function resolveNpmCommand(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+
+function packWorkspacePackage(
+  workspacePackage: (typeof externalRuntimeWorkspacePackages)[number],
+): string {
+  const before = new Set(readdirSync(packDir));
+  execFileSync("pnpm", ["pack", "--pack-destination", packDir], {
+    cwd: path.join(repoRoot, workspacePackage.directory),
+    stdio: "pipe",
+  });
+  const tarballs = readdirSync(packDir).filter(
+    (entry) =>
+      before.has(entry) === false &&
+      entry.startsWith(workspacePackage.tarballPrefix) &&
+      entry.endsWith(".tgz"),
+  );
+  assert.equal(
+    tarballs.length,
+    1,
+    `expected one packed dependency from ${workspacePackage.directory}`,
+  );
+  return path.join(packDir, tarballs[0]!);
 }

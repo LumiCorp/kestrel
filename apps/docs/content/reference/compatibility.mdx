@@ -5,22 +5,22 @@ section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-18
 ---
 
 ## Compatibility rule
 
-Use exact `0.8.0` contracts across Runtime, Protocol, Conversation, SDK, Memory, Next.js, AI SDK, Observability, Workspace Skills, and compatible clients. Install the corrected Runtime/CLI npm distribution as `@kestrel-agents/kestrel@0.8.2`; it pins its first-party dependencies to 0.8.0. Do not combine 0.7 and 0.8 contracts or add an application-side shim for removed APIs.
+Use exact `0.8.4` contracts across Runtime, Protocol, Conversation, SDK, Memory, Next.js, AI SDK, Observability, Workspace Skills, and compatible clients. Do not combine 0.7 and 0.8 contracts or add an application-side shim for removed APIs.
 
 ## Package matrix
 
 <ReleaseCompatibilityTable />
 
-All nine published npm artifacts share the coordinated 0.8 release line. The Runtime npm artifact alone uses patch 0.8.2 to correct its packaging and global installation. A package may remain optional to an application, but every installed Kestrel package must match the versions shown above.
+All nine published npm artifacts share version 0.8.4. A package may remain optional to an application, but every installed Kestrel package must match the versions shown above.
 
 ## Product matrix
 
-CLI/TUI uses the Runtime package and supports Node.js 22 on macOS arm64 and Linux x64. Desktop 0.8.0 is a signed manual macOS arm64 application. Kestrel One source is tagged 0.8.0; Lumi hosting runs an exact identified deployment of that product version.
+CLI/TUI uses the Runtime package and supports Node.js 22 on macOS arm64 and Linux x64. Desktop 0.8.4 is a signed macOS arm64 application available by DMG and stable OTA. Kestrel One source is tagged 0.8.4; Lumi hosting runs an identified deployment of that product version.
 
 ## Platform matrix
 
@@ -34,13 +34,13 @@ CLI/TUI uses the Runtime package and supports Node.js 22 on macOS arm64 and Linu
 
 ## Persistence and migrations
 
-Desktop and Local Core preserve their owned settings, credentials, projects, sessions, and history across the 0.8 manual upgrade. Hosted operators apply only pending migrations and verify application/worker compatibility before promotion.
+Desktop and Local Core preserve their owned settings, credentials, projects, sessions, and history across the upgrade. Desktop creates a one-time pre-v12 settings backup before migrating Apps and MCP connections to plugin records. Hosted operators apply only pending migrations and verify application/worker compatibility before promotion.
 
 ## Unsupported combinations
 
 - Mixed 0.7 and 0.8 Kestrel package graphs
 - Removed Board/Task or project snapshot write APIs
-- Desktop 0.8.0 installed through the stable OTA pointer
+- Desktop downgrade after schema 12 without first restoring the pre-v12 settings backup
 - Broad approvals reused for a different action
 - A hosted deployment whose actual Vercel result, Machine image tag, or tenant operation was not verified
 
@@ -50,4 +50,4 @@ The [0.7 upgrade guide](/build/upgrading-to-0-7) remains available as history. I
 
 ## Verify a deployed system
 
-For hosted operation, record the Vercel deployment and migration result, the operator-selected tag and provider record for each changed Machine, the exact tenant operation when applicable, and one successful terminal result. Do not infer one target's state from another target's result.
+For hosted operation, record the Vercel deployment and migration result, the operator-selected tag and provider result for each changed Machine, the exact tenant operation when applicable, and one successful terminal result. Do not infer one target's state from another target's result.

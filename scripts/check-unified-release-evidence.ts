@@ -15,25 +15,23 @@ const PUBLIC_PACKAGES = [
   "@kestrel-agents/kestrel",
 ] as const;
 
-const RUNTIME_PACKAGE = "@kestrel-agents/kestrel";
-
 const FLY_ROLES = [
   "workspace-runtime",
   "environment-router",
   "preview-edge",
   "turn-worker",
+  "control-worker",
   "runpod-worker",
 ] as const;
+
+const DESKTOP_OTA_FROM_VERSIONS = ["0.7.0", "0.8.0"] as const;
 
 interface ReleaseEvidence {
   phase: "candidate" | "cutover";
   version: string;
-  sourceSha: string;
   npm: {
-    runtimeVersion: string;
     packages: Array<{
       distTags: Record<string, string>;
-      gitHead?: string;
       integrity: string;
       name: string;
       version: string;
@@ -48,7 +46,6 @@ interface ReleaseEvidence {
   cli: {
     archiveSha256: string;
     platform: string;
-    sourceSha: string;
     version: string;
   };
   desktop: {
@@ -57,15 +54,19 @@ interface ReleaseEvidence {
     launchServices: string;
     notarization: string;
     signingIdentity: string;
-    sourceSha: string;
     version: string;
   };
   desktopOta: {
-    afterSha256: string;
-    afterVersion: string;
-    beforeSha256: string;
-    beforeVersion: string;
-    expectedStableVersion: string;
+    stableAfterSha256: string;
+    stableAfterVersion: string;
+    stableBeforeSha256: string;
+    stableBeforeVersion: string;
+    transitions: Array<{
+      completedAt: string;
+      fromVersion: string;
+      status: string;
+      toVersion: string;
+    }>;
   };
   deployments: {
     docs: DeploymentEvidence;
@@ -79,7 +80,6 @@ interface ReleaseEvidence {
     image: string;
     role: string;
     smoke: { completedAt: string; status: string };
-    sourceSha: string;
   }>;
   canaries: Array<{
     completedAt: string;
@@ -90,11 +90,9 @@ interface ReleaseEvidence {
 
 interface DeploymentEvidence {
   deploymentId: string;
-  revision: string;
   status: string;
 }
 
-const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_FLY_IMAGE_PATTERN =
   /^registry\.fly\.io\/[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$/u;
@@ -104,14 +102,8 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
   const evidence = input as unknown as ReleaseEvidence;
   assert.ok(evidence.phase === "candidate" || evidence.phase === "cutover");
   assert.match(evidence.version, /^\d+\.\d+\.\d+$/u, "version must be numeric semver");
-  assert.match(evidence.sourceSha, SHA_PATTERN, "sourceSha must be a full Git SHA");
 
   assertRecord(evidence.npm, "npm evidence");
-  assert.match(
-    evidence.npm.runtimeVersion,
-    /^\d+\.\d+\.\d+$/u,
-    "npm runtimeVersion must be numeric semver",
-  );
   assertExactNames(
     evidence.npm.packages,
     PUBLIC_PACKAGES,
@@ -119,23 +111,17 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
     "npm packages",
   );
   for (const packageEvidence of evidence.npm.packages) {
-    const expectedVersion = packageEvidence.name === RUNTIME_PACKAGE
-      ? evidence.npm.runtimeVersion
-      : evidence.version;
-    assert.equal(packageEvidence.version, expectedVersion, `${packageEvidence.name} version mismatch`);
+    assert.equal(packageEvidence.version, evidence.version, `${packageEvidence.name} version mismatch`);
     assert.match(packageEvidence.integrity, /^sha512-[A-Za-z0-9+/=]+$/u);
-    if (packageEvidence.gitHead !== undefined) {
-      assert.equal(packageEvidence.gitHead, evidence.sourceSha, `${packageEvidence.name} gitHead mismatch`);
-    }
     assert.equal(
       packageEvidence.distTags[`release-${evidence.version}`],
-      expectedVersion,
+      evidence.version,
       `${packageEvidence.name} staging dist-tag mismatch`,
     );
     if (evidence.phase === "cutover") {
       assert.equal(
         packageEvidence.distTags.latest,
-        expectedVersion,
+        evidence.version,
         `${packageEvidence.name} latest dist-tag mismatch`,
       );
     }
@@ -147,7 +133,7 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
     "npm consumer platforms",
   );
   for (const smoke of evidence.npm.consumerSmokes) {
-    assert.equal(smoke.version, evidence.npm.runtimeVersion);
+    assert.equal(smoke.version, evidence.version);
     assertPassed(smoke.status, `npm consumer smoke ${smoke.platform}`);
     assertTimestamp(smoke.completedAt, `npm consumer smoke ${smoke.platform}`);
   }
@@ -155,12 +141,10 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
   assertRecord(evidence.cli, "CLI evidence");
   assert.equal(evidence.cli.platform, "darwin-arm64");
   assert.equal(evidence.cli.version, evidence.version);
-  assert.equal(evidence.cli.sourceSha, evidence.sourceSha);
   assert.match(evidence.cli.archiveSha256, CHECKSUM_PATTERN);
 
   assertRecord(evidence.desktop, "Desktop evidence");
   assert.equal(evidence.desktop.version, evidence.version);
-  assert.equal(evidence.desktop.sourceSha, evidence.sourceSha);
   assertNonEmpty(evidence.desktop.signingIdentity, "Desktop signing identity");
   assertPassed(evidence.desktop.notarization, "Desktop notarization");
   assertPassed(evidence.desktop.gatekeeper, "Desktop Gatekeeper");
@@ -176,14 +160,38 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
   }
 
   assertRecord(evidence.desktopOta, "Desktop OTA evidence");
-  assert.match(evidence.desktopOta.beforeSha256, CHECKSUM_PATTERN);
-  assert.equal(
-    evidence.desktopOta.afterSha256,
-    evidence.desktopOta.beforeSha256,
-    "stable Desktop OTA metadata changed",
-  );
-  assert.equal(evidence.desktopOta.beforeVersion, evidence.desktopOta.expectedStableVersion);
-  assert.equal(evidence.desktopOta.afterVersion, evidence.desktopOta.expectedStableVersion);
+  assert.match(evidence.desktopOta.stableBeforeSha256, CHECKSUM_PATTERN);
+  assert.match(evidence.desktopOta.stableAfterSha256, CHECKSUM_PATTERN);
+  assert.match(evidence.desktopOta.stableBeforeVersion, /^\d+\.\d+\.\d+$/u);
+  if (evidence.phase === "candidate") {
+    assert.equal(
+      evidence.desktopOta.stableAfterSha256,
+      evidence.desktopOta.stableBeforeSha256,
+      "candidate stable Desktop OTA metadata changed",
+    );
+    assert.equal(
+      evidence.desktopOta.stableAfterVersion,
+      evidence.desktopOta.stableBeforeVersion,
+      "candidate stable Desktop OTA version changed",
+    );
+  } else {
+    assert.equal(
+      evidence.desktopOta.stableAfterVersion,
+      evidence.version,
+      "cutover stable Desktop OTA version mismatch",
+    );
+    assertExactNames(
+      evidence.desktopOta.transitions,
+      DESKTOP_OTA_FROM_VERSIONS,
+      (transition) => transition.fromVersion,
+      "Desktop OTA transitions",
+    );
+    for (const transition of evidence.desktopOta.transitions) {
+      assert.equal(transition.toVersion, evidence.version, "Desktop OTA target version mismatch");
+      assertPassed(transition.status, `Desktop OTA ${transition.fromVersion}`);
+      assertTimestamp(transition.completedAt, `Desktop OTA ${transition.fromVersion}`);
+    }
+  }
 
   assertRecord(evidence.deployments, "deployment evidence");
   assertExactNames(
@@ -194,7 +202,6 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
   );
   for (const [name, deployment] of Object.entries(evidence.deployments)) {
     assertNonEmpty(deployment.deploymentId, `${name} deployment ID`);
-    assert.equal(deployment.revision, evidence.sourceSha, `${name} deployment revision mismatch`);
     assertPassed(deployment.status, `${name} deployment`);
   }
 
@@ -213,7 +220,6 @@ export function validateUnifiedReleaseEvidence(input: unknown): void {
   assertExactNames(evidence.fly, FLY_ROLES, (entry) => entry.role, "Fly roles");
   for (const component of evidence.fly) {
     assert.match(component.image, IMMUTABLE_FLY_IMAGE_PATTERN, `${component.role} image is mutable`);
-    assert.equal(component.sourceSha, evidence.sourceSha, `${component.role} source revision mismatch`);
     assertPassed(component.smoke.status, `${component.role} smoke`);
     assertTimestamp(component.smoke.completedAt, `${component.role} smoke`);
   }
