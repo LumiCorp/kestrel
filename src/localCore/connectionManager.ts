@@ -104,6 +104,15 @@ export class LocalCoreConnectionManager {
    */
   async executeOnce<T>(operation: (client: LocalCoreClient) => Promise<T>): Promise<T> {
     await this.executeIdempotent(async (client) => await client.health());
+    return await this.executeConnectedOnce(operation);
+  }
+
+  /**
+   * Invokes an operation once on the current connection without a separate
+   * health request. Use when the operation itself is the liveness check and a
+   * preflight request would incorrectly gate or delay it.
+   */
+  async executeConnectedOnce<T>(operation: (client: LocalCoreClient) => Promise<T>): Promise<T> {
     const connection = await this.ensureConnected();
     try {
       return await operation(connection.client);

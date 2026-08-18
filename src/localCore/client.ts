@@ -988,10 +988,6 @@ export class LocalCoreClient {
       isRunnerStreamingCommandType(command.type) ||
       (command.type === "operator.control" &&
         command.payload.completionMode === "accepted");
-    const commandTimeoutMs = desktopRunnerCommandTimeoutMs(
-      command.type,
-      this.timeoutMs,
-    );
     await new Promise<void>((resolve, reject) => {
       const req = request(
         {
@@ -999,9 +995,6 @@ export class LocalCoreClient {
           path: `/runtime/v2/commands${stream ? "/stream" : ""}`,
           method: "POST",
           signal: input.signal,
-          ...(stream || commandTimeoutMs === undefined
-            ? {}
-            : { timeout: commandTimeoutMs }),
           headers: {
             authorization: `Bearer ${this.token}`,
             accept: stream
@@ -1051,11 +1044,6 @@ export class LocalCoreClient {
           response.on("error", reject);
         },
       );
-      req.on("timeout", () => {
-        req.destroy(new Error(
-          `Local Core runner command timed out after ${commandTimeoutMs ?? this.timeoutMs}ms: ${command.type}`,
-        ));
-      });
       req.on("error", reject);
       req.write(line);
       req.end();
@@ -1211,16 +1199,6 @@ export class LocalCoreClient {
       req.end();
     });
   }
-}
-
-export function desktopRunnerCommandTimeoutMs(
-  commandType: string,
-  standardTimeoutMs: number,
-): number | undefined {
-  return commandType === "mission_control.project.get" ||
-    commandType === "mission_control.action.execute"
-    ? standardTimeoutMs
-    : undefined;
 }
 
 function parseCorrelatedRunnerErrorLine(
