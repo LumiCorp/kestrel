@@ -22,7 +22,7 @@ export function buildQwen3RunPodProfile(imageRef: string) {
         ENABLE_AUTO_TOOL_CHOICE: "true",
         TOOL_CALL_PARSER: "hermes",
         OPENAI_SERVED_MODEL_NAME_OVERRIDE: "Qwen/Qwen3-8B",
-        MAX_MODEL_LEN: "8192",
+        MAX_MODEL_LEN: "32768",
         GPU_MEMORY_UTILIZATION: "0.9",
       },
       secretEnv: {},

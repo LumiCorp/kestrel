@@ -199,6 +199,23 @@ export const KESTREL_HARNESS_ECONOMICS = Object.freeze({
         behavior: "provider_automatic",
       },
     },
+    {
+      version: 1,
+      profileId: "openai:Qwen/Qwen3-8B:v1",
+      provider: "openai",
+      model: "Qwen/Qwen3-8B",
+      contextWindowTokens: 32_768,
+      maxOutputTokens: 8_192,
+      counting: {
+        counter: "utf8-byte-upper-bound",
+        counterVersion: "1",
+        method: "conservative_estimate",
+        confidence: "conservative",
+      },
+      cache: {
+        behavior: "none",
+      },
+    },
   ],
 } satisfies HarnessEconomicsControlV1);
 
