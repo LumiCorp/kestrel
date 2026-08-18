@@ -51,6 +51,18 @@ test("default turn executor delegates threaded payload preparation to runtime se
   assert.match(threadedExecutorSource, /payload:\s*runtimeTurn\.payload/u);
 });
 
+test("runtime cleanup leaves developer-shell process lifetime to the supervisor", async () => {
+  const source = await readFile(RUNTIME_SOURCE, "utf8");
+  const runtimeFactoryBody = sectionBetween(
+    source,
+    "function createDefaultRuntime(",
+    "\nexport function resolveDevShellServiceForProfile(",
+  );
+
+  assert.doesNotMatch(runtimeFactoryBody, /devShellService\.close/u);
+  assert.doesNotMatch(runtimeFactoryBody, /close\.bind\(devShellService\)/u);
+});
+
 test("KestrelChatRuntime delegates operator session projection to orchestration", async () => {
   const source = await readFile(RUNTIME_SOURCE, "utf8");
 
