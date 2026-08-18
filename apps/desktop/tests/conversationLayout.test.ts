@@ -155,6 +155,20 @@ test("composer controls are grouped by context and action", async () => {
   assert.match(app, /className="composer-actions-left"[\s\S]*className="composer-actions-right"/u);
 });
 
+test("composer activity stays visible only while the agent is executing", async () => {
+  const [styles, app] = await Promise.all([
+    readDesktopStyles(),
+    readFile(appPath, "utf8"),
+  ]);
+
+  assert.match(app, /const agentWorking = activeThread !== undefined[\s\S]*?isDesktopThreadWorking\(authorityCaches, activeThread\.id\)/u);
+  assert.match(app, /aria-busy=\{agentWorking\}/u);
+  assert.match(app, /\$\{agentWorking \? "composer-running" : ""\}/u);
+  assert.match(styles, /\.composer-running::before\s*\{[^}]*width:\s*36%;[^}]*animation:\s*composer-running-sweep 1\.35s linear infinite alternate;/su);
+  assert.match(styles, /@keyframes composer-running-sweep\s*\{\s*from \{ transform: translateX\(-60%\); \}\s*to \{ transform: translateX\(140%\); \}/su);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.composer-running::before \{ animation: none; transform: translateX\(40%\); \}/su);
+});
+
 test("composer keeps mode and model semantics without redundant visible chrome", async () => {
   const [styles, app] = await Promise.all([
     readDesktopStyles(),

@@ -110,6 +110,7 @@ import {
   type DesktopThreadFeedback,
 } from "./feedbackState";
 import {
+  isDesktopThreadWorking,
   reconcileDesktopThreadAuthority,
   type DesktopAuthorityCaches,
 } from "./threadAuthorityState";
@@ -272,6 +273,8 @@ export function DesktopApp(props: {
           runId: threadViews[activeThread.id]?.activeRun?.runId,
         }
       : undefined);
+  const agentWorking = activeThread !== undefined
+    && isDesktopThreadWorking(authorityCaches, activeThread.id);
   const operatorInboxItems = activeThread === undefined
     ? []
     : (threadViews[activeThread.id]?.inboxItems ?? []).filter(
@@ -2331,8 +2334,8 @@ export function DesktopApp(props: {
               </section>
             ) : (
             <form
-            aria-busy={activeRun !== undefined}
-            className={`composer ${composerFocused || activeThread.draft.trim().length > 0 || activeThread.draftAttachmentIds.length > 0 ? "composer-expanded" : ""} ${activeRun !== undefined ? "composer-running" : ""}`}
+            aria-busy={agentWorking}
+            className={`composer ${composerFocused || activeThread.draft.trim().length > 0 || activeThread.draftAttachmentIds.length > 0 ? "composer-expanded" : ""} ${agentWorking ? "composer-running" : ""}`}
             onBlur={(event) => {
               if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
                 return;
