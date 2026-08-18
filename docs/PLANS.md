@@ -6,7 +6,7 @@ owner: kestrel-runtime
 last_verified_at: 2026-08-18
 depends_on:
   - index.md
-  - plans/2026-08-18-kestrel-0.8.4-release-and-production-promotion.md
+  - plans/2026-08-18-kestrel-0.8.5-release-and-production-promotion.md
   - plans/2026-08-04-four-domain-parallel-integrity.md
   - plans/2026-07-31-egress-control-boundaries.md
   - plans/2026-08-03-oci-mcp-egress-security.md
@@ -34,7 +34,7 @@ plans in the repository.
 
 ## Current Delivery Plans
 
-- [Kestrel 0.8.4 release and production promotion](plans/2026-08-18-kestrel-0.8.4-release-and-production-promotion.md)
+- [Kestrel 0.8.5 release and production promotion](plans/2026-08-18-kestrel-0.8.5-release-and-production-promotion.md)
 - [Four-domain parallel integrity](plans/2026-08-04-four-domain-parallel-integrity.md)
 - [OCI MCP egress security](plans/2026-08-03-oci-mcp-egress-security.md)
 - [Superseded MCP network access](plans/2026-07-31-egress-control-boundaries.md)

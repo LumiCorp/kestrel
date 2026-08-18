@@ -3,7 +3,7 @@ id: cli-kchat-guide
 domain: cli
 status: active
 owner: kestrel-cli
-last_verified_at: 2026-06-30
+last_verified_at: 2026-08-18
 depends_on: [../index.md]
 ---
 
@@ -27,11 +27,15 @@ Workspace setup and scheduling guide: [docs/cli/workspaces.md](https://github.co
 ## Launch
 
 - Local dev: `pnpm run tui`
-- v0.5 beta CLI artifact: `kestrel-cli-0.5.0-beta.0-darwin-arm64.tar.gz`
+- Public install: `npm install -g @kestrel-agents/kestrel@0.8.5`
+- Secondary macOS archive: `kestrel-cli-0.8.5-darwin-arm64.tar.gz`
 - Packaged CLI bins: `kestrel`, `ks`, `kcron`
 - Contributor shims: `pnpm run install:cli`
 
-The v0.5 beta release path is a separate macOS ARM64 tarball shaped for future Homebrew installation. It contains `bin/` launchers and a bundled `libexec/` runtime, uses the system Node runtime, and does not require a repo checkout or repo `.env`.
+The npm package is canonical and supports Node.js 22 on verified macOS arm64
+and Linux x64 environments. The secondary macOS arm64 archive contains
+`bin/` launchers and a bundled `libexec/` runtime, uses the system Node runtime,
+and does not require a repo checkout or repository `.env` file.
 
 `pnpm run install:cli` remains a contributor convenience. It installs source-backed shims over the current checkout and should not be described as the external release install path.
 The shims fingerprint the executable Local Core inputs on every new CLI process.
@@ -51,7 +55,7 @@ Command mode:
 - `kestrel core restart --wait` waits until active work completes, then restarts
 - `kestrel workspace status|list`
 - `kestrel web [--host <host>] [--port <port>] [--token <token>]`
-- `kcron start|stop|status|run-once|install|uninstall` (beta local automation in v0.5)
+- `kcron start|stop|status|run-once|install|uninstall` for beta local scheduling
 
 An already-open TUI is not hot-reloaded after a source edit. Build reconciliation
 runs on a new CLI invocation, a Desktop connection or reconnection, or an

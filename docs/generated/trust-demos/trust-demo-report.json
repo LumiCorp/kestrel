@@ -1,6 +1,6 @@
 {
   "version": "trust_demo_report_v1",
-  "generatedAt": "2026-03-30T02:37:47.253Z",
+  "generatedAt": "2026-08-18T18:39:00.758Z",
   "synthetic": true,
   "scenarios": [
     {
@@ -13,19 +13,19 @@
         "unattended": true,
         "steps": [
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "interaction.requested",
             "detail": "Approval request emitted with explicit tool/capability scope.",
             "traceRef": "kestrel:approval-scope-enforcement:01"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "approval.granted",
             "detail": "Scoped grant recorded with allowlist.",
             "traceRef": "kestrel:approval-scope-enforcement:02"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "run.completed",
             "detail": "Execution continued only within granted scope.",
             "traceRef": "kestrel:approval-scope-enforcement:03"
@@ -40,19 +40,19 @@
         "unattended": true,
         "steps": [
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "message.received",
             "detail": "Natural-language approval interpreted without typed scope.",
             "traceRef": "chat_loop_baseline:approval-scope-enforcement:01"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "tool.invoked",
             "detail": "Tool call proceeded with implicit capability expansion.",
             "traceRef": "chat_loop_baseline:approval-scope-enforcement:02"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "run.completed",
             "detail": "Outcome succeeded but without auditable scoped grant.",
             "traceRef": "chat_loop_baseline:approval-scope-enforcement:03"
@@ -80,19 +80,19 @@
         "unattended": true,
         "steps": [
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "delegation.spawned",
             "detail": "Child thread launched with explicit parent linkage.",
             "traceRef": "kestrel:delegation-wait-resume:01"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "delegation.waiting",
             "detail": "Parent thread entered delegation wait with blocker chain.",
             "traceRef": "kestrel:delegation-wait-resume:02"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "delegation.completed",
             "detail": "Child terminal state propagated; parent resumed deterministically.",
             "traceRef": "kestrel:delegation-wait-resume:03"
@@ -107,19 +107,19 @@
         "unattended": true,
         "steps": [
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "task.spawned",
             "detail": "Background task requested.",
             "traceRef": "chat_loop_baseline:delegation-wait-resume:01"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "status.unknown",
             "detail": "No typed blocker chain for parent/child linkage.",
             "traceRef": "chat_loop_baseline:delegation-wait-resume:02"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "manual.recovery",
             "detail": "Operator intervention required to reconcile outputs.",
             "traceRef": "chat_loop_baseline:delegation-wait-resume:03"
@@ -147,19 +147,19 @@
         "unattended": true,
         "steps": [
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "run.completed",
             "detail": "Terminal state persisted with run/session/thread IDs.",
             "traceRef": "kestrel:replay-reproducibility:01"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "runtime.bundle.exported",
             "detail": "Single portable replay bundle exported.",
             "traceRef": "kestrel:replay-reproducibility:02"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "doctor.report.generated",
             "detail": "Doctor summary produced from persisted replay stream.",
             "traceRef": "kestrel:replay-reproducibility:03"
@@ -174,19 +174,19 @@
         "unattended": true,
         "steps": [
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "chat.completed",
             "detail": "Conversation terminal text produced.",
             "traceRef": "chat_loop_baseline:replay-reproducibility:01"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "history.exported",
             "detail": "Message transcript available without transition lineage.",
             "traceRef": "chat_loop_baseline:replay-reproducibility:02"
           },
           {
-            "at": "2026-03-30T02:37:47.253Z",
+            "at": "2026-08-18T18:39:00.758Z",
             "event": "audit.gap",
             "detail": "No deterministic replay artifact for runtime reconstruction.",
             "traceRef": "chat_loop_baseline:replay-reproducibility:03"

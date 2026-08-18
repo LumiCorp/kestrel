@@ -7,7 +7,7 @@ last_verified_at: 2026-08-18
 depends_on:
   - ../../package.json
   - ../../apps/docs/lib/release.ts
-  - ../plans/2026-08-18-kestrel-0.8.4-release-and-production-promotion.md
+  - ../plans/2026-08-18-kestrel-0.8.5-release-and-production-promotion.md
 ---
 
 # Unified Suite Version and Distinct Release Channels
@@ -18,15 +18,15 @@ Kestrel uses one numeric suite version across the root package and every first-p
 
 A shared version does not imply one distribution mechanism or one access policy:
 
-| Surface | 0.8.4 distribution and access |
+| Surface | 0.8.5 distribution and access |
 | --- | --- |
 | Runtime and CLI | Public npm package; macOS arm64 archive is secondary |
 | Protocol, Conversation, SDK, Memory, Next, AI SDK, Observability, and Workspace Skills | Public npm packages |
 | Desktop | Signed and notarized download; Beta; stable OTA supports signed 0.7.0 and 0.8.0 clients |
-| Kestrel One | Public source at `v0.8.4`; Beta; Lumi-hosted deployment is invitation-only |
+| Kestrel One | Public source at `v0.8.5`; Beta; Lumi-hosted deployment is invitation-only |
 | Internal services | Versioned with the suite; not independently published |
 
-The ordinary `v0.8.4` Git tag and GitHub release identify the release. There is
+The ordinary `v0.8.5` Git tag and GitHub release identify the release. There is
 no separate Desktop tag. Public package versions, product versions, release
 metadata, and exact first-party dependencies must not diverge from the suite
 version. An immutable bad publication is corrected by advancing the entire
@@ -50,5 +50,5 @@ suite to a new patch version rather than creating a package-only release line.
 ## Release control
 
 The current implementation and cutover sequence is recorded in the [Kestrel
-0.8.4 release and production promotion
-plan](../plans/2026-08-18-kestrel-0.8.4-release-and-production-promotion.md).
+0.8.5 release and production promotion
+plan](../plans/2026-08-18-kestrel-0.8.5-release-and-production-promotion.md).

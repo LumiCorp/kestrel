@@ -3,16 +3,14 @@ id: generated-trust-demos-report
 domain: runtime
 status: generated
 owner: kestrel-runtime
-last_verified_at: 2026-06-30
+last_verified_at: 2026-08-18
 depends_on:
   - ../../scripts/trust-demos.ts
 ---
 
 # Trust Demos (Synthetic v1)
 
-See also: [Docs index](../../index.md).
-
-Generated: 2026-03-30T02:37:47.253Z
+Generated: 2026-08-18T18:39:00.758Z
 
 | Scenario | Winner | Reason |
 | --- | --- | --- |
