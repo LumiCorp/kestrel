@@ -29,6 +29,7 @@ export class InteractionManager {
 
   async syncWaitState(input: {
     threadId: string;
+    turnId?: string | undefined;
     runId?: string | undefined;
     actor?: RuntimeTurnActor | undefined;
     delegationId?: string | undefined;
@@ -85,7 +86,17 @@ export class InteractionManager {
     );
     await this.cancelPendingRequests(pending.filter((request) => request.requestId !== existing?.requestId));
     if (existing !== undefined) {
-      return existing;
+      const updated: InteractionRequestRecord = {
+        ...existing,
+        ...(input.runId !== undefined ? { runId: input.runId } : {}),
+        metadata: {
+          ...(existing.metadata ?? {}),
+          ...(input.turnId !== undefined ? { conversationTurnId: input.turnId } : {}),
+          ...(input.runId !== undefined ? { conversationRunId: input.runId } : {}),
+        },
+      };
+      await this.store.upsertInteractionRequest(updated);
+      return updated;
     }
 
     const metadata = waitFor.metadata ?? {};
@@ -121,6 +132,8 @@ export class InteractionManager {
         : {}),
       metadata: {
         ...metadata,
+        ...(input.turnId !== undefined ? { conversationTurnId: input.turnId } : {}),
+        ...(input.runId !== undefined ? { conversationRunId: input.runId } : {}),
         ...(input.actor !== undefined
           ? { trustedRequestActor: normalizeTrustedActor(input.actor) }
           : {}),

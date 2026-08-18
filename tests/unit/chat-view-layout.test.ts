@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { resolveChatLayout } from "../../cli/ink/views/ChatView.js";
-import { resolveChatComposerInputRows, resolveChatLayoutBudget } from "../../cli/ink/views/chatLayout.js";
+import { resolveChatActivityRows, resolveChatComposerInputRows, resolveChatLayoutBudget } from "../../cli/ink/views/chatLayout.js";
 import { buildChatVisualRows, buildTranscriptStartScroll } from "../../cli/ink/views/chatRows.js";
 
 
@@ -66,4 +66,19 @@ test("composer input rows are not capped below available viewport space", () => 
   });
 
   assert.equal(rows, 12);
+});
+
+test("controller and Ink reserve the same capped rows for shared conversation activity", () => {
+  const activity = Array.from({ length: 5 }, (_, index) => ({
+    id: `activity-${index}`,
+    kind: "agent_progress" as const,
+    label: "Agent progress",
+    text: `step ${index}`,
+    timestamp: "2026-08-17T10:00:00.000Z",
+    status: "active" as const,
+    runId: "run-1",
+    sourceEventId: `event-${index}`,
+  }));
+  assert.equal(resolveChatActivityRows(activity), 3);
+  assert.equal(resolveChatActivityRows([...activity, { ...activity[0]!, id: "hidden", visible: false }]), 3);
 });

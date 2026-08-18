@@ -884,6 +884,23 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
     threadId: "thread-message-exact",
     messageId: "message-exact-queued-1",
     message: "What happened?",
+    actor: { actorType: "end_user", actorId: "user-queued" },
+    runtimeTurn: {
+      sessionId: "thread-message-exact",
+      message: "What happened?",
+      history: [{
+        role: "user",
+        text: "Evaluate this",
+        timestamp: "2026-07-20T12:00:00.000Z",
+      }],
+      workspace: { kind: "local", workspaceRoot: "/workspace/queued" },
+      manualCompaction: true,
+      autoCompaction: { enabled: true, state: "idle", suppressOnce: true },
+      mcpAuthorization: {
+        version: "v1",
+        authorizationId: "ephemeral-authorization",
+      } as never,
+    },
   });
   const replayed = await runtime.submitConversationMessage({
     threadId: "thread-message-exact",
@@ -891,6 +908,8 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
     message: "What happened?",
   });
   assert.equal(queued.disposition, "queued");
+  assert.equal(Object.hasOwn(queued.view.followUpQueue?.items[0] ?? {}, "runtimeContext"), false);
+  assert.equal(Object.hasOwn(queued.view.followUpQueue?.items[0] ?? {}, "runtimeActor"), false);
   assert.equal(replayed.followUpId, queued.followUpId);
   assert.equal(executor.inputs.length, 1);
   assert.equal((await sessionStore.getInteractionRequest(request.requestId))?.status, "PENDING");
@@ -907,7 +926,126 @@ test("ThreadRuntime queues free text during an exact decision and drains it once
   assert.equal(executor.inputs.length, 3);
   assert.equal(executor.inputs[2]?.eventType, "user.follow_up");
   assert.equal(executor.inputs[2]?.message, "What happened?");
+  assert.deepEqual(executor.inputs[2]?.actor, {
+    actorType: "end_user",
+    actorId: "user-queued",
+  });
+  assert.equal(executor.inputs[2]?.manualCompaction, true);
+  assert.deepEqual(executor.inputs[2]?.autoCompaction, {
+    enabled: true,
+    state: "idle",
+    suppressOnce: true,
+  });
+  assert.equal(executor.inputs[2]?.runtimeTurn?.history?.[0]?.role, "user");
+  assert.equal(executor.inputs[2]?.runtimeTurn?.history?.[0]?.text, "Evaluate this");
+  assert.equal(
+    executor.inputs[2]?.runtimeTurn?.history?.at(-1)?.text,
+    "Completed test turn.",
+  );
+  assert.deepEqual(executor.inputs[2]?.runtimeTurn?.workspace, {
+    kind: "local",
+    workspaceRoot: "/workspace/queued",
+  });
+  assert.equal(executor.inputs[2]?.runtimeTurn?.mcpAuthorization, undefined);
   assert.equal((await runtime.getThreadStatus("thread-message-exact"))?.thread.currentRequestId, undefined);
+
+  const promotedView = await runtime.getOperatorThreadView("thread-message-exact");
+  assert.ok(promotedView);
+  const promotedRoute = promotedView.conversationMessageRoutes?.find(
+    (route) => route.messageId === "message-exact-queued-1",
+  );
+  assert.equal(promotedRoute?.disposition, "started");
+  assert.equal(promotedRoute?.turnId, executor.inputs[2]?.metadata?.turnId);
+  assert.equal(promotedRoute?.runId, executor.inputs[2]?.runtimeTurn?.runId);
+
+  const replayedAfterPromotion = await runtime.submitConversationMessage({
+    threadId: "thread-message-exact",
+    messageId: "message-exact-queued-1",
+    message: "What happened?",
+  });
+  assert.equal(replayedAfterPromotion.disposition, "started");
+  assert.equal(replayedAfterPromotion.runId, promotedRoute?.runId);
+  assert.equal(
+    replayedAfterPromotion.view.conversationMessageRoutes?.find(
+      (route) => route.messageId === "message-exact-queued-1",
+    )?.turnId,
+    promotedRoute?.turnId,
+  );
+  assert.equal(executor.inputs.length, 3);
+});
+
+test("ThreadRuntime reuses promoted route identities when follow-up processing resumes", async () => {
+  let releaseFirst: (() => void) | undefined;
+  let markFirstStarted: (() => void) | undefined;
+  const firstStarted = new Promise<void>((resolve) => {
+    markFirstStarted = resolve;
+  });
+  const firstRelease = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const sessionStore = new InMemorySessionStore();
+  class InterruptedPromotionExecutor extends QueueTurnExecutor {
+    override async executeTurn(input: TurnExecutionInput): Promise<TurnExecutionResult> {
+      if (this.inputs.length === 0) {
+        markFirstStarted?.();
+        await firstRelease;
+      }
+      return super.executeTurn(input);
+    }
+  }
+  const executor = new InterruptedPromotionExecutor(sessionStore, [
+    { output: buildOutput({ runId: "ignored-active", status: "COMPLETED" }) },
+    { output: buildOutput({ runId: "ignored-promoted", status: "COMPLETED" }) },
+  ]);
+  const runtime = new ThreadRuntime({ sessionStore, executor, profile: buildProfile() });
+  await runtime.startThread({ threadId: "thread-promotion-resume", title: "Promotion resume" });
+
+  const activeTurn = runtime.submitTurn({
+    threadId: "thread-promotion-resume",
+    message: "First task",
+    eventType: "user.message",
+  });
+  await firstStarted;
+  const queued = await runtime.submitConversationMessage({
+    threadId: "thread-promotion-resume",
+    messageId: "message-promotion-resume",
+    message: "Queued task",
+  });
+  assert.equal(queued.disposition, "queued");
+
+  const thread = await sessionStore.getThread("thread-promotion-resume");
+  assert.ok(thread);
+  const routes = structuredClone(
+    (thread.metadata?.conversationMessageRoutes ?? {}) as Record<string, Record<string, unknown>>,
+  );
+  routes["message-promotion-resume"] = {
+    ...routes["message-promotion-resume"],
+    disposition: "started",
+    turnId: "turn-promoted-existing",
+    runId: "run-promoted-existing",
+  };
+  await sessionStore.upsertThread({
+    ...thread,
+    metadata: {
+      ...(thread.metadata ?? {}),
+      conversationMessageRoutes: routes,
+    },
+  });
+
+  releaseFirst?.();
+  await activeTurn;
+  for (let attempt = 0; attempt < 10 && executor.inputs.length < 2; attempt += 1) await tick();
+
+  assert.equal(executor.inputs.length, 2);
+  assert.equal(executor.inputs[1]?.metadata?.turnId, "turn-promoted-existing");
+  assert.equal(executor.inputs[1]?.runtimeTurn?.runId, "run-promoted-existing");
+  const view = await runtime.getOperatorThreadView("thread-promotion-resume");
+  assert.ok(view);
+  const route = view.conversationMessageRoutes?.find(
+    (candidate) => candidate.messageId === "message-promotion-resume",
+  );
+  assert.equal(route?.turnId, "turn-promoted-existing");
+  assert.equal(route?.runId, "run-promoted-existing");
 });
 
 test("ThreadRuntime preserves persisted generic recovery waits until explicit cancellation", async () => {
@@ -4717,6 +4855,15 @@ test("ThreadRuntime replays a delivered terminal turn without executing it again
     message: "A durable answer.",
     source: "inline",
   });
+  const outcomes = await runtime.listConversationTerminalOutcomes({
+    threadId: "thread-terminal-replay",
+    limit: 100,
+    includeFinalizedPayload: true,
+  });
+  assert.equal(outcomes[0]?.terminalStatus, "COMPLETED");
+  assert.equal(outcomes[0]?.outcomeStatus, "completed");
+  assert.equal(outcomes[0]?.handoffState, "delivered");
+  assert.equal(outcomes[0]?.result?.assistantText, "A durable answer.");
 });
 
 test("ThreadRuntime stores oversized finalized payloads as digest-validated artifacts", async () => {
@@ -4810,6 +4957,16 @@ test("ThreadRuntime records and rethrows terminal handoff validation failure", a
       asRecord(error)?.code === "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
   );
   assert.equal(executor.inputs.length, 1);
+  const outcomes = await runtime.listConversationTerminalOutcomes({
+    threadId: "thread-invalid-handoff",
+    limit: 100,
+  });
+  assert.equal(outcomes[0]?.handoffState, "failed");
+  assert.equal(outcomes[0]?.outcomeStatus, "contract_failure");
+  assert.equal(
+    outcomes[0]?.finalizationError?.code,
+    "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+  );
 });
 
 test("ThreadRuntime rejects a different initial request reusing a terminal turn ID", async () => {

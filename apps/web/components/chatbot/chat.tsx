@@ -7,6 +7,7 @@ import {
   type UIMessagePart,
 } from "ai";
 import { formatISO } from "date-fns";
+import type { ConversationMode } from "@kestrel-agents/conversation";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   type Dispatch,
@@ -52,10 +53,16 @@ import { buildThreadTurnRequestBody } from "@/lib/chat/thread-turn-request";
 import { ChatbotError } from "@/lib/errors";
 import {
   emptyThreadConversationState,
+  type ThreadInteractionView,
   type ThreadConversationSnapshot,
   type ThreadConversationState,
+  shouldInstallThreadConversationSnapshot,
   threadConversationSnapshotSchema,
 } from "@/lib/turns/client-contract";
+import {
+  createKestrelOneConversationCommandAdapter,
+  executeKestrelOneQueueSubmission,
+} from "@/lib/turns/conversation-command-adapter";
 import {
   reconcileConversationMessages,
   removeDurableQueuedMessages,
@@ -575,6 +582,35 @@ function ChatShell({
   workspaceModeControl?: ReactNode;
 }) {
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
+  const modeSwitchCallbacksRef = useRef({ onInteractionModeChange, onRuntimeInteractionResponse });
+  modeSwitchCallbacksRef.current = { onInteractionModeChange, onRuntimeInteractionResponse };
+  const modeSwitchCommandAdapterRef = useRef<ReturnType<typeof createKestrelOneConversationCommandAdapter> | undefined>(undefined);
+  if (modeSwitchCommandAdapterRef.current === undefined) {
+    modeSwitchCommandAdapterRef.current = createKestrelOneConversationCommandAdapter({
+      interrupt: async () => undefined,
+      switchMode: async (mode) => {
+        const changed = await modeSwitchCallbacksRef.current.onInteractionModeChange(mode);
+        if (changed === false) throw new Error("Mode selection could not be saved.");
+      },
+    });
+  }
+  const handleModeSwitch = async (interaction: ThreadInteractionView, mode: ConversationMode) => {
+    if (!interaction.turnId) throw new Error("The waiting turn could not be identified.");
+    await modeSwitchCommandAdapterRef.current!.switchModeAndRetry({
+      recommendationId: interaction.requestId,
+      mode,
+      answer: {
+        requestId: interaction.requestId,
+        source: "runtime",
+        execute: () => modeSwitchCallbacksRef.current.onRuntimeInteractionResponse({
+          requestId: interaction.requestId,
+          eventType: interaction.eventType,
+          turnId: interaction.turnId!,
+          message: `/mode ${mode}`,
+        }),
+      },
+    });
+  };
 
   return (
     <>
@@ -605,19 +641,7 @@ function ChatShell({
           onFeedbackChange={onFeedbackChange}
           onRefreshConversationState={onRefreshConversationState}
           onRuntimeInteractionResponse={onRuntimeInteractionResponse}
-          onModeSwitch={async (interaction, mode) => {
-            const changed = await onInteractionModeChange(mode);
-            if (changed === false) {
-              throw new Error("Mode selection could not be saved.");
-            }
-            if (!interaction.turnId) throw new Error("The waiting turn could not be identified.");
-            await onRuntimeInteractionResponse({
-              requestId: interaction.requestId,
-              eventType: interaction.eventType,
-              turnId: interaction.turnId,
-              message: `/mode ${mode}`,
-            });
-          }}
+          onModeSwitch={handleModeSwitch}
           regenerate={regenerate}
           selectedModelId={currentModelId}
           setMessages={setMessages}
@@ -635,19 +659,7 @@ function ChatShell({
             )}
             onResolved={onRefreshConversationState}
             onRuntimeResponse={onRuntimeInteractionResponse}
-            onModeSwitch={async (interaction, mode) => {
-              const changed = await onInteractionModeChange(mode);
-              if (changed === false) {
-                throw new Error("Mode selection could not be saved.");
-              }
-              if (!interaction.turnId) throw new Error("The waiting turn could not be identified.");
-              await onRuntimeInteractionResponse({
-                requestId: interaction.requestId,
-                eventType: interaction.eventType,
-                turnId: interaction.turnId,
-                message: `/mode ${mode}`,
-              });
-            }}
+            onModeSwitch={handleModeSwitch}
             threadId={threadId}
           />
         )}
@@ -969,6 +981,10 @@ export function Chat({
     initialConversationSnapshot
   );
   const conversationSnapshotRef = useRef(initialConversationSnapshot);
+  const conversationSnapshotRequestSequenceRef = useRef(0);
+  const conversationSnapshotInstalledSequenceRef = useRef(0);
+  const activeConversationThreadIdRef = useRef(id);
+  activeConversationThreadIdRef.current = id;
   const setControllerMessagesRef = useRef<
     ChatController["setMessages"] | null
   >(null);
@@ -991,6 +1007,7 @@ export function Chat({
     setChatExists(initialChatExists);
     conversationSnapshotRef.current = initialConversationSnapshot;
     setConversationSnapshot(initialConversationSnapshot);
+    setQueuedMessages([]);
     setLiveEnvironmentProvisioningNotice(environmentProvisioningNotice ?? null);
   }, [
     id,
@@ -1035,6 +1052,9 @@ export function Chat({
 
   const refreshConversationState = useCallback(async () => {
     if (!chatExists) return;
+    const requestedThreadId = id;
+    const requestSequence = conversationSnapshotRequestSequenceRef.current + 1;
+    conversationSnapshotRequestSequenceRef.current = requestSequence;
     const response = await fetch(`/api/threads/${id}`, {
       cache: "no-store",
     });
@@ -1047,12 +1067,19 @@ export function Chat({
       );
     }
     const nextSnapshot = threadConversationSnapshotSchema.parse(payload);
-    if (
-      nextSnapshot.queue.version <=
-      conversationSnapshotRef.current.queue.version
-    ) {
+    if (!shouldInstallThreadConversationSnapshot(
+      conversationSnapshotRef.current,
+      nextSnapshot,
+      {
+        requestedThreadId,
+        activeThreadId: activeConversationThreadIdRef.current,
+        requestSequence,
+        lastInstalledSequence: conversationSnapshotInstalledSequenceRef.current,
+      },
+    )) {
       return;
     }
+    conversationSnapshotInstalledSequenceRef.current = requestSequence;
     conversationSnapshotRef.current = nextSnapshot;
     setConversationSnapshot(nextSnapshot);
     setControllerMessagesRef.current?.((current) =>
@@ -1142,6 +1169,21 @@ export function Chat({
     transport: chatTransport,
     ...callbacks,
   });
+  const sendConversationMessage = useCallback(
+    (...args: Parameters<ChatController["sendMessage"]>) => {
+      const adapter = createKestrelOneConversationCommandAdapter({
+        interrupt: async () => undefined,
+        switchMode: async () => undefined,
+      });
+      return adapter.startTurn({
+        intent: "start",
+        execute: async () => {
+          await controller.sendMessage(...args);
+        },
+      });
+    },
+    [controller.sendMessage]
+  );
   setControllerMessagesRef.current = controller.setMessages;
 
   const conversationState: ThreadConversationState = conversationSnapshot;
@@ -1223,22 +1265,32 @@ export function Chat({
       const turnId = conversationState.interactions.find(
         (candidate) => candidate.requestId === interaction.requestId
       )?.turnId;
-      await controller.sendMessage(
-        {
-          id: messageId,
-          role: "user",
-          parts: [{ type: "text", text: interaction.message }],
-          metadata: turnId ? { kestrelTurnId: turnId } : undefined,
-        },
-        {
-          body: {
-            interactionResponse: {
-              ...interaction,
-              messageId,
+      const adapter = createKestrelOneConversationCommandAdapter({
+        interrupt: async () => undefined,
+        switchMode: async () => undefined,
+      });
+      await adapter.answerInteraction({
+        requestId: interaction.requestId,
+        source: "runtime",
+        execute: async () => {
+          await controller.sendMessage(
+            {
+              id: messageId,
+              role: "user",
+              parts: [{ type: "text", text: interaction.message }],
+              metadata: turnId ? { kestrelTurnId: turnId } : undefined,
             },
-          },
-        }
-      );
+            {
+              body: {
+                interactionResponse: {
+                  ...interaction,
+                  messageId,
+                },
+              },
+            }
+          );
+        },
+      });
     },
     [controller.sendMessage, conversationState.interactions]
   );
@@ -1246,26 +1298,32 @@ export function Chat({
   const interruptActiveTurn = useCallback(async () => {
     const turnId = conversationState.queue.activeTurnId;
     if (!turnId) return;
-    const response = await fetch(
-      `/api/threads/${id}/turns/${turnId}/interrupt`,
-      { method: "POST" }
-    );
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(
-        typeof payload.error === "string"
-          ? payload.error
-          : "The interrupt request could not be recorded."
-      );
-    }
-    toast({
-      type: "success",
-      description:
-        payload.turn?.interruptMode === "immediate"
-          ? "The waiting turn ended."
-          : "The agent will stop at the next safe boundary.",
+    const adapter = createKestrelOneConversationCommandAdapter({
+      interrupt: async ({ turnId: targetTurnId }) => {
+        const response = await fetch(
+          `/api/threads/${id}/turns/${targetTurnId}/interrupt`,
+          { method: "POST" }
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(
+            typeof payload.error === "string"
+              ? payload.error
+              : "The interrupt request could not be recorded."
+          );
+        }
+        toast({
+          type: "success",
+          description:
+            payload.turn?.interruptMode === "immediate"
+              ? "The waiting turn ended."
+              : "The agent will stop at the next safe boundary.",
+        });
+        await refreshConversationState();
+      },
+      switchMode: async () => undefined,
     });
-    await refreshConversationState();
+    await adapter.interruptTurn({ threadId: id, turnId });
   }, [conversationState.queue.activeTurnId, id, refreshConversationState]);
 
   const queueMessage = useCallback(
@@ -1282,44 +1340,65 @@ export function Chat({
         { message: queuedMessage, turnId: null },
       ]);
 
-      void fetch(`/api/threads/${id}/turns`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "idempotency-key": message.id,
+      const adapter = createKestrelOneConversationCommandAdapter({
+        interrupt: async () => undefined,
+        switchMode: async () => undefined,
+      });
+      void adapter.queueTurn({
+        intent: "queue",
+        execute: async () => {
+          await executeKestrelOneQueueSubmission({
+            submit: async () => {
+              const response = await fetch(`/api/threads/${id}/turns`, {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  "idempotency-key": message.id,
+                },
+                body: JSON.stringify({
+                  message: { id: message.id, parts: message.parts },
+                  model: shared.currentModelIdRef.current,
+                  interactionMode,
+                }),
+              });
+              const payload = await response.json().catch(() => ({}));
+              if (!response.ok || typeof payload.turn?.id !== "string") {
+                throw new Error(
+                  payload.error || "The message could not be queued."
+                );
+              }
+              return { turnId: payload.turn.id };
+            },
+            install: ({ turnId }) => {
+              setQueuedMessages((current) =>
+                current.map((item) =>
+                  item.message.id === message.id
+                    ? {
+                        message: {
+                          ...item.message,
+                          metadata: {
+                            ...item.message.metadata,
+                            deliveryState: "queued",
+                            kestrelTurnId: turnId,
+                          },
+                        },
+                        turnId,
+                      }
+                    : item
+                )
+              );
+            },
+            refresh: refreshConversationState,
+            onRefreshFailure: () => {
+              toast({
+                type: "warning",
+                description:
+                  "Message queued, but the latest conversation state could not be refreshed yet.",
+              });
+            },
+          });
         },
-        body: JSON.stringify({
-          message: { id: message.id, parts: message.parts },
-          model: shared.currentModelIdRef.current,
-          interactionMode,
-        }),
       })
-        .then(async (response) => {
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok || typeof payload.turn?.id !== "string") {
-            throw new Error(
-              payload.error || "The message could not be queued."
-            );
-          }
-          setQueuedMessages((current) =>
-            current.map((item) =>
-              item.message.id === message.id
-                ? {
-                    message: {
-                      ...item.message,
-                      metadata: {
-                        ...item.message.metadata,
-                        deliveryState: "queued",
-                        kestrelTurnId: payload.turn.id,
-                      },
-                    },
-                    turnId: payload.turn.id,
-                  }
-                : item
-            )
-          );
-          void refreshConversationState().catch(() => {});
-        })
         .catch((error) => {
           setQueuedMessages((current) =>
             current.filter((item) => item.message.id !== message.id)
@@ -1556,7 +1635,7 @@ export function Chat({
         queueMessage={queueMessage}
         regenerate={controller.regenerate}
         selectedVisibilityType={visibilityType}
-        sendMessage={controller.sendMessage}
+        sendMessage={sendConversationMessage}
         setAttachments={shared.setAttachments}
         setInput={shared.setInput}
         setMessages={controller.setMessages}

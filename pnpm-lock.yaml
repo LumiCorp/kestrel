@@ -14,6 +14,9 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.4.6
         version: 0.4.6
+      '@kestrel-agents/conversation':
+        specifier: workspace:*
+        version: link:packages/conversation
       '@kestrel-agents/memory':
         specifier: workspace:*
         version: link:packages/memory

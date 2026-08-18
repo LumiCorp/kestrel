@@ -3,8 +3,6 @@ import type {
   AppView,
   LayoutProfile,
   LayoutMode,
-  ProgressUpdateV1,
-  ReasoningUpdateV1,
   SplashPreflightState,
   TranscriptLine,
   TuiProfile,
@@ -15,6 +13,7 @@ import type {
   UiState,
   ViewScrollState,
 } from "../../contracts.js";
+import type { ConversationActivityItem } from "@kestrel-agents/conversation";
 import type { McpStatusSnapshot } from "../../../src/mcp/contracts.js";
 import type { WorkspaceCheckpointRecord } from "../../../src/workspaceCheckpoints/contracts.js";
 import {
@@ -81,9 +80,7 @@ export interface UiRuntimeState extends UiState {
   focusRegion?: FocusRegion | undefined;
   quitConfirm: boolean;
   viewport: UiViewport;
-  activeProgressByRun: Record<string, ProgressUpdateV1>;
-  latestProgressForSession?: ProgressUpdateV1 | undefined;
-  latestReasoningForSession?: ReasoningUpdateV1 | undefined;
+  conversationActivity: ConversationActivityItem[];
   taskScroll: ViewScrollState;
   commandBarReturnRegion?: FocusRegion | undefined;
   navigationStack: AppView[];
@@ -455,9 +452,7 @@ export function buildInitialUiRuntimeState(input: {
       ...DEFAULT_SCROLL,
     },
     detailDrawer,
-    activeProgressByRun: {},
-    latestProgressForSession: undefined,
-    latestReasoningForSession: undefined,
+    conversationActivity: [],
     commandBarReturnRegion: undefined,
     navigationStack: [],
     derived: {

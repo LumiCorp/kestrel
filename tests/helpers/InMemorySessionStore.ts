@@ -967,13 +967,58 @@ export class InMemorySessionStore implements SessionStore {
     threadId?: string | undefined;
     sessionId?: string | undefined;
     status?: ConversationTurnRecord["status"] | undefined;
+    completedAfter?: { completedAt: string; turnId: string } | undefined;
+    terminalMessagesOnly?: boolean | undefined;
+    terminalOutcomesOnly?: boolean | undefined;
     limit?: number | undefined;
   } = {}): Promise<ConversationTurnRecord[]> {
     const filtered = [...this.conversationTurns.values()]
       .filter((record) => input.threadId === undefined || record.threadId === input.threadId)
       .filter((record) => input.sessionId === undefined || record.sessionId === input.sessionId)
       .filter((record) => input.status === undefined || record.status === input.status)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      .filter((record) => {
+        if (input.terminalMessagesOnly !== true) return true;
+        const envelope = record.metadata?.terminalEnvelope;
+        if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) return false;
+        const handoff = (envelope as Record<string, unknown>).handoff;
+        if (typeof handoff !== "object" || handoff === null || Array.isArray(handoff)) return false;
+        const value = handoff as Record<string, unknown>;
+        return record.status === "COMPLETED"
+          && record.completedAt !== undefined
+          && value.state === "delivered"
+          && typeof value.assistantText === "string"
+          && value.assistantText.trim().length > 0;
+      })
+      .filter((record) => {
+        if (input.terminalOutcomesOnly !== true) return true;
+        if (
+          (record.status !== "COMPLETED" && record.status !== "FAILED")
+          || record.completedAt === undefined
+        ) return false;
+        const envelope = record.metadata?.terminalEnvelope;
+        if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) return false;
+        const handoff = (envelope as Record<string, unknown>).handoff;
+        if (typeof handoff !== "object" || handoff === null || Array.isArray(handoff)) return false;
+        const state = (handoff as Record<string, unknown>).state;
+        return state === "delivered" || state === "failed";
+      })
+      .filter((record) => {
+        if (input.completedAfter === undefined || record.completedAt === undefined) {
+          return input.completedAfter === undefined;
+        }
+        return record.completedAt > input.completedAfter.completedAt
+          || (record.completedAt === input.completedAfter.completedAt && record.turnId > input.completedAfter.turnId);
+      })
+      .sort((left, right) => {
+        if (
+          input.completedAfter === undefined
+          && input.terminalMessagesOnly !== true
+          && input.terminalOutcomesOnly !== true
+        ) return right.updatedAt.localeCompare(left.updatedAt);
+        const ordered = (left.completedAt ?? left.updatedAt).localeCompare(right.completedAt ?? right.updatedAt)
+          || left.turnId.localeCompare(right.turnId);
+        return input.completedAfter === undefined ? -ordered : ordered;
+      });
     const limit = Math.max(0, Math.trunc(input.limit ?? filtered.length));
     return filtered.slice(0, limit).map((record) => structuredClone(record));
   }

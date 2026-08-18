@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { ThreadConversationState } from "@/lib/turns/client-contract";
+import {
+  shouldInstallThreadConversationSnapshot,
+  type ThreadConversationSnapshot,
+  type ThreadConversationState,
+} from "@/lib/turns/client-contract";
 import {
   collectDurableTurnPresentationParts,
   projectThreadConversation,
@@ -8,11 +12,43 @@ import {
 import type { ChatMessage } from "@/lib/types";
 import {
   conversationConformanceFixture,
+  conversationProjectionConformanceScenarios,
   normalizeConversationConformanceProjection,
+  normalizeConversationProjectionConformance,
 } from "@kestrel-agents/conversation";
 
 
 const now = "2026-07-15T12:00:00.000Z";
+
+test("Kestrel One installs equal or newer snapshots but rejects stale queue versions", () => {
+  const snapshot = (version: number): ThreadConversationSnapshot => ({
+    messages: [],
+    interactions: [],
+    turns: [],
+    queue: { state: "running", pauseReason: null, activeTurnId: null, version },
+  });
+  assert.equal(shouldInstallThreadConversationSnapshot(snapshot(4), snapshot(4)), true);
+  assert.equal(shouldInstallThreadConversationSnapshot(snapshot(4), snapshot(5)), true);
+  assert.equal(shouldInstallThreadConversationSnapshot(snapshot(5), snapshot(4)), false);
+  assert.equal(shouldInstallThreadConversationSnapshot(snapshot(4), snapshot(4), {
+    requestedThreadId: "thread-1",
+    activeThreadId: "thread-1",
+    requestSequence: 3,
+    lastInstalledSequence: 4,
+  }), false);
+  assert.equal(shouldInstallThreadConversationSnapshot(snapshot(4), snapshot(4), {
+    requestedThreadId: "thread-1",
+    activeThreadId: "thread-1",
+    requestSequence: 5,
+    lastInstalledSequence: 4,
+  }), true);
+  assert.equal(shouldInstallThreadConversationSnapshot(snapshot(4), snapshot(8), {
+    requestedThreadId: "thread-1",
+    activeThreadId: "thread-2",
+    requestSequence: 6,
+    lastInstalledSequence: 4,
+  }), false);
+});
 
 test("Kestrel One projects the shared conformance fixture by durable identity", () => {
   const fixture = conversationConformanceFixture;
@@ -53,6 +89,42 @@ test("Kestrel One projects the shared conformance fixture by durable identity", 
     normalizeConversationConformanceProjection(projection),
     fixture.expected,
   );
+});
+
+test("Kestrel One normalizes every shared projection conformance scenario", () => {
+  for (const fixture of conversationProjectionConformanceScenarios) {
+    const projection = projectThreadConversation({
+      conversationState: {
+        turns: fixture.turns.map((turn) => ({
+          ...turn,
+          failureCode: turn.failureCode ?? null,
+          failureMessage: turn.failureMessage ?? null,
+          cancelRequestedAt: turn.cancelRequestedAt ?? null,
+          startedAt: turn.startedAt ?? null,
+          finishedAt: turn.finishedAt ?? null,
+        })),
+        interactions: fixture.interactions.map((interaction) => ({
+          ...interaction,
+          sourceCheckpointId: null,
+          requestEnvelope: interaction.requestEnvelope ?? {},
+          responseEnvelope: interaction.responseEnvelope ?? null,
+          resolvedAt: interaction.resolvedAt ?? null,
+        })),
+        queue: fixture.queue,
+      },
+      messages: fixture.messages.map((entry) => ({
+        id: entry.id,
+        role: entry.role,
+        parts: [{ type: "text" as const, text: entry.id }],
+        ...(entry.metadata !== undefined ? { metadata: entry.metadata } : {}),
+      } as ChatMessage)),
+    });
+    assert.deepEqual(
+      normalizeConversationProjectionConformance(projection),
+      fixture.expected,
+      fixture.name,
+    );
+  }
 });
 
 function message(

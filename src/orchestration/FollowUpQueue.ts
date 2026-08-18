@@ -1,5 +1,11 @@
 import type { RunTurnAttachment, ThreadRecord } from "../kestrel/contracts/orchestration.js";
-import type { FollowUpQueueEntry, FollowUpQueuePauseReason, FollowUpQueueView } from "./contracts.js";
+import type {
+  FollowUpQueueEntry,
+  FollowUpQueuePauseReason,
+  FollowUpQueueView,
+  FollowUpRuntimeContext,
+} from "./contracts.js";
+import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
 
 const OPERATOR_CONTROL_KEY = "operatorControl";
 const FOLLOW_UP_QUEUE_KEY = "followUpQueue";
@@ -101,6 +107,8 @@ function normalizeEntry(value: unknown): FollowUpQueueEntry[] {
     ? entry.interactionMode : undefined;
   const actSubmode = entry?.actSubmode === "strict" || entry?.actSubmode === "safe" || entry?.actSubmode === "full_auto"
     ? entry.actSubmode : undefined;
+  const runtimeContext = normalizeRuntimeContext(entry?.runtimeContext);
+  const runtimeActor = normalizeRuntimeActor(entry?.runtimeActor);
   return [{ followUpId, message, attachmentIds,
     ...(attachments !== undefined ? { attachments } : {}),
     ...(interactionMode !== undefined ? { interactionMode } : {}),
@@ -109,7 +117,67 @@ function normalizeEntry(value: unknown): FollowUpQueueEntry[] {
     ...(nonEmptyString(entry?.dialogId) !== undefined ? { dialogId: nonEmptyString(entry?.dialogId) } : {}),
     ...(nonEmptyString(entry?.dialogName) !== undefined ? { dialogName: nonEmptyString(entry?.dialogName) } : {}),
     ...(nonEmptyString(entry?.sourceMessageId) !== undefined ? { sourceMessageId: nonEmptyString(entry?.sourceMessageId) } : {}),
+    ...(runtimeContext !== undefined ? { runtimeContext } : {}),
+    ...(runtimeActor !== undefined ? { runtimeActor } : {}),
     createdAt, state: entry?.state === "starting" ? "starting" : "queued" }];
+}
+
+function normalizeRuntimeContext(value: unknown): FollowUpRuntimeContext | undefined {
+  const context = asRecord(value);
+  if (context === undefined) return undefined;
+  const normalized: FollowUpRuntimeContext = {};
+  if (typeof context.stepAgent === "string") normalized.stepAgent = context.stepAgent;
+  if (context.modeSystemV2Enabled === true || context.modeSystemV2Enabled === false) {
+    normalized.modeSystemV2Enabled = context.modeSystemV2Enabled;
+  }
+  if (context.interactionMode === "chat" || context.interactionMode === "plan" || context.interactionMode === "build") {
+    normalized.interactionMode = context.interactionMode;
+  }
+  if (context.actSubmode === "strict" || context.actSubmode === "safe" || context.actSubmode === "full_auto") {
+    normalized.actSubmode = context.actSubmode;
+  }
+  if (asRecord(context.mcpContext) !== undefined) normalized.mcpContext = context.mcpContext as FollowUpRuntimeContext["mcpContext"];
+  if (asRecord(context.metadata) !== undefined) normalized.metadata = context.metadata as Record<string, unknown>;
+  if (asRecord(context.clientCapabilities) !== undefined) {
+    normalized.clientCapabilities = context.clientCapabilities as FollowUpRuntimeContext["clientCapabilities"];
+  }
+  if (asRecord(context.executionPolicy) !== undefined) {
+    normalized.executionPolicy = context.executionPolicy as FollowUpRuntimeContext["executionPolicy"];
+  }
+  if (Array.isArray(context.systemInstructions)) {
+    normalized.systemInstructions = context.systemInstructions.filter((item): item is string => typeof item === "string");
+  }
+  if (Array.isArray(context.history)) normalized.history = context.history as FollowUpRuntimeContext["history"];
+  if (asRecord(context.projectContext) !== undefined) {
+    normalized.projectContext = context.projectContext as FollowUpRuntimeContext["projectContext"];
+  }
+  if (context.manualCompaction === true || context.manualCompaction === false) {
+    normalized.manualCompaction = context.manualCompaction;
+  }
+  if (asRecord(context.autoCompaction) !== undefined) {
+    normalized.autoCompaction = context.autoCompaction as FollowUpRuntimeContext["autoCompaction"];
+  }
+  if (Object.hasOwn(context, "workspace")) normalized.workspace = context.workspace;
+  if (Array.isArray(context.workspaceSkills)) {
+    normalized.workspaceSkills = context.workspaceSkills as FollowUpRuntimeContext["workspaceSkills"];
+  }
+  return normalized;
+}
+
+function normalizeRuntimeActor(value: unknown): RuntimeTurnActor | undefined {
+  const actor = asRecord(value);
+  const actorType = actor?.actorType;
+  const actorId = nonEmptyString(actor?.actorId);
+  if (
+    actorId === undefined
+    || (actorType !== "end_user" && actorType !== "operator" && actorType !== "service")
+  ) return undefined;
+  return {
+    actorType,
+    actorId,
+    ...(nonEmptyString(actor?.displayName) !== undefined ? { displayName: nonEmptyString(actor?.displayName) } : {}),
+    ...(nonEmptyString(actor?.tenantId) !== undefined ? { tenantId: nonEmptyString(actor?.tenantId) } : {}),
+  };
 }
 
 function normalizePauseReason(value: unknown): FollowUpQueuePauseReason | undefined {

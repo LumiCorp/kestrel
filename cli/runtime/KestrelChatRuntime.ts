@@ -791,8 +791,18 @@ export class KestrelChatRuntime {
     threadId: string;
     completedAfter?: { completedAt: string; turnId: string } | undefined;
     limit: number;
+    includeFinalizedPayload?: boolean | undefined;
   }) {
     return this.threadRuntime?.listCompletedConversationMessages(input) ?? [];
+  }
+
+  async listConversationTerminalOutcomes(input: {
+    threadId: string;
+    completedAfter?: { completedAt: string; turnId: string } | undefined;
+    limit: number;
+    includeFinalizedPayload?: boolean | undefined;
+  }) {
+    return this.threadRuntime?.listConversationTerminalOutcomes(input) ?? [];
   }
 
   async listOperatorRuns(

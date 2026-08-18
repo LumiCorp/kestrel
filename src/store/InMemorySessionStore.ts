@@ -1476,6 +1476,7 @@ export class InMemorySessionStore implements SessionStore {
     status?: ConversationTurnRecord["status"] | undefined;
     completedAfter?: { completedAt: string; turnId: string } | undefined;
     terminalMessagesOnly?: boolean | undefined;
+    terminalOutcomesOnly?: boolean | undefined;
     limit?: number | undefined;
   } = {}): Promise<ConversationTurnRecord[]> {
     const filtered = [...this.conversationTurns.values()]
@@ -1496,6 +1497,19 @@ export class InMemorySessionStore implements SessionStore {
           && value.assistantText.trim().length > 0;
       })
       .filter((record) => {
+        if (input.terminalOutcomesOnly !== true) return true;
+        if (
+          (record.status !== "COMPLETED" && record.status !== "FAILED")
+          || record.completedAt === undefined
+        ) return false;
+        const envelope = record.metadata?.terminalEnvelope;
+        if (typeof envelope !== "object" || envelope === null || Array.isArray(envelope)) return false;
+        const handoff = (envelope as Record<string, unknown>).handoff;
+        if (typeof handoff !== "object" || handoff === null || Array.isArray(handoff)) return false;
+        const state = (handoff as Record<string, unknown>).state;
+        return state === "delivered" || state === "failed";
+      })
+      .filter((record) => {
         if (input.completedAfter === undefined || record.completedAt === undefined) return input.completedAfter === undefined;
         return record.completedAt > input.completedAfter.completedAt
           || (record.completedAt === input.completedAfter.completedAt && record.turnId > input.completedAfter.turnId);
@@ -1503,7 +1517,11 @@ export class InMemorySessionStore implements SessionStore {
     const ascending = input.completedAfter !== undefined;
     return filtered
       .sort((left, right) => {
-        if (input.terminalMessagesOnly !== true && input.completedAfter === undefined) {
+        if (
+          input.terminalMessagesOnly !== true
+          && input.terminalOutcomesOnly !== true
+          && input.completedAfter === undefined
+        ) {
           return right.updatedAt.localeCompare(left.updatedAt) || left.turnId.localeCompare(right.turnId);
         }
         const leftAt = left.completedAt ?? left.updatedAt;

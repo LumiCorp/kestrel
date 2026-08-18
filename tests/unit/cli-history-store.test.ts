@@ -7,7 +7,7 @@ import path from "node:path";
 import { HistoryStore } from "../../cli/history/HistoryStore.js";
 
 
-test("HistoryStore merges legacy split assistant segments on read", async () => {
+test("HistoryStore keeps legacy assistant records standalone with stable identities", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-history-store-"));
   const store = new HistoryStore(tempDir);
 
@@ -48,12 +48,32 @@ test("HistoryStore merges legacy split assistant segments on read", async () => 
 
   const transcript = await store.readTranscript("session-1");
 
-  assert.equal(transcript.length, 1);
-  assert.equal(
-    transcript[0]?.text,
-    "Across the seas, where iron borders stand,\nAnd pray the far-off cells admit the light.",
-  );
+  assert.equal(transcript.length, 2);
+  assert.equal(transcript[0]?.eventId, "evt-1");
+  assert.equal(transcript[0]?.text, "Across the seas, where iron borders stand,");
   assert.equal(transcript[0]?.run?.runId, "run-1");
+  assert.equal(transcript[1]?.eventId, "evt-2");
+  assert.equal(transcript[1]?.text, "And pray the far-off cells admit the light.");
+});
+
+test("HistoryStore deduplicates replayed records by exact event identity", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-history-store-dedupe-"));
+  const store = new HistoryStore(tempDir);
+  const record = {
+    source: "runner" as const,
+    eventId: "evt-stable",
+    timestamp: "2026-03-14T13:15:10.000Z",
+    sessionName: "alpha",
+    sessionId: "session-1",
+    profileId: "reference",
+    role: "user" as const,
+    text: "same identity",
+  };
+  await store.append(record);
+  await store.append(record);
+
+  const transcript = await store.readTranscript("session-1");
+  assert.deepEqual(transcript.map((line) => line.eventId), ["evt-stable"]);
 });
 
 test("HistoryStore does not merge distinct assistant turns", async () => {

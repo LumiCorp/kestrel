@@ -212,6 +212,7 @@ export interface ConversationMessagesListCommandPayload {
   afterCursor?: string | undefined;
   limit?: number | undefined;
   includeFinalizedPayload?: boolean | undefined;
+  includeTerminalOutcomes?: boolean | undefined;
 }
 
 export interface OperatorRunsCommandPayload {
@@ -778,6 +779,27 @@ export interface ConversationMessagesEventPayload {
       finalizedPayload?: unknown | undefined;
     };
   }>;
+  terminalOutcomes?: Array<{
+    messageId: string;
+    turnId: string;
+    threadId: string;
+    sessionId: string;
+    runId: string;
+    completedAt: string;
+    terminalStatus: "COMPLETED" | "FAILED";
+    outcomeStatus: "completed" | "failed" | "cancelled" | "contract_failure";
+    handoffState: "delivered" | "failed";
+    result?: {
+      assistantText: string | null;
+      output: RunTurnResult["output"];
+      finalizedPayload?: unknown | undefined;
+    } | undefined;
+    finalizationError?: {
+      code: string;
+      message: string;
+      details?: unknown | undefined;
+    } | undefined;
+  }> | undefined;
   nextCursor?: string | undefined;
   hasMore: boolean;
 }

@@ -21,6 +21,7 @@ import type {
   SessionRepository,
 } from "../kestrel/contracts/store.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
+import { normalizeSubmittedHistory } from "../runtime/submittedHistory.js";
 import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
 import type { DelegationServicePort, DialogServicePort } from "../../tools/contracts.js";
 import { buildRuntimeIdentityMetadata } from "../profile/runtimeProfile.js";
@@ -73,6 +74,7 @@ import type {
   EnqueueFollowUpInput,
   ConversationMessageRouteResult,
   FanInDispositionSummary,
+  FollowUpRuntimeContext,
   ReplyToRequestInput,
   ResumeBlockedTurnInput,
   SubmitTurnInput,
@@ -103,6 +105,24 @@ export interface ThreadRuntimeOptions {
   onDetachedTurnEvent?: ((event: DetachedTurnLifecycleEvent) => void) | undefined;
   executionBoundaryRuntime?: ExecutionBoundaryPolicyRuntime | undefined;
   evaluateHandoff?: DelegationSupervisorOptions["onHandoffCompleted"] | undefined;
+}
+
+export interface ConversationTerminalOutcome {
+  messageId: string;
+  turnId: string;
+  threadId: string;
+  sessionId: string;
+  runId: string;
+  completedAt: string;
+  terminalStatus: "COMPLETED" | "FAILED";
+  outcomeStatus: "completed" | "failed" | "cancelled" | "contract_failure";
+  handoffState: "delivered" | "failed";
+  result?: {
+    assistantText: string | null;
+    output: NormalizedOutput;
+    finalizedPayload?: unknown | undefined;
+  } | undefined;
+  finalizationError?: RuntimeError | undefined;
 }
 
 export type DetachedTurnLifecycleEvent =
@@ -222,7 +242,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
     return this.delegationSupervisor;
   }
 
-  async listConversationTurns(input: { threadId?: string | undefined; sessionId?: string | undefined; status?: ConversationTurnRecord["status"] | undefined; completedAfter?: { completedAt: string; turnId: string } | undefined; terminalMessagesOnly?: boolean | undefined; limit?: number | undefined } = {}) { return this.store.listConversationTurns?.(input) ?? []; }
+  async listConversationTurns(input: { threadId?: string | undefined; sessionId?: string | undefined; status?: ConversationTurnRecord["status"] | undefined; completedAfter?: { completedAt: string; turnId: string } | undefined; terminalMessagesOnly?: boolean | undefined; terminalOutcomesOnly?: boolean | undefined; limit?: number | undefined } = {}) { return this.store.listConversationTurns?.(input) ?? []; }
   async listConversationTurnSegments(turnId: string) { return this.store.listConversationTurnSegments?.(turnId) ?? []; }
 
   async listCompletedConversationMessages(input: {
@@ -283,6 +303,60 @@ export class ThreadRuntime implements ThreadRuntimePort {
     return messages.filter((message): message is NonNullable<typeof message> =>
       message !== null
     );
+  }
+
+  async listConversationTerminalOutcomes(input: {
+    threadId: string;
+    completedAfter?: { completedAt: string; turnId: string } | undefined;
+    limit: number;
+    includeFinalizedPayload?: boolean | undefined;
+  }): Promise<ConversationTerminalOutcome[]> {
+    const turns = await this.listConversationTurns({
+      threadId: input.threadId,
+      terminalOutcomesOnly: true,
+      ...(input.completedAfter !== undefined ? { completedAfter: input.completedAfter } : {}),
+      limit: input.limit,
+    });
+    const outcomes = await Promise.all(turns.map(async (turn): Promise<ConversationTerminalOutcome | null> => {
+      const envelope = readTerminalEnvelope(turn.metadata?.terminalEnvelope);
+      if (turn.completedAt === undefined || envelope === undefined || envelope.handoff.state === "pending") {
+        return null;
+      }
+      const base = {
+        messageId: `terminal:${envelope.runId}`,
+        turnId: turn.turnId,
+        threadId: turn.threadId,
+        sessionId: turn.sessionId,
+        runId: envelope.runId,
+        completedAt: turn.completedAt,
+        terminalStatus: envelope.status,
+        outcomeStatus: envelope.handoff.state === "failed"
+          ? "contract_failure" as const
+          : envelope.output?.errors.some((error) => error.code === "RUN_CANCELLED") === true
+            ? "cancelled" as const
+            : envelope.status === "COMPLETED"
+              ? "completed" as const
+              : "failed" as const,
+        handoffState: envelope.handoff.state,
+      } as const;
+      if (envelope.handoff.state === "failed") {
+        return { ...base, finalizationError: envelope.handoff.finalizationError };
+      }
+      if (envelope.output === undefined) return null;
+      const finalizedPayload =
+        input.includeFinalizedPayload === true && envelope.handoff.finalizedPayload !== undefined
+          ? await this.readFinalizedPayload(turn.sessionId, envelope.handoff.finalizedPayload)
+          : undefined;
+      return {
+        ...base,
+        result: {
+          assistantText: envelope.handoff.assistantText,
+          output: envelope.output,
+          ...(finalizedPayload !== undefined ? { finalizedPayload } : {}),
+        },
+      };
+    }));
+    return outcomes.filter((outcome): outcome is ConversationTerminalOutcome => outcome !== null);
   }
 
   async startThread(input: {
@@ -480,6 +554,10 @@ export class ThreadRuntime implements ThreadRuntimePort {
           state: "queued",
           source: "human",
           sourceMessageId: messageId,
+          ...(input.runtimeTurn !== undefined
+            ? { runtimeContext: toFollowUpRuntimeContext(input.runtimeTurn) }
+            : {}),
+          ...(input.actor !== undefined ? { runtimeActor: input.actor } : {}),
         });
         if (updated.status === "WAITING" || updated.currentRequestId !== undefined) {
           updated = pauseFollowUpQueue(updated, "waiting");
@@ -1931,13 +2009,40 @@ export class ThreadRuntime implements ThreadRuntimePort {
         if (queue.state === "paused") return;
         const next = queue.items[0];
         if (next === undefined) return;
+        let promotedIdentity: { turnId: string; runId: string } | undefined;
         await this.withFollowUpMutation(threadId, async (thread) => {
-          await this.store.upsertThread(markFollowUpStarting(thread, next.followUpId));
+          let updated = markFollowUpStarting(thread, next.followUpId);
+          if (next.source !== "dialog" && next.sourceMessageId !== undefined) {
+            const route = readConversationMessageRoute(thread, next.sourceMessageId);
+            if (route === undefined || (route.disposition !== "queued" && route.disposition !== "started")) {
+              throw createRuntimeFailure(
+                "CONVERSATION_MESSAGE_ROUTE_MISSING",
+                `Queued message '${next.sourceMessageId}' has no promotable conversation route.`,
+                { threadId, followUpId: next.followUpId, messageId: next.sourceMessageId },
+              );
+            }
+            promotedIdentity = {
+              turnId: route.turnId ?? `turn-${randomUUID()}`,
+              runId: route.runId ?? randomUUID(),
+            };
+            updated = writeConversationMessageRoute(updated, {
+              ...route,
+              disposition: "started",
+              turnId: promotedIdentity.turnId,
+              runId: promotedIdentity.runId,
+            });
+          }
+          await this.store.upsertThread(updated);
         });
         try {
+          const promotionThread = await this.requireThread(threadId);
           const attachments = next.attachments ?? (next.attachmentIds.length === 0
             ? undefined
             : await this.resolveQueuedAttachments(threadId, next.attachmentIds));
+          const reconciledHistory = reconcilePromotedFollowUpHistory({
+            captured: next.runtimeContext?.history,
+            durable: promotionThread.metadata?.history,
+          });
           const result = await this.executeDetachedTurn({
             threadId,
             message: next.message,
@@ -1945,9 +2050,23 @@ export class ThreadRuntime implements ThreadRuntimePort {
             ...(next.interactionMode !== undefined ? { interactionMode: next.interactionMode } : {}),
             ...(next.actSubmode !== undefined ? { actSubmode: next.actSubmode } : {}),
             ...(attachments !== undefined ? { attachments } : {}),
+            ...(next.runtimeContext?.executionPolicy !== undefined
+              ? { executionPolicy: next.runtimeContext.executionPolicy }
+              : {}),
+            ...(next.runtimeContext?.stepAgent !== undefined
+              ? { stepAgent: next.runtimeContext.stepAgent }
+              : {}),
+            ...(next.runtimeContext?.manualCompaction !== undefined
+              ? { manualCompaction: next.runtimeContext.manualCompaction }
+              : {}),
+            ...(next.runtimeContext?.autoCompaction !== undefined
+              ? { autoCompaction: next.runtimeContext.autoCompaction }
+              : {}),
+            ...(next.runtimeActor !== undefined ? { actor: next.runtimeActor } : {}),
             metadata: {
               followUpId: next.followUpId,
               enqueuedAt: next.createdAt,
+              ...(promotedIdentity !== undefined ? { turnId: promotedIdentity.turnId } : {}),
               ...(next.source !== undefined ? { source: next.source } : {}),
               ...(next.dialogId !== undefined ? { dialogId: next.dialogId } : {}),
               ...(next.dialogName !== undefined ? { dialogName: next.dialogName } : {}),
@@ -1962,6 +2081,23 @@ export class ThreadRuntime implements ThreadRuntimePort {
                 systemInstructions: [
                   "This input came from an open collaborator dialog, not from the human. Continue the private dialog with dialog.send when useful. Produce an ordinary user-facing response only when there is a user-relevant outcome, a question requiring the human, or final completion; otherwise the visible dialog exchange is sufficient.",
                 ],
+              },
+            } : next.runtimeContext !== undefined ? {
+              runtimeTurn: {
+                ...next.runtimeContext,
+                sessionId: status.thread.sessionId,
+                ...(promotedIdentity !== undefined ? { runId: promotedIdentity.runId } : {}),
+                ...(Array.isArray(reconciledHistory) ? { history: reconciledHistory } : {}),
+                message: next.message,
+                eventType: "user.follow_up",
+              },
+            } : promotedIdentity !== undefined ? {
+              runtimeTurn: {
+                sessionId: status.thread.sessionId,
+                runId: promotedIdentity.runId,
+                message: next.message,
+                eventType: "user.follow_up",
+                ...(Array.isArray(reconciledHistory) ? { history: reconciledHistory } : {}),
               },
             } : {}),
           });
@@ -2766,6 +2902,58 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function toFollowUpRuntimeContext(
+  input: NonNullable<SubmitConversationMessageInput["runtimeTurn"]>,
+): FollowUpRuntimeContext {
+  const {
+    sessionId: _sessionId,
+    message: _message,
+    attachments: _attachments,
+    mcpAuthorization: _mcpAuthorization,
+    missionControl: _missionControl,
+    actor: _actor,
+    ...context
+  } = input;
+  return structuredClone(context);
+}
+
+function reconcilePromotedFollowUpHistory(input: {
+  captured: unknown;
+  durable: unknown;
+}) {
+  const captured = normalizeSubmittedHistory(input.captured) ?? [];
+  const durable = normalizeSubmittedHistory(input.durable) ?? [];
+  const durableByRuntimeIdentity = new Map(
+    durable.flatMap((line) => {
+      const identity = readRuntimeHistoryIdentity(line);
+      return identity === undefined ? [] : [[identity, line] as const];
+    }),
+  );
+  const seenRuntimeIdentities = new Set<string>();
+  const reconciled = captured.map((line) => {
+    const identity = readRuntimeHistoryIdentity(line);
+    if (identity === undefined) return line;
+    seenRuntimeIdentities.add(identity);
+    return durableByRuntimeIdentity.get(identity) ?? line;
+  });
+  for (const line of durable) {
+    const identity = readRuntimeHistoryIdentity(line);
+    if (identity === undefined || seenRuntimeIdentities.has(identity)) continue;
+    reconciled.push(line);
+    seenRuntimeIdentities.add(identity);
+  }
+  return normalizeSubmittedHistory(reconciled);
+}
+
+function readRuntimeHistoryIdentity(value: unknown): string | undefined {
+  const line = asRecord(value);
+  const data = asRecord(line?.data);
+  const runId = readNonEmptyString(data?.runId);
+  return runId === undefined || (data?.kind !== "runtime.assistant_text" && data?.kind !== "runtime.waiting_prompt")
+    ? undefined
+    : `${String(data.kind)}:${runId}`;
 }
 
 function readNonEmptyString(value: unknown): string | undefined {

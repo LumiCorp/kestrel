@@ -10,8 +10,6 @@ import type {
 } from "../protocol/contracts.js";
 import type { TuiAppContext } from "./TuiAppContext.js";
 
-const DEFAULT_STOP_MESSAGE = "Stop your current work immediately and wait for further instructions.";
-
 export type OperatorControlApplyAction =
   | "approve"
   | "reject"
@@ -60,12 +58,13 @@ export class OperatorController {
     }
     if (action === "stop") {
       await this.context.cancelActiveRun();
+      return;
     }
     const response = await this.context.client.sendCommand("operator.control", {
-      action: action === "stop" ? "steer" : action,
+      action,
       threadId: state.activeSession.focusedThreadId ?? state.activeSession.sessionId,
-      ...((message.length > 0 || action === "stop")
-        ? { message: message.length > 0 ? message : DEFAULT_STOP_MESSAGE }
+      ...(message.length > 0
+        ? { message }
         : {}),
     }, this.context.getActiveRunnerMetadata());
     if (response.type !== "operator.controlled") {
