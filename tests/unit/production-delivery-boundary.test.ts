@@ -44,6 +44,12 @@ test("Vercel project roots select Node.js 22", () => {
 test("production cutover preflight loads and removes the temporary One environment", () => {
   assert.match(cutoverPreflight, /loadProductionEnvironment/u);
   assert.match(cutoverPreflight, /POSTGRES_URL_NON_POOLING/u);
+  assert.match(cutoverPreflight, /environment_runtime_channels/u);
+  assert.match(cutoverPreflight, /fly-image\.release/u);
+  assert.doesNotMatch(
+    cutoverPreflight,
+    /fly_image_releases|fly_image_release_targets|fly_image_release_settings/u,
+  );
   assert.doesNotMatch(cutoverPreflight, /vercel env pull|production\.env/u);
 });
 
