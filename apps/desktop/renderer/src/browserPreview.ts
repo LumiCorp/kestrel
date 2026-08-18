@@ -345,6 +345,7 @@ export function ensureBrowserPreviewBridge(): void {
           projects: settings.projects.map((project) => ({ ...project })),
           projectTombstones: [],
           mcpServers: managedMcpServers,
+          plugins: [],
           capabilityVerifications: {},
           developerShellEnvMode: "inherit",
           developerShellAllowedEnvNames: [],

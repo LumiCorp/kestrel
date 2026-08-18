@@ -38,6 +38,10 @@ const RETIRED_CORE_APP_KEYS = [
   "discord",
   "source.github",
   "source.youtube",
+  "workflow.software_delivery",
+  "workflow.meeting_follow_through",
+  "workflow.incident_response",
+  "workflow.customer_escalation",
 ] as const;
 
 function record(value: unknown): Record<string, unknown> {

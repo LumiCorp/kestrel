@@ -25,7 +25,6 @@ import type { Session } from "@/lib/auth-types";
 import { generateTitleForOrganization } from "@/lib/chat/title";
 import { readEnvironmentExecutionTerminalStatus } from "@/lib/environments/execution-route";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { resolveActiveProjectWorkflowContext } from "@/lib/apps/project-service";
 import {
   issueProjectContextGrant,
   revokeProjectContextGrant,
@@ -237,11 +236,6 @@ async function loadBoundProjectContext(turn: {
     contextRevisionId: bound.revisionId,
     contextRevision: bound.revision,
   });
-  const workflowContext = await resolveActiveProjectWorkflowContext({
-    organizationId: turn.organizationId,
-    projectId: bound.projectId,
-    userId: turn.authorUserId,
-  });
   const projectSystemContext = formatProjectSystemContext({
     projectName: bound.projectName,
     instructions: bound.instructions,
@@ -252,9 +246,7 @@ async function loadBoundProjectContext(turn: {
     projectId: bound.projectId,
     contextRevisionId: bound.revisionId,
     contextRevision: bound.revision,
-    systemContext: workflowContext
-      ? `${projectSystemContext}\n\n${workflowContext}`
-      : projectSystemContext,
+    systemContext: projectSystemContext,
   };
 }
 

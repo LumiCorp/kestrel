@@ -1976,6 +1976,7 @@ export interface DesktopSettings {
     removedAt: string;
   }>;
   mcpServers: DesktopMcpServerConfig[];
+  plugins: DesktopPluginInstallation[];
   capabilityVerifications: Partial<Record<DesktopCapabilityId, string>>;
   developerShellPath?: string | undefined;
   developerPath?: string | undefined;
@@ -2015,7 +2016,6 @@ export interface DesktopSettings {
   modelConfigurations: DesktopModelConfiguration[];
   defaultModelConfigurationId: string;
   defaultEnabledBuiltInAppIds: string[];
-  legacyDefaultWorkflowAppIds?: string[] | undefined;
   appearanceTheme: DesktopAppearanceTheme;
 }
 
@@ -2038,7 +2038,6 @@ export interface DesktopRendererSettings {
   modelConfigurations: DesktopModelConfiguration[];
   defaultModelConfigurationId: string;
   defaultEnabledBuiltInAppIds: string[];
-  legacyDefaultWorkflowAppIds?: string[] | undefined;
   enabledConnectedAppIds: string[];
   appearanceTheme: DesktopAppearanceTheme;
   apps: DesktopAppDefinition[];
@@ -2151,7 +2150,6 @@ export type DesktopShellCommand =
   | "new-thread"
   | "stop-agent"
   | "toggle-left-sidebar"
-  | "toggle-right-sidebar"
   | "restart-runtime";
 
 export type DesktopFileEntryKind = "file" | "directory";
@@ -2296,6 +2294,23 @@ export interface DesktopMcpServerConfig {
   capabilityPacks?: string[] | undefined;
   setupWarning?: string | undefined;
   verifiedAt?: string | undefined;
+}
+
+/** One Desktop-owned installation record. The driver payload stays internal. */
+export interface DesktopPluginInstallation {
+  id: string;
+  pluginId: string;
+  version: number;
+  installScope: "desktop";
+  driver: "builtin" | "cli" | "mcp-stdio" | "mcp-http" | "api";
+  source: "included" | "standard" | "custom";
+  installed: boolean;
+  configured: boolean;
+  verifiedAt?: string | undefined;
+  enabled: boolean;
+  capabilityPacks?: string[] | undefined;
+  credentialIds?: string[] | undefined;
+  mcpServer?: DesktopMcpServerConfig | undefined;
 }
 
 export interface DesktopMcpDiscoveryDiagnostic {

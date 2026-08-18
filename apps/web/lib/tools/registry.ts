@@ -68,17 +68,6 @@ if (!MICROSOFT_365_APP_MANIFEST) {
   throw new Error("Microsoft 365 App manifest is unavailable.");
 }
 
-const WORKFLOW_APP_MANIFESTS = [
-  KESTREL_APP_IDS.SOFTWARE_DELIVERY,
-  KESTREL_APP_IDS.MEETING_FOLLOW_THROUGH,
-  KESTREL_APP_IDS.INCIDENT_RESPONSE,
-  KESTREL_APP_IDS.CUSTOMER_ESCALATION,
-].map((appId) => {
-  const manifest = getKestrelStandardAppManifest(appId);
-  if (!manifest) throw new Error(`${appId} App manifest is unavailable.`);
-  return manifest;
-});
-
 export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
   {
     key: "built_in.previews",
@@ -925,38 +914,6 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
       }),
     ],
   },
-  ...WORKFLOW_APP_MANIFESTS.map<ToolProviderDefinition>((manifest) => ({
-    key: manifest.id,
-    displayName: manifest.name,
-    description: manifest.description,
-    type: "built_in",
-    authType: "none",
-    app: {
-      category: "workflow",
-      connectionModel: "none",
-      connectionRequirement: "none",
-      authMethods: ["none"],
-      delivery: "native",
-      installMode: "explicit",
-      icon: "workflow",
-    },
-    metadata: {
-      icon: "workflow",
-      category: "workflow",
-      capabilityPacks: manifest.capabilityPacks,
-      dependencies: manifest.dependencies ?? [],
-    },
-    capabilities: manifest.capabilityPacks.map((pack) =>
-      createCapability({
-        key: pack.key,
-        runtimeName: null,
-        displayName: pack.name,
-        description: pack.description,
-        accessMode: "internal",
-        metadata: { group: "workflow" },
-      }),
-    ),
-  })),
 ];
 
 export function listToolProviders() {

@@ -31,6 +31,7 @@ import type {
   DesktopMicrophoneAccess,
   DesktopMicrophoneAccessState,
   DesktopMcpDiscoveryResult,
+  DesktopPluginInstallation,
   DesktopAppConnectionSession,
   DesktopStandardAppConnectionInput,
   DesktopMcpServerMutationInput,
@@ -259,6 +260,7 @@ export type {
   DesktopRuntimeStoreReset,
   DesktopShellPresetId,
   DesktopSettings,
+  DesktopPluginInstallation,
   DesktopSupportBundle,
   DesktopUiStateSyncResult,
   DesktopUiStateV1,
@@ -371,7 +373,6 @@ export type DesktopShellCommand =
   | "new-thread"
   | "stop-agent"
   | "toggle-left-sidebar"
-  | "toggle-right-sidebar"
   | "restart-runtime"
   | "settings"
   | "uninstall";

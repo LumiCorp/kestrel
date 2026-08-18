@@ -2114,9 +2114,19 @@ export class RunnerHost {
     payload: MissionControlProjectGetCommandPayload,
     metadata?: RunnerCommandMetadata
   ): Promise<void> {
-    for (const runtime of this.selectRuntimes(metadata)) {
+    // Mission Control documents are project-scoped, not profile-scoped. A
+    // Desktop request can carry a profile whose runtime has not yet exposed
+    // this capability; fall back to another registered project authority
+    // before reporting that no authority exists.
+    for (const runtime of this.selectMissionControlRuntimes(metadata)) {
       if (typeof runtime.getMissionControlProject === "function") {
-        const project = await runtime.getMissionControlProject(payload);
+        let project: MissionControlProjectStateRecord;
+        try {
+          project = await runtime.getMissionControlProject(payload);
+        } catch (cause) {
+          if (isMissionControlProjectUnavailable(cause)) continue;
+          throw cause;
+        }
         this.writer.emit(
           "mission_control.project",
           { projectId: project.projectId, project: { ...project } },
@@ -2140,9 +2150,15 @@ export class RunnerHost {
     payload: MissionControlActionExecuteCommandPayload,
     metadata?: RunnerCommandMetadata
   ): Promise<void> {
-    for (const runtime of this.selectRuntimes(metadata)) {
+    for (const runtime of this.selectMissionControlRuntimes(metadata)) {
       if (typeof runtime.executeMissionControlAction === "function") {
-        const project = await runtime.executeMissionControlAction(payload);
+        let project: MissionControlProjectStateRecord;
+        try {
+          project = await runtime.executeMissionControlAction(payload);
+        } catch (cause) {
+          if (isMissionControlProjectUnavailable(cause)) continue;
+          throw cause;
+        }
         this.writer.emit(
           "mission_control.project",
           { projectId: project.projectId, project: { ...project } },
@@ -3150,6 +3166,15 @@ export class RunnerHost {
     return entries.map((entry) => entry.runtime);
   }
 
+  private selectMissionControlRuntimes(metadata?: RunnerCommandMetadata): RunnerRuntime[] {
+    const selected = this.selectRuntimes(metadata);
+    if (metadata?.profile === undefined) return selected;
+    return [
+      ...selected,
+      ...this.selectRuntimes().filter((runtime) => selected.includes(runtime) === false),
+    ];
+  }
+
   private async resolveProfileOrThrow(
     input: {
       profile?: TuiProfile | undefined;
@@ -3678,6 +3703,13 @@ async function resolveDefaultExecutionProfile(
     );
   }
   return selected;
+}
+
+function isMissionControlProjectUnavailable(cause: unknown): boolean {
+  return typeof cause === "object"
+    && cause !== null
+    && "code" in cause
+    && (cause as { code?: unknown }).code === "MISSION_CONTROL_PROJECT_UNAVAILABLE";
 }
 
 function buildDefaultExecutionProfileProvenance(

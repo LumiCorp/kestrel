@@ -11,6 +11,21 @@ export interface DesktopAuthorityCaches {
   authorityStatuses: Record<string, DesktopThreadAuthorityResult["status"]>;
 }
 
+/**
+ * A turn can be active because it is waiting on the operator. Keep that
+ * distinct from the agent actually executing: only execution drives the
+ * composer activity indicator.
+ */
+export function isDesktopThreadWorking(
+  caches: DesktopAuthorityCaches,
+  rendererThreadId: string,
+): boolean {
+  const view = caches.threadViews[rendererThreadId];
+  return caches.activeRuns[rendererThreadId] !== undefined
+    || view?.activeRun?.status === "RUNNING"
+    || view?.thread.status === "RUNNING";
+}
+
 export function reconcileDesktopThreadAuthority(input: {
   caches: DesktopAuthorityCaches;
   rendererThreadId: string;

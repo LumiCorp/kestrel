@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { inspectDesktopThreadAuthority } from "../src/threadAuthority.js";
-import { reconcileDesktopThreadAuthority } from "../renderer/src/threadAuthorityState.js";
+import {
+  isDesktopThreadWorking,
+  reconcileDesktopThreadAuthority,
+} from "../renderer/src/threadAuthorityState.js";
 import type { DesktopRuntimeThreadInspection } from "../src/contracts.js";
 
 const view = {
@@ -58,4 +61,36 @@ test("authority reconciliation owns view run and workspace caches together", () 
     threadWorkspaces: {},
     authorityStatuses: { "renderer-1": "missing" },
   });
+});
+
+test("working state excludes a turn that is waiting for the operator", () => {
+  const waiting = reconcileDesktopThreadAuthority({
+    caches: { threadViews: {}, activeRuns: {}, threadWorkspaces: {}, authorityStatuses: {} },
+    rendererThreadId: "renderer-1",
+    sessionId: "session-1",
+    result: {
+      status: "available",
+      view: {
+        ...view,
+        thread: { ...view.thread, status: "WAITING" },
+        activeRun: { runId: "run-1", status: "WAITING" },
+      },
+    },
+  });
+
+  assert.equal(isDesktopThreadWorking(waiting, "renderer-1"), false);
+  assert.equal(isDesktopThreadWorking({
+    ...waiting,
+    threadViews: {
+      "renderer-1": {
+        ...waiting.threadViews["renderer-1"]!,
+        thread: { ...waiting.threadViews["renderer-1"]!.thread, status: "RUNNING" },
+        activeRun: undefined,
+      },
+    },
+  }, "renderer-1"), true);
+  assert.equal(isDesktopThreadWorking({
+    ...waiting,
+    activeRuns: { "renderer-1": { threadId: "renderer-1", sessionId: "session-1", runId: "run-2" } },
+  }, "renderer-1"), true);
 });

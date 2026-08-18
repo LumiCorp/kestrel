@@ -97,6 +97,7 @@ test("Kestrel One normalizes every shared projection conformance scenario", () =
       conversationState: {
         turns: fixture.turns.map((turn) => ({
           ...turn,
+          sequence: turn.sequence ?? 0,
           failureCode: turn.failureCode ?? null,
           failureMessage: turn.failureMessage ?? null,
           cancelRequestedAt: turn.cancelRequestedAt ?? null,

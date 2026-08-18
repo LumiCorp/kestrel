@@ -36,6 +36,27 @@ test("Mission Control relative timestamps advance against the display clock", ()
   assert.equal(formatRelativeTime(new Date(timestamp).toISOString(), timestamp + 2 * 60 * 60_000), "2h ago");
 });
 
+test("Mission Control presents an unavailable authority as one compact recovery state", async () => {
+  const { root, container } = installDom(async () => {
+    throw new Error("Error invoking remote method 'desktop:get-mission-control-project': Error: Mission Control project authority is unavailable.");
+  });
+  const errors: Array<string | undefined> = [];
+  await act(async () => root.render(
+    <UnifiedMissionControlWorkspace
+      project={{ id: PROJECT_ID, path: "/project", label: "Kestrel" }}
+      runtimeHealth={CONNECTED_RUNTIME_HEALTH}
+      onReturnToConversation={() => {}}
+      onOpenConversation={() => {}}
+      onError={(message) => errors.push(message)}
+    />,
+  ));
+  await act(async () => {});
+  assert.match(container.textContent ?? "", /Mission Control is reconnecting to its project authority/u);
+  assert.doesNotMatch(container.textContent ?? "", /Error invoking remote method/u);
+  assert.equal(errors.at(-1), undefined);
+  await act(async () => root.unmount());
+});
+
 function installDom(
   getMissionControlProject: DesktopBridge["getMissionControlProject"],
   executeMissionControlAction: DesktopBridge["executeMissionControlAction"] =
@@ -377,7 +398,7 @@ test(
     assert.match(container.textContent ?? "", /could not refresh/u);
     assert.match(container.textContent ?? "", /last authoritative project state/u);
     assert.match(container.textContent ?? "", /Verify Desktop package/u);
-    assert.equal(errors.at(-1), "Runner disconnected.");
+    assert.equal(errors.at(-1), undefined);
     await act(async () => root.unmount());
   },
 );

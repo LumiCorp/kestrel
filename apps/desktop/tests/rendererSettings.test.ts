@@ -5,7 +5,10 @@ import {
   getEffectiveDesktopEnabledAppIds,
   toDesktopRendererSettings,
 } from "../src/rendererSettings.js";
-import { createDefaultDesktopSettings } from "../src/settingsStore.js";
+import {
+  createDefaultDesktopSettings,
+  normalizeDesktopSettings,
+} from "../src/settingsStore.js";
 
 
 test("Desktop renderer settings never project persisted credentials", () => {
@@ -65,9 +68,10 @@ test("Desktop renderer settings project the completed onboarding project as the 
   );
 });
 
-test("Desktop projects standard capabilities under their canonical App", () => {
-  const settings = {
-    ...createDefaultDesktopSettings(),
+test("Desktop does not promote an unregistered MCP server into a standard App", () => {
+  const { plugins: _plugins, ...legacySettings } = createDefaultDesktopSettings();
+  const settings = normalizeDesktopSettings({
+    ...legacySettings,
     mcpServers: [
       {
         id: "linear-local",
@@ -81,18 +85,10 @@ test("Desktop projects standard capabilities under their canonical App", () => {
         tools: [{ name: "create_issue", description: "Create an issue." }],
       },
     ],
-  };
+  });
 
   const projected = toDesktopRendererSettings(settings);
-  const linear = projected.apps.find((app) => app.id === "linear");
-
-  assert.deepEqual(linear, {
-    id: "linear",
-    contractVersion: 1,
-    label: "Linear",
-    description: "Plan, track, and update product and engineering work.",
-    toolNames: ["mcp.linear-local.create_issue"],
-  });
-  assert.ok(projected.enabledConnectedAppIds.includes("linear"));
+  assert.equal(projected.apps.find((app) => app.id === "linear"), undefined);
+  assert.equal(projected.enabledConnectedAppIds.includes("linear"), false);
   assert.deepEqual(getEffectiveDesktopEnabledAppIds(settings).filter((id) => !projected.defaultEnabledBuiltInAppIds.includes(id)), projected.enabledConnectedAppIds);
 });

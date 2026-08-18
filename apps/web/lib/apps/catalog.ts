@@ -68,7 +68,7 @@ function groupFor(capability: ToolCapabilityDefinition) {
   }
   if (capability.key.startsWith("calendar.")) return "calendar";
   if (
-    /^(repository|pull_request|issue|merge|release|workflow)\./u.test(
+    /^(repository|pull_request|issue|merge|release)\./u.test(
       capability.key
     )
   ) {

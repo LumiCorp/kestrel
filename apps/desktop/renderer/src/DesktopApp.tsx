@@ -3,10 +3,9 @@ import {
   Folder,
   KeyRound,
   ListChecks,
+  Menu,
   MessageSquare,
   Moon,
-  PanelRightClose,
-  PanelRightOpen,
   Paperclip,
   Plug,
   Search,
@@ -19,7 +18,6 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
-  type CSSProperties,
   useEffect,
   useMemo,
   useRef,
@@ -72,7 +70,6 @@ import { ProjectWorkspace } from "./ProjectWorkspace";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { ValidationWorkspace } from "./ValidationWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
-import { ConversationWorkflowControl } from "./ConversationWorkflowControl";
 import type { DesktopAppsNavigationRequest, DesktopAppsNavigationTarget } from "./appsNavigation";
 import { getDesktopComposerSubmissionPolicy } from "./composerPolicy";
 import {
@@ -98,7 +95,6 @@ import {
   projectDesktopRunStream,
   type DesktopRunStreamItem,
 } from "./runStream";
-import { ContextSidebar } from "./ContextSidebar";
 import { ConversationExplorer } from "./ConversationExplorer";
 import {
   isDesktopThreadProjectUnavailable,
@@ -114,6 +110,7 @@ import {
   type DesktopThreadFeedback,
 } from "./feedbackState";
 import {
+  isDesktopThreadWorking,
   reconcileDesktopThreadAuthority,
   type DesktopAuthorityCaches,
 } from "./threadAuthorityState";
@@ -127,6 +124,8 @@ import {
   ensureRendererThread,
   addRendererDraftAttachment,
   archiveRendererThread,
+  deleteRendererThread,
+  detachRendererProject,
   appendRendererTranscript,
   acceptRendererPrompt,
   applyDesktopOnboardingHandoff,
@@ -174,8 +173,6 @@ type DesktopSurface =
   | "settings"
   | "diagnostics";
 const SURFACE_STATE_KEY = "kestrel:desktop:surface:v1" as const;
-const INSPECTOR_STATE_KEY = "kestrel:desktop:inspector-open:v1" as const;
-const INSPECTOR_WIDTH_KEY = "kestrel:desktop:inspector-width:v1" as const;
 const SELECTED_PROJECT_KEY = "kestrel:desktop:selected-project:v1" as const;
 
 export function DesktopApp(props: {
@@ -200,9 +197,7 @@ export function DesktopApp(props: {
   const [threadFeedback, setThreadFeedback] = useState<Record<string, DesktopThreadFeedback>>({});
   const [surfaceErrors, setSurfaceErrors] = useState<Partial<Record<DesktopSurface, string>>>({});
   const [systemError, setSystemError] = useState<string>();
-  const [inspectorOpen, setInspectorOpen] = useState(() => readDesktopSidebarState(INSPECTOR_STATE_KEY, false));
   const [workNavigatorOpen, setWorkNavigatorOpen] = useState(false);
-  const [inspectorWidth, setInspectorWidth] = useState(() => readDesktopSidebarWidth());
   const [surface, setSurface] = useState<DesktopSurface>("chat");
   const [settingsTarget, setSettingsTarget] = useState<DesktopCapabilityId>();
   const [appsNavigationRequest, setAppsNavigationRequest] = useState<DesktopAppsNavigationRequest>({ requestId: 0 });
@@ -278,6 +273,8 @@ export function DesktopApp(props: {
           runId: threadViews[activeThread.id]?.activeRun?.runId,
         }
       : undefined);
+  const agentWorking = activeThread !== undefined
+    && isDesktopThreadWorking(authorityCaches, activeThread.id);
   const operatorInboxItems = activeThread === undefined
     ? []
     : (threadViews[activeThread.id]?.inboxItems ?? []).filter(
@@ -411,7 +408,6 @@ export function DesktopApp(props: {
           nextSettings.projects[0]?.path,
         modelConfigurationId: defaultConfiguration?.id,
         modelConfigurationRevision: defaultConfiguration?.currentRevision,
-        legacyDefaultWorkflowAppIds: nextSettings.legacyDefaultWorkflowAppIds,
         theme: nextSettings.appearanceTheme,
       });
       if (props.onboardingHandoff !== undefined) {
@@ -425,16 +421,6 @@ export function DesktopApp(props: {
                   defaultConfiguration.currentRevision,
               }
             : {}),
-        });
-      }
-      if (
-        nextSettings.legacyDefaultWorkflowAppIds !== undefined &&
-        uiStatePersistenceEnabledRef.current
-      ) {
-        await window.kestrelDesktop.saveUiState(serializeDesktopRendererState(rendererState));
-        if (disposed) return;
-        nextSettings = await window.kestrelDesktop.saveSettings({
-          defaultEnabledBuiltInAppIds: nextSettings.defaultEnabledBuiltInAppIds,
         });
       }
       setState(rendererState);
@@ -695,10 +681,6 @@ export function DesktopApp(props: {
           setWorkNavigatorOpen((current) => !current);
           return;
         }
-        if (command === "toggle-right-sidebar") {
-          setInspectorOpen((current) => !current);
-          return;
-        }
         if (command === "uninstall") {
           openCapabilitySettings();
         }
@@ -726,10 +708,6 @@ export function DesktopApp(props: {
   }, [state]);
 
   useEffect(() => {
-    writeDesktopSidebarState(INSPECTOR_STATE_KEY, inspectorOpen);
-  }, [inspectorOpen]);
-
-  useEffect(() => {
     if (!selectedProjectPersistenceReady) return;
     writeDesktopSelectedProjectPath(selectedProjectPath);
   }, [selectedProjectPath, selectedProjectPersistenceReady]);
@@ -744,14 +722,6 @@ export function DesktopApp(props: {
     });
     if (next !== selectedProjectPath) setSelectedProjectPath(next);
   }, [settings?.projects, settings?.defaultProjectPath, activeThread?.projectPath, selectedProjectPath]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(INSPECTOR_WIDTH_KEY, String(inspectorWidth));
-    } catch {
-      // Sidebar preferences are optional; the workspace remains usable without them.
-    }
-  }, [inspectorWidth]);
 
   useEffect(() => {
     if (state?.theme !== "system") {
@@ -835,6 +805,20 @@ export function DesktopApp(props: {
       result,
     }));
     if (result.status === "available") {
+      // A persisted renderer wait is only a recovery hint. Local Core is the
+      // authority: clear a stale hint once it confirms the thread is no longer
+      // waiting, so lifecycle actions are not trapped behind old UI state.
+      if (
+        result.view.activeRun?.status !== "WAITING"
+        && result.view.thread.status !== "WAITING"
+      ) {
+        setState((current) => current === undefined
+          ? current
+          : updateRendererThread(current, thread.id, (currentThread) => ({
+              ...currentThread,
+              pendingWaitEventType: undefined,
+            })));
+      }
       setState((current) =>
         current === undefined
           ? current
@@ -1682,6 +1666,84 @@ export function DesktopApp(props: {
     return project;
   }
 
+  async function removeProject(project: DesktopProjectRegistration): Promise<void> {
+    if (settings === undefined) return;
+    const saved = await window.kestrelDesktop.saveSettings({
+      projects: settings.projects.filter((entry) => entry.path !== project.path),
+    });
+    const detachedSessionIds = new Set(
+      threadsRef.current
+        .filter((thread) => thread.projectPath === project.path)
+        .map((thread) => thread.sessionId),
+    );
+    setSettings(saved);
+    setState((current) =>
+      current === undefined ? current : detachRendererProject(current, project.path),
+    );
+    setAuthorityCaches((current) => ({
+      ...current,
+      threadWorkspaces: Object.fromEntries(
+        Object.entries(current.threadWorkspaces).filter(
+          ([sessionId]) => detachedSessionIds.has(sessionId) === false,
+        ),
+      ),
+    }));
+    const fallbackProjectPath = saved.projects.some((entry) => entry.path === selectedProjectPath)
+      ? selectedProjectPath
+      : saved.projects[0]?.path;
+    setSelectedProjectPath(fallbackProjectPath);
+    setMissionControlProjectPath(fallbackProjectPath);
+    setSurface("chat");
+  }
+
+  async function deleteConversation(
+    threadId: string,
+    force: boolean,
+  ): Promise<{ status: "deleted" | "requires_force"; message?: string }> {
+    const thread = threadsRef.current.find((candidate) => candidate.id === threadId);
+    if (thread === undefined) return { status: "deleted" };
+    try {
+      const authority = await refreshThreadAuthority(thread);
+      if (authority.status === "available") {
+      const interruptTarget = resolveDesktopInterruptAuthority(authority.view);
+      if (interruptTarget !== undefined) {
+          const activeTurn = authority.view.conversationTurns.find(
+            (turn) => turn.turnId === interruptTarget.turnId,
+          );
+          if (activeTurn?.activeRunId === undefined) {
+            if (!force) return { status: "requires_force", message: "Kestrel could not identify the active run. Force removal keeps the run out of the Desktop list but may not stop it." };
+          } else {
+            const cancellation = await window.kestrelDesktop.cancelRun({
+              sessionId: activeTurn.sessionId,
+              runId: activeTurn.activeRunId,
+            });
+            if (cancellation.status === "run_changed" || cancellation.status === "finalizing") {
+              if (!force) return { status: "requires_force", message: "The run changed while Kestrel was stopping it. Force removal keeps the run out of the Desktop list but may not stop it." };
+            }
+          }
+        }
+      }
+    } catch {
+      if (!force) {
+        return { status: "requires_force", message: "Kestrel cannot confirm whether this conversation is still active. Force removal keeps it out of the Desktop list but may not stop remote work." };
+      }
+    }
+    // Deletion owns the Desktop index. A live run is first stopped against the
+    // authoritative turn identity, never against stale renderer state.
+    setState((current) => current === undefined ? current : deleteRendererThread(current, threadId));
+    setAuthorityCaches((current) => {
+      const { [threadId]: _removedView, ...threadViews } = current.threadViews;
+      const { [thread.sessionId]: _removedWorkspace, ...threadWorkspaces } = current.threadWorkspaces;
+      return { ...current, threadViews, threadWorkspaces };
+    });
+    setActiveRuns((current) => {
+      const { [threadId]: _removed, ...next } = current;
+      return next;
+    });
+    setSurface("chat");
+    return { status: "deleted" };
+  }
+
   function createConversationForProject(projectPath: string | null): void {
     const defaultConfiguration = settings?.modelConfigurations.find(
       (configuration) => configuration.id === settings.defaultModelConfigurationId,
@@ -1690,7 +1752,6 @@ export function DesktopApp(props: {
       ...(projectPath !== null ? { projectPath } : {}),
       modelConfigurationId: defaultConfiguration?.id,
       modelConfigurationRevision: defaultConfiguration?.currentRevision,
-      enabledWorkflowAppIds: [],
     }));
     if (projectPath !== null) setSelectedProjectPath(projectPath);
     setSurface("chat");
@@ -1762,7 +1823,6 @@ export function DesktopApp(props: {
             projectPath,
             modelConfigurationId: defaultConfiguration?.id,
             modelConfigurationRevision: defaultConfiguration?.currentRevision,
-            enabledWorkflowAppIds: [],
             rawState: {
               missionControl: {
                 projectId: response.projectId,
@@ -1855,9 +1915,6 @@ export function DesktopApp(props: {
     );
   }
 
-  const healthState = runtimeHealth?.state ?? "degraded";
-  const healthLabel = runtimeHealthLabel(healthState);
-  const detailsLabel = `${inspectorOpen ? "Close" : "Open"} details${healthState === "healthy" ? "" : `, ${healthLabel}`}`;
   const activeModelConfiguration = settings?.modelConfigurations.find(
     (configuration) => configuration.id === activeThread.modelConfigurationId,
   );
@@ -1892,7 +1949,6 @@ export function DesktopApp(props: {
     : surface === "mission-control"
       ? missionControlProject?.label ?? "No project"
       : conversationProjectLabel;
-  const showInspector = surface === "chat" && inspectorOpen;
   return (
     <div className="desktop-app">
       <header className="titlebar" inert={workNavigatorOpen ? true : undefined}>
@@ -1903,13 +1959,13 @@ export function DesktopApp(props: {
           <strong>Kestrel</strong>
         </div>
         <button
-          className="project-switcher"
+          className="icon-button navigation-toggle"
           type="button"
-          title="Find work and switch projects"
+          aria-label="Open navigation"
+          title="Open navigation"
           onClick={(event) => openWorkNavigator(event.currentTarget)}
         >
-          <Folder size={16} aria-hidden="true" />
-          <span>{titlebarProjectLabel}</span>
+          <Menu size={16} aria-hidden="true" />
         </button>
         <div
           className="titlebar-context"
@@ -1954,21 +2010,6 @@ export function DesktopApp(props: {
           >
             {state.theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
           </button>
-          {surface === "chat" ? (
-            <button
-              className={`details-button ${healthState === "healthy" ? "" : "needs-attention"}`}
-              type="button"
-              title={detailsLabel}
-              aria-label={detailsLabel}
-              aria-controls="context-sidebar"
-              aria-expanded={inspectorOpen}
-              onClick={() => setInspectorOpen((open) => !open)}
-            >
-              <span className={`titlebar-status-dot health-${healthState}`} aria-hidden="true" />
-              {inspectorOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}
-              <span>Details</span>
-            </button>
-          ) : null}
         </div>
       </header>
 
@@ -1981,10 +2022,7 @@ export function DesktopApp(props: {
         />
       ) : null}
 
-      <div
-        className={`workspace ${showInspector ? "with-inspector" : ""}`}
-        style={{ "--inspector-width": `${inspectorWidth}px` } as CSSProperties}
-      >
+      <div className="workspace">
         <aside
           className={`conversation-rail work-navigator ${workNavigatorOpen ? "open" : ""}`}
           aria-label="Find work"
@@ -2087,7 +2125,12 @@ export function DesktopApp(props: {
                 const thread = threadsRef.current.find((candidate) => candidate.id === threadId);
                 if (thread === undefined) return { status: "blocked", message: "This conversation is no longer available." };
                 const cachedView = threadViews[thread.id];
-                const immediateReason = getRendererThreadArchiveBlockReason(thread, {
+                const immediateReason = getRendererThreadArchiveBlockReason({
+                  ...thread,
+                  // A renderer wait can be stale after restart. The following
+                  // authority refresh decides whether a wait is still active.
+                  pendingWaitEventType: undefined,
+                }, {
                   runActive: activeRuns[thread.id] !== undefined || cachedView?.activeRun?.status === "RUNNING",
                   runtimeWaiting: cachedView?.activeRun?.status === "WAITING" || cachedView?.thread.status === "WAITING",
                   actionableOperatorRequest: cachedView?.inboxItems.some((item) => item.actionable !== false) === true,
@@ -2096,7 +2139,10 @@ export function DesktopApp(props: {
                 try {
                   const authority = await refreshThreadAuthority(thread);
                   if (authority.status === "available") {
-                    const reason = getRendererThreadArchiveBlockReason(thread, {
+                    const reason = getRendererThreadArchiveBlockReason({
+                      ...thread,
+                      pendingWaitEventType: undefined,
+                    }, {
                       runActive: authority.view.activeRun?.status === "RUNNING",
                       runtimeWaiting: authority.view.activeRun?.status === "WAITING" || authority.view.thread.status === "WAITING",
                       actionableOperatorRequest: authority.view.inboxItems.some((item) => item.actionable !== false),
@@ -2107,7 +2153,6 @@ export function DesktopApp(props: {
                   setState((current) => current === undefined ? current : archiveRendererThread(current, threadId, {
                     modelConfigurationId: defaultConfiguration?.id,
                     modelConfigurationRevision: defaultConfiguration?.currentRevision,
-                    enabledWorkflowAppIds: [],
                   }));
                   setSurface("chat");
                   return { status: "archived" };
@@ -2123,6 +2168,7 @@ export function DesktopApp(props: {
                 setState((current) => current === undefined ? current : restoreRendererThread(current, threadId));
                 setSurface("chat");
               }}
+              onDelete={deleteConversation}
             />
         </aside>
 
@@ -2288,7 +2334,8 @@ export function DesktopApp(props: {
               </section>
             ) : (
             <form
-            className={`composer ${composerFocused || activeThread.draft.trim().length > 0 || activeThread.draftAttachmentIds.length > 0 ? "composer-expanded" : ""}`}
+            aria-busy={agentWorking}
+            className={`composer ${composerFocused || activeThread.draft.trim().length > 0 || activeThread.draftAttachmentIds.length > 0 ? "composer-expanded" : ""} ${agentWorking ? "composer-running" : ""}`}
             onBlur={(event) => {
               if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) {
                 return;
@@ -2399,18 +2446,6 @@ export function DesktopApp(props: {
                 <button className="icon-button" type="button" title="Attach files" aria-label="Attach files" disabled={activeThread.draftAttachmentIds.length >= 8} onClick={() => void selectAttachments()}>
                   <Paperclip size={16} />
                 </button>
-                <ConversationWorkflowControl
-                  selectedIds={activeThread.enabledWorkflowAppIds}
-                  servers={appsDiscovery?.servers ?? []}
-                  onChange={(enabledWorkflowAppIds) =>
-                    setState((current) => current === undefined
-                      ? current
-                      : updateRendererThread(current, activeThread.id, (thread) => ({
-                          ...thread,
-                          enabledWorkflowAppIds,
-                        })))}
-                  onSetup={(workflowId) => openApps({ kind: "workflow", workflowId })}
-                />
               </div>
               <div className="composer-actions-right">
                 {composerPolicy.mode === "reply_to_request" ? (
@@ -2459,6 +2494,7 @@ export function DesktopApp(props: {
                 workspace={projectWorkspace}
                 openFiles={projectConversationMatchesActiveThread ? activeThread.openFiles : []}
                 onChat={(project) => startProjectConversation(project.path)}
+                onRemoveProject={removeProject}
                 onSelectThread={(threadId) => {
                   setState((current) => current === undefined ? current : selectRendererThread(current, threadId));
                   setSurface("chat");
@@ -2625,19 +2661,12 @@ export function DesktopApp(props: {
             ) : surface === "mcp" ? (
               <McpWorkspace
                 settings={settings!}
-                currentWorkflowIds={activeThread.enabledWorkflowAppIds}
                 navigationRequest={appsNavigationRequest}
                 onSettings={async (update) => {
                   const saved = await window.kestrelDesktop.saveSettings(update);
                   setSettings(saved);
                   return saved;
                 }}
-                onWorkflowChange={(enabledWorkflowAppIds) =>
-                  setState((current) => current === undefined ? current : updateRendererThread(
-                    current,
-                    activeThread.id,
-                    (thread) => ({ ...thread, enabledWorkflowAppIds }),
-                  ))}
                 onDiscoveryChange={(result) => {
                   setAppsDiscovery(result);
                   void window.kestrelDesktop.getSettings().then(setSettings).catch(() => undefined);
@@ -2677,32 +2706,6 @@ export function DesktopApp(props: {
           </div>
         )}
 
-        {showInspector && settings !== undefined ? (
-          <ContextSidebar
-            thread={activeThread}
-            activeRun={activeRun !== undefined}
-            inboxItems={operatorInboxItems}
-            activity={activeThreadFeedback.activity}
-            error={activeThreadFeedback.error}
-            errorCapability={activeThreadFeedback.errorCapability}
-            onOpenSettings={openCapabilitySettings}
-            inert={workNavigatorOpen}
-            onResizeStart={(event) => {
-              event.currentTarget.setPointerCapture(event.pointerId);
-              const startX = event.clientX;
-              const startWidth = inspectorWidth;
-              const move = (pointerEvent: PointerEvent) => {
-                setInspectorWidth(clampInspectorWidth(startWidth + startX - pointerEvent.clientX));
-              };
-              const stop = () => {
-                window.removeEventListener("pointermove", move);
-                window.removeEventListener("pointerup", stop);
-              };
-              window.addEventListener("pointermove", move);
-              window.addEventListener("pointerup", stop, { once: true });
-            }}
-          />
-        ) : null}
       </div>
 
     </div>
@@ -2923,12 +2926,6 @@ function modeLabel(mode: RendererMode): string {
   return mode === "chat" ? "Chat" : mode === "plan" ? "Plan" : "Build";
 }
 
-function runtimeHealthLabel(state: DesktopRuntimeHealth["state"]): string {
-  if (state === "healthy") return "Runtime ready";
-  if (state === "blocked") return "Runtime blocked";
-  return "Runtime degraded";
-}
-
 function surfacePageTitle(surface: DesktopSurface): string {
   if (surface === "chat") {
     return "Conversation";
@@ -2965,29 +2962,6 @@ function parseDesktopSurface(value: string | undefined): DesktopSurface {
     : "chat";
 }
 
-function clampInspectorWidth(value: number): number {
-  return Number.isFinite(value)
-    ? Math.max(240, Math.min(520, Math.round(value)))
-    : 288;
-}
-
-function readDesktopSidebarState(key: string, fallback: boolean): boolean {
-  try {
-    const value = window.localStorage.getItem(key);
-    return value === null ? fallback : value === "true";
-  } catch {
-    return fallback;
-  }
-}
-
-function writeDesktopSidebarState(key: string, value: boolean): void {
-  try {
-    window.localStorage.setItem(key, String(value));
-  } catch {
-    // Sidebar preferences are optional; the workspace remains usable without them.
-  }
-}
-
 function readStoredSelectedProjectPath(): string | undefined {
   try {
     const stored = window.localStorage.getItem(SELECTED_PROJECT_KEY);
@@ -3003,15 +2977,6 @@ function writeDesktopSelectedProjectPath(projectPath: string | undefined): void 
     else window.localStorage.setItem(SELECTED_PROJECT_KEY, projectPath);
   } catch {
     // Project context persistence is optional; project selection remains usable.
-  }
-}
-
-function readDesktopSidebarWidth(): number {
-  try {
-    const storedWidth = window.localStorage.getItem(INSPECTOR_WIDTH_KEY);
-    return storedWidth === null ? 288 : clampInspectorWidth(Number(storedWidth));
-  } catch {
-    return 288;
   }
 }
 

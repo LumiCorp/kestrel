@@ -286,7 +286,14 @@ try {
     persistenceMarker,
     { timeout: 30_000 },
   );
+  const firstMainProcess = electronApp.process();
+  const firstMainProcessExited = firstMainProcess.exitCode === null
+    ? new Promise<void>((resolve) => {
+        firstMainProcess.once("exit", () => resolve());
+      })
+    : Promise.resolve();
   await electronApp.close();
+  await firstMainProcessExited;
   electronApp = undefined;
   electronPid = undefined;
 
@@ -606,7 +613,7 @@ async function verifyStaticRendererSurfaces(
   await openRendererSurface(window, "Settings", "Settings");
   for (const [category, capabilities] of [
     ["Models", ["OpenRouter"]],
-    ["Tools & services", []],
+    ["Connections", []],
     ["Local capabilities", ["Developer shell", "Sandboxed code execution"]],
     ["Workspace & data", ["Runtime database"]],
     ["Permissions", ["Microphone"]],
@@ -694,8 +701,9 @@ async function openRendererSurface(
 
 async function openConversationSurface(window: Page): Promise<void> {
   await window.getByRole("button", { name: /Find work/u }).click();
-  await window
-    .getByRole("dialog", { name: "Find work" })
+  const navigator = window.getByRole("dialog", { name: "Find work" });
+  await navigator
+    .getByRole("navigation", { name: "Kestrel views" })
     .getByRole("button", { name: "Conversations", exact: true })
     .click();
   await window

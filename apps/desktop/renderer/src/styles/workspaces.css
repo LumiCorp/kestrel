@@ -482,10 +482,6 @@
   color: var(--diff-removed);
 }
 
-.context-sidebar-scroll {
-  background: var(--bg-pane);
-}
-
 .surface-error {
   border-bottom-color: var(--border-subtle);
   background: color-mix(in srgb, var(--status-failed) 10%, var(--bg-pane));

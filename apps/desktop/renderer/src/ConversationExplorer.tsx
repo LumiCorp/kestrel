@@ -26,6 +26,10 @@ export function ConversationExplorer(props: {
   onArchive: (threadId: string) => Promise<{ status: "archived" } | { status: "blocked"; message: string }>;
   onUndoArchive: (threadId: string, removeReplacement: boolean) => void;
   onRestore: (threadId: string) => void;
+  onDelete: (threadId: string, force: boolean) => Promise<{
+    status: "deleted" | "requires_force";
+    message?: string | undefined;
+  }>;
   searchInputRef?: RefObject<HTMLInputElement | null>;
 }) {
   const [view, setView] = useState<"active" | "archived">("active");
@@ -34,6 +38,10 @@ export function ConversationExplorer(props: {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [openMenuId, setOpenMenuId] = useState<string>();
   const [renamingThread, setRenamingThread] = useState<RendererThread>();
+  const [deletingThread, setDeletingThread] = useState<RendererThread>();
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteForceRequired, setDeleteForceRequired] = useState(false);
+  const [deleteMessage, setDeleteMessage] = useState<string>();
   const [renameTitle, setRenameTitle] = useState("");
   const [notice, setNotice] = useState<{ threadId?: string; removeReplacement?: boolean; message: string }>();
   const [archivePendingId, setArchivePendingId] = useState<string>();
@@ -167,19 +175,13 @@ export function ConversationExplorer(props: {
   return (
     <section className="conversation-explorer" aria-label="Conversation explorer">
       <div className="explorer-heading">
-        <strong>{view === "active" ? "Conversations" : "Archived"}</strong>
+        <div className="explorer-view-navigation" aria-label="Conversation views">
+          <button className={view === "active" ? "active" : ""} type="button" onClick={() => setView("active")}>Conversations</button>
+          <button className={view === "archived" ? "active" : ""} type="button" onClick={() => setView("archived")}>
+            <Archive size={14} aria-hidden="true" />Archived{archivedCount > 0 ? ` (${archivedCount})` : ""}
+          </button>
+        </div>
         <div className="explorer-heading-actions">
-          {archivedCount > 0 || view === "archived" ? (
-            <button
-              className={`archived-view-button ${view === "archived" ? "active" : ""}`}
-              type="button"
-              title={view === "active" ? `View ${archivedCount} archived conversations` : "Back to conversations"}
-              onClick={() => setView((current) => current === "active" ? "archived" : "active")}
-            >
-              <Archive size={14} aria-hidden="true" />
-              <span>{view === "active" ? `Archived (${archivedCount})` : "Back"}</span>
-            </button>
-          ) : null}
           <button
             className="icon-button"
             type="button"
@@ -269,11 +271,11 @@ export function ConversationExplorer(props: {
               </div>
               {!collapsed ? (
                 <div className="explorer-thread-list">
-                  {group.threads.map(({ thread, status, activity, updatedAt }) => (
+                  {group.threads.map(({ thread, status, updatedAt }) => (
                     <div className={`explorer-thread-row ${thread.id === props.activeThreadId ? "active" : ""}`} key={thread.id}>
                       <button className="explorer-thread-select" type="button" title={thread.title} aria-label={`Open conversation: ${thread.title}`} onClick={() => props.onSelect(thread.id)}>
-                        <span className={`explorer-thread-status status-${status}`} aria-label={status} />
-                        <span className="explorer-thread-copy"><strong>{thread.title}</strong><small>{activity}</small></span>
+                        <span className={`explorer-thread-status status-${status}`} role="img" aria-label={`Conversation status: ${status}`} />
+                        <span className="explorer-thread-copy"><strong>{thread.title}</strong></span>
                         <time>{formatThreadTime(updatedAt)}</time>
                       </button>
                       <button
@@ -293,6 +295,7 @@ export function ConversationExplorer(props: {
                             <button type="button" role="menuitem" onClick={() => beginRename(thread)}>Rename</button>
                             <button type="button" role="menuitem" disabled={archivePendingId !== undefined} onClick={() => void archive(thread)}>Archive</button>
                           </> : <button type="button" role="menuitem" onClick={() => { setOpenMenuId(undefined); props.onRestore(thread.id); setView("active"); }}>Restore</button>}
+                          <button type="button" role="menuitem" onClick={() => { setOpenMenuId(undefined); setDeleteForceRequired(false); setDeleteMessage(undefined); setDeletingThread(thread); }}>Delete conversation</button>
                         </div>
                       ) : null}
                     </div>
@@ -324,6 +327,36 @@ export function ConversationExplorer(props: {
                 <button className="primary-button" type="submit" disabled={renameTitle.trim().length === 0}>Save</button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+      {deletingThread !== undefined ? (
+        <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setDeletingThread(undefined);
+        }}>
+          <div className="rename-dialog" role="dialog" aria-modal="true" aria-labelledby="delete-conversation-title">
+            <h2 id="delete-conversation-title">Delete conversation?</h2>
+            <p>This permanently removes “{deletingThread.title}” from Kestrel Desktop. If work is still running, Kestrel stops its authoritative run first. This cannot be undone.</p>
+            {deleteMessage !== undefined ? <p className="field-error">{deleteMessage}</p> : null}
+            <div className="dialog-actions">
+              <button type="button" disabled={deletePending} onClick={() => setDeletingThread(undefined)}>Cancel</button>
+              <button className="danger-button" type="button" disabled={deletePending} onClick={() => void (async () => {
+                setDeletePending(true);
+                try {
+                  const result = await props.onDelete(deletingThread.id, deleteForceRequired);
+                  if (result.status === "deleted") {
+                    setDeletingThread(undefined);
+                    return;
+                  }
+                  setDeleteForceRequired(true);
+                  setDeleteMessage(result.message);
+                } catch (cause) {
+                  setDeleteMessage(cause instanceof Error ? cause.message : String(cause));
+                } finally {
+                  setDeletePending(false);
+                }
+              })()}>{deleteForceRequired ? "Force remove from Desktop" : "Delete conversation"}</button>
+            </div>
           </div>
         </div>
       ) : null}

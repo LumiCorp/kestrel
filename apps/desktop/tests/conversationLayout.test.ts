@@ -8,7 +8,6 @@ const testDir = path.dirname(fileURLToPath(import.meta.url));
 const stylesPath = path.join(testDir, "..", "renderer", "src", "styles.css");
 const appPath = path.join(testDir, "..", "renderer", "src", "DesktopApp.tsx");
 const explorerPath = path.join(testDir, "..", "renderer", "src", "ConversationExplorer.tsx");
-const contextSidebarPath = path.join(testDir, "..", "renderer", "src", "ContextSidebar.tsx");
 const timelinePath = path.join(testDir, "..", "renderer", "src", "ConversationTimeline.tsx");
 const browserPreviewPath = path.join(testDir, "..", "renderer", "src", "browserPreview.ts");
 const rendererEntryPath = path.join(testDir, "..", "renderer", "src", "main.tsx");
@@ -108,21 +107,16 @@ test("expanded operational details keep their disclosure control visible while s
   );
 });
 
-test("context sidebar joins the full-width work canvas without an empty resizer column", async () => {
-  const [styles, sidebar] = await Promise.all([
+test("conversation workspace omits the Details drawer", async () => {
+  const [app, styles, main] = await Promise.all([
+    readFile(appPath, "utf8"),
     readDesktopStyles(),
-    readFile(contextSidebarPath, "utf8"),
+    readFile(mainPath, "utf8"),
   ]);
 
-  assert.match(
-    styles,
-    /\.workspace\.with-inspector\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) var\(--inspector-width\);/su,
-  );
-  assert.doesNotMatch(
-    styles,
-    /\.workspace\.with-inspector\s*\{[^}]*grid-template-columns:[^;}]*5px/su,
-  );
-  assert.match(sidebar, /className="sidebar-resize-handle"/u);
+  assert.doesNotMatch(app, /ContextSidebar|context-sidebar|details-button|inspectorOpen|inspectorWidth/u);
+  assert.doesNotMatch(styles, /\.workspace\.with-inspector|--inspector-width|\.details-button/u);
+  assert.doesNotMatch(main, /Toggle File Inspector|toggle-right-sidebar/u);
 });
 
 test("background attachment hydration waits for healthy Core and stays non-blocking", async () => {
@@ -159,6 +153,20 @@ test("composer controls are grouped by context and action", async () => {
   assert.match(styles, /\.composer-actions-left\s*\{[^}]*justify-self:\s*start;/su);
   assert.match(styles, /\.composer-actions-right\s*\{[^}]*justify-self:\s*end;/su);
   assert.match(app, /className="composer-actions-left"[\s\S]*className="composer-actions-right"/u);
+});
+
+test("composer activity stays visible only while the agent is executing", async () => {
+  const [styles, app] = await Promise.all([
+    readDesktopStyles(),
+    readFile(appPath, "utf8"),
+  ]);
+
+  assert.match(app, /const agentWorking = activeThread !== undefined[\s\S]*?isDesktopThreadWorking\(authorityCaches, activeThread\.id\)/u);
+  assert.match(app, /aria-busy=\{agentWorking\}/u);
+  assert.match(app, /\$\{agentWorking \? "composer-running" : ""\}/u);
+  assert.match(styles, /\.composer-running::before\s*\{[^}]*width:\s*36%;[^}]*animation:\s*composer-running-sweep 1\.35s linear infinite alternate;/su);
+  assert.match(styles, /@keyframes composer-running-sweep\s*\{\s*from \{ transform: translateX\(-60%\); \}\s*to \{ transform: translateX\(140%\); \}/su);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.composer-running::before \{ animation: none; transform: translateX\(40%\); \}/su);
 });
 
 test("composer keeps mode and model semantics without redundant visible chrome", async () => {
@@ -320,7 +328,8 @@ test("find work drawer groups conversations and keeps row selection separate fro
   assert.match(explorer, /aria-label=\{`New conversation in/u);
   assert.match(explorer, /className="explorer-thread-select"/u);
   assert.match(explorer, /className="explorer-thread-menu-button"/u);
-  assert.match(explorer, /Archived \(\$\{archivedCount\}\)/u);
+  assert.match(explorer, /explorer-view-navigation/u);
+  assert.match(explorer, /Archived\{archivedCount > 0/u);
   assert.match(explorer, /aria-label="Search conversations"/u);
 });
 
@@ -460,13 +469,12 @@ test("archived conversations are read-only without disabling project-scoped surf
 });
 
 test("conversation header keeps its project context while Mission Control owns an explicit project selector", async () => {
-  const [app, sidebar] = await Promise.all([readFile(appPath, "utf8"), readFile(contextSidebarPath, "utf8")]);
+  const app = await readFile(appPath, "utf8");
   assert.match(app, /surface === "mission-control"[\s\S]*missionControlProject\?\.label \?\? "No project"/u);
-  assert.match(app, /className="project-switcher"[\s\S]*\{titlebarProjectLabel\}/u);
+  assert.match(app, /className="icon-button navigation-toggle"[\s\S]*aria-label="Open navigation"/u);
   assert.doesNotMatch(app, /<small>\{conversationProjectLabel\}<\/small>/u);
   assert.match(app, /<UnifiedMissionControlWorkspace[\s\S]*onProjectChange=/u);
   assert.match(app, /setMissionControlProjectPath\(projectPath\)/u);
-  assert.doesNotMatch(sidebar, /Conversation project/u);
   assert.doesNotMatch(app, /activeProjectPath/u);
 });
 
@@ -485,39 +493,14 @@ test("project Files expose conversation actions only to the owning project threa
   assert.match(app, /onOpenFile=\{projectConversationMatchesActiveThread \?/u);
 });
 
-test("composer owns conversation workflows while Apps own global availability", async () => {
-  const [app, state, settings, sidebar, main] = await Promise.all([
-    readFile(appPath, "utf8"),
-    readFile(path.join(testDir, "..", "renderer", "src", "state.ts"), "utf8"),
-    readFile(path.join(testDir, "..", "renderer", "src", "SettingsWorkspace.tsx"), "utf8"),
-    readFile(contextSidebarPath, "utf8"),
-    readFile(mainPath, "utf8"),
-  ]);
-
-  assert.match(app, /aria-label="Conversation model"/u);
-  assert.match(app, /<ConversationWorkflowControl/u);
-  assert.match(state, /enabledWorkflowAppIds: string\[\]/u);
-  assert.match(state, /const enabled = new Set\(thread\.enabledWorkflowAppIds\);/u);
-  assert.doesNotMatch(settings, /<strong>Enabled Apps<\/strong>/u);
-  assert.match(settings, /<legend>Appearance<\/legend>/u);
-  assert.doesNotMatch(sidebar, /aria-label="Model configuration"/u);
-  assert.doesNotMatch(sidebar, /<span>Apps<\/span>/u);
-  assert.match(main, /resolveAuthoritativeDesktopExecutionSelection/u);
-  assert.match(main, /selection: globalExecutionSelection/u);
-});
-
-test("details persist while Find Work remains a calm, temporary drawer", async () => {
+test("Find Work remains the only titlebar drawer", async () => {
   const [app, styles] = await Promise.all([readFile(appPath, "utf8"), readDesktopStyles()]);
 
-  assert.match(app, /readDesktopSidebarState\(INSPECTOR_STATE_KEY, false\)/u);
-  assert.match(app, /const detailsLabel = `\$\{inspectorOpen \? "Close" : "Open"\} details/u);
-  assert.match(app, /aria-label=\{detailsLabel\}/u);
-  assert.match(app, /runtimeHealthLabel\(healthState\)/u);
-  assert.match(styles, /\.details-button\.needs-attention/u);
+  assert.doesNotMatch(app, /readDesktopSidebarState|detailsLabel|aria-controls="context-sidebar"/u);
+  assert.doesNotMatch(styles, /\.details-button|\.contextual-sidebar|\.sidebar-resize-handle/u);
   assert.match(app, /className=\{`conversation-rail work-navigator/u);
   assert.match(app, /aria-modal=\{workNavigatorOpen \? true : undefined\}/u);
   assert.doesNotMatch(styles, /\.workspace\.with-conversation-rail\s*\{/u);
-  assert.match(app, /storedWidth === null \? 288 : clampInspectorWidth\(Number\(storedWidth\)\)/u);
 });
 
 test("top-level navigation omits retired Git, Terminal, and Preview screens", async () => {
@@ -559,7 +542,7 @@ test("top-level workspace headers avoid decorative category kickers", async () =
 
 test("archive blocking covers runs, waits, and actionable operator requests", async () => {
   const app = await readFile(appPath, "utf8");
-  assert.match(app, /getRendererThreadArchiveBlockReason\(thread/u);
+  assert.match(app, /getRendererThreadArchiveBlockReason\(\{/u);
   assert.match(app, /await refreshThreadAuthority\(thread\)/u);
   assert.match(app, /authority\.view\.inboxItems\.some\(\(item\) => item\.actionable !== false\)/u);
   assert.match(app, /authority\.view\.activeRun\?\.status === "WAITING"/u);

@@ -1,24 +1,17 @@
 import { hasConfiguredDesktopProviderCredential } from "../../../src/desktopShell/onboarding.js";
-import {
-  desktopAppIdForServer,
-  listDesktopAppDefinitions,
-} from "../../../src/desktopShell/configuration.js";
-import { KESTREL_APP_IDS } from "@kestrel-agents/protocol";
+import { listDesktopAppDefinitions } from "../../../src/desktopShell/configuration.js";
 import type {
   DesktopRendererSettings,
   DesktopSettings,
 } from "./contracts.js";
 
 export function getEffectiveDesktopEnabledAppIds(
-  settings: Pick<DesktopSettings, "defaultEnabledBuiltInAppIds" | "mcpServers" | "tavilyApiKey">,
+  settings: Pick<DesktopSettings, "defaultEnabledBuiltInAppIds" | "plugins">,
 ): string[] {
   return [
     ...new Set([
       ...settings.defaultEnabledBuiltInAppIds,
-      ...(settings.tavilyApiKey?.trim() ? [KESTREL_APP_IDS.TAVILY] : []),
-      ...settings.mcpServers
-        .filter((server) => server.enabled)
-        .map((server) => desktopAppIdForServer(server)),
+      ...settings.plugins.filter((plugin) => plugin.enabled).map((plugin) => plugin.pluginId),
     ]),
   ];
 }
@@ -67,9 +60,6 @@ export function toDesktopRendererSettings(
     })),
     defaultModelConfigurationId: settings.defaultModelConfigurationId,
     defaultEnabledBuiltInAppIds: [...settings.defaultEnabledBuiltInAppIds],
-    ...(settings.legacyDefaultWorkflowAppIds !== undefined
-      ? { legacyDefaultWorkflowAppIds: [...settings.legacyDefaultWorkflowAppIds] }
-      : {}),
     enabledConnectedAppIds: getEffectiveDesktopEnabledAppIds(settings).filter(
       (id) => !settings.defaultEnabledBuiltInAppIds.includes(id),
     ),
