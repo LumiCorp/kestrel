@@ -5,7 +5,8 @@ import {
   SessionController,
   type SessionControllerContext,
 } from "../../cli/app/SessionController.js";
-import type { TuiSessionMeta } from "../../cli/contracts.js";
+import type { SessionsFile, TuiProfile, TuiSessionMeta } from "../../cli/contracts.js";
+import { buildInitialUiRuntimeState, UiStore } from "../../cli/ink/store/UiStore.js";
 
 
 function makeSession(input: Partial<TuiSessionMeta> & { name: string; sessionId: string }): TuiSessionMeta {
@@ -87,4 +88,90 @@ test("SessionController keeps switch and resume usage copy stable", async () => 
     "Usage: /switch <name|session-id-fragment>",
     "Usage: /resume <name|session-id-fragment|recent>",
   ]);
+});
+
+test("SessionController restores cached activity when switching to a background session", async () => {
+  const profile: TuiProfile = {
+    id: "reference",
+    label: "Reference",
+    agent: "reference-react",
+    sessionPrefix: "ref",
+  };
+  const main = makeSession({ name: "main", sessionId: "s-main" });
+  const background = makeSession({ name: "background", sessionId: "s-background" });
+  let sessionsFile: SessionsFile = {
+    version: 5,
+    activeSessionName: main.name,
+    sessions: [main, background],
+  };
+  const uiStore = new UiStore(buildInitialUiRuntimeState({
+    profile,
+    activeSession: main,
+    sessions: sessionsFile.sessions,
+    transcript: [],
+  }));
+  const cachedActivity = [{
+    id: "progress-background",
+    kind: "agent_progress" as const,
+    label: "Agent progress",
+    text: "Inspecting the workspace",
+    timestamp: "2026-05-14T00:00:02.000Z",
+    status: "active" as const,
+    runId: "run-background",
+    sequence: 2,
+  }];
+  const context = {
+    uiStore,
+    profileStore: {
+      load: async () => [profile],
+      findById: () => profile,
+    },
+    sessionStore: {
+      resolveSelector: (_file: SessionsFile, selector: string) => ({
+        status: "matched",
+        session: selector === background.name ? background : main,
+      }),
+      setActive: (file: SessionsFile, name: string) => ({ ...file, activeSessionName: name }),
+      upsert: (file: SessionsFile, session: TuiSessionMeta) => ({
+        ...file,
+        sessions: file.sessions.map((entry) => entry.sessionId === session.sessionId ? session : entry),
+      }),
+    },
+    historyStore: { readTranscript: async () => [] },
+    client: { sendCommand: async () => { throw new Error("runner unavailable"); } },
+    getSessionsFile: () => sessionsFile,
+    setSessionsFile: (next: SessionsFile) => { sessionsFile = next; },
+    saveSessionsFile: async () => {},
+    resolveWorkspaceForSession: async () => undefined,
+    setActiveWorkspace: () => {},
+    buildSessionOperatorState: () => ({ inbox: { items: [] } }),
+    getChatWrappedBodyWidth: () => 80,
+    getChatListRows: () => 20,
+    getConversationActivity: (sessionId: string) =>
+      sessionId === background.sessionId ? cachedActivity : [],
+    getConversationRunState: (sessionId: string) =>
+      sessionId === background.sessionId
+        ? { running: true, status: "running" as const }
+        : { running: false, status: "ready" as const },
+    withMcpSummary: (status: string) => `${status} | mcp ready`,
+    recoverTerminalMessages: async () => {},
+    appendHistoryLine: async () => {},
+    persistUiState: async () => {},
+  } as unknown as SessionControllerContext;
+
+  const controller = new SessionController(context);
+  await controller.switchSession(background.name);
+
+  assert.deepEqual(uiStore.getState().conversationActivity, cachedActivity);
+  assert.equal(uiStore.getState().running, true);
+  assert.equal(
+    uiStore.getState().statusLine,
+    "Agent progress: Inspecting the workspace | mcp ready",
+  );
+
+  await controller.switchSession(main.name);
+
+  assert.deepEqual(uiStore.getState().conversationActivity, []);
+  assert.equal(uiStore.getState().running, false);
+  assert.equal(uiStore.getState().statusLine, "resumed 'main' | mcp ready");
 });

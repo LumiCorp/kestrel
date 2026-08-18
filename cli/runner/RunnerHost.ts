@@ -262,6 +262,12 @@ export interface RunnerRuntime {
       finalizedPayload?: unknown | undefined;
     };
   }>>) | undefined;
+  listConversationTerminalOutcomes?: ((input: {
+    threadId: string;
+    completedAfter?: { completedAt: string; turnId: string } | undefined;
+    limit: number;
+    includeFinalizedPayload?: boolean | undefined;
+  }) => Promise<import("../../src/orchestration/ThreadRuntime.js").ConversationTerminalOutcome[]>) | undefined;
   submitConversationMessage?: ((input: import("../../src/orchestration/contracts.js").SubmitConversationMessageInput) => Promise<
     import("../../src/orchestration/contracts.js").ConversationMessageRouteResult
   >) | undefined;
@@ -1560,26 +1566,64 @@ export class RunnerHost {
       : parseConversationMessageCursor(payload.afterCursor);
     for (const runtime of this.selectRuntimes(metadata)) {
       if (typeof runtime.listCompletedConversationMessages !== "function") continue;
-      const page = await runtime.listCompletedConversationMessages({
-        threadId: payload.threadId,
-        ...(completedAfter !== undefined ? { completedAfter } : {}),
-        limit: limit + 1,
-        ...(payload.includeFinalizedPayload === true
-          ? { includeFinalizedPayload: true }
-          : {}),
-      });
-      const hasMore = payload.afterCursor !== undefined && page.length > limit;
-      const messages = page.slice(0, limit);
-      if (payload.afterCursor === undefined) messages.reverse();
-      const cursorMessage = messages.at(-1);
+      const includeTerminalOutcomes = payload.includeTerminalOutcomes === true
+        && typeof runtime.listConversationTerminalOutcomes === "function";
+      const terminalOutcomePage = includeTerminalOutcomes
+        ? await runtime.listConversationTerminalOutcomes!({
+            threadId: payload.threadId,
+            ...(completedAfter !== undefined ? { completedAfter } : {}),
+            limit: limit + 1,
+            ...(payload.includeFinalizedPayload === true ? { includeFinalizedPayload: true } : {}),
+          })
+        : undefined;
+      const completedMessagePage = terminalOutcomePage === undefined
+        ? await runtime.listCompletedConversationMessages({
+            threadId: payload.threadId,
+            ...(completedAfter !== undefined ? { completedAfter } : {}),
+            limit: limit + 1,
+            ...(payload.includeFinalizedPayload === true ? { includeFinalizedPayload: true } : {}),
+          })
+        : undefined;
+      const hasMore = payload.afterCursor !== undefined
+        && (terminalOutcomePage ?? completedMessagePage ?? []).length > limit;
+      const terminalOutcomes = terminalOutcomePage?.slice(0, limit);
+      const messages = completedMessagePage !== undefined
+        ? completedMessagePage.slice(0, limit)
+        : terminalOutcomes!.flatMap((outcome) =>
+            outcome.terminalStatus === "COMPLETED"
+              && outcome.handoffState === "delivered"
+              && outcome.result !== undefined
+              && typeof outcome.result.assistantText === "string"
+              ? [{
+                  messageId: outcome.messageId,
+                  turnId: outcome.turnId,
+                  threadId: outcome.threadId,
+                  sessionId: outcome.sessionId,
+                  runId: outcome.runId,
+                  completedAt: outcome.completedAt,
+                  result: {
+                    assistantText: outcome.result.assistantText,
+                    output: outcome.result.output,
+                    ...(outcome.result.finalizedPayload !== undefined
+                      ? { finalizedPayload: outcome.result.finalizedPayload }
+                      : {}),
+                  },
+                }]
+              : []);
+      if (payload.afterCursor === undefined) {
+        messages.reverse();
+        terminalOutcomes?.reverse();
+      }
+      const cursorEntry = terminalOutcomes?.at(-1) ?? messages.at(-1);
       this.writer.emit("conversation.messages", {
         threadId: payload.threadId,
         messages,
+        ...(terminalOutcomes !== undefined ? { terminalOutcomes } : {}),
         hasMore,
-        ...(cursorMessage !== undefined ? {
+        ...(cursorEntry !== undefined ? {
           nextCursor: encodeConversationMessageCursor({
-            completedAt: cursorMessage.completedAt,
-            turnId: cursorMessage.turnId,
+            completedAt: cursorEntry.completedAt,
+            turnId: cursorEntry.turnId,
           }),
         } : {}),
       }, { commandId, threadId: payload.threadId });

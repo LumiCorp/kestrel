@@ -444,6 +444,7 @@ export interface TuiHistoryRecord {
 }
 
 export interface TranscriptLine {
+  eventId?: string | undefined;
   role: HistoryRole;
   text: string;
   data?: Record<string, unknown> | undefined;

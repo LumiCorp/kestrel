@@ -33,6 +33,17 @@ const profile: TuiProfile = {
   sessionPrefix: "reference",
 };
 
+function completedOutput(sessionId: string, runId: string) {
+  return {
+    status: "COMPLETED" as const,
+    sessionId,
+    runId,
+    errors: [],
+    quality: { citationCoverage: 1, unresolvedClaims: 0, reworkRate: 0, thrashIndex: 0 },
+    telemetry: { stepsExecuted: 1, toolCalls: 0, modelCalls: 0, durationMs: 1 },
+  };
+}
+
 test("default runner progress callback forwards only live-only updates", () => {
   const forwarded: ProgressUpdateV1[] = [];
   const listener = createLiveOnlyProgressListener((update) => {
@@ -211,6 +222,50 @@ test("EventWriter rejects unknown event discriminants before serialization", () 
     /runner event/i,
   );
   assert.equal(output.read(), null);
+});
+
+test("conversation message recovery does not advertise forward pagination on its initial newest page", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const host = new RunnerHost(writer, () => ({
+    runTurn: async () => { throw new Error("not used"); },
+    listCompletedConversationMessages: async () => [
+      {
+        messageId: "terminal:run-2",
+        turnId: "turn-2",
+        threadId: "thread-1",
+        sessionId: "session-1",
+        runId: "run-2",
+        completedAt: "2026-08-17T10:02:00.000Z",
+        result: { assistantText: "two", output: completedOutput("session-1", "run-2") },
+      },
+      {
+        messageId: "terminal:run-1",
+        turnId: "turn-1",
+        threadId: "thread-1",
+        sessionId: "session-1",
+        runId: "run-1",
+        completedAt: "2026-08-17T10:01:00.000Z",
+        result: { assistantText: "one", output: completedOutput("session-1", "run-1") },
+      },
+    ],
+    close: async () => {},
+  }));
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> }));
+
+  await host.conversationMessagesList(
+    "command-initial-page",
+    { threadId: "thread-1", limit: 1 },
+    { profile },
+  );
+  await tick();
+  assert.equal(events[0]?.payload.hasMore, false);
+  assert.equal((events[0]?.payload.messages as unknown[])?.length, 1);
+
+  rl.close();
+  await host.close();
 });
 
 test("CommandRouter emits runner.error for unsupported command type", async () => {
@@ -3391,6 +3446,55 @@ test("operator commands emit inbox, thread, run, and controlled responses", asyn
         },
       },
     }],
+    listConversationTerminalOutcomes: async () => [{
+      messageId: "terminal:run-failed-1",
+      turnId: "turn-failed-1",
+      threadId: "thread-main",
+      sessionId: "session-main",
+      runId: "run-failed-1",
+      completedAt: "2026-07-10T12:00:04.000Z",
+      terminalStatus: "FAILED",
+      outcomeStatus: "contract_failure",
+      handoffState: "failed",
+      finalizationError: {
+        code: "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+        message: "Assistant text was invalid.",
+      },
+    }, {
+      messageId: "terminal:run-completed-1",
+      turnId: "turn-completed-1",
+      threadId: "thread-main",
+      sessionId: "session-main",
+      runId: "run-completed-1",
+      completedAt: "2026-07-10T12:00:03.000Z",
+      terminalStatus: "COMPLETED",
+      outcomeStatus: "completed",
+      handoffState: "delivered",
+      result: {
+        assistantText: "Recovered answer.",
+        finalizedPayload: {
+          payload: { data: { modeSwitch: { mode: "build" } } },
+        },
+        output: {
+          status: "COMPLETED",
+          sessionId: "session-main",
+          runId: "run-completed-1",
+          errors: [],
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 0,
+            modelCalls: 0,
+            durationMs: 1,
+          },
+        },
+      },
+    }],
     listOperatorRuns: async (input) => ({
       version: "operator-run-index-v1",
       generatedAt: "2026-07-10T12:00:02.000Z",
@@ -3529,6 +3633,7 @@ test("operator commands emit inbox, thread, run, and controlled responses", asyn
         threadId: "thread-main",
         limit: 100,
         includeFinalizedPayload: true,
+        includeTerminalOutcomes: true,
       },
     }),
   );
@@ -3638,6 +3743,11 @@ test("operator commands emit inbox, thread, run, and controlled responses", asyn
     }>;
     hasMore?: boolean;
     nextCursor?: string;
+    terminalOutcomes?: Array<{
+      messageId?: string;
+      handoffState?: string;
+      finalizationError?: { code?: string };
+    }>;
   } | undefined;
   assert.equal(messagesPayload?.messages?.[0]?.messageId, "terminal:run-completed-1");
   assert.equal(messagesPayload?.messages?.[0]?.result?.assistantText, "Recovered answer.");
@@ -3646,6 +3756,13 @@ test("operator commands emit inbox, thread, run, and controlled responses", asyn
     { payload: { data: { modeSwitch: { mode: "build" } } } },
   );
   assert.equal(messagesPayload?.hasMore, false);
+  assert.equal(messagesPayload?.terminalOutcomes?.length, 2);
+  assert.equal(messagesPayload?.terminalOutcomes?.[1]?.messageId, "terminal:run-failed-1");
+  assert.equal(messagesPayload?.terminalOutcomes?.[1]?.handoffState, "failed");
+  assert.equal(
+    messagesPayload?.terminalOutcomes?.[1]?.finalizationError?.code,
+    "RUNTIME_ASSISTANT_TEXT_CONTRACT_VIOLATION",
+  );
   assert.match(messagesPayload?.nextCursor ?? "", /^v1:/u);
   const missingThreadEvent = events.find((event) => event.type === "runner.error");
   assert.equal(missingThreadEvent?.payload.code, "OPERATOR_THREAD_NOT_FOUND");

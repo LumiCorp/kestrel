@@ -102,7 +102,7 @@ export interface DesktopConversationTurn {
     turnId: string;
     threadId: string;
     sessionId: string;
-    sequence: number;
+    sequence: number | null;
     status: "RUNNING" | "WAITING" | "COMPLETED" | "FAILED";
     sourceMessageId?: string | undefined;
     rootRunId?: string | undefined;

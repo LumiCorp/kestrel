@@ -5,11 +5,17 @@ import type {
   ConversationTurn,
 } from "./contracts.js";
 
-export type ConversationProjectionIssue = {
-  code: "MESSAGE_TURN_CONFLICT" | "MISSING_TURN_RECORD";
-  message: string;
-  messageId: string;
-};
+export type ConversationProjectionIssue =
+  | {
+      code: "MESSAGE_TURN_CONFLICT" | "MISSING_TURN_RECORD";
+      message: string;
+      messageId: string;
+    }
+  | {
+      code: "TURN_SEQUENCE_CONFLICT" | "TURN_SEQUENCE_MISSING";
+      message: string;
+      turnId: string;
+    };
 
 export type ProjectedConversationItem<Message, Turn, Interaction> =
   | {
@@ -44,6 +50,28 @@ export function projectConversation<
   const turnsById = new Map(orderedTurns.map((turn) => [turn.id, turn]));
   const turnIdByMessageId = new Map<string, string>();
   const issues: ConversationProjectionIssue[] = [];
+  const turnIdBySequence = new Map<number, string>();
+
+  for (const turn of orderedTurns) {
+    if (turn.sequence === null) {
+      issues.push({
+        code: "TURN_SEQUENCE_MISSING",
+        message: `Turn '${turn.id}' has no authoritative conversation sequence.`,
+        turnId: turn.id,
+      });
+      continue;
+    }
+    const existingTurnId = turnIdBySequence.get(turn.sequence);
+    if (existingTurnId !== undefined && existingTurnId !== turn.id) {
+      issues.push({
+        code: "TURN_SEQUENCE_CONFLICT",
+        message: `Turns '${existingTurnId}' and '${turn.id}' share conversation sequence ${turn.sequence}.`,
+        turnId: turn.id,
+      });
+    } else {
+      turnIdBySequence.set(turn.sequence, turn.id);
+    }
+  }
 
   const bind = (messageId: string | null | undefined, turnId: string | null | undefined) => {
     if (!messageId || !turnId) return;
@@ -69,9 +97,6 @@ export function projectConversation<
   }
 
   const messagesByTurnId = new Map<string, Message[]>();
-  const inputOrdinalByMessageId = new Map(
-    input.messages.map((message, index) => [message.id, index]),
-  );
   for (const message of input.messages) {
     const turnId = turnIdByMessageId.get(message.id);
     if (!turnId) continue;
@@ -106,8 +131,6 @@ export function projectConversation<
     messages.sort((left, right) =>
       messagePhase(left, turn, interactionAssistantIds, interactionResponseIds) -
         messagePhase(right, turn, interactionAssistantIds, interactionResponseIds) ||
-      (inputOrdinalByMessageId.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
-        (inputOrdinalByMessageId.get(right.id) ?? Number.MAX_SAFE_INTEGER) ||
       left.id.localeCompare(right.id),
     );
   }
@@ -198,14 +221,18 @@ export function reconcileConversationMessages<Message extends ConversationMessag
 }
 
 function compareTurns(left: ConversationTurn, right: ConversationTurn) {
-  return left.sequence - right.sequence || left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id);
+  if (left.sequence === null || right.sequence === null) {
+    if (left.sequence === null && right.sequence === null) return left.id.localeCompare(right.id);
+    return left.sequence === null ? 1 : -1;
+  }
+  return left.sequence - right.sequence || left.id.localeCompare(right.id);
 }
 
 function clearProcessedDeliveryState<Message extends ConversationMessageLike>(
   message: Message,
   turn: ConversationTurn | undefined,
 ): Message {
-  if (!turn || turn.status === "queued" || turn.inputMessageId !== message.id || message.metadata?.deliveryState === undefined) {
+  if (!turn || turn.status === "queued" || message.metadata?.deliveryState === undefined) {
     return message;
   }
   const { deliveryState: _deliveryState, ...metadata } = message.metadata;

@@ -171,20 +171,12 @@ export class OperatorControlPlane {
       threadId,
       limit: 500,
     }) ?? [];
-    const legacySequenceByTurnId = new Map(
-      [...storedConversationTurns]
-        .sort((left, right) =>
-          left.startedAt.localeCompare(right.startedAt) || left.turnId.localeCompare(right.turnId)
-        )
-        .map((turn, index) => [turn.turnId, index + 1]),
-    );
     const conversationTurns = storedConversationTurns
       .map((turn) => ({
         turnId: turn.turnId,
         threadId: turn.threadId,
         sessionId: turn.sessionId,
-        sequence: asPositiveSafeInteger(turn.metadata?.conversationSequence)
-          ?? legacySequenceByTurnId.get(turn.turnId)!,
+        sequence: asPositiveSafeInteger(turn.metadata?.conversationSequence) ?? null,
         status: turn.status,
         ...(asString(turn.metadata?.sourceMessageId) !== undefined
           ? { sourceMessageId: asString(turn.metadata?.sourceMessageId) }
@@ -197,7 +189,13 @@ export class OperatorControlPlane {
         updatedAt: turn.updatedAt,
         ...(turn.completedAt !== undefined ? { completedAt: turn.completedAt } : {}),
       }))
-      .sort((left, right) => left.sequence - right.sequence || left.turnId.localeCompare(right.turnId));
+      .sort((left, right) => {
+        if (left.sequence === null || right.sequence === null) {
+          if (left.sequence === null && right.sequence === null) return left.turnId.localeCompare(right.turnId);
+          return left.sequence === null ? 1 : -1;
+        }
+        return left.sequence - right.sequence || left.turnId.localeCompare(right.turnId);
+      });
     const conversationMessageRoutes: NonNullable<OperatorThreadView["conversationMessageRoutes"]> = Object.entries(
       asRecord(status.thread.metadata?.conversationMessageRoutes) ?? {},
     ).flatMap(([messageId, value]) => {
@@ -312,7 +310,7 @@ export class OperatorControlPlane {
       ...(status.thread.activeRunId !== undefined && (status.thread.status === "RUNNING" || status.thread.status === "WAITING")
         ? { activeRun: { runId: status.thread.activeRunId, status: status.thread.status } }
         : {}),
-      followUpQueue: readFollowUpQueue(status.thread),
+      followUpQueue: toOperatorFollowUpQueue(status.thread),
       inboxItems,
     };
   }
@@ -1384,6 +1382,12 @@ function assertCompactionEventInvariant(
 }
 
 function toRequestInboxItem(thread: ThreadRecord, request: InteractionRequestRecord): OperatorInboxItem {
+  const currentRequest = thread.currentRequestId === request.requestId;
+  const runId = request.runId
+    ?? asString(request.metadata?.conversationRunId)
+    ?? (currentRequest ? thread.activeRunId : undefined);
+  const turnId = asString(request.metadata?.conversationTurnId)
+    ?? (currentRequest ? asString(thread.metadata?.activeTurnId) : undefined);
   return {
     itemId: `request:${request.requestId}`,
     kind: request.kind === "approval" ? "approval_request" : "user_input_request",
@@ -1392,7 +1396,8 @@ function toRequestInboxItem(thread: ThreadRecord, request: InteractionRequestRec
     title: request.prompt ?? `${request.kind} required`,
     actionable: true,
     createdAt: request.createdAt,
-    ...(request.runId !== undefined ? { runId: request.runId } : {}),
+    ...(runId !== undefined ? { runId } : {}),
+    ...(turnId !== undefined ? { turnId } : {}),
     requestId: request.requestId,
     ...(request.delegationId !== undefined ? { delegationId: request.delegationId } : {}),
     recommendedAction: request.kind === "approval" ? "approve" : "reply",
@@ -1401,6 +1406,14 @@ function toRequestInboxItem(thread: ThreadRecord, request: InteractionRequestRec
       ? { interaction: structuredClone(request.interaction) }
       : {}),
     ...(request.metadata !== undefined ? { metadata: request.metadata } : {}),
+  };
+}
+
+function toOperatorFollowUpQueue(thread: ThreadRecord) {
+  const queue = readFollowUpQueue(thread);
+  return {
+    ...queue,
+    items: queue.items.map(({ runtimeContext: _runtimeContext, runtimeActor: _runtimeActor, ...entry }) => entry),
   };
 }
 

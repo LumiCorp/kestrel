@@ -14,7 +14,6 @@ import type { ThreadInteractionView } from "@/lib/turns/client-contract";
 import { readEvaluationReview } from "./evaluation-review";
 import { readThreadStructuredReview } from "@/lib/turns/structured-review";
 import {
-  createModeSwitchRetryGuard,
   resolveConversationModeSwitch,
   type ConversationMode,
 } from "@kestrel-agents/conversation";
@@ -50,7 +49,6 @@ export function InteractionPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const firstControlRef = useRef<HTMLTextAreaElement | null>(null);
-  const modeSwitchRetryGuardRef = useRef(createModeSwitchRetryGuard());
 
   useEffect(() => {
     firstControlRef.current?.focus();
@@ -388,23 +386,9 @@ export function InteractionPanel({
                     onClick={() => {
                       setBusy(interaction.requestId);
                       setError(null);
-                      void modeSwitchRetryGuardRef.current
-                        .run({
-                          recommendationId: modeSwitch.recommendationId,
-                          mode: modeSwitch.toMode,
-                          switchMode: () => {},
-                          retry: () =>
-                            onModeSwitch(interaction, modeSwitch.toMode),
-                        })
-                        .then(onResolved)
-                        .catch((caught) => {
-                          setError(
-                            caught instanceof Error
-                              ? caught.message
-                              : "The mode could not be changed.",
-                          );
-                        })
-                        .finally(() => setBusy(null));
+                      void onModeSwitch(interaction, modeSwitch.toMode).then(onResolved).catch((caught) => {
+                        setError(caught instanceof Error ? caught.message : "The mode could not be changed.");
+                      }).finally(() => setBusy(null));
                     }}
                     size="sm"
                   >

@@ -40,6 +40,8 @@ import type {
   DesktopReadinessItemId,
   DesktopAttachmentMetadata,
   DesktopFollowUpQueueEntry,
+  DesktopConversationMessageRequest,
+  DesktopConversationMessageResult,
   DesktopOperatorControlRequest,
   DesktopOperatorControlResult,
   DesktopOperatorInboxItem,
@@ -49,6 +51,7 @@ import type {
   DesktopProjectRegistration,
   DesktopRunnerEvent,
   DesktopRuntimeHealth,
+  DesktopRunCancellationResult,
   DesktopThreadAuthorityResult,
 } from "../../src/contracts";
 import { DiagnosticsWorkspace } from "./DiagnosticsWorkspace";
@@ -83,6 +86,11 @@ import {
   type DesktopConversationSubmissionIdentity,
 } from "./conversationSubmission";
 import { adaptDesktopConversation } from "./conversationAdapter";
+import {
+  createDesktopConversationCommandAdapter,
+  resolveDesktopInterruptAuthority,
+  resolveDesktopRefreshedInterruptAuthority,
+} from "./conversationCommandAdapter";
 import { loadDesktopUiState } from "./uiStateBootstrap";
 import {
   describeDesktopRunnerActivity,
@@ -1085,7 +1093,7 @@ export function DesktopApp(props: {
     setThreadActivity(threadId, "Routing message");
     let authorityRefreshAttempted = false;
     try {
-      const routed = await window.kestrelDesktop.submitConversationMessage({
+      const request: DesktopConversationMessageRequest = {
         sessionId: activeThread.sessionId,
         threadId: localCoreThreadId(activeThread.sessionId),
         messageId,
@@ -1106,11 +1114,26 @@ export function DesktopApp(props: {
           activeThread,
           settings.apps,
         ),
-      });
+      };
+      let routed: DesktopConversationMessageResult | undefined;
+      const commandAdapter = desktopConversationCommandAdapter(activeThread);
+      const command = {
+        request,
+        install: (result: DesktopConversationMessageResult) => {
+          routed = result;
+        },
+      };
+      if (composerPolicy.mode === "queue_follow_up") {
+        await commandAdapter.queueTurn(command);
+      } else {
+        await commandAdapter.startTurn(command);
+      }
+      if (routed === undefined) throw new Error("Desktop conversation command returned no authority result.");
+      const routedResult: DesktopConversationMessageResult = routed;
       const observedStart = startedConversationMessagesRef.current.delete(messageId);
-      const startedBeforeRoute = routed.disposition === "queued" && observedStart;
-      const projectedDisposition = startedBeforeRoute ? "started" : routed.disposition;
-      if (routed.disposition === "queued" && !startedBeforeRoute) {
+      const startedBeforeRoute = routedResult.disposition === "queued" && observedStart;
+      const projectedDisposition = startedBeforeRoute ? "started" : routedResult.disposition;
+      if (routedResult.disposition === "queued" && !startedBeforeRoute) {
         queuedTurnSubmissionsRef.current.set(messageId, {
           threadId,
           sessionId: activeThread.sessionId,
@@ -1126,16 +1149,16 @@ export function DesktopApp(props: {
         ...current,
         [threadId]: startedBeforeRoute
           ? {
-              ...routed.view,
+              ...routedResult.view,
               followUpQueue: {
-                ...routed.view.followUpQueue,
+                ...routedResult.view.followUpQueue,
                 items: markDesktopFollowUpStarted(
-                  routed.view.followUpQueue.items,
+                  routedResult.view.followUpQueue.items,
                   messageId,
                 ),
               },
             }
-          : routed.view,
+          : routedResult.view,
       }));
       setState((current) => {
         if (current === undefined) return current;
@@ -1149,16 +1172,16 @@ export function DesktopApp(props: {
         return updateRendererThread(accepted, threadId, (thread) => ({
           ...thread,
           ...(projectPath !== undefined ? { projectPath } : {}),
-          ...(routed.disposition === "replied" ? { pendingWaitEventType: undefined } : {}),
+          ...(routedResult.disposition === "replied" ? { pendingWaitEventType: undefined } : {}),
         }));
       });
       setActiveRuns((current) => {
         const next = { ...current };
-        if (routed.view.activeRun?.status === "RUNNING") {
+        if (routedResult.view.activeRun?.status === "RUNNING") {
           next[threadId] = {
             threadId,
             sessionId: activeThread.sessionId,
-            runId: routed.view.activeRun.runId,
+            runId: routedResult.view.activeRun.runId,
           };
         } else {
           delete next[threadId];
@@ -1172,11 +1195,11 @@ export function DesktopApp(props: {
       });
       setThreadActivity(
         threadId,
-        routed.disposition === "queued"
+        routedResult.disposition === "queued"
           ? "Queued behind current work"
-          : routed.view.activeRun?.status === "WAITING"
+          : routedResult.view.activeRun?.status === "WAITING"
             ? "Waiting for your input"
-            : routed.disposition === "replied"
+            : routedResult.disposition === "replied"
               ? "Reply sent"
               : "Message sent",
       );
@@ -1267,18 +1290,17 @@ export function DesktopApp(props: {
 
   async function acceptModeSwitch(): Promise<void> {
     if (activeThread === undefined || modeSwitchPresentation === undefined) return;
-    await modeSwitchRetryGuardRef.current.run({
+    await desktopConversationCommandAdapter(activeThread).switchModeAndRetry({
       recommendationId: modeSwitchPresentation.recommendationId,
       mode: modeSwitchPresentation.toMode,
-      switchMode: (mode) => {
-        setState((current) => current === undefined
-          ? current
-          : updateRendererThread(current, activeThread.id, (thread) => ({ ...thread, mode })));
+      answer: {
+        requestId: modeSwitchPresentation.recommendationId,
+        transport: "host",
+        execute: () => submitTurn(undefined, {
+          message: `/mode ${modeSwitchPresentation.toMode}`,
+          mode: modeSwitchPresentation.toMode,
+        }),
       },
-      retry: () => submitTurn(undefined, {
-        message: `/mode ${modeSwitchPresentation.toMode}`,
-        mode: modeSwitchPresentation.toMode,
-      }),
     });
   }
 
@@ -1297,7 +1319,8 @@ export function DesktopApp(props: {
     setOperatorActionPending((current) => ({ ...current, [item.itemId]: true }));
     setThreadActivity(threadId, "Submitting recovery choice");
     try {
-      const controlResult = await window.kestrelDesktop.submitOperatorControl({
+      let controlResult: DesktopOperatorControlResult | undefined;
+      const request: DesktopOperatorControlRequest = {
         action: "reply",
         threadId: localCoreThreadId(activeThread.sessionId),
         completionMode: "accepted",
@@ -1306,10 +1329,18 @@ export function DesktopApp(props: {
         message,
         interactionMode: activeThread.mode,
         ...(activeThread.mode === "build" ? { actSubmode: "safe" } : {}),
+      };
+      await desktopConversationCommandAdapter(activeThread).answerInteraction({
+        requestId: item.requestId,
+        transport: "operator",
+        request,
+        install: (result) => { controlResult = result; },
       });
+      if (controlResult === undefined) throw new Error("Desktop interaction command returned no authority result.");
+      const installedControlResult = controlResult;
       setThreadViews((current) => ({
         ...current,
-        [threadId]: controlResult.view,
+        [threadId]: installedControlResult.view,
       }));
       setState((current) => current === undefined
         ? current
@@ -1317,7 +1348,7 @@ export function DesktopApp(props: {
             ...thread,
             pendingWaitEventType: undefined,
           })));
-      projectOperatorControlResult(threadId, controlResult);
+      projectOperatorControlResult(threadId, installedControlResult);
       setThreadActivity(threadId, "Recovery choice submitted");
     } catch (cause) {
       setThreadFailure(threadId, "Recovery choice not submitted", errorMessage(cause));
@@ -1337,24 +1368,65 @@ export function DesktopApp(props: {
     clearThreadError(cancelledThread.id);
     setThreadActivity(cancelledThread.id, "Cancelling");
     try {
-      const result = await window.kestrelDesktop.cancelRun({
-        sessionId: activeRun.sessionId,
-        ...(activeRun.runId !== undefined ? { runId: activeRun.runId } : {}),
-      });
-      if (result.status === "finalizing") {
+      let view = threadViews[cancelledThread.id];
+      let interruptTarget = resolveDesktopInterruptAuthority(view, activeRun.runId);
+      if (interruptTarget === undefined) {
+        const authority = await refreshThreadAuthority(cancelledThread);
+        if (authority.status === "missing") {
+          throw new Error("The active thread is no longer available.");
+        }
+        view = authority.view;
+        const refreshed = resolveDesktopRefreshedInterruptAuthority(view, activeRun.runId);
+        if (refreshed.status === "run_changed") {
+          setActiveRuns((current) => ({
+            ...current,
+            [cancelledThread.id]: {
+              threadId: cancelledThread.id,
+              sessionId: cancelledThread.sessionId,
+              runId: refreshed.activeRunId,
+            },
+          }));
+          clearThreadError(cancelledThread.id);
+          setThreadActivity(cancelledThread.id, "Run changed; stop again");
+          return;
+        }
+        if (refreshed.status === "invalid") {
+          throw new Error("The active run has no authoritative turn identity.");
+        }
+        interruptTarget = refreshed.status === "target" ? refreshed.target : undefined;
+      }
+      if (interruptTarget === undefined) {
+        setActiveRuns((current) => {
+          const next = { ...current };
+          delete next[cancelledThread.id];
+          return next;
+        });
+        clearThreadError(cancelledThread.id);
+        setThreadActivity(cancelledThread.id, "Ready");
+        return;
+      }
+      let result: DesktopRunCancellationResult | undefined;
+      await desktopConversationCommandAdapter(
+        cancelledThread,
+        (value) => { result = value; },
+        view,
+      ).interruptTurn(interruptTarget);
+      if (result === undefined) throw new Error("Desktop interrupt command returned no authority result.");
+      const installedResult = result as DesktopRunCancellationResult;
+      if (installedResult.status === "finalizing") {
         clearThreadError(cancelledThread.id);
         setThreadActivity(cancelledThread.id, "Finalizing");
         await refreshThreadAuthority(cancelledThread);
         return;
       }
-      if (result.status === "run_changed") {
+      if (installedResult.status === "run_changed") {
         setActiveRuns((current) => ({
           ...current,
           [cancelledThread.id]: {
             threadId: cancelledThread.id,
             sessionId: cancelledThread.sessionId,
-            ...(result.activeRunId !== undefined
-              ? { runId: result.activeRunId }
+            ...(installedResult.activeRunId !== undefined
+              ? { runId: installedResult.activeRunId }
               : {}),
           },
         }));
@@ -1378,7 +1450,7 @@ export function DesktopApp(props: {
             };
       });
       clearThreadError(cancelledThread.id);
-      setThreadActivity(cancelledThread.id, result.status === "already_stopped" ? "Ready" : "Cancelled");
+      setThreadActivity(cancelledThread.id, installedResult.status === "already_stopped" ? "Ready" : "Cancelled");
       await refreshThreadAuthority(cancelledThread);
     } catch (cause) {
       setThreadFailure(cancelledThread.id, "Cancel failed", errorMessage(cause));
@@ -1500,7 +1572,19 @@ export function DesktopApp(props: {
     const ownerThread = activeThread;
     setOperatorActionPending((current) => ({ ...current, [itemId]: true }));
     try {
-      const controlResult = await window.kestrelDesktop.submitOperatorControl(request);
+      let controlResult: DesktopOperatorControlResult | undefined;
+      if (request.requestId === undefined) {
+        // Follow-up queue management is a Desktop host control, not a conversation interaction answer.
+        controlResult = await window.kestrelDesktop.submitOperatorControl(request);
+      } else {
+        await desktopConversationCommandAdapter(ownerThread).answerInteraction({
+          requestId: request.requestId,
+          transport: "operator",
+          request,
+          install: (result) => { controlResult = result; },
+        });
+      }
+      if (controlResult === undefined) throw new Error("Desktop interaction command returned no authority result.");
       const view = controlResult.view;
       if (view.thread.threadId === localCoreThreadId(ownerThread.sessionId)) {
         setThreadViews((current) => ({ ...current, [ownerThread.id]: view }));
@@ -1519,6 +1603,33 @@ export function DesktopApp(props: {
     } finally {
       setOperatorActionPending((current) => ({ ...current, [itemId]: false }));
     }
+  }
+
+  function desktopConversationCommandAdapter(
+    ownerThread: RendererThread,
+    installInterrupt: (result: DesktopRunCancellationResult) => void | Promise<void> = () => undefined,
+    interruptView = threadViews[ownerThread.id],
+  ) {
+    return createDesktopConversationCommandAdapter({
+      submitConversationMessage: (command) => window.kestrelDesktop.submitConversationMessage(command),
+      submitOperatorControl: (command) => window.kestrelDesktop.submitOperatorControl(command),
+      cancelRun: (command) => window.kestrelDesktop.cancelRun(command),
+      resolveInterrupt: (target) => {
+        const view = interruptView;
+        if (view?.thread.threadId !== target.threadId) return undefined;
+        const turn = view.conversationTurns?.find((entry) => entry.turnId === target.turnId);
+        return turn?.activeRunId === undefined
+          ? undefined
+          : { sessionId: turn.sessionId, runId: turn.activeRunId };
+      },
+      installInterrupt,
+      switchMode: (mode) => {
+        setState((current) => current === undefined
+          ? current
+          : updateRendererThread(current, ownerThread.id, (thread) => ({ ...thread, mode })));
+      },
+      modeSwitchGuard: modeSwitchRetryGuardRef.current,
+    });
   }
 
   function navigatePromptHistory(threadId: string, direction: -1 | 1): boolean {

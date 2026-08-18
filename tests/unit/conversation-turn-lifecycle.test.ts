@@ -457,3 +457,81 @@ test("missing claimed run is failed instead of stranded", async () => {
   assert.equal((await store.getConversationTurn("turn-lifecycle"))?.status, "FAILED");
   assert.equal((await store.getThread("thread-lifecycle"))?.status, "FAILED");
 });
+
+test("runtime in-memory terminal outcome pages exclude pending handoffs before limiting", async () => {
+  const store = new RuntimeInMemorySessionStore();
+  const turn = (
+    turnId: string,
+    completedAt: string,
+    updatedAt: string,
+    handoffState: "delivered" | "failed" | "pending",
+  ) => ({
+    turnId,
+    threadId: "thread-terminal-page",
+    sessionId: "session-terminal-page",
+    rootRunId: `run-${turnId}`,
+    status: handoffState === "failed" ? "FAILED" as const : "COMPLETED" as const,
+    initialEventType: "user.message",
+    startedAt: "2026-08-17T10:00:00.000Z",
+    updatedAt,
+    completedAt,
+    metadata: {
+      terminalEnvelope: {
+        version: "v1",
+        turnRequestIdentity: `request-${turnId}`,
+        terminalSubmissionIdentity: `submission-${turnId}`,
+        runId: `run-${turnId}`,
+        status: handoffState === "failed" ? "FAILED" : "COMPLETED",
+        handoff: handoffState === "failed"
+          ? { state: "failed", finalizationError: { code: "FINALIZATION_FAILED", message: "failed" } }
+          : handoffState === "delivered"
+            ? { state: "delivered", assistantText: "done" }
+            : { state: "pending" },
+      },
+    },
+  });
+  await Promise.all([
+    store.upsertConversationTurn(turn(
+      "turn-pending",
+      "2026-08-17T10:05:00.000Z",
+      "2026-08-17T10:20:00.000Z",
+      "pending",
+    )),
+    store.upsertConversationTurn(turn(
+      "turn-newest",
+      "2026-08-17T10:04:00.000Z",
+      "2026-08-17T10:04:00.000Z",
+      "delivered",
+    )),
+    store.upsertConversationTurn(turn(
+      "turn-next",
+      "2026-08-17T10:03:00.000Z",
+      "2026-08-17T10:03:00.000Z",
+      "failed",
+    )),
+    store.upsertConversationTurn(turn(
+      "turn-older",
+      "2026-08-17T10:02:00.000Z",
+      "2026-08-17T10:30:00.000Z",
+      "delivered",
+    )),
+  ]);
+
+  const initial = await store.listConversationTurns({
+    threadId: "thread-terminal-page",
+    terminalOutcomesOnly: true,
+    limit: 2,
+  });
+  const cursor = await store.listConversationTurns({
+    threadId: "thread-terminal-page",
+    terminalOutcomesOnly: true,
+    completedAfter: {
+      completedAt: "2026-08-17T10:02:00.000Z",
+      turnId: "turn-older",
+    },
+    limit: 5,
+  });
+
+  assert.deepEqual(initial.map((entry) => entry.turnId), ["turn-newest", "turn-next"]);
+  assert.deepEqual(cursor.map((entry) => entry.turnId), ["turn-next", "turn-newest"]);
+});

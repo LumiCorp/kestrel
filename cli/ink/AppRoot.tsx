@@ -753,12 +753,12 @@ function ChatScreen(props: {
         session={props.state.activeSession}
         transcript={props.state.transcript}
         runLogs={props.state.runLogs}
+        activity={props.state.conversationActivity}
         scroll={props.state.scroll.chat}
         statusLine={props.state.statusLine}
         draft={props.state.chatDraft}
         running={props.state.running}
         composerFocused={props.state.activeRegion === "composer"}
-        progress={props.state.latestProgressForSession}
         viewportColumns={props.state.viewport.columns}
         viewportRows={props.state.viewport.rows}
         unreadCount={props.state.chatUnreadCount ?? 0}

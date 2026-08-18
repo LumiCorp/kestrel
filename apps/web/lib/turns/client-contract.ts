@@ -114,6 +114,28 @@ export type ThreadConversationSnapshot = z.infer<
   typeof threadConversationSnapshotSchema
 >;
 
+export function shouldInstallThreadConversationSnapshot(
+  current: ThreadConversationSnapshot,
+  next: ThreadConversationSnapshot,
+  requestOrder?: {
+    requestedThreadId: string;
+    activeThreadId: string;
+    requestSequence: number;
+    lastInstalledSequence: number;
+  } | undefined,
+): boolean {
+  if (
+    requestOrder !== undefined
+    && (
+      requestOrder.requestedThreadId !== requestOrder.activeThreadId
+      || requestOrder.requestSequence < requestOrder.lastInstalledSequence
+    )
+  ) {
+    return false;
+  }
+  return next.queue.version >= current.queue.version;
+}
+
 export const emptyThreadConversationState: ThreadConversationState = {
   interactions: [],
   turns: [],

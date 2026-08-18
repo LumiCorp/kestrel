@@ -198,6 +198,9 @@ function readMessageIdentity(line: RendererTranscriptLine): string | undefined {
     if (data.kind === "desktop.user-message.v1" && typeof data.messageId === "string") {
       return data.messageId;
     }
+    if (typeof data.kestrelMessageId === "string" && data.kestrelMessageId.trim().length > 0) {
+      return data.kestrelMessageId;
+    }
   }
   if (line.dialog?.messageId !== undefined) return line.dialog.messageId;
   if (line.terminal?.runId !== undefined) return `terminal:${line.terminal.runId}`;

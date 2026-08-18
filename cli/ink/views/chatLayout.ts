@@ -1,4 +1,5 @@
 import { buildEditableTextInputRows } from "../components/textInputLayout.js";
+import type { ConversationActivityItem } from "@kestrel-agents/conversation";
 
 export interface ChatLayoutBudget {
   conversationWidth: number;
@@ -72,4 +73,10 @@ export function resolveChatComposerInputRows(input: {
   const availableComposerRows = Math.max(1, activeViewRows - reservedRows);
 
   return Math.min(desiredRows, availableComposerRows);
+}
+
+export function resolveChatActivityRows(
+  activity: readonly ConversationActivityItem[] | undefined,
+): number {
+  return (activity ?? []).filter((item) => item.visible !== false).slice(-3).length;
 }
