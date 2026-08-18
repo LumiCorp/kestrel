@@ -50,7 +50,6 @@ const outDir = path.join(cliDir, "out");
 const npmCacheDir = path.join(cliDir, ".npm-cache");
 const artifactName = `kestrel-cli-${rootPackageJson.version}-${TARGET_PLATFORM}-${TARGET_ARCH}.tar.gz`;
 const artifactPath = path.join(outDir, artifactName);
-const sourceCommit = process.env.KESTREL_SOURCE_COMMIT?.trim() || readSourceCommit();
 const excludedRuntimePaths = new Set(
   CLI_EXCLUDED_RUNTIME_PATHS.map((relativePath) => path.resolve(repoRoot, relativePath)),
 );
@@ -92,7 +91,6 @@ const coreBuildIdentity = writePackagedLocalCoreBuildIdentity({
   sourceRoot: repoRoot,
   targetRoot: libexecDir,
   suiteVersion: rootPackageJson.version,
-  sourceCommit,
 });
 writeLaunchers();
 writeBundleManifest(coreBuildIdentity);
@@ -113,7 +111,6 @@ function writeBundleManifest(coreBuildIdentity: LocalCoreBuildIdentityV1): void 
       version: "kestrel_cli_bundle_v1",
       package: rootPackageJson.name,
       packageVersion: rootPackageJson.version,
-      sourceCommit,
       coreBuildId: coreBuildIdentity.buildId,
       coreBuildManifest: "libexec/kestrel-core-build.json",
       platform: TARGET_PLATFORM,
@@ -129,18 +126,6 @@ function writeArtifactDigest(): void {
   const digest = createHash("sha256").update(readFileSync(artifactPath)).digest("hex");
   writeFileSync(`${artifactPath}.sha256`, `${digest}  ${path.basename(artifactPath)}\n`, "utf8");
   console.log(`[cli] sha256 ${digest}`);
-}
-
-function readSourceCommit(): string {
-  try {
-    return execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    throw new Error("Unable to determine Kestrel source commit; set KESTREL_SOURCE_COMMIT explicitly.");
-  }
 }
 
 function writeCliRuntimeManifest(): void {

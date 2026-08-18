@@ -89,10 +89,6 @@ writeFileSync(
   `${JSON.stringify(
     {
       schema: "desktop-ota-fixtures-v1",
-      sourceCommit: execFileSync("git", ["rev-parse", "HEAD"], {
-        cwd: repoRoot,
-        encoding: "utf8",
-      }).trim(),
       fixtures,
     },
     null,
