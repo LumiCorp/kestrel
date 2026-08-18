@@ -257,7 +257,7 @@ test(
   },
 );
 
-test("version 10 App defaults split built-ins from conversation workflows", async () => {
+test("legacy App defaults discard retired workflow IDs during plugin migration", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-app-migration-"));
   const settingsPath = path.join(tempDir, "desktop-settings.json");
   await writeFile(settingsPath, `${JSON.stringify({
@@ -271,10 +271,11 @@ test("version 10 App defaults split built-ins from conversation workflows", asyn
   }, null, 2)}\n`, "utf8");
   const restored = await readDesktopSettings(settingsPath);
   assert.deepEqual(restored.defaultEnabledBuiltInAppIds, ["built_in.weather"]);
-  assert.deepEqual(restored.legacyDefaultWorkflowAppIds, ["workflow.software_delivery"]);
+  assert.equal("legacyDefaultWorkflowAppIds" in restored, false);
+  assert.equal(restored.plugins.some((plugin) => plugin.id.startsWith("workflow.")), false);
 });
 
-test("active Local Core settings normalization migrates legacy App defaults", () => {
+test("active Local Core settings normalization discards retired workflow IDs", () => {
   const restored = normalizeDesktopSettings({
     defaultEnabledAppIds: [
       "built_in.weather",
@@ -285,7 +286,8 @@ test("active Local Core settings normalization migrates legacy App defaults", ()
   });
 
   assert.deepEqual(restored.defaultEnabledBuiltInAppIds, ["built_in.weather"]);
-  assert.deepEqual(restored.legacyDefaultWorkflowAppIds, ["workflow.software_delivery"]);
+  assert.equal("legacyDefaultWorkflowAppIds" in restored, false);
+  assert.equal(restored.plugins.some((plugin) => plugin.id.startsWith("workflow.")), false);
 });
 
 test(
@@ -462,7 +464,7 @@ test(
     assert.equal(restored.openaiModel, "gpt-5.4-2026-03-05");
     assert.equal(restored.tavilyApiKey, undefined);
     assert.deepEqual(restored.projects, saved.projects);
-    assert.match(raw, /"version": 11/u);
+    assert.match(raw, /"version": 12/u);
     assert.match(raw, /"selectedProvider": "openai"/u);
     assert.match(raw, /"databaseMode": "default"/u);
     assert.equal(raw.includes("openai-key"), false);
@@ -504,7 +506,7 @@ test(
     assert.equal(saved.databaseUrl, undefined);
     assert.equal(restored.databaseMode, "external");
     assert.equal(restored.databaseUrl, undefined);
-    assert.match(raw, /"version": 11/u);
+    assert.match(raw, /"version": 12/u);
     assert.match(raw, /"databaseMode": "external"/u);
     assert.equal(raw.includes("user:password"), false);
   },
