@@ -22,8 +22,14 @@ import {
   verifyEnvironmentToolCredential,
   verifyPreviewEdgeRouteTicket,
   verifyPreviewRelayTicket,
+  WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_MS,
+  WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_SECONDS,
+  WORKSPACE_MACHINE_HEALTH_TIMEOUT_MS,
+  WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
   WORKSPACE_READINESS_TIMEOUT_MS,
   WORKSPACE_READINESS_TIMEOUT_SECONDS,
+  WORKSPACE_RUNNER_STARTUP_TIMEOUT_MS,
+  WORKSPACE_RUNNER_STARTUP_TIMEOUT_SECONDS,
   type EnvironmentExecutionTicket,
   type EnvironmentToolCredentialTicket,
 } from "../src/index.js";
@@ -75,8 +81,23 @@ const providerNeutralTicket: EnvironmentExecutionTicket = {
 };
 
 test(
-  "Workspace readiness uses the shared 120 second budget",
+  "Workspace readiness layers have explicit increasing recovery budgets",
   () => {
+    assert.equal(WORKSPACE_RUNNER_STARTUP_TIMEOUT_SECONDS, 300);
+    assert.equal(WORKSPACE_RUNNER_STARTUP_TIMEOUT_MS, 300_000);
+    assert.equal(WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS, 360);
+    assert.equal(WORKSPACE_MACHINE_HEALTH_TIMEOUT_MS, 360_000);
+    assert.equal(WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_SECONDS, 420);
+    assert.equal(WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_MS, 420_000);
+    assert.ok(
+      WORKSPACE_RUNNER_STARTUP_TIMEOUT_MS < WORKSPACE_MACHINE_HEALTH_TIMEOUT_MS,
+    );
+    assert.ok(
+      WORKSPACE_MACHINE_HEALTH_TIMEOUT_MS <
+        WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_MS,
+    );
+
+    // Deprecated compatibility aliases retain their original contract.
     assert.equal(WORKSPACE_READINESS_TIMEOUT_SECONDS, 120);
     assert.equal(
       WORKSPACE_READINESS_TIMEOUT_MS,

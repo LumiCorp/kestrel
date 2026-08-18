@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
-import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
+import { WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
@@ -280,7 +280,7 @@ async function reconcileOrganizationEnvironments(input: {
             appName,
             machineId,
             checkName: "workspace",
-            timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+            timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
           }),
       });
       if (readiness.status === "degraded") {

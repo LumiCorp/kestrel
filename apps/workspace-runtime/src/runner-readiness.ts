@@ -1,3 +1,5 @@
+import { WORKSPACE_RUNNER_STARTUP_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
+
 export type WorkspaceRunnerReadinessEvent =
   | { type: "workspace.runner.starting" }
   | { type: "workspace.runner.ready" }
@@ -17,6 +19,32 @@ export type WorkspaceRunnerReadinessState =
 export interface WorkspaceRunnerProcess {
   kill(signal: "SIGTERM" | "SIGKILL"): boolean;
   once(event: "exit", listener: (code: number | null) => void): this;
+}
+
+export async function waitForWorkspaceRunnerHealth(input: {
+  probe: () => Promise<unknown>;
+  timeoutMs?: number | undefined;
+  pollIntervalMs?: number | undefined;
+  now?: (() => number) | undefined;
+  sleep?: ((delayMs: number) => Promise<void>) | undefined;
+}): Promise<boolean> {
+  const now = input.now ?? Date.now;
+  const sleep = input.sleep ?? ((delayMs: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+  const deadline = now() +
+    (input.timeoutMs ?? WORKSPACE_RUNNER_STARTUP_TIMEOUT_MS);
+  const pollIntervalMs = input.pollIntervalMs ?? 100;
+  while (now() < deadline) {
+    try {
+      await input.probe();
+      return true;
+    } catch {
+      const remainingMs = deadline - now();
+      if (remainingMs <= 0) break;
+      await sleep(Math.min(pollIntervalMs, remainingMs));
+    }
+  }
+  return false;
 }
 
 export function workspaceRunnerHealthStatus(
@@ -92,9 +120,7 @@ export function createWorkspaceRunnerReadiness(input: {
           reason: "exit",
           exitCode: code,
         });
-        if (code !== 0) {
-          input.onFatalExit(code ?? 1);
-        }
+        input.onFatalExit(code === null || code === 0 ? 1 : code);
       });
     }
     if (!ready) {

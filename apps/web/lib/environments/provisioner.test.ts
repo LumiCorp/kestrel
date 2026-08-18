@@ -104,6 +104,7 @@ function fixture(
   result: Record<string, unknown> | null = null,
 ) {
   const calls: string[] = [];
+  const workspaceReadinessTimeouts: number[] = [];
   let operation: ProvisioningOperation | null = {
     id: "operation-id",
     attempt: 1,
@@ -302,11 +303,17 @@ function fixture(
     async listEnvironmentResources() {
       return { machines: [], volumes: [] };
     },
-    async waitForMachine() {
+    async waitForMachine(input) {
       calls.push("provider:wait");
+      if (input.state === "started" && input.timeoutSeconds !== undefined) {
+        workspaceReadinessTimeouts.push(input.timeoutSeconds);
+      }
     },
-    async waitForMachineHealth() {
+    async waitForMachineHealth(input) {
       calls.push("provider:health");
+      if (input.checkName === "workspace" && input.timeoutSeconds !== undefined) {
+        workspaceReadinessTimeouts.push(input.timeoutSeconds);
+      }
     },
     async createVolumeSnapshot() {
       return { id: "snapshot-id", state: "prepare" };
@@ -315,7 +322,7 @@ function fixture(
       return { id: "machine-id", state: "started", region: "iad" };
     },
   };
-  return { repository, provider, calls };
+  return { repository, provider, calls, workspaceReadinessTimeouts };
 }
 
 function createProvisioner(
@@ -918,7 +925,7 @@ test("Environment updates report Workspaces that require provisioning recovery",
 });
 
 test("Workspace provisioning persists provider resources only after readiness", async () => {
-  const { repository, provider, calls } = fixture(
+  const { repository, provider, calls, workspaceReadinessTimeouts } = fixture(
     "workspace.provision",
     "workspace-id",
   );
@@ -937,6 +944,7 @@ test("Workspace provisioning persists provider resources only after readiness", 
     "workspace:ready",
     "operation:completed",
   ]);
+  assert.deepEqual(workspaceReadinessTimeouts, [360, 360]);
 });
 
 test("Workspace provisioning removes provisional resources after readiness failure", async () => {

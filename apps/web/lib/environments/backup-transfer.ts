@@ -1,4 +1,4 @@
-import { WORKSPACE_READINESS_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
+import { WORKSPACE_MACHINE_HEALTH_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 
@@ -122,7 +122,7 @@ export async function waitForWorkspaceService(
 ) {
   const fetchImpl = input.fetchImpl ?? fetch;
   const deadline =
-    Date.now() + (input.timeoutMs ?? WORKSPACE_READINESS_TIMEOUT_MS);
+    Date.now() + (input.timeoutMs ?? WORKSPACE_MACHINE_HEALTH_TIMEOUT_MS);
   while (Date.now() < deadline) {
     const current = route();
     const response = await fetchImpl(new URL("/v1/apps", current.baseUrl), {
