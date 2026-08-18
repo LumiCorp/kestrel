@@ -3689,9 +3689,6 @@ function createRuntimeWithStore(
       await closeRuntimeResources(
         toolRegistry.close.bind(toolRegistry),
         closeStore,
-        devShellService instanceof LocalDevShellService
-          ? devShellService.close.bind(devShellService)
-          : undefined,
       );
     },
   };
@@ -4304,7 +4301,6 @@ function normalizeOptionalPositiveInt(value: unknown): number | undefined {
 export async function closeRuntimeResources(
   closeToolRegistry: () => Promise<void>,
   closePool: () => Promise<void>,
-  closeDevShellService?: (() => Promise<void>) | undefined,
 ): Promise<void> {
   const errors: Error[] = [];
 
@@ -4312,14 +4308,6 @@ export async function closeRuntimeResources(
     await closeToolRegistry();
   } catch (error) {
     errors.push(asError(error, "toolRegistry.close failed"));
-  }
-
-  if (closeDevShellService !== undefined) {
-    try {
-      await closeDevShellService();
-    } catch (error) {
-      errors.push(asError(error, "devShellService.close failed"));
-    }
   }
 
   try {
