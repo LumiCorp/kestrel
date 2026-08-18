@@ -13,6 +13,7 @@ test("Qwen3 bootstrap is immutable, scale-to-zero, and cost bounded", () => {
   assert.equal(profile.expectedModelId, "Qwen/Qwen3-8B");
   assert.equal(profile.templateSpec.env.ENABLE_AUTO_TOOL_CHOICE, "true");
   assert.equal(profile.templateSpec.env.TOOL_CALL_PARSER, "hermes");
+  assert.equal(profile.templateSpec.env.MAX_MODEL_LEN, "32768");
   assert.equal(
     profile.templateSpec.env.OPENAI_SERVED_MODEL_NAME_OVERRIDE,
     "Qwen/Qwen3-8B"
