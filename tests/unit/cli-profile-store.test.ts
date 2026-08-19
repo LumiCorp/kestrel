@@ -528,6 +528,21 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
       provider: "openai",
     },
     modelCapabilities: { visionInputEnabled: true },
+    modelEconomicsProfile: {
+      version: 1,
+      profileId: "openrouter:z-ai/glm-5.2:free:v1",
+      provider: "openrouter",
+      model: "z-ai/glm-5.2:free",
+      contextWindowTokens: 202_752,
+      maxOutputTokens: 65_536,
+      counting: {
+        counter: "utf8-byte-upper-bound",
+        counterVersion: "1",
+        method: "conservative_estimate",
+        confidence: "conservative",
+      },
+      cache: { behavior: "none" },
+    },
     agentStageConfig: { modelByStage: { "agent.loop": "gpt-5.1" } },
     modelTimeoutMs: 120_000,
     storeDriver: "postgres",
@@ -552,6 +567,7 @@ test("Kestrel managed configuration parser validates SDK supplied overlays", () 
   assert.equal(parsed.modelProvider, "openai");
   assert.equal(parsed.modelCredential?.gatewayId, "gateway_123");
   assert.equal(parsed.modelCapabilities?.visionInputEnabled, true);
+  assert.equal(parsed.modelEconomicsProfile?.model, "z-ai/glm-5.2:free");
   assert.equal(
     parsed.kestrelOneAppApprovalModes?.[
       "kestrel_one.search_knowledge_documents"

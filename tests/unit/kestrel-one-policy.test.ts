@@ -400,6 +400,46 @@ test("hosted execution preflight requires one internally consistent exact econom
   );
 });
 
+test("approved model economics profiles are carried into hosted Kestrel composition", () => {
+  const modelEconomicsProfile = {
+    version: 1 as const,
+    profileId: "openrouter:z-ai/glm-5.2:free:v1",
+    provider: "openrouter",
+    model: "z-ai/glm-5.2:free",
+    contextWindowTokens: 202_752,
+    maxOutputTokens: 65_536,
+    counting: {
+      counter: "utf8-byte-upper-bound",
+      counterVersion: "1",
+      method: "conservative_estimate" as const,
+      confidence: "conservative" as const,
+    },
+    cache: { behavior: "none" as const },
+  };
+  const profile = composeKestrelOneProfile({
+    environmentPresetId: "workspace_hosted",
+    overlay: {
+      ...hostedCredential(modelEconomicsProfile.model),
+      modelProvider: modelEconomicsProfile.provider as "openrouter",
+      model: modelEconomicsProfile.model,
+      modelEconomicsProfile,
+    },
+  }).profile;
+
+  assert.deepEqual(
+    profile.harnessEconomics?.modelProfiles.find(
+      (candidate) => candidate.model === modelEconomicsProfile.model,
+    ),
+    modelEconomicsProfile,
+  );
+  assert.doesNotThrow(() =>
+    assertKestrelExecutionProfileEconomicsAdmission({
+      profile,
+      environmentPresetId: "workspace_hosted",
+    }),
+  );
+});
+
 test("canonical Kestrel policy accepts explicit hosted capability tools", () => {
   const hosted = composeKestrelOneProfile({
     environmentPresetId: "workspace_hosted",

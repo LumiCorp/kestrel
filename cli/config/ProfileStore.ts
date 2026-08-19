@@ -6,7 +6,10 @@ import { DEFAULT_CODE_MODE_DISABLED_CONFIG } from "../../src/code/contracts.js";
 import type { DevShellProfileConfig } from "../../src/devshell/contracts.js";
 import { DEFAULT_DEV_SHELL_DISABLED_CONFIG } from "../../src/devshell/contracts.js";
 import type { GuardrailConfig } from "../../src/kestrel/contracts/execution.js";
-import { parseHarnessEconomicsControlV1 } from "../../src/economics/policy.js";
+import {
+  parseHarnessEconomicsControlV1,
+  parseModelEconomicsProfileV1,
+} from "../../src/economics/policy.js";
 import { parseRuntimeEvaluationPolicyV1 } from "../../src/kestrel/contracts/evaluation.js";
 import type { McpServerConfig } from "../../src/mcp/contracts.js";
 import {
@@ -868,6 +871,7 @@ const KESTREL_MANAGED_CONFIGURATION_FIELDS = new Set([
   "modelCredential",
   "evaluationPolicy",
   "modelCapabilities",
+  "modelEconomicsProfile",
   "agentStageConfig",
   "modelTimeoutMs",
   "storeDriver",
@@ -935,6 +939,13 @@ export function parseKestrelManagedConfiguration(
           modelCapabilities: parseModelCapabilities(
             record.modelCapabilities,
             KESTREL_ONE_POLICY_ID,
+          ),
+        }
+      : {}),
+    ...(record.modelEconomicsProfile !== undefined
+      ? {
+          modelEconomicsProfile: parseModelEconomicsProfileV1(
+            record.modelEconomicsProfile,
           ),
         }
       : {}),
