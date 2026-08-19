@@ -51,7 +51,10 @@ import {
   type RunPodFetch,
   validateRunPodToolRoundTrip,
 } from "./runpod-connection-test";
-import { withGatewayModelEconomicsProfile } from "./model-economics-profile";
+import {
+  readGatewayModelEconomicsProfile,
+  withGatewayModelEconomicsProfile,
+} from "./model-economics-profile";
 
 export { GATEWAY_MODALITIES, GATEWAY_PROVIDERS };
 export type GatewayProvider = (typeof GATEWAY_PROVIDERS)[number];
@@ -1079,6 +1082,24 @@ export async function saveGatewayModel(input: {
           modality: input.modality,
         })
       : metadata;
+  if (
+    approved &&
+    input.modality === "language" &&
+    economicsProvider != null &&
+    isKestrelRuntimeLanguageProvider(gatewayProvider as GatewayProvider) &&
+    readGatewayModelEconomicsProfile(economicsMetadata, {
+      provider: economicsProvider,
+      model: input.rawModelId,
+    }) === undefined
+  ) {
+    console.warn("Approved hosted gateway model has no economics profile", {
+      organizationId: input.organizationId,
+      gatewayId: input.gatewayId,
+      provider: economicsProvider,
+      model: input.rawModelId,
+      reason: "provider_capacity_metadata_missing",
+    });
+  }
 
   if (
     gatewayProvider === "runpod" &&

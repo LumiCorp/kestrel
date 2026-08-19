@@ -5,6 +5,7 @@ import {
   GATEWAY_MODEL_ECONOMICS_PROFILE_KEY,
   withGatewayModelEconomicsProfile,
 } from "./model-economics-profile";
+import { planGatewayModelEconomicsProfileBackfill } from "./model-economics-profile-backfill";
 
 test("approved OpenRouter catalog models receive an exact economics profile", () => {
   const profile = createGatewayModelEconomicsProfile({
@@ -81,4 +82,93 @@ test("existing approved profiles survive an admin metadata edit", () => {
     metadata: { [GATEWAY_MODEL_ECONOMICS_PROFILE_KEY]: profile },
   });
   assert.deepEqual(metadata?.[GATEWAY_MODEL_ECONOMICS_PROFILE_KEY], profile);
+});
+
+test("invalid approved profiles are replaced when catalog capacity is available", () => {
+  const metadata = withGatewayModelEconomicsProfile({
+    metadata: {
+      context_length: 128_000,
+      top_provider: { max_completion_tokens: 16_000 },
+      [GATEWAY_MODEL_ECONOMICS_PROFILE_KEY]: {
+        version: 1,
+        provider: "openrouter",
+        model: "old-model",
+      },
+    },
+    provider: "openrouter",
+    model: "new-model",
+    approved: true,
+    modality: "language",
+  });
+
+  assert.equal(
+    (metadata?.[GATEWAY_MODEL_ECONOMICS_PROFILE_KEY] as { model: string })
+      .model,
+    "new-model",
+  );
+});
+
+test("backfill planning repairs catalog models and reports missing capacity", () => {
+  const plan = planGatewayModelEconomicsProfileBackfill([
+    {
+      id: "repairable",
+      organizationId: "org-1",
+      gatewayId: "gateway-1",
+      rawModelId: "z-ai/glm-5.2:free",
+      modality: "language",
+      approved: true,
+      metadata: {
+        context_length: 202_752,
+        top_provider: { max_completion_tokens: 65_536 },
+      },
+      gatewayProvider: "openrouter",
+    },
+    {
+      id: "unrepairable",
+      organizationId: "org-1",
+      gatewayId: "gateway-1",
+      rawModelId: "opaque-model",
+      modality: "language",
+      approved: true,
+      metadata: {},
+      gatewayProvider: "openrouter",
+    },
+  ]);
+
+  assert.equal(plan.repairable, 1);
+  assert.equal(plan.updates[0]?.profile.model, "z-ai/glm-5.2:free");
+  assert.deepEqual(plan.skipped, [
+    {
+      id: "unrepairable",
+      provider: "openrouter",
+      model: "opaque-model",
+      reason: "missing_capacity_metadata",
+    },
+  ]);
+});
+
+test("provider catalog field variants cover Lumi and RunPod OpenAI-compatible metadata", () => {
+  assert.equal(
+    createGatewayModelEconomicsProfile({
+      provider: "anthropic",
+      model: "claude-sonnet",
+      metadata: {
+        protocol: "anthropic",
+        max_input_tokens: 200_000,
+        max_output_tokens: 8192,
+      },
+    })?.provider,
+    "anthropic",
+  );
+  assert.equal(
+    createGatewayModelEconomicsProfile({
+      provider: "runpod",
+      model: "Qwen/Qwen3-32B",
+      metadata: {
+        contextWindowTokens: 32_768,
+        maxOutputTokens: 4096,
+      },
+    })?.maxOutputTokens,
+    4096,
+  );
 });

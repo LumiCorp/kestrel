@@ -80,11 +80,19 @@ export function readGatewayModelEconomicsProfile(
 ): GatewayModelEconomicsProfile | undefined {
   const candidate = asRecord(metadata)[GATEWAY_MODEL_ECONOMICS_PROFILE_KEY];
   const profile = asRecord(candidate);
+  const contextWindowTokens = positiveInteger(profile.contextWindowTokens);
+  const maxOutputTokens = positiveInteger(profile.maxOutputTokens);
   if (
     profile.provider !== input.provider ||
     profile.model !== input.model ||
     profile.version !== 1 ||
-    typeof profile.profileId !== "string"
+    profile.profileId !== `${input.provider}:${input.model}:v1` ||
+    contextWindowTokens === undefined ||
+    maxOutputTokens === undefined ||
+    maxOutputTokens >= contextWindowTokens ||
+    !isRecordWithStrings(profile.counting, ["counter", "counterVersion"]) ||
+    !isRecordWithStrings(profile.cache, ["behavior"]) ||
+    !isAllowedProfileValues(profile)
   ) {
     return;
   }
@@ -109,6 +117,9 @@ export function withGatewayModelEconomicsProfile(input: {
     provider: input.provider,
     model: input.model,
   });
+  if (Object.hasOwn(next, GATEWAY_MODEL_ECONOMICS_PROFILE_KEY) && !existing) {
+    delete next[GATEWAY_MODEL_ECONOMICS_PROFILE_KEY];
+  }
   const profile =
     existing ??
     createGatewayModelEconomicsProfile({
@@ -133,4 +144,26 @@ function positiveInteger(value: unknown): number | undefined {
     return;
   }
   return value;
+}
+
+function isRecordWithStrings(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, string> {
+  const record = asRecord(value);
+  return keys.every((key) => typeof record[key] === "string");
+}
+
+function isAllowedProfileValues(profile: Record<string, unknown>): boolean {
+  const counting = asRecord(profile.counting);
+  const cache = asRecord(profile.cache);
+  return (
+    counting.method === "conservative_estimate" ||
+    counting.method === "model_tokenizer"
+  ) &&
+    (counting.confidence === "conservative" ||
+      counting.confidence === "model_compatible") &&
+    (cache.behavior === "none" ||
+      cache.behavior === "provider_automatic" ||
+      cache.behavior === "anthropic_ephemeral");
 }
