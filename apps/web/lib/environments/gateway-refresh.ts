@@ -8,6 +8,7 @@ import { knowledgeDb } from "@/lib/knowledge/db";
 export async function refreshEnvironmentGateway(input: {
   organizationId: string;
   environmentId: string;
+  expectedRouteGeneration?: string | undefined;
 }) {
   const environment = await knowledgeDb.query.environments.findFirst({
     where: (table, { and, eq }) => and(
@@ -48,9 +49,36 @@ export async function refreshEnvironmentGateway(input: {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
       cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
     }
   );
   if (!response.ok) {
     throw new Error(`Environment gateway refresh failed (${response.status}).`);
   }
+  const result = await response.json().catch(() => null) as unknown;
+  if (
+    input.expectedRouteGeneration !== undefined &&
+    (!isRecord(result) || result.ok !== true)
+  ) {
+    throw new Error("Environment gateway refresh returned an invalid acknowledgement.");
+  }
+  const routeGeneration = isRecord(result) && typeof result.routeGeneration === "string"
+    ? result.routeGeneration
+    : null;
+  if (
+    input.expectedRouteGeneration !== undefined &&
+    routeGeneration !== input.expectedRouteGeneration
+  ) {
+    throw new Error("Environment gateway acknowledged an unexpected route generation.");
+  }
+  return {
+    revision: isRecord(result) && typeof result.revision === "string" ? result.revision : null,
+    gatewayId: isRecord(result) && typeof result.gatewayId === "string" ? result.gatewayId : null,
+    routeGeneration,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

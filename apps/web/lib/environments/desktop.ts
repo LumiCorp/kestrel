@@ -1,11 +1,14 @@
+import { randomBytes } from "node:crypto";
 import {
-  createHash,
-  createPublicKey,
-  randomBytes,
-  timingSafeEqual,
-  verify,
-} from "node:crypto";
-import {
+  CONNECTOR_CREDENTIAL_ROTATION_MS,
+  CONNECTOR_ENROLLMENT_TTL_MS,
+  CONNECTOR_NONCE_TTL_MS,
+  CONNECTOR_PREVIOUS_CREDENTIAL_GRACE_MS,
+  CONNECTOR_REQUEST_SKEW_SECONDS,
+  connectorSecretMatches,
+  hashConnectorSecret,
+  normalizeConnectorSigningPublicKey,
+  verifyConnectorRequestSignature,
   desktopCredentialEnvelopeContext,
   encryptDesktopCredential,
   ENVIRONMENT_ROUTER_AUDIENCE,
@@ -39,11 +42,6 @@ import {
   EXECUTION_AUTHORIZATION_RENEWAL_VERSION,
 } from "./authorization-renewal";
 
-const ENROLLMENT_TTL_MS = 10 * 60_000;
-const CONNECTOR_REQUEST_SKEW_SECONDS = 60;
-const CONNECTOR_NONCE_TTL_MS = 5 * 60_000;
-const CONNECTOR_CREDENTIAL_ROTATION_MS = 12 * 60 * 60_000;
-const CONNECTOR_PREVIOUS_CREDENTIAL_GRACE_MS = 5 * 60_000;
 const COMMAND_LEASE_MS = 90_000;
 export const DESKTOP_ENVIRONMENTS_FEATURE_KEY = "desktop_environments";
 const DESKTOP_ROUTE_CAPABILITIES = [
@@ -137,7 +135,7 @@ export type DesktopConnectorAuthorization = {
 
 export async function createDesktopEnrollmentRequest(input: unknown) {
   const parsed = createDesktopEnrollmentRequestSchema.parse(input);
-  const publicKey = normalizeEd25519PublicKey(parsed.publicKey);
+  const publicKey = normalizeConnectorSigningPublicKey(parsed.publicKey);
   const encryptionPublicKey = normalizeDesktopCredentialEncryptionPublicKey(
     parsed.encryptionPublicKey,
   );
@@ -153,7 +151,7 @@ export async function createDesktopEnrollmentRequest(input: unknown) {
       fingerprint: publicKey.fingerprint,
       desktopName: parsed.desktopName,
       status: "pending",
-      expiresAt: new Date(now.getTime() + ENROLLMENT_TTL_MS),
+      expiresAt: new Date(now.getTime() + CONNECTOR_ENROLLMENT_TTL_MS),
       createdAt: now,
       updatedAt: now,
     })
@@ -418,27 +416,16 @@ export async function authorizeDesktopConnector(input: {
   }
   await assertDesktopEnvironmentsEnabled(connection.organizationId);
   const pathname = new URL(input.request.url).pathname;
-  const digest = createHash("sha256").update(input.bodyText).digest("hex");
-  const signingInput = [
-    input.request.method.toUpperCase(),
-    pathname,
-    String(timestamp),
-    nonce,
-    digest,
-  ].join("\n");
-  let signature: Buffer;
-  try {
-    signature = Buffer.from(signatureValue, "base64url");
-  } catch {
-    throw new DesktopConnectorAuthError("DESKTOP_CONNECTOR_SIGNATURE_INVALID");
-  }
   if (
-    !verify(
-      null,
-      Buffer.from(signingInput),
-      createPublicKey(connection.publicKey),
-      signature,
-    )
+    !verifyConnectorRequestSignature({
+      publicKey: connection.publicKey,
+      signature: signatureValue,
+      method: input.request.method,
+      path: pathname,
+      timestamp,
+      nonce,
+      bodyText: input.bodyText,
+    })
   ) {
     throw new DesktopConnectorAuthError("DESKTOP_CONNECTOR_SIGNATURE_INVALID");
   }
@@ -1373,31 +1360,12 @@ async function requireClaimedCommand(input: {
   return command;
 }
 
-function normalizeEd25519PublicKey(value: string) {
-  try {
-    const key = createPublicKey(value);
-    if (key.asymmetricKeyType !== "ed25519") {
-      throw new Error("not ed25519");
-    }
-    const pem = key.export({ type: "spki", format: "pem" }).toString();
-    const der = key.export({ type: "spki", format: "der" });
-    return {
-      pem,
-      fingerprint: createHash("sha256").update(der).digest("hex"),
-    };
-  } catch {
-    throw new Error("Desktop enrollment public key must be Ed25519.");
-  }
-}
-
 function hashSecret(secret: string) {
-  return createHash("sha256").update(secret).digest("hex");
+  return hashConnectorSecret(secret);
 }
 
 function secretMatches(secret: string, expectedHash: string) {
-  const actual = Buffer.from(hashSecret(secret), "hex");
-  const expected = Buffer.from(expectedHash, "hex");
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+  return connectorSecretMatches(secret, expectedHash);
 }
 
 export class DesktopConnectorAuthError extends Error {

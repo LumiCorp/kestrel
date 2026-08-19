@@ -5,19 +5,18 @@ import { once } from "node:events";
 import { createServer, request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import {
-  ENVIRONMENT_GATEWAY_CONFIG_VERSION,
   EnvironmentGatewayConfigParseError,
   type EnvironmentGatewayConfig,
   PREVIEW_EDGE_AUTHORIZATION_HEADER,
   PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
-  PREVIEW_EDGE_ROUTE_TICKET_VERSION,
+  PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION,
   signPreviewEdgeRouteTicket,
 } from "@lumi/kestrel-environment-auth";
 import { EnvironmentGatewayConfigClient } from "../src/gateway-config.js";
 import { PreviewRelay } from "../src/preview-relay.js";
 
 test(
-  "Kestrel Edge requires an exact signed route for HTTP and WebSocket traffic",
+  "logical gateway configuration requires an exact signed route for HTTP and WebSocket traffic",
   async () => {
     const keys = generateKeyPairSync("ed25519");
     const privateKey = keys.privateKey
@@ -67,17 +66,28 @@ test(
       }),
     });
     const config: EnvironmentGatewayConfig = {
-      version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+      version: 4,
       environmentId: "environment-edge",
+      gatewayId: "gateway-resource-edge",
       revision: "edge",
-      workspaces: [],
+      routeGeneration: "generation-edge",
+      workspaces: [{
+        id: "workspace-edge",
+        serviceTokenHash: "A".repeat(43),
+        backend: {
+          kind: "private_dns",
+          hostname: "workspace-edge.namespace.svc.cluster.local",
+          port: 43_104,
+          computeResourceId: "compute-resource-edge",
+          desiredRevision: "sha256:image",
+        },
+      }],
       modelGrants: [],
       appGrants: [],
       previews: [
         {
           id: "preview-edge",
           workspaceId: "workspace-edge",
-          machineId: "machine-edge",
           hostname,
           port: 5173,
           expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -105,12 +115,12 @@ test(
     const authorization = `Bearer ${signPreviewEdgeRouteTicket({
       privateKey,
       ticket: {
-        version: PREVIEW_EDGE_ROUTE_TICKET_VERSION,
+        version: PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION,
         audience: PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
         organizationId: "organization-edge",
         environmentId: "environment-edge",
         workspaceId: "workspace-edge",
-        flyAppName: "kestrel-env-edge",
+        gatewayId: "gateway-resource-edge",
         previewId: "preview-edge",
         hostname,
         issuedAt: now,
@@ -172,7 +182,7 @@ test(
   "gateway configuration v3 accepts v2 during rollout and rejects retired provider fields",
   async () => {
     const baseConfig = {
-      version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+      version: 3,
       environmentId: "environment-1",
       revision: "edge-only",
       workspaces: [
@@ -240,10 +250,10 @@ test(
 );
 
 test(
-  "gateway configuration remains available when a relay listener fails",
+  "gateway configuration activation fails atomically when a relay listener fails",
   async () => {
     const config: EnvironmentGatewayConfig = {
-      version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+      version: 3,
       environmentId: "environment-1",
       revision: "one",
       workspaces: [],
@@ -256,8 +266,8 @@ test(
       throw new Error("preview relay unavailable");
     });
 
-    assert.deepEqual(await client.refresh(), config);
-    assert.deepEqual(client.snapshot, config);
+    await assert.rejects(client.refresh(), /preview relay unavailable/u);
+    assert.equal(client.snapshot, null);
     client.stop();
   },
 );
@@ -278,7 +288,7 @@ test(
         fetchCount += 1;
         if (fetchCount === 1) await firstBlocked;
         return Response.json({
-          version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+          version: 3,
           environmentId: "environment-1",
           revision: String(fetchCount),
           workspaces: [],

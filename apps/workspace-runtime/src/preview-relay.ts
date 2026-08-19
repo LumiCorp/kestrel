@@ -3,6 +3,7 @@ import { connect as connectTcp } from "node:net";
 import type { Duplex } from "node:stream";
 import {
   getFlyPreviewRelayTarget,
+  getLogicalPreviewRelayTarget,
   verifyPreviewRelayTicket,
   type PreviewRelayTicket,
 } from "@lumi/kestrel-environment-auth";
@@ -12,7 +13,7 @@ type RelayScope = {
   organizationId: string;
   environmentId: string;
   workspaceId: string;
-  machineId: string;
+  machineId?: string | undefined;
 };
 
 export function isPreviewRelayRequest(url: string | undefined) {
@@ -65,11 +66,12 @@ function authorizeRelay(request: IncomingMessage, scope: RelayScope) {
   if (!(token && match?.[1])) throw new Error("denied");
   const ticket = verifyPreviewRelayTicket({ token, publicKey: scope.publicKey });
   const target = getFlyPreviewRelayTarget(ticket);
+  const logicalTarget = getLogicalPreviewRelayTarget(ticket);
   if (
     ticket.organizationId !== scope.organizationId ||
     ticket.environmentId !== scope.environmentId ||
     ticket.workspaceId !== scope.workspaceId ||
-    target?.machineId !== scope.machineId ||
+    !(logicalTarget || (target && scope.machineId && target.machineId === scope.machineId)) ||
     ticket.previewId !== decodeURIComponent(match[1])
   ) throw new Error("denied");
   const suffix = match[2] ?? "";

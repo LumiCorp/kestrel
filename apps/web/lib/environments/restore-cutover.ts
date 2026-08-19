@@ -37,6 +37,36 @@ export function workspaceRestoreResourceIdentities(input: {
   };
 }
 
+export function selectPromotedWorkspaceRestoreReplay<
+  Operation extends { input: unknown; result: unknown },
+>(input: {
+  backupId: string;
+  currentMachineId: string;
+  currentVolumeId: string;
+  operations: readonly Operation[];
+}) {
+  return input.operations.find((operation) => {
+    const operationInput = record(operation.input);
+    const result = record(operation.result);
+    return (
+      stringValue(operationInput?.backupId) === input.backupId &&
+      stringValue(result?.replacementMachineId) === input.currentMachineId &&
+      stringValue(result?.replacementVolumeId) === input.currentVolumeId &&
+      Boolean(stringValue(result?.oldMachineId) && stringValue(result?.oldVolumeId))
+    );
+  }) ?? null;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
 export function selectWorkspaceBackupRecoverySource(input: {
   manifest: unknown;
   objectKey: string | null;

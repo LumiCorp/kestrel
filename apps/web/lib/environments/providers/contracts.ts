@@ -8,6 +8,63 @@ export const KESTREL_WORKSPACE_STOP_CONFIG = {
   timeout: 120_000_000_000,
 } as const;
 
+export const REQUIRED_ENVIRONMENT_PROVIDER_CAPABILITIES = [
+  "environment_scope",
+  "public_gateway",
+  "private_workspace_routing",
+  "workspace_compute",
+  "workspace_start_stop",
+  "persistent_workspace_storage",
+  "volume_snapshots",
+  "immutable_image_updates",
+  "health_readiness",
+  "resource_inventory",
+  "regional_placement",
+] as const;
+
+export type EnvironmentProviderCapability =
+  (typeof REQUIRED_ENVIRONMENT_PROVIDER_CAPABILITIES)[number];
+
+export type EnvironmentProviderDescriptor = {
+  id: string;
+  label: string;
+  capabilities: readonly EnvironmentProviderCapability[];
+  evidence:
+    | "implementation"
+    | "api_discovery"
+    | "cluster_preflight"
+    | "isolated_provider"
+    | "pilot"
+    | "production";
+};
+
+export class EnvironmentProviderCompatibilityError extends Error {
+  readonly code = "ENVIRONMENT_PROVIDER_INCOMPATIBLE";
+
+  constructor(
+    readonly providerId: string,
+    readonly missingCapabilities: readonly EnvironmentProviderCapability[],
+  ) {
+    super(
+      `Environment provider '${providerId}' is missing required capabilities: ${missingCapabilities.join(", ")}.`,
+    );
+    this.name = "EnvironmentProviderCompatibilityError";
+  }
+}
+
+export function assertEnvironmentProviderCompatibility(
+  descriptor: EnvironmentProviderDescriptor,
+) {
+  const supported = new Set(descriptor.capabilities);
+  const missing = REQUIRED_ENVIRONMENT_PROVIDER_CAPABILITIES.filter(
+    (capability) => !supported.has(capability),
+  );
+  if (missing.length > 0) {
+    throw new EnvironmentProviderCompatibilityError(descriptor.id, missing);
+  }
+  return descriptor;
+}
+
 export type EnvironmentProviderMachineStopConfig = {
   signal: string;
   timeout: number;
@@ -97,7 +154,9 @@ export type WorkspaceMachineProvisioningInput = {
 };
 
 export interface EnvironmentInfrastructureProvider {
+  readonly descriptor: EnvironmentProviderDescriptor;
   ensureEnvironmentApp(input: {
+    environmentId?: string | undefined;
     appName: string;
     networkName: string;
   }): Promise<EnvironmentProviderApp>;
@@ -213,3 +272,7 @@ export class EnvironmentProviderError extends Error {
     }
   }
 }
+
+export * from "./contracts-v2";
+export * from "./connector-contracts";
+export * from "./kubernetes-byoc-profile";

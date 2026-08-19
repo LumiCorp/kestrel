@@ -2,16 +2,26 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 export const WORKSPACE_IDLE_NOTIFICATION_VERSION =
+  "workspace-idle-notification-v2" as const;
+export const WORKSPACE_IDLE_NOTIFICATION_V1_VERSION =
   "workspace-idle-notification-v1" as const;
 
-export const workspaceIdleNotificationSchema = z.object({
-  version: z.literal(WORKSPACE_IDLE_NOTIFICATION_VERSION),
+const workspaceIdleNotificationBaseSchema = z.object({
   organizationId: z.string().trim().min(1).max(255),
   environmentId: z.string().uuid(),
   workspaceId: z.string().uuid(),
-  machineId: z.string().trim().min(1).max(128),
   lastActivityAt: z.string().datetime(),
 });
+
+export const workspaceIdleNotificationSchema = z.discriminatedUnion("version", [
+  workspaceIdleNotificationBaseSchema.extend({
+    version: z.literal(WORKSPACE_IDLE_NOTIFICATION_V1_VERSION),
+    machineId: z.string().trim().min(1).max(128),
+  }).strict(),
+  workspaceIdleNotificationBaseSchema.extend({
+    version: z.literal(WORKSPACE_IDLE_NOTIFICATION_VERSION),
+  }).strict(),
+]);
 
 export type WorkspaceIdleNotification = z.infer<
   typeof workspaceIdleNotificationSchema

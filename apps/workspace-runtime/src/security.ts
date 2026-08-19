@@ -3,6 +3,7 @@ import { realpath } from "node:fs/promises";
 import {
   EnvironmentTicketError,
   getFlyEnvironmentExecutionTarget,
+  getGatewayEnvironmentExecutionTarget,
   verifyEnvironmentExecutionTicket,
   type EnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
@@ -13,7 +14,7 @@ export function authorizeWorkspaceRequest(input: {
   workspaceId: string;
   organizationId: string;
   environmentId: string;
-  machineId: string;
+  machineId?: string | undefined;
   now?: number;
 }): EnvironmentExecutionTicket {
   const match = input.authorization?.match(/^Bearer ([^\s]+)$/u);
@@ -34,11 +35,12 @@ export function authorizeWorkspaceRequest(input: {
     );
   }
   const target = getFlyEnvironmentExecutionTarget(ticket);
+  const gateway = getGatewayEnvironmentExecutionTarget(ticket);
   if (
     ticket.workspaceId !== input.workspaceId ||
     ticket.organizationId !== input.organizationId ||
     ticket.environmentId !== input.environmentId ||
-    target?.machineId !== input.machineId
+    !(gateway || (target && input.machineId && target.machineId === input.machineId))
   ) {
     throw new WorkspaceRequestError(403, "WORKSPACE_SCOPE_MISMATCH");
   }

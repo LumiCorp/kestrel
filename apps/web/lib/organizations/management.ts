@@ -19,8 +19,8 @@ export type OrganizationManagementWorkspace = {
 export type OrganizationManagementEnvironment = {
   id: string;
   name: string;
-  provider: "fly" | "desktop";
-  region: string;
+  provider: "fly" | "desktop" | "kubernetes";
+  region: string | null;
   status: string;
   isDefault: boolean;
   runtimeTemplate: string;

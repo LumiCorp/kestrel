@@ -1,13 +1,15 @@
 import {
   EnvironmentTicketError,
   getFlyEnvironmentExecutionTarget,
+  getGatewayEnvironmentExecutionTarget,
   verifyEnvironmentExecutionTicket,
+  type EnvironmentGatewayConfig,
   type EnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
 
 export type RouterDecision =
   | { status: 200; targetUrl: string; ticket: EnvironmentExecutionTicket }
-  | { status: 400 | 401 | 403; code: string };
+  | { status: 400 | 401 | 403 | 503; code: string };
 
 export function authorizeEnvironmentHttpRequest(input: {
   authorization: string | undefined;
@@ -15,12 +17,14 @@ export function authorizeEnvironmentHttpRequest(input: {
   method: string;
   publicKey: string;
   expectedAppName?: string | undefined;
+  gatewayConfig?: EnvironmentGatewayConfig | null | undefined;
   now?: number;
 }): RouterDecision {
   const verified = verifyBearer({
     authorization: input.authorization,
     publicKey: input.publicKey,
     expectedAppName: input.expectedAppName,
+    gatewayConfig: input.gatewayConfig,
     ...(input.now === undefined ? {} : { now: input.now }),
   });
   if ("status" in verified) return verified;
@@ -28,9 +32,13 @@ export function authorizeEnvironmentHttpRequest(input: {
   if (!(capability && verified.ticket.capabilities.includes(capability))) {
     return { status: 403, code: "ENVIRONMENT_CAPABILITY_DENIED" };
   }
+  const targetUrl = workspaceTarget(verified.ticket, input.gatewayConfig);
+  if (!targetUrl) {
+    return { status: 503, code: "ENVIRONMENT_WORKSPACE_ROUTE_UNAVAILABLE" };
+  }
   return {
     status: 200,
-    targetUrl: workspaceTarget(verified.ticket),
+    targetUrl,
     ticket: verified.ticket,
   };
 }
@@ -50,6 +58,7 @@ export function authorizeEnvironmentSubscription(input: {
   body: unknown;
   publicKey: string;
   expectedAppName?: string | undefined;
+  gatewayConfig?: EnvironmentGatewayConfig | null | undefined;
   now?: number;
 }): RouterDecision {
   const verified = verifyBearer(input);
@@ -82,9 +91,13 @@ export function authorizeEnvironmentSubscription(input: {
   ) {
     return { status: 403, code: "ENVIRONMENT_THREAD_MISMATCH" };
   }
+  const targetUrl = workspaceTarget(verified.ticket, input.gatewayConfig);
+  if (!targetUrl) {
+    return { status: 503, code: "ENVIRONMENT_WORKSPACE_ROUTE_UNAVAILABLE" };
+  }
   return {
     status: 200,
-    targetUrl: workspaceTarget(verified.ticket),
+    targetUrl,
     ticket: verified.ticket,
   };
 }
@@ -94,6 +107,7 @@ export function authorizeEnvironmentRequest(input: {
   body: unknown;
   publicKey: string;
   expectedAppName?: string | undefined;
+  gatewayConfig?: EnvironmentGatewayConfig | null | undefined;
   now?: number;
 }): RouterDecision {
   const verified = verifyBearer(input);
@@ -113,9 +127,13 @@ export function authorizeEnvironmentRequest(input: {
   if (command.sessionId && command.sessionId !== ticket.threadId) {
     return { status: 403, code: "ENVIRONMENT_THREAD_MISMATCH" };
   }
+  const targetUrl = workspaceTarget(ticket, input.gatewayConfig);
+  if (!targetUrl) {
+    return { status: 503, code: "ENVIRONMENT_WORKSPACE_ROUTE_UNAVAILABLE" };
+  }
   return {
     status: 200,
-    targetUrl: workspaceTarget(ticket),
+    targetUrl,
     ticket,
   };
 }
@@ -124,6 +142,7 @@ function verifyBearer(input: {
   authorization: string | undefined;
   publicKey: string;
   expectedAppName?: string | undefined;
+  gatewayConfig?: EnvironmentGatewayConfig | null | undefined;
   now?: number;
 }):
   | { ticket: EnvironmentExecutionTicket }
@@ -137,6 +156,17 @@ function verifyBearer(input: {
       ...(input.now === undefined ? {} : { now: input.now }),
     });
     const target = getFlyEnvironmentExecutionTarget(ticket);
+    const gateway = getGatewayEnvironmentExecutionTarget(ticket);
+    if (gateway) {
+      if (
+        input.gatewayConfig?.version !== 4 ||
+        ticket.environmentId !== input.gatewayConfig.environmentId ||
+        gateway.gatewayId !== input.gatewayConfig.gatewayId
+      ) {
+        return { status: 403, code: "ENVIRONMENT_GATEWAY_MISMATCH" };
+      }
+      return { ticket };
+    }
     if (!target) {
       return { status: 403, code: "ENVIRONMENT_PROVIDER_MISMATCH" };
     }
@@ -157,10 +187,25 @@ function verifyBearer(input: {
   }
 }
 
-function workspaceTarget(ticket: EnvironmentExecutionTicket) {
+function workspaceTarget(
+  ticket: EnvironmentExecutionTicket,
+  config?: EnvironmentGatewayConfig | null,
+) {
+  const gateway = getGatewayEnvironmentExecutionTarget(ticket);
+  if (gateway) {
+    if (
+      config?.version !== 4 ||
+      config.gatewayId !== gateway.gatewayId ||
+      config.environmentId !== ticket.environmentId
+    ) return null;
+    const route = config.workspaces.find((workspace) => workspace.id === ticket.workspaceId);
+    return route
+      ? `http://${route.backend.hostname}:${route.backend.port}`
+      : null;
+  }
   const target = getFlyEnvironmentExecutionTarget(ticket);
   if (!target) {
-    throw new Error("Environment Router requires a Fly execution target.");
+    return null;
   }
   const host = `${target.machineId}.vm.${target.appName}.internal`;
   return `http://${host}:43104`;

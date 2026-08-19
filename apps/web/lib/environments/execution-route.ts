@@ -13,8 +13,10 @@ import { resolveKestrelAppUrl } from "@/lib/app-url";
 import { resolveHostedMcpRunPolicy } from "@/lib/mcp/grant-service";
 import {
   getHostedEnvironmentRuntimeMode,
+  getHostedRoutingContractMode,
   requireHostedEnvironmentsEnabled,
 } from "./config";
+import { resolveHostedRoutingAuthority } from "./routing-authority";
 import {
   requestFailedWorkspaceProvisionRetry,
   requestWorkspaceStart,
@@ -216,7 +218,7 @@ export async function resolveEnvironmentExecutionRoute(input: {
     status: "ready",
   });
   return {
-    provider: "fly" as const,
+    provider: "hosted" as const,
     baseUrl: authorization.baseUrl,
     authToken: authorization.executionTicket,
     executionTicket: authorization.executionTicket,
@@ -380,6 +382,13 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
     | undefined;
   owningLifecycleOperationIds?: readonly string[] | undefined;
 }) {
+  const logicalAuthority = getHostedRoutingContractMode() === "logical-v1"
+    ? await resolveHostedRoutingAuthority({
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+      })
+    : null;
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
@@ -401,6 +410,7 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
           flyAppName: true,
           routerUrl: true,
           flyGatewayMachineId: true,
+          providerConnectionId: true,
         },
       }),
       transaction.query.environmentWorkspaces.findFirst({
@@ -425,18 +435,38 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
         excludedOperationIds: input.owningLifecycleOperationIds,
       }),
     ]);
-    if (
-      !(
+    const logicalResources = logicalAuthority
+      ? await transaction.query.environmentProviderResources.findMany({
+          where: (table, { and, eq, inArray, isNull }) => and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.environmentId, input.environmentId),
+            inArray(table.id, [logicalAuthority.gateway.id, logicalAuthority.compute!.id]),
+            isNull(table.deletedAt),
+          ),
+          columns: { id: true },
+        })
+      : [];
+    const logicalReady = Boolean(
+      logicalAuthority &&
+      environment?.routerUrl === logicalAuthority.routerUrl &&
+      environment.providerConnectionId === logicalAuthority.connection.id &&
+      workspace?.runtimeImage &&
+      logicalResources.length === 2
+    );
+    const legacyReady = Boolean(
         environment?.flyAppName &&
         environment.routerUrl &&
         environment.flyGatewayMachineId &&
         workspace?.flyMachineId &&
         workspace.runtimeImage
-      ) ||
+    );
+    if (
+      !(logicalAuthority ? logicalReady : legacyReady) ||
       activeLifecycleOperation
     ) {
       return null;
     }
+    if (!(environment && workspace?.runtimeImage)) return null;
 
     const renewal = input.recordExecution
       ? createExecutionAuthorizationRenewalToken()
@@ -463,8 +493,9 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
     const now = Math.floor(Date.now() / 1000);
     const executionTicket = signEnvironmentExecutionTicket({
       privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
-      ticket: {
-        version: 2,
+      ticket: logicalAuthority
+        ? {
+        version: 3,
         audience: ENVIRONMENT_ROUTER_AUDIENCE,
         organizationId: input.organizationId,
         environmentId: environment.id,
@@ -474,9 +505,28 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
         actorId: input.actorUserId,
         agentId: input.agentId,
         target: {
+          kind: "gateway",
+          gatewayId: logicalAuthority.gateway.id,
+        },
+        capabilities: [...ROUTE_CAPABILITIES],
+        issuedAt: now,
+        expiresAt: now + 300,
+        nonce: crypto.randomUUID(),
+      }
+        : {
+        version: 2,
+        audience: ENVIRONMENT_ROUTER_AUDIENCE,
+        organizationId: input.organizationId,
+        environmentId: environment!.id,
+        workspaceId: workspace!.id,
+        threadId: input.threadId,
+        runId: input.runId,
+        actorId: input.actorUserId,
+        agentId: input.agentId,
+        target: {
           provider: "fly",
-          appName: environment.flyAppName,
-          machineId: workspace.flyMachineId,
+          appName: environment!.flyAppName!,
+          machineId: workspace!.flyMachineId!,
         },
         capabilities: [...ROUTE_CAPABILITIES],
         issuedAt: now,
@@ -485,7 +535,7 @@ export async function finalizeHostedEnvironmentExecutionAuthorization(input: {
       },
     });
     return {
-      baseUrl: environment.routerUrl,
+      baseUrl: logicalAuthority?.routerUrl ?? environment!.routerUrl!,
       executionTicket,
       runId: input.runId,
       environmentId: environment.id,
@@ -641,6 +691,27 @@ async function waitForExecutionResources(input: {
       });
       input.onProgress?.(failure);
       throw new Error(failure.detail);
+    }
+    if (
+      getHostedRoutingContractMode() === "logical-v1" &&
+      environment.status === "ready" &&
+      workspace.status === "ready" &&
+      workspace.runtimeImage &&
+      !activeLifecycleOperation
+    ) {
+      try {
+        await resolveHostedRoutingAuthority({
+          organizationId: input.organizationId,
+          environmentId: input.environmentId,
+          workspaceId: input.workspaceId,
+        });
+        return {
+          environment: { id: environment.id },
+          workspace: { id: workspace.id, runtimeImage: workspace.runtimeImage },
+        };
+      } catch {
+        // The durable lifecycle loop may still be persisting provider observations.
+      }
     }
     if (
       environment.status === "ready" &&
@@ -1099,13 +1170,40 @@ async function resolvePersistedEnvironmentExecutionRoute(input: {
     )
     .limit(1);
   if (!route) return null;
-  if (!(route.flyAppName && route.flyMachineId && route.routerUrl)) {
+  const logicalAuthority = getHostedRoutingContractMode() === "logical-v1"
+    ? await resolveHostedRoutingAuthority({
+        organizationId: input.organizationId,
+        environmentId: route.environmentId,
+        workspaceId: route.workspaceId,
+      })
+    : null;
+  if (!logicalAuthority && !(route.flyAppName && route.flyMachineId && route.routerUrl)) {
     throw new Error("Environment execution authorization route is incomplete.");
   }
   const now = Math.floor(Date.now() / 1000);
   const authToken = signEnvironmentExecutionTicket({
     privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
-    ticket: {
+    ticket: logicalAuthority
+      ? {
+      version: 3,
+      audience: ENVIRONMENT_ROUTER_AUDIENCE,
+      organizationId: input.organizationId,
+      environmentId: route.environmentId,
+      workspaceId: route.workspaceId,
+      threadId: route.threadId,
+      runId: input.executionId,
+      actorId: route.actorId,
+      agentId: "kestrel-one-turn-worker",
+      target: {
+        kind: "gateway",
+        gatewayId: logicalAuthority.gateway.id,
+      },
+      capabilities: [...input.capabilities],
+      issuedAt: now,
+      expiresAt: now + 300,
+      nonce: crypto.randomUUID(),
+    }
+      : {
       version: 2,
       audience: ENVIRONMENT_ROUTER_AUDIENCE,
       organizationId: input.organizationId,
@@ -1117,8 +1215,8 @@ async function resolvePersistedEnvironmentExecutionRoute(input: {
       agentId: "kestrel-one-turn-worker",
       target: {
         provider: "fly",
-        appName: route.flyAppName,
-        machineId: route.flyMachineId,
+        appName: route.flyAppName!,
+        machineId: route.flyMachineId!,
       },
       capabilities: [...input.capabilities],
       issuedAt: now,
@@ -1127,7 +1225,7 @@ async function resolvePersistedEnvironmentExecutionRoute(input: {
     },
   });
   return {
-    baseUrl: route.routerUrl,
+    baseUrl: logicalAuthority?.routerUrl ?? route.routerUrl!,
     authToken,
     runtimeRunId: route.runtimeRunId,
     lastRuntimeEventId: route.lastRuntimeEventId,
@@ -1192,6 +1290,80 @@ export function createEnvironmentMachineRoute(input: {
     },
   });
   return { baseUrl: input.routerUrl, authToken, runId };
+}
+
+type HostedEnvironmentRouteDependencies = {
+  routingMode?: "legacy" | "logical-v1" | undefined;
+  resolveAuthority?:
+    | ((input: {
+        organizationId: string;
+        environmentId: string;
+        workspaceId: string;
+      }) => Promise<{ gateway: { id: string }; routerUrl: string }>)
+    | undefined;
+};
+
+export async function createHostedEnvironmentRoute(
+  input: {
+    organizationId: string;
+    environmentId: string;
+    workspaceId: string;
+    threadId: string;
+    actorId: string;
+    agentId?: string | undefined;
+    flyAppName?: string | null | undefined;
+    flyMachineId?: string | null | undefined;
+    routerUrl?: string | null | undefined;
+    capabilities?: string[] | undefined;
+  },
+  dependencies: HostedEnvironmentRouteDependencies = {},
+) {
+  const routingMode =
+    dependencies.routingMode ?? getHostedRoutingContractMode();
+  if (routingMode === "legacy") {
+    if (!(input.flyAppName && input.flyMachineId && input.routerUrl)) {
+      throw new Error("Legacy hosted Environment routing authority is incomplete.");
+    }
+    return createEnvironmentMachineRoute({
+      ...input,
+      flyAppName: input.flyAppName,
+      flyMachineId: input.flyMachineId,
+      routerUrl: input.routerUrl,
+    });
+  }
+
+  const authority = await (
+    dependencies.resolveAuthority ?? resolveHostedRoutingAuthority
+  )({
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+    workspaceId: input.workspaceId,
+  });
+  const now = Math.floor(Date.now() / 1000);
+  const runId = crypto.randomUUID();
+  const authToken = signEnvironmentExecutionTicket({
+    privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
+    ticket: {
+      version: 3,
+      audience: ENVIRONMENT_ROUTER_AUDIENCE,
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      workspaceId: input.workspaceId,
+      threadId: input.threadId,
+      runId,
+      actorId: input.actorId,
+      agentId: input.agentId ?? "kestrel-control-plane",
+      target: {
+        kind: "gateway",
+        gatewayId: authority.gateway.id,
+      },
+      capabilities: input.capabilities ?? [...ROUTE_CAPABILITIES],
+      issuedAt: now,
+      expiresAt: now + 300,
+      nonce: crypto.randomUUID(),
+    },
+  });
+  return { baseUrl: authority.routerUrl, authToken, runId };
 }
 
 type EnvironmentExecutionTransaction = Parameters<

@@ -489,7 +489,7 @@ function createModelAwareKestrelOneAgent(input: {
             target: {
               kind: "remote",
               baseUrl: route.baseUrl,
-              ...(route.provider === "fly"
+              ...(route.provider === "hosted"
                 ? {
                     authTokenProvider: createExecutionAuthTokenProvider({
                       organizationId: input.organizationId,
@@ -871,7 +871,7 @@ export async function generateKestrelOneExternalReply(input: {
     target: {
       kind: "remote",
       baseUrl: route.baseUrl,
-      ...(route.provider === "fly"
+      ...(route.provider === "hosted"
         ? {
             authTokenProvider: createExecutionAuthTokenProvider({
               organizationId: input.organizationId,

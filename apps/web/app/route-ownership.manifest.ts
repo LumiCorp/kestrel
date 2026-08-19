@@ -2184,6 +2184,88 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin",
     "admin-denied",
   ),
+  ...[
+    [
+      "app/api/organization/infrastructure/kubernetes/enrollments/[id]/route.ts",
+      "/api/organization/infrastructure/kubernetes/enrollments/:id",
+    ],
+    [
+      "app/api/organization/infrastructure/kubernetes/enrollments/[id]/approve/route.ts",
+      "/api/organization/infrastructure/kubernetes/enrollments/:id/approve",
+    ],
+    [
+      "app/api/organization/infrastructure/kubernetes/connections/[id]/route.ts",
+      "/api/organization/infrastructure/kubernetes/connections/:id",
+    ],
+    [
+      "app/api/organization/infrastructure/kubernetes/connections/[id]/configure/route.ts",
+      "/api/organization/infrastructure/kubernetes/connections/:id/configure",
+    ],
+    [
+      "app/api/organization/infrastructure/kubernetes/connections/[id]/qualify/route.ts",
+      "/api/organization/infrastructure/kubernetes/connections/:id/qualify",
+    ],
+    [
+      "app/api/organization/infrastructure/kubernetes/connections/[id]/revoke/route.ts",
+      "/api/organization/infrastructure/kubernetes/connections/:id/revoke",
+    ],
+  ].map(([file, route]) =>
+    api(
+      file!,
+      route!,
+      "environments",
+      ADMIN_API.access,
+      ADMIN_API.unauthorized,
+    ),
+  ),
+  api(
+    "app/api/runtime/infrastructure-connectors/enrollments/route.ts",
+    "/api/runtime/infrastructure-connectors/enrollments",
+    "environments",
+    "public",
+    "public",
+  ),
+  api(
+    "app/api/runtime/infrastructure-connectors/enrollments/[id]/route.ts",
+    "/api/runtime/infrastructure-connectors/enrollments/:id",
+    "credential-boundary",
+    "public",
+    "public",
+  ),
+  ...[
+    [
+      "app/api/runtime/infrastructure-connectors/[connectionId]/presence/route.ts",
+      "/api/runtime/infrastructure-connectors/:connectionId/presence",
+    ],
+    [
+      "app/api/runtime/infrastructure-connectors/[connectionId]/commands/claim/route.ts",
+      "/api/runtime/infrastructure-connectors/:connectionId/commands/claim",
+    ],
+    [
+      "app/api/runtime/infrastructure-connectors/[connectionId]/commands/[commandId]/lease/route.ts",
+      "/api/runtime/infrastructure-connectors/:connectionId/commands/:commandId/lease",
+    ],
+    [
+      "app/api/runtime/infrastructure-connectors/[connectionId]/commands/[commandId]/events/route.ts",
+      "/api/runtime/infrastructure-connectors/:connectionId/commands/:commandId/events",
+    ],
+    [
+      "app/api/runtime/infrastructure-connectors/[connectionId]/commands/[commandId]/complete/route.ts",
+      "/api/runtime/infrastructure-connectors/:connectionId/commands/:commandId/complete",
+    ],
+    [
+      "app/api/runtime/infrastructure-connectors/[connectionId]/qualification-probe/route.ts",
+      "/api/runtime/infrastructure-connectors/:connectionId/qualification-probe",
+    ],
+  ].map(([file, route]) =>
+    api(
+      file!,
+      route!,
+      "credential-boundary",
+      "service-boundary",
+      "service-bearer",
+    ),
+  ),
   api(
     "app/api/runtime/email/action/route.ts",
     "/api/runtime/email/action",

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isIP } from "node:net";
 import {
   PREVIEW_EDGE_ROUTE_TICKET_CLOCK_SKEW_SECONDS,
   PREVIEW_EDGE_ROUTE_TICKET_MAX_TTL_SECONDS,
@@ -6,6 +7,7 @@ import {
 
 const RESOLVED_ROUTE_VERSION = "preview-edge-resolved-route-v1";
 const RESOLVED_ROUTE_V2_VERSION = "preview-edge-resolved-route-v2";
+const RESOLVED_ROUTE_V3_VERSION = "preview-edge-resolved-route-v3";
 const RESOLVER_PATH = "/api/runtime/previews/resolve";
 const RESOLVER_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 16_384;
@@ -15,7 +17,8 @@ export type PreviewEdgeRoute = {
   hostname: string;
   target?:
     | { provider: "fly"; targetUrl: string; authorization: string }
-    | { provider: "desktop"; previewId: string };
+    | { provider: "desktop"; previewId: string }
+    | { kind: "gateway"; url: string; authorization: string };
   /** v1 compatibility projection for Fly routes. */
   targetUrl?: string;
   /** v1 compatibility projection for Fly routes. */
@@ -159,12 +162,17 @@ function parseResolvedRoute(
     value;
   if (
     (version !== RESOLVED_ROUTE_VERSION &&
-      version !== RESOLVED_ROUTE_V2_VERSION) ||
+      version !== RESOLVED_ROUTE_V2_VERSION &&
+      version !== RESOLVED_ROUTE_V3_VERSION) ||
     hostname !== expectedHostname ||
     typeof expiresAt !== "string"
   ) {
     throw unavailable();
   }
+  const expectedKeys = version === RESOLVED_ROUTE_V3_VERSION || version === RESOLVED_ROUTE_V2_VERSION
+    ? ["version", "hostname", "target", "expiresAt"]
+    : ["version", "hostname", "targetUrl", "authorization", "expiresAt"];
+  if (!hasExactKeys(value, expectedKeys)) throw unavailable();
   const expiresAtMs = Date.parse(expiresAt);
   if (
     !Number.isSafeInteger(expiresAtMs) ||
@@ -182,13 +190,32 @@ function parseResolvedRoute(
     if (
       target.provider !== "desktop" ||
       typeof target.previewId !== "string" ||
-      !/^[0-9a-f-]{36}$/u.test(target.previewId)
+      !/^[0-9a-f-]{36}$/u.test(target.previewId) ||
+      !hasExactKeys(target, ["provider", "previewId"])
     ) {
       throw unavailable();
     }
     return {
       hostname,
       target: { provider: "desktop", previewId: target.previewId },
+      expiresAt: expiresAtMs,
+    };
+  }
+  if (version === RESOLVED_ROUTE_V3_VERSION) {
+    if (
+      !isRecord(target) ||
+      target.kind !== "gateway" ||
+      !hasExactKeys(target, ["kind", "url", "authorization"]) ||
+      typeof target.authorization !== "string" ||
+      !/^Bearer [^\s]+$/u.test(target.authorization)
+    ) throw unavailable();
+    return {
+      hostname,
+      target: {
+        kind: "gateway" as const,
+        url: parseQualifiedGatewayUrl(target.url),
+        authorization: target.authorization,
+      },
       expiresAt: expiresAtMs,
     };
   }
@@ -234,6 +261,37 @@ function parseTargetUrl(value: unknown) {
     throw unavailable();
   }
   return url.origin;
+}
+
+function parseQualifiedGatewayUrl(value: unknown) {
+  if (
+    typeof value !== "string" ||
+    /[^\x00-\x7F]/u.test(value) ||
+    /[A-Z]/u.test(value)
+  ) throw unavailable();
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw unavailable();
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.port ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash ||
+    isIP(url.hostname) !== 0 ||
+    !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(url.hostname)
+  ) throw unavailable();
+  return url.origin;
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]) {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
 }
 
 async function readBoundedBody(response: Response) {

@@ -1,0 +1,4 @@
+image:
+  digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+kestrel:
+  connectorDisplayName: EKS Ingress certification cluster

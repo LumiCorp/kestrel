@@ -1,5 +1,5 @@
 export const WORKSPACE_IDLE_NOTIFICATION_VERSION =
-  "workspace-idle-notification-v1" as const;
+  "workspace-idle-notification-v2" as const;
 
 export async function notifyWorkspaceIdle(input: {
   controlPlaneUrl: string;
@@ -7,7 +7,6 @@ export async function notifyWorkspaceIdle(input: {
   organizationId: string;
   environmentId: string;
   workspaceId: string;
-  machineId: string;
   lastActivityAt: Date;
   fetchImpl?: typeof fetch;
 }) {
@@ -28,7 +27,6 @@ export async function notifyWorkspaceIdle(input: {
           organizationId: input.organizationId,
           environmentId: input.environmentId,
           workspaceId: input.workspaceId,
-          machineId: input.machineId,
           lastActivityAt: input.lastActivityAt.toISOString(),
         }),
         signal: AbortSignal.timeout(10_000),

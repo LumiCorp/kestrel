@@ -15,6 +15,7 @@ import {
   KESTREL_WORKSPACE_SERVICE_PORT,
   KESTREL_WORKSPACE_STOP_CONFIG,
   KESTREL_WORKSPACE_VOLUME_GB,
+  REQUIRED_ENVIRONMENT_PROVIDER_CAPABILITIES,
   type EnvironmentProviderMachineStopConfig,
   type WorkspaceMachineProvisioningInput,
 } from "./contracts";
@@ -155,6 +156,13 @@ export type FlyMachineHealthCheck = {
 };
 
 export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
+  readonly descriptor = {
+    id: "fly",
+    label: "Fly.io Machines",
+    capabilities: REQUIRED_ENVIRONMENT_PROVIDER_CAPABILITIES,
+    evidence: "isolated_provider",
+  } as const;
+
   private readonly token: string;
   private readonly organizationSlug: string;
   private readonly apiBaseUrl: string;

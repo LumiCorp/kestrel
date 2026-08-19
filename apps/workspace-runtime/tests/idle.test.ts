@@ -36,7 +36,6 @@ test("Workspace idle notification binds the runtime identity and activity time",
     organizationId: identity.organizationId,
     environmentId: identity.environmentId,
     workspaceId: identity.workspaceId,
-    machineId: identity.machineId,
     lastActivityAt: identity.lastActivityAt.toISOString(),
   });
 });

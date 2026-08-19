@@ -7,6 +7,7 @@ import {
   assertHostedEnvironmentRuntimeConfiguration,
   assertLocalEnvironmentRuntimeConfiguration,
   getHostedEnvironmentRuntimeMode,
+  getHostedRoutingContractMode,
   hostedEnvironmentsDeploymentEnabled,
   hostedEnvironmentsEnabled,
   hostedEnvironmentsOrganizationEnabled,
@@ -36,6 +37,17 @@ test("Environment runtime mode defaults to Fly and selects local explicitly", ()
       }),
     /must be fly or local/u
   );
+});
+
+test("hosted routing rolls out as one global reader-first contract mode", () => {
+  assert.equal(getHostedRoutingContractMode({}), "legacy");
+  assert.equal(
+    getHostedRoutingContractMode({ KESTREL_HOSTED_ROUTING_CONTRACT_MODE: "logical-v1" }),
+    "logical-v1",
+  );
+  assert.throws(() => getHostedRoutingContractMode({
+    KESTREL_HOSTED_ROUTING_CONTRACT_MODE: "kubernetes",
+  }), /legacy or logical-v1/u);
 });
 
 test("local Environment mode needs only the loopback runner service", () => {

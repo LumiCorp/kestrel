@@ -19,14 +19,16 @@ import { handleWorkspaceIdle } from "./workspace-idle.js";
 const ENVIRONMENT_GATEWAY_CONTRACT_REVISION = 2;
 const port = readPort(process.env.PORT);
 const publicKey = process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "";
-const expectedAppName = required(
-  process.env.KESTREL_ENVIRONMENT_APP_NAME,
-  "KESTREL_ENVIRONMENT_APP_NAME"
-);
 const environmentId = required(
   process.env.KESTREL_ENVIRONMENT_ID,
   "KESTREL_ENVIRONMENT_ID"
 );
+const gatewayId = required(
+  process.env.KESTREL_ENVIRONMENT_GATEWAY_ID ??
+    process.env.KESTREL_ENVIRONMENT_APP_NAME,
+  "KESTREL_ENVIRONMENT_GATEWAY_ID"
+);
+const expectedAppName = process.env.KESTREL_ENVIRONMENT_APP_NAME;
 const gatewayConfig = new EnvironmentGatewayConfigClient({
   controlPlaneUrl: required(
     process.env.KESTREL_CONTROL_PLANE_URL,
@@ -39,7 +41,7 @@ const gatewayConfig = new EnvironmentGatewayConfigClient({
   ),
 });
 const previewRelay = new PreviewRelay({
-  expectedAppName,
+  expectedAppName: expectedAppName ?? gatewayId,
   environmentId,
   ticketPublicKey: publicKey,
 });
@@ -62,13 +64,18 @@ const server = createServer(async (request, response) => {
     response.end(JSON.stringify({ error: { code: "PREVIEW_NOT_FOUND" } }));
     return;
   }
-  if (request.method === "GET" && request.url === "/health") {
+  const requestUrl = new URL(request.url ?? "/", "http://router.internal");
+  if (request.method === "GET" && requestUrl.pathname === "/health") {
     const gatewayHealth = gatewayConfig.health;
+    const nonce = requestUrl.searchParams.get("nonce");
     response.writeHead(gatewayHealth.ready ? 200 : 503, { "content-type": "application/json" });
     response.end(
       JSON.stringify({
         ok: gatewayHealth.ready,
         service: "environment-router",
+        environmentId,
+        gatewayId: gatewayHealth.gatewayId ?? gatewayId,
+        ...(nonce ? { nonce } : {}),
         runtimeContractRevision: ENVIRONMENT_GATEWAY_CONTRACT_REVISION,
         configurationReady: gatewayHealth.ready,
         gatewayConfig: gatewayHealth,
@@ -76,7 +83,7 @@ const server = createServer(async (request, response) => {
     );
     return;
   }
-  const pathname = new URL(request.url ?? "/", "http://router.internal").pathname;
+  const pathname = requestUrl.pathname;
   if (request.method === "POST" && pathname === "/internal/config/refresh") {
     try {
       const token = request.headers.authorization?.match(/^Bearer ([^\s]+)$/u)?.[1];
@@ -86,6 +93,10 @@ const server = createServer(async (request, response) => {
         publicKey,
         environmentId,
         expectedAppName,
+        expectedGatewayId:
+          gatewayConfig.snapshot?.version === 4
+            ? gatewayConfig.snapshot.gatewayId
+            : undefined,
       });
     } catch {
       response.writeHead(403, { "content-type": "application/json" });
@@ -106,7 +117,13 @@ const server = createServer(async (request, response) => {
         "cache-control": "no-store",
         "content-type": "application/json",
       });
-      response.end(JSON.stringify({ ok: true, revision: refreshed.revision }));
+      response.end(JSON.stringify({
+        ok: true,
+        revision: refreshed.revision,
+        gatewayId: refreshed.version === 4 ? refreshed.gatewayId : null,
+        routeGeneration:
+          refreshed.version === 4 ? refreshed.routeGeneration : null,
+      }));
     } catch {
       response.writeHead(503, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: { code: "GATEWAY_CONFIG_UNAVAILABLE" } }));
@@ -140,6 +157,7 @@ const server = createServer(async (request, response) => {
       method: request.method ?? "GET",
       publicKey,
       expectedAppName,
+      gatewayConfig: gatewayConfig.snapshot,
     });
     await applyDecision(request, response, decision);
     return;
@@ -156,12 +174,14 @@ const server = createServer(async (request, response) => {
         body: body.value,
         publicKey,
         expectedAppName,
+        gatewayConfig: gatewayConfig.snapshot,
       })
     : authorizeEnvironmentRequest({
         authorization: request.headers.authorization,
         body: body.value,
         publicKey,
         expectedAppName,
+        gatewayConfig: gatewayConfig.snapshot,
       });
   await applyDecision(request, response, decision, body.raw);
 });

@@ -1,6 +1,4 @@
-import type {
-  EnvironmentGatewayConfigV3,
-} from "@lumi/kestrel-environment-auth";
+import type { EnvironmentGatewayConfig } from "@lumi/kestrel-environment-auth";
 import {
   ENVIRONMENT_GATEWAY_CONFIG_ACCEPTED_VERSIONS,
   EnvironmentGatewayConfigParseError,
@@ -8,16 +6,16 @@ import {
 } from "@lumi/kestrel-environment-auth";
 
 export class EnvironmentGatewayConfigClient {
-  private current: EnvironmentGatewayConfigV3 | null = null;
+  private current: EnvironmentGatewayConfig | null = null;
   private failure: {
     code: "UNSUPPORTED_VERSION" | "INVALID_CONFIG" | "UNAVAILABLE";
     receivedVersion: number | null;
     occurredAt: string;
   } | null = null;
   private timer: NodeJS.Timeout | null = null;
-  private refreshing: Promise<EnvironmentGatewayConfigV3> | null = null;
+  private refreshing: Promise<EnvironmentGatewayConfig> | null = null;
   private readonly listeners = new Set<
-    (config: EnvironmentGatewayConfigV3) => void | Promise<void>
+    (config: EnvironmentGatewayConfig) => void | Promise<void>
   >();
 
   constructor(
@@ -39,6 +37,10 @@ export class EnvironmentGatewayConfigClient {
       ready: this.current !== null,
       acceptedVersions: [...ENVIRONMENT_GATEWAY_CONFIG_ACCEPTED_VERSIONS],
       activeVersion: this.current?.version ?? null,
+      revision: this.current?.revision ?? null,
+      gatewayId: this.current?.version === 4 ? this.current.gatewayId : null,
+      routeGeneration:
+        this.current?.version === 4 ? this.current.routeGeneration : null,
       lastFailure: this.failure,
     };
   }
@@ -63,12 +65,12 @@ export class EnvironmentGatewayConfigClient {
     this.timer = null;
   }
 
-  subscribe(listener: (config: EnvironmentGatewayConfigV3) => void | Promise<void>) {
+  subscribe(listener: (config: EnvironmentGatewayConfig) => void | Promise<void>) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  refresh(): Promise<EnvironmentGatewayConfigV3> {
+  refresh(): Promise<EnvironmentGatewayConfig> {
     this.refreshing ??= this.load()
       .then((config) => {
         this.failure = null;
@@ -94,7 +96,7 @@ export class EnvironmentGatewayConfigClient {
     return this.refreshing;
   }
 
-  async refreshLatest(): Promise<EnvironmentGatewayConfigV3> {
+  async refreshLatest(): Promise<EnvironmentGatewayConfig> {
     const inFlight = this.refreshing;
     if (inFlight) await inFlight.catch(() => undefined);
     return this.refresh();
@@ -136,12 +138,10 @@ export class EnvironmentGatewayConfigClient {
     if (config.environmentId !== this.input.environmentId) {
       throw new Error("Environment gateway configuration scope is invalid.");
     }
-    this.current = config;
-    await Promise.allSettled(
-      [...this.listeners].map((listener) =>
-        Promise.resolve().then(() => listener(config))
-      )
+    await Promise.all(
+      [...this.listeners].map((listener) => Promise.resolve().then(() => listener(config)))
     );
+    this.current = config;
     return config;
   }
 }

@@ -9,7 +9,7 @@ import {
   workspaceDailyBackupDayStart,
   workspaceDailyBackupIdempotencyKey,
 } from "./daily-backup-contract";
-import { createFlyProviderClient } from "./fly-connection";
+import { resolveFlyProviderClient } from "./provider-registry";
 import {
   PROVISIONER_OPERATION_TYPES,
   RESOURCE_MUTATING_OPERATION_TYPES,
@@ -73,12 +73,19 @@ export async function reconcileHostedEnvironments() {
   const organizations = await knowledgeDb
     .selectDistinct({ organizationId: schema.environments.organizationId })
     .from(schema.environments)
-    .where(isNull(schema.environments.archivedAt));
+    .where(
+      and(
+        eq(schema.environments.provider, "fly"),
+        isNull(schema.environments.archivedAt),
+      ),
+    );
   for (const organization of organizations) {
     let result;
     try {
       result = await reconcileOrganizationEnvironments({
-        provider: await createFlyProviderClient(organization.organizationId),
+        provider: await resolveFlyProviderClient({
+          organizationId: organization.organizationId,
+        }),
         organizationId: organization.organizationId,
         now,
       });
@@ -188,7 +195,8 @@ async function reconcileOrganizationEnvironments(input: {
   let degradedWorkspaceCount = 0;
   let volumeBackupPolicyFailureCount = 0;
   for (const { workspace, environment } of workspaces) {
-    if (!(workspace.flyMachineId && environment.flyAppName)) continue;
+    if (!(workspace.flyMachineId && environment.flyAppName && environment.region))
+      continue;
     if (
       await hasActiveWorkspaceLifecycleOperation({
         organizationId,
@@ -498,7 +506,8 @@ async function reconcileEnvironmentGateways(
   const ticketPublicKey =
     process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "";
   for (const environment of environments) {
-    if (!(environment.flyAppName && environment.routerImage)) continue;
+    if (!(environment.flyAppName && environment.routerImage && environment.region))
+      continue;
     if (updatingEnvironmentIds.has(environment.id)) continue;
     try {
       const gateway = await provider.ensureEnvironmentGateway({

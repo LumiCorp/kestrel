@@ -1555,7 +1555,7 @@ export async function requestWorkspaceIdleStop(input: {
   organizationId: string;
   environmentId: string;
   workspaceId: string;
-  machineId: string;
+  machineId?: string | undefined;
   lastActivityAt: Date;
 }) {
   const lockKey = workspaceLifecycleLockKey(input.workspaceId);
@@ -1569,7 +1569,7 @@ export async function requestWorkspaceIdleStop(input: {
           eq(table.id, input.workspaceId),
           eq(table.environmentId, input.environmentId),
           eq(table.organizationId, input.organizationId),
-          eq(table.flyMachineId, input.machineId),
+          input.machineId ? eq(table.flyMachineId, input.machineId) : undefined,
           isNull(table.deletedAt),
         ),
     });
@@ -1578,6 +1578,26 @@ export async function requestWorkspaceIdleStop(input: {
         "ENVIRONMENT_FORBIDDEN",
         "Workspace idle identity does not match the provisioned Machine.",
       );
+    }
+    if (!input.machineId) {
+      const activeCompute =
+        await transaction.query.environmentProviderResources.findFirst({
+          where: (table, { and, eq, isNull }) => and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.environmentId, input.environmentId),
+            eq(table.workspaceId, input.workspaceId),
+            eq(table.resourceRole, "workspace_compute"),
+            isNull(table.replacementId),
+            isNull(table.deletedAt),
+          ),
+          columns: { id: true },
+        });
+      if (!activeCompute) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_FORBIDDEN",
+          "Workspace idle identity has no active compute resource.",
+        );
+      }
     }
     const activePreview =
       await transaction.query.workspacePreviewLeases.findFirst({

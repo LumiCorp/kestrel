@@ -1,0 +1,269 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "kestrel-connector.namespace" . }}
+  labels:
+    app.kubernetes.io/part-of: kestrel
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kestrel-connector
+  namespace: {{ include "kestrel-connector.namespace" . }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kestrel-connector
+  namespace: {{ include "kestrel-connector.namespace" . }}
+data:
+  KESTREL_BASE_URL: {{ required "kestrel.baseUrl is required" .Values.kestrel.baseUrl | quote }}
+  KESTREL_CONNECTOR_DISPLAY_NAME: {{ required "kestrel.connectorDisplayName is required" .Values.kestrel.connectorDisplayName | quote }}
+  KESTREL_CONNECTOR_NAMESPACE: {{ include "kestrel-connector.namespace" . | quote }}
+  KESTREL_CONNECTOR_IDENTITY_SECRET: kestrel-connector-identity
+  KESTREL_CONNECTOR_LEADER_LEASE: kestrel-connector-enrollment
+  KESTREL_CONNECTOR_VERSION: {{ .Chart.AppVersion | quote }}
+  KESTREL_CONNECTOR_IMAGE: {{ include "kestrel-connector.image" . | quote }}
+  HTTPS_PROXY: {{ .Values.kestrel.outboundProxy | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kestrel-connector-identity
+  namespace: {{ include "kestrel-connector.namespace" . }}
+  labels:
+    app.kubernetes.io/name: kestrel-connector
+type: Opaque
+---
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: kestrel-connector-enrollment
+  namespace: {{ include "kestrel-connector.namespace" . }}
+spec:
+  leaseDurationSeconds: 30
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kestrel-connector-identity
+  namespace: {{ include "kestrel-connector.namespace" . }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["kestrel-connector-identity"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["kestrel-connector-enrollment"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kestrel-connector-identity
+  namespace: {{ include "kestrel-connector.namespace" . }}
+subjects:
+  - kind: ServiceAccount
+    name: kestrel-connector
+    namespace: {{ include "kestrel-connector.namespace" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kestrel-connector-identity
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kestrel-environment-manager
+  labels:
+    app.kubernetes.io/part-of: kestrel
+rules:
+  - apiGroups: [""]
+    resources: ["services", "serviceaccounts", "resourcequotas", "limitranges"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies", "ingresses"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  # Safe namespace deletion requires complete read-only inventory, including CRDs.
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kestrel-connector-bootstrap
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["kestrel-environment-manager"]
+    verbs: ["get", "bind"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["selfsubjectaccessreviews"]
+    verbs: ["create"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshotclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways"]
+    verbs: ["get", "list"]
+  - nonResourceURLs: ["/version", "/api", "/api/*", "/apis", "/apis/*"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kestrel-connector-bootstrap
+subjects:
+  - kind: ServiceAccount
+    name: kestrel-connector
+    namespace: {{ include "kestrel-connector.namespace" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kestrel-connector-bootstrap
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kestrel-connector
+  namespace: {{ include "kestrel-connector.namespace" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kestrel-connector
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kestrel-connector
+        app.kubernetes.io/part-of: kestrel
+    spec:
+      serviceAccountName: kestrel-connector
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: {{ .Values.topologyKey | quote }}
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: kestrel-connector
+      containers:
+        - name: connector
+          image: {{ include "kestrel-connector.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: kestrel-connector
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: health
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: health
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: health
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: service-account-token
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: service-account-token
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+                  audience: https://kubernetes.default.svc
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kestrel-connector
+  namespace: {{ include "kestrel-connector.namespace" . }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kestrel-connector

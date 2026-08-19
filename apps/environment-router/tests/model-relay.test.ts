@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { ENVIRONMENT_GATEWAY_CONFIG_VERSION } from "@lumi/kestrel-environment-auth";
 import { EnvironmentGatewayConfigClient } from "../src/gateway-config.js";
 import { handleModelRelay } from "../src/model-relay.js";
 
@@ -45,7 +44,7 @@ test("model relay enforces workspace run and model while keeping provider creden
     environmentId,
     serviceToken: "gateway-secret",
     fetchImpl: async () => Response.json({
-      version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+      version: 3,
       environmentId,
       revision: new Date().toISOString(),
       workspaces: [{

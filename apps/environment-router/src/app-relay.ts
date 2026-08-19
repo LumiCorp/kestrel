@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { EnvironmentGatewayConfigV3 } from "@lumi/kestrel-environment-auth";
+import type { EnvironmentGatewayConfig } from "@lumi/kestrel-environment-auth";
 import type { EnvironmentGatewayConfigClient } from "./gateway-config.js";
 
 const MAX_APP_REQUEST_BYTES = 2 * 1024 * 1024;
@@ -176,7 +176,7 @@ async function resolveGrant(
   runId: string,
   refresh: boolean,
 ) {
-  let config: EnvironmentGatewayConfigV3 | null;
+  let config: EnvironmentGatewayConfig | null;
   try {
     config = refresh ? await client.refreshLatest() : client.snapshot;
     if (!config) config = await client.refresh();
@@ -310,7 +310,7 @@ function matchesToken(token: string, expectedHash: string) {
 }
 
 function hasScopedGrant(
-  config: EnvironmentGatewayConfigV3 | null,
+  config: EnvironmentGatewayConfig | null,
   token: string,
   executionId: string,
 ) {

@@ -12,6 +12,18 @@ export type HostedEnvironmentsRollout = {
 };
 
 export type HostedEnvironmentRuntimeMode = "fly" | "local";
+export type HostedRoutingContractMode = "legacy" | "logical-v1";
+
+export function getHostedRoutingContractMode(
+  env: Record<string, string | undefined> = process.env,
+): HostedRoutingContractMode {
+  const value = env.KESTREL_HOSTED_ROUTING_CONTRACT_MODE?.trim().toLowerCase();
+  if (!value || value === "legacy") return "legacy";
+  if (value === "logical-v1") return "logical-v1";
+  throw new Error(
+    "KESTREL_HOSTED_ROUTING_CONTRACT_MODE must be legacy or logical-v1.",
+  );
+}
 
 const REQUIRED_HOSTED_ENVIRONMENT_VALUES = [
   "CRON_SECRET",
@@ -114,6 +126,7 @@ export function assertLocalEnvironmentRuntimeConfiguration(
 export function assertHostedEnvironmentRuntimeConfiguration(
   env: Record<string, string | undefined> = process.env
 ) {
+  getHostedRoutingContractMode(env);
   const missing = REQUIRED_HOSTED_ENVIRONMENT_VALUES.filter(
     (name) => !env[name]?.trim()
   );

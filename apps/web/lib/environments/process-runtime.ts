@@ -1,4 +1,4 @@
-import { createFlyProviderClient } from "./fly-connection";
+import { resolveEnvironmentProvider } from "./provider-registry";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { eq } from "drizzle-orm";
 import {
@@ -63,7 +63,18 @@ export async function processEnvironmentOperation(
         : { runtimeImage: "", routerImage: "" };
       const provisioner = new EnvironmentProvisioner({
         repository: databaseEnvironmentProvisioningRepository,
-        provider: await createFlyProviderClient(operation.organizationId),
+        provider: await resolveEnvironmentProvider({
+          organizationId: operation.organizationId,
+          environmentId: operation.environmentId,
+          operationId,
+        }).then((provider) => {
+          if (provider.kind !== "fly") {
+            throw new Error(
+              `Environment ${operation.environmentId} does not use the Fly lifecycle adapter.`,
+            );
+          }
+          return provider.legacyLifecycle;
+        }),
         runtimeImage: images.runtimeImage,
         routerImage: images.routerImage,
         requireRuntimeImages: runtimeImagesRequired,

@@ -3,6 +3,7 @@ import { sign, verify } from "node:crypto";
 export const PREVIEW_RELAY_TICKET_AUDIENCE = "kestrel-preview-relay" as const;
 export const PREVIEW_RELAY_TICKET_VERSION = 1 as const;
 export const PREVIEW_RELAY_TICKET_V2_VERSION = 2 as const;
+export const PREVIEW_RELAY_TICKET_V3_VERSION = 3 as const;
 export const PREVIEW_RELAY_TICKET_MAX_TTL_SECONDS = 300;
 
 type PreviewRelayTicketCommon = {
@@ -39,13 +40,21 @@ export type PreviewRelayTicketV2 = PreviewRelayTicketCommon & {
       };
 };
 
-export type PreviewRelayTicket = PreviewRelayTicketV1 | PreviewRelayTicketV2;
+export type PreviewRelayTicketV3 = PreviewRelayTicketCommon & {
+  version: typeof PREVIEW_RELAY_TICKET_V3_VERSION;
+  target: { kind: "workspace" };
+};
+
+export type PreviewRelayTicket =
+  | PreviewRelayTicketV1
+  | PreviewRelayTicketV2
+  | PreviewRelayTicketV3;
 
 export function getFlyPreviewRelayTarget(ticket: PreviewRelayTicket) {
   if (ticket.version === 1) {
     return { appName: ticket.flyAppName, machineId: ticket.flyMachineId };
   }
-  return ticket.target.provider === "fly"
+  return ticket.version === 2 && ticket.target.provider === "fly"
     ? { appName: ticket.target.appName, machineId: ticket.target.machineId }
     : undefined;
 }
@@ -56,6 +65,12 @@ export function getDesktopPreviewRelayTarget(ticket: PreviewRelayTicket) {
         connectionId: ticket.target.connectionId,
         workspaceRef: ticket.target.workspaceRef,
       }
+    : undefined;
+}
+
+export function getLogicalPreviewRelayTarget(ticket: PreviewRelayTicket) {
+  return ticket.version === PREVIEW_RELAY_TICKET_V3_VERSION
+    ? ticket.target
     : undefined;
 }
 
@@ -105,9 +120,14 @@ export function verifyPreviewRelayTicket(input: {
 }
 
 function validatePreviewRelayTicket(ticket: PreviewRelayTicket, now: number) {
+  const commonKeys = [
+    "version", "audience", "organizationId", "environmentId", "workspaceId",
+    "previewId", "hostname", "port", "issuedAt", "expiresAt", "nonce",
+  ];
   if (
     (ticket.version !== PREVIEW_RELAY_TICKET_VERSION &&
-      ticket.version !== PREVIEW_RELAY_TICKET_V2_VERSION) ||
+      ticket.version !== PREVIEW_RELAY_TICKET_V2_VERSION &&
+      ticket.version !== PREVIEW_RELAY_TICKET_V3_VERSION) ||
     ticket.audience !== PREVIEW_RELAY_TICKET_AUDIENCE ||
     !ticket.organizationId ||
     !ticket.environmentId ||
@@ -127,6 +147,7 @@ function validatePreviewRelayTicket(ticket: PreviewRelayTicket, now: number) {
   }
   if (ticket.version === 1) {
     if (
+      !hasExactKeys(ticket, [...commonKeys, "flyAppName", "flyMachineId"]) ||
       !ticket.flyAppName ||
       !ticket.flyMachineId ||
       "target" in ticket
@@ -135,7 +156,21 @@ function validatePreviewRelayTicket(ticket: PreviewRelayTicket, now: number) {
     }
     return;
   }
-  if ("flyAppName" in ticket || "flyMachineId" in ticket) throw invalid();
+  if (
+    !hasExactKeys(ticket, [...commonKeys, "target"]) ||
+    "flyAppName" in ticket ||
+    "flyMachineId" in ticket
+  ) throw invalid();
+  if (ticket.version === PREVIEW_RELAY_TICKET_V3_VERSION) {
+    const target = ticket.target;
+    if (
+      !target ||
+      !("kind" in target) ||
+      target.kind !== "workspace" ||
+      Object.keys(target).length !== 1
+    ) throw invalid();
+    return;
+  }
   const target = ticket.target;
   if (
     !target ||
@@ -155,6 +190,11 @@ function validatePreviewRelayTicket(ticket: PreviewRelayTicket, now: number) {
   ) {
     throw invalid();
   }
+}
+
+function hasExactKeys(value: object, expected: readonly string[]) {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
 }
 
 function encode(value: unknown) {

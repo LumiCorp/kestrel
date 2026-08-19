@@ -9,7 +9,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
 import {
-  ENVIRONMENT_GATEWAY_CONFIG_VERSION,
   PREVIEW_EDGE_AUTHORIZATION_HEADER,
   PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
   PREVIEW_EDGE_ROUTE_TICKET_VERSION,
@@ -65,7 +64,9 @@ test("a real Vite app serves documents and HMR WebSockets through the preview re
     ticket: {
       version: PREVIEW_RELAY_TICKET_VERSION,
       audience: PREVIEW_RELAY_TICKET_AUDIENCE,
-      ...scope,
+      organizationId: scope.organizationId,
+      environmentId: scope.environmentId,
+      workspaceId: scope.workspaceId,
       flyAppName: "kestrel-env-vite",
       flyMachineId: scope.machineId,
       previewId,
@@ -128,10 +129,14 @@ test("a real Vite app serves documents and HMR WebSockets through the preview re
   try {
     await waitForVite(vitePort, () => viteOutput);
     await gateway.reconcile({
-      version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+      version: 3,
       environmentId: scope.environmentId,
       revision: "vite",
-      workspaces: [],
+      workspaces: [{
+        id: scope.workspaceId,
+        machineId: scope.machineId,
+        serviceTokenHash: "A".repeat(43),
+      }],
       modelGrants: [],
       appGrants: [],
       previews: [{

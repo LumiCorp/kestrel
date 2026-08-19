@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import test from "node:test";
-import { ENVIRONMENT_GATEWAY_CONFIG_VERSION } from "@lumi/kestrel-environment-auth";
 import {
   handleAppRelay,
   isAllowedAppRequest,
@@ -46,7 +45,7 @@ test("app relay refreshes expired execution tickets and enforces workspace and p
     fetchImpl: async () => {
       refreshCount += 1;
       return Response.json({
-        version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+        version: 3,
         environmentId,
         revision: String(refreshCount),
         workspaces: [{

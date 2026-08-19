@@ -624,7 +624,6 @@ const idleTimer = setInterval(() => {
       organizationId: config.organizationId,
       environmentId: config.environmentId,
       workspaceId: config.workspaceId,
-      machineId: config.machineId,
       lastActivityAt: reportedLastActivityAt
     })
       .then((accepted) => {
@@ -1141,7 +1140,10 @@ function readConfig() {
     workspaceId: required("KESTREL_WORKSPACE_ID"),
     organizationId: required("KESTREL_ORGANIZATION_ID"),
     environmentId: required("KESTREL_ENVIRONMENT_ID"),
-    machineId: required("FLY_MACHINE_ID"),
+    machineId:
+      process.env.KESTREL_WORKSPACE_RESOURCE_ID?.trim() ||
+      process.env.FLY_MACHINE_ID?.trim() ||
+      undefined,
     ticketPublicKey: required("KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY"),
     profileId: process.env.KESTREL_ONE_PROFILE_ID?.trim() || "kestrel",
     controlPlaneUrl: required("KESTREL_CONTROL_PLANE_URL"),

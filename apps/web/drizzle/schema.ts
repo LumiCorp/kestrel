@@ -1493,6 +1493,89 @@ export const organizationToolConnections = pgTable(
  *  Hosted execution environments
  *  ========================= */
 
+export const environmentProviderConnections = pgTable(
+  "environment_provider_connections",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    provider: text("provider", { enum: ["fly", "kubernetes"] }).notNull(),
+    displayName: text("display_name").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    status: text("status", {
+      enum: [
+        "pending",
+        "enrolling",
+        "qualifying",
+        "ready",
+        "degraded",
+        "revoked",
+      ],
+    })
+      .notNull()
+      .default("pending"),
+    supportStatus: text("support_status", {
+      enum: ["unverified", "qualified", "certified"],
+    })
+      .notNull()
+      .default("unverified"),
+    configuration: jsonb("configuration").$type<unknown>().notNull().default({}),
+    qualificationEvidence: jsonb("qualification_evidence")
+      .$type<unknown>()
+      .notNull()
+      .default([]),
+    connectorId: text("connector_id"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    lastQualifiedAt: timestamp("last_qualified_at", { withTimezone: true }),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
+    encryptedCredential: text("encrypted_credential"),
+    configuredByUserId: text("configured_by_user_id").references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    attestedByUserId: text("attested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    qualifiedByUserId: text("qualified_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    revokedByUserId: text("revoked_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    configuredAt: timestamp("configured_at", { withTimezone: true }),
+    attestedAt: timestamp("attested_at", { withTimezone: true }),
+    qualifiedAt: timestamp("qualified_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("environment_provider_connections_org_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    uniqueIndex("environment_provider_connections_active_default_idx")
+      .on(table.organizationId, table.provider)
+      .where(sql`${table.isDefault} = true and ${table.revokedAt} is null`),
+    uniqueIndex("environment_provider_connections_connector_idx")
+      .on(table.connectorId)
+      .where(sql`${table.connectorId} is not null`),
+    index("environment_provider_connections_org_status_idx").on(
+      table.organizationId,
+      table.provider,
+      table.status,
+    ),
+  ],
+);
+
 export const environments = pgTable(
   "environments",
   {
@@ -1507,10 +1590,16 @@ export const environments = pgTable(
     }),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
-    provider: text("provider", { enum: ["fly", "desktop"] })
+    provider: text("provider", { enum: ["fly", "desktop", "kubernetes"] })
       .notNull()
       .default("fly"),
-    region: text("region").notNull(),
+    region: text("region"),
+    providerConnectionId: text("provider_connection_id").references(
+      () => environmentProviderConnections.id,
+      { onDelete: "restrict" },
+    ),
+    providerPlacement: jsonb("provider_placement").$type<unknown>(),
+    workspaceLimit: integer("workspace_limit"),
     status: text("status", {
       enum: [
         "requested",
@@ -1576,13 +1665,14 @@ export const environments = pgTable(
       .on(table.flyAppName)
       .where(sql`${table.flyAppName} is not null`),
     index("environments_org_status_idx").on(table.organizationId, table.status),
+    index("environments_provider_connection_idx").on(table.providerConnectionId),
     check(
       "environments_idle_timeout_check",
       sql`${table.idleTimeoutMinutes} > 0`,
     ),
     check(
       "environments_provider_check",
-      sql`${table.provider} in ('fly', 'desktop')`,
+      sql`${table.provider} in ('fly', 'desktop', 'kubernetes')`,
     ),
     check(
       "environments_reasoning_retention_days_check",
@@ -1595,11 +1685,27 @@ export const environments = pgTable(
         or
         (
           ${table.provider} = 'desktop'
+          and ${table.providerConnectionId} is null
+          and ${table.flyAppName} is null
+          and ${table.flyNetworkName} is null
+          and ${table.flyGatewayMachineId} is null
+        )
+        or
+        (
+          ${table.provider} = 'kubernetes'
+          and ${table.providerConnectionId} is not null
+          and ${table.workspaceLimit} is not null
+          and ${table.workspaceLimit} > 0
+          and ${table.region} is null
           and ${table.flyAppName} is null
           and ${table.flyNetworkName} is null
           and ${table.flyGatewayMachineId} is null
         )
       )`,
+    ),
+    check(
+      "environments_workspace_limit_check",
+      sql`${table.workspaceLimit} is null or ${table.workspaceLimit} > 0`,
     ),
   ],
 );
@@ -1964,6 +2070,98 @@ export const environmentWorkspaces = pgTable(
         or
         (${table.sourceType} = 'desktop' and ${table.desktopCatalogId} is not null and ${table.sourceResourceId} is null and ${table.sourceRepository} is null)
       )`,
+    ),
+  ],
+);
+
+export const environmentProviderResources = pgTable(
+  "environment_provider_resources",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    environmentId: text("environment_id")
+      .notNull()
+      .references(() => environments.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id").references(
+      () => environmentWorkspaces.id,
+      { onDelete: "cascade" },
+    ),
+    replacementId: text("replacement_id"),
+    providerConnectionId: text("provider_connection_id")
+      .notNull()
+      .references(() => environmentProviderConnections.id, {
+        onDelete: "restrict",
+      }),
+    provider: text("provider", { enum: ["fly", "kubernetes"] }).notNull(),
+    resourceRole: text("resource_role", {
+      enum: [
+        "environment_scope",
+        "gateway",
+        "workspace_compute",
+        "workspace_storage",
+        "snapshot",
+        "edge_route",
+      ],
+    }).notNull(),
+    externalId: text("external_id").notNull(),
+    providerUid: text("provider_uid"),
+    desiredRevision: text("desired_revision").notNull(),
+    observedGeneration: text("observed_generation"),
+    state: text("state"),
+    providerMetadata: jsonb("provider_metadata").$type<unknown>(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("environment_provider_resources_environment_singleton_idx")
+      .on(table.environmentId, table.resourceRole)
+      .where(
+        sql`${table.workspaceId} is null and ${table.deletedAt} is null and ${table.resourceRole} <> 'snapshot'`,
+      ),
+    uniqueIndex("environment_provider_resources_workspace_singleton_idx")
+      .on(table.workspaceId, table.resourceRole)
+      .where(
+        sql`${table.workspaceId} is not null and ${table.replacementId} is null and ${table.deletedAt} is null and ${table.resourceRole} <> 'snapshot'`,
+      ),
+    uniqueIndex("environment_provider_resources_workspace_replacement_idx")
+      .on(table.workspaceId, table.resourceRole, table.replacementId)
+      .where(
+        sql`${table.workspaceId} is not null and ${table.replacementId} is not null and ${table.deletedAt} is null and ${table.resourceRole} in ('workspace_compute', 'workspace_storage')`,
+      ),
+    uniqueIndex("environment_provider_resources_external_idx")
+      .on(
+        table.providerConnectionId,
+        table.environmentId,
+        table.resourceRole,
+        table.externalId,
+      )
+      .where(sql`${table.deletedAt} is null`),
+    uniqueIndex("environment_provider_resources_org_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    index("environment_provider_resources_environment_idx").on(
+      table.organizationId,
+      table.environmentId,
+      table.deletedAt,
+    ),
+    index("environment_provider_resources_workspace_idx").on(
+      table.workspaceId,
+      table.replacementId,
+      table.deletedAt,
+    ),
+    check(
+      "environment_provider_resources_replacement_check",
+      sql`${table.replacementId} is null or (${table.workspaceId} is not null and ${table.resourceRole} in ('workspace_compute', 'workspace_storage'))`,
     ),
   ],
 );
@@ -2350,6 +2548,219 @@ export const githubActionApprovals = pgTable(
   ],
 );
 
+export const infrastructureConnectorEnrollmentRequests = pgTable(
+  "infrastructure_connector_enrollment_requests",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
+    providerConnectionId: text("provider_connection_id").references(
+      () => environmentProviderConnections.id,
+      { onDelete: "cascade" },
+    ),
+    connectorName: text("connector_name").notNull(),
+    connectorVersion: text("connector_version").notNull(),
+    supportedCommandVersions: jsonb("supported_command_versions")
+      .$type<unknown>()
+      .notNull(),
+    supportedResultVersions: jsonb("supported_result_versions")
+      .$type<unknown>()
+      .notNull(),
+    clusterMetadata: jsonb("cluster_metadata").$type<unknown>().notNull(),
+    secretHash: text("secret_hash").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    signingPublicKey: text("signing_public_key").notNull(),
+    encryptionPublicKey: text("encryption_public_key").notNull(),
+    status: text("status", {
+      enum: ["pending", "approved", "rejected", "expired", "consumed"],
+    })
+      .notNull()
+      .default("pending"),
+    requestedByUserId: text("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    approvedByUserId: text("approved_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    consumptionEnvelope: jsonb("consumption_envelope").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("infrastructure_connector_enrollment_fingerprint_idx").on(
+      table.fingerprint,
+    ),
+    index("infrastructure_connector_enrollment_expiry_idx").on(
+      table.status,
+      table.expiresAt,
+    ),
+  ],
+);
+
+export const infrastructureConnectorConnections = pgTable(
+  "infrastructure_connector_connections",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    providerConnectionId: text("provider_connection_id")
+      .notNull()
+      .references(() => environmentProviderConnections.id, {
+        onDelete: "cascade",
+      }),
+    signingPublicKey: text("signing_public_key").notNull(),
+    encryptionPublicKey: text("encryption_public_key").notNull(),
+    currentCredentialHash: text("current_credential_hash").notNull(),
+    previousCredentialHash: text("previous_credential_hash"),
+    previousCredentialExpiresAt: timestamp("previous_credential_expires_at", {
+      withTimezone: true,
+    }),
+    credentialRotatedAt: timestamp("credential_rotated_at", {
+      withTimezone: true,
+    }),
+    supportedCommandVersions: jsonb("supported_command_versions")
+      .$type<unknown>()
+      .notNull()
+      .default([]),
+    supportedResultVersions: jsonb("supported_result_versions")
+      .$type<unknown>()
+      .notNull()
+      .default([]),
+    connectorVersion: text("connector_version").notNull(),
+    status: text("status", { enum: ["active", "revoked"] })
+      .notNull()
+      .default("active"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("infrastructure_connector_connections_provider_idx").on(
+      table.providerConnectionId,
+    ),
+    uniqueIndex("infrastructure_connector_connections_org_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+  ],
+);
+
+export const infrastructureConnectorReplicaPresence = pgTable(
+  "infrastructure_connector_replica_presence",
+  {
+    connectorId: text("connector_id")
+      .notNull()
+      .references(() => infrastructureConnectorConnections.id, {
+        onDelete: "cascade",
+      }),
+    replicaId: text("replica_id").notNull(),
+    connectorVersion: text("connector_version").notNull(),
+    supportedCommandVersions: jsonb("supported_command_versions")
+      .$type<unknown>()
+      .notNull(),
+    supportedResultVersions: jsonb("supported_result_versions")
+      .$type<unknown>()
+      .notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.connectorId, table.replicaId] }),
+    index("infrastructure_connector_replica_presence_seen_idx").on(
+      table.lastSeenAt,
+    ),
+  ],
+);
+
+export const infrastructureConnectorRequestNonces = pgTable(
+  "infrastructure_connector_request_nonces",
+  {
+    connectorId: text("connector_id")
+      .notNull()
+      .references(() => infrastructureConnectorConnections.id, {
+        onDelete: "cascade",
+      }),
+    nonce: text("nonce").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.connectorId, table.nonce] }),
+    index("infrastructure_connector_request_nonces_expiry_idx").on(
+      table.expiresAt,
+    ),
+  ],
+);
+
+export const infrastructureConnectorQualificationRuns = pgTable(
+  "infrastructure_connector_qualification_runs",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    providerConnectionId: text("provider_connection_id")
+      .notNull()
+      .references(() => environmentProviderConnections.id, {
+        onDelete: "cascade",
+      }),
+    requestedByUserId: text("requested_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    configRevision: text("config_revision").notNull(),
+    status: text("status", {
+      enum: ["queued", "running", "passed", "failed", "cancelled"],
+    })
+      .notNull()
+      .default("queued"),
+    commandId: text("command_id"),
+    result: jsonb("result").$type<unknown>(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("infrastructure_connector_qualification_command_idx")
+      .on(table.commandId)
+      .where(sql`${table.commandId} is not null`),
+    index("infrastructure_connector_qualification_connection_idx").on(
+      table.organizationId,
+      table.providerConnectionId,
+      table.createdAt,
+    ),
+  ],
+);
+
 export const environmentOperations = pgTable(
   "environment_operations",
   {
@@ -2392,6 +2803,10 @@ export const environmentOperations = pgTable(
     stage: text("stage").notNull().default("requested"),
     idempotencyKey: text("idempotency_key").notNull(),
     providerRequestId: text("provider_request_id"),
+    connectorCommandId: text("connector_command_id").references(
+      (): AnyPgColumn => infrastructureConnectorCommands.id,
+      { onDelete: "set null" },
+    ),
     attempt: integer("attempt").notNull().default(0),
     input: jsonb("input").$type<Record<string, unknown>>(),
     result: jsonb("result").$type<Record<string, unknown>>(),
@@ -2416,6 +2831,139 @@ export const environmentOperations = pgTable(
       table.status,
     ),
     index("environment_operations_workspace_idx").on(table.workspaceId),
+    uniqueIndex("environment_operations_connector_command_idx")
+      .on(table.connectorCommandId)
+      .where(sql`${table.connectorCommandId} is not null`),
+  ],
+);
+
+export const infrastructureConnectorCommands = pgTable(
+  "infrastructure_connector_commands",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    providerConnectionId: text("provider_connection_id")
+      .notNull()
+      .references(() => environmentProviderConnections.id, {
+        onDelete: "cascade",
+      }),
+    connectorId: text("connector_id").references(
+      () => infrastructureConnectorConnections.id,
+      { onDelete: "restrict" },
+    ),
+    operationId: text("operation_id").references(() => environmentOperations.id, {
+      onDelete: "cascade",
+    }),
+    qualificationRunId: text("qualification_run_id").references(
+      () => infrastructureConnectorQualificationRuns.id,
+      { onDelete: "cascade" },
+    ),
+    idempotencyKey: text("idempotency_key").notNull(),
+    commandType: text("command_type").notNull(),
+    desiredRevision: text("desired_revision").notNull(),
+    envelope: jsonb("envelope").$type<unknown>().notNull(),
+    status: text("status", {
+      enum: [
+        "queued",
+        "claimed",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+      ],
+    })
+      .notNull()
+      .default("queued"),
+    claimTokenHash: text("claim_token_hash"),
+    claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
+    attempt: integer("attempt").notNull().default(0),
+    eventCursor: integer("event_cursor").notNull().default(0),
+    result: jsonb("result").$type<unknown>(),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("infrastructure_connector_commands_operation_idx")
+      .on(table.operationId)
+      .where(sql`${table.operationId} is not null`),
+    uniqueIndex("infrastructure_connector_commands_qualification_idx")
+      .on(table.qualificationRunId)
+      .where(sql`${table.qualificationRunId} is not null`),
+    uniqueIndex("infrastructure_connector_commands_idempotency_idx").on(
+      table.providerConnectionId,
+      table.idempotencyKey,
+    ),
+    uniqueIndex("infrastructure_connector_commands_org_id_idx").on(
+      table.organizationId,
+      table.id,
+    ),
+    index("infrastructure_connector_commands_claim_idx").on(
+      table.providerConnectionId,
+      table.status,
+      table.claimExpiresAt,
+      table.createdAt,
+    ),
+    check(
+      "infrastructure_connector_commands_attempt_check",
+      sql`${table.attempt} >= 0`,
+    ),
+    check(
+      "infrastructure_connector_commands_event_cursor_check",
+      sql`${table.eventCursor} >= 0`,
+    ),
+    check(
+      "infrastructure_connector_commands_owner_check",
+      sql`num_nonnulls(${table.operationId}, ${table.qualificationRunId}) = 1`,
+    ),
+  ],
+);
+
+export const infrastructureConnectorCommandEvents = pgTable(
+  "infrastructure_connector_command_events",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    commandId: text("command_id")
+      .notNull()
+      .references(() => infrastructureConnectorCommands.id, {
+        onDelete: "cascade",
+      }),
+    sequence: integer("sequence").notNull(),
+    event: jsonb("event").$type<unknown>().notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("infrastructure_connector_command_events_sequence_idx").on(
+      table.commandId,
+      table.sequence,
+    ),
+    index("infrastructure_connector_command_events_org_command_idx").on(
+      table.organizationId,
+      table.commandId,
+    ),
+    check(
+      "infrastructure_connector_command_events_sequence_check",
+      sql`${table.sequence} > 0`,
+    ),
   ],
 );
 
@@ -3086,10 +3634,10 @@ export const workspacePreviewLeases = pgTable(
     }),
     actorId: text("actor_id").notNull(),
     targetProvider: text("target_provider", {
-      enum: ["fly", "desktop"],
+      enum: ["hosted", "desktop", "fly"],
     })
       .notNull()
-      .default("fly"),
+      .default("hosted"),
     desktopConnectionId: text("desktop_connection_id").references(
       () => desktopEnvironmentConnections.id,
       { onDelete: "cascade" },
@@ -3150,7 +3698,7 @@ export const workspacePreviewLeases = pgTable(
       "workspace_preview_leases_target_check",
       sql`(
         (
-          ${table.targetProvider} = 'fly'
+          ${table.targetProvider} in ('hosted', 'fly')
           and ${table.threadId} is not null
           and ${table.runId} is not null
           and ${table.desktopConnectionId} is null
@@ -5981,6 +6529,9 @@ export type OrganizationToolCapability = InferSelectModel<
 export type OrganizationToolConnection = InferSelectModel<
   typeof organizationToolConnections
 >;
+export type EnvironmentProviderConnection = InferSelectModel<
+  typeof environmentProviderConnections
+>;
 export type Environment = InferSelectModel<typeof environments>;
 export type DesktopEnvironmentConnection = InferSelectModel<
   typeof desktopEnvironmentConnections
@@ -5996,6 +6547,27 @@ export type DesktopEnvironmentRequestNonce = InferSelectModel<
 >;
 export type EnvironmentWorkspace = InferSelectModel<
   typeof environmentWorkspaces
+>;
+export type EnvironmentProviderResource = InferSelectModel<
+  typeof environmentProviderResources
+>;
+export type InfrastructureConnectorEnrollmentRequest = InferSelectModel<
+  typeof infrastructureConnectorEnrollmentRequests
+>;
+export type InfrastructureConnectorConnection = InferSelectModel<
+  typeof infrastructureConnectorConnections
+>;
+export type InfrastructureConnectorReplicaPresence = InferSelectModel<
+  typeof infrastructureConnectorReplicaPresence
+>;
+export type InfrastructureConnectorQualificationRun = InferSelectModel<
+  typeof infrastructureConnectorQualificationRuns
+>;
+export type InfrastructureConnectorCommand = InferSelectModel<
+  typeof infrastructureConnectorCommands
+>;
+export type InfrastructureConnectorCommandEvent = InferSelectModel<
+  typeof infrastructureConnectorCommandEvents
 >;
 export type DesktopEnvironmentCommand = InferSelectModel<
   typeof desktopEnvironmentCommands

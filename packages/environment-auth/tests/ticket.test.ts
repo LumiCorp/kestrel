@@ -9,9 +9,11 @@ import {
   ENVIRONMENT_TOOL_CREDENTIAL_AUDIENCE,
   PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
   PREVIEW_EDGE_ROUTE_TICKET_VERSION,
+  PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION,
   PREVIEW_RELAY_TICKET_AUDIENCE,
   PREVIEW_RELAY_TICKET_VERSION,
   PREVIEW_RELAY_TICKET_V2_VERSION,
+  PREVIEW_RELAY_TICKET_V3_VERSION,
   generateDesktopCredentialEncryptionKeyPair,
   signEnvironmentExecutionTicket,
   signEnvironmentToolCredential,
@@ -72,6 +74,22 @@ const providerNeutralTicket: EnvironmentExecutionTicket = {
   issuedAt: 1000,
   expiresAt: 1300,
   nonce: "nonce-2",
+};
+const logicalTicket: EnvironmentExecutionTicket = {
+  version: 3,
+  audience: ENVIRONMENT_ROUTER_AUDIENCE,
+  organizationId: "org-1",
+  environmentId: "env-1",
+  workspaceId: "workspace-1",
+  threadId: "thread-1",
+  runId: "run-3",
+  actorId: "user-1",
+  agentId: "kestrel-one",
+  target: { kind: "gateway", gatewayId: "gateway-resource-1" },
+  capabilities: ["run.stream", "profile.read"],
+  issuedAt: 1000,
+  expiresAt: 1300,
+  nonce: "nonce-3",
 };
 
 test(
@@ -157,6 +175,37 @@ test(
   },
 );
 
+test("v3 execution tickets bind logical gateway authority and reject provider topology", () => {
+  const token = signEnvironmentExecutionTicket({ ticket: logicalTicket, privateKey });
+  assert.deepEqual(
+    verifyEnvironmentExecutionTicket({ token, publicKey, now: 1100 }),
+    logicalTicket,
+  );
+  assert.throws(() => signEnvironmentExecutionTicket({
+    ticket: {
+      ...logicalTicket,
+      target: { kind: "gateway", gatewayId: "gateway-resource-1", provider: "fly" },
+    } as EnvironmentExecutionTicket,
+    privateKey,
+  }));
+});
+
+test("execution ticket envelope and payload versions must match", () => {
+  const header = Buffer.from(JSON.stringify({
+    algorithm: "EdDSA",
+    type: "KET",
+    version: 1,
+  })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify(logicalTicket)).toString("base64url");
+  const signingInput = `${header}.${payload}`;
+  const signature = sign(null, Buffer.from(signingInput), privateKey).toString("base64url");
+  assert.throws(() => verifyEnvironmentExecutionTicket({
+    token: `${signingInput}.${signature}`,
+    publicKey,
+    now: 1100,
+  }));
+});
+
 test("preview relay tickets bind one hostname, Workspace Machine, and loopback port", () => {
   const relayTicket = {
     version: PREVIEW_RELAY_TICKET_VERSION,
@@ -224,6 +273,29 @@ test(
   },
 );
 
+test("preview relay v3 binds logical workspace authority with exact keys", () => {
+  const relayTicket = {
+    version: PREVIEW_RELAY_TICKET_V3_VERSION,
+    audience: PREVIEW_RELAY_TICKET_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "environment-1",
+    workspaceId: "workspace-1",
+    target: { kind: "workspace" as const },
+    previewId: "preview-3",
+    hostname: "p-three.previews.example.com",
+    port: 5173,
+    issuedAt: 1000,
+    expiresAt: 1120,
+    nonce: "relay-nonce-3",
+  } as const;
+  const token = signPreviewRelayTicket({ ticket: relayTicket, privateKey });
+  assert.deepEqual(verifyPreviewRelayTicket({ token, publicKey, now: 1050 }), relayTicket);
+  assert.throws(() => signPreviewRelayTicket({
+    ticket: { ...relayTicket, flyMachineId: "machine-1" } as typeof relayTicket,
+    privateKey,
+  }));
+});
+
 test(
   "Preview Edge route tickets bind one public hostname to one Environment gateway",
   () => {
@@ -267,6 +339,28 @@ test(
     );
   }
 );
+
+test("Preview Edge v2 tickets bind logical gateway authority", () => {
+  const edgeTicket = {
+    version: PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION,
+    audience: PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "environment-1",
+    workspaceId: "workspace-1",
+    gatewayId: "gateway-resource-1",
+    previewId: "preview-2",
+    hostname: "p-two.preview.kestrelagents.dev",
+    issuedAt: 1000,
+    expiresAt: 1300,
+    nonce: "edge-nonce-2",
+  } as const;
+  const token = signPreviewEdgeRouteTicket({ ticket: edgeTicket, privateKey });
+  assert.deepEqual(verifyPreviewEdgeRouteTicket({ token, publicKey, now: 1030 }), edgeTicket);
+  assert.throws(() => signPreviewEdgeRouteTicket({
+    ticket: { ...edgeTicket, flyAppName: "fly-app" } as typeof edgeTicket,
+    privateKey,
+  }));
+});
 
 test(
   "Preview Edge tickets reject malformed runtime payload types and unknown fields",

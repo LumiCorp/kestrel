@@ -7,7 +7,7 @@ import {
   type WorkspaceSkillStatus,
 } from "@kestrel-agents/workspace-skills";
 import { and, eq, isNull } from "drizzle-orm";
-import { createEnvironmentMachineRoute } from "@/lib/environments/execution-route";
+import { createHostedEnvironmentRoute } from "@/lib/environments/execution-route";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 
 const SKILL_STATUSES = new Set<WorkspaceSkillStatus>([
@@ -268,7 +268,7 @@ async function resolveReadyWorkspaceRoute(input: {
         absent(table.deletedAt)
       ),
   });
-  if (!workspace?.flyMachineId) return null;
+  if (!workspace) return null;
   const environment = await knowledgeDb.query.environments.findFirst({
     where: (table, { and: all, eq: equals }) =>
       all(
@@ -276,8 +276,8 @@ async function resolveReadyWorkspaceRoute(input: {
         equals(table.organizationId, input.organizationId)
       ),
   });
-  if (!(environment?.flyAppName && environment.routerUrl)) return null;
-  return createEnvironmentMachineRoute({
+  if (!environment) return null;
+  return createHostedEnvironmentRoute({
     organizationId: input.organizationId,
     environmentId: environment.id,
     workspaceId: workspace.id,

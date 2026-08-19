@@ -1,0 +1,4 @@
+image:
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+kestrel:
+  connectorDisplayName: GKE Gateway certification cluster

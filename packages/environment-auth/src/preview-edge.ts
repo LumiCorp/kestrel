@@ -3,24 +3,43 @@ import { sign, verify } from "node:crypto";
 export const PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE =
   "kestrel-preview-edge-route" as const;
 export const PREVIEW_EDGE_ROUTE_TICKET_VERSION = 1 as const;
+export const PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION = 2 as const;
 export const PREVIEW_EDGE_ROUTE_TICKET_MAX_TTL_SECONDS = 300;
 export const PREVIEW_EDGE_ROUTE_TICKET_CLOCK_SKEW_SECONDS = 30;
 export const PREVIEW_EDGE_AUTHORIZATION_HEADER =
   "x-kestrel-preview-edge-authorization" as const;
 
-export type PreviewEdgeRouteTicket = {
-  version: typeof PREVIEW_EDGE_ROUTE_TICKET_VERSION;
+type PreviewEdgeRouteTicketCommon = {
   audience: typeof PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE;
   organizationId: string;
   environmentId: string;
   workspaceId: string;
-  flyAppName: string;
   previewId: string;
   hostname: string;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
 };
+
+export type PreviewEdgeRouteTicketV1 = PreviewEdgeRouteTicketCommon & {
+  version: typeof PREVIEW_EDGE_ROUTE_TICKET_VERSION;
+  flyAppName: string;
+};
+
+export type PreviewEdgeRouteTicketV2 = PreviewEdgeRouteTicketCommon & {
+  version: typeof PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION;
+  gatewayId: string;
+};
+
+export type PreviewEdgeRouteTicket =
+  | PreviewEdgeRouteTicketV1
+  | PreviewEdgeRouteTicketV2;
+
+export function getGatewayPreviewEdgeTarget(ticket: PreviewEdgeRouteTicket) {
+  return ticket.version === PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION
+    ? { gatewayId: ticket.gatewayId }
+    : null;
+}
 
 export function signPreviewEdgeRouteTicket(input: {
   ticket: PreviewEdgeRouteTicket;
@@ -80,19 +99,21 @@ function parsePreviewEdgeRouteTicket(
   now: number
 ): PreviewEdgeRouteTicket {
   if (!isRecord(value)) throw invalid();
-  const expectedKeys = [
+  const commonKeys = [
     "version",
     "audience",
     "organizationId",
     "environmentId",
     "workspaceId",
-    "flyAppName",
     "previewId",
     "hostname",
     "issuedAt",
     "expiresAt",
     "nonce",
   ];
+  const expectedKeys = value.version === PREVIEW_EDGE_ROUTE_TICKET_VERSION
+    ? [...commonKeys, "flyAppName"]
+    : [...commonKeys, "gatewayId"];
   if (
     Object.keys(value).length !== expectedKeys.length ||
     expectedKeys.some((key) => !Object.hasOwn(value, key))
@@ -104,7 +125,6 @@ function parsePreviewEdgeRouteTicket(
     "organizationId",
     "environmentId",
     "workspaceId",
-    "flyAppName",
     "previewId",
     "hostname",
     "nonce",
@@ -114,33 +134,41 @@ function parsePreviewEdgeRouteTicket(
       (field) =>
         typeof value[field] !== "string" || value[field].length === 0
     ) ||
-    value.version !== PREVIEW_EDGE_ROUTE_TICKET_VERSION ||
+    (value.version !== PREVIEW_EDGE_ROUTE_TICKET_VERSION &&
+      value.version !== PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION) ||
     value.audience !== PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE ||
     !Number.isSafeInteger(value.issuedAt) ||
     !Number.isSafeInteger(value.expiresAt)
   ) {
     throw invalid();
   }
-  const ticket = {
-    version: value.version,
+  const common = {
     audience: value.audience,
     organizationId: value.organizationId,
     environmentId: value.environmentId,
     workspaceId: value.workspaceId,
-    flyAppName: value.flyAppName,
     previewId: value.previewId,
     hostname: value.hostname,
     issuedAt: value.issuedAt,
     expiresAt: value.expiresAt,
     nonce: value.nonce,
-  } as PreviewEdgeRouteTicket;
+  } as PreviewEdgeRouteTicketCommon;
+  const ticket = value.version === PREVIEW_EDGE_ROUTE_TICKET_VERSION
+    ? {
+        ...common,
+        version: value.version,
+        flyAppName: stringField(value, "flyAppName"),
+      }
+    : {
+        ...common,
+        version: value.version as typeof PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION,
+        gatewayId: stringField(value, "gatewayId"),
+      };
   if (
-    ticket.version !== PREVIEW_EDGE_ROUTE_TICKET_VERSION ||
     ticket.audience !== PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE ||
     !ticket.organizationId ||
     !ticket.environmentId ||
     !ticket.workspaceId ||
-    !ticket.flyAppName ||
     !ticket.previewId ||
     !validHostname(ticket.hostname) ||
     ticket.expiresAt <= ticket.issuedAt ||
@@ -156,6 +184,12 @@ function parsePreviewEdgeRouteTicket(
     throw invalid();
   }
   return ticket;
+}
+
+function stringField(value: Record<string, unknown>, key: string) {
+  const field = value[key];
+  if (typeof field !== "string" || field.length === 0) throw invalid();
+  return field;
 }
 
 function validHostname(value: string) {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   authorizeWorkspaceIdleNotification,
   WORKSPACE_IDLE_NOTIFICATION_VERSION,
+  WORKSPACE_IDLE_NOTIFICATION_V1_VERSION,
   WorkspaceIdleNotificationError,
   workspaceIdleNotificationSchema,
 } from "./idle-contract";
@@ -30,20 +31,26 @@ test("Workspace idle notifications require the dedicated runtime bearer", () => 
   }
 });
 
-test("Workspace idle notifications bind the exact organization and Machine", () => {
+test("Workspace idle notifications bind the exact organization and workspace", () => {
   const parsed = workspaceIdleNotificationSchema.parse({
     version: WORKSPACE_IDLE_NOTIFICATION_VERSION,
     organizationId: "organization-id",
     environmentId: "11111111-1111-4111-8111-111111111111",
     workspaceId: "22222222-2222-4222-8222-222222222222",
-    machineId: "d8d96934c79198",
     lastActivityAt: "2026-07-13T12:00:00.000Z",
   });
-  assert.equal(parsed.machineId, "d8d96934c79198");
+  assert.equal(parsed.organizationId, "organization-id");
   assert.throws(() =>
     workspaceIdleNotificationSchema.parse({
       ...parsed,
       workspaceId: "not-a-workspace-id",
     })
   );
+  const legacy = workspaceIdleNotificationSchema.parse({
+    ...parsed,
+    version: WORKSPACE_IDLE_NOTIFICATION_V1_VERSION,
+    machineId: "d8d96934c79198",
+  });
+  assert.equal(legacy.version, WORKSPACE_IDLE_NOTIFICATION_V1_VERSION);
+  assert.equal(legacy.machineId, "d8d96934c79198");
 });

@@ -7,6 +7,7 @@ import { once } from "node:events";
 import {
   PREVIEW_RELAY_TICKET_AUDIENCE,
   PREVIEW_RELAY_TICKET_VERSION,
+  PREVIEW_RELAY_TICKET_V3_VERSION,
   signPreviewRelayTicket,
 } from "@lumi/kestrel-environment-auth";
 import { handlePreviewRelayHttp, handlePreviewRelayUpgrade } from "../src/preview-relay.js";
@@ -43,9 +44,28 @@ test("preview relay authenticates its exact workspace and streams without exposi
     ticket: {
       version: PREVIEW_RELAY_TICKET_VERSION,
       audience: PREVIEW_RELAY_TICKET_AUDIENCE,
-      ...scope,
+      organizationId: scope.organizationId,
+      environmentId: scope.environmentId,
+      workspaceId: scope.workspaceId,
       flyAppName: "kestrel-env-1",
       flyMachineId: scope.machineId,
+      previewId,
+      hostname: "p-secret.previews.example.com",
+      port: applicationAddress.port,
+      issuedAt: now,
+      expiresAt: now + 120,
+      nonce: randomUUID(),
+    },
+  });
+  const logicalToken = signPreviewRelayTicket({
+    privateKey: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    ticket: {
+      version: PREVIEW_RELAY_TICKET_V3_VERSION,
+      audience: PREVIEW_RELAY_TICKET_AUDIENCE,
+      organizationId: scope.organizationId,
+      environmentId: scope.environmentId,
+      workspaceId: scope.workspaceId,
+      target: { kind: "workspace" },
       previewId,
       hostname: "p-secret.previews.example.com",
       port: applicationAddress.port,
@@ -85,6 +105,14 @@ test("preview relay authenticates its exact workspace and streams without exposi
       { headers: { authorization: `Bearer ${token}` } }
     );
     assert.equal(denied.status, 403);
+
+    const logical = await fetch(
+      `http://127.0.0.1:${relayAddress.port}/v1/preview-relay/${previewId}/logical`,
+      { headers: { authorization: `Bearer ${logicalToken}` } },
+    );
+    assert.equal(logical.status, 200);
+    assert.equal(await logical.text(), "data: one\n\ndata: two\n\n");
+    assert.equal(observed.at(-1)?.url, "/logical");
   } finally {
     relay.close();
     application.close();
@@ -119,7 +147,9 @@ test("preview relay carries WebSocket upgrades to the selected loopback port", a
     ticket: {
       version: PREVIEW_RELAY_TICKET_VERSION,
       audience: PREVIEW_RELAY_TICKET_AUDIENCE,
-      ...scope,
+      organizationId: scope.organizationId,
+      environmentId: scope.environmentId,
+      workspaceId: scope.workspaceId,
       flyAppName: "kestrel-env-ws",
       flyMachineId: scope.machineId,
       previewId,

@@ -12,6 +12,7 @@ import {
 import { environmentLifecycleLockKey } from "./lifecycle-lock";
 import { PROVISIONER_OPERATION_TYPES } from "./operation-routing";
 import {
+  assertEnvironmentProviderCompatibility,
   type EnvironmentInfrastructureProvider,
   EnvironmentProviderError,
   KESTREL_WORKSPACE_STOP_CONFIG,
@@ -298,6 +299,7 @@ export class EnvironmentProvisioner {
     }
     this.repository = repository;
     this.provider = provider;
+    assertEnvironmentProviderCompatibility(provider.descriptor);
     this.runtimeImage = runtimeImage;
     this.routerImage = routerImage;
     this.ticketPublicKey = ticketPublicKey;
@@ -544,7 +546,11 @@ export class EnvironmentProvisioner {
         stage: "environment.runtime.connecting",
       }),
     );
-    await this.provider.ensureEnvironmentApp({ appName, networkName });
+    await this.provider.ensureEnvironmentApp({
+      environmentId: environment.id,
+      appName,
+      networkName,
+    });
     const appStaged = await this.persistEnvironmentProvisioning(() =>
       this.repository.stageEnvironmentAppIdentity({
         environmentId: environment.id,
@@ -1546,7 +1552,15 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             idleTimeoutMinutes: true,
           },
         })
-        .then((value) => value ?? null);
+        .then((value) => {
+          if (!value) return null;
+          if (!value.region) {
+            throw new Error(
+              "The Fly lifecycle worker requires a provider region.",
+            );
+          }
+          return { ...value, region: value.region };
+        });
     },
     getWorkspace(workspaceId) {
       return knowledgeDb.query.environmentWorkspaces

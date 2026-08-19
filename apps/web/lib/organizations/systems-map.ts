@@ -30,7 +30,7 @@ export type OrganizationSystemsMapWorkspace = {
 export type OrganizationSystemsMapEnvironment = {
   id: string;
   name: string;
-  region: string;
+  region: string | null;
   status: string;
   appName: string | null;
   networkName: string | null;

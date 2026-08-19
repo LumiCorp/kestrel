@@ -1,0 +1,25 @@
+namespaceOverride: kestrel-system
+replicaCount: 2
+
+image:
+  repository: ghcr.io/lumicorp/kestrel-kubernetes-connector
+  digest: ""
+  pullPolicy: IfNotPresent
+
+kestrel:
+  baseUrl: https://app.kestrel.sh
+  connectorDisplayName: Kubernetes cluster
+  outboundProxy: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podDisruptionBudget:
+  minAvailable: 1
+
+topologyKey: kubernetes.io/hostname

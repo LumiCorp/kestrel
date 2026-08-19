@@ -24,7 +24,15 @@ import {
   createEnvironmentMachineRoute,
   resolveEnvironmentExecutionRoute,
 } from "./execution-route";
-import { createFlyProviderClient } from "./fly-connection";
+import { getHostedRoutingContractMode } from "./config";
+import { refreshEnvironmentGateway } from "./gateway-refresh";
+import { resolveFlyProviderClient } from "./provider-registry";
+import {
+  promoteEnvironmentProviderReplacementInTransaction,
+  upsertEnvironmentProviderResource,
+  upsertEnvironmentProviderResourceInTransaction,
+} from "./provider-persistence";
+import { resolveHostedRouteGeneration } from "./routing-authority";
 import {
   createEnvironmentServiceToken,
   hashEnvironmentServiceToken,
@@ -34,7 +42,9 @@ import {
   performGuardedWorkspaceRestoreCutover,
   resolveWorkspaceBackupRecoverySource,
   resolveWorkspaceBackupSnapshotSourceVolumeId,
+  selectPromotedWorkspaceRestoreReplay,
   WORKSPACE_RESTORE_ROUTE_CAPABILITIES,
+  WorkspaceRestoreCasConflictError,
   workspaceRestoreResourceIdentities,
 } from "./restore-cutover";
 import {
@@ -90,6 +100,8 @@ export async function createWorkspaceBackup(input: {
   if (
     !(
       environment?.flyAppName &&
+      environment.region &&
+      environment.providerConnectionId &&
       environment.routerUrl &&
       workspace?.flyVolumeId &&
       workspace.flyMachineId &&
@@ -102,6 +114,7 @@ export async function createWorkspaceBackup(input: {
   if (workspace.sourceType === "desktop") {
     throw new Error("Desktop Workspaces use Desktop-owned backup recovery.");
   }
+  const providerConnectionId = environment.providerConnectionId;
   const now = new Date();
   const expiresAt = new Date(
     now.getTime() + WORKSPACE_BACKUP_RETENTION_DAYS * 86_400_000,
@@ -126,7 +139,10 @@ export async function createWorkspaceBackup(input: {
     };
   }
   const { operationId, backupId } = prepared;
-  const provider = await createFlyProviderClient(input.organizationId);
+  const provider = await resolveFlyProviderClient({
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+  });
   let exportMachineId: string | null = null;
   let exportVolumeId: string | null = null;
   try {
@@ -211,6 +227,7 @@ export async function createWorkspaceBackup(input: {
     );
     if (preparation) {
       const reusable = await findReusableWorkspaceBackup({
+        environmentId: input.environmentId,
         workspaceId: input.workspaceId,
         sourceRevision: preparation.sourceRevision,
         organizationId: input.organizationId,
@@ -249,6 +266,7 @@ export async function createWorkspaceBackup(input: {
       });
       if (!claimed) {
         const concurrent = await waitForReusableWorkspaceBackup({
+          environmentId: input.environmentId,
           workspaceId: input.workspaceId,
           sourceRevision: preparation.sourceRevision,
           organizationId: input.organizationId,
@@ -329,6 +347,23 @@ export async function createWorkspaceBackup(input: {
     input.signal?.throwIfAborted();
     const completedAt = new Date();
     await knowledgeDb.transaction(async (transaction) => {
+      await upsertEnvironmentProviderResourceInTransaction(transaction, {
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        providerConnectionId,
+        provider: "fly",
+        resourceRole: "snapshot",
+        externalId: snapshot.id,
+        providerUid: null,
+        desiredRevision: backupId,
+        observedGeneration: snapshot.id,
+        state: "created",
+        providerMetadata: {
+          contract: "provider-resource-metadata-v1",
+          source: "provider_observation",
+        },
+      });
       await transaction
         .update(schema.workspaceBackups)
         .set({
@@ -902,6 +937,7 @@ async function enforceWorkspaceBackupRetention(input: {
 }
 
 async function findReusableWorkspaceBackup(input: {
+  environmentId: string;
   workspaceId: string;
   sourceRevision: string;
   organizationId: string;
@@ -926,7 +962,10 @@ async function findReusableWorkspaceBackup(input: {
   }
   const snapshotId = readString(asRecord(backup.manifest)?.flySnapshotId);
   if (!snapshotId) return null;
-  const provider = await createFlyProviderClient(input.organizationId);
+  const provider = await resolveFlyProviderClient({
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+  });
   const usable = await provider.isWorkspaceSnapshotUsable({
     appName: input.flyAppName,
     sourceVolumeId:
@@ -1425,7 +1464,10 @@ export async function listWorkspaceBackups(input: {
   ]);
   const storage = getStorageAdapter();
   const provider = environment?.flyAppName
-    ? await createFlyProviderClient(input.organizationId).catch(() => null)
+    ? await resolveFlyProviderClient({
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+      }).catch(() => null)
     : null;
   return Promise.all(protectedVisible.map(async (backup) => {
     const activeProtections = protections.filter(
@@ -1474,7 +1516,7 @@ export async function restoreWorkspaceBackup(input: {
   actorUserId: string;
   validationThreadId?: string | undefined;
 }) {
-  const [backup, environment, workspace, binding] = await Promise.all([
+  const [backup, environment, workspace, binding, resumableOperations] = await Promise.all([
     knowledgeDb.query.workspaceBackups.findFirst({
       where: (table, { and, eq }) =>
         and(
@@ -1501,6 +1543,18 @@ export async function restoreWorkspaceBackup(input: {
         ),
     }),
     findActiveWorkspaceExecutionBinding(input),
+    knowledgeDb.query.environmentOperations.findMany({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.workspaceId, input.workspaceId),
+          eq(table.type, "workspace.restore"),
+          inArray(table.status, ["running", "failed"]),
+        ),
+      orderBy: (table, { desc }) => [desc(table.updatedAt)],
+      limit: 10,
+    }),
   ]);
   if (!backup) {
     throw new Error("Workspace backup is unavailable.");
@@ -1508,6 +1562,8 @@ export async function restoreWorkspaceBackup(input: {
   if (
     !(
       environment?.flyAppName &&
+      environment.region &&
+      environment.providerConnectionId &&
       environment.runtimeImage &&
       environment.routerUrl &&
       workspace?.flyMachineId &&
@@ -1523,6 +1579,7 @@ export async function restoreWorkspaceBackup(input: {
     );
   }
   const flyAppName = environment.flyAppName;
+  const providerConnectionId = environment.providerConnectionId;
   const routerUrl = environment.routerUrl;
   const oldMachineId = workspace.flyMachineId;
   const oldVolumeId = workspace.flyVolumeId;
@@ -1530,7 +1587,38 @@ export async function restoreWorkspaceBackup(input: {
     manifest: backup.manifest,
     currentVolumeId: oldVolumeId,
   });
-  const provider = await createFlyProviderClient(input.organizationId);
+  const provider = await resolveFlyProviderClient({
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+  });
+  const resumableOperation = selectPromotedWorkspaceRestoreReplay({
+    backupId: input.backupId,
+    currentMachineId: workspace.flyMachineId,
+    currentVolumeId: workspace.flyVolumeId,
+    operations: resumableOperations,
+  });
+  if (resumableOperation) {
+    const result = asRecord(resumableOperation.result)!;
+    return resumePromotedWorkspaceRestore({
+      operationId: resumableOperation.id,
+      backupId: backup.id,
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      workspaceId: input.workspaceId,
+      actorUserId: input.actorUserId,
+      validationThreadId:
+        readString(result.validationThreadId) ??
+        input.validationThreadId ??
+        binding.threadId,
+      oldMachineId: readString(result.oldMachineId)!,
+      oldVolumeId: readString(result.oldVolumeId)!,
+      replacementMachineId: workspace.flyMachineId,
+      replacementVolumeId: workspace.flyVolumeId,
+      flyAppName,
+      provider,
+      priorResult: result,
+    });
+  }
   const recoverySource = await resolveWorkspaceBackupRecoverySource({
     manifest: backup.manifest,
     objectKey: backup.objectKey,
@@ -1619,6 +1707,9 @@ export async function restoreWorkspaceBackup(input: {
   let replacementVolumeId: string | null = null;
   let replacementMachineId: string | null = null;
   let rebound = false;
+  let expectedRouteGeneration: string | null = null;
+  let acknowledgedRouteGeneration: string | null = null;
+  let retiredProviderResourceIds: string[] = [];
   try {
     const workspaceServiceToken = createEnvironmentServiceToken();
     const replacementVolume = await provider.createReplacementWorkspaceVolume({
@@ -1674,6 +1765,46 @@ export async function restoreWorkspaceBackup(input: {
       },
     );
     replacementMachineId = replacementMachine.id;
+    await Promise.all([
+      upsertEnvironmentProviderResource({
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        replacementId: operationId,
+        providerConnectionId,
+        provider: "fly",
+        resourceRole: "workspace_storage",
+        externalId: replacementVolume.id,
+        providerUid: null,
+        desiredRevision: runtimeImage,
+        observedGeneration: replacementVolume.id,
+        state: "ready",
+        providerMetadata: {
+          contract: "provider-resource-metadata-v1",
+          source: "provider_observation",
+          detail: "Fly replacement volume created for guarded restore cutover.",
+        },
+      }),
+      upsertEnvironmentProviderResource({
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        replacementId: operationId,
+        providerConnectionId,
+        provider: "fly",
+        resourceRole: "workspace_compute",
+        externalId: replacementMachine.id,
+        providerUid: null,
+        desiredRevision: runtimeImage,
+        observedGeneration: replacementMachine.id,
+        state: "ready",
+        providerMetadata: {
+          contract: "provider-resource-metadata-v1",
+          source: "provider_observation",
+          detail: "Fly replacement Machine created for guarded restore cutover.",
+        },
+      }),
+    ]);
     const resourceIdentities = workspaceRestoreResourceIdentities({
       oldMachineId,
       oldVolumeId,
@@ -1772,8 +1903,25 @@ export async function restoreWorkspaceBackup(input: {
         return description;
       },
       casRebind: async () => {
-        const rows = await knowledgeDb.transaction(async (transaction) =>
-          transaction
+        return knowledgeDb.transaction(async (transaction) => {
+          const promotion = await promoteEnvironmentProviderReplacementInTransaction(
+            transaction,
+            {
+              organizationId: input.organizationId,
+              environmentId: input.environmentId,
+              workspaceId: input.workspaceId,
+              replacementId: operationId,
+              expectedReplacementExternalIds: {
+                workspace_compute: replacementMachine.id,
+                workspace_storage: replacementVolume.id,
+              },
+              expectedRetiredExternalIds: {
+                workspace_compute: oldMachineId,
+                workspace_storage: oldVolumeId,
+              },
+            },
+          );
+          const updated = await transaction
             .update(schema.environmentWorkspaces)
             .set({
               flyVolumeId: replacementVolume.id,
@@ -1793,14 +1941,31 @@ export async function restoreWorkspaceBackup(input: {
                 eq(schema.environmentWorkspaces.flyVolumeId, oldVolumeId),
               ),
             )
-            .returning({ id: schema.environmentWorkspaces.id }),
-        );
-        return rows.length === 1;
+            .returning({ id: schema.environmentWorkspaces.id });
+          if (updated.length !== 1) {
+            throw new WorkspaceRestoreCasConflictError();
+          }
+          retiredProviderResourceIds = promotion.retired.map((resource) => resource.id);
+          return true;
+        });
       },
       onRebound: () => {
         rebound = true;
       },
       validateBoundRoute: async () => {
+        if (getHostedRoutingContractMode() === "logical-v1") {
+          const routeAuthority = await resolveHostedRouteGeneration({
+            organizationId: input.organizationId,
+            environmentId: input.environmentId,
+          });
+          expectedRouteGeneration = routeAuthority.routeGeneration;
+          const acknowledgement = await refreshEnvironmentGateway({
+            organizationId: input.organizationId,
+            environmentId: input.environmentId,
+            expectedRouteGeneration,
+          });
+          acknowledgedRouteGeneration = acknowledgement.routeGeneration;
+        }
         const boundRoute = await resolveEnvironmentExecutionRoute({
           organizationId: input.organizationId,
           threadId: validationThreadId,
@@ -1823,6 +1988,13 @@ export async function restoreWorkspaceBackup(input: {
               ...(snapshotId ? { snapshotId, snapshotSourceVolumeId } : {}),
               validationThreadId,
               restoredSessionVersion: description.version,
+              ...(expectedRouteGeneration
+                ? {
+                    expectedRouteGeneration,
+                    acknowledgedRouteGeneration,
+                    retiredProviderResourceIds,
+                  }
+                : {}),
               ...resourceIdentities,
             },
             completedAt,
@@ -1857,6 +2029,13 @@ export async function restoreWorkspaceBackup(input: {
                 backupId: backup.id,
                 ...(snapshotId ? { snapshotId, snapshotSourceVolumeId } : {}),
                 validationThreadId,
+                ...(expectedRouteGeneration
+                  ? {
+                      expectedRouteGeneration,
+                      acknowledgedRouteGeneration,
+                      retiredProviderResourceIds,
+                    }
+                  : {}),
                 ...resourceIdentities,
               },
               completedAt: failedAt,
@@ -1887,6 +2066,13 @@ export async function restoreWorkspaceBackup(input: {
             ...(snapshotId ? { snapshotId, snapshotSourceVolumeId } : {}),
             validationThreadId,
             restoredSessionVersion: validation.version,
+            ...(expectedRouteGeneration
+              ? {
+                  expectedRouteGeneration,
+                  acknowledgedRouteGeneration,
+                  retiredProviderResourceIds,
+                }
+              : {}),
             ...resourceIdentities,
             cleanupPending: true,
           },
@@ -1921,9 +2107,20 @@ export async function restoreWorkspaceBackup(input: {
           .catch(() => {});
       }
       const failedAt = new Date();
-      await knowledgeDb
-        .update(schema.environmentOperations)
-        .set({
+      await knowledgeDb.transaction(async (transaction) => {
+        await transaction
+          .update(schema.environmentProviderResources)
+          .set({ state: "deleted", deletedAt: failedAt, updatedAt: failedAt })
+          .where(
+            and(
+              eq(schema.environmentProviderResources.organizationId, input.organizationId),
+              eq(schema.environmentProviderResources.environmentId, input.environmentId),
+              eq(schema.environmentProviderResources.workspaceId, input.workspaceId),
+              eq(schema.environmentProviderResources.replacementId, operationId),
+              isNull(schema.environmentProviderResources.deletedAt),
+            ),
+          );
+        await transaction.update(schema.environmentOperations).set({
           status: "failed",
           stage: "workspace.restore.failed",
           errorCode: "WORKSPACE_RESTORE_FAILED",
@@ -1945,8 +2142,198 @@ export async function restoreWorkspaceBackup(input: {
           completedAt: failedAt,
           updatedAt: failedAt,
         })
-        .where(eq(schema.environmentOperations.id, operationId));
+          .where(eq(schema.environmentOperations.id, operationId));
+      });
     }
+    throw error;
+  }
+}
+
+async function resumePromotedWorkspaceRestore(input: {
+  operationId: string;
+  backupId: string;
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  actorUserId: string;
+  validationThreadId: string;
+  oldMachineId: string;
+  oldVolumeId: string;
+  replacementMachineId: string;
+  replacementVolumeId: string;
+  flyAppName: string;
+  provider: Awaited<ReturnType<typeof resolveFlyProviderClient>>;
+  priorResult: Record<string, unknown>;
+}) {
+  const resumedAt = new Date();
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
+    );
+    const current = await transaction.query.environmentWorkspaces.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.id, input.workspaceId),
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+        ),
+      columns: { flyMachineId: true, flyVolumeId: true },
+    });
+    if (
+      current?.flyMachineId !== input.replacementMachineId ||
+      current.flyVolumeId !== input.replacementVolumeId
+    ) {
+      throw new WorkspaceRestoreCasConflictError();
+    }
+    await transaction
+      .update(schema.environmentOperations)
+      .set({
+        status: "running",
+        stage: "workspace.restore.post_cutover_validating",
+        errorCode: null,
+        errorMessage: null,
+        completedAt: null,
+        updatedAt: resumedAt,
+      })
+      .where(eq(schema.environmentOperations.id, input.operationId));
+    await transaction
+      .update(schema.environmentWorkspaces)
+      .set({
+        status: "ready",
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: resumedAt,
+      })
+      .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
+  });
+
+  let expectedRouteGeneration = readString(
+    input.priorResult.expectedRouteGeneration,
+  );
+  let acknowledgedRouteGeneration = readString(
+    input.priorResult.acknowledgedRouteGeneration,
+  );
+  try {
+    if (getHostedRoutingContractMode() === "logical-v1") {
+      const authority = await resolveHostedRouteGeneration({
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+      });
+      expectedRouteGeneration = authority.routeGeneration;
+      const acknowledgement = await refreshEnvironmentGateway({
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        expectedRouteGeneration,
+      });
+      acknowledgedRouteGeneration = acknowledgement.routeGeneration;
+    }
+    const route = await resolveEnvironmentExecutionRoute({
+      organizationId: input.organizationId,
+      expectedEnvironmentId: input.environmentId,
+      threadId: input.validationThreadId,
+      actorUserId: input.actorUserId,
+      owningLifecycleOperationIds: [input.operationId],
+    });
+    await waitForWorkspaceService(() => ({
+      baseUrl: route.baseUrl,
+      authToken: route.authToken,
+    }));
+    const description = await readStoredSessionDescription({
+      route: () => ({ baseUrl: route.baseUrl, authToken: route.authToken }),
+      sessionId: input.validationThreadId,
+      actorId: input.actorUserId,
+      organizationId: input.organizationId,
+    });
+    if (
+      description.sessionId !== input.validationThreadId ||
+      description.version <= 0
+    ) {
+      throw new Error(
+        "Promoted Workspace did not contain the required persisted session.",
+      );
+    }
+    const completedAt = new Date();
+    const result = {
+      ...input.priorResult,
+      backupId: input.backupId,
+      validationThreadId: input.validationThreadId,
+      restoredSessionVersion: description.version,
+      expectedRouteGeneration,
+      acknowledgedRouteGeneration,
+    };
+    await knowledgeDb
+      .update(schema.environmentOperations)
+      .set({
+        status: "completed",
+        stage: "workspace.restore.rebound",
+        result,
+        completedAt,
+        updatedAt: completedAt,
+      })
+      .where(eq(schema.environmentOperations.id, input.operationId));
+
+    let cleanupPending = false;
+    try {
+      await input.provider.deleteMachine({
+        appName: input.flyAppName,
+        machineId: input.oldMachineId,
+      });
+      await input.provider.deleteVolume({
+        appName: input.flyAppName,
+        volumeId: input.oldVolumeId,
+      });
+    } catch {
+      cleanupPending = true;
+      await knowledgeDb
+        .update(schema.environmentOperations)
+        .set({
+          stage: "workspace.restore.rebound_cleanup_pending",
+          result: { ...result, cleanupPending: true },
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.environmentOperations.id, input.operationId));
+    }
+    return {
+      restoredBackupId: input.backupId,
+      operationId: input.operationId,
+      replacementMachineId: input.replacementMachineId,
+      replacementVolumeId: input.replacementVolumeId,
+      cleanupPending,
+      restoredAt: completedAt,
+    };
+  } catch (error) {
+    const failedAt = new Date();
+    const errorMessage =
+      error instanceof Error
+        ? error.message.slice(0, 500)
+        : "Workspace post-cutover validation failed.";
+    await knowledgeDb.transaction(async (transaction) => {
+      await transaction
+        .update(schema.environmentWorkspaces)
+        .set({
+          status: "degraded",
+          failureCode: "WORKSPACE_RESTORE_POST_CUTOVER_FAILED",
+          failureMessage: errorMessage,
+          updatedAt: failedAt,
+        })
+        .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
+      await transaction
+        .update(schema.environmentOperations)
+        .set({
+          status: "failed",
+          stage: "workspace.restore.post_cutover_validation_failed",
+          errorCode: "WORKSPACE_RESTORE_POST_CUTOVER_FAILED",
+          errorMessage,
+          result: {
+            ...input.priorResult,
+            expectedRouteGeneration,
+            acknowledgedRouteGeneration,
+          },
+          completedAt: failedAt,
+          updatedAt: failedAt,
+        })
+        .where(eq(schema.environmentOperations.id, input.operationId));
+    });
     throw error;
   }
 }

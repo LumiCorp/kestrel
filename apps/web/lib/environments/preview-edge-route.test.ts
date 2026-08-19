@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import {
   PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
+  getGatewayPreviewEdgeTarget,
   verifyPreviewEdgeRouteTicket,
 } from "@lumi/kestrel-environment-auth";
 import {
   PREVIEW_EDGE_RESOLVED_ROUTE_VERSION,
   PREVIEW_EDGE_RESOLVED_ROUTE_V2_VERSION,
+  PREVIEW_EDGE_RESOLVED_ROUTE_V3_VERSION,
   PreviewEdgeRouteError,
   resolvePreviewEdgeRoute,
 } from "./preview-edge-route";
@@ -138,6 +140,63 @@ test(
     });
   },
 );
+
+test("logical hosted preview resolution returns only qualified gateway authority", async () => {
+  const route = await resolvePreviewEdgeRoute(
+    {
+      authorization: "Bearer preview-edge-service-token",
+      hostname,
+      now,
+    },
+    {
+      ...dependencies(),
+      routingMode: "logical-v1",
+      resolveHostedAuthority: async () => ({
+        gateway: { id: "gateway-resource-1" },
+        routerUrl: "https://kestrel-env-1.fly.dev",
+      }),
+    },
+  );
+  assert.equal(route.version, PREVIEW_EDGE_RESOLVED_ROUTE_V3_VERSION);
+  assert.equal(route.target.kind, "gateway");
+  assert.equal(route.target.url, "https://kestrel-env-1.fly.dev");
+  const token = route.target.authorization.match(/^Bearer ([^\s]+)$/u)?.[1];
+  assert.ok(token);
+  const ticket = verifyPreviewEdgeRouteTicket({
+    token,
+    publicKey,
+    now: Math.floor(now.getTime() / 1000),
+  });
+  assert.deepEqual(getGatewayPreviewEdgeTarget(ticket), {
+    gatewayId: "gateway-resource-1",
+  });
+  assert.equal("flyAppName" in ticket, false);
+});
+
+test("logical hosted preview normalizes malformed signing key failures", async () => {
+  await assert.rejects(
+    resolvePreviewEdgeRoute(
+      {
+        authorization: "Bearer preview-edge-service-token",
+        hostname,
+        now,
+      },
+      {
+        ...dependencies(),
+        privateKey: "not-an-ed25519-private-key",
+        routingMode: "logical-v1",
+        resolveHostedAuthority: async () => ({
+          gateway: { id: "gateway-resource-1" },
+          routerUrl: "https://kestrel-env-1.fly.dev",
+        }),
+      },
+    ),
+    (error: unknown) =>
+      error instanceof PreviewEdgeRouteError &&
+      error.code === "PREVIEW_EDGE_SIGNING_UNAVAILABLE" &&
+      error.status === 503,
+  );
+});
 
 test(
   "missing or inactive preview hosts reveal no route metadata",

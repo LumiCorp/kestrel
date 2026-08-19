@@ -1,0 +1,27 @@
+{
+  "name": "@kestrel/kubernetes-connector",
+  "version": "0.8.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm run build:self",
+    "build:self": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "test": "pnpm run test:unit",
+    "test:unit": "node --import tsx --test tests/contracts.test.ts tests/identity.test.ts tests/lifecycle.test.ts tests/qualification.test.ts",
+    "test:process": "node --import tsx --test tests/health.process.test.ts tests/helm.process.test.ts tests/lifecycle-http.process.test.ts",
+    "typecheck": "pnpm run typecheck:self",
+    "typecheck:self": "tsc -p tsconfig.json --noEmit",
+    "release:check": "node --import tsx scripts/release-check.ts"
+  },
+  "dependencies": {
+    "@lumi/kestrel-environment-auth": "workspace:*",
+    "undici": "^6.24.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

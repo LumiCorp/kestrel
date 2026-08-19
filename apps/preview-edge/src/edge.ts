@@ -550,7 +550,16 @@ async function proxyDesktopHttp(input: {
 }
 
 function normalizedRouteTarget(route: PreviewEdgeRoute) {
-  if (route.target) return route.target;
+  if (route.target) {
+    if ("kind" in route.target) {
+      return {
+        provider: "fly" as const,
+        targetUrl: route.target.url,
+        authorization: route.target.authorization,
+      };
+    }
+    return route.target;
+  }
   if (route.targetUrl && route.authorization) {
     return {
       provider: "fly" as const,

@@ -18,7 +18,6 @@ const token = signEnvironmentExecutionTicket({
     audience: ENVIRONMENT_ROUTER_AUDIENCE,
     organizationId: "org-1",
     environmentId: "env-1",
-    machineId: "machine-1",
     workspaceId: "workspace-1",
     threadId: "thread-1",
     runId: "run-1",
@@ -31,6 +30,37 @@ const token = signEnvironmentExecutionTicket({
     expiresAt: 1300,
     nonce: "nonce-1",
   },
+});
+
+const logicalToken = signEnvironmentExecutionTicket({
+  privateKey,
+  ticket: {
+    version: 3,
+    audience: ENVIRONMENT_ROUTER_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    workspaceId: "workspace-1",
+    threadId: "thread-1",
+    runId: "run-3",
+    actorId: "user-1",
+    agentId: "kestrel-one",
+    target: { kind: "gateway", gatewayId: "gateway-resource-1" },
+    capabilities: ["run.stream"],
+    issuedAt: 1000,
+    expiresAt: 1300,
+    nonce: "nonce-3",
+  },
+});
+
+test("Workspace service accepts logical v3 scope without Fly identity", () => {
+  assert.equal(authorizeWorkspaceRequest({
+    authorization: `Bearer ${logicalToken}`,
+    publicKey,
+    workspaceId: "workspace-1",
+    organizationId: "org-1",
+    environmentId: "env-1",
+    now: 1100,
+  }).threadId, "thread-1");
 });
 
 test("Workspace service revalidates the signed tenant boundary", () => {

@@ -3,15 +3,27 @@ import { connect as connectTcp } from "node:net";
 import type { Duplex } from "node:stream";
 import {
   type EnvironmentGatewayConfig,
-  type EnvironmentGatewayPreviewRoute,
+  getGatewayPreviewEdgeTarget,
   PREVIEW_EDGE_AUTHORIZATION_HEADER,
   verifyPreviewEdgeRouteTicket,
 } from "@lumi/kestrel-environment-auth";
 
 const MAX_CONNECTIONS_PER_PREVIEW = 100;
 
+type ActivePreviewRoute = {
+  id: string;
+  workspaceId: string;
+  hostname: string;
+  port: number;
+  expiresAt: string;
+  relayTicket: string;
+  backend: { host: string; port: number };
+  gatewayId: string | null;
+  legacyMachineId: string | null;
+};
+
 export class PreviewRelay {
-  private routes = new Map<string, EnvironmentGatewayPreviewRoute>();
+  private routes = new Map<string, ActivePreviewRoute>();
   private connections = new Map<string, number>();
   private revision = "";
   private reconciling = Promise.resolve();
@@ -21,7 +33,7 @@ export class PreviewRelay {
       expectedAppName: string;
       environmentId: string;
       ticketPublicKey?: string | undefined;
-      workspaceAddress?: ((route: EnvironmentGatewayPreviewRoute) => { host: string; port: number }) | undefined;
+      workspaceAddress?: ((route: ActivePreviewRoute) => { host: string; port: number }) | undefined;
     }
   ) {}
 
@@ -87,11 +99,41 @@ export class PreviewRelay {
   }
 
   private async apply(config: EnvironmentGatewayConfig) {
-    this.routes = new Map(
-      config.previews
+    const entries: Array<readonly [string, ActivePreviewRoute]> =
+      config.version === 4
+        ? config.previews
         .filter((preview) => new Date(preview.expiresAt).getTime() > Date.now())
-        .map((preview) => [preview.hostname.toLowerCase(), preview])
-    );
+        .flatMap((preview) => {
+          const workspace = config.workspaces.find((candidate) => candidate.id === preview.workspaceId);
+          if (!workspace) return [];
+          const route: ActivePreviewRoute = {
+                ...preview,
+                backend: {
+                  host: workspace.backend.hostname,
+                  port: workspace.backend.port,
+                },
+                gatewayId: config.gatewayId,
+                legacyMachineId: null,
+              };
+          return [[preview.hostname.toLowerCase(), route] as const];
+        })
+        : config.previews
+        .filter((preview) => new Date(preview.expiresAt).getTime() > Date.now())
+        .flatMap((preview) => {
+          const workspace = config.workspaces.find((candidate) => candidate.id === preview.workspaceId);
+          if (!workspace) return [];
+          const route: ActivePreviewRoute = {
+                ...preview,
+                backend: {
+                  host: `${workspace.machineId}.vm.${this.input.expectedAppName}.internal`,
+                  port: 43_104,
+                },
+                gatewayId: null,
+                legacyMachineId: workspace.machineId,
+              };
+          return [[preview.hostname.toLowerCase(), route] as const];
+        });
+    this.routes = new Map(entries);
     this.revision = config.revision;
   }
 
@@ -101,20 +143,17 @@ export class PreviewRelay {
     return this.routes.get(hostname) ?? null;
   }
 
-  private workspaceTarget(route: EnvironmentGatewayPreviewRoute) {
+  private workspaceTarget(route: ActivePreviewRoute) {
     const address = this.workspaceAddress(route);
     return `http://${address.host}:${address.port}`;
   }
 
-  private workspaceAddress(route: EnvironmentGatewayPreviewRoute) {
-    return this.input.workspaceAddress?.(route) ?? {
-      host: `${route.machineId}.vm.${this.input.expectedAppName}.internal`,
-      port: 43_104,
-    };
+  private workspaceAddress(route: ActivePreviewRoute) {
+    return this.input.workspaceAddress?.(route) ?? route.backend;
   }
 
   private authorizeIngress(
-    route: EnvironmentGatewayPreviewRoute,
+    route: ActivePreviewRoute,
     headers: IncomingHttpHeaders
   ) {
     const rawAuthorization = headers[PREVIEW_EDGE_AUTHORIZATION_HEADER];
@@ -128,10 +167,14 @@ export class PreviewRelay {
         token,
         publicKey: this.input.ticketPublicKey,
       });
+      const gateway = getGatewayPreviewEdgeTarget(ticket);
       return (
         ticket.environmentId === this.input.environmentId &&
         ticket.workspaceId === route.workspaceId &&
-        ticket.flyAppName === this.input.expectedAppName &&
+        ((route.gatewayId !== null && gateway?.gatewayId === route.gatewayId) ||
+          (route.gatewayId === null &&
+            ticket.version === 1 &&
+            ticket.flyAppName === this.input.expectedAppName)) &&
         ticket.previewId === route.id &&
         ticket.hostname === route.hostname
       );
@@ -158,7 +201,7 @@ function proxyHttp(
   incoming: IncomingMessage,
   outgoing: ServerResponse,
   targetBase: string,
-  route: EnvironmentGatewayPreviewRoute,
+  route: ActivePreviewRoute,
   release: () => void
 ) {
   return new Promise<void>((resolve) => {
@@ -199,7 +242,7 @@ function proxyUpgrade(
   client: Duplex,
   head: Buffer,
   workspace: { host: string; port: number },
-  route: EnvironmentGatewayPreviewRoute,
+  route: ActivePreviewRoute,
   release: () => void
 ) {
   let settled = false;
@@ -221,9 +264,9 @@ function proxyUpgrade(
   client.once("error", () => upstream.destroy());
 }
 
-function gatewayHeaders(headers: IncomingHttpHeaders, route: EnvironmentGatewayPreviewRoute) {
+function gatewayHeaders(headers: IncomingHttpHeaders, route: ActivePreviewRoute) {
   const result = sanitizedHeaders(headers);
-  result.host = `${route.machineId}.internal:43104`;
+  result.host = `${route.backend.host}:${route.backend.port}`;
   result.authorization = `Bearer ${route.relayTicket}`;
   result["x-forwarded-host"] = route.hostname;
   result["x-forwarded-proto"] = "https";

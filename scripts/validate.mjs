@@ -111,6 +111,8 @@ async function runFullValidation() {
         "@kestrel/workspace-runtime",
         "--filter",
         "@kestrel/mcp-service",
+        "--filter",
+        "@kestrel/kubernetes-connector",
         "run",
         "typecheck:self",
       ]),
@@ -290,7 +292,7 @@ function executionRoot(file) {
       prefix: ["--import", "./scripts/register-server-only.mjs"],
     };
   const match = file.match(
-    /^(apps\/(?:desktop|docs|environment-router|preview-edge|workspace-runtime|mcp-service)|packages\/[^/]+)\//u,
+    /^(apps\/(?:desktop|docs|environment-router|preview-edge|workspace-runtime|mcp-service|kubernetes-connector)|packages\/[^/]+)\//u,
   );
   if (match)
     return {

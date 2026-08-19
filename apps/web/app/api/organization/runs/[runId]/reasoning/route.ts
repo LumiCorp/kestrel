@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { readKestrelOneRetainedReasoning } from "@/lib/agent/kestrel-runtime";
 import { logAdminEvent } from "@/lib/admin/logs";
-import { createEnvironmentMachineRoute } from "@/lib/environments/execution-route";
+import { createHostedEnvironmentRoute } from "@/lib/environments/execution-route";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
@@ -59,7 +59,7 @@ async function handleReasoningRequest(
         ),
       }),
     ]);
-    if (!((environment?.routerUrl && environment.flyAppName ) && workspace?.flyMachineId)) {
+    if (!(environment && workspace)) {
       return NextResponse.json({ error: "Environment runtime is unavailable." }, { status: 409 });
     }
     if (environment.reasoningRetentionMode !== "provider_visible") {
@@ -78,7 +78,7 @@ async function handleReasoningRequest(
         days: environment.reasoningRetentionDays,
       },
     } as const;
-    const route = createEnvironmentMachineRoute({
+    const route = await createHostedEnvironmentRoute({
       organizationId,
       environmentId: environment.id,
       workspaceId: workspace.id,

@@ -4,6 +4,7 @@ import {
   performGuardedWorkspaceRestoreCutover,
   resolveWorkspaceBackupRecoverySource,
   resolveWorkspaceBackupSnapshotSourceVolumeId,
+  selectPromotedWorkspaceRestoreReplay,
   selectWorkspaceBackupRecoverySource,
   WORKSPACE_RESTORE_ROUTE_CAPABILITIES,
   workspaceRestoreResourceIdentities,
@@ -169,6 +170,47 @@ test("Workspace restore operation results retain both resource sets", () => {
       oldVolumeId: "volume-old",
       replacementVolumeId: "volume-new",
     },
+  );
+});
+
+test("Workspace restore replay reattaches only to the promoted replacement", () => {
+  const promoted = {
+    id: "restore-promoted",
+    input: { backupId: "backup-1" },
+    result: {
+      oldMachineId: "machine-old",
+      oldVolumeId: "volume-old",
+      replacementMachineId: "machine-new",
+      replacementVolumeId: "volume-new",
+    },
+  };
+  const stale = {
+    id: "restore-stale",
+    input: { backupId: "backup-1" },
+    result: {
+      oldMachineId: "machine-older",
+      oldVolumeId: "volume-older",
+      replacementMachineId: "machine-stale",
+      replacementVolumeId: "volume-stale",
+    },
+  };
+  assert.equal(
+    selectPromotedWorkspaceRestoreReplay({
+      backupId: "backup-1",
+      currentMachineId: "machine-new",
+      currentVolumeId: "volume-new",
+      operations: [stale, promoted],
+    })?.id,
+    promoted.id,
+  );
+  assert.equal(
+    selectPromotedWorkspaceRestoreReplay({
+      backupId: "backup-2",
+      currentMachineId: "machine-new",
+      currentVolumeId: "volume-new",
+      operations: [promoted],
+    }),
+    null,
   );
 });
 

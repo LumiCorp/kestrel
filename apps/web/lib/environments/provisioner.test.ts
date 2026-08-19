@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   type EnvironmentInfrastructureProvider,
   EnvironmentProviderError,
+  REQUIRED_ENVIRONMENT_PROVIDER_CAPABILITIES,
 } from "./providers/contracts";
 import {
   classifyEnvironmentGatewayHealthFailure,
@@ -242,6 +243,12 @@ function fixture(
     },
   };
   const provider: EnvironmentInfrastructureProvider = {
+    descriptor: {
+      id: "test",
+      label: "Test Environment Provider",
+      capabilities: REQUIRED_ENVIRONMENT_PROVIDER_CAPABILITIES,
+      evidence: "implementation",
+    },
     async ensureEnvironmentApp() {
       calls.push("provider:app");
       return {

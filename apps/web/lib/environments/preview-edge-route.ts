@@ -3,16 +3,21 @@ import {
   PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
   PREVIEW_EDGE_ROUTE_TICKET_MAX_TTL_SECONDS,
   PREVIEW_EDGE_ROUTE_TICKET_VERSION,
+  PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION,
   signPreviewEdgeRouteTicket,
 } from "@lumi/kestrel-environment-auth";
 import { and, eq, gt } from "drizzle-orm";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { authorizeDesktopPreviewViewer } from "./desktop-preview";
+import { getHostedRoutingContractMode, type HostedRoutingContractMode } from "./config";
+import { resolveHostedRoutingAuthority } from "./routing-authority";
 
 export const PREVIEW_EDGE_RESOLVED_ROUTE_VERSION =
   "preview-edge-resolved-route-v1" as const;
 export const PREVIEW_EDGE_RESOLVED_ROUTE_V2_VERSION =
   "preview-edge-resolved-route-v2" as const;
+export const PREVIEW_EDGE_RESOLVED_ROUTE_V3_VERSION =
+  "preview-edge-resolved-route-v3" as const;
 
 export class PreviewEdgeRouteError extends Error {
   constructor(
@@ -33,11 +38,11 @@ export type PreviewEdgeRouteDependencies = {
     environmentId: string;
     workspaceId: string;
     hostname: string;
-    targetProvider?: "fly" | "desktop";
+    targetProvider?: "fly" | "desktop" | "hosted";
     expiresAt: Date;
   } | null>;
   findEnvironment(environmentId: string): Promise<{
-    provider?: "fly" | "desktop";
+    provider?: "fly" | "desktop" | "kubernetes";
     flyAppName: string | null;
     routerUrl: string | null;
   } | null>;
@@ -45,6 +50,12 @@ export type PreviewEdgeRouteDependencies = {
     leaseId: string;
     accessToken: string | null;
   }): Promise<boolean>;
+  resolveHostedAuthority?(input: {
+    organizationId: string;
+    environmentId: string;
+    workspaceId: string;
+  }): Promise<{ gateway: { id: string }; routerUrl: string }>;
+  routingMode?: HostedRoutingContractMode | undefined;
   nonce(): string;
 };
 
@@ -78,6 +89,7 @@ const defaultDependencies: PreviewEdgeRouteDependencies = {
       },
     })) ?? null,
   authorizeDesktopViewer: authorizeDesktopPreviewViewer,
+  resolveHostedAuthority: resolveHostedRoutingAuthority,
   nonce: () => crypto.randomUUID(),
 };
 
@@ -115,6 +127,60 @@ export async function resolvePreviewEdgeRoute(
       expiresAt: new Date(
         Math.min(now.getTime() + 60_000, lease.expiresAt.getTime()),
       ).toISOString(),
+    };
+  }
+  const routingMode = dependencies.routingMode ?? getHostedRoutingContractMode();
+  if (routingMode === "logical-v1") {
+    const authority = await dependencies.resolveHostedAuthority?.({
+      organizationId: lease.organizationId,
+      environmentId: lease.environmentId,
+      workspaceId: lease.workspaceId,
+    }).catch(() => null);
+    if (!authority) {
+      throw new PreviewEdgeRouteError("PREVIEW_EDGE_ROUTE_UNAVAILABLE", 503);
+    }
+    const privateKey = dependencies.privateKey?.trim();
+    if (!privateKey) {
+      throw new PreviewEdgeRouteError("PREVIEW_EDGE_SIGNING_UNAVAILABLE", 503);
+    }
+    const issuedAt = Math.floor(now.getTime() / 1000);
+    const expiresAt = Math.min(
+      issuedAt + PREVIEW_EDGE_ROUTE_TICKET_MAX_TTL_SECONDS,
+      Math.floor(lease.expiresAt.getTime() / 1000),
+    );
+    if (expiresAt <= issuedAt) {
+      throw new PreviewEdgeRouteError("PREVIEW_EDGE_ROUTE_NOT_FOUND", 404);
+    }
+    let token: string;
+    try {
+      token = signPreviewEdgeRouteTicket({
+        privateKey,
+        ticket: {
+          version: PREVIEW_EDGE_ROUTE_TICKET_V2_VERSION,
+          audience: PREVIEW_EDGE_ROUTE_TICKET_AUDIENCE,
+          organizationId: lease.organizationId,
+          environmentId: lease.environmentId,
+          workspaceId: lease.workspaceId,
+          gatewayId: authority.gateway.id,
+          previewId: lease.id,
+          hostname,
+          issuedAt,
+          expiresAt,
+          nonce: dependencies.nonce(),
+        },
+      });
+    } catch {
+      throw new PreviewEdgeRouteError("PREVIEW_EDGE_SIGNING_UNAVAILABLE", 503);
+    }
+    return {
+      version: PREVIEW_EDGE_RESOLVED_ROUTE_V3_VERSION,
+      hostname,
+      target: {
+        kind: "gateway" as const,
+        url: authority.routerUrl,
+        authorization: `Bearer ${token}`,
+      },
+      expiresAt: new Date(expiresAt * 1000).toISOString(),
     };
   }
   const environment = await dependencies.findEnvironment(lease.environmentId);

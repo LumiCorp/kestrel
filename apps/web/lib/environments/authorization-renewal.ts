@@ -4,6 +4,7 @@ import {
   ENVIRONMENT_TICKET_MAX_TTL_SECONDS,
   getDesktopEnvironmentExecutionTarget,
   getFlyEnvironmentExecutionTarget,
+  getGatewayEnvironmentExecutionTarget,
   signEnvironmentExecutionTicket,
   verifyEnvironmentExecutionTicketForRenewal,
   type EnvironmentExecutionTicket,
@@ -15,6 +16,7 @@ import {
   digestHostedMcpRunPolicyEvidence,
   resolveHostedMcpRunPolicy,
 } from "@/lib/mcp/grant-service";
+import { resolveHostedRoutingAuthority } from "./routing-authority";
 
 export const EXECUTION_AUTHORIZATION_RENEWAL_VERSION =
   "execution-authorization-renewal-v1" as const;
@@ -200,16 +202,18 @@ export async function renewEnvironmentExecutionAuthorization(input: {
     ))
     .returning({ id: schema.mcpRunGrants.id });
   const issuedAt = Math.floor(now.getTime() / 1000);
-  const renewedTicket: EnvironmentExecutionTicket = current.version === 1
-    ? {
+  let renewedTicket: EnvironmentExecutionTicket;
+  if (current.version === 1) {
+    renewedTicket = {
         ...current,
         version: 1,
         audience: ENVIRONMENT_ROUTER_AUDIENCE,
         issuedAt,
         expiresAt: issuedAt + ENVIRONMENT_TICKET_MAX_TTL_SECONDS,
         nonce: crypto.randomUUID(),
-      }
-    : {
+      };
+  } else if (current.version === 2) {
+    renewedTicket = {
         ...current,
         version: 2,
         audience: ENVIRONMENT_ROUTER_AUDIENCE,
@@ -217,6 +221,16 @@ export async function renewEnvironmentExecutionAuthorization(input: {
         expiresAt: issuedAt + ENVIRONMENT_TICKET_MAX_TTL_SECONDS,
         nonce: crypto.randomUUID(),
       };
+  } else {
+    renewedTicket = {
+      ...current,
+      version: 3,
+      audience: ENVIRONMENT_ROUTER_AUDIENCE,
+      issuedAt,
+      expiresAt: issuedAt + ENVIRONMENT_TICKET_MAX_TTL_SECONDS,
+      nonce: crypto.randomUUID(),
+    };
+  }
   const executionTicket = signEnvironmentExecutionTicket({
     privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
     ticket: renewedTicket,
@@ -257,6 +271,19 @@ async function targetMatches(
   if (fly) {
     return fly.appName === row.environment.flyAppName &&
       fly.machineId === row.workspace.flyMachineId;
+  }
+  const gateway = getGatewayEnvironmentExecutionTarget(ticket);
+  if (gateway) {
+    try {
+      const authority = await resolveHostedRoutingAuthority({
+        organizationId: row.execution.organizationId,
+        environmentId: row.execution.environmentId,
+        workspaceId: row.execution.workspaceId,
+      });
+      return authority.gateway.id === gateway.gatewayId;
+    } catch {
+      return false;
+    }
   }
   const desktop = getDesktopEnvironmentExecutionTarget(ticket);
   if (!desktop || !row.workspace.desktopCatalogId) return false;

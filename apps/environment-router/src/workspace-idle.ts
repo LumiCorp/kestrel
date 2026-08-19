@@ -2,7 +2,8 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { EnvironmentGatewayConfigClient } from "./gateway-config.js";
 
-const VERSION = "workspace-idle-notification-v1";
+const V1 = "workspace-idle-notification-v1";
+const V2 = "workspace-idle-notification-v2";
 
 export async function handleWorkspaceIdle(input: {
   request: IncomingMessage;
@@ -17,19 +18,28 @@ export async function handleWorkspaceIdle(input: {
     const parsed = JSON.parse(raw.toString("utf8"));
     if (!(parsed && typeof parsed === "object" && !Array.isArray(parsed))) throw new Error();
     body = parsed as Record<string, unknown>;
+    if (!validIdleBody(body)) throw new Error();
   } catch {
     return write(input.response, 400, "WORKSPACE_IDLE_NOTIFICATION_INVALID");
   }
   let config = input.config.snapshot;
   if (!config) config = await input.config.refresh().catch(() => null);
-  const workspace = config?.workspaces.find((candidate) =>
-    candidate.id === body.workspaceId &&
-    candidate.machineId === body.machineId &&
-    typeof token === "string" && matchesToken(token, candidate.serviceTokenHash)
-  );
+  const workspace = config?.workspaces.find((candidate) => {
+    if (
+      candidate.id !== body.workspaceId ||
+      typeof token !== "string" ||
+      !matchesToken(token, candidate.serviceTokenHash)
+    ) return false;
+    return body.version === V2 || (
+      body.version === V1 &&
+      config.version === 3 &&
+      "machineId" in candidate &&
+      candidate.machineId === body.machineId
+    );
+  });
   if (
     !workspace ||
-    body.version !== VERSION ||
+    (body.version !== V1 && body.version !== V2) ||
     body.environmentId !== config?.environmentId
   ) return write(input.response, 403, "WORKSPACE_IDLE_UNAUTHORIZED");
   try {
@@ -39,6 +49,21 @@ export async function handleWorkspaceIdle(input: {
   } catch {
     write(input.response, 502, "WORKSPACE_IDLE_CONTROL_PLANE_FAILED");
   }
+}
+
+function validIdleBody(body: Record<string, unknown>) {
+  const expected = body.version === V1
+    ? ["version", "organizationId", "environmentId", "workspaceId", "machineId", "lastActivityAt"]
+    : body.version === V2
+      ? ["version", "organizationId", "environmentId", "workspaceId", "lastActivityAt"]
+      : [];
+  return expected.length > 0 &&
+    Object.keys(body).length === expected.length &&
+    expected.every((key) => Object.hasOwn(body, key)) &&
+    expected.filter((key) => key !== "version" && key !== "lastActivityAt")
+      .every((key) => typeof body[key] === "string" && body[key] !== "") &&
+    typeof body.lastActivityAt === "string" &&
+    Number.isFinite(Date.parse(body.lastActivityAt));
 }
 
 function matchesToken(token: string, expectedHash: string) {

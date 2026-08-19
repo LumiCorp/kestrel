@@ -30,6 +30,19 @@ function routeBody(
   };
 }
 
+function logicalRouteBody(url = "https://a1b2c3.byoc.example.test") {
+  return {
+    version: "preview-edge-resolved-route-v3",
+    hostname,
+    target: {
+      kind: "gateway",
+      url,
+      authorization: "Bearer signed-logical-route-ticket",
+    },
+    expiresAt: "2026-07-23T12:05:00.000Z",
+  };
+}
+
 test(
   "Preview Edge accepts only one canonical generated preview hostname",
   () => {
@@ -106,6 +119,36 @@ test(
     }
   }
 );
+
+test("Preview Edge accepts a control-plane-resolved logical gateway and rejects unsafe origins", async () => {
+  const resolver = (url?: string) => new PreviewEdgeRouteResolver({
+    controlPlaneUrl: "https://kestrelagents.dev",
+    serviceToken: "edge-service-token",
+    now: () => now,
+    fetch: async () => Response.json(logicalRouteBody(url)),
+  });
+  assert.deepEqual((await resolver().resolve(hostname)).route.target, {
+    kind: "gateway",
+    url: "https://a1b2c3.byoc.example.test",
+    authorization: "Bearer signed-logical-route-ticket",
+  });
+  for (const url of [
+    "http://a1b2c3.byoc.example.test",
+    "https://a1b2c3.byoc.example.test:8443",
+    "https://user@a1b2c3.byoc.example.test",
+    "https://a1b2c3.byoc.example.test/path",
+    "https://127.0.0.1",
+    "https://[::1]",
+    "https://UPPER.byoc.example.test",
+  ]) {
+    await assert.rejects(
+      resolver(url).resolve(hostname),
+      (error: unknown) =>
+        error instanceof PreviewEdgeRouteError &&
+        error.code === "PREVIEW_ROUTE_UNAVAILABLE",
+    );
+  }
+});
 
 test(
   "Preview Edge coalesces cache misses, refreshes at signed expiry, and never negative-caches",

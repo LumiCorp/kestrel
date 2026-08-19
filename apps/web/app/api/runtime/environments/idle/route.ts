@@ -36,7 +36,9 @@ export async function POST(request: Request) {
       organizationId: input.organizationId,
       environmentId: input.environmentId,
       workspaceId: input.workspaceId,
-      machineId: input.machineId,
+      ...(input.version === "workspace-idle-notification-v1"
+        ? { machineId: input.machineId }
+        : {}),
       lastActivityAt: new Date(input.lastActivityAt),
     });
     if (operation?.status === "queued") {

@@ -533,6 +533,34 @@
       "when": 1786856400000,
       "tag": "0075_project_prompt_schedule_models",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1786998000000,
+      "tag": "0076_kubernetes_byoc_persistence",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1787001600000,
+      "tag": "0077_kubernetes_connector_trust",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1787090400000,
+      "tag": "0078_kubernetes_lifecycle_replacements",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1787094000000,
+      "tag": "0079_provider_neutral_routing",
+      "breakpoints": true
     }
   ]
 }

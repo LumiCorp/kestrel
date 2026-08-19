@@ -128,6 +128,78 @@ const reasoningReadToken = signEnvironmentExecutionTicket({
     nonce: "nonce-reasoning-read",
   },
 });
+const logicalToken = signEnvironmentExecutionTicket({
+  privateKey,
+  ticket: {
+    version: 3,
+    audience: ENVIRONMENT_ROUTER_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    workspaceId: "workspace-1",
+    threadId: "thread-1",
+    runId: "run-logical",
+    actorId: "user-1",
+    agentId: "kestrel-one",
+    target: { kind: "gateway", gatewayId: "gateway-resource-1" },
+    capabilities: ["workspace.files.read"],
+    issuedAt: 1000,
+    expiresAt: 1300,
+    nonce: "nonce-logical",
+  },
+});
+const logicalConfig = {
+  version: 4,
+  environmentId: "env-1",
+  gatewayId: "gateway-resource-1",
+  revision: "revision-1",
+  routeGeneration: "generation-1",
+  workspaces: [{
+    id: "workspace-1",
+    serviceTokenHash: "A".repeat(43),
+    backend: {
+      kind: "private_dns",
+      hostname: "workspace.namespace.svc.cluster.local",
+      port: 43_104,
+      computeResourceId: "compute-resource-1",
+      desiredRevision: "sha256:image",
+    },
+  }],
+  previews: [],
+  modelGrants: [],
+  appGrants: [],
+} as const;
+
+test("router resolves v3 execution only through its active v4 gateway configuration", () => {
+  const allowed = authorizeEnvironmentHttpRequest({
+    authorization: `Bearer ${logicalToken}`,
+    publicKey,
+    now: 1100,
+    method: "GET",
+    pathname: "/v1/tree",
+    gatewayConfig: logicalConfig,
+  });
+  assert.equal(allowed.status, 200);
+  if (allowed.status === 200) {
+    assert.equal(allowed.targetUrl, "http://workspace.namespace.svc.cluster.local:43104");
+    assert.equal(allowed.ticket.version, 3);
+  }
+  assert.deepEqual(authorizeEnvironmentHttpRequest({
+    authorization: `Bearer ${logicalToken}`,
+    publicKey,
+    now: 1100,
+    method: "GET",
+    pathname: "/v1/tree",
+    gatewayConfig: { ...logicalConfig, workspaces: [] },
+  }), { status: 503, code: "ENVIRONMENT_WORKSPACE_ROUTE_UNAVAILABLE" });
+  assert.deepEqual(authorizeEnvironmentHttpRequest({
+    authorization: `Bearer ${logicalToken}`,
+    publicKey,
+    now: 1100,
+    method: "GET",
+    pathname: "/v1/tree",
+    gatewayConfig: { ...logicalConfig, gatewayId: "other-gateway" },
+  }), { status: 403, code: "ENVIRONMENT_GATEWAY_MISMATCH" });
+});
 
 test("router binds event subscriptions to the ticket Thread", () => {
   assert.equal(
@@ -469,6 +541,12 @@ test("gateway refresh accepts only an exactly scoped control-plane credential", 
     publicKey,
     environmentId: "env-1",
     expectedAppName: "kestrel-env-1",
+    now: 1030,
+  }));
+  assert.doesNotThrow(() => authorizeConfigRefreshToken({
+    token: credential,
+    publicKey,
+    environmentId: "env-1",
     now: 1030,
   }));
   assert.throws(() => authorizeConfigRefreshToken({
