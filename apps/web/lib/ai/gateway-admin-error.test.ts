@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import { z } from "zod";
 import { getSafeGatewayAdminError } from "./gateway-admin-error";
 import { GatewayCredentialEncryptionError } from "./gateway-credential-crypto";
-import { GatewayModelInUseError } from "./gateway-lifecycle-error";
+import {
+  GatewayModelEconomicsProfileRequiredError,
+  GatewayModelInUseError,
+} from "./gateway-lifecycle-error";
 
 
 test("gateway admin errors do not expose database parameters or credential envelopes", () => {
@@ -52,5 +55,23 @@ test("active model grants expose a stable conflict", () => {
       error: "An active Environment execution is using this gateway model.",
     },
     status: 409,
+  });
+});
+
+test("missing economics profiles expose actionable approval remediation", () => {
+  const result = getSafeGatewayAdminError(
+    new GatewayModelEconomicsProfileRequiredError({
+      provider: "openrouter",
+      model: "opaque-model",
+    }),
+  );
+
+  assert.deepEqual(result, {
+    body: {
+      code: "GATEWAY_MODEL_ECONOMICS_PROFILE_REQUIRED",
+      error:
+        "Cannot approve openrouter/opaque-model because provider capacity metadata is missing. Refresh the provider catalog and try again.",
+    },
+    status: 422,
   });
 });

@@ -26,7 +26,10 @@ import {
   initialGatewayCredentialStatus,
   isGatewayModelSyncAuthenticationFailure,
 } from "./gateway-credential-health";
-import { GatewayModelInUseError } from "./gateway-lifecycle-error";
+import {
+  GatewayModelEconomicsProfileRequiredError,
+  GatewayModelInUseError,
+} from "./gateway-lifecycle-error";
 import {
   normalizeGatewayStoredCredential,
 } from "./gateway-credential-source";
@@ -52,6 +55,7 @@ import {
   validateRunPodToolRoundTrip,
 } from "./runpod-connection-test";
 import {
+  getGatewayModelEconomicsProvider,
   readGatewayModelEconomicsProfile,
   withGatewayModelEconomicsProfile,
 } from "./model-economics-profile";
@@ -929,6 +933,7 @@ export async function syncGatewayModels(
       }),
       gatewayProvider: gateway.provider,
       gatewayBaseUrl: gateway.baseUrl,
+      requireEconomicsProfile: false,
     });
     savedModels.push(savedModel);
   }
@@ -994,6 +999,7 @@ export async function saveGatewayModel(input: {
   isDefault?: boolean;
   description?: string | null;
   metadata?: Record<string, unknown> | null;
+  requireEconomicsProfile?: boolean;
 }) {
   const [gateway, storedModel] = await Promise.all([
     input.gatewayProvider
@@ -1064,13 +1070,13 @@ export async function saveGatewayModel(input: {
 
   const approved = input.approved ?? true;
   const economicsProvider =
-    gatewayProvider === "lumi" && input.modality === "language"
-      ? getGatewayLanguageProtocol({
+    gatewayProvider === undefined
+      ? undefined
+      : getGatewayModelEconomicsProvider({
           gatewayProvider,
           modality: input.modality,
           metadata,
-        })
-      : gatewayProvider;
+        });
   const economicsMetadata =
     economicsProvider != null &&
     isKestrelRuntimeLanguageProvider(gatewayProvider as GatewayProvider)
@@ -1090,14 +1096,12 @@ export async function saveGatewayModel(input: {
     readGatewayModelEconomicsProfile(economicsMetadata, {
       provider: economicsProvider,
       model: input.rawModelId,
-    }) === undefined
+    }) === undefined &&
+    input.requireEconomicsProfile !== false
   ) {
-    console.warn("Approved hosted gateway model has no economics profile", {
-      organizationId: input.organizationId,
-      gatewayId: input.gatewayId,
+    throw new GatewayModelEconomicsProfileRequiredError({
       provider: economicsProvider,
       model: input.rawModelId,
-      reason: "provider_capacity_metadata_missing",
     });
   }
 

@@ -1,7 +1,10 @@
 import { ZodError } from "zod";
 import { GatewayCredentialEncryptionError } from "./gateway-credential-crypto";
 import { GatewayCredentialSourceError } from "./gateway-credential-source";
-import { GatewayModelInUseError } from "./gateway-lifecycle-error";
+import {
+  GatewayModelEconomicsProfileRequiredError,
+  GatewayModelInUseError,
+} from "./gateway-lifecycle-error";
 import { RunPodConnectionTestError } from "./runpod-connection-test";
 
 type GatewayAdminErrorBody = {
@@ -57,6 +60,13 @@ export function getSafeGatewayAdminError(
     return {
       body: { code: error.code, error: error.message },
       status: 409,
+    };
+  }
+
+  if (error instanceof GatewayModelEconomicsProfileRequiredError) {
+    return {
+      body: { code: error.code, error: error.message },
+      status: 422,
     };
   }
 

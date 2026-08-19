@@ -19,6 +19,21 @@ export type GatewayModelEconomicsProfile = {
   };
 };
 
+export function getGatewayModelEconomicsProvider(input: {
+  gatewayProvider: string;
+  modality: string;
+  metadata: unknown;
+}): string | undefined {
+  if (input.modality !== "language") return;
+  if (input.gatewayProvider === "lumi") {
+    return asRecord(input.metadata).protocol === "anthropic"
+      ? "anthropic"
+      : "openai";
+  }
+  if (input.gatewayProvider === "runpod") return "openai";
+  return input.gatewayProvider;
+}
+
 type RecordValue = Record<string, unknown>;
 
 /**

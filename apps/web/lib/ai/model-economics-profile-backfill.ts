@@ -1,5 +1,6 @@
 import {
   createGatewayModelEconomicsProfile,
+  getGatewayModelEconomicsProvider,
   readGatewayModelEconomicsProfile,
   withGatewayModelEconomicsProfile,
   type GatewayModelEconomicsProfile,
@@ -69,11 +70,20 @@ export function planGatewayModelEconomicsProfileBackfill(
       continue;
     }
 
-    const provider =
-      row.gatewayProvider === "lumi" &&
-      asRecord(row.metadata).protocol === "anthropic"
-        ? "anthropic"
-        : row.gatewayProvider;
+    const provider = getGatewayModelEconomicsProvider({
+      gatewayProvider: row.gatewayProvider,
+      modality: row.modality,
+      metadata: row.metadata,
+    });
+    if (provider === undefined) {
+      skipped.push({
+        id: row.id,
+        provider: row.gatewayProvider,
+        model: row.rawModelId,
+        reason: "unsupported_provider",
+      });
+      continue;
+    }
     const existing = readGatewayModelEconomicsProfile(row.metadata, {
       provider,
       model: row.rawModelId,
@@ -119,10 +129,4 @@ export function planGatewayModelEconomicsProfileBackfill(
     skipped,
     updates,
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
 }

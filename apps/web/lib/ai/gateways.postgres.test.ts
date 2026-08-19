@@ -58,6 +58,7 @@ test(
         modality: "language",
         approved: true,
         isDefault: true,
+        requireEconomicsProfile: false,
       }),
       /Gateway model not found/u
     );
@@ -75,6 +76,7 @@ test(
         modality: "language",
         approved: true,
         isDefault: true,
+        requireEconomicsProfile: false,
       }),
       saveGatewayModel({
         organizationId,
@@ -84,6 +86,7 @@ test(
         modality: "language",
         approved: true,
         isDefault: true,
+        requireEconomicsProfile: false,
       }),
     ]);
 

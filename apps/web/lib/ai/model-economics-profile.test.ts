@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createGatewayModelEconomicsProfile,
   GATEWAY_MODEL_ECONOMICS_PROFILE_KEY,
+  getGatewayModelEconomicsProvider,
   withGatewayModelEconomicsProfile,
 } from "./model-economics-profile";
 import { planGatewayModelEconomicsProfileBackfill } from "./model-economics-profile-backfill";
@@ -170,5 +171,66 @@ test("provider catalog field variants cover Lumi and RunPod OpenAI-compatible me
       },
     })?.maxOutputTokens,
     4096,
+  );
+});
+
+test("runtime provider identity is canonical for Lumi and RunPod profiles", () => {
+  assert.equal(
+    getGatewayModelEconomicsProvider({
+      gatewayProvider: "lumi",
+      modality: "language",
+      metadata: { protocol: "anthropic" },
+    }),
+    "anthropic",
+  );
+  assert.equal(
+    getGatewayModelEconomicsProvider({
+      gatewayProvider: "lumi",
+      modality: "language",
+      metadata: { protocol: "openai" },
+    }),
+    "openai",
+  );
+  assert.equal(
+    getGatewayModelEconomicsProvider({
+      gatewayProvider: "runpod",
+      modality: "language",
+      metadata: {},
+    }),
+    "openai",
+  );
+});
+
+test("backfill stores the same canonical provider identity as runtime lookup", () => {
+  const plan = planGatewayModelEconomicsProfileBackfill([
+    {
+      id: "runpod-model",
+      organizationId: "org-1",
+      gatewayId: "gateway-1",
+      rawModelId: "Qwen/Qwen3-32B",
+      modality: "language",
+      approved: true,
+      metadata: { contextWindowTokens: 32_768, maxOutputTokens: 4096 },
+      gatewayProvider: "runpod",
+    },
+    {
+      id: "lumi-openai-model",
+      organizationId: "org-1",
+      gatewayId: "gateway-2",
+      rawModelId: "lumi-model",
+      modality: "language",
+      approved: true,
+      metadata: {
+        protocol: "openai",
+        context_length: 32_768,
+        max_output_tokens: 4096,
+      },
+      gatewayProvider: "lumi",
+    },
+  ]);
+
+  assert.deepEqual(
+    plan.updates.map((update) => update.profile.provider),
+    ["openai", "openai"],
   );
 });
