@@ -51,6 +51,7 @@ import {
   type RunPodFetch,
   validateRunPodToolRoundTrip,
 } from "./runpod-connection-test";
+import { withGatewayModelEconomicsProfile } from "./model-economics-profile";
 
 export { GATEWAY_MODALITIES, GATEWAY_PROVIDERS };
 export type GatewayProvider = (typeof GATEWAY_PROVIDERS)[number];
@@ -1058,9 +1059,30 @@ export async function saveGatewayModel(input: {
         })
       : (inputMetadata ?? null);
 
+  const approved = input.approved ?? true;
+  const economicsProvider =
+    gatewayProvider === "lumi" && input.modality === "language"
+      ? getGatewayLanguageProtocol({
+          gatewayProvider,
+          modality: input.modality,
+          metadata,
+        })
+      : gatewayProvider;
+  const economicsMetadata =
+    economicsProvider != null &&
+    isKestrelRuntimeLanguageProvider(gatewayProvider as GatewayProvider)
+      ? withGatewayModelEconomicsProfile({
+          metadata,
+          provider: economicsProvider,
+          model: input.rawModelId,
+          approved,
+          modality: input.modality,
+        })
+      : metadata;
+
   if (
     gatewayProvider === "runpod" &&
-    (input.approved ?? true) &&
+    approved &&
     !(
       runPodBaseUrl &&
       getMatchingRunPodValidationEvidence({
@@ -1097,10 +1119,10 @@ export async function saveGatewayModel(input: {
           rawModelId: input.rawModelId,
           alias: input.alias ?? null,
           modality: input.modality,
-          approved: input.approved ?? true,
+          approved,
           isDefault: input.isDefault ?? false,
           description: input.description ?? null,
-          metadata,
+          metadata: economicsMetadata,
           updatedAt: new Date(),
         })
         .where(
@@ -1127,10 +1149,10 @@ export async function saveGatewayModel(input: {
         rawModelId: input.rawModelId,
         alias: input.alias ?? null,
         modality: input.modality,
-        approved: input.approved ?? true,
+        approved,
         isDefault: input.isDefault ?? false,
         description: input.description ?? null,
-        metadata,
+        metadata: economicsMetadata,
         createdAt: new Date(),
         updatedAt: new Date(),
       })
