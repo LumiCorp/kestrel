@@ -381,7 +381,16 @@ export function buildKestrelAgentToolResultSummary(
     if (count === 0 && message !== undefined && message.trim().length > 0) {
       return clampModelVisibleText(message.replace(/\s+/gu, " "), 360);
     }
-    return `fs.list returned ${count} ${count === 1 ? "entry" : "entries"}.`;
+    const truncated = output.truncated === true;
+    const maxEntries = typeof output.maxEntries === "number" && Number.isFinite(output.maxEntries)
+      ? Math.max(0, Math.trunc(output.maxEntries))
+      : undefined;
+    return [
+      `fs.list returned ${count} ${count === 1 ? "entry" : "entries"}.`,
+      truncated
+        ? `The listing was truncated${maxEntries !== undefined ? ` at ${maxEntries} entries` : ""} and cannot prove an unreturned path is absent.`
+        : undefined,
+    ].filter((item): item is string => item !== undefined).join(" ");
   }
   if (input.toolName === "fs.search_text" && Array.isArray(output?.matches)) {
     const count = typeof output.matchCount === "number" && Number.isFinite(output.matchCount)
@@ -759,6 +768,10 @@ function renderFilesystemFacts(
       ...field("path", firstString(asRecord(input)?.path, output.path)),
       ...field("entryCount", numberOr(output.entryCount, entries.length)),
       ...field("truncated", output.truncated),
+      ...field("maxEntries", output.maxEntries),
+      ...field("includeHidden", output.includeHidden),
+      ...field("recursive", output.recursive),
+      ...field("maxDepth", output.maxDepth),
       ...(entries.length > 0
         ? [
           "- entries:",

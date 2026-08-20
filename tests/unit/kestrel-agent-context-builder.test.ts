@@ -11,8 +11,13 @@ import {
 import { buildModelToolAliasRegistry } from "../../agents/reference-react/src/modelToolCallActions.js";
 import {
   buildActiveProcessEvidence,
+  buildRecentFilesystemEvidence,
   buildRecentToolResultEvidence,
 } from "../../src/runtime/agent-context/evidenceContext.js";
+import {
+  BUILD_MODE_DELIBERATOR_PROMPT,
+  SHARED_DELIBERATOR_PROMPT,
+} from "../../src/runtime/agent-context/systemPrompts.js";
 import {
   buildKestrelAgentContext as buildContextRequest,
   buildKestrelAgentCompactionMessages,
@@ -1122,6 +1127,40 @@ test("Kestrel agent context builder owns tool-result summaries and model context
     }),
     'fs.search_text src for "needle" returned 1 match.',
   );
+  assert.equal(
+    buildKestrelAgentToolResultSummary({
+      toolName: "fs.list",
+      toolInput: { path: ".", recursive: true, includeHidden: true },
+      toolOutput: {
+        path: ".",
+        entries: [{ path: "REDS-INTEL.md", type: "file" }],
+        truncated: true,
+        maxEntries: 1000,
+      },
+      status: "passed",
+    }),
+    "fs.list returned 1 entry. The listing was truncated at 1000 entries and cannot prove an unreturned path is absent.",
+  );
+
+  assert.deepEqual(
+    buildRecentFilesystemEvidence({
+      evidenceLedger: [{
+        kind: "file_listing",
+        facts: {
+          toolName: "fs.list",
+          inputPath: ".",
+          entryCount: 1000,
+          truncated: true,
+          maxEntries: 1000,
+          recursive: true,
+          includeHidden: true,
+          maxDepth: 5,
+          entries: [{ path: "REDS-INTEL.md", type: "file" }],
+        },
+      }],
+    }),
+    ["fs.list . returned 1000 entries (truncated at 1000; unreturned paths may still exist): REDS-INTEL.md"],
+  );
 
   const context = buildKestrelAgentToolModelContext({
     toolName: "fs.read_text",
@@ -1145,6 +1184,18 @@ test("Kestrel agent context builder owns tool-result summaries and model context
     status: "OK",
   });
   assert.equal(genericContext.text.match(/- status:/gu)?.length, 1);
+});
+
+test("shared filesystem evidence contract requires exact-path inspection", () => {
+  assert.match(SHARED_DELIBERATOR_PROMPT, /inspect a user-named workspace path directly/u);
+  assert.match(SHARED_DELIBERATOR_PROMPT, /before claiming absence or requesting a copy/u);
+  assert.match(SHARED_DELIBERATOR_PROMPT, /listings, content search, Git, and knowledge cannot prove absence/u);
+});
+
+test("build prompt requires noninteractive turns to finish without conversational waits", () => {
+  assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /work without conversational waits/u);
+  assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /finish with a concrete blocker/u);
+  assert.doesNotMatch(BUILD_MODE_DELIBERATOR_PROMPT, /Ask only/u);
 });
 
 test("Workspace preview results keep complete public URLs model-visible", () => {

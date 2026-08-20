@@ -639,6 +639,9 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       requestId: string | null;
       titleSnapshot: string;
       requestedInteractionMode: string;
+      turnSource: string;
+      messageSource: string;
+      noninteractive: boolean;
       interactionMode: string;
       threadMode: string;
       threadTitle: string;
@@ -651,12 +654,20 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       runs."request_id" AS "requestId",
       runs."title_snapshot" AS "titleSnapshot",
       turns."requested_interaction_mode" AS "requestedInteractionMode",
+      turns."source" AS "turnSource",
+      messages."source" AS "messageSource",
+      (
+        SELECT (events."data"->>'noninteractive')::boolean
+        FROM "thread_turn_events" events
+        WHERE events."turn_id" = turns."id" AND events."type" = 'turn.queued'
+      ) AS "noninteractive",
       threads."interaction_mode" AS "interactionMode",
       threads."mode" AS "threadMode",
       threads."title" AS "threadTitle"
     FROM "project_prompt_schedule_runs" runs
     JOIN "project_prompt_schedules" schedules ON schedules."id" = runs."schedule_id"
     JOIN "thread_turns" turns ON turns."id" = runs."turn_id"
+    JOIN "thread_messages" messages ON messages."id" = turns."input_message_id"
     JOIN "threads" threads ON threads."id" = runs."thread_id"
     WHERE runs."id" = ${testRun.runId}
   `;
@@ -668,6 +679,9 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       requestId: materializedTest.requestId,
       titleSnapshot: materializedTest.titleSnapshot,
       requestedInteractionMode: materializedTest.requestedInteractionMode,
+      turnSource: materializedTest.turnSource,
+      messageSource: materializedTest.messageSource,
+      noninteractive: materializedTest.noninteractive,
       interactionMode: materializedTest.interactionMode,
       threadMode: materializedTest.threadMode,
     },
@@ -678,6 +692,9 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
       requestId: testRequestId,
       titleSnapshot: "Scheduled review",
       requestedInteractionMode: "build",
+      turnSource: "web",
+      messageSource: "web",
+      noninteractive: true,
       interactionMode: "build",
       threadMode: "chat",
     },
@@ -860,10 +877,25 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
   releaseMaterializationLock();
   await heldMaterialization;
   await concurrentDelete;
-  const [preservedThread] = await sql<[{ count: number }]>`
-    SELECT count(*)::int AS "count" FROM "threads" WHERE "id" = ${claimed.threadId}
+  const [preservedThread] = await sql<
+    [{ count: number; noninteractive: boolean }]
+  >`
+    SELECT
+      count(*)::int AS "count",
+      (
+        SELECT (events."data"->>'noninteractive')::boolean
+        FROM "thread_turn_events" events
+        WHERE events."turn_id" = ${firstTurnId} AND events."type" = 'turn.queued'
+      ) AS "noninteractive"
+    FROM "threads"
+    WHERE "id" = ${claimed.threadId}
   `;
   assert.equal(preservedThread.count, 1);
+  assert.equal(
+    preservedThread.noninteractive,
+    true,
+    "deleting a schedule preserves autonomous identity on its durable turn",
+  );
 
   const archivedSchedule = await schedules.createProjectPromptSchedule({
     organizationId: ids.organization,

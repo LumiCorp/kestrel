@@ -14,6 +14,7 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
     runId: "run-requested",
     message: "ship it",
     eventType: "user.message",
+    noninteractive: true,
     interactionMode: "build",
     actSubmode: "full_auto",
     metadata: {
@@ -87,6 +88,7 @@ test("compileRuntimeTurn builds canonical v2 payload and metadata for external t
   assert.equal(compiled.compaction.apply, true);
   assert.equal(compiled.metadata.activeTaskId, "task-active");
   assert.equal(compiled.metadata.runId, "run-requested");
+  assert.equal(compiled.metadata.noninteractive, true);
   assert.equal(compiled.metadata.modeSystemV2Enabled, true);
   assert.equal(compiled.metadata.actSubmode, "full_auto");
   assert.equal(compiled.metadata.toolBatchCheckpointSize, 7);

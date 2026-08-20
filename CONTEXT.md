@@ -11,6 +11,9 @@ The operator-visible work container for a session. Threads carry waits, supervis
 **Turn**
 A user-visible request/response unit. A turn begins with an initial user submission and remains the same turn across approvals, replies, and resumes until terminal output.
 
+**Autonomous Turn**
+A Turn that cannot request conversational input and must finish with either an outcome or a concrete blocker. Scheduled occurrences and Schedule Test runs are Autonomous Turns.
+
 **Turn Segment**
 One submitted execution event inside a turn, such as the initial submission, a user reply, an approval reply, or a resume.
 

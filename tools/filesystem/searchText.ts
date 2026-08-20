@@ -21,7 +21,7 @@ import {
 export const fsSearchTextTool: SharedToolModule = {
   definition: {
     name: "fs.search_text",
-    description: "Search UTF-8 text files within the workspace or temp roots.",
+    description: "Search the contents of UTF-8 text files within the workspace or temp roots. This does not search filenames, and zero content matches do not prove that a named path is absent.",
     inputSchema: {
       type: "object",
       properties: {

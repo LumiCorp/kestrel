@@ -13,7 +13,7 @@ import {
 export const fsListTool: SharedToolModule = {
   definition: {
     name: "fs.list",
-    description: "List files and directories within the workspace or temp roots.",
+    description: "List files and directories within the workspace or temp roots. Recursive results are deterministic and shallow-first. When truncated is true, the listing is not proof that an unreturned path is absent; inspect an exact named path directly.",
     inputSchema: {
       type: "object",
       properties: {

@@ -482,18 +482,19 @@ export async function listFileSystemEntries(input: {
     return resolved;
   };
 
-  const visitDirectory = async (absolutePath: string, depth: number): Promise<void> => {
+  const visitDirectory = async (absolutePath: string, depth: number): Promise<string[]> => {
     const resolvedDirectory = await resolveExistingFileSystemPath(absolutePath, policy);
     if (resolvedDirectory.stat.isDirectory() === false) {
-      return;
+      return [];
     }
     if (visitedDirectories.has(resolvedDirectory.realPath)) {
-      return;
+      return [];
     }
     visitedDirectories.add(resolvedDirectory.realPath);
 
     const children = await readdir(absolutePath, { withFileTypes: true });
     children.sort((left, right) => left.name.localeCompare(right.name));
+    const nextDirectories: string[] = [];
 
     for (const child of children) {
       if (input.includeHidden === false && isHiddenName(child.name)) {
@@ -505,9 +506,10 @@ export async function listFileSystemEntries(input: {
         break;
       }
       if (input.recursive && resolvedChild.stat.isDirectory() && depth < input.maxDepth) {
-        await visitDirectory(childPath, depth + 1);
+        nextDirectories.push(childPath);
       }
     }
+    return nextDirectories;
   };
 
   if (root.stat.isDirectory() === false) {
@@ -519,7 +521,17 @@ export async function listFileSystemEntries(input: {
     return { entries, truncated };
   }
 
-  await visitDirectory(root.absolutePath, 1);
+  const pendingDirectories = [{ absolutePath: root.absolutePath, depth: 1 }];
+  for (let index = 0; index < pendingDirectories.length && truncated === false; index += 1) {
+    const pending = pendingDirectories[index]!;
+    const nextDirectories = await visitDirectory(pending.absolutePath, pending.depth);
+    pendingDirectories.push(
+      ...nextDirectories.map((absolutePath) => ({
+        absolutePath,
+        depth: pending.depth + 1,
+      })),
+    );
+  }
   return { entries, truncated };
 }
 

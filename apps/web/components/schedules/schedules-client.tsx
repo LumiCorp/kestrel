@@ -422,7 +422,7 @@ export function SchedulesClient({
             <Plus className="size-4" /> New schedule
           </Button>
         }
-        description="Run recurring single-turn prompts and review every result as a Project Thread. Each occurrence uses normal Kestrel usage."
+        description="Run recurring autonomous prompts and review every result as a Project Thread. Runs cannot pause for conversational input, and each occurrence uses normal Kestrel usage."
         eyebrow="Work"
         title="Schedules"
       />
@@ -594,7 +594,7 @@ export function SchedulesClient({
           <DialogHeader>
             <DialogTitle>{editing ? "Edit schedule" : "New schedule"}</DialogTitle>
             <DialogDescription>
-              Each occurrence creates a new Thread in the selected Project.
+              Each occurrence creates a new autonomous Thread in the selected Project and cannot pause for conversational input.
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain pr-2">
