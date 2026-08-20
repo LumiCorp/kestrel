@@ -2010,31 +2010,31 @@ export class ThreadRuntime implements ThreadRuntimePort {
         const next = queue.items[0];
         if (next === undefined) return;
         let promotedIdentity: { turnId: string; runId: string } | undefined;
-        await this.withFollowUpMutation(threadId, async (thread) => {
-          let updated = markFollowUpStarting(thread, next.followUpId);
-          if (next.source !== "dialog" && next.sourceMessageId !== undefined) {
-            const route = readConversationMessageRoute(thread, next.sourceMessageId);
-            if (route === undefined || (route.disposition !== "queued" && route.disposition !== "started")) {
-              throw createRuntimeFailure(
-                "CONVERSATION_MESSAGE_ROUTE_MISSING",
-                `Queued message '${next.sourceMessageId}' has no promotable conversation route.`,
-                { threadId, followUpId: next.followUpId, messageId: next.sourceMessageId },
-              );
-            }
-            promotedIdentity = {
-              turnId: route.turnId ?? `turn-${randomUUID()}`,
-              runId: route.runId ?? randomUUID(),
-            };
-            updated = writeConversationMessageRoute(updated, {
-              ...route,
-              disposition: "started",
-              turnId: promotedIdentity.turnId,
-              runId: promotedIdentity.runId,
-            });
-          }
-          await this.store.upsertThread(updated);
-        });
         try {
+          await this.withFollowUpMutation(threadId, async (thread) => {
+            let updated = markFollowUpStarting(thread, next.followUpId);
+            if (next.source !== "dialog" && next.sourceMessageId !== undefined) {
+              const route = readConversationMessageRoute(thread, next.sourceMessageId);
+              if (route === undefined || (route.disposition !== "queued" && route.disposition !== "started")) {
+                throw createRuntimeFailure(
+                  "CONVERSATION_MESSAGE_ROUTE_MISSING",
+                  `Queued message '${next.sourceMessageId}' has no promotable conversation route.`,
+                  { threadId, followUpId: next.followUpId, messageId: next.sourceMessageId },
+                );
+              }
+              promotedIdentity = {
+                turnId: route.turnId ?? `turn-${randomUUID()}`,
+                runId: route.runId ?? randomUUID(),
+              };
+              updated = writeConversationMessageRoute(updated, {
+                ...route,
+                disposition: "started",
+                turnId: promotedIdentity.turnId,
+                runId: promotedIdentity.runId,
+              });
+            }
+            await this.store.upsertThread(updated);
+          });
           const promotionThread = await this.requireThread(threadId);
           const attachments = next.attachments ?? (next.attachmentIds.length === 0
             ? undefined
