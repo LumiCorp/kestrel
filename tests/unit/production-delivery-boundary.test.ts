@@ -88,16 +88,31 @@ test("runtime delivery is explicit and exact-environment only", () => {
   assert.doesNotMatch(reconcileSchedule, /runtime-channel|reconcileDesired/u);
 });
 
-test("web deployment receivers and controls are absent", () => {
+test("web automatic deployment receivers and controls are absent", () => {
   for (const path of [
     "apps/web/app/api/internal/production-images/route.ts",
     "apps/web/lib/deployment/production-images.ts",
     "apps/web/app/api/admin/runtime-channel/route.ts",
-    "apps/web/app/(workspace)/platform/runtime/page.tsx",
     "apps/web/app/api/organization/environments/[id]/runtime-updates/route.ts",
   ]) {
     assert.equal(existsSync(path), false, path);
   }
+});
+
+test("platform runtime is limited to explicit Turn Worker capacity control", () => {
+  const runtimePage = source(
+    "apps/web/app/(workspace)/platform/runtime/page.tsx",
+  );
+  const runtimeRoute = source(
+    "apps/web/app/api/platform/runtime/turn-workers/route.ts",
+  );
+
+  assert.match(runtimePage, /TurnWorkerCapacityClient/u);
+  assert.match(runtimeRoute, /requestTurnWorkerCapacityOperation/u);
+  assert.doesNotMatch(
+    `${runtimePage}\n${runtimeRoute}`,
+    /production-images|runtime-channel|activateEnvironmentRuntimeVersion|deploy-production/u,
+  );
 });
 
 function source(path: string) {

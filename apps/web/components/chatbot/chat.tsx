@@ -796,7 +796,9 @@ export function BootstrapChat({
   const searchParams = useSearchParams();
   const query = searchParams.get("query");
   const [hasAppendedQuery, setHasAppendedQuery] = useState(false);
-  const [startInNewWorktree, setStartInNewWorktree] = useState(false);
+  const [startInNewWorktree, setStartInNewWorktree] = useState(
+    Boolean(projectId),
+  );
 
   useEffect(() => {
     resetArtifact();
@@ -879,6 +881,7 @@ export function BootstrapChat({
         }
         newTurnDisabledReason={newTurnDisabledReason}
         workspaceModeControl={
+          projectId ? (
           <label
             className="flex items-center gap-2 px-1 text-muted-foreground text-sm"
             htmlFor="start-in-new-worktree"
@@ -893,6 +896,7 @@ export function BootstrapChat({
             />
             <span>Start in new worktree</span>
           </label>
+          ) : null
         }
         onFeedbackChange={() => {}}
         onModelChange={shared.setCurrentModelId}

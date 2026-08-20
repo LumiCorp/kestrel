@@ -171,6 +171,7 @@ export interface EnvironmentInfrastructureProvider {
     machineId: string;
     runtimeImage: string;
     envPatch?: Record<string, string | undefined> | undefined;
+    standbyForMachineIds?: string[] | undefined;
     stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
   }): Promise<EnvironmentProviderMachine>;
 }

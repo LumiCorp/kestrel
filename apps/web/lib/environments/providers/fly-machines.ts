@@ -1,4 +1,4 @@
-import { createPublicKey, randomBytes } from "node:crypto";
+import { createHash, createPublicKey, randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
   type EnvironmentInfrastructureProvider,
@@ -153,6 +153,14 @@ export type FlyMachineHealthCheck = {
   path: string;
   timeoutSeconds: number;
   gracePeriodSeconds: number;
+};
+
+export type FlyTurnWorkerMachine = EnvironmentProviderMachine & {
+  configuredConcurrency: number | null;
+  concurrencyConfiguration: "valid" | "missing" | "invalid";
+  healthStatus: string;
+  workerHealthCheckConfigured: boolean;
+  configurationFingerprint: string;
 };
 
 export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
@@ -873,10 +881,96 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     return machines.map(toMachine);
   }
 
+  async listTurnWorkerMachines(input: { appName: string }) {
+    const machines = parseResponse(
+      z.array(machineSchema),
+      await this.request(
+        "fly.turn-worker.machines.list",
+        `/apps/${encodeURIComponent(input.appName)}/machines`,
+        { method: "GET" },
+      ),
+    );
+    return machines.map((machine): FlyTurnWorkerMachine => {
+      const raw = machine.config?.env?.KESTREL_TURN_WORKER_CONCURRENCY;
+      const configuredConcurrency = raw && /^[0-9]+$/u.test(raw) ? Number(raw) : null;
+      const concurrencyConfiguration =
+        raw === undefined
+          ? "missing"
+          : configuredConcurrency && configuredConcurrency >= 1 && configuredConcurrency <= 64
+            ? "valid"
+            : "invalid";
+      const healthStatus =
+        machine.checks?.find((check) => check.name === "worker")?.status ??
+        (machine.state === "stopped" ? "stopped" : "missing");
+      const workerHealthCheckConfigured = healthCheckMatches(
+        machine.config?.checks,
+        {
+          name: "worker",
+          port: 8081,
+          path: "/healthz",
+          timeoutSeconds: 5,
+          gracePeriodSeconds: 30,
+        },
+      );
+      const configurationFingerprint = createHash("sha256")
+        .update(
+          JSON.stringify({
+            checks: machine.config?.checks ?? null,
+            entrypoint:
+              (machine.config as Record<string, unknown> | undefined)
+                ?.entrypoint ?? null,
+            guest: machine.config?.guest ?? null,
+            image: machine.config?.image ?? null,
+            init:
+              (machine.config as Record<string, unknown> | undefined)?.init ??
+              null,
+            processes:
+              (machine.config as Record<string, unknown> | undefined)
+                ?.processes ?? null,
+          }),
+        )
+        .digest("hex");
+      return {
+        ...toMachine(machine),
+        configuredConcurrency,
+        concurrencyConfiguration,
+        healthStatus,
+        workerHealthCheckConfigured,
+        configurationFingerprint,
+      };
+    });
+  }
+
+  async cloneMachineAsStoppedIndependent(input: {
+    appName: string;
+    machineId: string;
+    runtimeImage: string;
+    concurrency: number;
+    healthCheck: FlyMachineHealthCheck;
+  }) {
+    return this.cloneTurnWorkerMachine({
+      ...input,
+      standbyForMachineIds: [],
+    });
+  }
+
   async cloneMachineAsStoppedStandby(input: {
     appName: string;
     machineId: string;
     runtimeImage: string;
+    concurrency?: number | undefined;
+    standbyForMachineIds: string[];
+    healthCheck: FlyMachineHealthCheck;
+  }) {
+    return this.cloneTurnWorkerMachine(input);
+  }
+
+  private async cloneTurnWorkerMachine(input: {
+    appName: string;
+    machineId: string;
+    runtimeImage: string;
+    concurrency?: number | undefined;
+    standbyForMachineIds: string[];
     healthCheck: FlyMachineHealthCheck;
   }) {
     const current = parseResponse(
@@ -913,6 +1007,17 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
               config: {
                 ...current.config,
                 image: input.runtimeImage,
+                env: {
+                  ...current.config.env,
+                  ...(input.concurrency
+                    ? {
+                        KESTREL_TURN_WORKER_CONCURRENCY: String(
+                          input.concurrency,
+                        ),
+                      }
+                    : {}),
+                },
+                standbys: input.standbyForMachineIds,
                 checks: applyMachineHealthCheck(
                   current.config.checks,
                   input.healthCheck,
@@ -1038,6 +1143,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     machineId: string;
     runtimeImage: string;
     envPatch?: Record<string, string | undefined> | undefined;
+    standbyForMachineIds?: string[] | undefined;
     stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
     healthCheck?: FlyMachineHealthCheck | undefined;
   }) {
@@ -1067,6 +1173,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     if (
       sameImageDigest(current.config.image, input.runtimeImage) &&
       environmentsEqual(current.config.env ?? {}, nextEnvironment) &&
+      standbyRelationshipsEqual(
+        current.config.standbys,
+        input.standbyForMachineIds,
+      ) &&
       stopConfigsEqual(current.config.stop_config, input.stopConfig) &&
       healthCheckMatches(current.config.checks, input.healthCheck)
     ) {
@@ -1086,6 +1196,9 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
                 ...current.config,
                 image: input.runtimeImage,
                 env: nextEnvironment,
+                ...(input.standbyForMachineIds
+                  ? { standbys: input.standbyForMachineIds }
+                  : {}),
                 ...(nextChecks ? { checks: nextChecks } : {}),
                 ...(input.stopConfig ? { stop_config: input.stopConfig } : {}),
               },
@@ -1117,6 +1230,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         !machineConfigurationMatches(authoritative.config, {
           runtimeImage: input.runtimeImage,
           environment: nextEnvironment,
+          standbyForMachineIds: input.standbyForMachineIds,
           stopConfig: input.stopConfig,
           healthCheck: input.healthCheck,
         })
@@ -1136,6 +1250,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     const applied = machineConfigurationMatches(updated.config, {
       runtimeImage: input.runtimeImage,
       environment: nextEnvironment,
+      standbyForMachineIds: input.standbyForMachineIds,
       stopConfig: input.stopConfig,
       healthCheck: input.healthCheck,
     })
@@ -1145,6 +1260,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
           machineId: input.machineId,
           runtimeImage: input.runtimeImage,
           environment: nextEnvironment,
+          standbyForMachineIds: input.standbyForMachineIds,
           stopConfig: input.stopConfig,
           healthCheck: input.healthCheck,
         });
@@ -1156,6 +1272,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     machineId: string;
     runtimeImage: string;
     environment: Record<string, string>;
+    standbyForMachineIds?: string[] | undefined;
     stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
     healthCheck?: FlyMachineHealthCheck | undefined;
   }) {
@@ -1173,6 +1290,7 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
         machineConfigurationMatches(machine.config, {
           runtimeImage: input.runtimeImage,
           environment: input.environment,
+          standbyForMachineIds: input.standbyForMachineIds,
           stopConfig: input.stopConfig,
           healthCheck: input.healthCheck,
         })
@@ -1594,6 +1712,7 @@ function machineConfigurationMatches(
     | {
         image?: string | undefined;
         env?: Record<string, string> | undefined;
+        standbys?: string[] | undefined;
         stop_config?: { signal: string; timeout: number } | null | undefined;
         checks?: unknown;
       }
@@ -1601,6 +1720,7 @@ function machineConfigurationMatches(
   requested: {
     runtimeImage: string;
     environment: Record<string, string>;
+    standbyForMachineIds?: string[] | undefined;
     stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
     healthCheck?: FlyMachineHealthCheck | undefined;
   },
@@ -1609,8 +1729,23 @@ function machineConfigurationMatches(
     current?.image &&
     sameImageDigest(current.image, requested.runtimeImage) &&
     environmentsEqual(current.env ?? {}, requested.environment) &&
+    standbyRelationshipsEqual(
+      current.standbys,
+      requested.standbyForMachineIds,
+    ) &&
     stopConfigsEqual(current.stop_config, requested.stopConfig) &&
     healthCheckMatches(current.checks, requested.healthCheck),
+  );
+}
+
+function standbyRelationshipsEqual(
+  current: string[] | undefined,
+  requested: string[] | undefined,
+) {
+  if (!requested) return true;
+  return (
+    JSON.stringify([...(current ?? [])].sort()) ===
+    JSON.stringify([...requested].sort())
   );
 }
 

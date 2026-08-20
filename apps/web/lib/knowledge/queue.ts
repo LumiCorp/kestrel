@@ -20,6 +20,7 @@ const ENVIRONMENT_RECONCILE_QUEUE = "environment.reconcile.controller-v1";
 const COST_PRICING_QUEUE = "costs.price";
 const COST_ACCRUAL_QUEUE = "costs.accrue-fixed";
 const COST_FLY_METERING_QUEUE = "costs.meter-fly";
+export const TURN_WORKER_CAPACITY_QUEUE = "platform.turn-worker-capacity.v1";
 type CostPricingJobData = { backfill?: unknown };
 export const ENVIRONMENT_OPERATION_EXPIRE_SECONDS = 12 * 60 * 60;
 export const ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS = 60;
@@ -111,6 +112,11 @@ async function createBoss() {
   await boss.createQueue(COST_PRICING_QUEUE);
   await boss.createQueue(COST_ACCRUAL_QUEUE);
   await boss.createQueue(COST_FLY_METERING_QUEUE);
+  await boss.createQueue(TURN_WORKER_CAPACITY_QUEUE, {
+    policy: "singleton",
+    expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+    heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+  });
   await boss.createQueue(MANAGED_RUNPOD_RUN_QUEUE);
   await boss.createQueue(MANAGED_RUNPOD_RECONCILE_QUEUE);
   await boss.createQueue(MANAGED_RUNPOD_USAGE_QUEUE);
@@ -414,6 +420,9 @@ async function runEnvironmentMaintenance(boss: PgBoss) {
   try {
     await reconcileEnvironmentOperationQueue(boss);
     await reconcileOrganizationDeletionQueue(boss);
+    const { interruptExpiredTurnWorkerCapacityOperation } =
+      await import("@/lib/platform/turn-worker-capacity");
+    await interruptExpiredTurnWorkerCapacityOperation();
   } finally {
     environmentMaintenanceRunning = false;
   }
@@ -460,6 +469,22 @@ export async function startEnvironmentLifecycleWorker() {
     },
   );
   await boss.work(ORGANIZATION_DELETION_QUEUE, processOrganizationDeletionJobs);
+  await boss.work(
+    TURN_WORKER_CAPACITY_QUEUE,
+    {
+      batchSize: 1,
+      includeMetadata: true,
+      heartbeatRefreshSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_REFRESH_SECONDS,
+    },
+    async (jobs: Array<JobWithMetadata<{ operationId?: unknown }>>) => {
+      const { processTurnWorkerCapacityOperation } =
+        await import("@/lib/platform/turn-worker-capacity");
+      for (const job of jobs) {
+        if (typeof job.data?.operationId !== "string") continue;
+        await processTurnWorkerCapacityOperation(job.data.operationId);
+      }
+    },
+  );
   await boss.work(ENVIRONMENT_RECONCILE_QUEUE, async () => {
     const { runScheduledEnvironmentReconciliation } =
       await import("@/lib/environments/reconcile-schedule");
@@ -507,6 +532,9 @@ export async function startEnvironmentLifecycleWorker() {
   await boss.send(COST_ACCRUAL_QUEUE, {}, { singletonKey: "startup-accrual" });
   await reconcileEnvironmentOperationQueue(boss);
   await reconcileOrganizationDeletionQueue(boss);
+  const { interruptExpiredTurnWorkerCapacityOperation } =
+    await import("@/lib/platform/turn-worker-capacity");
+  await interruptExpiredTurnWorkerCapacityOperation();
   environmentMaintenanceTimer = setInterval(() => {
     void runEnvironmentMaintenance(boss).catch((error) => {
       console.error("Environment lifecycle worker maintenance failed.", {
@@ -515,6 +543,23 @@ export async function startEnvironmentLifecycleWorker() {
     });
   }, 5000);
   return boss;
+}
+
+export async function enqueueTurnWorkerCapacityOperation(operationId: string) {
+  const boss = await getKnowledgeBossProducer();
+  const jobId = await boss.send(
+    TURN_WORKER_CAPACITY_QUEUE,
+    { operationId },
+    {
+      singletonKey: operationId,
+      retryLimit: 0,
+      expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
+      heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
+    },
+  );
+  if (!jobId) {
+    throw new Error("The Turn Worker capacity queue rejected the operation.");
+  }
 }
 
 export async function stopEnvironmentLifecycleWorker() {

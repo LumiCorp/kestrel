@@ -77,6 +77,23 @@ One independently triggered hosted production lane: native Vercel delivery,
 Fly platform images, the paired Environment Runtime, or the managed RunPod
 worker.
 
+**Turn Worker Capacity**
+The administrator-selected number of active Turn Worker Machines and durable
+Thread execution slots per Machine.
+
+**Execution Admission**
+The singleton PostgreSQL gate that allows or temporarily defers queued and
+resumed turn claims while a disruptive Turn Worker capacity operation runs.
+
+**Turn Concurrency Group**
+A creation-time execution key persisted on each turn. Primary Project Threads
+share a Project group, primary standalone Threads share a Personal Workspace
+group, and isolated or historical Threads use a Thread-specific group.
+
+**Retained Standby**
+The one stopped Fly Machine configured to watch every ordinary active Turn
+Worker Machine and excluded from routine independent scale-up starts.
+
 **Memory Read Binding**
 A trusted, versioned authorization that binds one memory retrieval to an exact tenant, user, agent, task, policy revision, namespace, scope, and document-access set. A model can provide a bounded query but cannot mint or widen this binding.
 
