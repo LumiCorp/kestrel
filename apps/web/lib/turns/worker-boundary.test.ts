@@ -118,6 +118,7 @@ test("scheduled prompt materialization stays on its locked database transaction"
     "scheduled turns must carry the model captured for their occurrence",
   );
   assert.match(runtimeSource, /requestedInteractionMode: "build"/u);
+  assert.match(runtimeSource, /noninteractive: true/u);
   assert.match(runtimeSource, /idempotencyKey: `schedule-run:\$\{current\.run\.id\}`/u);
   assert.match(runtimeSource, /title: current\.run\.titleSnapshot/u);
   assert.match(
@@ -132,6 +133,23 @@ test("scheduled prompt materialization stays on its locked database transaction"
     turnStoreSource,
     /export async function createDurableThreadTurnInTransaction/u,
   );
+});
+
+test("scheduled and Test turns enter the ordinary worker as autonomous turns", async () => {
+  const runtimeSource = await readFile(
+    new URL("./process-runtime.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(runtimeSource, /projectPromptScheduleRuns\.findFirst/u);
+  assert.match(runtimeSource, /eq\(table\.turnId, turn\.id\)/u);
+  assert.match(runtimeSource, /threadTurnEvents\.findFirst/u);
+  assert.match(runtimeSource, /eq\(table\.type, "turn\.queued"\)/u);
+  assert.match(
+    runtimeSource,
+    /readBooleanField\(turnContract\?\.data, "noninteractive"\)/u,
+  );
+  assert.match(runtimeSource, /scheduleRun !== undefined/u);
 });
 
 test(

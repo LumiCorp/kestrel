@@ -388,6 +388,42 @@ test("createKestrelOneAgentResponse preserves Build mode while resuming a blocke
   assert.equal(capturedInput?.eventType, "user.reply");
 });
 
+test("createKestrelOneAgentResponse propagates autonomous turn policy", async () => {
+  let capturedInput: KestrelOneAgentTurnInput | undefined;
+  const agent = fakeAgent({
+    terminal: completedTerminal("Autonomous run complete", undefined),
+    onStream(input) {
+      capturedInput = input;
+    },
+  });
+
+  const response = createKestrelOneAgentResponseFromAgent({
+    request: new Request("http://example.test/api/threads/thread_autonomous", {
+      method: "POST",
+    }),
+    agent,
+    ownsAgent: false,
+    session,
+    organizationId: "org_123",
+    correlation: {
+      requestId: "req_autonomous",
+      correlationId: "req_autonomous",
+    },
+    threadId: "thread_autonomous",
+    interactionMode: "build",
+    noninteractive: true,
+    messages: [{
+      id: "msg_autonomous",
+      role: "user",
+      parts: [{ type: "text", text: "Run the schedule." }],
+    }],
+  });
+
+  await response.text();
+
+  assert.equal(capturedInput?.noninteractive, true);
+});
+
 test("createKestrelOneAgentResponse persists a completed WAITING prompt as assistant text", async () => {
   let persistedText = "";
   let persistedTerminalStatus = "";

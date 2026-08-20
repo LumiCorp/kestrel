@@ -202,6 +202,25 @@ function describeLedgerFilesystemEntry(entry: Record<string, unknown>): string |
   }
   const target = asRecord(entry.target);
   const targetPath = asString(facts.outputPath) ?? asString(facts.inputPath) ?? asString(target?.value);
+  if (toolName === "fs.list") {
+    const count = typeof facts.entryCount === "number" ? Math.trunc(facts.entryCount) : undefined;
+    const truncated = facts.truncated === true;
+    const maxEntries = typeof facts.maxEntries === "number" ? Math.trunc(facts.maxEntries) : undefined;
+    const paths = asArray(facts.entries)
+      .map(asRecord)
+      .filter((entry): entry is Record<string, unknown> => entry !== undefined)
+      .map((entry) => asString(entry.path) ?? asString(entry.name))
+      .filter((path): path is string => path !== undefined)
+      .slice(0, 8)
+      .join(", ");
+    const summary = [
+      `fs.list ${targetPath ?? "."} returned ${count ?? 0} entr${count === 1 ? "y" : "ies"}`,
+      truncated
+        ? `(truncated${maxEntries !== undefined ? ` at ${maxEntries}` : ""}; unreturned paths may still exist)`
+        : undefined,
+    ].filter((item): item is string => item !== undefined).join(" ");
+    return `${summary}${paths.length > 0 ? `: ${paths}` : "."}`;
+  }
   if (toolName === "fs.search_text") {
     const query = asString(facts.query);
     const count = typeof facts.matchCount === "number" ? Math.trunc(facts.matchCount) : undefined;
@@ -388,7 +407,15 @@ function describeFilesystemResult(record: Record<string, unknown>): string | und
       .filter((item): item is string => item !== undefined)
       .slice(0, 8)
       .join(", ");
-    return `fs.list ${targetPath ?? "."} returned ${entries.length} entr${entries.length === 1 ? "y" : "ies"}${paths.length > 0 ? `: ${paths}` : "."}`;
+    const truncated = output?.truncated === true;
+    const maxEntries = typeof output?.maxEntries === "number" ? Math.trunc(output.maxEntries) : undefined;
+    const summary = [
+      `fs.list ${targetPath ?? "."} returned ${entries.length} entr${entries.length === 1 ? "y" : "ies"}`,
+      truncated
+        ? `(truncated${maxEntries !== undefined ? ` at ${maxEntries}` : ""}; unreturned paths may still exist)`
+        : undefined,
+    ].filter((item): item is string => item !== undefined).join(" ");
+    return `${summary}${paths.length > 0 ? `: ${paths}` : "."}`;
   }
   return ;
 }

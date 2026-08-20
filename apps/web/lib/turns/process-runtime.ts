@@ -99,6 +99,14 @@ function terminalTurnStatus(status: KestrelTerminalStatus) {
   return "failed" as const;
 }
 
+function readBooleanField(value: unknown, field: string): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as Record<string, unknown>)[field] === true,
+  );
+}
+
 function assistantText(message: UIMessage) {
   return message.parts
     .flatMap((part) => (part.type === "text" ? [part.text] : []))
@@ -481,7 +489,7 @@ export async function processDurableThreadTurn(
   };
   let waitingCommitted = false;
   try {
-    const [session, storedMessages, thread] = await Promise.all([
+    const [session, storedMessages, thread, scheduleRun, turnContract] = await Promise.all([
       loadWorkerSession(turn.authorUserId),
       listMessagesForDurableTurn(turn.id),
       knowledgeDb.query.threads.findFirst({
@@ -495,6 +503,15 @@ export async function processDurableThreadTurn(
           workspaceBaseRef: true,
           parentThreadId: true,
         },
+      }),
+      knowledgeDb.query.projectPromptScheduleRuns.findFirst({
+        where: (table, { eq }) => eq(table.turnId, turn.id),
+        columns: { id: true },
+      }),
+      knowledgeDb.query.threadTurnEvents.findFirst({
+        where: (table, { and, eq }) =>
+          and(eq(table.turnId, turn.id), eq(table.type, "turn.queued")),
+        columns: { data: true },
       }),
     ]);
     if (!thread) throw new Error("Thread workspace mode is unavailable.");
@@ -521,6 +538,10 @@ export async function processDurableThreadTurn(
       workspaceBaseRef: thread.workspaceBaseRef,
       parentThreadId: thread.parentThreadId,
       durableTurnId: turn.id,
+      ...(readBooleanField(turnContract?.data, "noninteractive") ||
+      scheduleRun !== undefined
+        ? { noninteractive: true }
+        : {}),
       messages,
       modelId: turn.requestedModelId ?? undefined,
       interactionMode: turn.requestedInteractionMode,

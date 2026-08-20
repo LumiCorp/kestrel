@@ -134,6 +134,7 @@ export type KestrelOneAgentResponseInput = {
   correlation: KestrelOneRequestCorrelation;
   threadId: string;
   durableTurnId?: string | undefined;
+  noninteractive?: boolean | undefined;
   messages: UIMessage[];
   approvalDecision?:
     | {
@@ -254,6 +255,7 @@ export function createKestrelOneAgentResponseFromAgent(
               sessionId: input.threadId,
               message: latestUserMessage,
               eventType: interactionResponse?.eventType ?? "user.message",
+              ...(input.noninteractive === true ? { noninteractive: true } : {}),
               interactionMode: input.interactionMode,
               ...(interactionResponse !== undefined
                 ? {

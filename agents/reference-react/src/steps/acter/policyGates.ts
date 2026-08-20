@@ -125,6 +125,8 @@ export async function checkToolPolicyGate(input: {
       reactState: input.reactState,
       activeRegion: input.activeRegion,
       acterStepId: input.acterStepId,
+      deliberationStepId: input.deliberationStepId,
+      currentStepAgent: input.currentStepAgent,
       loopStepId: input.loopStepId,
       runId: input.runId,
       stepIndex: input.stepIndex,
@@ -242,6 +244,21 @@ export async function checkToolBatchPolicyGate(input: {
       }),
     )
   ) {
+    if (isNoninteractiveEventPayload(input.eventPayload)) {
+      return {
+        kind: "blocked",
+        transition: toNoninteractiveApprovalBlockedTransition({
+          reactState: input.reactState,
+          activeRegion: input.activeRegion,
+          deliberationStepId: input.deliberationStepId,
+          currentStepAgent: input.currentStepAgent,
+          stepIndex: input.stepIndex,
+          toolName: "tool_batch",
+          toolClass: "external_side_effect",
+          reason: "The batch includes an operation that requires approval, which an autonomous turn cannot request.",
+        }),
+      };
+    }
     return {
       kind: "blocked",
       transition: toPolicyBlockedTransition({
@@ -282,6 +299,8 @@ export async function checkToolBatchPolicyGate(input: {
       reactState: input.reactState,
       activeRegion: input.activeRegion,
       acterStepId: input.acterStepId,
+      deliberationStepId: input.deliberationStepId,
+      currentStepAgent: input.currentStepAgent,
       loopStepId: input.loopStepId,
       runId: input.runId,
       stepIndex: input.stepIndex,
@@ -535,6 +554,19 @@ async function maybeRequireToolApproval(input: {
     })
   ) {
     return ;
+  }
+
+  if (isNoninteractiveEventPayload(input.eventPayload)) {
+    return toNoninteractiveApprovalBlockedTransition({
+      reactState: input.reactState,
+      activeRegion: input.activeRegion,
+      deliberationStepId: input.deliberationStepId,
+      currentStepAgent: input.currentStepAgent,
+      stepIndex: input.stepIndex,
+      toolName: input.toolName,
+      toolClass: input.toolClass,
+      reason: `Tool '${input.toolName}' requires approval, which an autonomous turn cannot request.`,
+    });
   }
 
   const effectiveToolInput =
@@ -820,6 +852,18 @@ async function maybeRequireManagedWorktreeApproval(input: {
   const workspace = asRecord(input.eventPayload?.workspace);
   if (workspace?.managedWorktreeRequired === false) {
     return ;
+  }
+  if (isNoninteractiveEventPayload(input.eventPayload)) {
+    return toNoninteractiveApprovalBlockedTransition({
+      reactState: input.reactState,
+      activeRegion: input.activeRegion,
+      deliberationStepId: input.deliberationStepId,
+      currentStepAgent: input.currentStepAgent,
+      stepIndex: input.stepIndex,
+      toolName: input.toolName,
+      toolClass: input.toolClass ?? "sandboxed_only",
+      reason: `Tool '${input.toolName}' requires managed-worktree approval, which an autonomous turn cannot request.`,
+    });
   }
   const sourceWorkspaceRoot = asString(workspace?.sourceWorkspaceRoot) ?? asString(workspace?.workspaceRoot);
   if (sourceWorkspaceRoot === undefined) {
@@ -1341,6 +1385,65 @@ function riskLevelForToolClass(
   return "high";
 }
 
+function isNoninteractiveEventPayload(
+  eventPayload: Record<string, unknown> | undefined,
+): boolean {
+  return eventPayload?.noninteractive === true ||
+    asRecord(eventPayload?.metadata)?.noninteractive === true;
+}
+
+function toNoninteractiveApprovalBlockedTransition(input: {
+  reactState: Record<string, unknown>;
+  activeRegion: string | undefined;
+  deliberationStepId: string;
+  currentStepAgent: string;
+  stepIndex: number;
+  toolName: string;
+  toolClass: ToolExecutionClass;
+  reason: string;
+}): Transition {
+  const lastActionResult = {
+    ok: false,
+    kind: "approval_unavailable",
+    status: "blocked",
+    noninteractive: true,
+    toolName: input.toolName,
+    toolClass: input.toolClass,
+    reason: input.reason,
+    ts: new Date().toISOString(),
+  };
+  return createReferenceReactEffectCollectCheckpoint({
+    reactState: input.reactState,
+    currentStepAgent: input.currentStepAgent,
+    nextStepAgent: input.deliberationStepId,
+    stepIndex: input.stepIndex,
+    activeRegion: input.activeRegion,
+    phase: "THINK",
+    reactPatch: {
+      lastActionResult,
+      observations: appendAgentObservation(input.reactState, lastActionResult),
+      decisionTrace: [
+        {
+          eventType: "decision.executed",
+          phase: "acter",
+          decisionCode: "noninteractive_approval_blocked",
+          metadata: {
+            toolName: input.toolName,
+            toolClass: input.toolClass,
+            reason: input.reason,
+          },
+        },
+      ],
+    },
+    execPatch: {
+      pendingApproval: undefined,
+    },
+    regionExecPatch: {
+      pendingApproval: undefined,
+    },
+  });
+}
+
 function toPolicyBlockedTransition(input: {
   reactState: Record<string, unknown>;
   activeRegion: string | undefined;
@@ -1454,6 +1557,8 @@ async function maybeRequireAutonomyEscalation(input: {
   reactState: Record<string, unknown>;
   activeRegion: string | undefined;
   acterStepId: string;
+  deliberationStepId: string;
+  currentStepAgent: string;
   loopStepId: string;
   runId: string;
   stepIndex: number;
@@ -1478,6 +1583,19 @@ async function maybeRequireAutonomyEscalation(input: {
   });
   if (autonomy.allowed && autonomy.escalateReasons.length === 0) {
     return ;
+  }
+
+  if (isNoninteractiveEventPayload(input.eventPayload)) {
+    return toNoninteractiveApprovalBlockedTransition({
+      reactState: input.reactState,
+      activeRegion: input.activeRegion,
+      deliberationStepId: input.deliberationStepId,
+      currentStepAgent: input.currentStepAgent,
+      stepIndex: input.stepIndex,
+      toolName: input.actionLabel,
+      toolClass: input.toolClass,
+      reason: `Action '${input.actionLabel}' requires autonomy-policy approval, which an autonomous turn cannot request.`,
+    });
   }
 
   const approvalPayload = {

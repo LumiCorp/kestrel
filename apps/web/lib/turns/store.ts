@@ -319,6 +319,7 @@ type DurableThreadTurnInput = {
   projectContextRevisionId?: string | null;
   requestedModelId?: string | null;
   requestedInteractionMode?: KestrelOneInteractionMode;
+  noninteractive?: boolean;
   source: ThreadTurnSource;
 } & (
   | {
@@ -523,7 +524,11 @@ export async function createDurableThreadTurnInTransaction(
   await appendTurnEvent(tx, {
     turnId,
     type: "turn.queued",
-    data: { status: "queued", sequence },
+    data: {
+      status: "queued",
+      sequence,
+      ...(input.noninteractive === true ? { noninteractive: true } : {}),
+    },
   });
   const resumesTerminallyPausedQueue = Boolean(
     input.messageId &&

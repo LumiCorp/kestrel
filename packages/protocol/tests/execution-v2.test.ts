@@ -46,6 +46,22 @@ const turn = {
   systemInstructions: ["Return the requested structured output."],
 };
 
+test("run.start accepts the autonomous turn marker", () => {
+  const parsed = parseRunnerCommandV2({
+    id: "command-autonomous",
+    type: "run.start",
+    payload: {
+      profileId: "kestrel",
+      turn: { ...turn, noninteractive: true },
+    },
+  });
+
+  assert.equal(parsed.type, "run.start");
+  if (parsed.type === "run.start") {
+    assert.equal(parsed.payload.turn.noninteractive, true);
+  }
+});
+
 const replay = {
   version: "job_replay_pointer_v1",
   sessionId: "session-1",

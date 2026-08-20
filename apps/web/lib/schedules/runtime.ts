@@ -216,6 +216,7 @@ export async function materializeProjectPromptScheduleRun(runId: string) {
         projectContextRevisionId: projectContext.id,
         requestedModelId: current.run.modelIdSnapshot,
         requestedInteractionMode: "build",
+        noninteractive: true,
         source: "web",
       });
       await complete(durable.turn.id);

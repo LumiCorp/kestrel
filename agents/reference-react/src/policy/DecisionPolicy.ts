@@ -88,6 +88,7 @@ export interface DecisionPolicyContext {
   executionPolicy?: ExecutionPolicyOverride | undefined;
   executionIntent?: DecisionContextExecutionIntent | undefined;
   interactionMode?: InteractionMode | undefined;
+  noninteractive?: boolean | undefined;
   goalSatisfiedCloseoutReadiness?: GoalSatisfiedCloseoutReadiness | undefined;
 }
 
@@ -150,6 +151,7 @@ export function validateDecisionPolicy(context: DecisionPolicyContext): string[]
       context.executionIntent,
       context.interactionMode,
       context.executionPolicy,
+      context.noninteractive === true,
     );
     checksPassed.push("cannot_satisfy_capability_consistency");
   }
@@ -504,6 +506,7 @@ function validateCannotSatisfyActionPolicy(
   executionIntent?: DecisionContextExecutionIntent | undefined,
   interactionMode?: InteractionMode | undefined,
   executionPolicy?: ExecutionPolicyOverride | undefined,
+  noninteractive = false,
 ): void {
   const missingRequiredCapabilities = computeMissingRequiredCapabilities(
     requiredCapabilities,
@@ -554,7 +557,11 @@ function validateCannotSatisfyActionPolicy(
     );
   }
 
-  if (action.reasonCode === "need_user_choice" && interactionMode === "build") {
+  if (
+    action.reasonCode === "need_user_choice" &&
+    interactionMode === "build" &&
+    noninteractive === false
+  ) {
     throw decisionPolicyError(
       "cannot_satisfy reasonCode='need_user_choice' is invalid in build mode. Ask the user for the concrete decision instead.",
       "DECISION_POLICY_FAILED",
