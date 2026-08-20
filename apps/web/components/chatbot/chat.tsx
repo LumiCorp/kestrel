@@ -64,6 +64,10 @@ import {
   executeKestrelOneQueueSubmission,
 } from "@/lib/turns/conversation-command-adapter";
 import {
+  executeKestrelOneComposerModeSelection,
+  filterKestrelOneComposerControlMessages,
+} from "@/lib/turns/composer-mode-selection";
+import {
   reconcileConversationMessages,
   removeDurableQueuedMessages,
 } from "@/lib/turns/message-reconciliation";
@@ -110,6 +114,8 @@ type ChatController = {
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   status: UseChatHelpers<ChatMessage>["status"];
 };
+
+class ModeSelectionSaveRejectedError extends Error {}
 
 function createChatTransport(
   currentModelIdRef: { current: string },
@@ -587,10 +593,10 @@ function ChatShell({
   const modeSwitchCommandAdapterRef = useRef<ReturnType<typeof createKestrelOneConversationCommandAdapter> | undefined>(undefined);
   if (modeSwitchCommandAdapterRef.current === undefined) {
     modeSwitchCommandAdapterRef.current = createKestrelOneConversationCommandAdapter({
-      interrupt: async () => undefined,
+      interrupt: async () => {},
       switchMode: async (mode) => {
         const changed = await modeSwitchCallbacksRef.current.onInteractionModeChange(mode);
-        if (changed === false) throw new Error("Mode selection could not be saved.");
+        if (changed === false) throw new ModeSelectionSaveRejectedError();
       },
     });
   }
@@ -607,10 +613,33 @@ function ChatShell({
           eventType: interaction.eventType,
           turnId: interaction.turnId!,
           message: `/mode ${mode}`,
+          presentation: "control",
         }),
       },
     });
   };
+  const handleComposerInteractionModeChange = async (
+    mode: KestrelOneInteractionMode,
+  ) =>
+    executeKestrelOneComposerModeSelection({
+      currentMode: interactionMode,
+      interactions: conversationState.interactions,
+      selectedMode: mode,
+      changeMode: (selectedMode) =>
+        modeSwitchCallbacksRef.current.onInteractionModeChange(selectedMode),
+      resumeModeSwitch: async (interaction, selectedMode) => {
+        await handleModeSwitch(interaction, selectedMode);
+        void onRefreshConversationState().catch(() => {});
+      },
+      onResumeFailure: (error) => {
+        if (error instanceof ModeSelectionSaveRejectedError) return;
+        toast({
+          type: "error",
+          description:
+            "Mode changed, but the waiting turn could not be resumed. Select the mode again to retry.",
+        });
+      },
+    });
 
   return (
     <>
@@ -635,13 +664,11 @@ function ChatShell({
           feedbackByMessageId={feedbackByMessageId}
           isArtifactVisible={isArtifactVisible}
           isReadonly={isReadonly}
-          interactionMode={interactionMode}
           liveRuntimePresentation={liveRuntimePresentation}
           messages={messages}
           onFeedbackChange={onFeedbackChange}
           onRefreshConversationState={onRefreshConversationState}
           onRuntimeInteractionResponse={onRuntimeInteractionResponse}
-          onModeSwitch={handleModeSwitch}
           regenerate={regenerate}
           selectedModelId={currentModelId}
           setMessages={setMessages}
@@ -652,14 +679,12 @@ function ChatShell({
 
         {isReadonly || !threadExists ? null : (
           <InteractionPanel
-            currentMode={interactionMode}
             interactions={conversationState.interactions.filter(
               (interaction) =>
                 interaction.status === "pending" && interaction.turnId === null
             )}
             onResolved={onRefreshConversationState}
             onRuntimeResponse={onRuntimeInteractionResponse}
-            onModeSwitch={handleModeSwitch}
             threadId={threadId}
           />
         )}
@@ -703,7 +728,7 @@ function ChatShell({
               newTurnDisabledReason={newTurnDisabledReason}
               onInterrupt={onInterrupt}
               onModelChange={onModelChange}
-              onInteractionModeChange={onInteractionModeChange}
+              onInteractionModeChange={handleComposerInteractionModeChange}
               onRuntimeInteractionResponse={onRuntimeInteractionResponse}
               queueMessage={queueMessage}
               selectedModelId={currentModelId}
@@ -978,6 +1003,7 @@ export function Chat({
   const hasShownResumeWarningRef = useRef(false);
   const hasShownResumedToastRef = useRef(false);
   const hasStartedHandoffRequestRef = useRef(false);
+  const composerControlMessageIdsRef = useRef(new Set<string>());
   const [liveThreadTitle, setLiveThreadTitle] = useState(threadTitle);
   const [chatExists, setChatExists] = useState(initialChatExists);
   const [queuedMessages, setQueuedMessages] = useState<QueuedUserMessage[]>([]);
@@ -1266,6 +1292,10 @@ export function Chat({
   const respondToRuntimeInteraction = useCallback(
     async (interaction: RuntimeInteractionResponse) => {
       const messageId = generateUUID();
+      const { presentation, ...transportInteraction } = interaction;
+      if (presentation === "control") {
+        composerControlMessageIdsRef.current.add(messageId);
+      }
       const turnId = conversationState.interactions.find(
         (candidate) => candidate.requestId === interaction.requestId
       )?.turnId;
@@ -1287,7 +1317,7 @@ export function Chat({
             {
               body: {
                 interactionResponse: {
-                  ...interaction,
+                  ...transportInteraction,
                   messageId,
                 },
               },
@@ -1556,17 +1586,22 @@ export function Chat({
       const durableIds = new Set(
         durableAndLive.map((message) => message.id),
       );
-      return [
-        ...durableAndLive,
-        ...queuedMessages
-          .map((item) => item.message)
-          .filter((message) => !durableIds.has(message.id)),
-      ];
+      return filterKestrelOneComposerControlMessages({
+        interactions: conversationState.interactions,
+        messages: [
+          ...durableAndLive,
+          ...queuedMessages
+            .map((item) => item.message)
+            .filter((message) => !durableIds.has(message.id)),
+        ],
+        optimisticControlMessageIds: composerControlMessageIdsRef.current,
+      });
     },
     [
       controller.messages,
       conversationSnapshot.messages,
       conversationSnapshot.turns,
+      conversationState.interactions,
       handoff,
       queuedMessages,
     ]

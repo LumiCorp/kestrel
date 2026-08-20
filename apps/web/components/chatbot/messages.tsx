@@ -9,7 +9,6 @@ import {
   projectThreadConversation,
 } from "@/lib/turns/conversation-projector";
 import type { ChatMessage, MessageFeedback } from "@/lib/types";
-import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import { useDataStream } from "./data-stream-provider";
 import { Greeting } from "./greeting";
 import {
@@ -50,8 +49,6 @@ type MessagesProps = {
   onRuntimeInteractionResponse: (
     response: RuntimeInteractionResponse
   ) => Promise<void>;
-  interactionMode: KestrelOneInteractionMode;
-  onModeSwitch: (interaction: ThreadConversationState["interactions"][number], mode: KestrelOneInteractionMode) => Promise<void>;
 };
 
 function PureMessages({
@@ -70,8 +67,6 @@ function PureMessages({
   conversationState,
   onRefreshConversationState,
   onRuntimeInteractionResponse,
-  interactionMode,
-  onModeSwitch,
 }: MessagesProps) {
   const latestAssistantMessageId = [...messages]
     .reverse()
@@ -229,14 +224,12 @@ function PureMessages({
         ))}
         {isReadonly ? null : (
           <InteractionPanel
-            currentMode={interactionMode}
             embedded={true}
             interactions={item.interactions.filter(
               (interaction) => interaction.status === "pending"
             )}
             onResolved={onRefreshConversationState}
             onRuntimeResponse={onRuntimeInteractionResponse}
-            onModeSwitch={onModeSwitch}
             threadId={threadId}
           />
         )}
