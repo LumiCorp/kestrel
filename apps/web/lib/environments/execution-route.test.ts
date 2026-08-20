@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { describeEnvironmentActivation } from "./execution-route";
 
 
@@ -85,4 +86,18 @@ test("Environment activation surfaces the stored failure without leaking a false
       status: "failed",
     }
   );
+});
+
+test("Workspace page activation uses lifecycle retry without submitting or replaying a turn", async () => {
+  const source = await readFile(
+    new URL(
+      "../../app/api/threads/[id]/environment/route.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  assert.match(source, /requestEnvironmentWorkspaceActivation\(\{/u);
+  assert.doesNotMatch(source, /resolveEnvironmentExecutionRoute\(/u);
+  assert.doesNotMatch(source, /run\.start|submit.*turn|replay/iu);
 });
