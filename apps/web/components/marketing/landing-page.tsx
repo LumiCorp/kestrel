@@ -105,9 +105,9 @@ const capabilities = [
 ] as const;
 
 const betaNotes = [
-  "Products, packages, and contracts share the canonical 0.8.5 release.",
+  "Desktop 0.8.6, packages and CLI/TUI 0.8.5, and Kestrel One source 0.8.5 release independently.",
   "Kestrel One source is public; Lumi-hosted signup requires an invite code.",
-  "Desktop 0.8.5 is signed and notarized, with stable OTA support from 0.7.0 and 0.8.0.",
+  "Desktop 0.8.6 is signed and notarized, with stable OTA support from earlier signed releases.",
   "Release identity, known Beta limitations, and compatibility remain public.",
 ] as const;
 
@@ -162,7 +162,7 @@ function BetaNotice() {
         <Badge className="border-primary/40 bg-primary/10" variant="outline">
           Beta
         </Badge>
-        <span>Kestrel 0.8 is one coordinated Beta release across every product surface.</span>
+        <span>Kestrel 0.8 uses independent artifact releases with explicit compatibility.</span>
         <Link
           className="inline-flex items-center gap-1 rounded-sm font-medium underline decoration-border underline-offset-4 hover:decoration-foreground focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           href="https://docs.kestrelagents.dev/start/release-status"
@@ -193,7 +193,7 @@ function MarketingFooter() {
             document work.
           </p>
           <p className="font-mono text-muted-foreground text-xs">
-            Kestrel 0.8 is Beta across Desktop, One, CLI/TUI, and SDK integrations.
+            Desktop and Kestrel One are Beta. Packages and CLI/TUI are Stable.
           </p>
           <p className="max-w-md text-muted-foreground text-sm leading-6">
             Kestrel is maintained and supported by Lumi.

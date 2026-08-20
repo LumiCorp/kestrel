@@ -5,7 +5,7 @@ section: start
 audience: everyone
 status: stable
 sourceKind: curated
-updatedAt: 2026-08-18
+updatedAt: 2026-08-20
 ---
 
 ## Which Kestrel product should I start with?
@@ -34,11 +34,11 @@ Yes. Replacing the signed application preserves Desktop and Local Core settings,
 
 ## Can Desktop update from an earlier release?
 
-Yes. Signed Desktop 0.7.0 and 0.8.0 installations can update to 0.8.5 through the stable channel. Desktop preserves a one-time pre-v12 settings backup before migrating App and MCP settings; use that backup before launching an older application after a downgrade.
+Yes. Signed Desktop 0.7.0, 0.8.0, and 0.8.5 installations can update to 0.8.6 through the stable channel. Desktop preserves a one-time pre-v12 settings backup before migrating App and MCP settings; use that backup before launching an older application after a downgrade.
 
-## Why must Kestrel packages use the exact same version?
+## How do I match Kestrel package versions?
 
-Runtime, Protocol, SDK, Memory, adapters, and clients exchange exact fields, events, terminal states, approvals, and recovery decisions. Mixed lines can compile while disagreeing at runtime, so Kestrel does not promise 0.7/0.8 shims.
+Use the versions in the [compatibility matrix](/reference/compatibility). Exact first-party dependency pins must match the owning package manifest because Runtime, Protocol, SDK, Memory, adapters, and clients exchange exact fields, events, terminal states, approvals, and recovery decisions. The current public package line is 0.8.5, but independently released products such as Desktop can carry a different version. Kestrel does not promise 0.7/0.8 shims.
 
 ## What are profiles and provider capabilities?
 

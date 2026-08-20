@@ -1,47 +1,56 @@
 ---
-id: unified-suite-version-and-release-channels
+id: independent-artifact-versioning-and-release-channels
 domain: architecture
 status: active
 owner: kestrel-runtime
-last_verified_at: 2026-08-18
+last_verified_at: 2026-08-20
 depends_on:
   - ../../package.json
   - ../../apps/docs/lib/release.ts
-  - ../plans/2026-08-18-kestrel-0.8.5-release-and-production-promotion.md
 ---
 
-# Unified Suite Version and Distinct Release Channels
+# Independent Artifact Versioning and Release Channels
 
 ## Decision
 
-Kestrel uses one numeric suite version across the root package and every first-party workspace manifest. The root [`package.json`](../../package.json) is canonical. Public package tarballs must resolve first-party workspace dependencies to that exact version, and product/documentation compatibility records must match it.
+Kestrel versions each published artifact independently. A release advances only the
+artifact being published: Desktop, a public npm package, CLI archive, Kestrel One
+source, Docs, or an internal service image. Repository source state is not an
+artifact and does not require a matching version bump.
 
-A shared version does not imply one distribution mechanism or one access policy:
+Every workspace manifest must have a numeric version. A first-party dependency
+declared with an exact numeric pin must match the dependency's manifest version.
+This explicit pin is the compatibility contract; a shared repository-wide number
+is not.
 
-| Surface | 0.8.5 distribution and access |
+Independent versions do not imply one distribution mechanism or one access policy:
+
+| Surface | Distribution and access |
 | --- | --- |
 | Runtime and CLI | Public npm package; macOS arm64 archive is secondary |
 | Protocol, Conversation, SDK, Memory, Next, AI SDK, Observability, and Workspace Skills | Public npm packages |
-| Desktop | Signed and notarized download; Beta; stable OTA supports signed 0.7.0 and 0.8.0 clients |
-| Kestrel One | Public source at `v0.8.5`; Beta; Lumi-hosted deployment is invitation-only |
-| Internal services | Versioned with the suite; not independently published |
+| Desktop | Signed and notarized download; Beta; own patch line and stable OTA channel |
+| Kestrel One | Versioned source tag; Beta; Lumi-hosted deployment is invitation-only |
+| Internal services | Independently versioned image or deployment revision; not npm releases |
 
-The ordinary `v0.8.5` Git tag and GitHub release identify the release. There is
-no separate Desktop tag. Public package versions, product versions, release
-metadata, and exact first-party dependencies must not diverge from the suite
-version. An immutable bad publication is corrected by advancing the entire
-suite to a new patch version rather than creating a package-only release line.
+Coordinated source releases use an ordinary `v<version>` tag. A Desktop-only
+release uses `desktop-v<version>` and contains only signed Desktop artifacts and
+their checksums. Its updater objects remain immutable at their versioned keys;
+stable-channel promotion remains a separate operation. An immutable bad
+publication is corrected by advancing that artifact's patch version, never by
+overwriting it.
 
 ## Consequences
 
-- Mixed first-party release lines fail the version or packed-consumer gates.
+- Independent release lines are valid when their declared dependency pins and
+  compatibility records are valid.
 - A private package manifest means “not published to npm,” not “unversioned.”
-- A unified product version does not create one hosted distribution unit;
-  database, Vercel, Fly components, and the managed RunPod worker advance and
-  roll back through independent production delivery channels.
-- Desktop candidate artifacts may exist while stable remains unchanged. Release
-  closeout requires Desktop stable to report the suite version and both required
-  upgrade paths to pass.
+- Desktop candidate artifacts may exist while stable remains unchanged. Desktop
+  closeout requires only that Desktop's versioned artifacts and required upgrade
+  paths pass; it does not imply a new npm, Docs, hosted, or image release.
+- A full coordinated release remains available when multiple artifacts genuinely
+  need to advance together, but it is an explicit release choice rather than a
+  versioning rule.
 - Hosted access restrictions do not restrict repository cloning or tagged source availability.
 - Release evidence uses versions, artifact checksums, signatures, notarization,
   dist-tags, migrations, health, and canary results. It does not require source
@@ -49,6 +58,5 @@ suite to a new patch version rather than creating a package-only release line.
 
 ## Release control
 
-The current implementation and cutover sequence is recorded in the [Kestrel
-0.8.5 release and production promotion
-plan](../plans/2026-08-18-kestrel-0.8.5-release-and-production-promotion.md).
+The version gate validates every manifest, exact first-party dependency pin,
+Docs release record, and the artifact owner for each compatibility entry.

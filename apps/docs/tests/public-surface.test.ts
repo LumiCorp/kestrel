@@ -34,6 +34,10 @@ test("docs chrome and README identify Lumi maintenance and support", async () =>
   assert.match(shell, /https:\/\/www\.lumicorp\.ai/u);
   assert.match(readme, /Kestrel is maintained and supported by/u);
   assert.match(readme, /https:\/\/www\.lumicorp\.ai/u);
+  assert.match(readme, /Desktop 0\.8\.6/u);
+  assert.match(readme, /packages and CLI\/TUI 0\.8\.5/u);
+  assert.match(readme, /updates\.lumicorp\.ai\/desktop\/releases\/0\.8\.6\/arm64\/Kestrel-0\.8\.6-mac-arm64\.dmg/u);
+  assert.doesNotMatch(readme, /one coordinated release across Desktop/iu);
 });
 
 test("docs homepage grids share one responsive column contract", async () => {

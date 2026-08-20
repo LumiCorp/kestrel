@@ -1,16 +1,22 @@
 ---
 title: Kestrel 0.8 release notes
-summary: One coordinated 0.8 release across Runtime, SDK packages, CLI/TUI, Desktop, Kestrel One source, and hosted execution.
+summary: Release notes for independently versioned Kestrel packages, Desktop, Kestrel One source, and hosted execution.
 section: reference
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-08-18
+updatedAt: 2026-08-20
 ---
+
+## Desktop 0.8.6 hotfix
+
+Desktop 0.8.6 fixes a finalization failure where a stale queued conversation message could reject detached follow-up processing and abort Local Core. The queue now pauses and reports the route failure instead, leaving the running conversation and Desktop process available for recovery.
+
+This is a Desktop-only release. Its signed [DMG](https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/Kestrel-0.8.6-mac-arm64.dmg), ZIP, [checksums](https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/SHA256SUMS.txt), notarization evidence, and updater metadata are published under the immutable Desktop 0.8.6 release path. Runtime and public package versions remain 0.8.5 because they are not part of this publication.
 
 ## Kestrel 0.8.5 overview
 
-Kestrel 0.8.5 is one canonical version across Desktop, CLI/TUI, Kestrel One, Runtime, Protocol, Conversation, SDK, Memory, adapters, Observability, and Workspace Skills. It incorporates the complete public change since v0.8.0 while retaining Beta product status.
+Kestrel 0.8.5 was the last coordinated source release and aligned Desktop, CLI/TUI, Kestrel One, Runtime, Protocol, Conversation, SDK, Memory, adapters, Observability, and Workspace Skills at publication time. Desktop has since advanced independently to 0.8.6; the remaining 0.8.5 sections describe that earlier coordinated release.
 
 ## Runtime and Protocol
 
@@ -51,7 +57,7 @@ Upgrade all Kestrel packages and clients together. Consumers of the previous wor
 
 ## Artifacts and evidence
 
-The unified [`v0.8.5` release](https://github.com/LumiCorp/kestrel/releases/tag/v0.8.5) owns source archives, package notes, CLI archive/checksum, signed Desktop assets, and Kestrel One deployment evidence. Artifacts are immutable and tied to the tagged revision.
+The coordinated [`v0.8.5` release](https://github.com/LumiCorp/kestrel/releases/tag/v0.8.5) owns source archives, package notes, CLI archive/checksum, signed Desktop assets, and Kestrel One deployment evidence. Artifacts are immutable and tied to the tagged revision. Later Desktop-only releases use their own `desktop-v<version>` release identity.
 
 ## Known limitations
 
