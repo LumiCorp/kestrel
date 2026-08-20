@@ -1,6 +1,7 @@
 import {
   and,
   asc,
+  desc,
   eq,
   inArray,
   isNotNull,
@@ -1302,26 +1303,28 @@ export async function requestFailedWorkspaceProvisionRetry(input: {
         ),
     });
     if (!workspace) return null;
+    const activeProvision =
+      await transaction.query.environmentOperations.findFirst({
+        where: (table, { and, eq, inArray }) =>
+          and(
+            eq(table.workspaceId, workspace.id),
+            eq(table.type, "workspace.provision"),
+            inArray(table.status, ["queued", "running"]),
+          ),
+      });
+    if (workspace.status === "provisioning" && activeProvision) {
+      return activeProvision;
+    }
+    if (workspace.status !== "failed") return null;
     const operation = await transaction.query.environmentOperations.findFirst({
-      where: (table, { and, eq }) =>
+      where: (table, { and, eq, inArray }) =>
         and(
           eq(table.workspaceId, workspace.id),
-          eq(table.type, "workspace.provision"),
+          inArray(table.status, ["failed", "cancelled"]),
         ),
+      orderBy: (table) => [desc(table.createdAt), desc(table.id)],
     });
-    if (!operation) return null;
-    if (
-      workspace.status === "provisioning" &&
-      (operation.status === "queued" || operation.status === "running")
-    ) {
-      return operation;
-    }
-    if (
-      workspace.status !== "failed" ||
-      (operation.status !== "failed" && operation.status !== "cancelled")
-    ) {
-      return null;
-    }
+    if (operation?.type !== "workspace.provision") return null;
     assertWorkspaceTransition(workspace.status, "provisioning");
     const now = new Date();
     const [retriedOperation] = await transaction
@@ -1353,6 +1356,79 @@ export async function requestFailedWorkspaceProvisionRetry(input: {
       })
       .where(eq(schema.environmentWorkspaces.id, workspace.id));
     return retriedOperation;
+  });
+}
+
+export async function requestFailedWorkspaceStartRetry(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  userId: string;
+}) {
+  const lockKey = workspaceLifecycleLockKey(input.workspaceId);
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+    );
+    const workspace = await transaction.query.environmentWorkspaces.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.id, input.workspaceId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.organizationId, input.organizationId),
+          isNull(table.deletedAt),
+        ),
+    });
+    if (!(workspace?.flyMachineId && workspace.status === "failed")) {
+      return null;
+    }
+    const terminalOwner =
+      await transaction.query.environmentOperations.findFirst({
+        where: (table, { and, eq, inArray }) =>
+          and(
+            eq(table.workspaceId, workspace.id),
+            inArray(table.status, ["failed", "cancelled"]),
+          ),
+        orderBy: (table) => [desc(table.createdAt), desc(table.id)],
+      });
+    if (terminalOwner?.type !== "workspace.start") return null;
+    const active = await transaction.query.environmentOperations.findFirst({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.workspaceId, workspace.id),
+          eq(table.type, "workspace.start"),
+          inArray(table.status, ["queued", "running"]),
+        ),
+    });
+    const now = new Date();
+    assertWorkspaceTransition(workspace.status, "starting");
+    await transaction
+      .update(schema.environmentWorkspaces)
+      .set({
+        status: "starting",
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: now,
+      })
+      .where(eq(schema.environmentWorkspaces.id, workspace.id));
+    if (active) return active;
+    const [operation] = await transaction
+      .insert(schema.environmentOperations)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        requestedByUserId: input.userId,
+        type: "workspace.start",
+        status: "queued",
+        stage: "environment.machine.starting",
+        idempotencyKey: `workspace.start:${workspace.id}:${now.getTime()}`,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    return operation ?? null;
   });
 }
 

@@ -62,24 +62,33 @@ test(
       code: null,
     });
     assert.deepEqual(events, [
-      { type: "workspace.runner.starting" },
-      { type: "workspace.runner.ready" },
+      { type: "workspace.runner.starting", generation: 1 },
+      { type: "workspace.runner.ready", generation: 1 },
     ]);
   },
 );
 
 test(
-  "Unexpected Workspace runner exit downgrades health and exits nonzero",
+  "Unexpected Workspace runner exit starts one replacement",
   async () => {
     const firstRunner = fakeRunner();
+    const secondRunner = fakeRunner();
+    const replacementHealth = deferred();
+    const runners = [firstRunner, secondRunner];
     let starts = 0;
+    let waits = 0;
     const fatalExitCodes: number[] = [];
     const readiness = createWorkspaceRunnerReadiness({
       startRunner: () => {
+        const runner = runners[starts];
         starts += 1;
-        return firstRunner;
+        assert.ok(runner);
+        return runner;
       },
-      waitUntilHealthy: async () => {},
+      waitUntilHealthy: () => {
+        waits += 1;
+        return waits === 1 ? Promise.resolve() : replacementHealth.promise;
+      },
       probeHealth: async () => {},
       onFatalExit(code) {
         fatalExitCodes.push(code);
@@ -91,17 +100,24 @@ test(
     firstRunner.emit("exit", 0);
     assert.deepEqual(workspaceRunnerHealthStatus(readiness.state()), {
       status: 503,
-      code: "WORKSPACE_RUNNER_UNAVAILABLE",
+      code: "WORKSPACE_RUNNER_STARTING",
     });
-    assert.equal(starts, 1);
-    assert.deepEqual(fatalExitCodes, [1]);
+    assert.equal(starts, 2);
+    assert.deepEqual(fatalExitCodes, []);
+
+    replacementHealth.resolve();
+    await readiness.ensureReady();
+    assert.deepEqual(workspaceRunnerHealthStatus(readiness.state()), {
+      status: 200,
+      code: null,
+    });
   },
 );
 
 test(
-  "Workspace runner health failures remain retryable without duplicate processes",
+  "Workspace runner health recovers inside the grace period without replacement",
   async () => {
-    const health = deferred();
+    const recoveryHealth = deferred();
     const runner = fakeRunner();
     let starts = 0;
     let waits = 0;
@@ -112,61 +128,128 @@ test(
       },
       waitUntilHealthy: () => {
         waits += 1;
-        return waits === 1 ? health.promise : Promise.resolve();
+        return waits === 1 ? Promise.resolve() : recoveryHealth.promise;
       },
-      probeHealth: async () => {},
+      probeHealth: async () => {
+        throw new Error("runner unavailable");
+      },
       onFatalExit() {},
       log() {},
     });
 
-    const first = readiness.ensureReady();
-    health.reject(new Error("not ready"));
-    await assert.rejects(first, /not ready/u);
+    await readiness.ensureReady();
+    await assert.rejects(readiness.probeReady(), /runner unavailable/u);
     assert.deepEqual(workspaceRunnerHealthStatus(readiness.state()), {
       status: 503,
       code: "WORKSPACE_RUNNER_UNAVAILABLE",
     });
+
+    recoveryHealth.resolve();
     await readiness.ensureReady();
     assert.equal(starts, 1);
     assert.equal(waits, 2);
+    assert.deepEqual(workspaceRunnerHealthStatus(readiness.state()), {
+      status: 200,
+      code: null,
+    });
   },
 );
 
 test(
-  "Workspace health downgrades when the running runner loses its health contract",
+  "Sustained Workspace health loss replaces the runner exactly once",
   async () => {
-    const runner = fakeRunner();
+    const firstRunner = new EventEmitter() as WorkspaceRunnerProcess;
+    const secondRunner = fakeRunner();
+    const signals: string[] = [];
+    firstRunner.kill = (signal) => {
+      signals.push(signal);
+      queueMicrotask(() => firstRunner.emit("exit", 0));
+      return true;
+    };
     const events: WorkspaceRunnerReadinessEvent[] = [];
-    let probeHealthy = true;
+    const runners = [firstRunner, secondRunner];
+    const replacementHealth = deferred();
     let starts = 0;
+    let waits = 0;
     const readiness = createWorkspaceRunnerReadiness({
       startRunner: () => {
+        const runner = runners[starts];
         starts += 1;
+        assert.ok(runner);
         return runner;
       },
-      waitUntilHealthy: async () => {},
+      waitUntilHealthy: () => {
+        waits += 1;
+        if (waits === 1) return Promise.resolve();
+        if (waits === 2) return Promise.reject(new Error("grace expired"));
+        return replacementHealth.promise;
+      },
       probeHealth: async () => {
-        if (!probeHealthy) throw new Error("runner unavailable");
+        throw new Error("runner unavailable");
       },
       onFatalExit() {},
       log: (event) => events.push(event),
     });
 
     await readiness.ensureReady();
-    await readiness.probeReady();
-    probeHealthy = false;
     await assert.rejects(readiness.probeReady(), /runner unavailable/u);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(starts, 2);
+    assert.deepEqual(signals, ["SIGTERM"]);
+    const recoveryRequests = [readiness.ensureReady(), readiness.ensureReady()];
+    assert.equal(recoveryRequests[0], recoveryRequests[1]);
+
+    replacementHealth.resolve();
+    await Promise.all(recoveryRequests);
     assert.deepEqual(workspaceRunnerHealthStatus(readiness.state()), {
-      status: 503,
-      code: "WORKSPACE_RUNNER_UNAVAILABLE",
+      status: 200,
+      code: null,
     });
-    assert.equal(starts, 1);
-    assert.deepEqual(events.at(-1), {
-      type: "workspace.runner.failed",
-      reason: "health",
-    });
+    assert.equal(
+      events.filter((event) => event.type === "workspace.runner.replacing")
+        .length,
+      1,
+    );
   },
 );
+
+test("Failed replacement startup escalates to one fatal Machine restart", async () => {
+  const firstRunner = new EventEmitter() as WorkspaceRunnerProcess;
+  const secondRunner = fakeRunner();
+  firstRunner.kill = () => {
+    queueMicrotask(() => firstRunner.emit("exit", 0));
+    return true;
+  };
+  const runners = [firstRunner, secondRunner];
+  const fatalExitCodes: number[] = [];
+  let starts = 0;
+  let waits = 0;
+  const readiness = createWorkspaceRunnerReadiness({
+    startRunner: () => {
+      const runner = runners[starts];
+      starts += 1;
+      assert.ok(runner);
+      return runner;
+    },
+    waitUntilHealthy: () => {
+      waits += 1;
+      return waits === 1
+        ? Promise.resolve()
+        : Promise.reject(new Error("runner unavailable"));
+    },
+    probeHealth: async () => {
+      throw new Error("runner unavailable");
+    },
+    onFatalExit: (code) => fatalExitCodes.push(code),
+    log() {},
+  });
+
+  await readiness.ensureReady();
+  await assert.rejects(readiness.probeReady(), /runner unavailable/u);
+  await assert.rejects(readiness.ensureReady(), /runner unavailable/u);
+  assert.equal(starts, 2);
+  assert.deepEqual(fatalExitCodes, [1]);
+});
 
 test(
   "Workspace shutdown is shared and waits for the runner to exit",
@@ -233,6 +316,7 @@ test(
     assert.deepEqual(events.at(-1), {
       type: "workspace.runner.failed",
       reason: "shutdown_timeout",
+      generation: 1,
     });
 
     let stopped = false;
@@ -280,4 +364,16 @@ test("Workspace runner recovery fails closed at its 300 second deadline", async 
 
   assert.equal(ready, false);
   assert.equal(nowMs, 300_000);
+});
+
+test("Workspace runner recovery bounds a never-resolving health probe", async () => {
+  const startedAt = Date.now();
+  const ready = await waitForWorkspaceRunnerHealth({
+    probe: async () => await new Promise<never>(() => {}),
+    timeoutMs: 5,
+    probeTimeoutMs: 5,
+  });
+
+  assert.equal(ready, false);
+  assert.ok(Date.now() - startedAt < 100);
 });

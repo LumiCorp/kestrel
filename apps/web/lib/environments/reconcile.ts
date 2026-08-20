@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
-import { WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
@@ -271,17 +270,10 @@ async function reconcileOrganizationEnvironments(input: {
           );
         }
       }
-      const appName = environment.flyAppName;
-      const machineId = workspace.flyMachineId;
       const readiness = await assessWorkspaceMachineReadiness({
         machineState: machine.state,
-        checkHealth: () =>
-          provider.waitForMachineHealth({
-            appName,
-            machineId,
-            checkName: "workspace",
-            timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
-          }),
+        checks: machine.checks,
+        checkName: "workspace",
       });
       if (readiness.status === "degraded") {
         const error = readiness.error;

@@ -37,16 +37,23 @@ export type WorkspaceMachineReadinessAssessment =
 
 export async function assessWorkspaceMachineReadiness(input: {
   machineState: string;
-  checkHealth: () => Promise<void>;
+  checks?: EnvironmentProviderMachine["checks"];
+  checkName: string;
 }): Promise<WorkspaceMachineReadinessAssessment> {
   if (input.machineState === "stopped") return { status: "stopped" };
   if (input.machineState !== "started") return { status: "unchanged" };
-  try {
-    await input.checkHealth();
-    return { status: "ready" };
-  } catch (error) {
-    return { status: "degraded", error };
-  }
+  const check = input.checks?.find(
+    (candidate) => candidate.name === input.checkName,
+  );
+  if (check?.status === "passing") return { status: "ready" };
+  const detail = check?.output ? `: ${check.output}` : ".";
+  return {
+    status: "degraded",
+    error: new EnvironmentProviderError(
+      "FLY_MACHINE_UNHEALTHY",
+      `Fly Machine health check ${input.checkName} was ${check?.status ?? "missing"}${detail}`,
+    ),
+  };
 }
 
 export type WorkspaceVolumeBindingAssessment =
