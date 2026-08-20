@@ -58,6 +58,7 @@ export interface RuntimeTurnInput {
   eventId?: string | undefined;
   message: string;
   eventType: string;
+  noninteractive?: boolean | undefined;
   attachments?: RunTurnAttachment[] | undefined;
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
@@ -364,6 +365,7 @@ function buildRuntimeTurnMetadata(input: {
       ? { activeTaskId: input.activeTaskId }
       : {}),
     ...(input.input.runId !== undefined ? { runId: input.input.runId } : {}),
+    ...(input.input.noninteractive === true ? { noninteractive: true } : {}),
     enableRouteClassifier: true,
     modeSystemV2Enabled: input.modeSystemV2Enabled,
     interactionMode: input.payloadMode.interactionMode,

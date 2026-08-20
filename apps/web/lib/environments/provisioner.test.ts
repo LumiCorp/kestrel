@@ -205,6 +205,9 @@ function fixture(
     async failWorkspace(input) {
       calls.push(`workspace:failed:${input.code}`);
     },
+    async degradeWorkspace(input) {
+      calls.push(`workspace:degraded:${input.code}`);
+    },
     async setWorkspaceStarting() {
       calls.push("workspace:starting");
     },
@@ -1333,6 +1336,45 @@ test("Workspace start wakes the existing Machine without reprovisioning storage"
     "workspace:ready",
     "operation:completed",
   ]);
+});
+
+test("Workspace start health failures remain recoverable as degraded", async () => {
+  const { repository, provider, calls } = fixture(
+    "workspace.start",
+    "workspace-id",
+  );
+  repository.getWorkspace = async () => ({
+    id: "workspace-id",
+    organizationId: "organization-id",
+    environmentId: "environment-id",
+    status: "degraded",
+    flyMachineId: "machine-id",
+    flyVolumeId: "volume-id",
+    runtimeImage: "registry.example/runtime@sha256:abc",
+    sourceType: "blank",
+    sourceResourceId: null,
+    sourceRepository: null,
+    sourceDefaultBranch: null,
+  });
+  provider.waitForMachineHealth = async () => {
+    calls.push("provider:health");
+    throw new EnvironmentProviderError(
+      "FLY_MACHINE_UNHEALTHY",
+      "Workspace runtime did not recover.",
+    );
+  };
+
+  await createProvisioner(repository, provider).process("operation-id");
+
+  assert.deepEqual(calls.slice(-3), [
+    "provider:health",
+    "workspace:degraded:FLY_MACHINE_UNHEALTHY",
+    "operation:failed:FLY_MACHINE_UNHEALTHY",
+  ]);
+  assert.equal(
+    calls.some((call) => call.startsWith("workspace:failed:")),
+    false,
+  );
 });
 
 test("Workspace stop retains its Machine and persistent volume", async () => {

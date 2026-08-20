@@ -133,6 +133,39 @@ test("KestrelClient reads and validates runner health", async () => {
   await client.close();
 });
 
+test("KestrelClient aborts a remote runner health request", async () => {
+  const controller = new AbortController();
+  let receivedSignal: AbortSignal | null = null;
+  const client = createRemoteClient({
+    baseUrl: "http://runner.internal",
+    fetchImpl: async (_input, init) => {
+      receivedSignal = init?.signal ?? null;
+      if (receivedSignal?.aborted) {
+        throw receivedSignal.reason ?? new Error("aborted");
+      }
+      return await new Promise<Response>((_resolve, reject) => {
+        receivedSignal?.addEventListener(
+          "abort",
+          () => reject(receivedSignal?.reason ?? new Error("aborted")),
+          { once: true },
+        );
+      });
+    },
+  });
+
+  const health = client.getHealth({ signal: controller.signal });
+  controller.abort(new Error("health deadline exceeded"));
+
+  await assert.rejects(
+    health,
+    (error: unknown) =>
+      error instanceof KestrelProtocolError &&
+      error.code === "RUNNER_TRANSPORT_ERROR",
+  );
+  assert.equal(receivedSignal, controller.signal);
+  await client.close();
+});
+
 test("SDK session contracts preserve typed operator and continuation fields", () => {
   const description: RunnerSessionDescription = {
     sessionId: "session-sdk-shape",

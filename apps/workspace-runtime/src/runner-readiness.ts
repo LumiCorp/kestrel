@@ -1,12 +1,32 @@
-import { WORKSPACE_RUNNER_STARTUP_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
+import {
+  WORKSPACE_RUNNER_HEALTH_PROBE_TIMEOUT_MS,
+  WORKSPACE_RUNNER_RECOVERY_GRACE_MS,
+  WORKSPACE_RUNNER_RECOVERY_STOP_TIMEOUT_MS,
+  WORKSPACE_RUNNER_STARTUP_TIMEOUT_MS,
+} from "@lumi/kestrel-environment-auth";
 
 export type WorkspaceRunnerReadinessEvent =
-  | { type: "workspace.runner.starting" }
-  | { type: "workspace.runner.ready" }
+  | { type: "workspace.runner.starting"; generation: number }
+  | {
+      type: "workspace.runner.ready";
+      generation: number;
+      recoveryReason?: "health" | "exit" | undefined;
+      recoveryDurationMs?: number | undefined;
+    }
   | {
       type: "workspace.runner.failed";
       reason: "health" | "exit" | "shutdown_timeout";
+      generation: number;
       exitCode?: number | null;
+    }
+  | {
+      type:
+        | "workspace.runner.recovering"
+        | "workspace.runner.replacing"
+        | "workspace.runner.escalated";
+      reason: "health" | "exit";
+      generation: number;
+      durationMs: number;
     };
 
 export type WorkspaceRunnerReadinessState =
@@ -22,8 +42,9 @@ export interface WorkspaceRunnerProcess {
 }
 
 export async function waitForWorkspaceRunnerHealth(input: {
-  probe: () => Promise<unknown>;
+  probe: (signal: AbortSignal) => Promise<unknown>;
   timeoutMs?: number | undefined;
+  probeTimeoutMs?: number | undefined;
   pollIntervalMs?: number | undefined;
   now?: (() => number) | undefined;
   sleep?: ((delayMs: number) => Promise<void>) | undefined;
@@ -35,8 +56,16 @@ export async function waitForWorkspaceRunnerHealth(input: {
     (input.timeoutMs ?? WORKSPACE_RUNNER_STARTUP_TIMEOUT_MS);
   const pollIntervalMs = input.pollIntervalMs ?? 100;
   while (now() < deadline) {
+    const remainingBeforeProbeMs = deadline - now();
+    if (remainingBeforeProbeMs <= 0) break;
     try {
-      await input.probe();
+      await probeWithTimeout(
+        input.probe,
+        Math.min(
+          input.probeTimeoutMs ?? WORKSPACE_RUNNER_HEALTH_PROBE_TIMEOUT_MS,
+          remainingBeforeProbeMs,
+        ),
+      );
       return true;
     } catch {
       const remainingMs = deadline - now();
@@ -67,20 +96,31 @@ export function workspaceRunnerHealthStatus(
 
 export function createWorkspaceRunnerReadiness(input: {
   startRunner: () => WorkspaceRunnerProcess;
-  waitUntilHealthy: () => Promise<void>;
+  waitUntilHealthy: (timeoutMs?: number | undefined) => Promise<void>;
   probeHealth: () => Promise<void>;
   onFatalExit: (code: number) => void;
   log: (event: WorkspaceRunnerReadinessEvent) => void;
   shutdownTimeoutMs?: number | undefined;
+  recoveryGraceMs?: number | undefined;
+  recoveryStopTimeoutMs?: number | undefined;
+  now?: (() => number) | undefined;
 }) {
-  let runner: WorkspaceRunnerProcess | null = null;
+  type RunnerContext = {
+    process: WorkspaceRunnerProcess;
+    generation: number;
+    exited: Promise<number | null>;
+  };
+
+  const now = input.now ?? Date.now;
+  let runner: RunnerContext | null = null;
   let ready: Promise<void> | null = null;
   let healthProbe: Promise<void> | null = null;
+  let recovery: Promise<void> | null = null;
   let generation = 0;
   let state: WorkspaceRunnerReadinessState = "idle";
-  let runnerExit: Promise<void> | null = null;
-  let resolveRunnerExit: (() => void) | null = null;
   let stopPromise: Promise<void> | null = null;
+  let fatalExitRequested = false;
+  const runnerStops = new Map<WorkspaceRunnerProcess, Promise<void>>();
 
   const transition = (
     next: typeof state,
@@ -90,54 +130,209 @@ export function createWorkspaceRunnerReadiness(input: {
     state = next;
     if (event) input.log(event);
   };
+  const isStopping = () => state === "stopping";
+
+  const requestFatalExit = (code: number) => {
+    if (fatalExitRequested || state === "stopping") return;
+    fatalExitRequested = true;
+    input.onFatalExit(code === 0 ? 1 : code);
+  };
+
+  const stopRunner = (context: RunnerContext, timeoutMs: number) => {
+    const existing = runnerStops.get(context.process);
+    if (existing) return existing;
+    const stopping = (async () => {
+      context.process.kill("SIGTERM");
+      const exitedGracefully = await waitForRunnerExit(
+        context.exited.then(() => undefined),
+        timeoutMs,
+      );
+      if (!exitedGracefully) {
+        input.log({
+          type: "workspace.runner.failed",
+          reason: "shutdown_timeout",
+          generation: context.generation,
+        });
+        context.process.kill("SIGKILL");
+        await context.exited;
+      }
+    })();
+    runnerStops.set(context.process, stopping);
+    return stopping;
+  };
+
+  const spawnRunner = (): RunnerContext => {
+    generation += 1;
+    const runnerGeneration = generation;
+    const process = input.startRunner();
+    let resolveExit!: (code: number | null) => void;
+    const exited = new Promise<number | null>((resolve) => {
+      resolveExit = resolve;
+    });
+    const context = { process, generation: runnerGeneration, exited };
+    runner = context;
+    transition("starting", {
+      type: "workspace.runner.starting",
+      generation: runnerGeneration,
+    });
+    process.once("exit", (code) => {
+      resolveExit(code);
+      if (runner !== context) return;
+      runner = null;
+      healthProbe = null;
+      const exitedWhileStopping = state === "stopping";
+      if (exitedWhileStopping) return;
+      transition("failed", {
+        type: "workspace.runner.failed",
+        reason: "exit",
+        generation: runnerGeneration,
+        exitCode: code,
+      });
+      if (!recovery) launchRecovery("exit", null);
+    });
+    return context;
+  };
+
+  const waitForContextHealth = async (
+    context: RunnerContext,
+    timeoutMs?: number,
+  ) => {
+    const outcome = await Promise.race([
+      input.waitUntilHealthy(timeoutMs).then(() => "healthy" as const),
+      context.exited.then(() => "exit" as const),
+    ]);
+    if (outcome !== "healthy" || runner !== context) {
+      throw new Error("Workspace runner exited before becoming healthy.");
+    }
+  };
+
+  const recover = async (
+    reason: "health" | "exit",
+    unhealthyRunner: RunnerContext | null,
+    startedAt: number,
+  ) => {
+    const recoveryGeneration = unhealthyRunner?.generation ?? generation;
+    input.log({
+      type: "workspace.runner.recovering",
+      reason,
+      generation: recoveryGeneration,
+      durationMs: 0,
+    });
+
+    if (reason === "health" && unhealthyRunner) {
+      const recovered = await Promise.race([
+        input
+          .waitUntilHealthy(
+            input.recoveryGraceMs ?? WORKSPACE_RUNNER_RECOVERY_GRACE_MS,
+          )
+          .then(() => true, () => false),
+        unhealthyRunner.exited.then(() => false),
+      ]);
+      if (recovered && runner === unhealthyRunner && state !== "stopping") {
+        transition("ready", {
+          type: "workspace.runner.ready",
+          generation: unhealthyRunner.generation,
+          recoveryReason: reason,
+          recoveryDurationMs: Math.max(0, now() - startedAt),
+        });
+        return;
+      }
+    }
+
+    if (isStopping()) return;
+    input.log({
+      type: "workspace.runner.replacing",
+      reason,
+      generation: recoveryGeneration,
+      durationMs: Math.max(0, now() - startedAt),
+    });
+    if (unhealthyRunner) {
+      if (runner === unhealthyRunner) runner = null;
+      await stopRunner(
+        unhealthyRunner,
+        input.recoveryStopTimeoutMs ??
+          WORKSPACE_RUNNER_RECOVERY_STOP_TIMEOUT_MS,
+      );
+    }
+    if (isStopping()) return;
+
+    const replacement = spawnRunner();
+    try {
+      await waitForContextHealth(replacement);
+      transition("ready", {
+        type: "workspace.runner.ready",
+        generation: replacement.generation,
+        recoveryReason: reason,
+        recoveryDurationMs: Math.max(0, now() - startedAt),
+      });
+    } catch (error) {
+      transition("failed", {
+        type: "workspace.runner.failed",
+        reason: "health",
+        generation: replacement.generation,
+      });
+      input.log({
+        type: "workspace.runner.escalated",
+        reason,
+        generation: replacement.generation,
+        durationMs: Math.max(0, now() - startedAt),
+      });
+      requestFatalExit(1);
+      throw error;
+    }
+  };
+
+  function launchRecovery(
+    reason: "health" | "exit",
+    unhealthyRunner: RunnerContext | null,
+  ) {
+    if (recovery) return recovery;
+    const startedAt = now();
+    const task = recover(reason, unhealthyRunner, startedAt);
+    const tracked = task.finally(() => {
+      if (recovery === tracked) recovery = null;
+    });
+    recovery = tracked;
+    ready = tracked;
+    void tracked.catch(() => {});
+    return tracked;
+  }
 
   const ensureReady = () => {
     if (state === "stopping") {
       return Promise.reject(new Error("Workspace runner is stopping."));
     }
+    if (fatalExitRequested) {
+      return Promise.reject(new Error("Workspace runner restart was escalated."));
+    }
+    if (recovery) return recovery;
     if (!runner) {
-      generation += 1;
-      const runnerGeneration = generation;
-      runner = input.startRunner();
-      runnerExit = new Promise<void>((resolve) => {
-        resolveRunnerExit = resolve;
-      });
-      transition("starting", { type: "workspace.runner.starting" });
-      const startedRunner = runner;
-      const resolveStartedRunnerExit = resolveRunnerExit;
-      startedRunner.once("exit", (code) => {
-        resolveStartedRunnerExit?.();
-        if (runner !== startedRunner || generation !== runnerGeneration) return;
-        const exitedWhileStopping = state === "stopping";
-        runner = null;
-        runnerExit = null;
-        resolveRunnerExit = null;
-        ready = null;
-        healthProbe = null;
-        if (exitedWhileStopping) return;
-        transition("failed", {
-          type: "workspace.runner.failed",
-          reason: "exit",
-          exitCode: code,
-        });
-        input.onFatalExit(code === null || code === 0 ? 1 : code);
-      });
+      spawnRunner();
     }
     if (!ready) {
-      const readinessGeneration = generation;
-      const readiness = input.waitUntilHealthy().then(
+      const startingRunner = runner;
+      if (!startingRunner) {
+        return Promise.reject(new Error("Workspace runner is unavailable."));
+      }
+      const readiness = waitForContextHealth(startingRunner).then(
         () => {
-          if (generation === readinessGeneration && runner) {
-            transition("ready", { type: "workspace.runner.ready" });
+          if (runner === startingRunner) {
+            transition("ready", {
+              type: "workspace.runner.ready",
+              generation: startingRunner.generation,
+            });
           }
         },
         (error: unknown) => {
-          if (generation === readinessGeneration) {
+          if (recovery) return recovery;
+          if (runner === startingRunner) {
             ready = null;
             transition("failed", {
               type: "workspace.runner.failed",
               reason: "health",
+              generation: startingRunner.generation,
             });
+            requestFatalExit(1);
           }
           throw error;
         },
@@ -150,18 +345,20 @@ export function createWorkspaceRunnerReadiness(input: {
   const probeReady = () => {
     if (state !== "ready") return Promise.resolve();
     if (!healthProbe) {
-      const probeGeneration = generation;
+      const probedRunner = runner;
+      if (!probedRunner) return Promise.resolve();
       const probe = input.probeHealth().catch((error: unknown) => {
         if (
-          generation === probeGeneration &&
-          runner &&
+          runner === probedRunner &&
           state === "ready"
         ) {
           ready = null;
           transition("failed", {
             type: "workspace.runner.failed",
             reason: "health",
+            generation: probedRunner.generation,
           });
+          launchRecovery("health", probedRunner);
         }
         throw error;
       });
@@ -185,31 +382,33 @@ export function createWorkspaceRunnerReadiness(input: {
         ready = null;
         healthProbe = null;
         const activeRunner = runner;
-        const activeRunnerExit = runnerExit;
-        if (!(activeRunner && activeRunnerExit)) return;
-
-        activeRunner.kill("SIGTERM");
-        const exitedGracefully = await waitForRunnerExit(
-          activeRunnerExit,
-          input.shutdownTimeoutMs ?? 110_000,
-        );
-        if (!exitedGracefully) {
-          input.log({
-            type: "workspace.runner.failed",
-            reason: "shutdown_timeout",
-          });
-          activeRunner.kill("SIGKILL");
-          await activeRunnerExit;
-        }
-        if (runner === activeRunner) {
-          runner = null;
-          runnerExit = null;
-          resolveRunnerExit = null;
-        }
+        if (!activeRunner) return;
+        runner = null;
+        await stopRunner(activeRunner, input.shutdownTimeoutMs ?? 110_000);
       })();
       return stopPromise;
     },
   };
+}
+
+async function probeWithTimeout(
+  probe: (signal: AbortSignal) => Promise<unknown>,
+  timeoutMs: number,
+): Promise<void> {
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error("Workspace runner health probe timed out.");
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    await Promise.race([probe(controller.signal), deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 function waitForRunnerExit(

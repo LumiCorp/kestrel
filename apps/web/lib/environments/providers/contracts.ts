@@ -47,6 +47,12 @@ export type EnvironmentProviderMachine = {
   instanceId?: string | undefined;
   workspaceId?: string | undefined;
   mounts?: EnvironmentProviderMachineMount[] | undefined;
+  checks?: Array<{
+    name: string;
+    status: string;
+    output?: string | undefined;
+    updatedAt?: string | undefined;
+  }> | undefined;
 };
 
 export type EnvironmentProviderGateway = {
@@ -171,6 +177,7 @@ export interface EnvironmentInfrastructureProvider {
     machineId: string;
     runtimeImage: string;
     envPatch?: Record<string, string | undefined> | undefined;
+    standbyForMachineIds?: string[] | undefined;
     stopConfig?: EnvironmentProviderMachineStopConfig | undefined;
   }): Promise<EnvironmentProviderMachine>;
 }

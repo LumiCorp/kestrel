@@ -6,6 +6,7 @@ import {
   assertRunPodWorkerProcessConfiguration,
   assertTurnWorkerProcessConfiguration,
   assertWebProcessConfiguration,
+  resolveTurnWorkerConcurrency,
 } from "./process-contracts";
 
 function turnWorkerEnvironment() {
@@ -136,6 +137,30 @@ test("turn-worker configuration rejects cross-role authority", () => {
       }),
     /forbidden values: KESTREL_WORKSPACE_RUNTIME_IMAGE/u,
   );
+});
+
+test("turn-worker concurrency defaults to sixteen and accepts bounds", () => {
+  assert.equal(resolveTurnWorkerConcurrency({}), 16);
+  assert.equal(
+    resolveTurnWorkerConcurrency({ KESTREL_TURN_WORKER_CONCURRENCY: "1" }),
+    1,
+  );
+  assert.equal(
+    resolveTurnWorkerConcurrency({ KESTREL_TURN_WORKER_CONCURRENCY: "64" }),
+    64,
+  );
+});
+
+test("turn-worker concurrency rejects malformed or out-of-range values", () => {
+  for (const value of ["invalid", "1.5", "0", "65", "-1"]) {
+    assert.throws(
+      () =>
+        resolveTurnWorkerConcurrency({
+          KESTREL_TURN_WORKER_CONCURRENCY: value,
+        }),
+      /must be an integer from 1 to 64/u,
+    );
+  }
 });
 
 test("control-worker validation preserves semantic readiness checks", () => {

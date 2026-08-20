@@ -764,6 +764,13 @@ export async function resolveHostedKestrelExecutionProfile(input: {
                       },
                     }
                   : {}),
+                ...(isKestrelOneManagedRuntimeModel(primaryRuntimeModel) &&
+                primaryRuntimeModel.economicsProfile !== undefined
+                  ? {
+                      modelEconomicsProfile:
+                        primaryRuntimeModel.economicsProfile,
+                    }
+                  : {}),
                 default: false,
               }
             : {}),

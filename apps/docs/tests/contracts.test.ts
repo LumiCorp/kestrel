@@ -68,8 +68,9 @@ test("release metadata names only real public packages with reference coverage",
   names.sort();
   const releasedNames = [...DOCS_RELEASE.packages.releasedPackageNames].sort();
   assert.deepEqual(names, releasedNames);
-  assert.equal(DOCS_RELEASE.packages.version, "0.8.5");
-  assert.equal(DOCS_RELEASE.packages.runtimeNpmVersion, "0.8.5");
+  for (const manifest of manifests) {
+    assert.equal(DOCS_RELEASE.packages.versions[manifest.name], manifest.version);
+  }
 
   for (const route of ["protocol", "conversation", "sdk", "memory", "nextjs", "ai-sdk", "observability", "workspace-skills"]) {
     assert.ok(await getRenderedPageBySlug(["reference", route]), route);

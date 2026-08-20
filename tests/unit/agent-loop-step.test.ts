@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 
 import { createAgentLoopStep } from "../../agents/reference-react/src/steps/deliberator.js";
 import { shapeToolExecutionResultForTests } from "../../agents/reference-react/src/steps/acter.js";
+import { checkToolPolicyGate } from "../../agents/reference-react/src/steps/acter/policyGates.js";
 import {
   compileAgentAction,
   DecisionCompileError,
@@ -6312,7 +6313,7 @@ test("hash-bound closeout attempts expose only mode-valid terminal controls", as
     [
       "plan",
       "job.run",
-      ["kestrel_finalize", "kestrel_cannot_satisfy", "kestrel_handoff_to_build"],
+      ["kestrel_finalize", "kestrel_cannot_satisfy"],
     ],
   ] as const) {
     const closeoutContext = context();
@@ -6655,6 +6656,138 @@ test("agent loop narrows build-mode cannot_satisfy reasons to concrete unavailab
   const properties = inputSchema.properties as Record<string, unknown>;
   const reasonCodeSchema = properties.reasonCode as Record<string, unknown>;
   assert.deepEqual(reasonCodeSchema.enum, ["missing_required_capability", "requested_tool_unavailable"]);
+});
+
+test("autonomous build turns cannot wait for user input and may terminalize a missing choice", async () => {
+  const buildContext = context();
+  buildContext.event.payload = {
+    message: "Run the scheduled task without waiting for input.",
+    interactionMode: "build",
+    modeSystemV2Enabled: true,
+    metadata: { noninteractive: true },
+  };
+  buildContext.session.state.agent = {
+    interactionMode: "build",
+    modeSystemV2Enabled: true,
+  };
+  let requestTools: ModelToolSpec[] = [];
+
+  const transition = await buildStep({
+    tools: [READ_TEXT_TOOL],
+    capabilityManifest: [
+      {
+        name: "fs.read_text",
+        description: "Read a text file",
+        capabilityClasses: ["filesystem.read"],
+        executionClass: "read_only",
+      },
+    ],
+  })(buildContext, {
+    useModel: async (request: ModelRequest) => {
+      requestTools = request.tools ?? [];
+      return modelResponse({
+        version: "v1",
+        reason: "The required operator choice is unavailable in this autonomous turn.",
+        nextAction: {
+          kind: "cannot_satisfy",
+          reasonCode: "need_user_choice",
+          message: "Blocked because the task requires an operator choice that an autonomous run cannot request.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  const names = requestTools.map((tool) => tool.name);
+  assert.equal(names.includes("kestrel_ask_user"), false);
+  assert.equal(names.includes("kestrel_request_mode_switch"), false);
+  const cannotSatisfyTool = requestTools.find((tool) => tool.name === "kestrel_cannot_satisfy");
+  assert.ok(cannotSatisfyTool);
+  const inputSchema = cannotSatisfyTool.inputSchema as Record<string, unknown>;
+  const properties = inputSchema.properties as Record<string, unknown>;
+  const reasonCodeSchema = properties.reasonCode as Record<string, unknown>;
+  assert.deepEqual(reasonCodeSchema.enum, [
+    "missing_required_capability",
+    "requested_tool_unavailable",
+    "need_user_choice",
+  ]);
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  assert.equal((agent.nextAction as Record<string, unknown>).kind, "cannot_satisfy");
+});
+
+test("autonomous plan turns expose no conversational wait controls", async () => {
+  const planContext = context();
+  planContext.event.payload = {
+    message: "Plan the scheduled task without waiting for input.",
+    interactionMode: "plan",
+    modeSystemV2Enabled: true,
+    metadata: { noninteractive: true },
+  };
+  planContext.session.state.agent = {
+    interactionMode: "plan",
+    modeSystemV2Enabled: true,
+  };
+  let requestToolNames: string[] = [];
+
+  const transition = await buildStep({
+    tools: [READ_TEXT_TOOL],
+  })(planContext, {
+    useModel: async (request: ModelRequest) => {
+      requestToolNames = (request.tools ?? []).map((tool) => tool.name);
+      return modelResponse({
+        version: "v1",
+        reason: "The required operator choice is unavailable in this autonomous turn.",
+        nextAction: {
+          kind: "cannot_satisfy",
+          reasonCode: "need_user_choice",
+          message: "Blocked because this autonomous plan requires an operator choice.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(requestToolNames.includes("kestrel_ask_user"), false);
+  assert.equal(requestToolNames.includes("kestrel_request_mode_switch"), false);
+  assert.equal(requestToolNames.includes("kestrel_handoff_to_build"), false);
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  assert.equal((agent.nextAction as Record<string, unknown>).kind, "cannot_satisfy");
+});
+
+test("autonomous turns replan protected tools without entering an approval wait", async () => {
+  const result = await checkToolPolicyGate({
+    reactState: {},
+    activeRegion: undefined,
+    acterStepId: "agent.exec.dispatch",
+    deliberationStepId: "agent.loop",
+    loopStepId: "agent.loop",
+    currentStepAgent: "agent.exec.dispatch",
+    runId: "run-autonomous-approval",
+    sessionId: "session-autonomous-approval",
+    stepIndex: 2,
+    eventType: "user.message",
+    eventPayload: { metadata: { noninteractive: true } },
+    toolName: "calendar.create_event",
+    toolInput: { title: "Protected action" },
+    toolClass: "external_side_effect",
+    requiredApprovalCapabilities: ["external.confirm"],
+    interactionMode: "build",
+    actSubmode: "safe",
+    modeSystemV2Enabled: true,
+    executionPolicy: undefined,
+    autonomyPolicy: undefined,
+    autonomyEvidence: [],
+    autonomyRiskSignals: [],
+    io: {} as StepIO,
+  });
+
+  assert.equal(result.kind, "blocked");
+  if (result.kind !== "blocked") return;
+  assert.equal(result.transition.status, "RUNNING");
+  assert.equal(result.transition.nextStepAgent, "agent.loop");
+  assert.equal("waitFor" in result.transition, false);
+  assert.match(JSON.stringify(result.transition.statePatch), /approval_unavailable/);
+  assert.match(JSON.stringify(result.transition.statePatch), /autonomous turn cannot request/);
 });
 
 test("agent loop accepts a concrete unavailable build capability with blocker provenance", async () => {

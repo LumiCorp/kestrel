@@ -707,6 +707,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
       "/platform/signup-codes",
     ],
     ["app/(workspace)/platform/email/page.tsx", "/platform/email"],
+    ["app/(workspace)/platform/runtime/page.tsx", "/platform/runtime"],
     [
       "app/(workspace)/platform/operations/page.tsx",
       "/platform/operations",
@@ -1163,6 +1164,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/organization/ai/gateways/[id]/sync/route.ts",
     "/api/organization/ai/gateways/:id/sync",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/platform/runtime/turn-workers/route.ts",
+    "/api/platform/runtime/turn-workers",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized,

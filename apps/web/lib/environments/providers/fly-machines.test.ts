@@ -1254,6 +1254,8 @@ test("Fly platform standby creation clones configuration without launching", asy
     appName: "kestrel-one-runpod-worker",
     machineId: "active",
     runtimeImage: "registry.fly.io/kestrel-one-runpod-worker:production-42-1",
+    concurrency: 16,
+    standbyForMachineIds: ["active"],
     healthCheck: {
       name: "worker",
       port: 8081,
@@ -1269,6 +1271,25 @@ test("Fly platform standby creation clones configuration without launching", asy
     "registry.fly.io/kestrel-one-runpod-worker:production-42-1",
   );
   assert.equal(requests[1]?.body?.config?.checks?.worker?.path, "/healthz");
+  assert.deepEqual(requests[1]?.body?.config?.standbys, ["active"]);
+  assert.equal(
+    requests[1]?.body?.config?.env?.KESTREL_TURN_WORKER_CONCURRENCY,
+    "16",
+  );
+  await client.cloneMachineAsStoppedIndependent({
+    appName: "kestrel-one-runpod-worker",
+    machineId: "active",
+    runtimeImage: "registry.fly.io/kestrel-one-runpod-worker:production-42-1",
+    concurrency: 16,
+    healthCheck: {
+      name: "worker",
+      port: 8081,
+      path: "/healthz",
+      timeoutSeconds: 5,
+      gracePeriodSeconds: 30,
+    },
+  });
+  assert.deepEqual(requests[3]?.body?.config?.standbys, []);
 });
 
 type TestMachineRequestBody = {
@@ -1276,6 +1297,7 @@ type TestMachineRequestBody = {
   config?: {
     image?: string;
     env?: Record<string, string>;
+    standbys?: string[];
     checks?: Record<
       string,
       {
@@ -1870,6 +1892,14 @@ test("Fly Machine lookup preserves exact Workspace mount evidence", async () => 
         id: "machine-1",
         state: "stopped",
         region: "iad",
+        checks: [
+          {
+            name: "workspace",
+            status: "critical",
+            output: "Authorization: Bearer secret-token\nrunner unavailable",
+            updated_at: "2026-08-20T17:00:00.000Z",
+          },
+        ],
         config: {
           guest: { cpu_kind: "shared", cpus: 2, memory_mb: 4096 },
           metadata: { kestrel_workspace_id: "workspace-1" },
@@ -1894,6 +1924,14 @@ test("Fly Machine lookup preserves exact Workspace mount evidence", async () => 
       cpus: 2,
       memoryMb: 4096,
       workspaceId: "workspace-1",
+      checks: [
+        {
+          name: "workspace",
+          status: "critical",
+          output: "Authorization=[redacted] runner unavailable",
+          updatedAt: "2026-08-20T17:00:00.000Z",
+        },
+      ],
       mounts: [
         {
           volumeId: "volume-1",

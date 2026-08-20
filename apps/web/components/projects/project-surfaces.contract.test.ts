@@ -99,6 +99,8 @@ test("Schedules live in primary navigation under Work instead of Project tabs", 
   assert.doesNotMatch(projectTabs, /"schedule"/u);
   assert.match(schedules, /eyebrow="Work"/u);
   assert.match(schedules, /title="Schedules"/u);
+  assert.match(schedules, /Run recurring autonomous prompts/u);
+  assert.match(schedules, /cannot pause for conversational input/u);
   assert.match(schedules, /New schedule/u);
   assert.match(schedules, /No schedules yet/u);
   assert.match(schedules, /Next run:/u);

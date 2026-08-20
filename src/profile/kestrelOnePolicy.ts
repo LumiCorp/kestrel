@@ -23,7 +23,10 @@ import {
 } from "./runtimeProfile.js";
 import { resolveProfileWithEvaluationPolicy } from "./evaluationPolicy.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
-import { resolveModelEconomicsProfileV1 } from "../economics/policy.js";
+import {
+  parseHarnessEconomicsControlV1,
+  resolveModelEconomicsProfileV1,
+} from "../economics/policy.js";
 import { createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 
 export const KESTREL_POLICY_ID = "kestrel";
@@ -219,6 +222,26 @@ export const KESTREL_HARNESS_ECONOMICS = Object.freeze({
   ],
 } satisfies HarnessEconomicsControlV1);
 
+function composeKestrelHarnessEconomics(
+  modelProfile:
+    | NonNullable<TuiProfile["harnessEconomics"]>["modelProfiles"][number]
+    | undefined,
+): HarnessEconomicsControlV1 {
+  const economics: HarnessEconomicsControlV1 = structuredClone(
+    KESTREL_HARNESS_ECONOMICS,
+  );
+  if (modelProfile === undefined) return economics;
+  const existingIndex = economics.modelProfiles.findIndex(
+    (candidate) =>
+      candidate.provider === modelProfile.provider &&
+      candidate.model === modelProfile.model,
+  );
+  if (existingIndex === -1) {
+    economics.modelProfiles.push(structuredClone(modelProfile));
+  }
+  return economics;
+}
+
 /** @deprecated Use KESTREL_HARNESS_ECONOMICS. */
 export const KESTREL_ONE_HOSTED_HARNESS_ECONOMICS = KESTREL_HARNESS_ECONOMICS;
 
@@ -270,6 +293,10 @@ export interface KestrelOneProfileOverlay {
   modelCredential?: TuiProfile["modelCredential"] | undefined;
   evaluationPolicy?: TuiProfile["evaluationPolicy"] | undefined;
   modelCapabilities?: TuiProfile["modelCapabilities"] | undefined;
+  /** Economics capacity for an administrator-approved hosted model. */
+  modelEconomicsProfile?:
+    | NonNullable<TuiProfile["harnessEconomics"]>["modelProfiles"][number]
+    | undefined;
   /** @deprecated Harness economics is policy-owned and rejected by composition. */
   harnessEconomics?: TuiProfile["harnessEconomics"] | undefined;
   agentStageConfig?: TuiProfile["agentStageConfig"] | undefined;
@@ -398,7 +425,9 @@ function composeLegacyKestrelOneProfile(
     ...(input.overlay?.modelCapabilities !== undefined
       ? { modelCapabilities: input.overlay.modelCapabilities }
       : {}),
-    harnessEconomics: structuredClone(KESTREL_HARNESS_ECONOMICS),
+    harnessEconomics: composeKestrelHarnessEconomics(
+      input.overlay?.modelEconomicsProfile,
+    ),
     ...(input.overlay?.agentStageConfig !== undefined
       ? { agentStageConfig: input.overlay.agentStageConfig }
       : {}),
@@ -863,7 +892,7 @@ export function assertKestrelExecutionProfileEconomicsAdmission(input: {
       { ...details, reason: "pinned_model_route_required" },
     );
   }
-  const canonicalEconomicsProfile = resolveModelEconomicsProfileV1(
+  const staticEconomicsProfile = resolveModelEconomicsProfileV1(
     KESTREL_HARNESS_ECONOMICS,
     provider,
     model,
@@ -903,11 +932,16 @@ export function assertKestrelExecutionProfileEconomicsAdmission(input: {
       },
     );
   }
-  const economics = input.profile.harnessEconomics;
+  const economics =
+    input.profile.harnessEconomics === undefined
+      ? undefined
+      : parseHarnessEconomicsControlV1(input.profile.harnessEconomics);
   const embeddedEconomicsProfile =
     economics === undefined
       ? undefined
       : resolveModelEconomicsProfileV1(economics, provider, model);
+  const canonicalEconomicsProfile =
+    staticEconomicsProfile ?? embeddedEconomicsProfile;
   if (
     canonicalEconomicsProfile === undefined ||
     economics === undefined ||

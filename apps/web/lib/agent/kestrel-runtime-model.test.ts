@@ -27,6 +27,51 @@ test("approved native gateway models become runner model selections", () => {
   );
 });
 
+test("approved model metadata carries its economics profile into selection", () => {
+  const selection = toKestrelOneRuntimeModelSelection({
+    id: "glm-free",
+    gatewayId: "gateway-openrouter",
+    rawModelId: "z-ai/glm-5.2:free",
+    gatewayProvider: "openrouter",
+    metadata: {
+      kestrelEconomicsProfile: {
+        version: 1,
+        profileId: "openrouter:z-ai/glm-5.2:free:v1",
+        provider: "openrouter",
+        model: "z-ai/glm-5.2:free",
+        contextWindowTokens: 202_752,
+        maxOutputTokens: 65_536,
+        counting: {
+          counter: "utf8-byte-upper-bound",
+          counterVersion: "1",
+          method: "conservative_estimate",
+          confidence: "conservative",
+        },
+        cache: { behavior: "none" },
+      },
+    },
+    organizationId: "org-1",
+    environmentId: "env-1",
+  });
+  assert.equal(selection.economicsProfile?.model, "z-ai/glm-5.2:free");
+});
+
+test("legacy approved catalog metadata is upgraded at runtime", () => {
+  const selection = toKestrelOneRuntimeModelSelection({
+    id: "legacy-glm-free",
+    gatewayId: "gateway-openrouter",
+    rawModelId: "z-ai/glm-5.2:free",
+    gatewayProvider: "openrouter",
+    metadata: {
+      context_length: 202_752,
+      top_provider: { max_completion_tokens: 65_536 },
+    },
+    organizationId: "org-1",
+    environmentId: "env-1",
+  });
+  assert.equal(selection.economicsProfile?.contextWindowTokens, 202_752);
+});
+
 test("runtime model selection preserves the base profile contract", () => {
   const profile = applyKestrelOneModelsToProfile(
     {

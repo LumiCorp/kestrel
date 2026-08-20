@@ -1485,5 +1485,115 @@ test(
       errorCode: null,
       completedAt: null,
     });
+
+    await sql`
+      UPDATE "environment_operations"
+      SET "status" = 'completed', "completed_at" = now()
+      WHERE "workspace_id" = ${projectBinding.workspace.id}
+        AND "status" IN ('queued', 'running')
+    `;
+    await sql`
+      UPDATE "environment_workspaces"
+      SET
+        "status" = 'failed',
+        "fly_machine_id" = 'legacy-failed-start-machine',
+        "failure_code" = 'FLY_MACHINE_UNHEALTHY',
+        "failure_message" = 'Workspace wake failed.'
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
+    const failedStartOperationId = `failed-start-${suffix}`;
+    await sql`
+      INSERT INTO "environment_operations" (
+        "id", "organization_id", "environment_id", "workspace_id",
+        "requested_by_user_id", "type", "status", "stage",
+        "idempotency_key", "error_code", "error_message",
+        "created_at", "updated_at", "completed_at"
+      ) VALUES (
+        ${failedStartOperationId}, ${organizationA},
+        ${createdEnvironment.environment.id}, ${projectBinding.workspace.id},
+        ${userA}, 'workspace.start', 'failed',
+        'environment.activation.failed', ${failedStartOperationId},
+        'FLY_MACHINE_UNHEALTHY', 'Workspace wake failed.',
+        now(), now(), now()
+      )
+    `;
+    const retriedStart =
+      await environmentStore.requestFailedWorkspaceStartRetry({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        workspaceId: projectBinding.workspace.id,
+        userId: userA,
+      });
+    assert.equal(retriedStart?.type, "workspace.start");
+    assert.equal(retriedStart?.status, "queued");
+    const [retriedStartWorkspace] = await sql<
+      Array<{
+        status: string;
+        failureCode: string | null;
+        failureMessage: string | null;
+      }>
+    >`
+      SELECT
+        "status",
+        "failure_code" AS "failureCode",
+        "failure_message" AS "failureMessage"
+      FROM "environment_workspaces"
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
+    assert.deepEqual(retriedStartWorkspace, {
+      status: "starting",
+      failureCode: null,
+      failureMessage: null,
+    });
+
+    await sql`
+      UPDATE "environment_operations"
+      SET "status" = 'completed', "completed_at" = now()
+      WHERE "workspace_id" = ${projectBinding.workspace.id}
+        AND "status" IN ('queued', 'running')
+    `;
+    await sql`
+      UPDATE "environment_workspaces"
+      SET
+        "status" = 'failed',
+        "failure_code" = 'FLY_MACHINE_STOP_FAILED',
+        "failure_message" = 'The latest lifecycle owner was not start or provision.'
+      WHERE "id" = ${projectBinding.workspace.id}
+    `;
+    const failedStopOperationId = `failed-stop-${suffix}`;
+    await sql`
+      INSERT INTO "environment_operations" (
+        "id", "organization_id", "environment_id", "workspace_id",
+        "requested_by_user_id", "type", "status", "stage",
+        "idempotency_key", "error_code", "error_message",
+        "created_at", "updated_at", "completed_at"
+      ) VALUES (
+        ${failedStopOperationId}, ${organizationA},
+        ${createdEnvironment.environment.id}, ${projectBinding.workspace.id},
+        ${userA}, 'workspace.stop', 'failed',
+        'environment.activation.failed', ${failedStopOperationId},
+        'FLY_MACHINE_STOP_FAILED', 'Workspace stop failed.',
+        now() + interval '1 second', now() + interval '1 second',
+        now() + interval '1 second'
+      )
+    `;
+    assert.equal(
+      await environmentStore.requestFailedWorkspaceProvisionRetry({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        workspaceId: projectBinding.workspace.id,
+        userId: userA,
+      }),
+      null,
+    );
+    assert.equal(
+      await environmentStore.requestFailedWorkspaceStartRetry({
+        organizationId: organizationA,
+        environmentId: createdEnvironment.environment.id,
+        workspaceId: projectBinding.workspace.id,
+        userId: userA,
+      }),
+      null,
+    );
   }
 );

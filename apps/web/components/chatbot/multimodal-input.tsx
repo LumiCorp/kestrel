@@ -476,11 +476,6 @@ function PureMultimodalInput({
       composerBlockedBySetup
     );
   const shouldQueueSubmission = composerPolicy.mode === "queue_turn";
-  const pendingInteraction =
-    composerPolicy.mode === "answer_interaction" ||
-    composerPolicy.mode === "blocked_interaction"
-      ? composerPolicy.interaction
-      : null;
 
   useEffect(() => {
     if (composerRuntimeQuestion) {
@@ -988,7 +983,7 @@ function PureMultimodalInput({
             </>
           }
           interactionMode={interactionMode}
-          modeDisabled={Boolean(pendingInteraction) || composerBlockedBySetup}
+          modeDisabled={composerBlockedBySetup}
           modelControl={
             <ModelSelectorCompact
               availableModels={availableModels}

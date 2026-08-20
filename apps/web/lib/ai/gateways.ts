@@ -26,7 +26,10 @@ import {
   initialGatewayCredentialStatus,
   isGatewayModelSyncAuthenticationFailure,
 } from "./gateway-credential-health";
-import { GatewayModelInUseError } from "./gateway-lifecycle-error";
+import {
+  GatewayModelEconomicsProfileRequiredError,
+  GatewayModelInUseError,
+} from "./gateway-lifecycle-error";
 import {
   normalizeGatewayStoredCredential,
 } from "./gateway-credential-source";
@@ -51,6 +54,11 @@ import {
   type RunPodFetch,
   validateRunPodToolRoundTrip,
 } from "./runpod-connection-test";
+import {
+  getGatewayModelEconomicsProvider,
+  readGatewayModelEconomicsProfile,
+  withGatewayModelEconomicsProfile,
+} from "./model-economics-profile";
 
 export { GATEWAY_MODALITIES, GATEWAY_PROVIDERS };
 export type GatewayProvider = (typeof GATEWAY_PROVIDERS)[number];
@@ -925,6 +933,7 @@ export async function syncGatewayModels(
       }),
       gatewayProvider: gateway.provider,
       gatewayBaseUrl: gateway.baseUrl,
+      requireEconomicsProfile: false,
     });
     savedModels.push(savedModel);
   }
@@ -990,6 +999,7 @@ export async function saveGatewayModel(input: {
   isDefault?: boolean;
   description?: string | null;
   metadata?: Record<string, unknown> | null;
+  requireEconomicsProfile?: boolean;
 }) {
   const [gateway, storedModel] = await Promise.all([
     input.gatewayProvider
@@ -1058,9 +1068,46 @@ export async function saveGatewayModel(input: {
         })
       : (inputMetadata ?? null);
 
+  const approved = input.approved ?? true;
+  const economicsProvider =
+    gatewayProvider === undefined
+      ? undefined
+      : getGatewayModelEconomicsProvider({
+          gatewayProvider,
+          modality: input.modality,
+          metadata,
+        });
+  const economicsMetadata =
+    economicsProvider != null &&
+    isKestrelRuntimeLanguageProvider(gatewayProvider as GatewayProvider)
+      ? withGatewayModelEconomicsProfile({
+          metadata,
+          provider: economicsProvider,
+          model: input.rawModelId,
+          approved,
+          modality: input.modality,
+        })
+      : metadata;
+  if (
+    approved &&
+    input.modality === "language" &&
+    economicsProvider != null &&
+    isKestrelRuntimeLanguageProvider(gatewayProvider as GatewayProvider) &&
+    readGatewayModelEconomicsProfile(economicsMetadata, {
+      provider: economicsProvider,
+      model: input.rawModelId,
+    }) === undefined &&
+    input.requireEconomicsProfile !== false
+  ) {
+    throw new GatewayModelEconomicsProfileRequiredError({
+      provider: economicsProvider,
+      model: input.rawModelId,
+    });
+  }
+
   if (
     gatewayProvider === "runpod" &&
-    (input.approved ?? true) &&
+    approved &&
     !(
       runPodBaseUrl &&
       getMatchingRunPodValidationEvidence({
@@ -1097,10 +1144,10 @@ export async function saveGatewayModel(input: {
           rawModelId: input.rawModelId,
           alias: input.alias ?? null,
           modality: input.modality,
-          approved: input.approved ?? true,
+          approved,
           isDefault: input.isDefault ?? false,
           description: input.description ?? null,
-          metadata,
+          metadata: economicsMetadata,
           updatedAt: new Date(),
         })
         .where(
@@ -1127,10 +1174,10 @@ export async function saveGatewayModel(input: {
         rawModelId: input.rawModelId,
         alias: input.alias ?? null,
         modality: input.modality,
-        approved: input.approved ?? true,
+        approved,
         isDefault: input.isDefault ?? false,
         description: input.description ?? null,
-        metadata,
+        metadata: economicsMetadata,
         createdAt: new Date(),
         updatedAt: new Date(),
       })

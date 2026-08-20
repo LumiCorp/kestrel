@@ -675,10 +675,10 @@
     {
       "id": "durable-turn-worker-concurrency-regression",
       "target": "apps/web/lib/turns/queue.ts",
-      "find": "export const DURABLE_TURN_LOCAL_CONCURRENCY = 2;",
-      "replace": "export const DURABLE_TURN_LOCAL_CONCURRENCY = 1;",
+      "find": "        localConcurrency: turnWorkerConcurrency,",
+      "replace": "        localConcurrency: 2,",
       "command": "pnpm",
-      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=exactly two one-job callbacks", "lib/turns/worker-boundary.test.ts"],
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=turn worker uses configured durable capacity", "lib/turns/worker-boundary.test.ts"],
       "testFiles": ["apps/web/lib/turns/worker-boundary.test.ts"]
     }
   ]

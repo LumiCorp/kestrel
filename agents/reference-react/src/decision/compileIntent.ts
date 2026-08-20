@@ -91,6 +91,7 @@ export interface CompileAgentActionInput {
   actionProvenance?: Record<string, unknown> | undefined;
   sourceRunId?: string | undefined;
   interactionMode?: InteractionMode | undefined;
+  noninteractive?: boolean | undefined;
   workspaceRoot?: string | undefined;
   observedCapabilities: string[];
   capabilityManifest: ToolCapabilityManifestItem[];
@@ -302,6 +303,7 @@ export function compileAgentAction(input: CompileAgentActionInput & { phase: "de
     executionPolicy: input.executionPolicy,
     ...(compatibilityExecutionIntent !== undefined ? { executionIntent: compatibilityExecutionIntent } : {}),
     ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+    ...(input.noninteractive === true ? { noninteractive: true } : {}),
     goalSatisfiedCloseoutReadiness,
   });
 

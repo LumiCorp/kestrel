@@ -20,6 +20,7 @@ import {
 } from "./config";
 import {
   requestFailedWorkspaceProvisionRetry,
+  requestFailedWorkspaceStartRetry,
   requestWorkspaceStart,
   resolveOrCreateThreadExecutionBinding,
 } from "./store";
@@ -143,12 +144,20 @@ export async function resolveEnvironmentExecutionRoute(input: {
     await enqueueEnvironmentOperation(resolved.operation.id);
   }
   if (!resolved.created && resolved.workspace.status === "failed") {
-    const operation = await requestFailedWorkspaceProvisionRetry({
+    const failedProvision = await requestFailedWorkspaceProvisionRetry({
       organizationId: input.organizationId,
       environmentId: resolved.binding.environmentId,
       workspaceId: resolved.binding.workspaceId,
       userId: input.actorUserId,
     });
+    const operation =
+      failedProvision ??
+      (await requestFailedWorkspaceStartRetry({
+        organizationId: input.organizationId,
+        environmentId: resolved.binding.environmentId,
+        workspaceId: resolved.binding.workspaceId,
+        userId: input.actorUserId,
+      }));
     if (operation?.status === "queued") {
       await enqueueEnvironmentOperation(operation.id);
     }

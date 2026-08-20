@@ -29,32 +29,27 @@ const interaction: ThreadInteractionView = {
   resolvedAt: null,
 };
 
-test("Kestrel One renders an explicit mode switch for the shared runtime contract", () => {
+test("Kestrel One leaves typed mode switches to the composer selector", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
-      currentMode="chat"
       interactions={[interaction]}
-      onModeSwitch={async () => {}}
       onResolved={async () => {}}
       onRuntimeResponse={async () => {}}
       threadId="thread-1"
     />,
   );
-  assert.match(html, /Continue in Build/u);
-  assert.match(html, /Switch to Build and continue/u);
+  assert.equal(html, "");
 });
 
 test("Kestrel One does not guess a mode switch without the explicit contract", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel
-      currentMode="chat"
       interactions={[
         {
           ...interaction,
           requestEnvelope: { metadata: { reason: "ordinary_question" } },
         },
       ]}
-      onModeSwitch={async () => {}}
       onResolved={async () => {}}
       onRuntimeResponse={async () => {}}
       threadId="thread-1"

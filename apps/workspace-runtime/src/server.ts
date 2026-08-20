@@ -61,6 +61,7 @@ import {
   WorkspaceSkillManager,
   type WorkspaceSkillSource
 } from "@kestrel-agents/workspace-skills";
+import { WORKSPACE_RUNNER_HEALTH_PROBE_TIMEOUT_MS } from "@lumi/kestrel-environment-auth";
 
 const WORKSPACE_RUNTIME_CONTRACT_REVISION = 3;
 const config = readConfig();
@@ -95,7 +96,7 @@ const runnerToken = randomBytes(32).toString("base64url");
 let sourceInitialization: Promise<void> | null = null;
 const runnerReadiness = createWorkspaceRunnerReadiness({
   startRunner: () => startRunner(runnerToken),
-  waitUntilHealthy: waitForRunnerService,
+  waitUntilHealthy: (timeoutMs) => waitForRunnerService(timeoutMs),
   probeHealth: probeRunnerService,
   onFatalExit: (code) => {
     void shutdown(code, "fatal");
@@ -677,7 +678,7 @@ function ensureRunnerReady() {
   return runnerReadiness.ensureReady();
 }
 
-async function waitForRunnerService() {
+async function waitForRunnerService(timeoutMs?: number) {
   const client = new KestrelClient({
     target: {
       kind: "remote",
@@ -686,7 +687,7 @@ async function waitForRunnerService() {
     }
   });
   try {
-    await waitForRunner(client);
+    await waitForRunner(client, timeoutMs);
   } finally {
     await client.close();
   }
@@ -701,7 +702,9 @@ async function probeRunnerService() {
     }
   });
   try {
-    await client.getHealth();
+    await client.getHealth({
+      signal: AbortSignal.timeout(WORKSPACE_RUNNER_HEALTH_PROBE_TIMEOUT_MS),
+    });
   } finally {
     await client.close();
   }
@@ -735,9 +738,10 @@ async function withRunnerClient<T>(
   }
 }
 
-async function waitForRunner(client: KestrelClient) {
+async function waitForRunner(client: KestrelClient, timeoutMs?: number) {
   const ready = await waitForWorkspaceRunnerHealth({
-    probe: () => client.getHealth(),
+    probe: (signal) => client.getHealth({ signal }),
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
   });
   if (!ready) {
     throw new WorkspaceRequestError(503, "WORKSPACE_RUNNER_UNAVAILABLE");

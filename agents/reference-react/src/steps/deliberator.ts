@@ -188,7 +188,6 @@ const EXECUTION_MODE_CONTROL_TOOL_NAMES = [
 const NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES = [
   "kestrel.finalize",
   "kestrel.cannot_satisfy",
-  "kestrel.request_mode_switch",
   "kestrel.switch_mode",
   "kestrel.todo_update",
 ] as const;
@@ -215,17 +214,18 @@ function controlToolNamesForInteractionMode(input: {
       ? names
       : names.filter((name) => name !== "kestrel.request_mode_switch");
   if (input.interactionMode === "build" && input.executableWorkspaceToolsAvailable) {
-    const buildControlTools = isNoninteractiveExecutionContext(input.eventType, input.eventPayload)
+    const noninteractive = isNoninteractiveExecutionContext(input.eventType, input.eventPayload);
+    const buildControlTools = noninteractive
       ? NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES
       : EXECUTION_MODE_CONTROL_TOOL_NAMES;
     return withAvailableModeRequest(
-      buildControlTools.filter((name) => name !== "kestrel.cannot_satisfy"),
+      noninteractive
+        ? buildControlTools
+        : buildControlTools.filter((name) => name !== "kestrel.cannot_satisfy"),
     );
   }
   if (isNoninteractiveExecutionContext(input.eventType, input.eventPayload)) {
-    return withAvailableModeRequest(input.interactionMode === "plan"
-      ? PLAN_MODE_CONTROL_TOOL_NAMES.filter((name) => name !== "kestrel.ask_user")
-      : NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES);
+    return NONINTERACTIVE_EXECUTION_MODE_CONTROL_TOOL_NAMES;
   }
   return withAvailableModeRequest(input.interactionMode === "plan"
     ? PLAN_MODE_CONTROL_TOOL_NAMES
@@ -244,14 +244,20 @@ function finalizeStatusesForInteractionMode(input: {
 
 function cannotSatisfyReasonCodesForInteractionMode(input: {
   interactionMode: InteractionMode;
+  noninteractive: boolean;
 }): readonly KestrelAgentCannotSatisfyReasonCode[] | undefined {
   if (input.interactionMode !== "build") {
     return ;
   }
-  return ["missing_required_capability", "requested_tool_unavailable"];
+  return input.noninteractive
+    ? ["missing_required_capability", "requested_tool_unavailable", "need_user_choice"]
+    : ["missing_required_capability", "requested_tool_unavailable"];
 }
 
 function isNoninteractiveExecutionContext(eventType: string, eventPayload: Record<string, unknown>): boolean {
+  if (eventPayload.noninteractive === true || asRecord(eventPayload.metadata)?.noninteractive === true) {
+    return true;
+  }
   if (eventType === "job.run") {
     return true;
   }
@@ -518,6 +524,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
           modeResolution,
           executionPolicy,
         });
+    const noninteractive = isNoninteractiveExecutionContext(ctx.event.type, eventPayload);
     const availableModeControlToolNames = controlToolNamesForInteractionMode({
       interactionMode: modeResolution.interactionMode,
       eventType: ctx.event.type,
@@ -549,6 +556,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       ? undefined
       : cannotSatisfyReasonCodesForInteractionMode({
         interactionMode: modeResolution.interactionMode,
+        noninteractive,
       });
     const initialActionTools = buildModelToolAliasRegistry(
       projectedDeliberatorTools,
@@ -622,6 +630,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
       stepIndex: ctx.stepIndex,
       runId: ctx.runId,
       interactionMode: modeResolution.interactionMode,
+      noninteractive,
       deliberatorTools: closeoutOnly ? [] : economicsScopedDeliberatorTools.tools,
       capabilityManifest,
       decisionContext,
@@ -734,6 +743,7 @@ export function createAgentLoopStep(config: AgentLoopStepConfig): StepAgent {
         stepIndex: ctx.stepIndex,
         runId: ctx.runId,
         interactionMode: modeResolution.interactionMode,
+        noninteractive,
         deliberatorTools: closeoutOnly ? [] : economicsScopedDeliberatorTools.tools,
         capabilityManifest,
         decisionContext,
@@ -1103,6 +1113,7 @@ function runDeliberatorCompileAttempt(input: {
   stepIndex: number;
   runId: string;
   interactionMode: InteractionMode;
+  noninteractive: boolean;
   deliberatorTools: ModelToolSpec[];
   capabilityManifest: ToolCapabilityManifestItem[];
   decisionContext: InternalDecisionContext;
@@ -1184,6 +1195,7 @@ function runDeliberatorCompileAttempt(input: {
     input.reactState.lastActionResult,
     input.runId,
     input.interactionMode,
+    input.noninteractive,
     input.executionPolicy,
     prepared.canonicalIntentContext,
     input.workspaceRoot,
@@ -2442,6 +2454,7 @@ function tryCompileAgentAction(
   lastActionResult: unknown,
   runId: string,
   interactionMode?: InteractionMode,
+  noninteractive = false,
   executionPolicy?: ExecutionPolicyOverride,
   canonicalIntentContext?: CanonicalIntentContext,
   workspaceRoot?: string | undefined,
@@ -2494,6 +2507,7 @@ function tryCompileAgentAction(
       visibleTodos,
       lastActionResult,
       interactionMode,
+      noninteractive,
       executionPolicy,
       workspaceRoot,
       activePlan,

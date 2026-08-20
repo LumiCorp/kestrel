@@ -893,6 +893,40 @@ test("filesystem list reports truncation at the entry cap", async () => {
   assert.equal(result.maxEntries, 1000);
 });
 
+test("recursive filesystem listing preserves shallow siblings before capped descendants", async () => {
+  const { handlers, policyRoots } = await createFsHarness();
+  await mkdir(path.join(policyRoots.workspaceRoot, ".git/objects"), { recursive: true });
+  await mkdir(path.join(policyRoots.workspaceRoot, "content"), { recursive: true });
+  await writeFile(path.join(policyRoots.workspaceRoot, "REDS-INTEL.md"), "present", "utf8");
+  await writeFile(path.join(policyRoots.workspaceRoot, "content/index.md"), "present", "utf8");
+  for (let index = 0; index < 1001; index += 1) {
+    await writeFile(
+      path.join(policyRoots.workspaceRoot, ".git/objects", `object-${String(index).padStart(4, "0")}`),
+      "",
+      "utf8",
+    );
+  }
+
+  const result = await rawToolOutput<{
+    entries: Array<{ path: string }>;
+    truncated: boolean;
+    maxEntries: number;
+  }>(handlers["fs.list"]({
+    path: ".",
+    recursive: true,
+    includeHidden: true,
+    maxDepth: 5,
+  }));
+
+  assert.deepEqual(
+    result.entries.slice(0, 3).map((entry) => entry.path),
+    [".git", "content", "REDS-INTEL.md"],
+  );
+  assert.ok(result.entries.some((entry) => entry.path === "content/index.md"));
+  assert.equal(result.truncated, true);
+  assert.equal(result.maxEntries, 1000);
+});
+
 test("filesystem JSON verifier returns structured artifact verification results", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   await writeFile(

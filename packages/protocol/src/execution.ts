@@ -489,6 +489,8 @@ export interface RunnerTurnInput {
   runId?: string | undefined;
   message: string;
   eventType: string;
+  /** Execute without conversational waits; blockers must terminate the turn. */
+  noninteractive?: boolean | undefined;
   attachments?: RunnerTurnAttachment[] | undefined;
   resumeBlockedRun?: boolean | undefined;
   resumeRequestId?: string | undefined;
@@ -3391,6 +3393,7 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalNonEmptyString(turn.runId, `${label}.runId`);
   requireString(turn.message, `${label}.message`);
   requireNonEmptyString(turn.eventType, `${label}.eventType`);
+  validateOptionalBoolean(turn.noninteractive, `${label}.noninteractive`);
   validateOptionalAttachments(turn.attachments, `${label}.attachments`);
   validateOptionalBoolean(turn.resumeBlockedRun, `${label}.resumeBlockedRun`);
   validateOptionalNonEmptyString(turn.resumeRequestId, `${label}.resumeRequestId`);

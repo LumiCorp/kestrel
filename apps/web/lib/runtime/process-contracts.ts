@@ -97,6 +97,7 @@ export const TURN_WORKER_PROCESS_CONTRACT = {
     "KESTREL_APP_CREDENTIAL_KEYS",
     "KESTREL_ONE_AGENT_ID",
     "KESTREL_ONE_CONTEXT_GRANT_TTL_SECONDS",
+    "KESTREL_TURN_WORKER_CONCURRENCY",
     "KESTREL_PRIVATE_INFERENCE_ENABLED",
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -248,6 +249,26 @@ export function assertTurnWorkerProcessConfiguration(
   env: Record<string, string | undefined> = process.env,
 ) {
   assertProcessConfiguration(TURN_WORKER_PROCESS_CONTRACT, env);
+  resolveTurnWorkerConcurrency(env);
+}
+
+export function resolveTurnWorkerConcurrency(
+  env: Record<string, string | undefined> = process.env,
+) {
+  const raw = env.KESTREL_TURN_WORKER_CONCURRENCY?.trim();
+  if (!raw) return 16;
+  if (!/^[0-9]+$/u.test(raw)) {
+    throw new Error(
+      "KESTREL_TURN_WORKER_CONCURRENCY must be an integer from 1 to 64.",
+    );
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > 64) {
+    throw new Error(
+      "KESTREL_TURN_WORKER_CONCURRENCY must be an integer from 1 to 64.",
+    );
+  }
+  return value;
 }
 
 export function assertControlWorkerProcessConfiguration(

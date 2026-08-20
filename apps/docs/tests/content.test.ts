@@ -13,8 +13,8 @@ import { DOCS_RELEASE } from "@/lib/release";
 import { CONTENT_ARCHETYPES, DOCS_NAV_SECTIONS, PRODUCT_SURFACES } from "@/lib/types";
 
 
-const PACKAGE_VERSION = "0.8.5";
-const DESKTOP_VERSION = "0.8.5";
+const RUNTIME_VERSION = "0.8.5";
+const DESKTOP_VERSION = "0.8.6";
 
 test("navigation exposes exactly six ordered public journeys", async () => {
   const navigation = await getNavigation();
@@ -159,23 +159,22 @@ test("released packages and compatibility are first-class public reference pages
 test("release metadata separates packages from product availability", async () => {
   const pages = await getPublicPages();
   const corpus = pages.map(({ rawContent }) => rawContent).join("\n");
-  assert.equal(DOCS_RELEASE.packages.version, PACKAGE_VERSION);
+  assert.equal(DOCS_RELEASE.packages.versions["@kestrel-agents/kestrel"], RUNTIME_VERSION);
   assert.equal(DOCS_RELEASE.packages.channel, "Stable");
   assert.equal(DOCS_RELEASE.products.desktop.version, DESKTOP_VERSION);
   assert.equal(DOCS_RELEASE.products.desktop.channel, "Beta");
   assert.equal(
     DOCS_RELEASE.products.desktop.releasesUrl,
-    "https://github.com/LumiCorp/kestrel/releases/tag/v0.8.5",
+    "https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/latest-mac.yml",
   );
   assert.equal(
     DOCS_RELEASE.products.desktop.downloadUrl,
-    "https://github.com/LumiCorp/kestrel/releases/download/v0.8.5/Kestrel-0.8.5-mac-arm64.dmg",
+    "https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/Kestrel-0.8.6-mac-arm64.dmg",
   );
-  assert.equal(DOCS_RELEASE.products.cli.version, PACKAGE_VERSION);
-  assert.equal(DOCS_RELEASE.packages.runtimeNpmVersion, "0.8.5");
-  assert.equal(DOCS_RELEASE.products.cli.npmVersion, DOCS_RELEASE.packages.runtimeNpmVersion);
+  assert.equal(DOCS_RELEASE.products.cli.version, RUNTIME_VERSION);
+  assert.equal(DOCS_RELEASE.products.cli.npmVersion, RUNTIME_VERSION);
   assert.equal(DOCS_RELEASE.products.cli.installCommand, "npm install -g @kestrel-agents/kestrel@0.8.5");
-  assert.equal(DOCS_RELEASE.products.kestrelOne.version, PACKAGE_VERSION);
+  assert.equal(DOCS_RELEASE.products.kestrelOne.version, RUNTIME_VERSION);
   assert.equal(DOCS_RELEASE.products.kestrelOne.channel, "Beta");
   assert.equal(DOCS_RELEASE.products.kestrelOne.hostedAccess, "Invitation");
   assert.doesNotMatch(corpus, /\b\d+\.\d+\.\d+-beta\.\d+\b/gu);
@@ -243,7 +242,11 @@ test("public code fences name their language and package installs pin the stable
 
     for (const line of page.rawContent.split("\n").filter((candidate) => candidate.includes("pnpm add @kestrel-agents/"))) {
       for (const packageName of line.match(/@kestrel-agents\/[a-z-]+(?:@[^\s\\]+)?/gu) ?? []) {
-        const expectedVersion = page.meta.url === "/build/upgrading-to-0-7" ? "0.7.0" : "0.8.5";
+        const packageNameWithoutVersion = packageName.slice(0, packageName.lastIndexOf("@"));
+        const expectedVersion = page.meta.url === "/build/upgrading-to-0-7"
+          ? "0.7.0"
+          : DOCS_RELEASE.packages.versions[packageNameWithoutVersion];
+        assert.ok(expectedVersion, `${page.meta.url} references an undocumented package ${packageNameWithoutVersion}`);
         assert.ok(packageName.endsWith(`@${expectedVersion}`), `${page.meta.url} has an unpinned package install`);
       }
     }

@@ -890,6 +890,21 @@ function buildToolFacts(
     ...(hasEntryOutput ? { entryCount: entries.length } : {}),
     ...(asString(output?.message) !== undefined ? { message: asString(output?.message) } : {}),
     ...(typeof output?.empty === "boolean" ? { empty: output.empty } : {}),
+    ...(toolName === "fs.list" && typeof output?.truncated === "boolean"
+      ? { truncated: output.truncated }
+      : {}),
+    ...(toolName === "fs.list" && typeof output?.maxEntries === "number" && Number.isFinite(output.maxEntries)
+      ? { maxEntries: Math.max(0, Math.trunc(output.maxEntries)) }
+      : {}),
+    ...(toolName === "fs.list" && typeof output?.includeHidden === "boolean"
+      ? { includeHidden: output.includeHidden }
+      : {}),
+    ...(toolName === "fs.list" && typeof output?.recursive === "boolean"
+      ? { recursive: output.recursive }
+      : {}),
+    ...(toolName === "fs.list" && typeof output?.maxDepth === "number" && Number.isFinite(output.maxDepth)
+      ? { maxDepth: Math.max(0, Math.trunc(output.maxDepth)) }
+      : {}),
     ...(typeof output?.omittedHiddenEntryCount === "number" && Number.isFinite(output.omittedHiddenEntryCount)
       ? { omittedHiddenEntryCount: Math.max(0, Math.trunc(output.omittedHiddenEntryCount)) }
       : {}),

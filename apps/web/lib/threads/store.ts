@@ -13,6 +13,7 @@ import {
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { meterPersistedModelMessages } from "@/lib/costs/metering";
 import { threadEnvironmentBindingLockKey } from "@/lib/environments/lifecycle-lock";
+import { defaultThreadWorkspaceMode } from "@/lib/turns/concurrency";
 import type { DbThread, DbThreadMessage } from "@/lib/knowledge/db-types";
 import {
   getProjectAccess,
@@ -379,7 +380,8 @@ export async function createThreadForUser(input: {
       mode,
       origin,
       externalThreadId: input.externalThreadId ?? null,
-      workspaceMode: input.workspaceMode ?? "primary",
+      workspaceMode:
+        input.workspaceMode ?? defaultThreadWorkspaceMode(projectId ?? null),
       workspaceBaseRef: input.workspaceBaseRef ?? null,
       parentThreadId: input.parentThreadId ?? null,
       branchAnchorMessageId: input.branchAnchorMessageId ?? null,

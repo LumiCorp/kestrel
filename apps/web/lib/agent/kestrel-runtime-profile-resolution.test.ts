@@ -215,6 +215,73 @@ test(
   },
 );
 
+test("hosted Desktop and web routes carry the exact approved economics profile", async () => {
+  const calls: ExecutionProfileResolveCommandPayload[] = [];
+  const economicsProfile = {
+    version: 1 as const,
+    profileId: "openrouter:z-ai/glm-5.2:free:v1",
+    provider: "openrouter",
+    model: "z-ai/glm-5.2:free",
+    contextWindowTokens: 202_752,
+    maxOutputTokens: 65_536,
+    counting: {
+      counter: "utf8-byte-upper-bound",
+      counterVersion: "1",
+      method: "conservative_estimate" as const,
+      confidence: "conservative" as const,
+    },
+    cache: { behavior: "none" as const },
+  };
+
+  await resolveHostedKestrelExecutionProfile({
+    client: {
+      async resolveExecutionProfile(input) {
+        calls.push(input);
+        return {
+          version: 1,
+          profileId: `kestrel:workspace_hosted:${"c".repeat(64)}`,
+          fingerprint: "c".repeat(64),
+          policy: { id: "kestrel", version: 3 },
+          environmentPreset: { id: "workspace_hosted", version: 1 },
+          resolvedProfile: {
+            id: `kestrel:workspace_hosted:${"c".repeat(64)}`,
+            label: "Kestrel One",
+            agent: "reference-react",
+            sessionPrefix: "kestrel",
+            agentProfileId: "kestrel",
+          },
+        } satisfies ExecutionProfileResolvedEventPayload;
+      },
+    },
+    context: {
+      tenantId: "org_123",
+      actor: {
+        actorId: "user_123",
+        actorType: "end_user",
+        tenantId: "org_123",
+      },
+    },
+    route: {
+      runId: "exec_456",
+      environmentId: "env_123",
+      effectiveCapabilities: [],
+    },
+    runtimeModels: [
+      {
+        id: "gateway_model_glm",
+        provider: "openrouter",
+        model: "z-ai/glm-5.2:free",
+        economicsProfile,
+        gatewayId: "gateway_123",
+        organizationId: "org_123",
+        environmentId: "env_123",
+      },
+    ],
+  });
+
+  assert.equal(calls[0]?.managedConfiguration?.modelEconomicsProfile, economicsProfile);
+});
+
 test(
   "hosted Kestrel maps economics admission into a clear preflight failure",
   async () => {

@@ -118,6 +118,7 @@ test("scheduled prompt materialization stays on its locked database transaction"
     "scheduled turns must carry the model captured for their occurrence",
   );
   assert.match(runtimeSource, /requestedInteractionMode: "build"/u);
+  assert.match(runtimeSource, /noninteractive: true/u);
   assert.match(runtimeSource, /idempotencyKey: `schedule-run:\$\{current\.run\.id\}`/u);
   assert.match(runtimeSource, /title: current\.run\.titleSnapshot/u);
   assert.match(
@@ -132,6 +133,23 @@ test("scheduled prompt materialization stays on its locked database transaction"
     turnStoreSource,
     /export async function createDurableThreadTurnInTransaction/u,
   );
+});
+
+test("scheduled and Test turns enter the ordinary worker as autonomous turns", async () => {
+  const runtimeSource = await readFile(
+    new URL("./process-runtime.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(runtimeSource, /projectPromptScheduleRuns\.findFirst/u);
+  assert.match(runtimeSource, /eq\(table\.turnId, turn\.id\)/u);
+  assert.match(runtimeSource, /threadTurnEvents\.findFirst/u);
+  assert.match(runtimeSource, /eq\(table\.type, "turn\.queued"\)/u);
+  assert.match(
+    runtimeSource,
+    /readBooleanField\(turnContract\?\.data, "noninteractive"\)/u,
+  );
+  assert.match(runtimeSource, /scheduleRun !== undefined/u);
 });
 
 test(
@@ -152,19 +170,22 @@ test(
 );
 
 test(
-  "the turn worker runs exactly two one-job callbacks concurrently",
+  "the turn worker uses configured durable capacity and preserves scheduled concurrency",
   async () => {
     const queueSource = await readFile(
       new URL("./queue.ts", import.meta.url),
       "utf8",
     );
 
-    assert.match(queueSource, /DURABLE_TURN_LOCAL_CONCURRENCY = 2/u);
+    assert.match(queueSource, /PROJECT_PROMPT_SCHEDULE_LOCAL_CONCURRENCY = 2/u);
+    assert.match(queueSource, /resolveTurnWorkerConcurrency/u);
     assert.match(queueSource, /batchSize: 1,/u);
     assert.match(
       queueSource,
-      /localConcurrency: DURABLE_TURN_LOCAL_CONCURRENCY,/u,
+      /localConcurrency: PROJECT_PROMPT_SCHEDULE_LOCAL_CONCURRENCY,/u,
     );
+    assert.match(queueSource, /localConcurrency: turnWorkerConcurrency,/u);
+    assert.match(queueSource, /groupConcurrency: 1,/u);
   },
 );
 
@@ -367,7 +388,7 @@ test(
   },
 );
 
-test("the dedicated control worker owns only environment lifecycle queues", async () => {
+test("the dedicated control worker owns durable platform lifecycle queues", async () => {
   const source = await readFile(
     new URL("../../scripts/control-worker.ts", import.meta.url),
     "utf8",

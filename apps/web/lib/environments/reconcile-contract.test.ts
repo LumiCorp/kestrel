@@ -45,32 +45,37 @@ test("gateway reconciliation keeps unknown failures generic", () => {
 test(
   "started Workspace Machines become ready only after their health check passes",
   async () => {
-    let checks = 0;
     assert.deepEqual(
       await assessWorkspaceMachineReadiness({
         machineState: "started",
-        checkHealth: async () => {
-          checks += 1;
-        },
+        checkName: "workspace",
+        checks: [{ name: "workspace", status: "passing" }],
       }),
       { status: "ready" },
     );
-    assert.equal(checks, 1);
   },
 );
 
 test(
   "started unhealthy Workspace Machines become degraded instead of ready",
   async () => {
-    const healthError = new Error("runner unavailable");
-    assert.deepEqual(
-      await assessWorkspaceMachineReadiness({
-        machineState: "started",
-        checkHealth: async () => {
-          throw healthError;
+    const assessment = await assessWorkspaceMachineReadiness({
+      machineState: "started",
+      checkName: "workspace",
+      checks: [
+        {
+          name: "workspace",
+          status: "critical",
+          output: "runner unavailable",
         },
-      }),
-      { status: "degraded", error: healthError },
+      ],
+    });
+    assert.equal(assessment.status, "degraded");
+    assert.match(
+      assessment.status === "degraded" && assessment.error instanceof Error
+        ? assessment.error.message
+        : "",
+      /critical: runner unavailable/u,
     );
   },
 );
@@ -78,26 +83,20 @@ test(
 test(
   "only stopped Workspace Machines reconcile to stopped without a health check",
   async () => {
-    let checks = 0;
     assert.deepEqual(
       await assessWorkspaceMachineReadiness({
         machineState: "stopped",
-        checkHealth: async () => {
-          checks += 1;
-        },
+        checkName: "workspace",
       }),
       { status: "stopped" },
     );
     assert.deepEqual(
       await assessWorkspaceMachineReadiness({
         machineState: "starting",
-        checkHealth: async () => {
-          checks += 1;
-        },
+        checkName: "workspace",
       }),
       { status: "unchanged" },
     );
-    assert.equal(checks, 0);
   },
 );
 

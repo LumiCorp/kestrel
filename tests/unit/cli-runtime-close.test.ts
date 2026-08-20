@@ -23,7 +23,7 @@ test("closeRuntimeResources always attempts pool close when tool close fails", a
   assert.deepEqual(calls, ["tool", "pool"]);
 });
 
-test("closeRuntimeResources closes dev shell service before pool", async () => {
+test("closeRuntimeResources closes tool registry before pool", async () => {
   const calls: string[] = [];
 
   await closeRuntimeResources(
@@ -33,12 +33,9 @@ test("closeRuntimeResources closes dev shell service before pool", async () => {
     async () => {
       calls.push("pool");
     },
-    async () => {
-      calls.push("dev-shell");
-    },
   );
 
-  assert.deepEqual(calls, ["tool", "dev-shell", "pool"]);
+  assert.deepEqual(calls, ["tool", "pool"]);
 });
 
 test("closeRuntimeResources throws AggregateError when both closes fail", async () => {

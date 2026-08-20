@@ -4,6 +4,11 @@ import {
   getGatewayLanguageProtocol,
   isKestrelRuntimeLanguageProvider,
 } from "@/lib/ai/gateway-utils";
+import {
+  createGatewayModelEconomicsProfile,
+  readGatewayModelEconomicsProfile,
+  type GatewayModelEconomicsProfile,
+} from "@/lib/ai/model-economics-profile";
 
 type RunnerModelProvider = NonNullable<RunnerProfile["modelProvider"]>;
 
@@ -14,6 +19,7 @@ export type KestrelOneRuntimeModelSelection = {
   environmentId: string;
   model: string;
   provider: RunnerModelProvider;
+  economicsProfile?: GatewayModelEconomicsProfile | undefined;
 };
 
 export type DesktopLocalRuntimeModelSelection = {
@@ -56,6 +62,16 @@ export function toKestrelOneRuntimeModelSelection(input: {
           metadata: input.metadata,
         })
       : input.gatewayProvider;
+  const economicsProfile =
+    readGatewayModelEconomicsProfile(input.metadata, {
+      provider,
+      model: input.rawModelId,
+    }) ??
+    createGatewayModelEconomicsProfile({
+      provider,
+      model: input.rawModelId,
+      metadata: input.metadata,
+    });
 
   return {
     id: input.id,
@@ -64,6 +80,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
     environmentId: input.environmentId,
     model: input.rawModelId,
     provider: provider as RunnerModelProvider,
+    ...(economicsProfile !== undefined ? { economicsProfile } : {}),
   };
 }
 
@@ -76,6 +93,9 @@ export function applyKestrelOneModelsToProfile(
   runId: string
 ): RunnerProfile {
   const selection = selections[0];
+  const economicsProfile =
+    "economicsProfile" in selection ? selection.economicsProfile : undefined;
+  const profileEconomics = asEconomicsControl(profile.harnessEconomics);
   const agentStageConfig = asRecord(profile.agentStageConfig);
   const modelByStage = asRecord(agentStageConfig.modelByStage);
 
@@ -92,6 +112,23 @@ export function applyKestrelOneModelsToProfile(
         "agent.loop": selection.model,
       },
     },
+    ...(economicsProfile !== undefined && profileEconomics !== undefined
+      ? {
+          harnessEconomics: {
+            ...profileEconomics,
+            modelProfiles: [
+              ...profileEconomics.modelProfiles.filter(
+                (candidate) =>
+                  !(
+                    candidate.provider === economicsProfile.provider &&
+                    candidate.model === economicsProfile.model
+                  ),
+              ),
+              economicsProfile,
+            ],
+          },
+        }
+      : {}),
     default: false,
   };
   if ("desktopLocal" in selection) {
@@ -122,4 +159,19 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function asEconomicsControl(value: unknown):
+  | { modelProfiles: GatewayModelEconomicsProfile[]; [key: string]: unknown }
+  | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return;
+  }
+  const modelProfiles = (value as { modelProfiles?: unknown }).modelProfiles;
+  return Array.isArray(modelProfiles)
+    ? {
+        ...(value as Record<string, unknown>),
+        modelProfiles: modelProfiles as GatewayModelEconomicsProfile[],
+      }
+    : undefined;
 }
