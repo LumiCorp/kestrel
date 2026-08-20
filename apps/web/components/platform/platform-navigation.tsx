@@ -4,6 +4,7 @@ import {
   BookOpen,
   CreditCard,
   Mail,
+  Gauge,
   ServerCog,
   TicketCheck,
   Users,
@@ -38,6 +39,11 @@ const platformNavigationGroups: Array<{
   {
     label: "Operate",
     items: [
+      {
+        href: "/platform/runtime",
+        icon: Gauge,
+        label: "Turn workers",
+      },
       {
         href: "/platform/operations",
         icon: ServerCog,

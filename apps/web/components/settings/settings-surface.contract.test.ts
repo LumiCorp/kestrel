@@ -154,6 +154,7 @@ test(
       "/platform/users",
       "/platform/signup-codes",
       "/platform/email",
+      "/platform/runtime",
       "/platform/operations",
       "/platform/billing",
       "/platform/docs",

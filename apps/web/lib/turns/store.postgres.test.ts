@@ -50,6 +50,7 @@ test(
     const environmentId = `turn-environment-${suffix}`;
     const successfulThreadId = `turn-success-${suffix}`;
     const dispatchFailureThreadId = `turn-dispatch-failure-${suffix}`;
+    const groupContendedThreadId = `turn-group-contended-${suffix}`;
     const orphanedThreadId = `turn-orphaned-${suffix}`;
     const recoveryThreadId = `turn-recovery-${suffix}`;
     const retriedThreadId = `turn-retried-${suffix}`;
@@ -104,6 +105,10 @@ test(
           ),
           (
             ${dispatchFailureThreadId}, 'Dispatch Failure', ${userId},
+            ${organizationId}, 'mobile'
+          ),
+          (
+            ${groupContendedThreadId}, 'Group Contended', ${userId},
             ${organizationId}, 'mobile'
           ),
           (
@@ -162,11 +167,50 @@ test(
     assert.equal(duplicate.created, false);
     assert.equal(duplicate.turn.id, successful.turn.id);
 
+    const [persistedGroup] = await sql<
+      Array<{ concurrencyGroupKey: string | null }>
+    >`
+      SELECT "concurrency_group_key" AS "concurrencyGroupKey"
+      FROM "thread_turns"
+      WHERE "id" = ${successful.turn.id}
+    `;
+    assert.equal(
+      persistedGroup?.concurrencyGroupKey,
+      `personal:${organizationId}:${userId}`,
+    );
+    await sql`
+      UPDATE "platform_turn_worker_capacity"
+      SET "admission_closed_until" = now() + interval '1 minute'
+      WHERE "id" = 'default'
+    `;
+    assert.equal(await store.claimDurableThreadTurn(successful.turn.id), null);
+    await sql`
+      UPDATE "platform_turn_worker_capacity"
+      SET "admission_closed_until" = NULL
+      WHERE "id" = 'default'
+    `;
+
     const claims = await Promise.all([
       store.claimDurableThreadTurn(successful.turn.id),
       store.claimDurableThreadTurn(successful.turn.id),
     ]);
     assert.equal(claims.filter(Boolean).length, 1);
+    const groupContended = await createTurn(
+      groupContendedThreadId,
+      "group-contended",
+    );
+    assert.equal(
+      await store.claimDurableThreadTurn(groupContended.turn.id),
+      null,
+    );
+    await assert.rejects(
+      sql`
+        UPDATE "thread_turns"
+        SET "status" = 'running'
+        WHERE "id" = ${groupContended.turn.id}
+      `,
+      /thread_turns_running_concurrency_group_idx/u,
+    );
     const workspaceId = `turn-workspace-${suffix}`;
     const executionId = `turn-execution-${suffix}`;
     const gatewayId = `turn-gateway-${suffix}`;
@@ -1106,19 +1150,20 @@ test(
       `;
       await transaction`
         INSERT INTO "threads" (
-          "id", "title", "created_by_user_id", "organization_id", "origin"
+          "id", "title", "created_by_user_id", "organization_id", "origin",
+          "workspace_mode"
         ) VALUES
           (
             ${initialThreadId}, 'Ambiguous Initial Dispatch', ${userId},
-            ${organizationId}, 'mobile'
+            ${organizationId}, 'mobile', 'isolated'
           ),
           (
             ${successorThreadId}, 'Ambiguous Successor Dispatch', ${userId},
-            ${organizationId}, 'mobile'
+            ${organizationId}, 'mobile', 'isolated'
           ),
           (
             ${missingThreadId}, 'Missing Dispatch', ${userId},
-            ${organizationId}, 'mobile'
+            ${organizationId}, 'mobile', 'isolated'
           )
       `;
     });

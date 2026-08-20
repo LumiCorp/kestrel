@@ -178,7 +178,7 @@
     "papaparse": "^5.5.2",
     "pdf-parse": "^2.4.5",
     "pg": "^8.20.0",
-    "pg-boss": "^12.14.0",
+    "pg-boss": "12.18.2",
     "postgres": "^3.4.7",
     "prettier": "^3.4.2",
     "prosemirror-example-setup": "^1.2.3",

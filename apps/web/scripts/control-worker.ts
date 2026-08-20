@@ -22,11 +22,11 @@ async function main() {
   await assertWorkerDatabaseReady();
   await startEnvironmentLifecycleWorker();
   health.markReady();
-  process.stdout.write("Kestrel One Environment lifecycle worker started.\n");
+  process.stdout.write("Kestrel One Control Worker started.\n");
 }
 
 async function shutdown(signal: string) {
-  process.stdout.write(`Kestrel One Environment lifecycle worker received ${signal}.\n`);
+  process.stdout.write(`Kestrel One Control Worker received ${signal}.\n`);
   health?.markUnhealthy();
   await stopEnvironmentLifecycleWorker();
   await health?.close();
@@ -40,7 +40,7 @@ void main().catch(async (error: unknown) => {
   health?.markUnhealthy();
   await health?.close().catch(() => {});
   process.stderr.write(
-    `Kestrel One Environment lifecycle worker failed to start: ${
+    `Kestrel One Control Worker failed to start: ${
       error instanceof Error ? error.message : "Unknown startup error"
     }\n`,
   );

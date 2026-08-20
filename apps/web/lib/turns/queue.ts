@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { type JobWithMetadata, PgBoss } from "pg-boss";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { resolveTurnWorkerConcurrency } from "@/lib/runtime/process-contracts";
 import {
   claimDueProjectPromptScheduleRuns,
   failProjectPromptScheduleRun,
@@ -10,6 +11,7 @@ import {
 } from "@/lib/schedules/store";
 import { createSingleFlightOperation } from "@/lib/turns/single-flight";
 import { completeDurableThreadTurn } from "@/lib/turns/store";
+import { resolveTurnConcurrencyGroup } from "@/lib/turns/concurrency";
 
 export const DURABLE_THREAD_TURN_QUEUE = "thread.turn.execute";
 export const PROJECT_PROMPT_SCHEDULE_DISPATCH_QUEUE =
@@ -20,7 +22,7 @@ export const PROJECT_PROMPT_SCHEDULE_DISPATCH_CRON = "* * * * *";
 export const DURABLE_TURN_EXPIRE_SECONDS = 12 * 60 * 60;
 export const DURABLE_TURN_HEARTBEAT_SECONDS = 60;
 export const DURABLE_TURN_HEARTBEAT_REFRESH_SECONDS = 30;
-export const DURABLE_TURN_LOCAL_CONCURRENCY = 2;
+export const PROJECT_PROMPT_SCHEDULE_LOCAL_CONCURRENCY = 2;
 
 const databaseUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL;
 let bossPromise: Promise<PgBoss> | null = null;
@@ -76,6 +78,22 @@ async function getTurnBoss() {
 }
 
 async function sendTurn(boss: PgBoss, turnId: string) {
+  const [turn] = await knowledgeDb
+    .select({
+      concurrencyGroupKey: schema.threadTurns.concurrencyGroupKey,
+      id: schema.threads.id,
+      organizationId: schema.threads.organizationId,
+      projectId: schema.threads.projectId,
+      createdByUserId: schema.threads.createdByUserId,
+      workspaceMode: schema.threads.workspaceMode,
+    })
+    .from(schema.threadTurns)
+    .innerJoin(schema.threads, eq(schema.threads.id, schema.threadTurns.threadId))
+    .where(eq(schema.threadTurns.id, turnId))
+    .limit(1);
+  if (!turn) throw new Error("The durable turn is unavailable for dispatch.");
+  const concurrencyGroupKey =
+    turn.concurrencyGroupKey ?? resolveTurnConcurrencyGroup(turn);
   const jobId = await boss.send(
     DURABLE_THREAD_TURN_QUEUE,
     { turnId },
@@ -85,6 +103,7 @@ async function sendTurn(boss: PgBoss, turnId: string) {
       retryBackoff: true,
       expireInSeconds: DURABLE_TURN_EXPIRE_SECONDS,
       heartbeatSeconds: DURABLE_TURN_HEARTBEAT_SECONDS,
+      group: { id: concurrencyGroupKey },
     },
   );
   if (!jobId) {
@@ -217,6 +236,20 @@ async function hasResolvedUnconsumedRuntimeInteraction(turnId: string) {
 }
 
 async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
+  const capacity =
+    await knowledgeDb.query.platformTurnWorkerCapacity.findFirst({
+      where: eq(schema.platformTurnWorkerCapacity.id, "default"),
+      columns: { admissionClosedUntil: true },
+    });
+  if (!capacity) {
+    throw new Error("Turn Worker capacity configuration is unavailable.");
+  }
+  if (
+    capacity.admissionClosedUntil &&
+    capacity.admissionClosedUntil.getTime() > Date.now()
+  ) {
+    return;
+  }
   const turns = await knowledgeDb
     .select({
       queueState: schema.threadTurnQueueState.state,
@@ -282,6 +315,7 @@ function createWorkerMaintenance(boss: PgBoss) {
 }
 
 export async function startDurableThreadTurnWorker() {
+  const turnWorkerConcurrency = resolveTurnWorkerConcurrency();
   const boss = await getTurnBoss();
   if (!workerRegistered) {
     workerRegistered = true;
@@ -293,7 +327,7 @@ export async function startDurableThreadTurnWorker() {
       PROJECT_PROMPT_SCHEDULE_EXECUTION_QUEUE,
       {
         batchSize: 1,
-        localConcurrency: DURABLE_TURN_LOCAL_CONCURRENCY,
+        localConcurrency: PROJECT_PROMPT_SCHEDULE_LOCAL_CONCURRENCY,
         includeMetadata: true,
       },
       async (jobs: Array<JobWithMetadata<{ runId?: unknown }>>) => {
@@ -331,7 +365,8 @@ export async function startDurableThreadTurnWorker() {
       DURABLE_THREAD_TURN_QUEUE,
       {
         batchSize: 1,
-        localConcurrency: DURABLE_TURN_LOCAL_CONCURRENCY,
+        localConcurrency: turnWorkerConcurrency,
+        groupConcurrency: 1,
         includeMetadata: true,
         heartbeatRefreshSeconds: DURABLE_TURN_HEARTBEAT_REFRESH_SECONDS,
       },

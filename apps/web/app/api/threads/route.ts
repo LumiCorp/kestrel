@@ -6,6 +6,7 @@ import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema, uiMessageSchema } from "@/lib/knowledge/validation";
 import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { NEW_THREAD_WORKSPACE_MODES } from "@/lib/threads/workspace-mode";
+import { defaultThreadWorkspaceMode } from "@/lib/turns/concurrency";
 import {
   createThreadForUser,
   getThreadUnreadCountsForUser,
@@ -17,7 +18,7 @@ const createBodySchema = z.object({
   id: routeIdSchema,
   projectId: routeIdSchema.nullable().optional(),
   mode: z.enum(["chat", "admin"]).optional().default("chat"),
-  workspaceMode: z.enum(NEW_THREAD_WORKSPACE_MODES).optional().default("primary"),
+  workspaceMode: z.enum(NEW_THREAD_WORKSPACE_MODES).optional(),
   message: (uiMessageSchema as z.ZodType<UIMessage>).optional(),
 });
 
@@ -83,7 +84,8 @@ export async function POST(request: NextRequest) {
       organizationId,
       projectId: body.projectId,
       mode: body.mode,
-      workspaceMode: body.workspaceMode,
+      workspaceMode:
+        body.workspaceMode ?? defaultThreadWorkspaceMode(body.projectId),
       title: "",
     });
     if (!thread) {

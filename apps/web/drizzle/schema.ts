@@ -886,6 +886,7 @@ export const threadTurns = pgTable(
     })
       .notNull()
       .default("chat"),
+    concurrencyGroupKey: text("concurrency_group_key"),
     status: text("status", {
       enum: [
         "queued",
@@ -5787,6 +5788,79 @@ export const adminEventLogs = pgTable(
   ],
 );
 
+export const platformTurnWorkerCapacity = pgTable(
+  "platform_turn_worker_capacity",
+  {
+    id: text("id").primaryKey().notNull().default("default"),
+    concurrencyPerMachine: integer("concurrency_per_machine")
+      .notNull()
+      .default(16),
+    desiredActiveMachines: integer("desired_active_machines")
+      .notNull()
+      .default(1),
+    revision: bigint("revision", { mode: "number" }).notNull().default(1),
+    operationId: text("operation_id"),
+    operationState: text("operation_state", {
+      enum: [
+        "idle",
+        "queued",
+        "running",
+        "succeeded",
+        "failed",
+        "interrupted",
+      ],
+    })
+      .notNull()
+      .default("idle"),
+    operationStage: text("operation_stage"),
+    operationInventoryFingerprint: text("operation_inventory_fingerprint"),
+    operationActorUserId: text("operation_actor_user_id").references(
+      () => users.id,
+      { onDelete: "set null" },
+    ),
+    operationResult: jsonb("operation_result"),
+    operationQueuedAt: timestamp("operation_queued_at", {
+      withTimezone: true,
+    }),
+    operationStartedAt: timestamp("operation_started_at", {
+      withTimezone: true,
+    }),
+    operationFinishedAt: timestamp("operation_finished_at", {
+      withTimezone: true,
+    }),
+    operationLeaseUntil: timestamp("operation_lease_until", {
+      withTimezone: true,
+    }),
+    admissionClosedUntil: timestamp("admission_closed_until", {
+      withTimezone: true,
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check(
+      "platform_turn_worker_capacity_singleton_check",
+      sql`${table.id} = 'default'`,
+    ),
+    check(
+      "platform_turn_worker_capacity_concurrency_check",
+      sql`${table.concurrencyPerMachine} BETWEEN 1 AND 64`,
+    ),
+    check(
+      "platform_turn_worker_capacity_machines_check",
+      sql`${table.desiredActiveMachines} BETWEEN 1 AND 8`,
+    ),
+    check(
+      "platform_turn_worker_capacity_revision_check",
+      sql`${table.revision} > 0`,
+    ),
+  ],
+);
+
 export const platformEmailConfig = pgTable("platform_email_config", {
   id: text("id").primaryKey().notNull(),
   provider: text("provider", { enum: ["resend"] })
@@ -6103,6 +6177,9 @@ export type OrganizationDashboardSetting = InferSelectModel<
 export type ArtifactDocument = InferSelectModel<typeof artifactDocuments>;
 export type ArtifactSuggestion = InferSelectModel<typeof artifactSuggestions>;
 export type AdminEventLog = InferSelectModel<typeof adminEventLogs>;
+export type PlatformTurnWorkerCapacity = InferSelectModel<
+  typeof platformTurnWorkerCapacity
+>;
 export type PlatformEmailConfig = InferSelectModel<typeof platformEmailConfig>;
 export type AdminApiKey = InferSelectModel<typeof adminApiKeys>;
 export type KnowledgeDocument = InferSelectModel<typeof knowledgeDocuments>;

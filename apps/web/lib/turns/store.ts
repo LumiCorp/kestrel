@@ -13,6 +13,7 @@ import {
   lt,
   lte,
   max,
+  ne,
   or,
   sql,
 } from "drizzle-orm";
@@ -33,6 +34,10 @@ import {
   terminalQueueOutcome,
 } from "@/lib/turns/contracts";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
+import {
+  defaultThreadWorkspaceMode,
+  resolveTurnConcurrencyGroup,
+} from "@/lib/turns/concurrency";
 
 export type TurnTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -490,6 +495,7 @@ export async function createDurableThreadTurnInTransaction(
       source: input.source,
       requestedModelId: input.requestedModelId ?? null,
       requestedInteractionMode,
+      concurrencyGroupKey: resolveTurnConcurrencyGroup(thread),
       status: "queued",
       createdAt: now,
       updatedAt: now,
@@ -595,6 +601,7 @@ export async function createMobileThreadWithFirstTurn(
           createdByUserId: input.authorUserId,
           organizationId: input.organizationId,
           projectId: input.projectId,
+          workspaceMode: defaultThreadWorkspaceMode(input.projectId),
           mode: "chat",
           origin: "mobile",
           activeStreamId: null,
@@ -846,10 +853,25 @@ export async function claimDurableThreadTurn(
     if (!candidate) {
       throw new DurableTurnError("TURN_NOT_FOUND", "Turn not found.");
     }
+    const [capacity] = await tx
+      .select()
+      .from(schema.platformTurnWorkerCapacity)
+      .where(eq(schema.platformTurnWorkerCapacity.id, "default"))
+      .limit(1)
+      .for("update");
+    if (!capacity) {
+      throw new Error("Turn Worker capacity configuration is unavailable.");
+    }
+    if (
+      capacity.admissionClosedUntil &&
+      capacity.admissionClosedUntil.getTime() > Date.now()
+    ) {
+      return null;
+    }
     await tx.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(candidate.threadId)}, 0))`,
     );
-    await lockAccessibleThread(tx, {
+    const thread = await lockAccessibleThread(tx, {
       threadId: candidate.threadId,
       organizationId: candidate.organizationId,
       userId: candidate.authorUserId,
@@ -893,11 +915,26 @@ export async function claimDurableThreadTurn(
     if (isRunningResume) {
       return { ...turn, interactionResponse: null };
     }
+    const concurrencyGroupKey =
+      turn.concurrencyGroupKey ?? resolveTurnConcurrencyGroup(thread);
+    const [groupConflict] = await tx
+      .select({ id: schema.threadTurns.id })
+      .from(schema.threadTurns)
+      .where(
+        and(
+          eq(schema.threadTurns.concurrencyGroupKey, concurrencyGroupKey),
+          eq(schema.threadTurns.status, "running"),
+          ne(schema.threadTurns.id, turn.id),
+        ),
+      )
+      .limit(1);
+    if (groupConflict) return null;
     assertThreadTurnTransition(turn.status, "running");
     const now = new Date();
     const [running] = await tx
       .update(schema.threadTurns)
       .set({
+        concurrencyGroupKey,
         status: "running",
         startedAt: turn.startedAt ?? now,
         updatedAt: now,
