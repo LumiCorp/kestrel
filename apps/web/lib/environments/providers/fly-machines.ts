@@ -1628,6 +1628,19 @@ function toMachine(
     ...(machine.config?.metadata?.kestrel_workspace_id
       ? { workspaceId: machine.config.metadata.kestrel_workspace_id }
       : {}),
+    ...(machine.checks
+      ? {
+          checks: machine.checks.map((check) => {
+            const output = sanitizeHealthCheckOutput(check.output);
+            return {
+              name: check.name,
+              status: check.status,
+              ...(output ? { output } : {}),
+              ...(check.updated_at ? { updatedAt: check.updated_at } : {}),
+            };
+          }),
+        }
+      : {}),
     mounts:
       machine.config?.mounts?.map((mount) => ({
         volumeId: mount.volume,

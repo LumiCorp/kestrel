@@ -1892,6 +1892,14 @@ test("Fly Machine lookup preserves exact Workspace mount evidence", async () => 
         id: "machine-1",
         state: "stopped",
         region: "iad",
+        checks: [
+          {
+            name: "workspace",
+            status: "critical",
+            output: "Authorization: Bearer secret-token\nrunner unavailable",
+            updated_at: "2026-08-20T17:00:00.000Z",
+          },
+        ],
         config: {
           guest: { cpu_kind: "shared", cpus: 2, memory_mb: 4096 },
           metadata: { kestrel_workspace_id: "workspace-1" },
@@ -1916,6 +1924,14 @@ test("Fly Machine lookup preserves exact Workspace mount evidence", async () => 
       cpus: 2,
       memoryMb: 4096,
       workspaceId: "workspace-1",
+      checks: [
+        {
+          name: "workspace",
+          status: "critical",
+          output: "Authorization=[redacted] runner unavailable",
+          updatedAt: "2026-08-20T17:00:00.000Z",
+        },
+      ],
       mounts: [
         {
           volumeId: "volume-1",

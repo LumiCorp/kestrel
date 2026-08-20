@@ -157,6 +157,11 @@ export interface EnvironmentProvisioningRepository {
     code: string;
     message: string;
   }): Promise<void>;
+  degradeWorkspace(input: {
+    workspaceId: string;
+    code: string;
+    message: string;
+  }): Promise<void>;
   setWorkspaceStarting(workspaceId: string): Promise<void>;
   setWorkspaceStopping(workspaceId: string): Promise<void>;
   setWorkspaceDeleting(workspaceId: string): Promise<void>;
@@ -431,10 +436,17 @@ export class EnvironmentProvisioner {
         return "processed";
       }
       if (operation.workspaceId) {
-        await this.repository.failWorkspace({
-          workspaceId: operation.workspaceId,
-          ...failure,
-        });
+        if (operation.type === "workspace.start") {
+          await this.repository.degradeWorkspace({
+            workspaceId: operation.workspaceId,
+            ...failure,
+          });
+        } else {
+          await this.repository.failWorkspace({
+            workspaceId: operation.workspaceId,
+            ...failure,
+          });
+        }
       } else if (operation.type === "environment.update") {
         await this.repository.degradeEnvironment({
           environmentId: operation.environmentId,
@@ -2042,6 +2054,17 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .update(schema.environmentWorkspaces)
         .set({
           status: "failed",
+          failureCode: input.code,
+          failureMessage: input.message,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
+    },
+    async degradeWorkspace(input) {
+      await knowledgeDb
+        .update(schema.environmentWorkspaces)
+        .set({
+          status: "degraded",
           failureCode: input.code,
           failureMessage: input.message,
           updatedAt: new Date(),

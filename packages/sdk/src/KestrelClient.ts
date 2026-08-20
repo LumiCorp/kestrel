@@ -100,12 +100,14 @@ export class KestrelClient {
     this.client = new ProtocolClient(new RemoteRunnerTransport(this.target));
   }
 
-  async getHealth(): Promise<RunnerHealthV1> {
+  async getHealth(options?: {
+    signal?: AbortSignal | undefined;
+  }): Promise<RunnerHealthV1> {
     let body: string;
     let status: number;
     try {
       if (this.target.kind === "local") {
-        const response = await this.localTransport!.getHealth();
+        const response = await this.localTransport!.getHealth(options?.signal);
         body = response.body;
         status = response.status;
       } else {
@@ -114,6 +116,9 @@ export class KestrelClient {
           new URL("/health", `${this.target.baseUrl}/`).toString(),
           {
             method: "GET",
+            ...(options?.signal !== undefined
+              ? { signal: options.signal }
+              : {}),
             headers: {
               accept: "application/json",
               ...(authToken !== undefined
