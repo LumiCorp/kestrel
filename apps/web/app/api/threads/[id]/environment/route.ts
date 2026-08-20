@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { describeEnvironmentActivation } from "@/lib/environments/execution-route";
+import {
+  describeEnvironmentActivation,
+  requestEnvironmentWorkspaceActivation,
+} from "@/lib/environments/execution-route";
 import {
   getThreadExecutionBindingState,
   resolveOrCreateThreadExecutionBinding,
 } from "@/lib/environments/store";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
-import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { routeIdSchema } from "@/lib/knowledge/validation";
 import { getThreadAccessForUser } from "@/lib/threads/store";
 
@@ -77,23 +79,32 @@ export async function POST(
       threadId: access.threadId,
       userId: access.session.user.id,
     });
-    if (resolved.created && resolved.operation?.status === "queued") {
-      await enqueueEnvironmentOperation(resolved.operation.id);
-    }
-    const state = await getThreadExecutionBindingState({
+    const initialState = await getThreadExecutionBindingState({
       organizationId: access.organizationId,
       threadId: access.threadId,
     });
-    if (!state) {
+    if (!initialState) {
       return NextResponse.json(
         { error: "Thread Environment binding not found" },
         { status: 500 }
       );
     }
+    await requestEnvironmentWorkspaceActivation({
+      organizationId: access.organizationId,
+      userId: access.session.user.id,
+      provider: initialState.environment.provider,
+      resolved,
+    });
+    const state =
+      (await getThreadExecutionBindingState({
+        organizationId: access.organizationId,
+        threadId: access.threadId,
+      })) ?? initialState;
     return NextResponse.json(
       {
         ...resolved,
         environment: state.environment,
+        workspace: state.workspace,
         activation: activationFor(state),
       },
       {

@@ -18,6 +18,7 @@ import {
   getHostedEnvironmentRuntimeMode,
   requireHostedEnvironmentsEnabled,
 } from "./config";
+import type { EnvironmentProvider } from "./contracts";
 import {
   requestFailedWorkspaceProvisionRetry,
   requestFailedWorkspaceStartRetry,
@@ -86,6 +87,52 @@ export const ENVIRONMENT_EXECUTION_ROUTE_CAPABILITIES = [
 
 const ROUTE_CAPABILITIES = ENVIRONMENT_EXECUTION_ROUTE_CAPABILITIES;
 
+type ResolvedThreadExecutionBinding = Awaited<
+  ReturnType<typeof resolveOrCreateThreadExecutionBinding>
+>;
+
+export async function requestEnvironmentWorkspaceActivation(input: {
+  organizationId: string;
+  userId: string;
+  provider: EnvironmentProvider;
+  resolved: ResolvedThreadExecutionBinding;
+}) {
+  if (input.provider === "desktop") return null;
+
+  let operation = input.resolved.created ? input.resolved.operation : null;
+  if (!input.resolved.created && input.resolved.workspace.status === "failed") {
+    operation =
+      (await requestFailedWorkspaceProvisionRetry({
+        organizationId: input.organizationId,
+        environmentId: input.resolved.binding.environmentId,
+        workspaceId: input.resolved.binding.workspaceId,
+        userId: input.userId,
+      })) ??
+      (await requestFailedWorkspaceStartRetry({
+        organizationId: input.organizationId,
+        environmentId: input.resolved.binding.environmentId,
+        workspaceId: input.resolved.binding.workspaceId,
+        userId: input.userId,
+      }));
+  }
+  if (
+    !input.resolved.created &&
+    (input.resolved.workspace.status === "stopped" ||
+      input.resolved.workspace.status === "degraded")
+  ) {
+    operation = await requestWorkspaceStart({
+      organizationId: input.organizationId,
+      environmentId: input.resolved.binding.environmentId,
+      workspaceId: input.resolved.binding.workspaceId,
+      userId: input.userId,
+    });
+  }
+  if (operation?.status === "queued") {
+    await enqueueEnvironmentOperation(operation.id);
+  }
+  return operation;
+}
+
 export async function resolveEnvironmentExecutionRoute(input: {
   organizationId: string;
   expectedEnvironmentId?: string;
@@ -140,43 +187,12 @@ export async function resolveEnvironmentExecutionRoute(input: {
       workspace: resolved.workspace,
     });
   }
-  if (resolved.created && resolved.operation?.status === "queued") {
-    await enqueueEnvironmentOperation(resolved.operation.id);
-  }
-  if (!resolved.created && resolved.workspace.status === "failed") {
-    const failedProvision = await requestFailedWorkspaceProvisionRetry({
-      organizationId: input.organizationId,
-      environmentId: resolved.binding.environmentId,
-      workspaceId: resolved.binding.workspaceId,
-      userId: input.actorUserId,
-    });
-    const operation =
-      failedProvision ??
-      (await requestFailedWorkspaceStartRetry({
-        organizationId: input.organizationId,
-        environmentId: resolved.binding.environmentId,
-        workspaceId: resolved.binding.workspaceId,
-        userId: input.actorUserId,
-      }));
-    if (operation?.status === "queued") {
-      await enqueueEnvironmentOperation(operation.id);
-    }
-  }
-  if (
-    !resolved.created &&
-    (resolved.workspace.status === "stopped" ||
-      resolved.workspace.status === "degraded")
-  ) {
-    const operation = await requestWorkspaceStart({
-      organizationId: input.organizationId,
-      environmentId: resolved.binding.environmentId,
-      workspaceId: resolved.binding.workspaceId,
-      userId: input.actorUserId,
-    });
-    if (operation?.status === "queued") {
-      await enqueueEnvironmentOperation(operation.id);
-    }
-  }
+  await requestEnvironmentWorkspaceActivation({
+    organizationId: input.organizationId,
+    userId: input.actorUserId,
+    provider: selectedEnvironment?.provider ?? "fly",
+    resolved,
+  });
   let authorization: Awaited<
     ReturnType<typeof finalizeHostedEnvironmentExecutionAuthorization>
   > | null = null;
