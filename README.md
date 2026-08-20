@@ -15,10 +15,10 @@
 </p>
 
 <p align="center">
-  Kestrel 0.8.5 is one coordinated release across Desktop, Kestrel One,
-  the CLI/TUI, Runtime, Protocol, SDK, Memory, adapters, and observability.
-  Each surface uses the same execution, Mission Control, recovery, approval,
-  memory, and evidence contracts.
+  Kestrel artifacts release independently. The current public lines are
+  Desktop 0.8.6, packages and CLI/TUI 0.8.5, and Kestrel One source 0.8.5.
+  Each surface keeps explicit compatibility, execution, Mission Control,
+  recovery, approval, memory, and evidence contracts.
 </p>
 
 <p align="center">
@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/LumiCorp/kestrel/releases/tag/v0.8.5">Get Kestrel 0.8.5</a> ·
+  <a href="https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/Kestrel-0.8.6-mac-arm64.dmg">Download Desktop 0.8.6</a> ·
   <a href="https://docs.kestrelagents.dev">Read the docs</a> ·
   <a href="https://github.com/LumiCorp/kestrel/tree/v0.8.5/apps/web">View Kestrel One source</a>
 </p>
@@ -34,7 +34,8 @@
 <p align="center">
   <a href="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml"><img src="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1f6f5f.svg" alt="MIT license" /></a>
-  <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/Kestrel-0.8.5-2f7d32.svg" alt="Kestrel 0.8.5" /></a>
+  <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/Desktop-0.8.6-2f7d32.svg" alt="Kestrel Desktop 0.8.6" /></a>
+  <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/Packages-0.8.5-245b78.svg" alt="Kestrel packages 0.8.5" /></a>
   <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/status-Beta-245b78.svg" alt="Kestrel Beta" /></a>
 </p>
 
@@ -48,20 +49,20 @@
   <img src=".github/assets/kestrel-desktop-night-flight.gif" alt="Kestrel Desktop creating a launch codename and rally cry in a completed conversation." width="1000" />
 </p>
 
-Kestrel Desktop 0.8.5 is the signed and notarized macOS application for local
+Kestrel Desktop 0.8.6 is the signed and notarized macOS application for local
 project work. Give it a folder, connect a compatible provider/model, and work
 through one durable conversation while Local Core owns execution, credentials,
 sessions, recovery, and project evidence. Mission Control keeps work items,
 attempts, validation, review, and acceptance visible without turning the
 conversation into a status database.
 
-Desktop 0.8.5 supports macOS 13 or newer on Apple silicon. Install the signed
-DMG directly or update through the stable channel from Desktop 0.7.0 or 0.8.0.
+Desktop 0.8.6 supports macOS 13 or newer on Apple silicon. Install the signed
+DMG directly or update through the stable channel from an earlier signed Desktop.
 The upgrade preserves settings, credentials, projects, conversations, Mission
 Control, and Local Core state while migrating Apps to executable plugin records.
 
 [Learn about Desktop](https://docs.kestrelagents.dev/desktop) ·
-[Install Desktop 0.8.5](https://docs.kestrelagents.dev/desktop/install) ·
+[Install Desktop 0.8.6](https://docs.kestrelagents.dev/desktop/install) ·
 [Desktop updates](https://docs.kestrelagents.dev/desktop/updates)
 
 ## Kestrel One
@@ -95,7 +96,7 @@ kestrel
 ```
 
 A checksum-bearing macOS arm64 standalone archive is also attached to the
-unified `v0.8.5` GitHub release and reports product version `0.8.5`.
+Runtime/CLI `v0.8.5` GitHub release and reports product version `0.8.5`.
 
 [CLI installation](https://docs.kestrelagents.dev/cli/install) ·
 [Command suite](https://docs.kestrelagents.dev/cli/command-suite) ·
@@ -103,9 +104,11 @@ unified `v0.8.5` GitHub release and reports product version `0.8.5`.
 
 ## Build with Kestrel
 
-Install exact matching 0.8 packages. Kestrel does not provide a 0.7 wire/API
-compatibility shim around the current Runtime, Protocol, SDK, adapters, or
-clients.
+Install the exact package versions shown in the compatibility matrix. The
+current nine public packages are all 0.8.5; independently versioned products
+such as Desktop do not need to share that number. Kestrel does not provide a
+0.7 wire/API compatibility shim around the current Runtime, Protocol, SDK,
+adapters, or clients.
 
 ```bash
 pnpm add @kestrel-agents/sdk@0.8.5 @kestrel-agents/protocol@0.8.5

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import { SiteChrome } from "@/components/SiteChrome";
 import { getNavSectionForUrl } from "@/lib/content";
-import { DOCS_RELEASE } from "@/lib/release";
+import { DOCS_RELEASE_LABEL } from "@/lib/release";
 import type { DocsPageMeta, NavGroup, TocItem } from "@/lib/types";
 
 interface DocsShellProps {
@@ -90,7 +90,7 @@ export function DocsShell(props: DocsShellProps) {
                 <span>{surfaceLabel}</span>
                 <span>{pageMeta.experienceLevel}</span>
                 {pageMeta.estimatedTime ? <span>{pageMeta.estimatedTime}</span> : null}
-                <span>{DOCS_RELEASE.packages.version} {DOCS_RELEASE.packages.channel}</span>
+                <span>{DOCS_RELEASE_LABEL}</span>
               </div>
               <div className="article-details">
                 <span>Verified {pageMeta.updatedAt}</span>

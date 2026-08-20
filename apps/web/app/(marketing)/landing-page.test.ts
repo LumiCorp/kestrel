@@ -13,7 +13,7 @@ function readPackageFile(file: string) {
 }
 
 test(
-  "public Kestrel landing page presents unified 0.8, public One source, and separate hosted access",
+  "public Kestrel landing page presents independent releases, public One source, and separate hosted access",
   () => {
     const rootRoute = KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST.find(
       (entry) => entry.kind === "page" && entry.route === "/",
@@ -48,7 +48,7 @@ test(
 
     assert.match(
       landingSource,
-      /Kestrel 0\.8 is one coordinated Beta release/u,
+      /Kestrel 0\.8 uses independent artifact releases/u,
     );
     assert.match(landingSource, /Download Desktop Beta/u);
     assert.match(landingSource, /One Kestrel everywhere\./u);
@@ -57,7 +57,8 @@ test(
     assert.match(landingSource, /github\.com\/LumiCorp\/kestrel\/tree\/v0\.8\.5\/apps\/web/u);
     assert.match(landingSource, /SDK 0\.8/u);
     assert.match(landingSource, /@kestrel-agents\/kestrel@0\.8\.5/u);
-    assert.match(landingSource, /canonical 0\.8\.5 release/u);
+    assert.match(landingSource, /Desktop 0\.8\.6/u);
+    assert.match(landingSource, /packages and CLI\/TUI 0\.8\.5/u);
     assert.match(landingSource, /requires an invite code/u);
     assert.match(
       landingSource,
@@ -65,7 +66,8 @@ test(
     );
     assert.match(landingSource, /https:\/\/www\.lumicorp\.ai/u);
     assert.match(headerSource, /https:\/\/www\.lumicorp\.ai/u);
-    assert.doesNotMatch(landingSource, /release independently/iu);
+    assert.match(landingSource, /release independently/iu);
+    assert.doesNotMatch(landingSource, /one coordinated Beta release/iu);
     assert.doesNotMatch(landingSource, /private beta/iu);
     assert.doesNotMatch(landingSource, /Release readiness/u);
     assert.doesNotMatch(showcaseSource, /Release readiness/u);

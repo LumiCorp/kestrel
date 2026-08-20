@@ -1,7 +1,5 @@
 export const DOCS_RELEASE = {
   packages: {
-    version: "0.8.5",
-    runtimeNpmVersion: "0.8.5",
     line: "0.8",
     channel: "Stable",
     releasedPackageNames: [
@@ -15,6 +13,17 @@ export const DOCS_RELEASE = {
       "@kestrel-agents/observability",
       "@kestrel-agents/workspace-skills",
     ],
+    versions: {
+      "@kestrel-agents/kestrel": "0.8.5",
+      "@kestrel-agents/protocol": "0.8.5",
+      "@kestrel-agents/conversation": "0.8.5",
+      "@kestrel-agents/sdk": "0.8.5",
+      "@kestrel-agents/memory": "0.8.5",
+      "@kestrel-agents/next": "0.8.5",
+      "@kestrel-agents/ai-sdk": "0.8.5",
+      "@kestrel-agents/observability": "0.8.5",
+      "@kestrel-agents/workspace-skills": "0.8.5",
+    },
     releaseNotesUrl: "/reference/releases",
   },
   products: {
@@ -30,14 +39,14 @@ export const DOCS_RELEASE = {
       runtimeRequirement: "Node.js 22",
     },
     desktop: {
-      version: "0.8.5",
+      version: "0.8.6",
       channel: "Beta",
       mode: "ota-and-download",
-      releasesUrl: "https://github.com/LumiCorp/kestrel/releases/tag/v0.8.5",
-      downloadUrl: "https://github.com/LumiCorp/kestrel/releases/download/v0.8.5/Kestrel-0.8.5-mac-arm64.dmg",
+      releasesUrl: "https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/latest-mac.yml",
+      downloadUrl: "https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/Kestrel-0.8.6-mac-arm64.dmg",
       artifactStatus: "release-gated",
       supportedPlatforms: ["macOS 13+ on Apple silicon"],
-      trustNote: "Download the signed and notarized DMG, or update through the stable channel from Desktop 0.7.0 or 0.8.0.",
+      trustNote: "Download the signed and notarized DMG, or update through the stable channel from Desktop 0.7.0, 0.8.0, or 0.8.5.",
     },
     kestrelOne: {
       version: "0.8.5",
@@ -49,7 +58,7 @@ export const DOCS_RELEASE = {
     },
   },
   compatibility: [
-    { surface: "Runtime", version: "0.8.5", channel: "Stable", note: "Canonical Runtime and CLI distribution for the coordinated 0.8.5 contracts" },
+    { surface: "Runtime", version: "0.8.5", channel: "Stable", note: "Runtime and CLI distribution; package compatibility follows its declared dependencies" },
     { surface: "Protocol", version: "0.8.5", channel: "Stable", note: "Owns execution, conversations, executable plugins, approvals, recovery, Mission Control, and events" },
     { surface: "Conversation", version: "0.8.5", channel: "Stable", note: "Projects durable turns, streaming presentation, queues, composer actions, and typed host interactions" },
     { surface: "SDK", version: "0.8.5", channel: "Stable", note: "Consumes the exact matching runner and protocol contracts" },
@@ -59,9 +68,9 @@ export const DOCS_RELEASE = {
     { surface: "Observability", version: "0.8.5", channel: "Stable", note: "Carries compatible trace context and correlation" },
     { surface: "Workspace skills", version: "0.8.5", channel: "Stable", note: "Installs and verifies portable workspace guidance" },
     { surface: "CLI", version: "0.8.5", channel: "Stable", note: "Install the canonical npm artifact on macOS arm64 or Linux x64 with Node.js 22" },
-    { surface: "Desktop", version: "0.8.5", channel: "Beta", note: "Signed and notarized macOS arm64 application with stable OTA support" },
+    { surface: "Desktop", version: "0.8.6", channel: "Beta", note: "Signed and notarized macOS arm64 application with stable OTA support" },
     { surface: "Kestrel One", version: "0.8.5", channel: "Beta", note: "Versioned source plus an invitation-only Lumi-hosted deployment" },
   ],
 } as const;
 
-export const DOCS_RELEASE_LABEL = `${DOCS_RELEASE.packages.version} ${DOCS_RELEASE.packages.channel}`;
+export const DOCS_RELEASE_LABEL = "Current releases";

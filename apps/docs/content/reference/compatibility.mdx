@@ -5,22 +5,22 @@ section: reference
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-08-18
+updatedAt: 2026-08-20
 ---
 
 ## Compatibility rule
 
-Use exact `0.8.5` contracts across Runtime, Protocol, Conversation, SDK, Memory, Next.js, AI SDK, Observability, Workspace Skills, and compatible clients. Do not combine 0.7 and 0.8 contracts or add an application-side shim for removed APIs.
+Use the exact package versions shown below across Runtime, Protocol, Conversation, SDK, Memory, Next.js, AI SDK, Observability, Workspace Skills, and compatible clients. Exact first-party dependency pins must match the owning package manifest. Products such as Desktop release independently and do not need to share the package version.
 
 ## Package matrix
 
 <ReleaseCompatibilityTable />
 
-All nine published npm artifacts share version 0.8.5. A package may remain optional to an application, but every installed Kestrel package must match the versions shown above.
+All nine currently published npm artifacts are version 0.8.5. A package may remain optional to an application, but every installed Kestrel package must match the versions shown above. Do not combine 0.7 and 0.8 contracts or add an application-side shim for removed APIs.
 
 ## Product matrix
 
-CLI/TUI uses the Runtime package and supports Node.js 22 on macOS arm64 and Linux x64. Desktop 0.8.5 is a signed macOS arm64 application available by DMG and stable OTA. Kestrel One source is tagged 0.8.5; Lumi hosting runs an identified deployment of that product version.
+CLI/TUI uses the Runtime package and supports Node.js 22 on macOS arm64 and Linux x64. Desktop 0.8.6 is an independently versioned signed macOS arm64 application available by DMG and stable OTA. Kestrel One source is tagged 0.8.5; Lumi hosting runs an identified deployment of that product version.
 
 ## Platform matrix
 

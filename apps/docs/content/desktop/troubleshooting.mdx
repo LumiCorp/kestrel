@@ -5,7 +5,7 @@ section: desktop
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-20
 ---
 
 Start with the message or status visible in Desktop. Each symptom points to a different check, while restarting everything at once can hide the original problem.
@@ -19,11 +19,11 @@ Start with the message or status visible in Desktop. Each symptom points to a di
 | Session will not continue | Last terminal status and waiting reason | Use [operator control](/desktop/operator-control) or [recovery](/desktop/recovery) on the same session |
 | Application will not open | macOS version, architecture, checksum, Gatekeeper, and LaunchServices message | Re-download the signed DMG; do not disable system security globally |
 | Model is saved but unavailable | Provider reachability, model ID, capability qualification, and policy | Repair the owning provider state; do not select an unverified fallback |
-| Manual upgrade reports the wrong version | Applications copy, release checksum, and running process identity | Quit Kestrel and reinstall the exact signed 0.8.5 application |
+| Manual upgrade reports the wrong version | Applications copy, release checksum, and running process identity | Quit Kestrel and reinstall the exact signed 0.8.6 application |
 
 ## Application and LaunchServices
 
-Verify macOS 13+, Apple silicon, the release checksum, Developer ID signature, notarization, and that the application running from Applications is the 0.8.5 copy.
+Verify macOS 13+, Apple silicon, the release checksum, Developer ID signature, notarization, and that the application running from Applications is the 0.8.6 copy.
 
 ## Local Core
 
@@ -39,7 +39,7 @@ Check folder existence and permissions, project registration, Git/worktree prepa
 
 ## Manual updates
 
-Check the unified release, checksum, signing identity, installed application version, preserved project library, and Local Core migrations. Do not clear state to make a version mismatch disappear.
+Check the Desktop release, checksum, signing identity, installed application version, preserved project library, and Local Core migrations. Do not clear state to make a version mismatch disappear.
 
 ## Collect evidence
 

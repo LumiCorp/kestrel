@@ -1048,6 +1048,66 @@ test("ThreadRuntime reuses promoted route identities when follow-up processing r
   assert.equal(route?.runId, "run-promoted-existing");
 });
 
+test("ThreadRuntime pauses a stale queued conversation message instead of rejecting its detached processor", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, [
+    { output: buildOutput({ runId: "ignored-stale-route", status: "COMPLETED" }) },
+  ]);
+  const runtime = new ThreadRuntime({ sessionStore, executor, profile: buildProfile() });
+  await runtime.startThread({ threadId: "thread-stale-route", title: "Stale route" });
+  const thread = await sessionStore.getThread("thread-stale-route");
+  assert.ok(thread);
+  await sessionStore.upsertThread({
+    ...thread,
+    metadata: {
+      ...(thread.metadata ?? {}),
+      operatorControl: {
+        followUpQueue: {
+          state: "ready",
+          items: [{
+            followUpId: "follow-up:message-stale-route",
+            message: "Queued before the route was lost.",
+            attachmentIds: [],
+            createdAt: "2026-08-19T20:00:00.000Z",
+            state: "queued",
+            source: "human",
+            sourceMessageId: "message-stale-route",
+          }],
+        },
+      },
+    },
+  });
+
+  const failures: Array<Record<string, unknown>> = [];
+  const subscription = runtime.subscribe(
+    { threadId: "thread-stale-route" },
+    (event) => {
+      if (event.type === "thread.follow_up_failed") failures.push(event.payload);
+    },
+  );
+  await runtime.submitTurn({
+    threadId: "thread-stale-route",
+    message: "Finish the active turn.",
+    eventType: "user.message",
+  });
+  for (let attempt = 0; attempt < 10 && failures.length === 0; attempt += 1) await tick();
+  subscription.unsubscribe();
+
+  assert.deepEqual(failures, [{
+    followUpId: "follow-up:message-stale-route",
+    code: "CONVERSATION_MESSAGE_ROUTE_MISSING",
+  }]);
+  const status = await runtime.getThreadStatus("thread-stale-route");
+  assert.equal(status?.thread.metadata?.operatorControl instanceof Object, true);
+  const queue = (status?.thread.metadata?.operatorControl as {
+    followUpQueue?: { state?: string; pauseReason?: string; items?: Array<{ state?: string }> };
+  } | undefined)?.followUpQueue;
+  assert.equal(queue?.state, "paused");
+  assert.equal(queue?.pauseReason, "failed");
+  assert.equal(queue?.items?.[0]?.state, "queued");
+  assert.equal(executor.inputs.length, 1);
+});
+
 test("ThreadRuntime preserves persisted generic recovery waits until explicit cancellation", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [

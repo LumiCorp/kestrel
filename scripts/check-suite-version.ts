@@ -16,9 +16,6 @@ interface WorkspaceDefinition {
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
-const rootManifest = readManifest("package.json");
-const suiteVersion = requireNumericVersion(rootManifest.version, "root package.json");
-
 const workspaceDefinition = parse(
   readFileSync(path.join(repoRoot, "pnpm-workspace.yaml"), "utf8"),
 ) as WorkspaceDefinition;
@@ -32,14 +29,26 @@ assert.equal(
   "pnpm-workspace.yaml resolves a workspace more than once",
 );
 
-for (const manifestPath of ["package.json", ...workspaceManifestPaths]) {
+const manifestPaths = ["package.json", ...workspaceManifestPaths];
+const manifests = new Map<string, PackageManifest>();
+for (const manifestPath of manifestPaths) {
   const manifest = readManifest(manifestPath);
   assert.ok(manifest.name, `${manifestPath} must declare a package name`);
-  assert.equal(
-    manifest.version,
-    suiteVersion,
-    `${manifest.name} must use the canonical suite version ${suiteVersion}`,
-  );
+  requireNumericVersion(manifest.version, `${manifest.name} version`);
+  assert.equal(manifests.has(manifest.name), false, `duplicate workspace package '${manifest.name}'`);
+  manifests.set(manifest.name, manifest);
+}
+
+for (const [name, manifest] of manifests) {
+  for (const [dependencyName, declaredVersion] of Object.entries(manifest.dependencies ?? {})) {
+    const dependency = manifests.get(dependencyName);
+    if (dependency === undefined || !/^\d+\.\d+\.\d+$/u.test(declaredVersion)) continue;
+    assert.equal(
+      declaredVersion,
+      dependency.version,
+      `${name} pins ${dependencyName}@${declaredVersion}, but its manifest is ${dependency.version}`,
+    );
+  }
 }
 
 const publicPackageNames = [
@@ -54,78 +63,88 @@ const publicPackageNames = [
   "@kestrel-agents/workspace-skills",
 ] as const;
 
-const kestrelOne = readManifest("apps/web/package.json");
-requireNumericVersion(kestrelOne.version, "Kestrel One package.json");
-const kestrelOnePackageDependencies = [
-  "@kestrel-agents/protocol",
-  "@kestrel-agents/conversation",
-  "@kestrel-agents/sdk",
-  "@kestrel-agents/memory",
-  "@kestrel-agents/next",
-  "@kestrel-agents/ai-sdk",
-  "@kestrel-agents/workspace-skills",
-] as const;
-for (const packageName of kestrelOnePackageDependencies) {
-  assert.equal(
-    kestrelOne.dependencies?.[packageName],
-    suiteVersion,
-    `Kestrel One must depend on ${packageName}@${suiteVersion}`,
-  );
-}
-
 const releaseModuleUrl = pathToFileURL(
   path.join(repoRoot, "apps/docs/lib/release.ts"),
 ).href;
 const { DOCS_RELEASE } = (await import(releaseModuleUrl)) as {
   DOCS_RELEASE: {
     compatibility: ReadonlyArray<{ surface: string; version: string }>;
-    packages: { releasedPackageNames: readonly string[]; runtimeNpmVersion: string; version: string };
+    packages: {
+      releasedPackageNames: readonly string[];
+      versions: Record<string, string>;
+    };
     products: Record<string, { npmVersion?: string; version: string }>;
   };
 };
 
-assert.equal(
-  DOCS_RELEASE.packages.version,
-  suiteVersion,
-  "docs package release metadata must match the canonical suite version",
-);
 assert.deepEqual(
   [...DOCS_RELEASE.packages.releasedPackageNames],
   [...publicPackageNames],
   "docs must enumerate the nine public packages in release order",
 );
-requireNumericVersion(
-  DOCS_RELEASE.packages.runtimeNpmVersion,
-  "docs Runtime npm package release metadata",
-);
-assert.equal(
-  DOCS_RELEASE.packages.runtimeNpmVersion,
-  suiteVersion,
-  "docs Runtime npm package release metadata must match the canonical suite version",
-);
-assert.equal(
-  DOCS_RELEASE.products.cli.npmVersion,
-  DOCS_RELEASE.packages.runtimeNpmVersion,
-  "docs CLI npm version must match the Runtime npm package version",
-);
-for (const [productName, product] of Object.entries(DOCS_RELEASE.products)) {
+for (const packageName of publicPackageNames) {
+  const manifest = manifests.get(packageName);
+  assert.ok(manifest, `missing public package manifest '${packageName}'`);
   assert.equal(
-    product.version,
-    suiteVersion,
-    `docs product '${productName}' must match the canonical suite version`,
-  );
-}
-for (const row of DOCS_RELEASE.compatibility) {
-  assert.equal(
-    row.version,
-    suiteVersion,
-    `docs compatibility row '${row.surface}' must match the canonical suite version`,
+    DOCS_RELEASE.packages.versions[packageName],
+    manifest.version,
+    `docs must report ${packageName}@${manifest.version}`,
   );
 }
 
-console.log(
-  `suite version check passed (${suiteVersion}; ${workspaceManifestPaths.length + 1} manifests; ${publicPackageNames.length} public packages)`,
+assert.equal(
+  DOCS_RELEASE.products.cli.version,
+  manifests.get("@kestrel-agents/kestrel")?.version,
+  "docs CLI product version must match the Runtime package",
 );
+assert.equal(
+  DOCS_RELEASE.products.cli.npmVersion,
+  manifests.get("@kestrel-agents/kestrel")?.version,
+  "docs CLI npm version must match the Runtime package",
+);
+assertProductVersion("desktop", "@kestrel/desktop");
+assertProductVersion("kestrelOne", "@kestrel/kestrel-one");
+
+const compatibilityOwners: Record<string, string> = {
+  Runtime: "@kestrel-agents/kestrel",
+  Protocol: "@kestrel-agents/protocol",
+  Conversation: "@kestrel-agents/conversation",
+  SDK: "@kestrel-agents/sdk",
+  Memory: "@kestrel-agents/memory",
+  "Next.js": "@kestrel-agents/next",
+  "AI SDK": "@kestrel-agents/ai-sdk",
+  Observability: "@kestrel-agents/observability",
+  "Workspace skills": "@kestrel-agents/workspace-skills",
+  CLI: "@kestrel-agents/kestrel",
+  Desktop: "@kestrel/desktop",
+  "Kestrel One": "@kestrel/kestrel-one",
+};
+for (const row of DOCS_RELEASE.compatibility) {
+  const owner = compatibilityOwners[row.surface];
+  assert.ok(owner, `docs compatibility surface '${row.surface}' has no owning artifact`);
+  assert.equal(
+    row.version,
+    manifests.get(owner)?.version,
+    `docs compatibility version for ${row.surface} must match ${owner}`,
+  );
+}
+assert.deepEqual(
+  DOCS_RELEASE.compatibility.map(({ surface }) => surface).sort(),
+  Object.keys(compatibilityOwners).sort(),
+  "docs compatibility must cover every release artifact exactly once",
+);
+
+console.log(
+  `release artifact version check passed (${manifestPaths.length} manifests; ${publicPackageNames.length} public packages)`,
+);
+
+function assertProductVersion(productName: string, packageName: string): void {
+  assert.equal(
+    DOCS_RELEASE.products[productName]?.version,
+    manifests.get(packageName)?.version,
+    `docs ${productName} version must match ${packageName}`,
+  );
+}
 
 function expandWorkspacePattern(pattern: string): string[] {
   const match = /^([^*]+)\/\*$/u.exec(pattern);

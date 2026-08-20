@@ -1,11 +1,11 @@
 ---
 title: Get Kestrel Desktop
-summary: Download, verify, install, or update the signed Kestrel Desktop 0.8.5 application on a supported Mac.
+summary: Download, verify, install, or update the signed Kestrel Desktop 0.8.6 application on a supported Mac.
 section: desktop
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-08-18
+updatedAt: 2026-08-20
 ---
 
 <DesktopDownload />
@@ -16,27 +16,27 @@ Use macOS 13 or later on a Mac with Apple silicon. You need permission to instal
 
 ## Install the application
 
-1. Open the unified [`v0.8.5` release](https://github.com/LumiCorp/kestrel/releases/tag/v0.8.5).
-2. Download `Kestrel-0.8.5-mac-arm64.dmg` and its checksum.
+1. Download the immutable [`Kestrel-0.8.6-mac-arm64.dmg`](https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/Kestrel-0.8.6-mac-arm64.dmg).
+2. Download [`SHA256SUMS.txt`](https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/SHA256SUMS.txt) and verify the DMG checksum.
 3. Verify the checksum, open the DMG, and move Kestrel to Applications.
 4. Open Kestrel from Applications.
 
 ## Verify the application
 
-macOS should accept the Developer ID signature and notarization. Confirm the application reports `0.8.5`. Stop if the checksum, signer, or version does not match the published record.
+macOS should accept the Developer ID signature and notarization. Confirm the application reports `0.8.6`. Stop if the checksum, signer, or version does not match the published record.
 
-## Upgrade from 0.7.0 or 0.8.0
+## Upgrade from an earlier signed Desktop
 
 Use **Check for Updates** for the stable OTA path, or quit the existing application and replace it from the signed DMG. Do not remove its data. The upgrade preserves provider settings, Keychain credentials, projects, sessions, conversations, Mission Control records, and Local Core persistence.
 
 ## Update Desktop
 
-Kestrel 0.8.5 is the current stable updater target. Read [Update Kestrel Desktop](/desktop/updates) before upgrading or restoring an older application.
+Kestrel 0.8.6 is the current stable updater target. Read [Update Kestrel Desktop](/desktop/updates) before upgrading or restoring an older application.
 
 ## If the application does not open
 
 Confirm the platform and checksum, reopen the DMG, and inspect the exact Gatekeeper or LaunchServices message. Do not disable macOS security controls globally or delete application data. Continue with [Desktop troubleshooting](/desktop/troubleshooting) and collect the version, warning, timestamp, and support bundle.
 
 <Outcome title="Desktop is ready to configure">
-  <p>Kestrel 0.8.5 opens from Applications, Local Core becomes ready, and the provider setup path is visible.</p>
+  <p>Kestrel 0.8.6 opens from Applications, Local Core becomes ready, and the provider setup path is visible.</p>
 </Outcome>
