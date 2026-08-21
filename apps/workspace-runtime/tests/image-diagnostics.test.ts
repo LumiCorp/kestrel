@@ -29,6 +29,7 @@ test("workspace image exposes pnpm to hosted project commands", async () => {
   );
   const corepackEnable = runtimeStage.indexOf("RUN corepack enable pnpm");
 
+  assert.match(runtimeStage, /ENV COREPACK_HOME=\/opt\/corepack/u);
   assert.match(runtimeStage, /ENV PNPM_HOME=\/pnpm/u);
   assert.match(runtimeStage, /ENV PATH=\$PNPM_HOME:\$PATH/u);
   assert.match(runtimeStage, /RUN corepack enable pnpm/u);
@@ -56,6 +57,7 @@ test("workspace image exposes pnpm to hosted project commands", async () => {
   assert.match(imageSmoke, /expected_pnpm=.*packageManager/u);
   assert.match(imageSmoke, /actual_pnpm="\$\(docker run --rm/u);
   assert.match(imageSmoke, /--network none/u);
+  assert.match(imageSmoke, /--env HOME=\/workspace\/\.kestrel\/runner/u);
   assert.match(imageSmoke, /--workdir \/workspace/u);
   assert.match(imageSmoke, /-lc 'pnpm --version'/u);
   assert.match(imageSmoke, /test "\$actual_pnpm" = "\$expected_pnpm"/u);
