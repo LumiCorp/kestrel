@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import JSZip from "jszip";
 
@@ -6,6 +7,13 @@ import {
   extractAttachmentText,
   isAttachmentTextExtractable,
 } from "../src/index.js";
+
+test("does not initialize the PDF runtime while importing the attachment package", async () => {
+  const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /^import .* from ["']pdf-parse["'];$/mu);
+  assert.match(source, /await import\(["']pdf-parse["']\)/u);
+  assert.match(source, /await import\(["']@napi-rs\/canvas["']\)/u);
+});
 
 test("extracts bounded UTF-8 text and reports truncation", async () => {
   const extracted = await extractAttachmentText({
@@ -25,6 +33,16 @@ test("extracts visible HTML text without returning markup", async () => {
     mediaType: "text/html",
   });
   assert.equal(extracted.text, "Hello world");
+});
+
+test("loads the native PDF runtime only for PDF extraction", async () => {
+  const extracted = await extractAttachmentText({
+    buffer: await readFile(new URL("../../../apps/web/tests/fixtures/knowledge-rag/incident-playbook.pdf", import.meta.url)),
+    filename: "incident-playbook.pdf",
+    mediaType: "application/pdf",
+  });
+  assert.match(extracted.text, /fixture-pdf-anchor-signal/u);
+  assert.equal(extracted.truncated, false);
 });
 
 test("malformed UTF-8 fails extraction so callers can degrade to metadata-only", async () => {

@@ -26,6 +26,7 @@
     "release:check": "pnpm run build && pnpm run smoke:import"
   },
   "dependencies": {
+    "@napi-rs/canvas": "0.1.80",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
     "pdf-parse": "^2.4.5",
