@@ -120,7 +120,7 @@ export function createWorkspaceRunnerReadiness(input: {
   let state: WorkspaceRunnerReadinessState = "idle";
   let stopPromise: Promise<void> | null = null;
   let fatalExitRequested = false;
-  const runnerStops = new Map<WorkspaceRunnerProcess, Promise<void>>();
+  const runnerStops = new Map<WorkspaceRunnerProcess, Promise<boolean>>();
 
   const transition = (
     next: typeof state,
@@ -154,8 +154,9 @@ export function createWorkspaceRunnerReadiness(input: {
           generation: context.generation,
         });
         context.process.kill("SIGKILL");
-        await context.exited;
+        return false;
       }
+      return true;
     })();
     runnerStops.set(context.process, stopping);
     return stopping;
@@ -248,11 +249,23 @@ export function createWorkspaceRunnerReadiness(input: {
     });
     if (unhealthyRunner) {
       if (runner === unhealthyRunner) runner = null;
-      await stopRunner(
+      const stopped = await stopRunner(
         unhealthyRunner,
         input.recoveryStopTimeoutMs ??
           WORKSPACE_RUNNER_RECOVERY_STOP_TIMEOUT_MS,
       );
+      if (!stopped) {
+        input.log({
+          type: "workspace.runner.escalated",
+          reason,
+          generation: unhealthyRunner.generation,
+          durationMs: Math.max(0, now() - startedAt),
+        });
+        requestFatalExit(1);
+        throw new Error(
+          "Workspace runner did not exit after SIGKILL; escalating to Machine restart.",
+        );
+      }
     }
     if (isStopping()) return;
 
@@ -422,7 +435,6 @@ function waitForRunnerExit(
       settled = true;
       resolve(false);
     }, timeoutMs);
-    timer.unref();
     void runnerExit.then(() => {
       if (settled) return;
       settled = true;

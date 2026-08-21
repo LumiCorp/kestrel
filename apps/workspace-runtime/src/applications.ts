@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { open, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { workspaceChildEnvironment } from "./child-environment.js";
 import { resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
 
 export type WorkspaceApplication = {
@@ -168,7 +169,10 @@ export class WorkspaceApplicationRegistry {
         this.workspaceRoot,
         application.workingDirectory
       ),
-      env: { ...process.env, PORT: String(application.port) },
+      env: {
+        ...workspaceChildEnvironment(),
+        PORT: String(application.port),
+      },
       stdio: ["ignore", log.fd, log.fd],
       detached: true,
     });

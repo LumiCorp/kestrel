@@ -291,7 +291,7 @@ test(
 );
 
 test(
-  "Workspace shutdown escalates once after the graceful timeout and still awaits exit",
+  "Workspace shutdown escalates once after the graceful timeout without waiting forever",
   async () => {
     const runner = new EventEmitter() as WorkspaceRunnerProcess;
     const signals: string[] = [];
@@ -319,16 +319,50 @@ test(
       generation: 1,
     });
 
-    let stopped = false;
-    void stopping.then(() => {
-      stopped = true;
-    });
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(stopped, false);
-    runner.emit("exit", null);
     await stopping;
   },
 );
+
+test("a runner that ignores SIGKILL triggers one fatal fallback and no competing replacement", async () => {
+  const runner = new EventEmitter() as WorkspaceRunnerProcess;
+  const signals: string[] = [];
+  const fatalExitCodes: number[] = [];
+  let starts = 0;
+  let waits = 0;
+  runner.kill = (signal) => {
+    signals.push(signal);
+    return true;
+  };
+  const readiness = createWorkspaceRunnerReadiness({
+    startRunner: () => {
+      starts += 1;
+      return runner;
+    },
+    waitUntilHealthy: () => {
+      waits += 1;
+      return waits === 1
+        ? Promise.resolve()
+        : Promise.reject(new Error("runner unavailable"));
+    },
+    probeHealth: async () => {
+      throw new Error("runner unavailable");
+    },
+    onFatalExit: (code) => fatalExitCodes.push(code),
+    log() {},
+    recoveryStopTimeoutMs: 5,
+  });
+
+  await readiness.ensureReady();
+  await assert.rejects(readiness.probeReady(), /runner unavailable/u);
+  await assert.rejects(
+    readiness.ensureReady(),
+    /escalating to Machine restart/u,
+  );
+
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.deepEqual(fatalExitCodes, [1]);
+  assert.equal(starts, 1);
+});
 
 for (const readyAtMs of [122_000, 299_000]) {
   test(`Workspace runner recovery remains retryable until ${readyAtMs / 1000} seconds`, async () => {

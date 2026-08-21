@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import test from "node:test";
 import { ENVIRONMENT_GATEWAY_CONFIG_VERSION } from "@lumi/kestrel-environment-auth";
 import {
@@ -164,3 +164,136 @@ test("app relay allowlists only supported app methods and contracts", () => {
     "POST",
   ), false);
 });
+
+test("app relay times out one stalled upstream request", async () => {
+  const fixture = await createRelayFixture();
+  let observedSignal: AbortSignal | undefined;
+  const relay = createServer((request, response) => {
+    void handleAppRelay({
+      request,
+      response,
+      config: fixture.config,
+      requestTimeoutMs: 5,
+      fetchImpl: (async (_input, init) => {
+        observedSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      }) as typeof fetch,
+    });
+  });
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${address.port}/internal/apps/${fixture.runId}/api/runtime/email/action`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${fixture.workspaceToken}`,
+          "content-type": "application/json",
+        },
+        body: "{}",
+      },
+    );
+    assert.equal(response.status, 502);
+    assert.equal(observedSignal?.aborted, true);
+  } finally {
+    relay.close();
+    fixture.config.stop();
+  }
+});
+
+test("app relay aborts its upstream request when the downstream closes", async () => {
+  const fixture = await createRelayFixture();
+  let resolveUpstreamStarted!: () => void;
+  const upstreamStarted = new Promise<void>((resolve) => {
+    resolveUpstreamStarted = resolve;
+  });
+  let resolveUpstreamAborted!: () => void;
+  const upstreamAborted = new Promise<void>((resolve) => {
+    resolveUpstreamAborted = resolve;
+  });
+  const relay = createServer((request, response) => {
+    void handleAppRelay({
+      request,
+      response,
+      config: fixture.config,
+      fetchImpl: (async (_input, init) => {
+        const signal = init?.signal;
+        assert.ok(signal);
+        signal.addEventListener("abort", resolveUpstreamAborted, {
+          once: true,
+        });
+        resolveUpstreamStarted();
+        return new Promise<Response>(() => {});
+      }) as typeof fetch,
+    });
+  });
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const address = relay.address();
+  assert.ok(address && typeof address !== "string");
+
+  try {
+    const request = httpRequest({
+      host: "127.0.0.1",
+      port: address.port,
+      path: `/internal/apps/${fixture.runId}/api/runtime/email/action`,
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${fixture.workspaceToken}`,
+        "content-type": "application/json",
+      },
+    });
+    request.on("error", () => {});
+    request.end("{}");
+    await upstreamStarted;
+    request.destroy();
+    await upstreamAborted;
+  } finally {
+    relay.close();
+    fixture.config.stop();
+  }
+});
+
+async function createRelayFixture() {
+  const environmentId = randomUUID();
+  const workspaceId = randomUUID();
+  const runId = randomUUID();
+  const workspaceToken = "workspace-secret";
+  const config = new EnvironmentGatewayConfigClient({
+    controlPlaneUrl: "http://127.0.0.1:18081",
+    environmentId,
+    serviceToken: "gateway-secret",
+    fetchImpl: (async () =>
+      Response.json({
+        version: ENVIRONMENT_GATEWAY_CONFIG_VERSION,
+        environmentId,
+        revision: "relay-timeout-test",
+        workspaces: [
+          {
+            id: workspaceId,
+            machineId: "machine-1",
+            serviceTokenHash: createHash("sha256")
+              .update(workspaceToken)
+              .digest("base64url"),
+          },
+        ],
+        previews: [],
+        modelGrants: [],
+        appGrants: [
+          {
+            executionId: runId,
+            runId: "runtime-run-1",
+            workspaceId,
+            executionTicket: "execution-ticket",
+            credentialExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+        ],
+      })) as typeof fetch,
+  });
+  await config.refresh();
+  return { config, runId, workspaceToken };
+}

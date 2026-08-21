@@ -4,6 +4,7 @@ import type { EnvironmentGatewayConfigV3 } from "@lumi/kestrel-environment-auth"
 import type { EnvironmentGatewayConfigClient } from "./gateway-config.js";
 
 const MAX_APP_REQUEST_BYTES = 2 * 1024 * 1024;
+export const APP_RELAY_REQUEST_TIMEOUT_MS = 30_000;
 const APP_RELAY_PATH = /^\/internal\/apps\/([^/]+)(\/api\/.*)$/u;
 const LEGACY_APP_PATHS = new Set([
   "/api/kestrel/tools/search-knowledge-documents",
@@ -28,6 +29,8 @@ export async function handleAppRelay(input: {
   request: IncomingMessage;
   response: ServerResponse;
   config: EnvironmentGatewayConfigClient;
+  fetchImpl?: typeof fetch | undefined;
+  requestTimeoutMs?: number | undefined;
 }) {
   const startedAt = Date.now();
   const pathname = new URL(
@@ -95,6 +98,11 @@ export async function handleAppRelay(input: {
     return;
   }
 
+  const relayAbort = createRelayAbort(
+    input.request,
+    input.response,
+    input.requestTimeoutMs ?? APP_RELAY_REQUEST_TIMEOUT_MS,
+  );
   try {
     let upstream = await requestControlPlane({
       request: input.request,
@@ -102,6 +110,8 @@ export async function handleAppRelay(input: {
       upstreamPath,
       executionTicket: scope.grant.executionTicket,
       body,
+      signal: relayAbort.signal,
+      fetchImpl: input.fetchImpl,
     });
     if (upstream.status === 401 && await hasErrorCode(upstream, "TICKET_EXPIRED")) {
       logRelay("environment.app_grant.refresh", {
@@ -124,6 +134,8 @@ export async function handleAppRelay(input: {
         upstreamPath,
         executionTicket: scope.grant.executionTicket,
         body,
+        signal: relayAbort.signal,
+        fetchImpl: input.fetchImpl,
       });
       if (upstream.status === 401 && await hasErrorCode(upstream, "TICKET_EXPIRED")) {
         logRelay("environment.app_relay.auth_failed", {
@@ -162,11 +174,16 @@ export async function handleAppRelay(input: {
       errorName: error instanceof Error ? error.name : "Error",
       errorMessage: error instanceof Error ? error.message : String(error),
     });
+    if (input.response.destroyed) {
+      return;
+    }
     if (!input.response.headersSent) {
       writeError(input.response, 502, "APP_RELAY_UPSTREAM_FAILED");
     } else {
       input.response.destroy();
     }
+  } finally {
+    relayAbort.dispose();
   }
 }
 
@@ -203,6 +220,8 @@ function requestControlPlane(input: {
   upstreamPath: string;
   executionTicket: string;
   body: Buffer | undefined;
+  signal: AbortSignal;
+  fetchImpl?: typeof fetch | undefined;
 }) {
   const forwardedHeaders = [
     "x-kestrel-runtime-approval",
@@ -211,7 +230,10 @@ function requestControlPlane(input: {
     "x-kestrel-tenant-id",
     "x-organization-id",
   ] as const;
-  return fetch(new URL(input.upstreamPath, input.controlPlaneUrl), {
+  return fetchWithAbort(input.fetchImpl ?? fetch, new URL(
+    input.upstreamPath,
+    input.controlPlaneUrl,
+  ), {
     method: input.request.method ?? "GET",
     headers: {
       accept: input.request.headers.accept ?? "application/json",
@@ -227,6 +249,53 @@ function requestControlPlane(input: {
       ),
     },
     ...(input.body !== undefined ? { body: input.body } : {}),
+    signal: input.signal,
+  }, input.signal);
+}
+
+function createRelayAbort(
+  request: IncomingMessage,
+  response: ServerResponse,
+  timeoutMs: number,
+) {
+  const controller = new AbortController();
+  const abort = (reason: Error) => {
+    if (!controller.signal.aborted) controller.abort(reason);
+  };
+  const onAborted = () => abort(new Error("App Relay downstream request closed."));
+  const onClose = () => {
+    if (!response.writableEnded) onAborted();
+  };
+  request.once("aborted", onAborted);
+  response.once("close", onClose);
+  const timer = setTimeout(
+    () => abort(new Error("App Relay request timed out.")),
+    timeoutMs,
+  );
+  timer.unref();
+  return {
+    signal: controller.signal,
+    dispose() {
+      clearTimeout(timer);
+      request.off("aborted", onAborted);
+      response.off("close", onClose);
+    },
+  };
+}
+
+function fetchWithAbort(
+  fetchImpl: typeof fetch,
+  input: URL,
+  init: RequestInit,
+  signal: AbortSignal,
+): Promise<Response> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<Response>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    void fetchImpl(input, init).then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
   });
 }
 

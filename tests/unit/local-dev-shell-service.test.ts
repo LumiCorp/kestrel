@@ -12,7 +12,10 @@ import {
   LocalDevShellService,
   resolveDevShellServiceLaunch,
 } from "../../src/devshell/LocalDevShellService.js";
-import { DEV_SHELL_SERVICE_PROTOCOL_VERSION } from "../../src/devshell/contracts.js";
+import {
+  DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+  DEV_SHELL_SERVICE_STARTUP_TIMEOUT_MS,
+} from "../../src/devshell/contracts.js";
 import {
   resolveDefaultDevShellBaseDir,
   resolveDefaultDevShellBootstrapStatusPath,
@@ -210,6 +213,21 @@ test("LocalDevShellService reads startup timeout from environment", async () => 
   try {
     const service = new LocalDevShellService(root) as any;
     assert.equal(service.startupTimeoutMs, 30_000);
+  } finally {
+    restoreEnvVar("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS", previousTimeout);
+  }
+});
+
+test("LocalDevShellService allows one bounded cold bootstrap by default", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "local-dev-shell-timeout-default-"));
+  const previousTimeout = process.env.KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS;
+  delete process.env.KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS;
+  try {
+    const service = new LocalDevShellService(root) as any;
+    assert.equal(
+      service.startupTimeoutMs,
+      DEV_SHELL_SERVICE_STARTUP_TIMEOUT_MS,
+    );
   } finally {
     restoreEnvVar("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS", previousTimeout);
   }
