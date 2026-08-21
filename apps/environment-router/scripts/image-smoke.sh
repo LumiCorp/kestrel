@@ -63,4 +63,60 @@ node -e '
   }
 ' "$health"
 
+docker run --rm \
+  --entrypoint node \
+  "$image" \
+  --input-type=module \
+  --eval '
+    import assert from "node:assert/strict";
+    import { generateKeyPairSync } from "node:crypto";
+    import {
+      ENVIRONMENT_ROUTER_AUDIENCE,
+      signEnvironmentExecutionTicket,
+    } from "/app/packages/environment-auth/dist/index.js";
+    import { authorizeEnvironmentHttpRequest } from "/app/apps/environment-router/dist/router.js";
+
+    const keys = generateKeyPairSync("ed25519");
+    const privateKey = keys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const publicKey = keys.publicKey.export({ type: "spki", format: "pem" }).toString();
+    const token = signEnvironmentExecutionTicket({
+      privateKey,
+      ticket: {
+        version: 1,
+        audience: ENVIRONMENT_ROUTER_AUDIENCE,
+        organizationId: "organization-smoke",
+        environmentId: "environment-smoke",
+        workspaceId: "workspace-smoke",
+        threadId: "thread-smoke",
+        runId: "run-smoke",
+        actorId: "operator-smoke",
+        agentId: "kestrel-one",
+        flyAppName: "environment-smoke-app",
+        flyMachineId: "workspace-smoke-machine",
+        capabilities: ["workspace.apps.write"],
+        issuedAt: 1_000,
+        expiresAt: 1_300,
+        nonce: "router-image-smoke",
+      },
+    });
+    for (const action of ["start", "stop"]) {
+      const decision = authorizeEnvironmentHttpRequest({
+        authorization: `Bearer ${token}`,
+        pathname: `/v1/apps/application-smoke/${action}`,
+        method: "POST",
+        publicKey,
+        expectedAppName: "environment-smoke-app",
+        now: 1_100,
+      });
+      assert.equal(decision.status, 200);
+      assert.equal(
+        decision.status === 200 ? decision.targetUrl : null,
+        "http://workspace-smoke-machine.vm.environment-smoke-app.internal:43104",
+      );
+    }
+  '
+
+docker stop --time 10 "$container" >/dev/null
+test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = "0"
+
 printf 'Environment Router image smoke passed\n'

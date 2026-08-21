@@ -37,6 +37,64 @@ node -e '
 
 docker exec "$container" test -d /workspace/.kestrel/runner/store/pglite
 
+docker exec "$container" node --input-type=module --eval '
+  import assert from "node:assert/strict";
+  import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+  import { createServer } from "node:net";
+  import path from "node:path";
+  import { WorkspaceApplicationRegistry } from "/app/apps/workspace-runtime/dist/applications.js";
+
+  const root = await mkdtemp("/tmp/kestrel-image-application-");
+  const pidPath = path.join(root, "application.pid");
+  const scriptPath = path.join(root, "application.mjs");
+  const port = 4174;
+  let applicationPid = null;
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    await mkdir(path.join(root, ".kestrel"));
+    await writeFile(scriptPath, [
+      "import { writeFileSync } from \"node:fs\";",
+      "import { createServer } from \"node:http\";",
+      `const server = createServer((_request, response) => response.end("ok"));`,
+      `server.listen(${port}, "127.0.0.1", () => writeFileSync(${JSON.stringify(pidPath)}, String(process.pid)));`,
+    ].join("\n"));
+    const registry = new WorkspaceApplicationRegistry(root);
+    const nestedCommand = `${JSON.stringify("/bin/sh")} -c ${JSON.stringify(
+      `${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)} & wait`,
+    )} & wait`;
+    const application = await registry.register({
+      name: "Image smoke application",
+      command: nestedCommand,
+      port,
+    });
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && applicationPid === null) {
+      applicationPid = Number(await readFile(pidPath, "utf8").catch(() => "0")) || null;
+      if (applicationPid === null) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert(applicationPid && alive(applicationPid));
+    const stopped = await registry.stop(application.id);
+    assert.equal(stopped.status, "stopped");
+    assert.equal(alive(applicationPid), false);
+    const listener = createServer();
+    await new Promise((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(port, "127.0.0.1", resolve);
+    });
+    await new Promise((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
+  } finally {
+    if (applicationPid && alive(applicationPid)) process.kill(applicationPid, "SIGKILL");
+    await rm(root, { recursive: true, force: true });
+  }
+'
+
 docker run --rm \
   --entrypoint node \
   "$image" \
@@ -61,5 +119,8 @@ docker run --rm \
       throw new Error(`Workspace Runtime Kestrel profile is invalid: ${JSON.stringify({ agentProfileId: profile?.agentProfileId, presetId: profile?.presetId, delegation: profile?.delegation, collaborationTools })}`);
     }
   '
+
+docker stop --time 15 "$container" >/dev/null
+test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = "0"
 
 printf 'Workspace Runtime image smoke passed\n'
