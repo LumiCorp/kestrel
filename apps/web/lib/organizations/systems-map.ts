@@ -1,8 +1,10 @@
 import "server-only";
 
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
-import { createFlyProviderClient } from "@/lib/environments/fly-connection";
-import type { EnvironmentInfrastructureProvider } from "@/lib/environments/providers/contracts";
+import type {
+  EnvironmentInfrastructureProvider,
+  EnvironmentProviderInventory,
+} from "@/lib/environments/providers/contracts";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   summarizeProviderEnvironment,
@@ -71,7 +73,7 @@ type ProviderClientFactory = (
 export async function getOrganizationSystemsMapSnapshot(input: {
   organizationId: string;
 }): Promise<OrganizationSystemsMapSnapshot | null> {
-  const [organization, environments, workspaces, members, projects, projectMembers, threads, currentTurns] =
+  const [organization, environments, workspaces, members, projects, projectMembers, threads, currentTurns, providerResources] =
     await Promise.all([
       knowledgeDb.query.organizations.findFirst({
         where: eq(schema.organizations.id, input.organizationId),
@@ -158,12 +160,26 @@ export async function getOrganizationSystemsMapSnapshot(input: {
             inArray(schema.threadTurns.status, [...ACTIVE_TURN_STATUSES, "failed"]),
           ),
         ),
+      knowledgeDb.query.environmentProviderResources.findMany({
+        where: and(
+          eq(schema.environmentProviderResources.organizationId, input.organizationId),
+          isNull(schema.environmentProviderResources.deletedAt),
+        ),
+      }),
     ]);
 
   if (!organization) return null;
 
+  const resourcesByEnvironment = new Map<string, typeof providerResources>();
+  for (const resource of providerResources) {
+    const resources = resourcesByEnvironment.get(resource.environmentId) ?? [];
+    resources.push(resource);
+    resourcesByEnvironment.set(resource.environmentId, resources);
+  }
+
   const workspacesByEnvironment = new Map<string, OrganizationSystemsMapWorkspace[]>();
   for (const workspace of workspaces) {
+    const neutralResources = resourcesByEnvironment.get(workspace.environmentId) ?? [];
     const items = workspacesByEnvironment.get(workspace.environmentId) ?? [];
     items.push({
       id: workspace.id,
@@ -171,8 +187,20 @@ export async function getOrganizationSystemsMapSnapshot(input: {
       kind: workspace.kind,
       status: workspace.status,
       projectId: workspace.projectId,
-      machineId: workspace.flyMachineId,
-      volumeId: workspace.flyVolumeId,
+      machineId:
+        neutralResources.find(
+          (resource) =>
+            resource.workspaceId === workspace.id &&
+            resource.resourceRole === "workspace_compute" &&
+            resource.replacementId === null,
+        )?.externalId ?? workspace.flyMachineId,
+      volumeId:
+        neutralResources.find(
+          (resource) =>
+            resource.workspaceId === workspace.id &&
+            resource.resourceRole === "workspace_storage" &&
+            resource.replacementId === null,
+        )?.externalId ?? workspace.flyVolumeId,
       lastHealthAt: workspace.lastHealthAt,
       failureMessage: workspace.failureMessage,
     });
@@ -249,18 +277,26 @@ export async function getOrganizationSystemsMapSnapshot(input: {
 
   return {
     organization,
-    environments: environments.map((environment) => ({
+    environments: environments.map((environment) => {
+      const resources = resourcesByEnvironment.get(environment.id) ?? [];
+      return {
       id: environment.id,
       name: environment.name,
       region: environment.region,
       status: environment.status,
-      appName: environment.flyAppName,
+      appName:
+        resources.find(
+          (resource) => resource.resourceRole === "environment_scope",
+        )?.externalId ?? environment.flyAppName,
       networkName: environment.flyNetworkName,
-      gatewayMachineId: environment.flyGatewayMachineId,
+      gatewayMachineId:
+        resources.find((resource) => resource.resourceRole === "gateway")
+          ?.externalId ?? environment.flyGatewayMachineId,
       lastHealthAt: environment.lastHealthAt,
       failureMessage: environment.failureMessage,
       workspaces: workspacesByEnvironment.get(environment.id) ?? [],
-    })),
+      };
+    }),
     people: members.map((member) => ({
       id: member.userId,
       name: member.name,
@@ -304,17 +340,9 @@ export async function getProviderEstateState(input: {
     }));
   }
 
-  let provider: EnvironmentInfrastructureProvider;
-  try {
-    provider = await (input.createClient ?? createFlyProviderClient)(input.organizationId);
-  } catch {
-    return environments.map((environment) => unavailableProviderState({
-      environment,
-      checkedAt,
-      status: "not_configured",
-      message: "The organization provider connection is not available.",
-    }));
-  }
+  const injectedProvider = input.createClient
+    ? await input.createClient(input.organizationId).catch(() => null)
+    : null;
 
   const states: ProviderEnvironmentState[] = [];
   for (const environment of environments) {
@@ -330,9 +358,14 @@ export async function getProviderEstateState(input: {
       continue;
     }
     try {
-      const inventory = await provider.listEnvironmentResources({
-        appName: environment.appName,
-      });
+      const inventory = injectedProvider
+        ? await injectedProvider.listEnvironmentResources({
+            appName: environment.appName,
+          })
+        : await durableEnvironmentInventory({
+            organizationId: input.organizationId,
+            environmentId: environment.id,
+          });
       states.push(
         summarizeProviderEnvironment({
           environment,
@@ -352,4 +385,55 @@ export async function getProviderEstateState(input: {
     }
   }
   return states;
+}
+
+async function durableEnvironmentInventory(input: {
+  organizationId: string;
+  environmentId: string;
+}): Promise<EnvironmentProviderInventory> {
+  const resources =
+    await knowledgeDb.query.environmentProviderResources.findMany({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          isNull(table.deletedAt),
+        ),
+    });
+  return {
+    machines: resources
+      .filter((resource) =>
+        ["gateway", "workspace_compute"].includes(resource.resourceRole),
+      )
+      .map((resource) => ({
+        id: resource.externalId,
+        state: resource.state ?? "unknown",
+        region: "recorded",
+        workspaceId: resource.workspaceId,
+        replacementId: resource.replacementId,
+        mountedVolumeIds: resources
+          .filter(
+            (related) =>
+              related.workspaceId === resource.workspaceId &&
+              related.resourceRole === "workspace_storage" &&
+              related.replacementId === resource.replacementId,
+          )
+          .map((related) => related.externalId),
+      })),
+    volumes: resources
+      .filter((resource) => resource.resourceRole === "workspace_storage")
+      .map((resource) => ({
+        id: resource.externalId,
+        name: resource.externalId,
+        region: "recorded",
+        sizeGb: undefined,
+        attachedMachineId:
+          resources.find(
+            (related) =>
+              related.workspaceId === resource.workspaceId &&
+              related.resourceRole === "workspace_compute" &&
+              related.replacementId === resource.replacementId,
+          )?.externalId ?? null,
+      })),
+  };
 }

@@ -1,3 +1,12 @@
+---
+id: adr-0002-independent-production-delivery-channels
+domain: runtime
+status: active
+owner: kestrel-runtime
+last_verified_at: 2026-08-20
+depends_on: [../index.md, 0001-stable-runtime-bundle-authority.md]
+---
+
 # ADR 0002: Application-owned production delivery
 
 - Status: accepted

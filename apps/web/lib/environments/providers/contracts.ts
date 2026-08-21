@@ -116,6 +116,19 @@ export type EnvironmentProviderGateway = {
 };
 
 export type EnvironmentProviderInventory = {
+  resources?: Array<{
+    role:
+      | "environment_scope"
+      | "gateway"
+      | "workspace_compute"
+      | "workspace_storage"
+      | "snapshot"
+      | "edge_route";
+    externalId: string;
+    workspaceId: string | null;
+    replacementId: string | null;
+    state?: string | null | undefined;
+  }>;
   machines: Array<{
     id: string;
     state?: string | undefined;

@@ -45,6 +45,7 @@ test("scheduled Environment reconciliation uses the shared advisory lock", async
         adoptedVolumeCount: 0,
         degradedWorkspaceCount: 0,
         finalizedPreviewCount: 0,
+        scheduledReconciliationCount: 0,
       };
     },
     createLock: async () => ({
@@ -72,6 +73,7 @@ test("scheduled Environment reconciliation uses the shared advisory lock", async
     adoptedVolumeCount: 0,
     degradedWorkspaceCount: 0,
     finalizedPreviewCount: 0,
+    scheduledReconciliationCount: 0,
   });
 });
 
@@ -89,6 +91,7 @@ test("scheduled Environment reconciliation skips overlap without running", async
         adoptedVolumeCount: 0,
         degradedWorkspaceCount: 0,
         finalizedPreviewCount: 0,
+        scheduledReconciliationCount: 0,
       };
     },
     createLock: async () => ({

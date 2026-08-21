@@ -78,11 +78,14 @@ export function selectWorkspaceBackupRecoverySource(input: {
     !Array.isArray(input.manifest)
       ? (input.manifest as Record<string, unknown>)
       : {};
+  const snapshot = record(manifest.snapshot);
+  const neutralSnapshotId = stringValue(snapshot?.externalId);
   const snapshotId =
-    typeof manifest.flySnapshotId === "string" &&
+    neutralSnapshotId ??
+    (typeof manifest.flySnapshotId === "string" &&
     manifest.flySnapshotId.trim().length > 0
       ? manifest.flySnapshotId
-      : null;
+      : null);
   if (snapshotId) {
     return { kind: "snapshot" as const, snapshotId };
   }
@@ -122,7 +125,10 @@ export function resolveWorkspaceBackupSnapshotSourceVolumeId(input: {
     !Array.isArray(input.manifest)
       ? (input.manifest as Record<string, unknown>)
       : {};
-  const recorded = manifest.flySnapshotSourceVolumeId;
+  const snapshot = record(manifest.snapshot);
+  const recorded =
+    stringValue(snapshot?.sourceResourceId) ??
+    manifest.flySnapshotSourceVolumeId;
   return typeof recorded === "string" && recorded.trim().length > 0
     ? recorded.trim()
     : input.currentVolumeId;

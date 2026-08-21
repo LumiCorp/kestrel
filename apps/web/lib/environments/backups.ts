@@ -22,11 +22,13 @@ import {
 import { WORKSPACE_BACKUP_RETENTION_DAYS } from "./contracts";
 import {
   createEnvironmentMachineRoute,
+  createHostedEnvironmentRoute,
   resolveEnvironmentExecutionRoute,
 } from "./execution-route";
 import { getHostedRoutingContractMode } from "./config";
 import { refreshEnvironmentGateway } from "./gateway-refresh";
-import { resolveFlyProviderClient } from "./provider-registry";
+import { resolveEnvironmentProvider } from "./provider-registry";
+import type { EnvironmentInfrastructureProvider } from "./providers/contracts";
 import {
   promoteEnvironmentProviderReplacementInTransaction,
   upsertEnvironmentProviderResource,
@@ -66,6 +68,185 @@ const CHECKPOINT_BACKUP_RETENTION_DAYS = 30;
 const DEFAULT_WORKSPACE_PROFILE_ID = "kestrel";
 type BackupExecutionOwnership = "parent_operation" | "queue";
 
+async function resolveWorkspaceProviderAuthority(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  environment: {
+    flyAppName: string | null;
+    providerConnectionId: string | null;
+  };
+  workspace: {
+    flyMachineId: string | null;
+    flyVolumeId: string | null;
+  };
+}) {
+  const resources =
+    await knowledgeDb.query.environmentProviderResources.findMany({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          isNull(table.replacementId),
+          isNull(table.deletedAt),
+        ),
+    });
+  return {
+    appName:
+      resources.find(
+        (resource) =>
+          resource.workspaceId === null &&
+          resource.resourceRole === "environment_scope",
+      )?.externalId ?? input.environment.flyAppName,
+    machineId:
+      resources.find(
+        (resource) =>
+          resource.workspaceId === input.workspaceId &&
+          resource.resourceRole === "workspace_compute",
+      )?.externalId ?? input.workspace.flyMachineId,
+    volumeId:
+      resources.find(
+        (resource) =>
+          resource.workspaceId === input.workspaceId &&
+          resource.resourceRole === "workspace_storage",
+      )?.externalId ?? input.workspace.flyVolumeId,
+  };
+}
+
+async function promoteBackupExportRoute(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  replacementId: string;
+  serviceTokenHash: string;
+}) {
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`environment-provider-replacement:${input.environmentId}:${input.workspaceId}`}, 0))`,
+    );
+    const workspace = await transaction.query.environmentWorkspaces.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.id, input.workspaceId),
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+        ),
+      columns: { serviceTokenHash: true },
+    });
+    const resources = await transaction.query.environmentProviderResources.findMany({
+      where: (table, { and, eq, inArray, isNull }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.workspaceId, input.workspaceId),
+          inArray(table.resourceRole, ["workspace_compute", "workspace_storage"]),
+          isNull(table.deletedAt),
+        ),
+    });
+    const primary = resources.filter((resource) => resource.replacementId === null);
+    const replacement = resources.filter(
+      (resource) => resource.replacementId === input.replacementId,
+    );
+    if (
+      !workspace ||
+      primary.length !== 2 ||
+      replacement.length !== 2 ||
+      !primary.some((resource) => resource.resourceRole === "workspace_compute") ||
+      !primary.some((resource) => resource.resourceRole === "workspace_storage") ||
+      !replacement.some((resource) => resource.resourceRole === "workspace_compute") ||
+      !replacement.some((resource) => resource.resourceRole === "workspace_storage")
+    ) {
+      throw new Error("Backup export replacement resources are incomplete.");
+    }
+    const now = new Date();
+    await transaction
+      .update(schema.environmentProviderResources)
+      .set({ replacementId: input.replacementId, state: "retained", updatedAt: now })
+      .where(
+        and(
+          eq(schema.environmentProviderResources.organizationId, input.organizationId),
+          eq(schema.environmentProviderResources.environmentId, input.environmentId),
+          eq(schema.environmentProviderResources.workspaceId, input.workspaceId),
+          inArray(schema.environmentProviderResources.resourceRole, ["workspace_compute", "workspace_storage"]),
+          isNull(schema.environmentProviderResources.replacementId),
+          isNull(schema.environmentProviderResources.deletedAt),
+        ),
+      );
+    await transaction
+      .update(schema.environmentProviderResources)
+      .set({ replacementId: null, updatedAt: now })
+      .where(
+        and(
+          eq(schema.environmentProviderResources.organizationId, input.organizationId),
+          eq(schema.environmentProviderResources.environmentId, input.environmentId),
+          eq(schema.environmentProviderResources.workspaceId, input.workspaceId),
+          inArray(schema.environmentProviderResources.resourceRole, ["workspace_compute", "workspace_storage"]),
+          eq(schema.environmentProviderResources.replacementId, input.replacementId),
+          isNull(schema.environmentProviderResources.deletedAt),
+        ),
+      );
+    await transaction
+      .update(schema.environmentWorkspaces)
+      .set({ serviceTokenHash: input.serviceTokenHash, updatedAt: now })
+      .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
+    return workspace.serviceTokenHash;
+  });
+}
+
+async function restoreBackupExportRoute(input: {
+  organizationId: string;
+  environmentId: string;
+  workspaceId: string;
+  replacementId: string;
+  serviceTokenHash: string | null;
+}) {
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`environment-provider-replacement:${input.environmentId}:${input.workspaceId}`}, 0))`,
+    );
+    const now = new Date();
+    const resources = await transaction.query.environmentProviderResources.findMany({
+      where: (table, { and, eq, inArray, isNull }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.workspaceId, input.workspaceId),
+          inArray(table.resourceRole, ["workspace_compute", "workspace_storage"]),
+          isNull(table.deletedAt),
+        ),
+    });
+    const active = resources.filter((resource) => resource.replacementId === null);
+    const retired = resources.filter(
+      (resource) => resource.replacementId === input.replacementId,
+    );
+    if (active.length !== 2 || retired.length !== 2) {
+      throw new Error("Backup export route restoration resources are incomplete.");
+    }
+    await transaction
+      .update(schema.environmentProviderResources)
+      .set({ replacementId: input.replacementId, updatedAt: now })
+      .where(
+        inArray(
+          schema.environmentProviderResources.id,
+          active.map((resource) => resource.id),
+        ),
+      );
+    await transaction
+      .update(schema.environmentProviderResources)
+      .set({ replacementId: null, state: "ready", updatedAt: now })
+      .where(
+        inArray(
+          schema.environmentProviderResources.id,
+          retired.map((resource) => resource.id),
+        ),
+      );
+    await transaction
+      .update(schema.environmentWorkspaces)
+      .set({ serviceTokenHash: input.serviceTokenHash, updatedAt: now })
+      .where(eq(schema.environmentWorkspaces.id, input.workspaceId));
+  });
+}
+
 export async function createWorkspaceBackup(input: {
   organizationId: string;
   environmentId: string;
@@ -97,14 +278,25 @@ export async function createWorkspaceBackup(input: {
     }),
     findActiveWorkspaceExecutionBinding(input),
   ]);
+  const authority =
+    environment && workspace
+      ? await resolveWorkspaceProviderAuthority({
+          organizationId: input.organizationId,
+          environmentId: input.environmentId,
+          workspaceId: input.workspaceId,
+          environment,
+          workspace,
+        })
+      : null;
   if (
     !(
-      environment?.flyAppName &&
-      environment.region &&
+      environment &&
       environment.providerConnectionId &&
       environment.routerUrl &&
-      workspace?.flyVolumeId &&
-      workspace.flyMachineId &&
+      workspace &&
+      authority?.appName &&
+      authority.volumeId &&
+      authority.machineId &&
       workspace.runtimeImage &&
       binding
     )
@@ -115,6 +307,10 @@ export async function createWorkspaceBackup(input: {
     throw new Error("Desktop Workspaces use Desktop-owned backup recovery.");
   }
   const providerConnectionId = environment.providerConnectionId;
+  const appName = authority.appName;
+  const sourceVolumeId = authority.volumeId;
+  const providerKind =
+    environment.provider === "kubernetes" ? "kubernetes" : "fly";
   const now = new Date();
   const expiresAt = new Date(
     now.getTime() + WORKSPACE_BACKUP_RETENTION_DAYS * 86_400_000,
@@ -139,44 +335,54 @@ export async function createWorkspaceBackup(input: {
     };
   }
   const { operationId, backupId } = prepared;
-  const provider = await resolveFlyProviderClient({
+  const resolvedProvider = await resolveEnvironmentProvider({
     organizationId: input.organizationId,
     environmentId: input.environmentId,
+    operationId,
+    workspaceId: input.workspaceId,
   });
+  if (!resolvedProvider.legacyLifecycle) {
+    throw new Error("Workspace backup requires a hosted lifecycle provider.");
+  }
+  const provider = resolvedProvider.legacyLifecycle;
   let exportMachineId: string | null = null;
   let exportVolumeId: string | null = null;
+  let exportReplacementIdForCleanup: string | null = null;
+  let exportRoutePromoted = false;
+  let exportRouteOriginalServiceTokenHash: string | null = null;
   try {
     input.signal?.throwIfAborted();
     const snapshot = await provider.createVolumeSnapshot({
-      appName: environment.flyAppName,
-      volumeId: workspace.flyVolumeId,
+      appName,
+      volumeId: sourceVolumeId,
     });
     await waitForWorkspaceSnapshot({
       snapshotId: snapshot.id,
-      sourceVolumeId: workspace.flyVolumeId,
-      appName: environment.flyAppName,
+      sourceVolumeId,
+      appName,
       isUsable: (snapshotInput) =>
         provider.isWorkspaceSnapshotUsable(snapshotInput),
       signal: input.signal,
     });
     const exportReplacementId = crypto.randomUUID();
+    exportReplacementIdForCleanup = exportReplacementId;
     const exportVolume = await provider.createReplacementWorkspaceVolume({
-      appName: environment.flyAppName,
+      appName,
       workspaceId: workspace.id,
-      region: environment.region,
+      region: environment.region ?? "cluster",
       replacementId: exportReplacementId,
       snapshotId: snapshot.id,
-      sourceVolumeId: workspace.flyVolumeId,
+      sourceVolumeId,
     });
     exportVolumeId = exportVolume.id;
     const workspaceServiceToken = createEnvironmentServiceToken();
     const exportMachine = await provider.createReplacementWorkspaceMachine({
-      appName: environment.flyAppName,
+      appName,
       environmentId: environment.id,
       organizationId: input.organizationId,
       workspaceId: workspace.id,
       volumeId: exportVolume.id,
-      region: environment.region,
+      region: environment.region ?? "cluster",
       runtimeImage: workspace.runtimeImage,
       ticketPublicKey:
         process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
@@ -197,25 +403,47 @@ export async function createWorkspaceBackup(input: {
     exportMachineId = exportMachine.id;
     if (exportMachine.state !== "started") {
       await provider.waitForMachine({
-        appName: environment.flyAppName,
+        appName,
         machineId: exportMachine.id,
         state: "started",
         timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
       });
     }
     await provider.waitForMachineHealth({
-      appName: environment.flyAppName,
+      appName,
       machineId: exportMachine.id,
       checkName: "workspace",
       timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
     });
-    const route = createEnvironmentMachineRoute({
+    if (
+      providerKind === "kubernetes" &&
+      getHostedRoutingContractMode() === "logical-v1"
+    ) {
+      exportRouteOriginalServiceTokenHash = await promoteBackupExportRoute({
+        organizationId: input.organizationId,
+        environmentId: environment.id,
+        workspaceId: workspace.id,
+        replacementId: exportReplacementId,
+        serviceTokenHash: hashEnvironmentServiceToken(workspaceServiceToken),
+      });
+      exportRoutePromoted = true;
+      const authority = await resolveHostedRouteGeneration({
+        organizationId: input.organizationId,
+        environmentId: environment.id,
+      });
+      await refreshEnvironmentGateway({
+        organizationId: input.organizationId,
+        environmentId: environment.id,
+        expectedRouteGeneration: authority.routeGeneration,
+      });
+    }
+    const route = await createHostedEnvironmentRoute({
       organizationId: input.organizationId,
       environmentId: environment.id,
       workspaceId: workspace.id,
       threadId: binding.threadId,
       actorId: input.actorUserId,
-      flyAppName: environment.flyAppName,
+      flyAppName: appName,
       flyMachineId: exportMachine.id,
       routerUrl: environment.routerUrl,
       capabilities: ["workspace.backups.export"],
@@ -227,12 +455,13 @@ export async function createWorkspaceBackup(input: {
     );
     if (preparation) {
       const reusable = await findReusableWorkspaceBackup({
+        operationId,
         environmentId: input.environmentId,
         workspaceId: input.workspaceId,
         sourceRevision: preparation.sourceRevision,
         organizationId: input.organizationId,
-        flyAppName: environment.flyAppName,
-        flyVolumeId: workspace.flyVolumeId,
+        flyAppName: appName,
+        flyVolumeId: sourceVolumeId,
       });
       if (reusable) {
         const retainedUntil = await protectWorkspaceBackup({
@@ -249,7 +478,8 @@ export async function createWorkspaceBackup(input: {
           retainedUntil,
           reusableManifest: reusable.manifest,
           snapshotId: snapshot.id,
-          snapshotSourceVolumeId: workspace.flyVolumeId,
+          snapshotSourceVolumeId: sourceVolumeId,
+          snapshotProvider: providerKind,
         });
         return {
           backupId: reusable.id,
@@ -266,12 +496,13 @@ export async function createWorkspaceBackup(input: {
       });
       if (!claimed) {
         const concurrent = await waitForReusableWorkspaceBackup({
+          operationId,
           environmentId: input.environmentId,
           workspaceId: input.workspaceId,
           sourceRevision: preparation.sourceRevision,
           organizationId: input.organizationId,
-          flyAppName: environment.flyAppName,
-          flyVolumeId: workspace.flyVolumeId,
+          flyAppName: appName,
+          flyVolumeId: sourceVolumeId,
           signal: input.signal,
         });
         if (!concurrent) {
@@ -296,7 +527,8 @@ export async function createWorkspaceBackup(input: {
           retainedUntil,
           reusableManifest: concurrent.manifest,
           snapshotId: snapshot.id,
-          snapshotSourceVolumeId: workspace.flyVolumeId,
+          snapshotSourceVolumeId: sourceVolumeId,
+          snapshotProvider: providerKind,
         });
         return {
           backupId: concurrent.id,
@@ -352,7 +584,7 @@ export async function createWorkspaceBackup(input: {
         environmentId: input.environmentId,
         workspaceId: input.workspaceId,
         providerConnectionId,
-        provider: "fly",
+        provider: providerKind,
         resourceRole: "snapshot",
         externalId: snapshot.id,
         providerUid: null,
@@ -378,9 +610,18 @@ export async function createWorkspaceBackup(input: {
             archiveBytes,
             logicalBytes: preparation?.logicalBytes ?? null,
             entryCount: preparation?.entryCount ?? null,
-            flySnapshotId: snapshot.id,
-            flySnapshotState: "created",
-            flySnapshotSourceVolumeId: workspace.flyVolumeId,
+            snapshot: {
+              provider: providerKind,
+              externalId: snapshot.id,
+              sourceResourceId: sourceVolumeId,
+            },
+            ...(providerKind === "fly"
+              ? {
+                  flySnapshotId: snapshot.id,
+                  flySnapshotState: "created",
+                  flySnapshotSourceVolumeId: sourceVolumeId,
+                }
+              : {}),
             ...(input.preDestructiveSnapshot
               ? {
                   preDestructiveFlySnapshotId: input.preDestructiveSnapshot.id,
@@ -400,8 +641,13 @@ export async function createWorkspaceBackup(input: {
           result: {
             backupId,
             objectKey,
-            flySnapshotId: snapshot.id,
-            flySnapshotState: "created",
+            snapshot: { provider: providerKind, externalId: snapshot.id },
+            ...(providerKind === "fly"
+              ? {
+                  flySnapshotId: snapshot.id,
+                  flySnapshotState: "created",
+                }
+              : {}),
           },
           completedAt,
           updatedAt: completedAt,
@@ -449,18 +695,54 @@ export async function createWorkspaceBackup(input: {
     });
     throw error;
   } finally {
-    if (exportMachineId) {
+    if (exportRoutePromoted) {
+      try {
+        await restoreBackupExportRoute({
+          organizationId: input.organizationId,
+          environmentId: environment.id,
+          workspaceId: workspace.id,
+          replacementId: exportReplacementIdForCleanup!,
+          serviceTokenHash: exportRouteOriginalServiceTokenHash,
+        });
+        const authority = await resolveHostedRouteGeneration({
+          organizationId: input.organizationId,
+          environmentId: environment.id,
+        });
+        await refreshEnvironmentGateway({
+          organizationId: input.organizationId,
+          environmentId: environment.id,
+          expectedRouteGeneration: authority.routeGeneration,
+        });
+        exportRoutePromoted = false;
+      } catch (error) {
+        await knowledgeDb
+          .update(schema.environmentWorkspaces)
+          .set({
+            status: "failed",
+            failureCode: "WORKSPACE_BACKUP_ROUTE_RESTORE_FAILED",
+            failureMessage:
+              error instanceof Error
+                ? error.message.slice(0, 500)
+                : "Workspace backup route restoration failed.",
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.environmentWorkspaces.id, workspace.id))
+          .catch(() => {});
+        throw error;
+      }
+    }
+    if (!exportRoutePromoted && exportMachineId) {
       await provider
         .deleteMachine({
-          appName: environment.flyAppName,
+          appName,
           machineId: exportMachineId,
         })
         .catch(() => {});
     }
-    if (exportVolumeId) {
+    if (!exportRoutePromoted && exportVolumeId) {
       await provider
         .deleteVolume({
-          appName: environment.flyAppName,
+          appName,
           volumeId: exportVolumeId,
         })
         .catch(() => {});
@@ -937,6 +1219,7 @@ async function enforceWorkspaceBackupRetention(input: {
 }
 
 async function findReusableWorkspaceBackup(input: {
+  operationId: string;
   environmentId: string;
   workspaceId: string;
   sourceRevision: string;
@@ -960,17 +1243,40 @@ async function findReusableWorkspaceBackup(input: {
   ) {
     return backup;
   }
-  const snapshotId = readString(asRecord(backup.manifest)?.flySnapshotId);
+  const backupManifest = asRecord(backup.manifest);
+  const snapshotId =
+    readString(asRecord(backupManifest?.snapshot)?.externalId) ??
+    readString(backupManifest?.flySnapshotId);
   if (!snapshotId) return null;
-  const provider = await resolveFlyProviderClient({
+  const snapshot =
+    await knowledgeDb.query.environmentProviderResources.findFirst({
+      where: (table, { and, eq, isNull, notInArray }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.workspaceId, input.workspaceId),
+          eq(table.resourceRole, "snapshot"),
+          eq(table.externalId, snapshotId),
+          notInArray(table.state, ["failed", "deleted"]),
+          isNull(table.deletedAt),
+        ),
+      columns: { id: true },
+  });
+  if (!snapshot) return null;
+  const provider = await resolveEnvironmentProvider({
     organizationId: input.organizationId,
     environmentId: input.environmentId,
+    operationId: input.operationId,
+    workspaceId: input.workspaceId,
   });
-  const usable = await provider.isWorkspaceSnapshotUsable({
+  if (!provider.legacyLifecycle) return null;
+  const sourceVolumeId =
+    readString(asRecord(backupManifest?.snapshot)?.sourceResourceId) ??
+    readString(backupManifest?.flySnapshotSourceVolumeId) ??
+    input.flyVolumeId;
+  const usable = await provider.legacyLifecycle.isWorkspaceSnapshotUsable({
     appName: input.flyAppName,
-    sourceVolumeId:
-      readString(asRecord(backup.manifest)?.flySnapshotSourceVolumeId) ??
-      input.flyVolumeId,
+    sourceVolumeId,
     snapshotId,
   });
   return usable ? backup : null;
@@ -1017,6 +1323,7 @@ async function completeUnchangedWorkspaceBackup(input: {
   reusableManifest: unknown;
   snapshotId: string;
   snapshotSourceVolumeId: string;
+  snapshotProvider: "fly" | "kubernetes";
 }) {
   const completedAt = new Date();
   await knowledgeDb.transaction(async (transaction) => {
@@ -1040,9 +1347,18 @@ async function completeUnchangedWorkspaceBackup(input: {
       .set({
         manifest: {
           ...asRecord(input.reusableManifest),
-          flySnapshotId: input.snapshotId,
-          flySnapshotState: "created",
-          flySnapshotSourceVolumeId: input.snapshotSourceVolumeId,
+          snapshot: {
+            provider: input.snapshotProvider,
+            externalId: input.snapshotId,
+            sourceResourceId: input.snapshotSourceVolumeId,
+          },
+          ...(input.snapshotProvider === "fly"
+            ? {
+                flySnapshotId: input.snapshotId,
+                flySnapshotState: "created",
+                flySnapshotSourceVolumeId: input.snapshotSourceVolumeId,
+              }
+            : {}),
         },
         updatedAt: completedAt,
       })
@@ -1452,46 +1768,36 @@ export async function listWorkspaceBackups(input: {
       backup.status !== "available" ||
       protections.some((protection) => protection.backupId === backup.id),
   );
-  const [environment, workspace] = await Promise.all([
-    knowledgeDb.query.environments.findFirst({
-      where: (table, { eq }) => eq(table.id, input.environmentId),
-      columns: { flyAppName: true },
-    }),
-    knowledgeDb.query.environmentWorkspaces.findFirst({
-      where: (table, { eq }) => eq(table.id, input.workspaceId),
-      columns: { flyVolumeId: true },
-    }),
-  ]);
+  const snapshotResources =
+    await knowledgeDb.query.environmentProviderResources.findMany({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.workspaceId, input.workspaceId),
+          eq(table.resourceRole, "snapshot"),
+          isNull(table.deletedAt),
+        ),
+    });
   const storage = getStorageAdapter();
-  const provider = environment?.flyAppName
-    ? await resolveFlyProviderClient({
-        organizationId: input.organizationId,
-        environmentId: input.environmentId,
-      }).catch(() => null)
-    : null;
   return Promise.all(protectedVisible.map(async (backup) => {
     const activeProtections = protections.filter(
       (protection) => protection.backupId === backup.id,
     );
     const manifest = asRecord(backup.manifest);
-    const snapshotId = readString(manifest?.flySnapshotId);
+    const snapshotId =
+      readString(asRecord(manifest?.snapshot)?.externalId) ??
+      readString(manifest?.flySnapshotId);
     const archiveRecoveryAvailable = backup.objectKey
       ? await storage.objectExists(backup.objectKey).catch(() => false)
       : false;
     const snapshotRecoveryAvailable =
-      provider &&
-      environment?.flyAppName &&
-      workspace?.flyVolumeId &&
       snapshotId
-        ? await provider
-            .isWorkspaceSnapshotUsable({
-              appName: environment.flyAppName,
-              sourceVolumeId:
-                readString(manifest?.flySnapshotSourceVolumeId) ??
-                workspace.flyVolumeId,
-              snapshotId,
-            })
-            .catch(() => false)
+        ? snapshotResources.some(
+            (resource) =>
+              resource.externalId === snapshotId &&
+              !["failed", "deleted"].includes(resource.state ?? ""),
+          )
         : false;
     return {
       ...backup,
@@ -1559,15 +1865,26 @@ export async function restoreWorkspaceBackup(input: {
   if (!backup) {
     throw new Error("Workspace backup is unavailable.");
   }
+  const authority =
+    environment && workspace
+      ? await resolveWorkspaceProviderAuthority({
+          organizationId: input.organizationId,
+          environmentId: input.environmentId,
+          workspaceId: input.workspaceId,
+          environment,
+          workspace,
+        })
+      : null;
   if (
     !(
-      environment?.flyAppName &&
-      environment.region &&
+      environment &&
       environment.providerConnectionId &&
       environment.runtimeImage &&
       environment.routerUrl &&
-      workspace?.flyMachineId &&
-      workspace.flyVolumeId &&
+      workspace &&
+      authority?.appName &&
+      authority.machineId &&
+      authority.volumeId &&
       binding
     )
   ) {
@@ -1578,26 +1895,33 @@ export async function restoreWorkspaceBackup(input: {
       "Desktop workspaces are restored on the enrolled Desktop Environment.",
     );
   }
-  const flyAppName = environment.flyAppName;
+  const flyAppName = authority.appName;
+  const providerKind =
+    environment.provider === "kubernetes" ? "kubernetes" : "fly";
   const providerConnectionId = environment.providerConnectionId;
   const routerUrl = environment.routerUrl;
-  const oldMachineId = workspace.flyMachineId;
-  const oldVolumeId = workspace.flyVolumeId;
+  const oldMachineId = authority.machineId;
+  const oldVolumeId = authority.volumeId;
   const snapshotSourceVolumeId = resolveWorkspaceBackupSnapshotSourceVolumeId({
     manifest: backup.manifest,
     currentVolumeId: oldVolumeId,
   });
-  const provider = await resolveFlyProviderClient({
-    organizationId: input.organizationId,
-    environmentId: input.environmentId,
-  });
   const resumableOperation = selectPromotedWorkspaceRestoreReplay({
     backupId: input.backupId,
-    currentMachineId: workspace.flyMachineId,
-    currentVolumeId: workspace.flyVolumeId,
+    currentMachineId: oldMachineId,
+    currentVolumeId: oldVolumeId,
     operations: resumableOperations,
   });
   if (resumableOperation) {
+    const resumedProvider = await resolveEnvironmentProvider({
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      operationId: resumableOperation.id,
+      workspaceId: input.workspaceId,
+    });
+    if (!resumedProvider.legacyLifecycle) {
+      throw new Error("Workspace restore requires a hosted lifecycle provider.");
+    }
     const result = asRecord(resumableOperation.result)!;
     return resumePromotedWorkspaceRestore({
       operationId: resumableOperation.id,
@@ -1612,13 +1936,51 @@ export async function restoreWorkspaceBackup(input: {
         binding.threadId,
       oldMachineId: readString(result.oldMachineId)!,
       oldVolumeId: readString(result.oldVolumeId)!,
-      replacementMachineId: workspace.flyMachineId,
-      replacementVolumeId: workspace.flyVolumeId,
+      replacementMachineId: oldMachineId,
+      replacementVolumeId: oldVolumeId,
       flyAppName,
-      provider,
+      providerKind,
+      provider: resumedProvider.legacyLifecycle,
       priorResult: result,
     });
   }
+  const operationId = crypto.randomUUID();
+  const startedAt = new Date();
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
+    );
+    await transaction.insert(schema.environmentOperations).values({
+      id: operationId,
+      organizationId: input.organizationId,
+      environmentId: input.environmentId,
+      workspaceId: input.workspaceId,
+      requestedByUserId: input.actorUserId,
+      type: "workspace.restore",
+      status: "running",
+      stage: "workspace.restore.validating_source",
+      idempotencyKey: `workspace.restore:${input.backupId}:${operationId}`,
+      input: {
+        backupId: input.backupId,
+        ...(input.validationThreadId
+          ? { validationThreadId: input.validationThreadId }
+          : {}),
+      },
+      startedAt,
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    });
+  });
+  const resolvedProvider = await resolveEnvironmentProvider({
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+    operationId,
+    workspaceId: input.workspaceId,
+  });
+  if (!resolvedProvider.legacyLifecycle) {
+    throw new Error("Workspace restore requires a hosted lifecycle provider.");
+  }
+  const provider = resolvedProvider.legacyLifecycle;
   const recoverySource = await resolveWorkspaceBackupRecoverySource({
     manifest: backup.manifest,
     objectKey: backup.objectKey,
@@ -1677,45 +2039,28 @@ export async function restoreWorkspaceBackup(input: {
     );
   }
   const validationThreadId = validationExecution?.threadId ?? binding.threadId;
-  const operationId = crypto.randomUUID();
-  const startedAt = new Date();
-  await knowledgeDb.transaction(async (transaction) => {
-    await transaction.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
-    );
-    await transaction.insert(schema.environmentOperations).values({
-      id: operationId,
-      organizationId: input.organizationId,
-      environmentId: input.environmentId,
-      workspaceId: input.workspaceId,
-      requestedByUserId: input.actorUserId,
-      type: "workspace.restore",
-      status: "running",
+  await knowledgeDb
+    .update(schema.environmentOperations)
+    .set({
       stage: "workspace.restore.provisioning_replacement",
-      idempotencyKey: `workspace.restore:${input.backupId}:${operationId}`,
-      input: {
-        backupId: input.backupId,
-        ...(input.validationThreadId
-          ? { validationThreadId: input.validationThreadId }
-          : {}),
-      },
-      startedAt,
-      createdAt: startedAt,
-      updatedAt: startedAt,
-    });
-  });
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.environmentOperations.id, operationId));
   let replacementVolumeId: string | null = null;
   let replacementMachineId: string | null = null;
   let rebound = false;
   let expectedRouteGeneration: string | null = null;
   let acknowledgedRouteGeneration: string | null = null;
   let retiredProviderResourceIds: string[] = [];
+  let validatedDescription: Awaited<
+    ReturnType<typeof readStoredSessionDescription>
+  > | null = null;
   try {
     const workspaceServiceToken = createEnvironmentServiceToken();
     const replacementVolume = await provider.createReplacementWorkspaceVolume({
       appName: flyAppName,
       workspaceId: workspace.id,
-      region: environment.region,
+      region: environment.region ?? "cluster",
       replacementId: operationId,
       ...(snapshotId
         ? { snapshotId, sourceVolumeId: snapshotSourceVolumeId }
@@ -1745,7 +2090,7 @@ export async function restoreWorkspaceBackup(input: {
         organizationId: input.organizationId,
         workspaceId: workspace.id,
         volumeId: replacementVolume.id,
-        region: environment.region,
+        region: environment.region ?? "cluster",
         runtimeImage,
         ticketPublicKey:
           process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
@@ -1772,7 +2117,7 @@ export async function restoreWorkspaceBackup(input: {
         workspaceId: input.workspaceId,
         replacementId: operationId,
         providerConnectionId,
-        provider: "fly",
+        provider: providerKind,
         resourceRole: "workspace_storage",
         externalId: replacementVolume.id,
         providerUid: null,
@@ -1782,7 +2127,7 @@ export async function restoreWorkspaceBackup(input: {
         providerMetadata: {
           contract: "provider-resource-metadata-v1",
           source: "provider_observation",
-          detail: "Fly replacement volume created for guarded restore cutover.",
+          detail: "Replacement storage created for guarded restore cutover.",
         },
       }),
       upsertEnvironmentProviderResource({
@@ -1791,7 +2136,7 @@ export async function restoreWorkspaceBackup(input: {
         workspaceId: input.workspaceId,
         replacementId: operationId,
         providerConnectionId,
-        provider: "fly",
+        provider: providerKind,
         resourceRole: "workspace_compute",
         externalId: replacementMachine.id,
         providerUid: null,
@@ -1801,7 +2146,7 @@ export async function restoreWorkspaceBackup(input: {
         providerMetadata: {
           contract: "provider-resource-metadata-v1",
           source: "provider_observation",
-          detail: "Fly replacement Machine created for guarded restore cutover.",
+          detail: "Replacement compute created for guarded restore cutover.",
         },
       }),
     ]);
@@ -1849,7 +2194,7 @@ export async function restoreWorkspaceBackup(input: {
         routerUrl,
         capabilities: [...WORKSPACE_RESTORE_ROUTE_CAPABILITIES],
       });
-    if (archive && checksum) {
+    if (providerKind === "fly" && archive && checksum) {
       await uploadBackupArchiveStream({
         route: replacementRoute,
         archive,
@@ -1882,10 +2227,15 @@ export async function restoreWorkspaceBackup(input: {
         timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
       });
     }
-    await waitForWorkspaceService(replacementRoute);
+    if (providerKind === "fly") {
+      await waitForWorkspaceService(replacementRoute);
+    }
     const completedAt = new Date();
     const cutover = await performGuardedWorkspaceRestoreCutover({
       validateReplacement: async () => {
+        if (providerKind === "kubernetes") {
+          return { sessionId: validationThreadId, version: 0 };
+        }
         const description = await readStoredSessionDescription({
           route: replacementRoute,
           sessionId: validationThreadId,
@@ -1900,10 +2250,10 @@ export async function restoreWorkspaceBackup(input: {
             "Replacement Workspace did not contain the required persisted session.",
           );
         }
+        validatedDescription = description;
         return description;
       },
-      casRebind: async () => {
-        return knowledgeDb.transaction(async (transaction) => {
+      casRebind: async () => knowledgeDb.transaction(async (transaction) => {
           const promotion = await promoteEnvironmentProviderReplacementInTransaction(
             transaction,
             {
@@ -1924,8 +2274,12 @@ export async function restoreWorkspaceBackup(input: {
           const updated = await transaction
             .update(schema.environmentWorkspaces)
             .set({
-              flyVolumeId: replacementVolume.id,
-              flyMachineId: replacementMachine.id,
+              ...(environment.provider === "fly"
+                ? {
+                    flyVolumeId: replacementVolume.id,
+                    flyMachineId: replacementMachine.id,
+                  }
+                : {}),
               runtimeImage,
               serviceTokenHash: hashEnvironmentServiceToken(
                 workspaceServiceToken,
@@ -1937,8 +2291,18 @@ export async function restoreWorkspaceBackup(input: {
             .where(
               and(
                 eq(schema.environmentWorkspaces.id, workspace.id),
-                eq(schema.environmentWorkspaces.flyMachineId, oldMachineId),
-                eq(schema.environmentWorkspaces.flyVolumeId, oldVolumeId),
+                ...(environment.provider === "fly"
+                  ? [
+                      eq(
+                        schema.environmentWorkspaces.flyMachineId,
+                        oldMachineId,
+                      ),
+                      eq(
+                        schema.environmentWorkspaces.flyVolumeId,
+                        oldVolumeId,
+                      ),
+                    ]
+                  : []),
               ),
             )
             .returning({ id: schema.environmentWorkspaces.id });
@@ -1947,8 +2311,7 @@ export async function restoreWorkspaceBackup(input: {
           }
           retiredProviderResourceIds = promotion.retired.map((resource) => resource.id);
           return true;
-        });
-      },
+        }),
       onRebound: () => {
         rebound = true;
       },
@@ -1972,12 +2335,64 @@ export async function restoreWorkspaceBackup(input: {
           actorUserId: input.actorUserId,
           owningLifecycleOperationIds: [operationId],
         });
-        await waitForWorkspaceService(() => ({
+        const promotedRoute = () => ({
           baseUrl: boundRoute.baseUrl,
           authToken: boundRoute.authToken,
-        }));
+        });
+        if (providerKind === "kubernetes" && archive && checksum) {
+          await uploadBackupArchiveStream({
+            route: promotedRoute,
+            archive,
+            checksumSha256: checksum,
+          });
+          await provider.stopMachine({
+            appName: flyAppName,
+            machineId: replacementMachine.id,
+          });
+          await provider.waitForMachine({
+            appName: flyAppName,
+            machineId: replacementMachine.id,
+            state: "stopped",
+            timeoutSeconds: 60,
+          });
+          await provider.startMachine({
+            appName: flyAppName,
+            machineId: replacementMachine.id,
+          });
+          await provider.waitForMachine({
+            appName: flyAppName,
+            machineId: replacementMachine.id,
+            state: "started",
+            timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+          });
+          await provider.waitForMachineHealth({
+            appName: flyAppName,
+            machineId: replacementMachine.id,
+            checkName: "workspace",
+            timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+          });
+        }
+        await waitForWorkspaceService(promotedRoute);
+        if (providerKind === "kubernetes") {
+          const description = await readStoredSessionDescription({
+            route: promotedRoute,
+            sessionId: validationThreadId,
+            actorId: input.actorUserId,
+            organizationId: input.organizationId,
+          });
+          if (
+            description.sessionId !== validationThreadId ||
+            description.version <= 0
+          ) {
+            throw new Error(
+              "Promoted Workspace did not contain the required persisted session.",
+            );
+          }
+          validatedDescription = description;
+        }
       },
       completeCutover: async (description) => {
+        const completedDescription = validatedDescription ?? description;
         await knowledgeDb
           .update(schema.environmentOperations)
           .set({
@@ -1987,7 +2402,7 @@ export async function restoreWorkspaceBackup(input: {
               backupId: backup.id,
               ...(snapshotId ? { snapshotId, snapshotSourceVolumeId } : {}),
               validationThreadId,
-              restoredSessionVersion: description.version,
+              restoredSessionVersion: completedDescription.version,
               ...(expectedRouteGeneration
                 ? {
                     expectedRouteGeneration,
@@ -2056,6 +2471,7 @@ export async function restoreWorkspaceBackup(input: {
         }),
     });
     const { cleanupPending, validation } = cutover;
+    const completedValidation = validatedDescription ?? validation;
     if (cleanupPending) {
       await knowledgeDb
         .update(schema.environmentOperations)
@@ -2065,7 +2481,7 @@ export async function restoreWorkspaceBackup(input: {
             backupId: backup.id,
             ...(snapshotId ? { snapshotId, snapshotSourceVolumeId } : {}),
             validationThreadId,
-            restoredSessionVersion: validation.version,
+            restoredSessionVersion: completedValidation.version,
             ...(expectedRouteGeneration
               ? {
                   expectedRouteGeneration,
@@ -2162,7 +2578,8 @@ async function resumePromotedWorkspaceRestore(input: {
   replacementMachineId: string;
   replacementVolumeId: string;
   flyAppName: string;
-  provider: Awaited<ReturnType<typeof resolveFlyProviderClient>>;
+  providerKind: "fly" | "kubernetes";
+  provider: EnvironmentInfrastructureProvider;
   priorResult: Record<string, unknown>;
 }) {
   const resumedAt = new Date();
@@ -2170,20 +2587,45 @@ async function resumePromotedWorkspaceRestore(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${workspaceLifecycleLockKey(input.workspaceId)}, 0))`,
     );
-    const current = await transaction.query.environmentWorkspaces.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.id, input.workspaceId),
-          eq(table.organizationId, input.organizationId),
-          eq(table.environmentId, input.environmentId),
-        ),
-      columns: { flyMachineId: true, flyVolumeId: true },
-    });
+    const activeResources =
+      await transaction.query.environmentProviderResources.findMany({
+        where: (table, { and, eq, isNull }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.environmentId, input.environmentId),
+            eq(table.workspaceId, input.workspaceId),
+            isNull(table.replacementId),
+            isNull(table.deletedAt),
+          ),
+      });
+    const activeCompute = activeResources.find(
+      (resource) => resource.resourceRole === "workspace_compute",
+    );
+    const activeStorage = activeResources.find(
+      (resource) => resource.resourceRole === "workspace_storage",
+    );
     if (
-      current?.flyMachineId !== input.replacementMachineId ||
-      current.flyVolumeId !== input.replacementVolumeId
+      activeCompute?.externalId !== input.replacementMachineId ||
+      activeStorage?.externalId !== input.replacementVolumeId
     ) {
       throw new WorkspaceRestoreCasConflictError();
+    }
+    if (input.providerKind === "fly") {
+      const current = await transaction.query.environmentWorkspaces.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.id, input.workspaceId),
+            eq(table.organizationId, input.organizationId),
+            eq(table.environmentId, input.environmentId),
+          ),
+        columns: { flyMachineId: true, flyVolumeId: true },
+      });
+      if (
+        current?.flyMachineId !== input.replacementMachineId ||
+        current.flyVolumeId !== input.replacementVolumeId
+      ) {
+        throw new WorkspaceRestoreCasConflictError();
+      }
     }
     await transaction
       .update(schema.environmentOperations)
@@ -2494,11 +2936,21 @@ async function assertWorkspaceBackupReady(input: {
     }),
     findActiveWorkspaceExecutionBinding(input),
   ]);
+  const authority =
+    environment && workspace
+      ? await resolveWorkspaceProviderAuthority({
+          organizationId: input.organizationId,
+          environmentId: input.environmentId,
+          workspaceId: input.workspaceId,
+          environment,
+          workspace,
+        })
+      : null;
   if (
     !(
-      environment?.flyAppName &&
-      workspace?.flyVolumeId &&
-      workspace.flyMachineId &&
+      authority?.appName &&
+      authority.volumeId &&
+      authority.machineId &&
       binding
     )
   ) {

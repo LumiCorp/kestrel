@@ -3,7 +3,7 @@ id: cli-kchat-guide
 domain: cli
 status: active
 owner: kestrel-cli
-last_verified_at: 2026-06-30
+last_verified_at: 2026-08-20
 depends_on: [../index.md]
 ---
 

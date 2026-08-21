@@ -11,30 +11,52 @@ import {
   listOrganizationEnvironments,
   requestOrganizationEnvironmentDelete,
   recoverDefaultEnvironmentProvisioning,
+  requestOrganizationEnvironmentReconcile,
   setDefaultOrganizationEnvironment,
 } from "@/lib/environments/store";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { getOrganizationInfrastructureSettings } from "@/lib/environments/organization-infrastructure-settings";
+import { requireKubernetesByocAdmission } from "@/lib/environments/config";
+import { requireKubernetesConnectionForEnvironmentCreation } from "@/lib/environments/kubernetes-connector";
 
 export async function createAdminEnvironment(input: {
   organizationId: string;
   actorUserId: string;
   environment: CreateEnvironmentInput;
 }) {
-  const infrastructure = await getOrganizationInfrastructureSettings(
-    input.organizationId,
-  );
-  if (!infrastructure.allowedRegions.includes(input.environment.region)) {
+  const kubernetesInput =
+    "providerConnectionId" in input.environment ? input.environment : null;
+  const isKubernetes = kubernetesInput !== null;
+  const provider = isKubernetes ? "kubernetes" : "fly";
+  const infrastructure =
+    !isKubernetes
+      ? await getOrganizationInfrastructureSettings(input.organizationId)
+      : null;
+  if (
+    !("providerConnectionId" in input.environment) &&
+    !infrastructure!.allowedRegions.includes(input.environment.region)
+  ) {
     throw new Error(
       "The selected region is not allowed by organization infrastructure settings.",
     );
+  }
+  if (isKubernetes) {
+    await requireKubernetesByocAdmission({ organizationId: input.organizationId });
+    await requireKubernetesConnectionForEnvironmentCreation({
+      organizationId: input.organizationId,
+      connectionId: kubernetesInput!.providerConnectionId,
+      runtimeTemplate: kubernetesInput!.runtimeTemplate,
+    });
   }
   const created = await createOrganizationEnvironment({
     organizationId: input.organizationId,
     userId: input.actorUserId,
     environment: input.environment,
-    runtimeTemplate: infrastructure.defaultRuntimeTemplate,
+    runtimeTemplate:
+      isKubernetes
+        ? kubernetesInput!.runtimeTemplate
+        : infrastructure!.defaultRuntimeTemplate,
   });
   await recordEnvironmentCreationSideEffect("audit", async () =>
     logAdminEvent({
@@ -46,7 +68,9 @@ export async function createAdminEnvironment(input: {
       targetId: created.environment.id,
       message: `Requested Environment ${created.environment.name}.`,
       metadata: {
+        provider,
         region: created.environment.region,
+        providerConnectionId: created.environment.providerConnectionId,
         operationId: created.operation?.id,
       },
     }),
@@ -181,6 +205,33 @@ export async function requestAdminEnvironmentDeletion(input: {
       requestAction: requested.action,
     },
   }).catch(() => {});
+  return requested;
+}
+
+export async function requestAdminEnvironmentReconciliation(input: {
+  organizationId: string;
+  actorUserId: string;
+  environmentId: string;
+}) {
+  const requested = await requestOrganizationEnvironmentReconcile({
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+    userId: input.actorUserId,
+  });
+  await enqueueEnvironmentOperation(requested.operation.id);
+  await logAdminEvent({
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    category: "environments",
+    action: "environment.reconcile.requested",
+    targetType: "environment",
+    targetId: input.environmentId,
+    message: `Requested reconciliation of Environment ${requested.environment.name}.`,
+    metadata: {
+      operationId: requested.operation.id,
+      requestAction: requested.action,
+    },
+  });
   return requested;
 }
 

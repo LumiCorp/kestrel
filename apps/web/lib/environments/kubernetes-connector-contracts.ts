@@ -25,7 +25,10 @@ export const kubernetesConnectionConfigV1Schema = z
     displayName: identifier,
     isDefault: z.boolean(),
     profile: kubernetesByocProfileV1Schema,
-    runtimeTemplateAllowlist: z.array(identifier).min(1).max(32),
+    runtimeTemplateAllowlist: z
+      .array(z.literal("kestrel-standard-v1"))
+      .min(1)
+      .max(32),
     qualificationProbeImage: digestImage,
     attestationEvidenceNote: z.string().trim().min(1).max(500),
   })
@@ -136,6 +139,12 @@ function stableJson(value: unknown): string {
 export function kubernetesConnectionConfigRevision(value: unknown) {
   const config = kubernetesConnectionConfigV1Schema.parse(value);
   return createHash("sha256").update(stableJson(config)).digest("hex");
+}
+
+export function kubernetesConnectionInfrastructureRevision(value: unknown) {
+  const { displayName: _displayName, isDefault: _isDefault, ...infrastructure } =
+    kubernetesConnectionConfigV1Schema.parse(value);
+  return createHash("sha256").update(stableJson(infrastructure)).digest("hex");
 }
 
 export function qualificationPassed(report: KubernetesQualificationReportV1) {

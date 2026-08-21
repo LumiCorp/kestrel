@@ -48,6 +48,7 @@ export const environmentOperationTypeSchema = z.enum([
   "environment.provision",
   "environment.update",
   "environment.delete",
+  "environment.reconcile",
   "workspace.provision",
   "workspace.start",
   "workspace.stop",
@@ -61,8 +62,7 @@ export type EnvironmentOperationType = z.infer<
   typeof environmentOperationTypeSchema
 >;
 
-export const createEnvironmentInputSchema = z.object({
-  provider: z.literal("fly").default("fly"),
+const createEnvironmentBaseSchema = z.object({
   name: z.string().trim().min(1).max(120),
   slug: z
     .string()
@@ -71,6 +71,11 @@ export const createEnvironmentInputSchema = z.object({
     .max(63)
     .regex(/^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$/u)
     .optional(),
+  isDefault: z.boolean().optional(),
+});
+
+const createFlyEnvironmentInputSchema = createEnvironmentBaseSchema.extend({
+  provider: z.literal("fly"),
   region: z
     .string()
     .trim()
@@ -78,17 +83,32 @@ export const createEnvironmentInputSchema = z.object({
     .max(16)
     .regex(/^[a-z0-9-]+$/u)
     .refine(isFlyRegionCode, "Select a supported Fly region."),
-  isDefault: z.boolean().optional(),
 });
-type ParsedCreateEnvironmentInput = z.infer<
-  typeof createEnvironmentInputSchema
->;
-export type CreateEnvironmentInput = Omit<
-  ParsedCreateEnvironmentInput,
-  "provider"
-> & {
-  provider?: "fly" | undefined;
-};
+
+const createKubernetesEnvironmentInputSchema = createEnvironmentBaseSchema.extend({
+  provider: z.literal("kubernetes"),
+  providerConnectionId: z.string().uuid(),
+  runtimeTemplate: z.string().trim().min(1).max(120),
+  workspaceLimit: z.number().int().positive(),
+});
+
+export const createEnvironmentInputSchema = z.preprocess(
+  (value) =>
+    value && typeof value === "object" && !("provider" in value)
+      ? { ...(value as Record<string, unknown>), provider: "fly" }
+      : value,
+  z.discriminatedUnion("provider", [
+    createFlyEnvironmentInputSchema,
+    createKubernetesEnvironmentInputSchema,
+  ]),
+);
+
+type ParsedCreateEnvironmentInput = z.infer<typeof createEnvironmentInputSchema>;
+export type CreateEnvironmentInput =
+  | (Omit<Extract<ParsedCreateEnvironmentInput, { provider: "fly" }>, "provider"> & {
+      provider?: "fly" | undefined;
+    })
+  | Extract<ParsedCreateEnvironmentInput, { provider: "kubernetes" }>;
 
 export const deleteEnvironmentInputSchema = z.object({
   confirmationName: z.string().min(1).max(120),
@@ -264,5 +284,5 @@ export function selectDefaultEnvironmentRecoveryAction(input: {
   }
   return "unsupported" as const;
 }
-export const environmentProviderSchema = z.enum(["fly", "desktop"]);
+export const environmentProviderSchema = z.enum(["fly", "desktop", "kubernetes"]);
 export type EnvironmentProvider = z.infer<typeof environmentProviderSchema>;

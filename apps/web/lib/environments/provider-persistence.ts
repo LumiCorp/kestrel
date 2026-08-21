@@ -209,6 +209,7 @@ export async function resolveEnvironmentProviderConnection(input: {
       providerPlacement: true,
       workspaceLimit: true,
       runtimeTemplate: true,
+      flyGatewayMachineId: true,
     },
   });
   if (!environment) return null;

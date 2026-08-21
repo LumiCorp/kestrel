@@ -9,7 +9,10 @@ test("hosted Environment eligibility is explicit after the BYO Fly migration", a
   process.env.DATABASE_URL = databaseUrl;
   Reflect.deleteProperty(process.env, "POSTGRES_URL");
 
-  const [{ resetDbRuntimeForTests }, { getHostedEnvironmentsRollout }] =
+  const [
+    { resetDbRuntimeForTests },
+    { getHostedEnvironmentsRollout, getKubernetesByocRollout },
+  ] =
     await Promise.all([import("@/lib/db/runtime"), import("./config")]);
   const sql = postgres(databaseUrl, { max: 1 });
   context.after(async () => {
@@ -35,6 +38,10 @@ test("hosted Environment eligibility is explicit after the BYO Fly migration", a
       effectiveEnabled: false,
     },
   );
+  assert.deepEqual(await getKubernetesByocRollout({ organizationId }), {
+    organizationConfigured: false,
+    organizationEnabled: false,
+  });
 
   await sql`
     INSERT INTO "organization_feature_flags" (
@@ -54,4 +61,14 @@ test("hosted Environment eligibility is explicit after the BYO Fly migration", a
       effectiveEnabled: true,
     },
   );
+
+  await sql`
+    INSERT INTO "organization_feature_flags" (
+      "organization_id", "key", "enabled", "updated_by_user_id"
+    ) VALUES (${organizationId}, 'kubernetes_byoc', true, NULL)
+  `;
+  assert.deepEqual(await getKubernetesByocRollout({ organizationId }), {
+    organizationConfigured: true,
+    organizationEnabled: true,
+  });
 });

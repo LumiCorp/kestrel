@@ -34,7 +34,7 @@ export type ResolvedEnvironmentProvider =
       kind: "kubernetes";
       connectionId: string;
       lifecycle: EnvironmentInfrastructureProviderV2;
-      legacyLifecycle: null;
+      legacyLifecycle: EnvironmentInfrastructureProviderV2LegacyAdapter;
       flyClient: null;
     };
 
@@ -42,6 +42,7 @@ export async function resolveEnvironmentProvider(input: {
   organizationId: string;
   environmentId: string;
   operationId?: string | undefined;
+  workspaceId?: string | undefined;
 }): Promise<ResolvedEnvironmentProvider> {
   const binding = await resolveEnvironmentProviderConnection(input);
   if (!binding) throw new Error("Environment provider binding was not found.");
@@ -58,10 +59,25 @@ export async function resolveEnvironmentProvider(input: {
     throw new Error("Hosted Environment provider connection is unavailable.");
   }
   if (binding.environment.provider === "fly") {
-    const flyClient = await createFlyProviderClientForNeutralConnection({
-      organizationId: input.organizationId,
-      connectionId: binding.connection.id,
-    });
+    const [flyClient, gatewayResource] = await Promise.all([
+      createFlyProviderClientForNeutralConnection({
+        organizationId: input.organizationId,
+        connectionId: binding.connection.id,
+      }),
+      knowledgeDb.query.environmentProviderResources.findFirst({
+        where: (table, { and, eq, isNull }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.environmentId, input.environmentId),
+            eq(table.providerConnectionId, binding.connection!.id),
+            eq(table.resourceRole, "gateway"),
+            isNull(table.workspaceId),
+            isNull(table.replacementId),
+            isNull(table.deletedAt),
+          ),
+        columns: { externalId: true },
+      }),
+    ]);
     const lifecycle = new FlyEnvironmentInfrastructureProviderV2(flyClient);
     return {
       kind: "fly",
@@ -69,7 +85,17 @@ export async function resolveEnvironmentProvider(input: {
       lifecycle,
       legacyLifecycle: new EnvironmentInfrastructureProviderV2LegacyAdapter(
         lifecycle,
-        binding.connection.id,
+        {
+          connectionId: binding.connection.id,
+          provider: "fly",
+          organizationId: input.organizationId,
+          environmentId: input.environmentId,
+          workspaceId: input.workspaceId,
+          gatewayExternalId:
+            gatewayResource?.externalId ??
+            binding.environment.flyGatewayMachineId ??
+            null,
+        },
       ),
       flyClient,
     };
@@ -83,7 +109,8 @@ export async function resolveEnvironmentProvider(input: {
     });
   }
   if (
-    binding.connection.status !== "ready" ||
+    binding.connection.status === "revoked" ||
+    binding.connection.revokedAt ||
     !binding.connection.connectorId ||
     !binding.environment.workspaceLimit
   ) {
@@ -94,8 +121,8 @@ export async function resolveEnvironmentProvider(input: {
       retryable: true,
     });
   }
-  const connector =
-    await knowledgeDb.query.infrastructureConnectorConnections.findFirst({
+  const [connector, gatewayResource] = await Promise.all([
+    knowledgeDb.query.infrastructureConnectorConnections.findFirst({
       where: (table, { and, eq }) =>
         and(
           eq(table.id, binding.connection!.connectorId!),
@@ -104,7 +131,21 @@ export async function resolveEnvironmentProvider(input: {
           eq(table.status, "active"),
         ),
       columns: { encryptionPublicKey: true },
-    });
+    }),
+    knowledgeDb.query.environmentProviderResources.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.providerConnectionId, binding.connection!.id),
+          eq(table.resourceRole, "gateway"),
+          isNull(table.workspaceId),
+          isNull(table.replacementId),
+          isNull(table.deletedAt),
+        ),
+      columns: { externalId: true },
+    }),
+  ]);
   if (!connector) {
     throw new EnvironmentProviderErrorV2({
       code: "PROVIDER_UNAVAILABLE",
@@ -113,20 +154,31 @@ export async function resolveEnvironmentProvider(input: {
       retryable: true,
     });
   }
+  const lifecycle = new KubernetesConnectorInfrastructureProviderV2({
+    operationId: input.operationId,
+    organizationId: input.organizationId,
+    environmentId: input.environmentId,
+    connectionId: binding.connection.id,
+    connectorEncryptionPublicKey: connector.encryptionPublicKey,
+    configuration: binding.connection.configuration,
+    workspaceLimit: binding.environment.workspaceLimit,
+    runtimeTemplate: binding.environment.runtimeTemplate,
+  });
   return {
     kind: "kubernetes",
     connectionId: binding.connection.id,
-    lifecycle: new KubernetesConnectorInfrastructureProviderV2({
-      operationId: input.operationId,
-      organizationId: input.organizationId,
-      environmentId: input.environmentId,
-      connectionId: binding.connection.id,
-      connectorEncryptionPublicKey: connector.encryptionPublicKey,
-      configuration: binding.connection.configuration,
-      workspaceLimit: binding.environment.workspaceLimit,
-      runtimeTemplate: binding.environment.runtimeTemplate,
-    }),
-    legacyLifecycle: null,
+    lifecycle,
+    legacyLifecycle: new EnvironmentInfrastructureProviderV2LegacyAdapter(
+      lifecycle,
+      {
+        connectionId: binding.connection.id,
+        provider: "kubernetes",
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        workspaceId: input.workspaceId,
+        gatewayExternalId: gatewayResource?.externalId ?? null,
+      },
+    ),
     flyClient: null,
   };
 }

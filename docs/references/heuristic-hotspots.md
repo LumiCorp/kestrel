@@ -3,7 +3,7 @@ id: heuristic-hotspots
 domain: docs
 status: active
 owner: kestrel-agent
-last_verified_at: 2026-06-30
+last_verified_at: 2026-08-20
 depends_on: [../index.md, ../../agents/reference-react/src/followUpSourceGrounding.ts, ../../agents/reference-react/src/steps/planner.ts, ../../tools/runtime/UnifiedToolRegistry.ts, ../../src/runtime/recoveryVerdict.ts]
 ---
 

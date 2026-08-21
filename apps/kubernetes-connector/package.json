@@ -8,7 +8,7 @@
     "build:self": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "pnpm run test:unit",
-    "test:unit": "node --import tsx --test tests/contracts.test.ts tests/identity.test.ts tests/lifecycle.test.ts tests/qualification.test.ts",
+    "test:unit": "node --import tsx --test tests/contracts.test.ts tests/faults.test.ts tests/identity.test.ts tests/lifecycle.test.ts tests/qualification.test.ts",
     "test:process": "node --import tsx --test tests/health.process.test.ts tests/helm.process.test.ts tests/lifecycle-http.process.test.ts",
     "typecheck": "pnpm run typecheck:self",
     "typecheck:self": "tsc -p tsconfig.json --noEmit",

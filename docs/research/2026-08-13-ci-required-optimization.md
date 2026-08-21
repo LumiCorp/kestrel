@@ -1,3 +1,12 @@
+---
+id: ci-required-optimization-research
+domain: runtime
+status: active
+owner: kestrel-runtime
+last_verified_at: 2026-08-20
+depends_on: [../ci-validation.md, ../index.md]
+---
+
 # ci-required Optimization Investigation
 
 ## Question

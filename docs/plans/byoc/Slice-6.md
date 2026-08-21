@@ -9,169 +9,164 @@ depends_on:
   - Slice-5.md
 ---
 
-# Slice 6: Control Plane, Administration, And Operations
+# Slice 6: Lean Control Plane, Administration, And Operations
 
 ## Outcome And User-Visible Result
 
-An authorized organization administrator can register and qualify multiple Kubernetes clusters, create Kubernetes Environments, observe and operate their workspaces, backups, updates, and deletion, inspect connector and provider evidence, and revoke access through supported product surfaces. Routine operation requires neither direct database changes nor `kubectl` repair.
+An organization administrator can opt into the pre-release Kubernetes BYOC feature, enroll and qualify a connector, create an Environment on an explicitly selected cluster, operate and reconcile it, inspect sanitized diagnostics, and delete and revoke it through supported product surfaces. No routine database access or `kubectl` repair is required.
 
-Kubernetes BYOC remains organization-flagged and manually activated. Automatic behavior is limited to recovering the recorded desired state of resources an administrator already created or changed.
+The complete API and UI remain behind the off-by-default `kubernetes_byoc` organization flag. Slice 6 is not deployed independently for general production use before Slice 7 completes real-cluster certification and the pilot proof.
 
 ## Starting State And Owned Boundaries
 
 Source: [Completing Kubernetes BYOC Accurately](../../research/2026-08-17-completing-kubernetes-byoc.md).
 
-Slices 1-5 provide provider-neutral contracts, persistence, connector trust and qualification, full Kubernetes lifecycle operations, execution-ticket v3, gateway-config v4, provider-neutral previews/idle reporting, and acknowledged replacement routing. Remaining Fly-specific construction exists across process runtime, Kubernetes backup orchestration, reconciliation, organization deletion, systems map, metering, create/update APIs, and Environment administration UI.
+Slices 1-5 provide provider-neutral contracts and persistence, trusted outbound connector transport, qualification, the Kubernetes lifecycle adapter, execution-ticket v3, gateway-config v4, logical preview and idle contracts, and acknowledged replacement routing. Slice 6 owns control-plane registry adoption, durable multi-command operations, Kubernetes admission, administration, backup/recovery orchestration, reconciliation, deletion, systems, cost semantics, diagnostics, UI, and audit.
 
-This slice owns complete provider-registry adoption, public/admin APIs, organization policy, UI, audit, health, cost semantics, support diagnostics, feature flags, and operator documentation. It does not certify or generally release the feature; Slice 7 owns proof and pilot rollout.
+Slice 7 owns every KIND and managed-cluster run, CSI and NetworkPolicy proof, public ingress and TLS proof, certification, artifact publication, and pilot rollout.
 
 ## Locked Architectural Decisions
 
-- Only organization administrators may approve, configure, qualify, default, revoke, or upgrade a Kubernetes connection.
-- Multiple connections are allowed; one may be the default for new Kubernetes Environments.
-- Environment connection binding is immutable after creation.
-- Kubernetes Environment creation requires a ready connection, allowed runtime template, and explicit positive workspace limit.
-- Provider registry is the only hosted infrastructure construction path.
-- Reconciliation can restore recorded desired revision but cannot create Environments, switch providers/connections, change images, raise workspace limits, upgrade connectors, or alter cluster configuration.
-- Connector installation and upgrades remain manual and digest-pinned.
-- BYOC cost is customer-billed/unknown; Kestrel reports resource requests, not fabricated provider prices.
-- Kestrel guarantees one writer among resources it manages for each `ReadWriteOnce` workspace PVC. Customer cluster administrators retain authority to create out-of-band PVC consumers and responsibility for resolving them.
-- Feature enablement is per organization and defaults off.
-- Kubernetes enablement fails closed unless `KESTREL_HOSTED_ROUTING_CONTRACT_MODE=logical-v1`; there is no provider-specific issuance exception.
-- Bulk Fly-to-Kubernetes migration is out of scope.
+- `kubernetes_byoc` is an organization-admin opt-in. There is no second deployment gate, operator authorization gate, or organization connection/template policy.
+- Kubernetes creation also requires `hosted_environments` and `KESTREL_HOSTED_ROUTING_CONTRACT_MODE=logical-v1`.
+- Missing `provider` means Fly for backward compatibility. Kubernetes creation always names a connection, runtime template, and positive workspace limit.
+- Qualification gates new Environment bindings only. A bound Environment remains operable while its immutable connection and active connector identity remain non-revoked.
+- Infrastructure configuration freezes after the first non-deleted Environment binding. Qualification, connector commands, and lifecycle admission bind to the infrastructure-only revision. Display name and default selection remain editable and do not invalidate qualification.
+- Configuration changes with zero active bindings invalidate qualification. Existing bindings never silently inherit a new profile, domain, class, selector, pull Secret, template list, or attestation.
+- Reconciliation restores only recorded Kestrel-owned desired state. It never selects a provider, connection, image, class, quota, edge mode, or workspace limit.
+- Revocation requires no active Environments or commands and a current empty inventory. There is no force-revoke path.
+- Kubernetes billing owner is `customer`; monetary cost is unknown. Kestrel records requested-resource observations but never applies Fly prices.
+- Connector upgrades remain manual and digest-pinned. Installed version and contract compatibility are factual; semantic-version comparison does not imply upgrade availability.
 
 ## Public Contracts, Schemas, And Wire Formats
 
-Add organization feature key `kubernetes_byoc`. Every administrator and runtime route checks both organization scope and this flag. Connector-authenticated cleanup and presence remain available long enough to revoke/clean disabled pilots, but disabling the feature blocks new connections, qualification, Environment creation, image update, and workspace creation.
+Migration `0080_kubernetes_byoc_control_plane.sql` replaces the unique connector-command `operation_id` index with a normal lookup index and adds `environment.reconcile` to the Environment operation constraint. `(provider_connection_id, idempotency_key)` remains unique. `environment_operations.connector_command_id` remains the latest-command compatibility pointer; complete timelines query every command with the operation ID.
 
-Extend Environment create input to a discriminated provider union:
+Environment creation accepts:
 
 ```ts
-type CreateHostedEnvironmentInput =
+type CreateEnvironmentInput =
   | {
-      provider: "fly";
+      provider?: "fly";
+      name: string;
+      slug?: string;
       region: FlyRegionCode;
-      runtimeTemplate: string;
+      isDefault?: boolean;
     }
   | {
       provider: "kubernetes";
+      name: string;
+      slug?: string;
       providerConnectionId: string;
       runtimeTemplate: string;
       workspaceLimit: number;
+      isDefault?: boolean;
     };
 ```
 
-Provider selection is explicit. Kubernetes does not consume organization Fly region settings. Add organization infrastructure policy for allowed provider connection IDs and runtime templates; do not add arbitrary Kubernetes selectors.
+The Kubernetes path validates admin authority, both organization flags, logical routing, organization ownership, ready/non-revoked connection state, active connector identity, current passed and unexpired qualification at the current infrastructure revision, template membership in the connection configuration, and a positive integer workspace limit.
 
-Expose sanitized connection views with identity, display name, provider, default, lifecycle/support status, connector version and compatible range, last presence, last qualification, edge mode/base domain, named classes, attestation status, failure summary, active Environment count, and upgrade requirement. Never expose keys, credentials, Secret data, raw encrypted payloads, or unrestricted provider metadata.
+Administration adds:
 
-Expose operation views with logical stage, connector command status, last safe event, normalized error, provider-native request/audit reference, resource role, retryability, and residual cleanup references.
+- `GET/PATCH /api/organization/infrastructure/kubernetes/settings`;
+- `GET /api/organization/infrastructure/kubernetes/connections`;
+- existing enrollment, approval, configure, qualify, and revoke routes under common organization authority;
+- `GET /api/organization/infrastructure/kubernetes/connections/:id/diagnostics`;
+- `POST /api/organization/environments/:id/reconcile`.
 
-Add explicit administrator operations:
-
-- register/approve/configure/qualify/default/revoke connection;
-- create/delete Kubernetes Environment;
-- update runtime image through existing runtime-channel operation;
-- provision/start/stop/rebuild/delete workspace;
-- create backup and restore/replacement;
-- run reconciliation and inventory;
-- inspect qualification and connector upgrade guidance.
-
-No route accepts arbitrary Kubernetes manifests, resource names, selectors, annotations, environment variables, or shell commands.
+Connection and diagnostic responses expose logical identity, lifecycle/support state, presence, compatibility, bounded configuration and qualification summaries, operation and command timelines, normalized failures, conditions, and residual inventory. They never expose credentials, private or signing keys, Secret values, encrypted envelopes, kubeconfig, or raw provider metadata.
 
 ## Ordered Implementation Phases
 
-1. Replace direct Fly construction in process runtime, backups, reconciliation, organization deletion, systems map, and health with the Slice 2 provider registry.
-2. Update all stores and presenters to use neutral connection/resource identities while retaining legacy fallback diagnostics.
-3. Add the organization feature flag and server-side authorization around every Kubernetes administrator/runtime route.
-4. Complete connection APIs and administrator UI for enrollment approval, configuration, attestations, qualification, support status, presence, revocation, and manual upgrade guidance.
-5. Extend Environment creation and organization policy to support explicit Kubernetes connection, runtime template, and workspace limit.
-6. Enable feature-flagged Kubernetes lifecycle actions through the existing durable Environment operation queue.
-7. Add provider-neutral health, systems inventory, operation evidence, residual-resource, and connector status presentation.
-8. Add customer-billed/unknown cost treatment plus requested CPU, memory, PVC, snapshot, and workspace-limit inventory.
-9. Add structured audit events and validate their redaction and organization scope.
-10. Add support bundles and operator documentation for installation through uninstall, including `ReadWriteOnce` same-node semantics, out-of-band consumer conflicts, and safe customer-owned Pod remediation.
-11. Remove remaining direct Fly assumptions from shared hosted lifecycle call sites and add boundary tests preventing regression.
+1. Apply migration 0080 and contract-test multiple deterministic connector commands per operation, replay reattachment, and the latest-command pointer.
+2. Add strict Fly-compatible/Kubernetes creation parsing and atomically persist Environment, immutable connection binding, neutral placement, pinned runtime images, and `environment.provision`.
+3. Refactor operation processing to resolve `EnvironmentInfrastructureProviderV2` from the Environment binding without Fly or cross-cluster fallback.
+4. Convert provisioning, update, workspace lifecycle, replacement, backup, restore, deletion, and normalized observation persistence to registry-resolved resources. Dual-write legacy columns only for Fly.
+5. Implement `environment.reconcile` and make scheduled/manual health refresh queue the same durable operation.
+6. Freeze infrastructure configuration after binding, invalidate qualification on unbound infrastructure changes, and enforce clean-state revocation.
+7. Add BYOC settings, connection, enrollment approval, qualification, compatibility, diagnostics, and manual-upgrade administration surfaces.
+8. Extend Environment creation/detail, systems, health, operation progress, residual-resource, and organization-deletion surfaces.
+9. Add customer-billed/unknown cost presentation and requested CPU, memory, PVC, snapshot, workspace, image, placement, and condition inventory.
+10. Add organization-scoped, redacted audit events and hermetic, process, Postgres, Chromium, audit, docs, and public-boundary proof.
 
 ## Data Flow And Lifecycle Behavior
 
-The connection flow is:
+The administrator enables BYOC, installs the connector chart, opens its verification path, compares and approves the fingerprint, supplies structured v1 connection configuration, and runs qualification. Environment creation selects that ready connection and one allowed runtime template and persists the immutable binding with the provision operation in one transaction.
 
-1. administrator installs the chart and opens the connector's verification path;
-2. Kestrel shows connector fingerprint and non-authoritative cluster facts;
-3. administrator approves it into the organization;
-4. administrator configures edge, controller selectors, storage, snapshots, pull Secret, and attestations;
-5. administrator runs read-only inspection and explicit active qualification;
-6. connection becomes certified or qualified and may be selected for Environment creation.
+Every worker resolves exactly the Environment's recorded connection through the provider registry. Kubernetes resolution requires a non-revoked connection and active connector identity; it does not reapply the creation-time qualification gate. Each provider call emits deterministic commands from the durable operation ID, command type, logical identities, replacement ID, and desired revision. Replay reattaches to every prior command and emits only missing later commands.
 
-Environment creation validates organization feature, admin role, ready connection, allowed policy, unique name/slug, runtime template, workspace limit, and current qualification. It persists the Environment and queues `environment.provision` atomically. The existing worker resolves the registry, invokes the Kubernetes proxy, and streams durable operation state to the UI.
+Backup manifests store neutral snapshot and source-resource references while continuing to read legacy Fly manifests. Replacement promotion locks the workspace, promotes neutral provider-resource rows, updates Fly compatibility columns only for Fly, refreshes the Router, requires the exact route generation, proves the logical route, and only then retires old resources.
 
-Workspace and backup actions use the same operation APIs and status model as Fly. Provider-specific evidence is rendered beneath normalized stage and health, never substituted for Kestrel lifecycle truth.
+`environment.reconcile` inventories the Environment and all workspaces, compares live observations with active resource rows and desired revisions, and reapplies missing or drifted owned state. Customer-owned consumers and field conflicts are reported without mutation. Manual refresh and scheduled health use this operation rather than holding an HTTP request open against Kubernetes.
 
-Scheduled reconciliation reads recorded desired revisions and inventories only active Kestrel resources. It may enqueue repair for missing or drifted owned fields. It cannot select a new connection, image, class, edge mode, quota, or provider. Customer-field ownership conflicts produce a degraded Environment and an administrator action.
-
-Connection revocation first prevents new commands and shows affected Environments. An administrator must stop/delete them or explicitly accept stranded resources. Safe revocation cancels queued commands, invalidates connector credentials, and records remaining resources. Helm uninstall instructions appear only after cleanup inventory is empty.
-
-Organization deletion enumerates Kubernetes Environments, executes their recorded delete operations, verifies no Kestrel-owned residuals, revokes connections, then continues organization deletion. A connector offline or residual resource blocks completion with explicit evidence rather than silently orphaning infrastructure.
+Organization deletion queues provider-neutral Environment deletion, waits for connector-confirmed cleanup, blocks while the connector is offline or inventory is residual/unknown, cleanly revokes Kubernetes connections, and only then permits organization cascade.
 
 ## Security And Trust Boundaries
 
-- All administrator actions use existing organization-role authority and CSRF/request validation.
-- Feature flag, organization, connection, Environment, and actor are checked in one server-side authority path.
-- Attestation changes invalidate qualification and emit audit events.
-- UI receives sanitized connection/config/evidence views only.
-- Connector and Kubernetes errors are sanitized before audit, UI, or support bundles.
-- Runtime desired-state recovery cannot broaden scope or permissions.
-- Kestrel reports an observed customer-owned workspace-PVC consumer as `RESOURCE_CONFLICT`; it does not delete, relabel, or adopt that Pod. Existing operation and support diagnostics carry the sanitized conflict without adding an access-mode support state.
-- Revocation and organization deletion fail closed when cleanup cannot be proven.
-- Support bundles hash or redact organization, cluster, hostname, Secret, credential, ticket, and repository-sensitive values according to existing diagnostic rules.
+- Organization-admin authority and organization ownership are checked server-side on every administration mutation.
+- Disabling the opt-in blocks new connector approval and Kubernetes Environment admission; it does not strand or disable existing bound Environments.
+- The provider registry never falls back to Fly or another Kubernetes connection.
+- The UI accepts structured connection configuration only and never accepts arbitrary manifests, selectors at Environment creation, shell commands, or raw environment variables.
+- Configuration secrets, enrollment secrets, connector credentials, command secrets, signatures, and kubeconfig never enter presentation or audit DTOs.
+- Reconciliation mutates only Kestrel-owned fields at recorded logical identities and reports customer-owned conflicts.
+- Clean revocation and organization deletion fail closed when presence or inventory is unknown.
 
 ## Failure, Retry, Recovery, And Rollback Behavior
 
-An offline connector makes mutation actions unavailable but retains queued operation state. UI distinguishes connector offline, cluster rejected, workload unhealthy, and Kestrel worker unavailable.
+Retryable connector, Kubernetes, and control-plane failures retain the operation checkpoint and deterministic command sequence. Worker or connector restart reclaims the same commands and rereads live state. Non-retryable authorization, ownership, malformed-result, and customer-consumer conflicts produce normalized failures and durable evidence.
 
-Stale qualification blocks new Environment creation and configuration-dependent mutations but permits health, inventory, stop, backup when safe, delete, and revocation cleanup. The exact safe-operation allowlist is contract-tested; no general fallback is inferred.
+Qualification expiry or configuration mismatch rejects only new Kubernetes bindings. Existing bound Environments can provision workspaces, stop, start, update, back up, restore, reconcile, and delete until the connection is cleanly revoked. Feature disablement similarly blocks new admission without introducing an operation allowlist.
 
-Provider registry resolution failure is normalized and recorded on the operation. It does not fall back to Fly or another Kubernetes connection.
-
-Feature rollback disables `kubernetes_byoc` for new actions while leaving status, cleanup, and revocation routes available to administrators. Fly and Desktop remain unaffected. Schema, resource rows, tickets, and connector evidence are additive and remain readable.
-
-UI rollout follows server support: ship readers and status surfaces first, enable connection administration second, enable Environment creation only after Slice 7 gates. A UI must never offer an action the server does not authorize.
+Application rollback keeps additive schema and readers, sets the organization opt-in off, and returns issuers to the compatible routing mode only after Kubernetes creation is disabled. Cleanup remains available. Fly and Desktop behavior is unchanged.
 
 ## Detailed Test Matrix
 
-- Feature off/on by organization, admin/member role, cross-organization IDs, and revoked connection.
-- Multiple connections, default selection, explicit selection, immutable binding, disabled default, and stale qualification.
-- Kubernetes create validation for missing connection, wrong provider, disallowed template, invalid workspace limit, and non-ready connection.
-- Atomic Environment row plus operation enqueue and duplicate idempotency.
-- Every lifecycle action resolves Kubernetes through the registry and Fly through its adapter.
-- Reconciliation repairs recorded desired state and rejects image, connection, quota, edge, or provider drift outside an explicit operation.
-- Connection approval, configuration, attestation invalidation, qualification, support status, presence, upgrade required, and revocation.
-- Sanitized API/UI views and absence of keys, Secret data, encrypted plaintext, kubeconfig, and raw provider payloads.
-- Health and systems map for ready, degraded, offline, stale, deleting, and residual states.
-- RWO conflict diagnostics distinguish duplicate Kestrel-managed compute from an observed customer-owned PVC consumer and never offer automatic deletion.
-- Customer-billed/unknown cost with requested resources and no Fly rate application.
-- Audit event existence, actor, organization, target, metadata redaction, and failure path.
-- Organization deletion success, connector offline, delete failure, residual resource, and eventual resume.
-- Chromium flows for install guidance, fingerprint approval, configuration, qualification, Environment creation, operation progress, failure recovery, and revocation.
+- Missing-provider Fly parsing; strict Kubernetes provider, connection, template, and positive workspace-limit parsing.
+- Organization admin/member and cross-organization feature, connection, Environment, diagnostics, reconciliation, and revocation authority.
+- Hosted flag, BYOC flag, logical routing, connection readiness, connector identity, qualification expiry/revision, template, and workspace-limit admission failures.
+- Atomic Environment, binding, placement, runtime-version, and provision-operation creation with no Kubernetes Fly aliases.
+- Multiple commands per operation, deterministic replay, latest pointer, command timeline, worker restart, connector restart, and partial completion.
+- Configuration freeze, presentation-only edits, qualification invalidation, multiple connections, default selection, and immutable binding.
+- Clean revocation plus active Environment, active command, residual, unknown inventory, offline connector, and cross-organization failures.
+- Fly and Kubernetes provision, update, start, stop, rebuild, backup, restore, reconcile, and delete through the registry and fake connector/Kubernetes servers.
+- Reconciliation repairs recorded desired state without changing provider, connection, image, class, quota, edge mode, or workspace limit; customer-owned PVC consumers remain untouched.
+- Organization deletion success, offline connector, failed deletion, residual inventory, retry, revocation, and eventual completion.
+- Kubernetes customer-billed/unknown presentation, bounded requested-resource inventory, and absence of Fly rate-ledger entries.
+- Chromium flows for opt-in, fingerprint approval, configuration, qualification, Environment creation, progress, diagnostics, reconciliation, deletion, and revocation.
+- Audit actor, organization, target, result, and redaction assertions; public-boundary proof that provider topology remains confined to adapters, connector contracts, persistence, and administration DTOs.
 
 ## Validation Commands And Proof Artifacts
 
-- Run focused provider registry, operation worker, backups, reconciliation, organization deletion, systems map, cost, API, authorization, and UI tests.
-- Run Postgres, process, Chromium, and audit validation leaves.
-- Run public-boundary and documentation checks for new administration surfaces.
-- Run `pnpm validate` before the slice PR is ready.
-- Capture administrator-flow screenshots or browser traces, redacted audit records, operation timelines, registry resolution proof, and organization deletion inventory.
+Run:
+
+```sh
+pnpm --filter @kestrel/kubernetes-connector test
+pnpm --filter @kestrel/kubernetes-connector test:process
+pnpm --filter @kestrel/kubernetes-connector typecheck
+pnpm --filter @kestrel/kestrel-one test:unit
+pnpm --filter @kestrel/kestrel-one typecheck
+pnpm validate:postgres
+pnpm validate:process
+pnpm validate:chromium
+pnpm validate:audit
+pnpm run check:public-boundary
+pnpm run check:docs
+git diff --check
+pnpm validate
+```
+
+Proof artifacts are classified only as hermetic, process, Postgres, Chromium, or audit evidence. No Slice 6 result is described as real-cluster or isolated-provider proof.
 
 ## Exit Criteria
 
-- No shared hosted lifecycle entry point constructs Fly or Kubernetes providers directly.
-- A flagged organization administrator can complete connection enrollment through Environment deletion using supported product surfaces.
-- Members and other organizations cannot inspect or mutate connections.
-- Health, systems map, operations, audit, cost, and support diagnostics accurately represent Kubernetes and connector state.
-- Reconciliation and runtime-channel actions remain inside the explicit manual-mutation boundary.
-- Organization deletion cannot report success while Kestrel-owned Kubernetes resources remain unknown or present.
+- One operation durably executes and replays its complete connector-command sequence.
+- Shared hosted lifecycle paths resolve Fly or Kubernetes through the v2 registry and neutral resource identities.
+- An opted-in organization administrator can complete enrollment through clean Environment deletion and connection revocation without database changes or routine `kubectl`.
+- Qualification affects new bindings only; existing immutable bindings remain manageable.
+- Configuration cannot silently change infrastructure under an active Environment.
+- Systems, costs, diagnostics, operations, and audit represent Kubernetes without fabricated prices or secret leakage.
+- Fly and Desktop remain compatible, and no live cluster is required for Slice 6 acceptance.
 
 ## Explicit Exclusions And Handoff
 
-This slice does not enable general availability, automatically publish or upgrade connector artifacts, certify new cluster stacks, migrate Fly Environments, or remove compatibility fields/readers. Slice 7 executes the full proof matrix, staged enablement, pilot, rollback drill, and release decision.
+This slice does not run KIND, deploy a managed cluster, prove CSI, NetworkPolicy, ingress, DNS, or TLS behavior, publish connector artifacts, certify GKE/EKS, approve a customer pilot, migrate Fly Environments, or release Kubernetes BYOC generally. Slice 7 owns all those gates. Organization administrators perform the product opt-in; operator approval in Slice 7 is a pilot-process requirement, not a product authorization gate.

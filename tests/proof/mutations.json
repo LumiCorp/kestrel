@@ -3,12 +3,12 @@
   "mutations": [
     {
       "id": "conversation-refresh-message-discard",
-      "target": "apps/web/lib/turns/message-reconciliation.ts",
-      "find": "return turnStatus === \"running\" ? live : persisted;",
+      "target": "packages/conversation/src/projector.ts",
+      "find": "return status === \"running\" ? live : persisted;",
       "replace": "return live;",
       "command": "pnpm",
-      "args": ["--dir", "apps/web", "exec", "tsx", "--test", "lib/turns/message-reconciliation.test.ts"],
-      "testFiles": ["apps/web/lib/turns/message-reconciliation.test.ts"]
+      "args": ["--dir", "packages/conversation", "exec", "tsx", "--test", "tests/conversation.test.ts"],
+      "testFiles": ["packages/conversation/tests/conversation.test.ts"]
     },
     {
       "id": "conversation-snapshot-orphan-interaction",
@@ -592,7 +592,7 @@
       "find": "db:migrate:deploy",
       "replace": "db:migrate",
       "command": "node",
-      "args": ["--import", "tsx", "--test", "--test-name-pattern=production database migration belongs", "tests/unit/production-delivery-boundary.test.ts"],
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=Vercel production build retains", "tests/unit/production-delivery-boundary.test.ts"],
       "testFiles": ["tests/unit/production-delivery-boundary.test.ts"]
     },
     {

@@ -43,6 +43,22 @@ export const environmentProviderResourceMetadataV1Schema = z
       "provider_observation",
     ]),
     detail: z.string().trim().min(1).max(500).optional(),
+    requestedCpu: z.number().positive().max(1024).nullable().optional(),
+    requestedMemoryMb: z.number().int().positive().max(4_194_304).nullable().optional(),
+    requestedStorageGb: z.number().int().positive().max(1_048_576).nullable().optional(),
+    imageDigest: z.string().regex(/^.+@sha256:[a-f0-9]{64}$/u).nullable().optional(),
+    placement: z.record(
+      z.string().trim().min(1).max(120),
+      z.string().trim().min(1).max(500),
+    ).nullable().optional(),
+    conditions: z.array(
+      z.object({
+        type: z.string().trim().min(1).max(120),
+        status: z.string().trim().min(1).max(120),
+        reason: z.string().trim().min(1).max(160).optional(),
+        message: z.string().trim().min(1).max(500).optional(),
+      }).strict(),
+    ).max(64).optional(),
   })
   .strict();
 

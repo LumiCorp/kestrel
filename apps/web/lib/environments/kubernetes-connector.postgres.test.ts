@@ -3,6 +3,10 @@ import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
 import { generateConnectorCredentialEncryptionKeyPair } from "@lumi/kestrel-environment-auth";
+import {
+  KUBERNETES_QUALIFICATION_CHECK_IDS,
+  kubernetesConnectionInfrastructureRevision,
+} from "./kubernetes-connector-contracts";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
@@ -90,4 +94,182 @@ test("connector enrollment binds once and qualification owns a durable command",
   `;
   assert.equal(command?.operationId, null);
   assert.equal(command?.qualificationRunId, run.runId);
+
+  const environmentId = `environment-${suffix}`;
+  await sql`
+    INSERT INTO "environments" (
+      "id", "organization_id", "name", "slug", "provider", "region",
+      "provider_connection_id", "provider_placement", "workspace_limit",
+      "status", "runtime_template", "idle_timeout_minutes"
+    ) VALUES (
+      ${environmentId}, ${organizationId}, 'Bound Environment', ${`bound-${suffix}`},
+      'kubernetes', NULL, ${approved.connection.id},
+      ${sql.json({ connectionId: approved.connection.id, requested: null, observed: null })},
+      4, 'requested', 'kestrel-standard-v1', 15
+    )
+  `;
+  const presentationUpdate = await connector.configureKubernetesConnection({
+    organizationId,
+    connectionId: approved.connection.id,
+    actorUserId: userId,
+    value: { ...configuration, displayName: "Renamed cluster", isDefault: false },
+  });
+  assert.equal(presentationUpdate.infrastructureChanged, false);
+  assert.equal(presentationUpdate.defaultChanged, true);
+  await assert.rejects(
+    connector.configureKubernetesConnection({
+      organizationId,
+      connectionId: approved.connection.id,
+      actorUserId: userId,
+      value: {
+        ...configuration,
+        displayName: "Renamed cluster",
+        isDefault: false,
+        profile: {
+          ...configuration.profile,
+          storageClassName: "different-storage-class",
+        },
+      },
+    }),
+    /cannot change while the connection owns an active Environment/u,
+  );
+
+  await assert.rejects(
+    connector.requireKubernetesConnectionForEnvironmentCreation({
+      organizationId,
+      connectionId: approved.connection.id,
+      runtimeTemplate: "kestrel-standard-v1",
+    }),
+    /not ready/u,
+  );
+
+  const now = new Date();
+  const report = {
+    contract: "kubernetes-qualification-report-v1",
+    runId: run.runId,
+    connectionId: approved.connection.id,
+    configurationRevision:
+      kubernetesConnectionInfrastructureRevision(configuration),
+    clusterFingerprint: "b".repeat(64),
+    startedAt: now.toISOString(),
+    completedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    evidenceClass: "isolated_provider",
+    observed: {
+      kubernetesVersion: "v1.32.0",
+      distribution: "other",
+      storageDriver: "csi.example.test",
+      snapshotDriver: "csi.example.test",
+      edgeController: "nginx",
+      edgeMode: "ingress",
+    },
+    checks: KUBERNETES_QUALIFICATION_CHECK_IDS.map((id) => ({
+      id,
+      status: "passed",
+      evidenceClass: id.startsWith("active.")
+        ? "isolated_provider"
+        : "cluster_preflight",
+      detail: `${id} passed.`,
+    })),
+    cleanup: {
+      status: "passed",
+      namespace: "kestrel-qualification-test",
+      residualResources: [],
+    },
+  };
+  await sql.begin(async (transaction) => {
+    await transaction`
+      UPDATE infrastructure_connector_qualification_runs
+      SET status = 'passed', result = ${transaction.json(report)},
+        completed_at = now(), updated_at = now()
+      WHERE id = ${run.runId}
+    `;
+    await transaction`
+      UPDATE environment_provider_connections
+      SET status = 'ready', support_status = 'qualified',
+        qualification_evidence = ${transaction.json([report])},
+        qualified_at = now(), last_qualified_at = now(), updated_at = now()
+      WHERE id = ${approved.connection.id}
+    `;
+  });
+  const admitted =
+    await connector.requireKubernetesConnectionForEnvironmentCreation({
+      organizationId,
+      connectionId: approved.connection.id,
+      runtimeTemplate: "kestrel-standard-v1",
+    });
+  assert.equal(admitted.connection.id, approved.connection.id);
+  await assert.rejects(
+    connector.requireKubernetesConnectionForEnvironmentCreation({
+      organizationId,
+      connectionId: approved.connection.id,
+      runtimeTemplate: "unapproved-template",
+    }),
+    /not allowed/u,
+  );
+  await assert.rejects(
+    connector.requireKubernetesConnectionForEnvironmentCreation({
+      organizationId: `other-${organizationId}`,
+      connectionId: approved.connection.id,
+      runtimeTemplate: "kestrel-standard-v1",
+    }),
+    /unavailable/u,
+  );
+
+  await sql`
+    UPDATE infrastructure_connector_connections
+    SET last_seen_at = now(), updated_at = now()
+    WHERE provider_connection_id = ${approved.connection.id}
+  `;
+  await assert.rejects(
+    connector.revokeKubernetesConnection({
+      organizationId,
+      connectionId: approved.connection.id,
+      actorUserId: userId,
+    }),
+    /Delete every Environment/u,
+  );
+  await sql`DELETE FROM environments WHERE id = ${environmentId}`;
+  await assert.rejects(
+    connector.revokeKubernetesConnection({
+      organizationId,
+      connectionId: approved.connection.id,
+      actorUserId: userId,
+    }),
+    /active command/u,
+  );
+  const inventoryResult = {
+    contract: "infrastructure-connector-result-v1",
+    commandId: run.commandId,
+    connectionId: approved.connection.id,
+    commandType: "list_environment_resources",
+    status: "succeeded",
+    observedRevision: run.configRevision,
+    resources: [],
+    evidence: [],
+    output: { resourceObservations: [] },
+  };
+  await sql`
+    UPDATE infrastructure_connector_commands
+    SET command_type = 'list_environment_resources', status = 'completed',
+      result = ${sql.json(inventoryResult)}, completed_at = now(),
+      created_at = now(), updated_at = now()
+    WHERE id = ${run.commandId}
+  `;
+  assert.deepEqual(
+    await connector.revokeKubernetesConnection({
+      organizationId,
+      connectionId: approved.connection.id,
+      actorUserId: userId,
+    }),
+    { revoked: true, displayName: "Renamed cluster" },
+  );
+  await assert.rejects(
+    connector.requireKubernetesConnectionForEnvironmentCreation({
+      organizationId,
+      connectionId: approved.connection.id,
+      runtimeTemplate: "kestrel-standard-v1",
+    }),
+    /not ready/u,
+  );
 });

@@ -2785,6 +2785,7 @@ export const environmentOperations = pgTable(
         "environment.provision",
         "environment.update",
         "environment.delete",
+        "environment.reconcile",
         "workspace.provision",
         "workspace.start",
         "workspace.stop",
@@ -2895,7 +2896,7 @@ export const infrastructureConnectorCommands = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex("infrastructure_connector_commands_operation_idx")
+    index("infrastructure_connector_commands_operation_idx")
       .on(table.operationId)
       .where(sql`${table.operationId} is not null`),
     uniqueIndex("infrastructure_connector_commands_qualification_idx")

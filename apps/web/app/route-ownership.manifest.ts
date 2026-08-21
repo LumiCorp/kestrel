@@ -537,6 +537,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin-denied",
   ),
   page(
+    "app/(workspace)/organization/connections/kubernetes/enrollments/[id]/page.tsx",
+    "/organization/connections/kubernetes/enrollments/:id",
+    "environments",
+    "admin",
+    "admin-denied",
+  ),
+  page(
     "app/(workspace)/organization/email/page.tsx",
     "/organization/email",
     "email-delivery",
@@ -925,6 +932,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/organization/environments/[id]/operations/route.ts",
     "/api/organization/environments/:id/operations",
+    ADMIN_API.owner,
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
+    "app/api/organization/environments/[id]/reconcile/route.ts",
+    "/api/organization/environments/:id/reconcile",
     ADMIN_API.owner,
     ADMIN_API.access,
     ADMIN_API.unauthorized,
@@ -2186,6 +2200,14 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   ),
   ...[
     [
+      "app/api/organization/infrastructure/kubernetes/settings/route.ts",
+      "/api/organization/infrastructure/kubernetes/settings",
+    ],
+    [
+      "app/api/organization/infrastructure/kubernetes/connections/route.ts",
+      "/api/organization/infrastructure/kubernetes/connections",
+    ],
+    [
       "app/api/organization/infrastructure/kubernetes/enrollments/[id]/route.ts",
       "/api/organization/infrastructure/kubernetes/enrollments/:id",
     ],
@@ -2200,6 +2222,10 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     [
       "app/api/organization/infrastructure/kubernetes/connections/[id]/configure/route.ts",
       "/api/organization/infrastructure/kubernetes/connections/:id/configure",
+    ],
+    [
+      "app/api/organization/infrastructure/kubernetes/connections/[id]/diagnostics/route.ts",
+      "/api/organization/infrastructure/kubernetes/connections/:id/diagnostics",
     ],
     [
       "app/api/organization/infrastructure/kubernetes/connections/[id]/qualify/route.ts",

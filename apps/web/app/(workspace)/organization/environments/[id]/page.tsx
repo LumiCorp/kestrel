@@ -17,6 +17,7 @@ import {
   listDesktopWorkspaceCatalog,
 } from "@/lib/environments/desktop";
 import { knowledgeDb } from "@/lib/knowledge/db";
+import { EnvironmentReconcileAction } from "@/components/organization/environment-reconcile-action";
 
 export default async function OrganizationEnvironmentOverviewPage({
   params,
@@ -30,14 +31,39 @@ export default async function OrganizationEnvironmentOverviewPage({
     environmentId: id,
   });
   if (!environment) return null;
-  const workspaces = await knowledgeDb.query.environmentWorkspaces.findMany({
-    where: (table, { and, eq, isNull }) =>
-      and(
-        eq(table.organizationId, organizationId),
-        eq(table.environmentId, environment.id),
-        isNull(table.deletedAt),
-      ),
-  });
+  const [workspaces, providerResources] = await Promise.all([
+    knowledgeDb.query.environmentWorkspaces.findMany({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.organizationId, organizationId),
+          eq(table.environmentId, environment.id),
+          isNull(table.deletedAt),
+        ),
+    }),
+    knowledgeDb.query.environmentProviderResources.findMany({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.organizationId, organizationId),
+          eq(table.environmentId, environment.id),
+          isNull(table.deletedAt),
+        ),
+    }),
+  ]);
+  const requestedCpu = providerResources.reduce(
+    (total, resource) =>
+      total + readNumber(resource.providerMetadata, "requestedCpu"),
+    0,
+  );
+  const requestedMemoryMb = providerResources.reduce(
+    (total, resource) =>
+      total + readNumber(resource.providerMetadata, "requestedMemoryMb"),
+    0,
+  );
+  const requestedStorageGb = providerResources.reduce(
+    (total, resource) =>
+      total + readNumber(resource.providerMetadata, "requestedStorageGb"),
+    0,
+  );
   const workspaceFailures = workspaces.filter((workspace) =>
     ["failed", "degraded"].includes(workspace.status),
   );
@@ -175,6 +201,9 @@ export default async function OrganizationEnvironmentOverviewPage({
               initialIsDefault={environment.isDefault}
             />
           </SettingsRow>
+          <SettingsRow label="Live inventory">
+            <EnvironmentReconcileAction environmentId={environment.id} />
+          </SettingsRow>
         </SettingsRows>
       </SettingsSection>
       <SettingsDisclosure
@@ -182,13 +211,36 @@ export default async function OrganizationEnvironmentOverviewPage({
         title="Technical details"
       >
         <SettingsRows>
-          <SettingsRow label="Region">{environment.region}</SettingsRow>
+          <SettingsRow label="Provider">
+            {environment.provider === "kubernetes" ? "Kubernetes BYOC" : "Fly.io"}
+          </SettingsRow>
+          <SettingsRow label="Placement">
+            {environment.provider === "kubernetes" ? "Bound customer cluster" : environment.region}
+          </SettingsRow>
           <SettingsRow label="Runtime template">
             {environment.runtimeTemplate}
           </SettingsRow>
           <SettingsRow label="Idle timeout">
             {environment.idleTimeoutMinutes} minutes
           </SettingsRow>
+          {environment.provider === "kubernetes" ? (
+            <>
+              <SettingsRow label="Connection ID">
+                <code className="break-all text-xs">{environment.providerConnectionId}</code>
+              </SettingsRow>
+              <SettingsRow label="Workspace limit">
+                {environment.workspaceLimit ?? "Not recorded"}
+              </SettingsRow>
+              <SettingsRow label="Billing owner">Customer</SettingsRow>
+              <SettingsRow label="Monetary cost">Unknown</SettingsRow>
+              <SettingsRow label="Requested compute">
+                {requestedCpu || "Unknown"} CPU · {requestedMemoryMb || "Unknown"} MiB memory
+              </SettingsRow>
+              <SettingsRow label="Requested storage">
+                {requestedStorageGb || "Unknown"} GiB PVC · {providerResources.filter((resource) => resource.resourceRole === "snapshot").length} snapshots
+              </SettingsRow>
+            </>
+          ) : null}
           <SettingsRow label="Preview ingress">Kestrel Edge</SettingsRow>
           <SettingsRow label="Environment ID">
             <code className="break-all text-xs">{environment.id}</code>
@@ -210,7 +262,7 @@ export default async function OrganizationEnvironmentOverviewPage({
         </SettingsRows>
       </SettingsDisclosure>
       <SettingsDangerSection
-        description="Deletion permanently removes this Environment's Fly app and Workspace volumes."
+        description="Deletion permanently removes this Environment's Kestrel-managed compute and storage resources."
         title="Danger zone"
       >
         <EnvironmentDeleteAction
@@ -222,4 +274,12 @@ export default async function OrganizationEnvironmentOverviewPage({
       </SettingsDangerSection>
     </div>
   );
+}
+
+function readNumber(value: unknown, key: string) {
+  if (!(value && typeof value === "object" && !Array.isArray(value))) return 0;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "number" && Number.isFinite(candidate)
+    ? candidate
+    : 0;
 }

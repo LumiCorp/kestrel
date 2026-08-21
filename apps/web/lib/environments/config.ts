@@ -3,12 +3,18 @@ import { assertGatewayCredentialEncryptionConfigured } from "@/lib/ai/gateway-cr
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 
 export const HOSTED_ENVIRONMENTS_FEATURE_KEY = "hosted_environments";
+export const KUBERNETES_BYOC_FEATURE_KEY = "kubernetes_byoc";
 
 export type HostedEnvironmentsRollout = {
   deploymentEnabled: boolean;
   organizationConfigured: boolean;
   organizationEnabled: boolean;
   effectiveEnabled: boolean;
+};
+
+export type KubernetesByocRollout = {
+  organizationConfigured: boolean;
+  organizationEnabled: boolean;
 };
 
 export type HostedEnvironmentRuntimeMode = "fly" | "local";
@@ -230,6 +236,74 @@ export async function setHostedEnvironmentsOrganizationFlag(input: {
     .returning();
   if (!flag) throw new Error("Environment rollout update failed.");
   return flag;
+}
+
+export async function getKubernetesByocRollout(input: {
+  organizationId: string;
+}): Promise<KubernetesByocRollout> {
+  const flag = await knowledgeDb.query.organizationFeatureFlags.findFirst({
+    where: (table, { and, eq }) =>
+      and(
+        eq(table.organizationId, input.organizationId),
+        eq(table.key, KUBERNETES_BYOC_FEATURE_KEY),
+      ),
+  });
+  return {
+    organizationConfigured: Boolean(flag),
+    organizationEnabled: flag?.enabled === true,
+  };
+}
+
+export async function setKubernetesByocOrganizationFlag(input: {
+  organizationId: string;
+  actorUserId: string;
+  enabled: boolean;
+}) {
+  const now = new Date();
+  const [flag] = await knowledgeDb
+    .insert(schema.organizationFeatureFlags)
+    .values({
+      organizationId: input.organizationId,
+      key: KUBERNETES_BYOC_FEATURE_KEY,
+      enabled: input.enabled,
+      updatedByUserId: input.actorUserId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        schema.organizationFeatureFlags.organizationId,
+        schema.organizationFeatureFlags.key,
+      ],
+      set: {
+        enabled: input.enabled,
+        updatedByUserId: input.actorUserId,
+        updatedAt: now,
+      },
+    })
+    .returning();
+  if (!flag) throw new Error("Kubernetes BYOC rollout update failed.");
+  return flag;
+}
+
+export async function requireKubernetesByocAdmission(input: {
+  organizationId: string;
+  requireLogicalRouting?: boolean | undefined;
+}) {
+  await requireHostedEnvironmentsEnabled({ organizationId: input.organizationId });
+  const rollout = await getKubernetesByocRollout(input);
+  if (!rollout.organizationEnabled) {
+    throw new Error("Kubernetes BYOC is not enabled for this organization.");
+  }
+  if (
+    input.requireLogicalRouting !== false &&
+    getHostedRoutingContractMode() !== "logical-v1"
+  ) {
+    throw new Error(
+      "Kubernetes BYOC requires KESTREL_HOSTED_ROUTING_CONTRACT_MODE=logical-v1.",
+    );
+  }
+  return rollout;
 }
 
 export async function requireHostedEnvironmentsEnabled(input: {

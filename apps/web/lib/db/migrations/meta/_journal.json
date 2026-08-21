@@ -561,6 +561,13 @@
       "when": 1787094000000,
       "tag": "0079_provider_neutral_routing",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1787180400000,
+      "tag": "0080_kubernetes_byoc_control_plane",
+      "breakpoints": true
     }
   ]
 }

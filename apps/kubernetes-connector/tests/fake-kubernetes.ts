@@ -1,8 +1,28 @@
 type JsonRecord = Record<string, unknown>;
 
+export type FakeKubernetesFault = {
+  method?: string;
+  path?: string | RegExp;
+  status: number;
+  message?: string;
+  delayMs?: number;
+  once?: boolean;
+};
+
+export class FakeKubernetesApiError extends Error {
+  constructor(
+    readonly status: number,
+    message = `Fake Kubernetes API returned HTTP ${status}.`,
+  ) {
+    super(message);
+    this.name = "FakeKubernetesApiError";
+  }
+}
+
 export class FakeKubernetesApi {
   readonly requests: Array<{ method: string; path: string; body?: JsonRecord }> = [];
   readonly resources = new Map<string, JsonRecord>();
+  private faults: FakeKubernetesFault[] = [];
   private generation = 0;
   private readonly discovery = new Map<string, JsonRecord>([
     ["/api/v1", resourceList([
@@ -29,8 +49,21 @@ export class FakeKubernetesApi {
     ["/apis/gateway.networking.k8s.io/v1", resourceList([["httproutes", "HTTPRoute"]])],
   ]);
 
+  setFault(fault: FakeKubernetesFault) {
+    this.faults.push({ ...fault });
+  }
+
+  setFaults(faults: FakeKubernetesFault[]) {
+    this.faults = faults.map((fault) => ({ ...fault }));
+  }
+
+  clearFaults() {
+    this.faults = [];
+  }
+
   async get(path: string, options: { allowNotFound?: boolean } = {}) {
     this.requests.push({ method: "GET", path });
+    await this.beforeRequest("GET", path);
     if (path === "/apis") {
       return {
         groups: [...this.discovery.keys()]
@@ -60,12 +93,14 @@ export class FakeKubernetesApi {
 
   async create(path: string, body: JsonRecord) {
     this.requests.push({ method: "POST", path, body: structuredClone(body) });
+    await this.beforeRequest("POST", path);
     const target = resourcePath(path, body);
     return this.store(target, body);
   }
 
   async apply(path: string, body: JsonRecord) {
     this.requests.push({ method: "PATCH", path, body: structuredClone(body) });
+    await this.beforeRequest("PATCH", path);
     const target = withoutQuery(path);
     const current = this.resources.get(target);
     return this.store(target, current ? merge(current, body) : body);
@@ -73,6 +108,7 @@ export class FakeKubernetesApi {
 
   async strategicMergePatch(path: string, body: JsonRecord) {
     this.requests.push({ method: "PATCH", path, body: structuredClone(body) });
+    await this.beforeRequest("PATCH", path);
     const target = withoutQuery(path);
     const current = this.resources.get(target);
     if (!current) throw new Error(`Cannot patch absent fake resource ${target}.`);
@@ -81,6 +117,7 @@ export class FakeKubernetesApi {
 
   async delete(path: string) {
     this.requests.push({ method: "DELETE", path });
+    await this.beforeRequest("DELETE", path);
     this.resources.delete(withoutQuery(path));
     return {};
   }
@@ -133,6 +170,26 @@ export class FakeKubernetesApi {
     }
     this.resources.set(path, body);
     return structuredClone(body);
+  }
+
+  private async beforeRequest(method: string, path: string) {
+    const index = this.faults.findIndex((fault) => {
+      if (fault.method && fault.method !== method) return false;
+      if (!fault.path) return true;
+      return typeof fault.path === "string"
+        ? withoutQuery(path) === withoutQuery(fault.path)
+        : fault.path.test(path);
+    });
+    if (index < 0) return;
+    const fault = this.faults[index]!;
+    if (fault.once) this.faults.splice(index, 1);
+    if (fault.delayMs && fault.delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, fault.delayMs));
+    }
+    throw new FakeKubernetesApiError(
+      fault.status,
+      fault.message ?? `Fake Kubernetes API fault for ${method} ${path}.`,
+    );
   }
 }
 

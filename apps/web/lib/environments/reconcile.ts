@@ -9,7 +9,6 @@ import {
   workspaceDailyBackupDayStart,
   workspaceDailyBackupIdempotencyKey,
 } from "./daily-backup-contract";
-import { resolveFlyProviderClient } from "./provider-registry";
 import {
   PROVISIONER_OPERATION_TYPES,
   RESOURCE_MUTATING_OPERATION_TYPES,
@@ -37,8 +36,12 @@ import {
   findActiveWorkspaceLifecycleOperation,
   hasActiveWorkspaceLifecycleOperation,
 } from "./lifecycle-operations";
-import { workspaceLifecycleLockKey } from "./lifecycle-lock";
+import {
+  environmentLifecycleLockKey,
+  workspaceLifecycleLockKey,
+} from "./lifecycle-lock";
 import { recordWorkspaceReconciliationStatus } from "./reconciliation-status";
+import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 
 export async function reconcileHostedEnvironments() {
   const now = new Date();
@@ -65,43 +68,8 @@ export async function reconcileHostedEnvironments() {
       });
     }
   }
-  let environmentGatewayCount = 0;
-  let workspaceCount = 0;
-  let adoptedVolumeCount = 0;
-  let degradedWorkspaceCount = 0;
-  let volumeBackupPolicyFailureCount = 0;
-  const organizations = await knowledgeDb
-    .selectDistinct({ organizationId: schema.environments.organizationId })
-    .from(schema.environments)
-    .where(
-      and(
-        eq(schema.environments.provider, "fly"),
-        isNull(schema.environments.archivedAt),
-      ),
-    );
-  for (const organization of organizations) {
-    let result;
-    try {
-      result = await reconcileOrganizationEnvironments({
-        provider: await resolveFlyProviderClient({
-          organizationId: organization.organizationId,
-        }),
-        organizationId: organization.organizationId,
-        now,
-      });
-    } catch (error) {
-      console.error("Organization Environment reconciliation failed.", {
-        organizationId: organization.organizationId,
-        message: error instanceof Error ? error.message : "Unknown error",
-      });
-      continue;
-    }
-    environmentGatewayCount += result.environmentGatewayCount;
-    workspaceCount += result.workspaceCount;
-    adoptedVolumeCount += result.adoptedVolumeCount;
-    degradedWorkspaceCount += result.degradedWorkspaceCount;
-    volumeBackupPolicyFailureCount += result.volumeBackupPolicyFailureCount;
-  }
+  const scheduledReconciliationCount =
+    await queueScheduledEnvironmentReconciliation(now);
   const finalizedPreviewCount = await reconcileClosingWorkspacePreviews(now);
   const backupLifecycle = await expireWorkspaceBackups(now);
   await createDueDailyBackup(now);
@@ -109,14 +77,63 @@ export async function reconcileHostedEnvironments() {
     operationCount: recoverableOperations.length,
     operationFailureCount,
     repairedExecutionCount,
-    environmentGatewayCount,
-    workspaceCount,
-    adoptedVolumeCount,
-    degradedWorkspaceCount,
-    volumeBackupPolicyFailureCount,
+    scheduledReconciliationCount,
     finalizedPreviewCount,
     backupLifecycle,
   };
+}
+
+async function queueScheduledEnvironmentReconciliation(now: Date) {
+  const candidates = await knowledgeDb.query.environments.findMany({
+    where: (table, { and, inArray, isNull }) =>
+      and(
+        inArray(table.provider, ["fly", "kubernetes"]),
+        inArray(table.status, ["ready", "degraded"]),
+        isNull(table.archivedAt),
+      ),
+    columns: { id: true, organizationId: true },
+    limit: 100,
+  });
+  let queued = 0;
+  for (const environment of candidates) {
+    const operation = await knowledgeDb.transaction(async (transaction) => {
+      await transaction.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environment.id)}, 0))`,
+      );
+      const active =
+        await transaction.query.environmentOperations.findFirst({
+          where: (table, { and, eq, inArray }) =>
+            and(
+              eq(table.environmentId, environment.id),
+              inArray(table.status, ["queued", "running"]),
+              inArray(table.type, PROVISIONER_OPERATION_TYPES),
+            ),
+          columns: { id: true },
+        });
+      if (active) return null;
+      const operationId = crypto.randomUUID();
+      const [created] = await transaction
+        .insert(schema.environmentOperations)
+        .values({
+          id: operationId,
+          organizationId: environment.organizationId,
+          environmentId: environment.id,
+          type: "environment.reconcile",
+          status: "queued",
+          stage: "environment.reconcile.requested",
+          idempotencyKey: `environment.reconcile:scheduled:${environment.id}:${operationId}`,
+          input: { reason: "scheduled", requestedAt: now.toISOString() },
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning({ id: schema.environmentOperations.id });
+      return created ?? null;
+    });
+    if (!operation) continue;
+    await enqueueEnvironmentOperation(operation.id);
+    queued += 1;
+  }
+  return queued;
 }
 
 export async function reconcileTerminalTurnExecutions() {

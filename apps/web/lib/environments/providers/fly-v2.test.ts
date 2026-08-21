@@ -180,7 +180,13 @@ test("the legacy provisioner facade executes Fly lifecycle calls through v2 with
   const fixture = legacyFixture();
   const provider = new EnvironmentInfrastructureProviderV2LegacyAdapter(
     new FlyEnvironmentInfrastructureProviderV2(fixture.provider),
-    placement.connectionId,
+    {
+      connectionId: placement.connectionId,
+      provider: "fly",
+      organizationId: identity.organizationId,
+      environmentId: identity.environmentId,
+      workspaceId: workspaceIdentity.workspaceId,
+    },
   );
   const appName = flyEnvironmentAppName(identity.environmentId);
   const app = await provider.ensureEnvironmentApp({
@@ -256,7 +262,13 @@ test("Fly conflict reconciliation evidence survives the v2 compatibility bridge"
   };
   const provider = new EnvironmentInfrastructureProviderV2LegacyAdapter(
     new FlyEnvironmentInfrastructureProviderV2(fixture.provider),
-    placement.connectionId,
+    {
+      connectionId: placement.connectionId,
+      provider: "fly",
+      organizationId: identity.organizationId,
+      environmentId: identity.environmentId,
+      workspaceId: workspaceIdentity.workspaceId,
+    },
   );
 
   await assert.rejects(

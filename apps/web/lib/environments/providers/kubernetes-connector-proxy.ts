@@ -15,7 +15,7 @@ import {
   upsertEnvironmentProviderResource,
 } from "../provider-persistence";
 import {
-  kubernetesConnectionConfigRevision,
+  kubernetesConnectionInfrastructureRevision,
   kubernetesConnectionConfigV1Schema,
 } from "../kubernetes-connector-contracts";
 import {
@@ -95,8 +95,10 @@ export class KubernetesConnectorInfrastructureProviderV2
     private readonly dependencies: KubernetesConnectorProxyDependencies = defaultDependencies,
   ) {
     this.config = kubernetesConnectionConfigV1Schema.parse(binding.configuration);
-    this.configRevision = kubernetesConnectionConfigRevision(this.config);
-    if (!this.config.runtimeTemplateAllowlist.includes(binding.runtimeTemplate)) {
+    this.configRevision = kubernetesConnectionInfrastructureRevision(
+      this.config,
+    );
+    if (!this.config.runtimeTemplateAllowlist.some((template) => template === binding.runtimeTemplate)) {
       throw providerError(
         "PROVIDER_REJECTED",
         `Runtime template ${binding.runtimeTemplate} is not allowed by this connection.`,
@@ -415,6 +417,22 @@ export class KubernetesConnectorInfrastructureProviderV2
           contract: "provider-resource-metadata-v1",
           source: "provider_observation",
           detail: `${observation.kind} ${observation.disposition}`,
+          ...(observation.resource.role === "workspace_compute"
+            ? {
+                requestedCpu: result.output?.cpus ?? null,
+                requestedMemoryMb: result.output?.memoryMb ?? null,
+                imageDigest:
+                  result.output?.resolvedImageDigest ??
+                  result.output?.image ??
+                  null,
+              }
+            : {}),
+          ...(observation.resource.role === "workspace_storage"
+            ? { requestedStorageGb: result.output?.sizeGb ?? null }
+            : {}),
+          placement: result.output?.placement?.observed ??
+            result.output?.placement?.requested ?? null,
+          conditions: observation.conditions ?? result.output?.conditions ?? [],
         },
       });
     }

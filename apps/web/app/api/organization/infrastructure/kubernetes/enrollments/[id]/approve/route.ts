@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { approveKubernetesConnectorEnrollment } from "@/lib/environments/kubernetes-connector";
+import { requireKubernetesByocAdmission } from "@/lib/environments/config";
 import { requireOrganizationAdmin } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
@@ -8,6 +9,10 @@ import { routeIdSchema } from "@/lib/knowledge/validation";
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     const { organizationId, session } = await requireOrganizationAdmin();
+    await requireKubernetesByocAdmission({
+      organizationId,
+      requireLogicalRouting: false,
+    });
     const approved = await approveKubernetesConnectorEnrollment({
       requestId: routeIdSchema.parse((await context.params).id),
       organizationId,

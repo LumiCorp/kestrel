@@ -10,11 +10,14 @@ import {
   EnvironmentProviderErrorV2,
   type EnvironmentResourceRef,
   type WorkspaceComputeStateV2,
+  type EnvironmentProviderKind,
 } from "./contracts-v2";
+import { createEnvironmentServiceToken } from "../service-tokens";
 
 export class EnvironmentInfrastructureProviderV2LegacyAdapter
   implements EnvironmentInfrastructureProvider
 {
+  private gatewayExternalId: string | null;
   readonly descriptor = {
     id: this.provider.descriptor.provider,
     label: this.provider.descriptor.label,
@@ -24,8 +27,17 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
 
   constructor(
     private readonly provider: EnvironmentInfrastructureProviderV2,
-    private readonly connectionId: string,
-  ) {}
+    private readonly context: {
+      connectionId: string;
+      provider: EnvironmentProviderKind;
+      organizationId: string;
+      environmentId: string;
+      workspaceId?: string | undefined;
+      gatewayExternalId?: string | null | undefined;
+    },
+  ) {
+    this.gatewayExternalId = context.gatewayExternalId ?? null;
+  }
 
   async ensureEnvironmentApp(input: {
     environmentId?: string | undefined;
@@ -33,10 +45,10 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
     networkName: string;
   }) {
     return this.translate(async () => {
-      const identity = environmentIdentity(input.environmentId ?? input.appName);
+      const identity = this.environmentIdentity(input.environmentId ?? input.appName);
       const scope = await this.provider.ensureEnvironmentScope({
         identity,
-        placement: placement(this.connectionId),
+        placement: placement(this.context.connectionId),
       });
       return {
         id: scope.resource.externalId,
@@ -52,14 +64,15 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   ) {
     return this.translate(async () => {
       const gateway = await this.provider.ensureEnvironmentGateway({
-        identity: environmentIdentity(input.environmentId),
-        scope: ref("environment_scope", input.appName),
-        placement: placement(this.connectionId, input.region),
+        identity: this.environmentIdentity(input.environmentId),
+        scope: this.ref("environment_scope", input.appName),
+        placement: placement(this.context.connectionId, input.region),
         runtimeImage: input.runtimeImage,
         ticketPublicKey: input.ticketPublicKey,
         controlPlaneUrl: input.controlPlaneUrl,
         serviceToken: input.serviceToken ?? "",
       });
+      this.gatewayExternalId = gateway.resource.externalId;
       return {
         machineId: gateway.resource.externalId,
         state: gateway.state,
@@ -76,9 +89,9 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   ) {
     return this.translate(async () => {
       const storage = await this.provider.ensureWorkspaceStorage({
-        identity: workspaceIdentity(input.appName, input.workspaceId),
-        scope: ref("environment_scope", input.appName),
-        placement: placement(this.connectionId, input.region),
+        identity: this.workspaceIdentity(input.workspaceId),
+        scope: this.ref("environment_scope", input.appName),
+        placement: placement(this.context.connectionId, input.region),
       });
       return {
         id: storage.resource.externalId,
@@ -94,7 +107,7 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
     return this.translate(async () =>
       legacyMachine(
         await this.provider.ensureWorkspaceCompute(
-          computeInput(this.connectionId, input),
+          this.computeInput(input),
         ),
       ),
     );
@@ -105,15 +118,15 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   ) {
     return this.translate(async () => {
       const storage = await this.provider.createReplacementWorkspaceStorage({
-        identity: workspaceIdentity(input.appName, input.workspaceId),
-        scope: ref("environment_scope", input.appName),
-        placement: placement(this.connectionId, input.region),
+        identity: this.workspaceIdentity(input.workspaceId),
+        scope: this.ref("environment_scope", input.appName),
+        placement: placement(this.context.connectionId, input.region),
         replacementId: input.replacementId,
         sourceStorage: input.sourceVolumeId
-          ? ref("workspace_storage", input.sourceVolumeId)
+          ? this.ref("workspace_storage", input.sourceVolumeId)
           : undefined,
         snapshot: input.snapshotId
-          ? ref("snapshot", input.snapshotId)
+          ? this.ref("snapshot", input.snapshotId)
           : undefined,
       });
       return {
@@ -131,10 +144,10 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   ) {
     return this.translate(() =>
       this.provider.isWorkspaceSnapshotUsable({
-        identity: workspaceIdentity(input.appName, input.sourceVolumeId),
-        scope: ref("environment_scope", input.appName),
-        storage: ref("workspace_storage", input.sourceVolumeId),
-        snapshot: ref("snapshot", input.snapshotId),
+        identity: this.workspaceIdentity(input.sourceVolumeId),
+        scope: this.ref("environment_scope", input.appName),
+        storage: this.ref("workspace_storage", input.sourceVolumeId),
+        snapshot: this.ref("snapshot", input.snapshotId),
       }),
     );
   }
@@ -145,7 +158,7 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
     return this.translate(async () =>
       legacyMachine(
         await this.provider.createReplacementWorkspaceCompute({
-          ...computeInput(this.connectionId, input),
+          ...this.computeInput(input),
           replacementId: input.replacementId,
         }),
       ),
@@ -157,9 +170,9 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   ) {
     return this.translate(async () => {
       const machine = await this.provider.getWorkspaceCompute({
-        identity: workspaceIdentity(input.appName, input.machineId),
-        scope: ref("environment_scope", input.appName),
-        compute: ref("workspace_compute", input.machineId),
+        identity: this.workspaceIdentity(input.machineId),
+        scope: this.ref("environment_scope", input.appName),
+        compute: this.ref("workspace_compute", input.machineId),
       });
       return machine ? legacyMachine(machine) : null;
     });
@@ -168,16 +181,18 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   async startMachine(
     input: Parameters<EnvironmentInfrastructureProvider["startMachine"]>[0],
   ) {
+    if (input.machineId === this.gatewayExternalId) return;
     return this.translate(() =>
-      this.provider.startWorkspaceCompute(computeReferenceInput(input)),
+      this.provider.startWorkspaceCompute(this.computeReferenceInput(input)),
     );
   }
 
   async stopMachine(
     input: Parameters<EnvironmentInfrastructureProvider["stopMachine"]>[0],
   ) {
+    if (input.machineId === this.gatewayExternalId) return;
     return this.translate(() =>
-      this.provider.stopWorkspaceCompute(computeReferenceInput(input)),
+      this.provider.stopWorkspaceCompute(this.computeReferenceInput(input)),
     );
   }
 
@@ -185,7 +200,7 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
     input: Parameters<EnvironmentInfrastructureProvider["deleteMachine"]>[0],
   ) {
     return this.translate(() =>
-      this.provider.deleteWorkspaceCompute(computeReferenceInput(input)),
+      this.provider.deleteWorkspaceCompute(this.computeReferenceInput(input)),
     );
   }
 
@@ -194,9 +209,9 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   ) {
     return this.translate(() =>
       this.provider.deleteWorkspaceStorage({
-        identity: workspaceIdentity(input.appName, input.volumeId),
-        scope: ref("environment_scope", input.appName),
-        storage: ref("workspace_storage", input.volumeId),
+        identity: this.workspaceIdentity(input.volumeId),
+        scope: this.ref("environment_scope", input.appName),
+        storage: this.ref("workspace_storage", input.volumeId),
       }),
     );
   }
@@ -206,8 +221,8 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   ) {
     return this.translate(() =>
       this.provider.deleteEnvironmentScope({
-        identity: environmentIdentity(input.appName),
-        scope: ref("environment_scope", input.appName),
+        identity: this.environmentIdentity(input.appName),
+        scope: this.ref("environment_scope", input.appName),
       }),
     );
   }
@@ -217,10 +232,17 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   ) {
     return this.translate(async () => {
       const inventory = await this.provider.listEnvironmentResources({
-        identity: environmentIdentity(input.appName),
-        scope: ref("environment_scope", input.appName),
+        identity: this.environmentIdentity(input.appName),
+        scope: this.ref("environment_scope", input.appName),
       });
       return {
+        resources: inventory.resources.map((resource) => ({
+          role: resource.ref.role,
+          externalId: resource.ref.externalId,
+          workspaceId: resource.workspaceId,
+          replacementId: resource.replacementId,
+          state: resource.state,
+        })),
         machines: inventory.resources
           .filter((resource) => resource.ref.role === "workspace_compute")
           .map((resource) => ({
@@ -249,9 +271,10 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   async waitForMachine(
     input: Parameters<EnvironmentInfrastructureProvider["waitForMachine"]>[0],
   ) {
+    if (input.machineId === this.gatewayExternalId) return;
     return this.translate(() =>
       this.provider.waitForWorkspaceState({
-        ...computeReferenceInput(input),
+        ...this.computeReferenceInput(input),
         state: input.state,
         timeoutSeconds: input.timeoutSeconds,
       }),
@@ -261,9 +284,10 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   async waitForMachineHealth(
     input: Parameters<EnvironmentInfrastructureProvider["waitForMachineHealth"]>[0],
   ) {
+    if (input.machineId === this.gatewayExternalId) return;
     return this.translate(() =>
       this.provider.waitForWorkspaceHealth({
-        ...computeReferenceInput(input),
+        ...this.computeReferenceInput(input),
         checkName: input.checkName,
         timeoutSeconds: input.timeoutSeconds,
       }),
@@ -275,9 +299,9 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   ) {
     return this.translate(async () => {
       const snapshot = await this.provider.createWorkspaceSnapshot({
-        identity: workspaceIdentity(input.appName, input.volumeId),
-        scope: ref("environment_scope", input.appName),
-        storage: ref("workspace_storage", input.volumeId),
+        identity: this.workspaceIdentity(input.volumeId),
+        scope: this.ref("environment_scope", input.appName),
+        storage: this.ref("workspace_storage", input.volumeId),
       });
       return { id: snapshot.resource.externalId, state: snapshot.state };
     });
@@ -286,12 +310,38 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
   async updateMachineImage(
     input: Parameters<EnvironmentInfrastructureProvider["updateMachineImage"]>[0],
   ) {
+    if (input.machineId === this.gatewayExternalId) {
+      return this.translate(async () => {
+        const serviceToken = createEnvironmentServiceToken();
+        const gateway = await this.provider.ensureEnvironmentGateway({
+          identity: this.environmentIdentity(),
+          scope: this.ref("environment_scope", input.appName),
+          placement: placement(this.context.connectionId),
+          runtimeImage: input.runtimeImage,
+          ticketPublicKey:
+            process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
+          controlPlaneUrl: process.env.KESTREL_ONE_APP_URL ?? "",
+          serviceToken,
+        });
+        this.gatewayExternalId = gateway.resource.externalId;
+        return {
+          id: gateway.resource.externalId,
+          state: gateway.state,
+          region:
+            gateway.placement.observed?.location ??
+            gateway.placement.requested?.location ??
+            "cluster",
+          image: input.runtimeImage,
+          serviceToken,
+        } as EnvironmentProviderMachine & { serviceToken: string };
+      });
+    }
     return this.translate(async () =>
       legacyMachine(
         await this.provider.updateWorkspaceImage({
-          identity: workspaceIdentity(input.appName, input.machineId),
-          scope: ref("environment_scope", input.appName),
-          compute: ref("workspace_compute", input.machineId),
+        identity: this.workspaceIdentity(input.machineId),
+        scope: this.ref("environment_scope", input.appName),
+        compute: this.ref("workspace_compute", input.machineId),
           runtimeImage: input.runtimeImage,
           environmentPatch: input.envPatch,
           stopConfig: input.stopConfig,
@@ -305,58 +355,59 @@ export class EnvironmentInfrastructureProviderV2LegacyAdapter
       return await operation();
     } catch (error) {
       if (!(error instanceof EnvironmentProviderErrorV2)) throw error;
-      throw legacyError(error);
+      throw legacyError(error, this.context.provider);
     }
   }
-}
 
-function computeInput(
-  connectionId: string,
-  input: WorkspaceMachineProvisioningInput,
-) {
-  return {
-    identity: {
-      organizationId: input.organizationId,
-      environmentId: input.environmentId,
-      workspaceId: input.workspaceId,
-    },
-    scope: ref("environment_scope", input.appName),
-    storage: ref("workspace_storage", input.volumeId),
-    placement: placement(connectionId, input.region),
-    desired: {
-      runtimeImage: input.runtimeImage,
-      ticketPublicKey: input.ticketPublicKey,
-      controlPlaneUrl: input.controlPlaneUrl,
-      serviceToken: input.serviceToken,
-      source: input.source,
-      idleTimeoutMinutes: input.idleTimeoutMinutes,
-    },
-  };
-}
+  private environmentIdentity(environmentId = this.context.environmentId) {
+    return {
+      organizationId: this.context.organizationId,
+      environmentId:
+        environmentId === this.context.environmentId
+          ? environmentId
+          : this.context.environmentId,
+    };
+  }
 
-function computeReferenceInput(input: {
-  appName: string;
-  machineId: string;
-}) {
-  return {
-    identity: workspaceIdentity(input.appName, input.machineId),
-    scope: ref("environment_scope", input.appName),
-    compute: ref("workspace_compute", input.machineId),
-  };
-}
+  private workspaceIdentity(workspaceId: string) {
+    return {
+      ...this.environmentIdentity(),
+      workspaceId: this.context.workspaceId ?? workspaceId,
+    };
+  }
 
-function environmentIdentity(environmentId: string) {
-  return {
-    organizationId: `legacy:${environmentId}`,
-    environmentId,
-  };
-}
+  private ref(role: EnvironmentResourceRef["role"], externalId: string) {
+    return { provider: this.context.provider, role, externalId } as const;
+  }
 
-function workspaceIdentity(environmentId: string, workspaceId: string) {
-  return {
-    ...environmentIdentity(environmentId),
-    workspaceId,
-  };
+  private computeInput(input: WorkspaceMachineProvisioningInput) {
+    return {
+      identity: {
+        organizationId: this.context.organizationId,
+        environmentId: this.context.environmentId,
+        workspaceId: input.workspaceId,
+      },
+      scope: this.ref("environment_scope", input.appName),
+      storage: this.ref("workspace_storage", input.volumeId),
+      placement: placement(this.context.connectionId, input.region),
+      desired: {
+        runtimeImage: input.runtimeImage,
+        ticketPublicKey: input.ticketPublicKey,
+        controlPlaneUrl: input.controlPlaneUrl,
+        serviceToken: input.serviceToken,
+        source: input.source,
+        idleTimeoutMinutes: input.idleTimeoutMinutes,
+      },
+    };
+  }
+
+  private computeReferenceInput(input: { appName: string; machineId: string }) {
+    return {
+      identity: this.workspaceIdentity(input.machineId),
+      scope: this.ref("environment_scope", input.appName),
+      compute: this.ref("workspace_compute", input.machineId),
+    };
+  }
 }
 
 function placement(connectionId: string, location?: string) {
@@ -374,12 +425,6 @@ function observedLocation(
   return value.observed?.location ?? fallback;
 }
 
-function ref(
-  role: EnvironmentResourceRef["role"],
-  externalId: string,
-): EnvironmentResourceRef {
-  return { provider: "fly", role, externalId };
-}
 
 function legacyMachine(
   machine: WorkspaceComputeStateV2,
@@ -405,7 +450,10 @@ function legacyMachine(
   };
 }
 
-function legacyError(error: EnvironmentProviderErrorV2) {
+function legacyError(
+  error: EnvironmentProviderErrorV2,
+  provider: EnvironmentProviderKind,
+) {
   const code = {
     PROVIDER_NOT_CONFIGURED: "FLY_PROVIDER_NOT_CONFIGURED",
     PROVIDER_UNAVAILABLE: "FLY_PROVIDER_UNAVAILABLE",
@@ -424,11 +472,14 @@ function legacyError(error: EnvironmentProviderErrorV2) {
   });
   return error.reconciliationState
     ? Object.assign(legacy, {
+        ...(provider === "kubernetes" ? { providerCode: error.code } : {}),
         authoritativeState: {
           machineId: error.reconciliationState.resource?.externalId,
           state: error.reconciliationState.state,
           image: error.reconciliationState.image,
         },
       })
-    : legacy;
+    : provider === "kubernetes"
+      ? Object.assign(legacy, { providerCode: error.code })
+      : legacy;
 }

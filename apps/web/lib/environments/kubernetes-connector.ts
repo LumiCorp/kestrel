@@ -14,9 +14,10 @@ import {
   normalizeConnectorSigningPublicKey,
   verifyConnectorRequestSignature,
 } from "@lumi/kestrel-environment-auth";
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { logAdminEvent } from "@/lib/admin/logs";
 import {
   appendInfrastructureConnectorCommandEvent,
   claimInfrastructureConnectorCommand,
@@ -29,6 +30,7 @@ import {
 } from "./connector-store";
 import {
   kubernetesConnectionConfigRevision,
+  kubernetesConnectionInfrastructureRevision,
   kubernetesConnectionConfigV1Schema,
   kubernetesConnectorEnrollmentSchema,
   kubernetesQualificationReportV1Schema,
@@ -91,7 +93,7 @@ export async function createKubernetesConnectorEnrollment(value: unknown) {
     requestSecret,
     fingerprint: request.fingerprint,
     expiresAt: request.expiresAt.toISOString(),
-    verificationPath: `/settings/infrastructure/kubernetes/enrollments/${request.id}`,
+    verificationPath: `/organization/connections/kubernetes/enrollments/${request.id}`,
   };
 }
 
@@ -185,8 +187,7 @@ export async function consumeKubernetesConnectorEnrollment(input: {
         where: (table, { eq }) => eq(table.id, input.requestId),
       });
     if (
-      !request ||
-      !connectorSecretMatches(input.requestSecret, request.secretHash) ||
+      !(request &&connectorSecretMatches(input.requestSecret, request.secretHash) ) ||
       request.expiresAt <= new Date()
     ) {
       throw new Error("Connector enrollment request is unavailable.");
@@ -265,11 +266,7 @@ export async function authorizeKubernetesConnector(input: {
   const nonce = input.request.headers.get("x-kestrel-nonce");
   const signature = input.request.headers.get("x-kestrel-signature");
   if (
-    !credential ||
-    !connectorTimestampIsCurrent({ timestamp }) ||
-    !nonce ||
-    !/^[A-Za-z0-9_-]{16,128}$/u.test(nonce) ||
-    !signature
+    !((((credential &&connectorTimestampIsCurrent({ timestamp }) ) &&nonce ) &&/^[A-Za-z0-9_-]{16,128}$/u.test(nonce) ) &&signature)
   ) {
     throw new Error("Unauthorized");
   }
@@ -292,10 +289,7 @@ export async function authorizeKubernetesConnector(input: {
           connectorSecretMatches(credential, connector.previousCredentialHash))),
   );
   if (
-    !connection ||
-    !connector ||
-    !credentialAccepted ||
-    !verifyConnectorRequestSignature({
+    !(((connection &&connector ) &&credentialAccepted ) &&verifyConnectorRequestSignature({
       publicKey: connector.signingPublicKey,
       signature,
       method: input.request.method,
@@ -303,7 +297,7 @@ export async function authorizeKubernetesConnector(input: {
       timestamp,
       nonce,
       bodyText: input.bodyText,
-    })
+    }))
   ) {
     throw new Error("Unauthorized");
   }
@@ -386,7 +380,7 @@ export async function recordKubernetesConnectorPresence(
 export async function configureKubernetesConnection(input: {
   organizationId: string;
   connectionId: string;
-  actorUserId: string;
+  actorUserId: string | null;
   value: unknown;
 }) {
   const config = kubernetesConnectionConfigV1Schema.parse(input.value);
@@ -405,6 +399,26 @@ export async function configureKubernetesConnection(input: {
         ),
     });
     if (!existing?.connectorId) throw new Error("Kubernetes connection is unavailable.");
+    const infrastructureChanged =
+      safeInfrastructureRevision(existing.configuration) !==
+      kubernetesConnectionInfrastructureRevision(config);
+    if (infrastructureChanged) {
+      const boundEnvironment = await transaction.query.environments.findFirst({
+        where: (table, { and, eq, isNull, ne }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.providerConnectionId, input.connectionId),
+            ne(table.status, "deleted"),
+            isNull(table.archivedAt),
+          ),
+        columns: { id: true },
+      });
+      if (boundEnvironment) {
+        throw new Error(
+          "Kubernetes infrastructure configuration cannot change while the connection owns an active Environment.",
+        );
+      }
+    }
     if (config.isDefault) {
       await transaction
         .update(schema.environmentProviderConnections)
@@ -424,24 +438,35 @@ export async function configureKubernetesConnection(input: {
         displayName: config.displayName,
         isDefault: config.isDefault,
         configuration: config,
-        qualificationEvidence: [],
-        status: "enrolling",
-        supportStatus: "unverified",
+        ...(infrastructureChanged
+          ? {
+              qualificationEvidence: [],
+              status: "enrolling" as const,
+              supportStatus: "unverified" as const,
+              qualifiedAt: null,
+              lastQualifiedAt: null,
+              qualifiedByUserId: null,
+              failureCode: null,
+              failureMessage: null,
+            }
+          : {}),
         configuredByUserId: input.actorUserId,
         attestedByUserId: input.actorUserId,
         configuredAt: now,
         attestedAt: now,
-        qualifiedAt: null,
-        lastQualifiedAt: null,
-        qualifiedByUserId: null,
-        failureCode: null,
-        failureMessage: null,
         updatedAt: now,
       })
       .where(eq(schema.environmentProviderConnections.id, input.connectionId))
       .returning();
     if (!updated) throw new Error("Kubernetes connection configuration failed.");
-    return { connection: updated, configRevision: kubernetesConnectionConfigRevision(config) };
+    return {
+      connection: updated,
+      configRevision: kubernetesConnectionConfigRevision(config),
+      infrastructureRevision:
+        kubernetesConnectionInfrastructureRevision(config),
+      infrastructureChanged,
+      defaultChanged: existing.isDefault !== config.isDefault,
+    };
   });
 }
 
@@ -466,7 +491,7 @@ export async function enqueueKubernetesQualification(input: {
     });
     if (!connection?.connectorId) throw new Error("Kubernetes connection is unavailable.");
     const config = kubernetesConnectionConfigV1Schema.parse(connection.configuration);
-    const revision = kubernetesConnectionConfigRevision(config);
+    const revision = kubernetesConnectionInfrastructureRevision(config);
     const runId = crypto.randomUUID();
     const commandId = crypto.randomUUID();
     const expiresAt = new Date(now.getTime() + 24 * 60 * 60_000);
@@ -576,7 +601,7 @@ export async function completeKubernetesConnectorCommand(input: {
     });
     if (!connection) throw new Error("Kubernetes connection is unavailable.");
     const config = kubernetesConnectionConfigV1Schema.parse(connection.configuration);
-    const currentRevision = kubernetesConnectionConfigRevision(config);
+    const currentRevision = kubernetesConnectionInfrastructureRevision(config);
     const stale = report.configurationRevision !== currentRevision;
     const passed =
       !stale && result.status === "succeeded" && qualificationPassed(report);
@@ -634,7 +659,30 @@ export async function completeKubernetesConnectorCommand(input: {
         })
         .where(eq(schema.environmentProviderConnections.id, connection.id));
     }
-    return { passed, support, stale };
+    return {
+      passed,
+      support,
+      stale,
+      requestedByUserId: run?.requestedByUserId ?? null,
+    };
+  });
+  await logAdminEvent({
+    organizationId: completed.organizationId,
+    actorUserId: qualificationState.requestedByUserId,
+    level: qualificationState.passed ? "info" : "warn",
+    category: "environments",
+    action: "kubernetes_connection.qualification.completed",
+    targetType: "provider-connection",
+    targetId: completed.providerConnectionId,
+    message: qualificationState.passed
+      ? "Kubernetes connection qualification passed."
+      : "Kubernetes connection qualification did not pass.",
+    metadata: {
+      runId: report.runId,
+      passed: qualificationState.passed,
+      stale: qualificationState.stale,
+      supportState: qualificationState.support.state,
+    },
   });
   return {
     ...completed,
@@ -644,7 +692,7 @@ export async function completeKubernetesConnectorCommand(input: {
   };
 }
 
-export async function getKubernetesConnection(input: {
+async function getKubernetesConnectionRecord(input: {
   organizationId: string;
   connectionId: string;
 }) {
@@ -666,22 +714,575 @@ export async function getKubernetesConnection(input: {
   const stale = Boolean(
     connector?.lastSeenAt && Date.now() - connector.lastSeenAt.getTime() > 2 * 60_000,
   );
-  const effectiveConnection =
-    stale && connection.status !== "revoked"
-      ? (
-          await knowledgeDb
-            .update(schema.environmentProviderConnections)
-            .set({
-              status: "degraded",
-              failureCode: "CONNECTOR_OFFLINE",
-              failureMessage: "No connector presence was received for two minutes.",
-              updatedAt: new Date(),
-            })
-            .where(eq(schema.environmentProviderConnections.id, connection.id))
-            .returning()
-        )[0] ?? connection
-      : connection;
-  return { connection: effectiveConnection, connector: connector ? { ...connector, currentCredentialHash: undefined, previousCredentialHash: undefined } : null, qualification, stale };
+  return { connection, connector, qualification, stale };
+}
+
+export async function getKubernetesConnection(input: {
+  organizationId: string;
+  connectionId: string;
+}) {
+  return sanitizeConnection(await getKubernetesConnectionRecord(input));
+}
+
+export async function listKubernetesConnections(input: {
+  organizationId: string;
+}) {
+  const connections =
+    await knowledgeDb.query.environmentProviderConnections.findMany({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.provider, "kubernetes"),
+        ),
+      orderBy: (table, { desc }) => [desc(table.isDefault), desc(table.updatedAt)],
+      columns: { id: true },
+    });
+  return Promise.all(
+    connections.map((connection) =>
+      getKubernetesConnection({
+        organizationId: input.organizationId,
+        connectionId: connection.id,
+      }),
+    ),
+  );
+}
+
+export async function requireKubernetesConnectionForEnvironmentCreation(input: {
+  organizationId: string;
+  connectionId: string;
+  runtimeTemplate: string;
+}) {
+  const current = await getKubernetesConnectionRecord(input);
+  const { connection, qualification } = current;
+  if (
+    connection.status !== "ready" ||
+    connection.revokedAt ||
+    !connection.connectorId
+  ) {
+    throw new Error("Kubernetes connection is not ready for Environment creation.");
+  }
+  const config = kubernetesConnectionConfigV1Schema.parse(
+    connection.configuration,
+  );
+  if (!config.runtimeTemplateAllowlist.some((template) => template === input.runtimeTemplate)) {
+    throw new Error(
+      "Runtime template is not allowed by the Kubernetes connection.",
+    );
+  }
+  if (!qualification?.result) {
+    throw new Error("Kubernetes connection has no current qualification.");
+  }
+  const report = kubernetesQualificationReportV1Schema.parse(
+    qualification.result,
+  );
+  if (
+    qualification.status !== "passed" ||
+    report.configurationRevision !==
+      kubernetesConnectionInfrastructureRevision(config) ||
+    !qualificationPassed(report)
+  ) {
+    throw new Error("Kubernetes connection qualification is stale or expired.");
+  }
+  return { connection, config, report };
+}
+
+export async function revokeKubernetesConnection(input: {
+  organizationId: string;
+  connectionId: string;
+  actorUserId: string | null;
+}) {
+  const current = await getKubernetesConnectionRecord(input);
+  const [environment, activeCommand, residual, inventoryCommand, latestCommand] = await Promise.all([
+    knowledgeDb.query.environments.findFirst({
+      where: (table, { and, eq, isNull, ne }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.providerConnectionId, input.connectionId),
+          ne(table.status, "deleted"),
+          isNull(table.archivedAt),
+        ),
+      columns: { id: true },
+    }),
+    knowledgeDb.query.infrastructureConnectorCommands.findFirst({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.providerConnectionId, input.connectionId),
+          inArray(table.status, ["queued", "claimed", "running"]),
+        ),
+      columns: { id: true },
+    }),
+    knowledgeDb.query.environmentProviderResources.findFirst({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.providerConnectionId, input.connectionId),
+          isNull(table.deletedAt),
+        ),
+      columns: { id: true },
+    }),
+    knowledgeDb.query.infrastructureConnectorCommands.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.providerConnectionId, input.connectionId),
+          eq(table.commandType, "list_environment_resources"),
+          eq(table.status, "completed"),
+        ),
+      orderBy: (table, { desc }) => [desc(table.completedAt)],
+      columns: { id: true, result: true, completedAt: true },
+    }),
+    knowledgeDb.query.infrastructureConnectorCommands.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.providerConnectionId, input.connectionId),
+        ),
+      orderBy: (table, { desc }) => [desc(table.createdAt)],
+      columns: { id: true },
+    }),
+  ]);
+  if (environment) {
+    throw new Error(
+      "Delete every Environment bound to this Kubernetes connection before revocation.",
+    );
+  }
+  if (activeCommand) {
+    throw new Error(
+      "Kubernetes connection has an active command and cannot be revoked.",
+    );
+  }
+  if (residual) {
+    throw new Error(
+      "Kubernetes connection has residual or unknown Kestrel resources.",
+    );
+  }
+  if (!current.connector) {
+    const displayName = await knowledgeDb.transaction(async (transaction) => {
+      await transaction.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:kubernetes-connection:${input.connectionId}`}, 0))`,
+      );
+      const [boundEnvironment, activeCommand, residualResource, connection] =
+        await Promise.all([
+          transaction.query.environments.findFirst({
+            where: (table, { and, eq, isNull, ne }) =>
+              and(
+                eq(table.organizationId, input.organizationId),
+                eq(table.providerConnectionId, input.connectionId),
+                ne(table.status, "deleted"),
+                isNull(table.archivedAt),
+              ),
+            columns: { id: true },
+          }),
+          transaction.query.infrastructureConnectorCommands.findFirst({
+            where: (table, { and, eq, inArray }) =>
+              and(
+                eq(table.organizationId, input.organizationId),
+                eq(table.providerConnectionId, input.connectionId),
+                inArray(table.status, ["queued", "claimed", "running"]),
+              ),
+            columns: { id: true },
+          }),
+          transaction.query.environmentProviderResources.findFirst({
+            where: (table, { and, eq, isNull }) =>
+              and(
+                eq(table.organizationId, input.organizationId),
+                eq(table.providerConnectionId, input.connectionId),
+                isNull(table.deletedAt),
+              ),
+            columns: { id: true },
+          }),
+          transaction.query.environmentProviderConnections.findFirst({
+            where: (table, { and, eq, isNull }) =>
+              and(
+                eq(table.id, input.connectionId),
+                eq(table.organizationId, input.organizationId),
+                eq(table.provider, "kubernetes"),
+                isNull(table.revokedAt),
+              ),
+            columns: { displayName: true, connectorId: true },
+          }),
+        ]);
+      if (boundEnvironment) {
+        throw new Error(
+          "Delete every Environment bound to this Kubernetes connection before revocation.",
+        );
+      }
+      if (activeCommand) {
+        throw new Error(
+          "Kubernetes connection has an active command and cannot be revoked.",
+        );
+      }
+      if (residualResource) {
+        throw new Error(
+          "Kubernetes connection has residual or unknown Kestrel resources.",
+        );
+      }
+      if (!connection || connection.connectorId) {
+        throw new Error("Kubernetes connection state changed; retry revocation.");
+      }
+      const now = new Date();
+      const [updated] = await transaction
+        .update(schema.environmentProviderConnections)
+        .set({
+          status: "revoked",
+          isDefault: false,
+          revokedByUserId: input.actorUserId,
+          revokedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.environmentProviderConnections.id, input.connectionId),
+            eq(
+              schema.environmentProviderConnections.organizationId,
+              input.organizationId,
+            ),
+            isNull(schema.environmentProviderConnections.revokedAt),
+          ),
+        )
+        .returning({ displayName: schema.environmentProviderConnections.displayName });
+      if (!updated) throw new Error("Kubernetes connection is unavailable.");
+      return updated.displayName;
+    });
+    await logAdminEvent({
+      organizationId: input.organizationId,
+      actorUserId: input.actorUserId,
+      category: "environments",
+      action: "kubernetes_connection.revoked",
+      targetType: "provider-connection",
+      targetId: input.connectionId,
+      message: `Revoked Kubernetes connection ${displayName}.`,
+    });
+    return { revoked: true, displayName };
+  }
+  if (current.stale || !current.connector.lastSeenAt) {
+    throw new Error(
+      "Kubernetes connector must be online to prove clean revocation inventory.",
+    );
+  }
+  const inventoryResult = inventoryCommand?.result
+    ? infrastructureConnectorResultV1Schema.safeParse(inventoryCommand.result)
+    : null;
+  if (
+    !inventoryCommand?.completedAt ||
+    latestCommand?.id !== inventoryCommand.id ||
+    !inventoryResult?.success ||
+    inventoryResult.data.status !== "succeeded" ||
+    inventoryResult.data.resources.length !== 0 ||
+    (inventoryResult.data.output?.resourceObservations?.length ?? 0) !== 0
+  ) {
+    throw new Error(
+      "Kubernetes connection requires a current empty connector inventory before revocation.",
+    );
+  }
+  await knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:kubernetes-connection:${input.connectionId}`}, 0))`,
+    );
+    const [boundEnvironment, activeCommand, residualResource, connection, connector, latestInventory] =
+      await Promise.all([
+        transaction.query.environments.findFirst({
+          where: (table, { and, eq, isNull, ne }) =>
+            and(
+              eq(table.organizationId, input.organizationId),
+              eq(table.providerConnectionId, input.connectionId),
+              ne(table.status, "deleted"),
+              isNull(table.archivedAt),
+            ),
+          columns: { id: true },
+        }),
+        transaction.query.infrastructureConnectorCommands.findFirst({
+          where: (table, { and, eq, inArray }) =>
+            and(
+              eq(table.organizationId, input.organizationId),
+              eq(table.providerConnectionId, input.connectionId),
+              inArray(table.status, ["queued", "claimed", "running"]),
+            ),
+          columns: { id: true },
+        }),
+        transaction.query.environmentProviderResources.findFirst({
+          where: (table, { and, eq, isNull }) =>
+            and(
+              eq(table.organizationId, input.organizationId),
+              eq(table.providerConnectionId, input.connectionId),
+              isNull(table.deletedAt),
+            ),
+          columns: { id: true },
+        }),
+        transaction.query.environmentProviderConnections.findFirst({
+          where: (table, { and, eq, isNull }) =>
+            and(
+              eq(table.id, input.connectionId),
+              eq(table.organizationId, input.organizationId),
+              eq(table.provider, "kubernetes"),
+              isNull(table.revokedAt),
+            ),
+          columns: { displayName: true, connectorId: true },
+        }),
+        transaction.query.infrastructureConnectorConnections.findFirst({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.id, current.connector!.id),
+              eq(table.organizationId, input.organizationId),
+              isNull(table.revokedAt),
+            ),
+          columns: { id: true, lastSeenAt: true },
+        }),
+        transaction.query.infrastructureConnectorCommands.findFirst({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.organizationId, input.organizationId),
+              eq(table.providerConnectionId, input.connectionId),
+              eq(table.commandType, "list_environment_resources"),
+              eq(table.status, "completed"),
+            ),
+          orderBy: (table, { desc }) => [desc(table.completedAt)],
+          columns: { id: true, result: true, completedAt: true },
+        }),
+      ]);
+    if (boundEnvironment) {
+      throw new Error(
+        "Delete every Environment bound to this Kubernetes connection before revocation.",
+      );
+    }
+    if (activeCommand) {
+      throw new Error(
+        "Kubernetes connection has an active command and cannot be revoked.",
+      );
+    }
+    if (residualResource) {
+      throw new Error(
+        "Kubernetes connection has residual or unknown Kestrel resources.",
+      );
+    }
+    if (!connection || !connector || connection.connectorId !== connector.id) {
+      throw new Error("Kubernetes connection state changed; retry revocation.");
+    }
+    if (
+      !connector.lastSeenAt ||
+      Date.now() - connector.lastSeenAt.getTime() > 2 * 60_000
+    ) {
+      throw new Error(
+        "Kubernetes connector must be online to prove clean revocation inventory.",
+      );
+    }
+    const liveInventory = latestInventory?.result
+      ? infrastructureConnectorResultV1Schema.safeParse(latestInventory.result)
+      : null;
+    const latestCommand = await transaction.query.infrastructureConnectorCommands.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.providerConnectionId, input.connectionId),
+        ),
+      orderBy: (table, { desc }) => [desc(table.createdAt)],
+      columns: { id: true },
+    });
+    if (
+      !latestInventory?.completedAt ||
+      latestCommand?.id !== latestInventory.id ||
+      !liveInventory?.success ||
+      liveInventory.data.status !== "succeeded" ||
+      liveInventory.data.resources.length !== 0 ||
+      (liveInventory.data.output?.resourceObservations?.length ?? 0) !== 0
+    ) {
+      throw new Error(
+        "Kubernetes connection requires a current empty connector inventory before revocation.",
+      );
+    }
+    const now = new Date();
+    const [revokedConnector] = await transaction
+      .update(schema.infrastructureConnectorConnections)
+      .set({ status: "revoked", revokedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(schema.infrastructureConnectorConnections.id, connector.id),
+          eq(
+            schema.infrastructureConnectorConnections.organizationId,
+            input.organizationId,
+          ),
+          isNull(schema.infrastructureConnectorConnections.revokedAt),
+        ),
+      )
+      .returning({ id: schema.infrastructureConnectorConnections.id });
+    if (!revokedConnector) throw new Error("Kubernetes connector is unavailable.");
+    await transaction
+      .update(schema.environmentProviderConnections)
+      .set({
+        status: "revoked",
+        isDefault: false,
+        revokedByUserId: input.actorUserId,
+        revokedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(schema.environmentProviderConnections.id, input.connectionId));
+    await transaction
+      .update(schema.infrastructureConnectorCommands)
+      .set({
+        status: "cancelled",
+        claimTokenHash: null,
+        claimExpiresAt: null,
+        cancelledAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(
+            schema.infrastructureConnectorCommands.organizationId,
+            input.organizationId,
+          ),
+          eq(
+            schema.infrastructureConnectorCommands.providerConnectionId,
+            input.connectionId,
+          ),
+          inArray(schema.infrastructureConnectorCommands.status, [
+            "queued",
+            "claimed",
+            "running",
+          ]),
+        ),
+      );
+    await transaction
+      .update(schema.infrastructureConnectorQualificationRuns)
+      .set({ status: "cancelled", completedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(
+            schema.infrastructureConnectorQualificationRuns.organizationId,
+            input.organizationId,
+          ),
+          eq(
+            schema.infrastructureConnectorQualificationRuns.providerConnectionId,
+            input.connectionId,
+          ),
+          inArray(schema.infrastructureConnectorQualificationRuns.status, [
+            "queued",
+            "running",
+          ]),
+        ),
+      );
+  });
+  await logAdminEvent({
+    organizationId: input.organizationId,
+    actorUserId: input.actorUserId,
+    category: "environments",
+    action: "kubernetes_connection.revoked",
+    targetType: "provider-connection",
+    targetId: input.connectionId,
+    message: `Revoked Kubernetes connection ${current.connection.displayName}.`,
+  });
+  return { revoked: true, displayName: current.connection.displayName };
+}
+
+export async function getKubernetesConnectionDiagnostic(input: {
+  organizationId: string;
+  connectionId: string;
+}) {
+  const connection = await getKubernetesConnection(input);
+  const [environments, resources, commands] = await Promise.all([
+    knowledgeDb.query.environments.findMany({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.providerConnectionId, input.connectionId),
+        ),
+      columns: {
+        id: true,
+        name: true,
+        status: true,
+        runtimeTemplate: true,
+        workspaceLimit: true,
+        failureCode: true,
+        failureMessage: true,
+        updatedAt: true,
+      },
+    }),
+    knowledgeDb.query.environmentProviderResources.findMany({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.providerConnectionId, input.connectionId),
+        ),
+      columns: {
+        id: true,
+        environmentId: true,
+        workspaceId: true,
+        replacementId: true,
+        resourceRole: true,
+        externalId: true,
+        desiredRevision: true,
+        observedGeneration: true,
+        state: true,
+        deletedAt: true,
+        updatedAt: true,
+      },
+    }),
+    knowledgeDb.query.infrastructureConnectorCommands.findMany({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.providerConnectionId, input.connectionId),
+        ),
+      orderBy: (table, { desc }) => [desc(table.createdAt)],
+      limit: 200,
+      columns: {
+        id: true,
+        operationId: true,
+        envelope: true,
+        commandType: true,
+        desiredRevision: true,
+        status: true,
+        attempt: true,
+        errorCode: true,
+        errorMessage: true,
+        createdAt: true,
+        completedAt: true,
+      },
+    }),
+  ]);
+  const operations = environments.length
+    ? await knowledgeDb.query.environmentOperations.findMany({
+        where: (table, { and, eq, inArray }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            inArray(
+              table.environmentId,
+              environments.map((environment) => environment.id),
+            ),
+          ),
+        orderBy: (table, { desc }) => [desc(table.createdAt)],
+        limit: 200,
+        columns: {
+          id: true,
+          environmentId: true,
+          workspaceId: true,
+          type: true,
+          status: true,
+          stage: true,
+          errorCode: true,
+          errorMessage: true,
+          createdAt: true,
+          completedAt: true,
+        },
+      })
+    : [];
+  return {
+    contract: "kubernetes-byoc-diagnostic-v1" as const,
+    generatedAt: new Date().toISOString(),
+    connection,
+    environments,
+    resources,
+    operations,
+    commands: commands.map(({ envelope, ...command }) => {
+      const parsed = infrastructureConnectorCommandV1Schema.safeParse(envelope);
+      return {
+        ...command,
+        environmentId: parsed.success ? parsed.data.environmentId ?? null : null,
+        workspaceId: parsed.success ? parsed.data.workspaceId ?? null : null,
+      };
+    }),
+  };
 }
 
 export async function proveKubernetesQualificationEndpoint(input: {
@@ -716,7 +1317,10 @@ export async function proveKubernetesQualificationEndpoint(input: {
   let expectedHost: string;
   let expectedEnvironmentId: string | null = null;
   if (qualification) {
-    if (run.configRevision !== kubernetesConnectionConfigRevision(config)) {
+    if (
+      run.configRevision !==
+      kubernetesConnectionInfrastructureRevision(config)
+    ) {
       throw new Error("Qualification configuration is stale.");
     }
     const shortId = body.runId.replace(/-/gu, "").slice(0, 10);
@@ -736,7 +1340,8 @@ export async function proveKubernetesQualificationEndpoint(input: {
     const envelope = infrastructureConnectorCommandV1Schema.parse(command.envelope);
     const payload = envelope.payload as Record<string, unknown>;
     if (
-      payload.configurationRevision !== kubernetesConnectionConfigRevision(config) ||
+      payload.configurationRevision !==
+        kubernetesConnectionInfrastructureRevision(config) ||
       envelope.environmentId === undefined
     ) {
       throw new Error("Gateway lifecycle configuration is stale.");
@@ -811,5 +1416,215 @@ function sanitizeEnrollment(request: typeof schema.infrastructureConnectorEnroll
     providerConnectionId: request.providerConnectionId,
     clusterMetadata: request.clusterMetadata,
     createdAt: request.createdAt,
+  };
+}
+
+function safeInfrastructureRevision(value: unknown) {
+  const parsed = kubernetesConnectionConfigV1Schema.safeParse(value);
+  return parsed.success
+    ? kubernetesConnectionInfrastructureRevision(parsed.data)
+    : null;
+}
+
+async function sanitizeConnection(
+  current: Awaited<ReturnType<typeof getKubernetesConnectionRecord>>,
+) {
+  const { connection, connector, qualification, stale } = current;
+  const configuration = kubernetesConnectionConfigV1Schema.safeParse(
+    connection.configuration,
+  );
+  const report = qualification?.result
+    ? kubernetesQualificationReportV1Schema.safeParse(qualification.result)
+    : null;
+  const [activeEnvironments, activeCommand, residual, inventoryCommand, latestCommand] =
+    await Promise.all([
+      knowledgeDb.query.environments.findMany({
+        where: (table, { and, eq, isNull, ne }) =>
+          and(
+            eq(table.organizationId, connection.organizationId),
+            eq(table.providerConnectionId, connection.id),
+            ne(table.status, "deleted"),
+            isNull(table.archivedAt),
+          ),
+        columns: { id: true },
+      }),
+      knowledgeDb.query.infrastructureConnectorCommands.findFirst({
+        where: (table, { and, eq, inArray }) =>
+          and(
+            eq(table.organizationId, connection.organizationId),
+            eq(table.providerConnectionId, connection.id),
+            inArray(table.status, ["queued", "claimed", "running"]),
+          ),
+        columns: { id: true },
+      }),
+      knowledgeDb.query.environmentProviderResources.findFirst({
+        where: (table, { and, eq, isNull }) =>
+          and(
+            eq(table.organizationId, connection.organizationId),
+            eq(table.providerConnectionId, connection.id),
+            isNull(table.deletedAt),
+          ),
+        columns: { id: true },
+      }),
+      knowledgeDb.query.infrastructureConnectorCommands.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.organizationId, connection.organizationId),
+            eq(table.providerConnectionId, connection.id),
+            eq(table.commandType, "list_environment_resources"),
+            eq(table.status, "completed"),
+          ),
+        orderBy: (table, { desc }) => [desc(table.completedAt)],
+        columns: { id: true, result: true },
+      }),
+      knowledgeDb.query.infrastructureConnectorCommands.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.organizationId, connection.organizationId),
+            eq(table.providerConnectionId, connection.id),
+          ),
+        orderBy: (table, { desc }) => [desc(table.createdAt)],
+        columns: { id: true },
+      }),
+    ]);
+  let compatible = false;
+  if (connector) {
+    try {
+      negotiateInfrastructureConnectorV1({
+        connectionId: connection.id,
+        connectorVersion: connector.connectorVersion,
+        commandVersions: connector.supportedCommandVersions,
+        resultVersions: connector.supportedResultVersions,
+      });
+      compatible = true;
+    } catch {
+      compatible = false;
+    }
+  }
+  const presence = connector?.lastSeenAt
+    ? stale
+      ? "offline"
+      : "online" : "unknown";
+  const inventory = inventoryCommand?.result
+    ? infrastructureConnectorResultV1Schema.safeParse(inventoryCommand.result)
+    : null;
+  const emptyInventory = Boolean(
+    inventory?.success &&
+      inventory.data.status === "succeeded" &&
+      latestCommand?.id === inventoryCommand?.id &&
+      inventory.data.resources.length === 0 &&
+      (inventory.data.output?.resourceObservations?.length ?? 0) === 0,
+  );
+  return {
+    id: connection.id,
+    displayName: connection.displayName,
+    isDefault: connection.isDefault,
+    status: connection.status,
+    supportStatus: connection.supportStatus,
+    presence,
+    lastSeenAt: connector?.lastSeenAt ?? connection.lastSeenAt,
+    lastQualifiedAt: connection.lastQualifiedAt,
+    failure:
+      connection.failureCode || connection.failureMessage
+        ? {
+            code: connection.failureCode,
+            message: connection.failureMessage,
+          }
+        : null,
+    activeEnvironmentCount: activeEnvironments.length,
+    connector: connector
+      ? {
+          id: connector.id,
+          version: connector.connectorVersion,
+          commandVersions: connector.supportedCommandVersions,
+          resultVersions: connector.supportedResultVersions,
+          compatible,
+          status: connector.status,
+        }
+      : null,
+    configuration: {
+      value: configuration.success
+        ? configuration.data
+        : kubernetesConnectionConfigurationDraft(connection),
+      revision: configuration.success
+        ? kubernetesConnectionConfigRevision(configuration.data)
+        : null,
+      infrastructureRevision: configuration.success
+        ? kubernetesConnectionInfrastructureRevision(configuration.data)
+        : null,
+      configured: configuration.success,
+      frozen: activeEnvironments.length > 0,
+    },
+    qualification: qualification
+      ? {
+          id: qualification.id,
+          status: qualification.status,
+          configRevision: qualification.configRevision,
+          createdAt: qualification.createdAt,
+          completedAt: qualification.completedAt,
+          expiresAt: qualification.expiresAt,
+          report: report?.success
+            ? {
+                evidenceClass: report.data.evidenceClass,
+                observed: report.data.observed,
+                checks: report.data.checks,
+                cleanup: report.data.cleanup,
+              }
+            : null,
+        }
+      : null,
+    revocationReady:
+      activeEnvironments.length === 0 &&
+      !activeCommand &&
+      !residual &&
+      (current.connector
+        ? emptyInventory && presence === "online"
+        : true) &&
+      connection.status !== "revoked",
+    createdAt: connection.createdAt,
+    updatedAt: connection.updatedAt,
+  };
+}
+
+function kubernetesConnectionConfigurationDraft(
+  connection: typeof schema.environmentProviderConnections.$inferSelect,
+) {
+  return {
+    contract: "kubernetes-connection-config-v1" as const,
+    displayName: connection.displayName,
+    isDefault: connection.isDefault,
+    runtimeTemplateAllowlist: [],
+    qualificationProbeImage: "",
+    attestationEvidenceNote: "",
+    profile: {
+      contract: "kubernetes-byoc-profile-v1" as const,
+      selectedCertificationProfile: null,
+      namespacePrefix: "",
+      baseDomain: "",
+      storageClassName: "",
+      volumeSnapshotClassName: "",
+      controllerNamespace: "",
+      controllerPodSelector: {},
+      pullSecretRef: null,
+      encryptionAttestations: {
+        persistentVolumes: {
+          encryption: "unknown" as const,
+          evidenceRef: null,
+        },
+        kubernetesSecrets: {
+          encryption: "unknown" as const,
+          evidenceRef: null,
+        },
+      },
+      edge: { mode: "ingress" as const, ingressClassName: "" },
+      platform: {
+        distribution: "other" as const,
+        computeProfile: "",
+        networkPolicyProvider: "",
+        storageCsiDriver: "",
+        snapshotCsiDriver: "",
+        edgeController: "",
+      },
+    },
   };
 }

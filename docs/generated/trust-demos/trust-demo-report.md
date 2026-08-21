@@ -3,7 +3,7 @@ id: generated-trust-demos-report
 domain: runtime
 status: generated
 owner: kestrel-runtime
-last_verified_at: 2026-06-30
+last_verified_at: 2026-08-20
 depends_on:
   - ../../scripts/trust-demos.ts
 ---

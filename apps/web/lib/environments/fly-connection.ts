@@ -232,11 +232,17 @@ export async function createFlyProviderClient(organizationId: string) {
 
 export async function createFlyProviderLifecycleAdapter(
   organizationId: string,
+  environmentId: string,
 ) {
   const client = await createFlyProviderClient(organizationId);
   return new EnvironmentInfrastructureProviderV2LegacyAdapter(
     new FlyEnvironmentInfrastructureProviderV2(client),
-    connectionIdFor(organizationId),
+    {
+      connectionId: connectionIdFor(organizationId),
+      provider: "fly",
+      organizationId,
+      environmentId,
+    },
   );
 }
 

@@ -23,6 +23,7 @@ export async function processEnvironmentOperation(
     columns: {
       organizationId: true,
       environmentId: true,
+      workspaceId: true,
       type: true,
       input: true,
     },
@@ -67,10 +68,11 @@ export async function processEnvironmentOperation(
           organizationId: operation.organizationId,
           environmentId: operation.environmentId,
           operationId,
+          workspaceId: operation.workspaceId ?? undefined,
         }).then((provider) => {
-          if (provider.kind !== "fly") {
+          if (!provider.legacyLifecycle) {
             throw new Error(
-              `Environment ${operation.environmentId} does not use the Fly lifecycle adapter.`,
+              `Environment ${operation.environmentId} does not use a hosted lifecycle adapter.`,
             );
           }
           return provider.legacyLifecycle;

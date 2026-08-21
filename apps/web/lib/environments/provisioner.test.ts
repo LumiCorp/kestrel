@@ -507,6 +507,10 @@ test("deletion operations do not require runtime image authority", async () => {
   provider.deleteEnvironmentApp = async () => {
     calls.push("provider:delete-app");
   };
+  provider.listEnvironmentResources = async () => {
+    calls.push("provider:list-environment-resources");
+    return { machines: [], volumes: [] };
+  };
   await createProvisioner(repository, provider, undefined, {
     runtimeImage: "",
     routerImage: "",
@@ -1065,7 +1069,7 @@ test("Environment app identity is staged before gateway Machine creation", async
     "processed",
   );
   assert.equal(staged?.operationId, "operation-id");
-  assert.match(staged?.appName ?? "", /^kestrel-env-/u);
+  assert.equal(staged?.appName, "app-name");
   assert.match(staged?.networkName ?? "", /^kestrel-/u);
   assert.equal(failure?.stage, "fly.environment.gateway.create.failed");
   assert.equal(failure?.providerRequestId, "fly-request-123");
@@ -1436,12 +1440,45 @@ test("Environment deletion removes the owning Fly App idempotently", async () =>
   provider.deleteEnvironmentApp = async () => {
     calls.push("provider:delete-app");
   };
+  provider.listEnvironmentResources = async () => {
+    calls.push("provider:list-environment-resources");
+    return { machines: [], volumes: [] };
+  };
   await createProvisioner(repository, provider).process("operation-id");
   assert.deepEqual(calls, [
     "environment:deleting",
     "provider:delete-app",
+    "provider:list-environment-resources",
     "environment:deleted",
     "operation:completed",
+  ]);
+});
+
+test("Environment deletion requires a final empty provider inventory", async () => {
+  const { repository, provider, calls } = fixture("environment.delete");
+  provider.deleteEnvironmentApp = async () => {
+    calls.push("provider:delete-app");
+  };
+  provider.listEnvironmentResources = async () => {
+    calls.push("provider:list-environment-resources");
+    return {
+      machines: [
+        {
+          id: "residual-compute",
+          workspaceId: "workspace-id",
+          replacementId: null,
+        },
+      ],
+      volumes: [],
+    };
+  };
+  await createProvisioner(repository, provider).process("operation-id");
+  assert.deepEqual(calls, [
+    "environment:deleting",
+    "provider:delete-app",
+    "provider:list-environment-resources",
+    "environment:failed:ENVIRONMENT_PROVIDER_RESOURCE_CONFLICT",
+    "operation:failed:ENVIRONMENT_PROVIDER_RESOURCE_CONFLICT",
   ]);
 });
 

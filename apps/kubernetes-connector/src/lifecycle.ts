@@ -677,6 +677,19 @@ async function inspectWorkspaceSnapshot(context: LifecycleContext): Promise<Exec
 }
 
 async function listEnvironmentResources(context: LifecycleContext): Promise<Execution> {
+  const namespace = await context.kubernetes.get(
+    `/api/v1/namespaces/${context.namespace}`,
+    { allowNotFound: true, signal: context.signal },
+  ) as JsonRecord | null;
+  if (!namespace) {
+    return success(
+      "environment.inventory.absent",
+      `Environment namespace ${context.namespace} is absent.`,
+      [],
+      [],
+      { state: "absent" },
+    );
+  }
   const selectors = encodeURIComponent(`app.kubernetes.io/managed-by=${MANAGED_BY}`);
   const endpoints = [
     ["PersistentVolumeClaim", `/api/v1/namespaces/${context.namespace}/persistentvolumeclaims?labelSelector=${selectors}`],

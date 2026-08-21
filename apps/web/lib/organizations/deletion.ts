@@ -13,6 +13,7 @@ import { queueManagedRunPodDeletion } from "@/lib/ai/managed-runpod-store";
 import { processManagedRunPodRun } from "@/lib/ai/managed-runpod-runtime";
 import { withOrganizationDeletionLock } from "@/lib/environments/reconcile-lock";
 import { ManagedRunPodActiveModelGrantsError } from "@/lib/ai/managed-runpod-lifecycle-error";
+import { revokeKubernetesConnection } from "@/lib/environments/kubernetes-connector";
 
 const BILLABLE_SUBSCRIPTION_STATUSES = new Set([
   "active",
@@ -442,6 +443,35 @@ async function processOrganizationDeletionLocked(operationId: string) {
     await failOrganizationDeletion(operation.id, {
       code: "ENVIRONMENT_PROVIDER_VERIFICATION_FAILED",
       message: "One or more Environment applications remain after deletion.",
+    });
+    return;
+  }
+
+  const kubernetesConnections =
+    await knowledgeDb.query.environmentProviderConnections.findMany({
+      where: (table, { and, eq, isNull }) =>
+        and(
+          eq(table.organizationId, operation.organizationId),
+          eq(table.provider, "kubernetes"),
+          isNull(table.revokedAt),
+        ),
+      columns: { id: true },
+    });
+  try {
+    for (const connection of kubernetesConnections) {
+      await revokeKubernetesConnection({
+        organizationId: operation.organizationId,
+        connectionId: connection.id,
+        actorUserId: operation.requestedByUserId,
+      });
+    }
+  } catch (error) {
+    await failOrganizationDeletion(operation.id, {
+      code: "KUBERNETES_CONNECTION_CLEANUP_BLOCKED",
+      message:
+        error instanceof Error
+          ? error.message
+          : "A Kubernetes connection could not be cleanly revoked.",
     });
     return;
   }

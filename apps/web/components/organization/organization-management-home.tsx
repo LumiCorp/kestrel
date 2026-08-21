@@ -169,7 +169,9 @@ export function OrganizationManagementHome({
                   description={
                     environment.provider === "desktop"
                       ? `Desktop · ${environment.connectionState ?? "offline"}`
-                      : `${environment.region} · ${environment.runtimeTemplate}`
+                      : environment.provider === "kubernetes"
+                        ? `Kubernetes BYOC · ${environment.runtimeTemplate}`
+                        : `${environment.region} · ${environment.runtimeTemplate}`
                   }
                   href={`/organization/environments/${environment.id}`}
                   key={environment.id}

@@ -1,3 +1,12 @@
+---
+id: operations-glossary
+domain: docs
+status: active
+owner: kestrel-runtime
+last_verified_at: 2026-08-20
+depends_on: [index.md]
+---
+
 # Kestrel operations glossary
 
 ## Environment Runtime Version

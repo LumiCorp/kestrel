@@ -99,8 +99,8 @@ test("shared lifecycle entry points resolve providers through the registry", () 
   const backups = fs.readFileSync(path.join(root, "backups.ts"), "utf8");
   const reconcile = fs.readFileSync(path.join(root, "reconcile.ts"), "utf8");
   assert.match(processRuntime, /resolveEnvironmentProvider/u);
-  assert.match(backups, /resolveFlyProviderClient/u);
-  assert.match(reconcile, /resolveFlyProviderClient/u);
+  assert.match(backups, /resolveEnvironmentProvider/u);
+  assert.doesNotMatch(reconcile, /resolveFlyProviderClient/u);
   for (const source of [processRuntime, backups, reconcile]) {
     assert.doesNotMatch(source, /new FlyMachinesEnvironmentProvider/u);
     assert.doesNotMatch(

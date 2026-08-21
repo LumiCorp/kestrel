@@ -8,9 +8,10 @@ test("manual runtime activation changes only the exact canary and channel pointe
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
   process.env.DATABASE_URL = databaseUrl;
   process.env.POSTGRES_URL = databaseUrl;
-  const [{ resetDbRuntimeForTests }, runtime] = await Promise.all([
+  const [{ resetDbRuntimeForTests }, runtime, processRuntime] = await Promise.all([
     import("@/lib/db/runtime"),
     import("./runtime-channel"),
+    import("./process-runtime"),
   ]);
   const pool = postgres(databaseUrl, { max: 1 });
   const connection = await pool.reserve();
@@ -132,6 +133,27 @@ test("manual runtime activation changes only the exact canary and channel pointe
       updated_at = now()
     WHERE name = 'production'
   `;
+
+  const mismatchedOperationId = `runtime-mismatch-${suffix}`;
+  await connection`
+    INSERT INTO environment_operations (
+      id, organization_id, environment_id, requested_by_user_id, type,
+      status, stage, idempotency_key, input
+    ) VALUES (
+      ${mismatchedOperationId}, ${organizationId}, ${canaryId}, ${userId},
+      'environment.update', 'queued', 'requested',
+      ${`runtime-mismatch:${suffix}`},
+      ${connection.json({
+        runtimeVersionId: proposed.id,
+        runtimeImage: initial.runtimeImage,
+        routerImage: proposed.routerImage,
+      })}
+    )
+  `;
+  await assert.rejects(
+    processRuntime.processEnvironmentOperation(mismatchedOperationId),
+    /do not match the immutable Runtime Version/u,
+  );
 
   const requested = await runtime.requestEnvironmentRuntimeUpdate({
     organizationId,

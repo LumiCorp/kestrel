@@ -1,3 +1,12 @@
+---
+id: adr-0001-stable-runtime-bundle-authority
+domain: runtime
+status: superseded
+owner: kestrel-runtime
+last_verified_at: 2026-08-20
+depends_on: [../index.md]
+---
+
 # ADR 0001: Stable Runtime Bundle authority
 
 - Status: superseded by ADR 0002

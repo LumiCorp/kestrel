@@ -506,6 +506,10 @@ test("rejected edge conditions stop before public proof", async () => {
 
 test("inventory returns authoritative resources once and deletion preserves customer objects", async () => {
   const fake = new FakeKubernetesApi();
+  await execute(fake, "ensure_environment_scope", {
+    workspaceLimit: 4,
+    runtimeTemplate: "kestrel-standard-v1",
+  });
   const storage = kubernetesLifecycleInternals.storageName("workspace-1");
   await execute(fake, "ensure_workspace_storage", { scope, placement, sizeGb: 20 }, "workspace-1");
   await execute(fake, "ensure_workspace_compute", {
@@ -602,6 +606,14 @@ test("namespace deletion removes a fully owned Environment after complete discov
   assert.equal(
     fake.resources.has(`/api/v1/namespaces/${scope.externalId}`),
     false,
+  );
+
+  const inventory = await execute(fake, "list_environment_resources", { scope });
+  assert.equal(inventory.status, "succeeded", JSON.stringify(inventory.error));
+  assert.deepEqual(inventory.resources, []);
+  assert.equal(
+    (inventory.output as { state?: string }).state,
+    "absent",
   );
 });
 

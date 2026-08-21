@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { WORKSPACE_READINESS_TIMEOUT_SECONDS } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { classifyDbError } from "@/lib/db/runtime";
@@ -14,6 +14,7 @@ import { PROVISIONER_OPERATION_TYPES } from "./operation-routing";
 import {
   assertEnvironmentProviderCompatibility,
   type EnvironmentInfrastructureProvider,
+  type EnvironmentProviderInventory,
   EnvironmentProviderError,
   KESTREL_WORKSPACE_STOP_CONFIG,
 } from "./providers/contracts";
@@ -49,10 +50,12 @@ export interface EnvironmentProvisioningRepository {
   getEnvironment(environmentId: string): Promise<{
     id: string;
     organizationId: string;
+    provider?: "fly" | "kubernetes" | "desktop";
     region: string;
     status: string;
     flyAppName: string | null;
     flyGatewayMachineId: string | null;
+    providerResourceCount?: number;
     routerUrl?: string | null;
     routerImage: string | null;
     runtimeImage: string | null;
@@ -78,6 +81,10 @@ export interface EnvironmentProvisioningRepository {
       flyMachineId: string | null;
       flyVolumeId: string | null;
       runtimeImage: string | null;
+      sourceType?: "blank" | "github" | "desktop" | undefined;
+      sourceResourceId?: string | null | undefined;
+      sourceRepository?: string | null | undefined;
+      sourceDefaultBranch?: string | null | undefined;
     }>
   >;
   beginEnvironmentProvisioning(input: {
@@ -151,7 +158,7 @@ export interface EnvironmentProvisioningRepository {
     volumeId: string;
     machineId: string;
     runtimeImage: string;
-    serviceTokenHash: string;
+    serviceTokenHash?: string | undefined;
   }): Promise<void>;
   failWorkspace(input: {
     workspaceId: string;
@@ -334,6 +341,8 @@ export class EnvironmentProvisioner {
         await this.deleteWorkspace(operation);
       } else if (operation.type === "environment.delete") {
         await this.deleteEnvironment(operation);
+      } else if (operation.type === "environment.reconcile") {
+        await this.reconcileEnvironment(operation);
       } else {
         throw operationError(
           "ENVIRONMENT_OPERATION_UNSUPPORTED",
@@ -437,7 +446,10 @@ export class EnvironmentProvisioner {
           workspaceId: operation.workspaceId,
           ...failure,
         });
-      } else if (operation.type === "environment.update") {
+      } else if (
+        operation.type === "environment.update" ||
+        operation.type === "environment.reconcile"
+      ) {
         await this.repository.degradeEnvironment({
           environmentId: operation.environmentId,
           ...failure,
@@ -487,7 +499,10 @@ export class EnvironmentProvisioner {
         code,
         message,
       });
-    } else if (operation.type === "environment.update") {
+    } else if (
+      operation.type === "environment.update" ||
+      operation.type === "environment.reconcile"
+    ) {
       await this.repository.degradeEnvironment({
         environmentId: operation.environmentId,
         code,
@@ -536,7 +551,7 @@ export class EnvironmentProvisioner {
       environmentStatusSchema.parse(environment.status),
       "provisioning",
     );
-    const appName =
+    let appName =
       environment.flyAppName ?? flyEnvironmentAppName(environment.id);
     const networkName = flyEnvironmentNetworkName(environment.id);
     await this.persistEnvironmentProvisioning(() =>
@@ -546,11 +561,12 @@ export class EnvironmentProvisioner {
         stage: "environment.runtime.connecting",
       }),
     );
-    await this.provider.ensureEnvironmentApp({
+    const ensuredScope = await this.provider.ensureEnvironmentApp({
       environmentId: environment.id,
       appName,
       networkName,
     });
+    appName = ensuredScope.name;
     const appStaged = await this.persistEnvironmentProvisioning(() =>
       this.repository.stageEnvironmentAppIdentity({
         environmentId: environment.id,
@@ -673,7 +689,7 @@ export class EnvironmentProvisioner {
       operation.input?.skipWorkspaceBackups === true ||
       !workspaceDataMigrationRevision;
     const automaticRollback = operation.input?.automaticRollback !== false;
-    if (!skipWorkspaceBackups && !operation.requestedByUserId) {
+    if (!(skipWorkspaceBackups || operation.requestedByUserId)) {
       throw operationError(
         "ENVIRONMENT_UPDATE_ACTOR_REQUIRED",
         "Environment updates that create backups require an audit actor.",
@@ -705,6 +721,7 @@ export class EnvironmentProvisioner {
     );
     if (!checkpoint.gatewayVerified) {
       await persistCheckpoint("environment.update.gateway");
+      let gatewayServiceTokenHash: string | undefined;
       try {
         const gateway = await this.provider.updateMachineImage({
           appName: environment.flyAppName,
@@ -714,6 +731,14 @@ export class EnvironmentProvisioner {
             KESTREL_CONTROL_PLANE_URL: this.controlPlaneUrl,
           },
         });
+        const rotatedGatewayToken = (
+          gateway as typeof gateway & { serviceToken?: string }
+        ).serviceToken;
+        if (rotatedGatewayToken) {
+          gatewayServiceTokenHash = hashEnvironmentServiceToken(
+            rotatedGatewayToken,
+          );
+        }
         if (gateway.state === "stopped") {
           await this.provider.startMachine({
             appName: environment.flyAppName,
@@ -779,6 +804,7 @@ export class EnvironmentProvisioner {
       await this.repository.completeEnvironmentGatewayUpdate({
         environmentId: environment.id,
         routerImage,
+        gatewayServiceTokenHash,
       });
       checkpoint.gatewayVerified = true;
       await persistCheckpoint("environment.update.gateway_verified");
@@ -1070,7 +1096,7 @@ export class EnvironmentProvisioner {
               timeoutSeconds: 60,
             }),
           )
-          .catch(() => undefined);
+          .catch(() => {});
       }
       const failure = safeFailure(error);
       if (!failure.retryable) {
@@ -1408,20 +1434,217 @@ export class EnvironmentProvisioner {
       environmentStatusSchema.parse(environment.status),
       "deleting",
     );
+    if (
+      environment.provider === "kubernetes" &&
+      !environment.flyAppName &&
+      (environment.providerResourceCount ?? 0) > 0
+    ) {
+      throw operationError(
+        "ENVIRONMENT_PROVIDER_RESOURCE_CONFLICT",
+        "Kubernetes provider scope identity is missing while provider resources remain.",
+      );
+    }
     await this.repository.setEnvironmentDeleting(environment.id, {
       organizationTeardown:
         typeof operation.input?.organizationDeletionOperationId === "string",
     });
+    let finalInventory: EnvironmentProviderInventory | null = null;
     if (environment.flyAppName) {
       await this.provider.deleteEnvironmentApp({
         appName: environment.flyAppName,
       });
+      finalInventory = await this.provider.listEnvironmentResources({
+        appName: environment.flyAppName,
+      });
+      if (
+        finalInventory.machines.length > 0 ||
+        finalInventory.volumes.length > 0 ||
+        (finalInventory.resources?.length ?? 0) > 0
+      ) {
+        throw operationError(
+          "ENVIRONMENT_PROVIDER_RESOURCE_CONFLICT",
+          "Environment deletion left provider resources requiring administrator attention.",
+        );
+      }
     }
     await this.repository.completeEnvironmentDelete(environment.id);
     await this.repository.completeOperation({
       operationId: operation.id,
       stage: "environment.deleted",
-      result: { appName: environment.flyAppName },
+      result: {
+        appName: environment.flyAppName,
+        finalInventory: finalInventory
+          ? {
+              machineCount: finalInventory.machines.length,
+              volumeCount: finalInventory.volumes.length,
+            }
+          : null,
+      },
+    });
+  }
+
+  private async reconcileEnvironment(operation: ProvisioningOperation) {
+    const environment = await this.repository.getEnvironment(
+      operation.environmentId,
+    );
+    if (
+      !environment ||
+      environment.organizationId !== operation.organizationId ||
+      !(environment.routerImage && environment.runtimeImage) ||
+      !["ready", "degraded"].includes(environment.status)
+    ) {
+      throw operationError(
+        "ENVIRONMENT_NOT_READY",
+        "Environment reconciliation target is unavailable.",
+      );
+    }
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.reconcile.scope",
+    });
+    const scope = await this.provider.ensureEnvironmentApp({
+      environmentId: environment.id,
+      appName: environment.flyAppName ?? flyEnvironmentAppName(environment.id),
+      networkName: flyEnvironmentNetworkName(environment.id),
+    });
+    const appName = scope.name;
+    let inventory = await this.provider.listEnvironmentResources({ appName });
+    let gatewayId = environment.flyGatewayMachineId;
+    let gatewayServiceTokenHash: string | undefined;
+    await this.repository.updateOperationStage({
+      operationId: operation.id,
+      stage: "environment.reconcile.gateway",
+    });
+    const kubernetesGatewayPresent =
+      inventory.resources?.some((resource) => resource.role === "gateway") === true &&
+      inventory.resources?.some((resource) => resource.role === "edge_route") === true;
+    const gatewayMissing =
+      environment.provider === "kubernetes"
+        ? !kubernetesGatewayPresent
+        : !(environment.flyGatewayMachineId && environment.routerUrl);
+    if (gatewayMissing) {
+      const gatewayServiceToken = createEnvironmentServiceToken();
+      const gateway = await this.provider.ensureEnvironmentGateway({
+        appName,
+        environmentId: environment.id,
+        region: environment.region,
+        runtimeImage: environment.routerImage,
+        ticketPublicKey: this.ticketPublicKey,
+        controlPlaneUrl: this.controlPlaneUrl,
+        serviceToken: gatewayServiceToken,
+      });
+      gatewayId = gateway.machineId;
+      gatewayServiceTokenHash = hashEnvironmentServiceToken(
+        gateway.serviceToken,
+      );
+      await this.repository.stageEnvironmentGatewayIdentity({
+        environmentId: environment.id,
+        appName,
+        gatewayServiceTokenHash,
+      });
+      inventory = await this.provider.listEnvironmentResources({ appName });
+    }
+    const workspaces = await this.repository.listEnvironmentWorkspaces(
+      environment.id,
+    );
+    const repairedWorkspaceIds: string[] = [];
+    for (const workspace of workspaces) {
+      if (!["ready", "stopped", "failed"].includes(workspace.status)) continue;
+      const machinePresent = Boolean(
+        workspace.flyMachineId &&
+          inventory.machines.some((machine) => machine.id === workspace.flyMachineId),
+      );
+      const volumePresent = Boolean(
+        workspace.flyVolumeId &&
+          inventory.volumes.some((volume) => volume.id === workspace.flyVolumeId),
+      );
+      if (workspace.status !== "failed" && machinePresent && volumePresent) {
+        continue;
+      }
+      await this.repository.updateOperationStage({
+        operationId: operation.id,
+        stage: `environment.reconcile.workspace.${workspace.id}`,
+      });
+      const storage = volumePresent
+        ? {
+            id: workspace.flyVolumeId!,
+            name: workspace.flyVolumeId!,
+            region: environment.region,
+            sizeGb: 20,
+            encrypted: true as const,
+          }
+        : await this.provider.ensureWorkspaceVolume({
+            appName,
+            workspaceId: workspace.id,
+            region: environment.region,
+          });
+      const serviceToken = createEnvironmentServiceToken();
+      const compute = await this.provider.ensureWorkspaceMachine({
+        appName,
+        environmentId: environment.id,
+        organizationId: operation.organizationId,
+        workspaceId: workspace.id,
+        volumeId: storage.id,
+        region: environment.region,
+        runtimeImage: environment.runtimeImage,
+        ticketPublicKey: this.ticketPublicKey,
+        controlPlaneUrl: this.controlPlaneUrl,
+        serviceToken,
+        source:
+          workspace.sourceType === "github"
+            ? {
+                type: "github",
+                resourceId: workspace.sourceResourceId ?? undefined,
+                repository: workspace.sourceRepository ?? undefined,
+                defaultBranch: workspace.sourceDefaultBranch ?? undefined,
+              }
+            : { type: "blank" },
+        idleTimeoutMinutes: environment.idleTimeoutMinutes,
+      });
+      await this.repository.completeWorkspace({
+        workspaceId: workspace.id,
+        volumeId: storage.id,
+        machineId: compute.id,
+        runtimeImage: environment.runtimeImage,
+        serviceTokenHash: hashEnvironmentServiceToken(serviceToken),
+      });
+      if (workspace.status === "stopped") {
+        await this.provider.stopMachine({ appName, machineId: compute.id });
+        await this.provider.waitForMachine({
+          appName,
+          machineId: compute.id,
+          state: "stopped",
+          timeoutSeconds: 60,
+        });
+        await this.repository.completeWorkspaceStop(workspace.id);
+      } else {
+        await this.provider.waitForMachineHealth({
+          appName,
+          machineId: compute.id,
+          checkName: "workspace",
+          timeoutSeconds: WORKSPACE_READINESS_TIMEOUT_SECONDS,
+        });
+      }
+      repairedWorkspaceIds.push(workspace.id);
+      inventory = await this.provider.listEnvironmentResources({ appName });
+    }
+    if (gatewayServiceTokenHash) {
+      await this.repository.completeEnvironmentGatewayUpdate({
+        environmentId: environment.id,
+        routerImage: environment.routerImage,
+        gatewayServiceTokenHash,
+      });
+    }
+    await this.repository.completeOperation({
+      operationId: operation.id,
+      stage: "environment.reconcile.completed",
+      result: {
+        scopeId: scope.id,
+        gatewayId,
+        repairedWorkspaceIds,
+        observedMachineIds: inventory.machines.map((machine) => machine.id),
+        observedVolumeIds: inventory.volumes.map((volume) => volume.id),
+      },
     });
   }
 
@@ -1535,13 +1758,14 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         });
       return claimed ?? null;
     },
-    getEnvironment(environmentId) {
-      return knowledgeDb.query.environments
-        .findFirst({
+    async getEnvironment(environmentId) {
+      const value = await knowledgeDb.query.environments.findFirst({
           where: (table, { eq }) => eq(table.id, environmentId),
           columns: {
             id: true,
             organizationId: true,
+            provider: true,
+            providerPlacement: true,
             region: true,
             status: true,
             flyAppName: true,
@@ -1551,20 +1775,37 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             runtimeImage: true,
             idleTimeoutMinutes: true,
           },
-        })
-        .then((value) => {
-          if (!value) return null;
-          if (!value.region) {
-            throw new Error(
-              "The Fly lifecycle worker requires a provider region.",
-            );
-          }
-          return { ...value, region: value.region };
         });
+      if (!value) return null;
+      if (value.provider === "kubernetes") {
+        const resources = await knowledgeDb.query.environmentProviderResources.findMany({
+          where: (table, { and, eq, isNull }) =>
+            and(
+              eq(table.environmentId, environmentId),
+              isNull(table.deletedAt),
+            ),
+        });
+        const scope = resources.find(
+          (resource) => resource.resourceRole === "environment_scope",
+        );
+        const gateway = resources.find(
+          (resource) => resource.resourceRole === "gateway",
+        );
+        return {
+          ...value,
+          region: "cluster",
+          flyAppName: scope?.externalId ?? null,
+          flyGatewayMachineId: gateway?.externalId ?? null,
+          providerResourceCount: resources.length,
+        };
+      }
+      if (!value.region) {
+        throw new Error("The hosted lifecycle worker requires provider placement.");
+      }
+      return { ...value, region: value.region };
     },
-    getWorkspace(workspaceId) {
-      return knowledgeDb.query.environmentWorkspaces
-        .findFirst({
+    async getWorkspace(workspaceId) {
+      const value = await knowledgeDb.query.environmentWorkspaces.findFirst({
           where: (table, { eq }) => eq(table.id, workspaceId),
           columns: {
             id: true,
@@ -1579,31 +1820,53 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             sourceRepository: true,
             sourceDefaultBranch: true,
           },
-        })
-        .then((value) => {
-          if (!value) return null;
-          if (value?.sourceType === "desktop") {
-            throw new Error(
-              "Desktop workspaces are not provisioned by the Fly lifecycle worker.",
-            );
-          }
-          return {
-            id: value.id,
-            organizationId: value.organizationId,
-            environmentId: value.environmentId,
-            status: value.status,
-            flyMachineId: value.flyMachineId,
-            flyVolumeId: value.flyVolumeId,
-            runtimeImage: value.runtimeImage,
-            sourceType: value.sourceType,
-            sourceResourceId: value.sourceResourceId,
-            sourceRepository: value.sourceRepository,
-            sourceDefaultBranch: value.sourceDefaultBranch,
-          };
         });
+      if (!value) return null;
+      if (value.sourceType === "desktop") {
+        throw new Error(
+          "Desktop workspaces are not provisioned by the hosted lifecycle worker.",
+        );
+      }
+      const environment = await knowledgeDb.query.environments.findFirst({
+        where: (table, { eq }) => eq(table.id, value.environmentId),
+        columns: { provider: true },
+      });
+      let machineId = value.flyMachineId;
+      let volumeId = value.flyVolumeId;
+      if (environment?.provider === "kubernetes") {
+        const resources = await knowledgeDb.query.environmentProviderResources.findMany({
+          where: (table, { and, eq, isNull }) =>
+            and(
+              eq(table.workspaceId, value.id),
+              isNull(table.replacementId),
+              isNull(table.deletedAt),
+            ),
+        });
+        machineId =
+          resources.find(
+            (resource) => resource.resourceRole === "workspace_compute",
+          )?.externalId ?? null;
+        volumeId =
+          resources.find(
+            (resource) => resource.resourceRole === "workspace_storage",
+          )?.externalId ?? null;
+      }
+      return {
+        id: value.id,
+        organizationId: value.organizationId,
+        environmentId: value.environmentId,
+        status: value.status,
+        flyMachineId: machineId,
+        flyVolumeId: volumeId,
+        runtimeImage: value.runtimeImage,
+        sourceType: value.sourceType,
+        sourceResourceId: value.sourceResourceId,
+        sourceRepository: value.sourceRepository,
+        sourceDefaultBranch: value.sourceDefaultBranch,
+      };
     },
-    listEnvironmentWorkspaces(environmentId) {
-      return knowledgeDb.query.environmentWorkspaces.findMany({
+    async listEnvironmentWorkspaces(environmentId) {
+      const workspaces = await knowledgeDb.query.environmentWorkspaces.findMany({
         where: (table, { and, eq, isNull }) =>
           and(eq(table.environmentId, environmentId), isNull(table.deletedAt)),
         columns: {
@@ -1612,8 +1875,41 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           flyMachineId: true,
           flyVolumeId: true,
           runtimeImage: true,
+          sourceType: true,
+          sourceResourceId: true,
+          sourceRepository: true,
+          sourceDefaultBranch: true,
         },
       });
+      const environment = await knowledgeDb.query.environments.findFirst({
+        where: (table, { eq }) => eq(table.id, environmentId),
+        columns: { provider: true },
+      });
+      if (environment?.provider !== "kubernetes") return workspaces;
+      const resources = await knowledgeDb.query.environmentProviderResources.findMany({
+        where: (table, { and, eq, isNotNull, isNull }) =>
+          and(
+            eq(table.environmentId, environmentId),
+            isNotNull(table.workspaceId),
+            isNull(table.replacementId),
+            isNull(table.deletedAt),
+          ),
+      });
+      return workspaces.map((workspace) => ({
+        ...workspace,
+        flyMachineId:
+          resources.find(
+            (resource) =>
+              resource.workspaceId === workspace.id &&
+              resource.resourceRole === "workspace_compute",
+          )?.externalId ?? null,
+        flyVolumeId:
+          resources.find(
+            (resource) =>
+              resource.workspaceId === workspace.id &&
+              resource.resourceRole === "workspace_storage",
+          )?.externalId ?? null,
+      }));
     },
     async beginEnvironmentProvisioning(input) {
       const now = new Date();
@@ -1670,10 +1966,16 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
     async stageEnvironmentGatewayIdentity(input) {
       const { attempt, operationId } = input;
       if (operationId === undefined || attempt === undefined) {
+        const current = await knowledgeDb.query.environments.findFirst({
+          where: (table, { eq }) => eq(table.id, input.environmentId),
+          columns: { provider: true },
+        });
         await knowledgeDb
           .update(schema.environments)
           .set({
-            flyAppName: input.appName,
+            ...(current?.provider === "fly"
+              ? { flyAppName: input.appName }
+              : {}),
             gatewayServiceTokenHash: input.gatewayServiceTokenHash,
             updatedAt: new Date(),
           })
@@ -1701,10 +2003,16 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           )
           .returning({ id: schema.environmentOperations.id });
         if (!operation) return "superseded" as const;
+        const current = await transaction.query.environments.findFirst({
+          where: (table, { eq }) => eq(table.id, input.environmentId),
+          columns: { provider: true },
+        });
         const [environment] = await transaction
           .update(schema.environments)
           .set({
-            flyAppName: input.appName,
+            ...(current?.provider === "fly"
+              ? { flyAppName: input.appName }
+              : {}),
             gatewayServiceTokenHash: input.gatewayServiceTokenHash,
             updatedAt: now,
           })
@@ -1735,11 +2043,19 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           )
           .returning({ id: schema.environmentOperations.id });
         if (!operation) return "superseded" as const;
+        const current = await transaction.query.environments.findFirst({
+          where: (table, { eq }) => eq(table.id, input.environmentId),
+          columns: { provider: true },
+        });
         const [environment] = await transaction
           .update(schema.environments)
           .set({
-            flyAppName: input.appName,
-            flyNetworkName: input.networkName,
+            ...(current?.provider === "fly"
+              ? {
+                  flyAppName: input.appName,
+                  flyNetworkName: input.networkName,
+                }
+              : {}),
             updatedAt: now,
           })
           .where(eq(schema.environments.id, input.environmentId))
@@ -1748,7 +2064,7 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
       });
     },
     async setEnvironmentDeleting(environmentId, options) {
-      await knowledgeDb.transaction(async (transaction) => {
+    await knowledgeDb.transaction(async (transaction) => {
         await transaction.execute(
           sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environmentId)}, 0))`,
         );
@@ -1826,13 +2142,21 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           )
           .returning({ id: schema.environmentOperations.id });
         if (!operation) return "superseded" as const;
+        const current = await transaction.query.environments.findFirst({
+          where: (table, { eq }) => eq(table.id, input.environmentId),
+          columns: { provider: true },
+        });
         const [environment] = await transaction
           .update(schema.environments)
           .set({
             status: "ready",
-            flyAppName: input.appName,
-            flyNetworkName: input.networkName,
-            flyGatewayMachineId: input.gatewayMachineId,
+            ...(current?.provider === "fly"
+              ? {
+                  flyAppName: input.appName,
+                  flyNetworkName: input.networkName,
+                  flyGatewayMachineId: input.gatewayMachineId,
+                }
+              : {}),
             routerUrl: input.routerUrl,
             routerImage: input.routerImage,
             runtimeImage: input.runtimeImage,
@@ -1850,12 +2174,18 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
           .set({
             status: "completed",
             stage: "environment.activation.ready",
-            result: {
-              appName: input.appName,
-              networkName: input.networkName,
-              gatewayMachineId: input.gatewayMachineId,
-              routerUrl: input.routerUrl,
-            },
+            result:
+              current?.provider === "fly"
+                ? {
+                    appName: input.appName,
+                    networkName: input.networkName,
+                    gatewayMachineId: input.gatewayMachineId,
+                    routerUrl: input.routerUrl,
+                  }
+                : {
+                    provider: "kubernetes",
+                    routerUrl: input.routerUrl,
+                  },
             completedAt: now,
             updatedAt: now,
           })
@@ -1998,6 +2328,19 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
             eq(schema.projectEnvironmentBindings.environmentId, environmentId),
           );
         await transaction
+          .update(schema.environmentProviderResources)
+          .set({
+            deletedAt: now,
+            state: "deleted",
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(schema.environmentProviderResources.environmentId, environmentId),
+              isNull(schema.environmentProviderResources.deletedAt),
+            ),
+          );
+        await transaction
           .update(schema.environmentWorkspaces)
           .set({
             status: "deleted",
@@ -2035,14 +2378,30 @@ export const databaseEnvironmentProvisioningRepository: EnvironmentProvisioningR
         .where(eq(schema.environmentWorkspaces.id, workspaceId));
     },
     async completeWorkspace(input) {
+      const workspace = await knowledgeDb.query.environmentWorkspaces.findFirst({
+        where: (table, { eq }) => eq(table.id, input.workspaceId),
+        columns: { environmentId: true },
+      });
+      const environment = workspace
+        ? await knowledgeDb.query.environments.findFirst({
+            where: (table, { eq }) => eq(table.id, workspace.environmentId),
+            columns: { provider: true },
+          })
+        : null;
       await knowledgeDb
         .update(schema.environmentWorkspaces)
         .set({
           status: "ready",
-          flyVolumeId: input.volumeId,
-          flyMachineId: input.machineId,
+          ...(environment?.provider === "fly"
+            ? {
+                flyVolumeId: input.volumeId,
+                flyMachineId: input.machineId,
+              }
+            : {}),
           runtimeImage: input.runtimeImage,
-          serviceTokenHash: input.serviceTokenHash,
+          ...(input.serviceTokenHash
+            ? { serviceTokenHash: input.serviceTokenHash }
+            : {}),
           lastActivityAt: new Date(),
           lastHealthAt: new Date(),
           failureCode: null,
@@ -2378,9 +2737,12 @@ function safeFailure(error: unknown): {
 } {
   if (error instanceof Error) {
     const candidate = error as Error & { code?: unknown };
+    const providerCode = (error as Error & { providerCode?: unknown }).providerCode;
     return {
       code:
-        typeof candidate.code === "string"
+        typeof providerCode === "string"
+          ? providerCode.slice(0, 120)
+          : typeof candidate.code === "string"
           ? candidate.code.slice(0, 120)
           : "ENVIRONMENT_PROVISIONING_FAILED",
       message: error.message.slice(0, 500),

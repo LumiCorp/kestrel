@@ -9,10 +9,7 @@ type EnvironmentReconciliationResult = {
   operationCount: number;
   operationFailureCount: number;
   repairedExecutionCount: number;
-  environmentGatewayCount: number;
-  workspaceCount: number;
-  adoptedVolumeCount: number;
-  degradedWorkspaceCount: number;
+  scheduledReconciliationCount: number;
   finalizedPreviewCount: number;
 };
 

@@ -4,6 +4,7 @@ export const PROVISIONER_OPERATION_TYPES = [
   "environment.provision",
   "environment.update",
   "environment.delete",
+  "environment.reconcile",
   "workspace.provision",
   "workspace.start",
   "workspace.stop",

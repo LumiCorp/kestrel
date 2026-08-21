@@ -21,7 +21,7 @@ The release has a rehearsed rollback that stops and deletes Kestrel-owned resour
 
 Source: [Completing Kubernetes BYOC Accurately](../../research/2026-08-17-completing-kubernetes-byoc.md).
 
-Slices 1-6 provide versioned contracts, additive persistence, trusted connector transport, full Kubernetes lifecycle, provider-neutral routing, administrator surfaces, observability, and a disabled organization feature flag.
+Slices 1-6 provide versioned contracts, additive persistence, trusted connector transport, full Kubernetes lifecycle, provider-neutral routing, administrator surfaces, observability, and an off-by-default organization-admin opt-in. Slice 6 is not generally deployed independently before this slice passes.
 
 Slice 4 deliberately supplied only hermetic fake-API, process, and Postgres lifecycle evidence. This slice owns every real-cluster proof: optional local KIND smoke coverage, disposable managed-cluster canaries, CSI behavior, enforced NetworkPolicy, Gateway API/Ingress controller behavior, public DNS, and TLS.
 
@@ -35,7 +35,7 @@ This slice owns proof tooling, certified cluster fixtures, fault injection, secu
 - Non-reference clusters may be enabled only as `qualified`, never `certified`.
 - Connector image and chart publication are manual, immutable, signed, and digest-addressed.
 - Cluster installation and upgrade remain customer/admin Helm actions.
-- Production feature enablement is organization-specific and manual.
+- Organization administrators perform the actual organization-specific product opt-in. Kestrel operator approval is a pilot-process requirement, not a product authorization gate.
 - Pilot rollback is cleanup-first: stop/delete, verify inventory, revoke, then uninstall.
 - Provider migration and bulk Fly-to-Kubernetes conversion are prohibited.
 - Unit mocks, hermetic fake APIs, isolated provider clusters, pilot use, and production use are reported separately.
@@ -47,11 +47,22 @@ Add a Kubernetes canary command owned by Web runtime tooling:
 ```text
 pnpm --dir apps/web canary:environment:kubernetes -- \
   --connection <connection-id> \
+  --profile gke|eks|qualified \
   --tag <proof-tag> \
   --evidence <output-path>
 ```
 
-The canary accepts only an existing ready connection and creates uniquely labeled disposable Environment/workspace records through public administration and operation services. It never bypasses the provider registry or writes provider tables directly.
+When the profile-specific routing, fault, or recovery probes are run by a
+separate managed-cluster harness, pass its strict proof JSON with
+`--scenario-evidence <path>`. The canary validates the profile and scenario
+records before merging them with the authenticated control-plane observations;
+without that input, missing live scenarios remain failed and the proof cannot
+pass. The disposable Environment is explicitly non-default, so cleanup does not
+mutate the organization's default Environment.
+
+The canary accepts only an existing ready connection and creates uniquely labeled, non-default disposable Environment/workspace records through public administration and operation services. It never bypasses the provider registry, mutates the organization's default Environment, or writes provider tables directly. The `qualified` profile is non-reference evidence only; KIND may be used as an optional smoke input but cannot produce an `isolated_provider`, `pilot`, or `production` proof.
+
+The operator supplies the authenticated Kestrel One base URL/cookie, organization ID, cluster facts, immutable image/chart digests, and their signature/provenance references through environment variables; no credentials or mutable tags are accepted by the parser.
 
 Define `kubernetes-byoc-proof-v1` JSON:
 
@@ -84,6 +95,20 @@ Add a certification registry entry only by committing a reviewed proof summary t
 13. Select one explicitly approved customer cluster, require current qualification, enable only that organization, and run a bounded pilot.
 14. Review pilot evidence and residuals before deciding general availability. Do not enable organizations in bulk as part of this slice.
 
+Optional KIND smoke runs before the managed profiles when Docker and KIND are available:
+
+```sh
+kind create cluster --name kestrel-byoc-smoke
+helm upgrade --install kestrel deploy/kubernetes/kestrel-connector \
+  --namespace kestrel-system --create-namespace \
+  --set image.digest=sha256:<published-digest>
+pnpm --filter @kestrel/kubernetes-connector release:check
+helm uninstall kestrel --namespace kestrel-system
+kind delete cluster --name kestrel-byoc-smoke
+```
+
+The smoke records installation, health, enrollment, and uninstall only. It receives no certification credit and does not assert cloud CSI, NetworkPolicy enforcement, Gateway API, Ingress, DNS, or TLS behavior.
+
 ## Data Flow And Lifecycle Behavior
 
 The canary creates one disposable Kubernetes Environment with a bounded workspace limit, one primary workspace, and one isolation-peer Environment/workspace. It uses the current runtime-channel image digests and the connection's configured edge and storage prerequisites.
@@ -115,7 +140,7 @@ GKE and EKS evidence use separate proof files. Passing one does not satisfy the 
 - Network negative tests originate from outside, same namespace, and peer Environment namespace where applicable.
 - RBAC proof compares rendered chart permissions to the reviewed resource/verb allowlist and verifies runtime Pods have no ServiceAccount token.
 - Image and chart verification checks signature, provenance, immutable digest, non-root runtime, and expected source revision.
-- Customer pilot enablement requires explicit organization administrator and Kestrel operator approval recorded in audit evidence.
+- Customer pilot participation requires explicit organization-administrator opt-in plus Kestrel operator approval recorded as pilot-process evidence; operator approval is not evaluated by product authorization code.
 
 ## Failure, Retry, Recovery, And Rollback Behavior
 

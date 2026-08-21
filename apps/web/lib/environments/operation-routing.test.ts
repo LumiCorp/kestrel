@@ -17,6 +17,7 @@ test("provisioner recovery owns only lifecycle operations", () => {
   assert.equal(isProvisionerOperationType("workspace.backup"), false);
   assert.equal(isProvisionerOperationType("workspace.restore"), false);
   assert.equal(isProvisionerOperationType("workspace.reconcile"), false);
+  assert.equal(isProvisionerOperationType("environment.reconcile"), true);
 });
 
 test("backup work cannot suppress orphan resource cleanup", () => {

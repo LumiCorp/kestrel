@@ -30,10 +30,7 @@ test(
       connectionSource,
       /new FlyEnvironmentInfrastructureProviderV2\(client\)/u
     );
-    assert.match(
-      reconcileSource,
-      /resolveFlyProviderClient/u
-    );
+    assert.doesNotMatch(reconcileSource, /resolveFlyProviderClient/u);
     assert.match(environmentsSource, /FlyWorkspaceProviderClient/u);
   }
 );

@@ -39,7 +39,7 @@ test("terminal lifecycle states reject resurrection", () => {
   );
 });
 
-test("environment creation requires an explicit provider region", () => {
+test("environment creation defaults to Fly and strictly parses Kubernetes", () => {
   assert.equal(
     createEnvironmentInputSchema.safeParse({ name: "Development" }).success,
     false
@@ -57,6 +57,32 @@ test("environment creation requires an explicit provider region", () => {
       region: "unknown",
     }).success,
     false
+  );
+  assert.deepEqual(
+    createEnvironmentInputSchema.parse({
+      provider: "kubernetes",
+      name: "Customer cluster",
+      providerConnectionId: "11111111-1111-4111-8111-111111111111",
+      runtimeTemplate: "kestrel-standard-v1",
+      workspaceLimit: 10,
+    }),
+    {
+      provider: "kubernetes",
+      name: "Customer cluster",
+      providerConnectionId: "11111111-1111-4111-8111-111111111111",
+      runtimeTemplate: "kestrel-standard-v1",
+      workspaceLimit: 10,
+    },
+  );
+  assert.equal(
+    createEnvironmentInputSchema.safeParse({
+      provider: "kubernetes",
+      name: "Customer cluster",
+      providerConnectionId: "11111111-1111-4111-8111-111111111111",
+      runtimeTemplate: "kestrel-standard-v1",
+      workspaceLimit: 0,
+    }).success,
+    false,
   );
 });
 

@@ -435,6 +435,64 @@ test(
       }),
       null,
     );
+    const secondCommand = {
+      ...command,
+      id: `command-second-${suffix}`,
+      idempotencyKey: `command:second:${suffix}`,
+      desiredRevision: "revision-2",
+    };
+    const secondEnqueued =
+      await connectorStore.enqueueInfrastructureConnectorCommand({
+        operationId,
+        command: secondCommand,
+      });
+    const secondReplayed =
+      await connectorStore.enqueueInfrastructureConnectorCommand({
+        operationId,
+        command: secondCommand,
+      });
+    assert.equal(secondReplayed.id, secondEnqueued.id);
+    const [commandSequence] = await sql<
+      Array<{ count: number; latestCommandId: string | null }>
+    >`
+      SELECT
+        count(commands.id)::int AS "count",
+        max(operations.connector_command_id) AS "latestCommandId"
+      FROM "environment_operations" operations
+      LEFT JOIN "infrastructure_connector_commands" commands
+        ON commands.operation_id = operations.id
+      WHERE operations.id = ${operationId}
+      GROUP BY operations.id
+    `;
+    assert.deepEqual(commandSequence, {
+      count: 2,
+      latestCommandId: secondCommand.id,
+    });
+    const secondClaim =
+      await connectorStore.claimInfrastructureConnectorCommand({
+        organizationId,
+        connectorId: connector.id,
+        leaseSeconds: 30,
+      });
+    assert.ok(secondClaim);
+    assert.equal(secondClaim.command.id, secondCommand.id);
+    await connectorStore.markInfrastructureConnectorCommandRunning({
+      organizationId,
+      connectorId: connector.id,
+      commandId: secondCommand.id,
+      claimToken: secondClaim.claimToken,
+    });
+    await connectorStore.completeInfrastructureConnectorCommand({
+      organizationId,
+      connectorId: connector.id,
+      commandId: secondCommand.id,
+      claimToken: secondClaim.claimToken,
+      result: {
+        ...result,
+        commandId: secondCommand.id,
+        observedRevision: secondCommand.desiredRevision,
+      },
+    });
     assert.deepEqual(
       await connectorStore.listInfrastructureConnectorCommandEvents({
         organizationId: otherOrganizationId,

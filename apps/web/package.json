@@ -60,6 +60,7 @@
     "test:knowledge-rag:e2e": "export PLAYWRIGHT=True && pnpm exec playwright test tests/e2e/knowledge-rag.test.ts",
     "test:environment:postgres": "node -e \"if (!process.env.KESTREL_ENVIRONMENT_DB_TEST_URL) throw new Error('KESTREL_ENVIRONMENT_DB_TEST_URL is required')\" && node --conditions=react-server --import tsx --test lib/environments/*.postgres.test.ts",
     "canary:environment:fly": "tsx scripts/environment-fly-canary.ts",
+    "canary:environment:kubernetes": "tsx scripts/environment-kubernetes-canary.ts",
     "canary:environment:workspace": "tsx scripts/workspace-post-cutover-canary.ts",
     "canary:environment:preview": "tsx scripts/environment-preview-canary.ts",
     "canary:github:oauth": "tsx scripts/github-oauth-canary.ts",

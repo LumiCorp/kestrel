@@ -25,7 +25,16 @@ import {
   selectDefaultEnvironmentRecoveryAction,
   workspaceProvisionIdempotencyKey,
 } from "./contracts";
-import { getHostedEnvironmentRuntimeMode } from "./config";
+import {
+  getHostedEnvironmentRuntimeMode,
+  getHostedRoutingContractMode,
+} from "./config";
+import {
+  kubernetesConnectionConfigV1Schema,
+  kubernetesConnectionInfrastructureRevision,
+  kubernetesQualificationReportV1Schema,
+  qualificationPassed,
+} from "./kubernetes-connector-contracts";
 import {
   environmentLifecycleLockKey,
   organizationEnvironmentCreateLockKey,
@@ -363,17 +372,107 @@ export async function createOrganizationEnvironment(input: {
   environment: CreateEnvironmentInput;
   runtimeTemplate?: string;
 }) {
+  const kubernetesInput =
+    "providerConnectionId" in input.environment ? input.environment : null;
+  const isKubernetes = kubernetesInput !== null;
   const usesFlyRuntime = getHostedEnvironmentRuntimeMode() === "fly";
-  const runtimeVersion = usesFlyRuntime
-    ? await requireCurrentEnvironmentRuntime()
-    : null;
+  const runtimeVersion =
+    isKubernetes || usesFlyRuntime
+      ? await requireCurrentEnvironmentRuntime()
+      : null;
   const environmentId = crypto.randomUUID();
   const operationId = crypto.randomUUID();
   const now = new Date();
   const slug =
     input.environment.slug ?? toEnvironmentSlug(input.environment.name);
+  const provider = isKubernetes ? "kubernetes" : "fly";
+  const region =
+    "providerConnectionId" in input.environment
+      ? null
+      : input.environment.region;
+  const runtimeTemplate =
+    input.runtimeTemplate ??
+    (isKubernetes
+      ? kubernetesInput!.runtimeTemplate
+      : ENVIRONMENT_RUNTIME_TEMPLATE);
 
   return knowledgeDb.transaction(async (transaction) => {
+    if (isKubernetes) {
+      await transaction.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:kubernetes-connection:${kubernetesInput!.providerConnectionId}`}, 0))`,
+      );
+      if (getHostedRoutingContractMode() !== "logical-v1") {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "Kubernetes BYOC requires logical-v1 hosted routing.",
+        );
+      }
+      const flags = await transaction.query.organizationFeatureFlags.findMany({
+        where: (table, { and, eq, inArray }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            inArray(table.key, ["hosted_environments", "kubernetes_byoc"]),
+          ),
+        columns: { key: true, enabled: true },
+      });
+      const enabled = new Map(flags.map((flag) => [flag.key, flag.enabled]));
+      if (
+        enabled.get("hosted_environments") !== true ||
+        enabled.get("kubernetes_byoc") !== true
+      ) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "Hosted Kubernetes Environments are not enabled for this organization.",
+        );
+      }
+      const connection = await transaction.query.environmentProviderConnections.findFirst({
+        where: (table, { and, eq, isNull }) =>
+          and(
+            eq(table.id, kubernetesInput!.providerConnectionId),
+            eq(table.organizationId, input.organizationId),
+            eq(table.provider, "kubernetes"),
+            eq(table.status, "ready"),
+            isNull(table.revokedAt),
+          ),
+      });
+      if (!connection?.connectorId) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "Kubernetes connection is not ready for Environment creation.",
+        );
+      }
+      const config = kubernetesConnectionConfigV1Schema.parse(connection.configuration);
+      if (!config.runtimeTemplateAllowlist.some((template) => template === kubernetesInput!.runtimeTemplate)) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "Runtime template is not allowed by the Kubernetes connection.",
+        );
+      }
+      const qualification = await transaction.query.infrastructureConnectorQualificationRuns.findFirst({
+        where: (table, { and, eq, gt }) =>
+          and(
+            eq(table.organizationId, input.organizationId),
+            eq(table.providerConnectionId, connection.id),
+            eq(table.status, "passed"),
+            gt(table.expiresAt, now),
+          ),
+        orderBy: (table, { desc }) => [desc(table.completedAt)],
+      });
+      const report = qualification?.result
+        ? kubernetesQualificationReportV1Schema.safeParse(qualification.result)
+        : null;
+      if (
+        !qualification ||
+        !report?.success ||
+        report.data.configurationRevision !== kubernetesConnectionInfrastructureRevision(config) ||
+        !qualificationPassed(report.data)
+      ) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "Kubernetes connection qualification is stale or expired.",
+        );
+      }
+    }
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${organizationEnvironmentDefaultLockKey(input.organizationId)}, 0))`,
     );
@@ -409,10 +508,27 @@ export async function createOrganizationEnvironment(input: {
         createdByUserId: input.userId,
         name: input.environment.name,
         slug,
-        region: input.environment.region,
+        provider,
+        region,
+        providerConnectionId:
+          isKubernetes
+            ? kubernetesInput!.providerConnectionId
+            : null,
+        providerPlacement:
+          isKubernetes
+            ? {
+                connectionId: kubernetesInput!.providerConnectionId,
+                requested: null,
+                observed: null,
+              }
+            : null,
+        workspaceLimit:
+          isKubernetes ? kubernetesInput!.workspaceLimit : null,
+        runtimeImage: runtimeVersion?.runtimeImage ?? null,
+        routerImage: runtimeVersion?.routerImage ?? null,
         status: "requested",
         isDefault,
-        runtimeTemplate: input.runtimeTemplate ?? ENVIRONMENT_RUNTIME_TEMPLATE,
+        runtimeTemplate,
         idleTimeoutMinutes: ENVIRONMENT_IDLE_TIMEOUT_MINUTES,
         createdAt: now,
         updatedAt: now,
@@ -434,9 +550,15 @@ export async function createOrganizationEnvironment(input: {
         stage: "environment.activation.requested",
         idempotencyKey: environmentProvisionIdempotencyKey(environmentId),
         input: {
-          region: input.environment.region,
-          runtimeTemplate:
-            input.runtimeTemplate ?? ENVIRONMENT_RUNTIME_TEMPLATE,
+          provider,
+          ...(region ? { region } : {}),
+          ...(isKubernetes
+            ? {
+                providerConnectionId: kubernetesInput!.providerConnectionId,
+                workspaceLimit: kubernetesInput!.workspaceLimit,
+              }
+            : {}),
+          runtimeTemplate,
           ...(runtimeVersion
             ? {
                 runtimeVersionId: runtimeVersion.id,
@@ -675,6 +797,66 @@ export async function requestOrganizationEnvironmentDelete(input: {
       operation,
       action: existing ? ("requeued" as const) : ("requested" as const),
     };
+  });
+}
+
+export async function requestOrganizationEnvironmentReconcile(input: {
+  organizationId: string;
+  environmentId: string;
+  userId: string;
+}) {
+  const now = new Date();
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
+    );
+    const environment = await transaction.query.environments.findFirst({
+      where: (table, { and, eq, isNull, inArray }) =>
+        and(
+          eq(table.id, input.environmentId),
+          eq(table.organizationId, input.organizationId),
+          isNull(table.archivedAt),
+          inArray(table.status, ["ready", "degraded"]),
+        ),
+    });
+    if (!environment) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_NOT_FOUND",
+        "A ready or degraded Environment is required for reconciliation.",
+      );
+    }
+    const existing = await transaction.query.environmentOperations.findFirst({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.organizationId, input.organizationId),
+          eq(table.environmentId, input.environmentId),
+          eq(table.type, "environment.reconcile"),
+          inArray(table.status, ["queued", "running"]),
+        ),
+      orderBy: (table, { desc }) => [desc(table.createdAt)],
+    });
+    if (existing) {
+      return { environment, operation: existing, action: "existing" as const };
+    }
+    const operationId = crypto.randomUUID();
+    const [operation] = await transaction
+      .insert(schema.environmentOperations)
+      .values({
+        id: operationId,
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+        requestedByUserId: input.userId,
+        type: "environment.reconcile",
+        status: "queued",
+        stage: "environment.reconcile.requested",
+        idempotencyKey: `environment.reconcile:${input.environmentId}:${operationId}`,
+        input: { reason: "manual" },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    if (!operation) throw new Error("Environment reconciliation was not queued.");
+    return { environment, operation, action: "created" as const };
   });
 }
 
@@ -1022,10 +1204,15 @@ export async function resolveOrCreateThreadExecutionBinding(input: {
         "No available Environment is configured for this Thread.",
       );
     }
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(environment.id)}, 0))`,
+    );
 
     const workspace = await findOrCreateWorkspace(transaction, {
       organizationId: input.organizationId,
       environmentId: environment.id,
+      provider: environment.provider,
+      workspaceLimit: environment.workspaceLimit,
       projectId: thread.projectId,
       personalOwnerUserId,
       userId: input.userId,
@@ -1202,6 +1389,8 @@ async function findOrCreateWorkspace(
   input: {
     organizationId: string;
     environmentId: string;
+    provider: "desktop" | "fly" | "kubernetes";
+    workspaceLimit: number | null;
     projectId: string | null;
     personalOwnerUserId: string | null;
     userId: string;
@@ -1225,6 +1414,24 @@ async function findOrCreateWorkspace(
   });
   if (existing) {
     return existing;
+  }
+
+  if (input.provider === "kubernetes" && input.workspaceLimit) {
+    const [usage] = await transaction
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.environmentWorkspaces)
+      .where(
+        and(
+          eq(schema.environmentWorkspaces.environmentId, input.environmentId),
+          isNull(schema.environmentWorkspaces.deletedAt),
+        ),
+      );
+    if ((usage?.count ?? 0) >= input.workspaceLimit) {
+      throw new EnvironmentContractError(
+        "ENVIRONMENT_UNAVAILABLE",
+        "The Kubernetes Environment workspace limit has been reached.",
+      );
+    }
   }
 
   const workspaceId = crypto.randomUUID();
@@ -1686,6 +1893,9 @@ export async function createOrConfigureProjectWorkspace(input: {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
     );
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
+    );
     const [project, environment] = await Promise.all([
       transaction.query.projects.findFirst({
         where: (table, { and, eq, isNull }) =>
@@ -1800,7 +2010,7 @@ export async function createOrConfigureProjectWorkspace(input: {
     }
     if (
       (environment.provider === "desktop" && source.type !== "desktop") ||
-      (environment.provider === "fly" && source.type === "desktop")
+      (environment.provider !== "desktop" && source.type === "desktop")
     ) {
       throw new EnvironmentContractError(
         "WORKSPACE_SOURCE_FORBIDDEN",
@@ -1965,6 +2175,27 @@ export async function createOrConfigureProjectWorkspace(input: {
     }
     const now = new Date();
     const workspaceId = existing?.id ?? crypto.randomUUID();
+    if (
+      !existing &&
+      environment.provider === "kubernetes" &&
+      environment.workspaceLimit
+    ) {
+      const [usage] = await transaction
+        .select({ count: sql<number>`count(*)::int` })
+        .from(schema.environmentWorkspaces)
+        .where(
+          and(
+            eq(schema.environmentWorkspaces.environmentId, environment.id),
+            isNull(schema.environmentWorkspaces.deletedAt),
+          ),
+        );
+      if ((usage?.count ?? 0) >= environment.workspaceLimit) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "The Kubernetes Environment workspace limit has been reached.",
+        );
+      }
+    }
     const values = {
       ...sourceValues,
       updatedAt: now,
@@ -2010,7 +2241,7 @@ export async function createOrConfigureProjectWorkspace(input: {
                 eq(table.type, "workspace.provision"),
               ),
           });
-    if (!operation && environment.provider === "fly") {
+    if (!operation && environment.provider !== "desktop") {
       [operation] = await transaction
         .insert(schema.environmentOperations)
         .values({
@@ -2043,6 +2274,9 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
   return knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${threadEnvironmentBindingLockKey(input.threadId)}, 0))`,
+    );
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
     );
     const [thread, environment] = await Promise.all([
       transaction.query.threads.findFirst({
@@ -2136,6 +2370,27 @@ export async function createOrConfigureStandaloneThreadWorkspace(input: {
     });
     const now = new Date();
     const workspaceId = existing?.id ?? crypto.randomUUID();
+    if (
+      !existing &&
+      environment.provider === "kubernetes" &&
+      environment.workspaceLimit
+    ) {
+      const [usage] = await transaction
+        .select({ count: sql<number>`count(*)::int` })
+        .from(schema.environmentWorkspaces)
+        .where(
+          and(
+            eq(schema.environmentWorkspaces.environmentId, environment.id),
+            isNull(schema.environmentWorkspaces.deletedAt),
+          ),
+        );
+      if ((usage?.count ?? 0) >= environment.workspaceLimit) {
+        throw new EnvironmentContractError(
+          "ENVIRONMENT_UNAVAILABLE",
+          "The Kubernetes Environment workspace limit has been reached.",
+        );
+      }
+    }
     const workspace = existing
       ? (
           await transaction
