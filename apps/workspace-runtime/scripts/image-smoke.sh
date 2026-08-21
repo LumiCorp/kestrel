@@ -39,11 +39,19 @@ docker exec "$container" test -d /workspace/.kestrel/runner/store/pglite
 expected_pnpm="$(docker exec "$container" node -p "require('/app/package.json').packageManager.split('@')[1].split('+')[0]")"
 actual_pnpm="$(docker run --rm \
   --network none \
+  --env HOME=/workspace/.kestrel/runner \
   --workdir /workspace \
   --entrypoint /bin/bash \
   "$image" \
   -lc 'pnpm --version')"
 test "$actual_pnpm" = "$expected_pnpm"
+test "$(docker run --rm \
+  --network none \
+  --env HOME=/workspace/.kestrel/runner \
+  --workdir /workspace \
+  --entrypoint node \
+  "$image" \
+  /app/apps/workspace-runtime/scripts/dev-shell-package-smoke.mjs)" = "dev-shell-execution-ok"
 docker exec "$container" node --input-type=module --eval \
   'await import("@kestrel-agents/files")'
 

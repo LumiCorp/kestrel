@@ -1567,7 +1567,17 @@ function buildShellEnv(
     ...inheritedWithoutNodeEnv,
     ...(normalizedNodeEnv !== undefined ? { NODE_ENV: normalizedNodeEnv } : {}),
   } as NodeJS.ProcessEnv;
-  for (const key of ["HOME", "PATH", "TERM", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL"]) {
+  for (const key of [
+    "HOME",
+    "PATH",
+    "COREPACK_HOME",
+    "TERM",
+    "USER",
+    "LOGNAME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+  ]) {
     if (process.env[key] !== undefined) {
       base[key] = process.env[key];
     }

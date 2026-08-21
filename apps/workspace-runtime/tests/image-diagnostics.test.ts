@@ -14,10 +14,17 @@ test("workspace image includes and smokes common HTTP and process diagnostics", 
 });
 
 test("workspace image exposes pnpm to hosted project commands", async () => {
-  const [dockerfile, imageSmoke] = await Promise.all([
+  const [dockerfile, imageSmoke, devShellPackageSmoke] = await Promise.all([
     readFile(path.resolve(import.meta.dirname, "../Dockerfile"), "utf8"),
     readFile(
       path.resolve(import.meta.dirname, "../scripts/image-smoke.sh"),
+      "utf8",
+    ),
+    readFile(
+      path.resolve(
+        import.meta.dirname,
+        "../scripts/dev-shell-package-smoke.mjs",
+      ),
       "utf8",
     ),
   ]);
@@ -29,6 +36,7 @@ test("workspace image exposes pnpm to hosted project commands", async () => {
   );
   const corepackEnable = runtimeStage.indexOf("RUN corepack enable pnpm");
 
+  assert.match(runtimeStage, /ENV COREPACK_HOME=\/opt\/corepack/u);
   assert.match(runtimeStage, /ENV PNPM_HOME=\/pnpm/u);
   assert.match(runtimeStage, /ENV PATH=\$PNPM_HOME:\$PATH/u);
   assert.match(runtimeStage, /RUN corepack enable pnpm/u);
@@ -56,8 +64,15 @@ test("workspace image exposes pnpm to hosted project commands", async () => {
   assert.match(imageSmoke, /expected_pnpm=.*packageManager/u);
   assert.match(imageSmoke, /actual_pnpm="\$\(docker run --rm/u);
   assert.match(imageSmoke, /--network none/u);
+  assert.match(imageSmoke, /--env HOME=\/workspace\/\.kestrel\/runner/u);
   assert.match(imageSmoke, /--workdir \/workspace/u);
   assert.match(imageSmoke, /-lc 'pnpm --version'/u);
   assert.match(imageSmoke, /test "\$actual_pnpm" = "\$expected_pnpm"/u);
+  assert.match(imageSmoke, /--entrypoint node/u);
+  assert.match(imageSmoke, /dev-shell-package-smoke\.mjs/u);
+  assert.match(imageSmoke, /dev-shell-execution-ok/u);
+  assert.match(devShellPackageSmoke, /LocalDevShellService/u);
+  assert.match(devShellPackageSmoke, /printf '%s\\\\n' \\"\$HOME\\"; pnpm --version/u);
+  assert.match(devShellPackageSmoke, /result\.text, `\$\{runnerHome\}\\n\$\{expectedPnpm\}\\n`/u);
   assert.match(imageSmoke, /import\("@kestrel-agents\/files"\)/u);
 });

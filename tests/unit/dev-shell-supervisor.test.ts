@@ -1554,8 +1554,10 @@ test("DevShellSupervisor exposes the core in-shell dev-shell client without leak
   const { supervisor, workspaceRoot } = await createSupervisor();
   const originalSocketPath = process.env.KESTREL_DEV_SHELL_SOCKET_PATH;
   const originalSecret = process.env.KESTREL_DEV_SHELL_TEST_SECRET;
+  const originalCorepackHome = process.env.COREPACK_HOME;
   process.env.KESTREL_DEV_SHELL_SOCKET_PATH = "/tmp/kestrel-dev-shell-test.sock";
   process.env.KESTREL_DEV_SHELL_TEST_SECRET = "do-not-leak";
+  process.env.COREPACK_HOME = "/opt/kestrel-corepack";
   try {
     const result = await supervisor.runCommand({
       workspaceRoot,
@@ -1563,6 +1565,7 @@ test("DevShellSupervisor exposes the core in-shell dev-shell client without leak
         "python3 -c \"import os, kestrel_devshell; " +
         "print(kestrel_devshell.__name__); " +
         "print(os.environ.get('KESTREL_DEV_SHELL_SOCKET_PATH', 'missing')); " +
+        "print(os.environ.get('COREPACK_HOME', 'missing')); " +
         "print(os.environ.get('KESTREL_DEV_SHELL_TEST_SECRET', 'missing'))\""
       ),
       envMode: "allowlist",
@@ -1574,6 +1577,7 @@ test("DevShellSupervisor exposes the core in-shell dev-shell client without leak
     assert.equal(finalResult.status, "COMPLETED");
     assert.match(`${result.text}${finalResult.text}`, /kestrel_devshell/u);
     assert.match(`${result.text}${finalResult.text}`, /\/tmp\/kestrel-dev-shell-test\.sock/u);
+    assert.match(`${result.text}${finalResult.text}`, /\/opt\/kestrel-corepack/u);
     assert.match(`${result.text}${finalResult.text}`, /missing/u);
     assert.doesNotMatch(`${result.text}${finalResult.text}`, /do-not-leak/u);
   } finally {
@@ -1586,6 +1590,11 @@ test("DevShellSupervisor exposes the core in-shell dev-shell client without leak
       process.env.KESTREL_DEV_SHELL_TEST_SECRET = originalSecret;
     } else {
       delete process.env.KESTREL_DEV_SHELL_TEST_SECRET;
+    }
+    if (originalCorepackHome !== undefined) {
+      process.env.COREPACK_HOME = originalCorepackHome;
+    } else {
+      delete process.env.COREPACK_HOME;
     }
     await supervisor.close();
   }
