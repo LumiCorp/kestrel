@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { open, readFile, writeFile } from "node:fs/promises";
+import { open, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveWorkspacePath, WorkspaceRequestError } from "./security.js";
 
@@ -17,15 +17,39 @@ export type WorkspaceApplication = {
   updatedAt: string;
 };
 
+export const WORKSPACE_APPLICATION_TERMINATION_GRACE_MS = 10_000;
+const WORKSPACE_APPLICATION_KILL_GRACE_MS = 1_000;
+const PROCESS_GROUP_POLL_INTERVAL_MS = 25;
+
+type ApplicationProcess = {
+  child: ChildProcess;
+  processGroupId: number;
+  generation: number;
+  exitCode: number | null;
+  expectedStop: boolean;
+  cleanupError: unknown;
+  settled: Promise<void>;
+  resolveSettled: () => void;
+  shutdownGroup: Promise<void> | null;
+  log: Awaited<ReturnType<typeof open>>;
+};
+
 export class WorkspaceApplicationRegistry {
   private readonly applications = new Map<string, WorkspaceApplication>();
-  private readonly processes = new Map<string, ChildProcess>();
-  private readonly processExit = new Map<string, Promise<void>>();
+  private readonly processes = new Map<string, ApplicationProcess>();
+  private readonly generations = new Map<string, number>();
+  private readonly transitions = new Map<string, Promise<void>>();
   private readonly registryPath: string;
   private readonly workspaceRoot: string;
+  private readonly terminationGraceMs: number;
 
-  constructor(workspaceRoot: string) {
+  constructor(
+    workspaceRoot: string,
+    options: { terminationGraceMs?: number } = {}
+  ) {
     this.workspaceRoot = workspaceRoot;
+    this.terminationGraceMs =
+      options.terminationGraceMs ?? WORKSPACE_APPLICATION_TERMINATION_GRACE_MS;
     this.registryPath = path.join(
       workspaceRoot,
       ".kestrel",
@@ -91,10 +115,43 @@ export class WorkspaceApplicationRegistry {
   }
 
   async start(id: string) {
+    return this.transition(id, () => this.startApplication(id));
+  }
+
+  async stop(id: string) {
+    return this.transition(id, () => this.stopApplication(id));
+  }
+
+  async stopAll() {
+    await Promise.all(
+      [...this.processes.entries()].map(async ([id, runtime]) => {
+        runtime.expectedStop = true;
+        await this.shutdownRuntime(runtime);
+        await runtime.settled;
+        if (runtime.cleanupError) {
+          throw new WorkspaceRequestError(500, "APPLICATION_STOP_FAILED");
+        }
+        return this.applications.get(id);
+      })
+    );
+  }
+
+  private async startApplication(id: string): Promise<WorkspaceApplication> {
     const application = this.applications.get(id);
     if (!application)
       throw new WorkspaceRequestError(404, "APPLICATION_NOT_FOUND");
-    if (this.processes.has(id)) return application;
+    const existing = this.processes.get(id);
+    if (existing) {
+      if (
+        !existing.expectedStop &&
+        existing.child.exitCode === null &&
+        existing.child.signalCode === null
+      ) {
+        return application;
+      }
+      await existing.settled;
+      return this.startApplication(id);
+    }
     Object.assign(application, {
       desiredState: "running",
       status: "starting",
@@ -113,61 +170,122 @@ export class WorkspaceApplicationRegistry {
       ),
       env: { ...process.env, PORT: String(application.port) },
       stdio: ["ignore", log.fd, log.fd],
+      detached: true,
     });
-    this.processes.set(id, child);
-    let resolveExit!: () => void;
-    this.processExit.set(
-      id,
-      new Promise<void>((resolve) => {
-        resolveExit = resolve;
-      })
-    );
+    if (child.pid === undefined) {
+      await log.close();
+      Object.assign(application, {
+        status: "failed",
+        processId: null,
+        updatedAt: new Date().toISOString(),
+      });
+      await this.persist();
+      throw new WorkspaceRequestError(500, "APPLICATION_START_FAILED");
+    }
+    const generation = (this.generations.get(id) ?? 0) + 1;
+    this.generations.set(id, generation);
+    let resolveSettled!: () => void;
+    const runtime: ApplicationProcess = {
+      child,
+      processGroupId: child.pid,
+      generation,
+      exitCode: null,
+      expectedStop: false,
+      cleanupError: null,
+      settled: new Promise<void>((resolve) => {
+        resolveSettled = resolve;
+      }),
+      resolveSettled,
+      shutdownGroup: null,
+      log,
+    };
+    this.processes.set(id, runtime);
     Object.assign(application, {
       status: "running",
-      processId: child.pid ?? null,
+      processId: child.pid,
       updatedAt: new Date().toISOString(),
     });
-    child.once("exit", (code) => {
+    let childSettled = false;
+    const settleChild = (exitCode: number | null) => {
+      if (childSettled) return;
+      childSettled = true;
+      runtime.exitCode = exitCode;
+      void this.settleRuntime(id, runtime);
+    };
+    child.once("error", () => settleChild(null));
+    child.once("exit", (exitCode) => settleChild(exitCode));
+    await this.persist();
+    return application;
+  }
+
+  private async stopApplication(id: string): Promise<WorkspaceApplication> {
+    const application = this.applications.get(id);
+    if (!application)
+      throw new WorkspaceRequestError(404, "APPLICATION_NOT_FOUND");
+    const runtime = this.processes.get(id);
+    Object.assign(application, {
+      desiredState: "stopped",
+      status: runtime ? application.status : "stopped",
+      processId: runtime?.child.pid ?? null,
+      updatedAt: new Date().toISOString(),
+    });
+    await this.persist();
+    if (!runtime) return application;
+    runtime.expectedStop = true;
+    await this.shutdownRuntime(runtime);
+    await runtime.settled;
+    if (runtime.cleanupError) {
+      throw new WorkspaceRequestError(500, "APPLICATION_STOP_FAILED");
+    }
+    return application;
+  }
+
+  private async settleRuntime(id: string, runtime: ApplicationProcess) {
+    try {
+      await this.shutdownRuntime(runtime);
+    } catch (error) {
+      runtime.cleanupError = error;
+    }
+    try {
+      if (this.processes.get(id) !== runtime) return;
       this.processes.delete(id);
-      this.processExit.delete(id);
+      const application = this.applications.get(id);
+      if (!application || this.generations.get(id) !== runtime.generation) return;
       Object.assign(application, {
         status:
-          application.desiredState === "stopped" || code === 0
+          !runtime.cleanupError &&
+          (runtime.expectedStop || runtime.exitCode === 0)
             ? "stopped"
             : "failed",
         processId: null,
         updatedAt: new Date().toISOString(),
       });
-      void this.persist().finally(() => {
-        void log.close().finally(resolveExit);
-      });
-    });
-    await this.persist();
-    return application;
+      await this.persist();
+    } finally {
+      await runtime.log.close().catch(() => {});
+      runtime.resolveSettled();
+    }
   }
 
-  async stop(id: string) {
-    const application = this.applications.get(id);
-    if (!application)
-      throw new WorkspaceRequestError(404, "APPLICATION_NOT_FOUND");
-    const child = this.processes.get(id);
-    Object.assign(application, {
-      desiredState: "stopped",
-      status: child ? "running" : "stopped",
-      processId: child?.pid ?? null,
-      updatedAt: new Date().toISOString(),
+  private shutdownRuntime(runtime: ApplicationProcess) {
+    runtime.shutdownGroup ??= terminateProcessGroup({
+      processGroupId: runtime.processGroupId,
+      terminationGraceMs: this.terminationGraceMs,
     });
-    await this.persist();
-    child?.kill("SIGTERM");
-    return application;
+    return runtime.shutdownGroup;
   }
 
-  async stopAll() {
-    const exits = [...this.processes.entries()].map(([id, child]) => {
-      child.kill("SIGTERM");
-      return this.processExit.get(id);
+  private transition<T>(id: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.transitions.get(id) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(operation);
+    const settled = current.then(
+      () => undefined,
+      () => undefined
+    );
+    this.transitions.set(id, settled);
+    return current.finally(() => {
+      if (this.transitions.get(id) === settled) this.transitions.delete(id);
     });
-    await Promise.all(exits);
   }
 
   private async persist() {
@@ -177,6 +295,187 @@ export class WorkspaceApplicationRegistry {
       "utf8"
     );
   }
+}
+
+async function terminateProcessGroup(input: {
+  processGroupId: number;
+  terminationGraceMs: number;
+}) {
+  if (process.platform === "linux") {
+    await terminateLinuxProcessGroup(input);
+    return;
+  }
+  signalProcessGroup(input.processGroupId, "SIGTERM");
+  if (await waitForProcessGroupExit(input.processGroupId, input.terminationGraceMs)) {
+    return;
+  }
+  signalProcessGroup(input.processGroupId, "SIGKILL");
+  if (
+    !(await waitForProcessGroupExit(
+      input.processGroupId,
+      WORKSPACE_APPLICATION_KILL_GRACE_MS
+    ))
+  ) {
+    throw new Error("Application process group did not terminate.");
+  }
+}
+
+async function terminateLinuxProcessGroup(input: {
+  processGroupId: number;
+  terminationGraceMs: number;
+}) {
+  const gracefulDeadline = Date.now() + input.terminationGraceMs;
+  const signaled = new Set<number>();
+  while (Date.now() < gracefulDeadline) {
+    const members = await listLinuxProcessGroupMembers(input.processGroupId);
+    const liveMembers = members.filter(isLiveLinuxProcess);
+    if (liveMembers.length === 0) return;
+    for (const member of leafTerminationTargets(
+      input.processGroupId,
+      members,
+      liveMembers
+    )) {
+      if (signaled.has(member.processId)) continue;
+      signalProcess(member.processId, "SIGTERM");
+      signaled.add(member.processId);
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, PROCESS_GROUP_POLL_INTERVAL_MS)
+    );
+  }
+
+  const killDeadline = Date.now() + WORKSPACE_APPLICATION_KILL_GRACE_MS;
+  const killed = new Set<number>();
+  while (Date.now() < killDeadline) {
+    const members = await listLinuxProcessGroupMembers(input.processGroupId);
+    const liveMembers = members.filter(isLiveLinuxProcess);
+    if (liveMembers.length === 0) return;
+    for (const member of leafTerminationTargets(
+      input.processGroupId,
+      members,
+      liveMembers
+    )) {
+      if (killed.has(member.processId)) continue;
+      signalProcess(member.processId, "SIGKILL");
+      killed.add(member.processId);
+    }
+    await new Promise((resolve) =>
+      setTimeout(resolve, PROCESS_GROUP_POLL_INTERVAL_MS)
+    );
+  }
+
+  const remaining = (await listLinuxProcessGroupMembers(input.processGroupId))
+    .filter(isLiveLinuxProcess);
+  for (const member of remaining) signalProcess(member.processId, "SIGKILL");
+  if (
+    !(await waitForProcessGroupExit(
+      input.processGroupId,
+      WORKSPACE_APPLICATION_KILL_GRACE_MS
+    ))
+  ) {
+    throw new Error("Application process group did not terminate.");
+  }
+}
+
+function signalProcess(processId: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(processId, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
+function signalProcessGroup(processGroupId: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(-processGroupId, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
+async function waitForProcessGroupExit(processGroupId: number, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  while (await processGroupHasLiveMembers(processGroupId)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) =>
+      setTimeout(resolve, PROCESS_GROUP_POLL_INTERVAL_MS)
+    );
+  }
+  return true;
+}
+
+async function processGroupHasLiveMembers(processGroupId: number) {
+  if (process.platform === "linux") {
+    return (await listLinuxProcessGroupMembers(processGroupId)).some(
+      isLiveLinuxProcess
+    );
+  }
+
+  try {
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    if ((error as NodeJS.ErrnoException).code === "EPERM") return true;
+    throw error;
+  }
+}
+
+type LinuxProcessGroupMember = {
+  processId: number;
+  parentProcessId: number;
+  state: string;
+};
+
+function isLiveLinuxProcess(member: LinuxProcessGroupMember) {
+  return member.state !== "Z" && member.state !== "X";
+}
+
+function leafTerminationTargets(
+  processGroupId: number,
+  members: ReadonlyArray<LinuxProcessGroupMember>,
+  liveMembers: ReadonlyArray<LinuxProcessGroupMember>
+) {
+  const descendants = liveMembers.filter(
+    (member) => member.processId !== processGroupId
+  );
+  const candidates = descendants.length > 0 ? descendants : liveMembers;
+  return candidates.filter(
+    (candidate) =>
+      !members.some((member) => member.parentProcessId === candidate.processId)
+  );
+}
+
+async function listLinuxProcessGroupMembers(processGroupId: number) {
+  const members: LinuxProcessGroupMember[] = [];
+  const entries = await readdir("/proc", { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
+    const stat = await readFile(`/proc/${entry.name}/stat`, "utf8").catch(
+      () => null
+    );
+    if (stat === null) continue;
+    const commandEnd = stat.lastIndexOf(")");
+    if (commandEnd === -1) continue;
+    const [state, parentProcess, processGroup] = stat
+      .slice(commandEnd + 2)
+      .split(" ");
+    if (
+      state === undefined ||
+      parentProcess === undefined ||
+      processGroup === undefined
+    ) {
+      continue;
+    }
+    if (Number(processGroup) === processGroupId) {
+      members.push({
+        processId: Number(entry.name),
+        parentProcessId: Number(parentProcess),
+        state,
+      });
+    }
+  }
+  return members;
 }
 
 export async function parseRegistration(value: unknown, workspaceRoot: string) {

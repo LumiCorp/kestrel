@@ -28,6 +28,7 @@ import {
 } from "./child-environment.js";
 import { readWorkspaceFile, writeWorkspaceFile } from "./files.js";
 import { requestGitHubToolCredential } from "./github-credentials.js";
+import { trackWorkspaceHealthDependency } from "./health.js";
 import { notifyWorkspaceIdle } from "./idle.js";
 import { workspaceListenHost } from "./network.js";
 import {
@@ -91,7 +92,9 @@ const workspaceSkills = new WorkspaceSkillManager(
     isWorkspaceIdle: workspaceIsIdle
   }
 );
-const workspaceSkillsActivation = workspaceSkills.syncAll();
+const workspaceSkillsActivation = trackWorkspaceHealthDependency(
+  workspaceSkills.syncAll()
+);
 const runnerToken = randomBytes(32).toString("base64url");
 let sourceInitialization: Promise<void> | null = null;
 const runnerReadiness = createWorkspaceRunnerReadiness({
@@ -114,14 +117,18 @@ const runnerReadiness = createWorkspaceRunnerReadiness({
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/health") {
-    try {
-      await workspaceSkillsActivation;
-    } catch {
+    const skillActivationState = workspaceSkillsActivation.state();
+    if (skillActivationState !== "ready") {
       writeJson(response, 503, {
         ok: false,
         workspaceId: config.workspaceId,
         runtimeContractRevision: WORKSPACE_RUNTIME_CONTRACT_REVISION,
-        error: { code: "WORKSPACE_SKILLS_ACTIVATION_FAILED" }
+        error: {
+          code:
+            skillActivationState === "failed"
+              ? "WORKSPACE_SKILLS_ACTIVATION_FAILED"
+              : "WORKSPACE_SKILLS_ACTIVATION_PENDING"
+        }
       });
       return;
     }
