@@ -5,6 +5,8 @@ import {
 } from "@lumi/kestrel-environment-auth";
 import { knowledgeDb } from "@/lib/knowledge/db";
 
+export const ENVIRONMENT_ROUTER_CONTROL_REQUEST_TIMEOUT_MS = 5_000;
+
 export async function refreshEnvironmentGateway(input: {
   organizationId: string;
   environmentId: string;
@@ -48,6 +50,9 @@ export async function refreshEnvironmentGateway(input: {
       method: "POST",
       headers: { authorization: `Bearer ${token}` },
       cache: "no-store",
+      signal: AbortSignal.timeout(
+        ENVIRONMENT_ROUTER_CONTROL_REQUEST_TIMEOUT_MS,
+      ),
     }
   );
   if (!response.ok) {

@@ -8,6 +8,7 @@ export type DevShellProcessStatus =
 export const DEV_SHELL_BRIDGE_URL_ENV = "KESTREL_DEV_SHELL_BRIDGE_URL";
 export const DEV_SHELL_SOCKET_PATH_ENV = "KESTREL_DEV_SHELL_SOCKET_PATH";
 export const DEV_SHELL_SERVICE_PROTOCOL_VERSION = 4;
+export const DEV_SHELL_SERVICE_STARTUP_TIMEOUT_MS = 30_000;
 export const DEV_SHELL_TIMEOUT_MS_MODEL_WARNING =
   "timeoutMs is a hard wall-clock process-lifetime deadline that kills the process even after status running is returned; omit timeoutMs for servers, watchers, REPLs, and other persistent processes.";
 

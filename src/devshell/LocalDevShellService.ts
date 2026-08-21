@@ -31,7 +31,11 @@ import type {
   DevShellRunInput,
   DevShellRunResult,
 } from "./contracts.js";
-import { DEFAULT_DEV_SHELL_DISABLED_CONFIG, DEV_SHELL_SERVICE_PROTOCOL_VERSION } from "./contracts.js";
+import {
+  DEFAULT_DEV_SHELL_DISABLED_CONFIG,
+  DEV_SHELL_SERVICE_PROTOCOL_VERSION,
+  DEV_SHELL_SERVICE_STARTUP_TIMEOUT_MS,
+} from "./contracts.js";
 import {
   resolveDefaultDevShellBaseDir,
   DEV_SHELL_BOOTSTRAP_STATUS_FILE,
@@ -117,7 +121,10 @@ export class LocalDevShellService implements DevShellServicePort {
     this.bootstrapStatusPath = baseDir === undefined
       ? readOptionalEnvPath("KESTREL_DEV_SHELL_STATUS_PATH") ?? path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE)
       : path.join(resolvedBaseDir, DEV_SHELL_BOOTSTRAP_STATUS_FILE);
-    this.startupTimeoutMs = options.startupTimeoutMs ?? readOptionalPositiveIntegerEnv("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS") ?? 5000;
+    this.startupTimeoutMs =
+      options.startupTimeoutMs ??
+      readOptionalPositiveIntegerEnv("KESTREL_DEV_SHELL_STARTUP_TIMEOUT_MS") ??
+      DEV_SHELL_SERVICE_STARTUP_TIMEOUT_MS;
     this.pollIntervalMs = options.pollIntervalMs ?? 100;
     this.runtimeModuleUrl = options.runtimeModuleUrl ?? import.meta.url;
   }

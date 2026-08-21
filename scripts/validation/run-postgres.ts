@@ -15,6 +15,7 @@ const files = execFileSync(
     "apps/web/lib/environments/desktop.postgres.test.ts",
     "apps/web/lib/environments/cutover-readiness.postgres.test.ts",
     "apps/web/lib/environments/workspace-backup-revision.postgres.test.ts",
+    "apps/web/lib/mobile/v2/snapshot.postgres.test.ts",
     "apps/web/lib/projects/skills.postgres.test.ts",
     "apps/web/lib/schedules/store.postgres.test.ts",
     "apps/web/lib/signup-access-codes.postgres.test.ts",
@@ -93,6 +94,7 @@ const groups = [
     name: "Turns",
     databaseUrl: required("KESTREL_TURN_DB_TEST_URL"),
     files: [
+      "lib/mobile/v2/snapshot.postgres.test.ts",
       "lib/turns/conversation-snapshot.postgres.test.ts",
       "lib/turns/mobile-store.postgres.test.ts",
       "lib/turns/store.postgres.test.ts",

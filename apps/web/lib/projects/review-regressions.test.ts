@@ -249,11 +249,15 @@ test("Project collaborators use canonical Thread access for message actions", ()
 test("mobile Thread responses pin Project context and Environment before durable dispatch", () => {
   const source = readAppSource("app/api/mobile/v1/threads/[id]/turns/route.ts");
   assert.match(source, /await resolveProjectRuntimeContext\(/);
+  assert.match(source, /projectId: thread\.projectId/u);
   assert.match(source, /await resolveThreadEnvironment\(/);
+  assert.match(source, /threadId: thread\.id/u);
   assert.match(source, /await createDurableThreadTurn\(/);
   assert.match(source, /projectContextRevisionId:[\s\S]*contextRevision\.id/u);
   assert.match(source, /requestedEnvironmentId: environment\.id/u);
   assert.match(source, /await enqueueDurableThreadTurn\(/);
+  assert.match(source, /const bodySchema = z[\s\S]*\.strict\(\)/u);
+  assert.doesNotMatch(source, /body\.projectId|body\.environmentId/u);
   assert.doesNotMatch(source, /createKestrelOneAgentResponse\(/);
 });
 

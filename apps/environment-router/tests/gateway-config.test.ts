@@ -51,3 +51,36 @@ test("gateway client sanitizes unsupported configuration failures", async () => 
     "receivedVersion",
   ]);
 });
+
+test("a timed-out gateway refresh clears single-flight state and permits recovery", async () => {
+  const payload = {
+    version: 3,
+    environmentId: "environment-test",
+    revision: "recovered",
+    workspaces: [],
+    previews: [],
+    modelGrants: [],
+    appGrants: [],
+  };
+  let requests = 0;
+  const gateway = new EnvironmentGatewayConfigClient({
+    controlPlaneUrl: "http://127.0.0.1:18081",
+    environmentId: "environment-test",
+    serviceToken: "service-token",
+    requestTimeoutMs: 5,
+    fetchImpl: (async () => {
+      requests += 1;
+      if (requests === 1) return new Promise<Response>(() => {});
+      return Response.json(payload);
+    }) as typeof fetch,
+  });
+
+  const first = gateway.refresh();
+  assert.equal(gateway.refresh(), first);
+  await assert.rejects(first, /timed out/u);
+  assert.equal(gateway.health.lastFailure?.code, "UNAVAILABLE");
+
+  assert.deepEqual(await gateway.refresh(), payload);
+  assert.equal(requests, 2);
+  assert.equal(gateway.snapshot?.revision, "recovered");
+});
