@@ -1192,16 +1192,29 @@ test("normalizeToolActionInput keeps typed desktop host-open fields and drops ex
   });
 });
 
-test("normalizeToolActionInput preserves invalid exec_command cwd for explicit boundary rejection", () => {
+test("normalizeToolActionInput canonicalizes exec_command cwd to the active workspace", () => {
   assert.deepEqual(
     normalizeToolActionInput("exec_command", {
       command: "pwd",
-      cwd: "../outside-workspace",
+      cwd: "/workspace",
       workspaceRoot: "/host-only/worktree",
-    }, "/home/sandbox/workspace"),
+    }, "/workspace/.kestrel/runner/worktrees/project/run"),
     {
       command: "pwd",
-      cwd: "../outside-workspace",
+      cwd: ".",
+    },
+  );
+});
+
+test("normalizeToolActionInput preserves an exec_command subdirectory relative to the active workspace", () => {
+  assert.deepEqual(
+    normalizeToolActionInput("exec_command", {
+      command: "pnpm test",
+      cwd: "/workspace/.kestrel/runner/worktrees/project/run/apps/web",
+    }, "/workspace/.kestrel/runner/worktrees/project/run"),
+    {
+      command: "pnpm test",
+      cwd: "apps/web",
     },
   );
 });

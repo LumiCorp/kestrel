@@ -1,4 +1,4 @@
-import { resolve, sep } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import { normalizeDevShellExecCommand } from "../../src/devshell/normalizeCommand.js";
 import { asNonEmptyRecord } from "../helpers.js";
 
@@ -545,10 +545,21 @@ export function normalizeToolActionInput(
     const command = normalizeDevShellExecCommand(input.command);
     const sessionId = normalizeOptionalString(input.sessionId);
     if (command !== undefined) {
+      const requestedCwd = normalizeOptionalString(input.cwd);
+      const resolvedPaths = resolveDevShellPaths(
+        workspaceRoot,
+        undefined,
+        requestedCwd,
+      );
       return {
         command,
-        ...(normalizeOptionalString(input.cwd) !== undefined
-          ? { cwd: normalizeOptionalString(input.cwd) }
+        ...(requestedCwd !== undefined
+          ? {
+              cwd: relativeWorkspacePath(
+                resolvedPaths.workspaceRoot,
+                resolvedPaths.cwd,
+              ),
+            }
           : {}),
         ...(normalizeOptionalStringArray(input.requiredTools) !== undefined
           ? { requiredTools: normalizeOptionalStringArray(input.requiredTools) }
@@ -772,6 +783,11 @@ function resolveDevShellPaths(
     workspaceRoot: resolvedWorkspaceRoot,
     cwd,
   };
+}
+
+function relativeWorkspacePath(workspaceRoot: string, cwd: string): string {
+  const relativePath = relative(resolve(workspaceRoot), resolve(cwd));
+  return relativePath.length > 0 ? relativePath : ".";
 }
 
 function isPathWithinWorkspace(workspaceRoot: string, target: string): boolean {
