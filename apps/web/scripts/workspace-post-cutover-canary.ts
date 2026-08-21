@@ -6,6 +6,7 @@ import {
   type WorkspaceCanaryApprovedModel,
   type WorkspaceCanaryModel,
 } from "./lib/workspace-canary-model";
+import { parseWorkspaceCanaryRevision } from "./lib/workspace-canary-revision";
 
 type EnvironmentState = {
   binding?: {
@@ -104,8 +105,9 @@ try {
     `files?path=${encodeURIComponent(filePath)}`,
   );
   await assertOk(initialFile, "Canary file read failed.");
-  const initialRevision = initialFile.headers.get("etag");
-  assert(Boolean(initialRevision), "The canary file had no revision ETag.");
+  const initialRevision = parseWorkspaceCanaryRevision(
+    initialFile.headers.get("etag"),
+  );
   assert(
     (await initialFile.text()) === initialContent,
     "The initial canary file content was not preserved.",
@@ -123,9 +125,11 @@ try {
     },
   );
   await assertOk(saved, "Optimistic Workspace file save failed.");
-  const updatedRevision = saved.headers.get("etag");
+  const updatedRevision = parseWorkspaceCanaryRevision(
+    saved.headers.get("etag"),
+  );
   assert(
-    Boolean(updatedRevision && updatedRevision !== initialRevision),
+    updatedRevision !== initialRevision,
     "The Workspace file revision did not advance.",
   );
 

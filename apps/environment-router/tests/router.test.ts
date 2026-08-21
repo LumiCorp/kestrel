@@ -65,6 +65,26 @@ const terminalToken = signEnvironmentExecutionTicket({
     nonce: "nonce-2",
   },
 });
+const appsToken = signEnvironmentExecutionTicket({
+  privateKey,
+  ticket: {
+    version: 1,
+    audience: ENVIRONMENT_ROUTER_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    workspaceId: "workspace-1",
+    threadId: "thread-1",
+    runId: "run-apps",
+    actorId: "user-1",
+    agentId: "kestrel-one",
+    flyAppName: "kestrel-env-1",
+    flyMachineId: "machine-1",
+    capabilities: ["workspace.apps.read", "workspace.apps.write"],
+    issuedAt: 1000,
+    expiresAt: 1300,
+    nonce: "nonce-apps",
+  },
+});
 const promotionToken = signEnvironmentExecutionTicket({
   privateKey,
   ticket: {
@@ -346,6 +366,37 @@ test("router authorizes interactive PTY session operations exactly", () => {
       now: 1100,
     }).status,
     403
+  );
+});
+
+test("router authorizes supervised Workspace application control exactly", () => {
+  for (const [method, pathname] of [
+    ["GET", "/v1/apps"],
+    ["POST", "/v1/apps"],
+    ["POST", "/v1/apps/application-1/start"],
+    ["POST", "/v1/apps/application-1/stop"],
+    ["GET", "/v1/apps/application-1/proxy/"],
+  ] as const) {
+    assert.equal(
+      authorizeEnvironmentHttpRequest({
+        authorization: `Bearer ${appsToken}`,
+        pathname,
+        method,
+        publicKey,
+        now: 1100,
+      }).status,
+      200,
+    );
+  }
+  assert.equal(
+    authorizeEnvironmentHttpRequest({
+      authorization: `Bearer ${appsToken}`,
+      pathname: "/v1/apps/application-1/restart",
+      method: "POST",
+      publicKey,
+      now: 1100,
+    }).status,
+    403,
   );
 });
 
