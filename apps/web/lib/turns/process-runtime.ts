@@ -25,6 +25,7 @@ import type { Session } from "@/lib/auth-types";
 import { generateTitleForOrganization } from "@/lib/chat/title";
 import { readEnvironmentExecutionTerminalStatus } from "@/lib/environments/execution-route";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { listThreadFileInventory } from "@/lib/files/service";
 import {
   issueProjectContextGrant,
   revokeProjectContextGrant,
@@ -528,6 +529,11 @@ export async function processDurableThreadTurn(
       milestoneId: `turn:${turn.id}:context`,
     });
     projectContext = await loadBoundProjectContext(turn);
+    const threadFileInventory = await listThreadFileInventory({
+      threadId: turn.threadId,
+      organizationId: turn.organizationId,
+      userId: turn.authorUserId,
+    });
     const responseInput: KestrelOneAgentResponseInput = {
       request: workerRequest(turn.id),
       session,
@@ -543,6 +549,7 @@ export async function processDurableThreadTurn(
         ? { noninteractive: true }
         : {}),
       messages,
+      threadFileInventory,
       modelId: turn.requestedModelId ?? undefined,
       interactionMode: turn.requestedInteractionMode,
       approvalDecision:

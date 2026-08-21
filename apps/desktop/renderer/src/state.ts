@@ -556,7 +556,7 @@ export function addRendererDraftAttachment(
   input: { attachmentId: string; generatedDraft?: string | undefined; replaceDraft?: boolean | undefined },
 ): DesktopRendererState {
   return updateRendererThread(state, threadId, (thread) => {
-    if (thread.draftAttachmentIds.includes(input.attachmentId) || thread.draftAttachmentIds.length >= 8) return thread;
+    if (thread.draftAttachmentIds.includes(input.attachmentId) || thread.draftAttachmentIds.length >= 20) return thread;
     return {
       ...thread,
       draftAttachmentIds: [...thread.draftAttachmentIds, input.attachmentId],
@@ -801,7 +801,7 @@ function parseInteractionState(raw: string | undefined): Record<string, ParsedIn
       if (record === undefined) return [];
       return [[id, {
         draft: typeof record.draft === "string" ? record.draft : "",
-        attachmentIds: parseStringArray(record.attachmentIds, 8),
+        attachmentIds: parseStringArray(record.attachmentIds, 20),
         promptHistory: parseStringArray(record.promptHistory, MAX_PROMPT_HISTORY),
       }]];
     }));

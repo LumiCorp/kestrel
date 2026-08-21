@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, watch, type FSWatcher } from "node:fs";
 import { spawn } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -41,7 +41,7 @@ import {
   isLocalCoreDaemonElectronAppLaunch,
   type LocalCoreDaemonReady,
 } from "../../../src/localCore/daemon.js";
-import { resolveKestrelCoreHome } from "../../../src/localCore/home.js";
+import { resolveKestrelCoreHome, resolveLocalCorePaths } from "../../../src/localCore/home.js";
 import type { LocalCoreClient } from "../../../src/localCore/client.js";
 import {
   LocalCoreConnectionManager,
@@ -416,6 +416,15 @@ const fileEditorWindows = new Map<string, BrowserWindow>();
 const projectFileWatchers = new Map<string, DesktopProjectFileWatcher>();
 const projectFileIndex = new DesktopProjectFileIndex();
 const activeDesktopWorkspaceRunCounts = new Map<string, number>();
+const activeDesktopAttachmentImports = new Map<string, {
+  filePath: string;
+  handle: FileHandle;
+  threadId: string;
+  filename: string;
+  mimeType?: string | undefined;
+  expectedBytes: number;
+  receivedBytes: number;
+}>();
 const activatedDesktopWorkspaceSkills = new Set<string>();
 const desktopWorkspaceSkillManagers = new Map<string, WorkspaceSkillManager>();
 const EDITABLE_TEXT_FILE_MAX_BYTES = 1024 * 1024;
@@ -2139,6 +2148,11 @@ function registerIpcHandlers(
         metadata: { desktopExecutionSelection: globalExecutionSelection },
       },
     }, DESKTOP_RUNNER_REQUEST_CONTEXT);
+    if (attachmentIds !== undefined && attachmentIds.length > 0) {
+      await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.markDesktopAttachmentsSubmitted(canonicalThreadId, attachmentIds, messageId),
+      );
+    }
     return {
       ...event.payload,
       view: parseDesktopRuntimeThreadInspection(event.payload.view),
@@ -2274,78 +2288,47 @@ function registerIpcHandlers(
       const dialogOptions: Electron.OpenDialogOptions = {
         title: "Attach files",
         properties: ["openFile", "multiSelections"],
-        filters: [
-          {
-            name: "Images and text/code",
-            extensions: [
-              "png",
-              "jpg",
-              "jpeg",
-              "webp",
-              "gif",
-              "txt",
-              "md",
-              "markdown",
-              "json",
-              "yaml",
-              "yml",
-              "csv",
-              "ts",
-              "tsx",
-              "js",
-              "jsx",
-              "mjs",
-              "cjs",
-              "py",
-              "rb",
-              "go",
-              "rs",
-              "java",
-              "kt",
-              "swift",
-              "c",
-              "h",
-              "cc",
-              "cpp",
-              "hpp",
-              "cs",
-              "php",
-              "sh",
-              "zsh",
-              "sql",
-              "html",
-              "css",
-              "scss",
-              "toml",
-              "xml",
-              "vue",
-              "svelte",
-            ],
-          },
-        ],
       };
       const selection =
         mainWindow === undefined
           ? await dialog.showOpenDialog(dialogOptions)
           : await dialog.showOpenDialog(mainWindow, dialogOptions);
       if (selection.canceled) return [];
-      if (selection.filePaths.length > 8)
+      const existingDrafts = (await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.listDesktopAttachments(normalizedThreadId),
+      )).filter((attachment) => attachment.submittedAt === undefined);
+      if (existingDrafts.length + selection.filePaths.length > 20)
         throw createDesktopError({
           code: "desktop.too_many_attachments",
-          message: "Select no more than 8 attachments at once.",
+          message: "Select no more than 20 attachments at once.",
         });
+      const selectedStats = await Promise.all(selection.filePaths.map(async (filePath) => await stat(filePath)));
+      if (selectedStats.some((entry) => !entry.isFile() || entry.size > 100 * 1024 * 1024)) {
+        throw createDesktopError({
+          code: "desktop.attachment_too_large",
+          message: "Each attachment must be a regular file no larger than 100 MiB.",
+        });
+      }
+      if (
+        existingDrafts.reduce((sum, entry) => sum + entry.sizeBytes, 0)
+        + selectedStats.reduce((sum, entry) => sum + entry.size, 0)
+        > 500 * 1024 * 1024
+      ) {
+        throw createDesktopError({
+          code: "desktop.attachments_too_large",
+          message: "Attachments must total at most 500 MiB per message.",
+        });
+      }
       const imported: DesktopAttachmentMetadata[] = [];
       for (const filePath of selection.filePaths) {
-        const bytes = await readFile(filePath);
         imported.push(
           await requireLocalCoreConnectionManager().executeOnce(
             async (client) =>
-              await client.importDesktopAttachment({
+              await client.importDesktopAttachmentPath({
                 threadId: normalizedThreadId,
                 filename: path.basename(filePath),
                 mimeType: desktopAttachmentMimeType(filePath),
-                data: bytes.toString("base64"),
-                sha256: createHash("sha256").update(bytes).digest("hex"),
+                sourcePath: filePath,
               }),
           ),
         );
@@ -2360,6 +2343,100 @@ function registerIpcHandlers(
       return await requireLocalCoreConnectionManager().executeOnce(
         async (client) => await client.importDesktopAttachment(attachment),
       );
+    },
+  );
+  ipcMain.handle(
+    "desktop:attachment-stream-begin",
+    async (_event, value: unknown): Promise<string> => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw createDesktopError({ code: "desktop.invalid_attachment_input", message: "Attachment stream metadata is invalid." });
+      }
+      const input = value as Record<string, unknown>;
+      const threadId = parseDesktopAttachmentThreadId(input.threadId);
+      const filename = typeof input.filename === "string" ? input.filename.trim() : "";
+      const mimeType = typeof input.mimeType === "string" && input.mimeType.trim() ? input.mimeType.trim() : undefined;
+      const expectedBytes = input.sizeBytes;
+      if (!filename || typeof expectedBytes !== "number" || !Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > 100 * 1024 * 1024) {
+        throw createDesktopError({ code: "desktop.invalid_attachment_input", message: "Attachment stream filename or size is invalid." });
+      }
+      const drafts = (await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.listDesktopAttachments(threadId),
+      )).filter((attachment) => attachment.submittedAt === undefined);
+      if (drafts.length >= 20 || drafts.reduce((sum, entry) => sum + entry.sizeBytes, 0) + expectedBytes > 500 * 1024 * 1024) {
+        throw createDesktopError({ code: "desktop.attachments_too_large", message: "Attachment count or message total exceeds the configured limit." });
+      }
+      const importRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-desktop-attachment-import-"));
+      const filePath = path.join(importRoot, "upload.bin");
+      const handle = await open(filePath, "wx", 0o600);
+      const uploadId = `attachment-upload-${randomUUID()}`;
+      activeDesktopAttachmentImports.set(uploadId, {
+        filePath,
+        handle,
+        threadId,
+        filename,
+        ...(mimeType !== undefined ? { mimeType } : {}),
+        expectedBytes,
+        receivedBytes: 0,
+      });
+      return uploadId;
+    },
+  );
+  ipcMain.handle(
+    "desktop:attachment-stream-append",
+    async (_event, uploadId: unknown, value: unknown): Promise<void> => {
+      const upload = typeof uploadId === "string" ? activeDesktopAttachmentImports.get(uploadId) : undefined;
+      const chunk = value instanceof Uint8Array ? Buffer.from(value) : undefined;
+      if (upload === undefined || chunk === undefined || chunk.byteLength > 1024 * 1024) {
+        throw createDesktopError({ code: "desktop.invalid_attachment_input", message: "Attachment stream chunk is invalid." });
+      }
+      if (upload.receivedBytes + chunk.byteLength > upload.expectedBytes) {
+        throw createDesktopError({ code: "desktop.attachment_too_large", message: "Attachment stream exceeded its declared size." });
+      }
+      let offset = 0;
+      while (offset < chunk.byteLength) {
+        const { bytesWritten } = await upload.handle.write(chunk, offset, chunk.byteLength - offset);
+        offset += bytesWritten;
+      }
+      upload.receivedBytes += chunk.byteLength;
+    },
+  );
+  ipcMain.handle(
+    "desktop:attachment-stream-finish",
+    async (_event, uploadId: unknown): Promise<DesktopAttachmentMetadata> => {
+      const normalizedId = typeof uploadId === "string" ? uploadId : "";
+      const upload = activeDesktopAttachmentImports.get(normalizedId);
+      if (upload === undefined) {
+        throw createDesktopError({ code: "desktop.invalid_attachment_input", message: "Attachment stream is unavailable." });
+      }
+      activeDesktopAttachmentImports.delete(normalizedId);
+      try {
+        await upload.handle.close();
+        if (upload.receivedBytes !== upload.expectedBytes) {
+          throw createDesktopError({ code: "desktop.invalid_attachment_input", message: "Attachment stream ended before its declared size." });
+        }
+        return await requireLocalCoreConnectionManager().executeOnce(
+          async (client) => await client.importDesktopAttachmentPath({
+            threadId: upload.threadId,
+            filename: upload.filename,
+            sourcePath: upload.filePath,
+            ...(upload.mimeType !== undefined ? { mimeType: upload.mimeType } : {}),
+          }),
+        );
+      } finally {
+        await upload.handle.close().catch(() => {});
+        await rm(path.dirname(upload.filePath), { recursive: true, force: true });
+      }
+    },
+  );
+  ipcMain.handle(
+    "desktop:attachment-stream-abort",
+    async (_event, uploadId: unknown): Promise<void> => {
+      const normalizedId = typeof uploadId === "string" ? uploadId : "";
+      const upload = activeDesktopAttachmentImports.get(normalizedId);
+      if (upload === undefined) return;
+      activeDesktopAttachmentImports.delete(normalizedId);
+      await upload.handle.close().catch(() => {});
+      await rm(path.dirname(upload.filePath), { recursive: true, force: true });
     },
   );
   ipcMain.handle(
@@ -2382,6 +2459,35 @@ function registerIpcHandlers(
             parseDesktopAttachmentId(attachmentId),
           ),
       ),
+  );
+  ipcMain.handle(
+    "desktop:save-attachment",
+    async (_event, threadId: unknown, attachmentId: unknown): Promise<string | null> => {
+      const normalizedThreadId = parseDesktopAttachmentThreadId(threadId);
+      const normalizedAttachmentId = parseDesktopAttachmentId(attachmentId);
+      const listed = await requireLocalCoreConnectionManager().executeIdempotent(
+        async (client) => await client.listDesktopAttachments(normalizedThreadId),
+      );
+      const attachment = listed.find((entry) => entry.attachmentId === normalizedAttachmentId);
+      if (!attachment) {
+        throw createDesktopError({
+          code: "desktop.attachment_unavailable",
+          message: "The attachment is unavailable for this thread.",
+        });
+      }
+      const selection = mainWindow === undefined
+        ? await dialog.showSaveDialog({ defaultPath: attachment.filename })
+        : await dialog.showSaveDialog(mainWindow, { defaultPath: attachment.filename });
+      if (selection.canceled || !selection.filePath) return null;
+      const source = path.join(
+        resolveLocalCorePaths(requireLocalCoreStatus().home.homePath).stateRootPath,
+        "attachments",
+        "blobs",
+        attachment.sha256,
+      );
+      await copyFile(source, selection.filePath);
+      return selection.filePath;
+    },
   );
   ipcMain.handle("desktop:operator-control", async (_event, input: unknown) => {
     let request: DesktopOperatorControlRequest;

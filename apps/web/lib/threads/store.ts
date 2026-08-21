@@ -105,7 +105,8 @@ export async function listThreadsForUser(
           ? undefined
           : isNull(schema.threads.archivedAt),
         scopeFilter,
-        cursorFilter
+        cursorFilter,
+        sql`exists (select 1 from ${schema.threadMessages} where ${schema.threadMessages.threadId} = ${schema.threads.id})`,
       )
     )
     .orderBy(desc(schema.threads.updatedAt), desc(schema.threads.id))
@@ -402,6 +403,18 @@ export async function createThreadForUser(input: {
     });
   }
   return thread;
+}
+
+export async function ensureThreadForUser(input: Parameters<typeof createThreadForUser>[0]) {
+  const existing = await getThreadForUser(input.id, input.userId, input.organizationId, true);
+  if (existing) return existing;
+  try {
+    return await createThreadForUser(input);
+  } catch (error) {
+    const raced = await getThreadForUser(input.id, input.userId, input.organizationId, true);
+    if (raced) return raced;
+    throw error;
+  }
 }
 
 export async function updateThreadTitleForUser(input: {
@@ -710,10 +723,63 @@ export async function permanentlyDeleteThreadForUser(input: {
   if (!(access?.canManage && access.thread.archivedAt)) {
     return null;
   }
+  const threadFileIds = await knowledgeDb
+    .selectDistinct({ fileId: schema.fileScopeGrants.fileId })
+    .from(schema.fileScopeGrants)
+    .where(
+      and(
+        eq(schema.fileScopeGrants.scopeType, "thread"),
+        eq(schema.fileScopeGrants.threadId, input.id)
+      )
+    );
   const [thread] = await knowledgeDb
     .delete(schema.threads)
     .where(eq(schema.threads.id, input.id))
     .returning();
+  if (thread) {
+    const candidateIds = threadFileIds.map(({ fileId }) => fileId);
+    if (candidateIds.length > 0) {
+      const orphanedFiles = await knowledgeDb
+        .select({
+          id: schema.kestrelFiles.id,
+          blobId: schema.kestrelFiles.blobId,
+        })
+        .from(schema.kestrelFiles)
+        .where(
+          and(
+            inArray(schema.kestrelFiles.id, candidateIds),
+            sql`not exists (select 1 from ${schema.threadMessageFiles} where ${schema.threadMessageFiles.fileId} = ${schema.kestrelFiles.id})`,
+            sql`not exists (select 1 from ${schema.fileScopeGrants} where ${schema.fileScopeGrants.fileId} = ${schema.kestrelFiles.id} and ${schema.fileScopeGrants.revokedAt} is null)`
+          )
+        );
+      if (orphanedFiles.length > 0) {
+        await knowledgeDb
+          .delete(schema.kestrelFiles)
+          .where(inArray(schema.kestrelFiles.id, orphanedFiles.map(({ id }) => id)));
+        const blobIds = [...new Set(orphanedFiles.map(({ blobId }) => blobId))];
+        const orphanedBlobs = await knowledgeDb
+          .select({ id: schema.fileBlobs.id })
+          .from(schema.fileBlobs)
+          .where(
+            and(
+              inArray(schema.fileBlobs.id, blobIds),
+              sql`not exists (select 1 from ${schema.kestrelFiles} where ${schema.kestrelFiles.blobId} = ${schema.fileBlobs.id})`
+            )
+          );
+        if (orphanedBlobs.length > 0) {
+          await knowledgeDb
+            .update(schema.fileBlobs)
+            .set({ deletedAt: new Date() })
+            .where(
+              and(
+                inArray(schema.fileBlobs.id, orphanedBlobs.map(({ id }) => id)),
+                isNull(schema.fileBlobs.deletedAt)
+              )
+            );
+        }
+      }
+    }
+  }
   return thread ?? null;
 }
 

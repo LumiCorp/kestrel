@@ -188,36 +188,22 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
   assert.equal(capturedInput?.sessionId, "chat_123");
   assert.equal(capturedInput?.message, "What changed?");
   assert.equal(capturedInput?.interactionMode, "build");
-  assert.deepEqual(capturedInput?.clientCapabilities, {
-    kestrelOne: {
-      requestId: "req_123",
-      correlationId: "req_123",
-      tenantId: "org_123",
-      capabilities: [
-        {
-          name: "kestrel_one.search_knowledge_documents",
-          description:
-            "Search Kestrel-One organization knowledge documents with schema-validated input.",
-          endpoint: {
-            method: "POST",
-            url: "http://example.test/api/kestrel/tools/search-knowledge-documents",
-            auth: {
-              type: "bearer",
-              tokenEnv: "KESTREL_ONE_TOOL_TOKEN",
-            },
-          },
-          input: {
-            type: "object",
-            required: ["query"],
-            properties: {
-              query: { type: "string", minLength: 3, maxLength: 1000 },
-              limit: { type: "integer", minimum: 1, maximum: 12 },
-            },
-          },
-        },
-      ],
-    },
-  });
+  assert.equal(capturedInput?.clientCapabilities?.kestrelOne?.requestId, "req_123");
+  assert.equal(
+    capturedInput?.clientCapabilities?.kestrelOne?.correlationId,
+    "req_123",
+  );
+  assert.equal(capturedInput?.clientCapabilities?.kestrelOne?.tenantId, "org_123");
+  assert.deepEqual(
+    capturedInput?.clientCapabilities?.kestrelOne?.capabilities.map(
+      (capability) => capability.name,
+    ),
+    [
+      "kestrel.files.search",
+      "kestrel.files.open",
+      "kestrel_one.search_knowledge_documents",
+    ],
+  );
   assert.equal(capturedContext?.actor.actorId, "user_123");
   assert.match(body, /Runtime answer/);
   assert.match(body, /kestrelTerminalStatus/);

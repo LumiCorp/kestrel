@@ -1,3 +1,5 @@
+import { and, eq } from "drizzle-orm";
+import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { chunkKnowledgeDocument } from "./chunk";
 import { embedKnowledgeTexts, getKnowledgeEmbeddingRuntime } from "./embed";
@@ -57,13 +59,42 @@ export async function processKnowledgeDocumentRun(runId: string) {
       stageTimingsMs: {},
     };
     const storage = getStorageAdapter();
-    const buffer = await storage.getObjectBuffer(document.storageKey);
     const extractStartedAt = Date.now();
-    const extracted = await extractKnowledgeDocument({
-      buffer,
-      filename: document.originalFilename,
-      mediaType: document.mediaType,
-    });
+    const representation = await knowledgeDb.select({
+      text: schema.fileRepresentations.textContent,
+      truncated: schema.fileRepresentations.truncated,
+      metadata: schema.fileRepresentations.metadata,
+    }).from(schema.kestrelFiles)
+      .innerJoin(schema.fileRepresentations, eq(schema.fileRepresentations.blobId, schema.kestrelFiles.blobId))
+      .where(and(
+        eq(schema.kestrelFiles.id, document.fileId),
+        eq(schema.fileRepresentations.kind, "extracted_text"),
+        eq(schema.fileRepresentations.status, "ready"),
+      )).limit(1);
+    const extracted = representation[0]?.text
+      ? {
+          title: null,
+          pageCount: null,
+          blocks: [{
+            text: representation[0].text,
+            metadata: {
+              source: "kestrel_file_representation",
+              ...(representation[0].metadata && typeof representation[0].metadata === "object"
+                ? representation[0].metadata as Record<string, unknown>
+                : {}),
+            },
+          }],
+          metadata: {
+            source: "kestrel_file_representation",
+            truncated: representation[0].truncated,
+          },
+          warnings: representation[0].truncated ? ["file_representation_truncated"] : [],
+        }
+      : await extractKnowledgeDocument({
+          buffer: await storage.getObjectBuffer(document.storageKey),
+          filename: document.originalFilename,
+          mediaType: document.mediaType,
+        });
     const extractDurationMs = Date.now() - extractStartedAt;
     diagnostics.warnings = extracted.warnings;
     diagnostics.metadata = extracted.metadata;

@@ -71,3 +71,21 @@ test("Desktop projects terminal messages after pending users and suppresses dupl
   assert.equal(recoveredDuplicate.outcome, "duplicate");
   assert.equal(recoveredDuplicate.state.threads[0]?.transcript.length, 2);
 });
+
+test("Desktop restores all twenty draft file references", () => {
+  const thread = createRendererThread();
+  const attachmentIds = Array.from({ length: 20 }, (_, index) => `file-${index}`);
+  const state = {
+    entries: {},
+    activeThreadId: thread.id,
+    threads: [{ ...thread, draftAttachmentIds: attachmentIds }],
+    theme: "system" as const,
+  };
+  const hydrated = readDesktopRendererState({
+    version: "desktop-ui-state-v1",
+    source: "desktop-renderer-vite",
+    capturedAt: "2026-08-21T10:00:00.000Z",
+    entries: serializeDesktopRendererState(state),
+  });
+  assert.deepEqual(hydrated.threads[0]?.draftAttachmentIds, attachmentIds);
+});

@@ -1,0 +1,1017 @@
+import "server-only";
+
+import { createHash, randomUUID } from "node:crypto";
+import { Readable, Transform, type TransformCallback } from "node:stream";
+import { and, desc, eq, ilike, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import {
+  CONVERSATION_ATTACHMENT_DRAFT_RETENTION_MS,
+  CONVERSATION_ATTACHMENT_MAX_COUNT,
+  CONVERSATION_ATTACHMENT_MAX_FILE_BYTES,
+  CONVERSATION_ATTACHMENT_MAX_TURN_BYTES,
+  type ConversationAttachmentReference,
+  type ConversationFileReference,
+} from "@kestrel-agents/conversation";
+import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
+import { extractAttachmentTextIsolated, isAttachmentTextExtractable } from "@kestrel-agents/files";
+import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { canManageOrganization } from "@/lib/knowledge/organization-access";
+import { getProjectAccess, requireProjectRole } from "@/lib/projects/access";
+import { getThreadForUser } from "@/lib/threads/store";
+import { getManagedFileStorageProvider } from "./storage-provider";
+
+export type FileScanResult = "clean" | "quarantined" | "unavailable";
+export type FileScanner = (input: {
+  fileId: string;
+  objectKey: string;
+  filename: string;
+  detectedMediaType: string;
+  sizeBytes: number;
+  sha256: string;
+}) => Promise<FileScanResult>;
+
+export async function createPublishedFileFromBuffer(input: {
+  organizationId: string;
+  uploaderUserId: string;
+  projectId?: string | null | undefined;
+  filename: string;
+  declaredMediaType?: string | undefined;
+  buffer: Buffer;
+}) {
+  validateFileSize(input.buffer.byteLength);
+  if (input.projectId) {
+    await requireProjectRole({
+      projectId: input.projectId,
+      organizationId: input.organizationId,
+      userId: input.uploaderUserId,
+      minimumRole: "editor",
+    });
+  }
+  const filename = sanitizeFilename(input.filename);
+  const sha256 = createHash("sha256").update(input.buffer).digest("hex");
+  const detectedMediaType = detectMediaType(
+    input.buffer.subarray(0, 512),
+    filename,
+    input.declaredMediaType,
+  );
+  let blob = await knowledgeDb.query.fileBlobs.findFirst({
+    where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
+      eqOp(table.organizationId, input.organizationId),
+      eqOp(table.sha256, sha256),
+      isNullOp(table.deletedAt),
+    ),
+  });
+  const storage = getManagedFileStorageProvider();
+  if (!blob) {
+    const blobId = `blob-${randomUUID()}`;
+    const objectKey = storage.buildOriginalKey({
+      organizationId: input.organizationId,
+      blobId,
+    });
+    await storage.putStream({
+      key: objectKey,
+      body: Readable.from(input.buffer),
+      contentType: detectedMediaType,
+      contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    });
+    try {
+      const [createdBlob] = await knowledgeDb.insert(schema.fileBlobs).values({
+        id: blobId,
+        organizationId: input.organizationId,
+        objectKey,
+        sizeBytes: input.buffer.byteLength,
+        sha256,
+        scanStatus: "unavailable",
+      }).returning();
+      blob = createdBlob;
+    } catch (error) {
+      await storage.delete(objectKey).catch(() => {});
+      blob = await knowledgeDb.query.fileBlobs.findFirst({
+        where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
+          eqOp(table.organizationId, input.organizationId),
+          eqOp(table.sha256, sha256),
+          isNullOp(table.deletedAt),
+        ),
+      });
+      if (!blob) throw error;
+    }
+  }
+  if (!blob) throw new Error("File blob could not be created.");
+  const fileId = `file-${randomUUID()}`;
+  await knowledgeDb.transaction(async (tx) => {
+    await tx.insert(schema.kestrelFiles).values({
+      id: fileId,
+      organizationId: input.organizationId,
+      uploaderUserId: input.uploaderUserId,
+      blobId: blob.id,
+      filename,
+      declaredMediaType: normalizeMediaType(input.declaredMediaType),
+      detectedMediaType,
+      sizeBytes: input.buffer.byteLength,
+      sha256,
+      lifecycleState: "ready",
+    });
+    await tx.insert(schema.fileScopeGrants).values({
+      id: `grant-${randomUUID()}`,
+      fileId,
+      organizationId: input.organizationId,
+      scopeType: input.projectId ? "project" : "organization",
+      threadId: null,
+      projectId: input.projectId ?? null,
+      createdByUserId: input.uploaderUserId,
+    });
+  });
+  if (await hasReadyRepresentation(blob.id) === false) {
+    await processStoredFileRepresentation({
+      blobId: blob.id,
+      objectKey: blob.objectKey,
+      filename,
+      mediaType: detectedMediaType,
+    });
+  }
+  return await getFileByIdForUser({
+    fileId,
+    organizationId: input.organizationId,
+    userId: input.uploaderUserId,
+  });
+}
+
+type FileRow = {
+  id: string;
+  organizationId: string;
+  uploaderUserId: string | null;
+  blobId: string;
+  objectKey: string;
+  filename: string;
+  declaredMediaType: string | null;
+  detectedMediaType: string | null;
+  sizeBytes: number;
+  sha256: string | null;
+  lifecycleState: "draft" | "ready" | "quarantined" | "failed" | "deleted";
+  createdAt: Date;
+  representationStatus: "native_image" | "extracted_text" | "staged_file" | "metadata_only";
+  metadataOnlyReason: string | null;
+  representationText: string | null;
+  textTruncated: boolean;
+};
+
+const NO_INTERPRETER_REASON =
+  "No automatic interpreter is available; the original remains available read-only to tools.";
+const FILE_BLOB_DELETION_GRACE_MS = 24 * 60 * 60 * 1000;
+
+export async function initializeThreadFile(input: {
+  threadId: string;
+  organizationId: string;
+  userId: string;
+  filename: string;
+  sizeBytes: number;
+  declaredMediaType?: string | undefined;
+}) {
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  if (!thread) throw new Error("Thread not found.");
+  validateFileSize(input.sizeBytes);
+  const filename = sanitizeFilename(input.filename);
+  const fileId = `file-${randomUUID()}`;
+  const blobId = `blob-${randomUUID()}`;
+  const storage = getManagedFileStorageProvider();
+  const objectKey = storage.buildOriginalKey({ organizationId: input.organizationId, blobId });
+  const createdAt = new Date();
+  await knowledgeDb.transaction(async (tx) => {
+    await tx.insert(schema.fileBlobs).values({
+      id: blobId,
+      organizationId: input.organizationId,
+      objectKey,
+      sizeBytes: input.sizeBytes,
+      sha256: null,
+      scanStatus: "pending",
+      createdAt,
+    });
+    await tx.insert(schema.kestrelFiles).values({
+      id: fileId,
+      organizationId: input.organizationId,
+      uploaderUserId: input.userId,
+      blobId,
+      filename,
+      declaredMediaType: normalizeMediaType(input.declaredMediaType),
+      detectedMediaType: null,
+      sizeBytes: input.sizeBytes,
+      sha256: null,
+      lifecycleState: "draft",
+      createdAt,
+    });
+    await tx.insert(schema.fileScopeGrants).values({
+      id: `grant-${randomUUID()}`,
+      fileId,
+      organizationId: input.organizationId,
+      scopeType: "thread",
+      threadId: input.threadId,
+      projectId: null,
+      createdByUserId: input.userId,
+      createdAt,
+    });
+    await tx.insert(schema.fileRepresentations).values({
+      id: `representation-${randomUUID()}`,
+      blobId,
+      kind: "metadata_only",
+      status: "pending",
+      mediaType: normalizeMediaType(input.declaredMediaType) ?? "application/octet-stream",
+      error: "Upload has not completed.",
+      createdAt,
+      updatedAt: createdAt,
+    });
+  });
+  return await requireThreadFileForUser({ ...input, fileId });
+}
+
+export async function uploadThreadFile(input: {
+  fileId: string;
+  threadId: string;
+  organizationId: string;
+  userId: string;
+  body: ReadableStream<Uint8Array> | null;
+  contentLength?: number | undefined;
+  scanner?: FileScanner | undefined;
+}) {
+  if (!input.body) throw new Error("File body is required.");
+  const file = await requireThreadFileForUser(input);
+  if (!["draft", "failed"].includes(file.lifecycleState)) throw new Error("File is not available for upload.");
+  if (input.contentLength !== undefined && input.contentLength !== file.sizeBytes) {
+    throw new Error("File Content-Length does not match the declared size.");
+  }
+  const verifier = new FileVerificationTransform(file.sizeBytes);
+  const storage = getManagedFileStorageProvider();
+  try {
+    await storage.putStream({
+      key: file.objectKey,
+      body: Readable.fromWeb(input.body as unknown as import("node:stream/web").ReadableStream).pipe(verifier),
+      contentType: normalizeMediaType(file.declaredMediaType) ?? "application/octet-stream",
+      contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+    });
+    const verified = verifier.result();
+    const detectedMediaType = detectMediaType(verifier.header, file.filename, file.declaredMediaType ?? undefined);
+    const scanResult = await input.scanner?.({
+      fileId: file.id,
+      objectKey: file.objectKey,
+      filename: file.filename,
+      detectedMediaType,
+      sizeBytes: verified.sizeBytes,
+      sha256: verified.sha256,
+    }) ?? "unavailable";
+    const canonicalBlob = await finalizeBlobDeduplication({
+      file,
+      sha256: verified.sha256,
+      scanResult,
+    });
+    const quarantined = scanResult === "quarantined" || canonicalBlob.scanStatus === "quarantined";
+    await knowledgeDb.update(schema.kestrelFiles).set({
+      blobId: canonicalBlob.id,
+      detectedMediaType,
+      sha256: verified.sha256,
+      lifecycleState: quarantined ? "quarantined" : "ready",
+    }).where(eq(schema.kestrelFiles.id, file.id));
+    if (
+      quarantined === false
+      && (canonicalBlob.id === file.blobId || await hasReadyRepresentation(canonicalBlob.id) === false)
+    ) {
+      await processBlobRepresentation({
+        blobId: canonicalBlob.id,
+        objectKey: canonicalBlob.objectKey,
+        filename: file.filename,
+        mediaType: detectedMediaType,
+      });
+    }
+    return await requireThreadFileForUser(input);
+  } catch (error) {
+    await storage.delete(file.objectKey).catch(() => {});
+    await knowledgeDb.update(schema.kestrelFiles).set({ lifecycleState: "failed" })
+      .where(eq(schema.kestrelFiles.id, file.id));
+    await knowledgeDb.update(schema.fileRepresentations).set({
+      status: "failed",
+      error: error instanceof Error ? error.message.slice(0, 500) : "Upload failed.",
+      updatedAt: new Date(),
+    }).where(eq(schema.fileRepresentations.blobId, file.blobId));
+    throw error;
+  }
+}
+
+export async function getThreadFileForUser(input: {
+  fileId: string;
+  threadId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  return await requireThreadFileForUser(input);
+}
+
+export async function getFileByIdForUser(input: {
+  fileId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  const rows = await selectFileRows([eq(schema.kestrelFiles.id, input.fileId), eq(schema.kestrelFiles.organizationId, input.organizationId)]);
+  const file = rows[0];
+  if (!file || file.lifecycleState === "deleted") throw new Error("File not found.");
+  const grants = await knowledgeDb.select().from(schema.fileScopeGrants).where(and(
+    eq(schema.fileScopeGrants.fileId, file.id),
+    isNull(schema.fileScopeGrants.revokedAt),
+  ));
+  for (const grant of grants) {
+    if (grant.scopeType === "organization") return file;
+    if (grant.scopeType === "thread" && grant.threadId) {
+      const thread = await getThreadForUser(grant.threadId, input.userId, input.organizationId);
+      if (thread) return file;
+    }
+    if (grant.scopeType === "project" && grant.projectId) {
+      const access = await getProjectAccess({
+        projectId: grant.projectId,
+        organizationId: input.organizationId,
+        userId: input.userId,
+      });
+      if (access) return file;
+    }
+  }
+  throw new Error("File not found.");
+}
+
+export async function getFileMetadataForUser(input: {
+  fileId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  const file = await getFileByIdForUser(input);
+  const scopes = await knowledgeDb.select({
+    scope: schema.fileScopeGrants.scopeType,
+    threadId: schema.fileScopeGrants.threadId,
+    projectId: schema.fileScopeGrants.projectId,
+    createdAt: schema.fileScopeGrants.createdAt,
+  }).from(schema.fileScopeGrants).where(and(
+    eq(schema.fileScopeGrants.fileId, file.id),
+    isNull(schema.fileScopeGrants.revokedAt),
+  ));
+  return { ...file, scopes };
+}
+
+export async function getVisibleFileForThread(input: {
+  fileId: string;
+  threadId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  if (!thread) throw new Error("Thread not found.");
+  const rows = await selectFileRows([
+    eq(schema.kestrelFiles.id, input.fileId),
+    eq(schema.kestrelFiles.organizationId, input.organizationId),
+    sql`exists (
+      select 1 from ${schema.fileScopeGrants} visible_grant
+      where visible_grant.file_id = ${schema.kestrelFiles.id}
+        and visible_grant.revoked_at is null
+        and (
+          (visible_grant.scope_type = 'thread' and visible_grant.thread_id = ${input.threadId})
+          or (visible_grant.scope_type = 'organization' and visible_grant.organization_id = ${input.organizationId})
+          or (visible_grant.scope_type = 'project' and visible_grant.project_id = ${thread.projectId ?? ""})
+        )
+    )`,
+  ]);
+  const file = rows[0];
+  if (!file || file.lifecycleState === "deleted") throw new Error("File not found.");
+  return file;
+}
+
+export async function deleteDraftThreadFile(input: {
+  fileId: string;
+  threadId: string;
+  organizationId: string;
+  userId: string;
+}): Promise<boolean> {
+  const file = await requireThreadFileForUser(input);
+  const linked = await knowledgeDb.select({ fileId: schema.threadMessageFiles.fileId })
+    .from(schema.threadMessageFiles).where(eq(schema.threadMessageFiles.fileId, file.id)).limit(1);
+  if (linked.length > 0) throw new Error("Submitted files cannot be removed.");
+  const [deleted] = await knowledgeDb.delete(schema.kestrelFiles).where(eq(schema.kestrelFiles.id, file.id)).returning();
+  if (!deleted) return false;
+  await scheduleBlobDeletionIfUnreferenced(file.blobId);
+  return true;
+}
+
+export async function discardUnreferencedFile(
+  fileId: string,
+  options: { removeScopeGrants?: boolean } = {},
+): Promise<boolean> {
+  const file = await knowledgeDb.select({
+    id: schema.kestrelFiles.id,
+    blobId: schema.kestrelFiles.blobId,
+    objectKey: schema.fileBlobs.objectKey,
+  }).from(schema.kestrelFiles)
+    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId))
+    .where(and(
+      eq(schema.kestrelFiles.id, fileId),
+      sql`not exists (select 1 from ${schema.threadMessageFiles} where ${schema.threadMessageFiles.fileId} = ${schema.kestrelFiles.id})`,
+      sql`not exists (select 1 from ${schema.knowledgeDocuments} where ${schema.knowledgeDocuments.fileId} = ${schema.kestrelFiles.id})`,
+      options.removeScopeGrants
+        ? undefined
+        : sql`not exists (select 1 from ${schema.fileScopeGrants} where ${schema.fileScopeGrants.fileId} = ${schema.kestrelFiles.id} and ${schema.fileScopeGrants.revokedAt} is null)`,
+    )).limit(1);
+  if (!file[0]) return false;
+  if (options.removeScopeGrants) {
+    await knowledgeDb.delete(schema.fileScopeGrants).where(eq(schema.fileScopeGrants.fileId, fileId));
+  }
+  await knowledgeDb.delete(schema.kestrelFiles).where(eq(schema.kestrelFiles.id, fileId));
+  await scheduleBlobDeletionIfUnreferenced(file[0].blobId);
+  return true;
+}
+
+export async function revokeFileScopeForManagement(input: {
+  fileId: string;
+  organizationId: string;
+  scope: "project" | "organization";
+  projectId?: string | null | undefined;
+}): Promise<void> {
+  await knowledgeDb.update(schema.fileScopeGrants).set({ revokedAt: new Date() }).where(and(
+    eq(schema.fileScopeGrants.fileId, input.fileId),
+    eq(schema.fileScopeGrants.organizationId, input.organizationId),
+    eq(schema.fileScopeGrants.scopeType, input.scope),
+    input.scope === "project"
+      ? eq(schema.fileScopeGrants.projectId, input.projectId ?? "")
+      : isNull(schema.fileScopeGrants.projectId),
+    isNull(schema.fileScopeGrants.revokedAt),
+  ));
+}
+
+export async function resolveReadyThreadFiles(input: {
+  fileIds: string[];
+  threadId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  validateSelection(input.fileIds);
+  if (input.fileIds.length === 0) return [];
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  if (!thread) throw new Error("Thread not found.");
+  const grants = await knowledgeDb.select({ fileId: schema.fileScopeGrants.fileId }).from(schema.fileScopeGrants).where(and(
+    eq(schema.fileScopeGrants.organizationId, input.organizationId),
+    eq(schema.fileScopeGrants.scopeType, "thread"),
+    eq(schema.fileScopeGrants.threadId, input.threadId),
+    isNull(schema.fileScopeGrants.revokedAt),
+    inArray(schema.fileScopeGrants.fileId, input.fileIds),
+  ));
+  const granted = new Set(grants.map((grant) => grant.fileId));
+  const rows = await selectFileRows([
+    eq(schema.kestrelFiles.organizationId, input.organizationId),
+    inArray(schema.kestrelFiles.id, input.fileIds),
+  ]);
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const ordered = input.fileIds.map((id) => granted.has(id) ? byId.get(id) : undefined);
+  if (ordered.some((row) => !row || row.lifecycleState !== "ready" || !row.sha256 || !row.detectedMediaType)) {
+    throw new Error("One or more files are unavailable, incomplete, or quarantined.");
+  }
+  if (ordered.reduce((sum, row) => sum + (row?.sizeBytes ?? 0), 0) > CONVERSATION_ATTACHMENT_MAX_TURN_BYTES) {
+    throw new Error("Files exceed the 500 MiB per-message limit.");
+  }
+  return ordered as Array<FileRow & { sha256: string; detectedMediaType: string }>;
+}
+
+export async function resolveThreadFilesForExecution(input: {
+  fileIds: string[];
+  threadId: string;
+  organizationId: string;
+  userId: string;
+}): Promise<RunnerTurnAttachment[]> {
+  const files = await resolveReadyThreadFiles(input);
+  const storage = getManagedFileStorageProvider();
+  return await Promise.all(files.map(async (file) => {
+    const kind = file.representationStatus === "native_image"
+      ? "image" as const
+      : file.representationStatus === "extracted_text" ? "text" as const : "file" as const;
+    const source = storage.signedReadUrl
+      ? {
+          sourceUrl: await storage.signedReadUrl(file.objectKey, 900),
+          sourceUrlExpiresAt: new Date(Date.now() + 14 * 60 * 1000).toISOString(),
+        }
+      : { data: (await storage.readBuffer(file.objectKey)).toString("base64") };
+    return {
+      fileId: file.id,
+      attachmentId: file.id,
+      threadId: input.threadId,
+      filename: file.filename,
+      mimeType: file.detectedMediaType,
+      sizeBytes: file.sizeBytes,
+      sha256: file.sha256,
+      kind,
+      representationStatus: file.representationStatus,
+      createdAt: file.createdAt.toISOString(),
+      ...source,
+      ...(file.representationText ? { text: file.representationText } : {}),
+      ...(file.textTruncated ? { textTruncated: true } : {}),
+      ...(file.metadataOnlyReason ? { metadataOnlyReason: file.metadataOnlyReason } : {}),
+    } satisfies RunnerTurnAttachment;
+  }));
+}
+
+export async function linkFilesToMessage(input: {
+  fileIds: string[];
+  messageId: string;
+  threadId: string;
+  organizationId: string;
+  userId: string;
+}): Promise<ConversationFileReference[]> {
+  const files = await resolveReadyThreadFiles(input);
+  if (files.length > 0) {
+    await knowledgeDb.insert(schema.threadMessageFiles).values(files.map((file, ordinal) => ({
+      messageId: input.messageId,
+      fileId: file.id,
+      ordinal,
+    }))).onConflictDoNothing();
+  }
+  return files.map(toFileReference);
+}
+
+export async function publishFileScope(input: {
+  fileId: string;
+  organizationId: string;
+  userId: string;
+  scope: "project" | "organization";
+  projectId?: string | undefined;
+}) {
+  const file = await getFileByIdForUser(input);
+  const canManage = await canManageOrganization({
+    organizationId: input.organizationId,
+    userId: input.userId,
+  });
+  if (file.uploaderUserId !== input.userId && !canManage) {
+    throw new Error("Only the uploader or an organization administrator can publish this file.");
+  }
+  if (input.scope === "project") {
+    if (!input.projectId) throw new Error("Project scope requires a project ID.");
+    await requireProjectRole({
+      projectId: input.projectId,
+      organizationId: input.organizationId,
+      userId: input.userId,
+      minimumRole: "editor",
+    });
+  } else if (!canManage) {
+    throw new Error("Organization administrator access is required to publish organization files.");
+  }
+  const existing = await knowledgeDb.select().from(schema.fileScopeGrants).where(and(
+    eq(schema.fileScopeGrants.fileId, file.id),
+    eq(schema.fileScopeGrants.scopeType, input.scope),
+    input.scope === "project"
+      ? eq(schema.fileScopeGrants.projectId, input.projectId as string)
+      : isNull(schema.fileScopeGrants.projectId),
+    isNull(schema.fileScopeGrants.revokedAt),
+  )).limit(1);
+  if (existing[0]) return existing[0];
+  const [grant] = await knowledgeDb.insert(schema.fileScopeGrants).values({
+    id: `grant-${randomUUID()}`,
+    fileId: file.id,
+    organizationId: input.organizationId,
+    scopeType: input.scope,
+    threadId: null,
+    projectId: input.scope === "project" ? input.projectId ?? null : null,
+    createdByUserId: input.userId,
+  }).returning();
+  return grant;
+}
+
+export async function revokeFileScope(input: {
+  fileId: string;
+  organizationId: string;
+  userId: string;
+  scope: "project" | "organization";
+  projectId?: string | undefined;
+}): Promise<boolean> {
+  const file = await getFileByIdForUser(input);
+  const canManage = await canManageOrganization({
+    organizationId: input.organizationId,
+    userId: input.userId,
+  });
+  if (file.uploaderUserId !== input.userId && !canManage) {
+    throw new Error("Only the uploader or an organization administrator can revoke this file scope.");
+  }
+  if (input.scope === "project") {
+    if (!input.projectId) throw new Error("Project scope requires a project ID.");
+    await requireProjectRole({
+      projectId: input.projectId,
+      organizationId: input.organizationId,
+      userId: input.userId,
+      minimumRole: "editor",
+    });
+  } else if (!canManage) {
+    throw new Error("Organization administrator access is required to revoke organization files.");
+  }
+  const revoked = await knowledgeDb.update(schema.fileScopeGrants).set({ revokedAt: new Date() }).where(and(
+    eq(schema.fileScopeGrants.fileId, file.id),
+    eq(schema.fileScopeGrants.scopeType, input.scope),
+    input.scope === "project"
+      ? eq(schema.fileScopeGrants.projectId, input.projectId as string)
+      : isNull(schema.fileScopeGrants.projectId),
+    isNull(schema.fileScopeGrants.revokedAt),
+  )).returning({ id: schema.fileScopeGrants.id });
+  return revoked.length > 0;
+}
+
+export async function listThreadFileInventory(input: {
+  threadId: string;
+  organizationId: string;
+  userId: string;
+  limit?: number | undefined;
+}) {
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  if (!thread) throw new Error("Thread not found.");
+  return await knowledgeDb.select({
+    fileId: schema.kestrelFiles.id,
+    filename: schema.kestrelFiles.filename,
+    mediaType: schema.kestrelFiles.detectedMediaType,
+    sizeBytes: schema.kestrelFiles.sizeBytes,
+    sha256: schema.kestrelFiles.sha256,
+    state: schema.kestrelFiles.lifecycleState,
+    createdAt: schema.kestrelFiles.createdAt,
+  }).from(schema.fileScopeGrants)
+    .innerJoin(schema.kestrelFiles, eq(schema.kestrelFiles.id, schema.fileScopeGrants.fileId))
+    .where(and(
+      eq(schema.fileScopeGrants.organizationId, input.organizationId),
+      eq(schema.fileScopeGrants.scopeType, "thread"),
+      eq(schema.fileScopeGrants.threadId, input.threadId),
+      isNull(schema.fileScopeGrants.revokedAt),
+      eq(schema.kestrelFiles.lifecycleState, "ready"),
+    ))
+    .orderBy(desc(schema.kestrelFiles.createdAt))
+    .limit(Math.min(Math.max(input.limit ?? 50, 1), 100));
+}
+
+export async function searchVisibleFiles(input: {
+  organizationId: string;
+  userId: string;
+  threadId: string;
+  projectId?: string | null | undefined;
+  query: string;
+  includeThread?: boolean | undefined;
+  limit?: number | undefined;
+}) {
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  if (!thread) throw new Error("Thread not found.");
+  if (input.projectId && input.projectId !== thread.projectId) {
+    throw new Error("Project file scope does not belong to this Thread.");
+  }
+  const query = input.query.trim();
+  if (!query) throw new Error("File search query is required.");
+  const likeQuery = `%${escapeLike(query)}%`;
+  const legacyKnowledgeText = sql<string | null>`(
+    select chunk.content
+    from ${schema.knowledgeDocumentChunks} chunk
+    inner join ${schema.knowledgeDocuments} document
+      on document.id = chunk.document_id
+    where document.file_id = ${schema.kestrelFiles.id}
+      and chunk.content ilike ${likeQuery}
+    order by chunk.chunk_index asc
+    limit 1
+  )`;
+  const scope = or(
+    ...(input.includeThread === false ? [] : [and(
+      eq(schema.fileScopeGrants.scopeType, "thread"),
+      eq(schema.fileScopeGrants.threadId, input.threadId),
+    )]),
+    ...(thread.projectId ? [and(
+      eq(schema.fileScopeGrants.scopeType, "project"),
+      eq(schema.fileScopeGrants.projectId, thread.projectId),
+    )] : []),
+    eq(schema.fileScopeGrants.scopeType, "organization"),
+  );
+  return await knowledgeDb.selectDistinct({
+    fileId: schema.kestrelFiles.id,
+    filename: schema.kestrelFiles.filename,
+    mediaType: schema.kestrelFiles.detectedMediaType,
+    sizeBytes: schema.kestrelFiles.sizeBytes,
+    sha256: schema.kestrelFiles.sha256,
+    representation: schema.fileRepresentations.kind,
+    text: sql<string | null>`coalesce(${schema.fileRepresentations.textContent}, ${legacyKnowledgeText})`,
+  }).from(schema.fileScopeGrants)
+    .innerJoin(schema.kestrelFiles, eq(schema.kestrelFiles.id, schema.fileScopeGrants.fileId))
+    .leftJoin(schema.fileRepresentations, and(
+      eq(schema.fileRepresentations.blobId, schema.kestrelFiles.blobId),
+      eq(schema.fileRepresentations.status, "ready"),
+    ))
+    .where(and(
+      eq(schema.fileScopeGrants.organizationId, input.organizationId),
+      isNull(schema.fileScopeGrants.revokedAt),
+      scope,
+      eq(schema.kestrelFiles.lifecycleState, "ready"),
+      or(
+        ilike(schema.kestrelFiles.filename, likeQuery),
+        ilike(schema.fileRepresentations.textContent, likeQuery),
+        sql`exists (
+          select 1
+          from ${schema.knowledgeDocuments} document
+          inner join ${schema.knowledgeDocumentChunks} chunk
+            on chunk.document_id = document.id
+          where document.file_id = ${schema.kestrelFiles.id}
+            and chunk.content ilike ${likeQuery}
+        )`,
+      ),
+    ))
+    .limit(Math.min(Math.max(input.limit ?? 10, 1), 25));
+}
+
+export async function cleanupExpiredFiles(now = new Date()): Promise<number> {
+  await cleanupPendingBlobDeletions(now);
+  const cutoff = new Date(now.getTime() - CONVERSATION_ATTACHMENT_DRAFT_RETENTION_MS);
+  const candidates = await knowledgeDb.select({
+    id: schema.kestrelFiles.id,
+    blobId: schema.kestrelFiles.blobId,
+    objectKey: schema.fileBlobs.objectKey,
+  }).from(schema.kestrelFiles)
+    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId))
+    .where(and(
+      inArray(schema.kestrelFiles.lifecycleState, ["draft", "ready", "failed"]),
+      lt(schema.kestrelFiles.createdAt, cutoff),
+      sql`not exists (select 1 from ${schema.threadMessageFiles} where ${schema.threadMessageFiles.fileId} = ${schema.kestrelFiles.id})`,
+      sql`not exists (select 1 from ${schema.fileScopeGrants} where ${schema.fileScopeGrants.fileId} = ${schema.kestrelFiles.id} and ${schema.fileScopeGrants.scopeType} <> 'thread' and ${schema.fileScopeGrants.revokedAt} is null)`,
+    ));
+  for (const candidate of candidates) {
+    await knowledgeDb.delete(schema.kestrelFiles).where(eq(schema.kestrelFiles.id, candidate.id));
+    await scheduleBlobDeletionIfUnreferenced(candidate.blobId);
+  }
+  await knowledgeDb.delete(schema.threads).where(and(
+    lt(schema.threads.createdAt, cutoff),
+    isNull(schema.threads.activeStreamId),
+    sql`not exists (select 1 from ${schema.threadMessages} where ${schema.threadMessages.threadId} = ${schema.threads.id})`,
+    sql`not exists (select 1 from ${schema.fileScopeGrants} where ${schema.fileScopeGrants.threadId} = ${schema.threads.id})`,
+  ));
+  return candidates.length;
+}
+
+export function toCompatibilityReference(file: FileRow): ConversationAttachmentReference {
+  return {
+    type: "kestrel-attachment",
+    attachmentId: file.id,
+    fileId: file.id,
+    filename: file.filename,
+    sizeBytes: file.sizeBytes,
+    mediaType: file.detectedMediaType ?? file.declaredMediaType ?? "application/octet-stream",
+    representationKind: file.representationStatus,
+    status: file.lifecycleState,
+  };
+}
+
+async function requireThreadFileForUser(input: {
+  fileId: string;
+  threadId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
+  if (!thread) throw new Error("Thread not found.");
+  const rows = await selectFileRows([
+    eq(schema.kestrelFiles.id, input.fileId),
+    eq(schema.kestrelFiles.organizationId, input.organizationId),
+    sql`exists (select 1 from ${schema.fileScopeGrants} grant_row where grant_row.file_id = ${schema.kestrelFiles.id} and grant_row.scope_type = 'thread' and grant_row.thread_id = ${input.threadId} and grant_row.revoked_at is null)`,
+  ]);
+  const file = rows[0];
+  if (!file || file.lifecycleState === "deleted") throw new Error("File not found.");
+  return file;
+}
+
+async function selectFileRows(conditions: Array<SQL | undefined>) {
+  return await knowledgeDb.select({
+    id: schema.kestrelFiles.id,
+    organizationId: schema.kestrelFiles.organizationId,
+    uploaderUserId: schema.kestrelFiles.uploaderUserId,
+    blobId: schema.kestrelFiles.blobId,
+    objectKey: schema.fileBlobs.objectKey,
+    filename: schema.kestrelFiles.filename,
+    declaredMediaType: schema.kestrelFiles.declaredMediaType,
+    detectedMediaType: schema.kestrelFiles.detectedMediaType,
+    sizeBytes: schema.kestrelFiles.sizeBytes,
+    sha256: schema.kestrelFiles.sha256,
+    lifecycleState: schema.kestrelFiles.lifecycleState,
+    createdAt: schema.kestrelFiles.createdAt,
+    representationStatus: sql<FileRow["representationStatus"]>`coalesce(${schema.fileRepresentations.kind}, 'metadata_only')`,
+    metadataOnlyReason: schema.fileRepresentations.error,
+    representationText: schema.fileRepresentations.textContent,
+    textTruncated: sql<boolean>`coalesce(${schema.fileRepresentations.truncated}, false)`,
+  }).from(schema.kestrelFiles)
+    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId))
+    .leftJoin(schema.fileRepresentations, and(
+      eq(schema.fileRepresentations.blobId, schema.kestrelFiles.blobId),
+      or(
+        eq(schema.fileRepresentations.kind, "native_image"),
+        eq(schema.fileRepresentations.kind, "extracted_text"),
+        eq(schema.fileRepresentations.kind, "metadata_only"),
+      ),
+    ))
+    .where(and(...conditions)) as FileRow[];
+}
+
+async function finalizeBlobDeduplication(input: {
+  file: FileRow;
+  sha256: string;
+  scanResult: FileScanResult;
+}) {
+  const existing = await knowledgeDb.query.fileBlobs.findFirst({
+    where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
+      eqOp(table.organizationId, input.file.organizationId),
+      eqOp(table.sha256, input.sha256),
+      isNullOp(table.deletedAt),
+    ),
+  });
+  if (existing && existing.id !== input.file.blobId) {
+    await knowledgeDb.update(schema.kestrelFiles).set({ blobId: existing.id })
+      .where(eq(schema.kestrelFiles.id, input.file.id));
+    await knowledgeDb.delete(schema.fileBlobs).where(eq(schema.fileBlobs.id, input.file.blobId));
+    await getManagedFileStorageProvider().delete(input.file.objectKey).catch(() => {});
+    return existing;
+  }
+  let updated: typeof schema.fileBlobs.$inferSelect | undefined;
+  try {
+    [updated] = await knowledgeDb.update(schema.fileBlobs).set({
+      sha256: input.sha256,
+      scanStatus: input.scanResult,
+    }).where(eq(schema.fileBlobs.id, input.file.blobId)).returning();
+  } catch (error) {
+    const raced = await knowledgeDb.query.fileBlobs.findFirst({
+      where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
+        eqOp(table.organizationId, input.file.organizationId),
+        eqOp(table.sha256, input.sha256),
+        isNullOp(table.deletedAt),
+      ),
+    });
+    if (!raced || raced.id === input.file.blobId) throw error;
+    await knowledgeDb.update(schema.kestrelFiles).set({ blobId: raced.id })
+      .where(eq(schema.kestrelFiles.id, input.file.id));
+    await knowledgeDb.delete(schema.fileBlobs).where(eq(schema.fileBlobs.id, input.file.blobId));
+    await getManagedFileStorageProvider().delete(input.file.objectKey).catch(() => {});
+    return raced;
+  }
+  if (!updated) throw new Error("File blob could not be finalized.");
+  return updated;
+}
+
+export async function processStoredFileRepresentation(input: {
+  blobId: string;
+  objectKey: string;
+  filename: string;
+  mediaType: string;
+}) {
+  const storage = getManagedFileStorageProvider();
+  let kind: "native_image" | "extracted_text" | "metadata_only" = "metadata_only";
+  let textContent: string | null = null;
+  let truncated = false;
+  let error: string | null = NO_INTERPRETER_REASON;
+  if (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(input.mediaType)) {
+    kind = "native_image";
+    error = null;
+  } else if (isAttachmentTextExtractable(input.mediaType)) {
+    try {
+      const extraction = await extractAttachmentTextIsolated({
+        buffer: await storage.readBuffer(input.objectKey),
+        filename: input.filename,
+        mediaType: input.mediaType,
+        timeoutMs: 30_000,
+      });
+      if (extraction.text) {
+        kind = "extracted_text";
+        textContent = extraction.text;
+        truncated = extraction.truncated;
+        error = null;
+      }
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message.slice(0, 500) : "File processing failed.";
+    }
+  }
+  await knowledgeDb.delete(schema.fileRepresentations).where(eq(schema.fileRepresentations.blobId, input.blobId));
+  await knowledgeDb.insert(schema.fileRepresentations).values({
+    id: `representation-${randomUUID()}`,
+    blobId: input.blobId,
+    kind,
+    status: error && kind !== "metadata_only" ? "failed" : "ready",
+    mediaType: input.mediaType,
+    textContent,
+    truncated,
+    error,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+}
+
+const processBlobRepresentation = processStoredFileRepresentation;
+
+async function hasReadyRepresentation(blobId: string): Promise<boolean> {
+  const row = await knowledgeDb.query.fileRepresentations.findFirst({
+    where: (table, { and: andOp, eq: eqOp }) => andOp(eqOp(table.blobId, blobId), eqOp(table.status, "ready")),
+  });
+  return row !== undefined;
+}
+
+async function scheduleBlobDeletionIfUnreferenced(blobId: string): Promise<void> {
+  const reference = await knowledgeDb.select({ id: schema.kestrelFiles.id }).from(schema.kestrelFiles)
+    .where(eq(schema.kestrelFiles.blobId, blobId)).limit(1);
+  if (reference.length > 0) return;
+  await knowledgeDb.update(schema.fileBlobs).set({ deletedAt: new Date() })
+    .where(and(eq(schema.fileBlobs.id, blobId), isNull(schema.fileBlobs.deletedAt)));
+}
+
+async function cleanupPendingBlobDeletions(now: Date): Promise<number> {
+  const cutoff = new Date(now.getTime() - FILE_BLOB_DELETION_GRACE_MS);
+  const candidates = await knowledgeDb.select({
+    id: schema.fileBlobs.id,
+    objectKey: schema.fileBlobs.objectKey,
+  }).from(schema.fileBlobs).where(and(
+    lt(schema.fileBlobs.deletedAt, cutoff),
+    sql`not exists (select 1 from ${schema.kestrelFiles} where ${schema.kestrelFiles.blobId} = ${schema.fileBlobs.id})`,
+  ));
+  const storage = getManagedFileStorageProvider();
+  for (const candidate of candidates) {
+    await storage.delete(candidate.objectKey);
+    await knowledgeDb.delete(schema.fileBlobs).where(and(
+      eq(schema.fileBlobs.id, candidate.id),
+      sql`not exists (select 1 from ${schema.kestrelFiles} where ${schema.kestrelFiles.blobId} = ${schema.fileBlobs.id})`,
+    ));
+  }
+  return candidates.length;
+}
+
+function toFileReference(file: FileRow): ConversationFileReference {
+  return {
+    type: "kestrel-file",
+    fileId: file.id,
+    filename: file.filename,
+    sizeBytes: file.sizeBytes,
+    mediaType: file.detectedMediaType ?? file.declaredMediaType ?? "application/octet-stream",
+    representationKind: file.representationStatus,
+    status: file.lifecycleState,
+  };
+}
+
+function validateSelection(fileIds: string[]): void {
+  if (fileIds.length > CONVERSATION_ATTACHMENT_MAX_COUNT) throw new Error("A message can include at most 20 files.");
+  if (new Set(fileIds).size !== fileIds.length) throw new Error("File IDs must be unique.");
+}
+
+function validateFileSize(sizeBytes: number): void {
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) throw new Error("File size is invalid.");
+  if (sizeBytes > CONVERSATION_ATTACHMENT_MAX_FILE_BYTES) throw new Error("File exceeds the 100 MiB limit.");
+}
+
+class FileVerificationTransform extends Transform {
+  readonly headerChunks: Buffer[] = [];
+  readonly hash = createHash("sha256");
+  sizeBytes = 0;
+  constructor(private readonly expectedSizeBytes: number) { super(); }
+  get header(): Buffer { return Buffer.concat(this.headerChunks).subarray(0, 512); }
+  override _transform(chunk: Buffer, _encoding: BufferEncoding, callback: TransformCallback): void {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    this.sizeBytes += bytes.byteLength;
+    if (this.sizeBytes > CONVERSATION_ATTACHMENT_MAX_FILE_BYTES || this.sizeBytes > this.expectedSizeBytes) {
+      callback(new Error("File exceeds its declared or maximum size."));
+      return;
+    }
+    if (this.header.length < 512) this.headerChunks.push(bytes.subarray(0, 512 - this.header.length));
+    this.hash.update(bytes);
+    callback(null, bytes);
+  }
+  result(): { sizeBytes: number; sha256: string } {
+    if (this.sizeBytes !== this.expectedSizeBytes) throw new Error("Uploaded bytes do not match the declared size.");
+    return { sizeBytes: this.sizeBytes, sha256: this.hash.digest("hex") };
+  }
+}
+
+function sanitizeFilename(value: string): string {
+  const filename = value.trim().split(/[\\/]/u).at(-1)?.trim() ?? "";
+  if (!filename || filename === "." || filename === "..") throw new Error("File filename is invalid.");
+  return filename.slice(0, 240);
+}
+
+function normalizeMediaType(value?: string | null): string | undefined {
+  const normalized = value?.split(";", 1)[0]?.trim().toLowerCase();
+  return normalized && /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u.test(normalized) ? normalized : undefined;
+}
+
+function detectMediaType(header: Buffer, filename: string, declared?: string): string {
+  if (header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
+  if (header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff) return "image/jpeg";
+  if (["GIF87a", "GIF89a"].includes(header.subarray(0, 6).toString("ascii"))) return "image/gif";
+  if (header.subarray(0, 4).toString("ascii") === "RIFF" && header.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  if (header.subarray(0, 5).toString("ascii") === "%PDF-") return "application/pdf";
+  if (header.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) return officeMediaType(filename, declared) ?? "application/zip";
+  const normalized = normalizeMediaType(declared);
+  if (normalized) return normalized;
+  if (/\.(txt|md|markdown|csv|json|ya?ml|html?|css|[cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|sh|sql|xml|toml)$/iu.test(filename)) return "text/plain";
+  return "application/octet-stream";
+}
+
+function officeMediaType(filename: string, declared?: string): string | undefined {
+  const supported = [
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ];
+  const normalized = normalizeMediaType(declared);
+  if (normalized && supported.includes(normalized)) return normalized;
+  if (/\.docx$/iu.test(filename)) return supported[0];
+  if (/\.xlsx$/iu.test(filename)) return supported[1];
+  if (/\.pptx$/iu.test(filename)) return supported[2];
+  return;
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/gu, (character) => `\\${character}`);
+}

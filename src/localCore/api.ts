@@ -89,7 +89,7 @@ import {
 import { DesktopUiStateStore } from "./desktopUiState.js";
 import {
   DesktopAttachmentStore,
-  DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES,
+  DESKTOP_MAX_ATTACHMENT_BYTES,
 } from "./desktopAttachments.js";
 import { syncDesktopThreadWorkspace } from "./desktopThreadWorkspace.js";
 import { resolveKestrelCoreHome, resolveLocalCorePaths } from "./home.js";
@@ -153,7 +153,7 @@ const MAX_BODY_BYTES = 256 * 1024;
 const MAX_DESKTOP_UI_STATE_BODY_BYTES =
   DESKTOP_UI_STATE_MAX_BYTES + 1024 * 1024;
 const MAX_DESKTOP_ATTACHMENT_BODY_BYTES =
-  Math.ceil((DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES * 4) / 3) + 1024 * 1024;
+  Math.ceil((DESKTOP_MAX_ATTACHMENT_BYTES * 4) / 3) + 1024 * 1024;
 
 export interface LocalCoreApiServer {
   status: LocalCoreStatus;
@@ -1938,30 +1938,35 @@ async function handleRequest(input: {
       const threadId = normalizeString(record.threadId);
       const filename = normalizeString(record.filename);
       const data = normalizeString(record.data);
+      const sourcePath = normalizeString(record.sourcePath);
       if (
         threadId === undefined ||
         filename === undefined ||
-        data === undefined
+        (data === undefined && sourcePath === undefined)
       ) {
         throw new LocalCoreApiRequestError(
           400,
           "LOCAL_CORE_ATTACHMENT_INPUT_INVALID",
-          "threadId, filename, and data are required.",
+          "threadId, filename, and either data or sourcePath are required.",
         );
       }
-      const attachment = await new DesktopAttachmentStore(
+      const attachmentStore = new DesktopAttachmentStore(
         input.status.home.homePath,
-      ).import({
-        threadId,
-        filename,
-        data: decodeStrictBase64(data),
-        ...(normalizeString(record.mimeType) !== undefined
-          ? { mimeType: normalizeString(record.mimeType) }
-          : {}),
-        ...(normalizeString(record.sha256) !== undefined
-          ? { sha256: normalizeString(record.sha256) }
-          : {}),
-      });
+      );
+      const attachment = data !== undefined
+        ? await attachmentStore.import({
+            threadId,
+            filename,
+            data: decodeStrictBase64(data),
+            ...(normalizeString(record.mimeType) !== undefined ? { mimeType: normalizeString(record.mimeType) } : {}),
+            ...(normalizeString(record.sha256) !== undefined ? { sha256: normalizeString(record.sha256) } : {}),
+          })
+        : await attachmentStore.importPath({
+            threadId,
+            filename,
+            sourcePath: sourcePath as string,
+            ...(normalizeString(record.mimeType) !== undefined ? { mimeType: normalizeString(record.mimeType) } : {}),
+          });
       writeJson(input.response, 201, { ok: true, attachment });
       return;
     }
@@ -1993,6 +1998,24 @@ async function handleRequest(input: {
         input.status.home.homePath,
       ).resolve(threadId, attachmentIds);
       writeJson(input.response, 200, { ok: true, attachments });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/v1/desktop/attachments/submit") {
+      const body = await readJsonBody(input.request);
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "Attachment submission body must be an object.");
+      }
+      const record = body as Record<string, unknown>;
+      const threadId = normalizeString(record.threadId);
+      const messageId = normalizeString(record.messageId);
+      const attachmentIds = Array.isArray(record.attachmentIds)
+        ? record.attachmentIds.flatMap((id) => normalizeString(id) ?? [])
+        : undefined;
+      if (threadId === undefined || messageId === undefined || attachmentIds === undefined) {
+        throw new LocalCoreApiRequestError(400, "LOCAL_CORE_ATTACHMENT_INPUT_INVALID", "threadId, messageId, and attachmentIds are required.");
+      }
+      await new DesktopAttachmentStore(input.status.home.homePath).markSubmitted(threadId, attachmentIds, messageId);
+      writeJson(input.response, 200, { ok: true });
       return;
     }
     const attachmentMatch = url.pathname.match(

@@ -4,6 +4,7 @@ import { auth as betterAuth } from "@/lib/auth";
 import type { OrganizationSnapshot, Session } from "@/lib/auth-types";
 import { ensureOrganizationDefaultEnvironment } from "@/lib/environments/store";
 import { knowledgeDb } from "@/lib/knowledge/db";
+import { canManageOrganization } from "@/lib/knowledge/organization-access";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { requireMobileSession } from "@/lib/mobile/session";
 import { ensurePersonalOrganizationByUserId } from "@/lib/personal-workspace";
@@ -222,20 +223,7 @@ export async function requireAdminOrganization() {
   };
 }
 
-export async function canManageOrganization(input: {
-  organizationId: string;
-  userId: string;
-}): Promise<boolean> {
-  const membership = await knowledgeDb.query.members.findFirst({
-    where: (table, { and, eq }) =>
-      and(
-        eq(table.organizationId, input.organizationId),
-        eq(table.userId, input.userId),
-      ),
-    columns: { role: true },
-  });
-  return membership?.role === "owner" || membership?.role === "admin";
-}
+export { canManageOrganization } from "@/lib/knowledge/organization-access";
 
 export async function requireOrganizationAdmin() {
   const { organizationId, session } = await requireActiveOrganization();

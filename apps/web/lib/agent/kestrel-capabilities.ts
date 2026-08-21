@@ -17,7 +17,10 @@ export const runnerKnowledgeCapabilityRequestSchema = z.object({
 });
 
 export type KestrelOneCapabilityDescriptor = {
-  name: "kestrel_one.search_knowledge_documents";
+  name:
+    | "kestrel.files.search"
+    | "kestrel.files.open"
+    | "kestrel_one.search_knowledge_documents";
   description: string;
   endpoint: {
     method: "POST";
@@ -29,20 +32,58 @@ export type KestrelOneCapabilityDescriptor = {
   };
   input: {
     type: "object";
-    required: ["query"];
-    properties: {
-      query: { type: "string"; minLength: 3; maxLength: 1000 };
-      limit: { type: "integer"; minimum: 1; maximum: 12 };
-    };
+    required: string[];
+    properties: Record<string, Record<string, string | number>>;
   };
 };
 
 export function buildKestrelOneCapabilityDescriptors(input: {
   request: Request;
+  threadId?: string | undefined;
 }): KestrelOneCapabilityDescriptor[] {
   const origin = new URL(input.request.url).origin;
 
   return [
+    ...(input.threadId ? [{
+      name: "kestrel.files.search" as const,
+      description:
+        "Search files visible to this Thread through Thread, Project, and organization scope.",
+      endpoint: {
+        method: "POST" as const,
+        url: `${origin}/api/kestrel/tools/files/search?threadId=${encodeURIComponent(input.threadId)}`,
+        auth: {
+          type: "bearer" as const,
+          tokenEnv: "KESTREL_ONE_TOOL_TOKEN" as const,
+        },
+      },
+      input: {
+        type: "object" as const,
+        required: ["query"],
+        properties: {
+          query: { type: "string", minLength: 1, maxLength: 1000 },
+          limit: { type: "integer", minimum: 1, maximum: 25 },
+        },
+      },
+    }, {
+      name: "kestrel.files.open" as const,
+      description:
+        "Open a visible Kestrel file as bounded extracted text or an authorized immutable source.",
+      endpoint: {
+        method: "POST" as const,
+        url: `${origin}/api/kestrel/tools/files/open?threadId=${encodeURIComponent(input.threadId)}`,
+        auth: {
+          type: "bearer" as const,
+          tokenEnv: "KESTREL_ONE_TOOL_TOKEN" as const,
+        },
+      },
+      input: {
+        type: "object" as const,
+        required: ["fileId"],
+        properties: {
+          fileId: { type: "string", minLength: 1, maxLength: 200 },
+        },
+      },
+    }] : []),
     {
       name: "kestrel_one.search_knowledge_documents",
       description:
@@ -123,6 +164,7 @@ export function parseRunnerKnowledgeCapabilityRequest(input: {
       userId: ticket.actorId,
       agentId: ticket.agentId,
       taskId: ticket.runId,
+      threadId: ticket.threadId,
       ...(parsed.contextGrantId
         ? { contextGrantId: parsed.contextGrantId }
         : {}),
@@ -130,5 +172,19 @@ export function parseRunnerKnowledgeCapabilityRequest(input: {
   } catch (error) {
     if (error instanceof EnvironmentTicketError) throw error;
     throw Object.assign(new Error("Unauthorized"), { code: "UNAUTHORIZED" });
+  }
+}
+
+export function assertRunnerFileThreadBinding(
+  identity: object,
+  requestedThreadId: string,
+): void {
+  const threadId = "threadId" in identity && typeof identity.threadId === "string"
+    ? identity.threadId
+    : undefined;
+  if (threadId !== requestedThreadId) {
+    throw Object.assign(new Error("Environment file capability is not valid for this Thread."), {
+      code: "UNAUTHORIZED",
+    });
   }
 }

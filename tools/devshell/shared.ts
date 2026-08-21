@@ -58,6 +58,10 @@ export function buildDevShellCommandOptions(context: SharedToolContext): DevShel
 export function buildDevShellSourceWriteGuardRequest(
   config: DevShellProfileConfig,
   mutationPolicy?: "reject" | "capture" | "direct" | undefined,
+  attachmentProtection?: {
+    workspaceRoot: string;
+    readOnlyRoots: string[];
+  } | undefined,
 ): DevShellSourceWriteGuardRequest | undefined {
   if (config.enabled !== true) {
     return ;
@@ -66,11 +70,18 @@ export function buildDevShellSourceWriteGuardRequest(
   if (guard?.enabled === false) {
     return ;
   }
+  const protectedRoots = attachmentProtection?.readOnlyRoots ?? [];
+  const sourceRoots = protectedRoots.length > 0
+    ? [
+        ...(guard?.sourceRoots ?? [attachmentProtection?.workspaceRoot ?? process.cwd()]),
+        ...protectedRoots,
+      ]
+    : guard?.sourceRoots;
   return {
     enabled: true,
     ...(mutationPolicy !== undefined ? { mutationPolicy } : {}),
-    ...(guard?.managedWorktree === true ? { managedWorktree: true } : {}),
-    ...(guard?.sourceRoots !== undefined ? { sourceRoots: [...guard.sourceRoots] } : {}),
+    ...(guard?.managedWorktree === true && protectedRoots.length === 0 ? { managedWorktree: true } : {}),
+    ...(sourceRoots !== undefined ? { sourceRoots: [...new Set(sourceRoots)] } : {}),
     ...(guard?.allowedWriteRoots !== undefined ? { allowedWriteRoots: [...guard.allowedWriteRoots] } : {}),
     ...(guard?.approvalGrants !== undefined ? { approvalGrants: [...guard.approvalGrants] } : {}),
   };

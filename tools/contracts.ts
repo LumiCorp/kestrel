@@ -95,6 +95,7 @@ export interface SharedToolDefinition {
 export interface FileSystemToolPolicyConfig {
   workspaceRoot: string;
   tempRoots: string[];
+  readOnlyRoots?: string[] | undefined;
 }
 
 export interface DelegationTaskSpawnRequest {
