@@ -75,6 +75,8 @@
     "validate:chromium": "node scripts/validate.mjs --leaf chromium all",
     "validate:audit": "node scripts/validate.mjs --leaf audit all",
     "production:cutover:preflight": "node --import tsx scripts/production-cutover-preflight.ts",
+    "kubernetes:doks:preflight": "node --import tsx scripts/kubernetes-doks-preflight.ts",
+    "test:kubernetes:doks": "node --import tsx --test scripts/kubernetes-doks-preflight.test.ts",
     "production:image:publish": "node --import tsx scripts/publish-production-image.ts",
     "production:fly:machine": "node --import tsx scripts/deploy-production-fly-machine.ts",
     "brand:build": "node brand/scripts/build-brand-assets.mjs && node brand/scripts/build-desktop-brand-assets.mjs",

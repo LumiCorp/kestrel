@@ -25,6 +25,14 @@ Slices 1-6 provide versioned contracts, additive persistence, trusted connector 
 
 Slice 4 deliberately supplied only hermetic fake-API, process, and Postgres lifecycle evidence. This slice owns every real-cluster proof: optional local KIND smoke coverage, disposable managed-cluster canaries, CSI behavior, enforced NetworkPolicy, Gateway API/Ingress controller behavior, public DNS, and TLS.
 
+The lowest-cost credible managed-cluster path is a manually created,
+single-node DOKS cluster. DOKS is a non-reference `qualified` profile only: it
+uses the observed block-storage and snapshot CSI classes plus the supported
+Gateway API/Cilium path, runs the same canary and scenario evidence, and is
+deleted immediately after proof. Repository tooling may inspect a selected
+`kubectl` context and emit sanitized facts, but it must not create or mutate a
+DigitalOcean account, cluster, load balancer, DNS record, or registry.
+
 This slice owns proof tooling, certified cluster fixtures, fault injection, security review, artifact publication, staged enablement, pilot observation, rollback drills, and the final release decision. It may fix defects found by those gates but may not weaken the locked profile, bypass qualification, relabel mock evidence, or broaden automatic deployment authority.
 
 ## Locked Architectural Decisions
@@ -39,6 +47,9 @@ This slice owns proof tooling, certified cluster fixtures, fault injection, secu
 - Pilot rollback is cleanup-first: stop/delete, verify inventory, revoke, then uninstall.
 - Provider migration and bulk Fly-to-Kubernetes conversion are prohibited.
 - Unit mocks, hermetic fake APIs, isolated provider clusters, pilot use, and production use are reported separately.
+- DOKS evidence is labeled `isolated_provider` with profile `qualified`; it can
+  validate the implementation cheaply but never contributes GKE/EKS
+  certification credit.
 
 ## Public Contracts, Schemas, And Wire Formats
 
@@ -83,17 +94,19 @@ Add a certification registry entry only by committing a reviewed proof summary t
 1. Build the provider-neutral Kubernetes canary on the same public services used by administrators.
 2. Add the proof schema, strict parser, scenario registry, cleanup inventory, redaction, and release checks.
 3. Add hermetic fault controls to the fake Kubernetes API and connector transport.
-4. Provision disposable internal GKE and EKS certification clusters from reviewed infrastructure instructions; do not encode unapproved production mutations in repository scripts.
-5. Run read-only and active qualification on each reference profile.
-6. Run the full GKE Gateway API canary and resolve every failed assertion without weakening it.
-7. Run the full EKS Ingress canary and resolve every failed assertion without weakening it.
-8. Complete connector/RBAC/network/secret/routing threat review and fix all release-blocking findings.
-9. Run every repository and package validation gate on the final code and artifact digests.
-10. Manually publish the signed connector image and Helm chart, then verify their digest and provenance from a clean consumer.
-11. Enable `kubernetes_byoc` for one internal organization, install from the published chart, and repeat the canary through UI/API authority.
-12. Execute and document the full rollback drill on the internal organization.
-13. Select one explicitly approved customer cluster, require current qualification, enable only that organization, and run a bounded pilot.
-14. Review pilot evidence and residuals before deciding general availability. Do not enable organizations in bulk as part of this slice.
+4. Optionally run the local KIND smoke; label it `kind_smoke` and give it no isolated-provider credit.
+5. Manually create a short-lived single-node DOKS cluster, run the read-only DOKS preflight, configure `selectedCertificationProfile: null` with `edge.mode: gateway_api`, and complete the full `qualified` canary before teardown.
+6. Provision disposable internal GKE and EKS certification clusters from reviewed infrastructure instructions; do not encode unapproved production mutations in repository scripts.
+7. Run read-only and active qualification on each reference profile.
+8. Run the full GKE Gateway API canary and resolve every failed assertion without weakening it.
+9. Run the full EKS Ingress canary and resolve every failed assertion without weakening it.
+10. Complete connector/RBAC/network/secret/routing threat review and fix all release-blocking findings.
+11. Run every repository and package validation gate on the final code and artifact digests.
+12. Manually publish the signed connector image and Helm chart, then verify their digest and provenance from a clean consumer.
+13. Enable `kubernetes_byoc` for one internal organization, install from the published chart, and repeat the canary through UI/API authority.
+14. Execute and document the full rollback drill on the internal organization.
+15. Select one explicitly approved customer cluster, require current qualification, enable only that organization, and run a bounded pilot.
+16. Review pilot evidence and residuals before deciding general availability. Do not enable organizations in bulk as part of this slice.
 
 Optional KIND smoke runs before the managed profiles when Docker and KIND are available:
 
@@ -108,6 +121,23 @@ kind delete cluster --name kestrel-byoc-smoke
 ```
 
 The smoke records installation, health, enrollment, and uninstall only. It receives no certification credit and does not assert cloud CSI, NetworkPolicy enforcement, Gateway API, Ingress, DNS, or TLS behavior.
+
+For the low-cost DOKS path, run the repository-owned read-only preflight before
+installing the connector:
+
+```sh
+pnpm kubernetes:doks:preflight -- \
+  --context <doks-context> \
+  --output artifacts/doks-cluster-facts.json \
+  --storage-class do-block-storage \
+  --snapshot-driver dobs.csi.digitalocean.com
+```
+
+Then run the existing canary with `--profile qualified` and external scenario
+evidence. The canary records the configured connection edge mode, so the DOKS
+connection must remain `gateway_api`; it must not infer Ingress from the
+`qualified` profile name. DOKS must be torn down after cleanup; its proof
+remains separate from the GKE and EKS artifacts.
 
 ## Data Flow And Lifecycle Behavior
 

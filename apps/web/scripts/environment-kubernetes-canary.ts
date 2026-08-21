@@ -11,6 +11,10 @@ import {
   type KubernetesProofEvidenceClass,
   type KubernetesProofProfile,
 } from "@/lib/environments/kubernetes-proof";
+import {
+  resolveKubernetesCanaryEdgeMode,
+  type KubernetesCanaryEdgeMode,
+} from "@/lib/environments/kubernetes-canary-contract";
 
 const execFileAsync = promisify(execFile);
 const TERMINAL_OPERATION_STATES = new Set(["completed", "failed", "cancelled"]);
@@ -107,6 +111,7 @@ async function main() {
     workspaceId: "",
     environmentName: `BYOC canary ${args.tag}`,
   };
+  let edgeMode: KubernetesCanaryEdgeMode | undefined;
   let environmentCreated = false;
   let threadCreated = false;
   let workspaceCreated = false;
@@ -150,6 +155,7 @@ async function main() {
     requestIds.push(connections.requestId);
     const connection = connections.value.connections?.find((item) => item.id === args.connection);
     if (!connection) throw new Error(`Kubernetes connection ${args.connection} was not found for this organization.`);
+    edgeMode = resolveKubernetesCanaryEdgeMode({ connection, profile });
     const connectionStatus = String(connection.status ?? "");
     if (connectionStatus !== "ready") throw new Error(`Kubernetes connection is not ready: ${connectionStatus || "unknown"}.`);
     const qualification = connection.qualification as JsonObject | null | undefined;
@@ -302,6 +308,7 @@ async function main() {
       });
   }
 
+  if (!edgeMode) throw new Error("Canary proof has no resolved connection edge mode.");
   const proof = {
     contract: KUBERNETES_BYOC_PROOF_VERSION,
     proofId,
@@ -324,7 +331,7 @@ async function main() {
     platform: {
       kubernetesVersion: required("KESTREL_KUBERNETES_VERSION"),
       distribution: profile === "gke" ? "gke" : profile === "eks" ? "eks" : "other",
-      edgeMode: profile === "gke" ? "gateway_api" : "ingress",
+      edgeMode,
       edgeController: required("KESTREL_KUBERNETES_EDGE_CONTROLLER"),
       cni: required("KESTREL_KUBERNETES_CNI"),
       storageCsi: required("KESTREL_KUBERNETES_STORAGE_CSI"),

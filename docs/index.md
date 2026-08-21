@@ -51,6 +51,7 @@ task instead of reading the repository as one long manual.
 - [Quality gates](../apps/docs/content/operations/quality-gates.mdx)
 - [Deployment troubleshooting](../apps/docs/content/deploy/deployment-troubleshooting.mdx)
 - [Production release runbook](production-delivery-channels.md)
+- [Kubernetes BYOC DOKS qualified validation](runbooks/kubernetes-byoc-doks-qualified.md)
 - [Operations glossary](glossary.md)
 - [Evaluations with Ruhroh](../apps/docs/content/operations/evaluations.mdx)
 

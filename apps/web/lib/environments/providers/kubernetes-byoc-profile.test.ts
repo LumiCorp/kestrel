@@ -108,6 +108,35 @@ test("a compatible non-reference profile is qualified but never certified", () =
   });
 });
 
+test("the DOKS-style Gateway API profile is explicitly qualified, not certified", () => {
+  const profile = parseKubernetesByocProfileV1({
+    ...gkeProfile,
+    selectedCertificationProfile: null,
+    storageClassName: "do-block-storage",
+    volumeSnapshotClassName: "dobs-snapshots",
+    controllerNamespace: "kube-system",
+    controllerPodSelector: { "k8s-app": "cilium" },
+    encryptionAttestations: {
+      persistentVolumes: { encryption: "unknown", evidenceRef: null },
+      kubernetesSecrets: { encryption: "unknown", evidenceRef: null },
+    },
+    platform: {
+      distribution: "other",
+      computeProfile: "basic",
+      networkPolicyProvider: "cilium",
+      storageCsiDriver: "dobs.csi.digitalocean.com",
+      snapshotCsiDriver: "dobs.csi.digitalocean.com",
+      edgeController: "cilium-gateway",
+    },
+  });
+
+  assert.deepEqual(resolveKubernetesByocSupportState({ profile, compatible: true }), {
+    state: "qualified",
+    profileId: null,
+    reason: "non_reference_profile",
+  });
+});
+
 test("an explicit certified profile ID fails closed when verified facts differ", () => {
   const profile = parseKubernetesByocProfileV1({
     ...gkeProfile,
