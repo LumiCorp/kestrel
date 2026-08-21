@@ -45,6 +45,13 @@ actual_pnpm="$(docker run --rm \
   "$image" \
   -lc 'pnpm --version')"
 test "$actual_pnpm" = "$expected_pnpm"
+test "$(docker run --rm \
+  --network none \
+  --env HOME=/workspace/.kestrel/runner \
+  --workdir /workspace \
+  --entrypoint node \
+  "$image" \
+  /app/apps/workspace-runtime/scripts/dev-shell-package-smoke.mjs)" = "dev-shell-execution-ok"
 docker exec "$container" node --input-type=module --eval \
   'await import("@kestrel-agents/files")'
 
