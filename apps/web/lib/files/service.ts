@@ -14,7 +14,7 @@ import {
 import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
 import { extractAttachmentTextIsolated, isAttachmentTextExtractable } from "@kestrel-agents/files";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { canManageOrganization } from "@/lib/knowledge/auth";
+import { canManageOrganization } from "@/lib/knowledge/organization-access";
 import { getProjectAccess, requireProjectRole } from "@/lib/projects/access";
 import { getThreadForUser } from "@/lib/threads/store";
 import { getManagedFileStorageProvider } from "./storage-provider";

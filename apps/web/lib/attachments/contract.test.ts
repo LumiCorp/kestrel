@@ -72,6 +72,8 @@ test("unified file search preserves migrated Knowledge chunk retrieval", () => {
 
 test("file publication uses organization membership authority", () => {
   const service = read("lib/files/service.ts");
+  assert.doesNotMatch(service, /@\/lib\/knowledge\/auth/u);
+  assert.match(service, /@\/lib\/knowledge\/organization-access/u);
   assert.match(service, /canManageOrganization/u);
   assert.match(service, /Organization administrator access is required to publish organization files/u);
   assert.match(service, /Organization administrator access is required to revoke organization files/u);
