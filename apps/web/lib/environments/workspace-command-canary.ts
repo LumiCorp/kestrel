@@ -22,10 +22,15 @@ export function hasCompletedExecCommandCanaryProof(
       const data = isRecord(part.data) ? part.data : undefined;
       const output = isRecord(data?.output) ? data.output : undefined;
       const auditRecord = isRecord(output?.auditRecord) ? output.auditRecord : undefined;
-      const commandOutput = isRecord(auditRecord?.output) ? auditRecord.output : undefined;
+      const auditedCommandOutput = isRecord(auditRecord?.output)
+        ? auditRecord.output
+        : undefined;
+      const commandOutput = output?.status === "OK"
+        ? auditedCommandOutput
+        : output;
       return data?.toolName === "exec_command" &&
         data.phase === "completed" &&
-        output?.status === "OK" &&
+        (output?.status === "OK" || output?.status === "completed") &&
         commandOutput?.status === "completed" &&
         commandOutput.exitCode === 0 &&
         [commandOutput.output, commandOutput.text, commandOutput.stdout]
