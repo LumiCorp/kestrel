@@ -69,10 +69,22 @@ test("knowledge queue status does not eagerly load worker runtimes", async () =>
 test("document ingestion traces the canvas JavaScript and native runtime", () => {
   const apiIncludes =
     nextConfig.outputFileTracingIncludes?.["/api/knowledge/documents/**"];
+  const attachmentCronIncludes =
+    nextConfig.outputFileTracingIncludes?.["/api/cron/attachments/**"];
+  const fileApiIncludes =
+    nextConfig.outputFileTracingIncludes?.["/api/files/**"];
+  const projectFileApiIncludes =
+    nextConfig.outputFileTracingIncludes?.["/api/projects/**/files"];
+  const threadAttachmentApiIncludes =
+    nextConfig.outputFileTracingIncludes?.["/api/threads/**/attachments/**"];
   const pageIncludes = nextConfig.outputFileTracingIncludes?.["/knowledge"];
 
   assert.ok(apiIncludes);
   assert.deepEqual(pageIncludes, apiIncludes);
+  assert.deepEqual(attachmentCronIncludes, apiIncludes);
+  assert.deepEqual(fileApiIncludes, apiIncludes);
+  assert.deepEqual(projectFileApiIncludes, apiIncludes);
+  assert.deepEqual(threadAttachmentApiIncludes, apiIncludes);
   assert.equal(
     apiIncludes.some((pattern) => pattern.includes("@napi-rs/canvas/**/*")),
     true

@@ -1,6 +1,5 @@
 import JSZip from "jszip";
 import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
 import { read, utils } from "xlsx";
 import { Worker } from "node:worker_threads";
 
@@ -112,6 +111,7 @@ export async function extractAttachmentText(input: {
   let text = "";
   const warnings: string[] = [];
   if (mediaType === "application/pdf") {
+    const PDFParse = await loadPdfParser();
     const parser = new PDFParse({ data: input.buffer });
     try {
       const parsed = await parser.getText();
@@ -170,6 +170,16 @@ export async function extractAttachmentText(input: {
     truncated: bytes.byteLength > maxBytes,
     warnings,
   };
+}
+
+async function loadPdfParser(): Promise<typeof import("pdf-parse").PDFParse> {
+  const { DOMMatrix, ImageData, Path2D } = await import("@napi-rs/canvas");
+  const runtimeGlobals = globalThis as unknown as Record<string, unknown>;
+  runtimeGlobals.DOMMatrix ??= DOMMatrix;
+  runtimeGlobals.ImageData ??= ImageData;
+  runtimeGlobals.Path2D ??= Path2D;
+  const { PDFParse } = await import("pdf-parse");
+  return PDFParse;
 }
 
 async function assertSafeOfficeArchive(buffer: Buffer): Promise<void> {
