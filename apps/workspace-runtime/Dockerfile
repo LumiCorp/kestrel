@@ -46,7 +46,9 @@ ENV PATH=$PNPM_HOME:$PATH
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl openssh-client procps python3 util-linux && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/package.json ./package.json
-RUN corepack enable pnpm && pnpm --version
+RUN corepack enable pnpm \
+    && corepack install --global "$(node -p "require('./package.json').packageManager")" \
+    && test "$(cd /tmp && pnpm --version)" = "$(node -p "require('./package.json').packageManager.split('@')[1].split('+')[0]")"
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/db ./dist/db
