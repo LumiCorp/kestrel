@@ -27,7 +27,11 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: monorepoRoot,
   outputFileTracingIncludes: {
     "/knowledge": canvasRuntimeFiles,
+    "/api/cron/attachments/**": canvasRuntimeFiles,
+    "/api/files/**": canvasRuntimeFiles,
     "/api/knowledge/documents/**": canvasRuntimeFiles,
+    "/api/projects/**/files": canvasRuntimeFiles,
+    "/api/threads/**/attachments/**": canvasRuntimeFiles,
   },
 
   serverExternalPackages: [
