@@ -8,7 +8,7 @@ import { resolveProjectRuntimeContext } from "@/lib/projects/runtime-context";
 import { NEW_THREAD_WORKSPACE_MODES } from "@/lib/threads/workspace-mode";
 import { defaultThreadWorkspaceMode } from "@/lib/turns/concurrency";
 import {
-  createThreadForUser,
+  ensureThreadForUser,
   getThreadUnreadCountsForUser,
   listThreadsForUser,
   saveThreadMessages,
@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const thread = await createThreadForUser({
+    const thread = await ensureThreadForUser({
       id: body.id,
       userId: user.id,
       organizationId,

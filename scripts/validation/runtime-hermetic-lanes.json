@@ -124,6 +124,7 @@
         "tests/unit/retry-after.test.ts",
         "tests/unit/runner-profile-source-policy.test.ts",
         "tests/unit/runtime-assembly.test.ts",
+        "tests/unit/runtime-attachment-materialization.test.ts",
         "tests/unit/runtime-delegation.test.ts",
         "tests/unit/runtime-event-projections.test.ts",
         "tests/unit/runtime-io-cancellation.test.ts",

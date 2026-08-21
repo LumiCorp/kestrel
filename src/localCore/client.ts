@@ -705,6 +705,16 @@ export class LocalCoreClient {
     );
   }
 
+  async importDesktopAttachmentPath(input: {
+    threadId: string;
+    filename: string;
+    sourcePath: string;
+    mimeType?: string | undefined;
+  }): Promise<DesktopAttachmentMetadata> {
+    const response = await this.post("/v1/desktop/attachments", input);
+    return readObjectField<DesktopAttachmentMetadata>(response, "attachment", "Desktop attachment");
+  }
+
   async listDesktopAttachments(
     threadId: string,
   ): Promise<DesktopAttachmentMetadata[]> {
@@ -743,6 +753,14 @@ export class LocalCoreClient {
         "Local Core Desktop attachment resolution response is invalid.",
       );
     return response.attachments as RunTurnAttachment[];
+  }
+
+  async markDesktopAttachmentsSubmitted(
+    threadId: string,
+    attachmentIds: string[],
+    messageId: string,
+  ): Promise<void> {
+    await this.post("/v1/desktop/attachments/submit", { threadId, attachmentIds, messageId });
   }
 
   async readDesktopProjectLauncher(input: {

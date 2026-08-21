@@ -246,15 +246,23 @@ export type DesktopConversationMessageRequest = Omit<
 };
 
 export interface DesktopAttachmentMetadata {
+  fileId: string;
   attachmentId: string;
   threadId: string;
   filename: string;
   mimeType: string;
   sizeBytes: number;
   sha256: string;
-  kind: "image" | "text";
+  kind: "image" | "text" | "file";
+  declaredMimeType?: string | undefined;
+  detectedMimeType: string;
+  lifecycleState: "draft" | "ready" | "quarantined" | "failed" | "deleted";
+  representationStatus: "native_image" | "extracted_text" | "staged_file" | "metadata_only";
+  metadataOnlyReason?: string | undefined;
   createdAt: string;
   submittedAt?: string | undefined;
+  messageId?: string | undefined;
+  messageIds?: string[] | undefined;
 }
 
 export interface DesktopOperatorInboxItem {
@@ -1143,9 +1151,9 @@ function parseDesktopRunTurnAttachments(
   if (value === undefined) {
     return;
   }
-  if (Array.isArray(value) === false || value.length > 8) {
+  if (Array.isArray(value) === false || value.length > 20) {
     throw new Error(
-      `Desktop request field '${field}' must contain at most 8 attachments.`,
+      `Desktop request field '${field}' must contain at most 20 attachments.`,
     );
   }
   let totalBytes = 0;
@@ -1181,29 +1189,29 @@ function parseDesktopRunTurnAttachments(
       typeof attachment.sizeBytes !== "number" ||
       Number.isInteger(attachment.sizeBytes) === false ||
       attachment.sizeBytes < 0 ||
-      attachment.sizeBytes > 5 * 1024 * 1024
+      attachment.sizeBytes > 100 * 1024 * 1024
     ) {
       throw new Error(
         `Desktop request field '${field}[${index}].sizeBytes' is invalid.`,
       );
     }
     totalBytes += attachment.sizeBytes;
-    if (totalBytes > 10 * 1024 * 1024) {
+    if (totalBytes > 500 * 1024 * 1024) {
       throw new Error(
-        `Desktop request field '${field}' exceeds the 10 MB attachment limit.`,
+        `Desktop request field '${field}' exceeds the 500 MiB attachment limit.`,
       );
     }
-    if (attachment.kind !== "text" && attachment.kind !== "image") {
+    if (attachment.kind !== "text" && attachment.kind !== "image" && attachment.kind !== "file") {
       throw new Error(
         `Desktop request field '${field}[${index}].kind' is invalid.`,
       );
     }
-    if (attachment.kind === "text" && typeof attachment.text !== "string") {
+    if (attachment.kind === "text" && typeof attachment.text !== "string" && typeof attachment.path !== "string") {
       throw new Error(
         `Desktop text attachment '${field}[${index}]' requires text.`,
       );
     }
-    if (attachment.kind === "image" && typeof attachment.data !== "string") {
+    if (attachment.kind === "image" && typeof attachment.data !== "string" && typeof attachment.path !== "string") {
       throw new Error(
         `Desktop image attachment '${field}[${index}]' requires data.`,
       );
@@ -1211,9 +1219,9 @@ function parseDesktopRunTurnAttachments(
     if (
       (typeof attachment.text === "string" &&
         new TextEncoder().encode(attachment.text).byteLength >
-          5 * 1024 * 1024) ||
+          1024 * 1024) ||
       (typeof attachment.data === "string" &&
-        attachment.data.length > 7 * 1024 * 1024)
+        attachment.data.length > 28 * 1024 * 1024)
     ) {
       throw new Error(
         `Desktop attachment '${field}[${index}]' payload is too large.`,
@@ -1233,6 +1241,13 @@ function parseDesktopRunTurnAttachments(
             attachment.createdAt,
             `${field}[${index}].createdAt`,
           );
+    const representationStatus = parseRequiredDesktopString(
+      attachment.representationStatus,
+      `${field}[${index}].representationStatus`,
+    ) as RunTurnAttachment["representationStatus"];
+    if (["native_image", "extracted_text", "staged_file", "metadata_only"].includes(representationStatus) === false) {
+      throw new Error(`Desktop request field '${field}[${index}].representationStatus' is invalid.`);
+    }
     return {
       attachmentId,
       filename,
@@ -1240,10 +1255,14 @@ function parseDesktopRunTurnAttachments(
       sizeBytes: attachment.sizeBytes,
       sha256,
       kind: attachment.kind,
+      representationStatus,
       ...(threadId !== undefined ? { threadId } : {}),
       ...(createdAt !== undefined ? { createdAt } : {}),
       ...(typeof attachment.data === "string" ? { data: attachment.data } : {}),
       ...(typeof attachment.text === "string" ? { text: attachment.text } : {}),
+      ...(typeof attachment.textTruncated === "boolean" ? { textTruncated: attachment.textTruncated } : {}),
+      ...(typeof attachment.path === "string" ? { path: attachment.path } : {}),
+      ...(typeof attachment.metadataOnlyReason === "string" ? { metadataOnlyReason: attachment.metadataOnlyReason } : {}),
     };
   });
 }

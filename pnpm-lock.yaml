@@ -17,6 +17,9 @@ importers:
       '@kestrel-agents/conversation':
         specifier: workspace:*
         version: link:packages/conversation
+      '@kestrel-agents/files':
+        specifier: workspace:*
+        version: link:packages/attachments
       '@kestrel-agents/memory':
         specifier: workspace:*
         version: link:packages/memory
@@ -29,6 +32,9 @@ importers:
       '@kestrel-agents/workspace-skills':
         specifier: workspace:*
         version: link:packages/workspace-skills
+      '@kestrel/mcp-security':
+        specifier: workspace:*
+        version: link:packages/mcp-security
       '@lumi/kestrel-environment-auth':
         specifier: workspace:^
         version: link:packages/environment-auth
@@ -68,6 +74,9 @@ importers:
       react:
         specifier: ^19.2.4
         version: 19.2.4
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
       tsx:
         specifier: ^4.19.3
         version: 4.21.0
@@ -516,6 +525,9 @@ importers:
       '@kestrel-agents/conversation':
         specifier: 0.8.5
         version: link:../../packages/conversation
+      '@kestrel-agents/files':
+        specifier: 0.8.5
+        version: link:../../packages/attachments
       '@kestrel-agents/memory':
         specifier: 0.8.5
         version: link:../../packages/memory
@@ -1011,6 +1023,31 @@ importers:
       ai:
         specifier: 6.0.246
         version: 6.0.246(zod@4.3.6)
+
+  packages/attachments:
+    dependencies:
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
+      mammoth:
+        specifier: ^1.12.0
+        version: 1.12.0
+      pdf-parse:
+        specifier: ^2.4.5
+        version: 2.4.5
+      xlsx:
+        specifier: ^0.18.5
+        version: 0.18.5
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.19.11
+      tsx:
+        specifier: ^4.20.5
+        version: 4.21.0
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
 
   packages/conversation: {}
 

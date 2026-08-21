@@ -341,6 +341,12 @@ export type KestrelOneAgentResponseInput = {
   parentThreadId?: string | null;
   durableTurnId?: string | undefined;
   messages: UIMessage[];
+  threadFileInventory?: Array<{
+    fileId: string;
+    filename: string;
+    mediaType: string | null;
+    sizeBytes: number;
+  }>;
   approvalDecision?:
     | {
         approvalId: string;
@@ -1145,6 +1151,7 @@ export async function createKestrelOneAgentResponse(
     threadId: input.threadId,
     durableTurnId: input.durableTurnId,
     messages: input.messages,
+    threadFileInventory: input.threadFileInventory,
     approvalDecision: input.approvalDecision,
     interactionResponse: input.interactionResponse,
     modelId: desktopLocalModel?.id ?? resolvedModel!.model.id,

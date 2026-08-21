@@ -9,7 +9,7 @@ export type {
   RunnerProjectActionType,
 } from "./projectActions.js";
 
-export const EXECUTION_PROTOCOL_VERSION = "execution-protocol-v3" as const;
+export const EXECUTION_PROTOCOL_VERSION = "execution-protocol-v4" as const;
 export const RUNNER_COMMAND_CONTRACT_VERSION = "runner-command-v3" as const;
 export const RUNNER_EVENT_CONTRACT_VERSION = "dotted-runtime-events-v3" as const;
 export const RUNNER_WAITING_PROMPT_HISTORY_KIND = "runtime.waiting_prompt" as const;
@@ -230,7 +230,7 @@ export const RUNNER_RUN_TERMINAL_EVENT_TYPES = [
 export type RunnerRunTerminalEventType =
   (typeof RUNNER_RUN_TERMINAL_EVENT_TYPES)[number];
 
-export interface ExecutionProtocolDescriptorV3 {
+export interface ExecutionProtocolDescriptorV4 {
   version: typeof EXECUTION_PROTOCOL_VERSION;
   contracts: {
     command: typeof RUNNER_COMMAND_CONTRACT_VERSION;
@@ -248,7 +248,7 @@ export interface ExecutionProtocolDescriptorV3 {
   };
 }
 
-export const EXECUTION_PROTOCOL_V3: ExecutionProtocolDescriptorV3 = {
+export const EXECUTION_PROTOCOL_V4: ExecutionProtocolDescriptorV4 = {
   version: EXECUTION_PROTOCOL_VERSION,
   contracts: {
     command: RUNNER_COMMAND_CONTRACT_VERSION,
@@ -265,11 +265,6 @@ export const EXECUTION_PROTOCOL_V3: ExecutionProtocolDescriptorV3 = {
     runTerminal: RUNNER_RUN_TERMINAL_EVENT_TYPES,
   },
 };
-
-/** @deprecated Use EXECUTION_PROTOCOL_V3. */
-export const EXECUTION_PROTOCOL_V2 = EXECUTION_PROTOCOL_V3;
-/** @deprecated Use ExecutionProtocolDescriptorV3. */
-export type ExecutionProtocolDescriptorV2 = ExecutionProtocolDescriptorV3;
 
 export interface RunnerWaitingPromptHistoryDataV2 {
   kind: typeof RUNNER_WAITING_PROMPT_HISTORY_KIND;
@@ -414,18 +409,35 @@ export type RunnerHistoryEntry = RunnerHistoryEntryBase & (
     }
 );
 
-export interface RunnerTurnAttachment {
+export interface RunnerTurnFile {
+  /** Canonical durable identity. */
+  fileId?: string | undefined;
+  /** @deprecated Protocol v4 compatibility alias for fileId. */
   attachmentId: string;
   threadId?: string | undefined;
   filename: string;
   mimeType: string;
   sizeBytes: number;
   sha256: string;
-  kind: "image" | "text";
+  kind: "image" | "text" | "file";
+  representationStatus:
+    | "native_image"
+    | "extracted_text"
+    | "staged_file"
+    | "metadata_only";
   createdAt?: string | undefined;
   data?: string | undefined;
   text?: string | undefined;
+  textTruncated?: boolean | undefined;
+  path?: string | undefined;
+  /** Transient transport input; runners must materialize and remove it before persistence. */
+  sourceUrl?: string | undefined;
+  sourceUrlExpiresAt?: string | undefined;
+  metadataOnlyReason?: string | undefined;
 }
+
+/** @deprecated Use RunnerTurnFile. */
+export type RunnerTurnAttachment = RunnerTurnFile;
 
 export interface RunnerProjectContext {
   projectId: string;
@@ -2363,7 +2375,7 @@ export function parseRunnerCommandV2(value: unknown): RunnerCommand {
   const id = requireNonEmptyString(command.id, "runner command.id");
   if (!isRunnerCommandType(command.type)) {
     throw new RunnerProtocolContractError(
-      `runner command.type must be a supported Execution Protocol v3 command, received '${String(command.type)}'`,
+      `runner command.type must be a supported Execution Protocol v4 command, received '${String(command.type)}'`,
     );
   }
   const payload = parseRunnerCommandPayloadV2(
@@ -2387,7 +2399,7 @@ export function parseRunnerEventV2(value: unknown): RunnerEvent {
   const id = requireNonEmptyString(event.id, "runner event.id");
   if (!isRunnerEventType(event.type)) {
     throw new RunnerProtocolContractError(
-      `runner event.type must be a supported Execution Protocol v3 event, received '${String(event.type)}'`,
+      `runner event.type must be a supported Execution Protocol v4 event, received '${String(event.type)}'`,
     );
   }
   const ts = requireNonEmptyString(event.ts, "runner event.ts");
@@ -4010,18 +4022,54 @@ function validateOptionalAttachments(value: unknown, label: string): void {
   if (value === undefined) {
     return;
   }
+  const attachments: Array<{ sizeBytes: number; fileId: string }> = [];
   validateRecordArray(value, label, (attachment, attachmentLabel) => {
-    requireNonEmptyString(attachment.attachmentId, `${attachmentLabel}.attachmentId`);
+    const fileId = attachment.fileId ?? attachment.attachmentId;
+    requireNonEmptyString(fileId, `${attachmentLabel}.fileId`);
+    validateOptionalNonEmptyString(attachment.fileId, `${attachmentLabel}.fileId`);
+    validateOptionalNonEmptyString(attachment.attachmentId, `${attachmentLabel}.attachmentId`);
     validateOptionalNonEmptyString(attachment.threadId, `${attachmentLabel}.threadId`);
     requireNonEmptyString(attachment.filename, `${attachmentLabel}.filename`);
     requireNonEmptyString(attachment.mimeType, `${attachmentLabel}.mimeType`);
     requireNonNegativeInteger(attachment.sizeBytes, `${attachmentLabel}.sizeBytes`);
-    requireNonEmptyString(attachment.sha256, `${attachmentLabel}.sha256`);
-    validateEnum(attachment.kind, `${attachmentLabel}.kind`, ["image", "text"]);
+    const sha256 = requireNonEmptyString(attachment.sha256, `${attachmentLabel}.sha256`);
+    if (/^[a-f0-9]{64}$/u.test(sha256) === false) {
+      throw new RunnerProtocolContractError(`${attachmentLabel}.sha256 must be a SHA-256 digest.`);
+    }
+    validateEnum(attachment.kind, `${attachmentLabel}.kind`, ["image", "text", "file"]);
+    validateEnum(attachment.representationStatus, `${attachmentLabel}.representationStatus`, [
+      "native_image",
+      "extracted_text",
+      "staged_file",
+      "metadata_only",
+    ]);
     validateOptionalNonEmptyString(attachment.createdAt, `${attachmentLabel}.createdAt`);
     validateOptionalString(attachment.data, `${attachmentLabel}.data`);
     validateOptionalString(attachment.text, `${attachmentLabel}.text`);
+    if (attachment.textTruncated !== undefined && typeof attachment.textTruncated !== "boolean") {
+      throw new RunnerProtocolContractError(`${attachmentLabel}.textTruncated must be a boolean.`);
+    }
+    validateOptionalNonEmptyString(attachment.path, `${attachmentLabel}.path`);
+    validateOptionalNonEmptyString(attachment.sourceUrl, `${attachmentLabel}.sourceUrl`);
+    validateOptionalNonEmptyString(attachment.sourceUrlExpiresAt, `${attachmentLabel}.sourceUrlExpiresAt`);
+    validateOptionalNonEmptyString(attachment.metadataOnlyReason, `${attachmentLabel}.metadataOnlyReason`);
+    attachments.push({
+      fileId: String(fileId),
+      sizeBytes: Number(attachment.sizeBytes),
+    });
   });
+  if (attachments.length > 20) {
+    throw new RunnerProtocolContractError(`${label} must contain at most 20 attachments.`);
+  }
+  if (new Set(attachments.map((entry) => entry.fileId)).size !== attachments.length) {
+    throw new RunnerProtocolContractError(`${label} file IDs must be unique.`);
+  }
+  if (attachments.some((entry) => entry.sizeBytes > 100 * 1024 * 1024)) {
+    throw new RunnerProtocolContractError(`${label} attachments must each be at most 100 MiB.`);
+  }
+  if (attachments.reduce((sum, entry) => sum + entry.sizeBytes, 0) > 500 * 1024 * 1024) {
+    throw new RunnerProtocolContractError(`${label} must total at most 500 MiB.`);
+  }
 }
 
 function validateOptionalWorkspaceSkills(value: unknown, label: string): void {

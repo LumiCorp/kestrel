@@ -1,6 +1,10 @@
 import "server-only";
 
 import type { KestrelInteractionPresentation } from "@kestrel-agents/ai-sdk";
+import {
+  CONVERSATION_ATTACHMENT_MAX_COUNT,
+  CONVERSATION_ATTACHMENT_MAX_TURN_BYTES,
+} from "@kestrel-agents/conversation";
 import { parseRunnerStructuredReviewInteractionV1 } from "@kestrel-agents/protocol";
 import {
   and,
@@ -325,6 +329,7 @@ type DurableThreadTurnInput = {
   | {
       messageId: string;
       messageParts: unknown;
+      attachmentIds?: string[];
       sourceMessageId?: string | null;
       approvalDecision?: undefined;
     }
@@ -454,6 +459,45 @@ export async function createDurableThreadTurnInTransaction(
   const now = new Date();
   const requestedInteractionMode = input.requestedInteractionMode ?? "chat";
   if (input.messageId) {
+    const attachmentIds = input.attachmentIds ?? [];
+    if (attachmentIds.length > CONVERSATION_ATTACHMENT_MAX_COUNT) {
+      throw new DurableTurnError("TURN_CONFLICT", "A message can include at most 20 attachments.");
+    }
+    if (new Set(attachmentIds).size !== attachmentIds.length) {
+      throw new DurableTurnError("TURN_CONFLICT", "Attachment IDs must be unique.");
+    }
+    const attachments = attachmentIds.length === 0
+      ? []
+      : await tx.select({
+          id: schema.kestrelFiles.id,
+          sizeBytes: schema.kestrelFiles.sizeBytes,
+          sha256: schema.kestrelFiles.sha256,
+          detectedMediaType: schema.kestrelFiles.detectedMediaType,
+          lifecycleState: schema.kestrelFiles.lifecycleState,
+        }).from(schema.kestrelFiles)
+          .innerJoin(schema.fileScopeGrants, and(
+            eq(schema.fileScopeGrants.fileId, schema.kestrelFiles.id),
+            eq(schema.fileScopeGrants.scopeType, "thread"),
+            eq(schema.fileScopeGrants.threadId, input.threadId),
+            isNull(schema.fileScopeGrants.revokedAt),
+          ))
+          .where(and(
+            eq(schema.kestrelFiles.organizationId, input.organizationId),
+            inArray(schema.kestrelFiles.id, attachmentIds),
+          )).for("update");
+    const attachmentsById = new Map(attachments.map((attachment) => [attachment.id, attachment]));
+    const orderedAttachments = attachmentIds.map((attachmentId) => attachmentsById.get(attachmentId));
+    if (orderedAttachments.some((attachment) =>
+      !attachment
+      || attachment.lifecycleState !== "ready"
+      || !attachment.sha256
+      || !attachment.detectedMediaType
+    )) {
+      throw new DurableTurnError("TURN_CONFLICT", "One or more attachments are unavailable, incomplete, or quarantined.");
+    }
+    if (orderedAttachments.reduce((sum, attachment) => sum + (attachment?.sizeBytes ?? 0), 0) > CONVERSATION_ATTACHMENT_MAX_TURN_BYTES) {
+      throw new DurableTurnError("TURN_CONFLICT", "Attachments exceed the 500 MiB per-message limit.");
+    }
     const [insertedMessage] = await tx
       .insert(schema.threadMessages)
       .values({
@@ -475,6 +519,13 @@ export async function createDurableThreadTurnInTransaction(
         "TURN_CONFLICT",
         "The input message ID is already in use.",
       );
+    }
+    if (attachmentIds.length > 0) {
+      await tx.insert(schema.threadMessageFiles).values(attachmentIds.map((attachmentId, ordinal) => ({
+        messageId: input.messageId,
+        fileId: attachmentId,
+        ordinal,
+      })));
     }
   }
   const [turn] = await tx

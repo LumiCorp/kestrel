@@ -1305,8 +1305,9 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
         filename: "approval.txt",
         mimeType: "text/plain",
         sizeBytes: 8,
-        sha256: "sha256-approval",
+        sha256: "2687f86ed6784b8a5fca36e6c468e12aa44dc3c7e8137e3160d1a95079bdcd02",
         kind: "text",
+        representationStatus: "extracted_text",
         text: "approved",
       },
     ],
@@ -1333,8 +1334,9 @@ test("KestrelChatRuntime routes main sessions through ThreadRuntime and exposes 
       filename: "approval.txt",
       mimeType: "text/plain",
       sizeBytes: 8,
-      sha256: "sha256-approval",
+      sha256: "2687f86ed6784b8a5fca36e6c468e12aa44dc3c7e8137e3160d1a95079bdcd02",
       kind: "text",
+      representationStatus: "extracted_text",
       text: "approved",
     },
   ]);
@@ -1632,7 +1634,7 @@ test("KestrelChatRuntime forwards attachments when replying to a typed operator 
     },
   };
   const runtime = createTestRuntime(profile, fakeFactory);
-  const attachments = [{ attachmentId: "attachment-1", threadId: "thread-reply", filename: "context.txt", mimeType: "text/plain", sizeBytes: 7, sha256: "a".repeat(64), kind: "text" as const, createdAt: new Date().toISOString(), text: "context" }];
+  const attachments = [{ attachmentId: "attachment-1", threadId: "thread-reply", filename: "context.txt", mimeType: "text/plain", sizeBytes: 7, sha256: "ea7792a26f405e2ae9c6f49ca93bbe6076ceac0a1fc53d83426c7d7f2d9377e4", kind: "text" as const, representationStatus: "extracted_text" as const, createdAt: new Date().toISOString(), text: "context" }];
   await runtime.performOperatorAction({ action: "reply", threadId: "thread-reply", requestId: "request-1", message: "Selected recovery option: retry.primary", recoveryOptionId: "retry.primary", attachments, interactionMode: "build", actSubmode: "safe" });
   assert.deepEqual(capturedAttachments, attachments);
   assert.equal(capturedInteractionMode, "build");

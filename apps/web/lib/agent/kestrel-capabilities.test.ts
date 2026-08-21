@@ -7,6 +7,7 @@ import {
   signEnvironmentExecutionTicket,
 } from "@lumi/kestrel-environment-auth";
 import {
+  assertRunnerFileThreadBinding,
   buildKestrelOneCapabilityDescriptors,
   parseRunnerKnowledgeCapabilityRequest,
 } from "@/lib/agent/kestrel-capabilities";
@@ -27,6 +28,19 @@ test("buildKestrelOneCapabilityDescriptors exposes knowledge search without secr
     tokenEnv: "KESTREL_ONE_TOOL_TOKEN",
   });
   assert.equal(JSON.stringify(capability).includes("secret-token"), false);
+});
+
+test("Thread capability descriptors expose canonical file search and open tools", () => {
+  const capabilities = buildKestrelOneCapabilityDescriptors({
+    request: new Request("https://app.example.test/api/threads/thread_123"),
+    threadId: "thread_123",
+  });
+  assert.deepEqual(capabilities.map(({ name }) => name), [
+    "kestrel.files.search",
+    "kestrel.files.open",
+    "kestrel_one.search_knowledge_documents",
+  ]);
+  assert.match(capabilities[0]?.endpoint.url ?? "", /threadId=thread_123/u);
 });
 
 test("parseRunnerKnowledgeCapabilityRequest accepts runner bearer auth and tenant", () => {
@@ -50,6 +64,10 @@ test("parseRunnerKnowledgeCapabilityRequest accepts runner bearer auth and tenan
     agentId: "agent_123",
     taskId: "task_123",
   });
+  assert.throws(
+    () => assertRunnerFileThreadBinding(result, "thread_123"),
+    (error: unknown) => (error as { code?: unknown }).code === "UNAUTHORIZED",
+  );
 });
 
 test("parseRunnerKnowledgeCapabilityRequest accepts only UUID context grants", () => {
@@ -145,7 +163,18 @@ test("parseRunnerKnowledgeCapabilityRequest accepts a tenant-bound Environment t
       userId: "user-1",
       agentId: "kestrel-one",
       taskId: "run-1",
+      threadId: "thread-1",
     }
+  );
+  const identity = parseRunnerKnowledgeCapabilityRequest({
+    expectedToken: undefined,
+    environmentTicketPublicKey: publicKey,
+    request,
+  });
+  assert.doesNotThrow(() => assertRunnerFileThreadBinding(identity, "thread-1"));
+  assert.throws(
+    () => assertRunnerFileThreadBinding(identity, "thread-other"),
+    (error: unknown) => (error as { code?: unknown }).code === "UNAUTHORIZED",
   );
   assert.throws(() =>
     parseRunnerKnowledgeCapabilityRequest({

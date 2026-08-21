@@ -88,6 +88,20 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
     },
   ],
   [
+    "kestrel.files.search",
+    {
+      appKey: "built_in.knowledge_search",
+      capabilityKey: "searchKnowledgeDocuments",
+    },
+  ],
+  [
+    "kestrel.files.open",
+    {
+      appKey: "built_in.knowledge_search",
+      capabilityKey: "searchKnowledgeDocuments",
+    },
+  ],
+  [
     "workspace.preview.publish",
     { appKey: "built_in.previews", capabilityKey: "publish" },
   ],
@@ -211,6 +225,18 @@ export function resolveKestrelOneToolProfileConfiguration(input: {
     Omit<KestrelOneCapabilityApprovalPolicyEvidence, "appKey" | "capabilityKey">
   >;
 } {
+  const availableToolNames = [...new Set(input.availableToolNames)];
+  if (
+    availableToolNames.includes("kestrel_one.search_knowledge_documents")
+  ) {
+    availableToolNames.splice(
+      availableToolNames.indexOf("kestrel_one.search_knowledge_documents") + 1,
+      0,
+      ...["kestrel.files.search", "kestrel.files.open"].filter(
+        (toolName) => !availableToolNames.includes(toolName),
+      ),
+    );
+  }
   const googleApprovalByCapability = appApprovalModes(
     input.effectiveCapabilities,
     "google_workspace",
@@ -325,7 +351,7 @@ export function resolveKestrelOneToolProfileConfiguration(input: {
   return {
     kestrelOneAppApprovalModes,
     kestrelOneAppApprovalPolicies,
-    additionalToolNames: input.availableToolNames.filter((toolName) => {
+    additionalToolNames: availableToolNames.filter((toolName) => {
       const requiredCapability =
         GOOGLE_CALENDAR_TOOL_CAPABILITIES.get(toolName);
       if (

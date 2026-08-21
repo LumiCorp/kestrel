@@ -29,6 +29,10 @@ import type { EnvironmentRuntimeModelSelection } from "@/lib/agent/kestrel-runti
 import type { Session } from "@/lib/auth-types";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
+import {
+  attachmentIdsFromMessageParts,
+  resolveThreadAttachmentsForExecution,
+} from "@/lib/attachments/store";
 
 const DEFAULT_PROFILE_ID = "kestrel";
 type KestrelUiStreamChunk = InferUIMessageChunk<ChatMessage>;
@@ -136,6 +140,12 @@ export type KestrelOneAgentResponseInput = {
   durableTurnId?: string | undefined;
   noninteractive?: boolean | undefined;
   messages: UIMessage[];
+  threadFileInventory?: Array<{
+    fileId: string;
+    filename: string;
+    mediaType: string | null;
+    sizeBytes: number;
+  }>;
   approvalDecision?:
     | {
         approvalId: string;
@@ -219,6 +229,9 @@ export function createKestrelOneAgentResponseFromAgent(
       : undefined);
   const latestUserMessage =
     interactionResponse?.message ?? getLatestUserText(input.messages);
+  const attachmentIds = interactionResponse === undefined
+    ? attachmentIdsFromMessageParts(input.messages.at(-1)?.parts)
+    : [];
   const history = toKestrelHistory(input.messages.slice(0, -1));
   const assistantMessageId = crypto.randomUUID();
   const textPartId = crypto.randomUUID();
@@ -250,6 +263,13 @@ export function createKestrelOneAgentResponseFromAgent(
 
       try {
         try {
+          const attachments = await resolveThreadAttachmentsForExecution({
+            attachmentIds,
+            threadId: input.threadId,
+            organizationId: input.organizationId,
+            userId: input.session.user.id,
+          });
+          const fileInventory = input.threadFileInventory ?? [];
           const runStream = await input.agent.stream(
             {
               sessionId: input.threadId,
@@ -257,6 +277,10 @@ export function createKestrelOneAgentResponseFromAgent(
               eventType: interactionResponse?.eventType ?? "user.message",
               ...(input.noninteractive === true ? { noninteractive: true } : {}),
               interactionMode: input.interactionMode,
+              ...(attachments.length > 0 ? { attachments } : {}),
+              ...(fileInventory.length > 0
+                ? { systemInstructions: [formatThreadFileInventory(fileInventory)] }
+                : {}),
               ...(interactionResponse !== undefined
                 ? {
                     resumeRequestId: interactionResponse.requestId,
@@ -292,6 +316,7 @@ export function createKestrelOneAgentResponseFromAgent(
                     : {}),
                   capabilities: buildKestrelOneCapabilityDescriptors({
                     request: input.request,
+                    threadId: input.threadId,
                   }),
                 },
               },
@@ -412,7 +437,23 @@ function getLatestUserText(messages: UIMessage[]): string {
     .reverse()
     .find((message) => message.role === "user");
   const text = latest ? getMessageText(latest) : "";
-  return text || "Continue.";
+  return text;
+}
+
+function formatThreadFileInventory(files: Array<{
+  fileId: string;
+  filename: string;
+  mediaType: string | null;
+  sizeBytes: number;
+}>): string {
+  const entries = files.map((file) =>
+    `- ${file.fileId}: ${JSON.stringify(file.filename)} (${file.mediaType ?? "application/octet-stream"}, ${file.sizeBytes} bytes)`,
+  );
+  return [
+    "Files previously attached in this Thread remain visible for its lifetime.",
+    "Use kestrel.files.search to find visible Thread, Project, or organization files and kestrel.files.open to inspect one by stable file ID.",
+    ...entries,
+  ].join("\n");
 }
 
 function toKestrelHistory(messages: UIMessage[]): RunnerHistoryEntry[] {

@@ -5029,6 +5029,38 @@ test("ThreadRuntime records and rethrows terminal handoff validation failure", a
   );
 });
 
+test("ThreadRuntime terminalizes attachment materialization failures after claiming the turn", async () => {
+  const sessionStore = new InMemorySessionStore();
+  const executor = new QueueTurnExecutor(sessionStore, []);
+  const runtime = new ThreadRuntime({ sessionStore, executor, profile: buildProfile() });
+  await runtime.startThread({ threadId: "thread-attachment-failure", title: "Attachment failure" });
+  const input = {
+    threadId: "thread-attachment-failure",
+    message: "Inspect this file",
+    eventType: "user.message",
+    metadata: { turnId: "turn-attachment-failure" },
+    attachments: [{
+      attachmentId: "attachment-corrupt",
+      filename: "corrupt.bin",
+      mimeType: "application/octet-stream",
+      sizeBytes: 1,
+      sha256: "0".repeat(64),
+      kind: "file" as const,
+      representationStatus: "metadata_only" as const,
+      data: Buffer.from("not-one-byte").toString("base64"),
+    }],
+  };
+
+  await assert.rejects(runtime.submitTurn(input), /size failed integrity validation/u);
+  await assert.rejects(runtime.submitTurn(input), /size failed integrity validation/u);
+  assert.equal(executor.inputs.length, 0);
+  const outcomes = await runtime.listConversationTerminalOutcomes({
+    threadId: "thread-attachment-failure",
+    limit: 100,
+  });
+  assert.equal(outcomes[0]?.handoffState, "failed");
+});
+
 test("ThreadRuntime rejects a different initial request reusing a terminal turn ID", async () => {
   const sessionStore = new InMemorySessionStore();
   const executor = new QueueTurnExecutor(sessionStore, [
@@ -5099,8 +5131,9 @@ test("ThreadRuntime turn identity binds attachment content without hashing volat
       filename: "context.txt",
       mimeType: "text/plain",
       sizeBytes: 7,
-      sha256: "a".repeat(64),
+      sha256: "ea7792a26f405e2ae9c6f49ca93bbe6076ceac0a1fc53d83426c7d7f2d9377e4",
       kind: "text" as const,
+      representationStatus: "extracted_text" as const,
       createdAt: "2026-07-30T12:00:00.000Z",
       text: "context",
     }],

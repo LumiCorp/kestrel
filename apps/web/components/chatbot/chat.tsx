@@ -536,6 +536,7 @@ function ChatShell({
   newTurnDisabledReason,
   environmentProvisioningNotice,
   workspaceModeControl,
+  composerWorkspaceMode,
 }: {
   addToolApprovalResponse: ChatController["addToolApprovalResponse"];
   archived: boolean;
@@ -586,6 +587,7 @@ function ChatShell({
   newTurnDisabledReason?: string;
   environmentProvisioningNotice?: EnvironmentProvisioningNotice | null;
   workspaceModeControl?: ReactNode;
+  composerWorkspaceMode?: "primary" | "isolated";
 }) {
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
   const modeSwitchCallbacksRef = useRef({ onInteractionModeChange, onRuntimeInteractionResponse });
@@ -739,6 +741,8 @@ function ChatShell({
               setMessages={setMessages}
               status={status}
               threadId={threadId}
+              projectId={project?.id}
+              workspaceMode={composerWorkspaceMode}
               />
             </>
           )}
@@ -923,6 +927,7 @@ export function BootstrapChat({
           </label>
           ) : null
         }
+        composerWorkspaceMode={startInNewWorktree ? "isolated" : "primary"}
         onFeedbackChange={() => {}}
         onModelChange={shared.setCurrentModelId}
         onInteractionModeChange={shared.setInteractionMode}
@@ -1683,6 +1688,7 @@ export function Chat({
         threadExists={chatExists}
         threadId={id}
         threadTitle={liveThreadTitle}
+        composerWorkspaceMode="primary"
       />
       <ChatAlerts
         open={shared.showCreditCardAlert}

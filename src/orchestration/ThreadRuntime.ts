@@ -22,6 +22,10 @@ import type {
 } from "../kestrel/contracts/store.js";
 import { stringifySanitizedJson } from "../runtime/jsonSanitizer.js";
 import { normalizeSubmittedHistory } from "../runtime/submittedHistory.js";
+import {
+  cleanupMaterializedRunTurnAttachments,
+  materializeRunTurnAttachments,
+} from "../runtime/attachments/materialize.js";
 import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
 import type { DelegationServicePort, DialogServicePort } from "../../tools/contracts.js";
 import { buildRuntimeIdentityMetadata } from "../profile/runtimeProfile.js";
@@ -492,7 +496,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
     if (messageId.length === 0) {
       throw createRuntimeFailure("CONVERSATION_MESSAGE_ID_INVALID", "Conversation message ID cannot be empty.");
     }
-    if (message.length === 0) {
+    if (message.length === 0 && (input.attachments?.length ?? 0) === 0) {
       throw createRuntimeFailure("CONVERSATION_MESSAGE_INVALID", "Conversation message cannot be empty.");
     }
     if (await this.store.getThread(input.threadId) === null) {
@@ -503,7 +507,7 @@ export class ThreadRuntime implements ThreadRuntimePort {
       await this.startThread({
         threadId: input.threadId,
         sessionId,
-        title: message.slice(0, 80),
+        title: message.slice(0, 80) || "Attached files",
         metadata: { mainThread: true },
       });
     }
@@ -810,10 +814,13 @@ export class ThreadRuntime implements ThreadRuntimePort {
       eventType: input.eventType,
       runId: proposedRunId,
     });
+    let materializedAttachments: RunTurnAttachment[] | undefined;
     let result: SubmitTurnResult;
     try {
+      materializedAttachments = await materializeRunTurnAttachments(input.attachments);
       result = await this.turnOrchestrator.execute(activeThread, {
         ...input,
+        ...(materializedAttachments !== undefined ? { attachments: materializedAttachments } : {}),
         runtimeTurn: {
           ...(input.runtimeTurn ?? {
             sessionId: activeThread.sessionId,
@@ -877,8 +884,10 @@ export class ThreadRuntime implements ThreadRuntimePort {
         },
       });
     } catch (error) {
-      await this.recordTerminalHandoffFailure(turnId, asRuntimeError(error));
+      await this.recordClaimedExecutionFailure(turnId, proposedRunId, asRuntimeError(error));
       throw error;
+    } finally {
+      await cleanupMaterializedRunTurnAttachments(materializedAttachments);
     }
     const turnUpdatedAt = new Date().toISOString();
     if (result.output.status === "COMPLETED" || result.output.status === "FAILED") {
@@ -1740,6 +1749,18 @@ export class ThreadRuntime implements ThreadRuntimePort {
       terminalSubmissionIdentity: envelope.terminalSubmissionIdentity,
       envelope: failed,
     });
+  }
+
+  private async recordClaimedExecutionFailure(
+    turnId: string,
+    runId: string,
+    error: RuntimeError,
+  ): Promise<void> {
+    const run = await this.store.getRun(runId);
+    if (run?.status === "RUNNING") {
+      await this.store.completeRun(runId, "FAILED", error);
+    }
+    await this.recordTerminalHandoffFailure(turnId, error);
   }
 
   private async persistFinalizedPayload(
@@ -2774,6 +2795,7 @@ function buildTurnExecutionIdentity(
 ): Record<string, unknown> {
   return {
     attachments: input.attachments?.map((attachment) => ({
+      fileId: attachment.fileId ?? attachment.attachmentId,
       attachmentId: attachment.attachmentId,
       threadId: attachment.threadId,
       filename: attachment.filename,

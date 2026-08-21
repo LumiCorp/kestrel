@@ -399,6 +399,13 @@ export interface DesktopAttachmentImportInput {
   sha256?: string | undefined;
 }
 
+export interface DesktopAttachmentStreamInput {
+  threadId: string;
+  filename: string;
+  mimeType?: string | undefined;
+  sizeBytes: number;
+}
+
 export interface DesktopLinkPreviewInput {
   urls: string[];
 }
@@ -525,8 +532,13 @@ export interface DesktopBridge {
   importAttachment(
     input: DesktopAttachmentImportInput,
   ): Promise<DesktopAttachmentMetadata>;
+  beginAttachmentStream(input: DesktopAttachmentStreamInput): Promise<string>;
+  appendAttachmentStream(uploadId: string, chunk: Uint8Array): Promise<void>;
+  finishAttachmentStream(uploadId: string): Promise<DesktopAttachmentMetadata>;
+  abortAttachmentStream(uploadId: string): Promise<void>;
   listAttachments(threadId: string): Promise<DesktopAttachmentMetadata[]>;
   removeAttachment(threadId: string, attachmentId: string): Promise<boolean>;
+  saveAttachment(threadId: string, attachmentId: string): Promise<string | null>;
   submitOperatorControl(
     request: DesktopOperatorControlRequest,
   ): Promise<DesktopOperatorControlResult>;

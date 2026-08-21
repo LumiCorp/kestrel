@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  EXECUTION_PROTOCOL_V3,
+  EXECUTION_PROTOCOL_V4,
   EXECUTION_PROTOCOL_VERSION,
   RUNNER_COMMAND_CONTRACT_VERSION,
   RUNNER_COMMAND_TYPES,
@@ -60,6 +60,58 @@ test("run.start accepts the autonomous turn marker", () => {
   if (parsed.type === "run.start") {
     assert.equal(parsed.payload.turn.noninteractive, true);
   }
+});
+
+test("execution protocol v4 accepts canonical attachments and rejects v3 payloads", () => {
+  const canonicalAttachment = {
+    attachmentId: "attachment-1",
+    threadId: "thread-1",
+    filename: "archive.zip",
+    mimeType: "application/zip",
+    sizeBytes: 2,
+    sha256: "0".repeat(64),
+    kind: "file",
+    representationStatus: "metadata_only",
+    metadataOnlyReason: "No automatic interpreter is available.",
+  } as const;
+  const parsed = parseRunnerCommandV2({
+    id: "command-with-attachment",
+    type: "run.start",
+    payload: { profileId: "kestrel", turn: { ...turn, message: "", attachments: [canonicalAttachment] } },
+  });
+  assert.equal(parsed.type, "run.start");
+  assert.equal(parsed.type === "run.start" ? parsed.payload.turn.attachments?.[0]?.kind : undefined, "file");
+
+  const { representationStatus: _removed, ...v3Attachment } = canonicalAttachment;
+  assert.throws(() => parseRunnerCommandV2({
+    id: "command-with-v3-attachment",
+    type: "run.start",
+    payload: { profileId: "kestrel", turn: { ...turn, attachments: [v3Attachment] } },
+  }), /representationStatus/u);
+});
+
+test("execution protocol v4 enforces attachment ordering identities and byte limits", () => {
+  const attachment = (attachmentId: string, sizeBytes: number) => ({
+    attachmentId,
+    filename: `${attachmentId}.bin`,
+    mimeType: "application/octet-stream",
+    sizeBytes,
+    sha256: "0".repeat(64),
+    kind: "file",
+    representationStatus: "metadata_only",
+  });
+  const parse = (attachments: ReturnType<typeof attachment>[]) => parseRunnerCommandV2({
+    id: "command-attachment-limits",
+    type: "run.start",
+    payload: { profileId: "kestrel", turn: { ...turn, attachments } },
+  });
+  assert.throws(() => parse(Array.from({ length: 21 }, (_, index) => attachment(`a-${index}`, 0))), /at most 20/u);
+  assert.throws(() => parse([attachment("duplicate", 0), attachment("duplicate", 0)]), /unique/u);
+  assert.throws(() => parse([attachment("oversized", 100 * 1024 * 1024 + 1)]), /100 MiB/u);
+  assert.throws(() => parse([
+    ...Array.from({ length: 5 }, (_, index) => attachment(`full-${index}`, 100 * 1024 * 1024)),
+    attachment("one-byte-over", 1),
+  ]), /500 MiB/u);
 });
 
 const replay = {
@@ -684,11 +736,11 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "mcp.refreshed": { status: {} },
 };
 
-test("Execution Protocol v3 descriptor owns the full supported registries", () => {
-  assert.equal(EXECUTION_PROTOCOL_VERSION, "execution-protocol-v3");
+test("Execution Protocol v4 descriptor owns the full supported registries", () => {
+  assert.equal(EXECUTION_PROTOCOL_VERSION, "execution-protocol-v4");
   assert.equal(RUNNER_COMMAND_CONTRACT_VERSION, "runner-command-v3");
   assert.equal(RUNNER_EVENT_CONTRACT_VERSION, "dotted-runtime-events-v3");
-  assert.deepEqual(EXECUTION_PROTOCOL_V3, {
+  assert.deepEqual(EXECUTION_PROTOCOL_V4, {
     version: EXECUTION_PROTOCOL_VERSION,
     contracts: {
       command: RUNNER_COMMAND_CONTRACT_VERSION,
@@ -700,9 +752,9 @@ test("Execution Protocol v3 descriptor owns the full supported registries", () =
     },
     events: {
       supported: RUNNER_EVENT_TYPES,
-      runStream: EXECUTION_PROTOCOL_V3.events.runStream,
+      runStream: EXECUTION_PROTOCOL_V4.events.runStream,
       jobStream: RUNNER_JOB_STREAM_EVENT_TYPES,
-      runTerminal: EXECUTION_PROTOCOL_V3.events.runTerminal,
+      runTerminal: EXECUTION_PROTOCOL_V4.events.runTerminal,
     },
   });
   assert.equal(new Set(RUNNER_COMMAND_TYPES).size, RUNNER_COMMAND_TYPES.length);
@@ -725,7 +777,7 @@ test("Execution Protocol v3 descriptor owns the full supported registries", () =
   assert.equal(isRunnerStreamingCommandType("run.cancel"), false);
 });
 
-test("Execution Protocol v3 correlates command responses and shared workspace operations", () => {
+test("Execution Protocol v4 correlates command responses and shared workspace operations", () => {
   const event = parseRunnerEventV2({
     id: "event-workspace-list",
     type: "workspace.checkpoint",
@@ -836,7 +888,7 @@ test("canonical command parser rejects unknown and malformed payloads", () => {
   );
   assert.throws(
     () => parseRunnerCommandV2({ id: "command-1", type: "unknown.run", payload: {} }),
-    /supported Execution Protocol v3 command/u,
+    /supported Execution Protocol v4 command/u,
   );
   assert.throws(
     () => parseRunnerCommandV2({ id: "command-1", type: "profile.get", payload: {} }),
@@ -1399,7 +1451,7 @@ test("canonical event parser rejects unknown and malformed payloads", () => {
       ts: "2026-07-13T12:00:00.000Z",
       payload: {},
     }),
-    /supported Execution Protocol v3 event/u,
+    /supported Execution Protocol v4 event/u,
   );
   assert.throws(
     () => parseRunnerEventV2({

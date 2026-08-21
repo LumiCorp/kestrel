@@ -344,7 +344,11 @@ function buildStartProcessInput(
       ? "direct"
       : "reject"
   );
-  const sourceWriteGuard = buildDevShellSourceWriteGuardRequest(config, effectiveMutation);
+  const workspaceRoot = context.fileSystem?.workspaceRoot ?? ".";
+  const sourceWriteGuard = buildDevShellSourceWriteGuardRequest(config, effectiveMutation, {
+    workspaceRoot,
+    readOnlyRoots: context.fileSystem?.readOnlyRoots ?? [],
+  });
   const sourceWriteAuthority = effectiveMutation === "direct"
     ? buildDevShellSourceWriteAuthority(config)
     : undefined;
@@ -363,7 +367,6 @@ function buildStartProcessInput(
       requiredCorrection: commandSafetyIssue.correction,
     });
   }
-  const workspaceRoot = context.fileSystem?.workspaceRoot ?? ".";
   const requestedCwd = readString(body, "cwd")?.trim();
   if (requestedCwd !== undefined) {
     validateWorkspaceRelativeCwd(workspaceRoot, requestedCwd);

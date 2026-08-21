@@ -95,6 +95,7 @@ export type SearchCapability =
   | "runtime"
   | "threads"
   | "projects"
+  | "files"
   | "knowledge"
   | "managed models"
   | "gateways"

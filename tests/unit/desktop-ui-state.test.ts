@@ -199,6 +199,7 @@ test("Desktop run requests admit only tagged runtime system prompts", () => {
     sizeBytes: 5,
     sha256: "a".repeat(64),
     kind: "text",
+    representationStatus: "extracted_text",
     text: "hello",
   };
   assert.deepEqual(

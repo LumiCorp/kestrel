@@ -435,14 +435,25 @@ export interface ModelCallProvenanceRecord {
 }
 
 export interface RunTurnAttachment {
+  fileId?: string | undefined;
   attachmentId: string;
   threadId?: string | undefined;
   filename: string;
   mimeType: string;
   sizeBytes: number;
   sha256: string;
-  kind: "image" | "text";
+  kind: "image" | "text" | "file";
+  representationStatus:
+    | "native_image"
+    | "extracted_text"
+    | "staged_file"
+    | "metadata_only";
   createdAt?: string | undefined;
   data?: string | undefined;
   text?: string | undefined;
+  textTruncated?: boolean | undefined;
+  path?: string | undefined;
+  sourceUrl?: string | undefined;
+  sourceUrlExpiresAt?: string | undefined;
+  metadataOnlyReason?: string | undefined;
 }

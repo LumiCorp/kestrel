@@ -18,9 +18,64 @@ import {
   type ConversationInteraction,
   type ConversationMessageLike,
   type ConversationTurn,
+  assertConversationFileSelection,
+  CONVERSATION_ATTACHMENT_MAX_FILE_BYTES,
+  CONVERSATION_ATTACHMENT_MAX_TURN_BYTES,
+  toConversationFileReference,
 } from "../src/index.js";
 
 const createdAt = "2026-08-13T12:00:00.000Z";
+
+test("universal file selection enforces exact count and byte boundaries", () => {
+  const attachment = (fileId: string, sizeBytes: number) => ({ fileId, sizeBytes });
+  assert.doesNotThrow(() => assertConversationFileSelection([
+    attachment("exact-file-limit", CONVERSATION_ATTACHMENT_MAX_FILE_BYTES),
+  ]));
+  assert.doesNotThrow(() => assertConversationFileSelection(
+    Array.from({ length: 20 }, (_, index) => attachment(`attachment-${index}`, 25 * 1024 * 1024)),
+  ));
+  assert.throws(() => assertConversationFileSelection([
+    attachment("over-file-limit", CONVERSATION_ATTACHMENT_MAX_FILE_BYTES + 1),
+  ]), /at most/u);
+  assert.throws(() => assertConversationFileSelection(
+    Array.from({ length: 21 }, (_, index) => attachment(`attachment-${index}`, 0)),
+  ), /at most 20/u);
+  assert.throws(() => assertConversationFileSelection([
+    ...Array.from({ length: 5 }, (_, index) =>
+      attachment(`full-${index}`, CONVERSATION_ATTACHMENT_MAX_FILE_BYTES)),
+    attachment("one-byte-over", 1),
+  ]), /total/u);
+  assert.throws(() => assertConversationFileSelection([
+    attachment("duplicate", 0),
+    attachment("duplicate", 0),
+  ]), /unique/u);
+});
+
+test("canonical file references carry stable identity instead of bytes or URLs", () => {
+  const reference = toConversationFileReference({
+    fileId: "file-1",
+    organizationId: "organization-1",
+    filename: "archive.zip",
+    sizeBytes: 12,
+    sha256: "0".repeat(64),
+    detectedMediaType: "application/zip",
+    lifecycleState: "ready",
+    representation: { kind: "metadata_only", reason: "No processor." },
+    scopes: [{ kind: "thread", threadId: "thread-1" }],
+    createdAt,
+  });
+  assert.deepEqual(reference, {
+    type: "kestrel-file",
+    fileId: "file-1",
+    filename: "archive.zip",
+    sizeBytes: 12,
+    mediaType: "application/zip",
+    representationKind: "metadata_only",
+    status: "ready",
+  });
+  assert.equal("url" in reference, false);
+  assert.equal("data" in reference, false);
+});
 
 test("projects durable turns by identity instead of message position", () => {
   const turns = [turn("turn-2", 2, "user-2"), turn("turn-1", 1, "user-1")];

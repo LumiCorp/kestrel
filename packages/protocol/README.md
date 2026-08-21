@@ -76,9 +76,9 @@ const event = parseRunnerEventV2(untrustedEventJson);
 Never cast untrusted HTTP, stream, queue, or persisted JSON directly to a
 protocol type. Parse it at the boundary before routing or mutation.
 
-## Execution Protocol v3
+## Execution Protocol v4
 
-The 0.8 line uses the aggregate `execution-protocol-v3` contract. It includes:
+The 0.8 line uses the aggregate `execution-protocol-v4` contract. It includes:
 
 - complete command and event registries
 - discriminated wire envelopes and payload parsers
@@ -87,7 +87,12 @@ The 0.8 line uses the aggregate `execution-protocol-v3` contract. It includes:
 - explicit runner capabilities
 - normalized run and job terminal results
 - application-owned system/developer instructions
+- canonical file manifests with stable `fileId` values and transient runner-local paths or signed sources
 - distinct provider reasoning and committed agent-progress channels
+
+Protocol v4 rejects v3 payloads. `attachmentId` remains a temporary wire alias
+for `fileId` during the coordinated Desktop, hosted runner, and SDK rollout;
+durable identity never depends on a URL or local path.
 
 ### Terminal results
 

@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { decideAppOperationApprovalIfPresent } from "@/lib/apps/app-operation-approvals";
+import { attachmentIdsFromMessageParts } from "@/lib/attachments/store";
 import { threadTurnBodySchema } from "@/lib/chat/thread-turn-request-contract";
 import { applySubmittedToolApproval } from "@/lib/chat/tool-approval-response";
 import { resolveThreadEnvironment } from "@/lib/environments/store";
@@ -273,6 +274,7 @@ export async function POST(
         authorUserId: user.id,
         messageId: newUserMessage.id,
         messageParts: newUserMessage.parts,
+        attachmentIds: attachmentIdsFromMessageParts(newUserMessage.parts),
         idempotencyKey,
         requestedEnvironmentId: environment.id,
         projectContextRevisionId: projectContext?.contextRevision.id ?? null,

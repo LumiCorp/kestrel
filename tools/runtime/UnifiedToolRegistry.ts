@@ -1727,6 +1727,7 @@ function resolveScopedRunContext(
     workspace.workspaceRoot.trim().length > 0
       ? workspace.workspaceRoot
       : undefined;
+  const attachmentReadOnlyRoots = readAttachmentReadOnlyRoots(payload);
   const workspaceToolContext = {
     ...(typeof workspace?.appRoot === "string" &&
     workspace.appRoot.trim().length > 0
@@ -1810,17 +1811,32 @@ function resolveScopedRunContext(
   };
   return {
     allowlist: toolAllowlist === undefined ? fallback : new Set(toolAllowlist),
-    builtInContext:
-      workspaceRoot === undefined
-        ? scopedBaseContext
-        : withDefaultFileSystemPolicy({
-            ...scopedBaseContext,
-            fileSystem: {
-              workspaceRoot,
-              tempRoots: scopedBaseContext.fileSystem?.tempRoots ?? [],
-            },
-          }),
+    builtInContext: withDefaultFileSystemPolicy({
+      ...scopedBaseContext,
+      fileSystem: {
+        workspaceRoot: workspaceRoot ?? scopedBaseContext.fileSystem?.workspaceRoot ?? process.cwd(),
+        tempRoots: scopedBaseContext.fileSystem?.tempRoots ?? [],
+        readOnlyRoots: [
+          ...(scopedBaseContext.fileSystem?.readOnlyRoots ?? []),
+          ...attachmentReadOnlyRoots,
+        ],
+      },
+    }),
   };
+}
+
+function readAttachmentReadOnlyRoots(payload: unknown): string[] {
+  const record = asRecord(payload);
+  const attachments = Array.isArray(record?.attachments)
+    ? record.attachments
+    : asRecord(record?.turn)?.attachments;
+  if (Array.isArray(attachments) === false) return [];
+  return [...new Set(attachments.flatMap((attachment) => {
+    const attachmentPath = asRecord(attachment)?.path;
+    return typeof attachmentPath === "string" && attachmentPath.trim().length > 0
+      ? [path.dirname(path.resolve(attachmentPath))]
+      : [];
+  }))];
 }
 
 function readExecutionTicketRunId(ticket: string): string | undefined {

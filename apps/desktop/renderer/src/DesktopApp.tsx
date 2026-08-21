@@ -1054,7 +1054,7 @@ export function DesktopApp(props: {
     if (
       state === undefined
       || activeThread === undefined
-      || message.trim().length === 0
+      || (message.trim().length === 0 && activeThread.draftAttachmentIds.length === 0)
       || settings === undefined
     ) {
       return;
@@ -1487,8 +1487,8 @@ export function DesktopApp(props: {
       return;
     }
     const ownerThread = activeThread;
-    if (ownerThread.draftAttachmentIds.length >= 8) {
-      setThreadFailure(ownerThread.id, "Attachment not added", "A message can include at most 8 attachments.");
+    if (ownerThread.draftAttachmentIds.length >= 20) {
+      setThreadFailure(ownerThread.id, "Attachment not added", "A message can include at most 20 attachments.");
       return;
     }
     try {
@@ -1530,6 +1530,63 @@ export function DesktopApp(props: {
     return attachment;
   }
 
+  async function attachComposerFiles(files: File[]): Promise<void> {
+    if (activeThread === undefined || files.length === 0) return;
+    const ownerThread = activeThread;
+    if (ownerThread.draftAttachmentIds.length + files.length > 20) {
+      setThreadFailure(ownerThread.id, "Attachment not added", "A message can include at most 20 attachments.");
+      return;
+    }
+    const currentBytes = ownerThread.draftAttachmentIds.reduce(
+      (sum, id) => sum + (attachments[id]?.sizeBytes ?? 0),
+      0,
+    );
+    if (files.some((file) => file.size > 100 * 1024 * 1024)) {
+      setThreadFailure(ownerThread.id, "Attachment not added", "Each attachment must be at most 100 MiB.");
+      return;
+    }
+    if (currentBytes + files.reduce((sum, file) => sum + file.size, 0) > 500 * 1024 * 1024) {
+      setThreadFailure(ownerThread.id, "Attachment not added", "Attachments must total at most 500 MiB per message.");
+      return;
+    }
+    try {
+      const imported: DesktopAttachmentMetadata[] = [];
+      for (const file of files) {
+        const uploadId = await window.kestrelDesktop.beginAttachmentStream({
+          threadId: localCoreThreadId(ownerThread.sessionId),
+          filename: file.name,
+          mimeType: file.type || "application/octet-stream",
+          sizeBytes: file.size,
+        });
+        try {
+          const reader = file.stream().getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            for (let offset = 0; offset < value.byteLength; offset += 1024 * 1024) {
+              await window.kestrelDesktop.appendAttachmentStream(
+                uploadId,
+                value.subarray(offset, Math.min(value.byteLength, offset + 1024 * 1024)),
+              );
+            }
+          }
+          imported.push(await window.kestrelDesktop.finishAttachmentStream(uploadId));
+        } catch (error) {
+          await window.kestrelDesktop.abortAttachmentStream(uploadId).catch(() => {});
+          throw error;
+        }
+      }
+      setState((current) => current === undefined ? current : updateRendererDraftAttachments(
+        current,
+        ownerThread.id,
+        [...ownerThread.draftAttachmentIds, ...imported.map((entry) => entry.attachmentId)],
+      ));
+      clearThreadError(ownerThread.id);
+    } catch (cause) {
+      setThreadFailure(ownerThread.id, "Attachment not added", errorMessage(cause));
+    }
+  }
+
   async function steerActiveRun(): Promise<void> {
     if (activeThread === undefined || activeRun === undefined || activeThread.draft.trim().length === 0) return;
     const ownerThread = activeThread;
@@ -1563,7 +1620,7 @@ export function DesktopApp(props: {
       setState((current) => current === undefined ? current : updateRendererDraftAttachments(
         current,
         ownerThread.id,
-        [...ownerThread.draftAttachmentIds, ...selected.map((entry) => entry.attachmentId)].slice(0, 8),
+        [...ownerThread.draftAttachmentIds, ...selected.map((entry) => entry.attachmentId)].slice(0, 20),
       ));
       clearThreadError(ownerThread.id);
     } catch (cause) {
@@ -2238,13 +2295,44 @@ export function DesktopApp(props: {
             }}
             messageSupplement={(entry) => {
               const outcome = getDesktopOutcomeHandoff(entry.line.data);
-              return outcome === undefined ? null : (
-                <OutcomeHandoff
-                  outcome={outcome}
-                  hasWorkspace={threadProjectPath !== undefined}
-                  onReviewChanges={reviewOutcomeChanges}
-                  onInspectRun={inspectOutcomeRun}
-                />
+              const data = entry.line.data as Record<string, unknown> | undefined;
+              const messageId = data?.kind === "desktop.user-message.v1" && typeof data.messageId === "string"
+                ? data.messageId
+                : undefined;
+              const submittedAttachments = messageId === undefined
+                ? []
+                : Object.values(attachments).filter((attachment) =>
+                    attachment.messageId === messageId
+                    && attachment.threadId === localCoreThreadId(activeThread.sessionId)
+                  );
+              return outcome === undefined && submittedAttachments.length === 0 ? null : (
+                <>
+                  {submittedAttachments.length > 0 ? (
+                    <div className="message-attachments" aria-label="Message attachments">
+                      {submittedAttachments.map((attachment) => (
+                        <button
+                          key={attachment.attachmentId}
+                          type="button"
+                          title={`${attachment.detectedMimeType} · ${attachment.sizeBytes} bytes · Save a copy`}
+                          onClick={() => void window.kestrelDesktop.saveAttachment(
+                            localCoreThreadId(activeThread.sessionId),
+                            attachment.attachmentId,
+                          )}
+                        >
+                          {attachment.filename}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {outcome === undefined ? null : (
+                    <OutcomeHandoff
+                      outcome={outcome}
+                      hasWorkspace={threadProjectPath !== undefined}
+                      onReviewChanges={reviewOutcomeChanges}
+                      onInspectRun={inspectOutcomeRun}
+                    />
+                  )}
+                </>
               );
             }}
             tail={(
@@ -2379,6 +2467,15 @@ export function DesktopApp(props: {
               setComposerFocused(false);
             }}
             onFocus={() => setComposerFocused(true)}
+            onDragOver={(event) => {
+              if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+            }}
+            onDrop={(event) => {
+              const files = Array.from(event.dataTransfer.files);
+              if (files.length === 0) return;
+              event.preventDefault();
+              void attachComposerFiles(files);
+            }}
             onSubmit={(event) => void submitTurn(event)}
           >
             <div className="mode-segment" aria-label="Interaction mode">
@@ -2404,6 +2501,12 @@ export function DesktopApp(props: {
               onChange={(event) => {
                 setState((current) => current === undefined ? current : updateRendererDraft(current, activeThread.id, event.target.value));
                 setHistoryNavigation((current) => { const next = { ...current }; delete next[activeThread.id]; return next; });
+              }}
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData.files);
+                if (files.length === 0) return;
+                event.preventDefault();
+                void attachComposerFiles(files);
               }}
               onKeyDown={(event) => {
                 if (event.altKey === false && event.ctrlKey === false && event.metaKey === false && event.shiftKey === false) {
@@ -2479,7 +2582,7 @@ export function DesktopApp(props: {
                   />
                   {activeModelRevision !== undefined ? <small title={activeModelRevision.policy.model}>{activeModelRevision.policy.model}</small> : null}
                 </div>
-                <button className="icon-button" type="button" title="Attach files" aria-label="Attach files" disabled={activeThread.draftAttachmentIds.length >= 8} onClick={() => void selectAttachments()}>
+                <button className="icon-button" type="button" title="Attach files" aria-label="Attach files" disabled={activeThread.draftAttachmentIds.length >= 20} onClick={() => void selectAttachments()}>
                   <Paperclip size={16} />
                 </button>
               </div>
@@ -2500,7 +2603,7 @@ export function DesktopApp(props: {
                     type="submit"
                     title="Send message"
                     aria-label="Send message"
-                    disabled={activeThread.draft.trim().length === 0}
+                    disabled={activeThread.draft.trim().length === 0 && activeThread.draftAttachmentIds.length === 0}
                   >
                     <Send size={17} />
                   </button>

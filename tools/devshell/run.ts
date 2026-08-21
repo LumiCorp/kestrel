@@ -69,7 +69,10 @@ export const devShellRunTool: SharedToolModule = {
       const body = parseToolInput("dev.shell.run", input);
       const config = readDevShellConfig(context);
       const envMode = resolveDevShellEnvMode(config, "dev.shell.run", body);
-      const sourceWriteGuard = buildDevShellSourceWriteGuardRequest(config);
+      const sourceWriteGuard = buildDevShellSourceWriteGuardRequest(config, undefined, {
+        workspaceRoot: context.fileSystem?.workspaceRoot ?? ".",
+        readOnlyRoots: context.fileSystem?.readOnlyRoots ?? [],
+      });
       const sourceWriteAuthority = buildDevShellSourceWriteAuthority(config);
       const normalizedCommand = normalizeDevShellExecCommand(readString(body, "command"));
       if (normalizedCommand === undefined) {

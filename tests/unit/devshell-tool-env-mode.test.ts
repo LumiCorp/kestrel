@@ -190,6 +190,35 @@ test("exec_command preserves direct checkpoint guard mode in managed worktrees",
   });
 });
 
+test("exec_command protects attachment roots even when the workspace is writable", async () => {
+  const service = new CapturingDevShellService();
+  const context = {
+    devShell: {
+      enabled: true,
+      sourceWriteAuthority: "source_write" as const,
+      sourceWriteGuard: {
+        managedWorktree: true,
+        allowedWriteRoots: ["/workspace"],
+      },
+    },
+    fileSystem: {
+      workspaceRoot: "/workspace",
+      tempRoots: ["/tmp"],
+      readOnlyRoots: ["/tmp/kestrel-turn-attachments-1"],
+    },
+    devShellService: service,
+  };
+
+  await execCommandTool.createHandler(context)({ command: "cat /tmp/kestrel-turn-attachments-1/evidence.txt" });
+
+  assert.deepEqual(service.startInputs[0]?.sourceWriteGuard, {
+    enabled: true,
+    mutationPolicy: "direct",
+    sourceRoots: ["/workspace", "/tmp/kestrel-turn-attachments-1"],
+    allowedWriteRoots: ["/workspace"],
+  });
+});
+
 test("dev.shell.run carries runtime-derived source-write authority", async () => {
   const service = new CapturingDevShellService();
   const context = {

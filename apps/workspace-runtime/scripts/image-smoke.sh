@@ -36,6 +36,11 @@ node -e '
 ' "$health"
 
 docker exec "$container" test -d /workspace/.kestrel/runner/store/pglite
+expected_pnpm="$(docker exec "$container" node -p "require('/app/package.json').packageManager.split('@')[1].split('+')[0]")"
+actual_pnpm="$(docker exec "$container" pnpm --version)"
+test "$actual_pnpm" = "$expected_pnpm"
+docker exec "$container" node --input-type=module --eval \
+  'await import("@kestrel-agents/files")'
 
 docker exec "$container" node --input-type=module --eval '
   import assert from "node:assert/strict";
