@@ -33,6 +33,10 @@ test("workspace image exposes pnpm to hosted project commands", async () => {
   assert.match(runtimeStage, /ENV PATH=\$PNPM_HOME:\$PATH/u);
   assert.match(runtimeStage, /RUN corepack enable pnpm/u);
   assert.match(
+    runtimeStage,
+    /corepack install --global "\$\(node -p "require\('\.\/package\.json'\)\.packageManager"\)"/u,
+  );
+  assert.match(
     dockerfile,
     /COPY packages\/attachments\/package\.json packages\/attachments\/package\.json/u,
   );
@@ -50,7 +54,10 @@ test("workspace image exposes pnpm to hosted project commands", async () => {
     "the pinned packageManager manifest must precede Corepack activation",
   );
   assert.match(imageSmoke, /expected_pnpm=.*packageManager/u);
-  assert.match(imageSmoke, /actual_pnpm=.*pnpm --version/u);
+  assert.match(imageSmoke, /actual_pnpm="\$\(docker run --rm/u);
+  assert.match(imageSmoke, /--network none/u);
+  assert.match(imageSmoke, /--workdir \/workspace/u);
+  assert.match(imageSmoke, /-lc 'pnpm --version'/u);
   assert.match(imageSmoke, /test "\$actual_pnpm" = "\$expected_pnpm"/u);
   assert.match(imageSmoke, /import\("@kestrel-agents\/files"\)/u);
 });

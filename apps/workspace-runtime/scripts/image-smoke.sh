@@ -37,7 +37,12 @@ node -e '
 
 docker exec "$container" test -d /workspace/.kestrel/runner/store/pglite
 expected_pnpm="$(docker exec "$container" node -p "require('/app/package.json').packageManager.split('@')[1].split('+')[0]")"
-actual_pnpm="$(docker exec "$container" pnpm --version)"
+actual_pnpm="$(docker run --rm \
+  --network none \
+  --workdir /workspace \
+  --entrypoint /bin/bash \
+  "$image" \
+  -lc 'pnpm --version')"
 test "$actual_pnpm" = "$expected_pnpm"
 docker exec "$container" node --input-type=module --eval \
   'await import("@kestrel-agents/files")'
