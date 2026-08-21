@@ -41,6 +41,7 @@ FROM node:22-bookworm-slim
 ARG KESTREL_BUILD_ID=unknown
 LABEL org.opencontainers.image.source="https://github.com/LumiCorp/kestrel"
 LABEL org.opencontainers.image.version=$KESTREL_BUILD_ID
+ENV COREPACK_HOME=/opt/corepack
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 WORKDIR /app

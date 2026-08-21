@@ -32,6 +32,7 @@ test(
       workspaceRunnerEnvironment({
         source: {
           PATH: "/usr/bin",
+          COREPACK_HOME: "/opt/corepack",
           KESTREL_ONE_APP_URL: "https://kestrel.example",
           KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "ambient-broker-secret",
           KESTREL_WORKSPACE_SERVICE_TOKEN: "ambient-workspace-secret",
@@ -47,6 +48,7 @@ test(
       }),
       {
         PATH: "/usr/bin",
+        COREPACK_HOME: "/opt/corepack",
         KESTREL_ONE_APP_URL: "https://kestrel.example",
         HOME: "/workspace",
         KESTREL_HOME: "/workspace",
