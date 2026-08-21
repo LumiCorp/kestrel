@@ -1,4 +1,11 @@
 import { hasCompletedExecCommandCanaryProof } from "../lib/environments/workspace-command-canary";
+import {
+  createWorkspaceCanaryTurnBody,
+  readWorkspaceCanaryTurnStatus,
+  selectWorkspaceCanaryModel,
+  type WorkspaceCanaryApprovedModel,
+  type WorkspaceCanaryModel,
+} from "./lib/workspace-canary-model";
 
 type EnvironmentState = {
   binding?: {
@@ -39,6 +46,7 @@ const APP_COMMAND = `node -e "require('http').createServer((_request,response)=>
 const baseUrl = requiredUrl("KESTREL_ONE_CANARY_URL");
 const cookie = required("KESTREL_ONE_CANARY_COOKIE");
 const threadId = required("KESTREL_ONE_CANARY_THREAD_ID");
+const requestedModelId = required("KESTREL_ONE_CANARY_MODEL_ID");
 const appPort = requiredPort("KESTREL_ONE_CANARY_APP_PORT");
 const workspaceBase = `/api/threads/${threadId}/workspace`;
 const nonce = crypto.randomUUID();
@@ -64,6 +72,15 @@ const readyState = await waitForActivation(activationStarted);
 assertEnvironmentIdentity(readyState);
 const environmentId = readyState.environment!.id!;
 const workspaceId = readyState.workspace!.id!;
+const approvedModels = await requestJson<{
+  models?: WorkspaceCanaryApprovedModel[];
+}>(
+  `/api/models/approved?threadId=${encodeURIComponent(threadId)}&modality=language`,
+);
+const canaryModel: WorkspaceCanaryModel = selectWorkspaceCanaryModel(
+  approvedModels.models ?? [],
+  requestedModelId,
+);
 
 try {
   await runAgentCommandCanary(agentCommandMarker);
@@ -223,6 +240,7 @@ process.stdout.write(
       threadId,
       environmentId,
       workspaceId,
+      canaryModel,
       activationStages: [...activationStages],
       applicationId: canaryApplication?.id,
       proofs: [
@@ -277,16 +295,13 @@ async function runAgentCommandCanary(marker: string) {
         "content-type": "application/json",
         "idempotency-key": messageId,
       },
-      body: JSON.stringify({
-        message: {
-          id: messageId,
-          parts: [{
-            type: "text",
-            text: `Run exactly one exec_command with this exact command: ${command}`,
-          }],
-        },
-        interactionMode: "build",
-      }),
+      body: JSON.stringify(
+        createWorkspaceCanaryTurnBody({
+          messageId,
+          modelId: canaryModel.id,
+          command,
+        }),
+      ),
     },
   );
   const turnId = created.turn?.id;
@@ -298,7 +313,8 @@ async function runAgentCommandCanary(marker: string) {
       turns?: Array<{ id?: string; status?: string }>;
     }>(`/api/threads/${threadId}/turns`);
     const turn = queue.turns?.find((candidate) => candidate.id === turnId);
-    if (turn?.status === "completed") {
+    const status = readWorkspaceCanaryTurnStatus(turn?.status);
+    if (status === "completed") {
       const snapshot = await requestJson<{ messages?: Array<{
         role?: unknown;
         metadata?: { kestrelTurnId?: unknown } | null;
@@ -309,9 +325,6 @@ async function runAgentCommandCanary(marker: string) {
         "The build-mode turn completed without an OK exec_command tool record containing the marker.",
       );
       return;
-    }
-    if (turn && ["failed", "cancelled", "contract_failure"].includes(turn.status ?? "")) {
-      throw new Error(`The build-mode command canary ended with status ${turn.status}.`);
     }
     await sleep(1000);
   }

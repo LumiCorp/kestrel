@@ -246,9 +246,12 @@ pnpm --dir apps/web canary:environment:preview
 
 The Workspace canary requires `KESTREL_ONE_CANARY_URL`,
 `KESTREL_ONE_CANARY_COOKIE`, `KESTREL_ONE_CANARY_THREAD_ID`, and
-`KESTREL_ONE_CANARY_APP_PORT`. The selected Thread must be bound to the canary
-Environment. The Preview canary requires
-`KESTREL_PREVIEW_CANARY_GATEWAY_URL`,
+`KESTREL_ONE_CANARY_APP_PORT`. It also requires
+`KESTREL_ONE_CANARY_MODEL_ID`, which must exactly match an approved OpenAI,
+Anthropic, or OpenRouter language model for the selected Thread. The canary
+rejects private inference and never falls back to the Environment default. The
+selected Thread must be bound to the canary Environment. The Preview canary
+requires `KESTREL_PREVIEW_CANARY_GATEWAY_URL`,
 `KESTREL_PREVIEW_CANARY_CONTROL_PLANE_URL`,
 `KESTREL_PREVIEW_CANARY_TICKET`, and
 `KESTREL_PREVIEW_CANARY_PROJECT_DIR`. Supply secrets through the local process
