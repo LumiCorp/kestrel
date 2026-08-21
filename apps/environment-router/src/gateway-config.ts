@@ -7,6 +7,8 @@ import {
   parseEnvironmentGatewayConfig as parseSharedEnvironmentGatewayConfig,
 } from "@lumi/kestrel-environment-auth";
 
+export const ENVIRONMENT_GATEWAY_CONFIG_REQUEST_TIMEOUT_MS = 5_000;
+
 export class EnvironmentGatewayConfigClient {
   private current: EnvironmentGatewayConfigV3 | null = null;
   private failure: {
@@ -27,6 +29,7 @@ export class EnvironmentGatewayConfigClient {
       serviceToken: string;
       fetchImpl?: typeof fetch | undefined;
       refreshIntervalMs?: number | undefined;
+      requestTimeoutMs?: number | undefined;
     }
   ) {}
 
@@ -122,13 +125,19 @@ export class EnvironmentGatewayConfigClient {
       `/api/runtime/environments/${encodeURIComponent(this.input.environmentId)}/gateway/config`,
       requireControlPlaneUrl(this.input.controlPlaneUrl)
     );
-    const response = await (this.input.fetchImpl ?? fetch)(endpoint, {
-      method: "GET",
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${this.input.serviceToken}`,
+    const response = await fetchWithTimeout(
+      this.input.fetchImpl ?? fetch,
+      endpoint,
+      {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${this.input.serviceToken}`,
+        },
       },
-    });
+      this.input.requestTimeoutMs ??
+        ENVIRONMENT_GATEWAY_CONFIG_REQUEST_TIMEOUT_MS,
+    );
     if (!response.ok) {
       throw new Error(`Environment gateway configuration failed (${response.status}).`);
     }
@@ -143,6 +152,31 @@ export class EnvironmentGatewayConfigClient {
       )
     );
     return config;
+  }
+}
+
+async function fetchWithTimeout(
+  fetchImpl: typeof fetch,
+  input: URL,
+  init: RequestInit,
+  timeoutMs: number,
+) {
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error("Environment gateway configuration request timed out.");
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      fetchImpl(input, { ...init, signal: controller.signal }),
+      timeout,
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

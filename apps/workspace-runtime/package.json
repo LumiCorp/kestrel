@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel-agents/sdk build && pnpm --filter @kestrel-agents/workspace-skills build && pnpm run build:self",
     "build:self": "tsc -p tsconfig.json",
+    "canary:images:local": "pnpm --filter @lumi/kestrel-environment-auth build && pnpm --filter @kestrel-agents/sdk build && tsx scripts/local-image-pair-canary.ts",
     "canary:local": "tsx scripts/local-canary.ts",
     "start": "node dist/server.js",
     "test": "pnpm run test:unit",

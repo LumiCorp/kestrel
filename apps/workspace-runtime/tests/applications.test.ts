@@ -91,6 +91,72 @@ test("application lifecycle controls persist the desired state", async () => {
   }
 });
 
+test("applications inherit user variables but not Workspace infrastructure credentials", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-apps-environment-"),
+  );
+  const outputPath = path.join(root, "application-environment.json");
+  const previous = {
+    COREPACK_HOME: process.env.COREPACK_HOME,
+    KESTREL_ONE_CREDENTIAL_BROKER_TOKEN:
+      process.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN,
+    KESTREL_WORKSPACE_SERVICE_TOKEN:
+      process.env.KESTREL_WORKSPACE_SERVICE_TOKEN,
+    KESTREL_RUNNER_SERVICE_TOKEN: process.env.KESTREL_RUNNER_SERVICE_TOKEN,
+    KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:
+      process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY,
+    FLY_API_TOKEN: process.env.FLY_API_TOKEN,
+    KESTREL_CANARY_USER_VARIABLE: process.env.KESTREL_CANARY_USER_VARIABLE,
+  };
+  try {
+    await mkdir(path.join(root, ".kestrel"));
+    process.env.COREPACK_HOME = "/opt/corepack";
+    process.env.KESTREL_ONE_CREDENTIAL_BROKER_TOKEN = "broker-secret";
+    process.env.KESTREL_WORKSPACE_SERVICE_TOKEN = "workspace-secret";
+    process.env.KESTREL_RUNNER_SERVICE_TOKEN = "runner-secret";
+    process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = "private-key";
+    process.env.FLY_API_TOKEN = "fly-secret";
+    process.env.KESTREL_CANARY_USER_VARIABLE = "visible";
+    const registry = new WorkspaceApplicationRegistry(root);
+    await registry.register({
+      name: "Environment proof",
+      command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+        `require("node:fs").writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(process.env))`,
+      )}`,
+      port: 3100,
+    });
+
+    const environment = JSON.parse(await waitForFile(outputPath)) as Record<
+      string,
+      string
+    >;
+    assert.equal(environment.PORT, "3100");
+    assert.ok(environment.PATH);
+    assert.equal(environment.COREPACK_HOME, "/opt/corepack");
+    assert.equal(environment.KESTREL_CANARY_USER_VARIABLE, "visible");
+    for (const name of [
+      "KESTREL_ONE_CREDENTIAL_BROKER_TOKEN",
+      "KESTREL_WORKSPACE_SERVICE_TOKEN",
+      "KESTREL_RUNNER_SERVICE_TOKEN",
+      "KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY",
+      "FLY_API_TOKEN",
+    ]) {
+      assert.equal(
+        environment[name],
+        undefined,
+        `${name} leaked to application`,
+      );
+    }
+    await registry.stopAll();
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("stopping an application terminates shell descendants and releases its port", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-apps-process-group-"));
   const port = await availablePort();

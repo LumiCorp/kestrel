@@ -1974,6 +1974,97 @@ test("UnifiedToolRegistry enables managed dev-shell mode from trusted agent sess
   assert.equal(execInputs[1]?.sourceWriteAuthority, "source_write");
 });
 
+test("UnifiedToolRegistry rebinds a prepared built-in after trusted managed-worktree provisioning", async () => {
+  const startInputs: Array<Record<string, unknown>> = [];
+  const registry = new UnifiedToolRegistry({
+    allowlist: ["exec_command"],
+    context: {
+      devShell: { enabled: true },
+      devShellService: {
+        startProcess: async (input: unknown) => {
+          startInputs.push(input as Record<string, unknown>);
+          return {
+            processId: "process-managed",
+            status: "COMPLETED",
+            text: "ok\n",
+            truncated: false,
+            cursor: 0,
+            nextCursor: 3,
+            exitCode: 0,
+          };
+        },
+      } as never,
+    },
+    mcpManager: new MockMcpProvider({
+      healthy: true,
+      checkedAt: new Date().toISOString(),
+      servers: [],
+      tools: [],
+    }),
+  });
+  await registry.refresh();
+  const sourceContext = createToolRunContext({
+    runId: "run-managed-rebind",
+    sessionId: "session-managed-rebind",
+    payload: {
+      workspace: {
+        workspaceRoot: "/workspace",
+        sourceWorkspaceRoot: "/workspace",
+        managedWorktreeRequired: true,
+      },
+    },
+  });
+  const prepared = await prepareTestToolCall({
+    gateway: registry,
+    toolName: "exec_command",
+    toolInput: { command: "printf ok", cwd: "." },
+    runId: sourceContext.runId,
+    sessionId: sourceContext.sessionId,
+    options: { runContext: sourceContext },
+  });
+  const managedContext = createToolRunContext({
+    runId: sourceContext.runId,
+    sessionId: sourceContext.sessionId,
+    payload: {
+      workspace: {
+        workspaceRoot: "/workspace/.kestrel/worktrees/session",
+        sourceWorkspaceRoot: "/workspace",
+        managedWorktree: true,
+        leaseId: "lease-managed-rebind",
+      },
+    },
+    sessionState: {
+      agent: {
+        exec: {
+          managedWorktreeBinding: {
+            status: "bound",
+            sessionId: sourceContext.sessionId,
+            runId: sourceContext.runId,
+            worktreeRoot: "/workspace/.kestrel/worktrees/session",
+            leaseId: "lease-managed-rebind",
+          },
+        },
+      },
+    },
+  });
+
+  const result = await registry.executePreparedToolCall(prepared, {
+    runContext: managedContext,
+  });
+
+  assert.equal(result.status, "OK");
+  assert.equal(
+    startInputs[0]?.workspaceRoot,
+    "/workspace/.kestrel/worktrees/session",
+  );
+  assert.deepEqual(startInputs[0]?.sourceWriteGuard, {
+    enabled: true,
+    mutationPolicy: "direct",
+    managedWorktree: true,
+    approvalGrants: [],
+  });
+});
+
 test("UnifiedToolRegistry passes Build-mode dev-shell commands without package-manager preflight", async () => {
   const runInputs: Array<Record<string, unknown>> = [];
   const startInputs: Array<Record<string, unknown>> = [];

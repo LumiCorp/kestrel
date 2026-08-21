@@ -2,7 +2,10 @@ import { randomBytes } from "node:crypto";
 import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import { and, count, eq, inArray, lt, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { refreshEnvironmentGateway } from "@/lib/environments/gateway-refresh";
+import {
+  ENVIRONMENT_ROUTER_CONTROL_REQUEST_TIMEOUT_MS,
+  refreshEnvironmentGateway,
+} from "@/lib/environments/gateway-refresh";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import type { authorizeAppRuntime } from "./runtime";
 import { AppRuntimeError } from "./runtime";
@@ -431,7 +434,13 @@ async function inspectPreviewPort(input: {
   }
   const response = await fetch(
     new URL(`/v1/preview-ports/${input.port}`, environment.routerUrl),
-    { headers: { authorization: input.authorization }, cache: "no-store" },
+    {
+      headers: { authorization: input.authorization },
+      cache: "no-store",
+      signal: AbortSignal.timeout(
+        ENVIRONMENT_ROUTER_CONTROL_REQUEST_TIMEOUT_MS,
+      ),
+    },
   );
   if (!response.ok) {
     if (response.status === 409) {

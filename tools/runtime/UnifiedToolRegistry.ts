@@ -780,10 +780,10 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
     options: ToolGatewayCallOptions = {},
   ): Promise<AgentToolResultV2> {
     const key = preparedExecutionKey(prepared);
-    const source =
+    const preparedSource =
       this.preparedExecutions.get(key) ??
       this.rehydrateStaticBuiltInExecution(prepared, options.runContext);
-    if (source === undefined) {
+    if (preparedSource === undefined) {
       throw createRuntimeFailure(
         "TOOL_PINNED_HANDLER_UNAVAILABLE",
         `Prepared tool call '${prepared.callId}' has no pinned live handler.`,
@@ -796,6 +796,11 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         },
       );
     }
+    const source = this.rebindPreparedBuiltInForManagedWorktree(
+      preparedSource,
+      prepared,
+      options.runContext,
+    );
     try {
       let result = await executePinnedToolCallV1({
         prepared,
@@ -843,8 +848,36 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       })) as AgentToolResultV2;
     } finally {
       this.preparedExecutions.delete(key);
-      await source.release?.();
+      if (source !== preparedSource) await source.release?.();
+      await preparedSource.release?.();
     }
+  }
+
+  private rebindPreparedBuiltInForManagedWorktree(
+    source: PinnedExecutionSource,
+    prepared: PreparedToolCallV1,
+    runContext: ToolRunContext | undefined,
+  ): PinnedExecutionSource {
+    if (
+      runContext === undefined ||
+      this.builtInDescriptors.has(prepared.activation.descriptor.toolId) ===
+        false ||
+      prepared.activation.scopeFingerprint ===
+        fingerprintToolRunScopeV1(runContext) ||
+      hasTrustedManagedWorktreeBinding(
+        runContext.runId,
+        runContext.sessionState,
+        runContext.payload,
+        runContext.sessionId,
+      ) === false
+    ) {
+      return source;
+    }
+    return this.createPinnedExecutionSource(
+      source.pinned.descriptor,
+      prepared.activation,
+      runContext,
+    );
   }
 
   async releaseToolSurfaceSnapshot(snapshotId: string): Promise<void> {

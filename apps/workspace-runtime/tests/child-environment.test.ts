@@ -14,6 +14,7 @@ test(
         KESTREL_ONE_APP_URL: "https://kestrel.example",
         KESTREL_ONE_CREDENTIAL_BROKER_TOKEN: "broker-secret",
         KESTREL_WORKSPACE_SERVICE_TOKEN: "workspace-secret",
+        KESTREL_RUNNER_SERVICE_TOKEN: "runner-secret",
         KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "ticket-secret",
         FLY_API_TOKEN: "fly-secret",
       }),
@@ -24,7 +25,6 @@ test(
     );
   }
 );
-
 test(
   "trusted runner receives only the workspace-scoped relay token",
   () => {
