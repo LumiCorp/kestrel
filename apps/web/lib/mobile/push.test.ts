@@ -28,6 +28,7 @@ test("mobile push payloads deep-link without transcript or Project content", () 
     "prompt",
     "transcript",
     "responseText",
+    "projectId",
     "projectName",
     "email",
   ]) {
