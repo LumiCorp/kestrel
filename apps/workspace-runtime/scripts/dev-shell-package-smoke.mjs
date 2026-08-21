@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -9,6 +9,12 @@ const baseDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-packaged-dev-shell
 const previousStoreDriver = process.env.KESTREL_STORE_DRIVER;
 const previousDatabaseUrl = process.env.DATABASE_URL;
 const previousKestrelHome = process.env.KESTREL_HOME;
+const runnerHome = process.env.HOME;
+assert.ok(runnerHome, "HOME is required for the packaged dev-shell smoke");
+const rootPackage = JSON.parse(
+  await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
+);
+const expectedPnpm = rootPackage.packageManager.split("@")[1].split("+")[0];
 const service = new LocalDevShellService(path.join(baseDir, "supervisor"), {
   startupTimeoutMs: 30_000,
   pollIntervalMs: 25,
@@ -20,13 +26,13 @@ try {
   process.env.KESTREL_HOME = path.join(baseDir, "runtime-home");
   const result = await service.runCommand({
     workspaceRoot: baseDir,
-    command: "printf packaged-ok",
+    command: "printf '%s\\n' \"$HOME\"; pnpm --version",
     timeoutMs: 5_000,
   });
   assert.equal(result.status, "COMPLETED");
   assert.equal(result.exitCode, 0);
-  assert.equal(result.text, "packaged-ok");
-  process.stdout.write("packaged-ok\n");
+  assert.equal(result.text, `${runnerHome}\n${expectedPnpm}\n`);
+  process.stdout.write("dev-shell-execution-ok\n");
 } finally {
   await service.close();
   await rm(baseDir, { recursive: true, force: true });

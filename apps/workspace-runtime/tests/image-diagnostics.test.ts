@@ -14,10 +14,17 @@ test("workspace image includes and smokes common HTTP and process diagnostics", 
 });
 
 test("workspace image exposes pnpm to hosted project commands", async () => {
-  const [dockerfile, imageSmoke] = await Promise.all([
+  const [dockerfile, imageSmoke, devShellPackageSmoke] = await Promise.all([
     readFile(path.resolve(import.meta.dirname, "../Dockerfile"), "utf8"),
     readFile(
       path.resolve(import.meta.dirname, "../scripts/image-smoke.sh"),
+      "utf8",
+    ),
+    readFile(
+      path.resolve(
+        import.meta.dirname,
+        "../scripts/dev-shell-package-smoke.mjs",
+      ),
       "utf8",
     ),
   ]);
@@ -61,5 +68,11 @@ test("workspace image exposes pnpm to hosted project commands", async () => {
   assert.match(imageSmoke, /--workdir \/workspace/u);
   assert.match(imageSmoke, /-lc 'pnpm --version'/u);
   assert.match(imageSmoke, /test "\$actual_pnpm" = "\$expected_pnpm"/u);
+  assert.match(imageSmoke, /--entrypoint node/u);
+  assert.match(imageSmoke, /dev-shell-package-smoke\.mjs/u);
+  assert.match(imageSmoke, /dev-shell-execution-ok/u);
+  assert.match(devShellPackageSmoke, /LocalDevShellService/u);
+  assert.match(devShellPackageSmoke, /printf '%s\\\\n' \\"\$HOME\\"; pnpm --version/u);
+  assert.match(devShellPackageSmoke, /result\.text, `\$\{runnerHome\}\\n\$\{expectedPnpm\}\\n`/u);
   assert.match(imageSmoke, /import\("@kestrel-agents\/files"\)/u);
 });
