@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildKnowledgeExtractionMetadata,
   buildKnowledgeIngestionFailureState,
+  buildKnowledgeIngestionRetryState,
 } from "./process-state";
 
 
@@ -51,4 +52,27 @@ test("embedding failures produce visible failed document and run state", () => {
   );
   assert.deepEqual(failure.runUpdate.diagnostics.embedding, semanticEmbedding);
   assert.equal(failure.runUpdate.finishedAt, finishedAt);
+});
+
+test("nonfinal ingestion failures remain recoverable for the queue retry", () => {
+  const retry = buildKnowledgeIngestionRetryState({
+    error: new Error("temporary storage failure"),
+    ocrMode: "fallback",
+    embeddingMode: "fallback",
+    embedding: { mode: "lexical" },
+    diagnostics: { stageTimingsMs: { extract: 15 } },
+  });
+
+  assert.deepEqual(retry.documentUpdate, {
+    status: "processing",
+    error: null,
+  });
+  assert.equal(retry.runUpdate.status, "queued");
+  assert.equal(retry.runUpdate.error, "temporary storage failure");
+  assert.equal(retry.runUpdate.finishedAt, null);
+  assert.equal(retry.runUpdate.diagnostics.retryScheduled, true);
+  assert.deepEqual(
+    (retry.runUpdate.diagnostics as Record<string, unknown>).stageTimingsMs,
+    { extract: 15 },
+  );
 });

@@ -17,6 +17,7 @@ export function buildKnowledgeIngestionFailureState(input: {
   ocrMode: "live" | "fallback";
   embeddingMode: "live" | "fallback";
   embedding: KnowledgeEmbeddingProvenance;
+  diagnostics?: Record<string, unknown>;
   finishedAt: Date;
 }) {
   const message =
@@ -34,6 +35,7 @@ export function buildKnowledgeIngestionFailureState(input: {
       status: "failed" as const,
       error: message,
       diagnostics: {
+        ...input.diagnostics,
         modes: {
           ocr: input.ocrMode,
           embedding: input.embeddingMode,
@@ -41,6 +43,41 @@ export function buildKnowledgeIngestionFailureState(input: {
         embedding: input.embedding,
       },
       finishedAt: input.finishedAt,
+    },
+  };
+}
+
+export function buildKnowledgeIngestionRetryState(input: {
+  error: unknown;
+  ocrMode: "live" | "fallback";
+  embeddingMode: "live" | "fallback";
+  embedding: KnowledgeEmbeddingProvenance;
+  diagnostics?: Record<string, unknown>;
+}) {
+  const message =
+    input.error instanceof Error
+      ? input.error.message
+      : "Unknown ingestion error";
+
+  return {
+    message,
+    documentUpdate: {
+      status: "processing" as const,
+      error: null,
+    },
+    runUpdate: {
+      status: "queued" as const,
+      error: message,
+      diagnostics: {
+        ...input.diagnostics,
+        modes: {
+          ocr: input.ocrMode,
+          embedding: input.embeddingMode,
+        },
+        embedding: input.embedding,
+        retryScheduled: true,
+      },
+      finishedAt: null,
     },
   };
 }

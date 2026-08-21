@@ -1,4 +1,4 @@
-import { isAdminUser } from "@/lib/knowledge/auth";
+import { isAdminUser } from "@/lib/knowledge/admin-user";
 import { getKnowledgeDocumentById } from "@/lib/knowledge/documents/store";
 import { requireProjectRole } from "@/lib/projects/access";
 

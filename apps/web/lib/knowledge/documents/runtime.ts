@@ -14,7 +14,7 @@ import { enqueueKnowledgeDocumentRun } from "@/lib/knowledge/queue";
 import { normalizeMediaType } from "./shared";
 import {
   createKnowledgeDocument,
-  createKnowledgeIngestionRun,
+  createOrReuseKnowledgeIngestionRun,
   deleteKnowledgeDocumentGraph,
   getKnowledgeDocumentByChecksum,
   getKnowledgeDocumentByFileScope,
@@ -98,7 +98,11 @@ export async function publishFileToKnowledge(input: {
     projectId: input.projectId,
   });
   if (existing) {
-    return { document: existing, run: null, deduped: true };
+    const run = await ensureKnowledgeDocumentIngestion({
+      document: existing,
+      requestedByUserId: input.uploaderUserId,
+    });
+    return { document: existing, run, deduped: true };
   }
   const document = await createKnowledgeDocument({
     id: crypto.randomUUID(),
@@ -113,12 +117,15 @@ export async function publishFileToKnowledge(input: {
     checksumSha256: file.sha256,
     storageKey: file.objectKey,
   });
-  const run = await createKnowledgeIngestionRun({
+  const { run } = await createOrReuseKnowledgeIngestionRun({
     organizationId: input.organizationId,
     documentId: document.id,
     requestedByUserId: input.uploaderUserId,
   });
-  await enqueueKnowledgeDocumentRun(run.id);
+  await enqueueKnowledgeDocumentRun({
+    runId: run.id,
+    documentId: document.id,
+  });
   return { document, run, deduped: false };
 }
 
@@ -164,14 +171,10 @@ async function createKnowledgeDocumentFromBuffer(input: {
   );
 
   if (existingDocument) {
-    const run =
-      existingDocument.status === "failed"
-        ? await queueKnowledgeDocumentReindex({
-            organizationId: input.organizationId,
-            documentId: existingDocument.id,
-            requestedByUserId: input.uploaderUserId,
-          })
-        : null;
+    const run = await ensureKnowledgeDocumentIngestion({
+      document: existingDocument,
+      requestedByUserId: input.uploaderUserId,
+    });
 
     await logAdminEvent({
       organizationId: input.organizationId,
@@ -240,9 +243,14 @@ async function createKnowledgeDocumentFromBuffer(input: {
       throw error;
     }
 
+    const run = await ensureKnowledgeDocumentIngestion({
+      document: concurrentDocument,
+      requestedByUserId: input.uploaderUserId,
+    });
+
     return {
       document: concurrentDocument,
-      run: null,
+      run,
       deduped: true,
     };
   }
@@ -251,13 +259,16 @@ async function createKnowledgeDocumentFromBuffer(input: {
     throw new Error("Knowledge document could not be created");
   }
 
-  const run = await createKnowledgeIngestionRun({
+  const { run } = await createOrReuseKnowledgeIngestionRun({
     organizationId: input.organizationId,
     documentId: document.id,
     requestedByUserId: input.uploaderUserId,
   });
 
-  await enqueueKnowledgeDocumentRun(run.id);
+  await enqueueKnowledgeDocumentRun({
+    runId: run.id,
+    documentId: document.id,
+  });
 
   await logAdminEvent({
     organizationId: input.organizationId,
@@ -285,12 +296,34 @@ export async function queueKnowledgeDocumentReindex(input: {
   documentId: string;
   requestedByUserId?: string | null;
 }) {
-  const run = await createKnowledgeIngestionRun({
+  const result = await createOrReuseKnowledgeIngestionRun({
     organizationId: input.organizationId,
     documentId: input.documentId,
     requestedByUserId: input.requestedByUserId ?? null,
   });
-  await enqueueKnowledgeDocumentRun(run.id);
+  await enqueueKnowledgeDocumentRun({
+    runId: result.run.id,
+    documentId: input.documentId,
+  });
+  return result;
+}
+
+async function ensureKnowledgeDocumentIngestion(input: {
+  document: {
+    id: string;
+    organizationId: string;
+    status: string;
+  };
+  requestedByUserId?: string | null;
+}) {
+  if (input.document.status === "ready" || input.document.status === "partial") {
+    return null;
+  }
+  const { run } = await queueKnowledgeDocumentReindex({
+    organizationId: input.document.organizationId,
+    documentId: input.document.id,
+    requestedByUserId: input.requestedByUserId,
+  });
   return run;
 }
 

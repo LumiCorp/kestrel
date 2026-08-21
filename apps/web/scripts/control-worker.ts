@@ -1,6 +1,7 @@
 import {
   startEnvironmentLifecycleWorker,
-  stopEnvironmentLifecycleWorker,
+  startKnowledgeDocumentWorker,
+  stopControlWorkers,
 } from "@/lib/knowledge/queue";
 import {
   assertControlWorkerProcessConfiguration,
@@ -21,6 +22,7 @@ async function main() {
   });
   await assertWorkerDatabaseReady();
   await startEnvironmentLifecycleWorker();
+  await startKnowledgeDocumentWorker();
   health.markReady();
   process.stdout.write("Kestrel One Control Worker started.\n");
 }
@@ -28,7 +30,7 @@ async function main() {
 async function shutdown(signal: string) {
   process.stdout.write(`Kestrel One Control Worker received ${signal}.\n`);
   health?.markUnhealthy();
-  await stopEnvironmentLifecycleWorker();
+  await stopControlWorkers();
   await health?.close();
   process.exit(0);
 }
@@ -38,6 +40,7 @@ process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
 void main().catch(async (error: unknown) => {
   health?.markUnhealthy();
+  await stopControlWorkers().catch(() => {});
   await health?.close().catch(() => {});
   process.stderr.write(
     `Kestrel One Control Worker failed to start: ${
