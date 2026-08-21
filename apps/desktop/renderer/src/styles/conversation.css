@@ -359,10 +359,14 @@
   font-size: 11px;
 }
 
-.message-attachments span {
+.message-attachments button {
+  border: 0;
+  background: transparent;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
+  cursor: pointer;
   font-size: 11px;
+  padding: 0;
 }
 
 .composer-actions {

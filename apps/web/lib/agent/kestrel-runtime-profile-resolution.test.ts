@@ -109,10 +109,14 @@ test(
         additionalToolNames: [
           "kestrel_one.google_calendar_list_events",
           "kestrel_one.search_knowledge_documents",
+          "kestrel.files.search",
+          "kestrel.files.open",
         ],
         kestrelOneAppApprovalModes: {
           "kestrel_one.google_calendar_list_events": "ask",
           "kestrel_one.search_knowledge_documents": "auto",
+          "kestrel.files.search": "auto",
+          "kestrel.files.open": "auto",
         },
         kestrelOneAppApprovalPolicies: {},
         reasoning: {

@@ -586,14 +586,19 @@ export function ensureBrowserPreviewBridge(): void {
       return completed;
     },
     async selectAttachments(threadId: string) {
+      const fileId = `file-${crypto.randomUUID()}`;
       const attachment: DesktopAttachmentMetadata = {
-        attachmentId: crypto.randomUUID(),
+        fileId,
+        attachmentId: fileId,
         threadId,
         filename: "desktop-preview.png",
         mimeType: "image/png",
+        detectedMimeType: "image/png",
         sizeBytes: 48_120,
         sha256: "sha256:desktop-preview-attachment",
         kind: "image",
+        lifecycleState: "draft",
+        representationStatus: "native_image",
         createdAt: new Date().toISOString(),
       };
       const attachments = [
@@ -604,14 +609,21 @@ export function ensureBrowserPreviewBridge(): void {
       return attachments;
     },
     async importAttachment(input: DesktopAttachmentImportInput) {
+      const fileId = `file-${crypto.randomUUID()}`;
       const attachment: DesktopAttachmentMetadata = {
-        attachmentId: crypto.randomUUID(),
+        fileId,
+        attachmentId: fileId,
         threadId: input.threadId,
         filename: input.filename,
         mimeType: input.mimeType ?? "application/octet-stream",
+        detectedMimeType: input.mimeType ?? "application/octet-stream",
         sizeBytes: Math.floor(input.data.length * 3 / 4),
         sha256: input.sha256 ?? `preview:${crypto.randomUUID()}`,
         kind: input.mimeType?.startsWith("image/") === true ? "image" : "text",
+        lifecycleState: "draft",
+        representationStatus: input.mimeType?.startsWith("image/") === true
+          ? "native_image"
+          : "extracted_text",
         createdAt: new Date().toISOString(),
       };
       previewAttachments.set(input.threadId, [...(previewAttachments.get(input.threadId) ?? []), attachment]);

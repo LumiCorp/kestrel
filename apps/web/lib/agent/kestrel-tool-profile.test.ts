@@ -44,11 +44,15 @@ test("calendar tools are exposed only for effective Project capabilities", () =>
   });
   assert.deepEqual(restricted.toolAllowlist, [
     "kestrel_one.search_knowledge_documents",
+    "kestrel.files.search",
+    "kestrel.files.open",
     "kestrel_one.google_calendar_list_events",
     "kestrel_one.google_calendar_check_availability",
   ]);
   assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
     "kestrel_one.search_knowledge_documents": "auto",
+    "kestrel.files.search": "auto",
+    "kestrel.files.open": "auto",
     "kestrel_one.google_calendar_list_events": "auto",
     "kestrel_one.google_calendar_check_availability": "ask",
   });
@@ -180,11 +184,15 @@ test("Tavily tools and approval modes come only from effective Project Apps", ()
   });
   assert.deepEqual(restricted.toolAllowlist, [
     "kestrel_one.search_knowledge_documents",
+    "kestrel.files.search",
+    "kestrel.files.open",
     "internet.search",
     "internet.crawl",
   ]);
   assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
     "kestrel_one.search_knowledge_documents": "auto",
+    "kestrel.files.search": "auto",
+    "kestrel.files.open": "auto",
     "internet.search": "auto",
     "internet.crawl": "ask",
   });
@@ -250,6 +258,8 @@ test("built-in agent tools are governed by their effective App capabilities", ()
     "free.geocode.lookup",
     "free.exchange.rate",
     "kestrel_one.search_knowledge_documents",
+    "kestrel.files.search",
+    "kestrel.files.open",
     "createDocument",
     "requestSuggestions",
   ]);
@@ -260,6 +270,8 @@ test("built-in agent tools are governed by their effective App capabilities", ()
     "free.geocode.lookup": "auto",
     "free.exchange.rate": "auto",
     "kestrel_one.search_knowledge_documents": "ask",
+    "kestrel.files.search": "ask",
+    "kestrel.files.open": "ask",
     createDocument: "ask",
     requestSuggestions: "auto",
   });

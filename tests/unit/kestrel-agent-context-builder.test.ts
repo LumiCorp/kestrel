@@ -121,7 +121,8 @@ test("Kestrel agent context builder records deterministic section order", () => 
       "workspaceFreshness",
       "correction",
       "activeWait",
-    "transcript:mt_1_0001_user",
+      "attachments",
+      "transcript:mt_1_0001_user",
     ],
   );
   assert.deepEqual(

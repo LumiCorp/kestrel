@@ -135,8 +135,9 @@ test("compileRuntimeTurn preserves resume and attachment payload fields", () => 
       filename: "approval.txt",
       mimeType: "text/plain",
       sizeBytes: 8,
-      sha256: "sha256-approval",
+      sha256: "2687f86ed6784b8a5fca36e6c468e12aa44dc3c7e8137e3160d1a95079bdcd02",
       kind: "text" as const,
+      representationStatus: "extracted_text" as const,
       text: "approved",
     },
   ];

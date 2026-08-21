@@ -73,8 +73,31 @@ export function getKnowledgeDocumentByChecksum(
   });
 }
 
+export function getKnowledgeDocumentByFileScope(input: {
+  organizationId: string;
+  fileId: string;
+  projectId?: string | null;
+}) {
+  return knowledgeDb.query.knowledgeDocuments.findFirst({
+    where: (table, operators) => operators.and(
+      operators.eq(table.organizationId, input.organizationId),
+      operators.eq(table.fileId, input.fileId),
+      input.projectId
+        ? operators.and(
+            operators.eq(table.scope, "project"),
+            operators.eq(table.projectId, input.projectId),
+          )
+        : operators.and(
+            operators.eq(table.scope, "organization"),
+            operators.isNull(table.projectId),
+          ),
+    ),
+  });
+}
+
 export async function createKnowledgeDocument(input: {
   id: string;
+  fileId: string;
   organizationId: string;
   uploaderUserId: string;
   title?: string | null;
@@ -90,6 +113,7 @@ export async function createKnowledgeDocument(input: {
     .insert(schema.knowledgeDocuments)
     .values({
       id: input.id,
+      fileId: input.fileId,
       organizationId: input.organizationId,
       scope: input.projectId ? "project" : "organization",
       projectId: input.projectId ?? null,

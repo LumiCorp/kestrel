@@ -1223,7 +1223,7 @@ function parseCommandEnvelope(body: string): RunnerCommandParseResult {
   if (body.length === 0) {
     return {
       ok: false,
-      message: "Command body must contain an Execution Protocol v3 command envelope.",
+      message: "Command body must contain an Execution Protocol v4 command envelope.",
     };
   }
   let parsed: unknown;
@@ -1249,7 +1249,7 @@ function parseCommandEnvelope(body: string): RunnerCommandParseResult {
         : {}),
       message: error instanceof Error
         ? error.message
-        : "Command envelope is not valid Execution Protocol v3.",
+        : "Command envelope is not valid Execution Protocol v4.",
     };
   }
 }

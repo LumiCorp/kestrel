@@ -63,7 +63,7 @@ test("runner health rejects the v1 event contract", () => {
   );
 });
 
-test("runner health requires the aggregate Execution Protocol v3 contract", () => {
+test("runner health requires the aggregate Execution Protocol v4 contract", () => {
   const health = createRunnerHealthV1({ serviceVersion: "0.7.0-beta.0" });
   const { execution: _execution, ...withoutExecution } = health.contracts;
   assert.throws(
@@ -71,7 +71,7 @@ test("runner health requires the aggregate Execution Protocol v3 contract", () =
       ...health,
       contracts: withoutExecution,
     }),
-    /execution-protocol-v3/u,
+    /execution-protocol-v4/u,
   );
   assert.throws(
     () => parseRunnerHealthV1({
@@ -81,7 +81,7 @@ test("runner health requires the aggregate Execution Protocol v3 contract", () =
         execution: "execution-protocol-v1",
       },
     }),
-    /execution-protocol-v3/u,
+    /execution-protocol-v4/u,
   );
 });
 

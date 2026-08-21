@@ -91,6 +91,33 @@ test("filesystem tools allow workspace-relative and temp-root paths and reject e
   );
 });
 
+test("filesystem tools can read but never mutate attachment roots", async () => {
+  const policyRoots = await createPolicyRoots();
+  const attachmentRoot = path.join(policyRoots.tempRoot, "kestrel-turn-attachments-test");
+  await mkdir(attachmentRoot, { recursive: true });
+  const attachmentPath = path.join(attachmentRoot, "evidence.txt");
+  await writeFile(attachmentPath, "preserved", "utf8");
+  const handlers = defaultToolCatalog.createHandlers([...FILESYSTEM_TOOL_NAMES], {
+    fileSystem: {
+      workspaceRoot: policyRoots.workspaceRoot,
+      tempRoots: [policyRoots.tempRoot],
+      readOnlyRoots: [attachmentRoot],
+    },
+  }) as unknown as FsTestHandlers;
+
+  const read = await rawToolOutput<{ content: string }>(handlers["fs.read_text"]({ path: attachmentPath }));
+  assert.equal(read.content, "preserved");
+  await assert.rejects(
+    () => handlers["fs.write_text"]({ path: attachmentPath, content: "changed" }),
+    /read-only attachment root/u,
+  );
+  await assert.rejects(
+    () => handlers["fs.delete"]({ path: attachmentRoot, recursive: true }),
+    /read-only attachment root/u,
+  );
+  assert.equal(await readFile(attachmentPath, "utf8"), "preserved");
+});
+
 test("filesystem tools reject symlink escapes outside allowed roots", async () => {
   const { handlers, policyRoots } = await createFsHarness();
   const outsideFile = path.join(policyRoots.outsideRoot, "linked-secret.txt");

@@ -63,6 +63,7 @@ export const MAX_SEARCH_MAX_TOTAL_PREVIEW_CHARS = 64_000;
 interface ResolvedFileSystemPolicy {
   workspaceRoot: string;
   tempRoots: string[];
+  readOnlyRoots: string[];
   allowedRoots: string[];
 }
 
@@ -165,6 +166,7 @@ export function createDefaultFileSystemPolicy(): FileSystemToolPolicyConfig {
   return {
     workspaceRoot: process.cwd(),
     tempRoots: [os.tmpdir()],
+    readOnlyRoots: [],
   };
 }
 
@@ -181,6 +183,9 @@ export function resolveFileSystemPolicy(
       Array.isArray(config?.tempRoots) && config.tempRoots.length > 0
         ? config.tempRoots.map((item) => path.resolve(item))
         : fallback.tempRoots.map((item) => path.resolve(item)),
+    readOnlyRoots: Array.isArray(config?.readOnlyRoots)
+      ? config.readOnlyRoots.map((item) => path.resolve(item))
+      : [],
   };
 }
 
@@ -357,6 +362,20 @@ export function assertWorkspaceSkillStateMutationAllowed(input: {
   const policy = resolveFileSystemPolicy(input.config);
   const candidate = path.resolve(input.absolutePath);
   const protectedRoot = path.join(policy.workspaceRoot, ".kestrel", "skills");
+  const readOnlyRoot = policy.readOnlyRoots?.find((root) =>
+    isWithinRoot(candidate, root) || (input.destructive === true && isWithinRoot(root, candidate))
+  );
+  if (readOnlyRoot !== undefined) {
+    throw createFileSystemFailure(
+      "FILESYSTEM_READ_ONLY_ROOT",
+      `${input.toolName} cannot modify a read-only attachment root.`,
+      {
+        path: normalizeDisplayPath(candidate, policy),
+        classification: "policy",
+        recoverable: false,
+      },
+    );
+  }
   if (
     isWithinRoot(candidate, protectedRoot) ||
     (input.destructive === true && isWithinRoot(protectedRoot, candidate))
@@ -850,7 +869,7 @@ async function resolvePolicy(
   config: FileSystemToolPolicyConfig | undefined,
 ): Promise<ResolvedFileSystemPolicy> {
   const normalized = resolveFileSystemPolicy(config);
-  const roots = [normalized.workspaceRoot, ...normalized.tempRoots];
+  const roots = [normalized.workspaceRoot, ...normalized.tempRoots, ...(normalized.readOnlyRoots ?? [])];
   const allowedRoots = await Promise.all(
     roots.map(async (root) => {
       const rootRealPath = await safeRealPath(root);
@@ -861,6 +880,7 @@ async function resolvePolicy(
   return {
     workspaceRoot: normalized.workspaceRoot,
     tempRoots: normalized.tempRoots,
+    readOnlyRoots: normalized.readOnlyRoots ?? [],
     allowedRoots,
   };
 }

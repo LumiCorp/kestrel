@@ -1,6 +1,11 @@
 "use client";
 
 import type { UseChatHelpers } from "@ai-sdk/react";
+import {
+  CONVERSATION_ATTACHMENT_MAX_COUNT,
+  CONVERSATION_ATTACHMENT_MAX_FILE_BYTES,
+  CONVERSATION_ATTACHMENT_MAX_TURN_BYTES,
+} from "@kestrel-agents/conversation";
 import type { UIMessage } from "ai";
 import equal from "fast-deep-equal";
 import {
@@ -74,6 +79,12 @@ import type { VisibilityType } from "./visibility-selector";
 
 type ScopedChatModel = ChatModel & {
   scope?: "environment" | "organization" | "platform";
+};
+
+type PendingAttachmentUpload = {
+  id: string;
+  file: File;
+  status: "uploading" | "failed";
 };
 
 function ComposerStatusEdge({
@@ -172,6 +183,8 @@ function extractMarkdownTableFromHtml(html: string) {
 
 function PureMultimodalInput({
   threadId,
+  projectId,
+  workspaceMode,
   input,
   setInput,
   status,
@@ -196,6 +209,8 @@ function PureMultimodalInput({
   newTurnDisabledReason,
 }: {
   threadId: string;
+  projectId?: string;
+  workspaceMode?: "primary" | "isolated";
   input: string;
   setInput: Dispatch<SetStateAction<string>>;
   status: UseChatHelpers<ChatMessage>["status"];
@@ -436,7 +451,8 @@ function PureMultimodalInput({
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploadQueue, setUploadQueue] = useState<string[]>([]);
+  const [uploadQueue, setUploadQueue] = useState<PendingAttachmentUpload[]>([]);
+  const uploadControllersRef = useRef(new Map<string, AbortController>());
   const composerPresentation = useMemo(
     () =>
       resolveComposerPresentation({
@@ -485,6 +501,10 @@ function PureMultimodalInput({
 
   const submitForm = useCallback(async () => {
     const liveInputValue = textareaRef.current?.value ?? input;
+
+    if (composerPresentation.action.disabled) {
+      return;
+    }
 
     if (!liveInputValue.trim() && attachments.length === 0) {
       return;
@@ -538,10 +558,16 @@ function PureMultimodalInput({
       role: "user",
       parts: [
         ...attachments.map((attachment) => ({
-          type: "file" as const,
-          url: attachment.url,
-          name: attachment.name,
-          mediaType: attachment.contentType,
+          type: "data-kestrel-file" as const,
+          data: {
+            type: "kestrel-file" as const,
+            fileId: attachment.attachmentId,
+            filename: attachment.name,
+            sizeBytes: attachment.sizeBytes,
+            mediaType: attachment.contentType,
+            representationKind: attachment.representationStatus,
+            status: attachment.status,
+          },
         })),
         {
           type: "text",
@@ -579,6 +605,7 @@ function PureMultimodalInput({
     width,
     resetHeight,
     clearError,
+    composerPresentation.action.disabled,
     composerBlockedByInteraction,
     composerBlockedBySetup,
     composerRuntimeQuestion,
@@ -588,71 +615,146 @@ function PureMultimodalInput({
   ]);
 
   const uploadFile = useCallback(
-    async (file: File): Promise<Attachment | undefined> => {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("threadId", threadId);
-
+    async (file: File, uploadId: string): Promise<Attachment | undefined> => {
+      const controller = new AbortController();
+      uploadControllersRef.current.set(uploadId, controller);
+      let draftAttachmentId: string | undefined;
       try {
-        const response = await fetch(`/api/threads/${threadId}/uploads`, {
-          method: "PUT",
-          body: formData,
+        const ensuredThread = await fetch("/api/threads", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: threadId,
+            ...(projectId ? { projectId } : {}),
+            ...(workspaceMode ? { workspaceMode } : {}),
+          }),
+          signal: controller.signal,
         });
-
-        if (response.ok) {
-          const data = await response.json();
-          const { url, pathname, contentType, knowledgeEligible, name } = data;
-
-          return {
-            url,
-            name: name || pathname,
-            contentType,
-            pathname,
-            knowledgeEligible: Boolean(knowledgeEligible),
-          };
+        if (!ensuredThread.ok) {
+          const { error } = await ensuredThread.json();
+          throw new Error(error || "Thread could not be prepared for upload.");
         }
-        const { error } = await response.json();
-        toast.error(error);
-      } catch (_error) {
-        toast.error("Failed to upload file, please try again!");
+        const initialized = await fetch("/api/files", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId,
+            filename: file.name,
+            sizeBytes: file.size,
+            ...(file.type ? { declaredMediaType: file.type } : {}),
+          }),
+          signal: controller.signal,
+        });
+        if (!initialized.ok) {
+          const { error } = await initialized.json();
+          throw new Error(error || "Attachment upload could not be initialized.");
+        }
+        const draft = await initialized.json();
+        draftAttachmentId = draft.fileId;
+        const uploaded = await fetch(draft.uploadUrl, {
+          method: "PUT",
+          headers: {
+            "Content-Type": file.type || "application/octet-stream",
+          },
+          body: file,
+          signal: controller.signal,
+        });
+        if (!uploaded.ok) {
+          const { error } = await uploaded.json();
+          throw new Error(error || "Attachment upload failed.");
+        }
+        const data = await uploaded.json();
+        setUploadQueue((current) => current.filter((entry) => entry.id !== uploadId));
+        return {
+          attachmentId: data.fileId ?? data.attachmentId,
+          url: data.downloadUrl,
+          name: data.filename,
+          contentType: data.detectedMediaType,
+          sizeBytes: data.sizeBytes,
+          sha256: data.sha256,
+          status: "ready",
+          representationStatus: data.representation,
+          ...(data.metadataOnlyReason ? { metadataOnlyReason: data.metadataOnlyReason } : {}),
+          knowledgeEligible: Boolean(data.knowledgeEligible),
+        };
+      } catch (error) {
+        if (draftAttachmentId) {
+          void fetch(
+            `/api/files/${encodeURIComponent(draftAttachmentId)}?threadId=${encodeURIComponent(threadId)}`,
+            { method: "DELETE" },
+          );
+        }
+        if (controller.signal.aborted) {
+          setUploadQueue((current) => current.filter((entry) => entry.id !== uploadId));
+          return;
+        }
+        setUploadQueue((current) => current.map((entry) =>
+          entry.id === uploadId ? { ...entry, status: "failed" } : entry
+        ));
+        toast.error(error instanceof Error ? error.message : "Failed to upload file.");
+      } finally {
+        uploadControllersRef.current.delete(uploadId);
       }
     },
-    [threadId]
+    [projectId, threadId, workspaceMode]
+  );
+
+  const enqueueFiles = useCallback(
+    async (files: File[]) => {
+      if (
+        attachments.length + uploadQueue.length + files.length >
+        CONVERSATION_ATTACHMENT_MAX_COUNT
+      ) {
+        toast.error("A message can include at most 20 attachments.");
+        return;
+      }
+      const oversizedFile = files.find(
+        (file) => file.size > CONVERSATION_ATTACHMENT_MAX_FILE_BYTES
+      );
+      if (oversizedFile) {
+        toast.error(`${oversizedFile.name} exceeds the 100 MiB file limit.`);
+        return;
+      }
+      const totalBytes =
+        attachments.reduce((sum, attachment) => sum + attachment.sizeBytes, 0) +
+        uploadQueue.reduce((sum, upload) => sum + upload.file.size, 0) +
+        files.reduce((sum, file) => sum + file.size, 0);
+      if (totalBytes > CONVERSATION_ATTACHMENT_MAX_TURN_BYTES) {
+        toast.error("Attachments must total at most 500 MiB per message.");
+        return;
+      }
+
+      const pending = files.map((file) => ({
+        id: generateUUID(),
+        file,
+        status: "uploading" as const,
+      }));
+      setUploadQueue((current) => [...current, ...pending]);
+      const uploadedAttachments = await Promise.all(
+        pending.map(({ file, id }) => uploadFile(file, id))
+      );
+      const successful = uploadedAttachments.filter(
+        (attachment): attachment is Attachment => Boolean(attachment)
+      );
+      if (successful.length > 0) {
+        setAttachments((current) => [...current, ...successful]);
+      }
+      const promotionCandidates = successful;
+      if (promotionCandidates.length > 0) {
+        setPendingKnowledgePromotion(promotionCandidates);
+        setPromotionOpen(true);
+      }
+    },
+    [attachments, setAttachments, uploadFile, uploadQueue]
   );
 
   const handleFileChange = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>) => {
+    (event: ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(event.target.files || []);
-
-      setUploadQueue(files.map((file) => file.name));
-
-      try {
-        const uploadPromises = files.map((file) => uploadFile(file));
-        const uploadedAttachments = await Promise.all(uploadPromises);
-        const successfullyUploadedAttachments = uploadedAttachments.filter(
-          (attachment): attachment is Attachment => Boolean(attachment)
-        );
-        const promotionCandidates = successfullyUploadedAttachments.filter(
-          (attachment): attachment is Attachment =>
-            Boolean(attachment.knowledgeEligible && attachment.pathname)
-        );
-
-        setAttachments((currentAttachments) => [
-          ...currentAttachments,
-          ...successfullyUploadedAttachments,
-        ]);
-
-        if (promotionCandidates.length > 0) {
-          setPendingKnowledgePromotion(promotionCandidates);
-          setPromotionOpen(true);
-        }
-      } catch (error) {
-        console.error("Error uploading files!", error);
-      } finally {
-        setUploadQueue([]);
-      }
+      event.target.value = "";
+      void enqueueFiles(files);
     },
-    [setAttachments, uploadFile]
+    [enqueueFiles]
   );
 
   const handlePaste = useCallback(
@@ -670,37 +772,7 @@ function PureMultimodalInput({
 
       if (fileItems.length > 0) {
         event.preventDefault();
-        setUploadQueue((prev) => [
-          ...prev,
-          ...fileItems.map((file) => file.name),
-        ]);
-
-        try {
-          const uploadedAttachments = await Promise.all(
-            fileItems.map((file) => uploadFile(file))
-          );
-          const successfullyUploadedAttachments = uploadedAttachments.filter(
-            (attachment): attachment is Attachment => Boolean(attachment)
-          );
-          const promotionCandidates = successfullyUploadedAttachments.filter(
-            (attachment) => attachment.knowledgeEligible && attachment.pathname
-          );
-
-          setAttachments((curr) => [
-            ...curr,
-            ...successfullyUploadedAttachments,
-          ]);
-
-          if (promotionCandidates.length > 0) {
-            setPendingKnowledgePromotion(promotionCandidates);
-            setPromotionOpen(true);
-          }
-        } catch (error) {
-          console.error("Error uploading pasted files:", error);
-          toast.error("Failed to upload pasted files");
-        } finally {
-          setUploadQueue([]);
-        }
+        void enqueueFiles(fileItems);
 
         return;
       }
@@ -722,7 +794,7 @@ function PureMultimodalInput({
         });
       }
     },
-    [input, setAttachments, setInput, uploadFile]
+    [enqueueFiles, input, setInput]
   );
 
   // Add paste event listener to textarea
@@ -832,6 +904,18 @@ function PureMultimodalInput({
 
       <PromptInput
         className="relative overflow-hidden rounded-xl border border-border bg-background p-3 shadow-xs transition-all duration-200 focus-within:border-border hover:border-muted-foreground/50"
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) {
+            event.preventDefault();
+          }
+        }}
+        onDrop={(event) => {
+          const files = Array.from(event.dataTransfer.files);
+          if (files.length > 0) {
+            event.preventDefault();
+            void enqueueFiles(files);
+          }
+        }}
         onSubmit={(event) => {
           event.preventDefault();
           void submitForm();
@@ -850,10 +934,14 @@ function PureMultimodalInput({
             {attachments.map((attachment) => (
               <PreviewAttachment
                 attachment={attachment}
-                key={attachment.url}
+                key={attachment.attachmentId}
                 onRemove={() => {
+                  void fetch(
+                    `/api/threads/${encodeURIComponent(threadId)}/attachments/${encodeURIComponent(attachment.attachmentId)}`,
+                    { method: "DELETE" }
+                  );
                   setAttachments((currentAttachments) =>
-                    currentAttachments.filter((a) => a.url !== attachment.url)
+                    currentAttachments.filter((a) => a.attachmentId !== attachment.attachmentId)
                   );
                   if (fileInputRef.current) {
                     fileInputRef.current.value = "";
@@ -862,15 +950,40 @@ function PureMultimodalInput({
               />
             ))}
 
-            {uploadQueue.map((filename) => (
+            {uploadQueue.map((upload) => (
               <PreviewAttachment
                 attachment={{
+                  attachmentId: upload.id,
                   url: "",
-                  name: filename,
-                  contentType: "",
+                  name: upload.file.name,
+                  contentType: upload.file.type,
+                  sizeBytes: upload.file.size,
+                  sha256: "",
+                  status: "ready",
+                  representationStatus: "metadata_only",
                 }}
-                isUploading={true}
-                key={filename}
+                isUploading={upload.status === "uploading"}
+                key={upload.id}
+                onRemove={upload.status === "uploading" ? () => {
+                  uploadControllersRef.current.get(upload.id)?.abort();
+                  setUploadQueue((current) =>
+                    current.filter((entry) => entry.id !== upload.id)
+                  );
+                } : () => {
+                  setUploadQueue((current) =>
+                    current.filter((entry) => entry.id !== upload.id)
+                  );
+                }}
+                onRetry={upload.status === "failed" ? () => {
+                  setUploadQueue((current) => current.map((entry) =>
+                    entry.id === upload.id ? { ...entry, status: "uploading" } : entry
+                  ));
+                  void uploadFile(upload.file, upload.id).then((attachment) => {
+                    if (attachment) {
+                      setAttachments((current) => [...current, attachment]);
+                    }
+                  });
+                } : undefined}
               />
             ))}
           </div>
@@ -1009,10 +1122,11 @@ function PureMultimodalInput({
       <Dialog onOpenChange={setPromotionOpen} open={promotionOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add these files to Knowledge too?</DialogTitle>
+            <DialogTitle>
+              {projectId ? "Add these files to Project Knowledge?" : "Add these files to Organization Knowledge?"}
+            </DialogTitle>
             <DialogDescription>
-              These files are already attached to the chat. You can also import
-              them into the Knowledge Library for reusable retrieval.
+              This publishes the existing files for reusable retrieval. It does not upload another copy.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -1038,10 +1152,10 @@ function PureMultimodalInput({
             <Button
               onClick={async () => {
                 try {
-                  const uploads = pendingKnowledgePromotion
-                    .map((attachment) => attachment.pathname)
-                    .filter((pathname): pathname is string => Boolean(pathname))
-                    .map((pathname) => ({ pathname }));
+                  const uploads = pendingKnowledgePromotion.map((attachment) => ({
+                    fileId: attachment.attachmentId,
+                    projectId: projectId ?? null,
+                  }));
                   const response = await fetch(
                     "/api/knowledge/documents/promote",
                     {
@@ -1069,7 +1183,7 @@ function PureMultimodalInput({
                 }
               }}
             >
-              Chat + Knowledge
+              {projectId ? "Add to Project" : "Add to Organization"}
             </Button>
           </DialogFooter>
         </DialogContent>

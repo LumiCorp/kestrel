@@ -28,6 +28,10 @@ test("Vercel invokes the authenticated Environment reconciliation route every mi
       path: "/api/cron/environments/reconcile",
       schedule: ENVIRONMENT_RECONCILE_CRON,
     },
+    {
+      path: "/api/cron/attachments/cleanup",
+      schedule: "17 3 * * *",
+    },
   ]);
 });
 

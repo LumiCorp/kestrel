@@ -4,6 +4,10 @@
     {
       "path": "/api/cron/environments/reconcile",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/attachments/cleanup",
+      "schedule": "17 3 * * *"
     }
   ]
 }

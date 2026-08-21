@@ -1,4 +1,8 @@
 import type { KestrelPresentationDataParts } from "@kestrel-agents/ai-sdk";
+import type {
+  ConversationAttachmentReference,
+  ConversationFileReference,
+} from "@kestrel-agents/conversation";
 import type { InferUITool, UIMessage } from "ai";
 import { z } from "zod";
 import type { ArtifactKind } from "@/components/artifact";
@@ -116,6 +120,8 @@ export type CustomUIDataTypes = {
   "stream-resumed": null;
   "stream-warning": { droppedChunkCount: number };
   "interaction-mode": { mode: KestrelOneInteractionMode };
+  "kestrel-attachment": ConversationAttachmentReference;
+  "kestrel-file": ConversationFileReference;
 } & KestrelPresentationDataParts;
 
 export type ChatMessage = UIMessage<
@@ -125,9 +131,15 @@ export type ChatMessage = UIMessage<
 >;
 
 export type Attachment = {
+  attachmentId: string;
   name: string;
   url: string;
   contentType: string;
+  sizeBytes: number;
+  sha256: string;
+  status: "draft" | "ready" | "quarantined" | "failed" | "deleted";
+  representationStatus: "native_image" | "extracted_text" | "staged_file" | "metadata_only";
+  metadataOnlyReason?: string;
   pathname?: string;
   knowledgeEligible?: boolean;
 };

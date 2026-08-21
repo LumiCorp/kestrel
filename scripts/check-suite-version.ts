@@ -55,6 +55,7 @@ const publicPackageNames = [
   "@kestrel-agents/kestrel",
   "@kestrel-agents/protocol",
   "@kestrel-agents/conversation",
+  "@kestrel-agents/files",
   "@kestrel-agents/sdk",
   "@kestrel-agents/memory",
   "@kestrel-agents/next",
@@ -80,7 +81,7 @@ const { DOCS_RELEASE } = (await import(releaseModuleUrl)) as {
 assert.deepEqual(
   [...DOCS_RELEASE.packages.releasedPackageNames],
   [...publicPackageNames],
-  "docs must enumerate the nine public packages in release order",
+  "docs must enumerate the ten public packages in release order",
 );
 for (const packageName of publicPackageNames) {
   const manifest = manifests.get(packageName);
@@ -109,6 +110,7 @@ const compatibilityOwners: Record<string, string> = {
   Runtime: "@kestrel-agents/kestrel",
   Protocol: "@kestrel-agents/protocol",
   Conversation: "@kestrel-agents/conversation",
+  Files: "@kestrel-agents/files",
   SDK: "@kestrel-agents/sdk",
   Memory: "@kestrel-agents/memory",
   "Next.js": "@kestrel-agents/next",

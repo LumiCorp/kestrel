@@ -72,7 +72,7 @@ test("release metadata names only real public packages with reference coverage",
     assert.equal(DOCS_RELEASE.packages.versions[manifest.name], manifest.version);
   }
 
-  for (const route of ["protocol", "conversation", "sdk", "memory", "nextjs", "ai-sdk", "observability", "workspace-skills"]) {
+  for (const route of ["protocol", "conversation", "files", "sdk", "memory", "nextjs", "ai-sdk", "observability", "workspace-skills"]) {
     assert.ok(await getRenderedPageBySlug(["reference", route]), route);
   }
 });

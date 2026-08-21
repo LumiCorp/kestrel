@@ -1,0 +1,41 @@
+---
+title: Files
+summary: Classify arbitrary uploads and derive bounded model representations without changing their original bytes.
+section: packages
+audience: integrators
+status: stable
+sourceKind: curated
+updatedAt: 2026-08-21
+---
+
+`@kestrel-agents/files` is the provider-neutral processing layer used by
+Kestrel Desktop and Kestrel One. It detects common media types and produces
+bounded text or native-image representations for supported files. Unknown,
+unsupported, or malformed formats remain valid files and degrade to explicit
+metadata-only access.
+
+The package does not own durable storage, authorization, scope grants, or
+runner materialization. Hosts retain the immutable original and call this
+processor after upload.
+
+## Install
+
+```bash
+pnpm add @kestrel-agents/files@0.8.5
+```
+
+## Process an upload
+
+```ts
+import { extractAttachmentTextIsolated } from "@kestrel-agents/files";
+
+const representation = await extractAttachmentTextIsolated({
+  buffer: bytes,
+  filename: "report.pdf",
+  mediaType: "application/pdf",
+});
+```
+
+Processing runs with explicit byte, time, memory, expansion, and output
+limits. A processor failure is returned as a visible metadata-only result; it
+does not discard or mutate the original file.

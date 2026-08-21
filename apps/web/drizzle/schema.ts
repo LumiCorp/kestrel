@@ -839,6 +839,158 @@ export const threadMessages = pgTable(
   ],
 );
 
+export const fileBlobs = pgTable(
+  "file_blobs",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    objectKey: text("object_key").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256"),
+    scanStatus: text("scan_status", {
+      enum: ["pending", "clean", "quarantined", "unavailable"],
+    }).notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("file_blobs_org_id_idx").on(table.organizationId),
+    uniqueIndex("file_blobs_org_sha256_idx")
+      .on(table.organizationId, table.sha256)
+      .where(sql`${table.sha256} is not null and ${table.deletedAt} is null`),
+    uniqueIndex("file_blobs_object_key_idx").on(table.objectKey),
+  ],
+);
+
+export const kestrelFiles = pgTable(
+  "kestrel_files",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    uploaderUserId: text("uploader_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    blobId: text("blob_id")
+      .notNull()
+      .references(() => fileBlobs.id, { onDelete: "restrict" }),
+    filename: text("filename").notNull(),
+    declaredMediaType: text("declared_media_type"),
+    detectedMediaType: text("detected_media_type"),
+    sizeBytes: integer("size_bytes").notNull(),
+    sha256: text("sha256"),
+    lifecycleState: text("lifecycle_state", {
+      enum: ["draft", "ready", "quarantined", "failed", "deleted"],
+    }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("kestrel_files_org_id_idx").on(table.organizationId),
+    index("kestrel_files_blob_id_idx").on(table.blobId),
+    index("kestrel_files_lifecycle_created_idx").on(table.lifecycleState, table.createdAt),
+  ],
+);
+
+export const fileScopeGrants = pgTable(
+  "file_scope_grants",
+  {
+    id: text("id").primaryKey(),
+    fileId: text("file_id").notNull().references(() => kestrelFiles.id, { onDelete: "cascade" }),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    scopeType: text("scope_type", { enum: ["thread", "project", "organization"] }).notNull(),
+    threadId: text("thread_id").references(() => threads.id, { onDelete: "cascade" }),
+    projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("file_scope_grants_file_idx").on(table.fileId),
+    index("file_scope_grants_thread_idx").on(table.threadId),
+    index("file_scope_grants_project_idx").on(table.projectId),
+    index("file_scope_grants_org_scope_idx").on(table.organizationId, table.scopeType),
+    uniqueIndex("file_scope_grants_live_thread_idx")
+      .on(table.fileId, table.threadId)
+      .where(sql`${table.scopeType} = 'thread' and ${table.revokedAt} is null`),
+    uniqueIndex("file_scope_grants_live_project_idx")
+      .on(table.fileId, table.projectId)
+      .where(sql`${table.scopeType} = 'project' and ${table.revokedAt} is null`),
+    uniqueIndex("file_scope_grants_live_org_idx")
+      .on(table.fileId, table.organizationId)
+      .where(sql`${table.scopeType} = 'organization' and ${table.revokedAt} is null`),
+  ],
+);
+
+export const fileRepresentations = pgTable(
+  "file_representations",
+  {
+    id: text("id").primaryKey(),
+    blobId: text("blob_id").notNull().references(() => fileBlobs.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["native_image", "extracted_text", "metadata_only"] }).notNull(),
+    status: text("status", { enum: ["pending", "ready", "failed"] }).notNull(),
+    mediaType: text("media_type").notNull(),
+    textContent: text("text_content"),
+    objectKey: text("object_key"),
+    truncated: boolean("truncated").notNull().default(false),
+    error: text("error"),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("file_representations_blob_kind_idx").on(table.blobId, table.kind),
+    index("file_representations_status_idx").on(table.status),
+  ],
+);
+
+export const threadMessageFiles = pgTable(
+  "thread_message_files",
+  {
+    messageId: text("message_id")
+      .notNull()
+      .references(() => threadMessages.id, { onDelete: "cascade" }),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => kestrelFiles.id, { onDelete: "cascade" }),
+    ordinal: integer("ordinal").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.messageId, table.fileId] }),
+    uniqueIndex("thread_message_files_message_ordinal_idx").on(table.messageId, table.ordinal),
+    index("thread_message_files_file_id_idx").on(table.fileId),
+  ],
+);
+
+export const fileBackfillProgress = pgTable("file_backfill_progress", {
+  source: text("source").primaryKey(),
+  cursorCreatedAt: timestamp("cursor_created_at", { withTimezone: true }),
+  cursorRecordId: text("cursor_record_id"),
+  status: text("status", { enum: ["pending", "running", "completed", "failed"] }).notNull().default("pending"),
+  scannedCount: integer("scanned_count").notNull().default(0),
+  registeredCount: integer("registered_count").notNull().default(0),
+  missingCount: integer("missing_count").notNull().default(0),
+  error: text("error"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const fileBackfillResults = pgTable(
+  "file_backfill_results",
+  {
+    sourceKey: text("source_key").primaryKey(),
+    source: text("source").notNull(),
+    fileId: text("file_id").references(() => kestrelFiles.id, { onDelete: "set null" }),
+    status: text("status", { enum: ["registered", "missing", "failed"] }).notNull(),
+    error: text("error"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("file_backfill_results_source_idx").on(table.source)],
+);
+
 /** =========================
  *  Durable Thread Turns
  *  ========================= */
@@ -5455,6 +5607,9 @@ export const knowledgeDocuments = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
+    fileId: text("file_id")
+      .notNull()
+      .references(() => kestrelFiles.id, { onDelete: "restrict" }),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
@@ -5490,6 +5645,13 @@ export const knowledgeDocuments = pgTable(
       .defaultNow(),
   },
   (table) => [
+    index("knowledge_documents_file_id_idx").on(table.fileId),
+    uniqueIndex("knowledge_documents_file_org_scope_idx")
+      .on(table.fileId, table.scope)
+      .where(sql`${table.scope} = 'organization' and ${table.projectId} is null`),
+    uniqueIndex("knowledge_documents_file_project_scope_idx")
+      .on(table.fileId, table.projectId)
+      .where(sql`${table.scope} = 'project' and ${table.projectId} is not null`),
     index("knowledge_documents_org_id_idx").on(table.organizationId),
     index("knowledge_documents_project_id_idx").on(table.projectId),
     index("knowledge_documents_scope_idx").on(table.scope),
@@ -6045,6 +6207,13 @@ export type ProjectContextRevision = InferSelectModel<
 >;
 export type Thread = InferSelectModel<typeof threads>;
 export type ThreadMessage = InferSelectModel<typeof threadMessages>;
+export type FileBlob = InferSelectModel<typeof fileBlobs>;
+export type KestrelFile = InferSelectModel<typeof kestrelFiles>;
+export type FileScopeGrant = InferSelectModel<typeof fileScopeGrants>;
+export type FileRepresentation = InferSelectModel<typeof fileRepresentations>;
+export type ThreadMessageFile = InferSelectModel<typeof threadMessageFiles>;
+export type FileBackfillProgress = InferSelectModel<typeof fileBackfillProgress>;
+export type FileBackfillResult = InferSelectModel<typeof fileBackfillResults>;
 export type ThreadTurn = InferSelectModel<typeof threadTurns>;
 export type ThreadTurnEvent = InferSelectModel<typeof threadTurnEvents>;
 export type ThreadTurnQueueState = InferSelectModel<

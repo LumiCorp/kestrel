@@ -188,6 +188,18 @@ const desktopBridge: DesktopBridge = {
   importAttachment(input: DesktopAttachmentImportInput) {
     return ipcRenderer.invoke("desktop:import-attachment", input);
   },
+  beginAttachmentStream(input) {
+    return ipcRenderer.invoke("desktop:attachment-stream-begin", input);
+  },
+  appendAttachmentStream(uploadId, chunk) {
+    return ipcRenderer.invoke("desktop:attachment-stream-append", uploadId, chunk);
+  },
+  finishAttachmentStream(uploadId) {
+    return ipcRenderer.invoke("desktop:attachment-stream-finish", uploadId);
+  },
+  abortAttachmentStream(uploadId) {
+    return ipcRenderer.invoke("desktop:attachment-stream-abort", uploadId);
+  },
   listAttachments(threadId) {
     return ipcRenderer.invoke("desktop:list-attachments", threadId);
   },
@@ -197,6 +209,9 @@ const desktopBridge: DesktopBridge = {
       threadId,
       attachmentId,
     );
+  },
+  saveAttachment(threadId, attachmentId) {
+    return ipcRenderer.invoke("desktop:save-attachment", threadId, attachmentId);
   },
   submitOperatorControl(request) {
     return ipcRenderer.invoke("desktop:operator-control", request);

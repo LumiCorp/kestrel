@@ -2,14 +2,22 @@ import { createHash } from "node:crypto";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { readUpload } from "@/lib/files/storage";
 import { assertUploadPathOwnedByUser } from "@/lib/files/upload-path";
+import {
+  createPublishedFileFromBuffer,
+  discardUnreferencedFile,
+  getFileByIdForUser,
+  publishFileScope,
+  revokeFileScope,
+  revokeFileScopeForManagement,
+} from "@/lib/files/service";
 import { enqueueKnowledgeDocumentRun } from "@/lib/knowledge/queue";
-import { getStorageAdapter } from "@/lib/storage";
-import { buildKnowledgeDocumentObjectKey, normalizeMediaType } from "./shared";
+import { normalizeMediaType } from "./shared";
 import {
   createKnowledgeDocument,
   createKnowledgeIngestionRun,
   deleteKnowledgeDocumentGraph,
   getKnowledgeDocumentByChecksum,
+  getKnowledgeDocumentByFileScope,
   getKnowledgeDocumentById,
 } from "./store";
 
@@ -61,6 +69,80 @@ export async function createKnowledgeDocumentFromStoredUpload(input: {
     mediaType,
     buffer: upload.buffer,
   });
+}
+
+export async function publishFileToKnowledge(input: {
+  organizationId: string;
+  uploaderUserId: string;
+  fileId: string;
+  projectId?: string | null;
+}) {
+  const file = await getFileByIdForUser({
+    fileId: input.fileId,
+    organizationId: input.organizationId,
+    userId: input.uploaderUserId,
+  });
+  if (file.lifecycleState !== "ready" || !file.sha256) {
+    throw new Error("Only ready files can be published to Knowledge.");
+  }
+  await publishFileScope({
+    fileId: file.id,
+    organizationId: input.organizationId,
+    userId: input.uploaderUserId,
+    scope: input.projectId ? "project" : "organization",
+    projectId: input.projectId ?? undefined,
+  });
+  const existing = await getKnowledgeDocumentByFileScope({
+    organizationId: input.organizationId,
+    fileId: file.id,
+    projectId: input.projectId,
+  });
+  if (existing) {
+    return { document: existing, run: null, deduped: true };
+  }
+  const document = await createKnowledgeDocument({
+    id: crypto.randomUUID(),
+    fileId: file.id,
+    organizationId: input.organizationId,
+    uploaderUserId: input.uploaderUserId,
+    projectId: input.projectId,
+    filename: file.filename,
+    originalFilename: file.filename,
+    mediaType: file.detectedMediaType ?? file.declaredMediaType ?? "application/octet-stream",
+    sizeBytes: file.sizeBytes,
+    checksumSha256: file.sha256,
+    storageKey: file.objectKey,
+  });
+  const run = await createKnowledgeIngestionRun({
+    organizationId: input.organizationId,
+    documentId: document.id,
+    requestedByUserId: input.uploaderUserId,
+  });
+  await enqueueKnowledgeDocumentRun(run.id);
+  return { document, run, deduped: false };
+}
+
+export async function revokeFileFromKnowledge(input: {
+  organizationId: string;
+  userId: string;
+  fileId: string;
+  projectId?: string | null;
+}) {
+  await revokeFileScope({
+    fileId: input.fileId,
+    organizationId: input.organizationId,
+    userId: input.userId,
+    scope: input.projectId ? "project" : "organization",
+    projectId: input.projectId ?? undefined,
+  });
+  const document = await getKnowledgeDocumentByFileScope({
+    organizationId: input.organizationId,
+    fileId: input.fileId,
+    projectId: input.projectId,
+  });
+  if (document) await deleteKnowledgeDocumentGraph(document.id);
+  await discardUnreferencedFile(input.fileId).catch(() => {});
+  return { revoked: true, documentId: document?.id ?? null };
 }
 
 async function createKnowledgeDocumentFromBuffer(input: {
@@ -115,24 +197,13 @@ async function createKnowledgeDocumentFromBuffer(input: {
   }
 
   const documentId = crypto.randomUUID();
-  const storage = getStorageAdapter();
-  const keyParts = buildKnowledgeDocumentObjectKey({
+  const file = await createPublishedFileFromBuffer({
     organizationId: input.organizationId,
+    uploaderUserId: input.uploaderUserId,
     projectId: input.projectId,
-    documentId,
     filename: input.filename,
-  });
-  const storageKey = storage.buildObjectKey("knowledge-documents", ...keyParts);
-
-  await storage.putObject({
-    key: storageKey,
-    body: input.buffer,
-    contentType: input.mediaType,
-    metadata: {
-      organizationId: input.organizationId,
-      ...(input.projectId ? { projectId: input.projectId } : {}),
-      uploaderUserId: input.uploaderUserId,
-    },
+    declaredMediaType: input.mediaType,
+    buffer: input.buffer,
   });
 
   let document: Awaited<ReturnType<typeof createKnowledgeDocument>> | null =
@@ -141,6 +212,7 @@ async function createKnowledgeDocumentFromBuffer(input: {
   try {
     document = await createKnowledgeDocument({
       id: documentId,
+      fileId: file.id,
       organizationId: input.organizationId,
       uploaderUserId: input.uploaderUserId,
       projectId: input.projectId,
@@ -149,16 +221,14 @@ async function createKnowledgeDocumentFromBuffer(input: {
       mediaType: input.mediaType,
       sizeBytes: input.buffer.length,
       checksumSha256,
-      storageKey,
+      storageKey: file.objectKey,
     });
   } catch (error) {
     if (!isChecksumConflict(error)) {
       throw error;
     }
 
-    await storage.deleteObject(storageKey).catch(() => {
-      // Best-effort orphan cleanup for duplicate upload races.
-    });
+    await discardUnreferencedFile(file.id, { removeScopeGrants: true }).catch(() => {});
 
     const concurrentDocument = await getKnowledgeDocumentByChecksum(
       input.organizationId,
@@ -237,11 +307,14 @@ export async function removeKnowledgeDocument(input: {
     throw new Error("Knowledge document not found");
   }
 
-  const storage = getStorageAdapter();
-  await storage.deleteObject(document.storageKey).catch(() => {
-    // Delete is best-effort because the row graph must still be removed.
+  await revokeFileScopeForManagement({
+    fileId: document.fileId,
+    organizationId: input.organizationId,
+    scope: document.scope,
+    projectId: document.projectId,
   });
   await deleteKnowledgeDocumentGraph(document.id);
+  await discardUnreferencedFile(document.fileId).catch(() => {});
 
   await logAdminEvent({
     organizationId: input.organizationId,

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
-import type { ModelMessage } from "../../kestrel/contracts/model-io.js";
+import type { ModelContentPart, ModelMessage } from "../../kestrel/contracts/model-io.js";
+import type { RunTurnAttachment } from "../../kestrel/contracts/orchestration.js";
 import type { ContextSectionCandidateV1 } from "../../economics/contracts.js";
 import { countTextTokens, type ExactTokenCounter } from "../../economics/tokenCounting.js";
 
@@ -159,7 +160,11 @@ export function buildKestrelAgentContext(
     benchmarkContext,
   });
   const explicitUserMessage = readUserMessage(input.eventPayload);
-  const userMessage = explicitUserMessage ?? input.goal;
+  const attachments = readTurnAttachments(input.eventPayload.attachments);
+  const attachmentContext = renderAttachmentContext(attachments);
+  const userMessage = [explicitUserMessage ?? input.goal, attachmentContext]
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n");
   const eventMetadata = asRecord(input.eventPayload.metadata);
   const submissionKind = readSubmissionKind(input.eventPayload);
   const hasCanonicalFreshMessage = submissionKind === "initial" || submissionKind === "follow_up";
@@ -259,6 +264,7 @@ export function buildKestrelAgentContext(
     runtimeContext,
     ...(correction !== undefined ? { suppressCorrectionContent: correction } : {}),
   });
+  attachTurnRepresentationsToLatestUserMessage(contextMessages, attachments);
   const systemMessage = renderSystemPromptMessage(input.systemPrompt);
   const messages = systemMessage !== undefined
     ? [systemMessage, ...contextMessages]
@@ -351,6 +357,7 @@ export function buildKestrelAgentContext(
         },
         { id: "correction", origin: "feedback", rendered: correction !== undefined },
         { id: "activeWait", origin: "runtime-state", rendered: asRecord(input.reactState.waitingFor) !== undefined },
+        { id: "attachments", origin: "turn-attachments", rendered: attachments.length > 0 },
         ...transcriptMessages.map((message, index) => ({
           id: `transcript:${transcript.items[index]?.id ?? index}`,
           origin: `model-transcript:${message.role}`,
@@ -451,6 +458,103 @@ function renderSystemPromptMessage(systemPrompt: KestrelAgentSystemPromptInput |
 
 function readUserMessage(eventPayload: Record<string, unknown>): string | undefined {
   return asString(eventPayload.message);
+}
+
+function readTurnAttachments(value: unknown): RunTurnAttachment[] {
+  if (value === undefined) return [];
+  if (Array.isArray(value) === false) throw new Error("Turn attachments must be an array.");
+  return value.map((entry, index) => {
+    const record = asRecord(entry);
+    if (record === undefined) throw new Error(`Turn attachment ${index} must be an object.`);
+    const attachmentId = asString(record.fileId)?.trim() ?? asString(record.attachmentId)?.trim();
+    const filename = asString(record.filename)?.trim();
+    const mimeType = asString(record.mimeType)?.trim();
+    const sha256 = asString(record.sha256)?.trim();
+    const kind = record.kind;
+    const representationStatus = record.representationStatus;
+    if (
+      !attachmentId || !filename || !mimeType || !sha256
+      || typeof record.sizeBytes !== "number"
+      || (kind !== "image" && kind !== "text" && kind !== "file")
+      || (
+        representationStatus !== "native_image"
+        && representationStatus !== "extracted_text"
+        && representationStatus !== "staged_file"
+        && representationStatus !== "metadata_only"
+      )
+    ) {
+      throw new Error(`Turn attachment ${index} does not satisfy the execution-protocol-v4 contract.`);
+    }
+    return {
+      ...record,
+      fileId: attachmentId,
+      attachmentId,
+    } as unknown as RunTurnAttachment;
+  });
+}
+
+function renderAttachmentContext(attachments: RunTurnAttachment[]): string {
+  if (attachments.length === 0) return "";
+  const inventory = attachments.map((attachment) => JSON.stringify({
+    fileId: attachment.fileId ?? attachment.attachmentId,
+    attachmentId: attachment.attachmentId,
+    filename: attachment.filename,
+    mediaType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    sha256: attachment.sha256,
+    representation: attachment.representationStatus,
+    ...(attachment.metadataOnlyReason !== undefined ? { note: attachment.metadataOnlyReason } : {}),
+  }));
+  const extractedText = attachments.flatMap((attachment) => attachment.text === undefined
+    ? []
+    : [
+        `<file_text file_id=${JSON.stringify(attachment.fileId ?? attachment.attachmentId)} filename=${JSON.stringify(attachment.filename)} truncated=${attachment.textTruncated === true ? "true" : "false"}>`,
+        attachment.text,
+        "</file_text>",
+      ]);
+  return [
+    "<attachments>",
+    ...inventory,
+    "</attachments>",
+    ...extractedText,
+  ].join("\n");
+}
+
+function attachTurnRepresentationsToLatestUserMessage(
+  messages: ModelMessage[],
+  attachments: RunTurnAttachment[],
+): void {
+  const images = attachments.filter((attachment) =>
+    attachment.kind === "image" && typeof attachment.data === "string" && attachment.data.length > 0
+  );
+  if (attachments.length === 0) return;
+  const target = [...messages].reverse().find((message) => message.role === "user");
+  if (target === undefined) throw new Error("Attachment turn has no model-visible user message.");
+  const current = typeof target.content === "string"
+    ? [{ type: "text", text: target.content } satisfies ModelContentPart]
+    : target.content;
+  const materialized = attachments.flatMap((attachment) => attachment.path === undefined
+      ? []
+    : [{
+        fileId: attachment.fileId ?? attachment.attachmentId,
+        attachmentId: attachment.attachmentId,
+        filename: attachment.filename,
+        readOnlyPath: attachment.path,
+      }]);
+  target.content = [
+    ...(materialized.length > 0
+      ? [{
+          type: "text" as const,
+          text: `<materialized_attachments>\n${materialized.map((entry) => JSON.stringify(entry)).join("\n")}\n</materialized_attachments>`,
+        }]
+      : []),
+    ...current,
+    ...images.map((attachment): ModelContentPart => ({
+      type: "image",
+      mimeType: attachment.mimeType,
+      data: attachment.data as string,
+    })),
+  ];
 }
 
 function buildRecoveryContext(reactState: Record<string, unknown>): Record<string, unknown> | undefined {

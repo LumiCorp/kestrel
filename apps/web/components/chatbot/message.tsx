@@ -149,7 +149,9 @@ function ConsoleArtifactDisclosure({
 }
 
 const isKestrelPresentationPart = (part: ChatMessage["parts"][number]) =>
-  part.type.startsWith("data-kestrel-");
+  part.type.startsWith("data-kestrel-")
+  && part.type !== "data-kestrel-attachment"
+  && part.type !== "data-kestrel-file";
 
 function turnActivityLabel(status: ThreadTurnView["status"] | undefined) {
   if (status === "queued") return "Activity details · Queued";
@@ -510,9 +512,51 @@ const PurePreviewMessage = ({
 }) => {
   const [mode, setMode] = useState<"view" | "edit">("view");
 
-  const attachmentsFromMessage = message.parts.filter(
-    (part) => part.type === "file"
-  );
+  const attachmentsFromMessage = message.parts.flatMap((part) => {
+    if (part.type === "data-kestrel-file") {
+      const file = part.data;
+      return [{
+        attachmentId: file.fileId,
+        filename: file.filename,
+        mediaType: file.mediaType,
+        sizeBytes: file.sizeBytes,
+        sha256: "",
+        status: file.status,
+        representationStatus: file.representationKind,
+        url: file.status === "ready"
+          ? `/api/files/${encodeURIComponent(file.fileId)}/content`
+          : "",
+      }];
+    }
+    if (part.type === "data-kestrel-attachment") {
+      const attachment = part.data;
+      return [{
+        attachmentId: attachment.attachmentId,
+        filename: attachment.filename,
+        mediaType: attachment.mediaType,
+        sizeBytes: attachment.sizeBytes,
+        sha256: "",
+        status: attachment.status,
+        representationStatus: attachment.representationKind,
+        url: attachment.status === "ready"
+          ? `/api/attachments/${encodeURIComponent(attachment.attachmentId)}/content`
+          : "",
+      }];
+    }
+    if (part.type === "file") {
+      return [{
+        attachmentId: part.url,
+        filename: part.filename ?? "file",
+        mediaType: part.mediaType,
+        sizeBytes: 0,
+        sha256: "",
+        status: "ready" as const,
+        representationStatus: "metadata_only" as const,
+        url: part.url,
+      }];
+    }
+    return [];
+  });
   const kestrelPresentationParts = message.parts.filter(
     isKestrelPresentationPart
   );
@@ -580,11 +624,16 @@ const PurePreviewMessage = ({
               {attachmentsFromMessage.map((attachment) => (
                 <PreviewAttachment
                   attachment={{
-                    name: attachment.filename ?? "file",
+                    attachmentId: attachment.attachmentId,
+                    name: attachment.filename,
                     contentType: attachment.mediaType,
                     url: attachment.url,
+                    sizeBytes: attachment.sizeBytes,
+                    sha256: attachment.sha256,
+                    status: attachment.status,
+                    representationStatus: attachment.representationStatus,
                   }}
-                  key={attachment.url}
+                  key={attachment.attachmentId}
                 />
               ))}
             </div>
