@@ -3,10 +3,15 @@ id: production-delivery-channels
 domain: operations
 status: active
 owner: kestrel-one
-last_verified_at: 2026-08-16
+last_verified_at: 2026-08-22
 depends_on:
   - ../apps/web/vercel.json
   - ../deploy/fly/image-catalog.json
+  - ../apps/preview-edge/ROLLOUT.md
+  - ../deploy/fly/kestrel-one-control-worker/ROLLOUT.md
+  - ../deploy/fly/kestrel-one-runner/ROLLOUT.md
+  - ../deploy/fly/kestrel-one-runpod-worker/ROLLOUT.md
+  - ../deploy/fly/kestrel-one-turn-worker/ROLLOUT.md
   - ../scripts/publish-production-image.ts
   - ../scripts/deploy-production-fly-machine.ts
   - ../apps/web/scripts/update-environment-runtime.ts
@@ -35,11 +40,11 @@ scope:
 | --- | --- |
 | `one` | Vercel native deployment from `production` |
 | `docs` | Vercel native deployment from `production` |
-| `preview-edge` | Published image, then one Fly Machine update |
-| `turn-worker` | Published image, then one Fly Machine update |
-| `control-worker` | Published image, then one Fly Machine update |
-| `runpod-worker` | Published image, then one Fly Machine update |
-| Router and Workspace Runtime | Two published images, then one Environment update |
+| `preview-edge` | Published image, then one Fly Machine update; follow its [role rollout](../apps/preview-edge/ROLLOUT.md) |
+| `turn-worker` | Published image, then one Fly Machine update; follow its [role rollout](../deploy/fly/kestrel-one-turn-worker/ROLLOUT.md) |
+| `control-worker` | Published image, then one Fly Machine update; follow its [role rollout](../deploy/fly/kestrel-one-control-worker/ROLLOUT.md) |
+| `runpod-worker` | Published image, then one Fly Machine update; follow its [role rollout](../deploy/fly/kestrel-one-runpod-worker/ROLLOUT.md) |
+| Router and Workspace Runtime | Two published images, then one Environment update; follow the [paired runtime rollout](../deploy/fly/kestrel-one-runner/ROLLOUT.md) |
 | Managed RunPod profile | Separate manual profile operation; never implied by a worker image |
 
 Confirm the local checkout contains the intended code and run the repository
@@ -97,6 +102,11 @@ The command builds the selected role for `linux/amd64`, runs that role's image
 smoke, and pushes the selected tag. It does not inspect Git, deploy the image,
 or update another role. Save the final JSON output in the release notes.
 
+Image smoke is publication evidence only. It may prove an image-local health or
+missing-configuration contract, but it never proves production configuration,
+provider state, consumer registration, reconciliation, or live work delivery.
+The selected role rollout defines the required production proof.
+
 If build, smoke, or push fails, nothing has been deployed. Fix the failure and
 rerun only the selected role.
 
@@ -125,6 +135,11 @@ The command prints the signed-in Fly identity, current provider record, exact
 requested image, and confirmation text. Read it, type the exact confirmation,
 and retain the fresh provider record printed after `fly machine update`.
 
+Inventory all Machine states before the first update. For a role with more than
+one Machine, update and verify every started Machine in scope before updating
+any stopped Machine. A stopped Machine must remain stopped; do not start a
+standby merely to prove an image update.
+
 For `preview-edge`, the command also requires the selected Machine to expose
 HTTP 80 and HTTPS 443 to internal port 8080 before the confirmation and after
 the update. It refuses missing or changed ingress instead of repairing Fly
@@ -134,11 +149,12 @@ Verify that Machine before touching another one:
 
 ```bash
 fly machine status <machine-id> --app <app>
-fly logs --app <app>
+fly logs --app <app> --machine <machine-id>
 ```
 
-`fly machine update` preserves a stopped Machine's state. If this exact Machine
-should be running, start it explicitly:
+`fly machine update` preserves a stopped Machine's state. Outside a standby
+image update, if this exact Machine is intentionally being placed into service,
+start it explicitly and treat that as a separate provider action:
 
 ```bash
 fly machine start <machine-id> --app <app>
@@ -147,6 +163,23 @@ fly machine start <machine-id> --app <app>
 Confirm the Machine is in the intended state, reports the requested tagged image, and passes
 the role's normal health or work-delivery check. Updating another Machine is a
 new invocation with its own review and confirmation.
+
+Complete the selected overlay before closing a Fly image rollout:
+
+- [Preview Edge](../apps/preview-edge/ROLLOUT.md) requires the ingress contract
+  and a public preview canary.
+- [Turn worker](../deploy/fly/kestrel-one-turn-worker/ROLLOUT.md) requires
+  capacity preservation, worker readiness, and a durable turn result.
+- [Control worker](../deploy/fly/kestrel-one-control-worker/ROLLOUT.md) requires
+  migration ordering, both consumers, reconciliation, and affected work proof.
+- [Managed RunPod worker](../deploy/fly/kestrel-one-runpod-worker/ROLLOUT.md)
+  requires an explicit spend boundary, worker readiness, and provider-backed
+  work evidence.
+
+When Web and a role share a migration or queue-ownership change, the live
+Machine update follows the successful `production` deployment and migration.
+Generic production health is not a substitute for the role's work-delivery
+proof.
 
 ### Fly configuration
 

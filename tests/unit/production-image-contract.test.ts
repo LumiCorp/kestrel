@@ -130,7 +130,7 @@ test("local Fly deployment selects the exact Machine from provider lists", async
       }
       return { status: 1, stdout: "" };
     },
-    async () => undefined,
+    async () => {},
   );
 
   assert.equal(result.before.id, "e2865");
@@ -181,7 +181,7 @@ test("Preview Edge image deployment refuses missing or invalid ingress before mu
           if (args[0] === "machine" && args[1] === "update") updates += 1;
           return { status: 0, stdout: "" };
         },
-        async () => undefined,
+        async () => {},
       ),
       /Preview Edge Machine e2865 is missing its public ingress contract before image update/u,
     );
@@ -219,7 +219,7 @@ test("Preview Edge image deployment rejects ingress stripped by the provider upd
         }
         return { status: 1, stdout: "" };
       },
-      async () => undefined,
+      async () => {},
     ),
     /Preview Edge Machine e2865 is missing its public ingress contract after image update/u,
   );
@@ -250,7 +250,7 @@ test("service-less worker image deployment remains supported", async () => {
         return { status: 0, stdout: "" };
       return { status: 1, stdout: "" };
     },
-    async () => undefined,
+    async () => {},
   );
 
   assert.equal(result.role, "control-worker");
@@ -287,6 +287,110 @@ test("tenant runtime catalog roles publish from exact public GHCR repositories",
       },
     ],
   );
+});
+
+test("every production image role has a live-proof rollout overlay", async () => {
+  const catalog = flyImageCatalogSchema.parse(
+    JSON.parse(
+      await readFile(
+        path.join(process.cwd(), "deploy/fly/image-catalog.json"),
+        "utf8",
+      ),
+    ),
+  );
+  const rolloutByRole: Record<string, string> = {
+    "workspace-runtime": "deploy/fly/kestrel-one-runner/ROLLOUT.md",
+    "environment-router": "deploy/fly/kestrel-one-runner/ROLLOUT.md",
+    "preview-edge": "apps/preview-edge/ROLLOUT.md",
+    "turn-worker": "deploy/fly/kestrel-one-turn-worker/ROLLOUT.md",
+    "control-worker": "deploy/fly/kestrel-one-control-worker/ROLLOUT.md",
+    "runpod-worker": "deploy/fly/kestrel-one-runpod-worker/ROLLOUT.md",
+  };
+  const rolloutEntries = await Promise.all(
+    Object.entries(rolloutByRole).map(async ([role, rolloutPath]) => [
+      role,
+      await readFile(path.join(process.cwd(), rolloutPath), "utf8"),
+    ] as const),
+  );
+  const rollouts = new Map(rolloutEntries);
+  const [canonical, publicDocs, turnReadme, controlReadme, runpodReadme] =
+    await Promise.all([
+      readFile(
+        path.join(process.cwd(), "docs/production-delivery-channels.md"),
+        "utf8",
+      ),
+      readFile(
+        path.join(
+          process.cwd(),
+          "apps/docs/content/operate/production-delivery.mdx",
+        ),
+        "utf8",
+      ),
+      readFile(
+        path.join(
+          process.cwd(),
+          "deploy/fly/kestrel-one-turn-worker/README.md",
+        ),
+        "utf8",
+      ),
+      readFile(
+        path.join(
+          process.cwd(),
+          "deploy/fly/kestrel-one-control-worker/README.md",
+        ),
+        "utf8",
+      ),
+      readFile(
+        path.join(
+          process.cwd(),
+          "deploy/fly/kestrel-one-runpod-worker/README.md",
+        ),
+        "utf8",
+      ),
+    ]);
+
+  assert.deepEqual(
+    Object.keys(rolloutByRole).sort(),
+    catalog.images.map(({ role }) => role).sort(),
+  );
+  for (const image of catalog.images) {
+    const rollout = rollouts.get(image.role);
+    assert.ok(rollout, `${image.role} is missing a rollout overlay`);
+    assert.match(rollout, /production:image:publish/u);
+    assert.match(rollout, /main` to `production/u);
+    assert.match(rollout, /image smoke/iu);
+    assert.match(rollout, /## Rollback/u);
+    assert.match(canonical, new RegExp(rolloutByRole[image.role]!.replaceAll("/", "\\/"), "u"));
+  }
+
+  for (const image of catalog.images.filter(
+    ({ rollout }) => rollout === "global-app",
+  )) {
+    const rollout = rollouts.get(image.role)!;
+    assert.match(rollout, /production:fly:machine/u);
+    assert.match(rollout, /## 4\. Update started Machines first/u);
+    assert.match(rollout, /## 6\. Update stopped Machines/u);
+    assert.match(rollout, /one\s+exact\s+Machine/iu);
+    assert.match(rollout, /work|preview|Knowledge|turn/iu);
+  }
+
+  const runtimeRollout = rollouts.get("workspace-runtime")!;
+  assert.equal(runtimeRollout, rollouts.get("environment-router"));
+  assert.match(runtimeRollout, /same tag/u);
+  assert.match(runtimeRollout, /environment\.update\.ready/u);
+  assert.match(runtimeRollout, /canary:environment:workspace/u);
+  assert.match(runtimeRollout, /canary:environment:preview/u);
+  assert.match(runtimeRollout, /production:runtime:activate/u);
+  assert.match(runtimeRollout, /no batch rollout/iu);
+
+  for (const readme of [turnReadme, controlReadme, runpodReadme]) {
+    assert.match(readme, /\.\/ROLLOUT\.md/u);
+    assert.match(readme, /Readiness is provider-native/u);
+    assert.match(readme, /image smoke/iu);
+  }
+  assert.match(publicDocs, /Update and verify started Machines before/u);
+  assert.match(publicDocs, /live\s+work-delivery proof/u);
+  assert.match(publicDocs, /provider-spend/u);
 });
 
 test("workspace-runtime image builds and carries the shared memory package", async () => {
