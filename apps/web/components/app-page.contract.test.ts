@@ -21,19 +21,13 @@ test("standard pages share one tight responsive container contract", () => {
 });
 
 test("every application shell owns the standard page container", () => {
-  const appPageLayouts = [
-    "app/debug/layout.tsx",
-    "app/knowledge/layout.tsx",
-  ];
+  const appPageLayouts = ["app/debug/layout.tsx", "app/knowledge/layout.tsx"];
 
   for (const relativePath of appPageLayouts) {
     assert.match(read(relativePath), /<AppPage>/u, relativePath);
   }
 
-  assert.match(
-    read("app/(workspace)/settings/layout.tsx"),
-    /<PageContainer/u,
-  );
+  assert.match(read("app/(workspace)/settings/layout.tsx"), /<PageContainer/u);
   assert.match(
     read("app/(workspace)/organization/layout.tsx"),
     /<PageContainer/u,
@@ -45,10 +39,17 @@ test("every application shell owns the standard page container", () => {
   const organizationNavigation = read(
     "components/organization/organization-navigation.tsx",
   );
+  const organizationConnections = read(
+    "app/(workspace)/organization/connections/page.tsx",
+  );
+  const organizationModels = read(
+    "app/(workspace)/organization/models/page.tsx",
+  );
   for (const href of [
     "/organization",
     "/organization/setup",
     "/organization/connections",
+    "/organization/models",
     "/organization/systems",
     "/organization/audit",
     "/organization/danger",
@@ -56,6 +57,8 @@ test("every application shell owns the standard page container", () => {
     assert.match(organizationNavigation, new RegExp(`href: "${href}"`, "u"));
   }
   assert.match(read("app/(auth)/layout.tsx"), /<PageContainer/u);
+  assert.doesNotMatch(organizationConnections, /surface="models"/u);
+  assert.match(organizationModels, /surface="models"/u);
   assert.match(read("app/shared/[token]/page.tsx"), /<PageContainer/u);
   assert.match(read("app/desktop/enroll/[id]/page.tsx"), /<PageContainer/u);
   assert.match(read("app/(workspace)/welcome/page.tsx"), /<PageContainer/u);
