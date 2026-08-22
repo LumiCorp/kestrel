@@ -1,7 +1,12 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { knowledgeDb, schema } from "../lib/knowledge/db";
 import { planGatewayModelEconomicsProfileBackfill } from "../lib/ai/model-economics-profile-backfill";
-import { saveGatewayModel } from "../lib/ai/gateways";
+import {
+  fetchOpenRouterModelDetailsWithCredentials,
+  getGatewayApiKey,
+  saveGatewayModel,
+} from "../lib/ai/gateways";
+import { createGatewayModelEconomicsProfile } from "../lib/ai/model-economics-profile";
 
 function parseArguments(argv: string[]) {
   const organizationFlag = argv.indexOf("--organization-id");
@@ -59,6 +64,50 @@ async function main() {
   const plan = planGatewayModelEconomicsProfileBackfill(rows);
   let applied = 0;
   const resolvedOpenRouterIds = new Set<string>();
+  const openRouterResolutions: Array<Record<string, unknown>> = [];
+
+  for (const skipped of plan.skipped.filter(
+    (item) => item.reason === "openrouter_resolution_required",
+  )) {
+    const row = rows.find((candidate) => candidate.id === skipped.id);
+    if (!row || !row.organizationId) continue;
+    if (!apply) {
+      try {
+        const gateway = await knowledgeDb.query.aiGateways.findFirst({
+          where: and(
+            eq(schema.aiGateways.id, row.gatewayId),
+            eq(schema.aiGateways.organizationId, row.organizationId),
+          ),
+        });
+        const apiKey = gateway ? getGatewayApiKey(gateway) : null;
+        if (!gateway || !apiKey || !row.gatewayBaseUrl) throw new Error("Gateway credential or endpoint is missing.");
+        const details = await fetchOpenRouterModelDetailsWithCredentials({
+          baseUrl: row.gatewayBaseUrl,
+          apiKey,
+          rawModelId: row.rawModelId,
+        });
+        const profile = createGatewayModelEconomicsProfile({
+          provider: "openrouter",
+          model: row.rawModelId,
+          metadata: details,
+        });
+        openRouterResolutions.push({
+          id: row.id,
+          model: row.rawModelId,
+          status: profile ? "repairable" : "missing_capacity_metadata",
+          contextWindowTokens: profile?.contextWindowTokens ?? null,
+          maxOutputTokens: profile?.maxOutputTokens ?? null,
+        });
+      } catch (error) {
+        openRouterResolutions.push({
+          id: row.id,
+          model: row.rawModelId,
+          status: "unrepairable",
+          error: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    }
+  }
 
   if (apply) {
     for (const skipped of plan.skipped.filter(
@@ -79,6 +128,7 @@ async function main() {
           description: row.description,
           metadata: row.metadata as Record<string, unknown> | null,
           resolveOpenRouterModel: true,
+          expectedModelUpdatedAt: row.updatedAt,
         });
         resolvedOpenRouterIds.add(row.id);
         applied += 1;
@@ -116,6 +166,8 @@ async function main() {
           .where(
             and(
               eq(schema.aiGatewayModels.id, update.id),
+              eq(schema.aiGatewayModels.gatewayId, source.gatewayId),
+              eq(schema.aiGatewayModels.organizationId, source.organizationId!),
               eq(schema.aiGatewayModels.approved, true),
               eq(schema.aiGatewayModels.modality, "language"),
               ...(update.expectedUpdatedAt
@@ -148,6 +200,8 @@ async function main() {
           .where(
             and(
               eq(schema.aiGatewayModels.id, skipped.id),
+              eq(schema.aiGatewayModels.gatewayId, source.gatewayId),
+              eq(schema.aiGatewayModels.organizationId, source.organizationId!),
               eq(schema.aiGatewayModels.approved, true),
               eq(schema.aiGatewayModels.modality, "language"),
               ...(source.updatedAt
@@ -171,6 +225,7 @@ async function main() {
         applied,
         alreadyComplete: plan.alreadyComplete,
         skipped: plan.skipped,
+        openRouterResolutions,
       },
       null,
       2,

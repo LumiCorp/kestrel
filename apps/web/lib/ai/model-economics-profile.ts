@@ -64,6 +64,13 @@ export function getGatewayModelEconomicsProvider(input: {
   return input.gatewayProvider;
 }
 
+export function getProviderEconomicsFallbackCapability(provider: string) {
+  return {
+    supportsConservativeFallback: ["anthropic", "openai", "lumi", "ollama", "runpod"].includes(provider),
+    requiresValidation: provider === "runpod",
+  };
+}
+
 type RecordValue = Record<string, unknown>;
 
 /**

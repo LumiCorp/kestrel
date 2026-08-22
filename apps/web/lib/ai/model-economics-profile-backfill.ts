@@ -1,6 +1,7 @@
 import {
   createGatewayModelEconomicsProfile,
   createKestrelDefaultEconomicsProfile,
+  getProviderEconomicsFallbackCapability,
   getGatewayModelEconomicsProvider,
   readGatewayModelEconomicsProfile,
   withGatewayModelEconomicsProfile,
@@ -118,9 +119,15 @@ export function planGatewayModelEconomicsProfileBackfill(
       catalog !== null &&
       (catalog.id === row.rawModelId ||
         catalog.model === row.rawModelId);
+    const providerProfile = createGatewayModelEconomicsProfile({
+      provider,
+      model: row.rawModelId,
+      metadata: row.metadata,
+    });
     const fallbackEligible =
-      ["anthropic", "openai", "lumi", "ollama", "runpod"].includes(row.gatewayProvider) &&
+      getProviderEconomicsFallbackCapability(row.gatewayProvider).supportsConservativeFallback &&
       identified &&
+      providerProfile === undefined &&
       (row.gatewayProvider !== "runpod" ||
         Boolean(
           row.gatewayBaseUrl &&

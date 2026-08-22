@@ -212,6 +212,27 @@ test("backfill assigns disclosed defaults only to identified non-OpenRouter cata
   );
 });
 
+test("backfill prefers complete provider capacity over the conservative default", () => {
+  const plan = planGatewayModelEconomicsProfileBackfill([
+    {
+      id: "openai-complete",
+      organizationId: "org-1",
+      gatewayId: "gateway-1",
+      rawModelId: "gpt-4",
+      modality: "language",
+      approved: true,
+      metadata: {
+        id: "gpt-4",
+        context_length: 128_000,
+        max_completion_tokens: 16_000,
+      },
+      gatewayProvider: "openai",
+    },
+  ]);
+  assert.equal(plan.updates[0]?.profile.contextWindowTokens, 128_000);
+  assert.equal(plan.updates[0]?.metadata.kestrelEconomicsProfileSource, undefined);
+});
+
 test("provider catalog field variants cover Lumi and RunPod OpenAI-compatible metadata", () => {
   assert.equal(
     createGatewayModelEconomicsProfile({

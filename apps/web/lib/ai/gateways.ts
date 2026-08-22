@@ -59,6 +59,7 @@ import {
   getGatewayModelEconomicsProvider,
   readGatewayModelEconomicsProfile,
   createKestrelDefaultEconomicsProfile,
+  getProviderEconomicsFallbackCapability,
   validateOpenRouterModelDetails,
   withGatewayModelEconomicsProfile,
 } from "./model-economics-profile";
@@ -1182,6 +1183,7 @@ export async function saveGatewayModel(input: {
   requireEconomicsProfile?: boolean;
   resolveOpenRouterModel?: boolean;
   allowProviderEconomicsFallback?: boolean;
+  expectedModelUpdatedAt?: Date | null;
 }) {
   const [gateway, storedModel] = await Promise.all([
     input.gatewayProvider
@@ -1202,6 +1204,7 @@ export async function saveGatewayModel(input: {
             metadata: true,
             rawModelId: true,
             modality: true,
+            updatedAt: true,
           },
           where: (table, operators) =>
             operators.and(
@@ -1250,17 +1253,27 @@ export async function saveGatewayModel(input: {
           })
         : input.metadata);
 
+  const fallbackCatalogMetadata =
+    input.allowProviderEconomicsFallback &&
+    gateway &&
+    gatewayProvider &&
+    getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback &&
+    !inputMetadata
+      ? (await fetchGatewayModels(gateway)).find(
+          (candidate) => candidate.rawModelId === input.rawModelId,
+        )?.metadata ?? null
+      : null;
   const normalizedMetadata =
     gatewayProvider != null
       ? normalizeGatewayModelMetadata({
           gatewayProvider: gatewayProvider as GatewayProvider,
           modality: input.modality,
-          metadata: inputMetadata,
+          metadata: inputMetadata ?? fallbackCatalogMetadata,
       })
-      : (inputMetadata ?? null);
+      : (inputMetadata ?? fallbackCatalogMetadata ?? null);
   const fallbackProvider =
     gatewayProvider && gatewayProvider !== "openrouter" &&
-    ["anthropic", "openai", "lumi", "ollama", "runpod"].includes(gatewayProvider)
+    getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback
       ? getGatewayModelEconomicsProvider({
           gatewayProvider,
           modality: input.modality,
@@ -1287,6 +1300,11 @@ export async function saveGatewayModel(input: {
     readGatewayModelEconomicsProfile(normalizedMetadata, {
       provider: fallbackProvider,
       model: input.rawModelId,
+    }) === undefined &&
+    createGatewayModelEconomicsProfile({
+      provider: fallbackProvider,
+      model: input.rawModelId,
+      metadata: normalizedMetadata,
     }) === undefined
       ? {
           ...(normalizedMetadata ?? {}),
@@ -1373,6 +1391,26 @@ export async function saveGatewayModel(input: {
       gatewayProvider === "openrouter" &&
       gateway && "credentialRevision" in gateway
     ) {
+      if (input.expectedModelUpdatedAt !== undefined) {
+        const [currentModel] = await transaction
+          .select({ updatedAt: schema.aiGatewayModels.updatedAt })
+          .from(schema.aiGatewayModels)
+          .where(
+            and(
+              eq(schema.aiGatewayModels.id, input.id ?? ""),
+              eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
+              eq(schema.aiGatewayModels.organizationId, input.organizationId),
+            ),
+          )
+          .limit(1);
+        if (currentModel?.updatedAt?.getTime() !== input.expectedModelUpdatedAt?.getTime()) {
+          throw new GatewayModelProviderResolutionError({
+            message: "The gateway model changed while provider details were resolving. Retry the repair.",
+            status: 409,
+            retryable: true,
+          });
+        }
+      }
       const [currentGateway] = await transaction
         .select({
           credentialRevision: schema.aiGateways.credentialRevision,
