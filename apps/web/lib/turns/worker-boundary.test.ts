@@ -411,7 +411,7 @@ test("the dedicated control worker owns durable platform lifecycle queues", asyn
 });
 
 test("the control worker rollout preserves migration and one-Machine gates", async () => {
-  const [readme, rollout, productionDelivery] = await Promise.all([
+  const [readme, rollout, productionDelivery, smoke] = await Promise.all([
     readFile(
       new URL(
         "../../../../deploy/fly/kestrel-one-control-worker/README.md",
@@ -428,6 +428,13 @@ test("the control worker rollout preserves migration and one-Machine gates", asy
     ),
     readFile(
       new URL("../../../../docs/production-delivery-channels.md", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL(
+        "../../../../deploy/fly/kestrel-one-control-worker/smoke.sh",
+        import.meta.url,
+      ),
       "utf8",
     ),
   ]);
@@ -450,6 +457,11 @@ test("the control worker rollout preserves migration and one-Machine gates", asy
   );
   assert.doesNotMatch(readme, /release_controller_heartbeats/u);
   assert.doesNotMatch(rollout, /release_controller_heartbeats/u);
+  assert.match(
+    smoke,
+    /Kestrel One Control Worker failed to start: control-worker configuration is incomplete/u,
+  );
+  assert.doesNotMatch(smoke, /Environment lifecycle worker failed to start/u);
 });
 
 test(
