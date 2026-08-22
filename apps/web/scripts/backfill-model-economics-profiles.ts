@@ -7,6 +7,7 @@ import {
   saveGatewayModel,
 } from "../lib/ai/gateways";
 import { createGatewayModelEconomicsProfile } from "../lib/ai/model-economics-profile";
+import { normalizeOpenAICompatibleBaseUrl } from "../lib/ai/gateway-utils";
 
 function parseArguments(argv: string[]) {
   const organizationFlag = argv.indexOf("--organization-id");
@@ -80,9 +81,11 @@ async function main() {
           ),
         });
         const apiKey = gateway ? getGatewayApiKey(gateway) : null;
-        if (!gateway || !apiKey || !row.gatewayBaseUrl) throw new Error("Gateway credential or endpoint is missing.");
+        if (!gateway || !apiKey) throw new Error("Gateway credential or endpoint is missing.");
         const details = await fetchOpenRouterModelDetailsWithCredentials({
-          baseUrl: row.gatewayBaseUrl,
+          baseUrl: normalizeOpenAICompatibleBaseUrl(
+            row.gatewayBaseUrl || "https://openrouter.ai/api/v1",
+          ),
           apiKey,
           rawModelId: row.rawModelId,
         });
@@ -103,6 +106,10 @@ async function main() {
           id: row.id,
           model: row.rawModelId,
           status: "unrepairable",
+          code: (error as { code?: string })?.code ?? "OPENROUTER_RESOLUTION_FAILED",
+          retryable: (error as { retryable?: boolean })?.retryable ?? false,
+          statusCode: (error as { status?: number })?.status ?? null,
+          resolvedModelId: (error as { resolvedModelId?: string })?.resolvedModelId ?? null,
           error: error instanceof Error ? error.message : "unknown",
         });
       }
@@ -132,7 +139,22 @@ async function main() {
         });
         resolvedOpenRouterIds.add(row.id);
         applied += 1;
+        openRouterResolutions.push({
+          id: row.id,
+          model: row.rawModelId,
+          status: "repaired",
+          concurrency: "current-at-commit",
+        });
       } catch (error) {
+        openRouterResolutions.push({
+          id: row.id,
+          model: row.rawModelId,
+          status: "unrepairable",
+          code: (error as { code?: string })?.code ?? "OPENROUTER_RESOLUTION_FAILED",
+          retryable: (error as { retryable?: boolean })?.retryable ?? false,
+          statusCode: (error as { status?: number })?.status ?? null,
+          error: error instanceof Error ? error.message : "unknown",
+        });
         console.warn(
           JSON.stringify({
             id: row.id,
@@ -140,7 +162,7 @@ async function main() {
             error: error instanceof Error ? error.message : "unknown",
           }),
         );
-      }
+          }
     }
   }
 

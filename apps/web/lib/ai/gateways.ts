@@ -59,6 +59,7 @@ import {
   getGatewayModelEconomicsProvider,
   readGatewayModelEconomicsProfile,
   createKestrelDefaultEconomicsProfile,
+  createGatewayModelEconomicsProfile,
   getProviderEconomicsFallbackCapability,
   validateOpenRouterModelDetails,
   withGatewayModelEconomicsProfile,
@@ -1253,17 +1254,28 @@ export async function saveGatewayModel(input: {
           })
         : input.metadata);
 
-  const fallbackCatalogMetadata =
+  let fallbackCatalogMetadata: Record<string, unknown> | null = null;
+  if (
     input.allowProviderEconomicsFallback &&
     gateway &&
     "credentialRevision" in gateway &&
     gatewayProvider &&
     getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback &&
     !inputMetadata
-      ? (await fetchGatewayModels(gateway)).find(
+  ) {
+    try {
+      fallbackCatalogMetadata =
+        (await fetchGatewayModels(gateway)).find(
           (candidate) => candidate.rawModelId === input.rawModelId,
-        )?.metadata ?? null
-      : null;
+        )?.metadata ?? null;
+    } catch {
+      throw new GatewayModelProviderResolutionError({
+        message: `Unable to verify ${gatewayProvider} model '${input.rawModelId}' against the provider catalog. Retry after the provider is available.`,
+        status: 503,
+        retryable: true,
+      });
+    }
+  }
   const normalizedMetadata =
     gatewayProvider != null
       ? normalizeGatewayModelMetadata({
@@ -1281,6 +1293,18 @@ export async function saveGatewayModel(input: {
           metadata: normalizedMetadata,
         })
       : undefined;
+  if (
+    input.allowProviderEconomicsFallback &&
+    fallbackProvider &&
+    !normalizedMetadata &&
+    gatewayProvider !== "runpod"
+  ) {
+    throw new GatewayModelProviderResolutionError({
+      message: `${gatewayProvider} did not advertise the exact model '${input.rawModelId}'. Refresh the provider catalog and try again.`,
+      status: 422,
+      retryable: false,
+    });
+  }
   const fallbackIdentity = (() => {
     if (!input.allowProviderEconomicsFallback || !fallbackProvider || !normalizedMetadata) return false;
     if (gatewayProvider === "runpod") {
