@@ -43,6 +43,9 @@ test("organization, platform, and personal settings retain separate navigation s
   const layout = read("app/(workspace)/settings/layout.tsx");
   const navigation = read("components/settings/settings-navigation.tsx");
   const organizationLayout = read("app/(workspace)/organization/layout.tsx");
+  const organizationShell = read(
+    "components/organization/organization-shell.tsx",
+  );
   const organizationNavigation = read(
     "components/organization/organization-navigation.tsx",
   );
@@ -73,18 +76,22 @@ test("organization, platform, and personal settings retain separate navigation s
   assert.match(gatewayAdmin, /lg:max-w-none/u);
   assert.match(gatewayAdmin, /lg:w-\[calc\(100vw-20rem\)\]/u);
   assert.match(gatewayAdmin, /className="lg:block"/u);
+  assert.match(gatewayAdmin, /Model modality counts/u);
+  assert.match(gatewayAdmin, /key=\{selectedBundle.gateway.id\}/u);
   assert.match(layout, /\bPageContainer\b/u);
   assert.doesNotMatch(layout, /<h1/u);
   assert.equal(layout.match(/<PageContainer/gu)?.length, 1);
   assert.doesNotMatch(layout, /<main className="[^"]*\bpx-/u);
   assert.doesNotMatch(navigation, /lg:hidden[^\n]*\bpx-4/u);
-  assert.match(organizationLayout, /\bPageContainer\b/u);
+  assert.match(organizationLayout, /\bOrganizationShell\b/u);
   assert.doesNotMatch(organizationLayout, /<main\b/u);
-  assert.match(organizationLayout, /\bOrganizationNavigation\b/u);
   assert.doesNotMatch(organizationLayout, /\bAppPage\b/u);
   assert.doesNotMatch(organizationLayout, /<h1/u);
-  assert.equal(organizationLayout.match(/<PageContainer/gu)?.length, 1);
   assert.doesNotMatch(organizationLayout, /<main className="[^"]*\bpx-/u);
+  assert.match(organizationShell, /<PageContainer/u);
+  assert.match(organizationShell, /pathname === "\/organization\/models"/u);
+  assert.match(organizationShell, /lg:max-w-none/u);
+  assert.match(organizationShell, /\bOrganizationNavigation\b/u);
   assert.match(organizationNavigation, /label: "Manage"/u);
   assert.match(organizationNavigation, /label: "Configure"/u);
   assert.match(organizationNavigation, /label: "Operate"/u);

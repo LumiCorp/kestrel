@@ -29,7 +29,7 @@ test("every application shell owns the standard page container", () => {
 
   assert.match(read("app/(workspace)/settings/layout.tsx"), /<PageContainer/u);
   assert.match(
-    read("app/(workspace)/organization/layout.tsx"),
+    read("components/organization/organization-shell.tsx"),
     /<PageContainer/u,
   );
   assert.match(read("app/(workspace)/platform/layout.tsx"), /<PageContainer/u);
