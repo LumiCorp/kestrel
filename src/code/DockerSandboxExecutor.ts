@@ -28,6 +28,7 @@ const DOCKER_LIFECYCLE_TIMEOUT_MS = 10_000;
 const DOCKER_LIFECYCLE_OUTPUT_BYTES = 16_000;
 export const DOCKER_CAPABILITY_ENDPOINT = "http://127.0.0.1:43127/v1/capability";
 const DOCKER_CAPABILITY_PORT = 43_127;
+const DOCKER_INVOCATION_LABEL = "com.kestrel.code.invocation";
 
 const LANGUAGE_IMAGE: Record<CodeExecutionLanguage, string> = {
   javascript: "node:20-alpine",
@@ -55,9 +56,10 @@ export class DockerSandboxCancellationError extends Error {}
 export interface DockerSandboxExecutorOptions {
   containerNameFactory?: (() => string) | undefined;
   capabilityConfinementProbe?: ((signal?: AbortSignal | undefined) => Promise<boolean>) | undefined;
+  createCommandRunner?: ((args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>) | undefined;
 }
 
-interface DockerProcessResult {
+export interface DockerProcessResult {
   exitCode: number | null;
   timedOut: boolean;
   cancelled: boolean;
@@ -68,12 +70,20 @@ interface DockerProcessResult {
 export class DockerSandboxExecutor implements SandboxExecutor {
   private readonly containerNameFactory: () => string;
   private readonly capabilityConfinementProbe: (signal?: AbortSignal | undefined) => Promise<boolean>;
+  private readonly createCommandRunner: (args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>;
 
   constructor(options: DockerSandboxExecutorOptions = {}) {
     this.containerNameFactory =
       options.containerNameFactory ?? (() => `kestrel-code-${randomUUID()}`);
     this.capabilityConfinementProbe =
       options.capabilityConfinementProbe ?? probeDockerCapabilityConfinement;
+    this.createCommandRunner = options.createCommandRunner ?? ((args, signal) =>
+      runDockerProcess(
+        args,
+        DOCKER_LIFECYCLE_TIMEOUT_MS,
+        DOCKER_LIFECYCLE_OUTPUT_BYTES,
+        signal,
+      ));
   }
 
   async execute(input: SandboxExecutionInput): Promise<SandboxExecutionOutput> {
@@ -85,6 +95,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     const mainFile = LANGUAGE_MAIN_FILE[input.request.language];
     const containerName = this.containerNameFactory();
     const brokerContainerName = `${containerName}-broker`;
+    const invocationMarker = randomUUID();
     const declaredFiles = normalizeFiles(input.request.files);
 
     await mkdir(stagingDir, { recursive: true, mode: 0o777 });
@@ -103,14 +114,20 @@ export class DockerSandboxExecutor implements SandboxExecutor {
 
     try {
       if (input.capability !== undefined) {
-        await startCapabilityBroker(input, brokerContainerName, () => {
+        await startCapabilityBroker(input, brokerContainerName, invocationMarker, this.createCommandRunner, () => {
           ownsBrokerContainer = true;
         });
       }
-      await runRequiredDockerCommand(
-        buildDockerCreateCommand(input, containerName, brokerContainerName),
+      await createOwnedContainer(
+        withInvocationMarker(
+          buildDockerCreateCommand(input, containerName, brokerContainerName),
+          invocationMarker,
+        ),
+        containerName,
+        invocationMarker,
         "create sandbox container",
         input.signal,
+        this.createCommandRunner,
       );
       ownsWorkloadContainer = true;
       await runRequiredDockerCommand(
@@ -438,11 +455,13 @@ load();`;
 async function startCapabilityBroker(
   input: SandboxExecutionInput,
   brokerContainerName: string,
+  invocationMarker: string,
+  createCommandRunner: (args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>,
   onCreated: () => void,
 ): Promise<void> {
   const grant = input.capability;
   if (grant === undefined) return;
-  await runRequiredDockerCommand([
+  await createOwnedContainer(withInvocationMarker([
     "create", "--init", "--name", brokerContainerName,
     "--user", `${SANDBOX_UID}:${SANDBOX_GID}`,
     "--read-only", "--memory", "64m", "--pids-limit", "32",
@@ -450,7 +469,7 @@ async function startCapabilityBroker(
     "--network", "none",
     "--tmpfs", `/run/kestrel:rw,nosuid,nodev,noexec,size=1m,uid=${SANDBOX_UID},gid=${SANDBOX_GID},mode=0700`,
     "node:20-alpine", "node", "-e", CAPABILITY_BROKER_SCRIPT,
-  ], "create confined capability broker", input.signal);
+  ], invocationMarker), brokerContainerName, invocationMarker, "create confined capability broker", input.signal, createCommandRunner);
   onCreated();
   await runRequiredDockerCommand(["start", brokerContainerName], "start confined capability broker", input.signal);
   const configuration = Buffer.from(JSON.stringify({
@@ -481,6 +500,58 @@ async function startCapabilityBroker(
   throw new Error(
     `Timed out while waiting for the confined capability broker${state.stdout.trim().length > 0 ? `: ${state.stdout.trim()}` : ""}`,
   );
+}
+
+function withInvocationMarker(args: string[], marker: string): string[] {
+  const createIndex = args.indexOf("create");
+  if (createIndex < 0) {
+    throw new Error("Docker create command is missing its create operation");
+  }
+  return [
+    ...args.slice(0, createIndex + 1),
+    "--label",
+    `${DOCKER_INVOCATION_LABEL}=${marker}`,
+    ...args.slice(createIndex + 1),
+  ];
+}
+
+async function createOwnedContainer(
+  args: string[],
+  containerName: string,
+  invocationMarker: string,
+  action: string,
+  signal: AbortSignal | undefined,
+  runner: (args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>,
+): Promise<void> {
+  const result = await runner(args, signal);
+  const ownsContainer = await containerMarkerMatches(containerName, invocationMarker);
+  if (result.exitCode === 0 && result.timedOut === false && result.cancelled === false) {
+    if (ownsContainer === false) {
+      throw new Error(`Unable to ${action}: created container ownership could not be verified`);
+    }
+    return;
+  }
+  if (ownsContainer) {
+    await removeContainer(containerName);
+  }
+  if (result.cancelled) {
+    throw new DockerSandboxCancellationError("Docker sandbox execution was cancelled");
+  }
+  if (result.timedOut) {
+    throw new Error(`Timed out while attempting to ${action}`);
+  }
+  const detail = result.stderr.trim() || result.stdout.trim();
+  throw new Error(`Unable to ${action}${detail.length > 0 ? `: ${detail}` : ""}`);
+}
+
+async function containerMarkerMatches(containerName: string, marker: string): Promise<boolean> {
+  const inspected = await runDockerProcess(
+    ["inspect", "--format", `{{ index .Config.Labels "${DOCKER_INVOCATION_LABEL}" }}`, containerName],
+    DOCKER_LIFECYCLE_TIMEOUT_MS,
+    DOCKER_LIFECYCLE_OUTPUT_BYTES,
+    undefined,
+  );
+  return inspected.exitCode === 0 && inspected.timedOut === false && inspected.stdout.trim() === marker;
 }
 
 function redactSensitiveValue(value: string, sensitiveValue: string): string {

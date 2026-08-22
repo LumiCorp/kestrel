@@ -12,6 +12,7 @@ import {
   DockerSandboxCancellationError,
   DockerSandboxExecutor,
   DockerUnavailableError,
+  type DockerProcessResult,
 } from "../../src/code/DockerSandboxExecutor.js";
 import type {
   AppliedCodeExecutionPolicy,
@@ -756,6 +757,63 @@ test(
 );
 
 test(
+  "Docker sandbox removes its workload when Docker create succeeds behind a timed-out CLI result",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("workload-create-timeout");
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return ambiguousDockerResult("timeout");
+      },
+    });
+
+    await assert.rejects(
+      executor.execute({
+        request: { language: "javascript", code: "console.log('must not run')" },
+        policy: policy(),
+      }),
+      /Timed out while attempting to create sandbox container/u,
+    );
+    await assertContainerAndProcessesRemoved(containerName);
+  },
+);
+
+test(
+  "Docker sandbox removes its broker when Docker create succeeds behind a cancelled CLI result",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("broker-create-cancel");
+    const brokerName = `${containerName}-broker`;
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return ambiguousDockerResult("cancel");
+      },
+    });
+
+    await assert.rejects(
+      executor.execute({
+        request: { language: "javascript", code: "console.log('must not run')" },
+        policy: policy(),
+        capability: {
+          transport: "docker-shared-loopback-v1",
+          lease: `opaque-lease-${randomUUID()}`,
+          operation: "search",
+          destination: "api.tavily.com",
+          response: { answer: "must not run" },
+        },
+      }),
+      (error: unknown) => error instanceof DockerSandboxCancellationError,
+    );
+    await assertContainerAndProcessesRemoved(brokerName);
+    assert.equal(await containerExists(containerName), false);
+  },
+);
+
+test(
   "Docker sandbox fails before container creation when capability confinement is unavailable",
   async () => {
     await requireDocker();
@@ -844,6 +902,16 @@ function fixedNameExecutor(containerName: string): DockerSandboxExecutor {
   return new DockerSandboxExecutor({
     containerNameFactory: () => containerName,
   });
+}
+
+function ambiguousDockerResult(outcome: "cancel" | "timeout"): DockerProcessResult {
+  return {
+    exitCode: null,
+    timedOut: outcome === "timeout",
+    cancelled: outcome === "cancel",
+    stdout: "",
+    stderr: "",
+  };
 }
 
 async function executeWithName(
