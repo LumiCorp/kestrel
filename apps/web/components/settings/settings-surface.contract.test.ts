@@ -56,6 +56,7 @@ test("organization, platform, and personal settings retain separate navigation s
   const environments = read("components/settings/environments-client.tsx");
   const setup = read("components/settings/setup-client.tsx");
   const settingsLayout = read("app/(workspace)/settings/layout.tsx");
+  const gatewayAdmin = read("components/settings/ai-providers-client.tsx");
   const pageContainer = read("components/app-page.tsx");
   const teamSwitcher = read("components/team-switcher.tsx");
   const appSidebar = read("components/app-sidebar.tsx");
@@ -69,6 +70,9 @@ test("organization, platform, and personal settings retain separate navigation s
   );
 
   assert.match(pageContainer, /max-w-7xl/u);
+  assert.match(gatewayAdmin, /lg:max-w-none/u);
+  assert.match(gatewayAdmin, /lg:w-\[calc\(100vw-20rem\)\]/u);
+  assert.match(gatewayAdmin, /className="lg:block"/u);
   assert.match(layout, /\bPageContainer\b/u);
   assert.doesNotMatch(layout, /<h1/u);
   assert.equal(layout.match(/<PageContainer/gu)?.length, 1);

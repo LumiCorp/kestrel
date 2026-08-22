@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Show every provider model column at wide desktop widths](02-full-width-model-catalog.md)
+None.
 
 ## In progress
 
@@ -17,6 +17,7 @@ None.
 ## Implemented
 
 - [Give organization admins a dedicated Models page](01-dedicated-models-page.md)
+- [Show every provider model column at wide desktop widths](02-full-width-model-catalog.md)
 
 ## Done
 
