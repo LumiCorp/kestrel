@@ -14,11 +14,9 @@ None.
 
 None.
 
-## Implemented
+## Done
 
 - [Give organization admins a dedicated Models page](01-dedicated-models-page.md)
 - [Show every provider model column at wide desktop widths](02-full-width-model-catalog.md)
-
-## Done
 
 None.
