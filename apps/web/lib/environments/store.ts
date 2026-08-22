@@ -26,7 +26,10 @@ import {
   selectDefaultEnvironmentRecoveryAction,
   workspaceProvisionIdempotencyKey,
 } from "./contracts";
-import { getHostedEnvironmentRuntimeMode } from "./config";
+import {
+  getHostedEnvironmentRuntimeMode,
+  getInitialEnvironmentLifecycleState,
+} from "./config";
 import {
   environmentLifecycleLockKey,
   organizationEnvironmentCreateLockKey,
@@ -152,7 +155,9 @@ export async function ensureOrganizationDefaultEnvironment(input: {
   if (existing)
     return { environment: existing, operation: null, created: false };
 
-  const usesFlyRuntime = getHostedEnvironmentRuntimeMode() === "fly";
+  const runtimeMode = getHostedEnvironmentRuntimeMode();
+  const usesFlyRuntime = runtimeMode === "fly";
+  const lifecycle = getInitialEnvironmentLifecycleState(runtimeMode);
   const runtimeVersion = usesFlyRuntime
     ? await requireCurrentEnvironmentRuntime()
     : null;
@@ -227,7 +232,7 @@ export async function ensureOrganizationDefaultEnvironment(input: {
         name: "Default",
         slug: "default",
         region: process.env.KESTREL_ENVIRONMENT_DEFAULT_REGION?.trim() || "iad",
-        status: "requested",
+        status: lifecycle.resourceStatus,
         isDefault: true,
         runtimeTemplate: ENVIRONMENT_RUNTIME_TEMPLATE,
         idleTimeoutMinutes: ENVIRONMENT_IDLE_TIMEOUT_MINUTES,
@@ -244,8 +249,8 @@ export async function ensureOrganizationDefaultEnvironment(input: {
         environmentId,
         requestedByUserId: input.userId,
         type: "environment.provision",
-        status: "queued",
-        stage: "environment.activation.requested",
+        status: lifecycle.operationStatus,
+        stage: lifecycle.stage,
         idempotencyKey: environmentProvisionIdempotencyKey(environmentId),
         input: {
           region: environment.region,
@@ -260,6 +265,7 @@ export async function ensureOrganizationDefaultEnvironment(input: {
         },
         createdAt: now,
         updatedAt: now,
+        completedAt: usesFlyRuntime ? null : now,
       })
       .returning();
     if (!operation) throw new Error("Default Environment operation failed.");
@@ -365,7 +371,9 @@ export async function createOrganizationEnvironment(input: {
   environment: CreateEnvironmentInput;
   runtimeTemplate?: string;
 }) {
-  const usesFlyRuntime = getHostedEnvironmentRuntimeMode() === "fly";
+  const runtimeMode = getHostedEnvironmentRuntimeMode();
+  const usesFlyRuntime = runtimeMode === "fly";
+  const lifecycle = getInitialEnvironmentLifecycleState(runtimeMode);
   const runtimeVersion = usesFlyRuntime
     ? await requireCurrentEnvironmentRuntime()
     : null;
@@ -412,7 +420,7 @@ export async function createOrganizationEnvironment(input: {
         name: input.environment.name,
         slug,
         region: input.environment.region,
-        status: "requested",
+        status: lifecycle.resourceStatus,
         isDefault,
         runtimeTemplate: input.runtimeTemplate ?? ENVIRONMENT_RUNTIME_TEMPLATE,
         idleTimeoutMinutes: ENVIRONMENT_IDLE_TIMEOUT_MINUTES,
@@ -432,8 +440,8 @@ export async function createOrganizationEnvironment(input: {
         environmentId,
         requestedByUserId: input.userId,
         type: "environment.provision",
-        status: "queued",
-        stage: "environment.activation.requested",
+        status: lifecycle.operationStatus,
+        stage: lifecycle.stage,
         idempotencyKey: environmentProvisionIdempotencyKey(environmentId),
         input: {
           region: input.environment.region,
@@ -449,6 +457,7 @@ export async function createOrganizationEnvironment(input: {
         },
         createdAt: now,
         updatedAt: now,
+        completedAt: usesFlyRuntime ? null : now,
       })
       .returning();
     return { environment, operation };
@@ -1230,6 +1239,9 @@ async function findOrCreateWorkspace(
 
   const workspaceId = crypto.randomUUID();
   const now = new Date();
+  const lifecycle = getInitialEnvironmentLifecycleState(
+    getHostedEnvironmentRuntimeMode(),
+  );
   const [workspace] = await transaction
     .insert(schema.environmentWorkspaces)
     .values({
@@ -1243,7 +1255,7 @@ async function findOrCreateWorkspace(
       name: input.projectId ? "Project workspace" : "Personal workspace",
       kind: input.projectId ? "project" : "scratch",
       sourceType: "blank",
-      status: "requested",
+      status: lifecycle.resourceStatus,
       createdAt: now,
       updatedAt: now,
     })
@@ -1258,12 +1270,13 @@ async function findOrCreateWorkspace(
     workspaceId,
     requestedByUserId: input.userId,
     type: "workspace.provision",
-    status: "queued",
-    stage: "environment.activation.requested",
+    status: lifecycle.operationStatus,
+    stage: lifecycle.stage,
     idempotencyKey: workspaceProvisionIdempotencyKey(workspaceId),
     input: { sourceType: "blank" },
     createdAt: now,
     updatedAt: now,
+    completedAt: lifecycle.operationStatus === "completed" ? now : null,
   });
   return workspace;
 }

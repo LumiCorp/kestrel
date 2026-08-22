@@ -6,11 +6,25 @@ import {
   assertHostedEnvironmentConfiguration,
   assertHostedEnvironmentRuntimeConfiguration,
   assertLocalEnvironmentRuntimeConfiguration,
+  getInitialEnvironmentLifecycleState,
   getHostedEnvironmentRuntimeMode,
   hostedEnvironmentsDeploymentEnabled,
   hostedEnvironmentsEnabled,
   hostedEnvironmentsOrganizationEnabled,
 } from "./config";
+
+test("local Environment resources start ready without provisioning work", () => {
+  assert.deepEqual(getInitialEnvironmentLifecycleState("local"), {
+    resourceStatus: "ready",
+    operationStatus: "completed",
+    stage: "environment.activation.ready",
+  });
+  assert.deepEqual(getInitialEnvironmentLifecycleState("fly"), {
+    resourceStatus: "requested",
+    operationStatus: "queued",
+    stage: "environment.activation.requested",
+  });
+});
 
 
 test("Environment runtime mode defaults to Fly and selects local explicitly", () => {

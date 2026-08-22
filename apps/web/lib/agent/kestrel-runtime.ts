@@ -30,6 +30,7 @@ import {
   isKestrelOneManagedRuntimeModel,
   toKestrelOneRuntimeModelSelection,
   type DesktopLocalRuntimeModelSelection,
+  type DirectLocalRuntimeModelSelection,
   type EnvironmentRuntimeModelSelection,
   type KestrelOneRuntimeModelSelection,
 } from "@/lib/agent/kestrel-runtime-model";
@@ -41,6 +42,7 @@ import { getResolvedKestrelRuntimeExecutionModel } from "@/lib/ai/gateways";
 import { parseDesktopLocalRuntimeModelId } from "@/lib/ai/gateway-utils";
 import { getGatewayResolutionFailureMessage } from "@/lib/ai/surface-policy";
 import type { Session } from "@/lib/auth-types";
+import { getHostedEnvironmentRuntimeMode } from "@/lib/environments/config";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   persistRuntimeDialogMessage,
@@ -1117,13 +1119,18 @@ export async function createKestrelOneAgentResponse(
     );
   }
 
+  const managedRuntimeModel = resolvedModel
+    ? toKestrelOneRuntimeModelSelection({
+        ...resolvedModel.model,
+        organizationId: input.organizationId,
+        environmentId: input.environmentId,
+      })
+    : null;
   const runtimeModel =
     desktopLocalModel ??
-    toKestrelOneRuntimeModelSelection({
-      ...resolvedModel!.model,
-      organizationId: input.organizationId,
-      environmentId: input.environmentId,
-    });
+    (getHostedEnvironmentRuntimeMode() === "local"
+      ? toDirectLocalRuntimeModelSelection(managedRuntimeModel!)
+      : managedRuntimeModel!);
   const agent = input.agent;
   const runtimeAgent = agent
     ? adaptKestrelAgentForKestrelOne(agent)
@@ -1477,6 +1484,22 @@ async function resolveDesktopLocalRuntimeModel(input: {
     environmentId: input.environmentId,
     provider,
     model,
+  };
+}
+
+function toDirectLocalRuntimeModelSelection(
+  selection: KestrelOneRuntimeModelSelection,
+): DirectLocalRuntimeModelSelection {
+  return {
+    directLocal: true,
+    id: selection.id,
+    organizationId: selection.organizationId,
+    environmentId: selection.environmentId,
+    provider: selection.provider,
+    model: selection.model,
+    ...(selection.economicsProfile !== undefined
+      ? { economicsProfile: selection.economicsProfile }
+      : {}),
   };
 }
 
