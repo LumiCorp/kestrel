@@ -33,6 +33,13 @@ Review `repairable` and every `skipped` row. A skipped row with
 operator remediation; removing and re-adding the model does not create missing
 capacity metadata.
 
+Rows classified as `openrouter_resolution_required` must be repaired through
+the exact OpenRouter model-detail approval path; they never receive the
+conservative fallback. Rows classified as `identity_unverified` or
+`missing_capacity_metadata` are not safe to repair and become unapproved when
+`--apply` is explicitly requested, while remaining visible in provider
+settings for remediation.
+
 To scope the inventory to one organization:
 
 ```sh

@@ -7,6 +7,7 @@ import {
   parseDesktopLocalRuntimeModelId,
   selectGatewayModelSelection,
 } from "./gateway-utils";
+import { getGatewayModelEconomicsProvider, readGatewayModelEconomicsProfile } from "./model-economics-profile";
 
 export type RuntimeModelSelectionTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -32,6 +33,7 @@ export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
       rawModelId: schema.aiGatewayModels.rawModelId,
       isDefault: schema.aiGatewayModels.isDefault,
       gatewayProvider: schema.aiGateways.provider,
+      metadata: schema.aiGatewayModels.metadata,
     })
     .from(schema.aiGatewayModels)
     .innerJoin(
@@ -52,7 +54,18 @@ export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
       ),
     );
   const gatewayModels = rows
-    .filter((row) => isKestrelRuntimeLanguageProvider(row.gatewayProvider))
+    .filter((row) => {
+      if (!isKestrelRuntimeLanguageProvider(row.gatewayProvider)) return false;
+      const provider = getGatewayModelEconomicsProvider({
+        gatewayProvider: row.gatewayProvider,
+        modality: "language",
+        metadata: row.metadata,
+      });
+      return provider !== undefined && readGatewayModelEconomicsProfile(row.metadata, {
+        provider,
+        model: row.rawModelId,
+      }) !== undefined;
+    })
     .map((row) => ({
       ...row,
       id: row.alias?.trim() || `${row.gatewayProvider}/${row.rawModelId}`,

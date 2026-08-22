@@ -29,6 +29,7 @@ import {
 import {
   GatewayModelEconomicsProfileRequiredError,
   GatewayModelInUseError,
+  GatewayModelProviderResolutionError,
 } from "./gateway-lifecycle-error";
 import {
   normalizeGatewayStoredCredential,
@@ -57,8 +58,15 @@ import {
 import {
   getGatewayModelEconomicsProvider,
   readGatewayModelEconomicsProfile,
+  createKestrelDefaultEconomicsProfile,
+  createGatewayModelEconomicsProfile,
+  getProviderEconomicsFallbackCapability,
+  validateOpenRouterModelDetails,
   withGatewayModelEconomicsProfile,
 } from "./model-economics-profile";
+import { fetchOpenRouterModelDetailsWithCredentials } from "./openrouter-model-resolution";
+
+export { fetchOpenRouterModelDetailsWithCredentials } from "./openrouter-model-resolution";
 
 export { GATEWAY_MODALITIES, GATEWAY_PROVIDERS };
 export type GatewayProvider = (typeof GATEWAY_PROVIDERS)[number];
@@ -78,6 +86,16 @@ export type GatewayCatalogModel = ChatModel & {
   metadata: Record<string, unknown> | null;
   environmentId: string | null;
   scope: "platform" | "organization" | "environment";
+};
+
+export type GatewayModelEconomicsAdmission = {
+  status: "ready" | "unapproved" | "needs_profile";
+  provider: string;
+  model: string;
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
+  source?: string;
+  canonicalSlug?: string;
 };
 
 const PROVIDER_DISPLAY_NAMES: Record<GatewayProvider, string> = {
@@ -172,6 +190,61 @@ function normalizeModelLabel(model: GatewayModelRecord) {
   );
 }
 
+function getGatewayModelEconomicsAdmission(
+  gatewayProvider: GatewayProvider,
+  model: GatewayModelRecord,
+): GatewayModelEconomicsAdmission | undefined {
+  if (model.modality !== "language") return undefined;
+  const provider = getGatewayModelEconomicsProvider({
+    gatewayProvider,
+    modality: model.modality,
+    metadata: model.metadata,
+  });
+  if (!provider) return undefined;
+  const base = { provider, model: model.rawModelId };
+  if (!model.approved) return { ...base, status: "unapproved" };
+  const profile = readGatewayModelEconomicsProfile(model.metadata, base);
+  if (!profile) return { ...base, status: "needs_profile" };
+  const metadata =
+    model.metadata && typeof model.metadata === "object" && !Array.isArray(model.metadata)
+      ? (model.metadata as Record<string, unknown>)
+      : {};
+  return {
+    ...base,
+    status: "ready",
+    contextWindowTokens: profile.contextWindowTokens,
+    maxOutputTokens: profile.maxOutputTokens,
+    source:
+      typeof metadata.kestrelEconomicsProfileSource === "string"
+        ? metadata.kestrelEconomicsProfileSource
+        : "provider_catalog",
+    ...(typeof metadata.kestrelOpenRouterCanonicalSlug === "string"
+      ? { canonicalSlug: metadata.kestrelOpenRouterCanonicalSlug }
+      : {}),
+  };
+}
+
+export function isEligibleHostedLanguageModel(input: {
+  gatewayProvider: GatewayProvider;
+  gatewayEnabled?: boolean;
+  approved: boolean;
+  modality: GatewayModality;
+  metadata: unknown;
+  rawModelId: string;
+}) {
+  if (!input.approved || input.gatewayEnabled === false || input.modality !== "language") return false;
+  if (!isKestrelRuntimeLanguageProvider(input.gatewayProvider)) return false;
+  const provider = getGatewayModelEconomicsProvider({
+    gatewayProvider: input.gatewayProvider,
+    modality: input.modality,
+    metadata: input.metadata,
+  });
+  return provider !== undefined && readGatewayModelEconomicsProfile(input.metadata, {
+    provider,
+    model: input.rawModelId,
+  }) !== undefined;
+}
+
 function getComparableModelName(rawModelId: string) {
   const trimmed = rawModelId.trim().toLowerCase();
   const parts = trimmed.split("/").filter(Boolean);
@@ -196,6 +269,24 @@ async function fetchProviderJson<T>(
   }
 
   return json as T;
+}
+
+async function fetchOpenRouterModelDetails(
+  gateway: GatewayRecord,
+  rawModelId: string,
+): Promise<Record<string, unknown>> {
+  const apiKey = getGatewayApiKey(gateway);
+  const baseUrl = getOpenAICompatibleBaseUrl(gateway);
+  if (!apiKey || !baseUrl) {
+    throw new GatewayModelProviderResolutionError({
+      message: "OpenRouter gateway credentials are required to resolve a model.",
+    });
+  }
+  return fetchOpenRouterModelDetailsWithCredentials({
+    baseUrl,
+    apiKey,
+    rawModelId,
+  });
 }
 
 function inferOpenAICompatibleModality(rawModelId: string): GatewayModality {
@@ -554,7 +645,13 @@ export async function listAIGatewaysWithModels(organizationId: string) {
 
   return gateways.map((gateway) => ({
     gateway: sanitizeGateway(gateway),
-    models: modelsByGateway[gateway.id] ?? [],
+    models: (modelsByGateway[gateway.id] ?? []).map((model) => ({
+      ...model,
+      economicsAdmission: getGatewayModelEconomicsAdmission(
+        gateway.provider as GatewayProvider,
+        model,
+      ),
+    })),
   }));
 }
 
@@ -606,7 +703,18 @@ export async function listApprovedModels(
       : Promise.resolve(undefined),
   ]);
 
-  return rows.map(({ gateway, model }) => ({
+  return rows
+    .filter(({ gateway, model }) =>
+      modality !== "language" ||
+      isEligibleHostedLanguageModel({
+        gatewayProvider: gateway.provider as GatewayProvider,
+        approved: model.approved,
+        modality: model.modality as GatewayModality,
+        metadata: model.metadata,
+        rawModelId: model.rawModelId,
+      }),
+    )
+    .map(({ gateway, model }) => ({
     gatewayModelId: model.id,
     id: model.alias?.trim() || `${gateway.provider}/${model.rawModelId}`,
     name: normalizeModelLabel(model),
@@ -634,7 +742,7 @@ export async function listApprovedModels(
       modality: model.modality as GatewayModality,
       metadata: model.metadata,
     }),
-  })) as GatewayCatalogModel[];
+    })) as GatewayCatalogModel[];
 }
 
 export async function getApprovedLanguageModels(
@@ -847,7 +955,12 @@ export async function updateGateway(
               credentialRevision:
                 sql`${schema.aiGateways.credentialRevision} + 1`,
             }
-          : {}),
+          : input.baseUrl !== undefined
+            ? {
+                credentialRevision:
+                  sql`${schema.aiGateways.credentialRevision} + 1`,
+              }
+            : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
       ...(input.supportedModalities !== undefined
         ? { supportedModalities: input.supportedModalities }
@@ -912,6 +1025,12 @@ export async function syncGatewayModels(
   const savedModels: GatewayModelRecord[] = [];
   for (const syncedModel of uniqueSyncedModels.values()) {
     const existing = existingByRawModelId.get(syncedModel.rawModelId);
+    const incomingMetadata = syncedModel.metadata ?? null;
+    const existingMetadata = existing?.metadata;
+    const preservedProfile =
+      existingMetadata && typeof existingMetadata === "object" && !Array.isArray(existingMetadata)
+        ? (existingMetadata as Record<string, unknown>).kestrelEconomicsProfile
+        : undefined;
     const savedModel = await saveGatewayModel({
       id: existing?.id,
       organizationId,
@@ -927,13 +1046,21 @@ export async function syncGatewayModels(
         modality: (existing?.modality ??
           syncedModel.modality) as GatewayModality,
         metadata:
-          syncedModel.metadata ??
-          (existing?.metadata as Record<string, unknown> | null) ??
-          null,
+          preservedProfile && incomingMetadata && typeof incomingMetadata === "object"
+            ? { ...(incomingMetadata as Record<string, unknown>), kestrelEconomicsProfile: preservedProfile,
+                ...((existingMetadata as Record<string, unknown>).kestrelEconomicsProfileSource
+                  ? { kestrelEconomicsProfileSource: (existingMetadata as Record<string, unknown>).kestrelEconomicsProfileSource }
+                  : {}) }
+            : incomingMetadata ?? (existing?.metadata as Record<string, unknown> | null) ?? null,
       }),
       gatewayProvider: gateway.provider,
       gatewayBaseUrl: gateway.baseUrl,
       requireEconomicsProfile: false,
+      allowProviderEconomicsFallback: true,
+      resolveOpenRouterModel:
+        gateway.provider === "openrouter" &&
+        (existing?.approved ?? false) &&
+        (existing?.modality ?? syncedModel.modality) === "language",
     });
     savedModels.push(savedModel);
   }
@@ -1000,15 +1127,17 @@ export async function saveGatewayModel(input: {
   description?: string | null;
   metadata?: Record<string, unknown> | null;
   requireEconomicsProfile?: boolean;
+  resolveOpenRouterModel?: boolean;
+  allowProviderEconomicsFallback?: boolean;
+  expectedModelUpdatedAt?: Date | null;
 }) {
   const [gateway, storedModel] = await Promise.all([
-    input.gatewayProvider
+    input.gatewayProvider && input.gatewayProvider !== "openrouter"
       ? Promise.resolve({
           provider: input.gatewayProvider,
           baseUrl: input.gatewayBaseUrl ?? null,
         })
       : knowledgeDb.query.aiGateways.findFirst({
-          columns: { provider: true, baseUrl: true },
           where: (table, operators) =>
             operators.and(
               operators.eq(table.id, input.gatewayId),
@@ -1021,6 +1150,7 @@ export async function saveGatewayModel(input: {
             metadata: true,
             rawModelId: true,
             modality: true,
+            updatedAt: true,
           },
           where: (table, operators) =>
             operators.and(
@@ -1032,12 +1162,34 @@ export async function saveGatewayModel(input: {
       : Promise.resolve(undefined),
   ]);
   const gatewayProvider = gateway?.provider;
+  const approved = input.approved ?? true;
+  const requiresOpenRouterResolution =
+    gatewayProvider === "openrouter" &&
+    approved &&
+    input.modality === "language";
+  if (requiresOpenRouterResolution && !input.resolveOpenRouterModel) {
+    throw new GatewayModelProviderResolutionError({
+      message:
+        "OpenRouter language models must be resolved through the exact provider detail endpoint before approval.",
+      status: 422,
+      retryable: false,
+    });
+  }
   const runPodBaseUrl =
     gatewayProvider === "runpod" && gateway?.baseUrl
       ? normalizeOpenAICompatibleBaseUrl(gateway.baseUrl)
       : null;
+  const resolvedOpenRouterMetadata =
+    input.resolveOpenRouterModel &&
+    gatewayProvider === "openrouter" &&
+    approved &&
+    input.modality === "language" &&
+    gateway && "credentialRevision" in gateway
+      ? await fetchOpenRouterModelDetails(gateway, input.rawModelId)
+      : undefined;
   const inputMetadata =
-    gatewayProvider === "runpod" && storedModel && runPodBaseUrl
+    resolvedOpenRouterMetadata ??
+    (gatewayProvider === "runpod" && storedModel && runPodBaseUrl
       ? preserveTrustedRunPodValidation({
           incomingMetadata: input.metadata,
           storedMetadata: storedModel.metadata,
@@ -1057,18 +1209,113 @@ export async function saveGatewayModel(input: {
             nextModality: input.modality,
             baseUrl: runPodBaseUrl ?? "",
           })
-        : input.metadata;
+        : input.metadata);
 
-  const metadata =
+  let fallbackCatalogMetadata: Record<string, unknown> | null = null;
+  if (
+    input.allowProviderEconomicsFallback &&
+    gateway &&
+    "credentialRevision" in gateway &&
+    gatewayProvider &&
+    gatewayProvider !== "runpod" &&
+    getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback
+  ) {
+    try {
+      fallbackCatalogMetadata =
+        (await fetchGatewayModels(gateway)).find(
+          (candidate) => candidate.rawModelId === input.rawModelId,
+        )?.metadata ?? null;
+    } catch {
+      throw new GatewayModelProviderResolutionError({
+        message: `Unable to verify ${gatewayProvider} model '${input.rawModelId}' against the provider catalog. Retry after the provider is available.`,
+        status: 503,
+        retryable: true,
+      });
+    }
+  }
+  const normalizedMetadata =
     gatewayProvider != null
       ? normalizeGatewayModelMetadata({
           gatewayProvider: gatewayProvider as GatewayProvider,
           modality: input.modality,
-          metadata: inputMetadata,
+          metadata: fallbackCatalogMetadata ?? inputMetadata,
+      })
+      : (fallbackCatalogMetadata ?? inputMetadata ?? null);
+  const fallbackProvider =
+    gatewayProvider && gatewayProvider !== "openrouter" &&
+    getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback
+      ? getGatewayModelEconomicsProvider({
+          gatewayProvider,
+          modality: input.modality,
+          metadata: normalizedMetadata,
         })
-      : (inputMetadata ?? null);
+      : undefined;
+  if (
+    input.allowProviderEconomicsFallback &&
+    fallbackProvider &&
+    !normalizedMetadata &&
+    gatewayProvider !== "runpod"
+  ) {
+    throw new GatewayModelProviderResolutionError({
+      message: `${gatewayProvider} did not advertise the exact model '${input.rawModelId}'. Refresh the provider catalog and try again.`,
+      status: 422,
+      retryable: false,
+    });
+  }
+  const fallbackIdentity = (() => {
+    if (!input.allowProviderEconomicsFallback || !fallbackProvider || !normalizedMetadata) return false;
+    if (gatewayProvider === "runpod") {
+      return Boolean(
+        runPodBaseUrl &&
+          getMatchingRunPodValidationEvidence({
+            metadata: normalizedMetadata,
+            rawModelId: input.rawModelId,
+            baseUrl: runPodBaseUrl,
+          }),
+      );
+    }
+    const catalog = normalizedMetadata as Record<string, unknown>;
+    return catalog.id === input.rawModelId || catalog.model === input.rawModelId;
+  })();
+  const fallbackMetadata =
+    fallbackIdentity && fallbackProvider &&
+    readGatewayModelEconomicsProfile(normalizedMetadata, {
+      provider: fallbackProvider,
+      model: input.rawModelId,
+    }) === undefined &&
+    createGatewayModelEconomicsProfile({
+      provider: fallbackProvider,
+      model: input.rawModelId,
+      metadata: normalizedMetadata,
+    }) === undefined
+      ? {
+          ...(normalizedMetadata ?? {}),
+          ...(() => {
+            const profile = createKestrelDefaultEconomicsProfile({
+              provider: fallbackProvider,
+              model: input.rawModelId,
+            });
+            return {
+              kestrelEconomicsProfile: profile,
+              kestrelEconomicsProfileSource: "kestrel_default",
+            };
+          })(),
+        }
+      : normalizedMetadata;
+  const metadata =
+    resolvedOpenRouterMetadata && normalizedMetadata
+      ? {
+          ...normalizedMetadata,
+          kestrelEconomicsProfileSource: "provider_detail",
+          ...(typeof resolvedOpenRouterMetadata.canonical_slug === "string"
+            ? {
+                kestrelOpenRouterCanonicalSlug:
+                  resolvedOpenRouterMetadata.canonical_slug,
+              }
+            : {}),
+        }
+      : fallbackMetadata;
 
-  const approved = input.approved ?? true;
   const economicsProvider =
     gatewayProvider === undefined
       ? undefined
@@ -1106,6 +1353,21 @@ export async function saveGatewayModel(input: {
   }
 
   if (
+    input.isDefault &&
+    input.modality === "language" &&
+    (!approved || economicsProvider == null ||
+      readGatewayModelEconomicsProfile(economicsMetadata, {
+        provider: economicsProvider,
+        model: input.rawModelId,
+      }) === undefined)
+  ) {
+    throw new GatewayModelEconomicsProfileRequiredError({
+      provider: economicsProvider ?? String(gatewayProvider ?? "unknown"),
+      model: input.rawModelId,
+    });
+  }
+
+  if (
     gatewayProvider === "runpod" &&
     approved &&
     !(
@@ -1121,6 +1383,64 @@ export async function saveGatewayModel(input: {
   }
 
   return knowledgeDb.transaction(async (transaction) => {
+    if (
+      input.resolveOpenRouterModel &&
+      gatewayProvider === "openrouter" &&
+      gateway && "credentialRevision" in gateway
+    ) {
+      if (input.expectedModelUpdatedAt !== undefined) {
+        const [currentModel] = await transaction
+          .select({ updatedAt: schema.aiGatewayModels.updatedAt })
+          .from(schema.aiGatewayModels)
+          .where(
+            and(
+              eq(schema.aiGatewayModels.id, input.id ?? ""),
+              eq(schema.aiGatewayModels.gatewayId, input.gatewayId),
+              eq(schema.aiGatewayModels.organizationId, input.organizationId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        if (currentModel?.updatedAt?.getTime() !== input.expectedModelUpdatedAt?.getTime()) {
+          throw new GatewayModelProviderResolutionError({
+            message: "The gateway model changed while provider details were resolving. Retry the repair.",
+            status: 409,
+            retryable: true,
+          });
+        }
+      }
+      const [currentGateway] = await transaction
+        .select({
+          credentialRevision: schema.aiGateways.credentialRevision,
+          baseUrl: schema.aiGateways.baseUrl,
+        })
+        .from(schema.aiGateways)
+        .where(
+          and(
+            eq(schema.aiGateways.id, input.gatewayId),
+            eq(schema.aiGateways.organizationId, input.organizationId),
+            eq(
+              schema.aiGateways.credentialRevision,
+              gateway.credentialRevision,
+            ),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      if (
+        !currentGateway ||
+        normalizeOpenAICompatibleBaseUrl(
+          currentGateway.baseUrl?.trim() || getDefaultBaseUrl("openrouter")
+        ) !== getOpenAICompatibleBaseUrl(gateway)
+      ) {
+        throw new GatewayModelProviderResolutionError({
+          message:
+            "OpenRouter gateway configuration changed while the model was resolving. Try again.",
+          status: 409,
+          retryable: true,
+        });
+      }
+    }
     if (input.isDefault) {
       const lockKey = `kestrel:ai-model-default:${input.organizationId}:${input.modality}`;
       await transaction.execute(

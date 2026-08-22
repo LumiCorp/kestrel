@@ -32,6 +32,7 @@ type Model = {
   modality: string;
   approved: boolean;
   gatewayEnabled: boolean;
+  runtimeEligible: boolean;
 };
 type Gateway = {
   id: string;
@@ -140,7 +141,8 @@ export function EnvironmentInferenceClient({
         (model) =>
           model.modality === "language" &&
           model.approved &&
-          model.gatewayEnabled
+          model.gatewayEnabled &&
+          model.runtimeEligible
       ),
     [state.models]
   );
@@ -209,6 +211,11 @@ export function EnvironmentInferenceClient({
 
   return (
     <div className="flex flex-col gap-6">
+      {defaultModelId && !availableModels.some((model) => model.id === defaultModelId) ? (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-900 dark:text-amber-100">
+          The stored Environment default is not currently eligible, so Kestrel is using the first eligible model instead. Choose a replacement below.
+        </div>
+      ) : null}
       <SettingsSection
         description="The default model and readiness of every private endpoint in this Environment."
         title="Inference fleet"

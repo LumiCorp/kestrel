@@ -54,8 +54,6 @@ await syncGatewayModels(organizationId, gateway.id);
 await saveGatewayModel({
   organizationId,
   gatewayId: gateway.id,
-  gatewayProvider: "openrouter",
-  gatewayBaseUrl: providerBaseUrl,
   rawModelId,
   modality: "language",
   approved: true,
