@@ -16,6 +16,8 @@ export type GatewayModelEconomicsBackfillRow = {
   approved: boolean;
   metadata: unknown;
   gatewayProvider: string;
+  gatewayBaseUrl?: string | null;
+  credentialRevision?: number;
   updatedAt?: Date | null;
 };
 
@@ -115,11 +117,17 @@ export function planGatewayModelEconomicsProfileBackfill(
     const identified =
       catalog !== null &&
       (catalog.id === row.rawModelId ||
-        catalog.model === row.rawModelId ||
-        catalog.name === row.rawModelId);
+        catalog.model === row.rawModelId);
     const fallbackEligible =
-      ["anthropic", "openai", "lumi", "ollama"].includes(row.gatewayProvider) &&
-      identified;
+      ["anthropic", "openai", "lumi", "ollama", "runpod"].includes(row.gatewayProvider) &&
+      identified &&
+      (row.gatewayProvider !== "runpod" ||
+        Boolean(
+          row.gatewayBaseUrl &&
+            (catalog?.kestrelRunPodValidation as { rawModelId?: string; baseUrl?: string } | undefined)
+              ?.rawModelId === row.rawModelId &&
+            (catalog?.kestrelRunPodValidation as { baseUrl?: string } | undefined)?.baseUrl === row.gatewayBaseUrl,
+        ));
     if (fallbackEligible) {
       const profile = createKestrelDefaultEconomicsProfile({
         provider,

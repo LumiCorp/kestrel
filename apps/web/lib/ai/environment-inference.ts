@@ -360,6 +360,7 @@ export async function setEnvironmentDefaultModel(input: {
     !row ||
     !isEligibleHostedLanguageModel({
       gatewayProvider: row.gateway.provider as import("./gateways").GatewayProvider,
+      gatewayEnabled: row.gateway.enabled,
       approved: row.model.approved,
       modality: row.model.modality as import("./gateways").GatewayModality,
       metadata: row.model.metadata,

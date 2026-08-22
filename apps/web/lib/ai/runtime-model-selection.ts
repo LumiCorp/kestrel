@@ -34,7 +34,6 @@ export async function findUnavailableKestrelRuntimeModelSelectionsInTransaction(
       isDefault: schema.aiGatewayModels.isDefault,
       gatewayProvider: schema.aiGateways.provider,
       metadata: schema.aiGatewayModels.metadata,
-      rawModelId: schema.aiGatewayModels.rawModelId,
     })
     .from(schema.aiGatewayModels)
     .innerJoin(

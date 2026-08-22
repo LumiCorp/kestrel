@@ -221,12 +221,13 @@ function getGatewayModelEconomicsAdmission(
 
 export function isEligibleHostedLanguageModel(input: {
   gatewayProvider: GatewayProvider;
+  gatewayEnabled?: boolean;
   approved: boolean;
   modality: GatewayModality;
   metadata: unknown;
   rawModelId: string;
 }) {
-  if (!input.approved || input.modality !== "language") return false;
+  if (!input.approved || input.gatewayEnabled === false || input.modality !== "language") return false;
   if (!isKestrelRuntimeLanguageProvider(input.gatewayProvider)) return false;
   const provider = getGatewayModelEconomicsProvider({
     gatewayProvider: input.gatewayProvider,
@@ -265,34 +266,32 @@ async function fetchProviderJson<T>(
   return json as T;
 }
 
-async function fetchOpenRouterModelDetails(
-  gateway: GatewayRecord,
-  rawModelId: string,
-): Promise<Record<string, unknown>> {
+export async function fetchOpenRouterModelDetailsWithCredentials(input: {
+  baseUrl: string;
+  apiKey: string;
+  rawModelId: string;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<Record<string, unknown>> {
+  const { baseUrl, apiKey, rawModelId } = input;
+  const fetchImpl = input.fetchImpl ?? fetch;
   const parts = rawModelId.split("/");
   if (parts.length !== 2 || parts.some((part) => part.trim().length === 0)) {
     throw new GatewayModelProviderResolutionError({
       message: `OpenRouter model ID '${rawModelId}' must use the exact author/slug form.`,
     });
   }
-  const apiKey = getGatewayApiKey(gateway);
-  const baseUrl = getOpenAICompatibleBaseUrl(gateway);
-  if (!apiKey || !baseUrl) {
-    throw new GatewayModelProviderResolutionError({
-      message: "OpenRouter gateway credentials are required to resolve a model.",
-    });
-  }
-  const timeoutSignal = AbortSignal.timeout(15_000);
+  const timeoutSignal = AbortSignal.timeout(input.timeoutMs ?? 15_000);
   let response: Response;
   try {
-    response = await fetch(
+    response = await fetchImpl(
       `${baseUrl}/model/${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}`,
       { headers: getOpenAICompatibleAuthHeaders(apiKey), signal: timeoutSignal },
     );
   } catch (error) {
     throw new GatewayModelProviderResolutionError({
       message:
-        error instanceof DOMException && error.name === "TimeoutError"
+        timeoutSignal.aborted || (error instanceof DOMException && error.name === "TimeoutError")
           ? `OpenRouter model resolution timed out for ${rawModelId}. Try again.`
           : `OpenRouter model resolution failed for ${rawModelId}. Try again.`,
       status: 503,
@@ -321,14 +320,29 @@ async function fetchOpenRouterModelDetails(
           ? `OpenRouter model '${rawModelId}' was not found.`
           : isAuthFailure
             ? `OpenRouter rejected the gateway credential while resolving ${rawModelId}. Update the credential and try again.`
-          : `OpenRouter model resolution failed for ${rawModelId}.`,
+            : `OpenRouter model resolution failed for ${rawModelId}.`,
       status: response.status === 404 ? 422 : isAuthFailure ? response.status : 503,
       retryable: retryableStatus,
     });
   }
-  return validateOpenRouterModelDetails({
-    requestedModelId: rawModelId,
-    response: json,
+  return validateOpenRouterModelDetails({ requestedModelId: rawModelId, response: json });
+}
+
+async function fetchOpenRouterModelDetails(
+  gateway: GatewayRecord,
+  rawModelId: string,
+): Promise<Record<string, unknown>> {
+  const apiKey = getGatewayApiKey(gateway);
+  const baseUrl = getOpenAICompatibleBaseUrl(gateway);
+  if (!apiKey || !baseUrl) {
+    throw new GatewayModelProviderResolutionError({
+      message: "OpenRouter gateway credentials are required to resolve a model.",
+    });
+  }
+  return fetchOpenRouterModelDetailsWithCredentials({
+    baseUrl,
+    apiKey,
+    rawModelId,
   });
 }
 
@@ -1068,6 +1082,12 @@ export async function syncGatewayModels(
   const savedModels: GatewayModelRecord[] = [];
   for (const syncedModel of uniqueSyncedModels.values()) {
     const existing = existingByRawModelId.get(syncedModel.rawModelId);
+    const incomingMetadata = syncedModel.metadata ?? null;
+    const existingMetadata = existing?.metadata;
+    const preservedProfile =
+      existingMetadata && typeof existingMetadata === "object" && !Array.isArray(existingMetadata)
+        ? (existingMetadata as Record<string, unknown>).kestrelEconomicsProfile
+        : undefined;
     const savedModel = await saveGatewayModel({
       id: existing?.id,
       organizationId,
@@ -1083,9 +1103,12 @@ export async function syncGatewayModels(
         modality: (existing?.modality ??
           syncedModel.modality) as GatewayModality,
         metadata:
-          syncedModel.metadata ??
-          (existing?.metadata as Record<string, unknown> | null) ??
-          null,
+          preservedProfile && incomingMetadata && typeof incomingMetadata === "object"
+            ? { ...(incomingMetadata as Record<string, unknown>), kestrelEconomicsProfile: preservedProfile,
+                ...((existingMetadata as Record<string, unknown>).kestrelEconomicsProfileSource
+                  ? { kestrelEconomicsProfileSource: (existingMetadata as Record<string, unknown>).kestrelEconomicsProfileSource }
+                  : {}) }
+            : incomingMetadata ?? (existing?.metadata as Record<string, unknown> | null) ?? null,
       }),
       gatewayProvider: gateway.provider,
       gatewayBaseUrl: gateway.baseUrl,
@@ -1257,7 +1280,7 @@ export async function saveGatewayModel(input: {
       );
     }
     const catalog = normalizedMetadata as Record<string, unknown>;
-    return catalog.id === input.rawModelId || catalog.model === input.rawModelId || catalog.name === input.rawModelId;
+    return catalog.id === input.rawModelId || catalog.model === input.rawModelId;
   })();
   const fallbackMetadata =
     fallbackIdentity && fallbackProvider &&
