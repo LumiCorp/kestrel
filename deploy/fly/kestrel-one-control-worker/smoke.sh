@@ -8,7 +8,7 @@ if output="$(docker run --rm "$image" 2>&1)"; then
   exit 1
 fi
 
-if [[ "$output" != *"Kestrel One Environment lifecycle worker failed to start: control-worker configuration is incomplete"* ]]; then
+if [[ "$output" != *"Kestrel One Control Worker failed to start: control-worker configuration is incomplete"* ]]; then
   printf 'control worker did not report the expected invalid-configuration startup failure\n%s\n' "$output" >&2
   exit 1
 fi
