@@ -90,10 +90,10 @@ test("hosted Environment images carry the production build identity", async () =
   for (const flyConfig of [workspaceFlyConfig, routerFlyConfig]) {
     assert.match(flyConfig, /dockerfile = "Dockerfile"/u);
   }
-  assert.match(rollout, /--role workspace-runtime --tag <tag>/u);
-  assert.match(rollout, /--role environment-router --tag <tag>/u);
+  assert.match(rollout, /--role workspace-runtime[\\\s]+--tag <tag>/u);
+  assert.match(rollout, /--role environment-router[\\\s]+--tag <tag>/u);
   assert.match(rollout, /runtime:update/u);
-  assert.match(previewEdgeRollout, /--role preview-edge --tag <tag>/u);
+  assert.match(previewEdgeRollout, /--role preview-edge[\\\s]+--tag <tag>/u);
   assert.match(previewEdgeRollout, /production:fly:machine/u);
   assert.match(
     previewEdgeServiceConfig,

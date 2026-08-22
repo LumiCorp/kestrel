@@ -410,6 +410,48 @@ test("the dedicated control worker owns durable platform lifecycle queues", asyn
   assert.doesNotMatch(source, /CRON_SECRET/u);
 });
 
+test("the control worker rollout preserves migration and one-Machine gates", async () => {
+  const [readme, rollout, productionDelivery] = await Promise.all([
+    readFile(
+      new URL(
+        "../../../../deploy/fly/kestrel-one-control-worker/README.md",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL(
+        "../../../../deploy/fly/kestrel-one-control-worker/ROLLOUT.md",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../../docs/production-delivery-channels.md", import.meta.url),
+      "utf8",
+    ),
+  ]);
+
+  assert.match(readme, /durable Knowledge ingestion/u);
+  assert.match(readme, /initial reconciliation succeeds/u);
+  assert.match(readme, /\.\/ROLLOUT\.md/u);
+  assert.match(rollout, /main` to `production/u);
+  assert.match(rollout, /knowledge_ingestion_runs_active_document_idx/u);
+  assert.match(rollout, /production:image:publish/u);
+  assert.match(rollout, /production:fly:machine/u);
+  assert.match(rollout, /Update started Machines first/u);
+  assert.match(rollout, /Update stopped Machines/u);
+  assert.match(rollout, /Knowledge document workers registered\./u);
+  assert.match(rollout, /Knowledge document queue reconciliation completed\./u);
+  assert.match(rollout, /distinctive\s+phrase/u);
+  assert.match(
+    productionDelivery,
+    /kestrel-one-control-worker\/ROLLOUT\.md/u,
+  );
+  assert.doesNotMatch(readme, /release_controller_heartbeats/u);
+  assert.doesNotMatch(rollout, /release_controller_heartbeats/u);
+});
+
 test(
   "title failures remain non-blocking and emit a durable sanitized diagnostic",
   async () => {
