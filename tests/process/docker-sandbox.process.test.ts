@@ -814,6 +814,93 @@ test(
 );
 
 test(
+  "Docker sandbox retains successful workload ownership when ownership inspect is unavailable",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("workload-inspect-unavailable");
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      ownershipInspectRunner: async () => {
+        throw new Error("ownership inspect must not run after successful create");
+      },
+    });
+    const result = await executor.execute({
+      request: { language: "javascript", code: "console.log('ok')" },
+      policy: policy(),
+    });
+    assert.equal(result.status, "ok", result.stderr);
+    await assertContainerAndProcessesRemoved(containerName);
+  },
+);
+
+test(
+  "Docker sandbox retains successful broker ownership when ownership inspect is inconclusive",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("broker-inspect-inconclusive");
+    const brokerName = `${containerName}-broker`;
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      ownershipInspectRunner: async () => ambiguousDockerResult("timeout"),
+    });
+    const result = await executor.execute({
+      request: { language: "javascript", code: "console.log('ok')" },
+      policy: policy(),
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: { answer: "ok" },
+      },
+    });
+    assert.equal(result.status, "ok", result.stderr);
+    await assertContainerAndProcessesRemoved(containerName);
+    await assertContainerAndProcessesRemoved(brokerName);
+  },
+);
+
+test(
+  "Docker sandbox removes an ambiguously created container by ID without deleting its same-name replacement",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("replacement-race");
+    let replacementId = "";
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return ambiguousDockerResult("timeout");
+      },
+      beforeAmbiguousCreateCleanup: async (_name, ownedContainerId) => {
+        await execFileAsync("docker", ["rm", "--force", ownedContainerId]);
+        const replacement = await execFileAsync("docker", [
+          "create", "--name", containerName, "node:20-alpine",
+          "sh", "-c", "while :; do sleep 3600; done",
+        ]);
+        replacementId = replacement.stdout.trim();
+      },
+    });
+    try {
+      await assert.rejects(
+        executor.execute({
+          request: { language: "javascript", code: "console.log('must not run')" },
+          policy: policy(),
+        }),
+        /Timed out while attempting to create sandbox container/u,
+      );
+      assert.equal(await containerExists(containerName), true);
+      const inspected = await execFileAsync("docker", [
+        "inspect", "--format", "{{.Id}}", containerName,
+      ]);
+      assert.equal(inspected.stdout.trim(), replacementId);
+    } finally {
+      await execFileAsync("docker", ["rm", "--force", containerName]);
+    }
+  },
+);
+
+test(
   "Docker sandbox fails before container creation when capability confinement is unavailable",
   async () => {
     await requireDocker();

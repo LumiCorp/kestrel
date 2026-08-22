@@ -57,6 +57,8 @@ export interface DockerSandboxExecutorOptions {
   containerNameFactory?: (() => string) | undefined;
   capabilityConfinementProbe?: ((signal?: AbortSignal | undefined) => Promise<boolean>) | undefined;
   createCommandRunner?: ((args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>) | undefined;
+  ownershipInspectRunner?: ((containerName: string) => Promise<DockerProcessResult>) | undefined;
+  beforeAmbiguousCreateCleanup?: ((containerName: string, containerId: string) => Promise<void>) | undefined;
 }
 
 export interface DockerProcessResult {
@@ -71,6 +73,8 @@ export class DockerSandboxExecutor implements SandboxExecutor {
   private readonly containerNameFactory: () => string;
   private readonly capabilityConfinementProbe: (signal?: AbortSignal | undefined) => Promise<boolean>;
   private readonly createCommandRunner: (args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>;
+  private readonly ownershipInspectRunner: (containerName: string) => Promise<DockerProcessResult>;
+  private readonly beforeAmbiguousCreateCleanup: (containerName: string, containerId: string) => Promise<void>;
 
   constructor(options: DockerSandboxExecutorOptions = {}) {
     this.containerNameFactory =
@@ -84,6 +88,8 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         DOCKER_LIFECYCLE_OUTPUT_BYTES,
         signal,
       ));
+    this.ownershipInspectRunner = options.ownershipInspectRunner ?? inspectContainerOwnership;
+    this.beforeAmbiguousCreateCleanup = options.beforeAmbiguousCreateCleanup ?? (async () => {});
   }
 
   async execute(input: SandboxExecutionInput): Promise<SandboxExecutionOutput> {
@@ -109,16 +115,16 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     let run: DockerProcessResult | undefined;
     let snapshotError: string | undefined;
-    let ownsWorkloadContainer = false;
-    let ownsBrokerContainer = false;
+    let ownedWorkloadContainerId: string | undefined;
+    let ownedBrokerContainerId: string | undefined;
 
     try {
       if (input.capability !== undefined) {
-        await startCapabilityBroker(input, brokerContainerName, invocationMarker, this.createCommandRunner, () => {
-          ownsBrokerContainer = true;
+        await startCapabilityBroker(input, brokerContainerName, invocationMarker, this.createCommandRunner, this.ownershipInspectRunner, this.beforeAmbiguousCreateCleanup, (containerId) => {
+          ownedBrokerContainerId = containerId;
         });
       }
-      await createOwnedContainer(
+      ownedWorkloadContainerId = await createOwnedContainer(
         withInvocationMarker(
           buildDockerCreateCommand(input, containerName, brokerContainerName),
           invocationMarker,
@@ -128,8 +134,9 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         "create sandbox container",
         input.signal,
         this.createCommandRunner,
+        this.ownershipInspectRunner,
+        this.beforeAmbiguousCreateCleanup,
       );
-      ownsWorkloadContainer = true;
       await runRequiredDockerCommand(
         ["start", containerName],
         "start sandbox container",
@@ -241,11 +248,11 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         artifacts,
       };
     } finally {
-      if (ownsWorkloadContainer) {
-        await removeContainer(containerName);
+      if (ownedWorkloadContainerId !== undefined) {
+        await removeContainer(ownedWorkloadContainerId);
       }
-      if (ownsBrokerContainer) {
-        await removeContainer(brokerContainerName);
+      if (ownedBrokerContainerId !== undefined) {
+        await removeContainer(ownedBrokerContainerId);
       }
       await rm(rootDir, { recursive: true, force: true });
     }
@@ -457,11 +464,13 @@ async function startCapabilityBroker(
   brokerContainerName: string,
   invocationMarker: string,
   createCommandRunner: (args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>,
-  onCreated: () => void,
+  ownershipInspectRunner: (containerName: string) => Promise<DockerProcessResult>,
+  beforeAmbiguousCreateCleanup: (containerName: string, containerId: string) => Promise<void>,
+  onCreated: (containerId: string) => void,
 ): Promise<void> {
   const grant = input.capability;
   if (grant === undefined) return;
-  await createOwnedContainer(withInvocationMarker([
+  const containerId = await createOwnedContainer(withInvocationMarker([
     "create", "--init", "--name", brokerContainerName,
     "--user", `${SANDBOX_UID}:${SANDBOX_GID}`,
     "--read-only", "--memory", "64m", "--pids-limit", "32",
@@ -469,8 +478,8 @@ async function startCapabilityBroker(
     "--network", "none",
     "--tmpfs", `/run/kestrel:rw,nosuid,nodev,noexec,size=1m,uid=${SANDBOX_UID},gid=${SANDBOX_GID},mode=0700`,
     "node:20-alpine", "node", "-e", CAPABILITY_BROKER_SCRIPT,
-  ], invocationMarker), brokerContainerName, invocationMarker, "create confined capability broker", input.signal, createCommandRunner);
-  onCreated();
+  ], invocationMarker), brokerContainerName, invocationMarker, "create confined capability broker", input.signal, createCommandRunner, ownershipInspectRunner, beforeAmbiguousCreateCleanup);
+  onCreated(containerId);
   await runRequiredDockerCommand(["start", brokerContainerName], "start confined capability broker", input.signal);
   const configuration = Buffer.from(JSON.stringify({
     lease: grant.lease,
@@ -522,17 +531,29 @@ async function createOwnedContainer(
   action: string,
   signal: AbortSignal | undefined,
   runner: (args: string[], signal?: AbortSignal | undefined) => Promise<DockerProcessResult>,
-): Promise<void> {
+  ownershipInspectRunner: (containerName: string) => Promise<DockerProcessResult>,
+  beforeAmbiguousCreateCleanup: (containerName: string, containerId: string) => Promise<void>,
+): Promise<string> {
   const result = await runner(args, signal);
-  const ownsContainer = await containerMarkerMatches(containerName, invocationMarker);
   if (result.exitCode === 0 && result.timedOut === false && result.cancelled === false) {
-    if (ownsContainer === false) {
-      throw new Error(`Unable to ${action}: created container ownership could not be verified`);
+    try {
+      return parseDockerContainerId(result.stdout, `${action} output`);
+    } catch (outputError) {
+      const inspectedContainerId = await resolveOwnedContainerId(
+        containerName,
+        invocationMarker,
+        ownershipInspectRunner,
+      );
+      if (inspectedContainerId !== undefined) {
+        return inspectedContainerId;
+      }
+      throw outputError;
     }
-    return;
   }
-  if (ownsContainer) {
-    await removeContainer(containerName);
+  const ownedContainerId = await resolveOwnedContainerId(containerName, invocationMarker, ownershipInspectRunner);
+  if (ownedContainerId !== undefined) {
+    await beforeAmbiguousCreateCleanup(containerName, ownedContainerId);
+    await removeContainer(ownedContainerId);
   }
   if (result.cancelled) {
     throw new DockerSandboxCancellationError("Docker sandbox execution was cancelled");
@@ -544,14 +565,37 @@ async function createOwnedContainer(
   throw new Error(`Unable to ${action}${detail.length > 0 ? `: ${detail}` : ""}`);
 }
 
-async function containerMarkerMatches(containerName: string, marker: string): Promise<boolean> {
-  const inspected = await runDockerProcess(
-    ["inspect", "--format", `{{ index .Config.Labels "${DOCKER_INVOCATION_LABEL}" }}`, containerName],
+async function inspectContainerOwnership(containerName: string): Promise<DockerProcessResult> {
+  return runDockerProcess(
+    ["inspect", "--format", `{{.Id}}|{{index .Config.Labels "${DOCKER_INVOCATION_LABEL}"}}`, containerName],
     DOCKER_LIFECYCLE_TIMEOUT_MS,
     DOCKER_LIFECYCLE_OUTPUT_BYTES,
     undefined,
   );
-  return inspected.exitCode === 0 && inspected.timedOut === false && inspected.stdout.trim() === marker;
+}
+
+async function resolveOwnedContainerId(
+  containerName: string,
+  marker: string,
+  inspectRunner: (containerName: string) => Promise<DockerProcessResult>,
+): Promise<string | undefined> {
+  const inspected = await inspectRunner(containerName);
+  if (inspected.exitCode !== 0 || inspected.timedOut || inspected.cancelled) {
+    return;
+  }
+  const fields = inspected.stdout.trim().split("|");
+  if (fields.length !== 2 || fields[1] !== marker) {
+    return;
+  }
+  return parseDockerContainerId(fields[0] ?? "", "Docker inspect container ID");
+}
+
+function parseDockerContainerId(value: string, label: string): string {
+  const normalized = value.trim();
+  if (/^[a-f0-9]{64}$/u.test(normalized) === false) {
+    throw new Error(`${label} is not a valid immutable Docker container ID`);
+  }
+  return normalized;
 }
 
 function redactSensitiveValue(value: string, sensitiveValue: string): string {
