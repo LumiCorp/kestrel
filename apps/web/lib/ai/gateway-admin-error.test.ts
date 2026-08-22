@@ -73,6 +73,7 @@ test("missing economics profiles expose actionable approval remediation", () => 
       code: "GATEWAY_MODEL_ECONOMICS_PROFILE_REQUIRED",
       error:
         "Cannot approve openrouter/opaque-model because provider capacity metadata is missing. Refresh the provider catalog and try again.",
+      retryable: false,
     },
     status: 422,
   });

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fetchOpenRouterModelDetailsWithCredentials } from "./gateways";
+import { fetchOpenRouterModelDetailsWithCredentials } from "./openrouter-model-resolution";
 import { GatewayModelProviderResolutionError } from "./gateway-lifecycle-error";
 
 function response(status: number, body: unknown): Response {
@@ -80,10 +80,11 @@ test("a stalled OpenRouter response body is a retryable timeout", async () => {
       fetchImpl: async (_url, init) => ({
         ok: true,
         status: 200,
-        json: () =>
-          new Promise((_resolve, reject) => {
-            init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
-          }),
+        json: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          if (init?.signal?.aborted) throw new Error("aborted");
+          return {};
+        },
       } as Response),
     }),
     (error: unknown) =>

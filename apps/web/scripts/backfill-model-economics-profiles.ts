@@ -83,9 +83,10 @@ async function main() {
         const apiKey = gateway ? getGatewayApiKey(gateway) : null;
         if (!gateway || !apiKey) throw new Error("Gateway credential or endpoint is missing.");
         const details = await fetchOpenRouterModelDetailsWithCredentials({
-          baseUrl: normalizeOpenAICompatibleBaseUrl(
-            row.gatewayBaseUrl || "https://openrouter.ai/api/v1",
-          ),
+          baseUrl:
+            normalizeOpenAICompatibleBaseUrl(
+              row.gatewayBaseUrl || "https://openrouter.ai/api/v1",
+            ) || "https://openrouter.ai/api/v1",
           apiKey,
           rawModelId: row.rawModelId,
         });

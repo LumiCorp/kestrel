@@ -27,6 +27,16 @@ test("eligible native gateway models become runner model selections", () => {
       environmentId: "env-1",
       model: "openai/gpt-5.4",
       provider: "openrouter",
+      economicsProfile: {
+        version: 1,
+        profileId: "openrouter:openai/gpt-5.4:v1",
+        provider: "openrouter",
+        model: "openai/gpt-5.4",
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_000,
+        counting: { counter: "utf8-byte-upper-bound", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
+        cache: { behavior: "none" },
+      },
     }
   );
 });
@@ -230,7 +240,11 @@ test("Lumi models select the configured native runner protocol", () => {
       gatewayId: "gateway-lumi",
       rawModelId: "claude-sonnet",
       gatewayProvider: "lumi",
-      metadata: { protocol: "anthropic" },
+      metadata: {
+        protocol: "anthropic",
+        max_input_tokens: 200_000,
+        max_output_tokens: 8_192,
+      },
       organizationId: "org-1",
       environmentId: "env-1",
     }).provider,
@@ -245,6 +259,10 @@ test("RunPod models use the OpenAI runner protocol with a gateway credential ref
       gatewayId: "gateway-runpod",
       rawModelId: "Qwen/Qwen3-32B",
       gatewayProvider: "runpod",
+      metadata: {
+        contextWindowTokens: 32_768,
+        maxOutputTokens: 8_192,
+      },
       organizationId: "org-1",
       environmentId: "env-1",
     }),
@@ -255,6 +273,16 @@ test("RunPod models use the OpenAI runner protocol with a gateway credential ref
       environmentId: "env-1",
       model: "Qwen/Qwen3-32B",
       provider: "openai",
+      economicsProfile: {
+        version: 1,
+        profileId: "openai:Qwen/Qwen3-32B:v1",
+        provider: "openai",
+        model: "Qwen/Qwen3-32B",
+        contextWindowTokens: 32_768,
+        maxOutputTokens: 8_192,
+        counting: { counter: "utf8-byte-upper-bound", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
+        cache: { behavior: "none" },
+      },
     }
   );
 });

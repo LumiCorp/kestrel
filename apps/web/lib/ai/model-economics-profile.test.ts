@@ -295,7 +295,7 @@ test("backfill stores the same canonical provider identity as runtime lookup", (
       rawModelId: "Qwen/Qwen3-32B",
       modality: "language",
       approved: true,
-      metadata: { contextWindowTokens: 32_768, maxOutputTokens: 4096 },
+      metadata: { id: "Qwen/Qwen3-32B", contextWindowTokens: 32_768, maxOutputTokens: 4096 },
       gatewayProvider: "runpod",
     },
     {
@@ -307,6 +307,7 @@ test("backfill stores the same canonical provider identity as runtime lookup", (
       approved: true,
       metadata: {
         protocol: "openai",
+        id: "lumi-model",
         context_length: 32_768,
         max_output_tokens: 4096,
       },
