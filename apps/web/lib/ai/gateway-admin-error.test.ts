@@ -117,6 +117,14 @@ test("provider resolution errors preserve retryability for the admin client", ()
   );
   assert.equal(auth.status, 401);
   assert.equal(auth.body.retryable, false);
+
+  const missingCapacity = getSafeGatewayAdminError(
+    new GatewayModelEconomicsProfileRequiredError({
+      provider: "openrouter",
+      model: "opaque-model",
+    }),
+  );
+  assert.equal(missingCapacity.body.retryable, false);
 });
 
 test("OpenRouter detail validation preserves exact route identity", () => {

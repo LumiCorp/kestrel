@@ -46,6 +46,6 @@ The provider settings UI already receives an `economicsAdmission` projection. Ex
 - Integration tests cover request URL/auth, response classification, timeout, no-write failure, credential and endpoint races, API projection, and UI rendering.
 - The parent issue’s focused checks and `pnpm validate` pass when dependencies are available.
 
-## Depends on
+## Dependency note
 
-- [Approve exact OpenRouter models with provider-backed economics](01-approve-exact-openrouter-models.md)
+This is a review follow-up that hardens the already-implemented parent issue. It is intentionally independent in the queue so the parent can remain blocked until this repair is complete; it is not a new prerequisite for issue 01.

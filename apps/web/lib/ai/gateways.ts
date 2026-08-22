@@ -261,12 +261,12 @@ async function fetchOpenRouterModelDetails(
       message: "OpenRouter gateway credentials are required to resolve a model.",
     });
   }
+  const timeoutSignal = AbortSignal.timeout(15_000);
   let response: Response;
   try {
-    const signal = AbortSignal.timeout(15_000);
     response = await fetch(
       `${baseUrl}/model/${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}`,
-      { headers: getOpenAICompatibleAuthHeaders(apiKey), signal },
+      { headers: getOpenAICompatibleAuthHeaders(apiKey), signal: timeoutSignal },
     );
   } catch (error) {
     throw new GatewayModelProviderResolutionError({
@@ -278,9 +278,22 @@ async function fetchOpenRouterModelDetails(
       retryable: true,
     });
   }
-  const json = await response.json().catch(() => null);
+  let json: unknown;
+  try {
+    json = await response.json();
+  } catch (error) {
+    if (timeoutSignal.aborted) {
+      throw new GatewayModelProviderResolutionError({
+        message: `OpenRouter model resolution timed out for ${rawModelId}. Try again.`,
+        status: 503,
+        retryable: true,
+      });
+    }
+    json = null;
+  }
   if (!response.ok) {
     const isAuthFailure = response.status === 401 || response.status === 403;
+    const retryableStatus = [408, 425, 429].includes(response.status) || response.status >= 500;
     throw new GatewayModelProviderResolutionError({
       message:
         response.status === 404
@@ -289,7 +302,7 @@ async function fetchOpenRouterModelDetails(
             ? `OpenRouter rejected the gateway credential while resolving ${rawModelId}. Update the credential and try again.`
           : `OpenRouter model resolution failed for ${rawModelId}.`,
       status: response.status === 404 ? 422 : isAuthFailure ? response.status : 503,
-      retryable: response.status >= 500,
+      retryable: retryableStatus,
     });
   }
   return validateOpenRouterModelDetails({

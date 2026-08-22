@@ -67,7 +67,7 @@ export function getSafeGatewayAdminError(
 
   if (error instanceof GatewayModelEconomicsProfileRequiredError) {
     return {
-      body: { code: error.code, error: error.message },
+      body: { code: error.code, error: error.message, retryable: false },
       status: 422,
     };
   }
