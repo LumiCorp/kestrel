@@ -63,6 +63,7 @@ task instead of reading the repository as one long manual.
 - [Design principles](../DESIGN.md)
 - [Plans index](PLANS.md)
 - [Architecture decisions](decisions/0001-unified-suite-version-and-release-channels.md)
+  - [Confined Docker capability transport](decisions/0003-confined-docker-capability-transport.md)
 - [Stable Runtime Bundle authority](adr/0001-stable-runtime-bundle-authority.md)
 - [Independent production delivery channels](adr/0002-independent-production-delivery-channels.md)
 - [CI validation](ci-validation.md)

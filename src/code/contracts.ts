@@ -132,7 +132,21 @@ export const DEFAULT_CODE_MODE_ENABLED_CONFIG: CodeModeProfileConfig = {
 export interface SandboxExecutionInput {
   request: CodeExecutionRequest;
   policy: AppliedCodeExecutionPolicy;
+  capability?: SandboxCapabilityGrant | undefined;
   signal?: AbortSignal | undefined;
+}
+
+/**
+ * A short-lived grant supplied by trusted runtime code. It is deliberately not
+ * part of CodeExecutionRequest or profile configuration, so model-authored and
+ * persisted inputs cannot contain the lease.
+ */
+export interface SandboxCapabilityGrant {
+  transport: "docker-shared-loopback-v1";
+  lease: string;
+  operation: string;
+  destination: string;
+  response: unknown;
 }
 
 export interface SandboxExecutionOutput {
@@ -152,6 +166,9 @@ export interface CodeExecutionServicePort {
   execute(
     config: CodeModeProfileConfig,
     request: CodeExecutionRequest,
-    options?: { signal?: AbortSignal | undefined },
+    options?: {
+      signal?: AbortSignal | undefined;
+      capability?: SandboxCapabilityGrant | undefined;
+    },
   ): Promise<CodeExecutionResult>;
 }

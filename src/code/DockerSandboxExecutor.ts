@@ -26,6 +26,8 @@ const SANDBOX_UID = 65_532;
 const SANDBOX_GID = 65_532;
 const DOCKER_LIFECYCLE_TIMEOUT_MS = 10_000;
 const DOCKER_LIFECYCLE_OUTPUT_BYTES = 16_000;
+export const DOCKER_CAPABILITY_ENDPOINT = "http://127.0.0.1:43127/v1/capability";
+const DOCKER_CAPABILITY_PORT = 43_127;
 
 const LANGUAGE_IMAGE: Record<CodeExecutionLanguage, string> = {
   javascript: "node:20-alpine",
@@ -52,6 +54,7 @@ export class DockerSandboxCancellationError extends Error {}
 
 export interface DockerSandboxExecutorOptions {
   containerNameFactory?: (() => string) | undefined;
+  capabilityConfinementProbe?: ((signal?: AbortSignal | undefined) => Promise<boolean>) | undefined;
 }
 
 interface DockerProcessResult {
@@ -64,19 +67,24 @@ interface DockerProcessResult {
 
 export class DockerSandboxExecutor implements SandboxExecutor {
   private readonly containerNameFactory: () => string;
+  private readonly capabilityConfinementProbe: (signal?: AbortSignal | undefined) => Promise<boolean>;
 
   constructor(options: DockerSandboxExecutorOptions = {}) {
     this.containerNameFactory =
       options.containerNameFactory ?? (() => `kestrel-code-${randomUUID()}`);
+    this.capabilityConfinementProbe =
+      options.capabilityConfinementProbe ?? probeDockerCapabilityConfinement;
   }
 
   async execute(input: SandboxExecutionInput): Promise<SandboxExecutionOutput> {
     throwIfCancelled(input.signal);
+    await assertSupportedNetworkMode(input, this.capabilityConfinementProbe);
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-code-"));
     const stagingDir = path.join(rootDir, "staging");
     const snapshotDir = path.join(rootDir, "snapshot");
     const mainFile = LANGUAGE_MAIN_FILE[input.request.language];
     const containerName = this.containerNameFactory();
+    const brokerContainerName = `${containerName}-broker`;
     const declaredFiles = normalizeFiles(input.request.files);
 
     await mkdir(stagingDir, { recursive: true, mode: 0o777 });
@@ -92,8 +100,11 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     let snapshotError: string | undefined;
 
     try {
+      if (input.capability !== undefined) {
+        await startCapabilityBroker(input, brokerContainerName);
+      }
       await runRequiredDockerCommand(
-        buildDockerCreateCommand(input, containerName),
+        buildDockerCreateCommand(input, containerName, brokerContainerName),
         "create sandbox container",
         input.signal,
       );
@@ -153,7 +164,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         }
       }
 
-      const artifacts = snapshotError === undefined
+      let artifacts = snapshotError === undefined
         ? await collectArtifacts({
             workspaceDir: snapshotDir,
             baselinePaths: new Set([
@@ -165,7 +176,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
           })
         : [];
       const durationMs = Date.now() - startedAt;
-      const stderr = snapshotError === undefined
+      let stderr = snapshotError === undefined
         ? run.stderr
         : appendBounded(
             run.stderr,
@@ -173,11 +184,26 @@ export class DockerSandboxExecutor implements SandboxExecutor {
             input.policy.maxOutputBytes,
           );
 
+      let stdout = run.stdout;
+      if (input.capability !== undefined) {
+        stdout = redactSensitiveValue(stdout, input.capability.lease);
+        stderr = redactSensitiveValue(stderr, input.capability.lease);
+        artifacts = artifacts.map((artifact) => ({
+          ...artifact,
+          ...(artifact.preview === undefined ? {} : {
+            preview: {
+              ...artifact.preview,
+              text: redactSensitiveValue(artifact.preview.text, input.capability!.lease),
+            },
+          }),
+        }));
+      }
+
       if (run.timedOut) {
         return {
           status: "timeout",
           exitCode: null,
-          stdout: run.stdout,
+          stdout,
           stderr,
           durationMs,
           artifacts,
@@ -187,13 +213,14 @@ export class DockerSandboxExecutor implements SandboxExecutor {
       return {
         status: run.exitCode === 0 ? "ok" : "error",
         exitCode: run.exitCode,
-        stdout: run.stdout,
+        stdout,
         stderr,
         durationMs,
         artifacts,
       };
     } finally {
       await removeContainer(containerName);
+      await removeContainer(brokerContainerName);
       await rm(rootDir, { recursive: true, force: true });
     }
   }
@@ -269,6 +296,7 @@ function sanitizeRelativePath(value: string): string | undefined {
 export function buildDockerCreateCommand(
   input: SandboxExecutionInput,
   containerName: string,
+  brokerContainerName = `${containerName}-broker`,
 ): string[] {
   const image = LANGUAGE_IMAGE[input.request.language];
   return [
@@ -290,7 +318,7 @@ export function buildDockerCreateCommand(
     "--security-opt",
     "no-new-privileges",
     "--network",
-    input.policy.network === "off" ? "none" : "bridge",
+    input.capability === undefined ? "none" : `container:${brokerContainerName}`,
     "--tmpfs",
     buildTmpfsSpec(
       "/workspace",
@@ -312,6 +340,130 @@ export function buildDockerCreateCommand(
     "-lc",
     "while :; do sleep 3600; done",
   ];
+}
+
+async function assertSupportedNetworkMode(
+  input: SandboxExecutionInput,
+  confinementProbe: (signal?: AbortSignal | undefined) => Promise<boolean>,
+): Promise<void> {
+  if (input.capability === undefined) {
+    if (input.policy.network === "on") {
+      throw new DockerUnavailableError(
+        "Unrestricted Docker networking is disabled; a confined capability grant is required",
+      );
+    }
+    return;
+  }
+  if (input.capability.transport !== "docker-shared-loopback-v1") {
+    throw new DockerUnavailableError("Docker capability transport is unsupported");
+  }
+  if (await confinementProbe(input.signal) === false) {
+    throw new DockerUnavailableError(
+      "Active Docker backend cannot enforce the shared-loopback capability transport",
+    );
+  }
+}
+
+async function probeDockerCapabilityConfinement(
+  signal?: AbortSignal | undefined,
+): Promise<boolean> {
+  const info = await runDockerProcess(
+    ["info", "--format", "{{.OSType}}"],
+    DOCKER_LIFECYCLE_TIMEOUT_MS,
+    DOCKER_LIFECYCLE_OUTPUT_BYTES,
+    signal,
+  );
+  if (info.cancelled) {
+    throw new DockerSandboxCancellationError("Docker sandbox execution was cancelled");
+  }
+  return info.timedOut === false && info.exitCode === 0 && info.stdout.trim() === "linux";
+}
+
+const CAPABILITY_BROKER_SCRIPT = String.raw`
+const fs = require("node:fs");
+const http = require("node:http");
+const configPath = "/run/kestrel/config";
+function load() {
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    fs.unlinkSync(configPath);
+    if (typeof config.lease !== "string" || config.lease.length < 16) process.exit(64);
+    http.createServer((request, response) => {
+      if (request.method === "GET" && request.url === "/health") {
+        response.writeHead(204); response.end(); return;
+      }
+      if (request.method !== "POST" || request.url !== "/v1/capability") {
+        response.writeHead(404); response.end(JSON.stringify({ error: "unknown_endpoint" })); return;
+      }
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", chunk => { body += chunk; if (body.length > 4096) request.destroy(); });
+      request.on("end", () => {
+        let value;
+        try { value = JSON.parse(body); } catch { response.writeHead(400); response.end(JSON.stringify({ error: "invalid_request" })); return; }
+        if (value.operation !== config.operation || value.destination !== config.destination || Object.keys(value).length !== 2) {
+          response.writeHead(403); response.end(JSON.stringify({ error: "capability_denied" })); return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(config.response));
+      });
+    }).listen(${DOCKER_CAPABILITY_PORT}, "127.0.0.1");
+  } catch (error) {
+    if (error && error.code === "ENOENT") setTimeout(load, 10); else process.exit(65);
+  }
+}
+load();`;
+
+async function startCapabilityBroker(
+  input: SandboxExecutionInput,
+  brokerContainerName: string,
+): Promise<void> {
+  const grant = input.capability;
+  if (grant === undefined) return;
+  await runRequiredDockerCommand([
+    "create", "--init", "--name", brokerContainerName,
+    "--user", `${SANDBOX_UID}:${SANDBOX_GID}`,
+    "--read-only", "--memory", "64m", "--pids-limit", "32",
+    "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+    "--network", "none",
+    "--tmpfs", `/run/kestrel:rw,nosuid,nodev,noexec,size=1m,uid=${SANDBOX_UID},gid=${SANDBOX_GID},mode=0700`,
+    "node:20-alpine", "node", "-e", CAPABILITY_BROKER_SCRIPT,
+  ], "create confined capability broker", input.signal);
+  await runRequiredDockerCommand(["start", brokerContainerName], "start confined capability broker", input.signal);
+  const configuration = Buffer.from(JSON.stringify({
+    lease: grant.lease,
+    operation: grant.operation,
+    destination: grant.destination,
+    response: grant.response,
+  }), "utf8");
+  const written = await runDockerProcess([
+    "exec", "--interactive", "--user", `${SANDBOX_UID}:${SANDBOX_GID}`,
+    brokerContainerName, "sh", "-c", "umask 077; cat > /run/kestrel/config",
+  ], DOCKER_LIFECYCLE_TIMEOUT_MS, DOCKER_LIFECYCLE_OUTPUT_BYTES, input.signal, configuration);
+  requireSuccessfulDockerResult(written, "load the capability broker grant");
+  const deadline = Date.now() + DOCKER_LIFECYCLE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const ready = await runDockerProcess([
+      "exec", "--user", `${SANDBOX_UID}:${SANDBOX_GID}`, brokerContainerName,
+      "node", "-e", `require('http').get('http://127.0.0.1:${DOCKER_CAPABILITY_PORT}/health',r=>process.exit(r.statusCode===204?0:1)).on('error',()=>process.exit(1))`,
+    ], 1_000, 1_000, input.signal);
+    if (ready.exitCode === 0) return;
+  }
+  const state = await runDockerProcess(
+    ["inspect", "--format", "{{json .State}}", brokerContainerName],
+    2_000,
+    2_000,
+    input.signal,
+  );
+  throw new Error(
+    `Timed out while waiting for the confined capability broker${state.stdout.trim().length > 0 ? `: ${state.stdout.trim()}` : ""}`,
+  );
+}
+
+function redactSensitiveValue(value: string, sensitiveValue: string): string {
+  return sensitiveValue.length === 0
+    ? value
+    : value.split(sensitiveValue).join("[redacted:capability]");
 }
 
 function buildTmpfsSpec(

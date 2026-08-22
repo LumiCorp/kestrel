@@ -8,8 +8,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import {
+  DOCKER_CAPABILITY_ENDPOINT,
   DockerSandboxCancellationError,
   DockerSandboxExecutor,
+  DockerUnavailableError,
 } from "../../src/code/DockerSandboxExecutor.js";
 import type {
   AppliedCodeExecutionPolicy,
@@ -566,6 +568,144 @@ test(
 
     assert.equal(result.status, "ok", result.stderr);
     assert.equal(result.stdout.trim(), "blocked");
+  },
+);
+
+test(
+  "Docker sandbox capability transport reaches only the exact trusted stub without exposing its lease",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability");
+    const brokerName = `${containerName}-broker`;
+    const lease = `opaque-lease-${randomUUID()}`;
+    const hostCanary = `host-canary-${randomUUID()}`;
+    const variableName = `KESTREL_CAPABILITY_HOST_${randomUUID().replaceAll("-", "")}`;
+    process.env[variableName] = hostCanary;
+    try {
+      const execution = fixedNameExecutor(containerName).execute({
+        request: {
+          language: "javascript",
+          code: `
+            const http = require("node:http");
+            const fs = require("node:fs");
+            function request(url, options = {}) {
+              return new Promise(resolve => {
+                const call = http.request(url, { ...options, timeout: 500 }, response => {
+                  let body = ""; response.on("data", chunk => body += chunk);
+                  response.on("end", () => resolve({ status: response.statusCode, body }));
+                });
+                call.on("timeout", () => call.destroy(new Error("timeout")));
+                call.on("error", error => resolve({ error: error.code ?? error.message }));
+                if (options.body) call.write(options.body);
+                call.end();
+              });
+            }
+            (async () => {
+              const endpoint = ${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)};
+              const exact = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com" }) });
+              const unknownOperation = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "write", destination: "api.tavily.com" }) });
+              const unknownDestination = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "example.com" }) });
+              const forwarding = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", url: "http://example.com" }) });
+              const probes = {};
+              for (const [name, url] of Object.entries({
+                provider: "http://api.tavily.com",
+                internet: "http://1.1.1.1",
+                lan: "http://192.168.1.1",
+                loopback: "http://127.0.0.1:43128",
+                linkLocal: "http://169.254.1.1",
+                metadata: "http://169.254.169.254/latest/meta-data/",
+              })) probes[name] = await request(url);
+              await new Promise(resolve => setTimeout(resolve, 750));
+              let brokerConfigReadable = true;
+              try { fs.readFileSync("/run/kestrel/config"); } catch { brokerConfigReadable = false; }
+              console.log(JSON.stringify({ exact, unknownOperation, unknownDestination, forwarding, probes, envKeys: Object.keys(process.env), brokerConfigReadable }));
+            })();
+          `,
+        },
+        policy: policy({ timeoutMs: 10_000 }),
+        capability: {
+          transport: "docker-shared-loopback-v1",
+          lease,
+          operation: "search",
+          destination: "api.tavily.com",
+          response: { answer: "trusted-stub-ok" },
+        },
+      });
+
+      await waitForContainer(containerName, true);
+      await waitForContainer(brokerName, true);
+      const [workloadInspect, brokerInspect, workloadTop, brokerTop, deletedBootstrap] = await Promise.all([
+        execFileAsync("docker", ["inspect", containerName]),
+        execFileAsync("docker", ["inspect", brokerName]),
+        execFileAsync("docker", ["top", containerName]),
+        execFileAsync("docker", ["top", brokerName]),
+        execFileAsync("docker", ["exec", brokerName, "test", "!", "-e", "/run/kestrel/config"]),
+      ]);
+      const visible = [workloadInspect.stdout, brokerInspect.stdout, workloadTop.stdout, brokerTop.stdout].join("\n");
+      assert.equal(visible.includes(lease), false);
+      assert.equal(visible.includes(hostCanary), false);
+      assert.equal(deletedBootstrap.stdout, "");
+      const parsedBroker = JSON.parse(brokerInspect.stdout)[0] as { Id: string; HostConfig: { NetworkMode: string } };
+      assert.equal(JSON.parse(workloadInspect.stdout)[0].HostConfig.NetworkMode, `container:${parsedBroker.Id}`);
+      assert.equal(parsedBroker.HostConfig.NetworkMode, "none");
+
+      const result = await execution;
+      assert.equal(result.status, "ok", result.stderr);
+      const evidence = JSON.parse(result.stdout.trim()) as {
+        exact: { status: number; body: string };
+        unknownOperation: { status: number };
+        unknownDestination: { status: number };
+        forwarding: { status: number };
+        probes: Record<string, { error?: string }>;
+        envKeys: string[];
+        brokerConfigReadable: boolean;
+      };
+      assert.equal(evidence.exact.status, 200);
+      assert.deepEqual(JSON.parse(evidence.exact.body), { answer: "trusted-stub-ok" });
+      assert.equal(evidence.unknownOperation.status, 403);
+      assert.equal(evidence.unknownDestination.status, 403);
+      assert.equal(evidence.forwarding.status, 403);
+      for (const [name, probe] of Object.entries(evidence.probes)) {
+        assert.equal(typeof probe.error, "string", name);
+      }
+      assert.equal(evidence.envKeys.includes(variableName), false);
+      assert.equal(evidence.brokerConfigReadable, false);
+      const retained = `${result.stdout}\n${result.stderr}\n${JSON.stringify(result.artifacts)}`;
+      assert.equal(retained.includes(lease), false);
+      assert.equal(retained.includes(hostCanary), false);
+      await assertContainerAndProcessesRemoved(containerName);
+      await assertContainerAndProcessesRemoved(brokerName);
+    } finally {
+      delete process.env[variableName];
+    }
+  },
+);
+
+test(
+  "Docker sandbox fails before container creation when capability confinement is unavailable",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-unavailable");
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      capabilityConfinementProbe: async () => false,
+    });
+    await assert.rejects(
+      executor.execute({
+        request: { language: "javascript", code: "console.log('must not run')" },
+        policy: policy(),
+        capability: {
+          transport: "docker-shared-loopback-v1",
+          lease: `opaque-lease-${randomUUID()}`,
+          operation: "search",
+          destination: "api.tavily.com",
+          response: { answer: "must not run" },
+        },
+      }),
+      (error: unknown) => error instanceof DockerUnavailableError,
+    );
+    assert.equal(await containerExists(containerName), false);
+    assert.equal(await containerExists(`${containerName}-broker`), false);
   },
 );
 

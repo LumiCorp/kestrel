@@ -2,6 +2,7 @@ import type {
   CodeExecutionRequest,
   CodeExecutionResult,
   CodeModeProfileConfig,
+  SandboxCapabilityGrant,
   SandboxExecutionOutput,
   SandboxExecutor,
 } from "./contracts.js";
@@ -22,7 +23,10 @@ export class CodeExecutionService {
   async execute(
     config: CodeModeProfileConfig | undefined,
     request: CodeExecutionRequest,
-    options: { signal?: AbortSignal | undefined } = {},
+    options: {
+      signal?: AbortSignal | undefined;
+      capability?: SandboxCapabilityGrant | undefined;
+    } = {},
   ): Promise<CodeExecutionResult> {
     const policyDecision = evaluateExecutionPolicy(config, request);
     if (policyDecision.ok === false) {
@@ -33,6 +37,7 @@ export class CodeExecutionService {
       const output = await this.executor.execute({
         request: policyDecision.request,
         policy: policyDecision.policy,
+        capability: options.capability,
         signal: options.signal,
       });
 
