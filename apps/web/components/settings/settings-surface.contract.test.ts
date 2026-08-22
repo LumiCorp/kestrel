@@ -78,6 +78,11 @@ test("organization, platform, and personal settings retain separate navigation s
   assert.match(gatewayAdmin, /className="lg:block"/u);
   assert.match(gatewayAdmin, /Model modality counts/u);
   assert.match(gatewayAdmin, /key=\{selectedBundle.gateway.id\}/u);
+  assert.match(gatewayAdmin, /function ConnectionsAdminClient/u);
+  assert.match(gatewayAdmin, /function ModelsAdminClient/u);
+  assert.match(gatewayAdmin, /function GatewayConnectionPane/u);
+  assert.match(gatewayAdmin, /function GatewayModelCatalogPane/u);
+  assert.doesNotMatch(gatewayAdmin, /isModelsSurface/u);
   assert.match(layout, /\bPageContainer\b/u);
   assert.doesNotMatch(layout, /<h1/u);
   assert.equal(layout.match(/<PageContainer/gu)?.length, 1);
