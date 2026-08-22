@@ -535,6 +535,7 @@ async function createOwnedContainer(
   beforeAmbiguousCreateCleanup: (containerName: string, containerId: string) => Promise<void>,
 ): Promise<string> {
   const result = await runner(args, signal);
+  const reconciliationDeadline = Date.now() + DOCKER_LIFECYCLE_TIMEOUT_MS;
   if (result.exitCode === 0 && result.timedOut === false && result.cancelled === false) {
     try {
       return parseDockerContainerId(result.stdout, `${action} output`);
@@ -543,6 +544,7 @@ async function createOwnedContainer(
         containerName,
         invocationMarker,
         ownershipInspectRunner,
+        reconciliationDeadline,
       );
       if (inspectedContainerId !== undefined) {
         return inspectedContainerId;
@@ -550,7 +552,12 @@ async function createOwnedContainer(
       throw outputError;
     }
   }
-  const ownedContainerId = await resolveOwnedContainerId(containerName, invocationMarker, ownershipInspectRunner);
+  const ownedContainerId = await resolveOwnedContainerId(
+    containerName,
+    invocationMarker,
+    ownershipInspectRunner,
+    reconciliationDeadline,
+  );
   if (ownedContainerId !== undefined) {
     await beforeAmbiguousCreateCleanup(containerName, ownedContainerId);
     await removeContainer(ownedContainerId);
@@ -578,16 +585,42 @@ async function resolveOwnedContainerId(
   containerName: string,
   marker: string,
   inspectRunner: (containerName: string) => Promise<DockerProcessResult>,
+  deadline: number,
 ): Promise<string | undefined> {
-  const inspected = await inspectRunner(containerName);
-  if (inspected.exitCode !== 0 || inspected.timedOut || inspected.cancelled) {
-    return;
+  while (Date.now() < deadline) {
+    let inspected: DockerProcessResult;
+    try {
+      inspected = await inspectRunner(containerName);
+    } catch {
+      await yieldToEventLoop();
+      continue;
+    }
+    if (inspected.exitCode !== 0 || inspected.timedOut || inspected.cancelled) {
+      await yieldToEventLoop();
+      continue;
+    }
+    const fields = inspected.stdout.trim().split("|");
+    if (fields.length !== 2) {
+      await yieldToEventLoop();
+      continue;
+    }
+    let containerId: string;
+    try {
+      containerId = parseDockerContainerId(fields[0] ?? "", "Docker inspect container ID");
+    } catch {
+      await yieldToEventLoop();
+      continue;
+    }
+    if (fields[1] !== marker) {
+      return;
+    }
+    return containerId;
   }
-  const fields = inspected.stdout.trim().split("|");
-  if (fields.length !== 2 || fields[1] !== marker) {
-    return;
-  }
-  return parseDockerContainerId(fields[0] ?? "", "Docker inspect container ID");
+  return;
+}
+
+async function yieldToEventLoop(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 function parseDockerContainerId(value: string, label: string): string {

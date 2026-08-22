@@ -901,6 +901,84 @@ test(
 );
 
 test(
+  "Docker sandbox reconciles a successful workload create with missing stdout after an inconclusive inspect",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("workload-reconcile");
+    let inspectAttempts = 0;
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return {
+          exitCode: 0,
+          timedOut: false,
+          cancelled: false,
+          stdout: "",
+          stderr: "",
+        };
+      },
+      ownershipInspectRunner: async (name) => {
+        inspectAttempts += 1;
+        return inspectAttempts === 1
+          ? ambiguousDockerResult("timeout")
+          : inspectOwnership(name);
+      },
+    });
+
+    const result = await executor.execute({
+      request: { language: "javascript", code: "console.log('ok')" },
+      policy: policy(),
+    });
+    assert.equal(result.status, "ok", result.stderr);
+    assert.equal(inspectAttempts, 2);
+    await assertContainerAndProcessesRemoved(containerName);
+  },
+);
+
+test(
+  "Docker sandbox reconciles a cancelled broker create after an inconclusive inspect",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("broker-reconcile");
+    const brokerName = `${containerName}-broker`;
+    let inspectAttempts = 0;
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return ambiguousDockerResult("cancel");
+      },
+      ownershipInspectRunner: async (name) => {
+        inspectAttempts += 1;
+        if (inspectAttempts === 1) {
+          throw new Error("transient Docker inspect transport failure");
+        }
+        return inspectOwnership(name);
+      },
+    });
+
+    await assert.rejects(
+      executor.execute({
+        request: { language: "javascript", code: "console.log('must not run')" },
+        policy: policy(),
+        capability: {
+          transport: "docker-shared-loopback-v1",
+          lease: `opaque-lease-${randomUUID()}`,
+          operation: "search",
+          destination: "api.tavily.com",
+          response: { answer: "must not run" },
+        },
+      }),
+      (error: unknown) => error instanceof DockerSandboxCancellationError,
+    );
+    assert.equal(inspectAttempts, 2);
+    await assertContainerAndProcessesRemoved(brokerName);
+    assert.equal(await containerExists(containerName), false);
+  },
+);
+
+test(
   "Docker sandbox fails before container creation when capability confinement is unavailable",
   async () => {
     await requireDocker();
@@ -999,6 +1077,33 @@ function ambiguousDockerResult(outcome: "cancel" | "timeout"): DockerProcessResu
     stdout: "",
     stderr: "",
   };
+}
+
+async function inspectOwnership(containerName: string): Promise<DockerProcessResult> {
+  try {
+    const inspected = await execFileAsync("docker", [
+      "inspect",
+      "--format",
+      '{{.Id}}|{{index .Config.Labels "com.kestrel.code.invocation"}}',
+      containerName,
+    ]);
+    return {
+      exitCode: 0,
+      timedOut: false,
+      cancelled: false,
+      stdout: inspected.stdout,
+      stderr: inspected.stderr,
+    };
+  } catch (error) {
+    const failure = error as { code?: unknown; stdout?: unknown; stderr?: unknown };
+    return {
+      exitCode: typeof failure.code === "number" ? failure.code : 1,
+      timedOut: false,
+      cancelled: false,
+      stdout: typeof failure.stdout === "string" ? failure.stdout : "",
+      stderr: typeof failure.stderr === "string" ? failure.stderr : "",
+    };
+  }
 }
 
 async function executeWithName(
