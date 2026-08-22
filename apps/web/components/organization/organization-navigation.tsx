@@ -5,6 +5,7 @@ import {
   Bot,
   Building2,
   CreditCard,
+  Cpu,
   KeyRound,
   Mail,
   Network,
@@ -48,6 +49,11 @@ const organizationNavigationGroups: OrganizationNavigationGroup[] = [
         href: "/organization/connections",
         icon: PlugZap,
         label: "Connections",
+      },
+      {
+        href: "/organization/models",
+        icon: Cpu,
+        label: "Models",
       },
       {
         href: "/organization/agent-defaults",

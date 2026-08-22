@@ -302,13 +302,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "public",
   ),
 
-  page(
-    "app/(marketing)/page.tsx",
-    "/",
-    "public",
-    "public",
-    "public",
-  ),
+  page("app/(marketing)/page.tsx", "/", "public", "public", "public"),
   page(
     "app/(workspace)/threads/page.tsx",
     "/threads",
@@ -537,6 +531,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     "admin-denied",
   ),
   page(
+    "app/(workspace)/organization/models/page.tsx",
+    "/organization/models",
+    "models",
+    "admin",
+    "admin-denied",
+  ),
+  page(
     "app/(workspace)/organization/email/page.tsx",
     "/organization/email",
     "email-delivery",
@@ -708,10 +709,7 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ],
     ["app/(workspace)/platform/email/page.tsx", "/platform/email"],
     ["app/(workspace)/platform/runtime/page.tsx", "/platform/runtime"],
-    [
-      "app/(workspace)/platform/operations/page.tsx",
-      "/platform/operations",
-    ],
+    ["app/(workspace)/platform/operations/page.tsx", "/platform/operations"],
     ["app/(workspace)/platform/billing/page.tsx", "/platform/billing"],
     ["app/(workspace)/platform/docs/page.tsx", "/platform/docs"],
     ["app/(workspace)/platform/docs/[slug]/page.tsx", "/platform/docs/:slug"],
