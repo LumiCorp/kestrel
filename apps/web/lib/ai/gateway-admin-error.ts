@@ -11,6 +11,7 @@ import { RunPodConnectionTestError } from "./runpod-connection-test";
 type GatewayAdminErrorBody = {
   code: string;
   error: string;
+  retryable?: boolean;
 };
 
 export function getSafeGatewayAdminError(
@@ -73,7 +74,11 @@ export function getSafeGatewayAdminError(
 
   if (error instanceof GatewayModelProviderResolutionError) {
     return {
-      body: { code: error.code, error: error.message },
+      body: {
+        code: error.code,
+        error: error.message,
+        retryable: error.retryable,
+      },
       status: error.status,
     };
   }

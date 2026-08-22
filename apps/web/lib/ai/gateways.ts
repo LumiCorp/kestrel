@@ -263,25 +263,32 @@ async function fetchOpenRouterModelDetails(
   }
   let response: Response;
   try {
+    const signal = AbortSignal.timeout(15_000);
     response = await fetch(
       `${baseUrl}/model/${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}`,
-      { headers: getOpenAICompatibleAuthHeaders(apiKey) },
+      { headers: getOpenAICompatibleAuthHeaders(apiKey), signal },
     );
-  } catch {
+  } catch (error) {
     throw new GatewayModelProviderResolutionError({
-      message: `OpenRouter model resolution failed for ${rawModelId}. Try again.`,
+      message:
+        error instanceof DOMException && error.name === "TimeoutError"
+          ? `OpenRouter model resolution timed out for ${rawModelId}. Try again.`
+          : `OpenRouter model resolution failed for ${rawModelId}. Try again.`,
       status: 503,
       retryable: true,
     });
   }
   const json = await response.json().catch(() => null);
   if (!response.ok) {
+    const isAuthFailure = response.status === 401 || response.status === 403;
     throw new GatewayModelProviderResolutionError({
       message:
         response.status === 404
           ? `OpenRouter model '${rawModelId}' was not found.`
+          : isAuthFailure
+            ? `OpenRouter rejected the gateway credential while resolving ${rawModelId}. Update the credential and try again.`
           : `OpenRouter model resolution failed for ${rawModelId}.`,
-      status: response.status === 404 ? 422 : 503,
+      status: response.status === 404 ? 422 : isAuthFailure ? response.status : 503,
       retryable: response.status >= 500,
     });
   }
@@ -946,7 +953,12 @@ export async function updateGateway(
               credentialRevision:
                 sql`${schema.aiGateways.credentialRevision} + 1`,
             }
-          : {}),
+          : input.baseUrl !== undefined
+            ? {
+                credentialRevision:
+                  sql`${schema.aiGateways.credentialRevision} + 1`,
+              }
+            : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
       ...(input.supportedModalities !== undefined
         ? { supportedModalities: input.supportedModalities }
@@ -1248,7 +1260,10 @@ export async function saveGatewayModel(input: {
       gateway && "credentialRevision" in gateway
     ) {
       const [currentGateway] = await transaction
-        .select({ credentialRevision: schema.aiGateways.credentialRevision })
+        .select({
+          credentialRevision: schema.aiGateways.credentialRevision,
+          baseUrl: schema.aiGateways.baseUrl,
+        })
         .from(schema.aiGateways)
         .where(
           and(
@@ -1261,10 +1276,15 @@ export async function saveGatewayModel(input: {
           ),
         )
         .limit(1);
-      if (!currentGateway) {
+      if (
+        !currentGateway ||
+        normalizeOpenAICompatibleBaseUrl(
+          currentGateway.baseUrl?.trim() || getDefaultBaseUrl("openrouter")
+        ) !== getOpenAICompatibleBaseUrl(gateway)
+      ) {
         throw new GatewayModelProviderResolutionError({
           message:
-            "OpenRouter credentials changed while the model was resolving. Try again.",
+            "OpenRouter gateway configuration changed while the model was resolving. Try again.",
           status: 409,
           retryable: true,
         });

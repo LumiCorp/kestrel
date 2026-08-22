@@ -92,6 +92,33 @@ test("provider route mismatches expose the resolved model without secrets", () =
   assert.match(result.body.error, /qwen\/qwen3\.8-27b/u);
 });
 
+test("provider resolution errors preserve retryability for the admin client", () => {
+  const retryable = getSafeGatewayAdminError(
+    new GatewayModelProviderResolutionError({
+      message: "OpenRouter timed out.",
+      status: 503,
+      retryable: true,
+    }),
+  );
+  assert.deepEqual(retryable, {
+    body: {
+      code: "GATEWAY_MODEL_PROVIDER_RESOLUTION_FAILED",
+      error: "OpenRouter timed out.",
+      retryable: true,
+    },
+    status: 503,
+  });
+
+  const auth = getSafeGatewayAdminError(
+    new GatewayModelProviderResolutionError({
+      message: "Credential rejected.",
+      status: 401,
+    }),
+  );
+  assert.equal(auth.status, 401);
+  assert.equal(auth.body.retryable, false);
+});
+
 test("OpenRouter detail validation preserves exact route identity", () => {
   assert.equal(
     validateOpenRouterModelDetails({

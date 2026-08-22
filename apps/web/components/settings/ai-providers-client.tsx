@@ -113,6 +113,7 @@ type GatewayModel = {
     contextWindowTokens?: number;
     maxOutputTokens?: number;
     source?: string;
+    canonicalSlug?: string;
   };
 };
 
@@ -1245,10 +1246,12 @@ function GatewayDetailPane({
                         <div className="mt-1 text-muted-foreground text-xs">
                           {model.economicsAdmission.status === "ready" ? (
                             <>
-                              {model.economicsAdmission.contextWindowTokens?.toLocaleString()}{" "}
-                              context ·{" "}
-                              {model.economicsAdmission.maxOutputTokens?.toLocaleString()}{" "}
-                              output · {model.economicsAdmission.source}
+                              Provider limits: {model.economicsAdmission.contextWindowTokens?.toLocaleString()} context ·{" "}
+                              {model.economicsAdmission.maxOutputTokens?.toLocaleString()} output · {model.economicsAdmission.source}
+                              {model.economicsAdmission.canonicalSlug ? (
+                                <div>Canonical slug: {model.economicsAdmission.canonicalSlug}</div>
+                              ) : null}
+                              <div>Kestrel per-run allocation is configured separately.</div>
                             </>
                           ) : (
                             "Needs economics profile"
