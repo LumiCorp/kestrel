@@ -39,6 +39,9 @@ test("every application shell owns the standard page container", () => {
   const organizationNavigation = read(
     "components/organization/organization-navigation.tsx",
   );
+  const organizationModelsPage = read(
+    "app/(workspace)/organization/models/page.tsx",
+  );
   const organizationConnections = read(
     "app/(workspace)/organization/connections/page.tsx",
   );
@@ -59,6 +62,25 @@ test("every application shell owns the standard page container", () => {
   assert.match(read("app/(auth)/layout.tsx"), /<PageContainer/u);
   assert.doesNotMatch(organizationConnections, /surface="models"/u);
   assert.match(organizationModels, /surface="models"/u);
+  assert.match(organizationModelsPage, /requireOrganizationAdmin/u);
+  const configureStart = organizationNavigation.indexOf('label: "Configure"');
+  const configureEnd = organizationNavigation.indexOf(
+    'label: "Operate"',
+    configureStart,
+  );
+  const configureHrefs = [
+    ...organizationNavigation
+      .slice(configureStart, configureEnd)
+      .matchAll(/href: "([^"]+)"/gu),
+  ].map((match) => match[1]);
+  assert.deepEqual(configureHrefs, [
+    "/organization/connections",
+    "/organization/models",
+    "/organization/agent-defaults",
+    "/organization/inference",
+    "/organization/email",
+    "/organization/api-keys",
+  ]);
   assert.match(read("app/shared/[token]/page.tsx"), /<PageContainer/u);
   assert.match(read("app/desktop/enroll/[id]/page.tsx"), /<PageContainer/u);
   assert.match(read("app/(workspace)/welcome/page.tsx"), /<PageContainer/u);
