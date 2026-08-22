@@ -6,13 +6,17 @@ import {
 } from "./kestrel-runtime-model";
 
 
-test("approved native gateway models become runner model selections", () => {
+test("eligible native gateway models become runner model selections", () => {
   assert.deepEqual(
     toKestrelOneRuntimeModelSelection({
       id: "preferred-model",
       gatewayId: "gateway-openrouter",
       rawModelId: "openai/gpt-5.4",
       gatewayProvider: "openrouter",
+      metadata: {
+        context_length: 128_000,
+        top_provider: { max_completion_tokens: 16_000 },
+      },
       organizationId: "org-1",
       environmentId: "env-1",
     }),
@@ -23,7 +27,33 @@ test("approved native gateway models become runner model selections", () => {
       environmentId: "env-1",
       model: "openai/gpt-5.4",
       provider: "openrouter",
+      economicsProfile: {
+        version: 1,
+        profileId: "openrouter:openai/gpt-5.4:v1",
+        provider: "openrouter",
+        model: "openai/gpt-5.4",
+        contextWindowTokens: 128_000,
+        maxOutputTokens: 16_000,
+        counting: { counter: "utf8-byte-upper-bound", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
+        cache: { behavior: "none" },
+      },
     }
+  );
+});
+
+test("hosted models without an exact economics profile are rejected locally", () => {
+  assert.throws(
+    () =>
+      toKestrelOneRuntimeModelSelection({
+        id: "missing-profile",
+        gatewayId: "gateway-openrouter",
+        rawModelId: "openai/gpt-5.4",
+        gatewayProvider: "openrouter",
+        organizationId: "org-1",
+        environmentId: "env-1",
+      }),
+    (error: unknown) =>
+      (error as { code?: string }).code === "GATEWAY_MODEL_RUNTIME_INELIGIBLE",
   );
 });
 
@@ -165,6 +195,31 @@ test("Desktop-local model selection never carries a Kestrel One credential refer
   assert.equal(profile.modelCredential, undefined);
 });
 
+test("direct local model selection uses runner environment credentials", () => {
+  const profile = applyKestrelOneModelsToProfile(
+    {
+      id: "base",
+      label: "Base",
+      agent: "reference-react",
+      sessionPrefix: "base",
+    },
+    [
+      {
+        directLocal: true,
+        id: "openrouter:gpt-5-nano",
+        organizationId: "org",
+        environmentId: "env",
+        provider: "openrouter",
+        model: "openai/gpt-5-nano",
+      },
+    ],
+    "run-1",
+  );
+  assert.equal(profile.modelProvider, "openrouter");
+  assert.equal(profile.model, "openai/gpt-5-nano");
+  assert.equal(profile.modelCredential, undefined);
+});
+
 test("ordered runtime models select only the explicit primary route", () => {
   const profile = applyKestrelOneModelsToProfile(
     {
@@ -210,7 +265,11 @@ test("Lumi models select the configured native runner protocol", () => {
       gatewayId: "gateway-lumi",
       rawModelId: "claude-sonnet",
       gatewayProvider: "lumi",
-      metadata: { protocol: "anthropic" },
+      metadata: {
+        protocol: "anthropic",
+        max_input_tokens: 200_000,
+        max_output_tokens: 8_192,
+      },
       organizationId: "org-1",
       environmentId: "env-1",
     }).provider,
@@ -225,6 +284,10 @@ test("RunPod models use the OpenAI runner protocol with a gateway credential ref
       gatewayId: "gateway-runpod",
       rawModelId: "Qwen/Qwen3-32B",
       gatewayProvider: "runpod",
+      metadata: {
+        contextWindowTokens: 32_768,
+        maxOutputTokens: 8_192,
+      },
       organizationId: "org-1",
       environmentId: "env-1",
     }),
@@ -235,6 +298,16 @@ test("RunPod models use the OpenAI runner protocol with a gateway credential ref
       environmentId: "env-1",
       model: "Qwen/Qwen3-32B",
       provider: "openai",
+      economicsProfile: {
+        version: 1,
+        profileId: "openai:Qwen/Qwen3-32B:v1",
+        provider: "openai",
+        model: "Qwen/Qwen3-32B",
+        contextWindowTokens: 32_768,
+        maxOutputTokens: 8_192,
+        counting: { counter: "utf8-byte-upper-bound", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
+        cache: { behavior: "none" },
+      },
     }
   );
 });

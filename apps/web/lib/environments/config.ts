@@ -13,6 +13,22 @@ export type HostedEnvironmentsRollout = {
 
 export type HostedEnvironmentRuntimeMode = "fly" | "local";
 
+export function getInitialEnvironmentLifecycleState(
+  runtimeMode: HostedEnvironmentRuntimeMode
+) {
+  return runtimeMode === "local"
+    ? {
+        resourceStatus: "ready" as const,
+        operationStatus: "completed" as const,
+        stage: "environment.activation.ready" as const,
+      }
+    : {
+        resourceStatus: "requested" as const,
+        operationStatus: "queued" as const,
+        stage: "environment.activation.requested" as const,
+      };
+}
+
 const REQUIRED_HOSTED_ENVIRONMENT_VALUES = [
   "CRON_SECRET",
   "KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY",

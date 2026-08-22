@@ -109,6 +109,13 @@ type GatewayModel = {
   isDefault: boolean;
   description: string | null;
   metadata: Record<string, unknown> | null;
+  economicsAdmission?: {
+    status: "ready" | "unapproved" | "needs_profile";
+    contextWindowTokens?: number;
+    maxOutputTokens?: number;
+    source?: string;
+    canonicalSlug?: string;
+  };
 };
 
 type GatewayBundle = {
@@ -600,7 +607,7 @@ function ModelsAdminClient() {
   } = useGatewayBundles();
 
   return (
-    <SettingsPage className="lg:max-w-none lg:w-[calc(100vw-20rem)]">
+    <SettingsPage className="lg:w-[calc(100vw-20rem)] lg:max-w-none">
       <SettingsPageHeader
         eyebrow="AI Runtime"
         description="Approve models, set defaults, and inspect each provider catalog."
@@ -1298,6 +1305,9 @@ function GatewayModelCatalogPane({
                     const runPodValidated =
                       bundle.gateway.provider !== "runpod" ||
                       isRunPodModelValidated(model);
+                    const economicsReady =
+                      model.modality !== "language" ||
+                      model.economicsAdmission?.status === "ready";
                     const draft = modelDrafts[model.id] || {
                       alias: model.alias || "",
                       approved: model.approved,
@@ -1383,6 +1393,30 @@ function GatewayModelCatalogPane({
                           >
                             {draft.approved ? "Approved" : "Unapproved"}
                           </Badge>
+                          {model.economicsAdmission ? (
+                            <div className="mt-1 text-muted-foreground text-xs">
+                              {model.economicsAdmission.status === "ready" ? (
+                                <>
+                                  Provider limits:{" "}
+                                  {model.economicsAdmission.contextWindowTokens?.toLocaleString()}{" "}
+                                  context ·{" "}
+                                  {model.economicsAdmission.maxOutputTokens?.toLocaleString()}{" "}
+                                  output · {model.economicsAdmission.source}
+                                  {model.economicsAdmission.canonicalSlug ? (
+                                    <div>
+                                      Canonical slug:{" "}
+                                      {model.economicsAdmission.canonicalSlug}
+                                    </div>
+                                  ) : null}
+                                  <div>
+                                    Kestrel per-run allocation is configured separately.
+                                  </div>
+                                </>
+                              ) : (
+                                "Needs economics profile"
+                              )}
+                            </div>
+                          ) : null}
                         </TableCell>
                         <TableCell className="py-3 align-top">
                           <Badge
@@ -1452,7 +1486,9 @@ function GatewayModelCatalogPane({
                             <IconActionButton
                               className="h-9 w-9 rounded-lg p-0"
                               disabled={
-                                Boolean(savingModelId) || !runPodValidated
+                              Boolean(savingModelId) ||
+                              !runPodValidated ||
+                              !(draft.approved || economicsReady)
                               }
                               icon={
                                 draft.approved ? (
@@ -1488,7 +1524,9 @@ function GatewayModelCatalogPane({
                             <IconActionButton
                               className="h-9 w-9 rounded-lg p-0"
                               disabled={
-                                Boolean(savingModelId) || !runPodValidated
+                              Boolean(savingModelId) ||
+                              !runPodValidated ||
+                              !economicsReady
                               }
                               icon={<Star className="size-4" />}
                               label={

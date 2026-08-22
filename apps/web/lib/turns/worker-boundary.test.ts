@@ -434,6 +434,7 @@ test(
     );
 
     assert.match(devAllSource, /pnpm worker:turns &/u);
+    assert.match(devAllSource, /load_env_file "\.\.\/\.\.\/\.env"/u);
     assert.match(devAllSource, /run runner:service &/u);
     assert.match(
       devAllSource,
@@ -443,6 +444,14 @@ test(
     assert.match(
       devAllSource,
       /export KESTREL_ENVIRONMENT_RUNTIME="\$\{KESTREL_ENVIRONMENT_RUNTIME:-local\}"/u,
+    );
+    assert.match(
+      devAllSource,
+      /export KESTREL_HOME="\$\{KESTREL_HOME:-\$\{TMPDIR:-\/tmp\}\/kestrel-one-local\}"/u,
+    );
+    assert.match(
+      devAllSource,
+      /export KESTREL_BUILD_ID="\$\{KESTREL_BUILD_ID:-local-dev\}"/u,
     );
     assert.match(devAllSource, /TURN_WORKER_PID=\$!/u);
     assert.match(
