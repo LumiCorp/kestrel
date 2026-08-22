@@ -19,7 +19,7 @@ export function getSidebarScopeItems(access: SidebarScopeAccess) {
     ...(access.isPlatformAdmin
       ? [
           {
-            href: "/platform",
+            href: "/platform/users",
             icon: ServerCog,
             label: "Platform",
             match: (pathname: string) => pathname.startsWith("/platform"),
