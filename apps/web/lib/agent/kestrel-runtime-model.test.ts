@@ -6,13 +6,17 @@ import {
 } from "./kestrel-runtime-model";
 
 
-test("approved native gateway models become runner model selections", () => {
+test("eligible native gateway models become runner model selections", () => {
   assert.deepEqual(
     toKestrelOneRuntimeModelSelection({
       id: "preferred-model",
       gatewayId: "gateway-openrouter",
       rawModelId: "openai/gpt-5.4",
       gatewayProvider: "openrouter",
+      metadata: {
+        context_length: 128_000,
+        top_provider: { max_completion_tokens: 16_000 },
+      },
       organizationId: "org-1",
       environmentId: "env-1",
     }),
@@ -24,6 +28,22 @@ test("approved native gateway models become runner model selections", () => {
       model: "openai/gpt-5.4",
       provider: "openrouter",
     }
+  );
+});
+
+test("hosted models without an exact economics profile are rejected locally", () => {
+  assert.throws(
+    () =>
+      toKestrelOneRuntimeModelSelection({
+        id: "missing-profile",
+        gatewayId: "gateway-openrouter",
+        rawModelId: "openai/gpt-5.4",
+        gatewayProvider: "openrouter",
+        organizationId: "org-1",
+        environmentId: "env-1",
+      }),
+    (error: unknown) =>
+      (error as { code?: string }).code === "GATEWAY_MODEL_RUNTIME_INELIGIBLE",
   );
 });
 

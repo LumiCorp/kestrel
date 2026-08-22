@@ -1,11 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createKestrelDefaultEconomicsProfile,
   createGatewayModelEconomicsProfile,
   GATEWAY_MODEL_ECONOMICS_PROFILE_KEY,
   getGatewayModelEconomicsProvider,
   withGatewayModelEconomicsProfile,
 } from "./model-economics-profile";
+
+test("Kestrel fallback profile is conservative and disclosed", () => {
+  assert.deepEqual(
+    createKestrelDefaultEconomicsProfile({ provider: "openai", model: "gpt-4" }),
+    {
+      version: 1,
+      profileId: "openai:gpt-4:v1",
+      provider: "openai",
+      model: "gpt-4",
+      contextWindowTokens: 32_768,
+      maxOutputTokens: 8_192,
+      counting: {
+        counter: "utf8-byte-upper-bound",
+        counterVersion: "1",
+        method: "conservative_estimate",
+        confidence: "conservative",
+      },
+      cache: { behavior: "none" },
+    },
+  );
+});
 import { planGatewayModelEconomicsProfileBackfill } from "./model-economics-profile-backfill";
 
 test("approved OpenRouter catalog models receive an exact economics profile", () => {
@@ -126,7 +148,7 @@ test("invalid approved profiles are replaced when catalog capacity is available"
   );
 });
 
-test("backfill planning repairs catalog models and reports missing capacity", () => {
+test("backfill planning defers OpenRouter rows to exact live resolution", () => {
   const plan = planGatewayModelEconomicsProfileBackfill([
     {
       id: "repairable",
@@ -153,16 +175,41 @@ test("backfill planning repairs catalog models and reports missing capacity", ()
     },
   ]);
 
-  assert.equal(plan.repairable, 1);
-  assert.equal(plan.updates[0]?.profile.model, "z-ai/glm-5.2:free");
+  assert.equal(plan.repairable, 0);
   assert.deepEqual(plan.skipped, [
+    {
+      id: "repairable",
+      provider: "openrouter",
+      model: "z-ai/glm-5.2:free",
+      reason: "openrouter_resolution_required",
+    },
     {
       id: "unrepairable",
       provider: "openrouter",
       model: "opaque-model",
-      reason: "missing_capacity_metadata",
+      reason: "openrouter_resolution_required",
     },
   ]);
+});
+
+test("backfill assigns disclosed defaults only to identified non-OpenRouter catalogs", () => {
+  const plan = planGatewayModelEconomicsProfileBackfill([
+    {
+      id: "openai-model",
+      organizationId: "org-1",
+      gatewayId: "gateway-1",
+      rawModelId: "gpt-4",
+      modality: "language",
+      approved: true,
+      metadata: { id: "gpt-4" },
+      gatewayProvider: "openai",
+    },
+  ]);
+  assert.equal(plan.updates[0]?.profile.contextWindowTokens, 32_768);
+  assert.equal(
+    plan.updates[0]?.metadata.kestrelEconomicsProfileSource,
+    "kestrel_default",
+  );
 });
 
 test("provider catalog field variants cover Lumi and RunPod OpenAI-compatible metadata", () => {

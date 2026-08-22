@@ -119,6 +119,27 @@ export function createGatewayModelEconomicsProfile(input: {
   };
 }
 
+export function createKestrelDefaultEconomicsProfile(input: {
+  provider: string;
+  model: string;
+}): GatewayModelEconomicsProfile {
+  return {
+    version: 1,
+    profileId: `${input.provider}:${input.model}:v1`,
+    provider: input.provider,
+    model: input.model,
+    contextWindowTokens: 32_768,
+    maxOutputTokens: 8_192,
+    counting: {
+      counter: "utf8-byte-upper-bound",
+      counterVersion: "1",
+      method: "conservative_estimate",
+      confidence: "conservative",
+    },
+    cache: { behavior: "none" },
+  };
+}
+
 export function readGatewayModelEconomicsProfile(
   metadata: unknown,
   input: { provider: string; model: string },

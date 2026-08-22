@@ -1,5 +1,6 @@
 import {
   createGatewayModelEconomicsProfile,
+  createKestrelDefaultEconomicsProfile,
   getGatewayModelEconomicsProvider,
   readGatewayModelEconomicsProfile,
   withGatewayModelEconomicsProfile,
@@ -33,7 +34,11 @@ export type GatewayModelEconomicsBackfillPlan = {
     id: string;
     provider: string;
     model: string;
-    reason: "unsupported_provider" | "missing_capacity_metadata";
+    reason:
+      | "unsupported_provider"
+      | "missing_capacity_metadata"
+      | "openrouter_resolution_required"
+      | "identity_unverified";
   }>;
   updates: GatewayModelEconomicsBackfillUpdate[];
 };
@@ -90,6 +95,50 @@ export function planGatewayModelEconomicsProfileBackfill(
     });
     if (existing) {
       alreadyComplete += 1;
+      continue;
+    }
+
+    if (row.gatewayProvider === "openrouter") {
+      skipped.push({
+        id: row.id,
+        provider,
+        model: row.rawModelId,
+        reason: "openrouter_resolution_required",
+      });
+      continue;
+    }
+
+    const catalog =
+      row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+        ? (row.metadata as Record<string, unknown>)
+        : null;
+    const identified =
+      catalog !== null &&
+      (catalog.id === row.rawModelId ||
+        catalog.model === row.rawModelId ||
+        catalog.name === row.rawModelId);
+    const fallbackEligible =
+      ["anthropic", "openai", "lumi", "ollama"].includes(row.gatewayProvider) &&
+      identified;
+    if (fallbackEligible) {
+      const profile = createKestrelDefaultEconomicsProfile({
+        provider,
+        model: row.rawModelId,
+      });
+      updates.push({
+        id: row.id,
+        metadata: {
+          ...(catalog ?? {}),
+          kestrelEconomicsProfile: profile,
+          kestrelEconomicsProfileSource: "kestrel_default",
+        },
+        profile,
+        expectedUpdatedAt: row.updatedAt,
+      });
+      continue;
+    }
+    if (catalog !== null && !identified) {
+      skipped.push({ id: row.id, provider, model: row.rawModelId, reason: "identity_unverified" });
       continue;
     }
 

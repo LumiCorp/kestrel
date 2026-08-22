@@ -72,6 +72,20 @@ async function main() {
           .returning({ id: schema.aiGatewayModels.id });
         applied += updated.length;
       }
+      for (const skipped of plan.skipped) {
+        const updated = await transaction
+          .update(schema.aiGatewayModels)
+          .set({ approved: false, isDefault: false, updatedAt: new Date() })
+          .where(
+            and(
+              eq(schema.aiGatewayModels.id, skipped.id),
+              eq(schema.aiGatewayModels.approved, true),
+              eq(schema.aiGatewayModels.modality, "language"),
+            ),
+          )
+          .returning({ id: schema.aiGatewayModels.id });
+        applied += updated.length;
+      }
     });
   }
 

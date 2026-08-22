@@ -58,6 +58,7 @@ import {
 import {
   getGatewayModelEconomicsProvider,
   readGatewayModelEconomicsProfile,
+  createKestrelDefaultEconomicsProfile,
   validateOpenRouterModelDetails,
   withGatewayModelEconomicsProfile,
 } from "./model-economics-profile";
@@ -216,6 +217,26 @@ function getGatewayModelEconomicsAdmission(
       ? { canonicalSlug: metadata.kestrelOpenRouterCanonicalSlug }
       : {}),
   };
+}
+
+export function isEligibleHostedLanguageModel(input: {
+  gatewayProvider: GatewayProvider;
+  approved: boolean;
+  modality: GatewayModality;
+  metadata: unknown;
+  rawModelId: string;
+}) {
+  if (!input.approved || input.modality !== "language") return false;
+  if (!isKestrelRuntimeLanguageProvider(input.gatewayProvider)) return false;
+  const provider = getGatewayModelEconomicsProvider({
+    gatewayProvider: input.gatewayProvider,
+    modality: input.modality,
+    metadata: input.metadata,
+  });
+  return provider !== undefined && readGatewayModelEconomicsProfile(input.metadata, {
+    provider,
+    model: input.rawModelId,
+  }) !== undefined;
 }
 
 function getComparableModelName(rawModelId: string) {
@@ -725,7 +746,18 @@ export async function listApprovedModels(
       : Promise.resolve(undefined),
   ]);
 
-  return rows.map(({ gateway, model }) => ({
+  return rows
+    .filter(({ gateway, model }) =>
+      modality !== "language" ||
+      isEligibleHostedLanguageModel({
+        gatewayProvider: gateway.provider as GatewayProvider,
+        approved: model.approved,
+        modality: model.modality as GatewayModality,
+        metadata: model.metadata,
+        rawModelId: model.rawModelId,
+      }),
+    )
+    .map(({ gateway, model }) => ({
     gatewayModelId: model.id,
     id: model.alias?.trim() || `${gateway.provider}/${model.rawModelId}`,
     name: normalizeModelLabel(model),
@@ -753,7 +785,7 @@ export async function listApprovedModels(
       modality: model.modality as GatewayModality,
       metadata: model.metadata,
     }),
-  })) as GatewayCatalogModel[];
+    })) as GatewayCatalogModel[];
 }
 
 export async function getApprovedLanguageModels(
@@ -1058,6 +1090,7 @@ export async function syncGatewayModels(
       gatewayProvider: gateway.provider,
       gatewayBaseUrl: gateway.baseUrl,
       requireEconomicsProfile: false,
+      allowProviderEconomicsFallback: true,
     });
     savedModels.push(savedModel);
   }
@@ -1125,6 +1158,7 @@ export async function saveGatewayModel(input: {
   metadata?: Record<string, unknown> | null;
   requireEconomicsProfile?: boolean;
   resolveOpenRouterModel?: boolean;
+  allowProviderEconomicsFallback?: boolean;
 }) {
   const [gateway, storedModel] = await Promise.all([
     input.gatewayProvider
@@ -1201,6 +1235,50 @@ export async function saveGatewayModel(input: {
           metadata: inputMetadata,
       })
       : (inputMetadata ?? null);
+  const fallbackProvider =
+    gatewayProvider && gatewayProvider !== "openrouter" &&
+    ["anthropic", "openai", "lumi", "ollama", "runpod"].includes(gatewayProvider)
+      ? getGatewayModelEconomicsProvider({
+          gatewayProvider,
+          modality: input.modality,
+          metadata: normalizedMetadata,
+        })
+      : undefined;
+  const fallbackIdentity = (() => {
+    if (!input.allowProviderEconomicsFallback || !fallbackProvider || !normalizedMetadata) return false;
+    if (gatewayProvider === "runpod") {
+      return Boolean(
+        runPodBaseUrl &&
+          getMatchingRunPodValidationEvidence({
+            metadata: normalizedMetadata,
+            rawModelId: input.rawModelId,
+            baseUrl: runPodBaseUrl,
+          }),
+      );
+    }
+    const catalog = normalizedMetadata as Record<string, unknown>;
+    return catalog.id === input.rawModelId || catalog.model === input.rawModelId || catalog.name === input.rawModelId;
+  })();
+  const fallbackMetadata =
+    fallbackIdentity && fallbackProvider &&
+    readGatewayModelEconomicsProfile(normalizedMetadata, {
+      provider: fallbackProvider,
+      model: input.rawModelId,
+    }) === undefined
+      ? {
+          ...(normalizedMetadata ?? {}),
+          ...(() => {
+            const profile = createKestrelDefaultEconomicsProfile({
+              provider: fallbackProvider,
+              model: input.rawModelId,
+            });
+            return {
+              kestrelEconomicsProfile: profile,
+              kestrelEconomicsProfileSource: "kestrel_default",
+            };
+          })(),
+        }
+      : normalizedMetadata;
   const metadata =
     resolvedOpenRouterMetadata && normalizedMetadata
       ? {
@@ -1213,7 +1291,7 @@ export async function saveGatewayModel(input: {
               }
             : {}),
         }
-      : normalizedMetadata;
+      : fallbackMetadata;
 
   const economicsProvider =
     gatewayProvider === undefined

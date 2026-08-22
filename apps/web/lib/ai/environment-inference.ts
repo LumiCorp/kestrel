@@ -11,6 +11,7 @@ import {
   updateGateway,
   validateRunPodGatewayModel,
   validateRunPodGatewayModelByRawId,
+  isEligibleHostedLanguageModel,
 } from "./gateways";
 import { isManagedRunPodEnabled } from "./managed-runpod-config";
 import {
@@ -338,7 +339,7 @@ export async function setEnvironmentDefaultModel(input: {
 }) {
   await requireOwnedEnvironment(input);
   const [row] = await knowledgeDb
-    .select({ model: schema.aiGatewayModels })
+    .select({ model: schema.aiGatewayModels, gateway: schema.aiGateways })
     .from(schema.aiGatewayModels)
     .innerJoin(
       schema.aiGateways,
@@ -355,7 +356,16 @@ export async function setEnvironmentDefaultModel(input: {
       )
     )
     .limit(1);
-  if (!row) {
+  if (
+    !row ||
+    !isEligibleHostedLanguageModel({
+      gatewayProvider: row.gateway.provider as import("./gateways").GatewayProvider,
+      approved: row.model.approved,
+      modality: row.model.modality as import("./gateways").GatewayModality,
+      metadata: row.model.metadata,
+      rawModelId: row.model.rawModelId,
+    })
+  ) {
     throw new Error("Model is unavailable in this Environment.");
   }
   const [saved] = await knowledgeDb

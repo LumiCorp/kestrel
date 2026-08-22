@@ -72,6 +72,13 @@ export function toKestrelOneRuntimeModelSelection(input: {
       model: input.rawModelId,
       metadata: input.metadata,
     });
+  if (economicsProfile === undefined) {
+    const error = new Error(
+      `Hosted model "${input.id}" is not runtime-eligible because its exact economics profile is missing or mismatched.`,
+    );
+    Object.assign(error, { code: "GATEWAY_MODEL_RUNTIME_INELIGIBLE" });
+    throw error;
+  }
 
   return {
     id: input.id,
@@ -80,7 +87,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
     environmentId: input.environmentId,
     model: input.rawModelId,
     provider: provider as RunnerModelProvider,
-    ...(economicsProfile !== undefined ? { economicsProfile } : {}),
+    economicsProfile,
   };
 }
 
