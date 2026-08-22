@@ -91,6 +91,14 @@ export async function getEnvironmentPrivateInference(input: {
         ).map((model) => ({
           ...model,
           gatewayEnabled: gateway.enabled,
+          runtimeEligible: isEligibleHostedLanguageModel({
+            gatewayProvider: gateway.provider as import("./gateways").GatewayProvider,
+            gatewayEnabled: gateway.enabled,
+            approved: model.approved,
+            modality: model.modality as import("./gateways").GatewayModality,
+            metadata: model.metadata,
+            rawModelId: model.rawModelId,
+          }),
         }))
       )
     )

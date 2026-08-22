@@ -7,6 +7,7 @@ import {
   withGatewayModelEconomicsProfile,
   type GatewayModelEconomicsProfile,
 } from "./model-economics-profile";
+import { normalizeOpenAICompatibleBaseUrl } from "./gateway-utils";
 
 export type GatewayModelEconomicsBackfillRow = {
   id: string;
@@ -133,7 +134,9 @@ export function planGatewayModelEconomicsProfileBackfill(
           row.gatewayBaseUrl &&
             (catalog?.kestrelRunPodValidation as { rawModelId?: string; baseUrl?: string } | undefined)
               ?.rawModelId === row.rawModelId &&
-            (catalog?.kestrelRunPodValidation as { baseUrl?: string } | undefined)?.baseUrl === row.gatewayBaseUrl,
+            normalizeOpenAICompatibleBaseUrl(
+              (catalog?.kestrelRunPodValidation as { baseUrl?: string } | undefined)?.baseUrl ?? "",
+            ) === normalizeOpenAICompatibleBaseUrl(row.gatewayBaseUrl ?? ""),
         ));
     if (fallbackEligible) {
       const profile = createKestrelDefaultEconomicsProfile({

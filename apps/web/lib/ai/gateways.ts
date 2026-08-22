@@ -1201,8 +1201,8 @@ export async function saveGatewayModel(input: {
     gateway &&
     "credentialRevision" in gateway &&
     gatewayProvider &&
-    getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback &&
-    !inputMetadata
+    gatewayProvider !== "runpod" &&
+    getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback
   ) {
     try {
       fallbackCatalogMetadata =
@@ -1222,9 +1222,9 @@ export async function saveGatewayModel(input: {
       ? normalizeGatewayModelMetadata({
           gatewayProvider: gatewayProvider as GatewayProvider,
           modality: input.modality,
-          metadata: inputMetadata ?? fallbackCatalogMetadata,
+          metadata: fallbackCatalogMetadata ?? inputMetadata,
       })
-      : (inputMetadata ?? fallbackCatalogMetadata ?? null);
+      : (fallbackCatalogMetadata ?? inputMetadata ?? null);
   const fallbackProvider =
     gatewayProvider && gatewayProvider !== "openrouter" &&
     getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback
@@ -1332,6 +1332,21 @@ export async function saveGatewayModel(input: {
   ) {
     throw new GatewayModelEconomicsProfileRequiredError({
       provider: economicsProvider,
+      model: input.rawModelId,
+    });
+  }
+
+  if (
+    input.isDefault &&
+    input.modality === "language" &&
+    (!approved || economicsProvider == null ||
+      readGatewayModelEconomicsProfile(economicsMetadata, {
+        provider: economicsProvider,
+        model: input.rawModelId,
+      }) === undefined)
+  ) {
+    throw new GatewayModelEconomicsProfileRequiredError({
+      provider: economicsProvider ?? String(gatewayProvider ?? "unknown"),
       model: input.rawModelId,
     });
   }

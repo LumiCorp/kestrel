@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Repair OpenRouter admission errors and race guards](05-repair-openrouter-admission-boundary.md)
+- None.
 
 ## In progress
 
@@ -12,15 +12,12 @@ None.
 
 ## Blocked
 
-- [Keep ineligible hosted models out of runtime selection](02-enforce-hosted-model-runtime-eligibility.md) — blocked by [Approve exact OpenRouter models with provider-backed economics](01-approve-exact-openrouter-models.md)
-- [Assign disclosed defaults only through eligible provider adapters](03-add-provider-declared-economics-fallbacks.md) — blocked by [Approve exact OpenRouter models with provider-backed economics](01-approve-exact-openrouter-models.md)
-- [Repair legacy model profiles without losing default intent](04-repair-legacy-model-economics-state.md) — blocked by [Keep ineligible hosted models out of runtime selection](02-enforce-hosted-model-runtime-eligibility.md) and [Assign disclosed defaults only through eligible provider adapters](03-add-provider-declared-economics-fallbacks.md)
-- [Approve exact OpenRouter models with provider-backed economics](01-approve-exact-openrouter-models.md) — blocked by [Repair OpenRouter admission errors and race guards](05-repair-openrouter-admission-boundary.md)
-
-## Implemented
-
-- [Approve exact OpenRouter models with provider-backed economics](01-approve-exact-openrouter-models.md)
+- None.
 
 ## Done
 
-None.
+- [Approve exact OpenRouter models with provider-backed economics](01-approve-exact-openrouter-models.md)
+- [Repair OpenRouter admission errors and race guards](05-repair-openrouter-admission-boundary.md)
+- [Keep ineligible hosted models out of runtime selection](02-enforce-hosted-model-runtime-eligibility.md)
+- [Assign disclosed defaults only through eligible provider adapters](03-add-provider-declared-economics-fallbacks.md)
+- [Repair legacy model profiles without losing default intent](04-repair-legacy-model-economics-state.md)
