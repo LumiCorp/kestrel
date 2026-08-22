@@ -979,6 +979,40 @@ test(
 );
 
 test(
+  "Docker sandbox bounds persistent ambiguous-create inspection without unsafe removal",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("persistent-inspect-failure");
+    let inspectAttempts = 0;
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return ambiguousDockerResult("cancel");
+      },
+      ownershipInspectRunner: async () => {
+        inspectAttempts += 1;
+        return ambiguousDockerResult("timeout");
+      },
+    });
+
+    try {
+      await assert.rejects(
+        executor.execute({
+          request: { language: "javascript", code: "console.log('must not run')" },
+          policy: policy(),
+        }),
+        (error: unknown) => error instanceof DockerSandboxCancellationError,
+      );
+      assert.equal(inspectAttempts, 5);
+      assert.equal(await containerExists(containerName), true);
+    } finally {
+      await execFileAsync("docker", ["rm", "--force", containerName]);
+    }
+  },
+);
+
+test(
   "Docker sandbox fails before container creation when capability confinement is unavailable",
   async () => {
     await requireDocker();

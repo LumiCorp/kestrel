@@ -26,6 +26,8 @@ const SANDBOX_UID = 65_532;
 const SANDBOX_GID = 65_532;
 const DOCKER_LIFECYCLE_TIMEOUT_MS = 10_000;
 const DOCKER_LIFECYCLE_OUTPUT_BYTES = 16_000;
+const DOCKER_OWNERSHIP_INSPECTION_LIMIT = 5;
+const DOCKER_OWNERSHIP_RETRY_DELAY_MS = 100;
 export const DOCKER_CAPABILITY_ENDPOINT = "http://127.0.0.1:43127/v1/capability";
 const DOCKER_CAPABILITY_PORT = 43_127;
 const DOCKER_INVOCATION_LABEL = "com.kestrel.code.invocation";
@@ -587,28 +589,32 @@ async function resolveOwnedContainerId(
   inspectRunner: (containerName: string) => Promise<DockerProcessResult>,
   deadline: number,
 ): Promise<string | undefined> {
-  while (Date.now() < deadline) {
+  for (
+    let attempt = 1;
+    attempt <= DOCKER_OWNERSHIP_INSPECTION_LIMIT && Date.now() < deadline;
+    attempt += 1
+  ) {
     let inspected: DockerProcessResult;
     try {
       inspected = await inspectRunner(containerName);
     } catch {
-      await yieldToEventLoop();
+      await waitForOwnershipRetry(attempt, deadline);
       continue;
     }
     if (inspected.exitCode !== 0 || inspected.timedOut || inspected.cancelled) {
-      await yieldToEventLoop();
+      await waitForOwnershipRetry(attempt, deadline);
       continue;
     }
     const fields = inspected.stdout.trim().split("|");
     if (fields.length !== 2) {
-      await yieldToEventLoop();
+      await waitForOwnershipRetry(attempt, deadline);
       continue;
     }
     let containerId: string;
     try {
       containerId = parseDockerContainerId(fields[0] ?? "", "Docker inspect container ID");
     } catch {
-      await yieldToEventLoop();
+      await waitForOwnershipRetry(attempt, deadline);
       continue;
     }
     if (fields[1] !== marker) {
@@ -619,8 +625,15 @@ async function resolveOwnedContainerId(
   return;
 }
 
-async function yieldToEventLoop(): Promise<void> {
-  await new Promise<void>((resolve) => setImmediate(resolve));
+async function waitForOwnershipRetry(attempt: number, deadline: number): Promise<void> {
+  if (
+    attempt >= DOCKER_OWNERSHIP_INSPECTION_LIMIT ||
+    Date.now() + DOCKER_OWNERSHIP_RETRY_DELAY_MS >= deadline
+  ) {
+    return;
+  }
+  await new Promise<void>((resolve) =>
+    setTimeout(resolve, DOCKER_OWNERSHIP_RETRY_DELAY_MS));
 }
 
 function parseDockerContainerId(value: string, label: string): string {
