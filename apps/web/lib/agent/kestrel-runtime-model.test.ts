@@ -195,6 +195,31 @@ test("Desktop-local model selection never carries a Kestrel One credential refer
   assert.equal(profile.modelCredential, undefined);
 });
 
+test("direct local model selection uses runner environment credentials", () => {
+  const profile = applyKestrelOneModelsToProfile(
+    {
+      id: "base",
+      label: "Base",
+      agent: "reference-react",
+      sessionPrefix: "base",
+    },
+    [
+      {
+        directLocal: true,
+        id: "openrouter:gpt-5-nano",
+        organizationId: "org",
+        environmentId: "env",
+        provider: "openrouter",
+        model: "openai/gpt-5-nano",
+      },
+    ],
+    "run-1",
+  );
+  assert.equal(profile.modelProvider, "openrouter");
+  assert.equal(profile.model, "openai/gpt-5-nano");
+  assert.equal(profile.modelCredential, undefined);
+});
+
 test("ordered runtime models select only the explicit primary route", () => {
   const profile = applyKestrelOneModelsToProfile(
     {

@@ -106,7 +106,7 @@ export async function requireActiveOrganization(request?: Request) {
       organizationId,
       userId: session.user.id,
     });
-    if (ensuredEnvironment.operation) {
+    if (ensuredEnvironment.operation?.status === "queued") {
       await enqueueEnvironmentOperation(ensuredEnvironment.operation.id);
     }
   }
@@ -153,7 +153,7 @@ export async function getActiveOrganizationSnapshot(
       organizationId,
       userId: session.user.id,
     });
-    if (ensuredEnvironment.operation) {
+    if (ensuredEnvironment.operation?.status === "queued") {
       await enqueueEnvironmentOperation(ensuredEnvironment.operation.id);
     }
   }
@@ -195,7 +195,7 @@ export async function requireAdminOrganization() {
     organizationId,
     userId: session.user.id,
   });
-  if (ensuredEnvironment.operation) {
+  if (ensuredEnvironment.operation?.status === "queued") {
     await enqueueEnvironmentOperation(ensuredEnvironment.operation.id);
   }
 

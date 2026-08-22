@@ -31,9 +31,20 @@ export type DesktopLocalRuntimeModelSelection = {
   provider: RunnerModelProvider;
 };
 
+export type DirectLocalRuntimeModelSelection = {
+  directLocal: true;
+  id: string;
+  organizationId: string;
+  environmentId: string;
+  model: string;
+  provider: RunnerModelProvider;
+  economicsProfile?: GatewayModelEconomicsProfile | undefined;
+};
+
 export type EnvironmentRuntimeModelSelection =
   | KestrelOneRuntimeModelSelection
-  | DesktopLocalRuntimeModelSelection;
+  | DesktopLocalRuntimeModelSelection
+  | DirectLocalRuntimeModelSelection;
 
 export function toKestrelOneRuntimeModelSelection(input: {
   id: string;
@@ -138,7 +149,7 @@ export function applyKestrelOneModelsToProfile(
       : {}),
     default: false,
   };
-  if ("desktopLocal" in selection) {
+  if (!isKestrelOneManagedRuntimeModel(selection)) {
     const { modelCredential: _modelCredential, ...local } = selected;
     return local;
   }
@@ -159,7 +170,7 @@ export function applyKestrelOneModelsToProfile(
 export function isKestrelOneManagedRuntimeModel(
   selection: EnvironmentRuntimeModelSelection,
 ): selection is KestrelOneRuntimeModelSelection {
-  return !("desktopLocal" in selection);
+  return "gatewayId" in selection;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
