@@ -22,6 +22,7 @@
         "tests/unit/chat-repository-acceptance.test.ts",
         "tests/unit/chat-view-layout.test.ts",
         "tests/unit/client-capabilities.test.ts",
+        "tests/unit/code-execution-service.test.ts",
         "tests/unit/code-policy-engine.test.ts",
         "tests/unit/compile-intent-executable-actions.test.ts",
         "tests/unit/context-policy-manager.test.ts",

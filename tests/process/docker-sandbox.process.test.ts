@@ -602,10 +602,15 @@ test(
             }
             (async () => {
               const endpoint = ${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)};
-              const exact = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com" }) });
+              const malformed = await request(endpoint, { method: "POST", body: "{" });
+              const nullBody = await request(endpoint, { method: "POST", body: "null" });
+              const primitive = await request(endpoint, { method: "POST", body: "42" });
+              const array = await request(endpoint, { method: "POST", body: "[]" });
+              const oversized = await request(endpoint, { method: "POST", body: JSON.stringify({ padding: "x".repeat(5000) }) });
               const unknownOperation = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "write", destination: "api.tavily.com" }) });
               const unknownDestination = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "example.com" }) });
               const forwarding = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", url: "http://example.com" }) });
+              const exact = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com" }) });
               const probes = {};
               for (const [name, url] of Object.entries({
                 provider: "http://api.tavily.com",
@@ -618,7 +623,7 @@ test(
               await new Promise(resolve => setTimeout(resolve, 750));
               let brokerConfigReadable = true;
               try { fs.readFileSync("/run/kestrel/config"); } catch { brokerConfigReadable = false; }
-              console.log(JSON.stringify({ exact, unknownOperation, unknownDestination, forwarding, probes, envKeys: Object.keys(process.env), brokerConfigReadable }));
+              console.log(JSON.stringify({ malformed, nullBody, primitive, array, oversized, exact, unknownOperation, unknownDestination, forwarding, probes, envKeys: Object.keys(process.env), brokerConfigReadable }));
             })();
           `,
         },
@@ -652,6 +657,11 @@ test(
       const result = await execution;
       assert.equal(result.status, "ok", result.stderr);
       const evidence = JSON.parse(result.stdout.trim()) as {
+        malformed: { status: number };
+        nullBody: { status: number };
+        primitive: { status: number };
+        array: { status: number };
+        oversized: { status: number };
         exact: { status: number; body: string };
         unknownOperation: { status: number };
         unknownDestination: { status: number };
@@ -660,6 +670,11 @@ test(
         envKeys: string[];
         brokerConfigReadable: boolean;
       };
+      assert.equal(evidence.malformed.status, 400);
+      assert.equal(evidence.nullBody.status, 400);
+      assert.equal(evidence.primitive.status, 400);
+      assert.equal(evidence.array.status, 400);
+      assert.equal(evidence.oversized.status, 413);
       assert.equal(evidence.exact.status, 200);
       assert.deepEqual(JSON.parse(evidence.exact.body), { answer: "trusted-stub-ok" });
       assert.equal(evidence.unknownOperation.status, 403);
@@ -677,6 +692,65 @@ test(
       await assertContainerAndProcessesRemoved(brokerName);
     } finally {
       delete process.env[variableName];
+    }
+  },
+);
+
+test(
+  "Docker sandbox leaves a preexisting workload container intact after a create-name collision",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("workload-collision");
+    await execFileAsync("docker", ["create", "--name", containerName, "node:20-alpine", "sh", "-c", "while :; do sleep 3600; done"]);
+    try {
+      await assert.rejects(
+        fixedNameExecutor(containerName).execute({
+          request: { language: "javascript", code: "console.log('must not run')" },
+          policy: policy(),
+          capability: {
+            transport: "docker-shared-loopback-v1",
+            lease: `opaque-lease-${randomUUID()}`,
+            operation: "search",
+            destination: "api.tavily.com",
+            response: { answer: "must not run" },
+          },
+        }),
+        /Unable to create sandbox container/u,
+      );
+      assert.equal(await containerExists(containerName), true);
+      assert.equal(await containerExists(`${containerName}-broker`), false);
+    } finally {
+      await execFileAsync("docker", ["rm", "--force", containerName]);
+    }
+  },
+);
+
+test(
+  "Docker sandbox leaves a preexisting broker container intact after a create-name collision",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("broker-collision");
+    const brokerName = `${containerName}-broker`;
+    await execFileAsync("docker", ["create", "--name", brokerName, "node:20-alpine", "sh", "-c", "while :; do sleep 3600; done"]);
+    try {
+      await assert.rejects(
+        fixedNameExecutor(containerName).execute({
+          request: { language: "javascript", code: "console.log('must not run')" },
+          policy: policy(),
+          capability: {
+            transport: "docker-shared-loopback-v1",
+            lease: `opaque-lease-${randomUUID()}`,
+            operation: "search",
+            destination: "api.tavily.com",
+            response: { answer: "must not run" },
+          },
+        }),
+        /Unable to create confined capability broker/u,
+      );
+      assert.equal(await containerExists(brokerName), true);
+      assert.equal(await containerExists(containerName), false);
+    } finally {
+      await execFileAsync("docker", ["rm", "--force", brokerName]);
     }
   },
 );

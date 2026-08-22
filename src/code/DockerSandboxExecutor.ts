@@ -98,16 +98,21 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     let run: DockerProcessResult | undefined;
     let snapshotError: string | undefined;
+    let ownsWorkloadContainer = false;
+    let ownsBrokerContainer = false;
 
     try {
       if (input.capability !== undefined) {
-        await startCapabilityBroker(input, brokerContainerName);
+        await startCapabilityBroker(input, brokerContainerName, () => {
+          ownsBrokerContainer = true;
+        });
       }
       await runRequiredDockerCommand(
         buildDockerCreateCommand(input, containerName, brokerContainerName),
         "create sandbox container",
         input.signal,
       );
+      ownsWorkloadContainer = true;
       await runRequiredDockerCommand(
         ["start", containerName],
         "start sandbox container",
@@ -219,8 +224,12 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         artifacts,
       };
     } finally {
-      await removeContainer(containerName);
-      await removeContainer(brokerContainerName);
+      if (ownsWorkloadContainer) {
+        await removeContainer(containerName);
+      }
+      if (ownsBrokerContainer) {
+        await removeContainer(brokerContainerName);
+      }
       await rm(rootDir, { recursive: true, force: true });
     }
   }
@@ -396,11 +405,23 @@ function load() {
         response.writeHead(404); response.end(JSON.stringify({ error: "unknown_endpoint" })); return;
       }
       let body = "";
+      let rejected = false;
       request.setEncoding("utf8");
-      request.on("data", chunk => { body += chunk; if (body.length > 4096) request.destroy(); });
+      request.on("data", chunk => {
+        if (rejected) return;
+        body += chunk;
+        if (body.length > 4096) {
+          rejected = true;
+          response.writeHead(413); response.end(JSON.stringify({ error: "request_too_large" }));
+        }
+      });
       request.on("end", () => {
+        if (rejected) return;
         let value;
         try { value = JSON.parse(body); } catch { response.writeHead(400); response.end(JSON.stringify({ error: "invalid_request" })); return; }
+        if (value === null || typeof value !== "object" || Array.isArray(value)) {
+          response.writeHead(400); response.end(JSON.stringify({ error: "invalid_request" })); return;
+        }
         if (value.operation !== config.operation || value.destination !== config.destination || Object.keys(value).length !== 2) {
           response.writeHead(403); response.end(JSON.stringify({ error: "capability_denied" })); return;
         }
@@ -417,6 +438,7 @@ load();`;
 async function startCapabilityBroker(
   input: SandboxExecutionInput,
   brokerContainerName: string,
+  onCreated: () => void,
 ): Promise<void> {
   const grant = input.capability;
   if (grant === undefined) return;
@@ -429,6 +451,7 @@ async function startCapabilityBroker(
     "--tmpfs", `/run/kestrel:rw,nosuid,nodev,noexec,size=1m,uid=${SANDBOX_UID},gid=${SANDBOX_GID},mode=0700`,
     "node:20-alpine", "node", "-e", CAPABILITY_BROKER_SCRIPT,
   ], "create confined capability broker", input.signal);
+  onCreated();
   await runRequiredDockerCommand(["start", brokerContainerName], "start confined capability broker", input.signal);
   const configuration = Buffer.from(JSON.stringify({
     lease: grant.lease,
