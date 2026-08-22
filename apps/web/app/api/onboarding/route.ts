@@ -248,6 +248,7 @@ async function selectDefaultModel(input: {
       modality: "language",
       approved: true,
       isDefault: true,
+      resolveOpenRouterModel: gateway.provider === "openrouter",
       description: model.description,
       metadata:
         model.metadata && typeof model.metadata === "object"

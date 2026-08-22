@@ -69,6 +69,8 @@ export async function POST(
       ...body,
       organizationId,
       gatewayId: params.id,
+      resolveOpenRouterModel: true,
+      allowProviderEconomicsFallback: true,
     });
     return NextResponse.json({ model }, { status: body.id ? 200 : 201 });
   } catch (error) {
