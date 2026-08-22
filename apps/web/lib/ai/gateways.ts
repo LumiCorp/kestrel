@@ -1256,6 +1256,7 @@ export async function saveGatewayModel(input: {
   const fallbackCatalogMetadata =
     input.allowProviderEconomicsFallback &&
     gateway &&
+    "credentialRevision" in gateway &&
     gatewayProvider &&
     getProviderEconomicsFallbackCapability(gatewayProvider).supportsConservativeFallback &&
     !inputMetadata
