@@ -1057,6 +1057,10 @@ export async function syncGatewayModels(
       gatewayBaseUrl: gateway.baseUrl,
       requireEconomicsProfile: false,
       allowProviderEconomicsFallback: true,
+      resolveOpenRouterModel:
+        gateway.provider === "openrouter" &&
+        (existing?.approved ?? false) &&
+        (existing?.modality ?? syncedModel.modality) === "language",
     });
     savedModels.push(savedModel);
   }
@@ -1128,7 +1132,7 @@ export async function saveGatewayModel(input: {
   expectedModelUpdatedAt?: Date | null;
 }) {
   const [gateway, storedModel] = await Promise.all([
-    input.gatewayProvider
+    input.gatewayProvider && input.gatewayProvider !== "openrouter"
       ? Promise.resolve({
           provider: input.gatewayProvider,
           baseUrl: input.gatewayBaseUrl ?? null,
@@ -1159,6 +1163,18 @@ export async function saveGatewayModel(input: {
   ]);
   const gatewayProvider = gateway?.provider;
   const approved = input.approved ?? true;
+  const requiresOpenRouterResolution =
+    gatewayProvider === "openrouter" &&
+    approved &&
+    input.modality === "language";
+  if (requiresOpenRouterResolution && !input.resolveOpenRouterModel) {
+    throw new GatewayModelProviderResolutionError({
+      message:
+        "OpenRouter language models must be resolved through the exact provider detail endpoint before approval.",
+      status: 422,
+      retryable: false,
+    });
+  }
   const runPodBaseUrl =
     gatewayProvider === "runpod" && gateway?.baseUrl
       ? normalizeOpenAICompatibleBaseUrl(gateway.baseUrl)
@@ -1383,7 +1399,8 @@ export async function saveGatewayModel(input: {
               eq(schema.aiGatewayModels.organizationId, input.organizationId),
             ),
           )
-          .limit(1);
+          .limit(1)
+          .for("update");
         if (currentModel?.updatedAt?.getTime() !== input.expectedModelUpdatedAt?.getTime()) {
           throw new GatewayModelProviderResolutionError({
             message: "The gateway model changed while provider details were resolving. Retry the repair.",
@@ -1408,7 +1425,8 @@ export async function saveGatewayModel(input: {
             ),
           ),
         )
-        .limit(1);
+        .limit(1)
+        .for("update");
       if (
         !currentGateway ||
         normalizeOpenAICompatibleBaseUrl(

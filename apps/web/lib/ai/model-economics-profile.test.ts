@@ -28,7 +28,10 @@ test("Kestrel fallback profile is conservative and disclosed", () => {
     },
   );
 });
-import { planGatewayModelEconomicsProfileBackfill } from "./model-economics-profile-backfill";
+import {
+  classifyOpenRouterBackfillResolution,
+  planGatewayModelEconomicsProfileBackfill,
+} from "./model-economics-profile-backfill";
 
 test("approved OpenRouter catalog models receive an exact economics profile", () => {
   const profile = createGatewayModelEconomicsProfile({
@@ -190,6 +193,60 @@ test("backfill planning defers OpenRouter rows to exact live resolution", () => 
       reason: "openrouter_resolution_required",
     },
   ]);
+});
+
+test("OpenRouter backfill classifications distinguish operator actions", () => {
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "qwen/qwen3.8-27b",
+      error: { resolvedModelId: "qwen/alias", status: 422 },
+    }),
+    "exact_id_mismatch",
+  );
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "opaque-model",
+      error: { message: "OpenRouter model ID 'opaque-model' must use the exact author/slug form." },
+    }),
+    "router_or_non_exact",
+  );
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "qwen/qwen3.8-27b",
+      error: { status: 401 },
+    }),
+    "authentication_failure",
+  );
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "qwen/qwen3.8-27b",
+      error: { status: 429, retryable: true },
+    }),
+    "provider_transient_failure",
+  );
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "qwen/qwen3.8-27b",
+      profile: {
+        version: 1,
+        profileId: "openrouter:qwen/qwen3.8-27b:v1",
+        provider: "openrouter",
+        model: "qwen/qwen3.8-27b",
+        contextWindowTokens: 8192,
+        maxOutputTokens: 8192,
+        counting: { counter: "utf8", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
+        cache: { behavior: "none" },
+      },
+    }),
+    "repairable_equal_capacity",
+  );
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "qwen/qwen3.8-27b",
+      error: { message: "The gateway model changed while provider details were resolving. Retry the repair.", status: 409, retryable: true },
+    }),
+    "concurrency_or_stale",
+  );
 });
 
 test("backfill assigns disclosed defaults only to identified non-OpenRouter catalogs", () => {

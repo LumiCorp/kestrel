@@ -47,6 +47,56 @@ export type GatewayModelEconomicsBackfillPlan = {
   updates: GatewayModelEconomicsBackfillUpdate[];
 };
 
+export type OpenRouterBackfillClassification =
+  | "already_valid"
+  | "repairable_provider_facts"
+  | "repairable_equal_capacity"
+  | "exact_id_mismatch"
+  | "router_or_non_exact"
+  | "authentication_failure"
+  | "lookup_failure"
+  | "provider_transient_failure"
+  | "missing_capacity_metadata"
+  | "concurrency_or_stale";
+
+/** Classify a live OpenRouter resolution for operator-facing dry-run output. */
+export function classifyOpenRouterBackfillResolution(input: {
+  requestedModelId: string;
+  details?: Record<string, unknown>;
+  profile?: GatewayModelEconomicsProfile;
+  alreadyValid?: boolean;
+  error?: unknown;
+}): OpenRouterBackfillClassification {
+  if (input.alreadyValid) return "already_valid";
+  if (input.error) {
+    const error = input.error as {
+      status?: number;
+      retryable?: boolean;
+      resolvedModelId?: string;
+      message?: string;
+    };
+    if (error.message?.includes("changed while provider details were resolving")) {
+      return "concurrency_or_stale";
+    }
+    if (error.resolvedModelId && error.resolvedModelId !== input.requestedModelId) {
+      return "exact_id_mismatch";
+    }
+    if (error.message?.includes("exact author/slug form")) {
+      return "router_or_non_exact";
+    }
+    if (error.status === 401 || error.status === 403) return "authentication_failure";
+    if (error.retryable || (error.status !== undefined && error.status >= 500)) {
+      return "provider_transient_failure";
+    }
+    return "lookup_failure";
+  }
+  if (input.profile === undefined) return "missing_capacity_metadata";
+  if (input.profile.contextWindowTokens === input.profile.maxOutputTokens) {
+    return "repairable_equal_capacity";
+  }
+  return "repairable_provider_facts";
+}
+
 const KESTREL_RUNTIME_LANGUAGE_PROVIDERS = new Set([
   "anthropic",
   "lumi",

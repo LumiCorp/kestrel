@@ -1,6 +1,9 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { knowledgeDb, schema } from "../lib/knowledge/db";
-import { planGatewayModelEconomicsProfileBackfill } from "../lib/ai/model-economics-profile-backfill";
+import {
+  classifyOpenRouterBackfillResolution,
+  planGatewayModelEconomicsProfileBackfill,
+} from "../lib/ai/model-economics-profile-backfill";
 import {
   fetchOpenRouterModelDetailsWithCredentials,
   getGatewayApiKey,
@@ -98,7 +101,13 @@ async function main() {
         openRouterResolutions.push({
           id: row.id,
           model: row.rawModelId,
+          classification: classifyOpenRouterBackfillResolution({
+            requestedModelId: row.rawModelId,
+            details,
+            profile,
+          }),
           status: profile ? "repairable" : "missing_capacity_metadata",
+          resolvedModelId: details.id ?? null,
           contextWindowTokens: profile?.contextWindowTokens ?? null,
           maxOutputTokens: profile?.maxOutputTokens ?? null,
         });
@@ -107,6 +116,10 @@ async function main() {
           id: row.id,
           model: row.rawModelId,
           status: "unrepairable",
+          classification: classifyOpenRouterBackfillResolution({
+            requestedModelId: row.rawModelId,
+            error,
+          }),
           code: (error as { code?: string })?.code ?? "OPENROUTER_RESOLUTION_FAILED",
           retryable: (error as { retryable?: boolean })?.retryable ?? false,
           statusCode: (error as { status?: number })?.status ?? null,
@@ -144,6 +157,7 @@ async function main() {
           id: row.id,
           model: row.rawModelId,
           status: "repaired",
+          classification: "repairable_provider_facts",
           concurrency: "current-at-commit",
         });
       } catch (error) {
@@ -151,6 +165,10 @@ async function main() {
           id: row.id,
           model: row.rawModelId,
           status: "unrepairable",
+          classification: classifyOpenRouterBackfillResolution({
+            requestedModelId: row.rawModelId,
+            error,
+          }),
           code: (error as { code?: string })?.code ?? "OPENROUTER_RESOLUTION_FAILED",
           retryable: (error as { retryable?: boolean })?.retryable ?? false,
           statusCode: (error as { status?: number })?.status ?? null,
@@ -175,8 +193,14 @@ async function main() {
         const [currentGateway] = await transaction
           .select({ credentialRevision: schema.aiGateways.credentialRevision })
           .from(schema.aiGateways)
-          .where(eq(schema.aiGateways.id, source.gatewayId))
-          .limit(1);
+          .where(
+            and(
+              eq(schema.aiGateways.id, source.gatewayId),
+              eq(schema.aiGateways.organizationId, source.organizationId!),
+            ),
+          )
+          .limit(1)
+          .for("update");
         if (
           source.credentialRevision !== undefined &&
           currentGateway?.credentialRevision !== source.credentialRevision
@@ -209,8 +233,14 @@ async function main() {
         const [currentGateway] = await transaction
           .select({ credentialRevision: schema.aiGateways.credentialRevision })
           .from(schema.aiGateways)
-          .where(eq(schema.aiGateways.id, source.gatewayId))
-          .limit(1);
+          .where(
+            and(
+              eq(schema.aiGateways.id, source.gatewayId),
+              eq(schema.aiGateways.organizationId, source.organizationId!),
+            ),
+          )
+          .limit(1)
+          .for("update");
         if (
           source.credentialRevision !== undefined &&
           currentGateway?.credentialRevision !== source.credentialRevision
