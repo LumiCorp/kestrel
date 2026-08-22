@@ -1,3 +1,5 @@
+import { GatewayModelProviderResolutionError } from "./gateway-lifecycle-error";
+
 export const GATEWAY_MODEL_ECONOMICS_PROFILE_KEY =
   "kestrelEconomicsProfile";
 
@@ -18,6 +20,34 @@ export type GatewayModelEconomicsProfile = {
     behavior: "none" | "provider_automatic" | "anthropic_ephemeral";
   };
 };
+
+export function validateOpenRouterModelDetails(input: {
+  requestedModelId: string;
+  response: unknown;
+}): Record<string, unknown> {
+  const data =
+    input.response &&
+    typeof input.response === "object" &&
+    !Array.isArray(input.response)
+      ? (input.response as Record<string, unknown>).data
+      : undefined;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new GatewayModelProviderResolutionError({
+      message: `OpenRouter returned invalid model details for ${input.requestedModelId}.`,
+    });
+  }
+  const model = data as Record<string, unknown>;
+  if (model.id !== input.requestedModelId) {
+    throw new GatewayModelProviderResolutionError({
+      message:
+        typeof model.id === "string"
+          ? `OpenRouter resolved '${input.requestedModelId}' to '${model.id}'. Approve the exact returned model ID.`
+          : `OpenRouter did not return the exact model ID '${input.requestedModelId}'.`,
+      resolvedModelId: typeof model.id === "string" ? model.id : undefined,
+    });
+  }
+  return model;
+}
 
 export function getGatewayModelEconomicsProvider(input: {
   gatewayProvider: string;
@@ -48,11 +78,11 @@ export function createGatewayModelEconomicsProfile(input: {
   const metadata = asRecord(input.metadata);
   const topProvider = asRecord(metadata.top_provider);
   const contextWindowTokens = positiveInteger(
-    metadata.context_length ??
+    topProvider.context_length ??
+      metadata.context_length ??
       metadata.contextWindowTokens ??
       metadata.context_window ??
-      metadata.max_input_tokens ??
-      topProvider.context_length,
+      metadata.max_input_tokens,
   );
   const maxOutputTokens = positiveInteger(
     topProvider.max_completion_tokens ??
@@ -65,7 +95,7 @@ export function createGatewayModelEconomicsProfile(input: {
   if (
     contextWindowTokens === undefined ||
     maxOutputTokens === undefined ||
-    maxOutputTokens >= contextWindowTokens
+    maxOutputTokens > contextWindowTokens
   ) {
     return;
   }
@@ -104,7 +134,7 @@ export function readGatewayModelEconomicsProfile(
     profile.profileId !== `${input.provider}:${input.model}:v1` ||
     contextWindowTokens === undefined ||
     maxOutputTokens === undefined ||
-    maxOutputTokens >= contextWindowTokens ||
+    maxOutputTokens > contextWindowTokens ||
     !isRecordWithStrings(profile.counting, ["counter", "counterVersion"]) ||
     !isRecordWithStrings(profile.cache, ["behavior"]) ||
     !isAllowedProfileValues(profile)

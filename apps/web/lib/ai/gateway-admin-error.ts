@@ -4,6 +4,7 @@ import { GatewayCredentialSourceError } from "./gateway-credential-source";
 import {
   GatewayModelEconomicsProfileRequiredError,
   GatewayModelInUseError,
+  GatewayModelProviderResolutionError,
 } from "./gateway-lifecycle-error";
 import { RunPodConnectionTestError } from "./runpod-connection-test";
 
@@ -67,6 +68,13 @@ export function getSafeGatewayAdminError(
     return {
       body: { code: error.code, error: error.message },
       status: 422,
+    };
+  }
+
+  if (error instanceof GatewayModelProviderResolutionError) {
+    return {
+      body: { code: error.code, error: error.message },
+      status: error.status,
     };
   }
 

@@ -35,6 +35,23 @@ test("approved OpenRouter catalog models receive an exact economics profile", ()
   });
 });
 
+test("OpenRouter provider capacity takes precedence and permits equal limits", () => {
+  const profile = createGatewayModelEconomicsProfile({
+    provider: "openrouter",
+    model: "z-ai/glm-5.2:free",
+    metadata: {
+      context_length: 1_000_000,
+      top_provider: {
+        context_length: 256_000,
+        max_completion_tokens: 256_000,
+      },
+    },
+  });
+
+  assert.equal(profile?.contextWindowTokens, 256_000);
+  assert.equal(profile?.maxOutputTokens, 256_000);
+});
+
 test("model approval persists and unapproval removes the economics profile", () => {
   const approved = withGatewayModelEconomicsProfile({
     provider: "openrouter",

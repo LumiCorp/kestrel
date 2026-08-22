@@ -108,6 +108,12 @@ type GatewayModel = {
   isDefault: boolean;
   description: string | null;
   metadata: Record<string, unknown> | null;
+  economicsAdmission?: {
+    status: "ready" | "unapproved" | "needs_profile";
+    contextWindowTokens?: number;
+    maxOutputTokens?: number;
+    source?: string;
+  };
 };
 
 type GatewayBundle = {
@@ -1147,6 +1153,9 @@ function GatewayDetailPane({
                 const runPodValidated =
                   bundle.gateway.provider !== "runpod" ||
                   isRunPodModelValidated(model);
+                const economicsReady =
+                  model.modality !== "language" ||
+                  model.economicsAdmission?.status === "ready";
                 const draft = modelDrafts[model.id] || {
                   alias: model.alias || "",
                   approved: model.approved,
@@ -1232,6 +1241,20 @@ function GatewayDetailPane({
                       >
                         {draft.approved ? "Approved" : "Unapproved"}
                       </Badge>
+                      {model.economicsAdmission ? (
+                        <div className="mt-1 text-muted-foreground text-xs">
+                          {model.economicsAdmission.status === "ready" ? (
+                            <>
+                              {model.economicsAdmission.contextWindowTokens?.toLocaleString()}{" "}
+                              context ·{" "}
+                              {model.economicsAdmission.maxOutputTokens?.toLocaleString()}{" "}
+                              output · {model.economicsAdmission.source}
+                            </>
+                          ) : (
+                            "Needs economics profile"
+                          )}
+                        </div>
+                      ) : null}
                     </TableCell>
                     <TableCell className="py-3 align-top">
                       <Badge
@@ -1297,7 +1320,11 @@ function GatewayDetailPane({
                         ) : null}
                         <IconActionButton
                           className="h-9 w-9 rounded-lg p-0"
-                          disabled={Boolean(savingModelId) || !runPodValidated}
+                          disabled={
+                            Boolean(savingModelId) ||
+                            !runPodValidated ||
+                            (!draft.approved && !economicsReady)
+                          }
                           icon={
                             draft.approved ? (
                               <ShieldOff className="size-4" />
@@ -1329,7 +1356,11 @@ function GatewayDetailPane({
                         />
                         <IconActionButton
                           className="h-9 w-9 rounded-lg p-0"
-                          disabled={Boolean(savingModelId) || !runPodValidated}
+                          disabled={
+                            Boolean(savingModelId) ||
+                            !runPodValidated ||
+                            !economicsReady
+                          }
                           icon={<Star className="size-4" />}
                           label={
                             draft.isDefault ? "Default model" : "Make default"

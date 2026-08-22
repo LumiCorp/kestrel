@@ -29,6 +29,7 @@ import {
 import {
   GatewayModelEconomicsProfileRequiredError,
   GatewayModelInUseError,
+  GatewayModelProviderResolutionError,
 } from "./gateway-lifecycle-error";
 import {
   normalizeGatewayStoredCredential,
@@ -57,6 +58,7 @@ import {
 import {
   getGatewayModelEconomicsProvider,
   readGatewayModelEconomicsProfile,
+  validateOpenRouterModelDetails,
   withGatewayModelEconomicsProfile,
 } from "./model-economics-profile";
 
@@ -78,6 +80,16 @@ export type GatewayCatalogModel = ChatModel & {
   metadata: Record<string, unknown> | null;
   environmentId: string | null;
   scope: "platform" | "organization" | "environment";
+};
+
+export type GatewayModelEconomicsAdmission = {
+  status: "ready" | "unapproved" | "needs_profile";
+  provider: string;
+  model: string;
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
+  source?: string;
+  canonicalSlug?: string;
 };
 
 const PROVIDER_DISPLAY_NAMES: Record<GatewayProvider, string> = {
@@ -172,6 +184,40 @@ function normalizeModelLabel(model: GatewayModelRecord) {
   );
 }
 
+function getGatewayModelEconomicsAdmission(
+  gatewayProvider: GatewayProvider,
+  model: GatewayModelRecord,
+): GatewayModelEconomicsAdmission | undefined {
+  if (model.modality !== "language") return undefined;
+  const provider = getGatewayModelEconomicsProvider({
+    gatewayProvider,
+    modality: model.modality,
+    metadata: model.metadata,
+  });
+  if (!provider) return undefined;
+  const base = { provider, model: model.rawModelId };
+  if (!model.approved) return { ...base, status: "unapproved" };
+  const profile = readGatewayModelEconomicsProfile(model.metadata, base);
+  if (!profile) return { ...base, status: "needs_profile" };
+  const metadata =
+    model.metadata && typeof model.metadata === "object" && !Array.isArray(model.metadata)
+      ? (model.metadata as Record<string, unknown>)
+      : {};
+  return {
+    ...base,
+    status: "ready",
+    contextWindowTokens: profile.contextWindowTokens,
+    maxOutputTokens: profile.maxOutputTokens,
+    source:
+      typeof metadata.kestrelEconomicsProfileSource === "string"
+        ? metadata.kestrelEconomicsProfileSource
+        : "provider_catalog",
+    ...(typeof metadata.kestrelOpenRouterCanonicalSlug === "string"
+      ? { canonicalSlug: metadata.kestrelOpenRouterCanonicalSlug }
+      : {}),
+  };
+}
+
 function getComparableModelName(rawModelId: string) {
   const trimmed = rawModelId.trim().toLowerCase();
   const parts = trimmed.split("/").filter(Boolean);
@@ -196,6 +242,53 @@ async function fetchProviderJson<T>(
   }
 
   return json as T;
+}
+
+async function fetchOpenRouterModelDetails(
+  gateway: GatewayRecord,
+  rawModelId: string,
+): Promise<Record<string, unknown>> {
+  const parts = rawModelId.split("/");
+  if (parts.length !== 2 || parts.some((part) => part.trim().length === 0)) {
+    throw new GatewayModelProviderResolutionError({
+      message: `OpenRouter model ID '${rawModelId}' must use the exact author/slug form.`,
+    });
+  }
+  const apiKey = getGatewayApiKey(gateway);
+  const baseUrl = getOpenAICompatibleBaseUrl(gateway);
+  if (!apiKey || !baseUrl) {
+    throw new GatewayModelProviderResolutionError({
+      message: "OpenRouter gateway credentials are required to resolve a model.",
+    });
+  }
+  let response: Response;
+  try {
+    response = await fetch(
+      `${baseUrl}/model/${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}`,
+      { headers: getOpenAICompatibleAuthHeaders(apiKey) },
+    );
+  } catch {
+    throw new GatewayModelProviderResolutionError({
+      message: `OpenRouter model resolution failed for ${rawModelId}. Try again.`,
+      status: 503,
+      retryable: true,
+    });
+  }
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new GatewayModelProviderResolutionError({
+      message:
+        response.status === 404
+          ? `OpenRouter model '${rawModelId}' was not found.`
+          : `OpenRouter model resolution failed for ${rawModelId}.`,
+      status: response.status === 404 ? 422 : 503,
+      retryable: response.status >= 500,
+    });
+  }
+  return validateOpenRouterModelDetails({
+    requestedModelId: rawModelId,
+    response: json,
+  });
 }
 
 function inferOpenAICompatibleModality(rawModelId: string): GatewayModality {
@@ -554,7 +647,13 @@ export async function listAIGatewaysWithModels(organizationId: string) {
 
   return gateways.map((gateway) => ({
     gateway: sanitizeGateway(gateway),
-    models: modelsByGateway[gateway.id] ?? [],
+    models: (modelsByGateway[gateway.id] ?? []).map((model) => ({
+      ...model,
+      economicsAdmission: getGatewayModelEconomicsAdmission(
+        gateway.provider as GatewayProvider,
+        model,
+      ),
+    })),
   }));
 }
 
@@ -1000,6 +1099,7 @@ export async function saveGatewayModel(input: {
   description?: string | null;
   metadata?: Record<string, unknown> | null;
   requireEconomicsProfile?: boolean;
+  resolveOpenRouterModel?: boolean;
 }) {
   const [gateway, storedModel] = await Promise.all([
     input.gatewayProvider
@@ -1008,7 +1108,6 @@ export async function saveGatewayModel(input: {
           baseUrl: input.gatewayBaseUrl ?? null,
         })
       : knowledgeDb.query.aiGateways.findFirst({
-          columns: { provider: true, baseUrl: true },
           where: (table, operators) =>
             operators.and(
               operators.eq(table.id, input.gatewayId),
@@ -1032,12 +1131,22 @@ export async function saveGatewayModel(input: {
       : Promise.resolve(undefined),
   ]);
   const gatewayProvider = gateway?.provider;
+  const approved = input.approved ?? true;
   const runPodBaseUrl =
     gatewayProvider === "runpod" && gateway?.baseUrl
       ? normalizeOpenAICompatibleBaseUrl(gateway.baseUrl)
       : null;
+  const resolvedOpenRouterMetadata =
+    input.resolveOpenRouterModel &&
+    gatewayProvider === "openrouter" &&
+    approved &&
+    input.modality === "language" &&
+    gateway && "credentialRevision" in gateway
+      ? await fetchOpenRouterModelDetails(gateway, input.rawModelId)
+      : undefined;
   const inputMetadata =
-    gatewayProvider === "runpod" && storedModel && runPodBaseUrl
+    resolvedOpenRouterMetadata ??
+    (gatewayProvider === "runpod" && storedModel && runPodBaseUrl
       ? preserveTrustedRunPodValidation({
           incomingMetadata: input.metadata,
           storedMetadata: storedModel.metadata,
@@ -1057,18 +1166,30 @@ export async function saveGatewayModel(input: {
             nextModality: input.modality,
             baseUrl: runPodBaseUrl ?? "",
           })
-        : input.metadata;
+        : input.metadata);
 
-  const metadata =
+  const normalizedMetadata =
     gatewayProvider != null
       ? normalizeGatewayModelMetadata({
           gatewayProvider: gatewayProvider as GatewayProvider,
           modality: input.modality,
           metadata: inputMetadata,
-        })
+      })
       : (inputMetadata ?? null);
+  const metadata =
+    resolvedOpenRouterMetadata && normalizedMetadata
+      ? {
+          ...normalizedMetadata,
+          kestrelEconomicsProfileSource: "provider_detail",
+          ...(typeof resolvedOpenRouterMetadata.canonical_slug === "string"
+            ? {
+                kestrelOpenRouterCanonicalSlug:
+                  resolvedOpenRouterMetadata.canonical_slug,
+              }
+            : {}),
+        }
+      : normalizedMetadata;
 
-  const approved = input.approved ?? true;
   const economicsProvider =
     gatewayProvider === undefined
       ? undefined
@@ -1121,6 +1242,34 @@ export async function saveGatewayModel(input: {
   }
 
   return knowledgeDb.transaction(async (transaction) => {
+    if (
+      input.resolveOpenRouterModel &&
+      gatewayProvider === "openrouter" &&
+      gateway && "credentialRevision" in gateway
+    ) {
+      const [currentGateway] = await transaction
+        .select({ credentialRevision: schema.aiGateways.credentialRevision })
+        .from(schema.aiGateways)
+        .where(
+          and(
+            eq(schema.aiGateways.id, input.gatewayId),
+            eq(schema.aiGateways.organizationId, input.organizationId),
+            eq(
+              schema.aiGateways.credentialRevision,
+              gateway.credentialRevision,
+            ),
+          ),
+        )
+        .limit(1);
+      if (!currentGateway) {
+        throw new GatewayModelProviderResolutionError({
+          message:
+            "OpenRouter credentials changed while the model was resolving. Try again.",
+          status: 409,
+          retryable: true,
+        });
+      }
+    }
     if (input.isDefault) {
       const lockKey = `kestrel:ai-model-default:${input.organizationId}:${input.modality}`;
       await transaction.execute(

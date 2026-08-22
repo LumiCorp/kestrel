@@ -223,10 +223,10 @@ export function parseModelEconomicsProfileV1(value: unknown): ModelEconomicsProf
     root.maxOutputTokens,
     "Model economics profile maxOutputTokens",
   );
-  if (maxOutputTokens >= contextWindowTokens) {
+  if (maxOutputTokens > contextWindowTokens) {
     throw createRuntimeFailure(
       "MODEL_ECONOMICS_PROFILE_CAPACITY_INVALID",
-      "Model economics profile maxOutputTokens must be smaller than contextWindowTokens.",
+      "Model economics profile maxOutputTokens must not exceed contextWindowTokens.",
     );
   }
 
