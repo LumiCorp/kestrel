@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { getPgPool } from "@/lib/db/runtime";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { chunkKnowledgeDocument } from "./chunk";
@@ -8,6 +9,7 @@ import { getKnowledgeOcrMode } from "./ocr-config";
 import {
   buildKnowledgeExtractionMetadata,
   buildKnowledgeIngestionFailureState,
+  buildKnowledgeIngestionRetryState,
 } from "./process-state";
 import {
   getKnowledgeDocumentById,
@@ -17,10 +19,51 @@ import {
   updateKnowledgeIngestionRun,
 } from "./store";
 
-export async function processKnowledgeDocumentRun(runId: string) {
+export async function processKnowledgeDocumentRun(
+  runId: string,
+  options: {
+    expectedDocumentId?: string | undefined;
+    finalAttempt?: boolean | undefined;
+  } = {},
+) {
+  const initialRun = await getKnowledgeIngestionRun(runId);
+  if (!initialRun) {
+    throw new Error("Knowledge document run not found");
+  }
+  if (
+    options.expectedDocumentId &&
+    options.expectedDocumentId !== initialRun.documentId
+  ) {
+    throw new Error("Knowledge document job does not match its run document.");
+  }
+
+  const client = await getPgPool().connect();
+  try {
+    await client.query(
+      "SELECT pg_advisory_lock(hashtextextended($1, 0))",
+      [`knowledge-document-processing:${initialRun.documentId}`],
+    );
+    return await processKnowledgeDocumentRunLocked(runId, options);
+  } finally {
+    await client
+      .query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [
+        `knowledge-document-processing:${initialRun.documentId}`,
+      ])
+      .catch(() => {});
+    client.release();
+  }
+}
+
+async function processKnowledgeDocumentRunLocked(
+  runId: string,
+  options: { finalAttempt?: boolean | undefined },
+) {
   const run = await getKnowledgeIngestionRun(runId);
   if (!run) {
     throw new Error("Knowledge document run not found");
+  }
+  if (run.status === "completed" || run.status === "failed") {
+    return;
   }
 
   const document = await getKnowledgeDocumentById(
@@ -35,7 +78,8 @@ export async function processKnowledgeDocumentRun(runId: string) {
     status: "running",
     stage: "extract",
     attemptCount: (run.attemptCount ?? 0) + 1,
-    startedAt: new Date(),
+    startedAt: run.startedAt ?? new Date(),
+    finishedAt: null,
     error: null,
   });
   await updateKnowledgeDocument(document.id, {
@@ -47,17 +91,16 @@ export async function processKnowledgeDocumentRun(runId: string) {
   const embeddingProvenance = embeddingRuntime.provenance ?? {
     mode: "lexical" as const,
   };
+  const diagnostics: Record<string, unknown> = {
+    modes: {
+      ocr: getKnowledgeOcrMode(),
+      embedding: embeddingRuntime.mode,
+    },
+    embedding: embeddingProvenance,
+    stageTimingsMs: {},
+  };
 
   try {
-    const ocrMode = getKnowledgeOcrMode();
-    const diagnostics: Record<string, unknown> = {
-      modes: {
-        ocr: ocrMode,
-        embedding: embeddingRuntime.mode,
-      },
-      embedding: embeddingProvenance,
-      stageTimingsMs: {},
-    };
     const storage = getStorageAdapter();
     const extractStartedAt = Date.now();
     const representation = await knowledgeDb.select({
@@ -201,15 +244,30 @@ export async function processKnowledgeDocumentRun(runId: string) {
       finishedAt: new Date(),
     });
   } catch (error) {
-    const failure = buildKnowledgeIngestionFailureState({
+    const stateInput = {
       error,
       ocrMode: getKnowledgeOcrMode(),
       embeddingMode: embeddingRuntime.mode,
       embedding: embeddingProvenance,
-      finishedAt: new Date(),
-    });
-    await updateKnowledgeDocument(document.id, failure.documentUpdate);
-    await updateKnowledgeIngestionRun(run.id, failure.runUpdate);
+      diagnostics,
+    };
+    const state =
+      (options.finalAttempt ?? true)
+        ? buildKnowledgeIngestionFailureState({
+            ...stateInput,
+            finishedAt: new Date(),
+          })
+        : buildKnowledgeIngestionRetryState(stateInput);
+    await updateKnowledgeDocument(document.id, state.documentUpdate);
+    await updateKnowledgeIngestionRun(run.id, state.runUpdate);
+    if (options.finalAttempt ?? true) {
+      console.error("Knowledge document ingestion failed permanently.", {
+        runId: run.id,
+        documentId: document.id,
+        attemptCount: (run.attemptCount ?? 0) + 1,
+        message: state.message,
+      });
+    }
     throw error;
   }
 }

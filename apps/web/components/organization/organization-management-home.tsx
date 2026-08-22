@@ -1,7 +1,11 @@
 import { AlertTriangle } from "lucide-react";
 import { CreateOrganizationEnvironmentDialog } from "@/components/organization/create-environment-dialog";
 import { OrganizationIdentityEditor } from "@/components/organization/organization-identity-editor";
-import { ResourceEmpty, ResourceList, ResourceRow } from "@/components/resource-list";
+import {
+  ResourceEmpty,
+  ResourceList,
+  ResourceRow,
+} from "@/components/resource-list";
 import {
   SettingsDangerSection,
   SettingsDisclosure,
@@ -48,7 +52,12 @@ const managementGroups = [
       {
         href: "/organization/connections",
         title: "Connections",
-        description: "Providers, credentials, and models",
+        description: "Providers, credentials, and connection health",
+      },
+      {
+        href: "/organization/models",
+        title: "Models",
+        description: "Catalog approvals, defaults, and validation",
       },
       {
         href: "/organization/inference",

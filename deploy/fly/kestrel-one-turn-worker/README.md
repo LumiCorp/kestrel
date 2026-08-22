@@ -21,4 +21,11 @@ database work without a pg-boss job.
 Publish this worker locally with `pnpm production:image:publish`, then update
 one exact Machine with `pnpm production:fly:machine`. The image command does not
 stage configuration, and another Machine requires another explicit command and
-confirmation. Roll back the selected Machine with its previous operator tag.
+confirmation. Follow the [turn-worker rollout](./ROLLOUT.md) for Web and
+migration ordering, capacity preservation, started-before-stopped Machine
+updates, durable turn proof, and rollback.
+
+Readiness is provider-native. The process returns 503 until database and gateway
+credential checks pass, workers are registered, and initial maintenance
+succeeds. The image smoke checks missing configuration only; production
+readiness and a completed durable turn must be verified after each rollout.

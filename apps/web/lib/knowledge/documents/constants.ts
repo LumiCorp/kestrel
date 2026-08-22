@@ -1,6 +1,7 @@
 export const KNOWLEDGE_EMBEDDING_DIMENSIONS = 1536;
 
-export const KNOWLEDGE_DOCUMENT_QUEUE = "knowledge.document.ingest";
+export const LEGACY_KNOWLEDGE_DOCUMENT_QUEUE = "knowledge.document.ingest";
+export const KNOWLEDGE_DOCUMENT_QUEUE = "knowledge.document.ingest.v2";
 
 export const KNOWLEDGE_DOCUMENT_STATUS = [
   "uploaded",

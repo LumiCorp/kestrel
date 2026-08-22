@@ -4,12 +4,14 @@ import { GatewayCredentialSourceError } from "./gateway-credential-source";
 import {
   GatewayModelEconomicsProfileRequiredError,
   GatewayModelInUseError,
+  GatewayModelProviderResolutionError,
 } from "./gateway-lifecycle-error";
 import { RunPodConnectionTestError } from "./runpod-connection-test";
 
 type GatewayAdminErrorBody = {
   code: string;
   error: string;
+  retryable?: boolean;
 };
 
 export function getSafeGatewayAdminError(
@@ -65,8 +67,19 @@ export function getSafeGatewayAdminError(
 
   if (error instanceof GatewayModelEconomicsProfileRequiredError) {
     return {
-      body: { code: error.code, error: error.message },
+      body: { code: error.code, error: error.message, retryable: false },
       status: 422,
+    };
+  }
+
+  if (error instanceof GatewayModelProviderResolutionError) {
+    return {
+      body: {
+        code: error.code,
+        error: error.message,
+        retryable: error.retryable,
+      },
+      status: error.status,
     };
   }
 

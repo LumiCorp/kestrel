@@ -45,6 +45,8 @@ load_env_file() {
   fi
 }
 
+load_env_file "../../.env.example"
+load_env_file "../../.env"
 load_env_file ".env.example"
 load_env_file ".env"
 load_env_file ".env.local"
@@ -61,6 +63,8 @@ export DEV_AUTH_BYPASS="${DEV_AUTH_BYPASS:-true}"
 export STORAGE_PROVIDER="${STORAGE_PROVIDER:-local-s3}"
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:${LOCAL_REDIS_PORT:-56379}}"
 export KESTREL_ENVIRONMENT_RUNTIME="${KESTREL_ENVIRONMENT_RUNTIME:-local}"
+export KESTREL_HOME="${KESTREL_HOME:-${TMPDIR:-/tmp}/kestrel-one-local}"
+export KESTREL_BUILD_ID="${KESTREL_BUILD_ID:-local-dev}"
 export KESTREL_RUNNER_SERVICE_HOST="$RUNNER_HOST"
 export KESTREL_RUNNER_SERVICE_PORT="$RUNNER_PORT"
 export KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL="${KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL:-http://${RUNNER_HOST}:${RUNNER_PORT}}"

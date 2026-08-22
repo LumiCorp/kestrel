@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
-import { isAdminUser } from "@/lib/knowledge/auth";
+import { isAdminUser } from "@/lib/knowledge/admin-user";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 
 export function getKnowledgeDocumentsForOrganization(organizationId: string) {
@@ -159,27 +159,49 @@ export async function deleteKnowledgeDocument(documentId: string) {
   return document;
 }
 
-export async function createKnowledgeIngestionRun(input: {
+export async function createOrReuseKnowledgeIngestionRun(input: {
   organizationId: string;
   documentId: string;
   requestedByUserId?: string | null;
 }) {
-  const [run] = await knowledgeDb
-    .insert(schema.knowledgeIngestionRuns)
-    .values({
-      id: crypto.randomUUID(),
-      organizationId: input.organizationId,
-      documentId: input.documentId,
-      requestedByUserId: input.requestedByUserId ?? null,
-      stage: "upload",
-      status: "queued",
-      attemptCount: 0,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .returning();
+  return knowledgeDb.transaction(async (transaction) => {
+    const findActiveRun = () =>
+      transaction.query.knowledgeIngestionRuns.findFirst({
+        where: (table, operators) =>
+          operators.and(
+            operators.eq(table.organizationId, input.organizationId),
+            operators.eq(table.documentId, input.documentId),
+            operators.inArray(table.status, ["queued", "running"]),
+          ),
+        orderBy: (table, operators) => [
+          operators.desc(table.updatedAt),
+          operators.desc(table.createdAt),
+        ],
+      });
+    const existing = await findActiveRun();
+    if (existing) return { run: existing, created: false };
 
-  return run;
+    const [created] = await transaction
+      .insert(schema.knowledgeIngestionRuns)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: input.organizationId,
+        documentId: input.documentId,
+        requestedByUserId: input.requestedByUserId ?? null,
+        stage: "upload",
+        status: "queued",
+        attemptCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .onConflictDoNothing()
+      .returning();
+    if (created) return { run: created, created: true };
+
+    const concurrent = await findActiveRun();
+    if (concurrent) return { run: concurrent, created: false };
+    throw new Error("Knowledge ingestion run could not be created or reused.");
+  });
 }
 
 export function getKnowledgeIngestionRun(runId: string) {
@@ -303,26 +325,28 @@ export async function replaceKnowledgeDocumentChunks(input: {
     "id" | "organizationId" | "documentId" | "createdAt"
   >[];
 }) {
-  await knowledgeDb
-    .delete(schema.knowledgeDocumentChunks)
-    .where(eq(schema.knowledgeDocumentChunks.documentId, input.documentId));
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction
+      .delete(schema.knowledgeDocumentChunks)
+      .where(eq(schema.knowledgeDocumentChunks.documentId, input.documentId));
 
-  if (input.chunks.length === 0) {
-    return [];
-  }
+    if (input.chunks.length === 0) {
+      return [];
+    }
 
-  return knowledgeDb
-    .insert(schema.knowledgeDocumentChunks)
-    .values(
-      input.chunks.map((chunk) => ({
-        id: crypto.randomUUID(),
-        organizationId: input.organizationId,
-        documentId: input.documentId,
-        ...chunk,
-        createdAt: new Date(),
-      }))
-    )
-    .returning();
+    return transaction
+      .insert(schema.knowledgeDocumentChunks)
+      .values(
+        input.chunks.map((chunk) => ({
+          id: crypto.randomUUID(),
+          organizationId: input.organizationId,
+          documentId: input.documentId,
+          ...chunk,
+          createdAt: new Date(),
+        })),
+      )
+      .returning();
+  });
 }
 
 export async function getReadyKnowledgeDocumentCount(organizationId: string) {

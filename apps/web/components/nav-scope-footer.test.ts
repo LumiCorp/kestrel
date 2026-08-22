@@ -44,3 +44,12 @@ test("scope footer matches only its canonical route family", () => {
   assert.equal(items[2]?.match("/settings/connections"), true);
   assert.equal(items[2]?.match("/platform/users"), false);
 });
+
+test("platform scope links directly to its canonical landing page", () => {
+  const items = getSidebarScopeItems({
+    canManageActiveOrganization: true,
+    isPlatformAdmin: true,
+  });
+
+  assert.equal(items[0]?.href, "/platform/users");
+});

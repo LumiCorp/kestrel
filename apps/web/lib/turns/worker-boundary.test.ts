@@ -394,11 +394,62 @@ test("the dedicated control worker owns durable platform lifecycle queues", asyn
     "utf8",
   );
   assert.match(source, /startEnvironmentLifecycleWorker/u);
-  assert.match(source, /stopEnvironmentLifecycleWorker/u);
+  assert.match(source, /startKnowledgeDocumentWorker/u);
+  assert.match(source, /stopControlWorkers/u);
+  assert.match(
+    source,
+    /await startEnvironmentLifecycleWorker\(\);\s*await startKnowledgeDocumentWorker\(\);\s*health\.markReady\(\)/u,
+  );
+  assert.match(
+    source,
+    /main\(\)\.catch[\s\S]*stopControlWorkers\(\)/u,
+  );
   assert.match(source, /startWorkerHealthServer/u);
   assert.doesNotMatch(source, /releaseControllerHeartbeats/u);
   assert.doesNotMatch(source, /RELEASE_CONTROLLER_CONTRACT_REVISION/u);
   assert.doesNotMatch(source, /CRON_SECRET/u);
+});
+
+test("the control worker rollout preserves migration and one-Machine gates", async () => {
+  const [readme, rollout, productionDelivery] = await Promise.all([
+    readFile(
+      new URL(
+        "../../../../deploy/fly/kestrel-one-control-worker/README.md",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL(
+        "../../../../deploy/fly/kestrel-one-control-worker/ROLLOUT.md",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    readFile(
+      new URL("../../../../docs/production-delivery-channels.md", import.meta.url),
+      "utf8",
+    ),
+  ]);
+
+  assert.match(readme, /durable Knowledge ingestion/u);
+  assert.match(readme, /initial reconciliation succeeds/u);
+  assert.match(readme, /\.\/ROLLOUT\.md/u);
+  assert.match(rollout, /main` to `production/u);
+  assert.match(rollout, /knowledge_ingestion_runs_active_document_idx/u);
+  assert.match(rollout, /production:image:publish/u);
+  assert.match(rollout, /production:fly:machine/u);
+  assert.match(rollout, /Update started Machines first/u);
+  assert.match(rollout, /Update stopped Machines/u);
+  assert.match(rollout, /Knowledge document workers registered\./u);
+  assert.match(rollout, /Knowledge document queue reconciliation completed\./u);
+  assert.match(rollout, /distinctive\s+phrase/u);
+  assert.match(
+    productionDelivery,
+    /kestrel-one-control-worker\/ROLLOUT\.md/u,
+  );
+  assert.doesNotMatch(readme, /release_controller_heartbeats/u);
+  assert.doesNotMatch(rollout, /release_controller_heartbeats/u);
 });
 
 test(
@@ -425,6 +476,7 @@ test(
     );
 
     assert.match(devAllSource, /pnpm worker:turns &/u);
+    assert.match(devAllSource, /load_env_file "\.\.\/\.\.\/\.env"/u);
     assert.match(devAllSource, /run runner:service &/u);
     assert.match(
       devAllSource,
@@ -434,6 +486,14 @@ test(
     assert.match(
       devAllSource,
       /export KESTREL_ENVIRONMENT_RUNTIME="\$\{KESTREL_ENVIRONMENT_RUNTIME:-local\}"/u,
+    );
+    assert.match(
+      devAllSource,
+      /export KESTREL_HOME="\$\{KESTREL_HOME:-\$\{TMPDIR:-\/tmp\}\/kestrel-one-local\}"/u,
+    );
+    assert.match(
+      devAllSource,
+      /export KESTREL_BUILD_ID="\$\{KESTREL_BUILD_ID:-local-dev\}"/u,
     );
     assert.match(devAllSource, /TURN_WORKER_PID=\$!/u);
     assert.match(

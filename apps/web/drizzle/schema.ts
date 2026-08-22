@@ -5728,6 +5728,9 @@ export const knowledgeIngestionRuns = pgTable(
     index("knowledge_ingestion_runs_status_idx").on(table.status),
     index("knowledge_ingestion_runs_stage_idx").on(table.stage),
     index("knowledge_ingestion_runs_updated_at_idx").on(table.updatedAt),
+    uniqueIndex("knowledge_ingestion_runs_active_document_idx")
+      .on(table.documentId)
+      .where(sql`${table.status} in ('queued', 'running')`),
   ],
 );
 

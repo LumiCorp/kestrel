@@ -31,9 +31,20 @@ export type DesktopLocalRuntimeModelSelection = {
   provider: RunnerModelProvider;
 };
 
+export type DirectLocalRuntimeModelSelection = {
+  directLocal: true;
+  id: string;
+  organizationId: string;
+  environmentId: string;
+  model: string;
+  provider: RunnerModelProvider;
+  economicsProfile?: GatewayModelEconomicsProfile | undefined;
+};
+
 export type EnvironmentRuntimeModelSelection =
   | KestrelOneRuntimeModelSelection
-  | DesktopLocalRuntimeModelSelection;
+  | DesktopLocalRuntimeModelSelection
+  | DirectLocalRuntimeModelSelection;
 
 export function toKestrelOneRuntimeModelSelection(input: {
   id: string;
@@ -72,6 +83,13 @@ export function toKestrelOneRuntimeModelSelection(input: {
       model: input.rawModelId,
       metadata: input.metadata,
     });
+  if (economicsProfile === undefined) {
+    const error = new Error(
+      `Hosted model "${input.id}" is not runtime-eligible because its exact economics profile is missing or mismatched.`,
+    );
+    Object.assign(error, { code: "GATEWAY_MODEL_RUNTIME_INELIGIBLE" });
+    throw error;
+  }
 
   return {
     id: input.id,
@@ -80,7 +98,7 @@ export function toKestrelOneRuntimeModelSelection(input: {
     environmentId: input.environmentId,
     model: input.rawModelId,
     provider: provider as RunnerModelProvider,
-    ...(economicsProfile !== undefined ? { economicsProfile } : {}),
+    economicsProfile,
   };
 }
 
@@ -131,7 +149,7 @@ export function applyKestrelOneModelsToProfile(
       : {}),
     default: false,
   };
-  if ("desktopLocal" in selection) {
+  if (!isKestrelOneManagedRuntimeModel(selection)) {
     const { modelCredential: _modelCredential, ...local } = selected;
     return local;
   }
@@ -152,7 +170,7 @@ export function applyKestrelOneModelsToProfile(
 export function isKestrelOneManagedRuntimeModel(
   selection: EnvironmentRuntimeModelSelection,
 ): selection is KestrelOneRuntimeModelSelection {
-  return !("desktopLocal" in selection);
+  return "gatewayId" in selection;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

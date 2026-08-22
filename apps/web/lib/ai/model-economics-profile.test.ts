@@ -1,12 +1,37 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createKestrelDefaultEconomicsProfile,
   createGatewayModelEconomicsProfile,
   GATEWAY_MODEL_ECONOMICS_PROFILE_KEY,
   getGatewayModelEconomicsProvider,
   withGatewayModelEconomicsProfile,
 } from "./model-economics-profile";
-import { planGatewayModelEconomicsProfileBackfill } from "./model-economics-profile-backfill";
+
+test("Kestrel fallback profile is conservative and disclosed", () => {
+  assert.deepEqual(
+    createKestrelDefaultEconomicsProfile({ provider: "openai", model: "gpt-4" }),
+    {
+      version: 1,
+      profileId: "openai:gpt-4:v1",
+      provider: "openai",
+      model: "gpt-4",
+      contextWindowTokens: 32_768,
+      maxOutputTokens: 8_192,
+      counting: {
+        counter: "utf8-byte-upper-bound",
+        counterVersion: "1",
+        method: "conservative_estimate",
+        confidence: "conservative",
+      },
+      cache: { behavior: "none" },
+    },
+  );
+});
+import {
+  classifyOpenRouterBackfillResolution,
+  planGatewayModelEconomicsProfileBackfill,
+} from "./model-economics-profile-backfill";
 
 test("approved OpenRouter catalog models receive an exact economics profile", () => {
   const profile = createGatewayModelEconomicsProfile({
@@ -33,6 +58,23 @@ test("approved OpenRouter catalog models receive an exact economics profile", ()
     },
     cache: { behavior: "none" },
   });
+});
+
+test("OpenRouter provider capacity takes precedence and permits equal limits", () => {
+  const profile = createGatewayModelEconomicsProfile({
+    provider: "openrouter",
+    model: "z-ai/glm-5.2:free",
+    metadata: {
+      context_length: 1_000_000,
+      top_provider: {
+        context_length: 256_000,
+        max_completion_tokens: 256_000,
+      },
+    },
+  });
+
+  assert.equal(profile?.contextWindowTokens, 256_000);
+  assert.equal(profile?.maxOutputTokens, 256_000);
 });
 
 test("model approval persists and unapproval removes the economics profile", () => {
@@ -109,7 +151,7 @@ test("invalid approved profiles are replaced when catalog capacity is available"
   );
 });
 
-test("backfill planning repairs catalog models and reports missing capacity", () => {
+test("backfill planning defers OpenRouter rows to exact live resolution", () => {
   const plan = planGatewayModelEconomicsProfileBackfill([
     {
       id: "repairable",
@@ -136,16 +178,116 @@ test("backfill planning repairs catalog models and reports missing capacity", ()
     },
   ]);
 
-  assert.equal(plan.repairable, 1);
-  assert.equal(plan.updates[0]?.profile.model, "z-ai/glm-5.2:free");
+  assert.equal(plan.repairable, 0);
   assert.deepEqual(plan.skipped, [
+    {
+      id: "repairable",
+      provider: "openrouter",
+      model: "z-ai/glm-5.2:free",
+      reason: "openrouter_resolution_required",
+    },
     {
       id: "unrepairable",
       provider: "openrouter",
       model: "opaque-model",
-      reason: "missing_capacity_metadata",
+      reason: "openrouter_resolution_required",
     },
   ]);
+});
+
+test("OpenRouter backfill classifications distinguish operator actions", () => {
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "qwen/qwen3.8-27b",
+      error: { resolvedModelId: "qwen/alias", status: 422 },
+    }),
+    "exact_id_mismatch",
+  );
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "opaque-model",
+      error: { message: "OpenRouter model ID 'opaque-model' must use the exact author/slug form." },
+    }),
+    "router_or_non_exact",
+  );
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "qwen/qwen3.8-27b",
+      error: { status: 401 },
+    }),
+    "authentication_failure",
+  );
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "qwen/qwen3.8-27b",
+      error: { status: 429, retryable: true },
+    }),
+    "provider_transient_failure",
+  );
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "qwen/qwen3.8-27b",
+      profile: {
+        version: 1,
+        profileId: "openrouter:qwen/qwen3.8-27b:v1",
+        provider: "openrouter",
+        model: "qwen/qwen3.8-27b",
+        contextWindowTokens: 8192,
+        maxOutputTokens: 8192,
+        counting: { counter: "utf8", counterVersion: "1", method: "conservative_estimate", confidence: "conservative" },
+        cache: { behavior: "none" },
+      },
+    }),
+    "repairable_equal_capacity",
+  );
+  assert.equal(
+    classifyOpenRouterBackfillResolution({
+      requestedModelId: "qwen/qwen3.8-27b",
+      error: { message: "The gateway model changed while provider details were resolving. Retry the repair.", status: 409, retryable: true },
+    }),
+    "concurrency_or_stale",
+  );
+});
+
+test("backfill assigns disclosed defaults only to identified non-OpenRouter catalogs", () => {
+  const plan = planGatewayModelEconomicsProfileBackfill([
+    {
+      id: "openai-model",
+      organizationId: "org-1",
+      gatewayId: "gateway-1",
+      rawModelId: "gpt-4",
+      modality: "language",
+      approved: true,
+      metadata: { id: "gpt-4" },
+      gatewayProvider: "openai",
+    },
+  ]);
+  assert.equal(plan.updates[0]?.profile.contextWindowTokens, 32_768);
+  assert.equal(
+    plan.updates[0]?.metadata.kestrelEconomicsProfileSource,
+    "kestrel_default",
+  );
+});
+
+test("backfill prefers complete provider capacity over the conservative default", () => {
+  const plan = planGatewayModelEconomicsProfileBackfill([
+    {
+      id: "openai-complete",
+      organizationId: "org-1",
+      gatewayId: "gateway-1",
+      rawModelId: "gpt-4",
+      modality: "language",
+      approved: true,
+      metadata: {
+        id: "gpt-4",
+        context_length: 128_000,
+        max_completion_tokens: 16_000,
+      },
+      gatewayProvider: "openai",
+    },
+  ]);
+  assert.equal(plan.updates[0]?.profile.contextWindowTokens, 128_000);
+  assert.equal(plan.updates[0]?.metadata.kestrelEconomicsProfileSource, undefined);
 });
 
 test("provider catalog field variants cover Lumi and RunPod OpenAI-compatible metadata", () => {
@@ -210,7 +352,7 @@ test("backfill stores the same canonical provider identity as runtime lookup", (
       rawModelId: "Qwen/Qwen3-32B",
       modality: "language",
       approved: true,
-      metadata: { contextWindowTokens: 32_768, maxOutputTokens: 4096 },
+      metadata: { id: "Qwen/Qwen3-32B", contextWindowTokens: 32_768, maxOutputTokens: 4096 },
       gatewayProvider: "runpod",
     },
     {
@@ -222,6 +364,7 @@ test("backfill stores the same canonical provider identity as runtime lookup", (
       approved: true,
       metadata: {
         protocol: "openai",
+        id: "lumi-model",
         context_length: 32_768,
         max_output_tokens: 4096,
       },

@@ -5,7 +5,7 @@ section: operate
 audience: integrators
 status: active
 sourceKind: curated
-updatedAt: 2026-08-16
+updatedAt: 2026-08-22
 ---
 
 Advancing the protected `production` branch lets Vercel natively deploy `one`
@@ -21,6 +21,13 @@ Before starting, record the intended targets, operator, readable image tag, and
 current provider image for every Machine or Environment in scope. Run
 `pnpm validate`, then verify the local `vercel`, `fly`, and Docker sessions.
 
+Each catalog role has a repository-owned rollout overlay. Read the selected
+overlay before publication: Preview Edge owns ingress and public preview proof;
+the turn worker owns capacity and durable turn proof; the control worker owns
+consumer, reconciliation, and Knowledge proof; the managed RunPod worker owns
+provider-spend and managed-work proof; and the paired runtime rollout owns one
+canary Environment, activation, and per-Environment updates.
+
 ## Publish one image
 
 Choose a readable tag and publish one role:
@@ -30,7 +37,9 @@ pnpm production:image:publish --role <role> --tag <tag>
 ```
 
 The command builds for `linux/amd64`, runs that role's image smoke, and pushes
-the tag. It does not inspect Git history or deploy anything.
+the tag. It does not inspect Git history or deploy anything. Image smoke is
+publication evidence only: it never proves production configuration, provider
+state, consumer registration, reconciliation, or live work delivery.
 
 ## Update one platform Machine
 
@@ -45,8 +54,11 @@ Review the current provider record and type back the exact target. The command
 uses provider-native `fly machine update` for one Machine. Repeat explicitly for
 another Machine. Rollback is the same command with the prior tag.
 
-An image update preserves a stopped Machine's state. Start that exact Machine
-explicitly with `fly machine start <machine-id> --app <app>` when it should run.
+Inventory every Machine state first. Update and verify started Machines before
+stopped Machines, one exact target per command. An image update preserves a
+stopped Machine's state; do not start a standby merely to verify its image.
+Filter status and logs to the exact Machine and require the role overlay's live
+work-delivery proof before continuing.
 
 Staged Fly secrets are separate and app-wide. Review their status and activate
 them deliberately with `fly secrets deploy --app <app>`. Image commands never
@@ -75,14 +87,18 @@ pnpm --dir apps/web production:runtime:activate \
 The commands trust the Vercel-authenticated operator, record that provider
 identity, and never accept a user ID to impersonate. Activation affects new
 provisioning only. Every other Environment requires its own explicit update.
-There is no batch rollout or background promotion.
+There is no batch rollout or background promotion. Never activate a mixed-tag
+Router and Workspace pair, and never treat an image smoke or completed update
+operation as a substitute for both live canaries.
 
 ## Evidence boundary
 
 Mock tests prove command contracts. Disposable Fly and RunPod resources prove
 isolated provider behavior. Neither proves production. Production proof comes
 only from the real Vercel migration/deployment result or exact production
-provider and Environment-operation evidence.
+provider and Environment-operation evidence. If a role cannot safely produce
+its required work evidence, stop and record the missing gate; do not create
+provider spend, start a standby, or widen the rollout merely to close it.
 
 Close the release with the Vercel deployment and migration results, every
 published role/tag, each selected Machine's before/after provider record and
