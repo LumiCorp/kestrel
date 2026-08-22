@@ -7,7 +7,10 @@ import {
 } from "@/lib/environments/daily-backup-contract";
 import { parseEnvironmentWorkerAttempt } from "@/lib/environments/worker-failure";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
-import { KNOWLEDGE_DOCUMENT_QUEUE } from "@/lib/knowledge/documents/constants";
+import {
+  KNOWLEDGE_DOCUMENT_QUEUE,
+  LEGACY_KNOWLEDGE_DOCUMENT_QUEUE,
+} from "@/lib/knowledge/documents/constants";
 import { knowledgeQueueState } from "@/lib/knowledge/queue-state";
 
 const LEGACY_ORGANIZATION_DELETION_QUEUE = "organization.deletion";
@@ -35,9 +38,24 @@ const MANAGED_RUNPOD_RUN_OPTIONS = {
   retryDelay: 15,
   retryBackoff: true,
 } as const;
+const KNOWLEDGE_DOCUMENT_EXPIRE_SECONDS = 60 * 60;
+const KNOWLEDGE_DOCUMENT_HEARTBEAT_SECONDS = 60;
+const KNOWLEDGE_DOCUMENT_HEARTBEAT_REFRESH_SECONDS = 30;
+const KNOWLEDGE_DOCUMENT_RETRY_LIMIT = 2;
+const KNOWLEDGE_DOCUMENT_RECONCILE_INTERVAL_MS = 60_000;
 const NONTERMINAL_JOB_STATES = new Set(["active", "created", "retry"]);
+const TERMINAL_JOB_STATES = new Set(["completed", "cancelled", "failed"]);
 let environmentMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
 let environmentMaintenanceRunning = false;
+let knowledgeMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
+let knowledgeMaintenanceRunning = false;
+let knowledgeWorkerDrain: Promise<void> = Promise.resolve();
+let controlWorkersStopPromise: Promise<void> | null = null;
+
+type KnowledgeDocumentJobData = {
+  runId?: unknown;
+  documentId?: unknown;
+};
 
 async function sendManagedRunPodRun(boss: PgBoss, runId: string) {
   await boss.send(
@@ -68,7 +86,18 @@ async function createBoss() {
   });
 
   await boss.start();
-  await boss.createQueue(KNOWLEDGE_DOCUMENT_QUEUE);
+  await boss.createQueue(LEGACY_KNOWLEDGE_DOCUMENT_QUEUE);
+  await boss.createQueue(KNOWLEDGE_DOCUMENT_QUEUE, {
+    policy: "singleton",
+    expireInSeconds: KNOWLEDGE_DOCUMENT_EXPIRE_SECONDS,
+    heartbeatSeconds: KNOWLEDGE_DOCUMENT_HEARTBEAT_SECONDS,
+    retryLimit: KNOWLEDGE_DOCUMENT_RETRY_LIMIT,
+  });
+  await boss.updateQueue(KNOWLEDGE_DOCUMENT_QUEUE, {
+    expireInSeconds: KNOWLEDGE_DOCUMENT_EXPIRE_SECONDS,
+    heartbeatSeconds: KNOWLEDGE_DOCUMENT_HEARTBEAT_SECONDS,
+    retryLimit: KNOWLEDGE_DOCUMENT_RETRY_LIMIT,
+  });
   await boss.createQueue(ENVIRONMENT_OPERATION_QUEUE, {
     expireInSeconds: ENVIRONMENT_OPERATION_EXPIRE_SECONDS,
     heartbeatSeconds: ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS,
@@ -123,32 +152,6 @@ async function createBoss() {
   return boss;
 }
 
-export async function getKnowledgeBoss() {
-  if (!knowledgeQueueState.bossPromise) {
-    knowledgeQueueState.bossPromise = createBoss();
-  }
-
-  const boss = await knowledgeQueueState.bossPromise;
-  if (!knowledgeQueueState.workersRegistered) {
-    knowledgeQueueState.workersRegistered = true;
-    await boss.work(
-      KNOWLEDGE_DOCUMENT_QUEUE,
-      async (jobs: Array<{ data?: unknown }>) => {
-        const { processKnowledgeDocumentRun } =
-          await import("@/lib/knowledge/documents/process-runtime");
-        for (const job of jobs) {
-          const payload = job.data as { runId?: string } | null;
-          if (payload?.runId) {
-            await processKnowledgeDocumentRun(payload.runId);
-          }
-        }
-      },
-    );
-  }
-
-  return boss;
-}
-
 async function getKnowledgeBossProducer() {
   if (!knowledgeQueueState.bossPromise) {
     knowledgeQueueState.bossPromise = createBoss();
@@ -192,9 +195,93 @@ export async function startManagedRunPodWorker() {
   return boss;
 }
 
-export async function enqueueKnowledgeDocumentRun(runId: string) {
-  const boss = await getKnowledgeBoss();
-  await boss.send(KNOWLEDGE_DOCUMENT_QUEUE, { runId });
+async function findKnowledgeDocumentJobs(boss: PgBoss, runId: string) {
+  const [currentJob, legacyJobs] = await Promise.all([
+    boss.getJobById<KnowledgeDocumentJobData>(KNOWLEDGE_DOCUMENT_QUEUE, runId),
+    boss.findJobs<KnowledgeDocumentJobData>(LEGACY_KNOWLEDGE_DOCUMENT_QUEUE, {
+      data: { runId },
+    }),
+  ]);
+  return [
+    ...(currentJob ? [{ queueName: KNOWLEDGE_DOCUMENT_QUEUE, job: currentJob }] : []),
+    ...legacyJobs.map((job) => ({
+      queueName: LEGACY_KNOWLEDGE_DOCUMENT_QUEUE,
+      job,
+    })),
+  ];
+}
+
+export async function ensureKnowledgeDocumentRunQueued(input: {
+  runId: string;
+  documentId: string;
+}) {
+  const boss = await getKnowledgeBossProducer();
+  return knowledgeDb.transaction(async (transaction) => {
+    await transaction.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`knowledge-document-queue:${input.runId}`}, 0))`,
+    );
+    const [run] = await transaction
+      .select({
+        documentId: schema.knowledgeIngestionRuns.documentId,
+        status: schema.knowledgeIngestionRuns.status,
+      })
+      .from(schema.knowledgeIngestionRuns)
+      .where(eq(schema.knowledgeIngestionRuns.id, input.runId))
+      .limit(1)
+      .for("update");
+    if (!run) {
+      throw new Error("Knowledge ingestion run not found.");
+    }
+    if (run.documentId !== input.documentId) {
+      throw new Error("Knowledge ingestion run does not match its document.");
+    }
+    if (run.status !== "queued" && run.status !== "running") {
+      return { disposition: "skipped" as const, deletedTerminalJobs: 0 };
+    }
+    const existingJobs = await findKnowledgeDocumentJobs(boss, input.runId);
+    if (
+      existingJobs.some(({ job }) => NONTERMINAL_JOB_STATES.has(job.state))
+    ) {
+      return { disposition: "preserved" as const, deletedTerminalJobs: 0 };
+    }
+
+    let deletedTerminalJobs = 0;
+    for (const { queueName, job } of existingJobs) {
+      if (!TERMINAL_JOB_STATES.has(job.state)) continue;
+      await boss.deleteJob(queueName, job.id);
+      deletedTerminalJobs += 1;
+    }
+
+    const jobId = await boss.send(
+      KNOWLEDGE_DOCUMENT_QUEUE,
+      { runId: input.runId, documentId: input.documentId },
+      {
+        id: input.runId,
+        singletonKey: input.documentId,
+        expireInSeconds: KNOWLEDGE_DOCUMENT_EXPIRE_SECONDS,
+        heartbeatSeconds: KNOWLEDGE_DOCUMENT_HEARTBEAT_SECONDS,
+        retryLimit: KNOWLEDGE_DOCUMENT_RETRY_LIMIT,
+      },
+    );
+    if (jobId) {
+      return { disposition: "recovered" as const, deletedTerminalJobs };
+    }
+
+    const concurrentJobs = await findKnowledgeDocumentJobs(boss, input.runId);
+    if (
+      concurrentJobs.some(({ job }) => NONTERMINAL_JOB_STATES.has(job.state))
+    ) {
+      return { disposition: "preserved" as const, deletedTerminalJobs };
+    }
+    throw new Error("The Knowledge document queue rejected the job.");
+  });
+}
+
+export async function enqueueKnowledgeDocumentRun(input: {
+  runId: string;
+  documentId: string;
+}) {
+  await ensureKnowledgeDocumentRunQueued(input);
 }
 
 function environmentOperationJobOptions(
@@ -439,6 +526,124 @@ async function processOrganizationDeletionJobs(
   }
 }
 
+async function processKnowledgeDocumentJobs(
+  jobs: Array<JobWithMetadata<KnowledgeDocumentJobData>>,
+) {
+  const next = knowledgeWorkerDrain.catch(() => {}).then(async () => {
+    const { processKnowledgeDocumentRun } =
+      await import("@/lib/knowledge/documents/process-runtime");
+    for (const job of jobs) {
+      if (typeof job.data?.runId !== "string") {
+        throw new Error("Knowledge document job is missing a runId.");
+      }
+      try {
+        await processKnowledgeDocumentRun(job.data.runId, {
+          expectedDocumentId:
+            typeof job.data.documentId === "string"
+              ? job.data.documentId
+              : undefined,
+          finalAttempt: job.retryCount >= job.retryLimit,
+        });
+      } catch (error) {
+        console.error("Knowledge document worker attempt failed.", {
+          runId: job.data.runId,
+          retryCount: job.retryCount,
+          retryLimit: job.retryLimit,
+          finalAttempt: job.retryCount >= job.retryLimit,
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+        throw error;
+      }
+    }
+  });
+  knowledgeWorkerDrain = next.catch(() => {});
+  return next;
+}
+
+export async function reconcileKnowledgeDocumentQueue() {
+  const boss = await getKnowledgeBossProducer();
+  const runs = await knowledgeDb.query.knowledgeIngestionRuns.findMany({
+    where: (table, { inArray }) =>
+      inArray(table.status, ["queued", "running"]),
+    columns: {
+      id: true,
+      documentId: true,
+      createdAt: true,
+    },
+    orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)],
+  });
+  const summary = {
+    scanned: 0,
+    preserved: 0,
+    recovered: 0,
+    skipped: 0,
+    deletedTerminalJobs: 0,
+    oldestQueuedRunAgeMs: runs[0]
+      ? Math.max(0, Date.now() - runs[0].createdAt.getTime())
+      : 0,
+  };
+
+  for (let offset = 0; offset < runs.length; offset += 100) {
+    const batch = runs.slice(offset, offset + 100);
+    for (const run of batch) {
+      const result = await ensureKnowledgeDocumentRunQueued({
+        runId: run.id,
+        documentId: run.documentId,
+      });
+      summary.scanned += 1;
+      summary[result.disposition] += 1;
+      summary.deletedTerminalJobs += result.deletedTerminalJobs;
+    }
+  }
+
+  console.info("Knowledge document queue reconciliation completed.", summary);
+  return summary;
+}
+
+async function runKnowledgeMaintenance() {
+  if (knowledgeMaintenanceRunning) return;
+  knowledgeMaintenanceRunning = true;
+  try {
+    await reconcileKnowledgeDocumentQueue();
+  } finally {
+    knowledgeMaintenanceRunning = false;
+  }
+}
+
+export async function startKnowledgeDocumentWorker() {
+  const boss = await getKnowledgeBossProducer();
+  if (knowledgeQueueState.workersRegistered) return boss;
+  const workOptions = {
+    batchSize: 1,
+    includeMetadata: true as const,
+    heartbeatRefreshSeconds: KNOWLEDGE_DOCUMENT_HEARTBEAT_REFRESH_SECONDS,
+  };
+  await boss.work(
+    KNOWLEDGE_DOCUMENT_QUEUE,
+    workOptions,
+    processKnowledgeDocumentJobs,
+  );
+  await boss.work(
+    LEGACY_KNOWLEDGE_DOCUMENT_QUEUE,
+    workOptions,
+    processKnowledgeDocumentJobs,
+  );
+  knowledgeQueueState.workersRegistered = true;
+  console.info("Knowledge document workers registered.", {
+    queues: [KNOWLEDGE_DOCUMENT_QUEUE, LEGACY_KNOWLEDGE_DOCUMENT_QUEUE],
+    concurrency: 1,
+  });
+  await reconcileKnowledgeDocumentQueue();
+  knowledgeMaintenanceTimer = setInterval(() => {
+    void runKnowledgeMaintenance().catch((error) => {
+      console.error("Knowledge document queue reconciliation failed.", {
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    });
+  }, KNOWLEDGE_DOCUMENT_RECONCILE_INTERVAL_MS);
+  return boss;
+}
+
 export async function startEnvironmentLifecycleWorker() {
   const boss = await getKnowledgeBossProducer();
   if (knowledgeQueueState.environmentWorkersRegistered) return boss;
@@ -562,16 +767,40 @@ export async function enqueueTurnWorkerCapacityOperation(operationId: string) {
   }
 }
 
-export async function stopEnvironmentLifecycleWorker() {
+async function stopControlWorkersOnce() {
   if (environmentMaintenanceTimer) {
     clearInterval(environmentMaintenanceTimer);
     environmentMaintenanceTimer = null;
   }
-  if (!knowledgeQueueState.bossPromise) return;
-  const boss = await knowledgeQueueState.bossPromise;
-  await boss.stop({ graceful: true, timeout: 30_000 });
-  knowledgeQueueState.bossPromise = null;
-  knowledgeQueueState.environmentWorkersRegistered = false;
+  if (knowledgeMaintenanceTimer) {
+    clearInterval(knowledgeMaintenanceTimer);
+    knowledgeMaintenanceTimer = null;
+  }
+  const bossPromise = knowledgeQueueState.bossPromise;
+  try {
+    if (bossPromise) {
+      const boss = await bossPromise;
+      await boss.stop({ graceful: true, timeout: 30_000 });
+    }
+  } finally {
+    knowledgeQueueState.bossPromise = null;
+    knowledgeQueueState.workersRegistered = false;
+    knowledgeQueueState.environmentWorkersRegistered = false;
+    knowledgeQueueState.managedRunPodWorkersRegistered = false;
+    environmentMaintenanceRunning = false;
+    knowledgeMaintenanceRunning = false;
+    knowledgeWorkerDrain = Promise.resolve();
+  }
+}
+
+export async function stopControlWorkers() {
+  if (controlWorkersStopPromise) return controlWorkersStopPromise;
+  controlWorkersStopPromise = stopControlWorkersOnce();
+  try {
+    await controlWorkersStopPromise;
+  } finally {
+    controlWorkersStopPromise = null;
+  }
 }
 
 export async function enqueueManagedRunPodRun(runId: string) {

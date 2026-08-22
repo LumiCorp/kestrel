@@ -6,6 +6,8 @@ import JSZip from "jszip";
 import mammoth from "mammoth";
 import { PDFParse } from "pdf-parse";
 import { read, utils } from "xlsx";
+import { chunkKnowledgeDocument } from "../../../lib/knowledge/documents/chunk";
+import { extractKnowledgeDocument } from "../../../lib/knowledge/documents/extract";
 
 
 const fixtureRoot = path.join(
@@ -90,5 +92,30 @@ test("fixture corpus files are parsable and contain their anchors", async () => 
       default:
         throw new Error(`Unhandled fixture media type: ${fixture.mediaType}`);
     }
+  }
+});
+
+test("Knowledge extraction produces searchable HTML and PPTX chunks", async () => {
+  const manifest = await readManifest();
+  const fixtures = manifest.fixtures.filter((fixture) =>
+    [
+      "text/html",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ].includes(fixture.mediaType),
+  );
+  assert.equal(fixtures.length, 2);
+
+  for (const fixture of fixtures) {
+    const extracted = await extractKnowledgeDocument({
+      buffer: await readFile(path.join(fixtureRoot, fixture.filename)),
+      filename: fixture.filename,
+      mediaType: fixture.mediaType,
+    });
+    const chunks = chunkKnowledgeDocument(extracted.blocks);
+    assert.ok(chunks.length > 0);
+    assert.match(
+      chunks.map((chunk) => chunk.content).join("\n"),
+      new RegExp(fixture.anchor),
+    );
   }
 });

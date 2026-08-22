@@ -48,7 +48,7 @@ export async function reindexKnowledgeDocumentForUser(input: {
     manage: true,
   });
 
-  const run = await queueKnowledgeDocumentReindex({
+  const { run, created } = await queueKnowledgeDocumentReindex({
     organizationId: input.organizationId,
     documentId: document.id,
     requestedByUserId: input.requestedByUserId,
@@ -56,7 +56,9 @@ export async function reindexKnowledgeDocumentForUser(input: {
 
   return {
     run,
-    message: `Reindex started for ${document.filename}.`,
+    message: created
+      ? `Reindex started for ${document.filename}.`
+      : `Reindex is already queued or in progress for ${document.filename}.`,
   };
 }
 

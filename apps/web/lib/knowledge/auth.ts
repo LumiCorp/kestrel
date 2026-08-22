@@ -3,6 +3,7 @@ import { forbidden, redirect, unauthorized } from "next/navigation";
 import { auth as betterAuth } from "@/lib/auth";
 import type { OrganizationSnapshot, Session } from "@/lib/auth-types";
 import { ensureOrganizationDefaultEnvironment } from "@/lib/environments/store";
+import { isAdminUser, parseAdminUserIds } from "@/lib/knowledge/admin-user";
 import { knowledgeDb } from "@/lib/knowledge/db";
 import { canManageOrganization } from "@/lib/knowledge/organization-access";
 import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
@@ -24,26 +25,7 @@ async function getServerSessionStrict(): Promise<Session | null> {
   })) as Session | null;
 }
 
-export function parseAdminUserIds(): Set<string> {
-  const raw = process.env.ADMIN_USER_IDS ?? "";
-  return new Set(
-    raw
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean),
-  );
-}
-
-export function isAdminUser(
-  user: { id?: string | null; role?: string | null } | null | undefined,
-) {
-  if (!(user?.id || user?.role)) {
-    return false;
-  }
-
-  const adminIds = parseAdminUserIds();
-  return user?.role === "admin" || (user?.id ? adminIds.has(user.id) : false);
-}
+export { isAdminUser, parseAdminUserIds };
 
 export async function requireSession(request?: Request) {
   if (request && new URL(request.url).pathname.startsWith("/api/mobile/v2/")) {

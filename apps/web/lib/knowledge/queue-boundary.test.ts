@@ -39,6 +39,29 @@ test("knowledge queue status does not eagerly load worker runtimes", async () =>
   assert.match(queueSource, /ENVIRONMENT_OPERATION_HEARTBEAT_SECONDS = 60/u);
   assert.match(queueSource, /heartbeatRefreshSeconds:\s*ENVIRONMENT_OPERATION_HEARTBEAT_REFRESH_SECONDS/u);
   assert.match(queueSource, /export async function startEnvironmentLifecycleWorker/u);
+  assert.match(queueSource, /export async function startKnowledgeDocumentWorker/u);
+  assert.match(queueSource, /export async function reconcileKnowledgeDocumentQueue/u);
+  assert.match(queueSource, /export async function stopControlWorkers/u);
+  assert.doesNotMatch(queueSource, /export async function getKnowledgeBoss\(/u);
+  assert.match(
+    queueSource,
+    /export async function ensureKnowledgeDocumentRunQueued[\s\S]*getKnowledgeBossProducer\(\)/u,
+  );
+  assert.match(
+    queueSource,
+    /export async function enqueueKnowledgeDocumentRun[\s\S]*ensureKnowledgeDocumentRunQueued\(input\)/u,
+  );
+  assert.match(queueSource, /id:\s*input\.runId/u);
+  assert.match(queueSource, /singletonKey:\s*input\.documentId/u);
+  assert.match(queueSource, /LEGACY_KNOWLEDGE_DOCUMENT_QUEUE/u);
+  assert.match(queueSource, /pg_advisory_xact_lock\(hashtextextended\([\s\S]*knowledge-document-queue:/u);
+  assert.match(queueSource, /deletedTerminalJobs/u);
+  assert.match(queueSource, /\.for\("update"\)/u);
+  assert.match(
+    queueSource,
+    /run\.status !== "queued" && run\.status !== "running"/u,
+  );
+  assert.match(queueSource, /controlWorkersStopPromise/u);
   assert.match(queueSource, /export async function reconcileEnvironmentOperationQueue/u);
   assert.match(queueSource, /await reconcileTerminalWorkspaceBackupRecords\(\)/u);
   assert.match(queueSource, /isParentOwnedWorkspaceBackup\(operation\.input\)/u);
@@ -59,7 +82,16 @@ test("knowledge queue status does not eagerly load worker runtimes", async () =>
   assert.doesNotMatch(environmentAdminSource, /retryTerminal/u);
   assert.doesNotMatch(documentRuntimeSource, /documents\/process-runtime/u);
   assert.doesNotMatch(documentRuntimeSource, /from ["']\.\/extract["']/u);
+  assert.match(documentRuntimeSource, /createOrReuseKnowledgeIngestionRun/u);
+  assert.match(documentRuntimeSource, /ensureKnowledgeDocumentIngestion/u);
+  assert.match(
+    documentRuntimeSource,
+    /status === "ready" \|\| input\.document\.status === "partial"/u,
+  );
   assert.match(processRuntimeSource, /from ["']\.\/extract["']/u);
+  assert.match(processRuntimeSource, /pg_advisory_lock\(hashtextextended/u);
+  assert.match(processRuntimeSource, /run\.status === "completed" \|\| run\.status === "failed"/u);
+  assert.match(processRuntimeSource, /buildKnowledgeIngestionRetryState/u);
   assert.doesNotMatch(pageDataSource, /knowledge\/queue-state/u);
   assert.doesNotMatch(pageDataSource, /knowledge\/queue["']/u);
   assert.doesNotMatch(documentsRouteSource, /knowledge\/queue-state/u);

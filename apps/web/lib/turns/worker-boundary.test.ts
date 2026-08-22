@@ -394,7 +394,16 @@ test("the dedicated control worker owns durable platform lifecycle queues", asyn
     "utf8",
   );
   assert.match(source, /startEnvironmentLifecycleWorker/u);
-  assert.match(source, /stopEnvironmentLifecycleWorker/u);
+  assert.match(source, /startKnowledgeDocumentWorker/u);
+  assert.match(source, /stopControlWorkers/u);
+  assert.match(
+    source,
+    /await startEnvironmentLifecycleWorker\(\);\s*await startKnowledgeDocumentWorker\(\);\s*health\.markReady\(\)/u,
+  );
+  assert.match(
+    source,
+    /main\(\)\.catch[\s\S]*stopControlWorkers\(\)/u,
+  );
   assert.match(source, /startWorkerHealthServer/u);
   assert.doesNotMatch(source, /releaseControllerHeartbeats/u);
   assert.doesNotMatch(source, /RELEASE_CONTROLLER_CONTRACT_REVISION/u);

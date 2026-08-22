@@ -275,3 +275,171 @@ test(
     });
   },
 );
+
+test(
+  "Knowledge ingestion reuses one active run and repairs its terminal queue job",
+  async (context) => {
+    assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.POSTGRES_URL = databaseUrl;
+    const [queue, queueState, store, constants, { resetDbRuntimeForTests }] =
+      await Promise.all([
+        import("./queue"),
+        import("./queue-state"),
+        import("./documents/store"),
+        import("./documents/constants"),
+        import("@/lib/db/runtime"),
+      ]);
+    const sql = postgres(databaseUrl, { max: 2 });
+    const boss = new PgBoss({ connectionString: databaseUrl, migrate: true });
+    await boss.start();
+    await boss.createQueue(constants.LEGACY_KNOWLEDGE_DOCUMENT_QUEUE);
+    await boss.createQueue(constants.KNOWLEDGE_DOCUMENT_QUEUE, {
+      policy: "singleton",
+      retryLimit: 2,
+      expireInSeconds: 3600,
+      heartbeatSeconds: 60,
+    });
+    queueState.knowledgeQueueState.databaseUrl = databaseUrl;
+    queueState.knowledgeQueueState.bossPromise = Promise.resolve(boss);
+
+    const suffix = crypto.randomUUID();
+    const userId = `knowledge-queue-user-${suffix}`;
+    const organizationId = `knowledge-queue-org-${suffix}`;
+    const blobId = `knowledge-queue-blob-${suffix}`;
+    const fileId = `knowledge-queue-file-${suffix}`;
+    const documentId = crypto.randomUUID();
+    let runId: string | null = null;
+
+    context.after(async () => {
+      await boss.stop({ graceful: true, timeout: 5000 }).catch(() => {});
+      queueState.knowledgeQueueState.bossPromise = null;
+      queueState.knowledgeQueueState.workersRegistered = false;
+      if (runId) {
+        await sql`DELETE FROM pgboss.job WHERE data->>'runId' = ${runId}`;
+      }
+      await sql`DELETE FROM "knowledge_ingestion_runs" WHERE "document_id" = ${documentId}`;
+      await sql`DELETE FROM "knowledge_documents" WHERE "id" = ${documentId}`;
+      await sql`DELETE FROM "kestrel_files" WHERE "id" = ${fileId}`;
+      await sql`DELETE FROM "file_blobs" WHERE "id" = ${blobId}`;
+      await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await resetDbRuntimeForTests();
+      await sql.end({ timeout: 0 });
+    });
+
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "user" (
+          "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+        ) VALUES (
+          ${userId}, 'Knowledge Queue User', ${`${userId}@example.test`}, true,
+          now(), now()
+        )
+      `;
+      await transaction`
+        INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+        VALUES (
+          ${organizationId}, 'Knowledge Queue Org',
+          ${`knowledge-queue-org-${suffix}`}, now()
+        )
+      `;
+      await transaction`
+        INSERT INTO "file_blobs" (
+          "id", "organization_id", "object_key", "size_bytes", "sha256",
+          "scan_status"
+        ) VALUES (
+          ${blobId}, ${organizationId}, ${`knowledge-queue/${suffix}`}, 12,
+          ${"a".repeat(64)}, 'clean'
+        )
+      `;
+      await transaction`
+        INSERT INTO "kestrel_files" (
+          "id", "organization_id", "uploader_user_id", "blob_id", "filename",
+          "declared_media_type", "detected_media_type", "size_bytes", "sha256",
+          "lifecycle_state"
+        ) VALUES (
+          ${fileId}, ${organizationId}, ${userId}, ${blobId}, 'queue-test.html',
+          'text/html', 'text/html', 12, ${"a".repeat(64)}, 'ready'
+        )
+      `;
+      await transaction`
+        INSERT INTO "knowledge_documents" (
+          "id", "file_id", "organization_id", "scope", "uploader_user_id",
+          "filename", "original_filename", "media_type", "size_bytes",
+          "checksum_sha256", "storage_key", "status"
+        ) VALUES (
+          ${documentId}, ${fileId}, ${organizationId}, 'organization', ${userId},
+          'queue-test.html', 'queue-test.html', 'text/html', 12,
+          ${"a".repeat(64)}, ${`knowledge-queue/${suffix}`}, 'uploaded'
+        )
+      `;
+    });
+
+    const attempts = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        store.createOrReuseKnowledgeIngestionRun({
+          organizationId,
+          documentId,
+          requestedByUserId: userId,
+        }),
+      ),
+    );
+    runId = attempts[0]?.run.id ?? null;
+    assert.ok(runId);
+    assert.equal(attempts.filter((attempt) => attempt.created).length, 1);
+    assert.equal(new Set(attempts.map((attempt) => attempt.run.id)).size, 1);
+
+    await Promise.all(
+      Array.from({ length: 5 }, () =>
+        queue.enqueueKnowledgeDocumentRun({ runId, documentId }),
+      ),
+    );
+    const [queued] = await sql<Array<{ count: number }>>`
+      SELECT count(*)::int AS count FROM pgboss.job
+      WHERE name = ${constants.KNOWLEDGE_DOCUMENT_QUEUE}
+        AND data->>'runId' = ${runId}
+        AND state IN ('active', 'created', 'retry')
+    `;
+    assert.equal(queued?.count, 1);
+
+    await boss.work(constants.KNOWLEDGE_DOCUMENT_QUEUE, async () => {});
+    await waitForJobState(sql, runId, "completed");
+    await boss.offWork(constants.KNOWLEDGE_DOCUMENT_QUEUE);
+    const repaired = await queue.ensureKnowledgeDocumentRunQueued({
+      runId,
+      documentId,
+    });
+    assert.equal(repaired.disposition, "recovered");
+    assert.equal(repaired.deletedTerminalJobs, 1);
+    const [requeued] = await sql<Array<{ count: number }>>`
+      SELECT count(*)::int AS count FROM pgboss.job
+      WHERE name = ${constants.KNOWLEDGE_DOCUMENT_QUEUE}
+        AND id = ${runId}::uuid
+        AND state = 'created'
+    `;
+    assert.equal(requeued?.count, 1);
+
+    await boss.work(constants.KNOWLEDGE_DOCUMENT_QUEUE, async () => {});
+    await waitForJobState(sql, runId, "completed");
+    await boss.offWork(constants.KNOWLEDGE_DOCUMENT_QUEUE);
+    await sql`
+      UPDATE "knowledge_ingestion_runs"
+      SET "status" = 'completed', "finished_at" = now(), "updated_at" = now()
+      WHERE "id" = ${runId}
+    `;
+    const skipped = await queue.ensureKnowledgeDocumentRunQueued({
+      runId,
+      documentId,
+    });
+    assert.equal(skipped.disposition, "skipped");
+    assert.equal(skipped.deletedTerminalJobs, 0);
+    const [preservedTerminal] = await sql<Array<{ count: number }>>`
+      SELECT count(*)::int AS count FROM pgboss.job
+      WHERE name = ${constants.KNOWLEDGE_DOCUMENT_QUEUE}
+        AND id = ${runId}::uuid
+        AND state = 'completed'
+    `;
+    assert.equal(preservedTerminal?.count, 1);
+  },
+);
