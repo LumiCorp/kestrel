@@ -48,8 +48,78 @@ const gatewayFixture = {
         },
       ],
     },
+    {
+      gateway: {
+        id: "gateway-openrouter",
+        provider: "openrouter",
+        displayName: "OpenRouter",
+        enabled: true,
+        hasApiKey: true,
+        supportedModalities: ["language"],
+        updatedAt: "2026-08-22T00:00:00.000Z",
+      },
+      models: [
+        {
+          id: "model-gpt-5-6-luna",
+          rawModelId: "openai/gpt-5.6-luna",
+          alias: "GPT 5.6 Luna",
+          modality: "language",
+          approved: false,
+          isDefault: false,
+          description: "OpenAI: GPT-5.6 Luna",
+          metadata: null,
+          economicsAdmission: { status: "needs_profile" },
+        },
+      ],
+    },
+    {
+      gateway: {
+        id: "gateway-runpod",
+        provider: "runpod",
+        displayName: "RunPod",
+        enabled: true,
+        hasApiKey: true,
+        supportedModalities: ["language"],
+        updatedAt: "2026-08-22T00:00:00.000Z",
+      },
+      models: [
+        {
+          id: "model-runpod-unvalidated",
+          rawModelId: "openai-compatible-model",
+          alias: null,
+          modality: "language",
+          approved: false,
+          isDefault: false,
+          description: "Unvalidated RunPod model",
+          metadata: null,
+          economicsAdmission: { status: "needs_profile" },
+        },
+      ],
+    },
   ],
 };
+
+function gatewayFixtureWithApprovedOpenRouterModel() {
+  return {
+    gateways: gatewayFixture.gateways.map((bundle) =>
+      bundle.gateway.id === "gateway-openrouter"
+        ? {
+            ...bundle,
+            models: bundle.models.map((model) => ({
+              ...model,
+              approved: true,
+              economicsAdmission: {
+                status: "ready",
+                contextWindowTokens: 1_050_000,
+                maxOutputTokens: 128_000,
+                source: "provider_detail",
+              },
+            })),
+          }
+        : bundle,
+    ),
+  };
+}
 
 test.beforeEach(async ({ page, request }) => {
   const signInResponse = await request.post("/api/auth/sign-in/email", {
@@ -146,6 +216,125 @@ test("Models resets provider-scoped filters when switching catalogs", async ({
   await expect(page.getByLabel("Model modality counts")).toContainText(
     "1 Language",
   );
+});
+
+test("Models lets approval initiate OpenRouter economics admission", async ({
+  page,
+}) => {
+  let approved = false;
+  let releaseApproval = () => {};
+  const approvalHeld = new Promise<void>((resolve) => {
+    releaseApproval = resolve;
+  });
+  await page.unroute("**/api/organization/ai/gateways");
+  await page.route("**/api/organization/ai/gateways", async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(
+          approved
+            ? gatewayFixtureWithApprovedOpenRouterModel()
+            : gatewayFixture,
+        ),
+        status: 200,
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.route(
+    "**/api/organization/ai/gateways/gateway-openrouter/models",
+    async (route) => {
+      expect(route.request().method()).toBe("POST");
+      expect(route.request().postDataJSON()).toMatchObject({
+        id: "model-gpt-5-6-luna",
+        rawModelId: "openai/gpt-5.6-luna",
+        approved: true,
+        isDefault: false,
+      });
+      await approvalHeld;
+      approved = true;
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ model: { id: "model-gpt-5-6-luna" } }),
+        status: 200,
+      });
+    },
+  );
+
+  await page.goto("/organization/models");
+  await page.getByRole("button", { name: /^OpenRouter/u }).click();
+  const row = page
+    .getByRole("row")
+    .filter({ hasText: "openai/gpt-5.6-luna" });
+  const approve = row.getByRole("button", { name: "Approve model" });
+  const makeDefault = row.getByRole("button", { name: "Make default" });
+
+  await expect(approve).toBeEnabled();
+  await expect(makeDefault).toBeDisabled();
+  await approve.click();
+
+  await expect(approve).toBeDisabled();
+  await expect(row.getByText("Unapproved", { exact: true })).toBeVisible();
+  releaseApproval();
+
+  await expect(row.getByText("Approved", { exact: true })).toBeVisible();
+  await expect(row).toContainText(
+    "1,050,000 context · 128,000 output · provider_detail",
+  );
+  await expect(makeDefault).toBeEnabled();
+});
+
+test("Models keeps failed OpenRouter admission unapproved and retryable", async ({
+  page,
+}) => {
+  await page.route(
+    "**/api/organization/ai/gateways/gateway-openrouter/models",
+    async (route) => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: "GATEWAY_MODEL_PROVIDER_RESOLUTION_FAILED",
+          error: "OpenRouter could not resolve the exact model ID.",
+          retryable: true,
+        }),
+        status: 503,
+      });
+    },
+  );
+
+  await page.goto("/organization/models");
+  await page.getByRole("button", { name: /^OpenRouter/u }).click();
+  const row = page
+    .getByRole("row")
+    .filter({ hasText: "openai/gpt-5.6-luna" });
+  const approve = row.getByRole("button", { name: "Approve model" });
+
+  await approve.click();
+
+  await expect(
+    page.getByText("OpenRouter could not resolve the exact model ID."),
+  ).toBeVisible();
+  await expect(row.getByText("Unapproved", { exact: true })).toBeVisible();
+  await expect(row.getByText("Needs economics profile")).toBeVisible();
+  await expect(approve).toBeEnabled();
+  await expect(
+    row.getByRole("button", { name: "Make default" }),
+  ).toBeDisabled();
+});
+
+test("Models still requires RunPod validation before approval", async ({
+  page,
+}) => {
+  await page.goto("/organization/models");
+  await page.getByRole("button", { name: /^RunPod/u }).click();
+  const row = page
+    .getByRole("row")
+    .filter({ hasText: "openai-compatible-model" });
+
+  await expect(
+    row.getByRole("button", { name: "Approve model" }),
+  ).toBeDisabled();
 });
 
 test("Models exposes a provider-required empty state", async ({ page }) => {
