@@ -37,8 +37,8 @@ test("turn attachment resolver is a no-store, ticket-bound service boundary", ()
   assert.match(route, /Cache-Control.*no-store/u);
   assert.match(route, /ATTACHMENT_ACCESS_UNAUTHORIZED/u);
   assert.match(route, /ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE/u);
+  assert.match(route, /error\.fileId/u);
   assert.doesNotMatch(route, /request\.json\(/u);
-  assert.doesNotMatch(route, /fileId/u);
   assert.doesNotMatch(route, /organizationId/u);
   assert.doesNotMatch(route, /sourceUrl.*console/u);
 });

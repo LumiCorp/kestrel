@@ -78,23 +78,35 @@ type HostedAttachmentFailureCode =
 class HostedAttachmentResolutionError extends Error {
   readonly code: HostedAttachmentFailureCode;
   readonly retryable: boolean;
+  readonly fileIds: string[];
 
-  constructor(code: HostedAttachmentFailureCode, message = "Attachment resolution failed.") {
+  constructor(
+    code: HostedAttachmentFailureCode,
+    message = "Attachment resolution failed.",
+    fileIds: string[] = [],
+  ) {
     super(message);
     this.name = "HostedAttachmentResolutionError";
     this.code = code;
     this.retryable = code === "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE";
+    this.fileIds = [...new Set(fileIds.filter((fileId) => fileId.length > 0))];
   }
 }
 
-function attachmentFailureMessage(code: HostedAttachmentFailureCode) {
+function attachmentFailureMessage(
+  code: HostedAttachmentFailureCode,
+  fileIds: string[] = [],
+) {
+  const fileHint = fileIds.length > 0
+    ? ` Affected file ID${fileIds.length === 1 ? "" : "s"}: ${fileIds.join(", ")}.`
+    : "";
   switch (code) {
     case "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE":
-      return "The attached file service is temporarily unavailable. The turn will retry.";
+      return `The attached file service is temporarily unavailable. The turn will retry.${fileHint}`;
     case "ATTACHMENT_BLOB_MISSING":
-      return "An attached file is no longer available. Restore it or replace the file before retrying.";
+      return `An attached file is no longer available. Restore it or replace the file before retrying.${fileHint}`;
     case "ATTACHMENT_UNAVAILABLE":
-      return "An attached file is unavailable or no longer permitted in this Thread.";
+      return `An attached file is unavailable or no longer permitted in this Thread.${fileHint}`;
     case "ATTACHMENT_SET_INVALID":
       return "The attached file set no longer matches the submitted message.";
     case "ATTACHMENT_ACCESS_UNAUTHORIZED":
@@ -173,10 +185,13 @@ async function resolveHostedTurnAttachments(input: {
   }
   const body = await response.json().catch(() => null) as {
     attachments?: RunnerTurnAttachment[];
-    error?: { code?: unknown };
+    error?: { code?: unknown; fileId?: unknown };
   } | null;
   if (!response.ok) {
     const code = body?.error?.code;
+    const fileIds = typeof body?.error?.fileId === "string"
+      ? [body.error.fileId]
+      : [];
     if (
       code === "ATTACHMENT_ACCESS_UNAUTHORIZED" ||
       code === "ATTACHMENT_SET_INVALID" ||
@@ -184,13 +199,17 @@ async function resolveHostedTurnAttachments(input: {
       code === "ATTACHMENT_BLOB_MISSING" ||
       code === "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE"
     ) {
-      throw new HostedAttachmentResolutionError(code);
+      throw new HostedAttachmentResolutionError(code, undefined, fileIds);
     }
     throw new HostedAttachmentResolutionError("ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE");
   }
   const attachments = body?.attachments;
   if (!Array.isArray(attachments) || attachments.length !== expected.length) {
-    throw new HostedAttachmentResolutionError("ATTACHMENT_SET_INVALID");
+    throw new HostedAttachmentResolutionError(
+      "ATTACHMENT_SET_INVALID",
+      undefined,
+      expected.map((attachment) => attachment.fileId),
+    );
   }
   const seen = new Set<string>();
   for (const [index, attachment] of attachments.entries()) {
@@ -209,7 +228,11 @@ async function resolveHostedTurnAttachments(input: {
       (source.sizeBytes !== undefined && attachment.sizeBytes !== source.sizeBytes) ||
       (source.mediaType !== undefined && attachment.mimeType !== source.mediaType)
     ) {
-      throw new HostedAttachmentResolutionError("ATTACHMENT_SET_INVALID");
+      throw new HostedAttachmentResolutionError(
+        "ATTACHMENT_SET_INVALID",
+        undefined,
+        [source.fileId],
+      );
     }
     seen.add(attachment.fileId);
   }
@@ -642,6 +665,7 @@ export async function processDurableThreadTurn(
     textPartId: null,
   };
   let waitingCommitted = false;
+  let attachmentFailureFileIds: string[] = [];
   try {
     const [session, storedMessages, thread, scheduleRun, turnContract] = await Promise.all([
       loadWorkerSession(turn.authorUserId),
@@ -693,6 +717,7 @@ export async function processDurableThreadTurn(
       const attachmentIds = attachmentParts(submittedUserMessage?.parts).map(
         (attachment) => attachment.fileId,
       );
+      attachmentFailureFileIds = attachmentIds;
       if (attachmentIds.length > 0) {
         await appendDurableTurnEvent({
           turnId: turn.id,
@@ -717,12 +742,18 @@ export async function processDurableThreadTurn(
             error instanceof HostedAttachmentResolutionError
               ? error.code
               : "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE";
+          const fileIds =
+            error instanceof HostedAttachmentResolutionError && error.fileIds.length > 0
+              ? error.fileIds
+              : attachmentIds;
+          attachmentFailureFileIds = fileIds;
           await appendDurableTurnEvent({
             turnId: turn.id,
             type: "attachment.resolution.failed",
             data: {
               code,
               retryable: code === "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE",
+              fileIds,
             },
           }).catch(() => {});
           throw error;
@@ -1021,6 +1052,10 @@ export async function processDurableThreadTurn(
         : null;
     const attachmentCode =
       error instanceof HostedAttachmentResolutionError ? error.code : null;
+    const attachmentFileIds =
+      error instanceof HostedAttachmentResolutionError && error.fileIds.length > 0
+        ? error.fileIds
+        : attachmentFailureFileIds;
     const stopped =
       cancellationRequested ||
       (await isDurableTurnCancellationRequested(turn.id).catch(() => false));
@@ -1037,7 +1072,7 @@ export async function processDurableThreadTurn(
     }
     const failurePresentation = buildFailurePresentation({
       errorMessage: attachmentCode
-        ? attachmentFailureMessage(attachmentCode)
+        ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
         : message,
       status: stopped ? "cancelled" : "failed",
       turn,
@@ -1066,7 +1101,7 @@ export async function processDurableThreadTurn(
       failureMessage: stopped
         ? null
         : attachmentCode
-          ? attachmentFailureMessage(attachmentCode)
+          ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
           : message,
     });
     return { processed: true, nextTurnId: completion.nextTurnId };

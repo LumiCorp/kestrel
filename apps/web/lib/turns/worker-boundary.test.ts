@@ -61,6 +61,8 @@ test("hosted durable turns resolve attachments through web-owned short-lived acc
   assert.match(runtimeSource, /fetch\(/u);
   assert.match(runtimeSource, /internal\/turn-worker/u);
   assert.match(runtimeSource, /ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE/u);
+  assert.match(runtimeSource, /fileIds/u);
+  assert.match(runtimeSource, /Affected file ID/u);
   assert.match(runtimeSource, /error\.retryable/u);
   assert.match(runtimeSource, /resolvedAttachments/u);
   assert.match(runtimeSource, /checkAvailability: false/u);

@@ -86,6 +86,13 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     code === "APP_CONNECTION_TEST_FAILED"
   ) {
     status = 503;
+  } else if (code === "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE") {
+    status = 503;
+  } else if (
+    code === "ATTACHMENT_BLOB_MISSING" ||
+    code === "ATTACHMENT_UNAVAILABLE"
+  ) {
+    status = 404;
   } else if (code === "TURN_NOT_FOUND") {
     status = 404;
   } else if (code === "TURN_FORBIDDEN") {

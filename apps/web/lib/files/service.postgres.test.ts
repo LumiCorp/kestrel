@@ -117,6 +117,14 @@ test(
       availabilityStatus: "missing",
     });
 
+    const hostedWorkerInventory = await files.listThreadFileInventory({
+      threadId,
+      organizationId,
+      userId,
+      checkAvailability: false,
+    });
+    assert.deepEqual(hostedWorkerInventory, []);
+
     await sql`
       UPDATE "file_blobs"
       SET "availability_status" = 'available'

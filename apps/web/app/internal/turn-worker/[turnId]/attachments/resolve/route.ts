@@ -43,7 +43,12 @@ export async function POST(
     }
     if (error instanceof TurnAttachmentResolutionError) {
       return NextResponse.json(
-        { error: { code: error.code } },
+        {
+          error: {
+            code: error.code,
+            ...(error.fileId ? { fileId: error.fileId } : {}),
+          },
+        },
         {
           status:
             error.code === "ATTACHMENT_ACCESS_UNAUTHORIZED"

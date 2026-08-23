@@ -65,6 +65,9 @@ export async function createPublishedFileFromBuffer(input: {
     ),
   });
   const storage = getManagedFileStorageProvider();
+  if (blob) {
+    await ensureReusableBlob(blob);
+  }
   if (!blob) {
     const blobId = `blob-${randomUUID()}`;
     const objectKey = storage.buildOriginalKey({
@@ -102,6 +105,7 @@ export async function createPublishedFileFromBuffer(input: {
     }
   }
   if (!blob) throw new Error("File blob could not be created.");
+  await ensureReusableBlob(blob);
   const fileId = `file-${randomUUID()}`;
   await knowledgeDb.transaction(async (tx) => {
     await tx.insert(schema.kestrelFiles).values({
@@ -657,6 +661,9 @@ export async function listThreadFileInventory(input: {
       eq(schema.fileScopeGrants.threadId, input.threadId),
       isNull(schema.fileScopeGrants.revokedAt),
       eq(schema.kestrelFiles.lifecycleState, "ready"),
+      input.checkAvailability === false
+        ? eq(schema.fileBlobs.availabilityStatus, "available")
+        : undefined,
     ))
     .orderBy(desc(schema.kestrelFiles.createdAt))
     .limit(Math.min(Math.max(input.limit ?? 50, 1), 100));
@@ -851,6 +858,7 @@ async function finalizeBlobDeduplication(input: {
     ),
   });
   if (existing && existing.id !== input.file.blobId) {
+    await ensureReusableBlob(existing);
     await knowledgeDb.update(schema.kestrelFiles).set({ blobId: existing.id })
       .where(eq(schema.kestrelFiles.id, input.file.id));
     await knowledgeDb.delete(schema.fileBlobs).where(eq(schema.fileBlobs.id, input.file.blobId));
@@ -874,6 +882,7 @@ async function finalizeBlobDeduplication(input: {
       ),
     });
     if (!raced || raced.id === input.file.blobId) throw error;
+    await ensureReusableBlob(raced);
     await knowledgeDb.update(schema.kestrelFiles).set({ blobId: raced.id })
       .where(eq(schema.kestrelFiles.id, input.file.id));
     await knowledgeDb.delete(schema.fileBlobs).where(eq(schema.fileBlobs.id, input.file.blobId));
@@ -882,6 +891,15 @@ async function finalizeBlobDeduplication(input: {
   }
   if (!updated) throw new Error("File blob could not be finalized.");
   return updated;
+}
+
+async function ensureReusableBlob(blob: typeof schema.fileBlobs.$inferSelect) {
+  await ensureFileBlobAvailable({
+    blobId: blob.id,
+    objectKey: blob.objectKey,
+    availabilityStatus: blob.availabilityStatus,
+    deletedAt: blob.deletedAt,
+  });
 }
 
 export async function processStoredFileRepresentation(input: {
