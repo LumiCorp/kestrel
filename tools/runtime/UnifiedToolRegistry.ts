@@ -53,6 +53,8 @@ import {
 } from "../../src/runtime/RuntimeFailure.js";
 import { ExecutionAuthorizationProvider } from "../../src/runtime/ExecutionAuthorizationProvider.js";
 import { defaultToolCatalog } from "../catalog.js";
+import { createBuiltInToolDescriptor } from "../catalog.js";
+import { codeExecuteDefinitionForProfile } from "../code/execute.js";
 import type {
   RuntimeToolRunContext,
   SharedToolContext,
@@ -229,6 +231,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         .toModelTools(builtInNames)
         .map((tool) => [tool.name, tool] as const),
     );
+    const codeExecuteDefinition = codeExecuteDefinitionForProfile(this.builtInContext.codeMode);
+    this.builtInDescriptors.set("code.execute", createBuiltInToolDescriptor(codeExecuteDefinition));
+    this.builtInToolSpecs.set("code.execute", {
+      name: codeExecuteDefinition.name,
+      description: codeExecuteDefinition.description,
+      inputSchema: codeExecuteDefinition.inputSchema,
+    });
 
     this.builtInCapabilities = new Map(
       defaultToolCatalog

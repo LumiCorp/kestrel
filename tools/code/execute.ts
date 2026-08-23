@@ -130,6 +130,19 @@ export const codeExecuteTool: SharedToolModule = {
   },
 };
 
+export function codeExecuteDefinitionForProfile(codeMode: import("../../src/code/contracts.js").CodeModeProfileConfig | undefined) {
+  const definition = structuredClone(codeExecuteTool.definition);
+  const properties = definition.inputSchema.properties as Record<string, unknown>;
+  const authoredIds = [...new Set((codeMode?.capabilities ?? []).map((item) => item.capabilityId))];
+  if (authoredIds.length === 0) {
+    delete properties.capability;
+  } else {
+    const capability = properties.capability as { properties: Record<string, unknown> };
+    capability.properties.capabilityId = { type: "string", enum: authoredIds };
+  }
+  return definition;
+}
+
 function parseCodeExecutionRequest(input: unknown): CodeExecutionRequest {
   const body = parseObjectInput("code.execute", input);
   const allowed = new Set(["language", "code", "files", "timeoutMs", "network", "dependencies", "args", "capability"]);

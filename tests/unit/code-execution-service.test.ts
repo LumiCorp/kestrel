@@ -11,7 +11,7 @@ test("CodeExecutionService derives a bounded Tavily grant before sandbox creatio
   let observed: SandboxExecutionInput | undefined;
   let authorization = "";
   let providerInvoked = false;
-  const executor: SandboxExecutor = { async execute(input) { observed = input; assert.equal(providerInvoked, false); await input.capability?.adapter?.(input.capability.expectedInput!); return { status: "ok", exitCode: 0, stdout: "ok", stderr: "", durationMs: 1, artifacts: [] }; } };
+  const executor: SandboxExecutor = { async execute(input) { observed = input; assert.equal(providerInvoked, false); await input.capability?.adapter?.(input.capability.expectedInput!, new AbortController().signal); return { status: "ok", exitCode: 0, stdout: "ok", stderr: "", durationMs: 1, artifacts: [] }; } };
   const service = new CodeExecutionService({ executor });
   const result = await service.execute({ ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] }, { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "kestrel", maxResults: 2 } } }, { capabilityRuntime: runtime(async (_url, input) => { providerInvoked = true; authorization = new Headers(input?.headers).get("authorization") ?? ""; return new Response(JSON.stringify({ results: [{ title: "A", url: "https://example.com/a", content: "bounded" }] }), { status: 200 }); }) });
   assert.equal(result.status, "ok");
@@ -33,8 +33,24 @@ test("CodeExecutionService rejects stale, mismatched, and caller-authored author
   assert.equal(executions, 0);
 });
 
+test("CodeExecutionService resolves the current credential revision for every selected call", async () => {
+  const revisions: string[] = [];
+  let executions = 0;
+  const service = new CodeExecutionService({ executor: { async execute(input) { executions += 1; revisions.push(input.capability!.authority!.credentialReference.revision); return { status: "ok", exitCode: 0, stdout: "", stderr: "", durationMs: 1, artifacts: [] }; } } });
+  const request = { language: "javascript" as const, code: "x", capability: { capabilityId: "tavily.search.read" as const, input: { query: "x" } } };
+  let snapshot: { credentialId: "tool.tavily.default"; revision: string; secret: string } | undefined = { credentialId: "tool.tavily.default", revision: "r1", secret: "first-secret" };
+  const capabilityRuntime = { ...runtime(), credentialSnapshot: undefined, resolveCredentialSnapshot: async () => { if (snapshot === undefined) throw new Error("deleted"); return snapshot; } };
+  await service.execute({ ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] }, request, { capabilityRuntime });
+  snapshot = { credentialId: "tool.tavily.default", revision: "r2", secret: "second-secret" };
+  await service.execute({ ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] }, request, { capabilityRuntime });
+  snapshot = undefined;
+  await assert.rejects(service.execute({ ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] }, request, { capabilityRuntime }), /deleted/u);
+  assert.deepEqual(revisions, ["r1", "r2"]);
+  assert.equal(executions, 2);
+});
+
 test("Tavily adapter rejects redirects and redacts credential-bearing failures", async () => {
-  const service = new CodeExecutionService({ executor: { async execute(input) { await input.capability?.adapter?.(input.capability.expectedInput!); return { status: "ok", exitCode: 0, stdout: "", stderr: "", durationMs: 1, artifacts: [] }; } } });
+  const service = new CodeExecutionService({ executor: { async execute(input) { await input.capability?.adapter?.(input.capability.expectedInput!, new AbortController().signal); return { status: "ok", exitCode: 0, stdout: "", stderr: "", durationMs: 1, artifacts: [] }; } } });
   const config = { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] };
   const request = { language: "javascript" as const, code: "x", capability: { capabilityId: "tavily.search.read" as const, input: { query: "x" } } };
   const redirect = await service.execute(config, request, { capabilityRuntime: runtime(async () => new Response("", { status: 302, headers: { location: "https://evil.example" } })) });
@@ -42,6 +58,172 @@ test("Tavily adapter rejects redirects and redacts credential-bearing failures",
   const redacted = await service.execute(config, request, { capabilityRuntime: runtime(async () => { throw new Error("provider rejected real-secret-key"); }) });
   assert.match(redacted.stderr, /\[redacted:credential\]/u);
   assert.equal(redacted.stderr.includes("real-secret-key"), false);
+});
+
+test("Tavily adapter aborts the authenticated fetch when the capability pump is cancelled", async () => {
+  let fetchObservedAbort = false;
+  const controller = new AbortController();
+  const service = new CodeExecutionService({ executor: { async execute(input) {
+    const pending = input.capability!.adapter!(input.capability!.expectedInput!, controller.signal);
+    controller.abort(new Error("sandbox cancelled"));
+    await pending;
+    throw new Error("adapter must reject");
+  } } });
+  const result = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+    { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "x" } } },
+    { capabilityRuntime: runtime(async (_url, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        fetchObservedAbort = true;
+        reject(init.signal?.reason);
+      }, { once: true });
+    })) },
+  );
+  assert.equal(result.status, "error");
+  assert.equal(fetchObservedAbort, true);
+});
+
+test("Tavily adapter cancels streamed response consumption above the byte ceiling", async () => {
+  let bodyCancelled = false;
+  let pulls = 0;
+  const oversizedProfile = { ...profile, maxResponseBytes: 256 };
+  const service = new CodeExecutionService({ executor: { async execute(input) {
+    await input.capability!.adapter!(input.capability!.expectedInput!, new AbortController().signal);
+    throw new Error("adapter must reject");
+  } } });
+  const result = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [oversizedProfile] },
+    { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "x" } } },
+    { capabilityRuntime: {
+      ...runtime(async () => new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulls += 1;
+          controller.enqueue(new Uint8Array(150));
+        },
+        cancel() { bodyCancelled = true; },
+      }), { status: 200 })),
+      capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([oversizedProfile]),
+    } },
+  );
+  assert.equal(result.status, "error");
+  assert.match(result.stderr, /response exceeds/u);
+  assert.equal(bodyCancelled, true);
+  assert.equal(pulls <= 3, true);
+});
+
+test("Tavily adapter uses lease expiry when it precedes the profile timeout", async () => {
+  const shortLeaseProfile = { ...profile, timeoutMs: 1000, maxExpiryMs: 100 };
+  let deadlineObserved = false;
+  const service = new CodeExecutionService({ executor: { async execute(input) {
+    await input.capability!.adapter!(input.capability!.expectedInput!, new AbortController().signal);
+    throw new Error("adapter must reject");
+  } } });
+  const startedAt = Date.now();
+  const result = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [shortLeaseProfile] },
+    { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "x" } } },
+    { capabilityRuntime: {
+      ...runtime(async (_url, init) => new Promise((_resolve, reject) => {
+        const keepAlive = setTimeout(() => reject(new Error("adapter deadline was not enforced")), 500);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(keepAlive);
+          deadlineObserved = true;
+          reject(init.signal?.reason);
+        }, { once: true });
+      })),
+      capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([shortLeaseProfile]),
+      now: () => new Date(),
+    } },
+  );
+  assert.equal(result.status, "error");
+  assert.equal(deadlineObserved, true);
+  assert.equal(Date.now() - startedAt < 750, true);
+});
+
+test("sensitive credential registration is reusable across sequential and overlapping capability calls", async () => {
+  const activeReferences = new Set<string>();
+  const registerSensitiveValue = (input: { referenceId: string }) => {
+    assert.equal(activeReferences.has(input.referenceId), false, input.referenceId);
+    activeReferences.add(input.referenceId);
+    return () => {
+      activeReferences.delete(input.referenceId);
+    };
+  };
+  const config = { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] };
+  const request = { language: "javascript" as const, code: "x", capability: { capabilityId: "tavily.search.read" as const, input: { query: "x" } } };
+
+  const sequential = new CodeExecutionService({
+    executor: {
+      async execute() {
+        assert.equal(activeReferences.size, 1);
+        return { status: "ok", exitCode: 0, stdout: "", stderr: "", durationMs: 1, artifacts: [] };
+      },
+    },
+  });
+  const sequentialRuntime = { ...runtime(), registerSensitiveValue, toolCallId: "call-sequential" };
+  await sequential.execute(config, request, { capabilityRuntime: sequentialRuntime });
+  assert.equal(activeReferences.size, 0);
+  await sequential.execute(config, request, { capabilityRuntime: sequentialRuntime });
+  assert.equal(activeReferences.size, 0);
+
+  let releaseExecutions: (() => void) | undefined;
+  const executionsMayFinish = new Promise<void>((resolve) => {
+    releaseExecutions = resolve;
+  });
+  let executing = 0;
+  const overlapping = new CodeExecutionService({
+    executor: {
+      async execute() {
+        executing += 1;
+        if (executing === 2) releaseExecutions?.();
+        await executionsMayFinish;
+        assert.equal(activeReferences.size, 2);
+        return { status: "ok", exitCode: 0, stdout: "", stderr: "", durationMs: 1, artifacts: [] };
+      },
+    },
+  });
+  await Promise.all([
+    overlapping.execute(config, request, { capabilityRuntime: { ...runtime(), registerSensitiveValue, toolCallId: "call-overlap-a" } }),
+    overlapping.execute(config, request, { capabilityRuntime: { ...runtime(), registerSensitiveValue, toolCallId: "call-overlap-b" } }),
+  ]);
+  assert.equal(activeReferences.size, 0);
+});
+
+test("sensitive credential registration is released after error, timeout, and cancellation", async () => {
+  const activeReferences = new Set<string>();
+  const registerSensitiveValue = (input: { referenceId: string }) => {
+    activeReferences.add(input.referenceId);
+    return () => {
+      activeReferences.delete(input.referenceId);
+    };
+  };
+  const config = { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] };
+  const request = { language: "javascript" as const, code: "x", capability: { capabilityId: "tavily.search.read" as const, input: { query: "x" } } };
+  const output = (status: "error" | "timeout") => ({ status, exitCode: status === "error" ? 1 : null, stdout: "", stderr: "", durationMs: 1, artifacts: [] });
+
+  for (const status of ["error", "timeout"] as const) {
+    const service = new CodeExecutionService({ executor: { async execute() { return output(status); } } });
+    await service.execute(config, request, { capabilityRuntime: { ...runtime(), registerSensitiveValue, toolCallId: `call-${status}` } });
+    assert.equal(activeReferences.size, 0, status);
+  }
+
+  const controller = new AbortController();
+  const cancelled = new CodeExecutionService({
+    executor: {
+      async execute() {
+        controller.abort();
+        throw new Error("cancelled");
+      },
+    },
+  });
+  await assert.rejects(
+    cancelled.execute(config, request, {
+      signal: controller.signal,
+      capabilityRuntime: { ...runtime(), registerSensitiveValue, toolCallId: "call-cancelled" },
+    }),
+    /cancelled/u,
+  );
+  assert.equal(activeReferences.size, 0);
 });
 
 let registeredSensitiveValue = "";

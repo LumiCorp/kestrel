@@ -45,8 +45,15 @@ export class CodeExecutionService {
       return policyDecision.result;
     }
     let capability = options.capability;
+    let releaseCapabilitySensitiveValue: (() => void) | undefined;
     if (request.capability !== undefined) {
-      capability = await resolveTavilyCapability(config, request.capability, options.capabilityRuntime);
+      const resolved = await resolveTavilyCapability(
+        config,
+        request.capability,
+        options.capabilityRuntime,
+      );
+      capability = resolved.grant;
+      releaseCapabilitySensitiveValue = resolved.releaseSensitiveValue;
     } else if (options.capability !== undefined) {
       throw new Error("Caller-authored sandbox capability grants are not accepted");
     }
@@ -98,6 +105,8 @@ export class CodeExecutionService {
         policy: policyDecision.policy,
         retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
       };
+    } finally {
+      releaseCapabilitySensitiveValue?.();
     }
   }
 }
@@ -106,7 +115,10 @@ async function resolveTavilyCapability(
   config: CodeModeProfileConfig | undefined,
   selectedValue: unknown,
   runtime: SandboxCapabilityRuntimeContext | undefined,
-): Promise<SandboxCapabilityGrant> {
+): Promise<{
+  grant: SandboxCapabilityGrant;
+  releaseSensitiveValue?: (() => void) | undefined;
+}> {
   const selected = parseSandboxCapabilitySelectionV1(selectedValue);
   const authoredProfiles = parseSandboxCapabilityProfilesV1(config?.capabilities ?? []);
   if (runtime !== undefined && runtime.capabilityCatalogFingerprint !== fingerprintSandboxCapabilityCatalogV1(authoredProfiles)) throw new Error("Sandbox capability catalog fingerprint is stale");
@@ -118,21 +130,19 @@ async function resolveTavilyCapability(
   if (runtime.brokerAuthority.authorityId !== profile.brokerAuthority.authorityId || runtime.brokerAuthority.revision !== profile.brokerAuthority.revision) throw new Error("Sandbox broker authority is stale or mismatched");
   if (/^[a-f0-9]{64}$/u.test(runtime.profileFingerprint) === false) throw new Error("Sandbox capability resolved-profile fingerprint is invalid");
   if (runtime.executionBoundaryRevision !== KESTREL_EXECUTION_BOUNDARY_POLICY.revision) throw new Error("Sandbox capability execution-boundary revision is stale");
-  for (const [label, value] of Object.entries({ sessionId: runtime.sessionId, runId: runtime.runId, toolCallId: runtime.toolCallId, executionBoundaryRevision: runtime.executionBoundaryRevision, credentialRevision: runtime.credentialSnapshot.revision })) {
+  const credentialSnapshot = runtime.resolveCredentialSnapshot === undefined ? runtime.credentialSnapshot : await runtime.resolveCredentialSnapshot();
+  if (credentialSnapshot === undefined) throw new Error("Authoritative Tavily credential snapshot is unavailable");
+  for (const [label, value] of Object.entries({ sessionId: runtime.sessionId, runId: runtime.runId, toolCallId: runtime.toolCallId, executionBoundaryRevision: runtime.executionBoundaryRevision, credentialRevision: credentialSnapshot.revision })) {
     if (value.trim().length === 0) throw new Error(`Trusted sandbox capability ${label} is missing`);
   }
-  if (runtime.credentialSnapshot.credentialId !== "tool.tavily.default" || runtime.credentialSnapshot.secret.trim().length === 0) throw new Error("Authoritative Tavily credential snapshot is unavailable");
-  runtime.registerSensitiveValue?.({
-    referenceId: `sandbox-capability:${runtime.credentialSnapshot.credentialId}:${runtime.credentialSnapshot.revision}`,
-    value: runtime.credentialSnapshot.secret,
-  });
+  if (credentialSnapshot.credentialId !== "tool.tavily.default" || credentialSnapshot.secret.trim().length === 0) throw new Error("Authoritative Tavily credential snapshot is unavailable");
   const query = selected.input.query;
   if (query.length > profile.maxQueryChars) throw new Error("Sandbox Tavily query exceeds the profile ceiling");
   const maxResults = selected.input.maxResults ?? Math.min(5, profile.maxResults);
   if (maxResults > profile.maxResults) throw new Error("Sandbox Tavily result request exceeds the profile ceiling");
   const now = (runtime.now ?? (() => new Date()))();
   const expiresAt = new Date(now.getTime() + profile.maxExpiryMs);
-  return {
+  const grant: SandboxCapabilityGrant = {
     transport: "docker-shared-loopback-v1",
     lease: randomUUID(),
     operation: "search",
@@ -152,43 +162,61 @@ async function resolveTavilyCapability(
       executionBoundaryRevision: runtime.executionBoundaryRevision,
       brokerAuthority: runtime.brokerAuthority,
       credentialReference: {
-        credentialId: runtime.credentialSnapshot.credentialId,
-        revision: runtime.credentialSnapshot.revision,
+        credentialId: credentialSnapshot.credentialId,
+        revision: credentialSnapshot.revision,
       },
       issuedAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
     },
     expectedInput: { query, maxResults },
-    adapter: async (adapterInput) => {
+    adapter: async (adapterInput, signal) => {
       try {
+        const remainingExpiryMs = expiresAt.getTime() - (runtime.now ?? (() => new Date()))().getTime();
+        if (remainingExpiryMs <= 0) throw new Error("Tavily adapter capability expired before provider invocation");
         return await callExactTavilySearch({
           fetchImpl: runtime.fetchImpl ?? fetch,
-          secret: runtime.credentialSnapshot.secret,
+          secret: credentialSnapshot.secret,
           query: adapterInput.query,
           maxResults: adapterInput.maxResults,
           timeoutMs: profile.timeoutMs,
+          expiryMs: remainingExpiryMs,
           maxResponseBytes: profile.maxResponseBytes,
+          signal,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(message.split(runtime.credentialSnapshot.secret).join("[redacted:credential]"));
+        throw new Error(message.split(credentialSnapshot.secret).join("[redacted:credential]"));
       }
     },
   };
+  const releaseSensitiveValue = runtime.registerSensitiveValue?.({
+    referenceId: [
+      "sandbox-capability",
+      credentialSnapshot.credentialId,
+      credentialSnapshot.revision,
+      runtime.toolCallId,
+    ].join(":"),
+    value: credentialSnapshot.secret,
+  });
+  return {
+    grant,
+    ...(releaseSensitiveValue === undefined ? {} : { releaseSensitiveValue }),
+  };
 }
 
-async function callExactTavilySearch(input: { fetchImpl: typeof fetch; secret: string; query: string; maxResults: number; timeoutMs: number; maxResponseBytes: number }): Promise<TavilySearchAdapterResponseV1> {
+async function callExactTavilySearch(input: { fetchImpl: typeof fetch; secret: string; query: string; maxResults: number; timeoutMs: number; expiryMs: number; maxResponseBytes: number; signal: AbortSignal }): Promise<TavilySearchAdapterResponseV1> {
+  const deadlineSignal = AbortSignal.timeout(Math.min(input.timeoutMs, input.expiryMs));
+  const signal = AbortSignal.any([input.signal, deadlineSignal]);
   const response = await input.fetchImpl(TAVILY_SEARCH_RESOURCE, {
     method: "POST",
     redirect: "manual",
-    signal: AbortSignal.timeout(input.timeoutMs),
+    signal,
     headers: { "content-type": "application/json", authorization: `Bearer ${input.secret}` },
     body: JSON.stringify({ query: input.query, max_results: input.maxResults }),
   });
   if (response.status >= 300 && response.status < 400) throw new Error("Tavily adapter rejected a redirect response");
   if (response.ok === false) throw new Error(`Tavily adapter failed with status ${response.status}`);
-  const text = await response.text();
-  if (Buffer.byteLength(text, "utf8") > input.maxResponseBytes) throw new Error("Tavily adapter response exceeds the profile ceiling");
+  const text = await readBoundedResponseBody(response, input.maxResponseBytes, signal);
   const value = JSON.parse(text) as { results?: unknown };
   if (Array.isArray(value.results) === false) throw new Error("Tavily adapter returned an invalid response");
   const results = value.results.slice(0, input.maxResults).map((item: unknown) => {
@@ -199,6 +227,38 @@ async function callExactTavilySearch(input: { fetchImpl: typeof fetch; secret: s
     return { title: clipAdapterField(record.title, 300), url: parsed.toString(), content: clipAdapterField(record.content, 2_000) };
   });
   return { version: 1, results };
+}
+
+async function readBoundedResponseBody(response: Response, maxBytes: number, signal: AbortSignal): Promise<string> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  const abort = () => { void reader.cancel(signal.reason).catch(() => {}); };
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    while (true) {
+      if (signal.aborted) throw signal.reason;
+      const chunk = await reader.read();
+      if (signal.aborted) throw signal.reason;
+      if (chunk.done) break;
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel("Tavily adapter response exceeds the profile ceiling");
+        throw new Error("Tavily adapter response exceeds the profile ceiling");
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    signal.removeEventListener("abort", abort);
+  }
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
 }
 
 function clipAdapterField(value: unknown, max: number): string {

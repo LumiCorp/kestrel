@@ -155,7 +155,7 @@ export interface SandboxCapabilityGrant {
   authority?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityAuthorityV1 | undefined;
   expectedInput?: { query: string; maxResults: number } | undefined;
   /** Trusted host-only adapter. This function is never serialized into Docker state. */
-  adapter?: ((input: { query: string; maxResults: number }) => Promise<unknown>) | undefined;
+  adapter?: ((input: { query: string; maxResults: number }, signal: AbortSignal) => Promise<unknown>) | undefined;
 }
 
 export interface SandboxCapabilityRuntimeContext {
@@ -168,14 +168,18 @@ export interface SandboxCapabilityRuntimeContext {
   capabilityCatalogFingerprint: string;
   executionBoundaryRevision: string;
   brokerAuthority: { authorityId: string; revision: string };
-  credentialSnapshot: {
+  credentialSnapshot?: {
     credentialId: "tool.tavily.default";
     revision: string;
     secret: string;
-  };
+  } | undefined;
+  resolveCredentialSnapshot?: (() => Promise<{ credentialId: "tool.tavily.default"; revision: string; secret: string }>) | undefined;
   now?: (() => Date) | undefined;
   fetchImpl?: typeof fetch | undefined;
-  registerSensitiveValue?: ((input: { referenceId: string; value: string }) => void) | undefined;
+  registerSensitiveValue?: ((input: {
+    referenceId: string;
+    value: string;
+  }) => (() => void) | void) | undefined;
 }
 
 export interface SandboxExecutionOutput {

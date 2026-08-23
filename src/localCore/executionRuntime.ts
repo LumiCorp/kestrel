@@ -8,6 +8,9 @@ import {
 import type { LocalCoreRuntimeEnvironmentResolver } from "./runtimeEnvironment.js";
 import { DesktopAttachmentStore } from "./desktopAttachments.js";
 import type { LocalCoreCredentialStore } from "./credentialStore.js";
+import { randomUUID } from "node:crypto";
+
+const sandboxCredentialRevisions = new WeakMap<LocalCoreCredentialStore, { secret: string; revision: string }>();
 import { createLocalCoreMcpOAuthProviderFactory } from "./mcpOAuthProvider.js";
 import { LocalCoreMicrosoft365Service } from "./microsoft365Service.js";
 import { LocalCoreGoogleWorkspaceService } from "./googleWorkspaceService.js";
@@ -87,6 +90,16 @@ function toKestrelRuntimeEnvironment(
     internetEnv: snapshot.internetEnv as NodeJS.ProcessEnv,
     runtimeEnv: snapshot.runtimeEnv as NodeJS.ProcessEnv,
     mcpEnv: snapshot.mcpEnv as NodeJS.ProcessEnv,
+    ...(credentialStore?.available === true ? {
+      sandboxCapabilityCredentialResolver: async () => {
+        const secret = await credentialStore.get("tool.tavily.default");
+        if (secret === undefined) throw new Error("Authoritative Local Core Tavily credential is missing.");
+        const prior = sandboxCredentialRevisions.get(credentialStore);
+        const revision = prior?.secret === secret ? prior.revision : `local-core:${randomUUID()}`;
+        sandboxCredentialRevisions.set(credentialStore, { secret, revision });
+        return { credentialId: "tool.tavily.default" as const, revision, secret };
+      },
+    } : {}),
     ...(credentialStore !== undefined
       ? {
           mcpOAuthProviderFactory:

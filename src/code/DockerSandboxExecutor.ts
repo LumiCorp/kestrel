@@ -485,6 +485,7 @@ function load() {
               fs.unlinkSync(responsePath);
               fs.unlinkSync(requestPath);
               if (mediated.ok !== true) { response.writeHead(502); response.end(JSON.stringify({ error: "adapter_failed" })); return; }
+              if (typeof config.expiresAt === "string" && Date.now() >= Date.parse(config.expiresAt)) { response.writeHead(410); response.end(JSON.stringify({ error: "capability_expired" })); return; }
               const serialized = JSON.stringify(mediated.response);
               if (Buffer.byteLength(serialized, "utf8") > (config.maxResponseBytes ?? 64000)) { response.writeHead(502); response.end(JSON.stringify({ error: "response_too_large" })); return; }
               response.writeHead(200, { "content-type": "application/json" }); response.end(serialized);
@@ -546,7 +547,7 @@ async function startCapabilityBroker(
   }), "utf8");
   const written = await runDockerProcess([
     "exec", "--interactive", "--user", `${SANDBOX_UID}:${SANDBOX_GID}`,
-    brokerContainerName, "sh", "-c", "umask 077; cat > /run/kestrel/config",
+    brokerContainerName, "sh", "-c", "umask 077; cat > /run/kestrel/config.tmp && mv /run/kestrel/config.tmp /run/kestrel/config",
   ], DOCKER_LIFECYCLE_TIMEOUT_MS, DOCKER_LIFECYCLE_OUTPUT_BYTES, input.signal, configuration);
   requireSuccessfulDockerResult(written, "load the capability broker grant");
   const deadline = Date.now() + DOCKER_LIFECYCLE_TIMEOUT_MS;
@@ -631,12 +632,7 @@ async function invokeAdapterUntilAbort(
   signal: AbortSignal,
 ): Promise<unknown> {
   if (signal.aborted) throw new DockerSandboxCancellationError("Capability adapter pump was cancelled");
-  return Promise.race([
-    adapter(input),
-    new Promise<never>((_resolve, reject) => {
-      signal.addEventListener("abort", () => reject(new DockerSandboxCancellationError("Capability adapter pump was cancelled")), { once: true });
-    }),
-  ]);
+  return adapter(input, signal);
 }
 
 async function waitForAdapterRequest(signal: AbortSignal): Promise<void> {

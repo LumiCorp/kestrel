@@ -805,6 +805,7 @@ test(
   async () => {
     await requireDocker();
     const containerName = testContainerName("capability-pump-timeout");
+    let adapterObservedAbort = false;
     const result = await fixedNameExecutor(containerName).execute({
       request: {
         language: "javascript",
@@ -820,10 +821,53 @@ test(
         expectedInput: { query: "wait", maxResults: 1 },
         expiresAt: new Date(Date.now() + 10_000).toISOString(),
         maxRequests: 1,
-        adapter: async () => new Promise(() => {}),
+        adapter: async (_input, signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            adapterObservedAbort = true;
+            reject(signal.reason);
+          }, { once: true });
+        }),
       },
     });
     assert.equal(result.status, "timeout");
+    assert.equal(adapterObservedAbort, true);
+    await assertContainerAndProcessesRemoved(containerName);
+    await assertContainerAndProcessesRemoved(`${containerName}-broker`);
+  },
+);
+
+test(
+  "Docker sandbox broker does not deliver an adapter response after capability expiry",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-expiry-delivery");
+    const result = await fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", input: { query: "late", maxResults: 1 } }) }).then(async response => console.log(JSON.stringify({ status: response.status, body: await response.json() })))`,
+      },
+      policy: policy({ timeoutMs: 4_000 }),
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: undefined,
+        expectedInput: { query: "late", maxResults: 1 },
+        expiresAt: new Date(Date.now() + 2_000).toISOString(),
+        maxRequests: 1,
+        maxResponseBytes: 4096,
+        adapter: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+          return { version: 1, results: [] };
+        },
+      },
+    });
+    assert.equal(result.status, "ok", result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), {
+      status: 410,
+      body: { error: "capability_expired" },
+    });
     await assertContainerAndProcessesRemoved(containerName);
     await assertContainerAndProcessesRemoved(`${containerName}-broker`);
   },

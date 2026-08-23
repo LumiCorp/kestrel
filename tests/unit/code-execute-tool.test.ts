@@ -159,3 +159,13 @@ test("UnifiedToolRegistry preserves capability selection and binds the prepared 
     await assert.rejects(() => registry.prepareToolCall({ runId: "run-a", sessionId: "session-a", callId: forgedIntent.modelToolCallId, activation: forgedIntent.activation, origin: { kind: "model", snapshotId: forgedIntent.snapshotId, modelToolCallId: forgedIntent.modelToolCallId }, rawInput: forgedIntent.rawInput, policy: { decision: "allow", policyRevision: hashCanonical({ forged }) } }), /unknown fields/u);
   }
 });
+
+test("UnifiedToolRegistry advertises capability only when authored by the resolved profile", () => {
+  const absent = new UnifiedToolRegistry({ allowlist: ["code.execute"], context: { codeMode: DEFAULT_CODE_MODE_ENABLED_CONFIG } });
+  const absentSchema = absent.getModelTools().find((tool) => tool.name === "code.execute")?.inputSchema as { properties: Record<string, unknown> };
+  assert.equal("capability" in absentSchema.properties, false);
+  const capability = { version: 1 as const, capabilityId: "tavily.search.read" as const, operations: ["search"] as ["search"], resource: "https://api.tavily.com/search" as const, audience: { tenantId: "t", environmentId: "e" }, maxRequests: 1 as const, maxQueryChars: 100, maxResults: 2, maxResponseBytes: 4096, timeoutMs: 1000, maxExpiryMs: 5000, brokerAuthority: { authorityId: "b", revision: "r" } };
+  const authored = new UnifiedToolRegistry({ allowlist: ["code.execute"], context: { codeMode: { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [capability] } } });
+  const schema = authored.getModelTools().find((tool) => tool.name === "code.execute")?.inputSchema as { properties: Record<string, { properties?: Record<string, { enum?: string[] }> }> };
+  assert.deepEqual(schema.properties.capability?.properties?.capabilityId?.enum, ["tavily.search.read"]);
+});

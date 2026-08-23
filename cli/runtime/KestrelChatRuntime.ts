@@ -282,6 +282,7 @@ export interface KestrelRuntimeEnvironment {
   mcpOAuthProviderFactory?: McpOAuthProviderFactory | undefined;
   microsoft365Service?: Microsoft365ServicePort | undefined;
   googleWorkspaceService?: GoogleWorkspaceServicePort | undefined;
+  sandboxCapabilityCredentialResolver?: (() => Promise<{ credentialId: "tool.tavily.default"; revision: string; secret: string }>) | undefined;
 }
 
 export interface RuntimeFactoryWithStoreOptions {
@@ -3349,9 +3350,10 @@ function createRuntimeWithStore(
     onFinalize,
     codeMode: profile.codeMode,
     ...(resolveSandboxCapabilityRuntimeEnvironment(
-      internetEnv,
+      profile,
       fingerprintResolvedProfile(profile),
       fingerprintSandboxCapabilityCatalogV1(profile.codeMode?.capabilities ?? []),
+      environment?.sandboxCapabilityCredentialResolver,
       (input) => executionBoundaryRuntime.sensitiveValues.register({
         reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
         value: input.value,
@@ -4310,32 +4312,23 @@ function parseEnvString(
 }
 
 function resolveSandboxCapabilityRuntimeEnvironment(
-  environment: NodeJS.ProcessEnv | undefined,
+  profile: TuiProfile,
   profileFingerprint: string,
   capabilityCatalogFingerprint: string,
+  credentialResolver: KestrelRuntimeEnvironment["sandboxCapabilityCredentialResolver"],
   registerSensitiveValue: NonNullable<NonNullable<SharedToolContext["sandboxCapabilityRuntime"]>["registerSensitiveValue"]>,
 ): Pick<SharedToolContext, "sandboxCapabilityRuntime"> | undefined {
-  if (environment === undefined) return;
-  const tenantId = parseEnvString("KESTREL_TENANT_ID", environment);
-  const environmentId = parseEnvString("KESTREL_ENVIRONMENT_ID", environment);
-  const authorityId = parseEnvString("KESTREL_SANDBOX_BROKER_AUTHORITY_ID", environment);
-  const authorityRevision = parseEnvString("KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION", environment);
-  const credentialRevision = parseEnvString("KESTREL_TAVILY_CREDENTIAL_REVISION", environment);
-  const secret = parseEnvString("TAVILY_API_KEY", environment);
-  if ([tenantId, environmentId, authorityId, authorityRevision, credentialRevision, secret].some((value) => value === undefined)) return;
+  const authored = profile.codeMode?.capabilities?.[0];
+  if (authored === undefined || credentialResolver === undefined) return;
   return {
     sandboxCapabilityRuntime: {
-      tenantId: tenantId!,
-      environmentId: environmentId!,
+      tenantId: authored.audience.tenantId,
+      environmentId: authored.audience.environmentId,
       executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
       profileFingerprint,
       capabilityCatalogFingerprint,
-      brokerAuthority: { authorityId: authorityId!, revision: authorityRevision! },
-      credentialSnapshot: {
-        credentialId: "tool.tavily.default",
-        revision: credentialRevision!,
-        secret: secret!,
-      },
+      brokerAuthority: authored.brokerAuthority,
+      resolveCredentialSnapshot: credentialResolver,
       registerSensitiveValue,
     },
   };
