@@ -1855,7 +1855,18 @@ export interface EffectResultLoadedEventPayload {
   sessionId: string;
   runId: string;
   idempotencyKey: string;
-  result: Record<string, unknown>;
+  result: AgentToolResultV2Wire;
+}
+
+export interface AgentToolResultV2Wire extends Record<string, unknown> {
+  version: "v2";
+  toolName: string;
+  status: "OK" | "FAILED";
+  toolCallId: string;
+  activation: Record<string, unknown>;
+  outcome: Record<string, unknown>;
+  modelContext: { text: string; rawOutputRef: string; truncated: boolean };
+  auditRecord: Record<string, unknown>;
 }
 
 export interface RunnerErrorEventPayload {
@@ -3127,7 +3138,7 @@ function parseRunnerEventPayloadV2(
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       requireNonEmptyString(payload.runId, `${label}.runId`);
       requireNonEmptyString(payload.idempotencyKey, `${label}.idempotencyKey`);
-      requireRecord(payload.result, `${label}.result`);
+      validateAgentToolResultV2Wire(payload.result, `${label}.result`);
       break;
     case "runner.error":
       requireNonEmptyString(payload.code, `${label}.code`);
@@ -4546,6 +4557,75 @@ function requireString(value: unknown, label: string): string {
   return value;
 }
 
+function validateAgentToolResultV2Wire(value: unknown, label: string): void {
+  const result = requireRecord(value, label);
+  rejectUnknownFields(result, label, ["version", "toolName", "status", "toolCallId", "activation", "outcome", "modelContext", "auditRecord", "projections", "presentation"]);
+  if (result.version !== "v2") throw new RunnerProtocolContractError(`${label}.version must be 'v2'`);
+  const toolName = requireNonEmptyString(result.toolName, `${label}.toolName`);
+  const toolCallId = requireNonEmptyString(result.toolCallId, `${label}.toolCallId`);
+  if (result.status !== "OK" && result.status !== "FAILED") throw new RunnerProtocolContractError(`${label}.status is invalid`);
+
+  const activation = validateAgentToolActivationV1(result.activation, `${label}.activation`);
+  const outcome = requireRecord(result.outcome, `${label}.outcome`);
+  rejectUnknownFields(outcome, `${label}.outcome`, ["version", "callId", "activation", "kind", "startedAt", "completedAt", "effectState", "rawOutput", "normalizedFailureCode", "retryable", "error"]);
+  if (outcome.version !== "v1") throw new RunnerProtocolContractError(`${label}.outcome.version must be 'v1'`);
+  const outcomeCallId = requireNonEmptyString(outcome.callId, `${label}.outcome.callId`);
+  const outcomeActivation = validateAgentToolActivationV1(outcome.activation, `${label}.outcome.activation`);
+  if (!["success", "partial", "failure", "cancellation"].includes(String(outcome.kind))) throw new RunnerProtocolContractError(`${label}.outcome.kind is invalid`);
+  if (!["not_applicable", "not_started", "committed", "unknown"].includes(String(outcome.effectState))) throw new RunnerProtocolContractError(`${label}.outcome.effectState is invalid`);
+  requireNonEmptyString(outcome.startedAt, `${label}.outcome.startedAt`);
+  requireNonEmptyString(outcome.completedAt, `${label}.outcome.completedAt`);
+  if (outcome.kind === "success" && !Object.hasOwn(outcome, "rawOutput")) throw new RunnerProtocolContractError(`${label}.outcome.rawOutput is required`);
+  if (outcome.kind === "partial") {
+    if (!Object.hasOwn(outcome, "rawOutput")) throw new RunnerProtocolContractError(`${label}.outcome.rawOutput is required`);
+    requireNonEmptyString(outcome.normalizedFailureCode, `${label}.outcome.normalizedFailureCode`);
+    requireBoolean(outcome.retryable, `${label}.outcome.retryable`);
+  }
+  if (outcome.kind === "failure") {
+    requireNonEmptyString(outcome.normalizedFailureCode, `${label}.outcome.normalizedFailureCode`);
+    requireBoolean(outcome.retryable, `${label}.outcome.retryable`);
+    const error = requireRecord(outcome.error, `${label}.outcome.error`);
+    rejectUnknownFields(error, `${label}.outcome.error`, ["message", "details"]);
+    requireString(error.message, `${label}.outcome.error.message`);
+    if (error.details !== undefined) requireRecord(error.details, `${label}.outcome.error.details`);
+  }
+  if (outcome.kind === "cancellation" && (outcome.normalizedFailureCode !== "TOOL_CANCELLED" || outcome.retryable !== false)) throw new RunnerProtocolContractError(`${label}.outcome cancellation is invalid`);
+
+  const modelContext = requireRecord(result.modelContext, `${label}.modelContext`);
+  rejectUnknownFields(modelContext, `${label}.modelContext`, ["text", "rawOutputRef", "truncated"]);
+  requireString(modelContext.text, `${label}.modelContext.text`);
+  requireNonEmptyString(modelContext.rawOutputRef, `${label}.modelContext.rawOutputRef`);
+  requireBoolean(modelContext.truncated, `${label}.modelContext.truncated`);
+  const audit = requireRecord(result.auditRecord, `${label}.auditRecord`);
+  rejectUnknownFields(audit, `${label}.auditRecord`, ["toolName", "input", "output", "error", "startedAt", "completedAt", "durationMs", "status"]);
+  if (audit.toolName !== toolName || audit.status !== result.status) throw new RunnerProtocolContractError(`${label} evidence identities do not agree`);
+  if (outcomeCallId !== toolCallId || activation.descriptorToolId !== toolName || outcomeActivation.contractRevision !== activation.contractRevision) throw new RunnerProtocolContractError(`${label} evidence identities do not agree`);
+  requireRecord(audit.input, `${label}.auditRecord.input`);
+  requireNonEmptyString(audit.startedAt, `${label}.auditRecord.startedAt`);
+  requireNonEmptyString(audit.completedAt, `${label}.auditRecord.completedAt`);
+  if (typeof audit.durationMs !== "number" || !Number.isFinite(audit.durationMs) || audit.durationMs < 0) throw new RunnerProtocolContractError(`${label}.auditRecord.durationMs is invalid`);
+  if (result.projections !== undefined) requireRecord(result.projections, `${label}.projections`);
+  if (result.presentation !== undefined) requireRecord(result.presentation, `${label}.presentation`);
+}
+
+function validateAgentToolActivationV1(value: unknown, label: string): { descriptorToolId: string; contractRevision: string } {
+  const activation = requireRecord(value, label);
+  rejectUnknownFields(activation, label, ["version", "descriptor", "registryGeneration", "scopeFingerprint"]);
+  if (activation.version !== "v1") throw new RunnerProtocolContractError(`${label}.version must be 'v1'`);
+  requireNonEmptyString(activation.registryGeneration, `${label}.registryGeneration`);
+  validateCanonicalSha256(activation.scopeFingerprint, `${label}.scopeFingerprint`);
+  const descriptor = requireRecord(activation.descriptor, `${label}.descriptor`);
+  rejectUnknownFields(descriptor, `${label}.descriptor`, ["version", "toolId", "sourceKind", "sourceId", "contractRevision", "inputSchemaHash", "outputContractHash"]);
+  if (descriptor.version !== "v1") throw new RunnerProtocolContractError(`${label}.descriptor.version must be 'v1'`);
+  const descriptorToolId = requireNonEmptyString(descriptor.toolId, `${label}.descriptor.toolId`);
+  if (!["builtin", "embedded", "mcp"].includes(String(descriptor.sourceKind))) throw new RunnerProtocolContractError(`${label}.descriptor.sourceKind is invalid`);
+  requireNonEmptyString(descriptor.sourceId, `${label}.descriptor.sourceId`);
+  validateCanonicalSha256(descriptor.contractRevision, `${label}.descriptor.contractRevision`);
+  validateCanonicalSha256(descriptor.inputSchemaHash, `${label}.descriptor.inputSchemaHash`);
+  validateCanonicalSha256(descriptor.outputContractHash, `${label}.descriptor.outputContractHash`);
+  return { descriptorToolId, contractRevision: descriptor.contractRevision as string };
+}
+
 function requireNonEmptyString(value: unknown, label: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new RunnerProtocolContractError(`${label} must be a non-empty string`);
@@ -4610,6 +4690,12 @@ function validateWorkspaceDiffOptions(options: Record<string, unknown>, label: s
 function validateSha256(value: unknown, label: string): void {
   if (typeof value !== "string" || /^[a-f0-9]{64}$/u.test(value) === false) {
     throw new RunnerProtocolContractError(`${label} must be a SHA-256 digest`);
+  }
+}
+
+function validateCanonicalSha256(value: unknown, label: string): void {
+  if (typeof value !== "string" || /^sha256:[a-f0-9]{64}$/u.test(value) === false) {
+    throw new RunnerProtocolContractError(`${label} must be a canonical SHA-256 digest`);
   }
 }
 

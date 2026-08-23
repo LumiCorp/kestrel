@@ -929,6 +929,7 @@ async function createExecutionBundle(input: {
     eventJournal,
     ...(storeHandle.store.readExactEffectResult === undefined ? {} : {
       exactEffectResultStore: { readExactEffectResult: storeHandle.store.readExactEffectResult.bind(storeHandle.store) },
+      exactEffectResultTenantId: (input.options.env ?? process.env).KESTREL_TENANT_ID,
     }),
   });
   try {

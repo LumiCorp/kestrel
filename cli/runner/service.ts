@@ -32,6 +32,7 @@ async function main(): Promise<void> {
           eventJournal: store.eventJournal,
           ...(store.store.readExactEffectResult === undefined ? {} : {
             exactEffectResultStore: { readExactEffectResult: store.store.readExactEffectResult.bind(store.store) },
+            exactEffectResultTenantId: process.env.KESTREL_TENANT_ID,
           }),
         }),
     profileSourcePolicy: "registered-only",

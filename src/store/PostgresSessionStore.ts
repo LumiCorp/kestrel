@@ -7,6 +7,7 @@ import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
   validateExactEffectResultRead,
+  validateExactEffectResultTenantBinding,
 } from "../kestrel/contracts/store.js";
 import type {
   RunEvent,
@@ -1649,11 +1650,24 @@ export class PostgresSessionStore implements SessionStore {
     };
   }
 
-  async readExactEffectResult(input: { sessionId: string; runId: string; idempotencyKey: string }) {
-    return validateExactEffectResultRead({
+  async readExactEffectResult(input: { sessionId: string; runId: string; idempotencyKey: string; tenantId: string }) {
+    const read = validateExactEffectResultRead({
       requested: input,
       effect: await this.getPersistedEffect(input.idempotencyKey),
       effectResult: await this.getEffectResult(input.idempotencyKey),
+    });
+    if (read.status !== "found") return read;
+    const rawOutput = read.result.outcome.kind === "success" || read.result.outcome.kind === "partial" ? read.result.outcome.rawOutput : undefined;
+    const evidence = typeof rawOutput === "object" && rawOutput !== null && !Array.isArray(rawOutput)
+      ? (rawOutput as Record<string, unknown>).capabilityReplayEvidence
+      : undefined;
+    const leaseId = typeof evidence === "object" && evidence !== null && !Array.isArray(evidence)
+      ? (evidence as Record<string, unknown>).leaseId
+      : undefined;
+    return validateExactEffectResultTenantBinding({
+      read,
+      requested: input,
+      lease: typeof leaseId === "string" ? await this.getSandboxCapabilityLease(leaseId) : null,
     });
   }
 

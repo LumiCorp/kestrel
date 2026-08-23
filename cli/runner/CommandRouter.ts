@@ -183,7 +183,7 @@ export class CommandRouter {
       }
 
       if (command.type === "effect.result.get") {
-        await this.host.effectResultGet(command.id, validateEffectResultGetPayload(command.payload));
+        await this.host.effectResultGet(command.id, validateEffectResultGetPayload(command.payload), command.metadata);
         return;
       }
 

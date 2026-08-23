@@ -372,10 +372,13 @@ test("spawned Local Core executes an immutable capability profile through Docker
     const capability = {
       version: 1 as const, capabilityId: "tavily.search.read" as const, operations: ["search"] as ["search"], resource: "https://api.tavily.com/search" as const,
       audience: { tenantId, environmentId }, maxRequests: 1 as const, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096,
-      timeoutMs: 5_000, maxExpiryMs: 20_000, brokerAuthority: { authorityId, revision: authorityRevision },
+      timeoutMs: 200, maxExpiryMs: 20_000, brokerAuthority: { authorityId, revision: authorityRevision },
     };
+    const expiryCapability = { ...capability, timeoutMs: 2_000, maxExpiryMs: 100 };
+    await client.putJson("/v1/profiles", { profiles: [{ ...canonical, codeMode: { ...structuredClone(DEFAULT_CODE_MODE_ENABLED_CONFIG), capabilities: [expiryCapability] } }] });
+    const expiryProfileId = (await client.resolveExecutionProfile({ client: "cli", profileId: "kestrel" })).profileId;
     await client.putJson("/v1/profiles", { profiles: [{ ...canonical, codeMode: { ...structuredClone(DEFAULT_CODE_MODE_ENABLED_CONFIG), capabilities: [capability] } }] });
-    return (await client.resolveExecutionProfile({ client: "cli", profileId: "kestrel" })).profileId;
+    return { qualificationProfileId: (await client.resolveExecutionProfile({ client: "cli", profileId: "kestrel" })).profileId, expiryProfileId };
   });
   assert.match(runner.qualificationProfileId ?? "", /^kestrel:cli_safe_local:[a-f0-9]{64}$/u);
   const response = await runCurlText({
@@ -393,6 +396,27 @@ test("spawned Local Core executes an immutable capability profile through Docker
   assert.equal(response.body.includes("isolated-tavily-secret"), false);
   assert.match(response.body, /capabilityReplayEvidence/u);
   assert.match(response.body, /"toolName":"code\.execute"/u);
+  const providerEvidenceBeforeUnused = await readFile(evidencePath, "utf8");
+  const unused = await runCapabilityQualification(runner, runner.qualificationProfileId!, tenantId, "selected-unused");
+  assert.match(unused.body, /event: run\.completed/u);
+  assert.match(unused.body, /selected capability intentionally unused/u);
+  assert.match(unused.body, /capabilityReplayEvidence/u);
+  assert.equal(await readFile(evidencePath, "utf8"), providerEvidenceBeforeUnused);
+  assert.equal(unused.body.includes("isolated-tavily-secret"), false);
+  await assertSelectedUnusedProjection(runner, unused.body, tenantId);
+  const capabilityFree = await runCapabilityQualification(runner, runner.qualificationProfileId!, tenantId, "capability-free");
+  assert.match(capabilityFree.body, /event: run\.completed/u);
+  assert.doesNotMatch(capabilityFree.body, /capabilityReplayEvidence/u);
+  assert.equal(await readFile(evidencePath, "utf8"), providerEvidenceBeforeUnused);
+  await assertCancellationQualification(runner, runner.qualificationProfileId!, tenantId, evidencePath);
+  const expired = await runCapabilityQualification(runner, runner.expiryProfileId!, tenantId, "expiry");
+  assert.match(expired.body, /event: run\.completed/u);
+  await assertCapabilityProjection(runner, expired.body, tenantId, 1, "expired");
+  const timedOut = await runCapabilityQualification(runner, runner.qualificationProfileId!, tenantId, "timeout");
+  assert.match(timedOut.body, /event: run\.completed/u);
+  assert.match(timedOut.body, /adapter_failed/u);
+  assert.equal(timedOut.body.includes("isolated-tavily-secret"), false);
+  await assertCapabilityProjection(runner, timedOut.body, tenantId, 0);
   const completed = readSseEvent(response.body, "run.completed") as { runId?: string };
   assert.ok(completed.runId);
   const exactResultKey = response.body.match(/"idempotencyKey":"([^"]+)"/u)?.[1];
@@ -435,7 +459,7 @@ test("spawned hosted runner executes a registered capability profile through Doc
   const capability = {
     version: 1 as const, capabilityId: "tavily.search.read" as const, operations: ["search"] as ["search"], resource: "https://api.tavily.com/search" as const,
     audience: { tenantId, environmentId }, maxRequests: 1 as const, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096,
-    timeoutMs: 5_000, maxExpiryMs: 20_000, brokerAuthority: { authorityId, revision: authorityRevision },
+    timeoutMs: 200, maxExpiryMs: 20_000, brokerAuthority: { authorityId, revision: authorityRevision },
   };
   const resolved = await runCurlJson({
     url: `${runner.url}/commands`, method: "POST",
@@ -461,6 +485,31 @@ test("spawned hosted runner executes a registered capability profile through Doc
   assert.equal(response.body.includes("isolated-tavily-secret"), false);
   assert.match(response.body, /capabilityReplayEvidence/u);
   assert.match(response.body, /"toolName":"code\.execute"/u);
+  const providerEvidenceBeforeUnused = await readFile(evidencePath, "utf8");
+  const unused = await runCapabilityQualification(runner, resolvedEvent.payload!.profileId!, tenantId, "selected-unused");
+  assert.match(unused.body, /event: run\.completed/u);
+  assert.match(unused.body, /selected capability intentionally unused/u);
+  assert.match(unused.body, /capabilityReplayEvidence/u);
+  assert.equal(await readFile(evidencePath, "utf8"), providerEvidenceBeforeUnused);
+  await assertCancellationQualification(runner, resolvedEvent.payload!.profileId!, tenantId, evidencePath);
+  const expiryResolved = await runCurlJson({ url: `${runner.url}/commands`, method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` }, body: JSON.stringify({ id: "qualification-hosted-expiry-resolve", type: "execution-profile.resolve", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { environmentPresetId: "workspace_hosted", managedConfiguration: { modelProvider: "openrouter", model: "openai/gpt-5.6-luna", codeMode: { ...structuredClone(DEFAULT_CODE_MODE_ENABLED_CONFIG), capabilities: [{ ...capability, timeoutMs: 2_000, maxExpiryMs: 100 }] } } } }) });
+  const expiryProfileId = (expiryResolved.body.payload as { profileId?: string }).profileId;
+  assert.ok(expiryProfileId);
+  const expired = await runCapabilityQualification(runner, expiryProfileId, tenantId, "expiry");
+  assert.match(expired.body, /event: run\.completed/u);
+  await assertCapabilityProjection(runner, expired.body, tenantId, 1, "expired");
+  const timedOut = await runCapabilityQualification(runner, resolvedEvent.payload!.profileId!, tenantId, "timeout");
+  assert.match(timedOut.body, /event: run\.completed/u);
+  assert.match(timedOut.body, /adapter_failed/u);
+  assert.equal(timedOut.body.includes("isolated-tavily-secret"), false);
+  await assertCapabilityProjection(runner, timedOut.body, tenantId, 0);
+  assert.equal(unused.body.includes("isolated-tavily-secret"), false);
+  await assertSelectedUnusedProjection(runner, unused.body, tenantId);
+  const providerEvidenceBeforeCapabilityFree = await readFile(evidencePath, "utf8");
+  const capabilityFree = await runCapabilityQualification(runner, resolvedEvent.payload!.profileId!, tenantId, "capability-free");
+  assert.match(capabilityFree.body, /event: run\.completed/u);
+  assert.doesNotMatch(capabilityFree.body, /capabilityReplayEvidence/u);
+  assert.equal(await readFile(evidencePath, "utf8"), providerEvidenceBeforeCapabilityFree);
   const completed = readSseEvent(response.body, "run.completed") as { runId?: string };
   assert.ok(completed.runId);
   const exactResultKey = response.body.match(/"idempotencyKey":"([^"]+)"/u)?.[1];
@@ -586,6 +635,79 @@ async function ensureCurlAvailable(): Promise<void> {
   }
 }
 
+async function runCapabilityQualification(
+  runner: { url: string; token: string },
+  profileId: string,
+  tenantId: string,
+  mode: "selected-unused" | "capability-free" | "timeout" | "expiry" | "cancel",
+  sessionId = `qualification-${mode}-${randomUUID()}`,
+): Promise<{ status: number; body: string }> {
+  return await runCurlText({
+    url: `${runner.url}/commands/stream`, method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
+    body: JSON.stringify({ id: `qualification-${mode}-${randomUUID()}`, type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId, turn: { sessionId, message: `qualification ${mode}`, eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true } } } } }),
+  });
+}
+
+async function assertSelectedUnusedProjection(
+  runner: { url: string; token: string },
+  runBody: string,
+  tenantId: string,
+): Promise<void> {
+  await assertCapabilityProjection(runner, runBody, tenantId, 1);
+}
+
+async function assertCapabilityProjection(
+  runner: { url: string; token: string },
+  runBody: string,
+  tenantId: string,
+  remainingRequests: number,
+  expectedTerminal?: string,
+): Promise<void> {
+  const terminalEvent = runBody.includes("event: run.cancelled") ? "run.cancelled" : runBody.includes("event: run.failed") ? "run.failed" : "run.completed";
+  const runId = (readSseEvent(runBody, terminalEvent) as { runId?: string }).runId;
+  assert.ok(runId);
+  const projection = await runCurlJson({
+    url: `${runner.url}/commands`, method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
+    body: JSON.stringify({ id: `qualification-operator-run-${randomUUID()}`, type: "operator.run", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { runId } }),
+  });
+  assert.equal(projection.status, 200, JSON.stringify(projection.body));
+  const sandbox = ((projection.body.payload as { view?: { sandboxCapabilities?: { leases?: Array<Record<string, unknown>> } } }).view?.sandboxCapabilities);
+  assert.ok(sandbox);
+  assert.equal(sandbox.leases?.length, 1);
+  assert.equal(sandbox.leases?.[0]?.status, "cleaned");
+  assert.equal(sandbox.leases?.[0]?.remainingRequests, remainingRequests);
+  if (expectedTerminal !== undefined) assert.match(JSON.stringify(sandbox.leases?.[0]), new RegExp(expectedTerminal, "u"));
+}
+
+async function assertCancellationQualification(runner: { url: string; token: string }, profileId: string, tenantId: string, evidencePath: string): Promise<void> {
+  const sessionId = `qualification-cancel-${randomUUID()}`;
+  const pending = runCapabilityQualification(runner, profileId, tenantId, "cancel", sessionId);
+  await waitForFileMatch(evidencePath, /"query":"qualification-cancel"/u);
+  const cancelled = await runCurlJson({ url: `${runner.url}/commands`, method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` }, body: JSON.stringify({ id: `qualification-cancel-command-${randomUUID()}`, type: "run.cancel", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { sessionId } }) });
+  assert.equal(cancelled.body.type, "run.cancelled");
+  const outcome = await pending;
+  assert.match(outcome.body, /event: run\.cancelled/u);
+  await waitForFileMatch(evidencePath, /"kind":"provider_abort","query":"qualification-cancel"/u);
+  await assertCapabilityProjection(runner, outcome.body, tenantId, 0, "cancel");
+  const runId = (readSseEvent(outcome.body, "run.cancelled") as { runId?: string }).runId;
+  const idempotencyKey = outcome.body.match(/"idempotencyKey":"([^"]+)"/u)?.[1];
+  assert.ok(runId && idempotencyKey);
+  const replay = await runCurlJson({ url: `${runner.url}/commands`, method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` }, body: JSON.stringify({ id: `qualification-cancel-replay-${randomUUID()}`, type: "effect.result.get", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { sessionId, runId, idempotencyKey } }) });
+  assert.equal(replay.body.type, "runner.error");
+  assert.match(JSON.stringify(replay.body), /EFFECT_RESULT_(?:INCOMPLETE|NOT_FOUND)/u);
+}
+
+async function waitForFileMatch(filePath: string, pattern: RegExp): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (pattern.test(await readFile(filePath, "utf8").catch(() => ""))) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${pattern}`);
+}
+
 async function startHostedRunner(
   t: TestContext,
   envOverrides: NodeJS.ProcessEnv = {},
@@ -654,7 +776,7 @@ async function startWebRunner(
   t: TestContext,
   envOverrides: NodeJS.ProcessEnv = {},
   autoShutdownSignal: NodeJS.Signals | false = "SIGINT",
-  afterCoreReady?: (client: LocalCoreClient) => Promise<string | undefined>,
+  afterCoreReady?: (client: LocalCoreClient) => Promise<string | { qualificationProfileId: string; expiryProfileId: string } | undefined>,
 ): Promise<{
   port: number;
   url: string;
@@ -666,6 +788,7 @@ async function startWebRunner(
   stderrOutput(): string;
   restartCore(overrides?: NodeJS.ProcessEnv): Promise<void>;
   qualificationProfileId?: string | undefined;
+  expiryProfileId?: string | undefined;
 }> {
   const repoRoot = process.cwd();
   const kestrelHome = await mkdtemp(path.join(os.tmpdir(), "kestrel-web-command-"));
@@ -716,7 +839,7 @@ async function startWebRunner(
     await rm(kestrelHome, { recursive: true, force: true });
     throw error;
   }
-  const qualificationProfileId = await afterCoreReady?.(
+  const configuredProfiles = await afterCoreReady?.(
     new LocalCoreClient({ socketPath: corePaths.apiSocketPath, token: coreToken }),
   );
   const child = spawn(
@@ -790,7 +913,7 @@ async function startWebRunner(
     port,
     url,
     token,
-    ...(qualificationProfileId === undefined ? {} : { qualificationProfileId }),
+    ...(configuredProfiles === undefined ? {} : typeof configuredProfiles === "string" ? { qualificationProfileId: configuredProfiles } : configuredProfiles),
     startupOutput,
     signal(signal: NodeJS.Signals) {
       child.kill(signal);
@@ -949,6 +1072,7 @@ async function runCurlJson(input: {
   const result = await execFileAsync("curl", args, {
     cwd: process.cwd(),
     env: process.env,
+    maxBuffer: 16 * 1024 * 1024,
   });
   const stdout = result.stdout.trimEnd();
   const newline = stdout.lastIndexOf("\n");
@@ -990,6 +1114,7 @@ async function runCurlText(input: {
   const result = await execFileAsync("curl", args, {
     cwd: process.cwd(),
     env: process.env,
+    maxBuffer: 16 * 1024 * 1024,
   });
   const stdout = result.stdout.trimEnd();
   const newline = stdout.lastIndexOf("\n");
@@ -1114,14 +1239,20 @@ async function handleFakeOpenRouterRequest(
   }
 
   const serializedMessages = JSON.stringify(parsed.messages);
-  const qualification = serializedMessages.includes("qualification provider-used");
+  const qualificationUsed = serializedMessages.includes("qualification provider-used");
+  const qualificationUnused = serializedMessages.includes("qualification selected-unused");
+  const qualificationTimeout = serializedMessages.includes("qualification timeout");
+  const qualificationCancel = serializedMessages.includes("qualification cancel");
+  const qualificationExpiry = serializedMessages.includes("qualification expiry");
   const codeName = parsed.tools?.map((tool) => tool.function?.name ?? tool.name).find((name) => name === "code_execute") ?? "code.execute";
-  const toolCall = qualification && serializedMessages.includes("call_qualification_code") === false ? {
-    id: "call_qualification_code",
+  const qualificationCallId = qualificationUnused ? "call_qualification_unused" : qualificationTimeout ? "call_qualification_timeout" : qualificationCancel ? "call_qualification_cancel" : qualificationExpiry ? "call_qualification_expiry" : "call_qualification_code";
+  const qualificationQuery = qualificationTimeout ? "qualification-timeout" : qualificationCancel ? "qualification-cancel" : qualificationExpiry ? "qualification-expiry" : "qualification";
+  const toolCall = (qualificationUsed || qualificationUnused || qualificationTimeout || qualificationCancel || qualificationExpiry) && serializedMessages.includes(qualificationCallId) === false ? {
+    id: qualificationCallId,
     type: "function",
     function: {
       name: codeName,
-      arguments: JSON.stringify({ language: "javascript", code: "fetch('http://127.0.0.1:43127/v1/capability', { method: 'POST', body: JSON.stringify({ operation: 'search', destination: 'api.tavily.com', input: { query: 'qualification', maxResults: 1 } }) }).then(async response => console.log(JSON.stringify(await response.json())))", capability: { capabilityId: "tavily.search.read", input: { query: "qualification", maxResults: 1 } } }),
+      arguments: JSON.stringify({ language: "javascript", code: qualificationUnused ? "console.log('selected capability intentionally unused')" : `fetch('http://127.0.0.1:43127/v1/capability', { method: 'POST', body: JSON.stringify({ operation: 'search', destination: 'api.tavily.com', input: { query: '${qualificationQuery}', maxResults: 1 } }) }).then(async response => console.log(JSON.stringify(await response.json())))`, capability: { capabilityId: "tavily.search.read", input: { query: qualificationUnused ? "unused" : qualificationQuery, maxResults: 1 } } }),
     },
   } : {
     id: "call_fake_finalize",

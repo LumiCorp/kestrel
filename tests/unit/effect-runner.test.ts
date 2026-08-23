@@ -416,6 +416,37 @@ test("deferred capability output mutation cannot alter or masquerade as the pers
   assert.equal((((await store.getEffectResult("call-mutation"))?.output as typeof original).outcome.rawOutput as { status: string }).status, "ok");
 });
 
+test("rejected pre-cleanup capability persistence does not leave a stale conflicting candidate", async () => {
+  const store = new InMemorySessionStore();
+  let attempts = 0;
+  Object.assign(store, {
+    saveSandboxCapabilityEffectResult: async () => {
+      attempts += 1;
+      throw new Error("capability result is not durably replayable");
+    },
+  });
+  const timestamp = "2026-08-23T12:00:00.000Z";
+  const exact = structuredClone(agentToolResultFixture(timestamp));
+  (exact.outcome.rawOutput as { status: string }).status = "timeout";
+  const returned = structuredClone(exact);
+  (returned.outcome.rawOutput as { status: string }).status = "error";
+  const registry = new EffectRegistry();
+  registry.register("execute_tool_call", async (_effect, context) => {
+    await assert.rejects(context.persistCompletedCapabilityResult!(exact), /not durably replayable/u);
+    return returned;
+  });
+
+  const result = await new InlineEffectRunner(store, registry).runEffects([{
+    runId: "run-timeout-envelope", sessionId: "session-timeout-envelope", stepIndex: 0,
+    type: "execute_tool_call", payload: { toolName: "code.execute", toolInput: {} },
+    idempotencyKey: "call-mutation", failurePolicy: "STOP", status: "PENDING", createdAt: timestamp,
+  }], { runId: "run-timeout-envelope", sessionId: "session-timeout-envelope", stepIndex: 0 });
+
+  assert.equal(result.stop, true, JSON.stringify(result));
+  assert.equal(attempts, 2);
+  assert.doesNotMatch(JSON.stringify(result), /conflicting completed outputs/u);
+});
+
 function agentToolResultFixture(timestamp: string) {
   const descriptor = defaultToolCatalog.getDescriptorRef("code.execute");
   assert.ok(descriptor);

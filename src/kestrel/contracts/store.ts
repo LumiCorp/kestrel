@@ -38,6 +38,7 @@ import type {
   RuntimeEventIntent,
 } from "./events.js";
 import { parseAgentToolResultV2, parsePreparedToolCallV1, type AgentToolResultV2 } from "./tool-invocation.js";
+import { canonicalJson } from "./tool-contract.js";
 
 export class SandboxCapabilityExactResultCancelledError extends Error {}
 export class SandboxCapabilityExactResultConflictError extends Error {}
@@ -466,6 +467,7 @@ export interface ExactEffectResultStore {
     sessionId: string;
     runId: string;
     idempotencyKey: string;
+    tenantId: string;
   }): Promise<ExactEffectResultRead>;
 }
 
@@ -494,8 +496,39 @@ export function validateExactEffectResultRead(input: {
   if (effectResult.status !== "DONE" || effectResult.output === undefined) return { status: "incomplete" };
   let result: AgentToolResultV2;
   try { result = parseAgentToolResultV2(effectResult.output); } catch { return { status: "conflict" }; }
-  if (result.toolCallId !== requested.idempotencyKey) return { status: "conflict" };
+  if (
+    result.toolCallId !== requested.idempotencyKey ||
+    result.toolName !== prepared.activation.descriptor.toolId ||
+    canonicalJson(result.activation) !== canonicalJson(prepared.activation) ||
+    canonicalJson(result.auditRecord.input) !== canonicalJson(prepared.effectiveInput)
+  ) return { status: "conflict" };
   return { status: "found", result };
+}
+
+export function validateExactEffectResultTenantBinding(input: {
+  read: ExactEffectResultRead;
+  requested: { sessionId: string; runId: string; idempotencyKey: string; tenantId: string };
+  lease: SandboxCapabilityLeaseTransitionRecordV1 | null;
+}): ExactEffectResultRead {
+  if (input.read.status !== "found") return input.read;
+  const rawOutput = input.read.result.outcome.kind === "success" || input.read.result.outcome.kind === "partial"
+    ? input.read.result.outcome.rawOutput
+    : undefined;
+  if (typeof rawOutput !== "object" || rawOutput === null || Array.isArray(rawOutput)) return { status: "conflict" };
+  const replayEvidence = (rawOutput as Record<string, unknown>).capabilityReplayEvidence;
+  if (typeof replayEvidence !== "object" || replayEvidence === null || Array.isArray(replayEvidence)) return { status: "conflict" };
+  const leaseId = (replayEvidence as Record<string, unknown>).leaseId;
+  if (typeof leaseId !== "string" || leaseId.length === 0 || input.lease === null || input.lease.leaseId !== leaseId) {
+    return { status: "conflict" };
+  }
+  const binding = input.lease.binding;
+  if (
+    binding.tenantId !== input.requested.tenantId ||
+    binding.sessionId !== input.requested.sessionId ||
+    binding.runId !== input.requested.runId ||
+    binding.toolCallId !== input.requested.idempotencyKey
+  ) return { status: "not_found" };
+  return input.read;
 }
 
 export interface OutboxStore {

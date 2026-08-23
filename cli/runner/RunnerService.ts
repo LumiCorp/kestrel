@@ -93,6 +93,7 @@ interface RunnerServiceRuntimeOptions {
   eventJournal?: RunnerServiceEventJournal | undefined;
   runtimeStore?: RunnerRuntimeStoreLifecycle | undefined;
   exactEffectResultStore?: NonNullable<ConstructorParameters<typeof RunnerHost>[3]>["exactEffectResultStore"];
+  exactEffectResultTenantId?: string | undefined;
   onRuntimeStoreEvent?: ((event: RunnerRuntimeStoreEvent) => void) | undefined;
 }
 
@@ -261,6 +262,7 @@ export function createRunnerServiceHttpHandler(
     serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
     eventJournal: options.eventJournal,
     exactEffectResultStore: options.exactEffectResultStore,
+    exactEffectResultTenantId: options.exactEffectResultTenantId,
   });
   const runtimeStore = createRunnerRuntimeStoreReadiness(
     options.runtimeStore,
@@ -393,6 +395,7 @@ export async function createRunnerServiceServer(options: RunnerServiceOptions = 
     eventJournal: options.eventJournal,
     runtimeStore: options.runtimeStore,
     exactEffectResultStore: options.exactEffectResultStore,
+    exactEffectResultTenantId: options.exactEffectResultTenantId,
     onRuntimeStoreEvent: options.onRuntimeStoreEvent,
   });
   await handler.ready();
@@ -555,6 +558,7 @@ export function createInMemoryRunnerService(options: RunnerServiceOptions = {}):
     serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
     eventJournal: options.eventJournal,
     exactEffectResultStore: options.exactEffectResultStore,
+    exactEffectResultTenantId: options.exactEffectResultTenantId,
   });
 
   return {

@@ -23,6 +23,20 @@ globalThis.fetch = async (input, init) => {
     })}\n`, "utf8");
   }
 
+  if (["qualification-timeout", "qualification-cancel", "qualification-expiry"].includes(body.query)) {
+    const delayMs = Number.parseInt(process.env.KESTREL_TEST_SANDBOX_CAPABILITY_DELAY_MS ?? "500", 10);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(resolve, Number.isFinite(delayMs) ? delayMs : 500);
+      const abort = () => {
+        clearTimeout(timer);
+        if (evidencePath !== undefined) appendFileSync(evidencePath, `${JSON.stringify({ kind: "provider_abort", query: body.query, pid: process.pid })}\n`, "utf8");
+        reject(init?.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      };
+      if (init?.signal?.aborted === true) abort();
+      else init?.signal?.addEventListener("abort", abort, { once: true });
+    });
+  }
+
   return new Response(JSON.stringify({
     results: [{
       title: "Isolated provider fixture",

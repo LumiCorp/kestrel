@@ -599,6 +599,7 @@ export class RunnerHost {
   private readonly profileSourcePolicy: RunnerProfileSourcePolicy;
   private readonly diagnosticsStore: Pick<DiagnosticLogStore, "append">;
   private readonly exactEffectResultStore: ExactEffectResultStore | undefined;
+  private readonly exactEffectResultTenantId: string | undefined;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly commandBySession = new Map<string, string>();
   private readonly commandTypeBySession = new Map<
@@ -628,6 +629,7 @@ export class RunnerHost {
       profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
       diagnosticsStore?: Pick<DiagnosticLogStore, "append"> | undefined;
       exactEffectResultStore?: ExactEffectResultStore | undefined;
+      exactEffectResultTenantId?: string | undefined;
     } = {},
   ) {
     this.writer = writer;
@@ -637,14 +639,19 @@ export class RunnerHost {
       options.profileSourcePolicy ?? "inline-or-registered";
     this.diagnosticsStore = options.diagnosticsStore ?? new DiagnosticLogStore();
     this.exactEffectResultStore = options.exactEffectResultStore;
+    this.exactEffectResultTenantId = options.exactEffectResultTenantId?.trim() || undefined;
   }
 
-  async effectResultGet(commandId: string, payload: EffectResultGetCommandPayload): Promise<void> {
-    if (this.exactEffectResultStore === undefined) {
+  async effectResultGet(commandId: string, payload: EffectResultGetCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    if (this.exactEffectResultStore === undefined || this.exactEffectResultTenantId === undefined) {
       this.writer.emit("runner.error", { code: "EFFECT_RESULT_LOOKUP_UNAVAILABLE", message: "Exact effect result lookup is unavailable." }, { commandId });
       return;
     }
-    const read = await this.exactEffectResultStore.readExactEffectResult(payload);
+    if (metadata?.tenantId !== this.exactEffectResultTenantId || metadata.actor?.tenantId !== this.exactEffectResultTenantId) {
+      this.writer.emit("runner.error", { code: "RUNNER_FORBIDDEN", message: "Exact effect result lookup is not authorized for this tenant." }, { commandId });
+      return;
+    }
+    const read = await this.exactEffectResultStore.readExactEffectResult({ ...payload, tenantId: this.exactEffectResultTenantId });
     if (read.status !== "found") {
       const code = read.status === "not_found" ? "EFFECT_RESULT_NOT_FOUND" : read.status === "incomplete" ? "EFFECT_RESULT_INCOMPLETE" : "EFFECT_RESULT_CONFLICT";
       this.writer.emit("runner.error", { code, message: "The requested exact effect result is not available." }, { commandId });
@@ -910,6 +917,14 @@ export class RunnerHost {
         active.runId = requestedRunId ?? terminalResult.output.runId;
       }
       const emittedRunId = requestedRunId ?? terminalResult.output.runId;
+      if (abortController.signal.aborted && active?.commandId === commandId && active.cancelRequested === true) {
+        this.writer.emit("run.cancelled", {
+          sessionId: turn.sessionId,
+          runId: emittedRunId,
+          result: buildNonResponsiveTerminalResult({ status: "CANCELLED", sessionId: turn.sessionId, runId: emittedRunId }),
+        }, { commandId, runId: emittedRunId, sessionId: turn.sessionId });
+        return;
+      }
       if (
         requestedRunId !== undefined &&
         terminalResult.output.runId !== requestedRunId

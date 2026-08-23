@@ -107,7 +107,7 @@ export class CodeExecutionService {
         output,
         policy: policyDecision.policy,
         retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
-        capabilityReplayEvidence,
+        capabilityReplayEvidence: exactCapabilityResultCommitted ? capabilityReplayEvidence : undefined,
         redact: redactCapabilityResult,
       });
     } catch (error) {
@@ -125,7 +125,6 @@ export class CodeExecutionService {
           summary: "Code runtime unavailable: Docker is not installed or not reachable.",
           policy: policyDecision.policy,
           retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
-          ...(capabilityReplayEvidence === undefined ? {} : { capabilityReplayEvidence }),
         };
         return redactCapabilityResult?.(result) ?? result;
       }
@@ -140,7 +139,6 @@ export class CodeExecutionService {
         summary: "Code execution failed before completion due to an internal runtime error.",
         policy: policyDecision.policy,
         retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
-        ...(capabilityReplayEvidence === undefined ? {} : { capabilityReplayEvidence }),
       };
       return redactCapabilityResult?.(result) ?? result;
     } finally {
@@ -460,11 +458,18 @@ async function resolveSandboxCapability(
   }
   let sensitiveMaterialReleased = false;
   let resultPersistenceCommitted = false;
+  let providerInvocationReserved = false;
+  let providerResultCommitted = false;
   let invocationResponseByteLimit = profile.maxResponseBytes;
   let releaseRegisteredSensitiveValue: (() => void) | undefined;
+  const expiryTimer = setTimeout(() => {
+    void runtime.leaseCoordinator!.expire(durableLease.leaseId, leaseBinding, "lease_expired").catch(() => {});
+  }, Math.max(1, expiresAt.getTime() - (runtime.now ?? (() => new Date()))().getTime()));
+  expiryTimer.unref?.();
   const disposeSensitiveMaterial = () => {
     if (sensitiveMaterialReleased) return;
     sensitiveMaterialReleased = true;
+    clearTimeout(expiryTimer);
     releaseRegisteredSensitiveValue?.();
   };
   const grant: SandboxCapabilityGrant = {
@@ -501,6 +506,7 @@ async function resolveSandboxCapability(
     lifecycle: {
         beforeProviderInvocation: async () => {
           const reservation = await runtime.leaseCoordinator!.reserveInvocation(durableLease.leaseId, leaseBinding);
+          providerInvocationReserved = true;
           invocationResponseByteLimit = reservation.invocationResponseByteLimit;
           return { responseByteLimit: invocationResponseByteLimit };
         },
@@ -512,8 +518,17 @@ async function resolveSandboxCapability(
             responseBytes,
             exactProviderUsage: null,
           });
+          providerResultCommitted = true;
         },
-        recordProviderFailure: async () => {
+        recordProviderFailure: async (error) => {
+          if (
+            error instanceof SandboxCapabilityAdapterFailure &&
+            error.code === "CAPABILITY_DEADLINE_EXCEEDED" &&
+            (runtime.now ?? (() => new Date()))().getTime() >= expiresAt.getTime()
+          ) {
+            await runtime.leaseCoordinator!.expire(durableLease.leaseId, leaseBinding, "lease_expired_during_provider_invocation");
+            return;
+          }
           await runtime.leaseCoordinator!.recordProviderFailure(
             durableLease.leaseId,
             leaseBinding,
@@ -523,7 +538,7 @@ async function resolveSandboxCapability(
           let persistenceError: unknown;
           try {
             const effectiveReason = signal?.aborted === true ? "cancelled" : reason;
-            if (completedOutput !== undefined && persistCompletedCapabilityResult !== undefined) {
+            if (completedOutput?.status === "ok" && persistCompletedCapabilityResult !== undefined) {
               try {
                 await persistCompletedCapabilityResult(buildCompletedCodeExecutionResult({
                   output: completedOutput,
@@ -559,7 +574,9 @@ async function resolveSandboxCapability(
             } catch (error) {
               if (!winningResultCommitted) throw error;
             }
-            if (persistenceError !== undefined) throw persistenceError;
+            if (persistenceError !== undefined && !(providerInvocationReserved && !providerResultCommitted)) {
+              throw persistenceError;
+            }
             return { completedResultCommitted: resultPersistenceCommitted };
           } finally {
             // Durable evidence can honestly remain non-cleaned when its store

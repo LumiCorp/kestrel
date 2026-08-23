@@ -108,11 +108,20 @@ export class InlineEffectRunner implements EffectRunner {
               output: outputSnapshot,
               timestamp: new Date().toISOString(),
             };
-            completedEffectResultSave = this.persistCompletedEffectResult(
+            const pendingSave = this.persistCompletedEffectResult(
               effect,
               completedEffectResult,
               context.signal,
             );
+            const trackedSave = pendingSave.catch((error: unknown) => {
+              if (completedEffectResultSave === trackedSave) {
+                completedEffectResult = undefined;
+                completedOutputCanonical = undefined;
+                completedEffectResultSave = undefined;
+              }
+              throw error;
+            });
+            completedEffectResultSave = trackedSave;
           } else if (completedOutputCanonical !== canonicalJson(output)) {
             return Promise.reject(new Error("Effect handler attempted to persist conflicting completed outputs"));
           }
@@ -122,7 +131,7 @@ export class InlineEffectRunner implements EffectRunner {
           readSandboxCapabilityReplayEvidence(output) === undefined
             ? Promise.resolve()
             : persistCompletedResult(output);
-        const output = await handler(effect, {
+        let output = await handler(effect, {
           ...context,
           session,
           persistCompletedCapabilityResult,
