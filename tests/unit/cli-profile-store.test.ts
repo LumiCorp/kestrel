@@ -13,8 +13,8 @@ import {
 import { MODEL_POLICY_FILE_NAME } from "../../src/profile/modelPolicy.js";
 import { FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
 import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.js";
-import { reconstructLegacySandboxCapabilityTuiProfile } from "../../cli/runtime/KestrelChatRuntime.js";
-import { fingerprintSandboxCapabilityCatalogV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import { reconstructLegacySandboxCapabilityTuiProfile, resolveSandboxCapabilityCompatibilityFingerprints } from "../../cli/runtime/KestrelChatRuntime.js";
+import { fingerprintSandboxCapabilityCatalogV1, fingerprintSandboxCapabilityCatalogV2 } from "../../src/kestrel/contracts/sandbox-capability.js";
 
 test("ProfileStore bootstraps default profile when file is missing", async () => {
   const tempDir = await mkdtemp(
@@ -81,6 +81,19 @@ test("ordinary profile parsing canonicalizes legacy sandbox authoring to V2 befo
   assert.ok(legacy);
   assert.equal(fingerprintResolvedProfile(legacy), "5e6cb22948471d8d9ea1163c5555edb1179d2e2a2427c2700fb69813901532f4");
   assert.equal(fingerprintSandboxCapabilityCatalogV1(legacy.codeMode?.capabilities ?? []), "c105064885a0b6bf870e00306bfd340601ab9a44772d9ee6d7b4ed2879a74325");
+  assert.deepEqual(resolveSandboxCapabilityCompatibilityFingerprints(parsed), {
+    profileFingerprint: fingerprintResolvedProfile(parsed),
+    capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2(parsed.codeMode?.capabilities ?? []),
+    legacyProfileFingerprint: "5e6cb22948471d8d9ea1163c5555edb1179d2e2a2427c2700fb69813901532f4",
+    legacyCapabilityCatalogFingerprint: "c105064885a0b6bf870e00306bfd340601ab9a44772d9ee6d7b4ed2879a74325",
+  });
+  const rawV1Profile = { ...parsed, codeMode: { ...parsed.codeMode!, capabilities: [capability] } } as never;
+  assert.deepEqual(resolveSandboxCapabilityCompatibilityFingerprints(rawV1Profile), {
+    profileFingerprint: fingerprintResolvedProfile(rawV1Profile),
+    capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2([capability]),
+    legacyProfileFingerprint: "5e6cb22948471d8d9ea1163c5555edb1179d2e2a2427c2700fb69813901532f4",
+    legacyCapabilityCatalogFingerprint: "c105064885a0b6bf870e00306bfd340601ab9a44772d9ee6d7b4ed2879a74325",
+  });
   assert.equal(reconstructLegacySandboxCapabilityTuiProfile({ ...parsed, codeMode: { ...parsed.codeMode!, capabilities: [{ ...canonical, effectClass: "external_effect" }] } } as never), undefined);
 });
 

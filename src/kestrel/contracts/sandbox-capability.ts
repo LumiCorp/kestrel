@@ -448,6 +448,9 @@ export function normalizeSandboxCapabilityProfilesV2(value: unknown): SandboxCap
 }
 
 export function reconstructSandboxCapabilityProfileV1(value: unknown): SandboxCapabilityProfileV1 | undefined {
+  if (typeof value === "object" && value !== null && !Array.isArray(value) && (value as { version?: unknown }).version === 1) {
+    try { return parseSandboxCapabilityProfileV1(value); } catch { return undefined; }
+  }
   let profile: SandboxCapabilityProfileV2;
   try { profile = parseSandboxCapabilityProfileV2(value); } catch { return undefined; }
   if (

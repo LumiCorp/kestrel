@@ -3390,13 +3390,12 @@ function createRuntimeWithStore(
     if (sandboxCapabilityStore === undefined) {
       throw new Error("Selected sandbox capabilities require a durable lifecycle store");
     }
-    const profileFingerprint = fingerprintResolvedProfile(profile);
-    const capabilityCatalogFingerprint = fingerprintSandboxCapabilityCatalogV2(profile.codeMode?.capabilities ?? []);
-    const legacyProfile = reconstructLegacySandboxCapabilityTuiProfile(profile);
-    const legacyProfileFingerprint = legacyProfile === undefined ? undefined : fingerprintResolvedProfile(legacyProfile);
-    const legacyCapabilityCatalogFingerprint = legacyProfile === undefined
-      ? undefined
-      : fingerprintSandboxCapabilityCatalogV1(legacyProfile.codeMode?.capabilities ?? []);
+    const {
+      profileFingerprint,
+      capabilityCatalogFingerprint,
+      legacyProfileFingerprint,
+      legacyCapabilityCatalogFingerprint,
+    } = resolveSandboxCapabilityCompatibilityFingerprints(profile);
     sandboxCapabilityRuntime.leaseCoordinator = new SandboxCapabilityLeaseCoordinator({
       store: sandboxCapabilityStore,
       validateCurrent: async (binding, boundary) => validateSandboxCapabilityLeaseCurrent({
@@ -4477,6 +4476,23 @@ export function reconstructLegacySandboxCapabilityTuiProfile(profile: TuiProfile
       ...profile.codeMode!,
       capabilities: legacyCapabilities as NonNullable<TuiProfile["codeMode"]>["capabilities"],
     },
+  };
+}
+
+export function resolveSandboxCapabilityCompatibilityFingerprints(profile: TuiProfile): {
+  profileFingerprint: string;
+  capabilityCatalogFingerprint: string;
+  legacyProfileFingerprint?: string | undefined;
+  legacyCapabilityCatalogFingerprint?: string | undefined;
+} {
+  const legacyProfile = reconstructLegacySandboxCapabilityTuiProfile(profile);
+  return {
+    profileFingerprint: fingerprintResolvedProfile(profile),
+    capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2(profile.codeMode?.capabilities ?? []),
+    ...(legacyProfile === undefined ? {} : {
+      legacyProfileFingerprint: fingerprintResolvedProfile(legacyProfile),
+      legacyCapabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1(legacyProfile.codeMode?.capabilities ?? []),
+    }),
   };
 }
 
