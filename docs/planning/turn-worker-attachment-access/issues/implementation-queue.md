@@ -4,7 +4,8 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Close the concurrent availability probe race](07-close-availability-probe-race.md)
+- [Make blob restoration and its audit event atomic](08-atomically-audit-blob-repair.md)
 
 ## In progress
 
