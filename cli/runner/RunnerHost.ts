@@ -175,7 +175,7 @@ interface ActiveRunEntry {
   runId?: string | undefined;
   cancelRequested?: boolean | undefined;
   finalizingAnswer?: boolean | undefined;
-  durableCompletedEffect?: {
+  exactEffectCandidate?: {
     runId: string;
     idempotencyKey: string;
   } | undefined;
@@ -921,10 +921,13 @@ export class RunnerHost {
         active.runId = requestedRunId ?? terminalResult.output.runId;
       }
       const emittedRunId = requestedRunId ?? terminalResult.output.runId;
-      const durableCompletionWon = active?.commandId === commandId
+      const cancellationPending = abortController.signal.aborted &&
+        active?.commandId === commandId &&
+        active.cancelRequested === true;
+      const durableCompletionWon = cancellationPending
         ? await this.hasDurableCompletedEffect(active, turn.sessionId, emittedRunId)
         : false;
-      if (abortController.signal.aborted && active?.commandId === commandId && active.cancelRequested === true && !durableCompletionWon) {
+      if (cancellationPending && !durableCompletionWon) {
         this.writer.emit("run.cancelled", {
           sessionId: turn.sessionId,
           runId: emittedRunId,
@@ -3387,12 +3390,12 @@ export class RunnerHost {
   private emitToolUpdate(update: RunToolUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     if (
-      normalizedUpdate.phase === "completed" &&
+      (normalizedUpdate.phase === "started" || normalizedUpdate.phase === "completed") &&
       normalizedUpdate.toolName === "code.execute"
     ) {
       const active = this.activeRuns.get(normalizedUpdate.sessionId);
       if (active !== undefined) {
-        active.durableCompletedEffect = {
+        active.exactEffectCandidate = {
           runId: normalizedUpdate.runId,
           idempotencyKey: normalizedUpdate.toolCallId,
         };
@@ -3434,7 +3437,7 @@ export class RunnerHost {
     sessionId: string,
     runId: string | undefined,
   ): Promise<boolean> {
-    const candidate = active.durableCompletedEffect;
+    const candidate = active.exactEffectCandidate;
     if (
       candidate === undefined ||
       runId === undefined ||

@@ -2957,7 +2957,7 @@ test("run.cancel aborts only the matching run command", async () => {
   await host.close();
 });
 
-test("late cancellation cannot replace a durably committed exact result", async () => {
+test("late cancellation after DONE but before tool completion cannot replace the exact result", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -2998,11 +2998,21 @@ test("late cancellation cannot replace a durably committed exact result", async 
           seq: 1,
           toolCallId: "call-late-commit",
           toolName: "code.execute",
-          phase: "completed",
-          output: exactResult,
+          phase: "started",
         }));
         doneObserved();
         await pausedAfterDone;
+        onRunEvent?.(buildPersistedRuntimeEventFromToolUpdate({
+          version: "v1",
+          runId: "run-late-commit",
+          sessionId: turn.sessionId,
+          ts: "2026-08-23T12:00:01.000Z",
+          seq: 2,
+          toolCallId: "call-late-commit",
+          toolName: "code.execute",
+          phase: "completed",
+          output: exactResult,
+        }));
         return {
           assistantText: "Committed result.",
           output: completedOutput(turn.sessionId, "run-late-commit"),
@@ -3057,6 +3067,73 @@ test("late cancellation cannot replace a durably committed exact result", async 
     tenantId: "tenant-late-commit",
   });
   assert.deepEqual(replay.result, exactResult);
+  rl.close();
+  await host.close();
+});
+
+test("ordinary committed success does not depend on a post-return exact-result read", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+  let reads = 0;
+  const host = new RunnerHost(
+    writer,
+    (_profile, _onLog, _onProgress, _onConsole, _onReasoning, _onTask, onRunEvent) => ({
+      runTurn: async (turn) => {
+        onRunEvent?.(buildPersistedRuntimeEventFromToolUpdate({
+          version: "v1",
+          runId: "run-post-commit-outage",
+          sessionId: turn.sessionId,
+          ts: "2026-08-23T12:00:00.000Z",
+          seq: 1,
+          toolCallId: "call-post-commit-outage",
+          toolName: "code.execute",
+          phase: "completed",
+          output: { version: "v2", toolCallId: "call-post-commit-outage" },
+        }));
+        return {
+          assistantText: "Committed result.",
+          output: completedOutput(turn.sessionId, "run-post-commit-outage"),
+        };
+      },
+      close: async () => {},
+    }),
+    undefined,
+    {
+      exactEffectResultTenantId: "tenant-post-commit-outage",
+      exactEffectResultStore: {
+        async readExactEffectResult() {
+          reads += 1;
+          throw new Error("store unavailable after exact commit");
+        },
+      },
+    },
+  );
+
+  await host.runStart(
+    "cmd-run-post-commit-outage",
+    {
+      profile,
+      turn: {
+        sessionId: "session-post-commit-outage",
+        runId: "run-post-commit-outage",
+        message: "complete despite later store outage",
+        eventType: "user.message",
+      },
+    },
+    {
+      tenantId: "tenant-post-commit-outage",
+      actor: { actorId: "operator-outage", actorType: "operator", tenantId: "tenant-post-commit-outage" },
+    },
+  );
+
+  assert.equal(reads, 0);
+  assert.equal(events.some((event) => event.type === "run.completed"), true);
+  assert.equal(events.some((event) => event.type === "run.failed"), false);
   rl.close();
   await host.close();
 });
