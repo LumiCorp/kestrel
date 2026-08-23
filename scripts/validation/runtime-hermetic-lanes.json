@@ -144,6 +144,7 @@
         "tests/unit/runtime-turn-compiler.test.ts",
         "tests/unit/runtime-turn-coordinator.test.ts",
         "tests/unit/runtime-turn-provenance.test.ts",
+        "tests/unit/sandbox-capability-contract.test.ts",
         "tests/unit/sdk-agent-shakedown.test.ts",
         "tests/unit/skill-packs.test.ts",
         "tests/unit/start-script.test.ts",
