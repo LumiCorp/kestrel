@@ -31,6 +31,7 @@ export interface EnsureLocalCoreStoreOptions {
   mode?: "pglite" | "managed" | "external" | undefined;
   externalDatabaseUrl?: string | undefined;
   migrationsDir?: string | undefined;
+  tenantId?: string | undefined;
 }
 
 export interface ArchiveLocalCorePgliteStoreOptions {
@@ -52,13 +53,14 @@ export async function ensureLocalCoreStore(
   const mode = normalizeMode(options.mode);
   const externalDatabaseUrl = normalizeString(options.externalDatabaseUrl);
   const migrationsDir = normalizeString(options.migrationsDir);
+  const tenantId = normalizeString(options.tenantId);
   if (mode === "external" && externalDatabaseUrl === undefined) {
     throw new Error("External Local Core store mode requires an explicit database URL.");
   }
 
   const configurationKey = mode === "pglite"
-    ? `pglite:${paths.pgliteDataPath}:${migrationsDir ?? "default"}`
-    : `external:${externalDatabaseUrl}`;
+    ? `pglite:${paths.pgliteDataPath}:${migrationsDir ?? "default"}:${tenantId ?? "unbound"}`
+    : `external:${externalDatabaseUrl}:${tenantId ?? "unbound"}`;
   const existing = storesByStateRoot.get(paths.stateRootPath);
   if (existing?.configurationKey === configurationKey) {
     return await existing.handle;
@@ -70,6 +72,7 @@ export async function ensureLocalCoreStore(
     mode,
     externalDatabaseUrl,
     migrationsDir,
+    tenantId,
   });
   const entry = { configurationKey, handle };
   storesByStateRoot.set(paths.stateRootPath, entry);
@@ -177,6 +180,7 @@ async function createStoreAfterClosing(
     mode: LocalCoreConfiguredDatabaseMode;
     externalDatabaseUrl?: string | undefined;
     migrationsDir?: string | undefined;
+    tenantId?: string | undefined;
   },
 ): Promise<LocalCoreStoreHandle> {
   if (previousHandle !== undefined) {
@@ -219,6 +223,7 @@ function buildHandle(
     pglitePath: string;
     mode: LocalCoreConfiguredDatabaseMode;
     externalDatabaseUrl?: string | undefined;
+    tenantId?: string | undefined;
   },
   sqlHandle: SqlExecutorStoreHandle,
 ): LocalCoreStoreHandle {
@@ -231,7 +236,7 @@ function buildHandle(
     await sqlHandle.close();
   };
   return {
-    store: new PostgresSessionStore(sqlHandle.executor, { enforceSchemaV3: true }),
+    store: new PostgresSessionStore(sqlHandle.executor, { enforceSchemaV3: true, tenantId: input.tenantId }),
     executor: sqlHandle.executor,
     mode: input.mode,
     stateRootPath: input.stateRootPath,

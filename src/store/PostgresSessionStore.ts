@@ -6,7 +6,9 @@ import type {
 import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
+  exactEffectRequiresCapabilityTenantBinding,
   validateExactEffectCancellationCandidate,
+  validateExactEffectCancellationTenantBinding,
   validateExactEffectResultRead,
   validateExactEffectResultTenantBinding,
 } from "../kestrel/contracts/store.js";
@@ -130,6 +132,7 @@ interface QueryResult<Row> {
 
 interface PostgresSessionStoreOptions {
   enforceSchemaV3?: boolean | undefined;
+  tenantId?: string | undefined;
 }
 
 interface LockedSessionLeaseState {
@@ -274,11 +277,13 @@ export class PostgresSessionStore implements SessionStore {
   private readonly db: SqlExecutor;
   private readonly enforceSchemaV3: boolean;
   private readonly orchestrationStore: PostgresOrchestrationStore;
+  private readonly tenantId: string | undefined;
   private schemaValidated = false;
 
   constructor(db: SqlExecutor, options: PostgresSessionStoreOptions = {}) {
     this.db = db;
     this.enforceSchemaV3 = options.enforceSchemaV3 ?? false;
+    this.tenantId = options.tenantId?.trim() || undefined;
     this.orchestrationStore = new PostgresOrchestrationStore(db);
   }
 
@@ -1224,9 +1229,9 @@ export class PostgresSessionStore implements SessionStore {
       await this.reconcileTerminalActiveRunWithExecutor(executor, session);
       await this.acquireRunLeaseWithExecutor(executor, runId, event.sessionId);
       await executor.query(
-        `INSERT INTO runs (run_id, session_id, event_type, status)
-         VALUES ($1, $2, $3, 'RUNNING')`,
-        [runId, event.sessionId, event.type],
+        `INSERT INTO runs (run_id, session_id, event_type, status, tenant_id)
+         VALUES ($1, $2, $3, 'RUNNING', $4)`,
+        [runId, event.sessionId, event.type, this.tenantId ?? null],
       );
     });
   }
@@ -1678,10 +1683,10 @@ export class PostgresSessionStore implements SessionStore {
       const effectResult = await executor.query<{
         run_id: string; session_id: string; step_index: number; effect_type: string;
         payload_json: Record<string, unknown>; idempotency_key: string;
-        failure_policy: PersistedEffect["failurePolicy"]; status: PersistedEffect["status"]; created_at: string;
+        failure_policy: PersistedEffect["failurePolicy"]; status: PersistedEffect["status"]; created_at: string; tenant_id: string | null;
       }>(
         `SELECT run_id, session_id, step_index, effect_type, payload_json,
-                idempotency_key, failure_policy, status, created_at
+                idempotency_key, failure_policy, status, created_at, tenant_id
            FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
         [input.idempotencyKey],
       );
@@ -1694,6 +1699,36 @@ export class PostgresSessionStore implements SessionStore {
       const candidate = validateExactEffectCancellationCandidate({ requested: input, effect });
       if (candidate !== "ready") return { status: candidate } as const;
       if (effect === null) return { status: "not_found" } as const;
+      if (row?.tenant_id !== null && row?.tenant_id !== input.tenantId) return { status: "not_found" } as const;
+      const requiresTenantBinding = exactEffectRequiresCapabilityTenantBinding(effect);
+      if (row?.tenant_id === null && !requiresTenantBinding) return { status: "conflict" } as const;
+      const leaseResult = requiresTenantBinding
+        ? await executor.query<{ record_json: unknown }>(
+        `SELECT transition.record_json
+           FROM sandbox_capability_leases lease
+           JOIN sandbox_capability_lease_transitions transition
+             ON transition.lease_id = lease.lease_id AND transition.sequence = lease.sequence
+          WHERE transition.record_json->'binding'->>'sessionId' = $1
+            AND transition.record_json->'binding'->>'runId' = $2
+            AND transition.record_json->'binding'->>'toolCallId' = $3
+          LIMIT 2
+          FOR UPDATE OF lease`,
+        [input.sessionId, input.runId, input.idempotencyKey],
+      )
+        : { rows: [] };
+      if (requiresTenantBinding && leaseResult.rows.length > 1) return { status: "conflict" } as const;
+      let lease: SandboxCapabilityLeaseTransitionRecordV1 | null = null;
+      try {
+        lease = leaseResult.rows[0] === undefined
+          ? null
+          : parseSandboxCapabilityLeaseTransitionRecordV1(leaseResult.rows[0].record_json);
+      } catch {
+        return { status: "conflict" } as const;
+      }
+      if (requiresTenantBinding) {
+        const tenantBinding = validateExactEffectCancellationTenantBinding({ requested: input, lease });
+        if (tenantBinding !== "ready") return { status: tenantBinding } as const;
+      }
       const recordedResult = await executor.query<{
         idempotency_key: string; status: "DONE" | "FAILED"; output_json: unknown;
         error_json: RuntimeError | null; created_at: string;
@@ -1716,7 +1751,14 @@ export class PostgresSessionStore implements SessionStore {
           effect: { ...effect, status: "DONE" },
           effectResult: recorded,
         });
-        return { status: read.status === "found" ? "completed" : "conflict" } as const;
+        const tenantRead = requiresTenantBinding
+          ? validateExactEffectResultTenantBinding({ read, requested: input, lease })
+          : read;
+        return {
+          status: tenantRead.status === "found"
+            ? "completed"
+            : tenantRead.status === "not_found" ? "not_found" : "conflict",
+        } as const;
       }
       if (effect.status !== "PENDING") return { status: "conflict" } as const;
       await executor.query(
@@ -1733,21 +1775,30 @@ export class PostgresSessionStore implements SessionStore {
     result: EffectResult,
   ): Promise<void> {
     await this.ensureSchemaV3();
-    await this.db.query(
-      `INSERT INTO effect_results
-         (run_id, session_id, idempotency_key, status, output_json, error_json, created_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::timestamptz)
-       ON CONFLICT (idempotency_key) DO NOTHING`,
-      [
-        runId,
-        sessionId,
-        result.idempotencyKey,
-        result.status,
-        stringifySanitizedJson(result.output ?? null),
-        stringifySanitizedJson(result.error ?? null),
-        normalizeTimestampString(result.timestamp),
-      ],
-    );
+    await this.withTransaction(async (executor) => {
+      const effect = await executor.query<{ status: PersistedEffect["status"] }>(
+        `SELECT status FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
+        [result.idempotencyKey],
+      );
+      if (result.status === "DONE" && effect.rows[0]?.status === "FAILED") {
+        throw new SandboxCapabilityExactResultCancelledError("Completed effect-result persistence lost to durable cancellation");
+      }
+      await executor.query(
+        `INSERT INTO effect_results
+           (run_id, session_id, idempotency_key, status, output_json, error_json, created_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::timestamptz)
+         ON CONFLICT (idempotency_key) DO NOTHING`,
+        [
+          runId,
+          sessionId,
+          result.idempotencyKey,
+          result.status,
+          stringifySanitizedJson(result.output ?? null),
+          stringifySanitizedJson(result.error ?? null),
+          normalizeTimestampString(result.timestamp),
+        ],
+      );
+    });
   }
 
   async markEffectStatus(
@@ -1755,12 +1806,19 @@ export class PostgresSessionStore implements SessionStore {
     status: EffectExecutionStatus,
   ): Promise<void> {
     await this.ensureSchemaV3();
-    await this.db.query(
-      `UPDATE effects
-          SET status = $2
-        WHERE idempotency_key = $1`,
-      [idempotencyKey, status],
-    );
+    await this.withTransaction(async (executor) => {
+      const effect = await executor.query<{ status: PersistedEffect["status"] }>(
+        `SELECT status FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
+        [idempotencyKey],
+      );
+      if (status === "DONE" && effect.rows[0]?.status === "FAILED") {
+        throw new SandboxCapabilityExactResultCancelledError("Completed effect status lost to durable cancellation");
+      }
+      await executor.query(
+        `UPDATE effects SET status = $2 WHERE idempotency_key = $1`,
+        [idempotencyKey, status],
+      );
+    });
   }
 
   async listUndeliveredOutbox(limit: number, runId?: string): Promise<OutboxEventRecord[]> {
@@ -2870,7 +2928,7 @@ export class PostgresSessionStore implements SessionStore {
         stringifySanitizedJson(effect.payload),
       );
       tuples.push(
-        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}::jsonb, 'PENDING')`,
+        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}::jsonb, 'PENDING', (SELECT tenant_id FROM runs WHERE run_id = $${offset + 1}))`,
       );
     }
 
@@ -2886,7 +2944,7 @@ export class PostgresSessionStore implements SessionStore {
       created_at: string;
     }>(
       `INSERT INTO effects
-         (run_id, session_id, step_index, effect_type, idempotency_key, failure_policy, payload_json, status)
+         (run_id, session_id, step_index, effect_type, idempotency_key, failure_policy, payload_json, status, tenant_id)
        VALUES ${tuples.join(", ")}
        ON CONFLICT (idempotency_key) DO NOTHING
        RETURNING run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at`,

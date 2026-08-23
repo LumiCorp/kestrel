@@ -47,16 +47,20 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     const preparedToolCall = await prepareTestToolCall({
       gateway,
       toolName: "code.execute",
-      toolInput: { language: "javascript", code: "console.log('ok')" },
+      toolInput: {
+        language: "javascript",
+        code: "console.log('ok')",
+        capability: { capabilityId: TAVILY_SEARCH_CAPABILITY_ID, input: { query: "ok" } },
+      },
       runId,
       sessionId,
       callId: binding.toolCallId,
     });
     await pool.query(
       `INSERT INTO effects
-         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at)
-       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW())`,
-      [runId, sessionId, JSON.stringify({ preparedToolCall }), binding.toolCallId],
+         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at, tenant_id)
+       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW(), $5)`,
+      [runId, sessionId, JSON.stringify({ preparedToolCall }), binding.toolCallId, binding.tenantId],
     );
     await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: record(1, "requested") });
     await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: record(2, "issued") });
@@ -153,26 +157,62 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     await savingExactEffectResult;
     assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
     assert.deepEqual(await store.claimExactEffectCancellation({
+      sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: "tenant-other",
+    }), { status: "not_found" });
+    assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
+    assert.deepEqual(await store.claimExactEffectCancellation({
       sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: binding.tenantId,
     }), { status: "completed" });
     const cancelledToolCallId = `cancelled-call-${suffix}`;
+    const cancelledLeaseId = `cancelled-lease-${suffix}`;
+    const cancelledBinding = { ...binding, toolCallId: cancelledToolCallId };
+    const cancelledRecord = (
+      sequence: number,
+      transition: SandboxCapabilityLeaseTransitionRecordV1["transition"],
+    ): SandboxCapabilityLeaseTransitionRecordV1 => ({
+      ...record(sequence, transition),
+      leaseId: cancelledLeaseId,
+      binding: cancelledBinding,
+      bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(cancelledBinding),
+    });
     const cancelledPreparedToolCall = await prepareTestToolCall({
       gateway,
       toolName: "code.execute",
-      toolInput: { language: "javascript", code: "console.log('cancel')" },
+      toolInput: {
+        language: "javascript",
+        code: "console.log('cancel')",
+        capability: { capabilityId: TAVILY_SEARCH_CAPABILITY_ID, input: { query: "cancel" } },
+      },
       runId,
       sessionId,
       callId: cancelledToolCallId,
     });
     await pool.query(
       `INSERT INTO effects
-         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at)
-       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW())`,
-      [runId, sessionId, JSON.stringify({ preparedToolCall: cancelledPreparedToolCall }), cancelledToolCallId],
+         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at, tenant_id)
+       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW(), $5)`,
+      [runId, sessionId, JSON.stringify({ preparedToolCall: cancelledPreparedToolCall }), cancelledToolCallId, binding.tenantId],
     );
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: cancelledRecord(1, "requested") });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: cancelledRecord(2, "issued") });
+    assert.deepEqual(await store.claimExactEffectCancellation({
+      sessionId, runId, idempotencyKey: cancelledToolCallId, tenantId: "tenant-other",
+    }), { status: "not_found" });
+    assert.equal((await store.getPersistedEffect(cancelledToolCallId))?.status, "PENDING");
     assert.deepEqual(await store.claimExactEffectCancellation({
       sessionId, runId, idempotencyKey: cancelledToolCallId, tenantId: binding.tenantId,
     }), { status: "cancelled" });
+    await assert.rejects(store.saveEffectResult(runId, sessionId, {
+      ...exactEffectResult,
+      idempotencyKey: cancelledToolCallId,
+    }), /durable cancellation/u);
+    await store.saveEffectResult(runId, sessionId, {
+      idempotencyKey: cancelledToolCallId,
+      status: "FAILED",
+      error: { code: "EFFECT_EXECUTION_FAILED", message: "cancelled" },
+      timestamp: "2026-08-23T12:00:04.000Z",
+    });
+    await assert.rejects(store.markEffectStatus(cancelledToolCallId, "DONE"), /durable cancellation/u);
     await assert.rejects(store.saveSandboxCapabilityEffectResult({
       leaseId,
       bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding),

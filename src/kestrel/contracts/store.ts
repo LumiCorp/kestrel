@@ -505,6 +505,28 @@ export function validateExactEffectCancellationCandidate(input: {
   return "ready";
 }
 
+export function validateExactEffectCancellationTenantBinding(input: {
+  requested: { sessionId: string; runId: string; idempotencyKey: string; tenantId: string };
+  lease: SandboxCapabilityLeaseTransitionRecordV1 | null;
+}): "ready" | "not_found" | "conflict" {
+  if (input.lease === null) return "conflict";
+  const binding = input.lease.binding;
+  if (
+    binding.tenantId !== input.requested.tenantId ||
+    binding.sessionId !== input.requested.sessionId ||
+    binding.runId !== input.requested.runId ||
+    binding.toolCallId !== input.requested.idempotencyKey
+  ) return "not_found";
+  return "ready";
+}
+
+export function exactEffectRequiresCapabilityTenantBinding(
+  effect: PersistedEffect,
+): boolean {
+  const prepared = parsePreparedToolCallV1(effect.payload.preparedToolCall);
+  return Object.prototype.hasOwnProperty.call(prepared.effectiveInput, "capability");
+}
+
 export function validateExactEffectResultRead(input: {
   requested: { sessionId: string; runId: string; idempotencyKey: string };
   effect: PersistedEffect | null;

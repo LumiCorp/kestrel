@@ -877,6 +877,7 @@ async function createExecutionBundle(input: {
   const storeHandle = await ensureLocalCoreStore({
     homePath: input.status.home.homePath,
     mode: input.status.dbMode === "external" ? "external" : "pglite",
+    tenantId: normalizeString((input.options.env ?? process.env).KESTREL_TENANT_ID),
     ...(input.status.dbMode !== "external" && repoRoot !== undefined
       ? { migrationsDir: path.join(repoRoot, "db", "migrations") }
       : {}),

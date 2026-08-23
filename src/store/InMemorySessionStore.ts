@@ -10,7 +10,9 @@ import type {
 import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
+  exactEffectRequiresCapabilityTenantBinding,
   validateExactEffectCancellationCandidate,
+  validateExactEffectCancellationTenantBinding,
   validateExactEffectResultRead,
   validateExactEffectResultTenantBinding,
 } from "../kestrel/contracts/store.js";
@@ -122,6 +124,7 @@ interface InMemoryRun {
   startedAt: string;
   completedAt: string | undefined;
   error: RuntimeError | undefined;
+  tenantId?: string | undefined;
 }
 
 interface InMemoryEffect {
@@ -134,6 +137,7 @@ interface InMemoryEffect {
   failurePolicy: "STOP" | "CONTINUE" | "WAIT";
   status: EffectExecutionStatus;
   createdAt: string;
+  tenantId?: string | undefined;
 }
 
 interface InMemoryRegionWorkItem extends RegionWorkItem {
@@ -141,6 +145,7 @@ interface InMemoryRegionWorkItem extends RegionWorkItem {
 }
 
 export class InMemorySessionStore implements SessionStore {
+  private readonly tenantId: string | undefined;
   private readonly orchestrationStore = new InMemoryOrchestrationStore();
   private readonly sessions = new Map<string, InMemorySession>();
   private readonly productStates = new Map<string, InMemoryProductState>();
@@ -168,6 +173,10 @@ export class InMemorySessionStore implements SessionStore {
   private readonly artifacts: PersistedArtifact[] = [];
   private readonly claims: PersistedClaim[] = [];
   private readonly regionWorkItems: InMemoryRegionWorkItem[] = [];
+
+  constructor(options: { tenantId?: string | undefined } = {}) {
+    this.tenantId = options.tenantId?.trim() || undefined;
+  }
   private readonly conversationTurns = new Map<string, ConversationTurnRecord>();
   private readonly conversationTurnSegments = new Map<string, ConversationTurnSegmentRecord>();
   private readonly legacyArchives: LegacySessionArchive[] = [];
@@ -741,6 +750,7 @@ export class InMemorySessionStore implements SessionStore {
       startedAt: new Date().toISOString(),
       completedAt: undefined,
       error: undefined,
+      ...(this.tenantId === undefined ? {} : { tenantId: this.tenantId }),
     });
     this.operationLog.push(`startRun:${runId}`);
   }
@@ -830,6 +840,7 @@ export class InMemorySessionStore implements SessionStore {
         failurePolicy: effect.failurePolicy,
         status: "PENDING",
         createdAt: new Date().toISOString(),
+        ...(this.runs.get(input.runId)?.tenantId === undefined ? {} : { tenantId: this.runs.get(input.runId)!.tenantId }),
       };
       this.effects.push(persisted);
       persistedEffects.push({ ...persisted });
@@ -931,10 +942,38 @@ export class InMemorySessionStore implements SessionStore {
     const candidate = validateExactEffectCancellationCandidate({ requested: input, effect });
     if (candidate !== "ready") return { status: candidate } as const;
     if (effect === null) return { status: "not_found" } as const;
+    if (effect.tenantId !== undefined && effect.tenantId !== input.tenantId) return { status: "not_found" } as const;
+    const requiresTenantBinding = exactEffectRequiresCapabilityTenantBinding(effect);
+    if (effect.tenantId === undefined && !requiresTenantBinding) return { status: "conflict" } as const;
+    const matchingLeases = requiresTenantBinding
+      ? [...this.sandboxCapabilityLeaseTransitions.values()]
+          .map((ledger) => ledger.at(-1))
+          .filter((lease): lease is SandboxCapabilityLeaseTransitionRecordV1 =>
+            lease !== undefined &&
+            lease.binding.sessionId === input.sessionId &&
+            lease.binding.runId === input.runId &&
+            lease.binding.toolCallId === input.idempotencyKey
+          )
+      : [];
+    if (requiresTenantBinding) {
+      if (matchingLeases.length > 1) return { status: "conflict" } as const;
+      const tenantBinding = validateExactEffectCancellationTenantBinding({
+        requested: input,
+        lease: matchingLeases[0] ?? null,
+      });
+      if (tenantBinding !== "ready") return { status: tenantBinding } as const;
+    }
     const result = this.effectResults.get(input.idempotencyKey) ?? null;
     if (result !== null) {
       const read = validateExactEffectResultRead({ requested: input, effect: { ...effect, status: "DONE" }, effectResult: result });
-      return { status: read.status === "found" ? "completed" : "conflict" } as const;
+      const tenantRead = requiresTenantBinding
+        ? validateExactEffectResultTenantBinding({ read, requested: input, lease: matchingLeases[0] ?? null })
+        : read;
+      return {
+        status: tenantRead.status === "found"
+          ? "completed"
+          : tenantRead.status === "not_found" ? "not_found" : "conflict",
+      } as const;
     }
     if (effect.status !== "PENDING") return { status: "conflict" } as const;
     effect.status = "FAILED";
@@ -943,6 +982,10 @@ export class InMemorySessionStore implements SessionStore {
   }
 
   async saveEffectResult(_runId: string, _sessionId: string, result: EffectResult): Promise<void> {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === result.idempotencyKey);
+    if (result.status === "DONE" && effect?.status === "FAILED") {
+      throw new SandboxCapabilityExactResultCancelledError("Completed effect-result persistence lost to durable cancellation");
+    }
     if (this.effectResults.has(result.idempotencyKey)) {
       return;
     }
@@ -954,6 +997,9 @@ export class InMemorySessionStore implements SessionStore {
   async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus): Promise<void> {
     for (const effect of this.effects) {
       if (effect.idempotencyKey === idempotencyKey) {
+        if (status === "DONE" && effect.status === "FAILED") {
+          throw new SandboxCapabilityExactResultCancelledError("Completed effect status lost to durable cancellation");
+        }
         effect.status = status;
       }
     }

@@ -98,6 +98,7 @@ function readTrustedEnv(env: NodeJS.ProcessEnv, name: string): string | undefine
 
 export async function createHostedRunnerStore(input: {
   storeDir: string;
+  tenantId?: string | undefined;
   onStoreQuarantined?:
     | ((recovery: HostedRunnerStoreRecovery) => void | Promise<void>)
     | undefined;
@@ -105,7 +106,7 @@ export async function createHostedRunnerStore(input: {
   const sqlitePath = path.join(path.resolve(input.storeDir), "pglite");
 
   try {
-    return await initializeHostedRunnerStore(sqlitePath);
+    return await initializeHostedRunnerStore(sqlitePath, input.tenantId);
   } catch (error) {
     if (asRuntimeError(error).code !== "STORE_SQLITE_INIT_FAILED") {
       throw error;
@@ -116,7 +117,7 @@ export async function createHostedRunnerStore(input: {
     if (archived) {
       await input.onStoreQuarantined?.({ sqlitePath, recoveryPath });
     }
-    return await initializeHostedRunnerStore(sqlitePath);
+    return await initializeHostedRunnerStore(sqlitePath, input.tenantId);
   }
 }
 
@@ -143,6 +144,7 @@ export async function createHostedRunnerStoreFromEnv(input: {
   }
   return await createHostedRunnerStore({
     storeDir,
+    tenantId: readTrustedEnv(input.env ?? process.env, "KESTREL_TENANT_ID"),
     ...(input.onStoreQuarantined !== undefined
       ? { onStoreQuarantined: input.onStoreQuarantined }
       : {}),
@@ -151,6 +153,7 @@ export async function createHostedRunnerStoreFromEnv(input: {
 
 async function initializeHostedRunnerStore(
   sqlitePath: string,
+  tenantId?: string | undefined,
 ): Promise<HostedRunnerStore> {
   let handle: SqlExecutorStoreHandle | undefined;
   try {
@@ -164,6 +167,7 @@ async function initializeHostedRunnerStore(
       eventJournal: new LocalCoreProtocolEventJournal(handle.executor),
       store: new PostgresSessionStore(handle.executor, {
         enforceSchemaV3: true,
+        tenantId,
       }),
       sqlitePath,
       ready: handle.ready,
