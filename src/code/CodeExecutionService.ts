@@ -12,7 +12,7 @@ import type {
 import { DockerSandboxCancellationError, DockerSandboxExecutor, DockerUnavailableError } from "./DockerSandboxExecutor.js";
 import { evaluateExecutionPolicy } from "./PolicyEngine.js";
 import {
-  fingerprintSandboxCapabilityCatalogV1,
+  fingerprintSandboxCapabilityCatalogV2,
   normalizeSandboxCapabilityProfilesV2,
   normalizeSandboxCapabilitySelectionV2,
   type SandboxCapabilityLeaseBindingV2,
@@ -390,7 +390,7 @@ async function resolveSandboxCapability(
 }> {
   const selected = normalizeSandboxCapabilitySelectionV2(selectedValue);
   const authoredProfiles = normalizeSandboxCapabilityProfilesV2(config?.capabilities ?? []);
-  if (runtime !== undefined && runtime.capabilityCatalogFingerprint !== fingerprintSandboxCapabilityCatalogV1(authoredProfiles)) throw new Error("Sandbox capability catalog fingerprint is stale");
+  if (runtime !== undefined && runtime.capabilityCatalogFingerprint !== fingerprintSandboxCapabilityCatalogV2(authoredProfiles)) throw new Error("Sandbox capability catalog fingerprint is stale");
   const authored = authoredProfiles.find((item) => item.capabilityId === selected.capabilityId);
   if (authored === undefined) throw new Error("Selected sandbox capability is not authored by the resolved profile");
   const adapter = adapters.requireExact({ capabilityId: selected.capabilityId, operation: selected.operation, resource: authored.resource });

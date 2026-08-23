@@ -16,6 +16,7 @@ import {
 } from "../../cli/runtime/KestrelChatRuntime.js";
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
 import {
+  fingerprintSandboxCapabilityCatalogV1,
   fingerprintSandboxCapabilityLeaseBindingV1,
   type SandboxCapabilityLeaseBindingV1,
 } from "../../src/kestrel/contracts/sandbox-capability.js";
@@ -92,6 +93,21 @@ test("sandbox capability currentness rejects independent policy replacement and 
   let approvalGrants: Array<{ grantId: string; status: string; expiresAt: string; authorityRevision: string }> = [];
   let effectStatus: "PENDING" | "DONE" = "PENDING";
   const digest = "a".repeat(64);
+  const legacyCatalogDigest = "7eab21dde0392113932278c803b9fbf9beb0d21f869af2eb847aa94887222441";
+  assert.equal(fingerprintSandboxCapabilityCatalogV1([{
+    version: 1,
+    capabilityId: "tavily.search.read",
+    operations: ["search"],
+    resource: "https://api.tavily.com/search",
+    audience: { tenantId: "tenant-a", environmentId: "environment-a" },
+    maxRequests: 1,
+    maxQueryChars: 100,
+    maxResults: 3,
+    maxResponseBytes: 4096,
+    timeoutMs: 1000,
+    maxExpiryMs: 5000,
+    brokerAuthority: { authorityId: "broker-a", revision: "broker-r1" },
+  }]), legacyCatalogDigest);
   const binding: SandboxCapabilityLeaseBindingV1 = {
     version: 1,
     tenantId: "tenant-a",
@@ -100,7 +116,7 @@ test("sandbox capability currentness rejects independent policy replacement and 
     runId: "run-policy",
     toolCallId: "call-policy",
     profileFingerprint: digest,
-    capabilityCatalogFingerprint: digest,
+    capabilityCatalogFingerprint: legacyCatalogDigest,
     executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
     capabilityId: "tavily.search.read",
     operation: "search",
@@ -149,6 +165,7 @@ test("sandbox capability currentness rejects independent policy replacement and 
     boundary: "issuance",
     profileFingerprint: digest,
     capabilityCatalogFingerprint: digest,
+    legacyCapabilityCatalogFingerprint: legacyCatalogDigest,
     executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
     audience: binding.audience,
     brokerAuthority: binding.brokerAuthority,
@@ -163,6 +180,7 @@ test("sandbox capability currentness rejects independent policy replacement and 
     boundary: "provider_invocation",
     profileFingerprint: digest,
     capabilityCatalogFingerprint: digest,
+    legacyCapabilityCatalogFingerprint: legacyCatalogDigest,
     executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
     audience: binding.audience,
     brokerAuthority: binding.brokerAuthority,
@@ -196,6 +214,7 @@ test("sandbox capability currentness rejects independent policy replacement and 
     boundary: "provider_invocation",
     profileFingerprint: digest,
     capabilityCatalogFingerprint: digest,
+    legacyCapabilityCatalogFingerprint: legacyCatalogDigest,
     executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
     audience: binding.audience,
     brokerAuthority: binding.brokerAuthority,
@@ -212,6 +231,7 @@ test("sandbox capability currentness rejects independent policy replacement and 
     boundary: "result_delivery",
     profileFingerprint: digest,
     capabilityCatalogFingerprint: digest,
+    legacyCapabilityCatalogFingerprint: legacyCatalogDigest,
     executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
     audience: binding.audience,
     brokerAuthority: binding.brokerAuthority,
@@ -221,6 +241,22 @@ test("sandbox capability currentness rejects independent policy replacement and 
     now: () => new Date("2026-08-23T12:00:00.000Z"),
   });
   assert.deepEqual(active, { authorized: true });
+
+  const v1WithV2Fingerprint = await validateSandboxCapabilityLeaseCurrent({
+    binding: { ...binding, capabilityCatalogFingerprint: digest, policyRevision: currentPolicyRevision, approval: preparedApproval },
+    boundary: "result_delivery",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    legacyCapabilityCatalogFingerprint: legacyCatalogDigest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    audience: binding.audience,
+    brokerAuthority: binding.brokerAuthority,
+    credentialResolver: async () => ({ credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" }),
+    resolveCurrentPolicy: async () => ({ decision: policyDecision, policyRevision: currentPolicyRevision }),
+    store,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+  });
+  assert.deepEqual(v1WithV2Fingerprint, { authorized: false, reason: "capability_catalog_changed" });
 
   const externalApprovalBinding: RunnerExternalApprovalBindingV1 = {
     version: "runner_external_approval_binding_v1",
@@ -240,6 +276,7 @@ test("sandbox capability currentness rejects independent policy replacement and 
   const externalBinding = {
     ...binding,
     version: 2 as const,
+    capabilityCatalogFingerprint: digest,
     effectClass: "external_effect" as const,
     policyRevision: currentPolicyRevision,
     approval: { approvalId: preparedApproval.approvalId, authorityRevision: preparedApproval.authorityRevision },
@@ -250,6 +287,7 @@ test("sandbox capability currentness rejects independent policy replacement and 
     boundary: "provider_invocation",
     profileFingerprint: digest,
     capabilityCatalogFingerprint: digest,
+    legacyCapabilityCatalogFingerprint: legacyCatalogDigest,
     executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
     audience: binding.audience,
     brokerAuthority: binding.brokerAuthority,
@@ -259,11 +297,27 @@ test("sandbox capability currentness rejects independent policy replacement and 
     now: () => new Date("2026-08-23T12:00:00.000Z"),
   });
   assert.deepEqual(exactExternal, { authorized: true });
+  const v2WithV1Fingerprint = await validateSandboxCapabilityLeaseCurrent({
+    binding: { ...externalBinding, capabilityCatalogFingerprint: legacyCatalogDigest },
+    boundary: "provider_invocation",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    legacyCapabilityCatalogFingerprint: legacyCatalogDigest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    audience: binding.audience,
+    brokerAuthority: binding.brokerAuthority,
+    credentialResolver: async () => ({ credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" }),
+    resolveCurrentPolicy: async () => ({ decision: policyDecision, policyRevision: currentPolicyRevision }),
+    store,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+  });
+  assert.deepEqual(v2WithV1Fingerprint, { authorized: false, reason: "capability_catalog_changed" });
   const changedExternal = await validateSandboxCapabilityLeaseCurrent({
     binding: { ...externalBinding, externalApprovalBinding: { ...externalApprovalBinding, actionKey: "code.execute:another-call:tavily.search.read:search" } },
     boundary: "provider_invocation",
     profileFingerprint: digest,
     capabilityCatalogFingerprint: digest,
+    legacyCapabilityCatalogFingerprint: legacyCatalogDigest,
     executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
     audience: binding.audience,
     brokerAuthority: binding.brokerAuthority,
@@ -280,6 +334,7 @@ test("sandbox capability currentness rejects independent policy replacement and 
     boundary: "recorded_replay",
     profileFingerprint: digest,
     capabilityCatalogFingerprint: digest,
+    legacyCapabilityCatalogFingerprint: legacyCatalogDigest,
     executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
     audience: binding.audience,
     brokerAuthority: binding.brokerAuthority,
@@ -295,6 +350,7 @@ test("sandbox capability currentness rejects independent policy replacement and 
     boundary: "recovery_resume",
     profileFingerprint: digest,
     capabilityCatalogFingerprint: digest,
+    legacyCapabilityCatalogFingerprint: legacyCatalogDigest,
     executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
     audience: binding.audience,
     brokerAuthority: binding.brokerAuthority,

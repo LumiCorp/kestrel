@@ -4,7 +4,7 @@ import { CodeExecutionService } from "../../src/code/CodeExecutionService.js";
 import { SandboxCapabilityLeaseCoordinator, digestSandboxCapabilityResult } from "../../src/code/SandboxCapabilityLeaseCoordinator.js";
 import { DEFAULT_CODE_MODE_ENABLED_CONFIG, type CodeExecutionResult, type SandboxExecutionInput, type SandboxExecutor } from "../../src/code/contracts.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY, SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
-import { fingerprintSandboxCapabilityCatalogV1, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityChildReservationV1, type SandboxCapabilityLeaseTransitionRecordV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import { fingerprintSandboxCapabilityCatalogV2, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityChildReservationV1, type SandboxCapabilityLeaseTransitionRecordV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import { SandboxCapabilityExactResultConflictError, type SandboxCapabilityLeaseStore } from "../../src/kestrel/contracts/store.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 
@@ -600,7 +600,7 @@ test("Tavily adapter cancels streamed response consumption above the byte ceilin
         },
         cancel() { bodyCancelled = true; },
       }), { status: 200 })),
-      capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([oversizedProfile]),
+      capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2([oversizedProfile]),
     } },
   );
   assert.equal(result.status, "error");
@@ -629,7 +629,7 @@ test("Tavily adapter uses lease expiry when it precedes the profile timeout", as
           reject(init.signal?.reason);
         }, { once: true });
       })),
-      capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([shortLeaseProfile]),
+      capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2([shortLeaseProfile]),
       now: () => new Date(),
     } },
   );
@@ -1000,7 +1000,7 @@ test("cancellation sanitization fails closed for hostile proxies and secret-bear
 let registeredSensitiveValue = "";
 function runtime(fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ results: [] }), { status: 200 })) {
   registeredSensitiveValue = "";
-  return { tenantId: "tenant-a", environmentId: "env-a", sessionId: "session-a", runId: "run-a", toolCallId: "call-a", profileFingerprint: fingerprintSandboxCapabilityProfileV1(profile), capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([profile]), executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision, brokerAuthority: profile.brokerAuthority, credentialSnapshot: { credentialId: "tool.tavily.default" as const, revision: "credential-rev-1", secret: "real-secret-key" }, fetchImpl, registerSensitiveValue: (input: { value: string }) => { registeredSensitiveValue = input.value; return () => {}; }, redactSensitiveValues: <T>(value: T) => value, now: () => new Date("2026-08-22T12:00:00.000Z"), leaseCoordinator: createTestLeaseCoordinator() };
+  return { tenantId: "tenant-a", environmentId: "env-a", sessionId: "session-a", runId: "run-a", toolCallId: "call-a", profileFingerprint: fingerprintSandboxCapabilityProfileV1(profile), capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2([profile]), executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision, brokerAuthority: profile.brokerAuthority, credentialSnapshot: { credentialId: "tool.tavily.default" as const, revision: "credential-rev-1", secret: "real-secret-key" }, fetchImpl, registerSensitiveValue: (input: { value: string }) => { registeredSensitiveValue = input.value; return () => {}; }, redactSensitiveValues: <T>(value: T) => value, now: () => new Date("2026-08-22T12:00:00.000Z"), leaseCoordinator: createTestLeaseCoordinator() };
 }
 
 function createTestLeaseCoordinator(): SandboxCapabilityLeaseCoordinator {

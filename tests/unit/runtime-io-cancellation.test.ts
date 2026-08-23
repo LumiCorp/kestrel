@@ -24,7 +24,7 @@ import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js"
 import { CodeExecutionService } from "../../src/code/CodeExecutionService.js";
 import { SandboxCapabilityLeaseCoordinator } from "../../src/code/SandboxCapabilityLeaseCoordinator.js";
 import { DEFAULT_CODE_MODE_ENABLED_CONFIG } from "../../src/code/contracts.js";
-import { fingerprintSandboxCapabilityCatalogV1, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import { fingerprintSandboxCapabilityCatalogV2, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 
@@ -692,7 +692,7 @@ test("real Tavily adapter echoes are redacted before RuntimeIO persistence and m
           runId: "run-runtime-io",
           toolCallId: "call-runtime-io",
           profileFingerprint: fingerprintSandboxCapabilityProfileV1(profile),
-          capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([profile]),
+          capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2([profile]),
           executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
           brokerAuthority: profile.brokerAuthority,
           credentialSnapshot: { credentialId: "tool.tavily.default", revision: "credential-runtime-io", secret },

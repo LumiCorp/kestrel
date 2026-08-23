@@ -160,6 +160,7 @@
         "tests/unit/supervision.test.ts",
         "tests/unit/swe-verified-bench.test.ts",
         "tests/unit/task-graph-runtime-integration.test.ts",
+        "tests/unit/tavily-search-read-adapter.test.ts",
         "tests/unit/telemetry-contracts.test.ts",
         "tests/unit/terminal-bench-codex.test.ts",
         "tests/unit/terminal-bench-evidence.test.ts",

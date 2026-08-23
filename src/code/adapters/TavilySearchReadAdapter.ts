@@ -91,7 +91,12 @@ export const tavilySearchReadAdapter: SandboxCapabilityAdapter<
     if (response.ok === false) {
       throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_FAILED", `Tavily adapter failed with status ${response.status}`);
     }
-    const text = await readBoundedResponseBody(response, context.maxResponseBytes, signal);
+    const assertActive = () => {
+      if (deadlineSignal.aborted) throw new SandboxCapabilityAdapterFailure("CAPABILITY_DEADLINE_EXCEEDED", "Sandbox capability adapter deadline expired");
+      if (context.signal.aborted) throw new SandboxCapabilityAdapterFailure("CAPABILITY_CANCELLED", "Sandbox capability adapter invocation was cancelled");
+    };
+    const text = await readBoundedResponseBody(response, context.maxResponseBytes, signal, assertActive);
+    assertActive();
     let value: { results?: unknown };
     try {
       value = JSON.parse(text) as { results?: unknown };
@@ -117,7 +122,7 @@ export const tavilySearchReadAdapter: SandboxCapabilityAdapter<
   },
 };
 
-async function readBoundedResponseBody(response: Response, maxBytes: number, signal: AbortSignal): Promise<string> {
+async function readBoundedResponseBody(response: Response, maxBytes: number, signal: AbortSignal, assertActive: () => void): Promise<string> {
   if (response.body === null) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -126,8 +131,12 @@ async function readBoundedResponseBody(response: Response, maxBytes: number, sig
   signal.addEventListener("abort", abort, { once: true });
   try {
     while (true) {
-      if (signal.aborted) throw signal.reason;
-      const chunk = await reader.read();
+      assertActive();
+      const chunk = await reader.read().catch((error: unknown) => {
+        assertActive();
+        throw error;
+      });
+      assertActive();
       if (chunk.done) break;
       totalBytes += chunk.value.byteLength;
       if (totalBytes > maxBytes) {
@@ -140,6 +149,7 @@ async function readBoundedResponseBody(response: Response, maxBytes: number, sig
     signal.removeEventListener("abort", abort);
     reader.releaseLock();
   }
+  assertActive();
   return Buffer.concat(chunks).toString("utf8");
 }
 

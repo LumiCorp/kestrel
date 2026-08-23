@@ -107,6 +107,7 @@ import type { RuntimeEvaluationRuntimeConfiguration } from "../../src/evaluation
 import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.js";
 import {
   fingerprintSandboxCapabilityCatalogV1,
+  fingerprintSandboxCapabilityCatalogV2,
   fingerprintSandboxCapabilityLeaseBinding,
   normalizeSandboxCapabilitySelectionV2,
   type SandboxCapabilityLeaseBinding,
@@ -3371,7 +3372,7 @@ function createRuntimeWithStore(
     environment?.sandboxCapabilityAudience ?? resolveSandboxCapabilityAudienceFromEnvironment(runtimeEnv),
     environment?.sandboxCapabilityBrokerAuthority ?? resolveSandboxCapabilityBrokerAuthorityFromEnvironment(runtimeEnv),
     fingerprintResolvedProfile(profile),
-    fingerprintSandboxCapabilityCatalogV1(profile.codeMode?.capabilities ?? []),
+    fingerprintSandboxCapabilityCatalogV2(profile.codeMode?.capabilities ?? []),
     environment?.sandboxCapabilityCredentialResolver,
     (input) => executionBoundaryRuntime.sensitiveValues.register({
       reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
@@ -3389,7 +3390,10 @@ function createRuntimeWithStore(
       throw new Error("Selected sandbox capabilities require a durable lifecycle store");
     }
     const profileFingerprint = fingerprintResolvedProfile(profile);
-    const capabilityCatalogFingerprint = fingerprintSandboxCapabilityCatalogV1(profile.codeMode?.capabilities ?? []);
+    const capabilityCatalogFingerprint = fingerprintSandboxCapabilityCatalogV2(profile.codeMode?.capabilities ?? []);
+    const legacyCapabilityCatalogFingerprint = profile.codeMode?.capabilities?.every((capability) => capability.version !== 2)
+      ? fingerprintSandboxCapabilityCatalogV1(profile.codeMode.capabilities)
+      : undefined;
     sandboxCapabilityRuntime.leaseCoordinator = new SandboxCapabilityLeaseCoordinator({
       store: sandboxCapabilityStore,
       validateCurrent: async (binding, boundary) => validateSandboxCapabilityLeaseCurrent({
@@ -3397,6 +3401,7 @@ function createRuntimeWithStore(
         boundary,
         profileFingerprint,
         capabilityCatalogFingerprint,
+        legacyCapabilityCatalogFingerprint,
         executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
         audience: sandboxCapabilityRuntime,
         brokerAuthority: sandboxCapabilityRuntime.brokerAuthority,
@@ -4533,6 +4538,7 @@ export async function validateSandboxCapabilityLeaseCurrent(input: {
   boundary: import("../../src/code/SandboxCapabilityLeaseCoordinator.js").SandboxCapabilityLeaseCurrentnessBoundary;
   profileFingerprint: string;
   capabilityCatalogFingerprint: string;
+  legacyCapabilityCatalogFingerprint?: string | undefined;
   executionBoundaryRevision: string;
   audience: { tenantId: string; environmentId: string };
   brokerAuthority: { authorityId: string; revision: string };
@@ -4546,7 +4552,10 @@ export async function validateSandboxCapabilityLeaseCurrent(input: {
 }): Promise<{ authorized: boolean; reason?: string | undefined }> {
   const binding = input.binding;
   if (binding.profileFingerprint !== input.profileFingerprint) return { authorized: false, reason: "profile_revision_changed" };
-  if (binding.capabilityCatalogFingerprint !== input.capabilityCatalogFingerprint) return { authorized: false, reason: "capability_catalog_changed" };
+  const currentCatalogFingerprint = binding.version === 1
+    ? input.legacyCapabilityCatalogFingerprint
+    : input.capabilityCatalogFingerprint;
+  if (currentCatalogFingerprint === undefined || binding.capabilityCatalogFingerprint !== currentCatalogFingerprint) return { authorized: false, reason: "capability_catalog_changed" };
   if (binding.executionBoundaryRevision !== input.executionBoundaryRevision) return { authorized: false, reason: "execution_boundary_changed" };
   if (binding.tenantId !== input.audience.tenantId || binding.environmentId !== input.audience.environmentId) return { authorized: false, reason: "audience_changed" };
   if (binding.brokerAuthority.authorityId !== input.brokerAuthority.authorityId || binding.brokerAuthority.revision !== input.brokerAuthority.revision) return { authorized: false, reason: "broker_authority_changed" };

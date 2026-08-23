@@ -8,10 +8,12 @@ import {
 import type { LocalCoreRuntimeEnvironmentResolver } from "./runtimeEnvironment.js";
 import { DesktopAttachmentStore } from "./desktopAttachments.js";
 import type { LocalCoreCredentialStore } from "./credentialStore.js";
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createLocalCoreMcpOAuthProviderFactory } from "./mcpOAuthProvider.js";
 import { LocalCoreMicrosoft365Service } from "./microsoft365Service.js";
 import { LocalCoreGoogleWorkspaceService } from "./googleWorkspaceService.js";
+
+const sandboxCredentialRevisions = new WeakMap<LocalCoreCredentialStore, { secret: string; revision: string }>();
 
 type RunnerRuntimeFactory = NonNullable<
   ConstructorParameters<typeof RunnerHost>[1]
@@ -106,15 +108,18 @@ export function resolveLocalCoreSandboxCapabilityEnvironment(
       sandboxCapabilityCredentialResolver: async () => {
         const secret = await credentialStore.get("tool.tavily.default");
         if (secret === undefined) throw new Error("Authoritative Local Core Tavily credential is missing.");
-        const revision = `local-core:sha256:${createHash("sha256").update(secret).digest("hex")}`;
+        const revision = await resolveLocalCredentialRevision(credentialStore, secret);
         return { credentialId: "tool.tavily.default" as const, revision, secret };
       },
     } : environmentTavilyCredential === undefined || environmentTavilyCredential.length === 0 ? {} : {
-      sandboxCapabilityCredentialResolver: async () => ({
-        credentialId: "tool.tavily.default" as const,
-        revision: `local-core:sha256:${createHash("sha256").update(environmentTavilyCredential).digest("hex")}`,
-        secret: environmentTavilyCredential,
-      }),
+      sandboxCapabilityCredentialResolver: (() => {
+        const revision = `local-core:opaque:${randomUUID()}`;
+        return async () => ({
+          credentialId: "tool.tavily.default" as const,
+          revision,
+          secret: environmentTavilyCredential,
+        });
+      })(),
     }),
     ...(sandboxCapabilityFetchImpl === undefined ? {} : { sandboxCapabilityFetchImpl }),
     ...(credentialStore !== undefined
@@ -134,4 +139,22 @@ export function resolveLocalCoreSandboxCapabilityEnvironment(
         }
       : {}),
   };
+}
+
+async function resolveLocalCredentialRevision(
+  credentialStore: LocalCoreCredentialStore,
+  secret: string,
+): Promise<string> {
+  const revisionProvider = credentialStore as LocalCoreCredentialStore & {
+    getRevision?: ((id: "tool.tavily.default") => Promise<string | undefined>) | undefined;
+  };
+  const ownedRevision = await revisionProvider.getRevision?.("tool.tavily.default");
+  if (ownedRevision !== undefined && ownedRevision.trim().length > 0) {
+    return `local-core:store:${ownedRevision.trim()}`;
+  }
+  const prior = sandboxCredentialRevisions.get(credentialStore);
+  if (prior?.secret === secret) return prior.revision;
+  const revision = `local-core:opaque:${randomUUID()}`;
+  sandboxCredentialRevisions.set(credentialStore, { secret, revision });
+  return revision;
 }

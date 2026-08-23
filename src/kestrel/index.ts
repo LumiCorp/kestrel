@@ -89,6 +89,7 @@ export {
   TAVILY_SEARCH_RESOURCE,
   fingerprintSandboxCapabilityProfileV1,
   fingerprintSandboxCapabilityCatalogV1,
+  fingerprintSandboxCapabilityCatalogV2,
   fingerprintSandboxCapabilityLeaseBinding,
   fingerprintSandboxCapabilityLeaseBindingV2,
   fingerprintSandboxCapabilityProfileV2,

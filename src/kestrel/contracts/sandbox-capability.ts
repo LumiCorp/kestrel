@@ -84,7 +84,7 @@ export function parseSandboxCapabilityProfileV2(value: unknown): SandboxCapabili
   const audience = stringPair(record.audience, "tenantId", "environmentId", "sandbox capability profile v2 audience");
   const brokerAuthority = stringPair(record.brokerAuthority, "authorityId", "revision", "sandbox capability profile v2 broker authority");
   const adapterConfig = arbitraryRecord(record.adapterConfig, "sandbox capability profile v2 adapterConfig");
-  return { version: 2, capabilityId: nonEmpty(record.capabilityId, "capabilityId"), operation: nonEmpty(record.operation, "operation"), resource, effectClass: effectClassV2(record.effectClass), audience, maxRequests: boundedInt(record.maxRequests, 1, 1_000_000, "maxRequests"), maxResponseBytes: boundedInt(record.maxResponseBytes, 1, 1_000_000_000, "maxResponseBytes"), timeoutMs: boundedInt(record.timeoutMs, 100, 30_000, "timeoutMs"), maxExpiryMs: boundedInt(record.maxExpiryMs, 100, 60_000, "maxExpiryMs"), brokerAuthority, adapterConfig: canonicalClone(adapterConfig) };
+  return { version: 2, capabilityId: nonEmpty(record.capabilityId, "capabilityId"), operation: nonEmpty(record.operation, "operation"), resource, effectClass: effectClassV2(record.effectClass), audience, maxRequests: boundedInt(record.maxRequests, 1, 1, "maxRequests"), maxResponseBytes: boundedInt(record.maxResponseBytes, 1, 1_000_000_000, "maxResponseBytes"), timeoutMs: boundedInt(record.timeoutMs, 100, 30_000, "timeoutMs"), maxExpiryMs: boundedInt(record.maxExpiryMs, 100, 60_000, "maxExpiryMs"), brokerAuthority, adapterConfig: canonicalClone(adapterConfig) };
 }
 
 export function parseSandboxCapabilitySelectionV2(value: unknown): SandboxCapabilitySelectionV2 {
@@ -473,6 +473,10 @@ export function fingerprintSandboxCapabilityProfileV1(profile: SandboxCapability
 }
 
 export function fingerprintSandboxCapabilityCatalogV1(value: unknown): string {
+  return createHash("sha256").update(canonical(parseSandboxCapabilityProfilesV1(value))).digest("hex");
+}
+
+export function fingerprintSandboxCapabilityCatalogV2(value: unknown): string {
   return createHash("sha256").update(canonical(normalizeSandboxCapabilityProfilesV2(value))).digest("hex");
 }
 

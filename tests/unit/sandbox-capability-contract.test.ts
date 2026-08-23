@@ -25,10 +25,11 @@ test("generic v2 capability contracts bind exact operation, resource, effect cla
   assert.equal(normalizeSandboxCapabilitySelectionV2({ capabilityId: "tavily.search.read", input: { query: "legacy" } }).version, 2);
   const v2 = parseSandboxCapabilityProfileV2({
     version: 2, capabilityId: "example.lookup.read", operation: "lookup", resource: "https://api.example.com/lookup",
-    effectClass: "read_only", audience: { tenantId: "t", environmentId: "e" }, maxRequests: 2, maxResponseBytes: 4096,
+    effectClass: "read_only", audience: { tenantId: "t", environmentId: "e" }, maxRequests: 1, maxResponseBytes: 4096,
     timeoutMs: 1000, maxExpiryMs: 5000, brokerAuthority: { authorityId: "b", revision: "r" }, adapterConfig: { maxItems: 4 },
   });
   assert.equal(v2.effectClass, "read_only");
+  assert.throws(() => parseSandboxCapabilityProfileV2({ ...v2, maxRequests: 2 }), /maxRequests is outside its allowed range/u);
   assert.deepEqual(parseSandboxCapabilitySelectionV2({ version: 2, capabilityId: "example.lookup.read", operation: "lookup", input: { query: "q" } }).input, { query: "q" });
   const binding = { version: 2, tenantId: "t", environmentId: "e", sessionId: "s", runId: "r", toolCallId: "call", profileFingerprint: "a".repeat(64), capabilityCatalogFingerprint: "b".repeat(64), executionBoundaryRevision: "boundary", capabilityId: "example.write", operation: "write", resource: "https://api.example.com/write", effectClass: "external_effect", audience: { tenantId: "t", environmentId: "e" }, brokerAuthority: { authorityId: "b", revision: "r" }, credentialReference: { credentialId: "tool.example", revision: "c" }, policyRevision: "p" };
   assert.throws(() => parseSandboxCapabilityLeaseBindingV2(binding), /action-bound approval/u);

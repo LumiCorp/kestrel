@@ -53,12 +53,25 @@ test("Local Core construction binds runtime authority and credential-store revis
   const unchanged = await environment.sandboxCapabilityCredentialResolver?.();
   assert.equal(first?.secret, "local-secret-one");
   assert.equal(unchanged?.revision, first?.revision);
+  assert.equal(first?.revision.includes("local-secret-one"), false);
+  assert.match(first?.revision ?? "", /^local-core:opaque:/u);
   const restartedEnvironment = resolveLocalCoreSandboxCapabilityEnvironment(snapshot as never, credentialStore as never, fixtureFetch);
   assert.equal((await restartedEnvironment.sandboxCapabilityCredentialResolver?.())?.revision, first?.revision);
   secret = "local-secret-two";
   const rotated = await environment.sandboxCapabilityCredentialResolver?.();
   assert.equal(rotated?.secret, "local-secret-two");
   assert.notEqual(rotated?.revision, first?.revision);
+});
+
+test("Local Core prefers credential-store-owned nonsecret revisions", async () => {
+  const credentialStore = {
+    available: true,
+    async get() { return "local-secret"; },
+    async getRevision() { return "store-revision-7"; },
+  };
+  const snapshot = { modelEnv: {}, internetEnv: {}, runtimeEnv: { ...trusted }, mcpEnv: {} };
+  const environment = resolveLocalCoreSandboxCapabilityEnvironment(snapshot as never, credentialStore as never);
+  assert.equal((await environment.sandboxCapabilityCredentialResolver?.())?.revision, "local-core:store:store-revision-7");
 });
 
 test("capability-free deployment construction does not invent credential authority", () => {

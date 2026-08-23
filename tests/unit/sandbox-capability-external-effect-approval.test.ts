@@ -11,7 +11,7 @@ import { SandboxCapabilityAdapterRegistry, type SandboxCapabilityAdapter } from 
 import { SandboxCapabilityLeaseCoordinator } from "../../src/code/SandboxCapabilityLeaseCoordinator.js";
 import { DEFAULT_CODE_MODE_ENABLED_CONFIG, type SandboxCapabilityRuntimeContext } from "../../src/code/contracts.js";
 import {
-  fingerprintSandboxCapabilityCatalogV1,
+  fingerprintSandboxCapabilityCatalogV2,
   fingerprintSandboxCapabilityProfileV2,
   type SandboxCapabilityLeaseBinding,
   type SandboxCapabilityProfileV2,
@@ -115,7 +115,7 @@ function createRuntime(binding: RunnerExternalApprovalBindingV1, onCredential = 
     policy: { decision: "approval_required", policyRevision: "policy-r1" },
     approval: { approvalId: "approval-a", authorityRevision: "authority-r1", externalApprovalBinding: structuredClone(binding) },
     profileFingerprint: fingerprintSandboxCapabilityProfileV2(profile),
-    capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([profile]),
+    capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2([profile]),
     executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
     brokerAuthority: profile.brokerAuthority,
     resolveCredentialSnapshot: async () => { onCredential(); return { credentialId: externalAdapter.credentialId, revision: "credential-r1", secret: "secret" }; },

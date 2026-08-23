@@ -5,40 +5,64 @@ import { DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY } from "../../src/code/Code
 import { SandboxCapabilityAdapterRegistry, type SandboxCapabilityAdapter } from "../../src/code/SandboxCapabilityAdapterRegistry.js";
 import { SandboxCapabilityAdapterFailure } from "../../src/code/adapters/TavilySearchReadAdapter.js";
 
-const profile = {
-  version: 1,
-  capabilityId: "tavily.search.read",
-  operations: ["search"],
-  resource: "https://api.tavily.com/search",
-  audience: { tenantId: "tenant-a", environmentId: "env-a" },
-  maxRequests: 1,
-  maxQueryChars: 100,
-  maxResults: 3,
-  maxResponseBytes: 4096,
-  timeoutMs: 1000,
-  maxExpiryMs: 5000,
-  brokerAuthority: { authorityId: "broker-a", revision: "broker-r1" },
+interface AdapterQualificationCase {
+  profile: unknown;
+  selection: unknown;
+  invalidCeilingSelection: unknown;
+  canonicalInput: unknown;
+  providerResponse: unknown;
+  oversizedProviderResponse: unknown;
+  expectedOutput: unknown;
+  destination: string;
+}
+
+const qualificationCases: Record<string, AdapterQualificationCase> = {
+  "tavily.search.read": {
+    profile: {
+      version: 1,
+      capabilityId: "tavily.search.read",
+      operations: ["search"],
+      resource: "https://api.tavily.com/search",
+      audience: { tenantId: "tenant-a", environmentId: "env-a" },
+      maxRequests: 1,
+      maxQueryChars: 100,
+      maxResults: 3,
+      maxResponseBytes: 4096,
+      timeoutMs: 1000,
+      maxExpiryMs: 5000,
+      brokerAuthority: { authorityId: "broker-a", revision: "broker-r1" },
+    },
+    selection: { capabilityId: "tavily.search.read", input: { query: "kestrel", maxResults: 2 } },
+    invalidCeilingSelection: { capabilityId: "tavily.search.read", input: { query: "x".repeat(101), maxResults: 2 } },
+    canonicalInput: { query: "kestrel", maxResults: 2 },
+    providerResponse: { results: [{ title: "A", url: "https://example.com/a", content: "bounded" }] },
+    oversizedProviderResponse: { results: [{ title: "x", url: "https://example.com", content: "x".repeat(200) }] },
+    expectedOutput: { version: 1, results: [{ title: "A", url: "https://example.com/a", content: "bounded" }] },
+    destination: "api.tavily.com",
+  },
 };
 
 for (const adapter of DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY.list()) {
   test(`registered sandbox adapter '${adapter.capabilityId}' passes the shared conformance contract`, async () => {
+    const qualification = qualificationCases[adapter.capabilityId];
+    assert.ok(qualification, `registered adapter '${adapter.capabilityId}' must provide a conformance case`);
     assert.equal(DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY.requireExact({
       capabilityId: adapter.capabilityId,
       operation: adapter.operation,
       resource: adapter.resource,
     }), adapter);
-    assert.equal(adapter.effectClass, "read_only");
-    const parsedProfile = adapter.parseProfile(profile);
-    const selection = adapter.parseSelection({ capabilityId: adapter.capabilityId, input: { query: "kestrel", maxResults: 2 } });
+    assert.ok(adapter.effectClass === "read_only" || adapter.effectClass === "external_effect");
+    const parsedProfile = adapter.parseProfile(qualification.profile);
+    const selection = adapter.parseSelection(qualification.selection);
     const canonicalInput = adapter.canonicalInput(parsedProfile, selection);
-    assert.deepEqual(canonicalInput, { query: "kestrel", maxResults: 2 });
-    assert.equal(adapter.destination(parsedProfile), "api.tavily.com");
+    assert.deepEqual(canonicalInput, qualification.canonicalInput);
+    assert.equal(adapter.destination(parsedProfile), qualification.destination);
 
     let redirectMode: string | undefined;
     const output = await adapter.invoke(canonicalInput, {
       fetchImpl: async (_url, init) => {
         redirectMode = init?.redirect;
-        return new Response(JSON.stringify({ results: [{ title: "A", url: "https://example.com/a", content: "bounded" }] }), { status: 200 });
+        return new Response(JSON.stringify(qualification.providerResponse), { status: 200 });
       },
       credential: "conformance-secret",
       timeoutMs: 1000,
@@ -47,10 +71,10 @@ for (const adapter of DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY.list()) {
       signal: new AbortController().signal,
     });
     assert.equal(redirectMode, "manual");
-    assert.deepEqual(output, { version: 1, results: [{ title: "A", url: "https://example.com/a", content: "bounded" }] });
+    assert.deepEqual(output, qualification.expectedOutput);
 
     assert.throws(
-      () => adapter.canonicalInput(parsedProfile, adapter.parseSelection({ capabilityId: adapter.capabilityId, input: { query: "x".repeat(101), maxResults: 2 } })),
+      () => adapter.canonicalInput(parsedProfile, adapter.parseSelection(qualification.invalidCeilingSelection)),
       (error) => error instanceof SandboxCapabilityAdapterFailure && error.code === "CAPABILITY_REQUEST_CEILING_EXCEEDED",
     );
 
@@ -89,7 +113,7 @@ for (const adapter of DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY.list()) {
     }), (error) => error instanceof SandboxCapabilityAdapterFailure && error.code === "CAPABILITY_REDIRECT_REJECTED" && !error.message.includes("conformance-secret"));
 
     await assert.rejects(adapter.invoke(canonicalInput, {
-      fetchImpl: async () => new Response(JSON.stringify({ results: [{ title: "x", url: "https://example.com", content: "x".repeat(200) }] }), { status: 200 }),
+      fetchImpl: async () => new Response(JSON.stringify(qualification.oversizedProviderResponse), { status: 200 }),
       credential: "conformance-secret", timeoutMs: 1000, expiryMs: 1000, maxResponseBytes: 32,
       signal: new AbortController().signal,
     }), (error) => error instanceof SandboxCapabilityAdapterFailure && error.code === "CAPABILITY_RESPONSE_CEILING_EXCEEDED" && !error.message.includes("conformance-secret"));
