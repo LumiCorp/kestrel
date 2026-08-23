@@ -5,9 +5,11 @@ import type { TuiProfile } from "../../cli/contracts.js";
 import {
   applyRequiredManagedWorkspacePolicy,
   createModelGatewayForProfile,
+  createRuntimeFactoryWithStore,
   resolveManagedWorktreesEnabledForRuntime,
 } from "../../cli/runtime/KestrelChatRuntime.js";
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
+import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 
 
 const BASE_PROFILE: TuiProfile = {
@@ -21,6 +23,58 @@ test("resolveManagedWorktreesEnabledForRuntime defaults off and honors explicit 
   assert.equal(resolveManagedWorktreesEnabledForRuntime({}), false);
   assert.equal(resolveManagedWorktreesEnabledForRuntime({ KESTREL_ENABLE_MANAGED_WORKTREES: "true" }), true);
   assert.equal(resolveManagedWorktreesEnabledForRuntime({ KESTREL_ENABLE_MANAGED_WORKTREES: "false" }), false);
+});
+
+test("runtime factory preserves managed-worktree host capability paths", async () => {
+  const store = new InMemorySessionStore();
+  const emptyEnvironment = {
+    runtimeEnv: {},
+    modelEnv: {},
+    internetEnv: {},
+    mcpEnv: {},
+  };
+  const createBootstrap = (
+    profile: TuiProfile,
+    options: Parameters<typeof createRuntimeFactoryWithStore>[1] = {},
+  ) =>
+    createRuntimeFactoryWithStore(store, {
+      resolveEnvironment: () => emptyEnvironment,
+      ...options,
+    }).create(profile, (payload) => payload);
+
+  const defaultBootstrap = createBootstrap(BASE_PROFILE);
+  const disabledBootstrap = createBootstrap(BASE_PROFILE, {
+    enableManagedWorktrees: false,
+  });
+  const enabledBootstrap = createBootstrap(BASE_PROFILE, {
+    enableManagedWorktrees: true,
+  });
+  const desktopBootstrap = createBootstrap({
+    ...BASE_PROFILE,
+    shellKind: "desktop",
+  });
+  const environmentBootstrap = createBootstrap(BASE_PROFILE, {
+    resolveEnvironment: () => ({
+      ...emptyEnvironment,
+      runtimeEnv: { KESTREL_ENABLE_MANAGED_WORKTREES: "true" },
+    }),
+  });
+
+  try {
+    assert.equal(defaultBootstrap.kestrel.getManagedTaskWorktreeService(), undefined);
+    assert.equal(disabledBootstrap.kestrel.getManagedTaskWorktreeService(), undefined);
+    assert.notEqual(enabledBootstrap.kestrel.getManagedTaskWorktreeService(), undefined);
+    assert.notEqual(desktopBootstrap.kestrel.getManagedTaskWorktreeService(), undefined);
+    assert.notEqual(environmentBootstrap.kestrel.getManagedTaskWorktreeService(), undefined);
+  } finally {
+    await Promise.all([
+      defaultBootstrap.close(),
+      disabledBootstrap.close(),
+      enabledBootstrap.close(),
+      desktopBootstrap.close(),
+      environmentBootstrap.close(),
+    ]);
+  }
 });
 
 test("required managed Workspace policy injects the Environment-owned canonical root", () => {

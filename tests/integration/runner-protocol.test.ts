@@ -24,6 +24,7 @@ import type {
   RunEvent,
   RunLogEntry,
 } from "../../src/index.js";
+import { runLocalCoreManagedWorktreeJobRegression } from "../helpers/localCoreManagedWorktreeJobRun.js";
 
 
 const profile: TuiProfile = {
@@ -32,6 +33,11 @@ const profile: TuiProfile = {
   agent: "reference-react",
   sessionPrefix: "reference",
 };
+
+test(
+  "Local Core job.run provisions session-isolated managed worktrees before filesystem mutation",
+  runLocalCoreManagedWorktreeJobRegression,
+);
 
 function completedOutput(sessionId: string, runId: string) {
   return {
