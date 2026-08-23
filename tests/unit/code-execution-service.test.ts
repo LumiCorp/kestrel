@@ -281,6 +281,36 @@ for (const providerUsed of [false, true]) {
   });
 }
 
+test("an exact result committed before abort wins without cancellation reclassification", async () => {
+  const controller = new AbortController();
+  const capabilityRuntime = runtime();
+  const completedOutput = { status: "ok" as const, exitCode: 0, stdout: "committed output", stderr: "", durationMs: 1, artifacts: [] };
+  const service = new CodeExecutionService({
+    executor: {
+      async execute(input) {
+        await input.capability!.lifecycle!.beforeContainerTeardown("completed", completedOutput);
+        return completedOutput;
+      },
+    },
+  });
+  let exactSaves = 0;
+  const result = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+    { language: "javascript", code: "console.log('committed output')", capability: { capabilityId: "tavily.search.read", input: { query: "commit wins" } } },
+    {
+      signal: controller.signal,
+      capabilityRuntime,
+      persistCompletedCapabilityResult: async () => {
+        exactSaves += 1;
+        controller.abort(new Error("abort after durable commit"));
+      },
+    },
+  );
+
+  assert.equal(exactSaves, 1);
+  assert.equal(result.status, "ok");
+});
+
 test("CodeExecutionService resolves the current credential revision for every selected call", async () => {
   const revisions: string[] = [];
   let executions = 0;

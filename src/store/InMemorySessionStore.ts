@@ -1033,6 +1033,7 @@ export class InMemorySessionStore implements SessionStore {
     runId: string;
     sessionId: string;
     result: EffectResult;
+    signal?: AbortSignal | undefined;
   }): Promise<void> {
     const exactInput = {
       ...input,
@@ -1047,6 +1048,7 @@ export class InMemorySessionStore implements SessionStore {
       }
       return;
     }
+    if (input.signal?.aborted === true) throw new Error("Sandbox capability exact-result persistence was cancelled");
     this.effectResults.set(exactInput.result.idempotencyKey, structuredClone(exactInput.result));
     this.operationLog.push(`saveSandboxCapabilityEffectResult:${input.leaseId}:${input.toolCallId}`);
   }

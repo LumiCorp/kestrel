@@ -111,6 +111,7 @@ export class InlineEffectRunner implements EffectRunner {
             completedEffectResultSave = this.persistCompletedEffectResult(
               effect,
               completedEffectResult,
+              context.signal,
             );
           } else if (completedOutputCanonical !== canonicalJson(output)) {
             return Promise.reject(new Error("Effect handler attempted to persist conflicting completed outputs"));
@@ -229,6 +230,7 @@ export class InlineEffectRunner implements EffectRunner {
       output: unknown;
       timestamp: string;
     },
+    signal?: AbortSignal | undefined,
   ): Promise<void> {
     const capabilityReplay = readSandboxCapabilityReplayEvidence(result.output);
     if (capabilityReplay === undefined) {
@@ -249,6 +251,7 @@ export class InlineEffectRunner implements EffectRunner {
       runId: effect.runId,
       sessionId: effect.sessionId,
       result,
+      signal,
     });
   }
 }

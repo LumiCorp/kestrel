@@ -511,6 +511,7 @@ export interface SandboxCapabilityLeaseStore {
     runId: string;
     sessionId: string;
     result: EffectResult;
+    signal?: AbortSignal | undefined;
   }): Promise<void>;
   getSandboxCapabilityLease(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1 | null>;
   listSandboxCapabilityLeaseTransitions(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1[]>;

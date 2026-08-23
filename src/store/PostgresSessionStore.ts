@@ -1858,6 +1858,7 @@ export class PostgresSessionStore implements SessionStore {
     runId: string;
     sessionId: string;
     result: EffectResult;
+    signal?: AbortSignal | undefined;
   }): Promise<void> {
     const exactInput = {
       ...input,
@@ -1903,6 +1904,7 @@ export class PostgresSessionStore implements SessionStore {
         }
         return;
       }
+      throwIfSandboxCapabilityResultPersistenceCancelled(input.signal);
       await executor.query(
         `INSERT INTO effect_results
           (run_id, session_id, idempotency_key, status, output_json, error_json, created_at)
@@ -1915,6 +1917,7 @@ export class PostgresSessionStore implements SessionStore {
           normalizeTimestampString(exactInput.result.timestamp),
         ],
       );
+      throwIfSandboxCapabilityResultPersistenceCancelled(input.signal);
     });
   }
 
@@ -4986,6 +4989,10 @@ function canonicalStoreJson(value: unknown): string {
     return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalStoreJson(record[key])}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function throwIfSandboxCapabilityResultPersistenceCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) throw new Error("Sandbox capability exact-result persistence was cancelled");
 }
 
 function readNonEmptyString(value: unknown): string | undefined {

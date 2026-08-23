@@ -50,12 +50,18 @@ export class CodeExecutionService {
     let releaseCapabilitySensitiveValue: (() => void) | undefined;
     let redactCapabilityResult: (<T>(value: T) => T) | undefined;
     let capabilityReplayEvidence: CodeExecutionResult["capabilityReplayEvidence"];
+    let exactCapabilityResultCommitted = false;
     if (request.capability !== undefined) {
       const resolved = await resolveTavilyCapability(
         config,
         request.capability,
         options.capabilityRuntime,
-        options.persistCompletedCapabilityResult,
+        options.persistCompletedCapabilityResult === undefined
+          ? undefined
+          : async (result) => {
+              await options.persistCompletedCapabilityResult!(result);
+              exactCapabilityResultCommitted = true;
+            },
         options.signal,
         policyDecision.policy,
         config?.retention ?? { persistSummary: true, persistArtifacts: true },
@@ -74,7 +80,7 @@ export class CodeExecutionService {
         capability,
         signal: options.signal,
       });
-      if (options.signal?.aborted === true) {
+      if (options.signal?.aborted === true && !exactCapabilityResultCommitted) {
         throw new DockerSandboxCancellationError("Docker sandbox execution was cancelled");
       }
 
@@ -424,6 +430,7 @@ async function resolveTavilyCapability(
     throw new Error(`Sandbox capability lease was not issued: ${durableLease.terminalReason ?? durableLease.transition}`);
   }
   let sensitiveMaterialReleased = false;
+  let resultPersistenceCommitted = false;
   let invocationResponseByteLimit = profile.maxResponseBytes;
   let releaseRegisteredSensitiveValue: (() => void) | undefined;
   const disposeSensitiveMaterial = () => {
@@ -480,28 +487,38 @@ async function resolveTavilyCapability(
           );
         },
         beforeContainerTeardown: async (reason, completedOutput) => {
+          let persistenceError: unknown;
           try {
             const effectiveReason = signal?.aborted === true ? "cancelled" : reason;
             if (effectiveReason !== "cancelled" && completedOutput !== undefined && persistCompletedCapabilityResult !== undefined) {
-              await persistCompletedCapabilityResult(buildCompletedCodeExecutionResult({
-                output: completedOutput,
-                policy: appliedPolicy,
-                retention,
-                capabilityReplayEvidence: {
-                  version: 1,
-                  leaseId: durableLease.leaseId,
-                  bindingDigest: durableLease.bindingDigest,
-                  toolCallId: durableLease.binding.toolCallId,
-                },
-                redact: runtime.redactSensitiveValues,
-              }));
+              try {
+                await persistCompletedCapabilityResult(buildCompletedCodeExecutionResult({
+                  output: completedOutput,
+                  policy: appliedPolicy,
+                  retention,
+                  capabilityReplayEvidence: {
+                    version: 1,
+                    leaseId: durableLease.leaseId,
+                    bindingDigest: durableLease.bindingDigest,
+                    toolCallId: durableLease.binding.toolCallId,
+                  },
+                  redact: runtime.redactSensitiveValues,
+                }));
+                resultPersistenceCommitted = true;
+              } catch (error) {
+                persistenceError = error;
+              }
             }
+            const settlementReason = signal?.aborted === true && !resultPersistenceCommitted
+              ? "cancelled"
+              : effectiveReason;
             await runtime.leaseCoordinator!.settleBeforeTeardown({
               leaseId: durableLease.leaseId,
               expectedBinding: leaseBinding,
-              reason: effectiveReason,
+              reason: settlementReason,
               disposeSensitiveMaterial,
             });
+            if (persistenceError !== undefined) throw persistenceError;
           } finally {
             // Durable evidence can honestly remain non-cleaned when its store
             // is unavailable, but process-local authority must still be gone

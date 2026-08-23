@@ -72,6 +72,33 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         result: { digest: "d".repeat(64), reference: "artifact:provider-result" },
       },
     });
+    let releasePausedInsert!: () => void;
+    let markInsertStarted!: () => void;
+    const pausedInsert = new Promise<void>((resolve) => { releasePausedInsert = resolve; });
+    const insertStarted = new Promise<void>((resolve) => { markInsertStarted = resolve; });
+    const baseExecutor = new PgSqlExecutor(pool);
+    const pausingStore = new PostgresSessionStore({
+      query: baseExecutor.query.bind(baseExecutor),
+      transaction: (operation) => baseExecutor.transaction((executor) => operation({
+        query: async (text, values) => {
+          if (/INSERT INTO effect_results/u.test(text)) {
+            markInsertStarted();
+            await pausedInsert;
+          }
+          return executor.query(text, values);
+        },
+      })),
+    });
+    const cancelledSave = new AbortController();
+    const cancelledPersistence = pausingStore.saveSandboxCapabilityEffectResult({
+      leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
+      runId, sessionId, result: exactEffectResult, signal: cancelledSave.signal,
+    });
+    await insertStarted;
+    cancelledSave.abort();
+    releasePausedInsert();
+    await assert.rejects(cancelledPersistence, /cancelled/u);
+    assert.equal(await store.getEffectResult(binding.toolCallId), null);
     const completedLease = await store.getSandboxCapabilityLease(leaseId);
     assert.ok(completedLease);
     await store.appendSandboxCapabilityLeaseTransition({
@@ -92,9 +119,11 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     ((mutableExactEffectResult.output as { outcome: { rawOutput: { answer: string } } }).outcome.rawOutput).answer = "mutated-after-save-started";
     await savingExactEffectResult;
     assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
+    const abortAfterCommit = new AbortController();
+    abortAfterCommit.abort();
     await store.saveSandboxCapabilityEffectResult({
       leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
-      runId, sessionId, result: exactEffectResult,
+      runId, sessionId, result: exactEffectResult, signal: abortAfterCommit.signal,
     });
     const unusedLeaseId = `unused-lease-${suffix}`;
     const unusedBinding = { ...binding, toolCallId: `unused-call-${suffix}` };

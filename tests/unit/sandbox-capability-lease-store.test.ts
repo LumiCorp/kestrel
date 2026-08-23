@@ -151,6 +151,13 @@ test("exact capability effect results require completed provider evidence and ar
     expectedSequence: 4,
     record: { ...consumed, sequence: 5, transition: "cleaned", cleanedAt: "2026-08-23T12:00:05.000Z" },
   });
+  const cancelledSave = new AbortController();
+  cancelledSave.abort();
+  await assert.rejects(store.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
+    runId: binding.runId, sessionId: binding.sessionId, result: exactResult, signal: cancelledSave.signal,
+  }), /cancelled/u);
+  assert.equal(await store.getEffectResult(binding.toolCallId), null);
   const mutableExactResult = structuredClone(exactResult);
   const savingExactResult = store.saveSandboxCapabilityEffectResult({
     leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
@@ -159,9 +166,11 @@ test("exact capability effect results require completed provider evidence and ar
   ((mutableExactResult.output as { outcome: { rawOutput: { answer: string } } }).outcome.rawOutput).answer = "mutated-after-save-started";
   await savingExactResult;
   assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactResult);
+  const abortAfterCommit = new AbortController();
+  abortAfterCommit.abort();
   await store.saveSandboxCapabilityEffectResult({
     leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
-    runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
+    runId: binding.runId, sessionId: binding.sessionId, result: exactResult, signal: abortAfterCommit.signal,
   });
   await assert.rejects(store.saveSandboxCapabilityEffectResult({
     leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
