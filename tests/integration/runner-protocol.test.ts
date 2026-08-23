@@ -3035,7 +3035,6 @@ test("late cancellation after DONE but before tool completion cannot replace the
       profile,
       turn: {
         sessionId: "session-late-commit",
-        runId: "run-late-commit",
         message: "commit before cancellation",
         eventType: "user.message",
       },
@@ -3048,7 +3047,6 @@ test("late cancellation after DONE but before tool completion cannot replace the
   await exactDone;
   await host.runCancel("cmd-cancel-late-commit", {
     sessionId: "session-late-commit",
-    runId: "run-late-commit",
   });
   releaseRun();
   await run;
@@ -3067,6 +3065,104 @@ test("late cancellation after DONE but before tool completion cannot replace the
     tenantId: "tenant-late-commit",
   });
   assert.deepEqual(replay.result, exactResult);
+  rl.close();
+  await host.close();
+});
+
+test("cancellation rechecks an exact result committed between its first read and abort", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+  let started!: () => void;
+  const toolStarted = new Promise<void>((resolve) => { started = resolve; });
+  let finishRun!: () => void;
+  const runFinished = new Promise<void>((resolve) => { finishRun = resolve; });
+  let committed = false;
+  let reads = 0;
+  let aborted = false;
+  const identities: Array<{
+    sessionId: string;
+    runId: string;
+    idempotencyKey: string;
+    tenantId: string;
+  }> = [];
+  const exactResult = { version: "v2", toolCallId: "call-cancel-race" } as never;
+  const host = new RunnerHost(
+    writer,
+    (_profile, _onLog, _onProgress, _onConsole, _onReasoning, _onTask, onRunEvent) => ({
+      runTurn: async (turn, options) => {
+        options?.signal?.addEventListener("abort", () => {
+          aborted = true;
+          committed = true;
+          finishRun();
+        }, { once: true });
+        onRunEvent?.(buildPersistedRuntimeEventFromToolUpdate({
+          version: "v1",
+          runId: "run-cancel-race",
+          sessionId: turn.sessionId,
+          ts: "2026-08-23T12:00:00.000Z",
+          seq: 1,
+          toolCallId: "call-cancel-race",
+          toolName: "code.execute",
+          phase: "started",
+        }));
+        started();
+        await runFinished;
+        return {
+          assistantText: "Committed result.",
+          output: completedOutput(turn.sessionId, "run-cancel-race"),
+        };
+      },
+      close: async () => {},
+    }),
+    undefined,
+    {
+      exactEffectResultTenantId: "tenant-cancel-race",
+      exactEffectResultStore: {
+        readExactEffectResult: async (input) => {
+          reads += 1;
+          identities.push(input);
+          return committed
+            ? { status: "found" as const, result: exactResult }
+            : { status: "incomplete" as const };
+        },
+      },
+    },
+  );
+
+  const run = host.runStart("cmd-run-cancel-race", {
+    profile,
+    turn: {
+      sessionId: "session-cancel-race",
+      message: "commit at cancellation boundary",
+      eventType: "user.message",
+    },
+  });
+  await toolStarted;
+  await host.runCancel("cmd-cancel-race", {
+    sessionId: "session-cancel-race",
+  });
+  await run;
+
+  assert.equal(aborted, true);
+  assert.equal(reads >= 2, true);
+  assert.deepEqual(identities[0], {
+    sessionId: "session-cancel-race",
+    runId: "run-cancel-race",
+    idempotencyKey: "call-cancel-race",
+    tenantId: "tenant-cancel-race",
+  });
+  assert.deepEqual(identities[1], identities[0]);
+  assert.equal(events.some((event) => event.type === "run.cancelled"), false);
+  assert.equal(events.some((event) => event.type === "run.completed"), true);
+  assert.equal(
+    events.some((event) => event.type === "runner.error" && event.payload.code === "RUN_ALREADY_COMPLETED"),
+    true,
+  );
   rl.close();
   await host.close();
 });

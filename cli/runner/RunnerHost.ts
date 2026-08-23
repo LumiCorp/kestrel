@@ -1415,11 +1415,7 @@ export class RunnerHost {
           );
           return;
         }
-        if (await this.hasDurableCompletedEffect(
-          active,
-          payload.sessionId,
-          active.runId ?? payload.runId,
-        )) {
+        const rejectDurablyCompletedCancellation = () => {
           this.writer.emit(
             "runner.error",
             {
@@ -1438,10 +1434,25 @@ export class RunnerHost {
               ...(active.runId !== undefined ? { runId: active.runId } : {}),
             },
           );
+        };
+        if (await this.hasDurableCompletedEffect(
+          active,
+          payload.sessionId,
+          active.runId ?? payload.runId,
+        )) {
+          rejectDurablyCompletedCancellation();
           return;
         }
         active.cancelRequested = true;
         active.abortController.abort();
+        if (await this.hasDurableCompletedEffect(
+          active,
+          payload.sessionId,
+          active.runId ?? payload.runId,
+        )) {
+          rejectDurablyCompletedCancellation();
+          return;
+        }
         cancelledRunId = active.runId;
         cancelled = true;
       }
@@ -3440,16 +3451,18 @@ export class RunnerHost {
     const candidate = active.exactEffectCandidate;
     if (
       candidate === undefined ||
-      runId === undefined ||
-      candidate.runId !== runId ||
       this.exactEffectResultStore === undefined ||
       this.exactEffectResultTenantId === undefined
     ) {
       return false;
     }
+    if (runId !== undefined && candidate.runId !== runId) {
+      return false;
+    }
+    const effectiveRunId = runId ?? candidate.runId;
     const read = await this.exactEffectResultStore.readExactEffectResult({
       sessionId,
-      runId,
+      runId: effectiveRunId,
       idempotencyKey: candidate.idempotencyKey,
       tenantId: this.exactEffectResultTenantId,
     });
