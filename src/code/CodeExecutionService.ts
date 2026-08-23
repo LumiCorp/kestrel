@@ -490,7 +490,7 @@ async function resolveTavilyCapability(
           let persistenceError: unknown;
           try {
             const effectiveReason = signal?.aborted === true ? "cancelled" : reason;
-            if (effectiveReason !== "cancelled" && completedOutput !== undefined && persistCompletedCapabilityResult !== undefined) {
+            if (completedOutput !== undefined && persistCompletedCapabilityResult !== undefined) {
               try {
                 await persistCompletedCapabilityResult(buildCompletedCodeExecutionResult({
                   output: completedOutput,
@@ -511,14 +511,21 @@ async function resolveTavilyCapability(
             }
             const settlementReason = signal?.aborted === true && !resultPersistenceCommitted
               ? "cancelled"
-              : effectiveReason;
-            await runtime.leaseCoordinator!.settleBeforeTeardown({
-              leaseId: durableLease.leaseId,
-              expectedBinding: leaseBinding,
-              reason: settlementReason,
-              disposeSensitiveMaterial,
-            });
+              : resultPersistenceCommitted && completedOutput !== undefined
+                ? completedOutput.status === "ok" ? "completed" : completedOutput.status === "timeout" ? "timeout" : "failed"
+                : effectiveReason;
+            try {
+              await runtime.leaseCoordinator!.settleBeforeTeardown({
+                leaseId: durableLease.leaseId,
+                expectedBinding: leaseBinding,
+                reason: settlementReason,
+                disposeSensitiveMaterial,
+              });
+            } catch (error) {
+              if (!resultPersistenceCommitted) throw error;
+            }
             if (persistenceError !== undefined) throw persistenceError;
+            return { completedResultCommitted: resultPersistenceCommitted };
           } finally {
             // Durable evidence can honestly remain non-cleaned when its store
             // is unavailable, but process-local authority must still be gone

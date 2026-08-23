@@ -236,6 +236,43 @@ test("exact capability result becomes durable before lease cleanup and container
   assert.deepEqual(order, ["exact_result_durable", "lease_cleanup", "containers_removed"]);
 });
 
+test("committed exact result remains the live result when durable lease cleanup fails", async () => {
+  const order: string[] = [];
+  const capabilityRuntime = runtime();
+  capabilityRuntime.registerSensitiveValue = () => () => { order.push("secret_disposed"); };
+  const coordinator = capabilityRuntime.leaseCoordinator;
+  coordinator.settleBeforeTeardown = async () => {
+    order.push("cleanup_persistence_failed");
+    throw new Error("lease cleanup store unavailable");
+  };
+  const completedOutput = { status: "ok" as const, exitCode: 0, stdout: "authoritative", stderr: "", durationMs: 1, artifacts: [] };
+  let committedResult: unknown;
+  const service = new CodeExecutionService({
+    executor: {
+      async execute(input) {
+        await input.capability!.lifecycle!.beforeContainerTeardown("completed", completedOutput);
+        order.push("containers_removed");
+        return completedOutput;
+      },
+    },
+  });
+
+  const liveResult = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+    { language: "javascript", code: "console.log('authoritative')", capability: { capabilityId: "tavily.search.read", input: { query: "unused" } } },
+    {
+      capabilityRuntime,
+      persistCompletedCapabilityResult: async (result) => {
+        order.push("exact_result_durable");
+        committedResult = structuredClone(result);
+      },
+    },
+  );
+
+  assert.deepEqual(liveResult, committedResult);
+  assert.deepEqual(order, ["exact_result_durable", "cleanup_persistence_failed", "secret_disposed", "containers_removed"]);
+});
+
 for (const providerUsed of [false, true]) {
   test(`late cancellation suppresses the ${providerUsed ? "provider-used" : "unused"} exact capability result`, async () => {
     const controller = new AbortController();
@@ -248,6 +285,7 @@ for (const providerUsed of [false, true]) {
       transitions.push(settled.terminalOutcome ?? "missing", settled.transition);
       return settled;
     };
+    let exactSaveAttempts = 0;
     let exactSaves = 0;
     const completedOutput = { status: "ok" as const, exitCode: 0, stdout: "late output", stderr: "", durationMs: 1, artifacts: [] };
     const service = new CodeExecutionService({
@@ -271,11 +309,16 @@ for (const providerUsed of [false, true]) {
         {
           signal: controller.signal,
           capabilityRuntime,
-          persistCompletedCapabilityResult: async () => { exactSaves += 1; },
+          persistCompletedCapabilityResult: async () => {
+            exactSaveAttempts += 1;
+            if (controller.signal.aborted) throw new Error("exact-result persistence was cancelled");
+            exactSaves += 1;
+          },
         },
       ),
       /cancelled/iu,
     );
+    assert.equal(exactSaveAttempts, 1);
     assert.equal(exactSaves, 0);
     assert.deepEqual(transitions, ["cancelled", "cleaned"]);
   });
@@ -309,6 +352,75 @@ test("an exact result committed before abort wins without cancellation reclassif
 
   assert.equal(exactSaves, 1);
   assert.equal(result.status, "ok");
+});
+
+test("an identical DONE already in the exact store wins over an aborted completion", async () => {
+  const controller = new AbortController();
+  const capabilityRuntime = runtime();
+  const outcomes: string[] = [];
+  const coordinator = capabilityRuntime.leaseCoordinator;
+  const settleBeforeTeardown = coordinator.settleBeforeTeardown.bind(coordinator);
+  coordinator.settleBeforeTeardown = async (...args) => {
+    const settled = await settleBeforeTeardown(...args);
+    outcomes.push(settled.terminalOutcome ?? "missing", settled.transition);
+    return settled;
+  };
+  const completedOutput = { status: "ok" as const, exitCode: 0, stdout: "identical committed output", stderr: "", durationMs: 1, artifacts: [] };
+  const service = new CodeExecutionService({ executor: {
+    async execute(input) {
+      await input.capability!.lifecycle!.beforeProviderInvocation();
+      await input.capability!.lifecycle!.commitProviderResult({ result: { results: [] }, responseBytes: 2, resultCount: 0 });
+      controller.abort(new Error("aborted competing attempt"));
+      await input.capability!.lifecycle!.beforeContainerTeardown("cancelled", completedOutput);
+      return completedOutput;
+    },
+  } });
+  let idempotentChecks = 0;
+
+  const result = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+    { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "identical" } } },
+    {
+      signal: controller.signal,
+      capabilityRuntime,
+      persistCompletedCapabilityResult: async (exactResult) => {
+        idempotentChecks += 1;
+        assert.equal(exactResult.stdout, completedOutput.stdout);
+        // The atomic store returns success for an identical DONE even though
+        // this competing attempt's signal is already aborted.
+      },
+    },
+  );
+
+  assert.equal(idempotentChecks, 1);
+  assert.equal(result.status, "ok");
+  assert.deepEqual(outcomes, ["completed", "cleaned"]);
+});
+
+test("a conflicting DONE remains rejected when the competing completion is aborted", async () => {
+  const controller = new AbortController();
+  const capabilityRuntime = runtime();
+  const completedOutput = { status: "ok" as const, exitCode: 0, stdout: "conflicting output", stderr: "", durationMs: 1, artifacts: [] };
+  const service = new CodeExecutionService({ executor: {
+    async execute(input) {
+      controller.abort(new Error("aborted competing attempt"));
+      await input.capability!.lifecycle!.beforeContainerTeardown("cancelled", completedOutput);
+      return completedOutput;
+    },
+  } });
+
+  await assert.rejects(
+    service.execute(
+      { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+      { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "conflict" } } },
+      {
+        signal: controller.signal,
+        capabilityRuntime,
+        persistCompletedCapabilityResult: async () => { throw new Error("conflicts with recorded exact replay output"); },
+      },
+    ),
+    /conflicts with recorded exact replay output/u,
+  );
 });
 
 test("CodeExecutionService resolves the current credential revision for every selected call", async () => {

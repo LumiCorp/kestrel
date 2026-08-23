@@ -272,11 +272,13 @@ export class DockerSandboxExecutor implements SandboxExecutor {
       const cancelledDuringTeardown = input.signal?.aborted === true;
       if (cancelledDuringTeardown) teardownReason = "cancelled";
       let lifecycleError: unknown;
+      let completedResultCommitted = false;
       try {
-        await input.capability?.lifecycle?.beforeContainerTeardown(
+        const lifecycleResult = await input.capability?.lifecycle?.beforeContainerTeardown(
           teardownReason,
-          cancelledDuringTeardown ? undefined : completedOutput,
+          completedOutput,
         );
+        completedResultCommitted = lifecycleResult?.completedResultCommitted === true;
       } catch (error) {
         lifecycleError = error;
       }
@@ -288,7 +290,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
       }
       await rm(rootDir, { recursive: true, force: true });
       if (lifecycleError !== undefined) throw lifecycleError;
-      if (cancelledDuringTeardown) {
+      if (cancelledDuringTeardown && !completedResultCommitted) {
         throw new DockerSandboxCancellationError("Docker sandbox execution was cancelled");
       }
     }

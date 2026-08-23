@@ -177,7 +177,7 @@ export interface SandboxCapabilityGrant {
     beforeContainerTeardown: (
       reason: "completed" | "failed" | "cancelled" | "timeout",
       completedOutput?: SandboxExecutionOutput | undefined,
-    ) => Promise<void>;
+    ) => Promise<{ completedResultCommitted: boolean } | void>;
   } | undefined;
 }
 

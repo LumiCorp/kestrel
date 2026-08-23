@@ -18,6 +18,8 @@ None.
 - [08 — Close the post-handler exact-result crash window](08-post-handler-result-crash-window.md)
 - [09 — Snapshot exact results before asynchronous persistence](09-immutable-result-snapshot.md)
 - [10 — Let cancellation dominate pre-cleanup result persistence](10-cancellation-dominates-result.md)
+- [11 — Keep committed result authoritative through cleanup failure](11-committed-result-cleanup-failure.md)
+- [12 — Let the store arbitrate aborted idempotent completion](12-aborted-idempotent-arbitration.md)
 
 ## Done
 
