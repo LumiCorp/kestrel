@@ -141,6 +141,9 @@ export const codeExecuteTool: SharedToolModule = {
       const result = await service.execute(profileConfig, request, {
         signal: context.signal,
         ...(capabilityRuntime === undefined ? {} : { capabilityRuntime }),
+        ...(context.persistCompletedCapabilityResult === undefined
+          ? {}
+          : { persistCompletedCapabilityResult: context.persistCompletedCapabilityResult }),
       });
       return result;
     };

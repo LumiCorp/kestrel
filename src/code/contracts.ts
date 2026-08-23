@@ -174,7 +174,10 @@ export interface SandboxCapabilityGrant {
       resultCount: number;
     }) => Promise<void>;
     recordProviderFailure: (error: unknown) => Promise<void>;
-    beforeContainerTeardown: (reason: "completed" | "failed" | "cancelled" | "timeout") => Promise<void>;
+    beforeContainerTeardown: (
+      reason: "completed" | "failed" | "cancelled" | "timeout",
+      completedOutput?: SandboxExecutionOutput | undefined,
+    ) => Promise<void>;
   } | undefined;
 }
 
@@ -236,6 +239,7 @@ export interface CodeExecutionServicePort {
       signal?: AbortSignal | undefined;
       capability?: SandboxCapabilityGrant | undefined;
       capabilityRuntime?: SandboxCapabilityRuntimeContext | undefined;
+      persistCompletedCapabilityResult?: ((result: CodeExecutionResult) => Promise<void>) | undefined;
     },
   ): Promise<CodeExecutionResult>;
 }

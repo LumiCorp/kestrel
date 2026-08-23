@@ -122,6 +122,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     const adapterPumpController = new AbortController();
     let adapterPump: Promise<void> | undefined;
     let teardownReason: "completed" | "failed" | "cancelled" | "timeout" = "failed";
+    let completedOutput: SandboxExecutionOutput | undefined;
 
     try {
       if (input.capability !== undefined) {
@@ -244,7 +245,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
 
       if (run.timedOut) {
         teardownReason = "timeout";
-        return {
+        completedOutput = {
           status: "timeout",
           exitCode: null,
           stdout,
@@ -252,10 +253,11 @@ export class DockerSandboxExecutor implements SandboxExecutor {
           durationMs,
           artifacts,
         };
+        return completedOutput;
       }
 
       teardownReason = run.exitCode === 0 ? "completed" : "failed";
-      return {
+      completedOutput = {
         status: run.exitCode === 0 ? "ok" : "error",
         exitCode: run.exitCode,
         stdout,
@@ -263,13 +265,14 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         durationMs,
         artifacts,
       };
+      return completedOutput;
     } finally {
       adapterPumpController.abort();
       await adapterPump?.catch(() => {});
       if (input.signal?.aborted === true) teardownReason = "cancelled";
       let lifecycleError: unknown;
       try {
-        await input.capability?.lifecycle?.beforeContainerTeardown(teardownReason);
+        await input.capability?.lifecycle?.beforeContainerTeardown(teardownReason, completedOutput);
       } catch (error) {
         lifecycleError = error;
       }

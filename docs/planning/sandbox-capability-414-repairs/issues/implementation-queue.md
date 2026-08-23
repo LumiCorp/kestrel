@@ -16,6 +16,7 @@ None.
 - [06 — Preserve cancellation outcome during provider invocation](06-provider-cancellation-outcome.md)
 - [07 — Preserve successful results when a selected capability is unused](07-unused-capability-result.md)
 - [08 — Close the post-handler exact-result crash window](08-post-handler-result-crash-window.md)
+- [09 — Snapshot exact results before asynchronous persistence](09-immutable-result-snapshot.md)
 
 ## Done
 

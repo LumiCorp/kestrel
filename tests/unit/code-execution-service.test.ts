@@ -200,6 +200,42 @@ test("durable teardown failure still disposes capability authority before contai
   assert.deepEqual(order, ["durable_transition_failed", "secret_disposed", "containers_removed"]);
 });
 
+test("exact capability result becomes durable before lease cleanup and container removal", async () => {
+  const order: string[] = [];
+  const capabilityRuntime = runtime();
+  const coordinator = capabilityRuntime.leaseCoordinator;
+  const settleBeforeTeardown = coordinator.settleBeforeTeardown.bind(coordinator);
+  coordinator.settleBeforeTeardown = async (...args) => {
+    order.push("lease_cleanup");
+    return settleBeforeTeardown(...args);
+  };
+  const completedOutput = { status: "ok" as const, exitCode: 0, stdout: "completed", stderr: "", durationMs: 1, artifacts: [] };
+  const service = new CodeExecutionService({
+    executor: {
+      async execute(input) {
+        await input.capability!.lifecycle!.beforeContainerTeardown("completed", completedOutput);
+        order.push("containers_removed");
+        return completedOutput;
+      },
+    },
+  });
+  const result = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+    { language: "javascript", code: "console.log('completed')", capability: { capabilityId: "tavily.search.read", input: { query: "unused" } } },
+    {
+      capabilityRuntime,
+      persistCompletedCapabilityResult: async (exactResult) => {
+        order.push("exact_result_durable");
+        assert.equal(exactResult.status, "ok");
+        assert.equal(exactResult.stdout, "completed");
+        assert.equal(exactResult.capabilityReplayEvidence?.toolCallId, capabilityRuntime.toolCallId);
+      },
+    },
+  );
+  assert.equal(result.status, "ok");
+  assert.deepEqual(order, ["exact_result_durable", "lease_cleanup", "containers_removed"]);
+});
+
 test("CodeExecutionService resolves the current credential revision for every selected call", async () => {
   const revisions: string[] = [];
   let executions = 0;

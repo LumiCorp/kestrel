@@ -49,7 +49,12 @@ export interface PinnedToolExecutionV1 {
   descriptor: ToolDescriptorV1;
   activation: ToolActivationRefV1;
   validator: ValidateFunction;
-  handler: (input: unknown) => Promise<unknown>;
+  handler: (
+    input: unknown,
+    lifecycle?: {
+      persistCompletedCapabilityResult: (rawOutput: unknown) => Promise<void>;
+    },
+  ) => Promise<unknown>;
   normalizer: (
     output: unknown,
     input: unknown,
@@ -188,14 +193,36 @@ export async function executePinnedToolCallV1(input: {
   prepared: PreparedToolCallV1;
   pinned: PinnedToolExecutionV1;
   signal?: AbortSignal | undefined;
+  persistCompletedCapabilityResult?: ((result: AgentToolResultV2) => Promise<void>) | undefined;
 }): Promise<AgentToolResultV2> {
   const prepared = parsePreparedToolCallV1(input.prepared);
   assertPreparedActivationMatches(prepared.activation, input.pinned.activation);
   throwIfAborted(input.signal);
   const startedAt = new Date().toISOString();
   let rawOutput: unknown;
+  let preCleanupResult: AgentToolResultV2 | undefined;
+  let preCleanupRawOutputDigest: string | undefined;
   try {
-    rawOutput = await input.pinned.handler(prepared.effectiveInput);
+    rawOutput = await input.pinned.handler(prepared.effectiveInput, {
+      persistCompletedCapabilityResult: async (completedRawOutput) => {
+        const result = buildCompletedToolResult({
+          prepared,
+          pinned: input.pinned,
+          rawOutput: completedRawOutput,
+          startedAt,
+        });
+        if (result.outcome.kind === "failure") {
+          throw createRuntimeFailure(
+            "TOOL_RESULT_NOT_REPLAYABLE_BEFORE_CLEANUP",
+            `Tool '${input.pinned.descriptor.toolId}' did not produce a replayable exact result before capability cleanup.`,
+            { subsystem: "tooling", classification: "contract", recoverable: false, toolName: input.pinned.descriptor.toolId },
+          );
+        }
+        await input.persistCompletedCapabilityResult?.(result);
+        preCleanupResult = result;
+        preCleanupRawOutputDigest = hashCanonical(completedRawOutput);
+      },
+    });
   } catch (error) {
     if (error instanceof RunCancelledError || input.signal?.aborted === true) {
       throw error;
@@ -214,22 +241,44 @@ export async function executePinnedToolCallV1(input: {
     });
   }
 
+  if (preCleanupResult !== undefined) {
+    if (hashCanonical(rawOutput) !== preCleanupRawOutputDigest) {
+      throw createRuntimeFailure(
+        "TOOL_RESULT_CHANGED_AFTER_PERSISTENCE",
+        `Tool '${input.pinned.descriptor.toolId}' changed its output after durable persistence.`,
+        { subsystem: "tooling", classification: "contract", recoverable: false, toolName: input.pinned.descriptor.toolId },
+      );
+    }
+    return preCleanupResult;
+  }
+
+  return buildCompletedToolResult({ prepared, pinned: input.pinned, rawOutput, startedAt });
+}
+
+function buildCompletedToolResult(input: {
+  prepared: PreparedToolCallV1;
+  pinned: PinnedToolExecutionV1;
+  rawOutput: unknown;
+  startedAt: string;
+}): AgentToolResultV2 {
+  const { prepared, pinned, rawOutput, startedAt } = input;
+
   const effectState =
-    input.pinned.descriptor.capability.executionClass === "external_side_effect"
+    pinned.descriptor.capability.executionClass === "external_side_effect"
       ? "committed"
       : "not_applicable";
   if (isAgentToolResult(rawOutput)) {
     return buildFailureResult({
       prepared,
-      descriptor: input.pinned.descriptor,
+      descriptor: pinned.descriptor,
       error: createRuntimeFailure(
         "TOOL_RESULT_ENVELOPE_FORBIDDEN",
-        `Tool handler '${input.pinned.descriptor.execution.handlerId}' returned a gateway-owned result envelope.`,
+        `Tool handler '${pinned.descriptor.execution.handlerId}' returned a gateway-owned result envelope.`,
         {
           subsystem: "tooling",
           classification: "contract",
           recoverable: false,
-          toolName: input.pinned.descriptor.toolId,
+          toolName: pinned.descriptor.toolId,
         },
       ),
       startedAt,
@@ -238,29 +287,29 @@ export async function executePinnedToolCallV1(input: {
   }
   let normalized;
   try {
-    normalized = input.pinned.normalizer(rawOutput, prepared.effectiveInput);
+    normalized = pinned.normalizer(rawOutput, prepared.effectiveInput);
   } catch (error) {
     return buildFailureResult({
       prepared,
-      descriptor: input.pinned.descriptor,
+      descriptor: pinned.descriptor,
       error,
       startedAt,
       effectState,
     });
   }
-  if (input.pinned.validator(normalized.output) !== true) {
+  if (pinned.validator(normalized.output) !== true) {
     return buildFailureResult({
       prepared,
-      descriptor: input.pinned.descriptor,
+      descriptor: pinned.descriptor,
       error: createRuntimeFailure(
         "TOOL_RESULT_CONTRACT_FAILED",
-        `Tool '${input.pinned.descriptor.toolId}' output failed its runtime contract.`,
+        `Tool '${pinned.descriptor.toolId}' output failed its runtime contract.`,
         {
           subsystem: "tooling",
           classification: "schema",
           recoverable: false,
-          toolName: input.pinned.descriptor.toolId,
-          validationErrors: input.pinned.validator.errors ?? [],
+          toolName: pinned.descriptor.toolId,
+          validationErrors: pinned.validator.errors ?? [],
           effectState,
         },
       ),
@@ -270,7 +319,7 @@ export async function executePinnedToolCallV1(input: {
   }
   const completedAt = new Date().toISOString();
   const legacy = buildAgentToolSuccessResult({
-    toolName: input.pinned.descriptor.toolId,
+    toolName: pinned.descriptor.toolId,
     input: prepared.effectiveInput,
     output: normalized.output,
     startedAt,

@@ -1,6 +1,7 @@
 import type { EffectExecutionStatus, RuntimeError, TransitionStatus } from "../kestrel/contracts/base.js";
 import type { RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { EffectResult, RegionWorkIntent, RegionWorkItem } from "../kestrel/contracts/execution.js";
+import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
 import type {
   ConversationTurnRecord,
   ConversationTurnSegmentRecord,
@@ -1033,16 +1034,20 @@ export class InMemorySessionStore implements SessionStore {
     sessionId: string;
     result: EffectResult;
   }): Promise<void> {
+    const exactInput = {
+      ...input,
+      result: JSON.parse(canonicalJson(input.result)) as EffectResult,
+    };
     const lease = this.sandboxCapabilityLeaseTransitions.get(input.leaseId)?.at(-1);
-    assertReplayableSandboxCapabilityEffectBinding(lease, input);
-    const existing = this.effectResults.get(input.result.idempotencyKey);
+    assertReplayableSandboxCapabilityEffectBinding(lease, exactInput);
+    const existing = this.effectResults.get(exactInput.result.idempotencyKey);
     if (existing !== undefined) {
-      if (JSON.stringify(existing) !== JSON.stringify(input.result)) {
+      if (canonicalJson(existing) !== canonicalJson(exactInput.result)) {
         throw new Error("Sandbox capability effect result conflicts with recorded exact replay output");
       }
       return;
     }
-    this.effectResults.set(input.result.idempotencyKey, structuredClone(input.result));
+    this.effectResults.set(exactInput.result.idempotencyKey, structuredClone(exactInput.result));
     this.operationLog.push(`saveSandboxCapabilityEffectResult:${input.leaseId}:${input.toolCallId}`);
   }
 
@@ -2176,9 +2181,8 @@ function assertReplayableSandboxCapabilityEffectBinding(
     lease.result !== undefined &&
     (lease.transition === "consumed" || lease.transition === "exhausted" || lease.transition === "cleaned");
   const completedUnusedCapability = lease !== undefined &&
-    lease.transition === "cleaned" &&
-    lease.terminalOutcome === "failed" &&
-    lease.terminalReason === "container_teardown_completed" &&
+    ((lease.transition === "issued" && lease.terminalOutcome === undefined && lease.terminalReason === undefined) ||
+      (lease.transition === "cleaned" && lease.terminalOutcome === "failed" && lease.terminalReason === "container_teardown_completed")) &&
     lease.result === undefined &&
     lease.usage.requestsConsumed === 0 &&
     lease.usage.responseBytesConsumed === 0 &&

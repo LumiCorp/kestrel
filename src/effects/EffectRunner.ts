@@ -16,6 +16,7 @@ import {
   parsePreparedToolCallV1,
 } from "../kestrel/contracts/tool-invocation.js";
 import type { ToolActivationRefV1 } from "../kestrel/contracts/tool-contract.js";
+import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
 import type { EffectRegistry } from "./EffectRegistry.js";
 import { createEffectExecutionError } from "./errors.js";
 
@@ -95,20 +96,23 @@ export class InlineEffectRunner implements EffectRunner {
           output: unknown;
           timestamp: string;
         } | undefined;
+        let completedOutputCanonical: string | undefined;
         let completedEffectResultSave: Promise<void> | undefined;
         const persistCompletedResult = (output: unknown): Promise<void> => {
           if (completedEffectResult === undefined) {
+            const outputSnapshot = snapshotCanonicalEffectOutput(output);
+            completedOutputCanonical = canonicalJson(outputSnapshot);
             completedEffectResult = {
               idempotencyKey: effect.idempotencyKey,
               status: "DONE",
-              output,
+              output: outputSnapshot,
               timestamp: new Date().toISOString(),
             };
             completedEffectResultSave = this.persistCompletedEffectResult(
               effect,
               completedEffectResult,
             );
-          } else if (completedEffectResult.output !== output) {
+          } else if (completedOutputCanonical !== canonicalJson(output)) {
             return Promise.reject(new Error("Effect handler attempted to persist conflicting completed outputs"));
           }
           return completedEffectResultSave!;
@@ -279,6 +283,10 @@ function readEffectToolActivity(effect: PersistedEffect): {
   } catch {
     return;
   }
+}
+
+function snapshotCanonicalEffectOutput(output: unknown): unknown {
+  return JSON.parse(canonicalJson(output)) as unknown;
 }
 
 function readAgentToolResultV2(value: unknown) {

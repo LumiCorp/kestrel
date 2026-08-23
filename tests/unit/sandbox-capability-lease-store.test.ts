@@ -151,10 +151,13 @@ test("exact capability effect results require completed provider evidence and ar
     expectedSequence: 4,
     record: { ...consumed, sequence: 5, transition: "cleaned", cleanedAt: "2026-08-23T12:00:05.000Z" },
   });
-  await store.saveSandboxCapabilityEffectResult({
+  const mutableExactResult = structuredClone(exactResult);
+  const savingExactResult = store.saveSandboxCapabilityEffectResult({
     leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
-    runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
+    runId: binding.runId, sessionId: binding.sessionId, result: mutableExactResult,
   });
+  ((mutableExactResult.output as { outcome: { rawOutput: { answer: string } } }).outcome.rawOutput).answer = "mutated-after-save-started";
+  await savingExactResult;
   assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactResult);
   await store.saveSandboxCapabilityEffectResult({
     leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
@@ -171,11 +174,22 @@ test("exact capability effect results require completed provider evidence and ar
   }), /completed exact lease action/u);
 });
 
-test("exact capability effect results accept only a cleaned, never-invoked capability", async () => {
+test("exact capability effect results persist before cleanup only for a never-invoked capability", async () => {
   const store = new InMemorySessionStore();
   const digest = fingerprintSandboxCapabilityLeaseBindingV1(binding);
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: transition(1, "requested") });
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: transition(2, "issued") });
+  const exactResult = {
+    idempotencyKey: binding.toolCallId,
+    status: "DONE" as const,
+    output: { status: "OK", outcome: { kind: "success", rawOutput: { status: "ok", stdout: "unused" } } },
+    timestamp: "2026-08-23T12:00:05.000Z",
+  };
+  await store.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
+    runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
+  });
+  assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactResult);
   await store.appendSandboxCapabilityLeaseTransition({
     expectedSequence: 2,
     record: {
@@ -194,17 +208,6 @@ test("exact capability effect results accept only a cleaned, never-invoked capab
       terminalReason: "container_teardown_completed",
       cleanedAt: "2026-08-23T12:00:04.000Z",
     },
-  });
-  const exactResult = {
-    idempotencyKey: binding.toolCallId,
-    status: "DONE" as const,
-    output: { status: "OK", outcome: { kind: "success", rawOutput: { status: "ok", stdout: "unused" } } },
-    timestamp: "2026-08-23T12:00:05.000Z",
-  };
-
-  await store.saveSandboxCapabilityEffectResult({
-    leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
-    runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
   });
   assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactResult);
 

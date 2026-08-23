@@ -44,9 +44,9 @@ export function createExecuteToolCallHandler(
       {
         signal: context.signal,
         runContext,
+        persistCompletedCapabilityResult: context.persistCompletedCapabilityResult,
       },
     );
-    await context.persistCompletedCapabilityResult?.(result);
     return result;
   };
 }

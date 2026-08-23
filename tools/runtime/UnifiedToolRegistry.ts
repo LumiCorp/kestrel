@@ -812,13 +812,27 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       options.runContext,
     );
     try {
+      let persistCompletedCapabilityRawOutput: ((rawOutput: unknown) => Promise<void>) | undefined;
+      const preparedHandler = source.createHandler({
+        ...options,
+        persistCompletedCapabilityRawOutput: (rawOutput) => {
+          if (persistCompletedCapabilityRawOutput === undefined) {
+            throw new Error("Capability result persistence is unavailable for this prepared execution.");
+          }
+          return persistCompletedCapabilityRawOutput(rawOutput);
+        },
+      }, prepared);
       let result = await executePinnedToolCallV1({
         prepared,
         pinned: {
           ...source.pinned,
-          handler: source.createHandler(options, prepared),
+          handler: (toolInput, lifecycle) => {
+            persistCompletedCapabilityRawOutput = lifecycle?.persistCompletedCapabilityResult;
+            return preparedHandler(toolInput);
+          },
         },
         signal: options.signal,
+        persistCompletedCapabilityResult: options.persistCompletedCapabilityResult,
       });
       if (
         result.outcome.kind === "failure" &&
@@ -836,13 +850,27 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             options.runContext,
           );
           try {
+            let persistRetryCapabilityRawOutput: ((rawOutput: unknown) => Promise<void>) | undefined;
+            const retryHandler = retrySource.createHandler({
+              ...options,
+              persistCompletedCapabilityRawOutput: (rawOutput) => {
+                if (persistRetryCapabilityRawOutput === undefined) {
+                  throw new Error("Capability result persistence is unavailable for this prepared execution.");
+                }
+                return persistRetryCapabilityRawOutput(rawOutput);
+              },
+            }, prepared);
             result = await executePinnedToolCallV1({
               prepared,
               pinned: {
                 ...retrySource.pinned,
-                handler: retrySource.createHandler(options, prepared),
+                handler: (toolInput, lifecycle) => {
+                  persistRetryCapabilityRawOutput = lifecycle?.persistCompletedCapabilityResult;
+                  return retryHandler(toolInput);
+                },
               },
               signal: options.signal,
+              persistCompletedCapabilityResult: options.persistCompletedCapabilityResult,
             });
           } finally {
             await retrySource.release?.();
@@ -1303,12 +1331,18 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                     }
                   : {}),
               };
+          const contextWithResultPersistence = handlerOptions.persistCompletedCapabilityRawOutput === undefined
+            ? executionContext
+            : {
+                ...executionContext,
+                persistCompletedCapabilityResult: handlerOptions.persistCompletedCapabilityRawOutput,
+              };
           const handlers = defaultToolCatalog.createRawHandlers(
             [descriptor.toolId],
             handlerOptions.console === undefined
-              ? { ...executionContext, signal: handlerOptions.signal }
+              ? { ...contextWithResultPersistence, signal: handlerOptions.signal }
               : {
-                  ...executionContext,
+                  ...contextWithResultPersistence,
                   toolConsole: handlerOptions.console,
                   signal: handlerOptions.signal,
                 },

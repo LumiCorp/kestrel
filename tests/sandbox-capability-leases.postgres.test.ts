@@ -84,10 +84,13 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         occurredAt: "2026-08-23T12:00:05.000Z",
       },
     });
-    await store.saveSandboxCapabilityEffectResult({
+    const mutableExactEffectResult = structuredClone(exactEffectResult);
+    const savingExactEffectResult = store.saveSandboxCapabilityEffectResult({
       leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
-      runId, sessionId, result: exactEffectResult,
+      runId, sessionId, result: mutableExactEffectResult,
     });
+    ((mutableExactEffectResult.output as { outcome: { rawOutput: { answer: string } } }).outcome.rawOutput).answer = "mutated-after-save-started";
+    await savingExactEffectResult;
     assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
     await store.saveSandboxCapabilityEffectResult({
       leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
@@ -107,6 +110,21 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     });
     await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: unusedRecord(1, "requested") });
     await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: unusedRecord(2, "issued") });
+    const unusedEffectResult = {
+      ...exactEffectResult,
+      idempotencyKey: unusedBinding.toolCallId,
+      output: { status: "OK", outcome: { kind: "success", rawOutput: { status: "ok", stdout: "unused" } } },
+      timestamp: "2026-08-23T12:00:05.000Z",
+    };
+    await store.saveSandboxCapabilityEffectResult({
+      leaseId: unusedLeaseId, bindingDigest: unusedDigest, toolCallId: unusedBinding.toolCallId,
+      runId, sessionId, result: unusedEffectResult,
+    });
+    // Simulate a process crash before lease cleanup by discarding the writer
+    // instance. A fresh store must observe the exact enclosing result without
+    // invoking any live runtime surface.
+    const restartedStore = new PostgresSessionStore(new PgSqlExecutor(pool));
+    assert.deepEqual(await restartedStore.getEffectResult(unusedBinding.toolCallId), unusedEffectResult);
     await store.appendSandboxCapabilityLeaseTransition({
       expectedSequence: 2,
       record: {
@@ -123,16 +141,6 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         terminalReason: "container_teardown_completed",
         cleanedAt: "2026-08-23T12:00:04.000Z",
       },
-    });
-    const unusedEffectResult = {
-      ...exactEffectResult,
-      idempotencyKey: unusedBinding.toolCallId,
-      output: { status: "OK", outcome: { kind: "success", rawOutput: { status: "ok", stdout: "unused" } } },
-      timestamp: "2026-08-23T12:00:05.000Z",
-    };
-    await store.saveSandboxCapabilityEffectResult({
-      leaseId: unusedLeaseId, bindingDigest: unusedDigest, toolCallId: unusedBinding.toolCallId,
-      runId, sessionId, result: unusedEffectResult,
     });
     assert.deepEqual(await store.getEffectResult(unusedBinding.toolCallId), unusedEffectResult);
     const childParentId = `child-parent-${suffix}`;

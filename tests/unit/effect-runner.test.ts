@@ -354,6 +354,12 @@ test("execute-tool handler persists the exact completed result before returning 
     sessionId: "session-handler-crash",
     callId: "call-handler-crash",
   });
+  const executePreparedToolCall = toolGateway.executePreparedToolCall.bind(toolGateway);
+  toolGateway.executePreparedToolCall = async (prepared, options) => {
+    const result = await executePreparedToolCall(prepared, options);
+    await options?.persistCompletedCapabilityResult?.(result);
+    return result;
+  };
   const handler = createExecuteToolCallHandler(toolGateway);
   const output = await handler({
     runId: "run-handler-crash",
@@ -378,6 +384,57 @@ test("execute-tool handler persists the exact completed result before returning 
   assert.equal((output as { status?: string }).status, "OK");
   assert.deepEqual(order, ["tool-completed", "exact-result-durable", "handler-returned"]);
 });
+
+test("deferred capability output mutation cannot alter or masquerade as the persisted snapshot", async () => {
+  const store = new InMemorySessionStore();
+  const timestamp = "2026-08-23T12:00:00.000Z";
+  const original = structuredClone(agentToolResultFixture(timestamp));
+  let persisted: unknown;
+  Object.assign(store, {
+    saveSandboxCapabilityEffectResult: async (input: { result: { output: unknown } }) => {
+      await Promise.resolve();
+      persisted = structuredClone(input.result.output);
+      await store.saveEffectResult("run-mutation", "session-mutation", input.result as never);
+    },
+  });
+  const registry = new EffectRegistry();
+  registry.register("execute_tool_call", async (_effect, context) => {
+    const mutable = structuredClone(original);
+    const saving = context.persistCompletedCapabilityResult!(mutable);
+    (mutable.outcome.rawOutput as { status: string }).status = "mutated";
+    await saving;
+    return mutable;
+  });
+  const result = await new InlineEffectRunner(store, registry).runEffects([{
+    runId: "run-mutation", sessionId: "session-mutation", stepIndex: 0,
+    type: "execute_tool_call", payload: { toolName: "code.execute", toolInput: {} },
+    idempotencyKey: "call-mutation", failurePolicy: "STOP", status: "PENDING", createdAt: timestamp,
+  }], { runId: "run-mutation", sessionId: "session-mutation", stepIndex: 0 });
+
+  assert.equal(result.stop, true);
+  assert.equal(((persisted as typeof original).outcome.rawOutput as { status: string }).status, "ok");
+  assert.equal((((await store.getEffectResult("call-mutation"))?.output as typeof original).outcome.rawOutput as { status: string }).status, "ok");
+});
+
+function agentToolResultFixture(timestamp: string) {
+  const descriptor = defaultToolCatalog.getDescriptorRef("code.execute");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-mutation",
+    scopeFingerprint: fingerprintToolScopeV1({ tenant: "tenant-a", environment: "environment-a", gateway: "local-core", authorizationScope: ["runtime"] }),
+  });
+  const rawOutput = {
+    status: "ok",
+    capabilityReplayEvidence: { version: 1, leaseId: "lease-mutation", bindingDigest: "a".repeat(64), toolCallId: "call-mutation" },
+  };
+  return {
+    version: "v2" as const, toolName: "code.execute", status: "OK" as const, toolCallId: "call-mutation", activation,
+    outcome: { version: "v1" as const, callId: "call-mutation", activation, kind: "success" as const, startedAt: timestamp, completedAt: timestamp, effectState: "not_applicable" as const, rawOutput },
+    modelContext: { text: "complete", rawOutputRef: "sha256:mutation", truncated: false },
+    auditRecord: { toolName: "code.execute", input: {}, output: rawOutput, startedAt: timestamp, completedAt: timestamp, durationMs: 0, status: "OK" as const },
+  };
+}
 
 test("selected but unused capability persists DONE and replays without live work", async () => {
   const store = new DurableInMemorySessionStore();
@@ -415,14 +472,6 @@ test("selected but unused capability persists DONE and replays without live work
   });
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: lease(1, "requested") });
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: lease(2, "issued") });
-  await store.appendSandboxCapabilityLeaseTransition({
-    expectedSequence: 2,
-    record: { ...lease(3, "revoked"), terminalOutcome: "failed", terminalReason: "container_teardown_completed" },
-  });
-  await store.appendSandboxCapabilityLeaseTransition({
-    expectedSequence: 3,
-    record: { ...lease(4, "cleaned"), terminalOutcome: "failed", terminalReason: "container_teardown_completed", cleanedAt: "2026-08-23T12:00:04.000Z" },
-  });
 
   const descriptor = defaultToolCatalog.getDescriptorRef("code.execute");
   assert.ok(descriptor);
@@ -451,12 +500,13 @@ test("selected but unused capability persists DONE and replays without live work
   let brokerCalls = 0;
   let dockerStarts = 0;
   const registry = new EffectRegistry();
-  registry.register("execute_tool_call", async () => {
+  registry.register("execute_tool_call", async (_effect, context) => {
     credentialResolutions += 1;
     providerCalls += 1;
     brokerCalls += 1;
     dockerStarts += 1;
-    return exactToolResult;
+    await context.persistCompletedCapabilityResult?.(exactToolResult);
+    throw new Error("simulated crash after exact result persistence and before cleanup");
   });
   const effect = {
     runId: binding.runId,
@@ -471,7 +521,7 @@ test("selected but unused capability persists DONE and replays without live work
   };
   const runner = new InlineEffectRunner(store, registry);
   const completed = await runner.runEffects([effect], { runId: binding.runId, sessionId: binding.sessionId, stepIndex: 0 });
-  assert.equal(completed.stop, false);
+  assert.equal(completed.stop, true);
   assert.equal((await store.getEffectResult(binding.toolCallId))?.status, "DONE");
   assert.deepEqual((await store.getEffectResult(binding.toolCallId))?.output, exactToolResult);
 

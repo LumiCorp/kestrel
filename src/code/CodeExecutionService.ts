@@ -39,6 +39,7 @@ export class CodeExecutionService {
       signal?: AbortSignal | undefined;
       capability?: SandboxCapabilityGrant | undefined;
       capabilityRuntime?: SandboxCapabilityRuntimeContext | undefined;
+      persistCompletedCapabilityResult?: ((result: CodeExecutionResult) => Promise<void>) | undefined;
     } = {},
   ): Promise<CodeExecutionResult> {
     const policyDecision = evaluateExecutionPolicy(config, request);
@@ -54,6 +55,9 @@ export class CodeExecutionService {
         config,
         request.capability,
         options.capabilityRuntime,
+        options.persistCompletedCapabilityResult,
+        policyDecision.policy,
+        config?.retention ?? { persistSummary: true, persistArtifacts: true },
       );
       capability = resolved.grant;
       releaseCapabilitySensitiveValue = resolved.releaseSensitiveValue;
@@ -70,29 +74,13 @@ export class CodeExecutionService {
         signal: options.signal,
       });
 
-      return redactCapabilityResult?.({
-        status: output.status,
-        exitCode: output.exitCode,
-        stdout: output.stdout,
-        stderr: output.stderr,
-        durationMs: output.durationMs,
-        artifacts: output.artifacts,
-        summary: summarizeExecutionResult(output),
+      return buildCompletedCodeExecutionResult({
+        output,
         policy: policyDecision.policy,
         retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
-        ...(capabilityReplayEvidence === undefined ? {} : { capabilityReplayEvidence }),
-      }) ?? {
-        status: output.status,
-        exitCode: output.exitCode,
-        stdout: output.stdout,
-        stderr: output.stderr,
-        durationMs: output.durationMs,
-        artifacts: output.artifacts,
-        summary: summarizeExecutionResult(output),
-        policy: policyDecision.policy,
-        retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
-        ...(capabilityReplayEvidence === undefined ? {} : { capabilityReplayEvidence }),
-      };
+        capabilityReplayEvidence,
+        redact: redactCapabilityResult,
+      });
     } catch (error) {
       if (options.signal?.aborted === true) {
         throw redactCapabilityError(error, redactCapabilityResult);
@@ -135,6 +123,30 @@ export class CodeExecutionService {
       }
     }
   }
+}
+
+function buildCompletedCodeExecutionResult(input: {
+  output: SandboxExecutionOutput;
+  policy: CodeExecutionResult["policy"];
+  retention: CodeExecutionResult["retention"];
+  capabilityReplayEvidence?: CodeExecutionResult["capabilityReplayEvidence"] | undefined;
+  redact?: (<T>(value: T) => T) | undefined;
+}): CodeExecutionResult {
+  const result: CodeExecutionResult = {
+    status: input.output.status,
+    exitCode: input.output.exitCode,
+    stdout: input.output.stdout,
+    stderr: input.output.stderr,
+    durationMs: input.output.durationMs,
+    artifacts: input.output.artifacts,
+    summary: summarizeExecutionResult(input.output),
+    policy: input.policy,
+    retention: input.retention,
+    ...(input.capabilityReplayEvidence === undefined
+      ? {}
+      : { capabilityReplayEvidence: input.capabilityReplayEvidence }),
+  };
+  return input.redact?.(result) ?? result;
 }
 
 function redactCapabilityError(
@@ -336,6 +348,9 @@ async function resolveTavilyCapability(
   config: CodeModeProfileConfig | undefined,
   selectedValue: unknown,
   runtime: SandboxCapabilityRuntimeContext | undefined,
+  persistCompletedCapabilityResult: ((result: CodeExecutionResult) => Promise<void>) | undefined,
+  appliedPolicy: CodeExecutionResult["policy"],
+  retention: CodeExecutionResult["retention"],
 ): Promise<{
   grant: SandboxCapabilityGrant;
   replayEvidence: NonNullable<CodeExecutionResult["capabilityReplayEvidence"]>;
@@ -459,8 +474,22 @@ async function resolveTavilyCapability(
             leaseBinding,
           );
         },
-        beforeContainerTeardown: async (reason) => {
+        beforeContainerTeardown: async (reason, completedOutput) => {
           try {
+            if (completedOutput !== undefined && persistCompletedCapabilityResult !== undefined) {
+              await persistCompletedCapabilityResult(buildCompletedCodeExecutionResult({
+                output: completedOutput,
+                policy: appliedPolicy,
+                retention,
+                capabilityReplayEvidence: {
+                  version: 1,
+                  leaseId: durableLease.leaseId,
+                  bindingDigest: durableLease.bindingDigest,
+                  toolCallId: durableLease.binding.toolCallId,
+                },
+                redact: runtime.redactSensitiveValues,
+              }));
+            }
             await runtime.leaseCoordinator!.settleBeforeTeardown({
               leaseId: durableLease.leaseId,
               expectedBinding: leaseBinding,

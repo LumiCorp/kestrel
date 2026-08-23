@@ -1859,6 +1859,10 @@ export class PostgresSessionStore implements SessionStore {
     sessionId: string;
     result: EffectResult;
   }): Promise<void> {
+    const exactInput = {
+      ...input,
+      result: JSON.parse(canonicalStoreJson(input.result)) as EffectResult,
+    };
     await this.ensureSchemaV3();
     await this.withTransaction(async (executor) => {
       const leaseResult = await executor.query<{ record_json: unknown }>(
@@ -1868,12 +1872,12 @@ export class PostgresSessionStore implements SessionStore {
              ON transition.lease_id = lease.lease_id AND transition.sequence = lease.sequence
           WHERE lease.lease_id = $1
           FOR UPDATE OF lease`,
-        [input.leaseId],
+        [exactInput.leaseId],
       );
       const lease = leaseResult.rows[0] === undefined
         ? undefined
         : parseSandboxCapabilityLeaseTransitionRecordV1(leaseResult.rows[0].record_json);
-      assertReplayableSandboxCapabilityEffectBinding(lease, input);
+      assertReplayableSandboxCapabilityEffectBinding(lease, exactInput);
       const existing = await executor.query<{
         idempotency_key: string;
         status: "DONE" | "FAILED";
@@ -1883,7 +1887,7 @@ export class PostgresSessionStore implements SessionStore {
       }>(
         `SELECT idempotency_key, status, output_json, error_json, created_at
            FROM effect_results WHERE idempotency_key = $1 FOR UPDATE`,
-        [input.result.idempotencyKey],
+        [exactInput.result.idempotencyKey],
       );
       const row = existing.rows[0];
       if (row !== undefined) {
@@ -1894,7 +1898,7 @@ export class PostgresSessionStore implements SessionStore {
           ...(row.error_json === null ? {} : { error: row.error_json }),
           timestamp: normalizeTimestampString(row.created_at),
         };
-        if (canonicalStoreJson(recorded) !== canonicalStoreJson(input.result)) {
+        if (canonicalStoreJson(recorded) !== canonicalStoreJson(exactInput.result)) {
           throw new Error("Sandbox capability effect result conflicts with recorded exact replay output");
         }
         return;
@@ -1904,11 +1908,11 @@ export class PostgresSessionStore implements SessionStore {
           (run_id, session_id, idempotency_key, status, output_json, error_json, created_at)
          VALUES ($1, $2, $3, 'DONE', $4::jsonb, NULL, $5::timestamptz)`,
         [
-          input.runId,
-          input.sessionId,
-          input.result.idempotencyKey,
-          stringifySanitizedJson(input.result.output ?? null),
-          normalizeTimestampString(input.result.timestamp),
+          exactInput.runId,
+          exactInput.sessionId,
+          exactInput.result.idempotencyKey,
+          stringifySanitizedJson(exactInput.result.output ?? null),
+          normalizeTimestampString(exactInput.result.timestamp),
         ],
       );
     });
@@ -4955,9 +4959,8 @@ function assertReplayableSandboxCapabilityEffectBinding(
     lease.result !== undefined &&
     (lease.transition === "consumed" || lease.transition === "exhausted" || lease.transition === "cleaned");
   const completedUnusedCapability = lease !== undefined &&
-    lease.transition === "cleaned" &&
-    lease.terminalOutcome === "failed" &&
-    lease.terminalReason === "container_teardown_completed" &&
+    ((lease.transition === "issued" && lease.terminalOutcome === undefined && lease.terminalReason === undefined) ||
+      (lease.transition === "cleaned" && lease.terminalOutcome === "failed" && lease.terminalReason === "container_teardown_completed")) &&
     lease.result === undefined &&
     lease.usage.requestsConsumed === 0 &&
     lease.usage.responseBytesConsumed === 0 &&
