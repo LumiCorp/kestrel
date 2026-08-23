@@ -100,6 +100,7 @@ export async function backfillLegacyThreadAttachments(
         organizationId: message.organizationId,
         objectKey,
         verified,
+        availabilityStatus: pathname === undefined ? "unknown" : verified ? "available" : "missing",
         createdAt: message.createdAt,
       });
       const [insertedFile] = await knowledgeDb.insert(schema.kestrelFiles).values({
@@ -214,6 +215,7 @@ async function findOrCreateBlob(input: {
   organizationId: string;
   objectKey: string;
   verified: Awaited<ReturnType<typeof inspectObject>> | null;
+  availabilityStatus: "unknown" | "available" | "missing";
   createdAt: Date;
 }) {
   const byObjectKey = await knowledgeDb.query.fileBlobs.findFirst({
@@ -236,6 +238,8 @@ async function findOrCreateBlob(input: {
     objectKey: input.objectKey,
     sizeBytes: input.verified?.sizeBytes ?? 0,
     sha256: input.verified?.sha256 ?? null,
+    availabilityStatus: input.availabilityStatus,
+    availabilityCheckedAt: input.availabilityStatus === "unknown" ? null : input.createdAt,
     scanStatus: "unavailable",
     createdAt: input.createdAt,
   }).onConflictDoNothing().returning();

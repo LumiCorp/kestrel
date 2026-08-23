@@ -849,6 +849,10 @@ export const fileBlobs = pgTable(
     objectKey: text("object_key").notNull(),
     sizeBytes: integer("size_bytes").notNull(),
     sha256: text("sha256"),
+    availabilityStatus: text("availability_status", {
+      enum: ["unknown", "available", "missing"],
+    }).notNull().default("unknown"),
+    availabilityCheckedAt: timestamp("availability_checked_at", { withTimezone: true }),
     scanStatus: text("scan_status", {
       enum: ["pending", "clean", "quarantined", "unavailable"],
     }).notNull().default("pending"),

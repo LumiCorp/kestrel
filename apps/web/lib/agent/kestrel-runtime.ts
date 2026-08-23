@@ -2,6 +2,7 @@ import "server-only";
 
 import { readRequestCorrelation } from "@kestrel-agents/next";
 import type { KestrelAgent, RunnerActorMetadata } from "@kestrel-agents/sdk";
+import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
 import {
   isRunnerRunStreamEvent,
   isRunnerRunTerminalEvent,
@@ -343,6 +344,7 @@ export type KestrelOneAgentResponseInput = {
   parentThreadId?: string | null;
   durableTurnId?: string | undefined;
   messages: UIMessage[];
+  resolvedAttachments?: RunnerTurnAttachment[] | null | undefined;
   threadFileInventory?: Array<{
     fileId: string;
     filename: string;
@@ -1158,6 +1160,7 @@ export async function createKestrelOneAgentResponse(
     threadId: input.threadId,
     durableTurnId: input.durableTurnId,
     messages: input.messages,
+    resolvedAttachments: input.resolvedAttachments,
     threadFileInventory: input.threadFileInventory,
     approvalDecision: input.approvalDecision,
     interactionResponse: input.interactionResponse,
@@ -1258,6 +1261,7 @@ export async function createKestrelOneReattachmentResponse(
     threadId: input.threadId,
     durableTurnId: input.durableTurnId,
     messages: input.messages,
+    resolvedAttachments: input.resolvedAttachments,
     approvalDecision: input.approvalDecision,
     interactionResponse: input.interactionResponse,
     modelId: input.modelId ?? "kestrel",
@@ -1363,6 +1367,7 @@ export async function createKestrelOneRecoveredCompletionResponse(
     threadId: input.threadId,
     durableTurnId: input.durableTurnId,
     messages: input.messages,
+    resolvedAttachments: input.resolvedAttachments,
     approvalDecision: input.approvalDecision,
     interactionResponse: input.interactionResponse,
     modelId: input.modelId ?? "kestrel",

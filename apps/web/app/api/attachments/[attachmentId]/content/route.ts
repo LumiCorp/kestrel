@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { z } from "zod";
 import { getAttachmentByIdForUser } from "@/lib/attachments/store";
+import { ensureEffectiveFileAvailability } from "@/lib/files/availability";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { getStorageAdapter } from "@/lib/storage";
@@ -22,6 +23,14 @@ export async function GET(
     if (attachment.lifecycleState !== "ready") {
       throw new Error("Attachment content is unavailable.");
     }
+    await ensureEffectiveFileAvailability({
+      fileId: attachment.id,
+      lifecycleState: attachment.lifecycleState,
+      blobId: attachment.blobId,
+      objectKey: attachment.objectKey,
+      availabilityStatus: attachment.availabilityStatus,
+      blobDeletedAt: attachment.blobDeletedAt,
+    });
     const stream = await getStorageAdapter().getObjectStream(attachment.objectKey);
     return new Response(Readable.toWeb(stream as Readable) as unknown as BodyInit, {
       headers: {

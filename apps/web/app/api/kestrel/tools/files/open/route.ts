@@ -5,6 +5,7 @@ import {
   parseRunnerKnowledgeCapabilityRequest,
 } from "@/lib/agent/kestrel-capabilities";
 import { getVisibleFileForThread } from "@/lib/files/service";
+import { ensureEffectiveFileAvailability } from "@/lib/files/availability";
 import { getManagedFileStorageProvider } from "@/lib/files/storage-provider";
 import { errorResponse } from "@/lib/knowledge/http";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
@@ -37,6 +38,14 @@ export async function POST(request: Request) {
       userId: identity.userId,
     });
     if (file.lifecycleState !== "ready") throw new Error("File is unavailable.");
+    await ensureEffectiveFileAvailability({
+      fileId: file.id,
+      lifecycleState: file.lifecycleState,
+      blobId: file.blobId,
+      objectKey: file.objectKey,
+      availabilityStatus: file.availabilityStatus,
+      blobDeletedAt: file.blobDeletedAt,
+    });
     const storage = getManagedFileStorageProvider();
     const sourceUrl = storage.signedReadUrl
       ? await storage.signedReadUrl(file.objectKey, 900)

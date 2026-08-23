@@ -15,6 +15,8 @@ export type AdminLogInput = {
   metadata?: Record<string, unknown> | null;
 };
 
+export type AdminLogDatabase = Pick<typeof knowledgeDb, "insert">;
+
 const ALLOWED_LEVELS = new Set<AdminLogLevel>([
   "info",
   "warn",
@@ -40,8 +42,11 @@ export function parseAdminLogLevel(value: string | null | undefined) {
   return value;
 }
 
-export async function logAdminEvent(input: AdminLogInput) {
-  await knowledgeDb.insert(schema.adminEventLogs).values({
+export async function insertAdminEvent(
+  database: AdminLogDatabase,
+  input: AdminLogInput,
+) {
+  await database.insert(schema.adminEventLogs).values({
     id: crypto.randomUUID(),
     organizationId: input.organizationId ?? null,
     actorUserId: input.actorUserId ?? null,
@@ -54,6 +59,10 @@ export async function logAdminEvent(input: AdminLogInput) {
     metadata: input.metadata ?? null,
     createdAt: new Date(),
   });
+}
+
+export async function logAdminEvent(input: AdminLogInput) {
+  await insertAdminEvent(knowledgeDb, input);
 }
 
 export async function getAdminLogStats(organizationId: string) {

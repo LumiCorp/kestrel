@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 import { z } from "zod";
 import { getFileByIdForUser } from "@/lib/files/service";
 import { getManagedFileStorageProvider } from "@/lib/files/storage-provider";
+import { ensureEffectiveFileAvailability } from "@/lib/files/availability";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 
@@ -22,6 +23,14 @@ export async function GET(
     if (file.lifecycleState !== "ready") {
       throw new Error("File content is unavailable.");
     }
+    await ensureEffectiveFileAvailability({
+      fileId: file.id,
+      lifecycleState: file.lifecycleState,
+      blobId: file.blobId,
+      objectKey: file.objectKey,
+      availabilityStatus: file.availabilityStatus,
+      blobDeletedAt: file.blobDeletedAt,
+    });
     const stream = await getManagedFileStorageProvider().readStream(file.objectKey);
     return new Response(Readable.toWeb(stream as Readable) as unknown as BodyInit, {
       headers: {
