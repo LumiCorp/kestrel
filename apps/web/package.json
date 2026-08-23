@@ -18,6 +18,7 @@
     "build:self": "pnpm run check:brand && pnpm run clean && next build",
     "start": "next start --port 43103",
     "worker:turns": "node --import ./scripts/register-server-only.mjs --import tsx scripts/turn-worker.ts",
+    "worker:turns:attachment-canary": "node --import tsx scripts/turn-worker-attachment-canary.mjs",
     "worker:control": "node --import ./scripts/register-server-only.mjs --import tsx scripts/control-worker.ts",
     "runtime:update": "tsx scripts/update-environment-runtime.ts",
     "production:runtime:activate": "tsx scripts/activate-production-runtime.ts",

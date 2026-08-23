@@ -45,21 +45,26 @@ test(
       packageJson.scripts?.["worker:turns"],
       "node --import ./scripts/register-server-only.mjs --import tsx scripts/turn-worker.ts",
     );
+    assert.equal(
+      packageJson.scripts?.["worker:turns:attachment-canary"],
+      "node --import tsx scripts/turn-worker-attachment-canary.mjs",
+    );
     assert.equal((packageJson as { type?: string }).type, "module");
   },
 );
 
 test("hosted durable turns resolve attachments through web-owned short-lived access", async () => {
-  const [runtimeSource, coreSource, processContractSource, storageSource] = await Promise.all([
+  const [runtimeSource, resolverClientSource, coreSource, processContractSource, storageSource] = await Promise.all([
     readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("./attachment-resolver-client.ts", import.meta.url), "utf8"),
     readFile(new URL("../agent/kestrel-runtime-core.ts", import.meta.url), "utf8"),
     readFile(new URL("../runtime/process-contracts.ts", import.meta.url), "utf8"),
     readFile(new URL("../storage/index.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(runtimeSource, /signTurnAttachmentResolutionTicket/u);
-  assert.match(runtimeSource, /fetch\(/u);
-  assert.match(runtimeSource, /internal\/turn-worker/u);
+  assert.match(resolverClientSource, /signTurnAttachmentResolutionTicket/u);
+  assert.match(resolverClientSource, /fetch/u);
+  assert.match(resolverClientSource, /internal\/turn-worker/u);
   assert.match(runtimeSource, /ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE/u);
   assert.match(runtimeSource, /fileIds/u);
   assert.match(runtimeSource, /Affected file ID/u);
@@ -69,6 +74,7 @@ test("hosted durable turns resolve attachments through web-owned short-lived acc
   assert.doesNotMatch(runtimeSource, /console\.(log|warn|error)[^\n]*sourceUrl/u);
   assert.doesNotMatch(runtimeSource, /data:\s*.*token/u);
   assert.doesNotMatch(runtimeSource, /getManagedFileStorageProvider/u);
+  assert.doesNotMatch(resolverClientSource, /knowledgeDb/u);
   assert.match(coreSource, /resolvedAttachments === undefined/u);
   assert.match(coreSource, /resolveThreadAttachmentsForExecution/u);
   assert.match(processContractSource, /TURN_WORKER_PROCESS_CONTRACT/u);
@@ -76,6 +82,7 @@ test("hosted durable turns resolve attachments through web-owned short-lived acc
   assert.match(storageSource, /FLY_MACHINE_ID/u);
   assert.match(storageSource, /Hosted workers cannot use implicit local attachment storage/u);
 });
+
 test(
   "an exhausted queue job fails its durable turn visibly",
   async () => {
