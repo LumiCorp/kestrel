@@ -304,6 +304,20 @@ const codeModeSchema = z
       .object({ persistSummary: z.boolean(), persistArtifacts: z.boolean() })
       .strict(),
     approvalMode: z.literal("auto"),
+    capabilities: z.array(z.object({
+      version: z.literal(1),
+      capabilityId: z.literal("tavily.search.read"),
+      operations: z.tuple([z.literal("search")]),
+      resource: z.literal("https://api.tavily.com/search"),
+      audience: z.object({ tenantId: nonEmptyString, environmentId: nonEmptyString }).strict(),
+      maxRequests: z.literal(1),
+      maxQueryChars: z.number().int().min(1).max(400),
+      maxResults: z.number().int().min(1).max(20),
+      maxResponseBytes: z.number().int().min(256).max(64_000),
+      timeoutMs: z.number().int().min(100).max(30_000),
+      maxExpiryMs: z.number().int().min(100).max(60_000),
+      brokerAuthority: z.object({ authorityId: nonEmptyString, revision: nonEmptyString }).strict(),
+    }).strict()).optional(),
   })
   .strict();
 

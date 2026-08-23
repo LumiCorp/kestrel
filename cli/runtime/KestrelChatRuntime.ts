@@ -105,6 +105,8 @@ import {
 } from "../../src/kestrel/contracts/evaluation.js";
 import type { RuntimeEvaluationRuntimeConfiguration } from "../../src/evaluation/RuntimeEvaluationCoordinator.js";
 import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.js";
+import { fingerprintSandboxCapabilityCatalogV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
 import type { SessionStore } from "../../src/kestrel/contracts/store.js";
 import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
@@ -3346,6 +3348,15 @@ function createRuntimeWithStore(
     store,
     onFinalize,
     codeMode: profile.codeMode,
+    ...(resolveSandboxCapabilityRuntimeEnvironment(
+      internetEnv,
+      fingerprintResolvedProfile(profile),
+      fingerprintSandboxCapabilityCatalogV1(profile.codeMode?.capabilities ?? []),
+      (input) => executionBoundaryRuntime.sensitiveValues.register({
+        reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
+        value: input.value,
+      }),
+    ) ?? {}),
     devShell: profile.devShell,
     kestrelOne: {
       appUrl: parseEnvString("KESTREL_ONE_APP_URL", runtimeEnv),
@@ -4296,6 +4307,38 @@ function parseEnvString(
   }
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveSandboxCapabilityRuntimeEnvironment(
+  environment: NodeJS.ProcessEnv | undefined,
+  profileFingerprint: string,
+  capabilityCatalogFingerprint: string,
+  registerSensitiveValue: NonNullable<NonNullable<SharedToolContext["sandboxCapabilityRuntime"]>["registerSensitiveValue"]>,
+): Pick<SharedToolContext, "sandboxCapabilityRuntime"> | undefined {
+  if (environment === undefined) return;
+  const tenantId = parseEnvString("KESTREL_TENANT_ID", environment);
+  const environmentId = parseEnvString("KESTREL_ENVIRONMENT_ID", environment);
+  const authorityId = parseEnvString("KESTREL_SANDBOX_BROKER_AUTHORITY_ID", environment);
+  const authorityRevision = parseEnvString("KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION", environment);
+  const credentialRevision = parseEnvString("KESTREL_TAVILY_CREDENTIAL_REVISION", environment);
+  const secret = parseEnvString("TAVILY_API_KEY", environment);
+  if ([tenantId, environmentId, authorityId, authorityRevision, credentialRevision, secret].some((value) => value === undefined)) return;
+  return {
+    sandboxCapabilityRuntime: {
+      tenantId: tenantId!,
+      environmentId: environmentId!,
+      executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+      profileFingerprint,
+      capabilityCatalogFingerprint,
+      brokerAuthority: { authorityId: authorityId!, revision: authorityRevision! },
+      credentialSnapshot: {
+        credentialId: "tool.tavily.default",
+        revision: credentialRevision!,
+        secret: secret!,
+      },
+      registerSensitiveValue,
+    },
+  };
 }
 
 function normalizePositiveInt(value: number, fallback: number): number {

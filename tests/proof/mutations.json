@@ -389,8 +389,8 @@
     {
       "id": "docker-capability-drop-removal",
       "target": "src/code/DockerSandboxExecutor.ts",
-      "find": "    \"--cap-drop\",",
-      "replace": "    \"--cap-add\",",
+      "find": "    \"--cap-drop\",\n    \"ALL\",",
+      "replace": "    \"--cap-add\",\n    \"ALL\",",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
       "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
@@ -398,8 +398,8 @@
     {
       "id": "docker-no-new-privileges-removal",
       "target": "src/code/DockerSandboxExecutor.ts",
-      "find": "    \"no-new-privileges\",",
-      "replace": "    \"seccomp=unconfined\",",
+      "find": "    \"no-new-privileges\",\n    \"--network\",",
+      "replace": "    \"seccomp=unconfined\",\n    \"--network\",",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
       "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
@@ -407,8 +407,8 @@
     {
       "id": "docker-read-only-root-removal",
       "target": "src/code/DockerSandboxExecutor.ts",
-      "find": "    \"--read-only\",",
-      "replace": "    \"--read-write\",",
+      "find": "    \"--read-only\",\n    \"--memory\",",
+      "replace": "    \"--read-write\",\n    \"--memory\",",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
       "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]

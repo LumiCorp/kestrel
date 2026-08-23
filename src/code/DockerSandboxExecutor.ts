@@ -119,12 +119,21 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     let snapshotError: string | undefined;
     let ownedWorkloadContainerId: string | undefined;
     let ownedBrokerContainerId: string | undefined;
+    const adapterPumpController = new AbortController();
+    let adapterPump: Promise<void> | undefined;
 
     try {
       if (input.capability !== undefined) {
         await startCapabilityBroker(input, brokerContainerName, invocationMarker, this.createCommandRunner, this.ownershipInspectRunner, this.beforeAmbiguousCreateCleanup, (containerId) => {
           ownedBrokerContainerId = containerId;
         });
+        if (input.capability.adapter !== undefined) {
+          adapterPump = runCapabilityAdapterPump(
+            input.capability,
+            brokerContainerName,
+            adapterPumpController.signal,
+          );
+        }
       }
       ownedWorkloadContainerId = await createOwnedContainer(
         withInvocationMarker(
@@ -166,6 +175,8 @@ export class DockerSandboxExecutor implements SandboxExecutor {
           "Docker sandbox execution was cancelled",
         );
       }
+      adapterPumpController.abort();
+      await adapterPump;
 
       throwIfCancelled(input.signal);
       try {
@@ -250,6 +261,8 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         artifacts,
       };
     } finally {
+      adapterPumpController.abort();
+      await adapterPump?.catch(() => {});
       if (ownedWorkloadContainerId !== undefined) {
         await removeContainer(ownedWorkloadContainerId);
       }
@@ -418,6 +431,10 @@ const CAPABILITY_BROKER_SCRIPT = String.raw`
 const fs = require("node:fs");
 const http = require("node:http");
 const configPath = "/run/kestrel/config";
+const requestPath = "/run/kestrel/request";
+const requestTempPath = "/run/kestrel/request.tmp";
+const responsePath = "/run/kestrel/response";
+let acceptedRequests = 0;
 function load() {
   try {
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -429,6 +446,12 @@ function load() {
       }
       if (request.method !== "POST" || request.url !== "/v1/capability") {
         response.writeHead(404); response.end(JSON.stringify({ error: "unknown_endpoint" })); return;
+      }
+      if (typeof config.expiresAt === "string" && Date.now() >= Date.parse(config.expiresAt)) {
+        response.writeHead(410); response.end(JSON.stringify({ error: "capability_expired" })); return;
+      }
+      if (acceptedRequests >= (config.maxRequests ?? 1)) {
+        response.writeHead(429); response.end(JSON.stringify({ error: "request_ceiling_reached" })); return;
       }
       let body = "";
       let rejected = false;
@@ -448,11 +471,37 @@ function load() {
         if (value === null || typeof value !== "object" || Array.isArray(value)) {
           response.writeHead(400); response.end(JSON.stringify({ error: "invalid_request" })); return;
         }
-        if (value.operation !== config.operation || value.destination !== config.destination || Object.keys(value).length !== 2) {
+        const expectedKeys = config.expectedInput === undefined ? 2 : 3;
+        if (value.operation !== config.operation || value.destination !== config.destination || Object.keys(value).length !== expectedKeys || (config.expectedInput !== undefined && JSON.stringify(value.input) !== JSON.stringify(config.expectedInput))) {
           response.writeHead(403); response.end(JSON.stringify({ error: "capability_denied" })); return;
         }
+        acceptedRequests += 1;
+        if (config.adapter === true) {
+          fs.writeFileSync(requestTempPath, JSON.stringify(value), { mode: 0o600 });
+          fs.renameSync(requestTempPath, requestPath);
+          const waitForResponse = () => {
+            try {
+              const mediated = JSON.parse(fs.readFileSync(responsePath, "utf8"));
+              fs.unlinkSync(responsePath);
+              fs.unlinkSync(requestPath);
+              if (mediated.ok !== true) { response.writeHead(502); response.end(JSON.stringify({ error: "adapter_failed" })); return; }
+              const serialized = JSON.stringify(mediated.response);
+              if (Buffer.byteLength(serialized, "utf8") > (config.maxResponseBytes ?? 64000)) { response.writeHead(502); response.end(JSON.stringify({ error: "response_too_large" })); return; }
+              response.writeHead(200, { "content-type": "application/json" }); response.end(serialized);
+            } catch (error) {
+              if (error && error.code === "ENOENT") setTimeout(waitForResponse, 10);
+              else { response.writeHead(502); response.end(JSON.stringify({ error: "adapter_failed" })); }
+            }
+          };
+          waitForResponse();
+          return;
+        }
+        const serialized = JSON.stringify(config.response);
+        if (Buffer.byteLength(serialized, "utf8") > (config.maxResponseBytes ?? 64000)) {
+          response.writeHead(502); response.end(JSON.stringify({ error: "response_too_large" })); return;
+        }
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify(config.response));
+        response.end(serialized);
       });
     }).listen(${DOCKER_CAPABILITY_PORT}, "127.0.0.1");
   } catch (error) {
@@ -488,6 +537,12 @@ async function startCapabilityBroker(
     operation: grant.operation,
     destination: grant.destination,
     response: grant.response,
+    expiresAt: grant.expiresAt,
+    maxRequests: grant.maxRequests,
+    maxResponseBytes: grant.maxResponseBytes,
+    authority: grant.authority,
+    expectedInput: grant.expectedInput,
+    adapter: grant.adapter !== undefined,
   }), "utf8");
   const written = await runDockerProcess([
     "exec", "--interactive", "--user", `${SANDBOX_UID}:${SANDBOX_GID}`,
@@ -511,6 +566,90 @@ async function startCapabilityBroker(
   throw new Error(
     `Timed out while waiting for the confined capability broker${state.stdout.trim().length > 0 ? `: ${state.stdout.trim()}` : ""}`,
   );
+}
+
+async function runCapabilityAdapterPump(
+  grant: NonNullable<SandboxExecutionInput["capability"]>,
+  brokerContainerName: string,
+  signal: AbortSignal,
+): Promise<void> {
+  if (grant.adapter === undefined || grant.expectedInput === undefined) return;
+  while (signal.aborted === false) {
+    const request = await runDockerProcess(
+      ["exec", "--user", `${SANDBOX_UID}:${SANDBOX_GID}`, brokerContainerName, "sh", "-c", "test -f /run/kestrel/request && cat /run/kestrel/request"],
+      1_000,
+      8_192,
+      signal,
+    );
+    if (request.cancelled) return;
+    if (request.exitCode === 0 && request.stdout.trim().length > 0) {
+      let mediated: { ok: true; response: unknown } | { ok: false };
+      try {
+        const value = JSON.parse(request.stdout) as Record<string, unknown>;
+        const adapterInput = value.input as Record<string, unknown> | undefined;
+        if (
+          value.operation !== grant.operation ||
+          value.destination !== grant.destination ||
+          Object.keys(value).length !== 3 ||
+          adapterInput?.query !== grant.expectedInput.query ||
+          adapterInput.maxResults !== grant.expectedInput.maxResults ||
+          Object.keys(adapterInput).length !== 2
+        ) {
+          throw new Error("Broker request does not match the trusted capability grant");
+        }
+        const response = await invokeAdapterUntilAbort(
+          grant.adapter,
+          grant.expectedInput,
+          signal,
+        );
+        if (Buffer.byteLength(JSON.stringify(response), "utf8") > (grant.maxResponseBytes ?? 64_000)) {
+          throw new Error("Adapter response exceeds the trusted capability ceiling");
+        }
+        mediated = { ok: true, response };
+      } catch {
+        mediated = { ok: false };
+      }
+      if (signal.aborted) return;
+      const written = await runDockerProcess(
+        ["exec", "--interactive", "--user", `${SANDBOX_UID}:${SANDBOX_GID}`, brokerContainerName, "sh", "-c", "umask 077; cat > /run/kestrel/response.tmp && mv /run/kestrel/response.tmp /run/kestrel/response"],
+        DOCKER_LIFECYCLE_TIMEOUT_MS,
+        DOCKER_LIFECYCLE_OUTPUT_BYTES,
+        signal,
+        Buffer.from(JSON.stringify(mediated), "utf8"),
+      );
+      if (written.cancelled) return;
+      requireSuccessfulDockerResult(written, "return the capability adapter response");
+      return;
+    }
+    await waitForAdapterRequest(signal);
+  }
+}
+
+async function invokeAdapterUntilAbort(
+  adapter: NonNullable<NonNullable<SandboxExecutionInput["capability"]>["adapter"]>,
+  input: { query: string; maxResults: number },
+  signal: AbortSignal,
+): Promise<unknown> {
+  if (signal.aborted) throw new DockerSandboxCancellationError("Capability adapter pump was cancelled");
+  return Promise.race([
+    adapter(input),
+    new Promise<never>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new DockerSandboxCancellationError("Capability adapter pump was cancelled")), { once: true });
+    }),
+  ]);
+}
+
+async function waitForAdapterRequest(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, 25);
+    function finish() {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    }
+    signal.addEventListener("abort", finish, { once: true });
+  });
 }
 
 function withInvocationMarker(args: string[], marker: string): string[] {

@@ -126,6 +126,7 @@ type PinnedExecutionSource = {
   pinned: Omit<PinnedToolExecutionV1, "handler">;
   createHandler: (
     options: ToolGatewayCallOptions,
+    prepared?: PreparedToolCallV1 | undefined,
   ) => (input: unknown) => Promise<unknown>;
   retain?: (() => void) | undefined;
   release?: (() => Promise<void> | void) | undefined;
@@ -806,7 +807,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         prepared,
         pinned: {
           ...source.pinned,
-          handler: source.createHandler(options),
+          handler: source.createHandler(options, prepared),
         },
         signal: options.signal,
       });
@@ -830,7 +831,7 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
               prepared,
               pinned: {
                 ...retrySource.pinned,
-                handler: retrySource.createHandler(options),
+                handler: retrySource.createHandler(options, prepared),
               },
               signal: options.signal,
             });
@@ -1272,13 +1273,24 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           }
           return record;
         },
-        createHandler: (handlerOptions: ToolGatewayCallOptions) => {
+        createHandler: (handlerOptions: ToolGatewayCallOptions, prepared) => {
+          const executionContext = prepared === undefined
+            ? activeContext
+            : {
+                ...activeContext,
+                runtime: {
+                  ...activeContext.runtime,
+                  runId: activeContext.runtime?.runId ?? prepared.runId,
+                  sessionId: activeContext.runtime?.sessionId ?? prepared.sessionId,
+                  toolCallId: prepared.callId,
+                },
+              };
           const handlers = defaultToolCatalog.createRawHandlers(
             [descriptor.toolId],
             handlerOptions.console === undefined
-              ? { ...activeContext, signal: handlerOptions.signal }
+              ? { ...executionContext, signal: handlerOptions.signal }
               : {
-                  ...activeContext,
+                  ...executionContext,
                   toolConsole: handlerOptions.console,
                   signal: handlerOptions.signal,
                 },

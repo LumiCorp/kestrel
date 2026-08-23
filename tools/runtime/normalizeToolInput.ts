@@ -8,6 +8,11 @@ export function normalizeToolActionInput(
   workspaceRoot: string | undefined = ".",
 ): Record<string, unknown> {
   if (name === "code.execute") {
+    const allowed = new Set(["language", "code", "files", "timeoutMs", "network", "dependencies", "args", "capability"]);
+    const unknown = Object.keys(input).find((key) => allowed.has(key) === false);
+    if (unknown !== undefined) {
+      throw new Error(`code.execute contains unknown field '${unknown}'.`);
+    }
     const {
       language: _language,
       code: _code,
@@ -16,6 +21,7 @@ export function normalizeToolActionInput(
       network: _network,
       dependencies: _dependencies,
       args: _args,
+      capability: _capability,
     } = input;
     return {
       ...(normalizeOptionalString(_language) !== undefined
@@ -39,6 +45,7 @@ export function normalizeToolActionInput(
       ...(normalizeCodeExecuteStringArray(_args) !== undefined
         ? { args: normalizeCodeExecuteStringArray(_args) }
         : {}),
+      ...(_capability === undefined ? {} : { capability: _capability }),
     };
   }
 

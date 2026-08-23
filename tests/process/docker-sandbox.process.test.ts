@@ -612,6 +612,7 @@ test(
               const unknownDestination = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "example.com" }) });
               const forwarding = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", url: "http://example.com" }) });
               const exact = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com" }) });
+              const overCeiling = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com" }) });
               const probes = {};
               for (const [name, url] of Object.entries({
                 provider: "http://api.tavily.com",
@@ -624,7 +625,7 @@ test(
               await new Promise(resolve => setTimeout(resolve, 750));
               let brokerConfigReadable = true;
               try { fs.readFileSync("/run/kestrel/config"); } catch { brokerConfigReadable = false; }
-              console.log(JSON.stringify({ malformed, nullBody, primitive, array, oversized, exact, unknownOperation, unknownDestination, forwarding, probes, envKeys: Object.keys(process.env), brokerConfigReadable }));
+              console.log(JSON.stringify({ malformed, nullBody, primitive, array, oversized, exact, overCeiling, unknownOperation, unknownDestination, forwarding, probes, envKeys: Object.keys(process.env), brokerConfigReadable }));
             })();
           `,
         },
@@ -664,6 +665,7 @@ test(
         array: { status: number };
         oversized: { status: number };
         exact: { status: number; body: string };
+        overCeiling: { status: number };
         unknownOperation: { status: number };
         unknownDestination: { status: number };
         forwarding: { status: number };
@@ -678,6 +680,7 @@ test(
       assert.equal(evidence.oversized.status, 413);
       assert.equal(evidence.exact.status, 200);
       assert.deepEqual(JSON.parse(evidence.exact.body), { answer: "trusted-stub-ok" });
+      assert.equal(evidence.overCeiling.status, 429);
       assert.equal(evidence.unknownOperation.status, 403);
       assert.equal(evidence.unknownDestination.status, 403);
       assert.equal(evidence.forwarding.status, 403);
@@ -723,6 +726,130 @@ test(
     } finally {
       await execFileAsync("docker", ["rm", "--force", containerName]);
     }
+  },
+);
+
+test(
+  "Docker sandbox broker rejects an expired authenticated capability",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-expired");
+    const result = await fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com" }) }).then(async response => console.log(JSON.stringify({ status: response.status, body: await response.json() })))`,
+      },
+      policy: policy(),
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: { answer: "must not return" },
+        expiresAt: "2000-01-01T00:00:00.000Z",
+        maxRequests: 1,
+      },
+    });
+    assert.equal(result.status, "ok", result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), { status: 410, body: { error: "capability_expired" } });
+  },
+);
+
+test(
+  "Docker sandbox broker invokes the trusted host adapter only after the exact workload request",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-mediated");
+    const hostCredential = `tavily-key-${randomUUID()}`;
+    let adapterCalls = 0;
+    const execution = fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `(async () => {
+          const denied = await fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "example.com", input: { query: "kestrel", maxResults: 2 } }) });
+          const response = await fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", input: { query: "kestrel", maxResults: 2 } }) });
+          console.log(JSON.stringify({ denied: denied.status, status: response.status, body: await response.json() }));
+        })()`,
+      },
+      policy: policy(),
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: undefined,
+        expectedInput: { query: "kestrel", maxResults: 2 },
+        expiresAt: new Date(Date.now() + 10_000).toISOString(),
+        maxRequests: 1,
+        maxResponseBytes: 4096,
+        adapter: async (input) => {
+          adapterCalls += 1;
+          assert.deepEqual(input, { query: "kestrel", maxResults: 2 });
+          assert.equal(hostCredential.startsWith("tavily-key-"), true);
+          return { version: 1, results: [{ title: "Exact", url: "https://example.com/", content: "mediated" }] };
+        },
+      },
+    });
+    assert.equal(adapterCalls, 0);
+    await waitForContainer(containerName, true);
+    const result = await execution;
+    assert.equal(result.status, "ok", result.stderr);
+    assert.equal(adapterCalls, 1);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), { denied: 403, status: 200, body: { version: 1, results: [{ title: "Exact", url: "https://example.com/", content: "mediated" }] } });
+    assert.equal(`${result.stdout}${result.stderr}${JSON.stringify(result.artifacts)}`.includes(hostCredential), false);
+  },
+);
+
+test(
+  "Docker sandbox timeout cancels the host adapter pump and removes both containers",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-pump-timeout");
+    const result = await fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", input: { query: "wait", maxResults: 1 } }) })`,
+      },
+      policy: policy({ timeoutMs: 500 }),
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: undefined,
+        expectedInput: { query: "wait", maxResults: 1 },
+        expiresAt: new Date(Date.now() + 10_000).toISOString(),
+        maxRequests: 1,
+        adapter: async () => new Promise(() => {}),
+      },
+    });
+    assert.equal(result.status, "timeout");
+    await assertContainerAndProcessesRemoved(containerName);
+    await assertContainerAndProcessesRemoved(`${containerName}-broker`);
+  },
+);
+
+test(
+  "Docker sandbox exits and cleans up when a selected capability is never requested",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("unused-capability");
+    let adapterCalls = 0;
+    const result = await fixedNameExecutor(containerName).execute({
+      request: { language: "javascript", code: "console.log('done')" },
+      policy: policy({ timeoutMs: 1000 }),
+      capability: {
+        transport: "docker-shared-loopback-v1", lease: `opaque-lease-${randomUUID()}`,
+        operation: "search", destination: "api.tavily.com", response: undefined,
+        expectedInput: { query: "unused", maxResults: 1 }, expiresAt: new Date(Date.now() + 10_000).toISOString(), maxRequests: 1,
+        adapter: async () => { adapterCalls += 1; return { results: [] }; },
+      },
+    });
+    assert.equal(result.status, "ok");
+    assert.equal(result.stdout.trim(), "done");
+    assert.equal(adapterCalls, 0);
+    await assertContainerAndProcessesRemoved(containerName);
+    await assertContainerAndProcessesRemoved(`${containerName}-broker`);
   },
 );
 

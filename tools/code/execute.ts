@@ -5,6 +5,9 @@ import type {
   CodeExecutionLanguage,
 } from "../../src/code/contracts.js";
 import { mergeCodeModeConfig } from "../../src/code/PolicyEngine.js";
+import {
+  parseSandboxCapabilitySelectionV1,
+} from "../../src/kestrel/contracts/sandbox-capability.js";
 import type { SharedToolModule } from "../contracts.js";
 import {
   createToolInputError,
@@ -59,6 +62,23 @@ export const codeExecuteTool: SharedToolModule = {
           type: "array",
           items: { type: "string" },
         },
+        capability: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            capabilityId: { type: "string", enum: ["tavily.search.read"] },
+            input: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                query: { type: "string", minLength: 1, maxLength: 400 },
+                maxResults: { type: "integer", minimum: 1, maximum: 20 },
+              },
+              required: ["query"],
+            },
+          },
+          required: ["capabilityId", "input"],
+        },
       },
       required: ["language", "code"],
     },
@@ -84,8 +104,26 @@ export const codeExecuteTool: SharedToolModule = {
     return async (input: unknown) => {
       const request = parseCodeExecutionRequest(input);
       const profileConfig = mergeCodeModeConfig(context.codeMode);
+      const selectedProfile = request.capability === undefined
+        ? undefined
+        : profileConfig.capabilities?.find((item) => item.capabilityId === request.capability?.capabilityId);
+      const capabilityRuntime = request.capability === undefined
+        ? undefined
+        : (() => {
+            if (selectedProfile === undefined || context.sandboxCapabilityRuntime === undefined || context.runtime?.toolCallId === undefined) {
+              throw createToolInputError("code.execute", "Selected capability is unavailable in the trusted runtime context.");
+            }
+            return {
+              ...context.sandboxCapabilityRuntime,
+              sessionId: context.runtime.sessionId,
+              runId: context.runtime.runId,
+              toolCallId: context.runtime.toolCallId,
+              profileFingerprint: context.sandboxCapabilityRuntime.profileFingerprint,
+            };
+          })();
       const result = await service.execute(profileConfig, request, {
         signal: context.signal,
+        ...(capabilityRuntime === undefined ? {} : { capabilityRuntime }),
       });
       return result;
     };
@@ -94,6 +132,11 @@ export const codeExecuteTool: SharedToolModule = {
 
 function parseCodeExecutionRequest(input: unknown): CodeExecutionRequest {
   const body = parseObjectInput("code.execute", input);
+  const allowed = new Set(["language", "code", "files", "timeoutMs", "network", "dependencies", "args", "capability"]);
+  const unknown = Object.keys(body).find((key) => allowed.has(key) === false);
+  if (unknown !== undefined) {
+    throw createToolInputError("code.execute", `code.execute contains unknown field '${unknown}'.`, { field: unknown });
+  }
   const language = parseLanguage(readString(body, "language"));
   const code = requireStringField("code.execute", body, "code");
 
@@ -109,6 +152,9 @@ function parseCodeExecutionRequest(input: unknown): CodeExecutionRequest {
   const network = parseNetwork(readString(body, "network"));
   const dependencies = parseOptionalStringArray(body, "dependencies", 50);
   const args = parseOptionalStringArray(body, "args", 50);
+  const capability = body.capability === undefined
+    ? undefined
+    : parseSandboxCapabilitySelectionV1(body.capability);
 
   return {
     language,
@@ -118,6 +164,7 @@ function parseCodeExecutionRequest(input: unknown): CodeExecutionRequest {
     ...(network !== undefined ? { network } : {}),
     ...(dependencies.length > 0 ? { dependencies } : {}),
     ...(args.length > 0 ? { args } : {}),
+    ...(capability === undefined ? {} : { capability }),
   };
 }
 

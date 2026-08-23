@@ -20,6 +20,7 @@ export interface CodeExecutionRequest {
   network?: CodeNetworkMode | undefined;
   dependencies?: string[] | undefined;
   args?: string[] | undefined;
+  capability?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilitySelectionV1 | undefined;
 }
 
 export interface CodeExecutionArtifact {
@@ -92,6 +93,7 @@ export interface CodeModeProfileConfig {
   sandbox: CodeModeSandboxConfig;
   retention: CodeModeRetentionConfig;
   approvalMode: "auto";
+  capabilities?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityProfileV1[] | undefined;
 }
 
 export const DEFAULT_CODE_MODE_SANDBOX: CodeModeSandboxConfig = {
@@ -147,6 +149,33 @@ export interface SandboxCapabilityGrant {
   operation: string;
   destination: string;
   response: unknown;
+  expiresAt?: string | undefined;
+  maxRequests?: 1 | undefined;
+  maxResponseBytes?: number | undefined;
+  authority?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityAuthorityV1 | undefined;
+  expectedInput?: { query: string; maxResults: number } | undefined;
+  /** Trusted host-only adapter. This function is never serialized into Docker state. */
+  adapter?: ((input: { query: string; maxResults: number }) => Promise<unknown>) | undefined;
+}
+
+export interface SandboxCapabilityRuntimeContext {
+  tenantId: string;
+  environmentId: string;
+  sessionId: string;
+  runId: string;
+  toolCallId: string;
+  profileFingerprint: string;
+  capabilityCatalogFingerprint: string;
+  executionBoundaryRevision: string;
+  brokerAuthority: { authorityId: string; revision: string };
+  credentialSnapshot: {
+    credentialId: "tool.tavily.default";
+    revision: string;
+    secret: string;
+  };
+  now?: (() => Date) | undefined;
+  fetchImpl?: typeof fetch | undefined;
+  registerSensitiveValue?: ((input: { referenceId: string; value: string }) => void) | undefined;
 }
 
 export interface SandboxExecutionOutput {
@@ -169,6 +198,7 @@ export interface CodeExecutionServicePort {
     options?: {
       signal?: AbortSignal | undefined;
       capability?: SandboxCapabilityGrant | undefined;
+      capabilityRuntime?: SandboxCapabilityRuntimeContext | undefined;
     },
   ): Promise<CodeExecutionResult>;
 }

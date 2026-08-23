@@ -423,6 +423,14 @@ test("normalizeToolActionInput preserves existing code.execute arrays for schema
   );
 });
 
+test("normalizeToolActionInput preserves code.execute capability and rejects forged fields", () => {
+  const capability = { capabilityId: "tavily.search.read", input: { query: "kestrel", maxResults: 2 } };
+  assert.deepEqual(normalizeToolActionInput("code.execute", { language: "javascript", code: "x", capability }).capability, capability);
+  for (const forged of ["authority", "credentialReference", "lease", "unknown"]) {
+    assert.throws(() => normalizeToolActionInput("code.execute", { language: "javascript", code: "x", [forged]: "forged" }), new RegExp(`unknown field '${forged}'`, "u"));
+  }
+});
+
 test("validateToolActionSchemas returns compact expected and received details for runtime feedback", () => {
   let error: (Error & { diagnostics?: Record<string, unknown> }) | undefined;
   try {
@@ -590,12 +598,6 @@ test("trusted compatibility adapts evidence.extract aliases", () => {
 });
 
 test("normalizeToolActionInput strips unsupported fields from strict tool schemas", () => {
-  const codeExecute = normalizeToolActionInput("code.execute", {
-    language: "python",
-    code: "print('ok')",
-    timeoutMs: "1000",
-    extra: "ignored",
-  });
   const internetSearch = normalizeToolActionInput("internet.search", {
     query: "latest tariffs",
     freshness: "day",
@@ -627,11 +629,6 @@ test("normalizeToolActionInput strips unsupported fields from strict tool schema
     extra: "ignored",
   });
 
-  assert.deepEqual(codeExecute, {
-    language: "python",
-    code: "print('ok')",
-    timeoutMs: 1000,
-  });
   assert.deepEqual(internetSearch, {
     query: "latest tariffs",
     freshness: "day",

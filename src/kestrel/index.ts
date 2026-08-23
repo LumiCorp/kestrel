@@ -83,6 +83,24 @@ export type {
 } from "./contracts/model-registration.js";
 export type { SessionRecord } from "./contracts/store.js";
 export {
+  SANDBOX_CAPABILITY_CONTRACT_VERSION,
+  TAVILY_SEARCH_CAPABILITY_ID,
+  TAVILY_SEARCH_OPERATION,
+  TAVILY_SEARCH_RESOURCE,
+  fingerprintSandboxCapabilityProfileV1,
+  fingerprintSandboxCapabilityCatalogV1,
+  parseSandboxCapabilityProfileV1,
+  parseSandboxCapabilityProfilesV1,
+  parseSandboxCapabilitySelectionV1,
+} from "./contracts/sandbox-capability.js";
+export type {
+  SandboxCapabilityAuthorityV1,
+  SandboxCapabilityProfileV1,
+  SandboxCapabilitySelectionV1,
+  TavilySearchAdapterRequestV1,
+  TavilySearchAdapterResponseV1,
+} from "./contracts/sandbox-capability.js";
+export {
   REQUIRED_RUNTIME_SPAN_ATTRIBUTES_V1,
   REQUIRED_SETTLED_RUNTIME_SPAN_ATTRIBUTES_V1,
   RUNTIME_SPAN_EVENT_VERSION,

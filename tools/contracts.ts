@@ -1,6 +1,7 @@
 import type {
   CodeExecutionServicePort,
   CodeModeProfileConfig,
+  SandboxCapabilityRuntimeContext,
 } from "../src/code/contracts.js";
 import type {
   DevShellProfileConfig,
@@ -124,6 +125,8 @@ export interface DelegationTaskSpawnRequest {
 export interface RuntimeToolRunContext {
   runId: string;
   sessionId: string;
+  /** Exact prepared call identity supplied by the trusted tool gateway. */
+  toolCallId?: string | undefined;
   projectId?: string | undefined;
   approvalId?: string | undefined;
   threadId?: string | undefined;
@@ -215,6 +218,7 @@ export interface SharedToolContext {
   strictFinalizeProvenance?: boolean | undefined;
   codeMode?: CodeModeProfileConfig | undefined;
   codeExecutionService?: CodeExecutionServicePort | undefined;
+  sandboxCapabilityRuntime?: Omit<SandboxCapabilityRuntimeContext, "sessionId" | "runId" | "toolCallId"> | undefined;
   devShell?: DevShellProfileConfig | undefined;
   devShellService?: DevShellServicePort | undefined;
   desktopHostOpenService?: DesktopHostOpenServicePort | undefined;
