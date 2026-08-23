@@ -11,6 +11,10 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import { requireCurrentEnvironmentRuntime } from "./runtime-channel";
 import {
+  acquireWorkspaceSnapshot,
+  type WorkspaceSnapshotEvidence,
+} from "./backup-snapshot";
+import {
   createWorkspaceBackupDecryptionStream,
   createWorkspaceBackupEncryptionStream,
 } from "./backup-crypto";
@@ -127,29 +131,54 @@ export async function createWorkspaceBackup(input: {
   }
   const { operationId, backupId } = prepared;
   const provider = await createFlyProviderClient(input.organizationId);
+  const flyAppName = environment.flyAppName;
+  const sourceVolumeId = workspace.flyVolumeId;
+  const backupRecord = await knowledgeDb.query.workspaceBackups.findFirst({
+    where: (table, { eq }) => eq(table.id, backupId),
+    columns: { manifest: true },
+  });
+  let snapshotManifest = asRecord(backupRecord?.manifest) ?? {};
   let exportMachineId: string | null = null;
   let exportVolumeId: string | null = null;
   try {
     input.signal?.throwIfAborted();
-    const snapshot = await provider.createVolumeSnapshot({
-      appName: environment.flyAppName,
-      volumeId: workspace.flyVolumeId,
+    const persistedSnapshot = readWorkspaceSnapshotEvidence(snapshotManifest);
+    const snapshot = await acquireWorkspaceSnapshot({
+      appName: flyAppName,
+      sourceVolumeId,
+      persistedSnapshot,
+      createSnapshot: (snapshotInput) => provider.createVolumeSnapshot({
+        appName: snapshotInput.appName,
+        volumeId: snapshotInput.volumeId,
+      }),
+      persistSnapshot: async (evidence) => {
+        snapshotManifest = {
+          ...snapshotManifest,
+          ...evidence,
+        };
+        await knowledgeDb
+          .update(schema.workspaceBackups)
+          .set({ manifest: snapshotManifest, updatedAt: new Date() })
+          .where(eq(schema.workspaceBackups.id, backupId));
+      },
+      waitForSnapshot: ({ snapshotId }) =>
+        waitForWorkspaceSnapshot({
+          snapshotId,
+          sourceVolumeId,
+          appName: flyAppName,
+          isUsable: (snapshotInput) =>
+            provider.isWorkspaceSnapshotUsable(snapshotInput),
+          signal: input.signal,
+        }),
     });
-    await waitForWorkspaceSnapshot({
-      snapshotId: snapshot.id,
-      sourceVolumeId: workspace.flyVolumeId,
-      appName: environment.flyAppName,
-      isUsable: (snapshotInput) =>
-        provider.isWorkspaceSnapshotUsable(snapshotInput),
-      signal: input.signal,
-    });
+    const snapshotId = snapshot.id;
     const exportReplacementId = crypto.randomUUID();
     const exportVolume = await provider.createReplacementWorkspaceVolume({
       appName: environment.flyAppName,
       workspaceId: workspace.id,
       region: environment.region,
       replacementId: exportReplacementId,
-      snapshotId: snapshot.id,
+      snapshotId,
       sourceVolumeId: workspace.flyVolumeId,
     });
     exportVolumeId = exportVolume.id;
@@ -231,13 +260,13 @@ export async function createWorkspaceBackup(input: {
           sourceRevision: preparation.sourceRevision,
           retainedUntil,
           reusableManifest: reusable.manifest,
-          snapshotId: snapshot.id,
+          snapshotId,
           snapshotSourceVolumeId: workspace.flyVolumeId,
         });
         return {
           backupId: reusable.id,
           objectKey: reusable.objectKey,
-          snapshotId: snapshot.id,
+          snapshotId,
           snapshotState: "created",
           expiresAt: retainedUntil,
           status: "unchanged" as const,
@@ -343,8 +372,9 @@ export async function createWorkspaceBackup(input: {
             archiveBytes,
             logicalBytes: preparation?.logicalBytes ?? null,
             entryCount: preparation?.entryCount ?? null,
-            flySnapshotId: snapshot.id,
-            flySnapshotState: "created",
+            ...snapshotManifest,
+            flySnapshotId: snapshotId,
+            flySnapshotState: snapshot.state,
             flySnapshotSourceVolumeId: workspace.flyVolumeId,
             ...(input.preDestructiveSnapshot
               ? {
@@ -365,8 +395,8 @@ export async function createWorkspaceBackup(input: {
           result: {
             backupId,
             objectKey,
-            flySnapshotId: snapshot.id,
-            flySnapshotState: "created",
+            flySnapshotId: snapshotId,
+            flySnapshotState: snapshot.state,
           },
           completedAt,
           updatedAt: completedAt,
@@ -388,8 +418,8 @@ export async function createWorkspaceBackup(input: {
     return {
       backupId,
       objectKey,
-      snapshotId: snapshot.id,
-      snapshotState: "created",
+      snapshotId,
+      snapshotState: snapshot.state,
       expiresAt: retainedUntil,
     };
   } catch (error) {
@@ -1126,7 +1156,7 @@ async function prepareWorkspaceBackup(input: {
             encryptionKeyId: null,
             checksumSha256: null,
             sizeBytes: null,
-            manifest: null,
+            manifest: existingBackup.manifest,
             expiresAt: input.expiresAt,
             updatedAt: input.now,
           })
@@ -1283,6 +1313,7 @@ export function isDeterministicBackupFailure(code: string) {
     "WORKSPACE_BACKUP_PREPARATION_UNAVAILABLE",
     "WORKSPACE_BACKUP_CAPACITY_INVALID",
     "WORKSPACE_BACKUP_PORTABLE_STATE_INVALID",
+    "WORKSPACE_BACKUP_SNAPSHOT_SOURCE_VOLUME_MISMATCH",
     "ENVIRONMENT_ROUTE_FORBIDDEN",
     "ENVIRONMENT_ROUTE_UNAUTHORIZED",
   ]).has(code);
@@ -1302,21 +1333,31 @@ export async function waitForWorkspaceSnapshot(input: {
   pollIntervalMs?: number | undefined;
 }) {
   const deadline = Date.now() + (input.timeoutMs ?? 120_000);
+  let lastObservation = {
+    state: "prepare",
+    observedAt: new Date().toISOString(),
+  };
   while (true) {
     input.signal?.throwIfAborted();
-    if (
-      await input.isUsable({
-        appName: input.appName,
-        sourceVolumeId: input.sourceVolumeId,
-        snapshotId: input.snapshotId,
-      })
-    ) {
-      return;
+    const usable = await input.isUsable({
+      appName: input.appName,
+      sourceVolumeId: input.sourceVolumeId,
+      snapshotId: input.snapshotId,
+    });
+    lastObservation = {
+      state: usable ? "created" : "prepare",
+      observedAt: new Date().toISOString(),
+    };
+    if (usable) {
+      return lastObservation;
     }
     if (Date.now() >= deadline) {
       throw Object.assign(
         new Error("Fly Workspace snapshot was not ready for archive export."),
-        { code: "WORKSPACE_BACKUP_SNAPSHOT_NOT_READY" },
+        {
+          code: "WORKSPACE_BACKUP_SNAPSHOT_NOT_READY",
+          lastObservation,
+        },
       );
     }
     await new Promise((resolve) =>
@@ -2168,6 +2209,36 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function readString(value: unknown) {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function readWorkspaceSnapshotEvidence(
+  manifest: Record<string, unknown>,
+): WorkspaceSnapshotEvidence | undefined {
+  const flySnapshotId = readString(manifest.flySnapshotId);
+  const flySnapshotSourceVolumeId = readString(
+    manifest.flySnapshotSourceVolumeId,
+  );
+  const flySnapshotState = readString(manifest.flySnapshotState);
+  const flySnapshotRequestedAt = readString(manifest.flySnapshotRequestedAt);
+  const flySnapshotLastObservedAt = readString(
+    manifest.flySnapshotLastObservedAt,
+  );
+  if (
+    !flySnapshotId ||
+    !flySnapshotSourceVolumeId ||
+    !flySnapshotState ||
+    !flySnapshotRequestedAt ||
+    !flySnapshotLastObservedAt
+  ) {
+    return undefined;
+  }
+  return {
+    flySnapshotId,
+    flySnapshotSourceVolumeId,
+    flySnapshotState,
+    flySnapshotRequestedAt,
+    flySnapshotLastObservedAt,
+  };
 }
 
 function backupKeyId() {
