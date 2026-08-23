@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Run hosted turns with verified remote attachments and safe failures](03-run-hosted-turns-with-remote-attachments.md)
+None.
 
 ## In progress
 
@@ -27,3 +27,4 @@ None.
 - [Close the concurrent availability probe race](07-close-availability-probe-race.md)
 - [Make blob restoration and its audit event atomic](08-atomically-audit-blob-repair.md)
 - [Resolve each active turn's attachments at the web storage boundary](02-add-turn-attachment-resolver.md)
+- [Run hosted turns with verified remote attachments and safe failures](03-run-hosted-turns-with-remote-attachments.md)
