@@ -388,6 +388,72 @@ test("cancellation sanitization handles DOMException, frozen errors, and cyclic 
   }
 });
 
+test("cancellation sanitization fails closed for hostile proxies and secret-bearing keys", async () => {
+  const secret = "proxy-cancellation-secret";
+  const revoked = Proxy.revocable({}, {});
+  revoked.revoke();
+  const ownKeysProxy = new Proxy({}, {
+    ownKeys() {
+      throw new Error(secret);
+    },
+  });
+  const descriptorProxy = new Proxy({ detail: secret }, {
+    getOwnPropertyDescriptor() {
+      throw new Error(secret);
+    },
+  });
+  const keyedError = Object.assign(new Error(`cancelled ${secret}`), {
+    code: "RUN_CANCELLED",
+    [secret]: secret,
+    [Symbol(secret)]: secret,
+    ownKeysProxy,
+    descriptorProxy,
+  });
+  const cases: Array<{ thrown: unknown; expectedName: string; expectedCode: string }> = [
+    { thrown: revoked.proxy, expectedName: "RunCancelledError", expectedCode: "RUN_CANCELLED" },
+    { thrown: keyedError, expectedName: "Error", expectedCode: "RUN_CANCELLED" },
+  ];
+
+  for (const [index, testCase] of cases.entries()) {
+    const registry = new SensitiveValueRegistry();
+    const controller = new AbortController();
+    const service = new CodeExecutionService({
+      executor: {
+        async execute() {
+          controller.abort();
+          throw testCase.thrown;
+        },
+      },
+    });
+
+    await assert.rejects(
+      service.execute(
+        { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+        { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "x" } } },
+        { signal: controller.signal, capabilityRuntime: {
+          ...runtime(),
+          credentialSnapshot: { credentialId: "tool.tavily.default", revision: `proxy-credential-${index}`, secret },
+          registerSensitiveValue: (input) => registry.register({
+            reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
+            value: input.value,
+          }),
+          redactSensitiveValues: <T>(value: T) => registry.redact(value).value,
+          toolCallId: `proxy-call-${index}`,
+        } },
+      ),
+      (error) => {
+        assert.equal(error instanceof Error, true);
+        assert.equal((error as Error).name, testCase.expectedName);
+        assert.equal((error as Error & { code?: unknown }).code, testCase.expectedCode);
+        assert.equal(Reflect.ownKeys(error as object).some((key) => String(key).includes(secret)), false);
+        assert.equal(JSON.stringify(error).includes(secret), false);
+        return true;
+      },
+    );
+    assert.equal(registry.registeredValueDigests().length, 0);
+  }
+});
+
 let registeredSensitiveValue = "";
 function runtime(fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ results: [] }), { status: 200 })) {
   registeredSensitiveValue = "";

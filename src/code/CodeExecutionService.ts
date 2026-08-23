@@ -130,7 +130,11 @@ function redactCapabilityError(
   redact: (<T>(value: T) => T) | undefined,
 ): unknown {
   if (redact === undefined) return error;
-  return sanitizeCapabilityError(error, redact, new WeakMap<object, unknown>());
+  try {
+    return sanitizeCapabilityError(error, redact, new WeakMap<object, unknown>());
+  } catch {
+    return createFallbackCancellationError(error, redact);
+  }
 }
 
 function sanitizeCapabilityError(
@@ -141,18 +145,22 @@ function sanitizeCapabilityError(
   if (typeof value !== "object" || value === null) return safelyRedact(value, redact);
   const prior = seen.get(value);
   if (prior !== undefined) return "[Circular]";
-  if (value instanceof Error === false) {
-    const sanitizedValue: Record<PropertyKey, unknown> | unknown[] = Array.isArray(value) ? [] : {};
+  const errorClassification = classifyErrorSafely(value);
+  if (errorClassification === undefined) throw new Error("Unsafe cancellation diagnostic");
+  if (errorClassification === false) {
+    const sanitizedValue: Record<PropertyKey, unknown> | unknown[] = isArraySafely(value) ? [] : {};
     seen.set(value, sanitizedValue);
-    for (const key of Reflect.ownKeys(value)) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    for (const key of ownKeysSafely(value)) {
+      const sanitizedKey = sanitizePropertyKey(key, redact);
+      if (sanitizedKey === undefined) continue;
+      const descriptor = getOwnPropertyDescriptorSafely(value, key);
       if (descriptor === undefined || !("value" in descriptor)) continue;
       const sanitizedItem = sanitizeCapabilityError(descriptor.value, redact, seen);
-      if (Array.isArray(sanitizedValue) && typeof key === "string" && /^\d+$/u.test(key)) {
-        sanitizedValue[Number(key)] = sanitizedItem;
+      if (Array.isArray(sanitizedValue) && /^\d+$/u.test(sanitizedKey)) {
+        sanitizedValue[Number(sanitizedKey)] = sanitizedItem;
       } else {
         try {
-          Object.defineProperty(sanitizedValue, key, {
+          Object.defineProperty(sanitizedValue, sanitizedKey, {
             value: sanitizedItem,
             enumerable: descriptor.enumerable ?? false,
             configurable: true,
@@ -165,29 +173,32 @@ function sanitizeCapabilityError(
     }
     return sanitizedValue;
   }
+  const errorValue = value as Error;
 
   // Cancellation errors may be DOMExceptions, frozen Errors, or carry
   // read-only runtime metadata. Never mutate or invoke arbitrary accessors on
   // the original error while sensitive values are registered.
-  const sanitized = new Error(safelyRedact(readErrorString(value, "message", "Execution cancelled") ?? "Execution cancelled", redact));
+  const sanitized = new Error(safelyRedact(readErrorString(errorValue, "message", "Execution cancelled") ?? "Execution cancelled", redact));
   seen.set(value, sanitized);
-  sanitized.name = safelyRedact(readErrorString(value, "name", "Error") ?? "Error", redact);
+  sanitized.name = safelyRedact(readErrorString(errorValue, "name", "Error") ?? "Error", redact);
 
-  const stack = readErrorString(value, "stack");
+  const stack = readErrorString(errorValue, "stack");
   if (stack !== undefined) sanitized.stack = safelyRedact(stack, redact);
 
-  const causeDescriptor = Object.getOwnPropertyDescriptor(value, "cause");
+  const causeDescriptor = getOwnPropertyDescriptorSafely(value, "cause");
   if (causeDescriptor !== undefined && "value" in causeDescriptor) {
     sanitized.cause = sanitizeCapabilityError(causeDescriptor.value, redact, seen);
   }
 
-  for (const key of Reflect.ownKeys(value)) {
+  for (const key of ownKeysSafely(value)) {
     if (key === "message" || key === "name" || key === "stack" || key === "cause") continue;
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    const sanitizedKey = sanitizePropertyKey(key, redact);
+    if (sanitizedKey === undefined) continue;
+    const descriptor = getOwnPropertyDescriptorSafely(value, key);
     if (descriptor === undefined || !("value" in descriptor)) continue;
     defineSanitizedErrorProperty(
       sanitized,
-      key,
+      sanitizedKey,
       sanitizeCapabilityError(descriptor.value, redact, seen),
       descriptor.enumerable ?? false,
     );
@@ -204,6 +215,79 @@ function sanitizeCapabilityError(
     }
   }
   return sanitized;
+}
+
+function createFallbackCancellationError(
+  value: unknown,
+  redact: <T>(value: T) => T,
+): Error {
+  const error = new Error("Execution cancelled");
+  error.name = typeof value === "object" && value !== null && classifyErrorSafely(value) === true
+    ? safelyRedact(readErrorString(value as Error, "name", "RunCancelledError") ?? "RunCancelledError", redact)
+    : "RunCancelledError";
+  const code = readPropertySafely(value, "code");
+  defineSanitizedErrorProperty(
+    error,
+    "code",
+    typeof code === "string" || typeof code === "number"
+      ? safelyRedact(code, redact)
+      : "RUN_CANCELLED",
+    true,
+  );
+  return error;
+}
+
+function classifyErrorSafely(value: object): boolean | undefined {
+  try {
+    return value instanceof Error;
+  } catch {
+    return undefined;
+  }
+}
+
+function isArraySafely(value: object): value is unknown[] {
+  try {
+    return Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function ownKeysSafely(value: object): PropertyKey[] {
+  try {
+    return Reflect.ownKeys(value);
+  } catch {
+    return [];
+  }
+}
+
+function getOwnPropertyDescriptorSafely(
+  value: object,
+  key: PropertyKey,
+): PropertyDescriptor | undefined {
+  try {
+    return Object.getOwnPropertyDescriptor(value, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function readPropertySafely(value: unknown, key: PropertyKey): unknown {
+  if (typeof value !== "object" || value === null) return undefined;
+  try {
+    return Reflect.get(value, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitizePropertyKey(
+  key: PropertyKey,
+  redact: <T>(value: T) => T,
+): string | undefined {
+  if (typeof key !== "string") return undefined;
+  const sanitized = safelyRedact(key, redact);
+  return typeof sanitized === "string" ? sanitized : undefined;
 }
 
 function safelyRedact<T>(value: T, redact: <U>(value: U) => U): T {
