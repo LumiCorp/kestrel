@@ -1486,9 +1486,7 @@ function GatewayModelCatalogPane({
                             <IconActionButton
                               className="h-9 w-9 rounded-lg p-0"
                               disabled={
-                              Boolean(savingModelId) ||
-                              !runPodValidated ||
-                              !(draft.approved || economicsReady)
+                                Boolean(savingModelId) || !runPodValidated
                               }
                               icon={
                                 draft.approved ? (
@@ -1507,10 +1505,6 @@ function GatewayModelCatalogPane({
                                   ...draft,
                                   approved: !draft.approved,
                                 };
-                                setModelDrafts((current) => ({
-                                  ...current,
-                                  [model.id]: nextDraft,
-                                }));
                                 void persistModel(
                                   model,
                                   nextDraft,
