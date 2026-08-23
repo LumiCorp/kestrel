@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { getPgPool } from "@/lib/db/runtime";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
+import { ensureEffectiveFileAvailability } from "@/lib/files/availability";
 import { chunkKnowledgeDocument } from "./chunk";
 import { embedKnowledgeTexts, getKnowledgeEmbeddingRuntime } from "./embed";
 import { extractKnowledgeDocument } from "./extract";
@@ -102,6 +103,19 @@ async function processKnowledgeDocumentRunLocked(
 
   try {
     const storage = getStorageAdapter();
+    const file = await knowledgeDb.select({
+      fileId: schema.kestrelFiles.id,
+      blobId: schema.kestrelFiles.blobId,
+      objectKey: schema.fileBlobs.objectKey,
+      lifecycleState: schema.kestrelFiles.lifecycleState,
+      availabilityStatus: schema.fileBlobs.availabilityStatus,
+      blobDeletedAt: schema.fileBlobs.deletedAt,
+    }).from(schema.kestrelFiles)
+      .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId))
+      .where(eq(schema.kestrelFiles.id, document.fileId))
+      .limit(1);
+    if (!file[0]) throw new Error("Knowledge document file not found.");
+    await ensureEffectiveFileAvailability(file[0]);
     const extractStartedAt = Date.now();
     const representation = await knowledgeDb.select({
       text: schema.fileRepresentations.textContent,

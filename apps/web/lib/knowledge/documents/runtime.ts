@@ -10,6 +10,7 @@ import {
   revokeFileScope,
   revokeFileScopeForManagement,
 } from "@/lib/files/service";
+import { ensureEffectiveFileAvailability } from "@/lib/files/availability";
 import { enqueueKnowledgeDocumentRun } from "@/lib/knowledge/queue";
 import { normalizeMediaType } from "./shared";
 import {
@@ -85,6 +86,14 @@ export async function publishFileToKnowledge(input: {
   if (file.lifecycleState !== "ready" || !file.sha256) {
     throw new Error("Only ready files can be published to Knowledge.");
   }
+  await ensureEffectiveFileAvailability({
+    fileId: file.id,
+    lifecycleState: file.lifecycleState,
+    blobId: file.blobId,
+    objectKey: file.objectKey,
+    availabilityStatus: file.availabilityStatus,
+    blobDeletedAt: file.blobDeletedAt,
+  });
   await publishFileScope({
     fileId: file.id,
     organizationId: input.organizationId,

@@ -88,3 +88,19 @@ test("orphaned blobs are marked and removed only after the deletion grace period
   assert.match(threads, /set\(\{ deletedAt: new Date\(\) \}\)/u);
   assert.doesNotMatch(threads, /deleteObject\(objectKey\)/u);
 });
+
+test("blob availability distinguishes missing objects from temporary storage failures", () => {
+  const availability = read("lib/files/availability.ts");
+  const schema = read("drizzle/schema.ts");
+  const migration = read("lib/db/migrations/0080_file_blob_availability.sql");
+  assert.match(schema, /availabilityStatus: text\("availability_status"/u);
+  assert.match(schema, /\["unknown", "available", "missing"\]/u);
+  assert.match(migration, /DEFAULT 'unknown' NOT NULL/u);
+  assert.match(migration, /'unknown', 'available', 'missing'/u);
+  assert.match(availability, /ATTACHMENT_BLOB_MISSING/u);
+  assert.match(availability, /ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE/u);
+  assert.match(availability, /availabilityStatus: exists \? "available" : "missing"/u);
+  assert.match(availability, /availabilityStatus, "unknown"/u);
+  assert.match(availability, /createHash\("sha256"\)/u);
+  assert.match(availability, /restore_verified/u);
+});
