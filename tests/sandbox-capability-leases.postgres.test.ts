@@ -15,6 +15,7 @@ import {
 import { SandboxCapabilityExactResultConflictError } from "../src/kestrel/contracts/store.js";
 import { PgSqlExecutor } from "../src/store/PgSqlExecutor.js";
 import { PostgresSessionStore } from "../src/store/PostgresSessionStore.js";
+import { createTestToolGateway, prepareTestToolCall } from "./helpers/createTestToolGateway.js";
 
 const databaseUrl = process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL?.trim();
 
@@ -42,6 +43,21 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
   try {
     await store.ensureSession(sessionId);
     await store.startRun(runId, { id: `event-${suffix}`, type: "user.message", sessionId, payload: {}, timestamp: "2026-08-23T12:00:00.000Z" });
+    const gateway = createTestToolGateway({ "code.execute": async () => ({ status: "ok" }) });
+    const preparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: { language: "javascript", code: "console.log('ok')" },
+      runId,
+      sessionId,
+      callId: binding.toolCallId,
+    });
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at)
+       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW())`,
+      [runId, sessionId, JSON.stringify({ preparedToolCall }), binding.toolCallId],
+    );
     await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: record(1, "requested") });
     await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: record(2, "issued") });
     const contention = await Promise.allSettled([
@@ -56,7 +72,23 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     const exactEffectResult = {
       idempotencyKey: binding.toolCallId,
       status: "DONE" as const,
-      output: { status: "OK", outcome: { kind: "success", rawOutput: { answer: "recorded" } } },
+      output: {
+        version: "v2",
+        toolName: "code.execute",
+        status: "OK",
+        toolCallId: binding.toolCallId,
+        activation: preparedToolCall.activation,
+        outcome: {
+          version: "v1", callId: binding.toolCallId, activation: preparedToolCall.activation,
+          kind: "success", startedAt: "2026-08-23T12:00:03.000Z", completedAt: "2026-08-23T12:00:04.000Z",
+          effectState: "not_applicable", rawOutput: { answer: "recorded" },
+        },
+        modelContext: { text: "recorded", rawOutputRef: "sha256:recorded", truncated: false },
+        auditRecord: {
+          toolName: "code.execute", input: preparedToolCall.effectiveInput, output: { answer: "recorded" },
+          startedAt: "2026-08-23T12:00:03.000Z", completedAt: "2026-08-23T12:00:04.000Z", durationMs: 1000, status: "OK",
+        },
+      },
       timestamp: "2026-08-23T12:00:04.000Z",
     };
     await assert.rejects(store.saveSandboxCapabilityEffectResult({
@@ -120,6 +152,35 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     ((mutableExactEffectResult.output as { outcome: { rawOutput: { answer: string } } }).outcome.rawOutput).answer = "mutated-after-save-started";
     await savingExactEffectResult;
     assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
+    assert.deepEqual(await store.claimExactEffectCancellation({
+      sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: binding.tenantId,
+    }), { status: "completed" });
+    const cancelledToolCallId = `cancelled-call-${suffix}`;
+    const cancelledPreparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: { language: "javascript", code: "console.log('cancel')" },
+      runId,
+      sessionId,
+      callId: cancelledToolCallId,
+    });
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at)
+       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW())`,
+      [runId, sessionId, JSON.stringify({ preparedToolCall: cancelledPreparedToolCall }), cancelledToolCallId],
+    );
+    assert.deepEqual(await store.claimExactEffectCancellation({
+      sessionId, runId, idempotencyKey: cancelledToolCallId, tenantId: binding.tenantId,
+    }), { status: "cancelled" });
+    await assert.rejects(store.saveSandboxCapabilityEffectResult({
+      leaseId,
+      bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding),
+      toolCallId: cancelledToolCallId,
+      runId,
+      sessionId,
+      result: { ...exactEffectResult, idempotencyKey: cancelledToolCallId },
+    }), /cancelled/u);
     const abortAfterCommit = new AbortController();
     abortAfterCommit.abort();
     await store.saveSandboxCapabilityEffectResult({

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateExactEffectResultRead, validateExactEffectResultTenantBinding, type PersistedEffect } from "../../src/kestrel/contracts/store.js";
+import { SandboxCapabilityExactResultCancelledError, validateExactEffectResultRead, validateExactEffectResultTenantBinding, type PersistedEffect } from "../../src/kestrel/contracts/store.js";
+import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import { createTestToolGateway, prepareTestToolCall } from "../helpers/createTestToolGateway.js";
 
 const timestamp = "2026-08-23T12:00:00.000Z";
@@ -71,6 +72,26 @@ test("exact effect result reads fail closed for absent, incomplete, and conflict
 
 test("exact effect result reads return the complete persisted AgentToolResult only on exact identity", () => {
   assert.deepEqual(validateExactEffectResultRead({ requested, effect, effectResult }), { status: "found", result });
+});
+
+test("in-memory exact completion and cancellation claims have a single durable winner", async () => {
+  const cancellationWins = new InMemorySessionStore();
+  (cancellationWins as unknown as { effects: PersistedEffect[] }).effects.push({ ...effect, status: "PENDING" });
+  assert.deepEqual(await cancellationWins.claimExactEffectCancellation({ ...requested, tenantId: "tenant-1" }), { status: "cancelled" });
+  await assert.rejects(cancellationWins.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-1",
+    bindingDigest: "a".repeat(64),
+    toolCallId: requested.idempotencyKey,
+    runId: requested.runId,
+    sessionId: requested.sessionId,
+    result: effectResult,
+  }), SandboxCapabilityExactResultCancelledError);
+
+  const completionWins = new InMemorySessionStore();
+  (completionWins as unknown as { effects: PersistedEffect[] }).effects.push({ ...effect, status: "PENDING" });
+  await completionWins.saveEffectResult(requested.runId, requested.sessionId, effectResult);
+  assert.deepEqual(await completionWins.claimExactEffectCancellation({ ...requested, tenantId: "tenant-1" }), { status: "completed" });
+  assert.equal((await completionWins.getPersistedEffect(requested.idempotencyKey))?.status, "PENDING");
 });
 
 test("exact effect result reads bind the persisted capability lease to trusted tenant authority", () => {

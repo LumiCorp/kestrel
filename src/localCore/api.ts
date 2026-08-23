@@ -927,8 +927,11 @@ async function createExecutionBundle(input: {
     ),
     profileSourcePolicy: "registered-only",
     eventJournal,
-    ...(storeHandle.store.readExactEffectResult === undefined ? {} : {
-      exactEffectResultStore: { readExactEffectResult: storeHandle.store.readExactEffectResult.bind(storeHandle.store) },
+    ...(storeHandle.store.readExactEffectResult === undefined || storeHandle.store.claimExactEffectCancellation === undefined ? {} : {
+      exactEffectResultStore: {
+        readExactEffectResult: storeHandle.store.readExactEffectResult.bind(storeHandle.store),
+        claimExactEffectCancellation: storeHandle.store.claimExactEffectCancellation.bind(storeHandle.store),
+      },
       exactEffectResultTenantId: (input.options.env ?? process.env).KESTREL_TENANT_ID,
     }),
   });

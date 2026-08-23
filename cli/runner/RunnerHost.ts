@@ -1383,10 +1383,12 @@ export class RunnerHost {
     let cancelledRunId: string | undefined;
     let cancelled = false;
     if (active !== undefined) {
+      const authoritativeRunId =
+        active.runId ?? active.exactEffectCandidate?.runId;
       const matchesRunId =
         payload.runId === undefined ||
-        active.runId === undefined ||
-        payload.runId === active.runId;
+        authoritativeRunId === undefined ||
+        payload.runId === authoritativeRunId;
       const matchesCommandId =
         payload.commandId === undefined ||
         payload.commandId === active.commandId;
@@ -1435,24 +1437,28 @@ export class RunnerHost {
             },
           );
         };
-        if (await this.hasDurableCompletedEffect(
-          active,
-          payload.sessionId,
-          active.runId ?? payload.runId,
-        )) {
-          rejectDurablyCompletedCancellation();
-          return;
+        const candidate = active.exactEffectCandidate;
+        if (
+          candidate !== undefined &&
+          this.exactEffectResultStore !== undefined &&
+          this.exactEffectResultTenantId !== undefined
+        ) {
+          const claim = await this.exactEffectResultStore.claimExactEffectCancellation({
+            sessionId: payload.sessionId,
+            runId: active.runId ?? payload.runId ?? candidate.runId,
+            idempotencyKey: candidate.idempotencyKey,
+            tenantId: this.exactEffectResultTenantId,
+          });
+          if (claim.status === "completed") {
+            rejectDurablyCompletedCancellation();
+            return;
+          }
+          if (claim.status !== "cancelled") {
+            return this.emitRunCancelNotFound(commandId, payload, active.runId);
+          }
         }
         active.cancelRequested = true;
         active.abortController.abort();
-        if (await this.hasDurableCompletedEffect(
-          active,
-          payload.sessionId,
-          active.runId ?? payload.runId,
-        )) {
-          rejectDurablyCompletedCancellation();
-          return;
-        }
         cancelledRunId = active.runId;
         cancelled = true;
       }
@@ -1465,34 +1471,9 @@ export class RunnerHost {
     }
 
     if (cancelled === false) {
-      this.writer.emit(
-        "runner.error",
-        {
-          code: "RUN_CANCEL_NOT_FOUND",
-          message: "No matching cancellable run was found.",
-          details: {
-            sessionId: payload.sessionId,
-            ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
-            ...(payload.commandId !== undefined
-              ? { commandId: payload.commandId }
-              : {}),
-            ...(active?.runId !== undefined
-              ? { activeRunId: active.runId }
-              : {}),
-            ...(active?.commandId !== undefined
-              ? { activeCommandId: active.commandId }
-              : {}),
-          },
-        },
-        {
-          commandId,
-          sessionId: payload.sessionId,
-          ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
-        }
-      );
+      this.emitRunCancelNotFound(commandId, payload);
       return;
     }
-
     this.writer.emit(
       "run.cancelled",
       {
@@ -1509,6 +1490,34 @@ export class RunnerHost {
         sessionId: payload.sessionId,
         ...(cancelledRunId !== undefined ? { runId: cancelledRunId } : {}),
       }
+    );
+  }
+
+  private emitRunCancelNotFound(
+    commandId: string,
+    payload: RunCancelCommandPayload,
+    activeRunId?: string | undefined,
+  ): void {
+    const active = this.activeRuns.get(payload.sessionId);
+    const effectiveActiveRunId = activeRunId ?? active?.runId;
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUN_CANCEL_NOT_FOUND",
+        message: "No matching cancellable run was found.",
+        details: {
+          sessionId: payload.sessionId,
+          ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+          ...(payload.commandId !== undefined ? { commandId: payload.commandId } : {}),
+          ...(effectiveActiveRunId !== undefined ? { activeRunId: effectiveActiveRunId } : {}),
+          ...(active?.commandId !== undefined ? { activeCommandId: active.commandId } : {}),
+        },
+      },
+      {
+        commandId,
+        sessionId: payload.sessionId,
+        ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+      },
     );
   }
 

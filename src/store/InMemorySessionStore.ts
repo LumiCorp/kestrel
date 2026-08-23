@@ -10,6 +10,7 @@ import type {
 import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
+  validateExactEffectCancellationCandidate,
   validateExactEffectResultRead,
   validateExactEffectResultTenantBinding,
 } from "../kestrel/contracts/store.js";
@@ -925,6 +926,22 @@ export class InMemorySessionStore implements SessionStore {
     });
   }
 
+  async claimExactEffectCancellation(input: { sessionId: string; runId: string; idempotencyKey: string; tenantId: string }) {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === input.idempotencyKey) ?? null;
+    const candidate = validateExactEffectCancellationCandidate({ requested: input, effect });
+    if (candidate !== "ready") return { status: candidate } as const;
+    if (effect === null) return { status: "not_found" } as const;
+    const result = this.effectResults.get(input.idempotencyKey) ?? null;
+    if (result !== null) {
+      const read = validateExactEffectResultRead({ requested: input, effect: { ...effect, status: "DONE" }, effectResult: result });
+      return { status: read.status === "found" ? "completed" : "conflict" } as const;
+    }
+    if (effect.status !== "PENDING") return { status: "conflict" } as const;
+    effect.status = "FAILED";
+    this.operationLog.push(`claimExactEffectCancellation:${input.idempotencyKey}`);
+    return { status: "cancelled" } as const;
+  }
+
   async saveEffectResult(_runId: string, _sessionId: string, result: EffectResult): Promise<void> {
     if (this.effectResults.has(result.idempotencyKey)) {
       return;
@@ -1066,6 +1083,17 @@ export class InMemorySessionStore implements SessionStore {
       ...input,
       result: JSON.parse(canonicalJson(input.result)) as EffectResult,
     };
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === input.toolCallId) ?? null;
+    const candidate = validateExactEffectCancellationCandidate({
+      requested: { sessionId: exactInput.sessionId, runId: exactInput.runId, idempotencyKey: exactInput.toolCallId },
+      effect,
+    });
+    if (candidate === "conflict") {
+      throw new SandboxCapabilityExactResultConflictError("Sandbox capability exact result has no matching prepared effect");
+    }
+    if (effect?.status === "FAILED") {
+      throw new SandboxCapabilityExactResultCancelledError("Sandbox capability exact-result persistence was cancelled");
+    }
     const lease = this.sandboxCapabilityLeaseTransitions.get(input.leaseId)?.at(-1);
     assertReplayableSandboxCapabilityEffectBinding(lease, exactInput);
     const existing = this.effectResults.get(exactInput.result.idempotencyKey);

@@ -6,6 +6,7 @@ import type {
 import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
+  validateExactEffectCancellationCandidate,
   validateExactEffectResultRead,
   validateExactEffectResultTenantBinding,
 } from "../kestrel/contracts/store.js";
@@ -1671,6 +1672,61 @@ export class PostgresSessionStore implements SessionStore {
     });
   }
 
+  async claimExactEffectCancellation(input: { sessionId: string; runId: string; idempotencyKey: string; tenantId: string }) {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      const effectResult = await executor.query<{
+        run_id: string; session_id: string; step_index: number; effect_type: string;
+        payload_json: Record<string, unknown>; idempotency_key: string;
+        failure_policy: PersistedEffect["failurePolicy"]; status: PersistedEffect["status"]; created_at: string;
+      }>(
+        `SELECT run_id, session_id, step_index, effect_type, payload_json,
+                idempotency_key, failure_policy, status, created_at
+           FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
+        [input.idempotencyKey],
+      );
+      const row = effectResult.rows[0];
+      const effect: PersistedEffect | null = row === undefined ? null : {
+        runId: row.run_id, sessionId: row.session_id, stepIndex: row.step_index,
+        type: row.effect_type, payload: row.payload_json, idempotencyKey: row.idempotency_key,
+        failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
+      };
+      const candidate = validateExactEffectCancellationCandidate({ requested: input, effect });
+      if (candidate !== "ready") return { status: candidate } as const;
+      if (effect === null) return { status: "not_found" } as const;
+      const recordedResult = await executor.query<{
+        idempotency_key: string; status: "DONE" | "FAILED"; output_json: unknown;
+        error_json: RuntimeError | null; created_at: string;
+      }>(
+        `SELECT idempotency_key, status, output_json, error_json, created_at
+           FROM effect_results WHERE idempotency_key = $1 FOR UPDATE`,
+        [input.idempotencyKey],
+      );
+      const resultRow = recordedResult.rows[0];
+      if (resultRow !== undefined) {
+        const recorded: EffectResult = {
+          idempotencyKey: resultRow.idempotency_key,
+          status: resultRow.status,
+          ...(resultRow.output_json === null ? {} : { output: resultRow.output_json }),
+          ...(resultRow.error_json === null ? {} : { error: resultRow.error_json }),
+          timestamp: normalizeTimestampString(resultRow.created_at),
+        };
+        const read = validateExactEffectResultRead({
+          requested: input,
+          effect: { ...effect, status: "DONE" },
+          effectResult: recorded,
+        });
+        return { status: read.status === "found" ? "completed" : "conflict" } as const;
+      }
+      if (effect.status !== "PENDING") return { status: "conflict" } as const;
+      await executor.query(
+        `UPDATE effects SET status = 'FAILED' WHERE idempotency_key = $1`,
+        [input.idempotencyKey],
+      );
+      return { status: "cancelled" } as const;
+    });
+  }
+
   async saveEffectResult(
     runId: string,
     sessionId: string,
@@ -1893,6 +1949,33 @@ export class PostgresSessionStore implements SessionStore {
     };
     await this.ensureSchemaV3();
     await this.withTransaction(async (executor) => {
+      const effectResult = await executor.query<{
+        run_id: string; session_id: string; step_index: number; effect_type: string;
+        payload_json: Record<string, unknown>; idempotency_key: string;
+        failure_policy: PersistedEffect["failurePolicy"]; status: PersistedEffect["status"]; created_at: string;
+      }>(
+        `SELECT run_id, session_id, step_index, effect_type, payload_json,
+                idempotency_key, failure_policy, status, created_at
+           FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
+        [exactInput.toolCallId],
+      );
+      const effectRow = effectResult.rows[0];
+      const effect: PersistedEffect | null = effectRow === undefined ? null : {
+        runId: effectRow.run_id, sessionId: effectRow.session_id, stepIndex: effectRow.step_index,
+        type: effectRow.effect_type, payload: effectRow.payload_json, idempotencyKey: effectRow.idempotency_key,
+        failurePolicy: effectRow.failure_policy, status: effectRow.status,
+        createdAt: normalizeTimestampString(effectRow.created_at),
+      };
+      const candidate = validateExactEffectCancellationCandidate({
+        requested: { sessionId: exactInput.sessionId, runId: exactInput.runId, idempotencyKey: exactInput.toolCallId },
+        effect,
+      });
+      if (candidate === "conflict") {
+        throw new SandboxCapabilityExactResultConflictError("Sandbox capability exact result has no matching prepared effect");
+      }
+      if (effect?.status === "FAILED") {
+        throw new SandboxCapabilityExactResultCancelledError("Sandbox capability exact-result persistence was cancelled");
+      }
       const leaseResult = await executor.query<{ record_json: unknown }>(
         `SELECT transition.record_json
            FROM sandbox_capability_leases lease

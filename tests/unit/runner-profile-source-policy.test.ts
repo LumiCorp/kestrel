@@ -118,6 +118,7 @@ test("RunnerHost loads an exact persisted effect result without creating a runti
           assert.deepEqual(input, { sessionId: "session-1", runId: "run-1", idempotencyKey: "call-1", tenantId: "tenant-1" });
           return { status: "found", result: { version: "v2", toolCallId: "call-1" } as never };
         },
+        async claimExactEffectCancellation() { return { status: "not_found" }; },
       },
       exactEffectResultTenantId: "tenant-1",
     },
@@ -136,7 +137,10 @@ test("RunnerHost rejects exact effect result lookup outside trusted tenant autho
     () => { throw new Error("runtime must not be created"); },
     { async listProfiles() { return []; }, async getProfile() { return undefined; } },
     {
-      exactEffectResultStore: { async readExactEffectResult() { reads += 1; return { status: "not_found" }; } },
+      exactEffectResultStore: {
+        async readExactEffectResult() { reads += 1; return { status: "not_found" }; },
+        async claimExactEffectCancellation() { return { status: "not_found" }; },
+      },
       exactEffectResultTenantId: "tenant-1",
     },
   );

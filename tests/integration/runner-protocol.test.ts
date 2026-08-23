@@ -3025,6 +3025,7 @@ test("late cancellation after DONE but before tool completion cannot replace the
       exactEffectResultTenantId: "tenant-late-commit",
       exactEffectResultStore: {
         readExactEffectResult,
+        async claimExactEffectCancellation() { return { status: "completed" }; },
       },
     },
   );
@@ -3045,6 +3046,18 @@ test("late cancellation after DONE but before tool completion cannot replace the
     },
   );
   await exactDone;
+  await host.runCancel("cmd-cancel-wrong-run", {
+    sessionId: "session-late-commit",
+    runId: "run-not-the-candidate",
+  });
+  assert.equal(aborted, false);
+  assert.equal(
+    events.some((event) =>
+      event.type === "runner.error" &&
+      event.payload.code === "RUN_CANCEL_NOT_FOUND"
+    ),
+    true,
+  );
   await host.runCancel("cmd-cancel-late-commit", {
     sessionId: "session-late-commit",
   });
@@ -3069,7 +3082,7 @@ test("late cancellation after DONE but before tool completion cannot replace the
   await host.close();
 });
 
-test("cancellation rechecks an exact result committed between its first read and abort", async () => {
+test("atomic cancellation claim rejects cancellation when exact completion wins", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);
   const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -3130,6 +3143,12 @@ test("cancellation rechecks an exact result committed between its first read and
             ? { status: "found" as const, result: exactResult }
             : { status: "incomplete" as const };
         },
+        async claimExactEffectCancellation(input) {
+          identities.push(input);
+          committed = true;
+          finishRun();
+          return { status: "completed" };
+        },
       },
     },
   );
@@ -3148,15 +3167,15 @@ test("cancellation rechecks an exact result committed between its first read and
   });
   await run;
 
-  assert.equal(aborted, true);
-  assert.equal(reads >= 2, true);
+  assert.equal(aborted, false);
+  assert.equal(reads, 0);
   assert.deepEqual(identities[0], {
     sessionId: "session-cancel-race",
     runId: "run-cancel-race",
     idempotencyKey: "call-cancel-race",
     tenantId: "tenant-cancel-race",
   });
-  assert.deepEqual(identities[1], identities[0]);
+  assert.equal(identities.length, 1);
   assert.equal(events.some((event) => event.type === "run.cancelled"), false);
   assert.equal(events.some((event) => event.type === "run.completed"), true);
   assert.equal(
@@ -3206,6 +3225,7 @@ test("ordinary committed success does not depend on a post-return exact-result r
           reads += 1;
           throw new Error("store unavailable after exact commit");
         },
+        async claimExactEffectCancellation() { throw new Error("store unavailable after exact commit"); },
       },
     },
   );

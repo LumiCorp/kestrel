@@ -462,6 +462,12 @@ export type ExactEffectResultRead =
   | { status: "incomplete" }
   | { status: "conflict" };
 
+export type ExactEffectCancellationClaim =
+  | { status: "cancelled" }
+  | { status: "completed" }
+  | { status: "not_found" }
+  | { status: "conflict" };
+
 export interface ExactEffectResultStore {
   readExactEffectResult(input: {
     sessionId: string;
@@ -469,6 +475,34 @@ export interface ExactEffectResultStore {
     idempotencyKey: string;
     tenantId: string;
   }): Promise<ExactEffectResultRead>;
+  claimExactEffectCancellation(input: {
+    sessionId: string;
+    runId: string;
+    idempotencyKey: string;
+    tenantId: string;
+  }): Promise<ExactEffectCancellationClaim>;
+}
+
+export function validateExactEffectCancellationCandidate(input: {
+  requested: { sessionId: string; runId: string; idempotencyKey: string };
+  effect: PersistedEffect | null;
+}): "ready" | "not_found" | "conflict" {
+  const { requested, effect } = input;
+  if (effect === null) return "not_found";
+  if (
+    effect.sessionId !== requested.sessionId ||
+    effect.runId !== requested.runId ||
+    effect.idempotencyKey !== requested.idempotencyKey
+  ) return "not_found";
+  if (effect.type !== "execute_tool_call") return "conflict";
+  let prepared;
+  try { prepared = parsePreparedToolCallV1(effect.payload.preparedToolCall); } catch { return "conflict"; }
+  if (
+    prepared.sessionId !== requested.sessionId ||
+    prepared.runId !== requested.runId ||
+    prepared.callId !== requested.idempotencyKey
+  ) return "conflict";
+  return "ready";
 }
 
 export function validateExactEffectResultRead(input: {
@@ -779,6 +813,7 @@ export interface SessionStore
     ThreadStore,
     AssemblyStore {
   readExactEffectResult?: ExactEffectResultStore["readExactEffectResult"];
+  claimExactEffectCancellation?: ExactEffectResultStore["claimExactEffectCancellation"];
   recoverOrphanedActiveRun?(
     sessionId: string,
   ): Promise<{ runId?: string | undefined }>;
