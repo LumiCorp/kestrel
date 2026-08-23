@@ -8,14 +8,8 @@ import {
   type SandboxCapabilitySelectionV2,
   type TavilySearchAdapterResponseV1,
 } from "../../kestrel/contracts/sandbox-capability.js";
-import type { SandboxCapabilityAdapter } from "../SandboxCapabilityAdapterRegistry.js";
-
-export class SandboxCapabilityAdapterFailure extends Error {
-  constructor(readonly code: string, message: string) {
-    super(message);
-    this.name = "SandboxCapabilityAdapterFailure";
-  }
-}
+import { SandboxCapabilityAdapterFailure, type SandboxCapabilityAdapter } from "../SandboxCapabilityAdapterRegistry.js";
+export { SandboxCapabilityAdapterFailure } from "../SandboxCapabilityAdapterRegistry.js";
 
 export const tavilySearchReadAdapter: SandboxCapabilityAdapter<
   SandboxCapabilityProfileV2,

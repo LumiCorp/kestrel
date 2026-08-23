@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY } from "../../src/code/CodeExecutionService.js";
-import { SandboxCapabilityAdapterRegistry, type SandboxCapabilityAdapter } from "../../src/code/SandboxCapabilityAdapterRegistry.js";
-import { SandboxCapabilityAdapterFailure } from "../../src/code/adapters/TavilySearchReadAdapter.js";
+import { SandboxCapabilityAdapterFailure, SandboxCapabilityAdapterRegistry, type SandboxCapabilityAdapter } from "../../src/code/SandboxCapabilityAdapterRegistry.js";
 
 interface AdapterQualificationCase {
   profile: unknown;

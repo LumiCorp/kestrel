@@ -103,6 +103,7 @@ export {
   parseSandboxCapabilityProfileV2,
   parseSandboxCapabilityProfilesV1,
   parseSandboxCapabilitySelectionV1,
+  reconstructSandboxCapabilityProfileV1,
 } from "./contracts/sandbox-capability.js";
 export type {
   SandboxCapabilityAuthorityV1,

@@ -447,6 +447,37 @@ export function normalizeSandboxCapabilityProfilesV2(value: unknown): SandboxCap
   return profiles;
 }
 
+export function reconstructSandboxCapabilityProfileV1(value: unknown): SandboxCapabilityProfileV1 | undefined {
+  let profile: SandboxCapabilityProfileV2;
+  try { profile = parseSandboxCapabilityProfileV2(value); } catch { return undefined; }
+  if (
+    profile.capabilityId !== TAVILY_SEARCH_CAPABILITY_ID ||
+    profile.operation !== TAVILY_SEARCH_OPERATION ||
+    profile.resource !== TAVILY_SEARCH_RESOURCE ||
+    profile.effectClass !== "read_only" ||
+    profile.maxRequests !== 1 ||
+    Object.keys(profile.adapterConfig).sort().join(",") !== "maxQueryChars,maxResults"
+  ) return undefined;
+  try {
+    return parseSandboxCapabilityProfileV1({
+      version: 1,
+      capabilityId: TAVILY_SEARCH_CAPABILITY_ID,
+      operations: [TAVILY_SEARCH_OPERATION],
+      resource: TAVILY_SEARCH_RESOURCE,
+      audience: profile.audience,
+      maxRequests: 1,
+      maxQueryChars: profile.adapterConfig.maxQueryChars,
+      maxResults: profile.adapterConfig.maxResults,
+      maxResponseBytes: profile.maxResponseBytes,
+      timeoutMs: profile.timeoutMs,
+      maxExpiryMs: profile.maxExpiryMs,
+      brokerAuthority: profile.brokerAuthority,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseSandboxCapabilitySelectionV1(value: unknown): SandboxCapabilitySelectionV1 {
   const record = strictRecord(value, ["capabilityId", "input"], "sandbox capability selection");
   if (record.capabilityId !== TAVILY_SEARCH_CAPABILITY_ID) fail("unknown sandbox capability ID");

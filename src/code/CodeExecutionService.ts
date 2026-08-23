@@ -21,8 +21,8 @@ import {
 } from "../kestrel/contracts/sandbox-capability.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
 import { SandboxCapabilityExactResultConflictError } from "../kestrel/contracts/store.js";
-import { SandboxCapabilityAdapterRegistry } from "./SandboxCapabilityAdapterRegistry.js";
-import { SandboxCapabilityAdapterFailure, tavilySearchReadAdapter } from "./adapters/TavilySearchReadAdapter.js";
+import { SandboxCapabilityAdapterFailure, SandboxCapabilityAdapterRegistry } from "./SandboxCapabilityAdapterRegistry.js";
+import { tavilySearchReadAdapter } from "./adapters/TavilySearchReadAdapter.js";
 
 export const DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY = new SandboxCapabilityAdapterRegistry([
   tavilySearchReadAdapter,

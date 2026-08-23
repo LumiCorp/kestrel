@@ -22,6 +22,7 @@ const canonicalInput = tavilySearchReadAdapter.canonicalInput(profile, selection
 
 for (const scenario of ["deadline", "cancel"] as const) {
   test(`Tavily response-body stalls fail with stable ${scenario} evidence`, async () => {
+    const keepEventLoopAlive = setTimeout(() => {}, 100);
     const cancellation = new AbortController();
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -37,10 +38,15 @@ for (const scenario of ["deadline", "cancel"] as const) {
       maxResponseBytes: 4096,
       signal: cancellation.signal,
     });
-    if (scenario === "cancel") setTimeout(() => cancellation.abort(), 10);
-    await assert.rejects(invocation, (error) =>
-      error instanceof SandboxCapabilityAdapterFailure &&
-      error.code === (scenario === "deadline" ? "CAPABILITY_DEADLINE_EXCEEDED" : "CAPABILITY_CANCELLED"),
-    );
+    const cancellationTimer = scenario === "cancel" ? setTimeout(() => cancellation.abort(), 10) : undefined;
+    try {
+      await assert.rejects(invocation, (error) =>
+        error instanceof SandboxCapabilityAdapterFailure &&
+        error.code === (scenario === "deadline" ? "CAPABILITY_DEADLINE_EXCEEDED" : "CAPABILITY_CANCELLED"),
+      );
+    } finally {
+      clearTimeout(keepEventLoopAlive);
+      if (cancellationTimer !== undefined) clearTimeout(cancellationTimer);
+    }
   });
 }

@@ -110,6 +110,7 @@ import {
   fingerprintSandboxCapabilityCatalogV2,
   fingerprintSandboxCapabilityLeaseBinding,
   normalizeSandboxCapabilitySelectionV2,
+  reconstructSandboxCapabilityProfileV1,
   type SandboxCapabilityLeaseBinding,
 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import {
@@ -3391,15 +3392,18 @@ function createRuntimeWithStore(
     }
     const profileFingerprint = fingerprintResolvedProfile(profile);
     const capabilityCatalogFingerprint = fingerprintSandboxCapabilityCatalogV2(profile.codeMode?.capabilities ?? []);
-    const legacyCapabilityCatalogFingerprint = profile.codeMode?.capabilities?.every((capability) => capability.version !== 2)
-      ? fingerprintSandboxCapabilityCatalogV1(profile.codeMode.capabilities)
-      : undefined;
+    const legacyProfile = reconstructLegacySandboxCapabilityTuiProfile(profile);
+    const legacyProfileFingerprint = legacyProfile === undefined ? undefined : fingerprintResolvedProfile(legacyProfile);
+    const legacyCapabilityCatalogFingerprint = legacyProfile === undefined
+      ? undefined
+      : fingerprintSandboxCapabilityCatalogV1(legacyProfile.codeMode?.capabilities ?? []);
     sandboxCapabilityRuntime.leaseCoordinator = new SandboxCapabilityLeaseCoordinator({
       store: sandboxCapabilityStore,
       validateCurrent: async (binding, boundary) => validateSandboxCapabilityLeaseCurrent({
         binding,
         boundary,
         profileFingerprint,
+        legacyProfileFingerprint,
         capabilityCatalogFingerprint,
         legacyCapabilityCatalogFingerprint,
         executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
@@ -4462,6 +4466,20 @@ export function resolveSandboxCapabilityBrokerAuthorityFromEnvironment(
   return { authorityId, revision };
 }
 
+export function reconstructLegacySandboxCapabilityTuiProfile(profile: TuiProfile): TuiProfile | undefined {
+  const capabilities = profile.codeMode?.capabilities;
+  if (capabilities === undefined || capabilities.length === 0) return undefined;
+  const legacyCapabilities = capabilities.map(reconstructSandboxCapabilityProfileV1);
+  if (legacyCapabilities.some((capability) => capability === undefined)) return undefined;
+  return {
+    ...profile,
+    codeMode: {
+      ...profile.codeMode!,
+      capabilities: legacyCapabilities as NonNullable<TuiProfile["codeMode"]>["capabilities"],
+    },
+  };
+}
+
 export function resolveSandboxCapabilityRuntimeEnvironment(
   profile: TuiProfile,
   trustedAudience: KestrelRuntimeEnvironment["sandboxCapabilityAudience"],
@@ -4537,6 +4555,7 @@ export async function validateSandboxCapabilityLeaseCurrent(input: {
   binding: SandboxCapabilityLeaseBinding;
   boundary: import("../../src/code/SandboxCapabilityLeaseCoordinator.js").SandboxCapabilityLeaseCurrentnessBoundary;
   profileFingerprint: string;
+  legacyProfileFingerprint?: string | undefined;
   capabilityCatalogFingerprint: string;
   legacyCapabilityCatalogFingerprint?: string | undefined;
   executionBoundaryRevision: string;
@@ -4551,7 +4570,10 @@ export async function validateSandboxCapabilityLeaseCurrent(input: {
   now?: (() => Date) | undefined;
 }): Promise<{ authorized: boolean; reason?: string | undefined }> {
   const binding = input.binding;
-  if (binding.profileFingerprint !== input.profileFingerprint) return { authorized: false, reason: "profile_revision_changed" };
+  const currentProfileFingerprint = binding.version === 1
+    ? input.legacyProfileFingerprint
+    : input.profileFingerprint;
+  if (currentProfileFingerprint === undefined || binding.profileFingerprint !== currentProfileFingerprint) return { authorized: false, reason: "profile_revision_changed" };
   const currentCatalogFingerprint = binding.version === 1
     ? input.legacyCapabilityCatalogFingerprint
     : input.capabilityCatalogFingerprint;
@@ -4559,10 +4581,12 @@ export async function validateSandboxCapabilityLeaseCurrent(input: {
   if (binding.executionBoundaryRevision !== input.executionBoundaryRevision) return { authorized: false, reason: "execution_boundary_changed" };
   if (binding.tenantId !== input.audience.tenantId || binding.environmentId !== input.audience.environmentId) return { authorized: false, reason: "audience_changed" };
   if (binding.brokerAuthority.authorityId !== input.brokerAuthority.authorityId || binding.brokerAuthority.revision !== input.brokerAuthority.revision) return { authorized: false, reason: "broker_authority_changed" };
-  if (input.credentialResolver === undefined) return { authorized: false, reason: "credential_unavailable" };
-  const credential = await input.credentialResolver();
-  if (credential.credentialId !== binding.credentialReference.credentialId || credential.revision !== binding.credentialReference.revision) {
-    return { authorized: false, reason: "credential_revision_changed" };
+  if (input.boundary !== "recorded_replay") {
+    if (input.credentialResolver === undefined) return { authorized: false, reason: "credential_unavailable" };
+    const credential = await input.credentialResolver();
+    if (credential.credentialId !== binding.credentialReference.credentialId || credential.revision !== binding.credentialReference.revision) {
+      return { authorized: false, reason: "credential_revision_changed" };
+    }
   }
   const pendingEffects = await input.store.listPendingEffects(binding.sessionId);
   const persistedDoneEffect = input.boundary === "recorded_replay" && input.store.getPersistedEffect !== undefined

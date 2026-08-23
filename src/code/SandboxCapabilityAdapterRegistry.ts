@@ -1,5 +1,12 @@
 export type SandboxCapabilityEffectClass = "read_only" | "external_effect";
 
+export class SandboxCapabilityAdapterFailure extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "SandboxCapabilityAdapterFailure";
+  }
+}
+
 export interface SandboxCapabilityAdapterInvocationContext {
   fetchImpl: typeof fetch;
   credential: string;
