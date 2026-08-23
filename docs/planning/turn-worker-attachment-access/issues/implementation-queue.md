@@ -4,11 +4,11 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Resolve each active turn's attachments at the web storage boundary](02-add-turn-attachment-resolver.md)
+None.
 
 ## In progress
 
-None.
+- [Resolve each active turn's attachments at the web storage boundary](02-add-turn-attachment-resolver.md)
 
 ## Blocked
 
