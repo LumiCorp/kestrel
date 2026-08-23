@@ -4,15 +4,15 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Run hosted turns with verified remote attachments and safe failures](03-run-hosted-turns-with-remote-attachments.md)
 
 ## In progress
 
-- [Resolve each active turn's attachments at the web storage boundary](02-add-turn-attachment-resolver.md)
+None.
 
 ## Blocked
 
-- [Run hosted turns with verified remote attachments and safe failures](03-run-hosted-turns-with-remote-attachments.md) — blocked by [Resolve each active turn's attachments at the web storage boundary](02-add-turn-attachment-resolver.md)
+None.
 
 ## Implemented
 
@@ -26,3 +26,4 @@ None.
 - [Expose audited operator repair for missing file blobs](06-expose-audited-blob-repair.md)
 - [Close the concurrent availability probe race](07-close-availability-probe-race.md)
 - [Make blob restoration and its audit event atomic](08-atomically-audit-blob-repair.md)
+- [Resolve each active turn's attachments at the web storage boundary](02-add-turn-attachment-resolver.md)
