@@ -6,6 +6,7 @@ import { DEFAULT_CODE_MODE_ENABLED_CONFIG, type SandboxExecutionInput, type Sand
 import { KESTREL_EXECUTION_BOUNDARY_POLICY, SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { fingerprintSandboxCapabilityCatalogV1, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityChildReservationV1, type SandboxCapabilityLeaseTransitionRecordV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import { SandboxCapabilityExactResultConflictError, type SandboxCapabilityLeaseStore } from "../../src/kestrel/contracts/store.js";
+import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 
 const profile: SandboxCapabilityProfileV1 = { version: 1, capabilityId: "tavily.search.read", operations: ["search"], resource: "https://api.tavily.com/search", audience: { tenantId: "tenant-a", environmentId: "env-a" }, maxRequests: 1, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096, timeoutMs: 1000, maxExpiryMs: 5000, brokerAuthority: { authorityId: "broker-a", revision: "broker-rev-1" } };
 
@@ -432,6 +433,91 @@ test("a conflicting DONE remains rejected when the competing completion is abort
     /conflicts with recorded exact replay output/u,
   );
   assert.deepEqual(outcomes, ["completed", "cleaned"]);
+});
+
+test("a real in-memory winner paused before cleanup defeats an aborted conflicting attempt", async () => {
+  const store = new InMemorySessionStore();
+  const controller = new AbortController();
+  const coordinator = new SandboxCapabilityLeaseCoordinator({
+    store,
+    now: () => new Date("2026-08-22T12:00:00.000Z"),
+    validateCurrent: async () => ({ authorized: true }),
+    persistResult: async ({ leaseId, result }) => ({ digest: digestSandboxCapabilityResult(result), reference: `result:${leaseId}` }),
+  });
+  let releaseWinnerCleanup!: () => void;
+  let markWinnerPaused!: () => void;
+  const winnerCleanupReleased = new Promise<void>((resolve) => { releaseWinnerCleanup = resolve; });
+  const winnerPaused = new Promise<void>((resolve) => { markWinnerPaused = resolve; });
+  const settle = coordinator.settleBeforeTeardown.bind(coordinator);
+  let settlements = 0;
+  coordinator.settleBeforeTeardown = async (...args) => {
+    settlements += 1;
+    if (settlements === 1) {
+      markWinnerPaused();
+      await winnerCleanupReleased;
+    }
+    return settle(...args);
+  };
+  const capabilityRuntime = { ...runtime(), leaseCoordinator: coordinator };
+  const winnerOutput = { status: "ok" as const, exitCode: 0, stdout: "winner", stderr: "", durationMs: 1, artifacts: [] };
+  const loserOutput = { ...winnerOutput, stdout: "loser" };
+  let losingError: unknown;
+  let winningExactResult: unknown;
+  let winningLeaseId = "";
+  const service = new CodeExecutionService({ executor: {
+    async execute(input) {
+      await input.capability!.lifecycle!.beforeProviderInvocation();
+      await input.capability!.lifecycle!.commitProviderResult({ result: { results: [] }, responseBytes: 2, resultCount: 0 });
+      const winningCleanup = input.capability!.lifecycle!.beforeContainerTeardown("completed", winnerOutput);
+      await winnerPaused;
+      controller.abort(new Error("loser aborted while winner cleanup was paused"));
+      try {
+        await input.capability!.lifecycle!.beforeContainerTeardown("cancelled", loserOutput);
+      } catch (error) {
+        losingError = error;
+      }
+      releaseWinnerCleanup();
+      await winningCleanup;
+      return winnerOutput;
+    },
+  } });
+
+  const result = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+    { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "race" } } },
+    {
+      signal: controller.signal,
+      capabilityRuntime,
+      persistCompletedCapabilityResult: async (exactResult) => {
+        const replay = exactResult.capabilityReplayEvidence!;
+        winningLeaseId = replay.leaseId;
+        const effectResult = {
+          idempotencyKey: replay.toolCallId,
+          status: "DONE" as const,
+          output: exactResult,
+          timestamp: "2026-08-23T12:00:00.000Z",
+        };
+        await store.saveSandboxCapabilityEffectResult({
+          leaseId: replay.leaseId,
+          bindingDigest: replay.bindingDigest,
+          toolCallId: replay.toolCallId,
+          runId: capabilityRuntime.runId,
+          sessionId: capabilityRuntime.sessionId,
+          result: effectResult,
+          signal: controller.signal,
+        });
+        winningExactResult ??= structuredClone(effectResult);
+      },
+    },
+  );
+
+  assert.equal(losingError instanceof SandboxCapabilityExactResultConflictError, true);
+  assert.equal(result.stdout, "winner");
+  assert.deepEqual(await store.getEffectResult(capabilityRuntime.toolCallId), winningExactResult);
+  const transitions = await store.listSandboxCapabilityLeaseTransitions(winningLeaseId);
+  assert.equal(transitions.some((record) => record.transition === "cancelled"), false);
+  assert.equal(transitions.at(-1)?.transition, "cleaned");
+  assert.equal(transitions.at(-1)?.terminalOutcome, "completed");
 });
 
 test("CodeExecutionService resolves the current credential revision for every selected call", async () => {
