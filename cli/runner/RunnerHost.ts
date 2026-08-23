@@ -175,6 +175,10 @@ interface ActiveRunEntry {
   runId?: string | undefined;
   cancelRequested?: boolean | undefined;
   finalizingAnswer?: boolean | undefined;
+  durableCompletedEffect?: {
+    runId: string;
+    idempotencyKey: string;
+  } | undefined;
 }
 
 export interface RunnerProfileProvider {
@@ -917,7 +921,10 @@ export class RunnerHost {
         active.runId = requestedRunId ?? terminalResult.output.runId;
       }
       const emittedRunId = requestedRunId ?? terminalResult.output.runId;
-      if (abortController.signal.aborted && active?.commandId === commandId && active.cancelRequested === true) {
+      const durableCompletionWon = active?.commandId === commandId
+        ? await this.hasDurableCompletedEffect(active, turn.sessionId, emittedRunId)
+        : false;
+      if (abortController.signal.aborted && active?.commandId === commandId && active.cancelRequested === true && !durableCompletionWon) {
         this.writer.emit("run.cancelled", {
           sessionId: turn.sessionId,
           runId: emittedRunId,
@@ -1402,6 +1409,31 @@ export class RunnerHost {
               sessionId: payload.sessionId,
               ...(active.runId !== undefined ? { runId: active.runId } : {}),
             }
+          );
+          return;
+        }
+        if (await this.hasDurableCompletedEffect(
+          active,
+          payload.sessionId,
+          active.runId ?? payload.runId,
+        )) {
+          this.writer.emit(
+            "runner.error",
+            {
+              code: "RUN_ALREADY_COMPLETED",
+              message:
+                "The run has durably committed an exact tool result and is no longer cancellable.",
+              details: {
+                sessionId: payload.sessionId,
+                ...(active.runId !== undefined ? { runId: active.runId } : {}),
+                activeCommandId: active.commandId,
+              },
+            },
+            {
+              commandId,
+              sessionId: payload.sessionId,
+              ...(active.runId !== undefined ? { runId: active.runId } : {}),
+            },
           );
           return;
         }
@@ -3356,6 +3388,18 @@ export class RunnerHost {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     if (
       normalizedUpdate.phase === "completed" &&
+      normalizedUpdate.toolName === "code.execute"
+    ) {
+      const active = this.activeRuns.get(normalizedUpdate.sessionId);
+      if (active !== undefined) {
+        active.durableCompletedEffect = {
+          runId: normalizedUpdate.runId,
+          idempotencyKey: normalizedUpdate.toolCallId,
+        };
+      }
+    }
+    if (
+      normalizedUpdate.phase === "completed" &&
       normalizedUpdate.toolName === "FinalizeAnswer"
     ) {
       const active = this.activeRuns.get(normalizedUpdate.sessionId);
@@ -3383,6 +3427,30 @@ export class RunnerHost {
         ...(commandId !== undefined ? { commandId } : {}),
       }
     );
+  }
+
+  private async hasDurableCompletedEffect(
+    active: ActiveRunEntry,
+    sessionId: string,
+    runId: string | undefined,
+  ): Promise<boolean> {
+    const candidate = active.durableCompletedEffect;
+    if (
+      candidate === undefined ||
+      runId === undefined ||
+      candidate.runId !== runId ||
+      this.exactEffectResultStore === undefined ||
+      this.exactEffectResultTenantId === undefined
+    ) {
+      return false;
+    }
+    const read = await this.exactEffectResultStore.readExactEffectResult({
+      sessionId,
+      runId,
+      idempotencyKey: candidate.idempotencyKey,
+      tenantId: this.exactEffectResultTenantId,
+    });
+    return read.status === "found";
   }
 
   private normalizeActiveRunIdentity<

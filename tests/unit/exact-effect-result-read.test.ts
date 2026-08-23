@@ -65,6 +65,7 @@ test("exact effect result reads fail closed for absent, incomplete, and conflict
   assert.deepEqual(validateExactEffectResultRead({ requested, effect, effectResult: { ...effectResult, output: { ...result, toolCallId: "other-call" } } }), { status: "conflict" });
   assert.deepEqual(validateExactEffectResultRead({ requested, effect, effectResult: { ...effectResult, output: { ...result, toolName: "other.tool" } } }), { status: "conflict" });
   assert.deepEqual(validateExactEffectResultRead({ requested, effect, effectResult: { ...effectResult, output: { ...result, activation: { ...activation, registryGeneration: "other-generation" }, outcome: { ...result.outcome, activation: { ...activation, registryGeneration: "other-generation" } } } } }), { status: "conflict" });
+  assert.deepEqual(validateExactEffectResultRead({ requested, effect, effectResult: { ...effectResult, output: { ...result, outcome: { ...result.outcome, activation: { ...activation, registryGeneration: "other-outcome-generation" } } } } }), { status: "conflict" });
   assert.deepEqual(validateExactEffectResultRead({ requested, effect, effectResult: { ...effectResult, output: { ...result, auditRecord: { ...result.auditRecord, input: { other: true } } } } }), { status: "conflict" });
 });
 

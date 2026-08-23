@@ -2957,6 +2957,110 @@ test("run.cancel aborts only the matching run command", async () => {
   await host.close();
 });
 
+test("late cancellation cannot replace a durably committed exact result", async () => {
+  const output = new PassThrough();
+  const writer = new EventWriter(output);
+  const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const rl = readline.createInterface({ input: output, terminal: false });
+  rl.on("line", (line) => {
+    events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+  });
+  let releaseRun!: () => void;
+  const pausedAfterDone = new Promise<void>((resolve) => { releaseRun = resolve; });
+  let doneObserved!: () => void;
+  const exactDone = new Promise<void>((resolve) => { doneObserved = resolve; });
+  let aborted = false;
+  const exactResult = { version: "v2", toolCallId: "call-late-commit" } as never;
+  const readExactEffectResult = async (input: {
+    sessionId: string;
+    runId: string;
+    idempotencyKey: string;
+    tenantId: string;
+  }) => {
+    assert.deepEqual(input, {
+      sessionId: "session-late-commit",
+      runId: "run-late-commit",
+      idempotencyKey: "call-late-commit",
+      tenantId: "tenant-late-commit",
+    });
+    return { status: "found" as const, result: exactResult };
+  };
+  const host = new RunnerHost(
+    writer,
+    (_profile, _onLog, _onProgress, _onConsole, _onReasoning, _onTask, onRunEvent) => ({
+      runTurn: async (turn, options) => {
+        options?.signal?.addEventListener("abort", () => { aborted = true; }, { once: true });
+        onRunEvent?.(buildPersistedRuntimeEventFromToolUpdate({
+          version: "v1",
+          runId: "run-late-commit",
+          sessionId: turn.sessionId,
+          ts: "2026-08-23T12:00:00.000Z",
+          seq: 1,
+          toolCallId: "call-late-commit",
+          toolName: "code.execute",
+          phase: "completed",
+          output: exactResult,
+        }));
+        doneObserved();
+        await pausedAfterDone;
+        return {
+          assistantText: "Committed result.",
+          output: completedOutput(turn.sessionId, "run-late-commit"),
+        };
+      },
+      close: async () => {},
+    }),
+    undefined,
+    {
+      exactEffectResultTenantId: "tenant-late-commit",
+      exactEffectResultStore: {
+        readExactEffectResult,
+      },
+    },
+  );
+
+  const run = host.runStart(
+    "cmd-run-late-commit",
+    {
+      profile,
+      turn: {
+        sessionId: "session-late-commit",
+        runId: "run-late-commit",
+        message: "commit before cancellation",
+        eventType: "user.message",
+      },
+    },
+    {
+      tenantId: "tenant-late-commit",
+      actor: { actorId: "operator-late", actorType: "operator", tenantId: "tenant-late-commit" },
+    },
+  );
+  await exactDone;
+  await host.runCancel("cmd-cancel-late-commit", {
+    sessionId: "session-late-commit",
+    runId: "run-late-commit",
+  });
+  releaseRun();
+  await run;
+
+  assert.equal(aborted, false);
+  assert.equal(events.some((event) => event.type === "run.cancelled"), false);
+  assert.equal(events.some((event) => event.type === "run.completed"), true);
+  assert.equal(
+    events.some((event) => event.type === "runner.error" && event.payload.code === "RUN_ALREADY_COMPLETED"),
+    true,
+  );
+  const replay = await readExactEffectResult({
+    sessionId: "session-late-commit",
+    runId: "run-late-commit",
+    idempotencyKey: "call-late-commit",
+    tenantId: "tenant-late-commit",
+  });
+  assert.deepEqual(replay.result, exactResult);
+  rl.close();
+  await host.close();
+});
+
 test("run.cancel with wrong runId reports an error without aborting the active run", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);

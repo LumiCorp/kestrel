@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { SandboxCapabilityAdapterFailure } from "./SandboxCapabilityAdapterRegistry.js";
 
 import type {
   CodeExecutionArtifact,
@@ -507,7 +508,7 @@ function load() {
               const mediated = JSON.parse(fs.readFileSync(responsePath, "utf8"));
               fs.unlinkSync(responsePath);
               fs.unlinkSync(requestPath);
-              if (mediated.ok !== true) { response.writeHead(502); response.end(JSON.stringify({ error: "adapter_failed" })); return; }
+              if (mediated.ok !== true) { response.writeHead(502); response.end(JSON.stringify({ error: mediated.errorCode === "capability_timeout" ? "capability_timeout" : "adapter_failed" })); return; }
               if (typeof config.expiresAt === "string" && Date.now() >= Date.parse(config.expiresAt)) { response.writeHead(410); response.end(JSON.stringify({ error: "capability_expired" })); return; }
               const serialized = JSON.stringify(mediated.response);
               if (Buffer.byteLength(serialized, "utf8") > (config.maxResponseBytes ?? 64000)) { response.writeHead(502); response.end(JSON.stringify({ error: "response_too_large" })); return; }
@@ -607,7 +608,7 @@ async function runCapabilityAdapterPump(
     );
     if (request.cancelled) return;
     if (request.exitCode === 0 && request.stdout.trim().length > 0) {
-      let mediated: { ok: true; response: unknown } | { ok: false };
+      let mediated: { ok: true; response: unknown } | { ok: false; errorCode?: "capability_timeout" | undefined };
       try {
         const value = JSON.parse(request.stdout) as Record<string, unknown>;
         const adapterInput = value.input as Record<string, unknown> | undefined;
@@ -651,8 +652,13 @@ async function runCapabilityAdapterPump(
           throw error;
         }
         mediated = { ok: true, response };
-      } catch {
-        mediated = { ok: false };
+      } catch (error) {
+        mediated = {
+          ok: false,
+          ...(error instanceof SandboxCapabilityAdapterFailure && error.code === "CAPABILITY_DEADLINE_EXCEEDED"
+            ? { errorCode: "capability_timeout" }
+            : {}),
+        };
       }
       if (signal.aborted) return;
       const written = await runDockerProcess(

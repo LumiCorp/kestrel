@@ -532,6 +532,9 @@ async function resolveSandboxCapability(
           await runtime.leaseCoordinator!.recordProviderFailure(
             durableLease.leaseId,
             leaseBinding,
+            error instanceof SandboxCapabilityAdapterFailure && error.code === "CAPABILITY_DEADLINE_EXCEEDED"
+              ? "provider_invocation_timeout"
+              : "provider_invocation_failed",
           );
         },
         beforeContainerTeardown: async (reason, completedOutput) => {

@@ -500,6 +500,7 @@ export function validateExactEffectResultRead(input: {
     result.toolCallId !== requested.idempotencyKey ||
     result.toolName !== prepared.activation.descriptor.toolId ||
     canonicalJson(result.activation) !== canonicalJson(prepared.activation) ||
+    canonicalJson(result.outcome.activation) !== canonicalJson(prepared.activation) ||
     canonicalJson(result.auditRecord.input) !== canonicalJson(prepared.effectiveInput)
   ) return { status: "conflict" };
   return { status: "found", result };

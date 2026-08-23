@@ -1457,6 +1457,7 @@ test("effect.result.loaded rejects malformed or internally conflicting AgentTool
   assert.throws(() => parse({ ...exactLoadedResult, extra: true }), /extra is not supported/u);
   assert.throws(() => parse({ ...exactLoadedResult, toolCallId: "other-call" }), /identities do not agree/u);
   assert.throws(() => parse({ ...exactLoadedResult, activation: { ...exactResultActivation, descriptor: { ...exactResultActivation.descriptor, toolId: "other.tool" } } }), /identities do not agree/u);
+  assert.throws(() => parse({ ...exactLoadedResult, outcome: { ...exactLoadedResult.outcome, activation: { ...exactResultActivation, registryGeneration: "other-generation" } } }), /identities do not agree/u);
 });
 
 test("provider reasoning events reject opaque continuation state at the protocol boundary", () => {

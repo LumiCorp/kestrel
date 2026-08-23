@@ -4599,7 +4599,7 @@ function validateAgentToolResultV2Wire(value: unknown, label: string): void {
   const audit = requireRecord(result.auditRecord, `${label}.auditRecord`);
   rejectUnknownFields(audit, `${label}.auditRecord`, ["toolName", "input", "output", "error", "startedAt", "completedAt", "durationMs", "status"]);
   if (audit.toolName !== toolName || audit.status !== result.status) throw new RunnerProtocolContractError(`${label} evidence identities do not agree`);
-  if (outcomeCallId !== toolCallId || activation.descriptorToolId !== toolName || outcomeActivation.contractRevision !== activation.contractRevision) throw new RunnerProtocolContractError(`${label} evidence identities do not agree`);
+  if (outcomeCallId !== toolCallId || activation.descriptorToolId !== toolName || outcomeActivation.canonicalIdentity !== activation.canonicalIdentity) throw new RunnerProtocolContractError(`${label} evidence identities do not agree`);
   requireRecord(audit.input, `${label}.auditRecord.input`);
   requireNonEmptyString(audit.startedAt, `${label}.auditRecord.startedAt`);
   requireNonEmptyString(audit.completedAt, `${label}.auditRecord.completedAt`);
@@ -4608,7 +4608,7 @@ function validateAgentToolResultV2Wire(value: unknown, label: string): void {
   if (result.presentation !== undefined) requireRecord(result.presentation, `${label}.presentation`);
 }
 
-function validateAgentToolActivationV1(value: unknown, label: string): { descriptorToolId: string; contractRevision: string } {
+function validateAgentToolActivationV1(value: unknown, label: string): { descriptorToolId: string; contractRevision: string; canonicalIdentity: string } {
   const activation = requireRecord(value, label);
   rejectUnknownFields(activation, label, ["version", "descriptor", "registryGeneration", "scopeFingerprint"]);
   if (activation.version !== "v1") throw new RunnerProtocolContractError(`${label}.version must be 'v1'`);
@@ -4623,7 +4623,11 @@ function validateAgentToolActivationV1(value: unknown, label: string): { descrip
   validateCanonicalSha256(descriptor.contractRevision, `${label}.descriptor.contractRevision`);
   validateCanonicalSha256(descriptor.inputSchemaHash, `${label}.descriptor.inputSchemaHash`);
   validateCanonicalSha256(descriptor.outputContractHash, `${label}.descriptor.outputContractHash`);
-  return { descriptorToolId, contractRevision: descriptor.contractRevision as string };
+  return {
+    descriptorToolId,
+    contractRevision: descriptor.contractRevision as string,
+    canonicalIdentity: [descriptor.version, descriptor.toolId, descriptor.sourceKind, descriptor.sourceId, descriptor.contractRevision, descriptor.inputSchemaHash, descriptor.outputContractHash, activation.registryGeneration, activation.scopeFingerprint].join("\u0000"),
+  };
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {

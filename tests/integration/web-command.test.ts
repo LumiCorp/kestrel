@@ -414,9 +414,10 @@ test("spawned Local Core executes an immutable capability profile through Docker
   await assertCapabilityProjection(runner, expired.body, tenantId, 1, "expired");
   const timedOut = await runCapabilityQualification(runner, runner.qualificationProfileId!, tenantId, "timeout");
   assert.match(timedOut.body, /event: run\.completed/u);
-  assert.match(timedOut.body, /adapter_failed/u);
+  assert.match(timedOut.body, /capability_timeout/u);
   assert.equal(timedOut.body.includes("isolated-tavily-secret"), false);
-  await assertCapabilityProjection(runner, timedOut.body, tenantId, 0);
+  await waitForFileMatch(evidencePath, /"kind":"provider_abort","query":"qualification-timeout"/u);
+  await assertCapabilityProjection(runner, timedOut.body, tenantId, 0, "provider_invocation_timeout");
   const completed = readSseEvent(response.body, "run.completed") as { runId?: string };
   assert.ok(completed.runId);
   const exactResultKey = response.body.match(/"idempotencyKey":"([^"]+)"/u)?.[1];
@@ -500,9 +501,10 @@ test("spawned hosted runner executes a registered capability profile through Doc
   await assertCapabilityProjection(runner, expired.body, tenantId, 1, "expired");
   const timedOut = await runCapabilityQualification(runner, resolvedEvent.payload!.profileId!, tenantId, "timeout");
   assert.match(timedOut.body, /event: run\.completed/u);
-  assert.match(timedOut.body, /adapter_failed/u);
+  assert.match(timedOut.body, /capability_timeout/u);
   assert.equal(timedOut.body.includes("isolated-tavily-secret"), false);
-  await assertCapabilityProjection(runner, timedOut.body, tenantId, 0);
+  await waitForFileMatch(evidencePath, /"kind":"provider_abort","query":"qualification-timeout"/u);
+  await assertCapabilityProjection(runner, timedOut.body, tenantId, 0, "provider_invocation_timeout");
   assert.equal(unused.body.includes("isolated-tavily-secret"), false);
   await assertSelectedUnusedProjection(runner, unused.body, tenantId);
   const providerEvidenceBeforeCapabilityFree = await readFile(evidencePath, "utf8");
