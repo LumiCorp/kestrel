@@ -90,7 +90,7 @@ export class CodeExecutionService {
       };
     } catch (error) {
       if (options.signal?.aborted === true) {
-        throw error;
+        throw redactCapabilityError(error, redactCapabilityResult);
       }
       if (error instanceof DockerUnavailableError) {
         const result: CodeExecutionResult = {
@@ -123,6 +123,26 @@ export class CodeExecutionService {
       releaseCapabilitySensitiveValue?.();
     }
   }
+}
+
+function redactCapabilityError(
+  error: unknown,
+  redact: (<T>(value: T) => T) | undefined,
+): unknown {
+  if (redact === undefined) return error;
+  if (error instanceof Error === false) return redact(error);
+
+  // Preserve cancellation identity and any runtime-specific error code while
+  // ensuring no secret-bearing message, stack, cause, or attached metadata can
+  // outlive the call-scoped sensitive registration.
+  error.message = redact(error.message);
+  if (error.stack !== undefined) error.stack = redact(error.stack);
+  if (error.cause !== undefined) error.cause = redactCapabilityError(error.cause, redact);
+  for (const [key, value] of Object.entries(error)) {
+    if (key === "cause") continue;
+    Object.assign(error, { [key]: redact(value) });
+  }
+  return error;
 }
 
 async function resolveTavilyCapability(

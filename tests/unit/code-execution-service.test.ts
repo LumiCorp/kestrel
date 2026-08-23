@@ -23,14 +23,34 @@ test("CodeExecutionService derives a bounded Tavily grant before sandbox creatio
 
 test("CodeExecutionService rejects stale, mismatched, and caller-authored authority before sandbox creation", async () => {
   let executions = 0;
+  let credentialResolutions = 0;
   const service = new CodeExecutionService({ executor: { async execute() { executions += 1; throw new Error("must not execute"); } } });
   const config = { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] };
   const request = { language: "javascript" as const, code: "x", capability: { capabilityId: "tavily.search.read" as const, input: { query: "x" } } };
   await assert.rejects(service.execute(config, request, { capabilityRuntime: { ...runtime(), tenantId: "wrong" } }), /audience/u);
+  await assert.rejects(service.execute(config, request, { capabilityRuntime: {
+    ...runtime(),
+    brokerAuthority: { authorityId: "forged-broker", revision: "broker-rev-1" },
+    credentialSnapshot: undefined,
+    resolveCredentialSnapshot: async () => {
+      credentialResolutions += 1;
+      return { credentialId: "tool.tavily.default", revision: "r", secret: "secret" };
+    },
+  } }), /broker authority/u);
+  await assert.rejects(service.execute(config, request, { capabilityRuntime: {
+    ...runtime(),
+    brokerAuthority: { authorityId: "broker-a", revision: "forged-revision" },
+    credentialSnapshot: undefined,
+    resolveCredentialSnapshot: async () => {
+      credentialResolutions += 1;
+      return { credentialId: "tool.tavily.default", revision: "r", secret: "secret" };
+    },
+  } }), /broker authority/u);
   await assert.rejects(service.execute(config, request, { capabilityRuntime: { ...runtime(), executionBoundaryRevision: "stale" } }), /revision is stale/u);
   await assert.rejects(service.execute({ ...config, capabilities: [{ ...profile, maxResults: 2 }] }, request, { capabilityRuntime: runtime() }), /catalog fingerprint is stale/u);
   await assert.rejects(service.execute(DEFAULT_CODE_MODE_ENABLED_CONFIG, { language: "javascript", code: "x" }, { capability: { transport: "docker-shared-loopback-v1", lease: "caller-lease", operation: "search", destination: "api.tavily.com", response: {} } }), /Caller-authored/u);
   assert.equal(executions, 0);
+  assert.equal(credentialResolutions, 0);
 });
 
 test("CodeExecutionService resolves the current credential revision for every selected call", async () => {
@@ -208,22 +228,46 @@ test("sensitive credential registration is released after error, timeout, and ca
   }
 
   const controller = new AbortController();
+  const cancellationRegistry = new SensitiveValueRegistry();
+  const cancellationSecret = "cancelled-provider-secret";
   const cancelled = new CodeExecutionService({
     executor: {
       async execute() {
         controller.abort();
-        throw new Error("cancelled");
+        const error = new Error(`cancelled after provider reflected ${cancellationSecret}`);
+        Object.assign(error, { code: "RUN_CANCELLED", detail: cancellationSecret });
+        throw error;
       },
     },
   });
   await assert.rejects(
     cancelled.execute(config, request, {
       signal: controller.signal,
-      capabilityRuntime: { ...runtime(), registerSensitiveValue, toolCallId: "call-cancelled" },
+      capabilityRuntime: {
+        ...runtime(),
+        credentialSnapshot: { credentialId: "tool.tavily.default", revision: "credential-rev-cancelled", secret: cancellationSecret },
+        registerSensitiveValue: (input) => cancellationRegistry.register({
+          reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
+          value: input.value,
+        }),
+        redactSensitiveValues: <T>(value: T) => cancellationRegistry.redact(value).value,
+        toolCallId: "call-cancelled",
+      },
     }),
-    /cancelled/u,
+    (error) => {
+      assert.equal(error instanceof Error, true);
+      assert.equal(JSON.stringify({
+        message: (error as Error).message,
+        stack: (error as Error).stack,
+        ...(error as Record<string, unknown>),
+      }).includes(cancellationSecret), false);
+      assert.equal((error as Error & { code?: string }).code, "RUN_CANCELLED");
+      assert.match((error as Error).message, /redacted/iu);
+      return true;
+    },
   );
   assert.equal(activeReferences.size, 0);
+  assert.equal(cancellationRegistry.registeredValueDigests().length, 0);
 });
 
 test("credential-bearing executor output is redacted before its registration is released", async () => {

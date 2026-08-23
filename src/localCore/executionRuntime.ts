@@ -85,11 +85,21 @@ function toKestrelRuntimeEnvironment(
   snapshot: ReturnType<LocalCoreRuntimeEnvironmentResolver["resolve"]>,
   credentialStore?: LocalCoreCredentialStore | undefined,
 ): KestrelRuntimeEnvironment {
+  const tenantId = snapshot.runtimeEnv.KESTREL_TENANT_ID?.trim();
+  const environmentId = snapshot.runtimeEnv.KESTREL_ENVIRONMENT_ID?.trim();
+  const brokerAuthorityId = snapshot.runtimeEnv.KESTREL_SANDBOX_BROKER_AUTHORITY_ID?.trim();
+  const brokerAuthorityRevision = snapshot.runtimeEnv.KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION?.trim();
   return {
     modelEnv: snapshot.modelEnv as NodeJS.ProcessEnv,
     internetEnv: snapshot.internetEnv as NodeJS.ProcessEnv,
     runtimeEnv: snapshot.runtimeEnv as NodeJS.ProcessEnv,
     mcpEnv: snapshot.mcpEnv as NodeJS.ProcessEnv,
+    ...(tenantId && environmentId
+      ? { sandboxCapabilityAudience: { tenantId, environmentId } }
+      : {}),
+    ...(brokerAuthorityId && brokerAuthorityRevision
+      ? { sandboxCapabilityBrokerAuthority: { authorityId: brokerAuthorityId, revision: brokerAuthorityRevision } }
+      : {}),
     ...(credentialStore?.available === true ? {
       sandboxCapabilityCredentialResolver: async () => {
         const secret = await credentialStore.get("tool.tavily.default");

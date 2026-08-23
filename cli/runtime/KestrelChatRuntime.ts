@@ -285,6 +285,8 @@ export interface KestrelRuntimeEnvironment {
   sandboxCapabilityCredentialResolver?: (() => Promise<{ credentialId: "tool.tavily.default"; revision: string; secret: string }>) | undefined;
   /** Host-resolved execution identity. Capability profile content must not populate this authority. */
   sandboxCapabilityAudience?: { tenantId: string; environmentId: string } | undefined;
+  /** Host-resolved broker identity. Capability profile content must not populate this authority. */
+  sandboxCapabilityBrokerAuthority?: { authorityId: string; revision: string } | undefined;
 }
 
 export interface RuntimeFactoryWithStoreOptions {
@@ -3353,12 +3355,8 @@ function createRuntimeWithStore(
     codeMode: profile.codeMode,
     ...(resolveSandboxCapabilityRuntimeEnvironment(
       profile,
-      environment?.sandboxCapabilityAudience ?? (profile.modelCredential === undefined
-        ? resolveSandboxCapabilityAudienceFromEnvironment(runtimeEnv)
-        : {
-            tenantId: profile.modelCredential.organizationId,
-            environmentId: profile.modelCredential.environmentId,
-          }),
+      environment?.sandboxCapabilityAudience ?? resolveSandboxCapabilityAudienceFromEnvironment(runtimeEnv),
+      environment?.sandboxCapabilityBrokerAuthority ?? resolveSandboxCapabilityBrokerAuthorityFromEnvironment(runtimeEnv),
       fingerprintResolvedProfile(profile),
       fingerprintSandboxCapabilityCatalogV1(profile.codeMode?.capabilities ?? []),
       environment?.sandboxCapabilityCredentialResolver,
@@ -4320,7 +4318,7 @@ function parseEnvString(
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function resolveSandboxCapabilityAudienceFromEnvironment(
+export function resolveSandboxCapabilityAudienceFromEnvironment(
   env: NodeJS.ProcessEnv,
 ): KestrelRuntimeEnvironment["sandboxCapabilityAudience"] {
   const tenantId = parseEnvString("KESTREL_TENANT_ID", env);
@@ -4329,9 +4327,19 @@ function resolveSandboxCapabilityAudienceFromEnvironment(
   return { tenantId, environmentId };
 }
 
+export function resolveSandboxCapabilityBrokerAuthorityFromEnvironment(
+  env: NodeJS.ProcessEnv,
+): KestrelRuntimeEnvironment["sandboxCapabilityBrokerAuthority"] {
+  const authorityId = parseEnvString("KESTREL_SANDBOX_BROKER_AUTHORITY_ID", env);
+  const revision = parseEnvString("KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION", env);
+  if (authorityId === undefined || revision === undefined) return;
+  return { authorityId, revision };
+}
+
 export function resolveSandboxCapabilityRuntimeEnvironment(
   profile: TuiProfile,
   trustedAudience: KestrelRuntimeEnvironment["sandboxCapabilityAudience"],
+  trustedBrokerAuthority: KestrelRuntimeEnvironment["sandboxCapabilityBrokerAuthority"],
   profileFingerprint: string,
   capabilityCatalogFingerprint: string,
   credentialResolver: KestrelRuntimeEnvironment["sandboxCapabilityCredentialResolver"],
@@ -4343,11 +4351,20 @@ export function resolveSandboxCapabilityRuntimeEnvironment(
   if (trustedAudience === undefined) {
     throw new Error("Sandbox capability trusted tenant and environment identity is unavailable.");
   }
+  if (trustedBrokerAuthority === undefined) {
+    throw new Error("Sandbox capability trusted broker authority is unavailable.");
+  }
   if (
     authored.audience.tenantId !== trustedAudience.tenantId ||
     authored.audience.environmentId !== trustedAudience.environmentId
   ) {
     throw new Error("Sandbox capability audience does not match the trusted runtime identity.");
+  }
+  if (
+    authored.brokerAuthority.authorityId !== trustedBrokerAuthority.authorityId ||
+    authored.brokerAuthority.revision !== trustedBrokerAuthority.revision
+  ) {
+    throw new Error("Sandbox capability broker authority does not match the trusted runtime authority.");
   }
   return {
     sandboxCapabilityRuntime: {
@@ -4356,7 +4373,7 @@ export function resolveSandboxCapabilityRuntimeEnvironment(
       executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
       profileFingerprint,
       capabilityCatalogFingerprint,
-      brokerAuthority: authored.brokerAuthority,
+      brokerAuthority: trustedBrokerAuthority,
       resolveCredentialSnapshot: credentialResolver,
       registerSensitiveValue,
       redactSensitiveValues,

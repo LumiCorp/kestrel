@@ -7,6 +7,8 @@ import {
   createModelGatewayForProfile,
   createRuntimeFactoryWithStore,
   resolveManagedWorktreesEnabledForRuntime,
+  resolveSandboxCapabilityAudienceFromEnvironment,
+  resolveSandboxCapabilityBrokerAuthorityFromEnvironment,
   resolveSandboxCapabilityRuntimeEnvironment,
 } from "../../cli/runtime/KestrelChatRuntime.js";
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
@@ -64,11 +66,13 @@ const CAPABILITY_PROFILE: TuiProfile = {
 function resolveCapabilityRuntime(
   profile: TuiProfile,
   trustedAudience: { tenantId: string; environmentId: string } | undefined,
+  trustedBrokerAuthority: { authorityId: string; revision: string } | undefined,
 ) {
   let credentialResolutions = 0;
   const resolved = resolveSandboxCapabilityRuntimeEnvironment(
     profile,
     trustedAudience,
+    trustedBrokerAuthority,
     "a".repeat(64),
     "b".repeat(64),
     async () => {
@@ -85,7 +89,7 @@ test("sandbox capability runtime binds the authored audience to independent runt
   const { resolved } = resolveCapabilityRuntime(CAPABILITY_PROFILE, {
     tenantId: "tenant-a",
     environmentId: "environment-a",
-  });
+  }, { authorityId: "broker-a", revision: "revision-a" });
   assert.ok(resolved?.sandboxCapabilityRuntime);
   assert.deepEqual(
     {
@@ -111,6 +115,7 @@ test("sandbox capability runtime rejects forged tenant and environment audiences
       () => resolveSandboxCapabilityRuntimeEnvironment(
         CAPABILITY_PROFILE,
         trustedAudience,
+        { authorityId: "broker-a", revision: "revision-a" },
         "a".repeat(64),
         "b".repeat(64),
         async () => {
@@ -128,9 +133,84 @@ test("sandbox capability runtime rejects forged tenant and environment audiences
 
 test("sandbox capability runtime fails closed without an independent runtime identity", () => {
   assert.throws(
-    () => resolveCapabilityRuntime(CAPABILITY_PROFILE, undefined),
+    () => resolveCapabilityRuntime(
+      CAPABILITY_PROFILE,
+      undefined,
+      { authorityId: "broker-a", revision: "revision-a" },
+    ),
     /trusted tenant and environment identity is unavailable/u,
   );
+});
+
+test("sandbox capability runtime rejects forged broker authority before credential resolution", () => {
+  for (const trustedBrokerAuthority of [
+    { authorityId: "broker-b", revision: "revision-a" },
+    { authorityId: "broker-a", revision: "revision-b" },
+  ]) {
+    const result = () => resolveCapabilityRuntime(
+      CAPABILITY_PROFILE,
+      { tenantId: "tenant-a", environmentId: "environment-a" },
+      trustedBrokerAuthority,
+    );
+    assert.throws(result, /broker authority does not match/u);
+  }
+});
+
+test("sandbox capability runtime fails closed without independent broker authority", () => {
+  assert.throws(
+    () => resolveCapabilityRuntime(
+      CAPABILITY_PROFILE,
+      { tenantId: "tenant-a", environmentId: "environment-a" },
+      undefined,
+    ),
+    /trusted broker authority is unavailable/u,
+  );
+});
+
+test("local capability authority is assembled only from host runtime variables", () => {
+  const env = {
+    KESTREL_TENANT_ID: "tenant-a",
+    KESTREL_ENVIRONMENT_ID: "environment-a",
+    KESTREL_SANDBOX_BROKER_AUTHORITY_ID: "broker-a",
+    KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION: "revision-a",
+  };
+  assert.deepEqual(resolveSandboxCapabilityAudienceFromEnvironment(env), CAPABILITY_PROFILE.codeMode?.capabilities?.[0]?.audience);
+  assert.deepEqual(resolveSandboxCapabilityBrokerAuthorityFromEnvironment(env), CAPABILITY_PROFILE.codeMode?.capabilities?.[0]?.brokerAuthority);
+  assert.equal(resolveSandboxCapabilityAudienceFromEnvironment({ KESTREL_TENANT_ID: "tenant-a" }), undefined);
+  assert.equal(resolveSandboxCapabilityBrokerAuthorityFromEnvironment({ KESTREL_SANDBOX_BROKER_AUTHORITY_ID: "broker-a" }), undefined);
+});
+
+test("gateway profile credential identity cannot replace host-resolved capability authority", () => {
+  let credentialResolutions = 0;
+  const gatewayProfile: TuiProfile = {
+    ...CAPABILITY_PROFILE,
+    modelCredential: {
+      source: "kestrel-one",
+      runId: "run-a",
+      gatewayId: "gateway-a",
+      organizationId: "tenant-a",
+      environmentId: "environment-a",
+      rawModelId: "openai/gpt-5.4",
+      provider: "openai",
+    },
+  };
+  assert.throws(
+    () => resolveSandboxCapabilityRuntimeEnvironment(
+      gatewayProfile,
+      { tenantId: "tenant-a", environmentId: "host-environment" },
+      { authorityId: "broker-a", revision: "revision-a" },
+      "a".repeat(64),
+      "b".repeat(64),
+      async () => {
+        credentialResolutions += 1;
+        return { credentialId: "tool.tavily.default", revision: "credential-a", secret: "secret-a" };
+      },
+      () => undefined,
+      (value) => value,
+    ),
+    /audience does not match/u,
+  );
+  assert.equal(credentialResolutions, 0);
 });
 
 test("resolveManagedWorktreesEnabledForRuntime defaults off and honors explicit opt-in", () => {
