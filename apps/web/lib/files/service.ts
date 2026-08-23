@@ -18,6 +18,10 @@ import { canManageOrganization } from "@/lib/knowledge/organization-access";
 import { getProjectAccess, requireProjectRole } from "@/lib/projects/access";
 import { getThreadForUser } from "@/lib/threads/store";
 import { getManagedFileStorageProvider } from "./storage-provider";
+import {
+  ensureEffectiveFileAvailability,
+  ensureFileBlobAvailable,
+} from "./availability";
 
 export type FileScanResult = "clean" | "quarantined" | "unavailable";
 export type FileScanner = (input: {
@@ -61,6 +65,9 @@ export async function createPublishedFileFromBuffer(input: {
     ),
   });
   const storage = getManagedFileStorageProvider();
+  if (blob) {
+    await ensureReusableBlob(blob);
+  }
   if (!blob) {
     const blobId = `blob-${randomUUID()}`;
     const objectKey = storage.buildOriginalKey({
@@ -80,6 +87,8 @@ export async function createPublishedFileFromBuffer(input: {
         objectKey,
         sizeBytes: input.buffer.byteLength,
         sha256,
+        availabilityStatus: "available",
+        availabilityCheckedAt: new Date(),
         scanStatus: "unavailable",
       }).returning();
       blob = createdBlob;
@@ -96,6 +105,7 @@ export async function createPublishedFileFromBuffer(input: {
     }
   }
   if (!blob) throw new Error("File blob could not be created.");
+  await ensureReusableBlob(blob);
   const fileId = `file-${randomUUID()}`;
   await knowledgeDb.transaction(async (tx) => {
     await tx.insert(schema.kestrelFiles).values({
@@ -146,6 +156,8 @@ type FileRow = {
   detectedMediaType: string | null;
   sizeBytes: number;
   sha256: string | null;
+  availabilityStatus: "unknown" | "available" | "missing";
+  blobDeletedAt: Date | null;
   lifecycleState: "draft" | "ready" | "quarantined" | "failed" | "deleted";
   createdAt: Date;
   representationStatus: "native_image" | "extracted_text" | "staged_file" | "metadata_only";
@@ -182,6 +194,7 @@ export async function initializeThreadFile(input: {
       objectKey,
       sizeBytes: input.sizeBytes,
       sha256: null,
+      availabilityStatus: "unknown",
       scanStatus: "pending",
       createdAt,
     });
@@ -464,10 +477,19 @@ export async function resolveReadyThreadFiles(input: {
   if (ordered.some((row) => !row || row.lifecycleState !== "ready" || !row.sha256 || !row.detectedMediaType)) {
     throw new Error("One or more files are unavailable, incomplete, or quarantined.");
   }
+  const readyFiles = ordered as Array<FileRow & { sha256: string; detectedMediaType: string }>;
+  await Promise.all(readyFiles.map((file) => ensureEffectiveFileAvailability({
+    fileId: file.id,
+    lifecycleState: file.lifecycleState,
+    blobId: file.blobId,
+    objectKey: file.objectKey,
+    availabilityStatus: file.availabilityStatus,
+    blobDeletedAt: file.blobDeletedAt,
+  })));
   if (ordered.reduce((sum, row) => sum + (row?.sizeBytes ?? 0), 0) > CONVERSATION_ATTACHMENT_MAX_TURN_BYTES) {
     throw new Error("Files exceed the 500 MiB per-message limit.");
   }
-  return ordered as Array<FileRow & { sha256: string; detectedMediaType: string }>;
+  return readyFiles;
 }
 
 export async function resolveThreadFilesForExecution(input: {
@@ -614,28 +636,48 @@ export async function listThreadFileInventory(input: {
   organizationId: string;
   userId: string;
   limit?: number | undefined;
+  checkAvailability?: boolean | undefined;
 }) {
   const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
   if (!thread) throw new Error("Thread not found.");
-  return await knowledgeDb.select({
+  const rows = await knowledgeDb.select({
     fileId: schema.kestrelFiles.id,
+    blobId: schema.kestrelFiles.blobId,
+    objectKey: schema.fileBlobs.objectKey,
     filename: schema.kestrelFiles.filename,
     mediaType: schema.kestrelFiles.detectedMediaType,
     sizeBytes: schema.kestrelFiles.sizeBytes,
     sha256: schema.kestrelFiles.sha256,
     state: schema.kestrelFiles.lifecycleState,
+    availabilityStatus: schema.fileBlobs.availabilityStatus,
+    blobDeletedAt: schema.fileBlobs.deletedAt,
     createdAt: schema.kestrelFiles.createdAt,
   }).from(schema.fileScopeGrants)
     .innerJoin(schema.kestrelFiles, eq(schema.kestrelFiles.id, schema.fileScopeGrants.fileId))
+    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId))
     .where(and(
       eq(schema.fileScopeGrants.organizationId, input.organizationId),
       eq(schema.fileScopeGrants.scopeType, "thread"),
       eq(schema.fileScopeGrants.threadId, input.threadId),
       isNull(schema.fileScopeGrants.revokedAt),
       eq(schema.kestrelFiles.lifecycleState, "ready"),
+      input.checkAvailability === false
+        ? eq(schema.fileBlobs.availabilityStatus, "available")
+        : undefined,
     ))
     .orderBy(desc(schema.kestrelFiles.createdAt))
     .limit(Math.min(Math.max(input.limit ?? 50, 1), 100));
+  if (input.checkAvailability !== false) {
+    await Promise.all(rows.map((row) => ensureEffectiveFileAvailability({
+      fileId: row.fileId,
+      lifecycleState: row.state,
+      blobId: row.blobId,
+      objectKey: row.objectKey,
+      availabilityStatus: row.availabilityStatus,
+      blobDeletedAt: row.blobDeletedAt,
+    })));
+  }
+  return rows;
 }
 
 export async function searchVisibleFiles(input: {
@@ -783,6 +825,8 @@ async function selectFileRows(conditions: Array<SQL | undefined>) {
     sizeBytes: schema.kestrelFiles.sizeBytes,
     sha256: schema.kestrelFiles.sha256,
     lifecycleState: schema.kestrelFiles.lifecycleState,
+    availabilityStatus: schema.fileBlobs.availabilityStatus,
+    blobDeletedAt: schema.fileBlobs.deletedAt,
     createdAt: schema.kestrelFiles.createdAt,
     representationStatus: sql<FileRow["representationStatus"]>`coalesce(${schema.fileRepresentations.kind}, 'metadata_only')`,
     metadataOnlyReason: schema.fileRepresentations.error,
@@ -814,6 +858,7 @@ async function finalizeBlobDeduplication(input: {
     ),
   });
   if (existing && existing.id !== input.file.blobId) {
+    await ensureReusableBlob(existing);
     await knowledgeDb.update(schema.kestrelFiles).set({ blobId: existing.id })
       .where(eq(schema.kestrelFiles.id, input.file.id));
     await knowledgeDb.delete(schema.fileBlobs).where(eq(schema.fileBlobs.id, input.file.blobId));
@@ -825,6 +870,8 @@ async function finalizeBlobDeduplication(input: {
     [updated] = await knowledgeDb.update(schema.fileBlobs).set({
       sha256: input.sha256,
       scanStatus: input.scanResult,
+      availabilityStatus: "available",
+      availabilityCheckedAt: new Date(),
     }).where(eq(schema.fileBlobs.id, input.file.blobId)).returning();
   } catch (error) {
     const raced = await knowledgeDb.query.fileBlobs.findFirst({
@@ -835,6 +882,7 @@ async function finalizeBlobDeduplication(input: {
       ),
     });
     if (!raced || raced.id === input.file.blobId) throw error;
+    await ensureReusableBlob(raced);
     await knowledgeDb.update(schema.kestrelFiles).set({ blobId: raced.id })
       .where(eq(schema.kestrelFiles.id, input.file.id));
     await knowledgeDb.delete(schema.fileBlobs).where(eq(schema.fileBlobs.id, input.file.blobId));
@@ -845,6 +893,15 @@ async function finalizeBlobDeduplication(input: {
   return updated;
 }
 
+async function ensureReusableBlob(blob: typeof schema.fileBlobs.$inferSelect) {
+  await ensureFileBlobAvailable({
+    blobId: blob.id,
+    objectKey: blob.objectKey,
+    availabilityStatus: blob.availabilityStatus,
+    deletedAt: blob.deletedAt,
+  });
+}
+
 export async function processStoredFileRepresentation(input: {
   blobId: string;
   objectKey: string;
@@ -852,6 +909,16 @@ export async function processStoredFileRepresentation(input: {
   mediaType: string;
 }) {
   const storage = getManagedFileStorageProvider();
+  const blob = await knowledgeDb.query.fileBlobs.findFirst({
+    where: eq(schema.fileBlobs.id, input.blobId),
+  });
+  if (!blob) throw new Error("File blob not found.");
+  await ensureFileBlobAvailable({
+    blobId: blob.id,
+    objectKey: input.objectKey,
+    availabilityStatus: blob.availabilityStatus,
+    deletedAt: blob.deletedAt,
+  });
   let kind: "native_image" | "extracted_text" | "metadata_only" = "metadata_only";
   let textContent: string | null = null;
   let truncated = false;

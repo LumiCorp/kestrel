@@ -5,6 +5,7 @@ export * from "./desktop-credential-envelope.js";
 export * from "./preview-edge.js";
 export * from "./preview-relay.js";
 export * from "./workspace-readiness.js";
+export * from "./turn-attachment.js";
 
 export const ENVIRONMENT_ROUTER_AUDIENCE = "kestrel-environment-router";
 export const ENVIRONMENT_TICKET_VERSION = 2;

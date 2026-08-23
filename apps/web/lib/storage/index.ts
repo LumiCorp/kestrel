@@ -24,6 +24,14 @@ function parseStorageProvider(value: string | undefined): StorageProvider {
 
 export function getStorageConfig(): StorageConfig {
   const provider = parseStorageProvider(process.env.STORAGE_PROVIDER);
+  if (
+    process.env.FLY_MACHINE_ID?.trim() &&
+    provider === "local"
+  ) {
+    throw new Error(
+      "Hosted workers cannot use implicit local attachment storage; configure the web storage boundary instead.",
+    );
+  }
   const isLocalS3 = provider === "local-s3";
 
   return {

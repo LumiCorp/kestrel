@@ -15,11 +15,13 @@ import {
   generateDesktopCredentialEncryptionKeyPair,
   signEnvironmentExecutionTicket,
   signEnvironmentToolCredential,
+  signTurnAttachmentResolutionTicket,
   signPreviewEdgeRouteTicket,
   signPreviewRelayTicket,
   verifyEnvironmentExecutionTicket,
   verifyEnvironmentExecutionTicketForRenewal,
   verifyEnvironmentToolCredential,
+  verifyTurnAttachmentResolutionTicket,
   verifyPreviewEdgeRouteTicket,
   verifyPreviewRelayTicket,
   WORKSPACE_EXECUTION_ACTIVATION_TIMEOUT_MS,
@@ -38,6 +40,9 @@ import {
   WORKSPACE_RUNNER_STARTUP_TIMEOUT_SECONDS,
   type EnvironmentExecutionTicket,
   type EnvironmentToolCredentialTicket,
+  type TurnAttachmentResolutionTicket,
+  TURN_ATTACHMENT_RESOLUTION_TICKET_AUDIENCE,
+  TURN_ATTACHMENT_RESOLUTION_TICKET_VERSION,
 } from "../src/index.js";
 
 
@@ -85,6 +90,51 @@ const providerNeutralTicket: EnvironmentExecutionTicket = {
   expiresAt: 1300,
   nonce: "nonce-2",
 };
+
+const attachmentTicket: TurnAttachmentResolutionTicket = {
+  version: TURN_ATTACHMENT_RESOLUTION_TICKET_VERSION,
+  audience: TURN_ATTACHMENT_RESOLUTION_TICKET_AUDIENCE,
+  turnId: "turn-1",
+  issuedAt: 1000,
+  expiresAt: 1060,
+  nonce: "attachment-nonce-1",
+};
+
+test("turn attachment tickets are strict, short-lived, and parser-separated", () => {
+  const token = signTurnAttachmentResolutionTicket({
+    ticket: attachmentTicket,
+    privateKey,
+  });
+  assert.deepEqual(
+    verifyTurnAttachmentResolutionTicket({ token, publicKey, now: 1030 }),
+    attachmentTicket,
+  );
+  assert.throws(() =>
+    verifyEnvironmentExecutionTicket({ token, publicKey, now: 1030 }),
+  );
+  assert.throws(() =>
+    signTurnAttachmentResolutionTicket({
+      ticket: { ...attachmentTicket, expiresAt: 1061 },
+      privateKey,
+    }),
+  );
+  assert.throws(() =>
+    signTurnAttachmentResolutionTicket({
+      ticket: { ...attachmentTicket, extra: "rejected" } as never,
+      privateKey,
+    }),
+  );
+  assert.throws(() =>
+    verifyTurnAttachmentResolutionTicket({ token, publicKey, now: 1060 }),
+  );
+  assert.throws(() =>
+    verifyTurnAttachmentResolutionTicket({
+      token: `${token}x`,
+      publicKey,
+      now: 1030,
+    }),
+  );
+});
 
 test(
   "Workspace readiness layers have explicit increasing recovery budgets",

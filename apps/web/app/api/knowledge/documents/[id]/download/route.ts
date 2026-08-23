@@ -3,6 +3,8 @@ import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { requireKnowledgeDocumentAccess } from "@/lib/knowledge/documents/access";
+import { getFileByIdForUser } from "@/lib/files/service";
+import { ensureEffectiveFileAvailability } from "@/lib/files/availability";
 import { isInlineRenderableMediaType } from "@/lib/knowledge/documents/shared";
 import { errorResponse } from "@/lib/knowledge/http";
 import { getStorageAdapter } from "@/lib/storage";
@@ -26,6 +28,19 @@ export async function GET(
       organizationId,
       user: session.user,
       documentId: params.id,
+    });
+    const file = await getFileByIdForUser({
+      fileId: document.fileId,
+      organizationId,
+      userId: session.user.id,
+    });
+    await ensureEffectiveFileAvailability({
+      fileId: file.id,
+      lifecycleState: file.lifecycleState,
+      blobId: file.blobId,
+      objectKey: file.objectKey,
+      availabilityStatus: file.availabilityStatus,
+      blobDeletedAt: file.blobDeletedAt,
     });
 
     const storage = getStorageAdapter();
