@@ -404,6 +404,7 @@ const commandPayloads: Record<RunnerCommandType, Record<string, unknown>> = {
     },
   },
   "run.cancel": { sessionId: "session-1", runId: "run-1" },
+  "effect.result.get": { sessionId: "session-1", runId: "run-1", idempotencyKey: "call-1" },
   "session.describe": { sessionId: "session-1" },
   "session.state": { sessionId: "session-1" },
   "operator.inbox": { sessionId: "session-1" },
@@ -687,6 +688,13 @@ const eventPayloads: Record<RunnerEventType, Record<string, unknown>> = {
   "run.failed": {
     result: { ...terminalResult, output: { ...terminalResult.output, status: "FAILED" } },
     error: { code: "RUN_FAILED", message: "Run failed" },
+  },
+  "effect.result.loaded": {
+    version: 1,
+    sessionId: "session-1",
+    runId: "run-1",
+    idempotencyKey: "call-1",
+    result: { version: 2, toolCallId: "call-1", status: "success", output: {} },
   },
   "runner.error": { code: "INVALID_COMMAND", message: "Invalid command" },
   "runner.pong": { nonce: "ping-1" },

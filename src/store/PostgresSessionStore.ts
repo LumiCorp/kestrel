@@ -6,6 +6,7 @@ import type {
 import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
+  validateExactEffectResultRead,
 } from "../kestrel/contracts/store.js";
 import type {
   RunEvent,
@@ -1646,6 +1647,14 @@ export class PostgresSessionStore implements SessionStore {
       ...(row.error_json === null ? {} : { error: row.error_json }),
       timestamp: normalizeTimestampString(row.created_at),
     };
+  }
+
+  async readExactEffectResult(input: { sessionId: string; runId: string; idempotencyKey: string }) {
+    return validateExactEffectResultRead({
+      requested: input,
+      effect: await this.getPersistedEffect(input.idempotencyKey),
+      effectResult: await this.getEffectResult(input.idempotencyKey),
+    });
   }
 
   async saveEffectResult(

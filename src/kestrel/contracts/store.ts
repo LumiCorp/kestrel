@@ -37,6 +37,7 @@ import type {
   RuntimeEvent,
   RuntimeEventIntent,
 } from "./events.js";
+import { parseAgentToolResultV2, parsePreparedToolCallV1, type AgentToolResultV2 } from "./tool-invocation.js";
 
 export class SandboxCapabilityExactResultCancelledError extends Error {}
 export class SandboxCapabilityExactResultConflictError extends Error {}
@@ -454,6 +455,49 @@ export interface EffectStore {
   spawnRegionWorkItems(sessionId: string, items: RegionWorkIntent[]): Promise<void>;
 }
 
+export type ExactEffectResultRead =
+  | { status: "found"; result: AgentToolResultV2 }
+  | { status: "not_found" }
+  | { status: "incomplete" }
+  | { status: "conflict" };
+
+export interface ExactEffectResultStore {
+  readExactEffectResult(input: {
+    sessionId: string;
+    runId: string;
+    idempotencyKey: string;
+  }): Promise<ExactEffectResultRead>;
+}
+
+export function validateExactEffectResultRead(input: {
+  requested: { sessionId: string; runId: string; idempotencyKey: string };
+  effect: PersistedEffect | null;
+  effectResult: EffectResult | null;
+}): ExactEffectResultRead {
+  const { requested, effect, effectResult } = input;
+  if (effect === null) return { status: "not_found" };
+  if (
+    effect.sessionId !== requested.sessionId ||
+    effect.runId !== requested.runId ||
+    effect.idempotencyKey !== requested.idempotencyKey
+  ) return { status: "not_found" };
+  if (effect.type !== "execute_tool_call") return { status: "conflict" };
+  let prepared;
+  try { prepared = parsePreparedToolCallV1(effect.payload.preparedToolCall); } catch { return { status: "conflict" }; }
+  if (
+    prepared.sessionId !== requested.sessionId ||
+    prepared.runId !== requested.runId ||
+    prepared.callId !== requested.idempotencyKey
+  ) return { status: "conflict" };
+  if (effect.status !== "DONE" || effectResult === null) return { status: "incomplete" };
+  if (effectResult.idempotencyKey !== requested.idempotencyKey) return { status: "conflict" };
+  if (effectResult.status !== "DONE" || effectResult.output === undefined) return { status: "incomplete" };
+  let result: AgentToolResultV2;
+  try { result = parseAgentToolResultV2(effectResult.output); } catch { return { status: "conflict" }; }
+  if (result.toolCallId !== requested.idempotencyKey) return { status: "conflict" };
+  return { status: "found", result };
+}
+
 export interface OutboxStore {
   listUndeliveredOutbox(limit: number, runId?: string): Promise<OutboxEventRecord[]>;
   markOutboxDeliveredBatch(ids: number[]): Promise<void>;
@@ -700,6 +744,7 @@ export interface SessionStore
     MissionControlProjectRepository,
     ThreadStore,
     AssemblyStore {
+  readExactEffectResult?: ExactEffectResultStore["readExactEffectResult"];
   recoverOrphanedActiveRun?(
     sessionId: string,
   ): Promise<{ runId?: string | undefined }>;

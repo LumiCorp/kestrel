@@ -46,6 +46,7 @@ import type {
   MissionControlProjectStateRecord,
 } from "../../src/index.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
+import type { ExactEffectResultStore } from "../../src/kestrel/contracts/store.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { resolveKestrelHome } from "../config/kestrelHome.js";
 import { ProfileStore } from "../config/ProfileStore.js";
@@ -81,6 +82,7 @@ import type {
   ProjectReviewGetCommandPayload,
   ProjectSnapshotGetCommandPayload,
   RunCancelCommandPayload,
+  EffectResultGetCommandPayload,
   RunnerCommandMetadata,
   RunnerPingCommandPayload,
   SessionDescribeCommandPayload,
@@ -596,6 +598,7 @@ export class RunnerHost {
   private readonly profileProvider: RunnerProfileProvider;
   private readonly profileSourcePolicy: RunnerProfileSourcePolicy;
   private readonly diagnosticsStore: Pick<DiagnosticLogStore, "append">;
+  private readonly exactEffectResultStore: ExactEffectResultStore | undefined;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly commandBySession = new Map<string, string>();
   private readonly commandTypeBySession = new Map<
@@ -624,6 +627,7 @@ export class RunnerHost {
     options: {
       profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
       diagnosticsStore?: Pick<DiagnosticLogStore, "append"> | undefined;
+      exactEffectResultStore?: ExactEffectResultStore | undefined;
     } = {},
   ) {
     this.writer = writer;
@@ -632,6 +636,21 @@ export class RunnerHost {
     this.profileSourcePolicy =
       options.profileSourcePolicy ?? "inline-or-registered";
     this.diagnosticsStore = options.diagnosticsStore ?? new DiagnosticLogStore();
+    this.exactEffectResultStore = options.exactEffectResultStore;
+  }
+
+  async effectResultGet(commandId: string, payload: EffectResultGetCommandPayload): Promise<void> {
+    if (this.exactEffectResultStore === undefined) {
+      this.writer.emit("runner.error", { code: "EFFECT_RESULT_LOOKUP_UNAVAILABLE", message: "Exact effect result lookup is unavailable." }, { commandId });
+      return;
+    }
+    const read = await this.exactEffectResultStore.readExactEffectResult(payload);
+    if (read.status !== "found") {
+      const code = read.status === "not_found" ? "EFFECT_RESULT_NOT_FOUND" : read.status === "incomplete" ? "EFFECT_RESULT_INCOMPLETE" : "EFFECT_RESULT_CONFLICT";
+      this.writer.emit("runner.error", { code, message: "The requested exact effect result is not available." }, { commandId });
+      return;
+    }
+    this.writer.emit("effect.result.loaded", { version: 1, ...payload, result: { ...read.result } }, { commandId, sessionId: payload.sessionId, runId: payload.runId });
   }
 
   async profileList(

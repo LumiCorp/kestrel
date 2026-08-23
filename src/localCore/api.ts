@@ -927,6 +927,9 @@ async function createExecutionBundle(input: {
     ),
     profileSourcePolicy: "registered-only",
     eventJournal,
+    ...(storeHandle.store.readExactEffectResult === undefined ? {} : {
+      exactEffectResultStore: { readExactEffectResult: storeHandle.store.readExactEffectResult.bind(storeHandle.store) },
+    }),
   });
   try {
     await handler.ready();

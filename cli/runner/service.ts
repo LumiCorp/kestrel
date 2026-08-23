@@ -30,6 +30,9 @@ async function main(): Promise<void> {
             close: store.close,
           },
           eventJournal: store.eventJournal,
+          ...(store.store.readExactEffectResult === undefined ? {} : {
+            exactEffectResultStore: { readExactEffectResult: store.store.readExactEffectResult.bind(store.store) },
+          }),
         }),
     profileSourcePolicy: "registered-only",
     onRuntimeStoreEvent: (event) => {

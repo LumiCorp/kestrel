@@ -358,6 +358,7 @@ test("spawned Local Core executes an immutable capability profile through Docker
   const environmentId = "qualification-local";
   const authorityId = "qualification-broker";
   const authorityRevision = "qualification-r1";
+  const sessionId = `qualification-${randomUUID()}`;
   const runner = await startWebRunner(t, {
     OPENROUTER_API_KEY: "fixture-model-key", OPENROUTER_BASE_URL: fakeModel.url,
     TAVILY_API_KEY: "isolated-tavily-secret", KESTREL_TENANT_ID: tenantId, KESTREL_ENVIRONMENT_ID: environmentId,
@@ -380,7 +381,7 @@ test("spawned Local Core executes an immutable capability profile through Docker
   const response = await runCurlText({
     url: `${runner.url}/commands/stream`, method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
-    body: JSON.stringify({ id: "qualification-provider-used", type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId: runner.qualificationProfileId, turn: { sessionId: `qualification-${randomUUID()}`, message: "qualification provider-used", eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true } } } } }),
+    body: JSON.stringify({ id: "qualification-provider-used", type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId: runner.qualificationProfileId, turn: { sessionId, message: "qualification provider-used", eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true } } } } }),
   });
   assert.equal(response.status, 200);
   assert.match(response.body, /event: run\.completed/u);
@@ -392,6 +393,23 @@ test("spawned Local Core executes an immutable capability profile through Docker
   assert.equal(response.body.includes("isolated-tavily-secret"), false);
   assert.match(response.body, /capabilityReplayEvidence/u);
   assert.match(response.body, /"toolName":"code\.execute"/u);
+  const completed = readSseEvent(response.body, "run.completed") as { runId?: string };
+  assert.ok(completed.runId);
+  const exactResultKey = response.body.match(/"idempotencyKey":"([^"]+)"/u)?.[1];
+  assert.ok(exactResultKey);
+  const lookup = async () => await runCurlJson({
+    url: `${runner.url}/commands`, method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
+    body: JSON.stringify({ id: `qualification-local-effect-${randomUUID()}`, type: "effect.result.get", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { sessionId, runId: completed.runId, idempotencyKey: exactResultKey } }),
+  });
+  const liveRead = await lookup();
+  assert.equal(liveRead.status, 200, JSON.stringify(liveRead.body));
+  const evidenceBeforeRestart = await readFile(evidencePath, "utf8");
+  await runner.restartCore({ TAVILY_API_KEY: undefined, PATH: "/usr/bin:/bin" });
+  const restartedRead = await lookup();
+  assert.equal(restartedRead.status, 200, JSON.stringify(restartedRead.body));
+  assert.deepEqual((restartedRead.body.payload as { result?: unknown }).result, (liveRead.body.payload as { result?: unknown }).result);
+  assert.equal(await readFile(evidencePath, "utf8"), evidenceBeforeRestart);
 });
 
 test("spawned hosted runner executes a registered capability profile through Docker and isolated provider transport", async (t) => {
@@ -405,6 +423,7 @@ test("spawned hosted runner executes a registered capability profile through Doc
   const environmentId = "qualification-hosted";
   const authorityId = "qualification-hosted-broker";
   const authorityRevision = "qualification-hosted-r1";
+  const sessionId = `qualification-hosted-${randomUUID()}`;
   const runner = await startHostedRunner(t, {
     OPENROUTER_API_KEY: "fixture-model-key", OPENROUTER_BASE_URL: fakeModel.url,
     KESTREL_TENANT_ID: tenantId, KESTREL_ENVIRONMENT_ID: environmentId,
@@ -430,7 +449,7 @@ test("spawned hosted runner executes a registered capability profile through Doc
   const response = await runCurlText({
     url: `${runner.url}/commands/stream`, method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
-    body: JSON.stringify({ id: "qualification-hosted-provider-used", type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId: resolvedEvent.payload?.profileId, turn: { sessionId: `qualification-hosted-${randomUUID()}`, message: "qualification provider-used", eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true } } } } }),
+    body: JSON.stringify({ id: "qualification-hosted-provider-used", type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId: resolvedEvent.payload?.profileId, turn: { sessionId, message: "qualification provider-used", eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true } } } } }),
   });
   assert.equal(response.status, 200);
   assert.match(response.body, /event: run\.completed/u);
@@ -442,6 +461,31 @@ test("spawned hosted runner executes a registered capability profile through Doc
   assert.equal(response.body.includes("isolated-tavily-secret"), false);
   assert.match(response.body, /capabilityReplayEvidence/u);
   assert.match(response.body, /"toolName":"code\.execute"/u);
+  const completed = readSseEvent(response.body, "run.completed") as { runId?: string };
+  assert.ok(completed.runId);
+  const exactResultKey = response.body.match(/"idempotencyKey":"([^"]+)"/u)?.[1];
+  assert.ok(exactResultKey);
+  const lookup = async () => await runCurlJson({
+    url: `${runner.url}/commands`, method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
+    body: JSON.stringify({ id: `qualification-hosted-effect-${randomUUID()}`, type: "effect.result.get", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { sessionId, runId: completed.runId, idempotencyKey: exactResultKey } }),
+  });
+  const liveRead = await lookup();
+  assert.equal(liveRead.status, 200, JSON.stringify(liveRead.body));
+  assert.equal(liveRead.body.type, "effect.result.loaded");
+  const evidenceBeforeRestart = await readFile(evidencePath, "utf8");
+  await runner.restart({ KESTREL_SANDBOX_TAVILY_CREDENTIAL: undefined, KESTREL_SANDBOX_TAVILY_CREDENTIAL_REVISION: undefined });
+  const restartedHealth = await runCurlJson({
+    url: `${runner.url}/health`,
+    headers: { authorization: `Bearer ${runner.token}` },
+  });
+  assert.equal(restartedHealth.status, 200, JSON.stringify(restartedHealth.body));
+  const restartedRead = await lookup().catch((error) => {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\nHosted stderr:\n${runner.stderrOutput()}`);
+  });
+  assert.equal(restartedRead.status, 200, JSON.stringify(restartedRead.body));
+  assert.deepEqual((restartedRead.body.payload as { result?: unknown }).result, (liveRead.body.payload as { result?: unknown }).result);
+  assert.equal(await readFile(evidencePath, "utf8"), evidenceBeforeRestart);
 });
 
 test("kestrel web forces shutdown after the grace period when an event stream is still connected", async (t) => {
@@ -545,34 +589,65 @@ async function ensureCurlAvailable(): Promise<void> {
 async function startHostedRunner(
   t: TestContext,
   envOverrides: NodeJS.ProcessEnv = {},
-): Promise<{ url: string; token: string }> {
+): Promise<{ url: string; token: string; restart(overrides?: NodeJS.ProcessEnv): Promise<void>; stderrOutput(): string }> {
   const repoRoot = process.cwd();
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-hosted-runner-"));
   const storeDir = path.join(root, "store");
   const home = path.join(root, "home");
   const port = await reservePort();
   const token = `qualification-${randomUUID()}`;
-  const stdoutChunks: string[] = [];
-  const stderrChunks: string[] = [];
-  const child = spawn(process.execPath, ["--import", "tsx", path.resolve(repoRoot, "cli/runner/service.ts")], {
-    cwd: repoRoot,
-    env: { ...process.env, ...envOverrides, KESTREL_HOME: home, KESTREL_DISABLE_DOTENV: "1", KESTREL_RUNNER_STORE_DIR: storeDir, KESTREL_RUNNER_SERVICE_HOST: "127.0.0.1", KESTREL_RUNNER_SERVICE_PORT: String(port), KESTREL_RUNNER_SERVICE_TOKEN: token, FORCE_COLOR: "0" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  child.stdout.on("data", (chunk) => stdoutChunks.push(chunk.toString("utf8")));
-  child.stderr.on("data", (chunk) => stderrChunks.push(chunk.toString("utf8")));
-  const exitPromise = waitForClose(child);
+  const launch = (overrides: NodeJS.ProcessEnv = {}) => {
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    const child = spawn(process.execPath, ["--import", "tsx", path.resolve(repoRoot, "cli/runner/service.ts")], {
+      cwd: repoRoot,
+      env: { ...process.env, ...envOverrides, ...overrides, KESTREL_HOME: home, KESTREL_DISABLE_DOTENV: "1", KESTREL_RUNNER_STORE_DIR: storeDir, KESTREL_RUNNER_SERVICE_HOST: "127.0.0.1", KESTREL_RUNNER_SERVICE_PORT: String(port), KESTREL_RUNNER_SERVICE_TOKEN: token, FORCE_COLOR: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout.on("data", (chunk) => stdoutChunks.push(chunk.toString("utf8")));
+    child.stderr.on("data", (chunk) => stderrChunks.push(chunk.toString("utf8")));
+    return { child, stdoutChunks, stderrChunks, exitPromise: waitForClose(child) };
+  };
+  let current = launch();
+  const waitForStartup = async () => {
+    const timeout = new Promise<never>((_resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Hosted runner startup timed out:\n${current.stderrChunks.join("")}`)), 15_000);
+      timer.unref();
+    });
+    await Promise.race([
+      waitForOutput(current.stdoutChunks, /"type":"runner\.service\.started"/u),
+      current.exitPromise.then((exit) => {
+        throw new Error(`Hosted runner exited during startup (${JSON.stringify(exit)}):\n${current.stderrChunks.join("")}`);
+      }),
+      timeout,
+    ]);
+  };
+  const stopCurrent = async () => {
+    if (current.child.exitCode === null && current.child.signalCode === null) current.child.kill("SIGINT");
+    const forceTimer = setTimeout(() => {
+      if (current.child.exitCode === null && current.child.signalCode === null) current.child.kill("SIGKILL");
+    }, 10_000);
+    const exit = await current.exitPromise;
+    clearTimeout(forceTimer);
+    current.child.stdout.destroy();
+    current.child.stderr.destroy();
+    assert.ok(exit.code === 0 || exit.signal === "SIGKILL", current.stderrChunks.join(""));
+    return exit;
+  };
   t.after(async () => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGINT");
-    const exit = await exitPromise;
+    await stopCurrent();
     await rm(root, { recursive: true, force: true });
-    assert.equal(exit.code, 0, stderrChunks.join(""));
   });
-  const startup = await waitForOutput(stdoutChunks, /"type":"runner\.service\.started"/u);
-  if (child.exitCode !== null || child.signalCode !== null) {
-    throw new Error(`Hosted runner exited during startup:\n${stderrChunks.join("")}\n${startup}`);
+  await waitForStartup();
+  if (current.child.exitCode !== null || current.child.signalCode !== null) {
+    throw new Error(`Hosted runner exited during startup:\n${current.stderrChunks.join("")}`);
   }
-  return { url: `http://127.0.0.1:${port}`, token };
+  return { url: `http://127.0.0.1:${port}`, token, stderrOutput: () => current.stderrChunks.join(""), async restart(overrides = {}) {
+    const stopped = await stopCurrent();
+    assert.equal(stopped.code, 0, `Hosted runner did not close its persistent store cleanly: ${JSON.stringify(stopped)}`);
+    current = launch(overrides);
+    await waitForStartup();
+  } };
 }
 
 async function startWebRunner(
@@ -589,25 +664,21 @@ async function startWebRunner(
   waitForExit(): Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   waitForStderr(pattern: RegExp): Promise<string>;
   stderrOutput(): string;
+  restartCore(overrides?: NodeJS.ProcessEnv): Promise<void>;
   qualificationProfileId?: string | undefined;
 }> {
   const repoRoot = process.cwd();
   const kestrelHome = await mkdtemp(path.join(os.tmpdir(), "kestrel-web-command-"));
   const corePaths = resolveLocalCorePaths(kestrelHome);
   const port = await reservePort();
-  const coreStderrChunks: string[] = [];
-  const core = spawn(
-    process.execPath,
-    [
-      "--import",
-      "tsx",
-      path.resolve(repoRoot, "src/localCore/daemonMain.ts"),
-    ],
-    {
+  const launchCore = (overrides: NodeJS.ProcessEnv = {}) => {
+    const coreStderrChunks: string[] = [];
+    const core = spawn(process.execPath, ["--import", "tsx", path.resolve(repoRoot, "src/localCore/daemonMain.ts")], {
       cwd: repoRoot,
       env: {
         ...process.env,
         ...envOverrides,
+        ...overrides,
         KESTREL_HOME: kestrelHome,
         // The web-runner fixture supplies isolated ambient credentials. Avoid
         // coupling it to the host developer's macOS Keychain.
@@ -623,25 +694,25 @@ async function startWebRunner(
         FORCE_COLOR: "0",
       },
       stdio: ["ignore", "ignore", "pipe"],
-    },
-  );
-  const coreExitPromise = waitForClose(core);
-  core.stderr.on("data", (chunk) => {
-    coreStderrChunks.push(chunk.toString("utf8"));
-  });
+    });
+    const coreExitPromise = waitForClose(core);
+    core.stderr.on("data", (chunk) => coreStderrChunks.push(chunk.toString("utf8")));
+    return { core, coreExitPromise, coreStderrChunks };
+  };
+  let coreState = launchCore();
   let coreToken: string;
   try {
     coreToken = await waitForLocalCoreReady({
       socketPath: corePaths.apiSocketPath,
       tokenPath: corePaths.apiTokenPath,
-      exitPromise: coreExitPromise,
-      stderrChunks: coreStderrChunks,
+      exitPromise: coreState.coreExitPromise,
+      stderrChunks: coreState.coreStderrChunks,
     });
   } catch (error) {
-    if (core.exitCode === null && core.signalCode === null) {
-      core.kill("SIGTERM");
+    if (coreState.core.exitCode === null && coreState.core.signalCode === null) {
+      coreState.core.kill("SIGTERM");
     }
-    await coreExitPromise;
+    await coreState.coreExitPromise;
     await rm(kestrelHome, { recursive: true, force: true });
     throw error;
   }
@@ -696,10 +767,10 @@ async function startWebRunner(
       assert.equal(exit.code, 0);
       assert.match(stderrChunks.join(""), /runner service stopped/u);
     }
-    if (core.exitCode === null && core.signalCode === null) {
-      core.kill("SIGTERM");
+    if (coreState.core.exitCode === null && coreState.core.signalCode === null) {
+      coreState.core.kill("SIGTERM");
     }
-    await coreExitPromise;
+    await coreState.coreExitPromise;
     // The runner may have replaced an incompatible fixture daemon. This
     // isolated home belongs to the test, so stop whichever daemon currently
     // owns its lock before deleting the home.
@@ -732,6 +803,18 @@ async function startWebRunner(
     },
     stderrOutput() {
       return stderrChunks.join("");
+    },
+    async restartCore(overrides = {}) {
+      if (coreState.core.exitCode === null && coreState.core.signalCode === null) coreState.core.kill("SIGTERM");
+      await coreState.coreExitPromise;
+      coreState = launchCore(overrides);
+      const restartedToken = await waitForLocalCoreReady({
+        socketPath: corePaths.apiSocketPath,
+        tokenPath: corePaths.apiTokenPath,
+        exitPromise: coreState.coreExitPromise,
+        stderrChunks: coreState.coreStderrChunks,
+      });
+      assert.equal(restartedToken, coreToken, "Local Core restart must preserve the proxy authentication token.");
     },
   };
 }
@@ -851,7 +934,7 @@ async function runCurlJson(input: {
   headers?: Record<string, string>;
   body?: string;
 }): Promise<{ status: number; body: Record<string, unknown> }> {
-  const args = ["-sS", "-o", "-", "-w", "\n%{http_code}"];
+  const args = ["-sS", "--max-time", "20", "-o", "-", "-w", "\n%{http_code}"];
   if (input.method !== undefined && input.method !== "GET") {
     args.push("-X", input.method);
   }
@@ -925,6 +1008,17 @@ async function runCurlText(input: {
     status,
     body: rawBody,
   };
+}
+
+function readSseEvent(body: string, eventType: string): Record<string, unknown> {
+  const marker = `event: ${eventType}\n`;
+  const start = body.indexOf(marker);
+  if (start === -1) throw new Error(`SSE event '${eventType}' was not present.`);
+  const dataStart = start + marker.length;
+  const dataEnd = body.indexOf("\n\n", dataStart);
+  const line = body.slice(dataStart, dataEnd === -1 ? undefined : dataEnd);
+  if (line.startsWith("data: ") === false) throw new Error(`SSE event '${eventType}' had no data line.`);
+  return JSON.parse(line.slice("data: ".length)) as Record<string, unknown>;
 }
 
 async function startFakeOpenRouterServer(): Promise<{

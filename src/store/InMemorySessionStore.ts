@@ -10,6 +10,7 @@ import type {
 import {
   SandboxCapabilityExactResultCancelledError,
   SandboxCapabilityExactResultConflictError,
+  validateExactEffectResultRead,
 } from "../kestrel/contracts/store.js";
 import type {
   ClaimConversationTurnExecutionInput,
@@ -900,6 +901,14 @@ export class InMemorySessionStore implements SessionStore {
       return null;
     }
     return { ...result };
+  }
+
+  async readExactEffectResult(input: { sessionId: string; runId: string; idempotencyKey: string }) {
+    return validateExactEffectResultRead({
+      requested: input,
+      effect: await this.getPersistedEffect(input.idempotencyKey),
+      effectResult: await this.getEffectResult(input.idempotencyKey),
+    });
   }
 
   async saveEffectResult(_runId: string, _sessionId: string, result: EffectResult): Promise<void> {

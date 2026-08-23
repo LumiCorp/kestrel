@@ -54,6 +54,7 @@ export const RUNNER_COMMAND_TYPES = [
   "job.run",
   "run.start",
   "run.cancel",
+  "effect.result.get",
   "session.describe",
   "session.state",
   "operator.inbox",
@@ -191,6 +192,7 @@ export const RUNNER_EVENT_TYPES = [
   "run.agent_progress",
   "run.completed",
   "run.failed",
+  "effect.result.loaded",
   "runner.error",
   "runner.pong",
   "session.described",
@@ -1176,6 +1178,12 @@ export interface RunCancelCommandPayload {
   commandId?: string | undefined;
 }
 
+export interface EffectResultGetCommandPayload {
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+}
+
 export interface SessionDescribeCommandPayload {
   sessionId: string;
 }
@@ -1538,6 +1546,7 @@ export interface RunnerCommandPayloadByType {
   "job.run": JobRunCommandPayload;
   "run.start": RunStartCommandPayload;
   "run.cancel": RunCancelCommandPayload;
+  "effect.result.get": EffectResultGetCommandPayload;
   "session.describe": SessionDescribeCommandPayload;
   "session.state": SessionStateCommandPayload;
   "operator.inbox": OperatorInboxCommandPayload;
@@ -1841,6 +1850,14 @@ export interface RunFailedEventPayload {
   error: RunnerRunError;
 }
 
+export interface EffectResultLoadedEventPayload {
+  version: 1;
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+  result: Record<string, unknown>;
+}
+
 export interface RunnerErrorEventPayload {
   code: string;
   message: string;
@@ -2076,6 +2093,7 @@ export interface RunnerEventPayloadByType {
   "run.agent_progress": RunAgentProgressEventPayload;
   "run.completed": RunCompletedEventPayload;
   "run.failed": RunFailedEventPayload;
+  "effect.result.loaded": EffectResultLoadedEventPayload;
   "runner.error": RunnerErrorEventPayload;
   "runner.pong": RunnerPongEventPayload;
   "session.described": SessionDescribedEventPayload;
@@ -2137,6 +2155,7 @@ export interface RunnerResponseByCommandType {
   "job.run": RunnerEventEnvelope<"job.completed"> | RunnerEventEnvelope<"job.failed">;
   "run.start": RunnerRunTerminalEvent;
   "run.cancel": RunnerEventEnvelope<"run.cancelled"> | RunnerEventEnvelope<"runner.error">;
+  "effect.result.get": RunnerEventEnvelope<"effect.result.loaded"> | RunnerEventEnvelope<"runner.error">;
   "session.describe": RunnerEventEnvelope<"session.described">;
   "session.state": RunnerEventEnvelope<"session.state">;
   "operator.inbox": RunnerEventEnvelope<"operator.inbox">;
@@ -2203,6 +2222,7 @@ export const RUNNER_RESPONSE_EVENT_TYPES_BY_COMMAND_TYPE = {
   "job.run": ["job.completed", "job.failed"],
   "run.start": ["run.completed", "run.failed", "run.cancelled"],
   "run.cancel": ["run.cancelled", "runner.error"],
+  "effect.result.get": ["effect.result.loaded", "runner.error"],
   "session.describe": ["session.described"],
   "session.state": ["session.state"],
   "operator.inbox": ["operator.inbox"],
@@ -2556,6 +2576,12 @@ function parseRunnerCommandPayloadV2(
       requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
       validateOptionalNonEmptyString(payload.runId, `${label}.runId`);
       validateOptionalNonEmptyString(payload.commandId, `${label}.commandId`);
+      break;
+    case "effect.result.get":
+      rejectUnknownFields(payload, label, ["sessionId", "runId", "idempotencyKey"]);
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.runId, `${label}.runId`);
+      requireNonEmptyString(payload.idempotencyKey, `${label}.idempotencyKey`);
       break;
     case "session.describe":
     case "session.state":
@@ -3094,6 +3120,14 @@ function parseRunnerEventPayloadV2(
     case "run.failed":
       requireRecord(payload.result, `${label}.result`);
       validateRunError(payload.error, `${label}.error`);
+      break;
+    case "effect.result.loaded":
+      rejectUnknownFields(payload, label, ["version", "sessionId", "runId", "idempotencyKey", "result"]);
+      if (payload.version !== 1) throw new RunnerProtocolContractError(`${label}.version must be 1`);
+      requireNonEmptyString(payload.sessionId, `${label}.sessionId`);
+      requireNonEmptyString(payload.runId, `${label}.runId`);
+      requireNonEmptyString(payload.idempotencyKey, `${label}.idempotencyKey`);
+      requireRecord(payload.result, `${label}.result`);
       break;
     case "runner.error":
       requireNonEmptyString(payload.code, `${label}.code`);

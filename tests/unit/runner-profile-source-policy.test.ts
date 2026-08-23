@@ -105,6 +105,28 @@ test("RunnerHost emits execution profile resolution from provider", async () => 
   await host.close();
 });
 
+test("RunnerHost loads an exact persisted effect result without creating a runtime", async () => {
+  const events: Array<{ type: string; payload: unknown }> = [];
+  let runtimeCreations = 0;
+  const host = new RunnerHost(
+    { emit(type, payload) { events.push({ type, payload }); } },
+    () => { runtimeCreations += 1; throw new Error("runtime must not be created"); },
+    { async listProfiles() { return []; }, async getProfile() { return undefined; } },
+    {
+      exactEffectResultStore: {
+        async readExactEffectResult(input) {
+          assert.deepEqual(input, { sessionId: "session-1", runId: "run-1", idempotencyKey: "call-1" });
+          return { status: "found", result: { version: "v2", toolCallId: "call-1" } as never };
+        },
+      },
+    },
+  );
+  await host.effectResultGet("command-1", { sessionId: "session-1", runId: "run-1", idempotencyKey: "call-1" });
+  assert.equal(runtimeCreations, 0);
+  assert.deepEqual(events, [{ type: "effect.result.loaded", payload: { version: 1, sessionId: "session-1", runId: "run-1", idempotencyKey: "call-1", result: { version: "v2", toolCallId: "call-1" } } }]);
+  await host.close();
+});
+
 test("RunnerHost rejects a hosted provider result without immutable economics", async () => {
   const host = new RunnerHost(
     writer,
