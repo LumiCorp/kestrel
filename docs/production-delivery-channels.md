@@ -102,6 +102,13 @@ The command builds the selected role for `linux/amd64`, runs that role's image
 smoke, and pushes the selected tag. It does not inspect Git, deploy the image,
 or update another role. Save the final JSON output in the release notes.
 
+`turn-worker` and `workspace-runtime` publication additionally require
+`KESTREL_ONE_APP_URL` and `KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY`. Their image
+smokes run a one-shot signed request through Web-owned R2 access and the exact
+image's attachment materializer. They verify the fixed object size, SHA-256,
+read-only mode, and cleanup without starting pg-boss or creating a user turn.
+Publication stops before push if this bounded live canary fails.
+
 Image smoke is publication evidence only. It may prove an image-local health or
 missing-configuration contract, but it never proves production configuration,
 provider state, consumer registration, reconciliation, or live work delivery.

@@ -13,6 +13,7 @@ import {
   parseFlyMachineDeploymentArgs,
 } from "../../scripts/deploy-production-fly-machine.js";
 import {
+  assertProductionImageCanaryEnvironment,
   parsePublishProductionImageArgs,
   productionImageBuildCommands,
 } from "../../scripts/publish-production-image.js";
@@ -60,6 +61,45 @@ test("local publication builds one amd64 image, smokes it, then pushes", () => {
     ["docker buildx", "bash smoke.sh", "docker push"],
   );
   assert.match(commands[0].args.join(" "), /--platform linux\/amd64/u);
+});
+
+test("attachment-owning image publication requires the live signed canary environment", () => {
+  for (const role of ["turn-worker", "workspace-runtime"]) {
+    assert.throws(
+      () => assertProductionImageCanaryEnvironment(role, {}),
+      /KESTREL_ONE_APP_URL/u,
+    );
+    assert.throws(
+      () => assertProductionImageCanaryEnvironment(role, {
+        KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
+      }),
+      /KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY/u,
+    );
+    assert.doesNotThrow(() => assertProductionImageCanaryEnvironment(role, {
+      KESTREL_ONE_APP_URL: "https://kestrelagents.dev",
+      KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: "configured",
+    }));
+  }
+  assert.doesNotThrow(() =>
+    assertProductionImageCanaryEnvironment("preview-edge", {}),
+  );
+});
+
+test("attachment-owning image smokes gate publication on exact-build canary evidence", async () => {
+  const [turnWorkerSmoke, workspaceRuntimeSmoke, workspaceDockerfile] =
+    await Promise.all([
+      readFile("deploy/fly/kestrel-one-turn-worker/smoke.sh", "utf8"),
+      readFile("apps/workspace-runtime/scripts/image-smoke.sh", "utf8"),
+      readFile("apps/workspace-runtime/Dockerfile", "utf8"),
+    ]);
+  for (const source of [turnWorkerSmoke, workspaceRuntimeSmoke]) {
+    assert.match(source, /KESTREL_ONE_APP_URL/u);
+    assert.match(source, /KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY/u);
+    assert.match(source, /attachment-canary/u);
+    assert.match(source, /evidence\.buildId !== process\.argv\[2\]/u);
+    assert.match(source, /\$\{image##\*:\}/u);
+  }
+  assert.match(workspaceDockerfile, /KESTREL_BUILD_ID=\$KESTREL_BUILD_ID/u);
 });
 
 test("local Fly deployment names one platform Machine and operator tag", () => {

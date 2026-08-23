@@ -34,6 +34,12 @@ it executes the durable `environment.update` operation.
 
 ## 2. Publish both images
 
+Load the production `KESTREL_ONE_APP_URL` and
+`KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY` into the local process environment.
+Workspace Runtime publication refuses to continue without them because its
+image smoke runs the signed attachment/R2/materialization canary inside the
+exact image. The canary creates no user turn and does not start a queue worker.
+
 Publish each role with the same tag:
 
 ```bash
@@ -48,7 +54,9 @@ pnpm production:image:publish \
 
 Retain both final JSON results and resolve both GHCR image references. Each
 command builds `linux/amd64`, runs its role-specific image smoke, and pushes one
-tag. The smokes prove image-local health and runtime contracts; they do not prove
+tag. Workspace Runtime additionally proves the fixed Web-owned canary object can
+be resolved, downloaded from R2, integrity-checked, and staged read-only. The
+smokes prove image-local health and that bounded attachment path; they do not prove
 tenant Fly configuration, control-plane compatibility, durable update behavior,
 Workspace persistence, public previews, or a production agent turn.
 

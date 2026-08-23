@@ -63,6 +63,7 @@ COPY --from=build /app/packages/sdk ./packages/sdk
 COPY --from=build /app/packages/workspace-skills ./packages/workspace-skills
 RUN test -f /app/dist/db/migrations/001_sessions_runs.sql \
     && test -f /app/packages/attachments/dist/index.js \
+    && test -f /app/dist/src/runtime/attachments/deploymentCanaryRunner.js \
     && test -f /app/dist/cli/runner/service.js \
     && test -f /app/dist/cli/dev-shell/service.js \
     && curl --version \
@@ -71,6 +72,6 @@ RUN test -f /app/dist/db/migrations/001_sessions_runs.sql \
     && python3 --version \
     && mkdir -p /workspace \
     && node /app/apps/workspace-runtime/scripts/dev-shell-package-smoke.mjs
-ENV NODE_ENV=production KESTREL_WORKSPACE_ROOT=/workspace KESTREL_WORKSPACE_PORT=43104 KESTREL_PROFILE_ENVIRONMENT=workspace_hosted
+ENV NODE_ENV=production KESTREL_BUILD_ID=$KESTREL_BUILD_ID KESTREL_WORKSPACE_ROOT=/workspace KESTREL_WORKSPACE_PORT=43104 KESTREL_PROFILE_ENVIRONMENT=workspace_hosted
 EXPOSE 43104
 CMD ["node", "apps/workspace-runtime/dist/server.js"]

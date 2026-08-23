@@ -52,6 +52,7 @@ export function productionImageBuildCommands(input: {
 export async function publishProductionImage(
   args: string[],
   runner: Runner = run,
+  environment: NodeJS.ProcessEnv = process.env,
 ) {
   const { role, tag } = parsePublishProductionImageArgs(args);
   const catalog = flyImageCatalogSchema.parse(
@@ -59,6 +60,7 @@ export async function publishProductionImage(
   );
   const image = catalog.images.find((candidate) => candidate.role === role);
   if (!image) throw new Error(`Unknown production image role: ${role}.`);
+  assertProductionImageCanaryEnvironment(role, environment);
   const taggedImage = `${image.repository}:${tag}`;
   for (const command of productionImageBuildCommands({
     dockerfile: image.dockerfile,
@@ -71,6 +73,23 @@ export async function publishProductionImage(
   const result = { role: image.role, tag, image: taggedImage };
   process.stdout.write(`${JSON.stringify(result)}\n`);
   return result;
+}
+
+export function assertProductionImageCanaryEnvironment(
+  role: string,
+  environment: NodeJS.ProcessEnv,
+) {
+  if (role !== "turn-worker" && role !== "workspace-runtime") return;
+  for (const name of [
+    "KESTREL_ONE_APP_URL",
+    "KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY",
+  ]) {
+    if (!environment[name]?.trim()) {
+      throw new Error(
+        `${role} publication requires the live attachment canary environment: ${name}.`,
+      );
+    }
+  }
 }
 
 function argument(args: string[], name: string) {

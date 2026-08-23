@@ -1,14 +1,27 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { access, stat } from "node:fs/promises";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { access, chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { verifyTurnAttachmentResolutionTicket } from "@lumi/kestrel-environment-auth";
 
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 import {
   cleanupMaterializedRunTurnAttachments,
+  createPinnedAttachmentLookup,
   materializeRunTurnAttachments,
 } from "../../src/runtime/attachments/materialize.js";
+import {
+  TURN_ATTACHMENT_DEPLOYMENT_CANARY_FILE_ID,
+  TURN_ATTACHMENT_DEPLOYMENT_CANARY_FILENAME,
+  TURN_ATTACHMENT_DEPLOYMENT_CANARY_MEDIA_TYPE,
+  TURN_ATTACHMENT_DEPLOYMENT_CANARY_SHA256,
+  TURN_ATTACHMENT_DEPLOYMENT_CANARY_SIZE_BYTES,
+  TURN_ATTACHMENT_DEPLOYMENT_CANARY_TEXT,
+  TURN_ATTACHMENT_DEPLOYMENT_CANARY_TURN_ID,
+} from "@kestrel-agents/protocol";
+import { runTurnAttachmentDeploymentCanary } from "../../src/runtime/attachments/deploymentCanaryRunner.js";
 
 function attachment(
   overrides: Partial<RunTurnAttachment> = {},
@@ -119,4 +132,100 @@ test("remote materialization rejects private and loopback destinations", async (
   await assert.rejects(materializeRunTurnAttachments([
     attachment({ data: undefined, sourceUrl: "https://127.0.0.1/attachment" }),
   ]), /non-public address/u);
+});
+
+test("pinned attachment lookup honors Node's all-address callback contract", async () => {
+  const lookup = createPinnedAttachmentLookup({
+    address: "203.0.113.10",
+    family: 4,
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    lookup("attachments.example.test", { all: true }, (error, addresses) => {
+      try {
+        assert.ifError(error);
+        assert.deepEqual(addresses, [{ address: "203.0.113.10", family: 4 }]);
+        resolve();
+      } catch (assertionError) {
+        reject(assertionError);
+      }
+    });
+  });
+});
+
+test("deployment canary signs the resolver request and proves materialized evidence", async () => {
+  const canaryBytes = Buffer.from(TURN_ATTACHMENT_DEPLOYMENT_CANARY_TEXT, "utf8");
+  assert.equal(canaryBytes.byteLength, TURN_ATTACHMENT_DEPLOYMENT_CANARY_SIZE_BYTES);
+  assert.equal(
+    createHash("sha256").update(canaryBytes).digest("hex"),
+    TURN_ATTACHMENT_DEPLOYMENT_CANARY_SHA256,
+  );
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const privatePem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  const publicPem = publicKey.export({ type: "spki", format: "pem" }).toString();
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-deployment-canary-test-"));
+  const filePath = path.join(root, TURN_ATTACHMENT_DEPLOYMENT_CANARY_FILENAME);
+  await writeFile(filePath, TURN_ATTACHMENT_DEPLOYMENT_CANARY_TEXT);
+  await chmod(filePath, 0o400);
+  const descriptor: RunTurnAttachment = {
+    attachmentId: TURN_ATTACHMENT_DEPLOYMENT_CANARY_FILE_ID,
+    fileId: TURN_ATTACHMENT_DEPLOYMENT_CANARY_FILE_ID,
+    threadId: "deployment-canary-thread-v1",
+    filename: TURN_ATTACHMENT_DEPLOYMENT_CANARY_FILENAME,
+    mimeType: TURN_ATTACHMENT_DEPLOYMENT_CANARY_MEDIA_TYPE,
+    sizeBytes: TURN_ATTACHMENT_DEPLOYMENT_CANARY_SIZE_BYTES,
+    sha256: TURN_ATTACHMENT_DEPLOYMENT_CANARY_SHA256,
+    kind: "text",
+    representationStatus: "extracted_text",
+    sourceUrl: "https://r2.example.test/deployment-canary",
+    sourceUrlExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  let cleaned = false;
+  try {
+    const result = await runTurnAttachmentDeploymentCanary(
+      { appUrl: "https://kestrel.example.test", privateKey: privatePem },
+      {
+        fetchImpl: async (url, init) => {
+          assert.equal(
+            url.toString(),
+            `https://kestrel.example.test/internal/turn-worker/${TURN_ATTACHMENT_DEPLOYMENT_CANARY_TURN_ID}/attachments/resolve`,
+          );
+          const authorization = new Headers(init?.headers).get("authorization");
+          if (!authorization?.startsWith("Bearer ")) {
+            throw new Error("Attachment canary authorization is missing.");
+          }
+          const ticket = verifyTurnAttachmentResolutionTicket({
+            token: authorization.slice("Bearer ".length),
+            publicKey: publicPem,
+          });
+          assert.equal(ticket.turnId, TURN_ATTACHMENT_DEPLOYMENT_CANARY_TURN_ID);
+          return Response.json({
+            version: 1,
+            turnId: TURN_ATTACHMENT_DEPLOYMENT_CANARY_TURN_ID,
+            attachments: [descriptor],
+          });
+        },
+        materialize: async () => [{
+          ...descriptor,
+          path: filePath,
+          sourceUrl: undefined,
+          sourceUrlExpiresAt: undefined,
+        }],
+        cleanup: async () => {
+          cleaned = true;
+          await chmod(filePath, 0o600);
+          await rm(root, { recursive: true, force: true });
+        },
+      },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.resolver, true);
+    assert.equal(result.r2Download, true);
+    assert.equal(result.materialized, true);
+    assert.equal(result.readOnly, true);
+    assert.equal(result.sha256, TURN_ATTACHMENT_DEPLOYMENT_CANARY_SHA256);
+    assert.equal(cleaned, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

@@ -138,6 +138,23 @@ docker run --rm \
     }
   '
 
+if [[ -n "${KESTREL_ONE_APP_URL:-}" && -n "${KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:-}" ]]; then
+  canary_output="$(docker run --rm \
+    --env KESTREL_ONE_APP_URL \
+    --env KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY \
+    --entrypoint node \
+    "$image" \
+    /app/apps/workspace-runtime/scripts/turn-attachment-canary.mjs)"
+  node -e '
+    const evidence = JSON.parse(process.argv[1]);
+    if (evidence.ok !== true || evidence.buildId !== process.argv[2]) {
+      throw new Error("Workspace Runtime attachment canary evidence is invalid");
+    }
+  ' "$canary_output" "${image##*:}"
+  printf '%s\n' "$canary_output"
+  printf 'Workspace Runtime live attachment image canary passed\n'
+fi
+
 docker stop --time 15 "$container" >/dev/null
 test "$(docker inspect --format '{{.State.ExitCode}}' "$container")" = "0"
 
