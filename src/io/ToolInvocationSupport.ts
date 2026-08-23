@@ -173,6 +173,9 @@ export function createPreparedToolCallV1(input: {
             policyRevision: input.policy.policyRevision,
             upstreamAuthorityRevision: input.approval.authorityRevision,
           }),
+          ...(input.approval.externalApprovalBinding === undefined
+            ? {}
+            : { externalApprovalBinding: input.approval.externalApprovalBinding }),
         };
   return parsePreparedToolCallV1({
     version: PREPARED_TOOL_CALL_VERSION,

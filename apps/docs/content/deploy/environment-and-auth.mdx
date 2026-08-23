@@ -27,6 +27,8 @@ Do not expose the token through browser-readable environment variables.
 
 Configuration owners should also declare the canonical profile/provider registry, memory persistence, MCP/network policy, budget/evaluation policy, release identity, and worker/image identity. Keep each value in the service that owns it instead of copying one unrestricted environment block everywhere.
 
+Sandbox capability profiles reference only statically registered adapters. Profile configuration may narrow audience, broker authority, request and response ceilings, timeout, and expiry, but it cannot supply a provider URL, proxy, credential, adapter implementation, or broader effect classification. Local Core and the hosted runner resolve credentials in their trusted environments and pass no bearer value into the sandbox.
+
 ## Resolve user context in one place
 
 ```ts
@@ -73,6 +75,8 @@ Carry the resulting actor, tenant, request, correlation, session, thread, run, t
 ## Action and approval authority
 
 Resolve the exact requested action and effect on the trusted server. A browser may choose among offered options, but the server validates the pending request, grant, action fingerprint, expiry, and actor before execution.
+
+For a sandbox `external_effect`, also bind that approval to the same run, tool call, canonical payload, and effect idempotency identity. Source access, read-only authority, or approval for another action is never interchangeable. No sandbox write adapter ships by default.
 
 ## Check the server-side setup
 

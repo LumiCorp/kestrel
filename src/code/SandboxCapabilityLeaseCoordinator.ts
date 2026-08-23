@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import {
-  fingerprintSandboxCapabilityLeaseBindingV1,
+  fingerprintSandboxCapabilityLeaseBinding,
   assertSandboxCapabilityLeaseTransitionV1,
-  parseSandboxCapabilityLeaseBindingV1,
-  type SandboxCapabilityLeaseBindingV1,
+  parseSandboxCapabilityLeaseBinding,
+  type SandboxCapabilityLeaseBinding,
   type SandboxCapabilityChildReservationV1,
   type SandboxCapabilityLeaseResultEvidenceV1,
   type SandboxCapabilityLeaseTransitionRecordV1,
@@ -28,12 +28,12 @@ export interface SandboxCapabilityLeaseCoordinatorOptions {
   store: SandboxCapabilityLeaseStore;
   now?: (() => Date) | undefined;
   validateCurrent: (
-    binding: SandboxCapabilityLeaseBindingV1,
+    binding: SandboxCapabilityLeaseBinding,
     boundary: SandboxCapabilityLeaseCurrentnessBoundary,
   ) => Promise<SandboxCapabilityLeaseCurrentness>;
   persistResult: (input: {
     leaseId: string;
-    binding: SandboxCapabilityLeaseBindingV1;
+    binding: SandboxCapabilityLeaseBinding;
     result: unknown;
   }) => Promise<SandboxCapabilityLeaseResultEvidenceV1>;
   appendTransitionEvent?: ((record: SandboxCapabilityLeaseTransitionRecordV1) => Promise<void>) | undefined;
@@ -58,12 +58,12 @@ export class SandboxCapabilityLeaseCoordinator {
   }
 
   async request(input: {
-    binding: SandboxCapabilityLeaseBindingV1;
+    binding: SandboxCapabilityLeaseBinding;
     expiresAt: string;
     requestLimit: number;
     responseByteLimit: number;
   }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
-    const binding = parseSandboxCapabilityLeaseBindingV1(input.binding);
+    const binding = parseSandboxCapabilityLeaseBinding(input.binding);
     const occurredAt = this.timestamp();
     const leaseId = `sandbox-lease:${randomUUID()}`;
     const requested = await this.append({
@@ -72,7 +72,7 @@ export class SandboxCapabilityLeaseCoordinator {
       sequence: 1,
       transition: "requested",
       binding,
-      bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding),
+      bindingDigest: fingerprintSandboxCapabilityLeaseBinding(binding),
       usage: {
         requestLimit: input.requestLimit,
         requestsConsumed: 0,
@@ -109,7 +109,7 @@ export class SandboxCapabilityLeaseCoordinator {
 
   async reserveInvocation(
     leaseId: string,
-    expectedBinding: SandboxCapabilityLeaseBindingV1,
+    expectedBinding: SandboxCapabilityLeaseBinding,
   ): Promise<SandboxCapabilityLeaseTransitionRecordV1 & { invocationResponseByteLimit: number }> {
     const current = await this.requireExact(leaseId, expectedBinding);
     if (current.transition !== "issued") {
@@ -150,7 +150,7 @@ export class SandboxCapabilityLeaseCoordinator {
 
   async commitResult(input: {
     leaseId: string;
-    expectedBinding: SandboxCapabilityLeaseBindingV1;
+    expectedBinding: SandboxCapabilityLeaseBinding;
     result: unknown;
     responseBytes: number;
     exactProviderUsage?: number | null | undefined;
@@ -211,7 +211,7 @@ export class SandboxCapabilityLeaseCoordinator {
 
   async recordProviderFailure(
     leaseId: string,
-    expectedBinding: SandboxCapabilityLeaseBindingV1,
+    expectedBinding: SandboxCapabilityLeaseBinding,
     reason = "provider_invocation_failed",
   ): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
     const current = await this.requireExact(leaseId, expectedBinding);
@@ -224,7 +224,7 @@ export class SandboxCapabilityLeaseCoordinator {
 
   async revoke(
     leaseId: string,
-    expectedBinding: SandboxCapabilityLeaseBindingV1,
+    expectedBinding: SandboxCapabilityLeaseBinding,
     reason = "authorization_revoked",
   ): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
     return await this.terminalize(leaseId, expectedBinding, "revoked", "revoked", reason);
@@ -232,7 +232,7 @@ export class SandboxCapabilityLeaseCoordinator {
 
   async cancel(
     leaseId: string,
-    expectedBinding: SandboxCapabilityLeaseBindingV1,
+    expectedBinding: SandboxCapabilityLeaseBinding,
     reason = "execution_cancelled",
   ): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
     return await this.terminalize(leaseId, expectedBinding, "cancelled", "cancelled", reason);
@@ -240,7 +240,7 @@ export class SandboxCapabilityLeaseCoordinator {
 
   async expire(
     leaseId: string,
-    expectedBinding: SandboxCapabilityLeaseBindingV1,
+    expectedBinding: SandboxCapabilityLeaseBinding,
     reason = "lease_expired",
   ): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
     return await this.terminalize(leaseId, expectedBinding, "expired", "expired", reason);
@@ -248,7 +248,7 @@ export class SandboxCapabilityLeaseCoordinator {
 
   async cleanup(input: {
     leaseId: string;
-    expectedBinding: SandboxCapabilityLeaseBindingV1;
+    expectedBinding: SandboxCapabilityLeaseBinding;
     disposeSensitiveMaterial: () => void | Promise<void>;
   }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
     const current = await this.requireExact(input.leaseId, input.expectedBinding);
@@ -260,7 +260,7 @@ export class SandboxCapabilityLeaseCoordinator {
 
   async settleBeforeTeardown(input: {
     leaseId: string;
-    expectedBinding: SandboxCapabilityLeaseBindingV1;
+    expectedBinding: SandboxCapabilityLeaseBinding;
     reason: "completed" | "failed" | "cancelled" | "timeout";
     disposeSensitiveMaterial: () => void | Promise<void>;
   }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
@@ -286,7 +286,7 @@ export class SandboxCapabilityLeaseCoordinator {
 
   async recover(
     leaseId: string,
-    expectedBinding: SandboxCapabilityLeaseBindingV1,
+    expectedBinding: SandboxCapabilityLeaseBinding,
   ): Promise<SandboxCapabilityLeaseRecovery> {
     let current = await this.requireExact(leaseId, expectedBinding);
     if (current.transition === "requested") {
@@ -336,18 +336,18 @@ export class SandboxCapabilityLeaseCoordinator {
 
   private async requireExact(
     leaseId: string,
-    expectedBinding: SandboxCapabilityLeaseBindingV1,
+    expectedBinding: SandboxCapabilityLeaseBinding,
   ): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
     const current = await this.store.getSandboxCapabilityLease(leaseId);
     if (current === null) throw new Error("Sandbox capability lease does not exist");
-    const digest = fingerprintSandboxCapabilityLeaseBindingV1(expectedBinding);
+    const digest = fingerprintSandboxCapabilityLeaseBinding(expectedBinding);
     if (current.bindingDigest !== digest) throw new Error("Sandbox capability lease binding does not match the exact action");
     return current;
   }
 
   private async terminalize(
     leaseId: string,
-    expectedBinding: SandboxCapabilityLeaseBindingV1,
+    expectedBinding: SandboxCapabilityLeaseBinding,
     transition: "revoked" | "cancelled" | "expired",
     terminalOutcome: "revoked" | "cancelled" | "expired",
     terminalReason: string,
@@ -360,7 +360,7 @@ export class SandboxCapabilityLeaseCoordinator {
   }
 
   private createChildReservation(
-    binding: SandboxCapabilityLeaseBindingV1,
+    binding: SandboxCapabilityLeaseBinding,
     requestLimit: number,
     responseByteLimit: number,
   ): SandboxCapabilityChildReservationV1 | undefined {

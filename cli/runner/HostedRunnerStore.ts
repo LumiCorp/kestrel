@@ -10,6 +10,7 @@ import {
 import { LocalCoreProtocolEventJournal } from "../../src/localCore/protocolEventJournal.js";
 import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import { KestrelChatRuntime, createRuntimeFactoryWithStore } from "../runtime/KestrelChatRuntime.js";
+import type { KestrelRuntimeEnvironment } from "../runtime/KestrelChatRuntime.js";
 import {
   createLiveOnlyProgressListener,
   type RunnerHost,
@@ -36,8 +37,14 @@ export interface HostedRunnerStoreRecovery {
 
 export function createHostedRunnerRuntimeFactory(
   store: SessionStore,
+  options: { env?: NodeJS.ProcessEnv | undefined; sandboxCapabilityFetchImpl?: typeof fetch | undefined } = {},
 ): RunnerRuntimeFactory {
-  const runtimeFactory = createRuntimeFactoryWithStore(store);
+  const runtimeFactory = createRuntimeFactoryWithStore(store, {
+    resolveEnvironment: () => resolveHostedSandboxCapabilityEnvironment(
+      options.env ?? process.env,
+      options.sandboxCapabilityFetchImpl,
+    ),
+  });
   return (
     profile,
     onRunLog,
@@ -55,6 +62,38 @@ export function createHostedRunnerRuntimeFactory(
       onTaskUpdate,
       onRunEvent,
     });
+}
+
+export function resolveHostedSandboxCapabilityEnvironment(
+  env: NodeJS.ProcessEnv,
+  sandboxCapabilityFetchImpl?: typeof fetch | undefined,
+): KestrelRuntimeEnvironment {
+  const tenantId = readTrustedEnv(env, "KESTREL_TENANT_ID");
+  const environmentId = readTrustedEnv(env, "KESTREL_ENVIRONMENT_ID");
+  const authorityId = readTrustedEnv(env, "KESTREL_SANDBOX_BROKER_AUTHORITY_ID");
+  const authorityRevision = readTrustedEnv(env, "KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION");
+  return {
+    runtimeEnv: env,
+    modelEnv: env,
+    internetEnv: env,
+    mcpEnv: env,
+    ...(tenantId && environmentId ? { sandboxCapabilityAudience: { tenantId, environmentId } } : {}),
+    ...(authorityId && authorityRevision ? { sandboxCapabilityBrokerAuthority: { authorityId, revision: authorityRevision } } : {}),
+    ...(readTrustedEnv(env, "KESTREL_SANDBOX_TAVILY_CREDENTIAL") === undefined ? {} : {
+      sandboxCapabilityCredentialResolver: async () => {
+        const secret = readTrustedEnv(env, "KESTREL_SANDBOX_TAVILY_CREDENTIAL");
+        const revision = readTrustedEnv(env, "KESTREL_SANDBOX_TAVILY_CREDENTIAL_REVISION");
+        if (secret === undefined || revision === undefined) throw new Error("Authoritative hosted Tavily credential and revision are required");
+        return { credentialId: "tool.tavily.default", revision, secret };
+      },
+    }),
+    ...(sandboxCapabilityFetchImpl === undefined ? {} : { sandboxCapabilityFetchImpl }),
+  };
+}
+
+function readTrustedEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = env[name]?.trim();
+  return value === undefined || value.length === 0 ? undefined : value;
 }
 
 export async function createHostedRunnerStore(input: {

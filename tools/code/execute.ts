@@ -132,6 +132,7 @@ export const codeExecuteTool: SharedToolModule = {
               sessionId: context.runtime.sessionId,
               runId: context.runtime.runId,
               toolCallId: context.runtime.toolCallId,
+              ...(context.runtime.threadId === undefined ? {} : { threadId: context.runtime.threadId }),
               profileFingerprint: context.sandboxCapabilityRuntime.profileFingerprint,
               policy: preparedContext.preparedPolicy,
               ...(preparedContext.preparedApproval === undefined ? {} : { approval: preparedContext.preparedApproval }),

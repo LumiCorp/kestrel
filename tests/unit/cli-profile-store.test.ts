@@ -65,12 +65,16 @@ test("ProfileStore bootstraps default profile when file is missing", async () =>
   assert.equal("profiles" in persisted, false);
 });
 
-test("ordinary profile parsing preserves strict sandbox capabilities through fingerprinting", () => {
+test("ordinary profile parsing canonicalizes legacy sandbox authoring to V2 before fingerprinting", () => {
   const capability = { version: 1, capabilityId: "tavily.search.read", operations: ["search"], resource: "https://api.tavily.com/search", audience: { tenantId: "tenant-a", environmentId: "env-a" }, maxRequests: 1, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096, timeoutMs: 1000, maxExpiryMs: 5000, brokerAuthority: { authorityId: "broker-a", revision: "r1" } };
   const raw = JSON.stringify({ version: 9, profiles: [{ id: "cap-profile", label: "Cap", sessionPrefix: "cap", agent: "kestrel", shellKind: "cli", codeMode: { enabled: true, capabilities: [capability] } }] });
   const parsed = parseProfilesFile(raw).profiles[0]!;
-  assert.deepEqual(parsed.codeMode?.capabilities, [capability]);
-  assert.notEqual(fingerprintResolvedProfile(parsed), fingerprintResolvedProfile({ ...parsed, codeMode: { ...parsed.codeMode!, capabilities: [{ ...capability, maxResults: 2 }] } } as never));
+  const canonical = parsed.codeMode?.capabilities?.[0];
+  assert.equal(canonical?.version, 2);
+  assert.equal(canonical?.version === 2 ? canonical.effectClass : undefined, "read_only");
+  assert.deepEqual(canonical?.version === 2 ? canonical.adapterConfig : undefined, { maxQueryChars: 100, maxResults: 3 });
+  assert.ok(canonical?.version === 2);
+  assert.notEqual(fingerprintResolvedProfile(parsed), fingerprintResolvedProfile({ ...parsed, codeMode: { ...parsed.codeMode!, capabilities: [{ ...canonical, adapterConfig: { maxQueryChars: 100, maxResults: 2 } }] } } as never));
 });
 
 test("ProfileStore v9 migrates only generated local profiles and emits the isolation notice once", async () => {

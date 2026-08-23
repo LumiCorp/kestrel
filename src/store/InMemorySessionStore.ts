@@ -32,7 +32,7 @@ import type {
 } from "../kestrel/contracts/store.js";
 import {
   assertSandboxCapabilityLeaseTransitionV1,
-  fingerprintSandboxCapabilityLeaseBindingV1,
+  fingerprintSandboxCapabilityLeaseBinding,
   parseSandboxCapabilityChildReservationV1,
   parseSandboxCapabilityLeaseTransitionRecordV1,
   type SandboxCapabilityChildReservationV1,
@@ -1062,7 +1062,7 @@ export class InMemorySessionStore implements SessionStore {
     record: SandboxCapabilityLeaseTransitionRecordV1;
   }): SandboxCapabilityLeaseTransitionRecordV1 {
     const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
-    if (record.bindingDigest !== fingerprintSandboxCapabilityLeaseBindingV1(record.binding)) {
+    if (record.bindingDigest !== fingerprintSandboxCapabilityLeaseBinding(record.binding)) {
       throw new Error("Sandbox capability lease binding digest does not match the immutable binding");
     }
     const ledger = this.sandboxCapabilityLeaseTransitions.get(record.leaseId) ?? [];

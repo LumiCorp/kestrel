@@ -1,9 +1,133 @@
 import { createHash } from "node:crypto";
+import { parseRunnerExternalApprovalBindingV1, type RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
 
 export const SANDBOX_CAPABILITY_CONTRACT_VERSION = 1 as const;
 export const TAVILY_SEARCH_CAPABILITY_ID = "tavily.search.read" as const;
 export const TAVILY_SEARCH_OPERATION = "search" as const;
 export const TAVILY_SEARCH_RESOURCE = "https://api.tavily.com/search" as const;
+
+export type SandboxCapabilityEffectClassV2 = "read_only" | "external_effect";
+
+/** Generic authoring contract. V1 remains readable for durable Tavily replay. */
+export interface SandboxCapabilityProfileV2 {
+  version: 2;
+  capabilityId: string;
+  operation: string;
+  resource: string;
+  effectClass: SandboxCapabilityEffectClassV2;
+  audience: { tenantId: string; environmentId: string };
+  maxRequests: number;
+  maxResponseBytes: number;
+  timeoutMs: number;
+  maxExpiryMs: number;
+  brokerAuthority: { authorityId: string; revision: string };
+  adapterConfig: Record<string, unknown>;
+}
+
+export interface SandboxCapabilitySelectionV2 {
+  version: 2;
+  capabilityId: string;
+  operation: string;
+  input: Record<string, unknown>;
+}
+
+export interface SandboxCapabilityAuthorityV2 {
+  version: 2;
+  capabilityId: string;
+  operation: string;
+  resource: string;
+  effectClass: SandboxCapabilityEffectClassV2;
+  tenantId: string;
+  environmentId: string;
+  sessionId: string;
+  runId: string;
+  toolCallId: string;
+  profileFingerprint: string;
+  executionBoundaryRevision: string;
+  brokerAuthority: { authorityId: string; revision: string };
+  credentialReference: { credentialId: string; revision: string };
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export interface SandboxCapabilityLeaseBindingV2 {
+  version: 2;
+  tenantId: string;
+  environmentId: string;
+  sessionId: string;
+  runId: string;
+  toolCallId: string;
+  profileFingerprint: string;
+  capabilityCatalogFingerprint: string;
+  executionBoundaryRevision: string;
+  capabilityId: string;
+  operation: string;
+  resource: string;
+  effectClass: SandboxCapabilityEffectClassV2;
+  audience: { tenantId: string; environmentId: string };
+  brokerAuthority: { authorityId: string; revision: string };
+  credentialReference: { credentialId: string; revision: string };
+  policyRevision: string;
+  approval?: { approvalId?: string | undefined; authorityRevision: string } | undefined;
+  externalApprovalBinding?: RunnerExternalApprovalBindingV1 | undefined;
+  parentAuthorization?: SandboxCapabilityLeaseBindingV1["parentAuthorization"] | undefined;
+}
+
+export type SandboxCapabilityProfile = SandboxCapabilityProfileV1 | SandboxCapabilityProfileV2;
+export type SandboxCapabilitySelection = SandboxCapabilitySelectionV1 | SandboxCapabilitySelectionV2;
+export type SandboxCapabilityLeaseBinding = SandboxCapabilityLeaseBindingV1 | SandboxCapabilityLeaseBindingV2;
+
+export function parseSandboxCapabilityProfileV2(value: unknown): SandboxCapabilityProfileV2 {
+  const record = strictRecord(value, ["version", "capabilityId", "operation", "resource", "effectClass", "audience", "maxRequests", "maxResponseBytes", "timeoutMs", "maxExpiryMs", "brokerAuthority", "adapterConfig"], "sandbox capability profile v2");
+  if (record.version !== 2) fail("sandbox capability profile v2 version is invalid");
+  const resource = exactHttpsResource(record.resource, "sandbox capability profile v2 resource");
+  const audience = stringPair(record.audience, "tenantId", "environmentId", "sandbox capability profile v2 audience");
+  const brokerAuthority = stringPair(record.brokerAuthority, "authorityId", "revision", "sandbox capability profile v2 broker authority");
+  const adapterConfig = arbitraryRecord(record.adapterConfig, "sandbox capability profile v2 adapterConfig");
+  return { version: 2, capabilityId: nonEmpty(record.capabilityId, "capabilityId"), operation: nonEmpty(record.operation, "operation"), resource, effectClass: effectClassV2(record.effectClass), audience, maxRequests: boundedInt(record.maxRequests, 1, 1_000_000, "maxRequests"), maxResponseBytes: boundedInt(record.maxResponseBytes, 1, 1_000_000_000, "maxResponseBytes"), timeoutMs: boundedInt(record.timeoutMs, 100, 30_000, "timeoutMs"), maxExpiryMs: boundedInt(record.maxExpiryMs, 100, 60_000, "maxExpiryMs"), brokerAuthority, adapterConfig: canonicalClone(adapterConfig) };
+}
+
+export function parseSandboxCapabilitySelectionV2(value: unknown): SandboxCapabilitySelectionV2 {
+  const record = strictRecord(value, ["version", "capabilityId", "operation", "input"], "sandbox capability selection v2");
+  if (record.version !== 2) fail("sandbox capability selection v2 version is invalid");
+  const input = arbitraryRecord(record.input, "sandbox capability selection v2 input");
+  return { version: 2, capabilityId: nonEmpty(record.capabilityId, "capabilityId"), operation: nonEmpty(record.operation, "operation"), input: canonicalClone(input) };
+}
+
+export function parseSandboxCapabilityAuthorityV2(value: unknown): SandboxCapabilityAuthorityV2 {
+  const record = strictRecord(value, ["version", "capabilityId", "operation", "resource", "effectClass", "tenantId", "environmentId", "sessionId", "runId", "toolCallId", "profileFingerprint", "executionBoundaryRevision", "brokerAuthority", "credentialReference", "issuedAt", "expiresAt"], "sandbox capability authority v2");
+  if (record.version !== 2) fail("sandbox capability authority v2 version is invalid");
+  const issuedAt = timestamp(record.issuedAt, "issuedAt");
+  const expiresAt = timestamp(record.expiresAt, "expiresAt");
+  if (Date.parse(expiresAt) <= Date.parse(issuedAt)) fail("sandbox capability authority expiry must follow issuance");
+  return { version: 2, capabilityId: nonEmpty(record.capabilityId, "capabilityId"), operation: nonEmpty(record.operation, "operation"), resource: exactHttpsResource(record.resource, "resource"), effectClass: effectClassV2(record.effectClass), tenantId: nonEmpty(record.tenantId, "tenantId"), environmentId: nonEmpty(record.environmentId, "environmentId"), sessionId: nonEmpty(record.sessionId, "sessionId"), runId: nonEmpty(record.runId, "runId"), toolCallId: nonEmpty(record.toolCallId, "toolCallId"), profileFingerprint: hashValue(record.profileFingerprint, "profileFingerprint"), executionBoundaryRevision: nonEmpty(record.executionBoundaryRevision, "executionBoundaryRevision"), brokerAuthority: stringPair(record.brokerAuthority, "authorityId", "revision", "sandbox capability authority broker"), credentialReference: stringPair(record.credentialReference, "credentialId", "revision", "sandbox capability authority credential"), issuedAt, expiresAt };
+}
+
+export function parseSandboxCapabilityLeaseBindingV2(value: unknown): SandboxCapabilityLeaseBindingV2 {
+  const record = strictRecord(value, ["version", "tenantId", "environmentId", "sessionId", "runId", "toolCallId", "profileFingerprint", "capabilityCatalogFingerprint", "executionBoundaryRevision", "capabilityId", "operation", "resource", "effectClass", "audience", "brokerAuthority", "credentialReference", "policyRevision", "approval", "externalApprovalBinding", "parentAuthorization"], "sandbox capability lease binding v2");
+  if (record.version !== 2) fail("sandbox capability lease binding v2 version is invalid");
+  const audience = stringPair(record.audience, "tenantId", "environmentId", "sandbox capability lease audience");
+  const brokerAuthority = stringPair(record.brokerAuthority, "authorityId", "revision", "sandbox capability lease broker authority");
+  const credentialReference = stringPair(record.credentialReference, "credentialId", "revision", "sandbox capability lease credential reference");
+  const tenantId = nonEmpty(record.tenantId, "tenantId");
+  const environmentId = nonEmpty(record.environmentId, "environmentId");
+  if (tenantId !== audience.tenantId || environmentId !== audience.environmentId) fail("sandbox capability lease audience is inconsistent");
+  const approval = record.approval === undefined ? undefined : (() => { const item = strictRecord(record.approval, ["approvalId", "authorityRevision"], "sandbox capability lease approval"); return { ...(item.approvalId === undefined ? {} : { approvalId: nonEmpty(item.approvalId, "approvalId") }), authorityRevision: nonEmpty(item.authorityRevision, "approval authorityRevision") }; })();
+  const effectClass = effectClassV2(record.effectClass);
+  const externalApprovalBinding = record.externalApprovalBinding === undefined ? undefined : parseRunnerExternalApprovalBindingV1(record.externalApprovalBinding);
+  if (effectClass === "external_effect" && (approval?.approvalId === undefined || externalApprovalBinding === undefined)) fail("external-effect sandbox capability requires exact action-bound approval");
+  if (externalApprovalBinding !== undefined && externalApprovalBinding.approvalId !== approval?.approvalId) fail("external-effect sandbox approval identity is inconsistent");
+  const parentAuthorization = parseParentAuthorization(record.parentAuthorization);
+  return { version: 2, tenantId, environmentId, sessionId: nonEmpty(record.sessionId, "sessionId"), runId: nonEmpty(record.runId, "runId"), toolCallId: nonEmpty(record.toolCallId, "toolCallId"), profileFingerprint: hashValue(record.profileFingerprint, "profileFingerprint"), capabilityCatalogFingerprint: hashValue(record.capabilityCatalogFingerprint, "capabilityCatalogFingerprint"), executionBoundaryRevision: nonEmpty(record.executionBoundaryRevision, "executionBoundaryRevision"), capabilityId: nonEmpty(record.capabilityId, "capabilityId"), operation: nonEmpty(record.operation, "operation"), resource: exactHttpsResource(record.resource, "resource"), effectClass, audience, brokerAuthority, credentialReference, policyRevision: nonEmpty(record.policyRevision, "policyRevision"), ...(approval === undefined ? {} : { approval }), ...(externalApprovalBinding === undefined ? {} : { externalApprovalBinding }), ...(parentAuthorization === undefined ? {} : { parentAuthorization }) };
+}
+
+export function fingerprintSandboxCapabilityProfileV2(value: unknown): string {
+  return createHash("sha256").update(canonical(parseSandboxCapabilityProfileV2(value))).digest("hex");
+}
+
+export function fingerprintSandboxCapabilityLeaseBindingV2(value: unknown): string {
+  return createHash("sha256").update(canonical(parseSandboxCapabilityLeaseBindingV2(value))).digest("hex");
+}
 
 export interface SandboxCapabilityProfileV1 {
   version: 1;
@@ -153,7 +277,7 @@ export interface SandboxCapabilityLeaseTransitionRecordV1 {
   leaseId: string;
   sequence: number;
   transition: SandboxCapabilityLeaseTransitionV1;
-  binding: SandboxCapabilityLeaseBindingV1;
+  binding: SandboxCapabilityLeaseBinding;
   bindingDigest: string;
   usage: SandboxCapabilityLeaseUsageV1;
   issuedAt?: string | undefined;
@@ -169,7 +293,7 @@ export function parseSandboxCapabilityLeaseTransitionRecordV1(value: unknown): S
   const record = strictRecord(value, ["version", "leaseId", "sequence", "transition", "binding", "bindingDigest", "usage", "issuedAt", "expiresAt", "terminalOutcome", "terminalReason", "cleanedAt", "result", "occurredAt"], "sandbox capability lease transition");
   if (record.version !== SANDBOX_CAPABILITY_LEASE_LIFECYCLE_VERSION) fail("sandbox capability lease transition version is invalid");
   const transition = leaseTransition(record.transition);
-  const binding = parseSandboxCapabilityLeaseBindingV1(record.binding);
+  const binding = parseSandboxCapabilityLeaseBinding(record.binding);
   const usageRecord = strictRecord(record.usage, ["requestLimit", "requestsConsumed", "responseByteLimit", "responseBytesConsumed", "exactProviderUsage"], "sandbox capability lease usage");
   const usage: SandboxCapabilityLeaseUsageV1 = {
     requestLimit: boundedInt(usageRecord.requestLimit, 1, 1_000_000, "requestLimit"),
@@ -209,7 +333,7 @@ export function parseSandboxCapabilityLeaseBindingV1(value: unknown): SandboxCap
   const credentialReference = stringPair(record.credentialReference, "credentialId", "revision", "sandbox capability lease credential reference");
   if (credentialReference.credentialId !== "tool.tavily.default") fail("sandbox capability lease credential reference is invalid");
   const approval = record.approval === undefined ? undefined : (() => { const item = strictRecord(record.approval, ["approvalId", "authorityRevision"], "sandbox capability lease approval"); return { ...(item.approvalId === undefined ? {} : { approvalId: nonEmpty(item.approvalId, "approvalId") }), authorityRevision: nonEmpty(item.authorityRevision, "approval authorityRevision") }; })();
-  const parentAuthorization = record.parentAuthorization === undefined ? undefined : (() => { const item = strictRecord(record.parentAuthorization, ["leaseId", "bindingDigest", "authorizationDecisionId", "reservationId", "requestLimit", "responseByteLimit"], "sandbox capability parent authorization"); return { leaseId: nonEmpty(item.leaseId, "parent leaseId"), bindingDigest: hashValue(item.bindingDigest, "parent bindingDigest"), authorizationDecisionId: nonEmpty(item.authorizationDecisionId, "parent authorizationDecisionId"), reservationId: nonEmpty(item.reservationId, "parent reservationId"), requestLimit: boundedInt(item.requestLimit, 1, 1_000_000, "parent requestLimit"), responseByteLimit: boundedInt(item.responseByteLimit, 1, 1_000_000_000, "parent responseByteLimit") }; })();
+  const parentAuthorization = parseParentAuthorization(record.parentAuthorization);
   const output: SandboxCapabilityLeaseBindingV1 = { version: 1, tenantId: nonEmpty(record.tenantId, "tenantId"), environmentId: nonEmpty(record.environmentId, "environmentId"), sessionId: nonEmpty(record.sessionId, "sessionId"), runId: nonEmpty(record.runId, "runId"), toolCallId: nonEmpty(record.toolCallId, "toolCallId"), profileFingerprint: hashValue(record.profileFingerprint, "profileFingerprint"), capabilityCatalogFingerprint: hashValue(record.capabilityCatalogFingerprint, "capabilityCatalogFingerprint"), executionBoundaryRevision: nonEmpty(record.executionBoundaryRevision, "executionBoundaryRevision"), capabilityId: TAVILY_SEARCH_CAPABILITY_ID, operation: TAVILY_SEARCH_OPERATION, resource: TAVILY_SEARCH_RESOURCE, audience, brokerAuthority, credentialReference: { credentialId: "tool.tavily.default", revision: credentialReference.revision }, policyRevision: nonEmpty(record.policyRevision, "policyRevision"), ...(approval === undefined ? {} : { approval }), ...(parentAuthorization === undefined ? {} : { parentAuthorization }) };
   if (output.tenantId !== audience.tenantId || output.environmentId !== audience.environmentId) fail("sandbox capability lease audience is inconsistent");
   return output;
@@ -217,6 +341,15 @@ export function parseSandboxCapabilityLeaseBindingV1(value: unknown): SandboxCap
 
 export function fingerprintSandboxCapabilityLeaseBindingV1(value: unknown): string {
   return createHash("sha256").update(canonical(parseSandboxCapabilityLeaseBindingV1(value))).digest("hex");
+}
+
+export function parseSandboxCapabilityLeaseBinding(value: unknown): SandboxCapabilityLeaseBinding {
+  const version = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as { version?: unknown }).version : undefined;
+  return version === 2 ? parseSandboxCapabilityLeaseBindingV2(value) : parseSandboxCapabilityLeaseBindingV1(value);
+}
+
+export function fingerprintSandboxCapabilityLeaseBinding(value: unknown): string {
+  return createHash("sha256").update(canonical(parseSandboxCapabilityLeaseBinding(value))).digest("hex");
 }
 
 export function assertSandboxCapabilityLeaseTransitionV1(
@@ -242,6 +375,10 @@ function leaseTerminalOutcome(value: unknown): SandboxCapabilityLeaseTerminalOut
 function timestamp(value: unknown, label: string): string { const text = nonEmpty(value, label); if (Number.isFinite(Date.parse(text)) === false) fail(`${label} must be a timestamp`); return new Date(text).toISOString(); }
 function optionalTimestamp(value: unknown, label: string): string | undefined { return value === undefined ? undefined : timestamp(value, label); }
 function hashValue(value: unknown, label: string): string { const text = nonEmpty(value, label); if (/^(?:sha256:)?[a-f0-9]{64}$/u.test(text) === false) fail(`${label} must be a SHA-256 digest`); return text; }
+function parseParentAuthorization(value: unknown): NonNullable<SandboxCapabilityLeaseBindingV1["parentAuthorization"]> | undefined { if (value === undefined) return; const item = strictRecord(value, ["leaseId", "bindingDigest", "authorizationDecisionId", "reservationId", "requestLimit", "responseByteLimit"], "sandbox capability parent authorization"); return { leaseId: nonEmpty(item.leaseId, "parent leaseId"), bindingDigest: hashValue(item.bindingDigest, "parent bindingDigest"), authorizationDecisionId: nonEmpty(item.authorizationDecisionId, "parent authorizationDecisionId"), reservationId: nonEmpty(item.reservationId, "parent reservationId"), requestLimit: boundedInt(item.requestLimit, 1, 1_000_000, "parent requestLimit"), responseByteLimit: boundedInt(item.responseByteLimit, 1, 1_000_000_000, "parent responseByteLimit") }; }
+function effectClassV2(value: unknown): SandboxCapabilityEffectClassV2 { if (value !== "read_only" && value !== "external_effect") fail("sandbox capability effectClass is invalid"); return value; }
+function exactHttpsResource(value: unknown, label: string): string { const text = nonEmpty(value, label); let parsed: URL; try { parsed = new URL(text); } catch { fail(`${label} must be an exact HTTPS URL`); } if (parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" || parsed.hash !== "") fail(`${label} must be an exact credential-free HTTPS URL`); return parsed.toString(); }
+function canonicalClone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function parseLeaseResult(value: unknown): SandboxCapabilityLeaseResultEvidenceV1 { const record = strictRecord(value, ["digest", "reference"], "sandbox capability lease result evidence"); return { digest: hashValue(record.digest, "result digest"), reference: nonEmpty(record.reference, "result reference") }; }
 
 export function parseSandboxCapabilityProfileV1(value: unknown): SandboxCapabilityProfileV1 {
@@ -279,6 +416,37 @@ export function parseSandboxCapabilityProfilesV1(value: unknown): SandboxCapabil
   return profiles;
 }
 
+export function normalizeSandboxCapabilityProfileV2(value: unknown): SandboxCapabilityProfileV2 {
+  const version = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as { version?: unknown }).version : undefined;
+  if (version === 2) return parseSandboxCapabilityProfileV2(value);
+  const legacy = parseSandboxCapabilityProfileV1(value);
+  return {
+    version: 2,
+    capabilityId: legacy.capabilityId,
+    operation: legacy.operations[0],
+    resource: legacy.resource,
+    effectClass: "read_only",
+    audience: legacy.audience,
+    maxRequests: legacy.maxRequests,
+    maxResponseBytes: legacy.maxResponseBytes,
+    timeoutMs: legacy.timeoutMs,
+    maxExpiryMs: legacy.maxExpiryMs,
+    brokerAuthority: legacy.brokerAuthority,
+    adapterConfig: { maxQueryChars: legacy.maxQueryChars, maxResults: legacy.maxResults },
+  };
+}
+
+export function normalizeSandboxCapabilityProfilesV2(value: unknown): SandboxCapabilityProfileV2[] {
+  if (!Array.isArray(value)) fail("sandbox capability profiles must be an array");
+  const profiles = value.map(normalizeSandboxCapabilityProfileV2);
+  const seen = new Set<string>();
+  for (const profile of profiles) {
+    if (seen.has(profile.capabilityId)) fail(`duplicate sandbox capability ID '${profile.capabilityId}'`);
+    seen.add(profile.capabilityId);
+  }
+  return profiles;
+}
+
 export function parseSandboxCapabilitySelectionV1(value: unknown): SandboxCapabilitySelectionV1 {
   const record = strictRecord(value, ["capabilityId", "input"], "sandbox capability selection");
   if (record.capabilityId !== TAVILY_SEARCH_CAPABILITY_ID) fail("unknown sandbox capability ID");
@@ -293,12 +461,19 @@ export function parseSandboxCapabilitySelectionV1(value: unknown): SandboxCapabi
   };
 }
 
+export function normalizeSandboxCapabilitySelectionV2(value: unknown): SandboxCapabilitySelectionV2 {
+  const version = typeof value === "object" && value !== null && !Array.isArray(value) ? (value as { version?: unknown }).version : undefined;
+  if (version === 2) return parseSandboxCapabilitySelectionV2(value);
+  const legacy = parseSandboxCapabilitySelectionV1(value);
+  return { version: 2, capabilityId: legacy.capabilityId, operation: TAVILY_SEARCH_OPERATION, input: legacy.input };
+}
+
 export function fingerprintSandboxCapabilityProfileV1(profile: SandboxCapabilityProfileV1): string {
   return createHash("sha256").update(canonical(profile)).digest("hex");
 }
 
 export function fingerprintSandboxCapabilityCatalogV1(value: unknown): string {
-  return createHash("sha256").update(canonical(parseSandboxCapabilityProfilesV1(value))).digest("hex");
+  return createHash("sha256").update(canonical(normalizeSandboxCapabilityProfilesV2(value))).digest("hex");
 }
 
 function strictRecord(value: unknown, allowed: string[], label: string): Record<string, unknown> {
@@ -307,6 +482,10 @@ function strictRecord(value: unknown, allowed: string[], label: string): Record<
   const unknown = Object.keys(record).filter((key) => allowed.includes(key) === false);
   if (unknown.length > 0) fail(`${label} contains unknown field '${unknown[0]}'`);
   return record;
+}
+function arbitraryRecord(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) fail(`${label} must be an object`);
+  return value as Record<string, unknown>;
 }
 function stringPair<L extends string, R extends string>(value: unknown, left: L, right: R, label: string): Record<L | R, string> {
   const record = strictRecord(value, [left, right], label);

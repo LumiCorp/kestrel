@@ -20,7 +20,7 @@ export interface CodeExecutionRequest {
   network?: CodeNetworkMode | undefined;
   dependencies?: string[] | undefined;
   args?: string[] | undefined;
-  capability?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilitySelectionV1 | undefined;
+  capability?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilitySelection | undefined;
 }
 
 export interface CodeExecutionArtifact {
@@ -99,7 +99,7 @@ export interface CodeModeProfileConfig {
   sandbox: CodeModeSandboxConfig;
   retention: CodeModeRetentionConfig;
   approvalMode: "auto";
-  capabilities?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityProfileV1[] | undefined;
+  capabilities?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityProfile[] | undefined;
 }
 
 export const DEFAULT_CODE_MODE_SANDBOX: CodeModeSandboxConfig = {
@@ -158,10 +158,11 @@ export interface SandboxCapabilityGrant {
   expiresAt?: string | undefined;
   maxRequests?: 1 | undefined;
   maxResponseBytes?: number | undefined;
-  authority?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityAuthorityV1 | undefined;
-  expectedInput?: { query: string; maxResults: number } | undefined;
+  authority?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityAuthorityV1 | import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityAuthorityV2 | undefined;
+  /** Adapter-owned canonical input. The broker compares this exact value. */
+  expectedInput?: Record<string, unknown> | undefined;
   /** Trusted host-only adapter. This function is never serialized into Docker state. */
-  adapter?: ((input: { query: string; maxResults: number }, signal: AbortSignal) => Promise<unknown>) | undefined;
+  adapter?: ((input: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>) | undefined;
   /**
    * Host-only durable lifecycle hooks. Like the adapter, these functions are
    * never serialized into broker or workload state.
@@ -187,6 +188,7 @@ export interface SandboxCapabilityRuntimeContext {
   sessionId: string;
   runId: string;
   toolCallId: string;
+  threadId?: string | undefined;
   /** Exact prepared-call policy decision; never inferred from the profile. */
   policy?: import("../kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined;
   /** Exact prepared-call approval authority, when policy required approval. */
@@ -199,11 +201,11 @@ export interface SandboxCapabilityRuntimeContext {
   brokerAuthority: { authorityId: string; revision: string };
   leaseCoordinator?: import("./SandboxCapabilityLeaseCoordinator.js").SandboxCapabilityLeaseCoordinator | undefined;
   credentialSnapshot?: {
-    credentialId: "tool.tavily.default";
+    credentialId: string;
     revision: string;
     secret: string;
   } | undefined;
-  resolveCredentialSnapshot?: (() => Promise<{ credentialId: "tool.tavily.default"; revision: string; secret: string }>) | undefined;
+  resolveCredentialSnapshot?: (() => Promise<{ credentialId: string; revision: string; secret: string }>) | undefined;
   resolveParentAuthorization?: ((input: {
     sessionId: string;
     runId: string;

@@ -284,7 +284,7 @@ export const KESTREL_ONE_ENVIRONMENT_PRESETS: Readonly<
     id: "desktop_dev_local",
     version: 1,
   }),
-  workspace_hosted: Object.freeze({ id: "workspace_hosted", version: 1 }),
+  workspace_hosted: Object.freeze({ id: "workspace_hosted", version: 2 }),
 });
 
 export interface KestrelOneProfileOverlay {

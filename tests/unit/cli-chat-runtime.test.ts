@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
 
 import type { TuiProfile } from "../../cli/contracts.js";
 import {
@@ -87,7 +88,7 @@ test("sandbox capability currentness rejects independent policy replacement and 
   const stalePolicyRevision = hashCanonical({ policy: "stale" });
   const effectiveInput = { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "exact" } } };
   let policyDecision: "allow" | "approval_required" = "allow";
-  let preparedApproval: { approvalId: string; authorityRevision: string } | undefined;
+  let preparedApproval: { approvalId: string; authorityRevision: string; externalApprovalBinding?: RunnerExternalApprovalBindingV1 } | undefined;
   let approvalGrants: Array<{ grantId: string; status: string; expiresAt: string; authorityRevision: string }> = [];
   let effectStatus: "PENDING" | "DONE" = "PENDING";
   const digest = "a".repeat(64);
@@ -220,6 +221,58 @@ test("sandbox capability currentness rejects independent policy replacement and 
     now: () => new Date("2026-08-23T12:00:00.000Z"),
   });
   assert.deepEqual(active, { authorized: true });
+
+  const externalApprovalBinding: RunnerExternalApprovalBindingV1 = {
+    version: "runner_external_approval_binding_v1",
+    approvalId: "grant-policy",
+    threadId: "thread-policy",
+    runId: binding.runId,
+    actionKey: `code.execute:${binding.toolCallId}:${binding.capabilityId}:${binding.operation}`,
+    payloadHash: `sha256:${"c".repeat(64)}`,
+    toolClass: "external_side_effect",
+    capabilities: ["code.execute", binding.capabilityId],
+    authorityKind: "runtime_policy",
+    authorityRevision: upstreamAuthorityRevision,
+    requestedAt: "2026-08-23T11:59:00.000Z",
+    expiresAt: "2026-08-23T12:01:00.000Z",
+  };
+  preparedApproval.externalApprovalBinding = externalApprovalBinding;
+  const externalBinding = {
+    ...binding,
+    version: 2 as const,
+    effectClass: "external_effect" as const,
+    policyRevision: currentPolicyRevision,
+    approval: { approvalId: preparedApproval.approvalId, authorityRevision: preparedApproval.authorityRevision },
+    externalApprovalBinding,
+  };
+  const exactExternal = await validateSandboxCapabilityLeaseCurrent({
+    binding: externalBinding,
+    boundary: "provider_invocation",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    audience: binding.audience,
+    brokerAuthority: binding.brokerAuthority,
+    credentialResolver: async () => ({ credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" }),
+    resolveCurrentPolicy: async () => ({ decision: policyDecision, policyRevision: currentPolicyRevision }),
+    store,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+  });
+  assert.deepEqual(exactExternal, { authorized: true });
+  const changedExternal = await validateSandboxCapabilityLeaseCurrent({
+    binding: { ...externalBinding, externalApprovalBinding: { ...externalApprovalBinding, actionKey: "code.execute:another-call:tavily.search.read:search" } },
+    boundary: "provider_invocation",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    audience: binding.audience,
+    brokerAuthority: binding.brokerAuthority,
+    credentialResolver: async () => ({ credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" }),
+    resolveCurrentPolicy: async () => ({ decision: policyDecision, policyRevision: currentPolicyRevision }),
+    store,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+  });
+  assert.deepEqual(changedExternal, { authorized: false, reason: "external_effect_action_approval_changed" });
 
   effectStatus = "DONE";
   const completedReplay = await validateSandboxCapabilityLeaseCurrent({

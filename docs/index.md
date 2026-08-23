@@ -42,6 +42,7 @@ task instead of reading the repository as one long manual.
 - [Conversation kernel](../packages/conversation/README.md)
 - [Observability](../packages/observability/README.md)
 - [Protocol and terminal results](../apps/docs/content/build/protocol-and-results.mdx)
+- [Sandbox capability adapters](../apps/docs/content/reference/sandbox-capability-adapters.mdx)
 
 ### Operate Kestrel
 

@@ -8,9 +8,7 @@ import {
 import type { LocalCoreRuntimeEnvironmentResolver } from "./runtimeEnvironment.js";
 import { DesktopAttachmentStore } from "./desktopAttachments.js";
 import type { LocalCoreCredentialStore } from "./credentialStore.js";
-import { randomUUID } from "node:crypto";
-
-const sandboxCredentialRevisions = new WeakMap<LocalCoreCredentialStore, { secret: string; revision: string }>();
+import { createHash } from "node:crypto";
 import { createLocalCoreMcpOAuthProviderFactory } from "./mcpOAuthProvider.js";
 import { LocalCoreMicrosoft365Service } from "./microsoft365Service.js";
 import { LocalCoreGoogleWorkspaceService } from "./googleWorkspaceService.js";
@@ -23,6 +21,7 @@ export interface LocalCoreRunnerRuntimeFactoryOptions {
   runtimeEnvironmentResolver?: LocalCoreRuntimeEnvironmentResolver | undefined;
   homePath?: string | undefined;
   credentialStore?: LocalCoreCredentialStore | undefined;
+  sandboxCapabilityFetchImpl?: typeof fetch | undefined;
 }
 
 /**
@@ -52,12 +51,13 @@ export function createLocalCoreRunnerRuntimeFactory(
     ...(runtimeEnvironmentResolver !== undefined
       ? {
           resolveEnvironment: (profile) =>
-            toKestrelRuntimeEnvironment(
+            resolveLocalCoreSandboxCapabilityEnvironment(
               runtimeEnvironmentResolver.resolve({
                 modelProvider: profile.modelProvider ?? "openrouter",
                 model: profile.model ?? "",
               }),
               options.credentialStore,
+              options.sandboxCapabilityFetchImpl,
             ),
         }
       : {}),
@@ -81,14 +81,16 @@ export function createLocalCoreRunnerRuntimeFactory(
     });
 }
 
-function toKestrelRuntimeEnvironment(
+export function resolveLocalCoreSandboxCapabilityEnvironment(
   snapshot: ReturnType<LocalCoreRuntimeEnvironmentResolver["resolve"]>,
   credentialStore?: LocalCoreCredentialStore | undefined,
+  sandboxCapabilityFetchImpl?: typeof fetch | undefined,
 ): KestrelRuntimeEnvironment {
   const tenantId = snapshot.runtimeEnv.KESTREL_TENANT_ID?.trim();
   const environmentId = snapshot.runtimeEnv.KESTREL_ENVIRONMENT_ID?.trim();
   const brokerAuthorityId = snapshot.runtimeEnv.KESTREL_SANDBOX_BROKER_AUTHORITY_ID?.trim();
   const brokerAuthorityRevision = snapshot.runtimeEnv.KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION?.trim();
+  const environmentTavilyCredential = snapshot.internetEnv.TAVILY_API_KEY?.trim();
   return {
     modelEnv: snapshot.modelEnv as NodeJS.ProcessEnv,
     internetEnv: snapshot.internetEnv as NodeJS.ProcessEnv,
@@ -104,12 +106,17 @@ function toKestrelRuntimeEnvironment(
       sandboxCapabilityCredentialResolver: async () => {
         const secret = await credentialStore.get("tool.tavily.default");
         if (secret === undefined) throw new Error("Authoritative Local Core Tavily credential is missing.");
-        const prior = sandboxCredentialRevisions.get(credentialStore);
-        const revision = prior?.secret === secret ? prior.revision : `local-core:${randomUUID()}`;
-        sandboxCredentialRevisions.set(credentialStore, { secret, revision });
+        const revision = `local-core:sha256:${createHash("sha256").update(secret).digest("hex")}`;
         return { credentialId: "tool.tavily.default" as const, revision, secret };
       },
-    } : {}),
+    } : environmentTavilyCredential === undefined || environmentTavilyCredential.length === 0 ? {} : {
+      sandboxCapabilityCredentialResolver: async () => ({
+        credentialId: "tool.tavily.default" as const,
+        revision: `local-core:sha256:${createHash("sha256").update(environmentTavilyCredential).digest("hex")}`,
+        secret: environmentTavilyCredential,
+      }),
+    }),
+    ...(sandboxCapabilityFetchImpl === undefined ? {} : { sandboxCapabilityFetchImpl }),
     ...(credentialStore !== undefined
       ? {
           mcpOAuthProviderFactory:

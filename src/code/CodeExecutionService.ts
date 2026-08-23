@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { serializeCanonicalApprovalPayload, type RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
 import type {
   CodeExecutionRequest,
   CodeExecutionResult,
@@ -12,25 +13,41 @@ import { DockerSandboxCancellationError, DockerSandboxExecutor, DockerUnavailabl
 import { evaluateExecutionPolicy } from "./PolicyEngine.js";
 import {
   fingerprintSandboxCapabilityCatalogV1,
-  parseSandboxCapabilityProfileV1,
-  parseSandboxCapabilityProfilesV1,
-  parseSandboxCapabilitySelectionV1,
-  TAVILY_SEARCH_RESOURCE,
-  type SandboxCapabilityLeaseBindingV1,
-  type TavilySearchAdapterResponseV1,
+  normalizeSandboxCapabilityProfilesV2,
+  normalizeSandboxCapabilitySelectionV2,
+  type SandboxCapabilityLeaseBindingV2,
+  type SandboxCapabilityProfileV2,
+  type SandboxCapabilitySelectionV2,
 } from "../kestrel/contracts/sandbox-capability.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
 import { SandboxCapabilityExactResultConflictError } from "../kestrel/contracts/store.js";
+import { SandboxCapabilityAdapterRegistry } from "./SandboxCapabilityAdapterRegistry.js";
+import { SandboxCapabilityAdapterFailure, tavilySearchReadAdapter } from "./adapters/TavilySearchReadAdapter.js";
+
+export const DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY = new SandboxCapabilityAdapterRegistry([
+  tavilySearchReadAdapter,
+]);
+
+export function sandboxCapabilityExternalActionKey(input: { toolCallId: string; capabilityId: string; operation: string }): string {
+  return `code.execute:${input.toolCallId}:${input.capabilityId}:${input.operation}`;
+}
+
+export function digestSandboxCapabilityExternalPayload(input: { capabilityId: string; operation: string; input: Record<string, unknown> }): string {
+  return `sha256:${createHash("sha256").update(serializeCanonicalApprovalPayload(input)).digest("hex")}`;
+}
 
 export interface CodeExecutionServiceOptions {
   executor?: SandboxExecutor | undefined;
+  capabilityAdapters?: SandboxCapabilityAdapterRegistry | undefined;
 }
 
 export class CodeExecutionService {
   private readonly executor: SandboxExecutor;
+  private readonly capabilityAdapters: SandboxCapabilityAdapterRegistry;
 
   constructor(options: CodeExecutionServiceOptions = {}) {
     this.executor = options.executor ?? new DockerSandboxExecutor();
+    this.capabilityAdapters = options.capabilityAdapters ?? DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY;
   }
 
   async execute(
@@ -53,7 +70,8 @@ export class CodeExecutionService {
     let capabilityReplayEvidence: CodeExecutionResult["capabilityReplayEvidence"];
     let exactCapabilityResultCommitted = false;
     if (request.capability !== undefined) {
-      const resolved = await resolveTavilyCapability(
+      const resolved = await resolveSandboxCapability(
+        this.capabilityAdapters,
         config,
         request.capability,
         options.capabilityRuntime,
@@ -355,7 +373,8 @@ function defineSanitizedErrorProperty(
   }
 }
 
-async function resolveTavilyCapability(
+async function resolveSandboxCapability(
+  adapters: SandboxCapabilityAdapterRegistry,
   config: CodeModeProfileConfig | undefined,
   selectedValue: unknown,
   runtime: SandboxCapabilityRuntimeContext | undefined,
@@ -369,12 +388,14 @@ async function resolveTavilyCapability(
   releaseSensitiveValue?: (() => void) | undefined;
   redactSensitiveValues?: (<T>(value: T) => T) | undefined;
 }> {
-  const selected = parseSandboxCapabilitySelectionV1(selectedValue);
-  const authoredProfiles = parseSandboxCapabilityProfilesV1(config?.capabilities ?? []);
+  const selected = normalizeSandboxCapabilitySelectionV2(selectedValue);
+  const authoredProfiles = normalizeSandboxCapabilityProfilesV2(config?.capabilities ?? []);
   if (runtime !== undefined && runtime.capabilityCatalogFingerprint !== fingerprintSandboxCapabilityCatalogV1(authoredProfiles)) throw new Error("Sandbox capability catalog fingerprint is stale");
   const authored = authoredProfiles.find((item) => item.capabilityId === selected.capabilityId);
   if (authored === undefined) throw new Error("Selected sandbox capability is not authored by the resolved profile");
-  const profile = parseSandboxCapabilityProfileV1(authored);
+  const adapter = adapters.requireExact({ capabilityId: selected.capabilityId, operation: selected.operation, resource: authored.resource });
+  const profile: SandboxCapabilityProfileV2 = adapter.parseProfile(authored) as SandboxCapabilityProfileV2;
+  const adapterSelection: SandboxCapabilitySelectionV2 = adapter.parseSelection(selected) as SandboxCapabilitySelectionV2;
   if (runtime === undefined) throw new Error("Trusted sandbox capability runtime context is missing");
   if (runtime.registerSensitiveValue === undefined || runtime.redactSensitiveValues === undefined) {
     throw new Error("Sandbox capability sensitive-value registration and redaction are required together");
@@ -386,20 +407,22 @@ async function resolveTavilyCapability(
   if (runtime.brokerAuthority.authorityId !== profile.brokerAuthority.authorityId || runtime.brokerAuthority.revision !== profile.brokerAuthority.revision) throw new Error("Sandbox broker authority is stale or mismatched");
   if (/^[a-f0-9]{64}$/u.test(runtime.profileFingerprint) === false) throw new Error("Sandbox capability resolved-profile fingerprint is invalid");
   if (runtime.executionBoundaryRevision !== KESTREL_EXECUTION_BOUNDARY_POLICY.revision) throw new Error("Sandbox capability execution-boundary revision is stale");
+  const canonicalInput = adapter.canonicalInput(profile, adapterSelection);
+  if (typeof canonicalInput !== "object" || canonicalInput === null || Array.isArray(canonicalInput)) throw new Error("Sandbox capability adapter canonical input must be a JSON object");
+  const canonicalInputRecord = canonicalInput as Record<string, unknown>;
+  const externalApprovalBinding = adapter.effectClass === "external_effect"
+    ? requireExactExternalApprovalBinding({ runtime, adapter, canonicalInput: canonicalInputRecord })
+    : undefined;
   const credentialSnapshot = runtime.resolveCredentialSnapshot === undefined ? runtime.credentialSnapshot : await runtime.resolveCredentialSnapshot();
-  if (credentialSnapshot === undefined) throw new Error("Authoritative Tavily credential snapshot is unavailable");
+  if (credentialSnapshot === undefined) throw new Error("Authoritative sandbox capability credential snapshot is unavailable");
   for (const [label, value] of Object.entries({ sessionId: runtime.sessionId, runId: runtime.runId, toolCallId: runtime.toolCallId, executionBoundaryRevision: runtime.executionBoundaryRevision, credentialRevision: credentialSnapshot.revision })) {
     if (value.trim().length === 0) throw new Error(`Trusted sandbox capability ${label} is missing`);
   }
-  if (credentialSnapshot.credentialId !== "tool.tavily.default" || credentialSnapshot.secret.trim().length === 0) throw new Error("Authoritative Tavily credential snapshot is unavailable");
-  const query = selected.input.query;
-  if (query.length > profile.maxQueryChars) throw new Error("Sandbox Tavily query exceeds the profile ceiling");
-  const maxResults = selected.input.maxResults ?? Math.min(5, profile.maxResults);
-  if (maxResults > profile.maxResults) throw new Error("Sandbox Tavily result request exceeds the profile ceiling");
+  if (credentialSnapshot.credentialId !== adapter.credentialId || credentialSnapshot.secret.trim().length === 0) throw new Error("Authoritative sandbox capability credential snapshot is unavailable");
   const now = (runtime.now ?? (() => new Date()))();
   const expiresAt = new Date(now.getTime() + profile.maxExpiryMs);
-  const leaseBinding: SandboxCapabilityLeaseBindingV1 = {
-    version: 1,
+  const leaseBinding: SandboxCapabilityLeaseBindingV2 = {
+    version: 2,
     tenantId: runtime.tenantId,
     environmentId: runtime.environmentId,
     sessionId: runtime.sessionId,
@@ -409,8 +432,9 @@ async function resolveTavilyCapability(
     capabilityCatalogFingerprint: runtime.capabilityCatalogFingerprint,
     executionBoundaryRevision: runtime.executionBoundaryRevision,
     capabilityId: selected.capabilityId,
-    operation: "search",
-    resource: TAVILY_SEARCH_RESOURCE,
+    operation: adapter.operation,
+    resource: adapter.resource,
+    effectClass: adapter.effectClass,
     audience: profile.audience,
     brokerAuthority: runtime.brokerAuthority,
     credentialReference: {
@@ -418,7 +442,11 @@ async function resolveTavilyCapability(
       revision: credentialSnapshot.revision,
     },
     policyRevision: runtime.policy?.policyRevision ?? runtime.executionBoundaryRevision,
-    ...(runtime.approval === undefined ? {} : { approval: runtime.approval }),
+    ...(runtime.approval === undefined ? {} : { approval: {
+      ...(runtime.approval.approvalId === undefined ? {} : { approvalId: runtime.approval.approvalId }),
+      authorityRevision: runtime.approval.authorityRevision,
+    } }),
+    ...(externalApprovalBinding === undefined ? {} : { externalApprovalBinding }),
     ...(runtime.parentAuthorization === undefined ? {} : { parentAuthorization: runtime.parentAuthorization }),
   };
   const durableLease = await runtime.leaseCoordinator.request({
@@ -442,14 +470,18 @@ async function resolveTavilyCapability(
   const grant: SandboxCapabilityGrant = {
     transport: "docker-shared-loopback-v1",
     lease: randomUUID(),
-    operation: "search",
-    destination: new URL(TAVILY_SEARCH_RESOURCE).hostname,
+    operation: adapter.operation,
+    destination: adapter.destination(profile),
     response: undefined,
     expiresAt: expiresAt.toISOString(),
     maxRequests: 1,
     maxResponseBytes: profile.maxResponseBytes,
     authority: {
-      version: 1,
+      version: 2,
+      capabilityId: adapter.capabilityId,
+      operation: adapter.operation,
+      resource: adapter.resource,
+      effectClass: adapter.effectClass,
       tenantId: runtime.tenantId,
       environmentId: runtime.environmentId,
       sessionId: runtime.sessionId,
@@ -465,7 +497,7 @@ async function resolveTavilyCapability(
       issuedAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
     },
-    expectedInput: { query, maxResults },
+    expectedInput: canonicalInputRecord,
     lifecycle: {
         beforeProviderInvocation: async () => {
           const reservation = await runtime.leaseCoordinator!.reserveInvocation(durableLease.leaseId, leaseBinding);
@@ -541,11 +573,9 @@ async function resolveTavilyCapability(
       try {
         const remainingExpiryMs = expiresAt.getTime() - (runtime.now ?? (() => new Date()))().getTime();
         if (remainingExpiryMs <= 0) throw new Error("Tavily adapter capability expired before provider invocation");
-        return await callExactTavilySearch({
+        return await adapter.invoke(adapterInput, {
           fetchImpl: runtime.fetchImpl ?? fetch,
-          secret: credentialSnapshot.secret,
-          query: adapterInput.query,
-          maxResults: adapterInput.maxResults,
+          credential: credentialSnapshot.secret,
           timeoutMs: profile.timeoutMs,
           expiryMs: remainingExpiryMs,
           maxResponseBytes: invocationResponseByteLimit,
@@ -553,7 +583,11 @@ async function resolveTavilyCapability(
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(message.split(credentialSnapshot.secret).join("[redacted:credential]"));
+        const sanitized = message.split(credentialSnapshot.secret).join("[redacted:credential]");
+        if (error instanceof SandboxCapabilityAdapterFailure) {
+          throw new SandboxCapabilityAdapterFailure(error.code, sanitized);
+        }
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_FAILED", sanitized);
       }
     },
   };
@@ -589,65 +623,31 @@ async function resolveTavilyCapability(
   };
 }
 
-async function callExactTavilySearch(input: { fetchImpl: typeof fetch; secret: string; query: string; maxResults: number; timeoutMs: number; expiryMs: number; maxResponseBytes: number; signal: AbortSignal }): Promise<TavilySearchAdapterResponseV1> {
-  const deadlineSignal = AbortSignal.timeout(Math.min(input.timeoutMs, input.expiryMs));
-  const signal = AbortSignal.any([input.signal, deadlineSignal]);
-  const response = await input.fetchImpl(TAVILY_SEARCH_RESOURCE, {
-    method: "POST",
-    redirect: "manual",
-    signal,
-    headers: { "content-type": "application/json", authorization: `Bearer ${input.secret}` },
-    body: JSON.stringify({ query: input.query, max_results: input.maxResults }),
-  });
-  if (response.status >= 300 && response.status < 400) throw new Error("Tavily adapter rejected a redirect response");
-  if (response.ok === false) throw new Error(`Tavily adapter failed with status ${response.status}`);
-  const text = await readBoundedResponseBody(response, input.maxResponseBytes, signal);
-  const value = JSON.parse(text) as { results?: unknown };
-  if (Array.isArray(value.results) === false) throw new Error("Tavily adapter returned an invalid response");
-  const results = value.results.slice(0, input.maxResults).map((item: unknown) => {
-    const record = typeof item === "object" && item !== null ? item as Record<string, unknown> : {};
-    const url = typeof record.url === "string" ? record.url : "";
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "") throw new Error("Tavily adapter returned an unsafe result URL");
-    return { title: clipAdapterField(record.title, 300), url: parsed.toString(), content: clipAdapterField(record.content, 2_000) };
-  });
-  return { version: 1, results };
-}
-
-async function readBoundedResponseBody(response: Response, maxBytes: number, signal: AbortSignal): Promise<string> {
-  if (response.body === null) return "";
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let totalBytes = 0;
-  const abort = () => { void reader.cancel(signal.reason).catch(() => {}); };
-  signal.addEventListener("abort", abort, { once: true });
-  try {
-    while (true) {
-      if (signal.aborted) throw signal.reason;
-      const chunk = await reader.read();
-      if (signal.aborted) throw signal.reason;
-      if (chunk.done) break;
-      totalBytes += chunk.value.byteLength;
-      if (totalBytes > maxBytes) {
-        await reader.cancel("Tavily adapter response exceeds the profile ceiling");
-        throw new Error("Tavily adapter response exceeds the profile ceiling");
-      }
-      chunks.push(chunk.value);
-    }
-  } finally {
-    signal.removeEventListener("abort", abort);
+function requireExactExternalApprovalBinding(input: {
+  runtime: SandboxCapabilityRuntimeContext;
+  adapter: { capabilityId: string; operation: string };
+  canonicalInput: Record<string, unknown>;
+}): RunnerExternalApprovalBindingV1 {
+  const approval = input.runtime.approval;
+  const binding = approval?.externalApprovalBinding;
+  const expectedActionKey = sandboxCapabilityExternalActionKey({ toolCallId: input.runtime.toolCallId, capabilityId: input.adapter.capabilityId, operation: input.adapter.operation });
+  const expectedPayloadHash = digestSandboxCapabilityExternalPayload({ capabilityId: input.adapter.capabilityId, operation: input.adapter.operation, input: input.canonicalInput });
+  if (
+    input.runtime.policy?.decision !== "approval_required" ||
+    approval?.approvalId === undefined ||
+    binding === undefined ||
+    binding.approvalId !== approval.approvalId ||
+    binding.actionKey !== expectedActionKey ||
+    binding.payloadHash !== expectedPayloadHash ||
+    binding.runId !== input.runtime.runId ||
+    input.runtime.threadId === undefined || binding.threadId !== input.runtime.threadId ||
+    Date.parse(binding.expiresAt) <= (input.runtime.now ?? (() => new Date()))().getTime() ||
+    !binding.capabilities.includes("code.execute") ||
+    !binding.capabilities.includes(input.adapter.capabilityId)
+  ) {
+    throw new Error("External-effect sandbox capability requires an exact current action-bound approval");
   }
-  const body = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(body);
-}
-
-function clipAdapterField(value: unknown, max: number): string {
-  return typeof value === "string" ? value.slice(0, max) : "";
+  return binding;
 }
 
 function summarizeExecutionResult(output: SandboxExecutionOutput): string {

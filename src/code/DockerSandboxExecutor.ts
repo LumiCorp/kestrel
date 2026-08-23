@@ -615,9 +615,8 @@ async function runCapabilityAdapterPump(
           value.operation !== grant.operation ||
           value.destination !== grant.destination ||
           Object.keys(value).length !== 3 ||
-          adapterInput?.query !== grant.expectedInput.query ||
-          adapterInput.maxResults !== grant.expectedInput.maxResults ||
-          Object.keys(adapterInput).length !== 2
+          adapterInput === undefined ||
+          canonicalAdapterInput(adapterInput) !== canonicalAdapterInput(grant.expectedInput)
         ) {
           throw new Error("Broker request does not match the trusted capability grant");
         }
@@ -679,11 +678,23 @@ function readCapabilityResultCount(value: unknown): number {
 
 async function invokeAdapterUntilAbort(
   adapter: NonNullable<NonNullable<SandboxExecutionInput["capability"]>["adapter"]>,
-  input: { query: string; maxResults: number },
+  input: Record<string, unknown>,
   signal: AbortSignal,
 ): Promise<unknown> {
   if (signal.aborted) throw new DockerSandboxCancellationError("Capability adapter pump was cancelled");
   return adapter(input, signal);
+}
+
+function canonicalAdapterInput(value: Record<string, unknown>): string {
+  const canonical = (item: unknown): string => {
+    if (Array.isArray(item)) return `[${item.map(canonical).join(",")}]`;
+    if (typeof item === "object" && item !== null) {
+      const record = item as Record<string, unknown>;
+      return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`).join(",")}}`;
+    }
+    return JSON.stringify(item);
+  };
+  return canonical(value);
 }
 
 async function waitForAdapterRequest(signal: AbortSignal): Promise<void> {

@@ -12,15 +12,23 @@ const profile: SandboxCapabilityProfileV1 = { version: 1, capabilityId: "tavily.
 
 test("CodeExecutionService derives a bounded Tavily grant before sandbox creation", async () => {
   let observed: SandboxExecutionInput | undefined;
+  let issuedBinding: SandboxCapabilityLeaseTransitionRecordV1["binding"] | undefined;
   let authorization = "";
   let providerInvoked = false;
   const executor: SandboxExecutor = { async execute(input) { observed = input; assert.equal(providerInvoked, false); await input.capability?.adapter?.(input.capability.expectedInput!, new AbortController().signal); return { status: "ok", exitCode: 0, stdout: "ok", stderr: "", durationMs: 1, artifacts: [] }; } };
+  const capabilityRuntime = runtime(async (_url, input) => { providerInvoked = true; authorization = new Headers(input?.headers).get("authorization") ?? ""; return new Response(JSON.stringify({ results: [{ title: "A", url: "https://example.com/a", content: "bounded" }] }), { status: 200 }); });
+  const originalRequest = capabilityRuntime.leaseCoordinator.request.bind(capabilityRuntime.leaseCoordinator);
+  capabilityRuntime.leaseCoordinator.request = async (input) => { issuedBinding = input.binding; return originalRequest(input); };
   const service = new CodeExecutionService({ executor });
-  const result = await service.execute({ ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] }, { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "kestrel", maxResults: 2 } } }, { capabilityRuntime: runtime(async (_url, input) => { providerInvoked = true; authorization = new Headers(input?.headers).get("authorization") ?? ""; return new Response(JSON.stringify({ results: [{ title: "A", url: "https://example.com/a", content: "bounded" }] }), { status: 200 }); }) });
+  const result = await service.execute({ ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] }, { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "kestrel", maxResults: 2 } } }, { capabilityRuntime });
   assert.equal(result.status, "ok");
   assert.equal(authorization, "Bearer real-secret-key");
   assert.equal(registeredSensitiveValue, "real-secret-key");
   assert.equal(observed?.capability?.destination, "api.tavily.com");
+  assert.equal(observed?.capability?.authority?.version, 2);
+  assert.equal(observed?.capability?.authority?.effectClass, "read_only");
+  assert.equal(issuedBinding?.version, 2);
+  assert.equal(issuedBinding?.version === 2 ? issuedBinding.effectClass : undefined, "read_only");
   assert.equal(JSON.stringify(observed).includes("real-secret-key"), false);
 });
 
@@ -546,7 +554,7 @@ test("Tavily adapter rejects redirects and redacts credential-bearing failures",
   const redirect = await service.execute(config, request, { capabilityRuntime: runtime(async () => new Response("", { status: 302, headers: { location: "https://evil.example" } })) });
   assert.match(redirect.stderr, /rejected a redirect/u);
   const redacted = await service.execute(config, request, { capabilityRuntime: runtime(async () => { throw new Error("provider rejected real-secret-key"); }) });
-  assert.match(redacted.stderr, /\[redacted:credential\]/u);
+  assert.equal(redacted.stderr, "Sandbox capability provider request failed");
   assert.equal(redacted.stderr.includes("real-secret-key"), false);
 });
 

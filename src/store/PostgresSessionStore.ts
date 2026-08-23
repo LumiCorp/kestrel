@@ -65,7 +65,7 @@ import type {
 } from "../kestrel/contracts/orchestration.js";
 import {
   assertSandboxCapabilityLeaseTransitionV1,
-  fingerprintSandboxCapabilityLeaseBindingV1,
+  fingerprintSandboxCapabilityLeaseBinding,
   parseSandboxCapabilityChildReservationV1,
   parseSandboxCapabilityLeaseTransitionRecordV1,
   type SandboxCapabilityChildReservationV1,
@@ -1930,7 +1930,7 @@ export class PostgresSessionStore implements SessionStore {
     input: { expectedSequence: number; record: SandboxCapabilityLeaseTransitionRecordV1 },
   ): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
     const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
-    if (record.bindingDigest !== fingerprintSandboxCapabilityLeaseBindingV1(record.binding)) {
+    if (record.bindingDigest !== fingerprintSandboxCapabilityLeaseBinding(record.binding)) {
       throw new Error("Sandbox capability lease binding digest does not match the immutable binding");
     }
     if (record.sequence !== input.expectedSequence + 1) {

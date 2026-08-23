@@ -24,6 +24,8 @@ import {
 } from "../../packages/protocol/src/index.js";
 import { LocalCoreClient } from "../../src/localCore/client.js";
 import { resolveLocalCorePaths } from "../../src/localCore/home.js";
+import { DEFAULT_CODE_MODE_ENABLED_CONFIG } from "../../src/code/contracts.js";
+import type { TuiProfile } from "../../cli/contracts.js";
 
 
 const execFileAsync = promisify(execFile);
@@ -345,6 +347,103 @@ test("kestrel web runs quick chat-lane agent interactions against a fake model b
   assert.equal(fakeModel.requests[1]?.userMessage, "what tools do you have");
 });
 
+test("spawned Local Core executes an immutable capability profile through Docker and isolated provider transport", async (t) => {
+  try { await execFileAsync("docker", ["info", "--format", "{{.ServerVersion}}"]); }
+  catch { t.skip("Docker daemon is required for capability process qualification"); return; }
+  const fakeModel = await startFakeOpenRouterServer();
+  t.after(async () => await fakeModel.close());
+  const evidenceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-local-capability-"));
+  const evidencePath = path.join(evidenceRoot, "provider.ndjson");
+  const tenantId = "qualification-tenant";
+  const environmentId = "qualification-local";
+  const authorityId = "qualification-broker";
+  const authorityRevision = "qualification-r1";
+  const runner = await startWebRunner(t, {
+    OPENROUTER_API_KEY: "fixture-model-key", OPENROUTER_BASE_URL: fakeModel.url,
+    TAVILY_API_KEY: "isolated-tavily-secret", KESTREL_TENANT_ID: tenantId, KESTREL_ENVIRONMENT_ID: environmentId,
+    KESTREL_SANDBOX_BROKER_AUTHORITY_ID: authorityId, KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION: authorityRevision,
+    KESTREL_TEST_SANDBOX_CAPABILITY_EVIDENCE: evidencePath,
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import ${path.resolve(process.cwd(), "tests/fixtures/sandbox-capability-fetch-preload.mjs")}`.trim(),
+  }, "SIGINT", async (client) => {
+    const listed = await client.getJson("/v1/profiles") as { profiles: TuiProfile[] };
+    const canonical = listed.profiles.find((profile) => profile.id === "kestrel");
+    assert.ok(canonical);
+    const capability = {
+      version: 1 as const, capabilityId: "tavily.search.read" as const, operations: ["search"] as ["search"], resource: "https://api.tavily.com/search" as const,
+      audience: { tenantId, environmentId }, maxRequests: 1 as const, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096,
+      timeoutMs: 5_000, maxExpiryMs: 20_000, brokerAuthority: { authorityId, revision: authorityRevision },
+    };
+    await client.putJson("/v1/profiles", { profiles: [{ ...canonical, codeMode: { ...structuredClone(DEFAULT_CODE_MODE_ENABLED_CONFIG), capabilities: [capability] } }] });
+    return (await client.resolveExecutionProfile({ client: "cli", profileId: "kestrel" })).profileId;
+  });
+  assert.match(runner.qualificationProfileId ?? "", /^kestrel:cli_safe_local:[a-f0-9]{64}$/u);
+  const response = await runCurlText({
+    url: `${runner.url}/commands/stream`, method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
+    body: JSON.stringify({ id: "qualification-provider-used", type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId: runner.qualificationProfileId, turn: { sessionId: `qualification-${randomUUID()}`, message: "qualification provider-used", eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true } } } } }),
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.body, /event: run\.completed/u);
+  const evidence = await readFile(evidencePath, "utf8").catch(() => {
+    throw new Error(`Provider not invoked. Stream tail:\n${response.body.slice(-10_000)}`);
+  });
+  assert.match(evidence, /qualification/u);
+  assert.equal(evidence.includes("isolated-tavily-secret"), false);
+  assert.equal(response.body.includes("isolated-tavily-secret"), false);
+  assert.match(response.body, /capabilityReplayEvidence/u);
+  assert.match(response.body, /"toolName":"code\.execute"/u);
+});
+
+test("spawned hosted runner executes a registered capability profile through Docker and isolated provider transport", async (t) => {
+  try { await execFileAsync("docker", ["info", "--format", "{{.ServerVersion}}"]); }
+  catch { t.skip("Docker daemon is required for capability process qualification"); return; }
+  const fakeModel = await startFakeOpenRouterServer();
+  t.after(async () => await fakeModel.close());
+  const evidenceRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-hosted-capability-"));
+  const evidencePath = path.join(evidenceRoot, "provider.ndjson");
+  const tenantId = "qualification-hosted-tenant";
+  const environmentId = "qualification-hosted";
+  const authorityId = "qualification-hosted-broker";
+  const authorityRevision = "qualification-hosted-r1";
+  const runner = await startHostedRunner(t, {
+    OPENROUTER_API_KEY: "fixture-model-key", OPENROUTER_BASE_URL: fakeModel.url,
+    KESTREL_TENANT_ID: tenantId, KESTREL_ENVIRONMENT_ID: environmentId,
+    KESTREL_SANDBOX_BROKER_AUTHORITY_ID: authorityId, KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION: authorityRevision,
+    KESTREL_SANDBOX_TAVILY_CREDENTIAL: "isolated-tavily-secret", KESTREL_SANDBOX_TAVILY_CREDENTIAL_REVISION: "credential-r1",
+    KESTREL_TEST_SANDBOX_CAPABILITY_EVIDENCE: evidencePath,
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import ${path.resolve(process.cwd(), "tests/fixtures/sandbox-capability-fetch-preload.mjs")}`.trim(),
+  });
+  const capability = {
+    version: 1 as const, capabilityId: "tavily.search.read" as const, operations: ["search"] as ["search"], resource: "https://api.tavily.com/search" as const,
+    audience: { tenantId, environmentId }, maxRequests: 1 as const, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096,
+    timeoutMs: 5_000, maxExpiryMs: 20_000, brokerAuthority: { authorityId, revision: authorityRevision },
+  };
+  const resolved = await runCurlJson({
+    url: `${runner.url}/commands`, method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
+    body: JSON.stringify({ id: "qualification-hosted-resolve", type: "execution-profile.resolve", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { environmentPresetId: "workspace_hosted", managedConfiguration: { modelProvider: "openrouter", model: "openai/gpt-5.6-luna", codeMode: { ...structuredClone(DEFAULT_CODE_MODE_ENABLED_CONFIG), capabilities: [capability] } } } }),
+  });
+  assert.equal(resolved.status, 200, JSON.stringify(resolved.body));
+  const resolvedEvent = resolved.body as { type?: string; payload?: { profileId?: string } };
+  assert.equal(resolvedEvent.type, "execution-profile.resolved");
+  assert.match(resolvedEvent.payload?.profileId ?? "", /^kestrel:workspace_hosted:[a-f0-9]{64}$/u);
+  const response = await runCurlText({
+    url: `${runner.url}/commands/stream`, method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
+    body: JSON.stringify({ id: "qualification-hosted-provider-used", type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId: resolvedEvent.payload?.profileId, turn: { sessionId: `qualification-hosted-${randomUUID()}`, message: "qualification provider-used", eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true } } } } }),
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.body, /event: run\.completed/u);
+  const evidence = await readFile(evidencePath, "utf8").catch(() => {
+    throw new Error(`Provider not invoked. Stream tail:\n${response.body.slice(-10_000)}`);
+  });
+  assert.match(evidence, /qualification/u);
+  assert.equal(evidence.includes("isolated-tavily-secret"), false);
+  assert.equal(response.body.includes("isolated-tavily-secret"), false);
+  assert.match(response.body, /capabilityReplayEvidence/u);
+  assert.match(response.body, /"toolName":"code\.execute"/u);
+});
+
 test("kestrel web forces shutdown after the grace period when an event stream is still connected", async (t) => {
   const runner = await startWebRunner(
     t,
@@ -443,10 +542,44 @@ async function ensureCurlAvailable(): Promise<void> {
   }
 }
 
+async function startHostedRunner(
+  t: TestContext,
+  envOverrides: NodeJS.ProcessEnv = {},
+): Promise<{ url: string; token: string }> {
+  const repoRoot = process.cwd();
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-hosted-runner-"));
+  const storeDir = path.join(root, "store");
+  const home = path.join(root, "home");
+  const port = await reservePort();
+  const token = `qualification-${randomUUID()}`;
+  const stdoutChunks: string[] = [];
+  const stderrChunks: string[] = [];
+  const child = spawn(process.execPath, ["--import", "tsx", path.resolve(repoRoot, "cli/runner/service.ts")], {
+    cwd: repoRoot,
+    env: { ...process.env, ...envOverrides, KESTREL_HOME: home, KESTREL_DISABLE_DOTENV: "1", KESTREL_RUNNER_STORE_DIR: storeDir, KESTREL_RUNNER_SERVICE_HOST: "127.0.0.1", KESTREL_RUNNER_SERVICE_PORT: String(port), KESTREL_RUNNER_SERVICE_TOKEN: token, FORCE_COLOR: "0" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout.on("data", (chunk) => stdoutChunks.push(chunk.toString("utf8")));
+  child.stderr.on("data", (chunk) => stderrChunks.push(chunk.toString("utf8")));
+  const exitPromise = waitForClose(child);
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGINT");
+    const exit = await exitPromise;
+    await rm(root, { recursive: true, force: true });
+    assert.equal(exit.code, 0, stderrChunks.join(""));
+  });
+  const startup = await waitForOutput(stdoutChunks, /"type":"runner\.service\.started"/u);
+  if (child.exitCode !== null || child.signalCode !== null) {
+    throw new Error(`Hosted runner exited during startup:\n${stderrChunks.join("")}\n${startup}`);
+  }
+  return { url: `http://127.0.0.1:${port}`, token };
+}
+
 async function startWebRunner(
   t: TestContext,
   envOverrides: NodeJS.ProcessEnv = {},
   autoShutdownSignal: NodeJS.Signals | false = "SIGINT",
+  afterCoreReady?: (client: LocalCoreClient) => Promise<string | undefined>,
 ): Promise<{
   port: number;
   url: string;
@@ -456,6 +589,7 @@ async function startWebRunner(
   waitForExit(): Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   waitForStderr(pattern: RegExp): Promise<string>;
   stderrOutput(): string;
+  qualificationProfileId?: string | undefined;
 }> {
   const repoRoot = process.cwd();
   const kestrelHome = await mkdtemp(path.join(os.tmpdir(), "kestrel-web-command-"));
@@ -511,6 +645,9 @@ async function startWebRunner(
     await rm(kestrelHome, { recursive: true, force: true });
     throw error;
   }
+  const qualificationProfileId = await afterCoreReady?.(
+    new LocalCoreClient({ socketPath: corePaths.apiSocketPath, token: coreToken }),
+  );
   const child = spawn(
     process.execPath,
     [
@@ -582,6 +719,7 @@ async function startWebRunner(
     port,
     url,
     token,
+    ...(qualificationProfileId === undefined ? {} : { qualificationProfileId }),
     startupOutput,
     signal(signal: NodeJS.Signals) {
       child.kill(signal);
@@ -848,8 +986,8 @@ async function handleFakeOpenRouterRequest(
   const parsed = JSON.parse(body) as {
     metadata?: { schemaName?: string | undefined } | undefined;
     response_format?: { json_schema?: { name?: string | undefined } | undefined } | undefined;
-    tools?: unknown[] | undefined;
-    messages?: Array<{ content?: string | undefined }> | undefined;
+    tools?: Array<{ name?: string | undefined; function?: { name?: string | undefined } | undefined }> | undefined;
+    messages?: Array<{ content?: string | undefined; tool_call_id?: string | undefined }> | undefined;
     stream?: boolean | undefined;
   };
 
@@ -881,7 +1019,17 @@ async function handleFakeOpenRouterRequest(
     return;
   }
 
-  const toolCall = {
+  const serializedMessages = JSON.stringify(parsed.messages);
+  const qualification = serializedMessages.includes("qualification provider-used");
+  const codeName = parsed.tools?.map((tool) => tool.function?.name ?? tool.name).find((name) => name === "code_execute") ?? "code.execute";
+  const toolCall = qualification && serializedMessages.includes("call_qualification_code") === false ? {
+    id: "call_qualification_code",
+    type: "function",
+    function: {
+      name: codeName,
+      arguments: JSON.stringify({ language: "javascript", code: "fetch('http://127.0.0.1:43127/v1/capability', { method: 'POST', body: JSON.stringify({ operation: 'search', destination: 'api.tavily.com', input: { query: 'qualification', maxResults: 1 } }) }).then(async response => console.log(JSON.stringify(await response.json())))", capability: { capabilityId: "tavily.search.read", input: { query: "qualification", maxResults: 1 } } }),
+    },
+  } : {
     id: "call_fake_finalize",
     type: "function",
     function: {
