@@ -64,6 +64,10 @@ export async function proxy(request: NextRequest) {
     );
   }
 
+  if (isTurnWorkerAttachmentResolverPath(pathname)) {
+    return NextResponse.next();
+  }
+
   if (pathname.startsWith("/api/dev/auto-login")) {
     if (!isLocalDevAuthBypassEnabled(request.headers.get("host"))) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -98,6 +102,19 @@ export async function proxy(request: NextRequest) {
   }
 
   return NextResponse.next();
+}
+
+function isTurnWorkerAttachmentResolverPath(pathname: string) {
+  const segments = pathname.split("/");
+  return (
+    segments.length === 6 &&
+    segments[0] === "" &&
+    segments[1] === "internal" &&
+    segments[2] === "turn-worker" &&
+    Boolean(segments[3]) &&
+    segments[4] === "attachments" &&
+    segments[5] === "resolve"
+  );
 }
 
 export const config = {
