@@ -1188,6 +1188,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     ADMIN_API.unauthorized,
   ),
   api(
+    "app/api/organization/files/blobs/[blobId]/repair/route.ts",
+    "/api/organization/files/blobs/:blobId/repair",
+    "files",
+    ADMIN_API.access,
+    ADMIN_API.unauthorized,
+  ),
+  api(
     "app/api/platform/runtime/turn-workers/route.ts",
     "/api/platform/runtime/turn-workers",
     ADMIN_API.owner,

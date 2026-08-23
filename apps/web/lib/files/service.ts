@@ -649,6 +649,7 @@ export async function listThreadFileInventory(input: {
     createdAt: schema.kestrelFiles.createdAt,
   }).from(schema.fileScopeGrants)
     .innerJoin(schema.kestrelFiles, eq(schema.kestrelFiles.id, schema.fileScopeGrants.fileId))
+    .innerJoin(schema.fileBlobs, eq(schema.fileBlobs.id, schema.kestrelFiles.blobId))
     .where(and(
       eq(schema.fileScopeGrants.organizationId, input.organizationId),
       eq(schema.fileScopeGrants.scopeType, "thread"),

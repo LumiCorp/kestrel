@@ -4,9 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Inventory file availability through a valid blob join](04-repair-availability-inventory-join.md)
-- [Register the blob availability migration with the deployed runner](05-register-availability-migration.md)
-- [Expose audited operator repair for missing file blobs](06-expose-audited-blob-repair.md)
+None.
 
 ## In progress
 
@@ -20,6 +18,9 @@ None.
 ## Implemented
 
 - [Make blob availability durable across every byte consumer](01-enforce-durable-blob-availability.md)
+- [Inventory file availability through a valid blob join](04-repair-availability-inventory-join.md)
+- [Register the blob availability migration with the deployed runner](05-register-availability-migration.md)
+- [Expose audited operator repair for missing file blobs](06-expose-audited-blob-repair.md)
 
 ## Done
 
