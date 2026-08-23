@@ -35,8 +35,10 @@ export function createLocalCoreRunnerRuntimeFactory(
   const runtimeFactory = createRuntimeFactoryWithStore(store, {
     enableUserTerminals: true,
     enableWorkspaceChanges: true,
+    enableManagedWorktrees: true,
     ...(options.homePath !== undefined
       ? {
+          managedWorktreeHomeDir: options.homePath,
           resolveAttachments: async (threadId, attachmentIds) =>
             await new DesktopAttachmentStore(options.homePath!).resolve(
               threadId,

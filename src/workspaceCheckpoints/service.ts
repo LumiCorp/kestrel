@@ -208,8 +208,9 @@ export class WorkspaceCheckpointService {
         checkpoints: [checkpoint, ...state.checkpoints],
       };
       await this.persistState(input.sessionId, nextState, sessionSnapshot);
-      await this.runAutomaticCleanup(input.sessionId);
+      await this.runAutomaticCleanup(input.sessionId, input.runId);
       await this.appendReplayEvent(input.sessionId, {
+        runId: input.runId,
         type: "workspace.checkpoint_captured",
         metadata: {
           checkpointId,
@@ -345,8 +346,9 @@ export class WorkspaceCheckpointService {
         restores: [restoreRecord, ...latestSnapshot.state.restores],
       };
       await this.persistState(input.sessionId, nextState, latestSnapshot);
-      await this.runAutomaticCleanup(input.sessionId);
+      await this.runAutomaticCleanup(input.sessionId, input.runId);
       await this.appendReplayEvent(input.sessionId, {
+        runId: input.runId,
         type: "workspace.checkpoint_restored",
         metadata: {
           checkpointId: checkpoint.checkpointId,
@@ -399,6 +401,7 @@ export class WorkspaceCheckpointService {
     };
     await this.persistState(input.promotion.sessionId, nextState, snapshot);
     await this.appendReplayEvent(input.promotion.sessionId, {
+      runId: input.promotion.runId,
       type: "workspace.promotion_recorded",
       metadata: {
         promotionId: input.promotion.promotionId,
@@ -473,6 +476,7 @@ export class WorkspaceCheckpointService {
     };
     await this.recordPromotion({ promotion: updatedPromotion });
     await this.appendReplayEvent(input.sessionId, {
+      runId: promotion.runId,
       type: "workspace.promotion_undo_restored",
       metadata: {
         promotionId: promotion.promotionId,
@@ -521,7 +525,10 @@ export class WorkspaceCheckpointService {
     });
   }
 
-  private async runAutomaticCleanup(sessionId: string): Promise<void> {
+  private async runAutomaticCleanup(
+    sessionId: string,
+    runId?: string | undefined,
+  ): Promise<void> {
     try {
       const snapshot = await this.readStateSnapshot(sessionId);
       await this.performCleanup({
@@ -531,9 +538,11 @@ export class WorkspaceCheckpointService {
         reason: "Automatic workspace checkpoint cleanup",
         policy: snapshot.state.cleanupPolicy,
         persistPolicy: true,
+        runId,
       });
     } catch (error) {
       await this.appendReplayEvent(sessionId, {
+        runId,
         type: "workspace.checkpoint_cleanup_failed",
         metadata: {
           message: error instanceof Error ? error.message : String(error),
@@ -554,6 +563,7 @@ export class WorkspaceCheckpointService {
     reason: string;
     policy: WorkspaceCheckpointCleanupPolicy;
     persistPolicy: boolean;
+    runId?: string | undefined;
   }): Promise<WorkspaceCheckpointCleanupResult> {
     const protectedIds = this.buildProtectedCheckpointIds(input.stateSnapshot.state, input.policy);
     const checkpoints = [...input.stateSnapshot.state.checkpoints];
@@ -596,6 +606,7 @@ export class WorkspaceCheckpointService {
       };
       await this.persistState(input.sessionId, nextState, input.stateSnapshot);
       await this.appendReplayEvent(input.sessionId, {
+        runId: input.runId,
         type: "workspace.checkpoint_cleaned",
         metadata: {
           cleanupId: cleanup.cleanupId,
@@ -640,6 +651,7 @@ export class WorkspaceCheckpointService {
     };
     await this.persistState(input.sessionId, nextState, input.stateSnapshot);
     await this.appendReplayEvent(input.sessionId, {
+      runId: input.runId,
       type: "workspace.checkpoint_cleaned",
       metadata: {
         cleanupId: cleanup.cleanupId,
@@ -1185,6 +1197,7 @@ export class WorkspaceCheckpointService {
   private async appendReplayEvent(
     sessionId: string,
     input: {
+      runId?: string | undefined;
       type:
         | "workspace.checkpoint_captured"
         | "workspace.checkpoint_restored"
@@ -1195,8 +1208,15 @@ export class WorkspaceCheckpointService {
       metadata: Record<string, unknown>;
     },
   ): Promise<void> {
+    if (input.runId === undefined) {
+      return;
+    }
+    const run = await this.store.getRun(input.runId);
+    if (run === null || run.sessionId !== sessionId) {
+      return;
+    }
     await this.store.appendRunEvent({
-      runId: `workspace:${sessionId}`,
+      runId: input.runId,
       sessionId,
       type: input.type,
       level: "INFO",
