@@ -10,11 +10,12 @@ GitHub issue #414, commit `b974371d8`, `SandboxCapabilityLeaseCoordinator.commit
 
 ## Repair requirements
 
-The exact result, usage, child settlement, and replayable lease state must become durable as one recoverable action. Recovery must restore that result through the existing exact tool/effect replay seam without credential resolution, provider access, broker work, or Docker.
+Provider evidence, usage, child settlement, and lease state must become durable as one recoverable action. A provider response is not the final `code.execute` result: if the sandbox has not completed, recovery must fail closed without provider retry. Once `code.execute` has completed, the exact `AgentToolResult` must be durably recorded and restored through the existing effect replay seam without credential resolution, provider access, broker work, or Docker.
 
 ## Done when
 
-- Interruption at every result-commit boundary recovers the exact recorded result.
+- Interruption after provider contact but before sandbox completion fails closed without retry.
+- Interruption after the complete tool result is durable recovers that exact result.
 - Restart performs zero credential, provider, broker, and Docker calls.
 - Missing committed evidence fails closed without live fallback.
 - Secret-free persistence and exact binding checks remain intact.
@@ -22,4 +23,3 @@ The exact result, usage, child settlement, and replayable lease state must becom
 ## Depends on
 
 None.
-

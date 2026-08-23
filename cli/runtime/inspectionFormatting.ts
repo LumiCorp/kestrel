@@ -111,7 +111,7 @@ export function formatReplayInspection(replay: ReplayResult): string[] {
   }
   for (const capability of replay.sandboxCapabilities?.leases ?? []) {
     lines.push(
-      `sandboxCapability lease=${capability.leaseId} capability=${capability.capabilityId} status=${capability.status} expiresAt=${capability.expiresAt} remainingRequests=${capability.remainingRequests} remainingBytes=${capability.remainingResponseBytes}` +
+      `sandboxCapability lease=${capability.leaseId} capability=${capability.capabilityId} status=${capability.status} expiresAt=${capability.expiresAt} remainingRequests=${capability.remainingRequests} remainingBytes=${capability.remainingResponseBytes} childRequestsAllocated=${capability.childRequestsAllocated} childBytesAllocated=${capability.childResponseBytesAllocated}` +
       `${capability.terminalOutcome !== undefined ? ` terminal=${capability.terminalOutcome}` : ""}` +
       `${capability.parentLeaseId !== undefined ? ` parentLease=${capability.parentLeaseId}` : ""}` +
       `${capability.resultReference !== undefined ? ` resultRef=${capability.resultReference}` : ""}`,

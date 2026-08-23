@@ -702,8 +702,8 @@
     {
       "id": "sandbox-lease-response-ceiling-bypass",
       "target": "src/code/SandboxCapabilityLeaseCoordinator.ts",
-      "find": "        current.usage.responseBytesConsumed + input.responseBytes > current.usage.responseByteLimit) {",
-      "replace": "        false && current.usage.responseBytesConsumed + input.responseBytes > current.usage.responseByteLimit) {",
+      "find": "        current.usage.responseBytesConsumed + childResponseBytesAllocated + input.responseBytes > current.usage.responseByteLimit) {",
+      "replace": "        false && current.usage.responseBytesConsumed + childResponseBytesAllocated + input.responseBytes > current.usage.responseByteLimit) {",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=beyond the response-byte ceiling", "tests/unit/sandbox-capability-lease-coordinator.test.ts"],
       "testFiles": ["tests/unit/sandbox-capability-lease-coordinator.test.ts"]

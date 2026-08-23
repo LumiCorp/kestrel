@@ -8,6 +8,7 @@ import type {
 import type {
   PersistedEffect,
   EffectStore,
+  SandboxCapabilityLeaseStore,
   SessionRepository,
 } from "../kestrel/contracts/store.js";
 import {
@@ -93,12 +94,32 @@ export class InlineEffectRunner implements EffectRunner {
           session,
         });
 
-        await this.store.saveEffectResult(effect.runId, effect.sessionId, {
+        const completedEffectResult = {
           idempotencyKey: effect.idempotencyKey,
-          status: "DONE",
+          status: "DONE" as const,
           output,
           timestamp: new Date().toISOString(),
-        });
+        };
+        const capabilityReplay = readSandboxCapabilityReplayEvidence(output);
+        if (capabilityReplay === undefined) {
+          await this.store.saveEffectResult(effect.runId, effect.sessionId, completedEffectResult);
+        } else {
+          const capabilityStore = this.store as typeof this.store & Partial<SandboxCapabilityLeaseStore>;
+          if (capabilityStore.saveSandboxCapabilityEffectResult === undefined) {
+            throw new Error("Durable sandbox capability effect-result persistence is unavailable");
+          }
+          if (capabilityReplay.toolCallId !== effect.idempotencyKey) {
+            throw new Error("Sandbox capability replay evidence does not match the exact effect action");
+          }
+          await capabilityStore.saveSandboxCapabilityEffectResult({
+            leaseId: capabilityReplay.leaseId,
+            bindingDigest: capabilityReplay.bindingDigest,
+            toolCallId: capabilityReplay.toolCallId,
+            runId: effect.runId,
+            sessionId: effect.sessionId,
+            result: completedEffectResult,
+          });
+        }
         await this.store.markEffectStatus(effect.idempotencyKey, "DONE");
         if (toolActivity !== undefined) {
           const evidence = readAgentToolResultV2(output);
@@ -232,6 +253,31 @@ function readAgentToolResultV2(value: unknown) {
   } catch {
     return undefined;
   }
+}
+
+function readSandboxCapabilityReplayEvidence(value: unknown): {
+  leaseId: string;
+  bindingDigest: string;
+  toolCallId: string;
+} | undefined {
+  const result = readAgentToolResultV2(value);
+  if (result === undefined || (result.outcome.kind !== "success" && result.outcome.kind !== "partial")) return;
+  const rawOutput = result.outcome.rawOutput;
+  if (typeof rawOutput !== "object" || rawOutput === null || Array.isArray(rawOutput)) return;
+  const evidence = (rawOutput as Record<string, unknown>).capabilityReplayEvidence;
+  if (typeof evidence !== "object" || evidence === null || Array.isArray(evidence)) return;
+  const record = evidence as Record<string, unknown>;
+  if (
+    record.version !== 1 ||
+    typeof record.leaseId !== "string" || record.leaseId.length === 0 ||
+    typeof record.bindingDigest !== "string" || !/^(?:sha256:)?[a-f0-9]{64}$/u.test(record.bindingDigest) ||
+    typeof record.toolCallId !== "string" || record.toolCallId.length === 0
+  ) return;
+  return {
+    leaseId: record.leaseId,
+    bindingDigest: record.bindingDigest,
+    toolCallId: record.toolCallId,
+  };
 }
 
 async function notifyToolActivity(

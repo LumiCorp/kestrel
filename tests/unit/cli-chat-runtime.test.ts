@@ -11,17 +11,25 @@ import {
   resolveSandboxCapabilityBrokerAuthorityFromEnvironment,
   resolveSandboxCapabilityRuntimeEnvironment,
   persistSandboxCapabilityResultEvidence,
+  validateSandboxCapabilityLeaseCurrent,
 } from "../../cli/runtime/KestrelChatRuntime.js";
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
 import {
   fingerprintSandboxCapabilityLeaseBindingV1,
   type SandboxCapabilityLeaseBindingV1,
 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import type { SessionStore } from "../../src/kestrel/contracts/store.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+  hashCanonical,
+} from "../../src/kestrel/contracts/tool-contract.js";
 import {
   KESTREL_EXECUTION_BOUNDARY_POLICY,
   SensitiveValueRegistry,
 } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
 
 test("sandbox capability result artifacts recursively redact registered secrets before digest and persistence", async () => {
   const store = new InMemorySessionStore();
@@ -65,6 +73,184 @@ test("sandbox capability result artifacts recursively redact registered secrets 
   assert.equal(serialized.includes(secret), false);
   assert.match(serialized, /redacted/iu);
   assert.equal((artifact?.payload as { bindingDigest?: string }).bindingDigest, fingerprintSandboxCapabilityLeaseBindingV1(binding));
+});
+
+test("sandbox capability currentness rejects independent policy replacement and preserves exact DONE replay", async () => {
+  const descriptor = defaultToolCatalog.getDescriptorRef("code.execute");
+  if (descriptor === undefined) throw new Error("code.execute descriptor missing");
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-currentness",
+    scopeFingerprint: fingerprintToolScopeV1({ tenant: "tenant-a", environment: "environment-a", gateway: "local-core", authorizationScope: ["runtime"] }),
+  });
+  const currentPolicyRevision = hashCanonical({ policy: "current" });
+  const stalePolicyRevision = hashCanonical({ policy: "stale" });
+  const effectiveInput = { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "exact" } } };
+  let policyDecision: "allow" | "approval_required" = "allow";
+  let preparedApproval: { approvalId: string; authorityRevision: string } | undefined;
+  let approvalGrants: Array<{ grantId: string; status: string; expiresAt: string; authorityRevision: string }> = [];
+  let effectStatus: "PENDING" | "DONE" = "PENDING";
+  const digest = "a".repeat(64);
+  const binding: SandboxCapabilityLeaseBindingV1 = {
+    version: 1,
+    tenantId: "tenant-a",
+    environmentId: "environment-a",
+    sessionId: "session-policy",
+    runId: "run-policy",
+    toolCallId: "call-policy",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    capabilityId: "tavily.search.read",
+    operation: "search",
+    resource: "https://api.tavily.com/search",
+    audience: { tenantId: "tenant-a", environmentId: "environment-a" },
+    brokerAuthority: { authorityId: "broker-a", revision: "broker-r1" },
+    credentialReference: { credentialId: "tool.tavily.default", revision: "credential-r1" },
+    policyRevision: stalePolicyRevision,
+  };
+  const persistedEffect = () => ({
+        runId: binding.runId,
+        sessionId: binding.sessionId,
+        stepIndex: 0,
+        type: "execute_tool_call",
+        payload: { preparedToolCall: {
+          version: "v1",
+          runId: binding.runId,
+          sessionId: binding.sessionId,
+          callId: binding.toolCallId,
+          activation,
+          origin: { kind: "model", snapshotId: hashCanonical({ snapshot: 1 }), modelToolCallId: "model-call-policy" },
+          effectiveInput,
+          inputAdapters: [],
+          policy: { decision: policyDecision, policyRevision: currentPolicyRevision },
+          ...(preparedApproval === undefined ? {} : { approval: preparedApproval }),
+          preparedAt: "2026-08-23T12:00:00.000Z",
+        } },
+        idempotencyKey: binding.toolCallId,
+        failurePolicy: "STOP",
+        status: effectStatus,
+        createdAt: "2026-08-23T12:00:00.000Z",
+      });
+  const store = {
+    async listPendingEffects() { return effectStatus === "PENDING" ? [persistedEffect()] : []; },
+    async getPersistedEffect() { return persistedEffect(); },
+    async getEffectResult() {
+      return effectStatus === "DONE"
+        ? { idempotencyKey: binding.toolCallId, status: "DONE", output: { recorded: true }, timestamp: "2026-08-23T12:00:01.000Z" }
+        : null;
+    },
+    async listApprovalGrants() { return approvalGrants; },
+  } as unknown as SessionStore;
+
+  const result = await validateSandboxCapabilityLeaseCurrent({
+    binding,
+    boundary: "issuance",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    audience: binding.audience,
+    brokerAuthority: binding.brokerAuthority,
+    credentialResolver: async () => ({ credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" }),
+    resolveCurrentPolicy: async () => ({ decision: policyDecision, policyRevision: currentPolicyRevision }),
+    store,
+  });
+  assert.deepEqual(result, { authorized: false, reason: "prepared_policy_changed_or_denied" });
+
+  const hostPolicyReplacement = await validateSandboxCapabilityLeaseCurrent({
+    binding: { ...binding, policyRevision: currentPolicyRevision },
+    boundary: "provider_invocation",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    audience: binding.audience,
+    brokerAuthority: binding.brokerAuthority,
+    credentialResolver: async () => ({ credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" }),
+    resolveCurrentPolicy: async () => ({ decision: "allow", policyRevision: hashCanonical({ policy: "host-replacement" }) }),
+    store,
+  });
+  assert.deepEqual(hostPolicyReplacement, { authorized: false, reason: "prepared_policy_changed_or_denied" });
+
+  const upstreamAuthorityRevision = hashCanonical({ approval: "upstream" });
+  preparedApproval = {
+    approvalId: "grant-policy",
+    authorityRevision: hashCanonical({
+      version: "prepared-tool-approval-authority-v1",
+      activation,
+      effectiveInput,
+      inputAdapters: [],
+      policyRevision: currentPolicyRevision,
+      upstreamAuthorityRevision,
+    }),
+  };
+  policyDecision = "approval_required";
+  approvalGrants = [{
+    grantId: "grant-policy",
+    status: "ACTIVE",
+    expiresAt: "2026-08-23T11:59:59.000Z",
+    authorityRevision: upstreamAuthorityRevision,
+  }];
+  const expired = await validateSandboxCapabilityLeaseCurrent({
+    binding: { ...binding, policyRevision: currentPolicyRevision, approval: preparedApproval },
+    boundary: "provider_invocation",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    audience: binding.audience,
+    brokerAuthority: binding.brokerAuthority,
+    credentialResolver: async () => ({ credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" }),
+    resolveCurrentPolicy: async () => ({ decision: policyDecision, policyRevision: currentPolicyRevision }),
+    store,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+  });
+  assert.deepEqual(expired, { authorized: false, reason: "approval_revoked_or_stale" });
+
+  approvalGrants[0]!.expiresAt = "2026-08-23T12:01:00.000Z";
+  const active = await validateSandboxCapabilityLeaseCurrent({
+    binding: { ...binding, policyRevision: currentPolicyRevision, approval: preparedApproval },
+    boundary: "result_delivery",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    audience: binding.audience,
+    brokerAuthority: binding.brokerAuthority,
+    credentialResolver: async () => ({ credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" }),
+    resolveCurrentPolicy: async () => ({ decision: policyDecision, policyRevision: currentPolicyRevision }),
+    store,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+  });
+  assert.deepEqual(active, { authorized: true });
+
+  effectStatus = "DONE";
+  const completedReplay = await validateSandboxCapabilityLeaseCurrent({
+    binding: { ...binding, policyRevision: currentPolicyRevision, approval: preparedApproval },
+    boundary: "recorded_replay",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    audience: binding.audience,
+    brokerAuthority: binding.brokerAuthority,
+    credentialResolver: async () => ({ credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" }),
+    resolveCurrentPolicy: async () => ({ decision: policyDecision, policyRevision: currentPolicyRevision }),
+    store,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+  });
+  assert.deepEqual(completedReplay, { authorized: true });
+
+  const forbiddenResume = await validateSandboxCapabilityLeaseCurrent({
+    binding: { ...binding, policyRevision: currentPolicyRevision, approval: preparedApproval },
+    boundary: "recovery_resume",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    audience: binding.audience,
+    brokerAuthority: binding.brokerAuthority,
+    credentialResolver: async () => ({ credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" }),
+    resolveCurrentPolicy: async () => ({ decision: policyDecision, policyRevision: currentPolicyRevision }),
+    store,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+  });
+  assert.deepEqual(forbiddenResume, { authorized: false, reason: "prepared_call_authority_missing_or_ambiguous" });
 });
 
 

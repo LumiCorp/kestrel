@@ -7,6 +7,11 @@ import { createExecuteToolCallHandler } from "../../src/effects/handlers/execute
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
+import { defaultToolCatalog } from "../../tools/catalog.js";
+import {
+  createToolActivationRefV1,
+  fingerprintToolScopeV1,
+} from "../../src/kestrel/contracts/tool-contract.js";
 import {
   adaptLegacyTestToolGateway,
   prepareTestToolCall,
@@ -234,6 +239,89 @@ test("recorded sandbox capability result replay never resolves credentials, cont
     providerCalls: 0,
     dockerStarts: 0,
   });
+});
+
+test("completed code capability output is durably bound before the effect is marked done", async () => {
+  const store = new InMemorySessionStore();
+  const descriptor = defaultToolCatalog.getDescriptorRef("code.execute");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-replay",
+    scopeFingerprint: fingerprintToolScopeV1({
+      tenant: "tenant-a",
+      environment: "environment-a",
+      gateway: "local-core",
+      authorizationScope: ["runtime"],
+    }),
+  });
+  const order: string[] = [];
+  let exactResult: unknown;
+  const originalMark = store.markEffectStatus.bind(store);
+  store.markEffectStatus = async (...args) => {
+    order.push("mark-done");
+    return originalMark(...args);
+  };
+  Object.assign(store, {
+    saveSandboxCapabilityEffectResult: async (input: { result: unknown }) => {
+      order.push("save-exact-result");
+      exactResult = structuredClone(input.result);
+      await store.saveEffectResult("run-exact", "session-exact", input.result as never);
+    },
+  });
+  const timestamp = "2026-08-23T12:00:00.000Z";
+  const rawOutput = {
+    status: "ok",
+    capabilityReplayEvidence: {
+      version: 1,
+      leaseId: "lease-exact",
+      bindingDigest: "a".repeat(64),
+      toolCallId: "call-exact",
+    },
+  };
+  const agentToolResult = {
+    version: "v2" as const,
+    toolName: "code.execute",
+    status: "OK" as const,
+    toolCallId: "call-exact",
+    activation,
+    outcome: {
+      version: "v1" as const,
+      callId: "call-exact",
+      activation,
+      kind: "success" as const,
+      startedAt: timestamp,
+      completedAt: timestamp,
+      effectState: "not_applicable" as const,
+      rawOutput,
+    },
+    modelContext: { text: "complete", rawOutputRef: "sha256:recorded", truncated: false },
+    auditRecord: {
+      toolName: "code.execute",
+      input: { language: "javascript", code: "return 1" },
+      output: rawOutput,
+      startedAt: timestamp,
+      completedAt: timestamp,
+      durationMs: 0,
+      status: "OK" as const,
+    },
+  };
+  const registry = new EffectRegistry();
+  registry.register("execute_tool_call", async () => agentToolResult);
+  await new InlineEffectRunner(store, registry).runEffects([{
+    runId: "run-exact",
+    sessionId: "session-exact",
+    stepIndex: 0,
+    type: "execute_tool_call",
+    payload: { toolName: "code.execute", toolInput: {} },
+    idempotencyKey: "call-exact",
+    failurePolicy: "STOP",
+    status: "PENDING",
+    createdAt: timestamp,
+  }], { runId: "run-exact", sessionId: "session-exact", stepIndex: 0 });
+
+  assert.deepEqual(order, ["save-exact-result", "mark-done"]);
+  assert.deepEqual((exactResult as { output?: unknown }).output, agentToolResult);
 });
 
 test("Effect runner honors existing FAILED result and WAIT policy", async () => {

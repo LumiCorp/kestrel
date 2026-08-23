@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS sandbox_capability_lease_transitions (
 
 CREATE INDEX IF NOT EXISTS idx_sandbox_capability_leases_recovery
   ON sandbox_capability_leases(occurred_at, lease_id)
-  WHERE cleaned_at IS NULL AND transition NOT IN ('requested', 'denied', 'cleaned');
+  WHERE cleaned_at IS NULL AND transition NOT IN ('denied', 'cleaned');
 
 CREATE TABLE IF NOT EXISTS sandbox_capability_child_reservations (
   reservation_id TEXT PRIMARY KEY,

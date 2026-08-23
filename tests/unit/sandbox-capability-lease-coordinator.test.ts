@@ -11,6 +11,7 @@ import type {
   SandboxCapabilityLeaseTransitionRecordV1,
 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import type { SandboxCapabilityLeaseStore } from "../../src/kestrel/contracts/store.js";
+import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 
 const hash = "a".repeat(64);
 const binding: SandboxCapabilityLeaseBindingV1 = {
@@ -31,6 +32,35 @@ const binding: SandboxCapabilityLeaseBindingV1 = {
   credentialReference: { credentialId: "tool.tavily.default", revision: "credential-1" },
   policyRevision: "policy-1",
 };
+
+test("issuance failures terminalize requested authority and never strand child capacity", async () => {
+  const validationStore = new InMemorySessionStore();
+  const validationFailure = new SandboxCapabilityLeaseCoordinator({
+    store: validationStore,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+    validateCurrent: async () => { throw new Error("credential resolver unavailable"); },
+    persistResult: async () => ({ digest: hash, reference: "unused" }),
+  });
+  await assert.rejects(validationFailure.request({ binding, expiresAt: "2026-08-23T12:01:00.000Z", requestLimit: 1, responseByteLimit: 4096 }), /credential resolver unavailable/u);
+  assert.equal((await validationStore.listRecoverableSandboxCapabilityLeases({ before: "2026-08-23T12:01:00.000Z" })).length, 0);
+  assert.deepEqual(validationStore.getRunEvents().filter((event) => event.type.startsWith("sandbox_capability.")).map((event) => event.type), ["sandbox_capability.requested", "sandbox_capability.denied", "sandbox_capability.cleaned"]);
+
+  const childStore = new InMemorySessionStore();
+  const childFailure = new SandboxCapabilityLeaseCoordinator({
+    store: childStore,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+    validateCurrent: async () => ({ authorized: true }),
+    persistResult: async () => ({ digest: hash, reference: "unused" }),
+  });
+  const childBinding: SandboxCapabilityLeaseBindingV1 = {
+    ...binding,
+    approval: { approvalId: "child-approval", authorityRevision: "child-authority" },
+    parentAuthorization: { leaseId: "missing-parent", bindingDigest: hash, authorizationDecisionId: "child-decision", reservationId: "child-reservation", requestLimit: 1, responseByteLimit: 4096 },
+  };
+  await assert.rejects(childFailure.request({ binding: childBinding, expiresAt: "2026-08-23T12:01:00.000Z", requestLimit: 1, responseByteLimit: 4096 }), /unavailable or stale/u);
+  assert.equal(await childStore.getSandboxCapabilityChildReservation("child-reservation"), null);
+  assert.equal((await childStore.listRecoverableSandboxCapabilityLeases({ before: "2026-08-23T12:01:00.000Z" })).length, 0);
+});
 
 test("lease coordinator durably reserves before provider and commits result before success", async () => {
   const store = new FakeLeaseStore();
@@ -138,6 +168,54 @@ test("lease coordinator fails stale binding closed and disposes secrets before c
   assert.deepEqual(order.slice(-3), ["cancelled", "secret_disposed", "cleaned"]);
 });
 
+test("lease coordinator revalidates policy authority at issue, invocation, result, and recovery boundaries", async () => {
+  const store = new FakeLeaseStore();
+  let authorized = false;
+  const coordinator = new SandboxCapabilityLeaseCoordinator({
+    store,
+    now: () => new Date("2026-08-23T12:00:00.000Z"),
+    validateCurrent: async () => authorized
+      ? { authorized: true }
+      : { authorized: false, reason: "prepared_policy_changed_or_denied" },
+    persistResult: async ({ leaseId, result }) => ({ digest: digestSandboxCapabilityResult(result), reference: `result:${leaseId}` }),
+  });
+
+  const deniedAtIssue = await coordinator.request({ binding: { ...binding, toolCallId: "issue-denied" }, expiresAt: "2026-08-23T12:01:00.000Z", requestLimit: 1, responseByteLimit: 4096 });
+  assert.equal(deniedAtIssue.transition, "cleaned");
+  assert.equal(deniedAtIssue.terminalReason, "prepared_policy_changed_or_denied");
+
+  authorized = true;
+  const invocationLease = await coordinator.request({ binding: { ...binding, toolCallId: "invoke-denied" }, expiresAt: "2026-08-23T12:01:00.000Z", requestLimit: 1, responseByteLimit: 4096 });
+  authorized = false;
+  await assert.rejects(coordinator.reserveInvocation(invocationLease.leaseId, invocationLease.binding), /no longer current/u);
+  assert.equal((await store.getSandboxCapabilityLease(invocationLease.leaseId))?.transition, "revoked");
+
+  authorized = true;
+  const resultLease = await coordinator.request({ binding: { ...binding, toolCallId: "result-denied" }, expiresAt: "2026-08-23T12:01:00.000Z", requestLimit: 1, responseByteLimit: 4096 });
+  await coordinator.reserveInvocation(resultLease.leaseId, resultLease.binding);
+  authorized = false;
+  await assert.rejects(coordinator.commitResult({ leaseId: resultLease.leaseId, expectedBinding: resultLease.binding, result: { results: [] }, responseBytes: 2 }), /no longer authorized/u);
+  assert.equal((await store.getSandboxCapabilityLease(resultLease.leaseId))?.transition, "revoked");
+
+  authorized = true;
+  const recoveryLease = await coordinator.request({ binding: { ...binding, toolCallId: "recovery-denied" }, expiresAt: "2026-08-23T12:01:00.000Z", requestLimit: 1, responseByteLimit: 4096 });
+  authorized = false;
+  const recovery = await coordinator.recover(recoveryLease.leaseId, recoveryLease.binding);
+  assert.equal(recovery.kind, "denied");
+  assert.equal(recovery.lease.transition, "revoked");
+  assert.equal(recovery.lease.terminalReason, "prepared_policy_changed_or_denied");
+
+  authorized = true;
+  const replayLease = await coordinator.request({ binding: { ...binding, toolCallId: "replay-denied" }, expiresAt: "2026-08-23T12:01:00.000Z", requestLimit: 1, responseByteLimit: 4096 });
+  await coordinator.reserveInvocation(replayLease.leaseId, replayLease.binding);
+  await coordinator.commitResult({ leaseId: replayLease.leaseId, expectedBinding: replayLease.binding, result: { results: [] }, responseBytes: 2 });
+  authorized = false;
+  const replay = await coordinator.recover(replayLease.leaseId, replayLease.binding);
+  assert.equal(replay.kind, "denied");
+  assert.equal(replay.lease.transition, "revoked");
+  assert.equal(replay.lease.terminalOutcome, "revoked");
+});
+
 class FakeLeaseStore implements SandboxCapabilityLeaseStore {
   private readonly transitions = new Map<string, SandboxCapabilityLeaseTransitionRecordV1[]>();
   private readonly childReservations = new Map<string, SandboxCapabilityChildReservationV1>();
@@ -149,6 +227,13 @@ class FakeLeaseStore implements SandboxCapabilityLeaseStore {
     records.push(structuredClone(input.record));
     this.transitions.set(input.record.leaseId, records);
     return structuredClone(input.record);
+  }
+  async issueSandboxCapabilityLease(input: { expectedSequence: number; record: SandboxCapabilityLeaseTransitionRecordV1; childReservation?: SandboxCapabilityChildReservationV1 }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
+    if (input.childReservation !== undefined) this.childReservations.set(input.childReservation.reservationId, structuredClone(input.childReservation));
+    return this.appendSandboxCapabilityLeaseTransition(input);
+  }
+  async reserveSandboxCapabilityInvocation(input: { expectedSequence: number; record: SandboxCapabilityLeaseTransitionRecordV1 }): Promise<SandboxCapabilityLeaseTransitionRecordV1 & { invocationResponseByteLimit: number }> {
+    return { ...await this.appendSandboxCapabilityLeaseTransition(input), invocationResponseByteLimit: input.record.usage.responseByteLimit - input.record.usage.responseBytesConsumed };
   }
   async getSandboxCapabilityLease(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1 | null> {
     return structuredClone(this.transitions.get(leaseId)?.at(-1) ?? null);
@@ -175,6 +260,7 @@ class FakeLeaseStore implements SandboxCapabilityLeaseStore {
   async listSandboxCapabilityChildReservations(parentLeaseId: string): Promise<SandboxCapabilityChildReservationV1[]> {
     return structuredClone([...this.childReservations.values()].filter((item) => item.decision.parentLeaseId === parentLeaseId));
   }
+  async saveSandboxCapabilityEffectResult(): Promise<void> {}
 }
 
 function createCoordinator(store: SandboxCapabilityLeaseStore, order: string[] = []): SandboxCapabilityLeaseCoordinator {

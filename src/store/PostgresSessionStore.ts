@@ -1580,6 +1580,40 @@ export class PostgresSessionStore implements SessionStore {
     }));
   }
 
+  async getPersistedEffect(idempotencyKey: string): Promise<PersistedEffect | null> {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<{
+      run_id: string;
+      session_id: string;
+      step_index: number;
+      effect_type: string;
+      payload_json: Record<string, unknown>;
+      idempotency_key: string;
+      failure_policy: PersistedEffect["failurePolicy"];
+      status: PersistedEffect["status"];
+      created_at: string;
+    }>(
+      `SELECT e.run_id, e.session_id, e.step_index, e.effect_type,
+              e.payload_json, e.idempotency_key, e.failure_policy, e.status, e.created_at
+         FROM effects e
+        WHERE e.idempotency_key = $1
+        LIMIT 1`,
+      [idempotencyKey],
+    );
+    const row = result.rows[0];
+    return row === undefined ? null : {
+      runId: row.run_id,
+      sessionId: row.session_id,
+      stepIndex: row.step_index,
+      type: row.effect_type,
+      payload: row.payload_json,
+      idempotencyKey: row.idempotency_key,
+      failurePolicy: row.failure_policy,
+      status: row.status,
+      createdAt: row.created_at,
+    };
+  }
+
   async getEffectResult(idempotencyKey: string): Promise<EffectResult | null> {
     await this.ensureSchemaV3();
     const result = await this.db.query<{
@@ -1604,9 +1638,9 @@ export class PostgresSessionStore implements SessionStore {
     return {
       idempotencyKey: row.idempotency_key,
       status: row.status,
-      output: row.output_json ?? undefined,
-      error: row.error_json ?? undefined,
-      timestamp: row.created_at,
+      ...(row.output_json === null ? {} : { output: row.output_json }),
+      ...(row.error_json === null ? {} : { error: row.error_json }),
+      timestamp: normalizeTimestampString(row.created_at),
     };
   }
 
@@ -1768,6 +1802,122 @@ export class PostgresSessionStore implements SessionStore {
     record: SandboxCapabilityLeaseTransitionRecordV1;
   }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
     await this.ensureSchemaV3();
+    return this.withTransaction((executor) =>
+      this.appendSandboxCapabilityLeaseTransitionWithExecutor(executor, input));
+  }
+
+  async issueSandboxCapabilityLease(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+    childReservation?: SandboxCapabilityChildReservationV1 | undefined;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
+    await this.ensureSchemaV3();
+    const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
+    if (record.transition !== "issued") throw new Error("Sandbox capability issuance must transition to issued");
+    return this.withTransaction(async (executor) => {
+      if (input.childReservation !== undefined) {
+        await this.reserveSandboxCapabilityChildWithExecutor(executor, {
+          reservation: input.childReservation,
+        });
+      }
+      return this.appendSandboxCapabilityLeaseTransitionWithExecutor(executor, {
+        expectedSequence: input.expectedSequence,
+        record,
+      });
+    });
+  }
+
+  async reserveSandboxCapabilityInvocation(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1 & { invocationResponseByteLimit: number }> {
+    await this.ensureSchemaV3();
+    const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
+    if (record.transition !== "invoking") throw new Error("Sandbox capability invocation must transition to invoking");
+    return this.withTransaction(async (executor) => {
+      const parent = await executor.query<{ sequence: number | string }>(
+        `SELECT sequence FROM sandbox_capability_leases WHERE lease_id=$1 FOR UPDATE`,
+        [record.leaseId],
+      );
+      if (Number(parent.rows[0]?.sequence) !== input.expectedSequence) {
+        throw new Error("Sandbox capability lease transition sequence conflict");
+      }
+      const allocated = await postgresChildCapacity(executor, record.leaseId);
+      const invocationResponseByteLimit = record.usage.responseByteLimit - record.usage.responseBytesConsumed - allocated.bytes;
+      if (record.usage.requestsConsumed + allocated.requests > record.usage.requestLimit || invocationResponseByteLimit <= 0) {
+        throw new Error("Sandbox capability parent ceiling is reserved by child authority");
+      }
+      return { ...await this.appendSandboxCapabilityLeaseTransitionWithExecutor(executor, input), invocationResponseByteLimit };
+    });
+  }
+
+  async saveSandboxCapabilityEffectResult(input: {
+    leaseId: string;
+    bindingDigest: string;
+    toolCallId: string;
+    runId: string;
+    sessionId: string;
+    result: EffectResult;
+  }): Promise<void> {
+    await this.ensureSchemaV3();
+    await this.withTransaction(async (executor) => {
+      const leaseResult = await executor.query<{ record_json: unknown }>(
+        `SELECT transition.record_json
+           FROM sandbox_capability_leases lease
+           JOIN sandbox_capability_lease_transitions transition
+             ON transition.lease_id = lease.lease_id AND transition.sequence = lease.sequence
+          WHERE lease.lease_id = $1
+          FOR UPDATE OF lease`,
+        [input.leaseId],
+      );
+      const lease = leaseResult.rows[0] === undefined
+        ? undefined
+        : parseSandboxCapabilityLeaseTransitionRecordV1(leaseResult.rows[0].record_json);
+      assertReplayableSandboxCapabilityEffectBinding(lease, input);
+      const existing = await executor.query<{
+        idempotency_key: string;
+        status: "DONE" | "FAILED";
+        output_json: unknown;
+        error_json: RuntimeError | null;
+        created_at: string;
+      }>(
+        `SELECT idempotency_key, status, output_json, error_json, created_at
+           FROM effect_results WHERE idempotency_key = $1 FOR UPDATE`,
+        [input.result.idempotencyKey],
+      );
+      const row = existing.rows[0];
+      if (row !== undefined) {
+        const recorded: EffectResult = {
+          idempotencyKey: row.idempotency_key,
+          status: row.status,
+          ...(row.output_json === null ? {} : { output: row.output_json }),
+          ...(row.error_json === null ? {} : { error: row.error_json }),
+          timestamp: normalizeTimestampString(row.created_at),
+        };
+        if (canonicalStoreJson(recorded) !== canonicalStoreJson(input.result)) {
+          throw new Error("Sandbox capability effect result conflicts with recorded exact replay output");
+        }
+        return;
+      }
+      await executor.query(
+        `INSERT INTO effect_results
+          (run_id, session_id, idempotency_key, status, output_json, error_json, created_at)
+         VALUES ($1, $2, $3, 'DONE', $4::jsonb, NULL, $5::timestamptz)`,
+        [
+          input.runId,
+          input.sessionId,
+          input.result.idempotencyKey,
+          stringifySanitizedJson(input.result.output ?? null),
+          normalizeTimestampString(input.result.timestamp),
+        ],
+      );
+    });
+  }
+
+  private async appendSandboxCapabilityLeaseTransitionWithExecutor(
+    executor: SqlExecutor,
+    input: { expectedSequence: number; record: SandboxCapabilityLeaseTransitionRecordV1 },
+  ): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
     const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
     if (record.bindingDigest !== fingerprintSandboxCapabilityLeaseBindingV1(record.binding)) {
       throw new Error("Sandbox capability lease binding digest does not match the immutable binding");
@@ -1775,7 +1925,6 @@ export class PostgresSessionStore implements SessionStore {
     if (record.sequence !== input.expectedSequence + 1) {
       throw new Error("Sandbox capability lease transition sequence conflict");
     }
-    return this.withTransaction(async (executor) => {
       const currentResult = await executor.query<{ sequence: number | string; transition: string; binding_digest: string }>(
         `SELECT sequence, transition, binding_digest FROM sandbox_capability_leases WHERE lease_id = $1 FOR UPDATE`,
         [record.leaseId],
@@ -1846,7 +1995,6 @@ export class PostgresSessionStore implements SessionStore {
         await revokePostgresChildReservations(executor, record.leaseId, record.occurredAt, `parent_${record.transition}`);
       }
       return record;
-    });
   }
 
   async getSandboxCapabilityLease(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1 | null> {
@@ -1880,7 +2028,7 @@ export class PostgresSessionStore implements SessionStore {
          JOIN sandbox_capability_lease_transitions transition
            ON transition.lease_id = lease.lease_id AND transition.sequence = lease.sequence
         WHERE lease.cleaned_at IS NULL
-          AND lease.transition NOT IN ('requested', 'denied', 'cleaned')
+          AND lease.transition NOT IN ('denied', 'cleaned')
           AND lease.occurred_at <= $1::timestamptz
         ORDER BY lease.occurred_at ASC, lease.lease_id ASC
         LIMIT $2`,
@@ -1891,25 +2039,25 @@ export class PostgresSessionStore implements SessionStore {
 
   async reserveSandboxCapabilityChild(input: { expectedParentSequence: number; reservation: SandboxCapabilityChildReservationV1 }): Promise<SandboxCapabilityChildReservationV1> {
     await this.ensureSchemaV3();
+    return this.withTransaction((executor) =>
+      this.reserveSandboxCapabilityChildWithExecutor(executor, input));
+  }
+
+  private async reserveSandboxCapabilityChildWithExecutor(
+    executor: SqlExecutor,
+    input: { expectedParentSequence?: number | undefined; reservation: SandboxCapabilityChildReservationV1 },
+  ): Promise<SandboxCapabilityChildReservationV1> {
     const reservation = parseSandboxCapabilityChildReservationV1(input.reservation);
     if (reservation.sequence !== 1 || reservation.status !== "reserved") throw new Error("Sandbox capability child reservation must begin reserved at sequence 1");
-    return this.withTransaction(async (executor) => {
       const parentResult = await executor.query<{ sequence: number | string; transition: string; binding_digest: string; usage_json: unknown }>(
         `SELECT sequence, transition, binding_digest, usage_json FROM sandbox_capability_leases WHERE lease_id = $1 FOR UPDATE`,
         [reservation.decision.parentLeaseId],
       );
       const parent = parentResult.rows[0];
-      if (parent === undefined || Number(parent.sequence) !== input.expectedParentSequence || parent.binding_digest !== reservation.decision.parentBindingDigest || !["issued", "invoking"].includes(parent.transition)) throw new Error("Sandbox capability parent authorization is unavailable or stale");
-      const usage = parseSandboxCapabilityLeaseTransitionRecordV1((await executor.query<{ record_json: unknown }>(`SELECT record_json FROM sandbox_capability_lease_transitions WHERE lease_id = $1 AND sequence = $2`, [reservation.decision.parentLeaseId, input.expectedParentSequence])).rows[0]?.record_json).usage;
-      const allocated = await executor.query<{ requests_allocated: string; bytes_allocated: string }>(
-        `SELECT COALESCE(SUM(CASE WHEN status = 'reserved' THEN request_limit WHEN status = 'committed' THEN requests_committed ELSE 0 END), 0)::text AS requests_allocated,
-                COALESCE(SUM(CASE WHEN status = 'reserved' THEN response_byte_limit WHEN status = 'committed' THEN response_bytes_committed ELSE 0 END), 0)::text AS bytes_allocated
-           FROM sandbox_capability_child_reservations WHERE parent_lease_id = $1`,
-        [reservation.decision.parentLeaseId],
-      );
-      const requestsAllocated = Number(allocated.rows[0]?.requests_allocated ?? 0);
-      const bytesAllocated = Number(allocated.rows[0]?.bytes_allocated ?? 0);
-      if (usage.requestsConsumed + requestsAllocated + reservation.decision.requestLimit > usage.requestLimit || usage.responseBytesConsumed + bytesAllocated + reservation.decision.responseByteLimit > usage.responseByteLimit) throw new Error("Sandbox capability parent ceiling is exhausted");
+      if (parent === undefined || (input.expectedParentSequence !== undefined && Number(parent.sequence) !== input.expectedParentSequence) || parent.binding_digest !== reservation.decision.parentBindingDigest || parent.transition !== "issued") throw new Error("Sandbox capability parent authorization is unavailable or stale");
+      const usage = parseSandboxCapabilityLeaseTransitionRecordV1((await executor.query<{ record_json: unknown }>(`SELECT record_json FROM sandbox_capability_lease_transitions WHERE lease_id = $1 AND sequence = $2`, [reservation.decision.parentLeaseId, Number(parent.sequence)])).rows[0]?.record_json).usage;
+      const allocated = await postgresChildCapacity(executor, reservation.decision.parentLeaseId);
+      if (usage.requestsConsumed + allocated.requests + reservation.decision.requestLimit > usage.requestLimit || usage.responseBytesConsumed + allocated.bytes + reservation.decision.responseByteLimit > usage.responseByteLimit) throw new Error("Sandbox capability parent ceiling is exhausted");
       const inserted = await executor.query(
         `INSERT INTO sandbox_capability_child_reservations
           (reservation_id, parent_lease_id, sequence, status, decision_id, parent_binding_digest,
@@ -1920,7 +2068,6 @@ export class PostgresSessionStore implements SessionStore {
       if (inserted.rowCount !== 1) throw new Error("Sandbox capability child reservation conflict");
       await executor.query(`INSERT INTO sandbox_capability_child_reservation_transitions (reservation_id, sequence, status, record_json, occurred_at) VALUES ($1,$2,$3,$4::jsonb,$5::timestamptz)`, [reservation.reservationId, reservation.sequence, reservation.status, stringifySanitizedJson(reservation), reservation.occurredAt]);
       return reservation;
-    });
   }
 
   async settleSandboxCapabilityChild(input: { reservationId: string; expectedSequence: number; status: "committed" | "released"; requestsCommitted: number; responseBytesCommitted: number; reason?: string | undefined; occurredAt: string }): Promise<SandboxCapabilityChildReservationV1> {
@@ -4653,6 +4800,22 @@ function childReservationValues(record: SandboxCapabilityChildReservationV1): un
   return [record.reservationId, record.decision.parentLeaseId, record.sequence, record.status, record.decision.decisionId, record.decision.parentBindingDigest, record.decision.childRunId, record.decision.childSessionId, record.decision.childToolCallId, record.decision.requestLimit, record.decision.responseByteLimit, record.requestsCommitted, record.responseBytesCommitted, stringifySanitizedJson(record), record.occurredAt];
 }
 
+async function postgresChildCapacity(
+  executor: SqlExecutor,
+  parentLeaseId: string,
+): Promise<{ requests: number; bytes: number }> {
+  const allocated = await executor.query<{ requests_allocated: string; bytes_allocated: string }>(
+    `SELECT COALESCE(SUM(CASE WHEN status = 'reserved' THEN request_limit WHEN status = 'committed' THEN requests_committed ELSE 0 END), 0)::text AS requests_allocated,
+            COALESCE(SUM(CASE WHEN status = 'reserved' THEN response_byte_limit WHEN status = 'committed' THEN response_bytes_committed ELSE 0 END), 0)::text AS bytes_allocated
+       FROM sandbox_capability_child_reservations WHERE parent_lease_id = $1`,
+    [parentLeaseId],
+  );
+  return {
+    requests: Number(allocated.rows[0]?.requests_allocated ?? 0),
+    bytes: Number(allocated.rows[0]?.bytes_allocated ?? 0),
+  };
+}
+
 async function revokePostgresChildReservations(executor: SqlExecutor, parentLeaseId: string, occurredAt: string, reason: string): Promise<void> {
   const active = await executor.query<{ record_json: unknown }>(`SELECT record_json FROM sandbox_capability_child_reservations WHERE parent_lease_id=$1 AND status='reserved' FOR UPDATE`, [parentLeaseId]);
   for (const row of active.rows) {
@@ -4775,6 +4938,41 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function assertReplayableSandboxCapabilityEffectBinding(
+  lease: SandboxCapabilityLeaseTransitionRecordV1 | undefined,
+  input: {
+    bindingDigest: string;
+    toolCallId: string;
+    runId: string;
+    sessionId: string;
+    result: EffectResult;
+  },
+): asserts lease is SandboxCapabilityLeaseTransitionRecordV1 {
+  if (
+    lease === undefined ||
+    lease.bindingDigest !== input.bindingDigest ||
+    lease.binding.toolCallId !== input.toolCallId ||
+    lease.binding.runId !== input.runId ||
+    lease.binding.sessionId !== input.sessionId ||
+    input.result.idempotencyKey !== input.toolCallId ||
+    input.result.status !== "DONE" ||
+    lease.terminalOutcome !== "completed" ||
+    lease.result === undefined ||
+    (lease.transition !== "consumed" && lease.transition !== "exhausted" && lease.transition !== "cleaned")
+  ) {
+    throw new Error("Sandbox capability effect result is not bound to a completed exact lease action");
+  }
+}
+
+function canonicalStoreJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalStoreJson).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalStoreJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function readNonEmptyString(value: unknown): string | undefined {

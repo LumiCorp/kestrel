@@ -48,6 +48,7 @@ export class CodeExecutionService {
     let capability = options.capability;
     let releaseCapabilitySensitiveValue: (() => void) | undefined;
     let redactCapabilityResult: (<T>(value: T) => T) | undefined;
+    let capabilityReplayEvidence: CodeExecutionResult["capabilityReplayEvidence"];
     if (request.capability !== undefined) {
       const resolved = await resolveTavilyCapability(
         config,
@@ -57,6 +58,7 @@ export class CodeExecutionService {
       capability = resolved.grant;
       releaseCapabilitySensitiveValue = resolved.releaseSensitiveValue;
       redactCapabilityResult = resolved.redactSensitiveValues;
+      capabilityReplayEvidence = resolved.replayEvidence;
     } else if (options.capability !== undefined) {
       throw new Error("Caller-authored sandbox capability grants are not accepted");
     }
@@ -78,6 +80,7 @@ export class CodeExecutionService {
         summary: summarizeExecutionResult(output),
         policy: policyDecision.policy,
         retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
+        ...(capabilityReplayEvidence === undefined ? {} : { capabilityReplayEvidence }),
       }) ?? {
         status: output.status,
         exitCode: output.exitCode,
@@ -88,6 +91,7 @@ export class CodeExecutionService {
         summary: summarizeExecutionResult(output),
         policy: policyDecision.policy,
         retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
+        ...(capabilityReplayEvidence === undefined ? {} : { capabilityReplayEvidence }),
       };
     } catch (error) {
       if (options.signal?.aborted === true) {
@@ -104,6 +108,7 @@ export class CodeExecutionService {
           summary: "Code runtime unavailable: Docker is not installed or not reachable.",
           policy: policyDecision.policy,
           retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
+          ...(capabilityReplayEvidence === undefined ? {} : { capabilityReplayEvidence }),
         };
         return redactCapabilityResult?.(result) ?? result;
       }
@@ -118,6 +123,7 @@ export class CodeExecutionService {
         summary: "Code execution failed before completion due to an internal runtime error.",
         policy: policyDecision.policy,
         retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
+        ...(capabilityReplayEvidence === undefined ? {} : { capabilityReplayEvidence }),
       };
       return redactCapabilityResult?.(result) ?? result;
     } finally {
@@ -332,6 +338,7 @@ async function resolveTavilyCapability(
   runtime: SandboxCapabilityRuntimeContext | undefined,
 ): Promise<{
   grant: SandboxCapabilityGrant;
+  replayEvidence: NonNullable<CodeExecutionResult["capabilityReplayEvidence"]>;
   releaseSensitiveValue?: (() => void) | undefined;
   redactSensitiveValues?: (<T>(value: T) => T) | undefined;
 }> {
@@ -397,6 +404,7 @@ async function resolveTavilyCapability(
     throw new Error(`Sandbox capability lease was not issued: ${durableLease.terminalReason ?? durableLease.transition}`);
   }
   let sensitiveMaterialReleased = false;
+  let invocationResponseByteLimit = profile.maxResponseBytes;
   let releaseRegisteredSensitiveValue: (() => void) | undefined;
   const disposeSensitiveMaterial = () => {
     if (sensitiveMaterialReleased) return;
@@ -432,7 +440,9 @@ async function resolveTavilyCapability(
     expectedInput: { query, maxResults },
     lifecycle: {
         beforeProviderInvocation: async () => {
-          await runtime.leaseCoordinator!.reserveInvocation(durableLease.leaseId, leaseBinding);
+          const reservation = await runtime.leaseCoordinator!.reserveInvocation(durableLease.leaseId, leaseBinding);
+          invocationResponseByteLimit = reservation.invocationResponseByteLimit;
+          return { responseByteLimit: invocationResponseByteLimit };
         },
         commitProviderResult: async ({ result, responseBytes }) => {
           await runtime.leaseCoordinator!.commitResult({
@@ -450,12 +460,19 @@ async function resolveTavilyCapability(
           );
         },
         beforeContainerTeardown: async (reason) => {
-          await runtime.leaseCoordinator!.settleBeforeTeardown({
-            leaseId: durableLease.leaseId,
-            expectedBinding: leaseBinding,
-            reason,
-            disposeSensitiveMaterial,
-          });
+          try {
+            await runtime.leaseCoordinator!.settleBeforeTeardown({
+              leaseId: durableLease.leaseId,
+              expectedBinding: leaseBinding,
+              reason,
+              disposeSensitiveMaterial,
+            });
+          } finally {
+            // Durable evidence can honestly remain non-cleaned when its store
+            // is unavailable, but process-local authority must still be gone
+            // before Docker is allowed to remove either container.
+            disposeSensitiveMaterial();
+          }
         },
       },
     adapter: async (adapterInput, signal) => {
@@ -469,7 +486,7 @@ async function resolveTavilyCapability(
           maxResults: adapterInput.maxResults,
           timeoutMs: profile.timeoutMs,
           expiryMs: remainingExpiryMs,
-          maxResponseBytes: profile.maxResponseBytes,
+          maxResponseBytes: invocationResponseByteLimit,
           signal,
         });
       } catch (error) {
@@ -499,6 +516,12 @@ async function resolveTavilyCapability(
   releaseRegisteredSensitiveValue = releaseSensitiveValue;
   return {
     grant,
+    replayEvidence: {
+      version: 1,
+      leaseId: durableLease.leaseId,
+      bindingDigest: durableLease.bindingDigest,
+      toolCallId: durableLease.binding.toolCallId,
+    },
     releaseSensitiveValue: disposeSensitiveMaterial,
     ...(runtime.redactSensitiveValues === undefined ? {} : { redactSensitiveValues: runtime.redactSensitiveValues }),
   };

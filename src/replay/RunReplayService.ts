@@ -360,6 +360,8 @@ export interface ReplaySandboxCapabilityLease {
   expiresAt: string;
   remainingRequests: number;
   remainingResponseBytes: number;
+  childRequestsAllocated: number;
+  childResponseBytesAllocated: number;
   exactProviderUsage: number | null;
   terminalOutcome?: SandboxCapabilityLeaseTransitionRecordV1["terminalOutcome"];
   terminalReason?: string | undefined;
@@ -629,7 +631,7 @@ export class RunReplayService {
     });
     const delegations = await this.buildDelegationReports(lineage, groups, waits.history, events);
     const supervision = this.buildSupervisionReport(delegations, events);
-    const sandboxCapabilities = this.buildSandboxCapabilityReport(events);
+    const sandboxCapabilities = await this.buildSandboxCapabilityReport(events);
 
     return {
       query,
@@ -660,7 +662,7 @@ export class RunReplayService {
     };
   }
 
-  private buildSandboxCapabilityReport(events: RunEvent[]): ReplaySandboxCapabilityReport {
+  private async buildSandboxCapabilityReport(events: RunEvent[]): Promise<ReplaySandboxCapabilityReport> {
     const latestByLease = new Map<string, SandboxCapabilityLeaseTransitionRecordV1>();
     let invalidTransitionEvents = 0;
     for (const event of events) {
@@ -681,10 +683,22 @@ export class RunReplayService {
         invalidTransitionEvents += 1;
       }
     }
-    return {
-      leases: [...latestByLease.values()]
-        .sort((left, right) => left.leaseId.localeCompare(right.leaseId))
-        .map((record) => ({
+    const reservationStore = this.store as ReplayStore & Partial<{
+      listSandboxCapabilityChildReservations(leaseId: string): Promise<import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityChildReservationV1[]>;
+    }>;
+    const leases = [];
+    for (const record of [...latestByLease.values()].sort((left, right) => left.leaseId.localeCompare(right.leaseId))) {
+      const reservations = reservationStore.listSandboxCapabilityChildReservations === undefined
+        ? []
+        : await reservationStore.listSandboxCapabilityChildReservations(record.leaseId);
+      const allocated = reservations.reduce(
+        (sum, item) => ({
+          requests: sum.requests + (item.status === "reserved" ? item.decision.requestLimit : item.status === "committed" ? item.requestsCommitted : 0),
+          bytes: sum.bytes + (item.status === "reserved" ? item.decision.responseByteLimit : item.status === "committed" ? item.responseBytesCommitted : 0),
+        }),
+        { requests: 0, bytes: 0 },
+      );
+      leases.push({
           leaseId: record.leaseId,
           bindingDigest: record.bindingDigest,
           capabilityId: record.binding.capabilityId,
@@ -701,15 +715,20 @@ export class RunReplayService {
             : {}),
           status: record.transition,
           expiresAt: record.expiresAt,
-          remainingRequests: Math.max(0, record.usage.requestLimit - record.usage.requestsConsumed),
-          remainingResponseBytes: Math.max(0, record.usage.responseByteLimit - record.usage.responseBytesConsumed),
+          remainingRequests: Math.max(0, record.usage.requestLimit - record.usage.requestsConsumed - allocated.requests),
+          remainingResponseBytes: Math.max(0, record.usage.responseByteLimit - record.usage.responseBytesConsumed - allocated.bytes),
+          childRequestsAllocated: allocated.requests,
+          childResponseBytesAllocated: allocated.bytes,
           exactProviderUsage: record.usage.exactProviderUsage,
           ...(record.terminalOutcome !== undefined ? { terminalOutcome: record.terminalOutcome } : {}),
           ...(record.terminalReason !== undefined ? { terminalReason: record.terminalReason } : {}),
           ...(record.cleanedAt !== undefined ? { cleanedAt: record.cleanedAt } : {}),
           ...(record.result !== undefined ? { resultReference: record.result.reference } : {}),
           occurredAt: record.occurredAt,
-        })),
+      });
+    }
+    return {
+      leases,
       invalidTransitionEvents,
     };
   }

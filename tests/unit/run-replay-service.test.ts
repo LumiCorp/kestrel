@@ -55,6 +55,15 @@ test("RunReplayService projects secret-free sandbox capability lifecycle evidenc
     timestamp: record.occurredAt,
     metadata: { record },
   });
+  Object.assign(store, {
+    async listSandboxCapabilityChildReservations(leaseId: string) {
+      return leaseId === "lease-replay-1" ? [{
+        version: 1, reservationId: "operator-reservation", sequence: 1, status: "reserved",
+        decision: { version: 1, decisionId: "operator-decision", parentLeaseId: leaseId, parentBindingDigest: digest, childSessionId: "child-session", childRunId: "child-run", childToolCallId: "child-call", policyRevision: "policy-v3", approval: { approvalId: "approval-child", authorityRevision: "approval-v2" }, requestLimit: 1, responseByteLimit: 1_000, decidedAt: "2026-08-23T10:00:01.000Z" },
+        requestsCommitted: 0, responseBytesCommitted: 0, occurredAt: "2026-08-23T10:00:01.000Z",
+      }] : [];
+    },
+  });
   await store.appendRunEvent({
     runId: "run-capability",
     sessionId: "session-capability",
@@ -81,7 +90,9 @@ test("RunReplayService projects secret-free sandbox capability lifecycle evidenc
       status: "cleaned",
       expiresAt: "2026-08-23T10:01:00.000Z",
       remainingRequests: 0,
-      remainingResponseBytes: 7_500,
+      remainingResponseBytes: 6_500,
+      childRequestsAllocated: 1,
+      childResponseBytesAllocated: 1_000,
       exactProviderUsage: null,
       terminalOutcome: "completed",
       cleanedAt: "2026-08-23T10:00:03.000Z",

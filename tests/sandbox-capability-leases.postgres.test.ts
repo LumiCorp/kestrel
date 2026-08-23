@@ -52,13 +52,92 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     assert.equal((await store.getSandboxCapabilityLease(leaseId))?.transition, "invoking");
     assert.deepEqual((await store.listSandboxCapabilityLeaseTransitions(leaseId)).map((item) => item.sequence), [1, 2, 3]);
     assert.deepEqual((await store.listRecoverableSandboxCapabilityLeases({ before: "2026-08-23T12:01:00.000Z" })).filter((item) => item.leaseId === leaseId).map((item) => item.transition), ["invoking"]);
-    const child = (id: string): SandboxCapabilityChildReservationV1 => ({ version: 1, reservationId: `${id}-${suffix}`, sequence: 1, status: "reserved", decision: { version: 1, decisionId: `decision-${id}-${suffix}`, parentLeaseId: leaseId, parentBindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), childSessionId: `child-session-${id}`, childRunId: `child-run-${id}`, childToolCallId: `child-call-${id}`, policyRevision: `policy-${id}`, approval: { approvalId: `approval-${id}`, authorityRevision: `authority-${id}` }, requestLimit: 1, responseByteLimit: 4096, decidedAt: "2026-08-23T12:00:03.000Z" }, requestsCommitted: 0, responseBytesCommitted: 0, occurredAt: "2026-08-23T12:00:03.000Z" });
-    const childContention = await Promise.allSettled([store.reserveSandboxCapabilityChild({ expectedParentSequence: 3, reservation: child("a") }), store.reserveSandboxCapabilityChild({ expectedParentSequence: 3, reservation: child("b") })]);
+    const exactEffectResult = {
+      idempotencyKey: binding.toolCallId,
+      status: "DONE" as const,
+      output: { status: "OK", outcome: { kind: "success", rawOutput: { answer: "recorded" } } },
+      timestamp: "2026-08-23T12:00:04.000Z",
+    };
+    await assert.rejects(store.saveSandboxCapabilityEffectResult({
+      leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
+      runId, sessionId, result: exactEffectResult,
+    }), /completed exact lease action/u);
+    await store.appendSandboxCapabilityLeaseTransition({
+      expectedSequence: 3,
+      record: {
+        ...record(4, "consumed"),
+        issuedAt: "2026-08-23T12:00:02.000Z",
+        usage: { ...record(4, "consumed").usage, requestsConsumed: 1, responseBytesConsumed: 18 },
+        terminalOutcome: "completed",
+        result: { digest: "d".repeat(64), reference: "artifact:provider-result" },
+      },
+    });
+    await store.saveSandboxCapabilityEffectResult({
+      leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
+      runId, sessionId, result: exactEffectResult,
+    });
+    assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
+    await store.saveSandboxCapabilityEffectResult({
+      leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
+      runId, sessionId, result: exactEffectResult,
+    });
+    const childParentId = `child-parent-${suffix}`;
+    const childParentBinding = { ...binding, toolCallId: `child-parent-call-${suffix}` };
+    const childParentDigest = fingerprintSandboxCapabilityLeaseBindingV1(childParentBinding);
+    const childParentRecord = (sequence: number, transition: SandboxCapabilityLeaseTransitionRecordV1["transition"]): SandboxCapabilityLeaseTransitionRecordV1 => ({ ...record(sequence, transition), leaseId: childParentId, binding: childParentBinding, bindingDigest: childParentDigest });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: childParentRecord(1, "requested") });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: childParentRecord(2, "issued") });
+    const child = (id: string, parentLeaseId = childParentId, parentBindingDigest = childParentDigest): SandboxCapabilityChildReservationV1 => ({ version: 1, reservationId: `${id}-${suffix}`, sequence: 1, status: "reserved", decision: { version: 1, decisionId: `decision-${id}-${suffix}`, parentLeaseId, parentBindingDigest, childSessionId: `child-session-${id}`, childRunId: `child-run-${id}`, childToolCallId: `child-call-${id}`, policyRevision: `policy-${id}`, approval: { approvalId: `approval-${id}`, authorityRevision: `authority-${id}` }, requestLimit: 1, responseByteLimit: 4096, decidedAt: "2026-08-23T12:00:03.000Z" }, requestsCommitted: 0, responseBytesCommitted: 0, occurredAt: "2026-08-23T12:00:03.000Z" });
+    const childContention = await Promise.allSettled([store.reserveSandboxCapabilityChild({ expectedParentSequence: 2, reservation: child("a") }), store.reserveSandboxCapabilityChild({ expectedParentSequence: 2, reservation: child("b") })]);
     assert.equal(childContention.filter((item) => item.status === "fulfilled").length, 1);
     assert.equal(childContention.filter((item) => item.status === "rejected").length, 1);
-    const reserved = (await store.listSandboxCapabilityChildReservations(leaseId))[0]!;
-    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 3, record: { ...record(4, "revoked"), terminalOutcome: "revoked" } });
+    const reserved = (await store.listSandboxCapabilityChildReservations(childParentId))[0]!;
+    await assert.rejects(store.reserveSandboxCapabilityInvocation({ expectedSequence: 2, record: { ...childParentRecord(3, "invoking"), usage: { ...childParentRecord(3, "invoking").usage, requestsConsumed: 1 } } }), /reserved by child authority/u);
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 2, record: { ...childParentRecord(3, "revoked"), terminalOutcome: "revoked" } });
     assert.equal((await store.getSandboxCapabilityChildReservation(reserved.reservationId))?.status, "revoked");
+
+    const raceParentId = `race-parent-${suffix}`;
+    const raceBinding = { ...binding, toolCallId: `race-parent-call-${suffix}` };
+    const raceDigest = fingerprintSandboxCapabilityLeaseBindingV1(raceBinding);
+    const raceRecord = (sequence: number, transition: SandboxCapabilityLeaseTransitionRecordV1["transition"]): SandboxCapabilityLeaseTransitionRecordV1 => ({ ...record(sequence, transition), leaseId: raceParentId, binding: raceBinding, bindingDigest: raceDigest });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: raceRecord(1, "requested") });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: raceRecord(2, "issued") });
+    const parentChildRace = await Promise.allSettled([
+      store.reserveSandboxCapabilityInvocation({ expectedSequence: 2, record: { ...raceRecord(3, "invoking"), usage: { ...raceRecord(3, "invoking").usage, requestsConsumed: 1 } } }),
+      store.reserveSandboxCapabilityChild({ expectedParentSequence: 2, reservation: child("race-child", raceParentId, raceDigest) }),
+    ]);
+    assert.equal(parentChildRace.filter((item) => item.status === "fulfilled").length, 1);
+    assert.equal(parentChildRace.filter((item) => item.status === "rejected").length, 1);
+
+    const atomicParentId = `atomic-parent-${suffix}`;
+    const atomicParentBinding = { ...binding, toolCallId: `atomic-parent-call-${suffix}` };
+    const atomicParentDigest = fingerprintSandboxCapabilityLeaseBindingV1(atomicParentBinding);
+    const atomicParentRecord = (sequence: number, transition: SandboxCapabilityLeaseTransitionRecordV1["transition"]): SandboxCapabilityLeaseTransitionRecordV1 => ({ ...record(sequence, transition), leaseId: atomicParentId, binding: atomicParentBinding, bindingDigest: atomicParentDigest });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: atomicParentRecord(1, "requested") });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: atomicParentRecord(2, "issued") });
+    const atomicChildId = `atomic-child-${suffix}`;
+    const atomicReservation = child("atomic-rollback", atomicParentId, atomicParentDigest);
+    const atomicChildBinding: SandboxCapabilityLeaseBindingV1 = { ...binding, toolCallId: `atomic-child-call-${suffix}`, approval: atomicReservation.decision.approval, parentAuthorization: { leaseId: atomicParentId, bindingDigest: atomicParentDigest, authorizationDecisionId: atomicReservation.decision.decisionId, reservationId: atomicReservation.reservationId, requestLimit: 1, responseByteLimit: 4096 } };
+    const atomicChildDigest = fingerprintSandboxCapabilityLeaseBindingV1(atomicChildBinding);
+    const atomicChildRecord = (sequence: number, transition: SandboxCapabilityLeaseTransitionRecordV1["transition"]): SandboxCapabilityLeaseTransitionRecordV1 => ({ ...record(sequence, transition), leaseId: atomicChildId, binding: atomicChildBinding, bindingDigest: atomicChildDigest });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: atomicChildRecord(1, "requested") });
+    await assert.rejects(store.issueSandboxCapabilityLease({ expectedSequence: 99, record: atomicChildRecord(2, "issued"), childReservation: atomicReservation }), /sequence conflict/u);
+    assert.equal(await store.getSandboxCapabilityChildReservation(atomicReservation.reservationId), null);
+    assert.equal((await store.getSandboxCapabilityLease(atomicChildId))?.transition, "requested");
+
+    const byteParentId = `byte-parent-${suffix}`;
+    const byteBinding = { ...binding, toolCallId: `byte-parent-call-${suffix}` };
+    const byteDigest = fingerprintSandboxCapabilityLeaseBindingV1(byteBinding);
+    const byteRecord = (sequence: number, transition: SandboxCapabilityLeaseTransitionRecordV1["transition"]): SandboxCapabilityLeaseTransitionRecordV1 => ({
+      ...record(sequence, transition), leaseId: byteParentId, binding: byteBinding, bindingDigest: byteDigest,
+      usage: { requestLimit: 2, requestsConsumed: transition === "invoking" ? 1 : 0, responseByteLimit: 100, responseBytesConsumed: 0, exactProviderUsage: null },
+    });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: byteRecord(1, "requested") });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: byteRecord(2, "issued") });
+    const byteChild = { ...child("byte-child", byteParentId, byteDigest), decision: { ...child("byte-child", byteParentId, byteDigest).decision, responseByteLimit: 50 } };
+    await store.reserveSandboxCapabilityChild({ expectedParentSequence: 2, reservation: byteChild });
+    const byteInvocation = await store.reserveSandboxCapabilityInvocation({ expectedSequence: 2, record: byteRecord(3, "invoking") });
+    assert.equal(byteInvocation.invocationResponseByteLimit, 50);
   } finally {
     await pool.query("DELETE FROM runs WHERE run_id = $1", [runId]);
     await pool.query("DELETE FROM sessions WHERE session_id = $1", [sessionId]);

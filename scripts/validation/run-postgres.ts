@@ -42,6 +42,7 @@ const runtimeFiles = execFileSync(
     "tests/budget-ledger.postgres.test.ts",
     "tests/mission-control-project-authority.postgres.test.ts",
     "tests/mission-control-review-acceptance.postgres.test.ts",
+    "tests/sandbox-capability-leases.postgres.test.ts",
   )
   .filter((file, index, all) => all.indexOf(file) === index)
   .sort();

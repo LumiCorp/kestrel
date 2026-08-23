@@ -15,6 +15,7 @@ import type {
   OutboxEventRecord,
   PersistedArtifact,
   PersistedClaim,
+  PersistedEffect,
   PersistedRunRecord,
   PersistedRunStateRecord,
   PersistedRunSummaryRecord,
@@ -883,6 +884,11 @@ export class InMemorySessionStore implements SessionStore {
       .map((effect) => ({ ...effect }));
   }
 
+  async getPersistedEffect(idempotencyKey: string): Promise<PersistedEffect | null> {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+    return effect === undefined ? null : structuredClone(effect);
+  }
+
   async getEffectResult(idempotencyKey: string): Promise<EffectResult | null> {
     const result = this.effectResults.get(idempotencyKey);
     if (result === undefined) {
@@ -980,6 +986,70 @@ export class InMemorySessionStore implements SessionStore {
     expectedSequence: number;
     record: SandboxCapabilityLeaseTransitionRecordV1;
   }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
+    return this.appendSandboxCapabilityLeaseTransitionNow(input);
+  }
+
+  async issueSandboxCapabilityLease(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+    childReservation?: SandboxCapabilityChildReservationV1 | undefined;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
+    const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
+    if (record.transition !== "issued") throw new Error("Sandbox capability issuance must transition to issued");
+    const child = input.childReservation === undefined
+      ? undefined
+      : this.validateInMemoryChildReservation(input.childReservation);
+    const persisted = this.appendSandboxCapabilityLeaseTransitionNow({
+      expectedSequence: input.expectedSequence,
+      record,
+    });
+    if (child !== undefined) {
+      this.sandboxCapabilityChildReservations.set(child.reservationId, [structuredClone(child)]);
+    }
+    return persisted;
+  }
+
+  async reserveSandboxCapabilityInvocation(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1 & { invocationResponseByteLimit: number }> {
+    const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
+    if (record.transition !== "invoking") throw new Error("Sandbox capability invocation must transition to invoking");
+    const current = this.sandboxCapabilityLeaseTransitions.get(record.leaseId)?.at(-1);
+    if (current === undefined || current.sequence !== input.expectedSequence) throw new Error("Sandbox capability lease transition sequence conflict");
+    const allocated = this.inMemoryChildCapacity(current.leaseId);
+    const invocationResponseByteLimit = record.usage.responseByteLimit - record.usage.responseBytesConsumed - allocated.bytes;
+    if (record.usage.requestsConsumed + allocated.requests > record.usage.requestLimit || invocationResponseByteLimit <= 0) {
+      throw new Error("Sandbox capability parent ceiling is reserved by child authority");
+    }
+    return { ...this.appendSandboxCapabilityLeaseTransitionNow(input), invocationResponseByteLimit };
+  }
+
+  async saveSandboxCapabilityEffectResult(input: {
+    leaseId: string;
+    bindingDigest: string;
+    toolCallId: string;
+    runId: string;
+    sessionId: string;
+    result: EffectResult;
+  }): Promise<void> {
+    const lease = this.sandboxCapabilityLeaseTransitions.get(input.leaseId)?.at(-1);
+    assertReplayableSandboxCapabilityEffectBinding(lease, input);
+    const existing = this.effectResults.get(input.result.idempotencyKey);
+    if (existing !== undefined) {
+      if (JSON.stringify(existing) !== JSON.stringify(input.result)) {
+        throw new Error("Sandbox capability effect result conflicts with recorded exact replay output");
+      }
+      return;
+    }
+    this.effectResults.set(input.result.idempotencyKey, structuredClone(input.result));
+    this.operationLog.push(`saveSandboxCapabilityEffectResult:${input.leaseId}:${input.toolCallId}`);
+  }
+
+  private appendSandboxCapabilityLeaseTransitionNow(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): SandboxCapabilityLeaseTransitionRecordV1 {
     const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
     if (record.bindingDigest !== fingerprintSandboxCapabilityLeaseBindingV1(record.binding)) {
       throw new Error("Sandbox capability lease binding digest does not match the immutable binding");
@@ -1020,25 +1090,33 @@ export class InMemorySessionStore implements SessionStore {
     const limit = input.limit ?? 100;
     return [...this.sandboxCapabilityLeaseTransitions.values()]
       .map((ledger) => ledger.at(-1))
-      .filter((record): record is SandboxCapabilityLeaseTransitionRecordV1 => record !== undefined && record.transition !== "cleaned" && record.transition !== "requested" && record.transition !== "denied" && Date.parse(record.occurredAt) <= before)
+      .filter((record): record is SandboxCapabilityLeaseTransitionRecordV1 => record !== undefined && record.transition !== "cleaned" && record.transition !== "denied" && Date.parse(record.occurredAt) <= before)
       .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.leaseId.localeCompare(right.leaseId))
       .slice(0, limit)
       .map((record) => structuredClone(record));
   }
 
   async reserveSandboxCapabilityChild(input: { expectedParentSequence: number; reservation: SandboxCapabilityChildReservationV1 }): Promise<SandboxCapabilityChildReservationV1> {
-    const reservation = parseSandboxCapabilityChildReservationV1(input.reservation);
-    if (reservation.sequence !== 1 || reservation.status !== "reserved") throw new Error("Sandbox capability child reservation must begin reserved at sequence 1");
-    const parent = await this.getSandboxCapabilityLease(reservation.decision.parentLeaseId);
-    if (parent === null || parent.sequence !== input.expectedParentSequence || parent.bindingDigest !== reservation.decision.parentBindingDigest || !["issued", "invoking"].includes(parent.transition)) throw new Error("Sandbox capability parent authorization is unavailable or stale");
-    if (this.sandboxCapabilityChildReservations.has(reservation.reservationId)) throw new Error("Sandbox capability child reservation conflict");
-    const siblings = this.currentInMemoryChildReservations(parent.leaseId);
-    const requestsAllocated = siblings.reduce((sum, item) => sum + (item.status === "reserved" ? item.decision.requestLimit : item.status === "committed" ? item.requestsCommitted : 0), 0);
-    const bytesAllocated = siblings.reduce((sum, item) => sum + (item.status === "reserved" ? item.decision.responseByteLimit : item.status === "committed" ? item.responseBytesCommitted : 0), 0);
-    if (parent.usage.requestsConsumed + requestsAllocated + reservation.decision.requestLimit > parent.usage.requestLimit || parent.usage.responseBytesConsumed + bytesAllocated + reservation.decision.responseByteLimit > parent.usage.responseByteLimit) throw new Error("Sandbox capability parent ceiling is exhausted");
+    const reservation = this.validateInMemoryChildReservation(input.reservation, input.expectedParentSequence);
     const persisted = structuredClone(reservation);
     this.sandboxCapabilityChildReservations.set(reservation.reservationId, [persisted]);
     return structuredClone(persisted);
+  }
+
+  private validateInMemoryChildReservation(value: SandboxCapabilityChildReservationV1, expectedParentSequence?: number): SandboxCapabilityChildReservationV1 {
+    const reservation = parseSandboxCapabilityChildReservationV1(value);
+    if (reservation.sequence !== 1 || reservation.status !== "reserved") throw new Error("Sandbox capability child reservation must begin reserved at sequence 1");
+    const parent = this.sandboxCapabilityLeaseTransitions.get(reservation.decision.parentLeaseId)?.at(-1);
+    if (
+      parent === undefined ||
+      (expectedParentSequence !== undefined && parent.sequence !== expectedParentSequence) ||
+      parent.bindingDigest !== reservation.decision.parentBindingDigest ||
+      parent.transition !== "issued"
+    ) throw new Error("Sandbox capability parent authorization is unavailable or stale");
+    if (this.sandboxCapabilityChildReservations.has(reservation.reservationId)) throw new Error("Sandbox capability child reservation conflict");
+    const allocated = this.inMemoryChildCapacity(parent.leaseId);
+    if (parent.usage.requestsConsumed + allocated.requests + reservation.decision.requestLimit > parent.usage.requestLimit || parent.usage.responseBytesConsumed + allocated.bytes + reservation.decision.responseByteLimit > parent.usage.responseByteLimit) throw new Error("Sandbox capability parent ceiling is exhausted");
+    return reservation;
   }
 
   async settleSandboxCapabilityChild(input: { reservationId: string; expectedSequence: number; status: "committed" | "released"; requestsCommitted: number; responseBytesCommitted: number; reason?: string | undefined; occurredAt: string }): Promise<SandboxCapabilityChildReservationV1> {
@@ -1061,6 +1139,16 @@ export class InMemorySessionStore implements SessionStore {
 
   private currentInMemoryChildReservations(parentLeaseId: string): SandboxCapabilityChildReservationV1[] {
     return [...this.sandboxCapabilityChildReservations.values()].map((ledger) => ledger.at(-1)).filter((item): item is SandboxCapabilityChildReservationV1 => item?.decision.parentLeaseId === parentLeaseId);
+  }
+
+  private inMemoryChildCapacity(parentLeaseId: string): { requests: number; bytes: number } {
+    return this.currentInMemoryChildReservations(parentLeaseId).reduce(
+      (sum, item) => ({
+        requests: sum.requests + (item.status === "reserved" ? item.decision.requestLimit : item.status === "committed" ? item.requestsCommitted : 0),
+        bytes: sum.bytes + (item.status === "reserved" ? item.decision.responseByteLimit : item.status === "committed" ? item.responseBytesCommitted : 0),
+      }),
+      { requests: 0, bytes: 0 },
+    );
   }
 
   private revokeInMemoryChildReservations(parentLeaseId: string, occurredAt: string, reason: string): void {
@@ -2071,6 +2159,32 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function assertReplayableSandboxCapabilityEffectBinding(
+  lease: SandboxCapabilityLeaseTransitionRecordV1 | undefined,
+  input: {
+    bindingDigest: string;
+    toolCallId: string;
+    runId: string;
+    sessionId: string;
+    result: EffectResult;
+  },
+): asserts lease is SandboxCapabilityLeaseTransitionRecordV1 {
+  if (
+    lease === undefined ||
+    lease.bindingDigest !== input.bindingDigest ||
+    lease.binding.toolCallId !== input.toolCallId ||
+    lease.binding.runId !== input.runId ||
+    lease.binding.sessionId !== input.sessionId ||
+    input.result.idempotencyKey !== input.toolCallId ||
+    input.result.status !== "DONE" ||
+    lease.terminalOutcome !== "completed" ||
+    lease.result === undefined ||
+    (lease.transition !== "consumed" && lease.transition !== "exhausted" && lease.transition !== "cleaned")
+  ) {
+    throw new Error("Sandbox capability effect result is not bound to a completed exact lease action");
+  }
 }
 
 function readMissionControlRunCorrelation(value: unknown) {

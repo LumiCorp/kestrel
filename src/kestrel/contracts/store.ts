@@ -441,6 +441,7 @@ export interface StepCommitStore {
 
 export interface EffectStore {
   listPendingEffects(sessionId: string): Promise<PersistedEffect[]>;
+  getPersistedEffect?(idempotencyKey: string): Promise<PersistedEffect | null>;
   getEffectResult(idempotencyKey: string): Promise<EffectResult | null>;
   saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void>;
   markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus): Promise<void>;
@@ -494,6 +495,23 @@ export interface SandboxCapabilityLeaseStore {
     expectedSequence: number;
     record: SandboxCapabilityLeaseTransitionRecordV1;
   }): Promise<SandboxCapabilityLeaseTransitionRecordV1>;
+  issueSandboxCapabilityLease(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+    childReservation?: SandboxCapabilityChildReservationV1 | undefined;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1>;
+  reserveSandboxCapabilityInvocation(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1 & { invocationResponseByteLimit: number }>;
+  saveSandboxCapabilityEffectResult(input: {
+    leaseId: string;
+    bindingDigest: string;
+    toolCallId: string;
+    runId: string;
+    sessionId: string;
+    result: EffectResult;
+  }): Promise<void>;
   getSandboxCapabilityLease(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1 | null>;
   listSandboxCapabilityLeaseTransitions(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1[]>;
   listRecoverableSandboxCapabilityLeases(input: {

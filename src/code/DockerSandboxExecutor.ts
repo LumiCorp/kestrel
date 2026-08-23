@@ -609,7 +609,11 @@ async function runCapabilityAdapterPump(
         ) {
           throw new Error("Broker request does not match the trusted capability grant");
         }
-        await grant.lifecycle?.beforeProviderInvocation();
+        const invocation = await grant.lifecycle?.beforeProviderInvocation();
+        const responseByteLimit = invocation?.responseByteLimit ?? grant.maxResponseBytes ?? 64_000;
+        if (!Number.isSafeInteger(responseByteLimit) || responseByteLimit <= 0) {
+          throw new Error("Capability invocation response-byte reservation is invalid");
+        }
         let response: unknown;
         try {
           response = await invokeAdapterUntilAbort(
@@ -617,8 +621,11 @@ async function runCapabilityAdapterPump(
             grant.expectedInput,
             signal,
           );
+          if (signal.aborted) {
+            throw new DockerSandboxCancellationError("Capability adapter completed after cancellation");
+          }
           const responseBytes = Buffer.byteLength(JSON.stringify(response), "utf8");
-          if (responseBytes > (grant.maxResponseBytes ?? 64_000)) {
+          if (responseBytes > responseByteLimit) {
             throw new Error("Adapter response exceeds the trusted capability ceiling");
           }
           await grant.lifecycle?.commitProviderResult({
@@ -627,7 +634,9 @@ async function runCapabilityAdapterPump(
             resultCount: readCapabilityResultCount(response),
           });
         } catch (error) {
-          await grant.lifecycle?.recordProviderFailure(error);
+          // Teardown owns cancellation/timeout classification. Recording a
+          // generic failure first would make that terminal outcome immutable.
+          if (!signal.aborted) await grant.lifecycle?.recordProviderFailure(error);
           throw error;
         }
         mediated = { ok: true, response };

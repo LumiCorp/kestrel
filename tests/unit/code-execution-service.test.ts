@@ -23,6 +23,28 @@ test("CodeExecutionService derives a bounded Tavily grant before sandbox creatio
   assert.equal(JSON.stringify(observed).includes("real-secret-key"), false);
 });
 
+test("CodeExecutionService applies the atomic invocation byte allowance before provider response delivery", async () => {
+  const capabilityRuntime = runtime(async () => new Response(JSON.stringify({ results: [{ title: "large", url: "https://example.com", content: "x".repeat(100) }] }), { status: 200 }));
+  const coordinator = capabilityRuntime.leaseCoordinator;
+  const reserve = coordinator.reserveInvocation.bind(coordinator);
+  coordinator.reserveInvocation = async (...args) => ({ ...await reserve(...args), invocationResponseByteLimit: 16 });
+  const service = new CodeExecutionService({ executor: {
+    async execute(input) {
+      const reservation = await input.capability!.lifecycle!.beforeProviderInvocation();
+      assert.equal(reservation?.responseByteLimit, 16);
+      await input.capability!.adapter!(input.capability!.expectedInput!, new AbortController().signal);
+      throw new Error("provider response should not cross the reserved byte ceiling");
+    },
+  } });
+  const result = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+    { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "bounded" } } },
+    { capabilityRuntime },
+  );
+  assert.equal(result.status, "error");
+  assert.match(result.stderr, /profile ceiling/u);
+});
+
 test("CodeExecutionService rejects stale, mismatched, and caller-authored authority before sandbox creation", async () => {
   let executions = 0;
   let credentialResolutions = 0;
@@ -126,6 +148,56 @@ test("CodeExecutionService rejects sensitive-value registration without a cleanu
     },
   );
   assert.equal(executions, 0);
+});
+
+test("durable teardown failure still disposes capability authority before container removal", async () => {
+  const order: string[] = [];
+  const failingCoordinator = {
+    async request(input: { binding: SandboxCapabilityLeaseTransitionRecordV1["binding"]; expiresAt: string; requestLimit: number; responseByteLimit: number }) {
+      return {
+        version: 1 as const,
+        leaseId: "lease-disposal-order",
+        sequence: 2,
+        transition: "issued" as const,
+        binding: input.binding,
+        bindingDigest: fingerprintSandboxCapabilityProfileV1(profile),
+        usage: { requestLimit: input.requestLimit, requestsConsumed: 0, responseByteLimit: input.responseByteLimit, responseBytesConsumed: 0, exactProviderUsage: null },
+        issuedAt: "2026-08-22T12:00:00.000Z",
+        expiresAt: input.expiresAt,
+        occurredAt: "2026-08-22T12:00:00.000Z",
+      };
+    },
+    async settleBeforeTeardown() {
+      order.push("durable_transition_failed");
+      throw new Error("lease store unavailable");
+    },
+  } as unknown as SandboxCapabilityLeaseCoordinator;
+  const service = new CodeExecutionService({
+    executor: {
+      async execute(input) {
+        try {
+          await input.capability!.lifecycle!.beforeContainerTeardown("cancelled");
+        } catch {
+          order.push("containers_removed");
+          throw new Error("teardown failed");
+        }
+        throw new Error("expected lifecycle failure");
+      },
+    },
+  });
+  const result = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+    { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "x" } } },
+    {
+      capabilityRuntime: {
+        ...runtime(),
+        leaseCoordinator: failingCoordinator,
+        registerSensitiveValue: () => () => { order.push("secret_disposed"); },
+      },
+    },
+  );
+  assert.equal(result.status, "error");
+  assert.deepEqual(order, ["durable_transition_failed", "secret_disposed", "containers_removed"]);
 });
 
 test("CodeExecutionService resolves the current credential revision for every selected call", async () => {
@@ -611,6 +683,13 @@ function createTestLeaseCoordinator(): SandboxCapabilityLeaseCoordinator {
       transitions.set(record.leaseId, records);
       return structuredClone(record);
     },
+    async issueSandboxCapabilityLease(input) {
+      if (input.childReservation !== undefined) childReservations.set(input.childReservation.reservationId, structuredClone(input.childReservation));
+      return this.appendSandboxCapabilityLeaseTransition(input);
+    },
+    async reserveSandboxCapabilityInvocation(input) {
+      return { ...await this.appendSandboxCapabilityLeaseTransition(input), invocationResponseByteLimit: input.record.usage.responseByteLimit - input.record.usage.responseBytesConsumed };
+    },
     async getSandboxCapabilityLease(leaseId) {
       return structuredClone(transitions.get(leaseId)?.at(-1) ?? null);
     },
@@ -634,6 +713,7 @@ function createTestLeaseCoordinator(): SandboxCapabilityLeaseCoordinator {
     async listSandboxCapabilityChildReservations(parentLeaseId) {
       return structuredClone([...childReservations.values()].filter((item) => item.decision.parentLeaseId === parentLeaseId));
     },
+    async saveSandboxCapabilityEffectResult() {},
   };
   return new SandboxCapabilityLeaseCoordinator({
     store,

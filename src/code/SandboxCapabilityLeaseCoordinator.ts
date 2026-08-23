@@ -17,11 +17,19 @@ export interface SandboxCapabilityLeaseCurrentness {
   reason?: string | undefined;
 }
 
+export type SandboxCapabilityLeaseCurrentnessBoundary =
+  | "issuance"
+  | "provider_invocation"
+  | "result_delivery"
+  | "recovery_resume"
+  | "recorded_replay";
+
 export interface SandboxCapabilityLeaseCoordinatorOptions {
   store: SandboxCapabilityLeaseStore;
   now?: (() => Date) | undefined;
   validateCurrent: (
     binding: SandboxCapabilityLeaseBindingV1,
+    boundary: SandboxCapabilityLeaseCurrentnessBoundary,
   ) => Promise<SandboxCapabilityLeaseCurrentness>;
   persistResult: (input: {
     leaseId: string;
@@ -75,38 +83,39 @@ export class SandboxCapabilityLeaseCoordinator {
       expiresAt: normalizeTimestamp(input.expiresAt),
       occurredAt,
     }, 0);
-    const current = await this.options.validateCurrent(binding);
-    if (!current.authorized || this.isExpired(requested)) {
-      const terminal = await this.transition(requested, this.isExpired(requested) ? "expired" : "denied", {
-        terminalOutcome: this.isExpired(requested) ? "expired" : "denied",
-        terminalReason: current.reason ?? (this.isExpired(requested) ? "lease_expired" : "authorization_denied"),
-      });
-      return await this.transition(terminal, "cleaned", { cleanedAt: this.timestamp() });
-    }
-    if (binding.parentAuthorization !== undefined) {
-      try {
-        await this.reserveChildAuthorization(binding, input.requestLimit, input.responseByteLimit);
-      } catch (error) {
-        const denied = await this.transition(requested, "denied", {
-          terminalOutcome: "denied",
-          terminalReason: "parent_authorization_reservation_denied",
+    try {
+      const current = await this.options.validateCurrent(binding, "issuance");
+      if (!current.authorized || this.isExpired(requested)) {
+        const terminal = await this.transition(requested, this.isExpired(requested) ? "expired" : "denied", {
+          terminalOutcome: this.isExpired(requested) ? "expired" : "denied",
+          terminalReason: current.reason ?? (this.isExpired(requested) ? "lease_expired" : "authorization_denied"),
         });
-        await this.transition(denied, "cleaned", { cleanedAt: this.timestamp() });
-        throw error;
+        return await this.transition(terminal, "cleaned", { cleanedAt: this.timestamp() });
       }
+      const issued = this.nextRecord(requested, "issued", { issuedAt: this.timestamp() });
+      const childReservation = this.createChildReservation(binding, input.requestLimit, input.responseByteLimit);
+      const committed = await this.store.issueSandboxCapabilityLease({
+        expectedSequence: requested.sequence,
+        record: issued,
+        ...(childReservation === undefined ? {} : { childReservation }),
+      });
+      await this.emitTransitionEventBestEffort(committed);
+      return committed;
+    } catch (error) {
+      await this.settleInterruptedRequest(requested);
+      throw error;
     }
-    return await this.transition(requested, "issued", { issuedAt: this.timestamp() });
   }
 
   async reserveInvocation(
     leaseId: string,
     expectedBinding: SandboxCapabilityLeaseBindingV1,
-  ): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
+  ): Promise<SandboxCapabilityLeaseTransitionRecordV1 & { invocationResponseByteLimit: number }> {
     const current = await this.requireExact(leaseId, expectedBinding);
     if (current.transition !== "issued") {
       throw new Error(`Sandbox capability lease cannot invoke from '${current.transition}'`);
     }
-    const authorization = await this.options.validateCurrent(current.binding);
+    const authorization = await this.options.validateCurrent(current.binding, "provider_invocation");
     if (!authorization.authorized) {
       await this.transition(current, "revoked", {
         terminalOutcome: "revoked",
@@ -128,9 +137,15 @@ export class SandboxCapabilityLeaseCoordinator {
       });
       throw new Error("Sandbox capability request ceiling is exhausted");
     }
-    return await this.transition(current, "invoking", {
+    const invoking = this.nextRecord(current, "invoking", {
       usage: { ...current.usage, requestsConsumed: current.usage.requestsConsumed + 1 },
     });
+    const committed = await this.store.reserveSandboxCapabilityInvocation({
+      expectedSequence: current.sequence,
+      record: invoking,
+    });
+    await this.emitTransitionEventBestEffort(committed);
+    return committed;
   }
 
   async commitResult(input: {
@@ -144,7 +159,7 @@ export class SandboxCapabilityLeaseCoordinator {
     if (current.transition !== "invoking") {
       throw new Error(`Sandbox capability result cannot commit from '${current.transition}'`);
     }
-    const authorization = await this.options.validateCurrent(current.binding);
+    const authorization = await this.options.validateCurrent(current.binding, "result_delivery");
     if (!authorization.authorized || this.isExpired(current)) {
       const transition = this.isExpired(current) ? "expired" : "revoked";
       await this.transition(current, transition, {
@@ -153,8 +168,12 @@ export class SandboxCapabilityLeaseCoordinator {
       });
       throw new Error("Sandbox capability result delivery is no longer authorized");
     }
+    const childResponseBytesAllocated = (await this.store.listSandboxCapabilityChildReservations(current.leaseId))
+      .reduce((sum, reservation) => sum + (reservation.status === "reserved"
+        ? reservation.decision.responseByteLimit
+        : reservation.status === "committed" ? reservation.responseBytesCommitted : 0), 0);
     if (!Number.isSafeInteger(input.responseBytes) || input.responseBytes < 0 ||
-        current.usage.responseBytesConsumed + input.responseBytes > current.usage.responseByteLimit) {
+        current.usage.responseBytesConsumed + childResponseBytesAllocated + input.responseBytes > current.usage.responseByteLimit) {
       await this.transition(current, "exhausted", {
         terminalOutcome: "exhausted",
         terminalReason: "response_byte_ceiling_reached",
@@ -268,6 +287,14 @@ export class SandboxCapabilityLeaseCoordinator {
     expectedBinding: SandboxCapabilityLeaseBindingV1,
   ): Promise<SandboxCapabilityLeaseRecovery> {
     let current = await this.requireExact(leaseId, expectedBinding);
+    if (current.transition === "requested") {
+      const denied = await this.transition(current, "denied", {
+        terminalOutcome: "denied",
+        terminalReason: "requested_issuance_interrupted",
+      });
+      current = await this.transition(denied, "cleaned", { cleanedAt: this.timestamp() });
+      return { kind: "denied", lease: current, reason: "requested_issuance_interrupted" };
+    }
     if (current.transition === "invoking") {
       current = await this.transition(current, "revoked", {
         terminalOutcome: "failed",
@@ -276,12 +303,24 @@ export class SandboxCapabilityLeaseCoordinator {
       return { kind: "denied", lease: current, reason: "ambiguous_provider_invocation" };
     }
     if ((current.transition === "consumed" || current.transition === "exhausted") && current.result !== undefined) {
+      const authorization = await this.options.validateCurrent(current.binding, "recorded_replay");
+      if (!authorization.authorized || this.isExpired(current)) {
+        current = await this.transition(current, this.isExpired(current) ? "expired" : "revoked", {
+          terminalOutcome: this.isExpired(current) ? "expired" : "revoked",
+          terminalReason: authorization.reason ?? "replay_authorization_stale",
+        });
+        return {
+          kind: "denied",
+          lease: current,
+          reason: authorization.reason ?? (this.isExpired(current) ? "lease_expired" : "replay_authorization_stale"),
+        };
+      }
       return { kind: "replay", lease: current, result: current.result };
     }
     if (current.transition !== "issued") {
       return { kind: "denied", lease: current, reason: `terminal_${current.transition}` };
     }
-    const authorization = await this.options.validateCurrent(current.binding);
+    const authorization = await this.options.validateCurrent(current.binding, "recovery_resume");
     if (!authorization.authorized || this.isExpired(current)) {
       const transition = this.isExpired(current) ? "expired" : "revoked";
       current = await this.transition(current, transition, {
@@ -318,11 +357,11 @@ export class SandboxCapabilityLeaseCoordinator {
     return terminal;
   }
 
-  private async reserveChildAuthorization(
+  private createChildReservation(
     binding: SandboxCapabilityLeaseBindingV1,
     requestLimit: number,
     responseByteLimit: number,
-  ): Promise<SandboxCapabilityChildReservationV1 | undefined> {
+  ): SandboxCapabilityChildReservationV1 | undefined {
     const parentAuthorization = binding.parentAuthorization;
     if (parentAuthorization === undefined) return;
     if (requestLimit !== parentAuthorization.requestLimit || responseByteLimit !== parentAuthorization.responseByteLimit) {
@@ -331,13 +370,7 @@ export class SandboxCapabilityLeaseCoordinator {
     if (binding.approval === undefined) {
       throw new Error("Child sandbox capability requires independent approval authority");
     }
-    const parent = await this.store.getSandboxCapabilityLease(parentAuthorization.leaseId);
-    if (parent === null || parent.bindingDigest !== parentAuthorization.bindingDigest || parent.transition !== "issued") {
-      throw new Error("Child sandbox capability parent authorization is missing, stale, or inactive");
-    }
-    return await this.store.reserveSandboxCapabilityChild({
-      expectedParentSequence: parent.sequence,
-      reservation: {
+    return {
         version: 1,
         reservationId: parentAuthorization.reservationId,
         sequence: 1,
@@ -359,8 +392,22 @@ export class SandboxCapabilityLeaseCoordinator {
         requestsCommitted: 0,
         responseBytesCommitted: 0,
         occurredAt: this.timestamp(),
-      },
-    });
+    };
+  }
+
+  private async settleInterruptedRequest(requested: SandboxCapabilityLeaseTransitionRecordV1): Promise<void> {
+    try {
+      const current = await this.store.getSandboxCapabilityLease(requested.leaseId);
+      if (current === null || current.transition !== "requested") return;
+      const denied = await this.transition(current, "denied", {
+        terminalOutcome: "denied",
+        terminalReason: "issuance_interrupted",
+      });
+      await this.transition(denied, "cleaned", { cleanedAt: this.timestamp() });
+    } catch {
+      // If the store cannot settle now, requested remains recoverable and can
+      // only be denied by recovery; it is never treated as issued authority.
+    }
   }
 
   private async settleChildAuthorization(
@@ -395,15 +442,23 @@ export class SandboxCapabilityLeaseCoordinator {
     transition: SandboxCapabilityLeaseTransitionV1,
     patch: Partial<SandboxCapabilityLeaseTransitionRecordV1>,
   ): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
+    return await this.append(this.nextRecord(current, transition, patch), current.sequence);
+  }
+
+  private nextRecord(
+    current: SandboxCapabilityLeaseTransitionRecordV1,
+    transition: SandboxCapabilityLeaseTransitionV1,
+    patch: Partial<SandboxCapabilityLeaseTransitionRecordV1>,
+  ): SandboxCapabilityLeaseTransitionRecordV1 {
     assertSandboxCapabilityLeaseTransitionV1(current.transition, transition);
-    return await this.append({
+    return {
       ...current,
       ...patch,
       version: 1,
       sequence: current.sequence + 1,
       transition,
       occurredAt: this.timestamp(),
-    }, current.sequence);
+    };
   }
 
   private async append(
@@ -413,6 +468,16 @@ export class SandboxCapabilityLeaseCoordinator {
     const committed = await this.store.appendSandboxCapabilityLeaseTransition({ expectedSequence, record });
     await this.options.appendTransitionEvent?.(committed);
     return committed;
+  }
+
+  private async emitTransitionEventBestEffort(record: SandboxCapabilityLeaseTransitionRecordV1): Promise<void> {
+    try {
+      await this.options.appendTransitionEvent?.(record);
+    } catch {
+      // Durable stores append the authoritative event in the same transaction.
+      // This optional observer must not turn a committed authority transition
+      // into an apparent issuance or invocation failure.
+    }
   }
 }
 

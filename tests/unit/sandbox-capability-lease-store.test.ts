@@ -58,6 +58,11 @@ test("in-memory child reservations serialize sibling ceilings and cascade parent
   assert.equal(siblings.filter((item) => item.status === "fulfilled").length, 1);
   assert.equal(siblings.filter((item) => item.status === "rejected").length, 1);
   const reserved = (await store.listSandboxCapabilityChildReservations("parent-lease"))[0]!;
+  await assert.rejects(store.reserveSandboxCapabilityInvocation({
+    expectedSequence: 2,
+    record: { ...parentRecord(3, "invoking"), usage: { ...parentRecord(3, "invoking").usage, requestsConsumed: 1 } },
+  }), /reserved by child authority/u);
+  assert.equal((await store.getSandboxCapabilityLease("parent-lease"))?.transition, "issued");
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 2, record: { ...parentRecord(3, "revoked"), terminalOutcome: "revoked" } });
   assert.equal((await store.getSandboxCapabilityChildReservation(reserved.reservationId))?.status, "revoked");
   await assert.rejects(store.settleSandboxCapabilityChild({ reservationId: reserved.reservationId, expectedSequence: 1, status: "committed", requestsCommitted: 1, responseBytesCommitted: 100, occurredAt: "2026-08-23T12:00:04.000Z" }), /sequence conflict/u);
@@ -78,9 +83,29 @@ test("child settlement propagates committed usage and releases unused reservatio
   await assert.rejects(store.reserveSandboxCapabilityChild({ expectedParentSequence: 2, reservation: reservation("over") }), /parent ceiling is exhausted/u);
 });
 
+test("parent invocation receives only response bytes left after child allocation", async () => {
+  const store = new InMemorySessionStore();
+  const parentBinding = { ...binding, parentAuthorization: undefined };
+  const parentDigest = fingerprintSandboxCapabilityLeaseBindingV1(parentBinding);
+  const parent = (sequence: number, state: SandboxCapabilityLeaseTransitionRecordV1["transition"]): SandboxCapabilityLeaseTransitionRecordV1 => ({
+    ...transition(sequence, state), leaseId: "byte-parent", binding: parentBinding, bindingDigest: parentDigest,
+    usage: { requestLimit: 2, requestsConsumed: state === "invoking" ? 1 : 0, responseByteLimit: 100, responseBytesConsumed: 0, exactProviderUsage: null },
+  });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: parent(1, "requested") });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: parent(2, "issued") });
+  await store.reserveSandboxCapabilityChild({ expectedParentSequence: 2, reservation: {
+    version: 1, reservationId: "byte-child", sequence: 1, status: "reserved",
+    decision: { version: 1, decisionId: "byte-decision", parentLeaseId: "byte-parent", parentBindingDigest: parentDigest, childSessionId: "byte-child-session", childRunId: "byte-child-run", childToolCallId: "byte-child-call", policyRevision: "byte-policy", approval: { approvalId: "byte-approval", authorityRevision: "byte-authority" }, requestLimit: 1, responseByteLimit: 50, decidedAt: "2026-08-23T12:00:02.000Z" },
+    requestsCommitted: 0, responseBytesCommitted: 0, occurredAt: "2026-08-23T12:00:02.000Z",
+  } });
+  const invocation = await store.reserveSandboxCapabilityInvocation({ expectedSequence: 2, record: parent(3, "invoking") });
+  assert.equal(invocation.invocationResponseByteLimit, 50);
+});
+
 test("in-memory lease store appends an immutable CAS ledger and exposes recoverable projections", async () => {
   const store = new InMemorySessionStore();
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: transition(1, "requested") });
+  assert.deepEqual((await store.listRecoverableSandboxCapabilityLeases({ before: "2026-08-23T12:01:00.000Z" })).map((item) => item.transition), ["requested"]);
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: transition(2, "issued") });
   await assert.rejects(store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: transition(3, "consumed") }), /sequence conflict/u);
   await assert.rejects(store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 2, record: { ...transition(3, "consumed"), binding: { ...binding, runId: "run-other" } } }), /binding digest does not match/u);
@@ -92,4 +117,52 @@ test("in-memory lease store appends an immutable CAS ledger and exposes recovera
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 3, record: { ...transition(4, "cleaned"), terminalOutcome: "cancelled", cleanedAt: "2026-08-23T12:00:04.000Z" } });
   assert.equal((await store.getSandboxCapabilityLease("lease-a"))?.terminalOutcome, "cancelled");
   assert.equal((await store.listRecoverableSandboxCapabilityLeases({ before: "2026-08-23T12:01:00.000Z" })).length, 0);
+});
+
+test("exact capability effect results require completed provider evidence and are idempotent", async () => {
+  const store = new InMemorySessionStore();
+  const digest = fingerprintSandboxCapabilityLeaseBindingV1(binding);
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: transition(1, "requested") });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: transition(2, "issued") });
+  await store.appendSandboxCapabilityLeaseTransition({
+    expectedSequence: 2,
+    record: { ...transition(3, "invoking"), usage: { ...transition(3, "invoking").usage, requestsConsumed: 1 } },
+  });
+
+  const exactResult = {
+    idempotencyKey: binding.toolCallId,
+    status: "DONE" as const,
+    output: { status: "OK", outcome: { kind: "success", rawOutput: { answer: "recorded" } } },
+    timestamp: "2026-08-23T12:00:04.000Z",
+  };
+  await assert.rejects(store.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
+    runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
+  }), /completed exact lease action/u);
+
+  const consumed = {
+    ...transition(4, "consumed"),
+    usage: { ...transition(4, "consumed").usage, requestsConsumed: 1, responseBytesConsumed: 18 },
+    terminalOutcome: "completed" as const,
+    result: { digest: "d".repeat(64), reference: "artifact:provider-result" },
+  };
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 3, record: consumed });
+  await store.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
+    runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
+  });
+  assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactResult);
+  await store.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
+    runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
+  });
+  await assert.rejects(store.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
+    runId: binding.runId, sessionId: binding.sessionId,
+    result: { ...exactResult, output: { status: "OK", outcome: { kind: "success", rawOutput: { answer: "different" } } } },
+  }), /conflicts with recorded exact replay output/u);
+  await assert.rejects(store.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-a", bindingDigest: "e".repeat(64), toolCallId: binding.toolCallId,
+    runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
+  }), /completed exact lease action/u);
 });

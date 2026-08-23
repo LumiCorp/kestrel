@@ -823,6 +823,8 @@ test(
     await requireDocker();
     const containerName = testContainerName("capability-pump-timeout");
     let adapterObservedAbort = false;
+    let providerFailures = 0;
+    const teardownReasons: string[] = [];
     const result = await fixedNameExecutor(containerName).execute({
       request: {
         language: "javascript",
@@ -844,10 +846,68 @@ test(
             reject(signal.reason);
           }, { once: true });
         }),
+        lifecycle: {
+          beforeProviderInvocation: async () => {},
+          commitProviderResult: async () => {},
+          recordProviderFailure: async () => { providerFailures += 1; },
+          beforeContainerTeardown: async (reason) => { teardownReasons.push(reason); },
+        },
       },
     });
     assert.equal(result.status, "timeout");
     assert.equal(adapterObservedAbort, true);
+    assert.equal(providerFailures, 0);
+    assert.deepEqual(teardownReasons, ["timeout"]);
+    await assertContainerAndProcessesRemoved(containerName);
+    await assertContainerAndProcessesRemoved(`${containerName}-broker`);
+  },
+);
+
+test(
+  "Docker sandbox cancellation during the first provider operation preserves cancellation classification",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-provider-cancel");
+    const controller = new AbortController();
+    let providerStarted!: () => void;
+    const providerStart = new Promise<void>((resolve) => { providerStarted = resolve; });
+    let providerFailures = 0;
+    const teardownReasons: string[] = [];
+    const execution = fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", input: { query: "cancel", maxResults: 1 } }) })`,
+      },
+      policy: policy({ timeoutMs: 10_000 }),
+      signal: controller.signal,
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: undefined,
+        expectedInput: { query: "cancel", maxResults: 1 },
+        expiresAt: new Date(Date.now() + 10_000).toISOString(),
+        maxRequests: 1,
+        adapter: async (_input, signal) => {
+          providerStarted();
+          return await new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+        lifecycle: {
+          beforeProviderInvocation: async () => {},
+          commitProviderResult: async () => { throw new Error("late provider result must not commit"); },
+          recordProviderFailure: async () => { providerFailures += 1; },
+          beforeContainerTeardown: async (reason) => { teardownReasons.push(reason); },
+        },
+      },
+    });
+    await providerStart;
+    controller.abort(new Error("operator cancelled"));
+    await assert.rejects(execution, /cancel/iu);
+    assert.equal(providerFailures, 0);
+    assert.deepEqual(teardownReasons, ["cancelled"]);
     await assertContainerAndProcessesRemoved(containerName);
     await assertContainerAndProcessesRemoved(`${containerName}-broker`);
   },

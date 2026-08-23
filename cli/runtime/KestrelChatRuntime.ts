@@ -108,8 +108,15 @@ import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.j
 import {
   fingerprintSandboxCapabilityCatalogV1,
   fingerprintSandboxCapabilityLeaseBindingV1,
+  parseSandboxCapabilitySelectionV1,
   type SandboxCapabilityLeaseBindingV1,
 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import {
+  parsePreparedToolCallV1,
+  type PreparedToolCallV1,
+  type PreparedToolPolicyDispositionV1,
+} from "../../src/kestrel/contracts/tool-invocation.js";
+import { hashCanonical } from "../../src/kestrel/contracts/tool-contract.js";
 import {
   digestSandboxCapabilityResult,
   SandboxCapabilityLeaseCoordinator,
@@ -3372,6 +3379,8 @@ function createRuntimeWithStore(
   );
   const sandboxCapabilityRuntime = sandboxCapabilityEnvironment?.sandboxCapabilityRuntime;
   const sandboxCapabilityStore = supportsSandboxCapabilityLeaseStore(store) ? store : undefined;
+  let resolveCurrentSandboxCapabilityPolicy: Parameters<typeof validateSandboxCapabilityLeaseCurrent>[0]["resolveCurrentPolicy"] =
+    async () => ({ decision: "deny", policyRevision: hashCanonical({ authority: "sandbox-policy-unavailable" }) });
   if (sandboxCapabilityRuntime !== undefined) {
     if (sandboxCapabilityStore === undefined) {
       throw new Error("Selected sandbox capabilities require a durable lifecycle store");
@@ -3380,14 +3389,16 @@ function createRuntimeWithStore(
     const capabilityCatalogFingerprint = fingerprintSandboxCapabilityCatalogV1(profile.codeMode?.capabilities ?? []);
     sandboxCapabilityRuntime.leaseCoordinator = new SandboxCapabilityLeaseCoordinator({
       store: sandboxCapabilityStore,
-      validateCurrent: async (binding) => validateSandboxCapabilityLeaseCurrent({
+      validateCurrent: async (binding, boundary) => validateSandboxCapabilityLeaseCurrent({
         binding,
+        boundary,
         profileFingerprint,
         capabilityCatalogFingerprint,
         executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
         audience: sandboxCapabilityRuntime,
         brokerAuthority: sandboxCapabilityRuntime.brokerAuthority,
         credentialResolver: sandboxCapabilityRuntime.resolveCredentialSnapshot,
+        resolveCurrentPolicy: (input) => resolveCurrentSandboxCapabilityPolicy(input),
         store,
       }),
       persistResult: (input) => persistSandboxCapabilityResultEvidence({
@@ -3476,6 +3487,28 @@ function createRuntimeWithStore(
       ? { mcpOAuthProviderFactory }
       : {}),
   });
+  resolveCurrentSandboxCapabilityPolicy = async ({ prepared, approvalAuthorityRevision }) => {
+    const descriptor = toolRegistry.getDescriptor("code.execute");
+    if (descriptor === undefined) {
+      return { decision: "deny", policyRevision: hashCanonical({ authority: "code-execute-unavailable" }) };
+    }
+    const runtimeToolEffectRevision = hashCanonical({
+        version: "v1",
+        source: "runtime.tool-effect",
+        descriptorRevision: descriptor.contractRevision,
+        scopeFingerprint: prepared.activation.scopeFingerprint,
+        ...(approvalAuthorityRevision === undefined
+          ? { authority: "automatic" }
+          : { authority: approvalAuthorityRevision }),
+      });
+    const policyRevision = prepared.policy.policyRevision === KESTREL_EXECUTION_BOUNDARY_POLICY.revision
+      ? KESTREL_EXECUTION_BOUNDARY_POLICY.revision
+      : runtimeToolEffectRevision;
+    return {
+      decision: prepared.approval === undefined ? "allow" : "approval_required",
+      policyRevision,
+    };
+  };
   if (profile.agentProfileId === KESTREL_ONE_POLICY_ID) {
     assertRequiredKestrelOneTools(
       toolRegistry.getModelTools().map((tool) => tool.name),
@@ -3620,8 +3653,33 @@ function createRuntimeWithStore(
             before: new Date().toISOString(),
           }) ?? [];
           for (const lease of leases.filter((candidate) => candidate.binding.sessionId === sessionId)) {
-            const disposition = await coordinator.recover(lease.leaseId, lease.binding);
-            if (disposition.kind === "resume") continue;
+            let disposition = await coordinator.recover(lease.leaseId, lease.binding);
+            const exactEffectResult = await store.getEffectResult(lease.binding.toolCallId);
+            if (exactEffectResult === null) {
+              await store.saveEffectResult(lease.binding.runId, lease.binding.sessionId, {
+                idempotencyKey: lease.binding.toolCallId,
+                status: "FAILED",
+                error: {
+                  code: "SANDBOX_CAPABILITY_REPLAY_INCOMPLETE",
+                  message: "The sandbox capability provider evidence was recorded without a complete exact tool result; live fallback is forbidden.",
+                  details: {
+                    leaseId: lease.leaseId,
+                    bindingDigest: lease.bindingDigest,
+                    recoveryDisposition: disposition.kind,
+                    recoverable: false,
+                  },
+                },
+                timestamp: new Date().toISOString(),
+              });
+            }
+            if (disposition.kind === "resume") {
+              const revoked = await coordinator.revoke(
+                disposition.lease.leaseId,
+                disposition.lease.binding,
+                "orphan_recovery_cannot_recreate_process_local_authority",
+              );
+              disposition = { kind: "denied", lease: revoked, reason: "orphan_recovery_fail_closed" };
+            }
             await coordinator.settleBeforeTeardown({
               leaseId: disposition.lease.leaseId,
               expectedBinding: disposition.lease.binding,
@@ -4465,15 +4523,21 @@ export async function persistSandboxCapabilityResultEvidence(input: {
   return { digest, reference: `artifact:${artifactId}` };
 }
 
-async function validateSandboxCapabilityLeaseCurrent(input: {
+export async function validateSandboxCapabilityLeaseCurrent(input: {
   binding: SandboxCapabilityLeaseBindingV1;
+  boundary: import("../../src/code/SandboxCapabilityLeaseCoordinator.js").SandboxCapabilityLeaseCurrentnessBoundary;
   profileFingerprint: string;
   capabilityCatalogFingerprint: string;
   executionBoundaryRevision: string;
   audience: { tenantId: string; environmentId: string };
   brokerAuthority: { authorityId: string; revision: string };
   credentialResolver: KestrelRuntimeEnvironment["sandboxCapabilityCredentialResolver"];
+  resolveCurrentPolicy: (input: {
+    prepared: PreparedToolCallV1;
+    approvalAuthorityRevision?: string | undefined;
+  }) => Promise<PreparedToolPolicyDispositionV1>;
   store: SessionStore;
+  now?: (() => Date) | undefined;
 }): Promise<{ authorized: boolean; reason?: string | undefined }> {
   const binding = input.binding;
   if (binding.profileFingerprint !== input.profileFingerprint) return { authorized: false, reason: "profile_revision_changed" };
@@ -4486,14 +4550,94 @@ async function validateSandboxCapabilityLeaseCurrent(input: {
   if (credential.credentialId !== binding.credentialReference.credentialId || credential.revision !== binding.credentialReference.revision) {
     return { authorized: false, reason: "credential_revision_changed" };
   }
-  if (binding.approval?.approvalId !== undefined) {
+  const pendingEffects = await input.store.listPendingEffects(binding.sessionId);
+  const persistedDoneEffect = input.boundary === "recorded_replay" && input.store.getPersistedEffect !== undefined
+    ? await input.store.getPersistedEffect(binding.toolCallId)
+    : null;
+  const exactDoneResult = input.boundary === "recorded_replay"
+    ? await input.store.getEffectResult(binding.toolCallId)
+    : null;
+  const authorityEffects = [
+    ...pendingEffects,
+    ...(persistedDoneEffect?.status === "DONE" && exactDoneResult?.status === "DONE" ? [persistedDoneEffect] : []),
+  ];
+  const preparedCalls = authorityEffects
+    .filter((effect) => effect.runId === binding.runId)
+    .map((effect) => {
+      try {
+        return parsePreparedToolCallV1(effect.payload.preparedToolCall);
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((prepared): prepared is NonNullable<typeof prepared> => prepared !== undefined && prepared.callId === binding.toolCallId);
+  if (preparedCalls.length !== 1) return { authorized: false, reason: "prepared_call_authority_missing_or_ambiguous" };
+  const prepared = preparedCalls[0]!;
+  if (
+    prepared.runId !== binding.runId ||
+    prepared.sessionId !== binding.sessionId ||
+    prepared.activation.descriptor.toolId !== "code.execute" ||
+    prepared.policy.decision === "deny"
+  ) {
+    return { authorized: false, reason: "prepared_policy_changed_or_denied" };
+  }
+  try {
+    const selection = parseSandboxCapabilitySelectionV1(prepared.effectiveInput.capability);
+    if (selection.capabilityId !== binding.capabilityId) {
+      return { authorized: false, reason: "prepared_input_binding_changed" };
+    }
+  } catch {
+    return { authorized: false, reason: "prepared_input_binding_changed" };
+  }
+  if (
+    prepared.approval?.approvalId !== binding.approval?.approvalId ||
+    prepared.approval?.authorityRevision !== binding.approval?.authorityRevision ||
+    (prepared.policy.decision === "approval_required" && prepared.approval === undefined)
+  ) {
+    return { authorized: false, reason: "prepared_approval_authority_changed" };
+  }
+  let approvalAuthorityRevision: string | undefined;
+  if (prepared.approval !== undefined) {
+    if (prepared.approval.approvalId === undefined) {
+      return { authorized: false, reason: "approval_grant_identity_missing" };
+    }
     const grants = await input.store.listApprovalGrants();
     const grant = grants.find((candidate) =>
-      candidate.grantId === binding.approval?.approvalId &&
-      candidate.authorityRevision === binding.approval.authorityRevision);
-    if (grant === undefined || grant.status === "EXPIRED" || grant.status === "REVOKED") {
+      candidate.grantId === prepared.approval?.approvalId);
+    const expectedAuthorityRevision = grant?.authorityRevision === undefined
+      ? undefined
+      : hashCanonical({
+          version: "prepared-tool-approval-authority-v1",
+          activation: prepared.activation,
+          effectiveInput: prepared.effectiveInput,
+          inputAdapters: prepared.inputAdapters,
+          policyRevision: prepared.policy.policyRevision,
+          upstreamAuthorityRevision: grant.authorityRevision,
+        });
+    const now = (input.now ?? (() => new Date()))().getTime();
+    const approvalExpiry = grant?.expiresAt === undefined ? Number.NaN : Date.parse(grant.expiresAt);
+    if (
+      grant === undefined ||
+      grant.status !== "ACTIVE" ||
+      Number.isFinite(approvalExpiry) === false ||
+      now >= approvalExpiry ||
+      expectedAuthorityRevision !== prepared.approval.authorityRevision
+    ) {
       return { authorized: false, reason: "approval_revoked_or_stale" };
     }
+    approvalAuthorityRevision = grant.authorityRevision;
+  }
+  const currentPolicy = await input.resolveCurrentPolicy({
+    prepared,
+    ...(approvalAuthorityRevision === undefined ? {} : { approvalAuthorityRevision }),
+  });
+  if (
+    currentPolicy.decision === "deny" ||
+    currentPolicy.decision !== prepared.policy.decision ||
+    currentPolicy.policyRevision !== prepared.policy.policyRevision ||
+    currentPolicy.policyRevision !== binding.policyRevision
+  ) {
+    return { authorized: false, reason: "prepared_policy_changed_or_denied" };
   }
   if (binding.parentAuthorization !== undefined) {
     if (!supportsSandboxCapabilityLeaseStore(input.store)) {
@@ -4557,6 +4701,8 @@ function supportsSandboxCapabilityLeaseStore(
 ): store is SessionStore & SandboxCapabilityLeaseStore {
   const candidate = store as SessionStore & Partial<SandboxCapabilityLeaseStore>;
   return typeof candidate.appendSandboxCapabilityLeaseTransition === "function" &&
+    typeof candidate.issueSandboxCapabilityLease === "function" &&
+    typeof candidate.reserveSandboxCapabilityInvocation === "function" &&
     typeof candidate.getSandboxCapabilityLease === "function" &&
     typeof candidate.listSandboxCapabilityLeaseTransitions === "function" &&
     typeof candidate.listRecoverableSandboxCapabilityLeases === "function" &&

@@ -63,6 +63,12 @@ export interface CodeExecutionResult {
   summary: string;
   policy: AppliedCodeExecutionPolicy;
   retention: CodeModeRetentionConfig;
+  capabilityReplayEvidence?: {
+    version: 1;
+    leaseId: string;
+    bindingDigest: string;
+    toolCallId: string;
+  } | undefined;
 }
 
 export interface CodeModeSandboxConfig {
@@ -161,7 +167,7 @@ export interface SandboxCapabilityGrant {
    * never serialized into broker or workload state.
    */
   lifecycle?: {
-    beforeProviderInvocation: () => Promise<void>;
+    beforeProviderInvocation: () => Promise<{ responseByteLimit: number } | void>;
     commitProviderResult: (input: {
       result: unknown;
       responseBytes: number;
