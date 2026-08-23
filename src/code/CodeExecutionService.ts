@@ -407,7 +407,7 @@ async function resolveTavilyCapability(
       }
     },
   };
-  const releaseSensitiveValue = runtime.registerSensitiveValue?.({
+  const releaseSensitiveValue = runtime.registerSensitiveValue({
     referenceId: [
       "sandbox-capability",
       credentialSnapshot.credentialId,
@@ -416,9 +416,12 @@ async function resolveTavilyCapability(
     ].join(":"),
     value: credentialSnapshot.secret,
   });
+  if (typeof releaseSensitiveValue !== "function") {
+    throw new Error("Sandbox capability sensitive-value registration must provide cleanup");
+  }
   return {
     grant,
-    ...(releaseSensitiveValue === undefined ? {} : { releaseSensitiveValue }),
+    releaseSensitiveValue,
     ...(runtime.redactSensitiveValues === undefined ? {} : { redactSensitiveValues: runtime.redactSensitiveValues }),
   };
 }

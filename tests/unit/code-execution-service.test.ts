@@ -82,6 +82,27 @@ test("CodeExecutionService rejects partial sensitive-value callback configuratio
   assert.equal(executions, 0);
 });
 
+test("CodeExecutionService rejects sensitive-value registration without a cleanup disposer", async () => {
+  let executions = 0;
+  const service = new CodeExecutionService({ executor: { async execute() { executions += 1; throw new Error("must not execute"); } } });
+  const config = { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] };
+  const request = { language: "javascript" as const, code: "x", capability: { capabilityId: "tavily.search.read" as const, input: { query: "x" } } };
+  const capabilityRuntime = {
+    ...runtime(),
+    registerSensitiveValue: (() => undefined) as unknown as () => () => void,
+  };
+
+  await assert.rejects(
+    service.execute(config, request, { capabilityRuntime }),
+    (error) => {
+      assert.match((error as Error).message, /registration must provide cleanup/u);
+      assert.equal((error as Error).message.includes("real-secret-key"), false);
+      return true;
+    },
+  );
+  assert.equal(executions, 0);
+});
+
 test("CodeExecutionService resolves the current credential revision for every selected call", async () => {
   const revisions: string[] = [];
   let executions = 0;
@@ -551,5 +572,5 @@ test("cancellation sanitization fails closed for hostile proxies and secret-bear
 let registeredSensitiveValue = "";
 function runtime(fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ results: [] }), { status: 200 })) {
   registeredSensitiveValue = "";
-  return { tenantId: "tenant-a", environmentId: "env-a", sessionId: "session-a", runId: "run-a", toolCallId: "call-a", profileFingerprint: fingerprintSandboxCapabilityProfileV1(profile), capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([profile]), executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision, brokerAuthority: profile.brokerAuthority, credentialSnapshot: { credentialId: "tool.tavily.default" as const, revision: "credential-rev-1", secret: "real-secret-key" }, fetchImpl, registerSensitiveValue: (input: { value: string }) => { registeredSensitiveValue = input.value; }, redactSensitiveValues: <T>(value: T) => value, now: () => new Date("2026-08-22T12:00:00.000Z") };
+  return { tenantId: "tenant-a", environmentId: "env-a", sessionId: "session-a", runId: "run-a", toolCallId: "call-a", profileFingerprint: fingerprintSandboxCapabilityProfileV1(profile), capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([profile]), executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision, brokerAuthority: profile.brokerAuthority, credentialSnapshot: { credentialId: "tool.tavily.default" as const, revision: "credential-rev-1", secret: "real-secret-key" }, fetchImpl, registerSensitiveValue: (input: { value: string }) => { registeredSensitiveValue = input.value; return () => {}; }, redactSensitiveValues: <T>(value: T) => value, now: () => new Date("2026-08-22T12:00:00.000Z") };
 }

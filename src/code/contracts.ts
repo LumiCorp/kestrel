@@ -179,7 +179,7 @@ export interface SandboxCapabilityRuntimeContext {
   registerSensitiveValue?: ((input: {
     referenceId: string;
     value: string;
-  }) => (() => void) | void) | undefined;
+  }) => (() => void)) | undefined;
   redactSensitiveValues?: (<T>(value: T) => T) | undefined;
 }
 

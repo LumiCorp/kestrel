@@ -79,7 +79,7 @@ function resolveCapabilityRuntime(
       credentialResolutions += 1;
       return { credentialId: "tool.tavily.default", revision: "credential-a", secret: "secret-a" };
     },
-    () => undefined,
+    () => () => {},
     (value) => value,
   );
   return { resolved, credentialResolutions };
@@ -122,7 +122,7 @@ test("sandbox capability runtime rejects forged tenant and environment audiences
           credentialResolutions += 1;
           return { credentialId: "tool.tavily.default", revision: "credential-a", secret: "secret-a" };
         },
-        () => undefined,
+        () => () => {},
         (value) => value,
       ),
       /audience does not match/u,
@@ -205,7 +205,7 @@ test("gateway profile credential identity cannot replace host-resolved capabilit
         credentialResolutions += 1;
         return { credentialId: "tool.tavily.default", revision: "credential-a", secret: "secret-a" };
       },
-      () => undefined,
+      () => () => {},
       (value) => value,
     ),
     /audience does not match/u,
