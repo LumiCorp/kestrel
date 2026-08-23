@@ -130,19 +130,110 @@ function redactCapabilityError(
   redact: (<T>(value: T) => T) | undefined,
 ): unknown {
   if (redact === undefined) return error;
-  if (error instanceof Error === false) return redact(error);
+  return sanitizeCapabilityError(error, redact, new WeakMap<object, unknown>());
+}
 
-  // Preserve cancellation identity and any runtime-specific error code while
-  // ensuring no secret-bearing message, stack, cause, or attached metadata can
-  // outlive the call-scoped sensitive registration.
-  error.message = redact(error.message);
-  if (error.stack !== undefined) error.stack = redact(error.stack);
-  if (error.cause !== undefined) error.cause = redactCapabilityError(error.cause, redact);
-  for (const [key, value] of Object.entries(error)) {
-    if (key === "cause") continue;
-    Object.assign(error, { [key]: redact(value) });
+function sanitizeCapabilityError(
+  value: unknown,
+  redact: <T>(value: T) => T,
+  seen: WeakMap<object, unknown>,
+): unknown {
+  if (typeof value !== "object" || value === null) return safelyRedact(value, redact);
+  const prior = seen.get(value);
+  if (prior !== undefined) return "[Circular]";
+  if (value instanceof Error === false) {
+    const sanitizedValue: Record<PropertyKey, unknown> | unknown[] = Array.isArray(value) ? [] : {};
+    seen.set(value, sanitizedValue);
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (descriptor === undefined || !("value" in descriptor)) continue;
+      const sanitizedItem = sanitizeCapabilityError(descriptor.value, redact, seen);
+      if (Array.isArray(sanitizedValue) && typeof key === "string" && /^\d+$/u.test(key)) {
+        sanitizedValue[Number(key)] = sanitizedItem;
+      } else {
+        try {
+          Object.defineProperty(sanitizedValue, key, {
+            value: sanitizedItem,
+            enumerable: descriptor.enumerable ?? false,
+            configurable: true,
+            writable: true,
+          });
+        } catch {
+          // Hostile metadata is omitted rather than escaping unredacted.
+        }
+      }
+    }
+    return sanitizedValue;
   }
-  return error;
+
+  // Cancellation errors may be DOMExceptions, frozen Errors, or carry
+  // read-only runtime metadata. Never mutate or invoke arbitrary accessors on
+  // the original error while sensitive values are registered.
+  const sanitized = new Error(safelyRedact(readErrorString(value, "message", "Execution cancelled") ?? "Execution cancelled", redact));
+  seen.set(value, sanitized);
+  sanitized.name = safelyRedact(readErrorString(value, "name", "Error") ?? "Error", redact);
+
+  const stack = readErrorString(value, "stack");
+  if (stack !== undefined) sanitized.stack = safelyRedact(stack, redact);
+
+  const causeDescriptor = Object.getOwnPropertyDescriptor(value, "cause");
+  if (causeDescriptor !== undefined && "value" in causeDescriptor) {
+    sanitized.cause = sanitizeCapabilityError(causeDescriptor.value, redact, seen);
+  }
+
+  for (const key of Reflect.ownKeys(value)) {
+    if (key === "message" || key === "name" || key === "stack" || key === "cause") continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !("value" in descriptor)) continue;
+    defineSanitizedErrorProperty(
+      sanitized,
+      key,
+      sanitizeCapabilityError(descriptor.value, redact, seen),
+      descriptor.enumerable ?? false,
+    );
+  }
+
+  // DOMException exposes its actionable numeric code through an inherited
+  // getter rather than an own property.
+  if (!("code" in sanitized)) {
+    try {
+      const code = (value as Error & { code?: unknown }).code;
+      if (code !== undefined) defineSanitizedErrorProperty(sanitized, "code", safelyRedact(code, redact), true);
+    } catch {
+      // Hostile accessors are intentionally omitted from the sanitized copy.
+    }
+  }
+  return sanitized;
+}
+
+function safelyRedact<T>(value: T, redact: <U>(value: U) => U): T {
+  try {
+    return redact(value);
+  } catch {
+    return "[REDACTED]" as T;
+  }
+}
+
+function readErrorString(error: Error, key: "message" | "name" | "stack", fallback?: string): string | undefined {
+  try {
+    const value = error[key];
+    return typeof value === "string" ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function defineSanitizedErrorProperty(
+  error: Error,
+  key: PropertyKey,
+  value: unknown,
+  enumerable: boolean,
+): void {
+  try {
+    Object.defineProperty(error, key, { value, enumerable, configurable: true, writable: true });
+  } catch {
+    // A sanitized diagnostic must never replace cancellation with a copy error.
+  }
 }
 
 async function resolveTavilyCapability(

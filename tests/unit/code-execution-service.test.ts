@@ -316,6 +316,78 @@ test("credential-bearing executor output is redacted before its registration is 
   assert.equal(registry.registeredValueDigests().length, 0);
 });
 
+test("cancellation sanitization handles DOMException, frozen errors, and cyclic diagnostics without leaking", async () => {
+  const cases = [
+    (secret: string): Error => {
+      const error = new DOMException(`provider aborted with ${secret}`, "AbortError");
+      Object.defineProperty(error, "detail", {
+        value: { secret },
+        enumerable: true,
+      });
+      return error;
+    },
+    (secret: string): Error => {
+      const error = new Error(`frozen cancellation ${secret}`) as Error & { code: string; detail: unknown };
+      error.name = "RunCancelledError";
+      error.code = "RUN_CANCELLED";
+      const detail: { secret: string; self?: unknown; error?: unknown } = { secret };
+      detail.self = detail;
+      detail.error = error;
+      error.detail = detail;
+      error.cause = error;
+      return Object.freeze(error);
+    },
+  ];
+
+  for (const [index, createError] of cases.entries()) {
+    const secret = `cancellation-secret-${index}`;
+    const registry = new SensitiveValueRegistry();
+    const controller = new AbortController();
+    const thrown = createError(secret);
+    const service = new CodeExecutionService({
+      executor: {
+        async execute() {
+          controller.abort();
+          throw thrown;
+        },
+      },
+    });
+
+    await assert.rejects(
+      service.execute(
+        { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+        { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "x" } } },
+        { signal: controller.signal, capabilityRuntime: {
+          ...runtime(),
+          credentialSnapshot: { credentialId: "tool.tavily.default", revision: `credential-${index}`, secret },
+          registerSensitiveValue: (input) => registry.register({
+            reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
+            value: input.value,
+          }),
+          redactSensitiveValues: <T>(value: T) => registry.redact(value).value,
+          toolCallId: `call-${index}`,
+        } },
+      ),
+      (error) => {
+        assert.equal(error instanceof Error, true);
+        assert.notEqual(error, thrown);
+        assert.equal((error as Error).name, index === 0 ? "AbortError" : "RunCancelledError");
+        assert.equal((error as Error & { code?: unknown }).code, index === 0 ? DOMException.ABORT_ERR : "RUN_CANCELLED");
+        const serialized = JSON.stringify({
+          name: (error as Error).name,
+          message: (error as Error).message,
+          cause: (error as Error).cause,
+          ...(error as Record<string, unknown>),
+        });
+        assert.equal(serialized.includes(secret), false);
+        assert.match(serialized, /redacted/iu);
+        return true;
+      },
+    );
+    assert.equal(registry.registeredValueDigests().length, 0);
+  }
+});
+
 let registeredSensitiveValue = "";
 function runtime(fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ results: [] }), { status: 200 })) {
   registeredSensitiveValue = "";
