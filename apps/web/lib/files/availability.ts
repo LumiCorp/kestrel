@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { logAdminEvent } from "@/lib/admin/logs";
+import { insertAdminEvent } from "@/lib/admin/logs";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getManagedFileStorageProvider } from "./storage-provider";
 
@@ -84,14 +84,30 @@ export async function ensureFileBlobAvailable(input: {
     eq(schema.fileBlobs.availabilityStatus, "unknown"),
   ));
 
-  if (!exists) {
+  const committed = await knowledgeDb.query.fileBlobs.findFirst({
+    where: eq(schema.fileBlobs.id, input.blobId),
+    columns: {
+      availabilityStatus: true,
+    },
+  });
+
+  if (committed?.availabilityStatus === "available") return;
+  if (committed?.availabilityStatus !== "missing") {
     throw new FileAvailabilityError({
-      code: "ATTACHMENT_BLOB_MISSING",
-      message: "The attached file content is unavailable.",
+      code: "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE",
+      message: "The attachment service could not confirm file availability.",
+      retryable: true,
       fileId: input.fileId,
       blobId: input.blobId,
     });
   }
+
+  throw new FileAvailabilityError({
+    code: "ATTACHMENT_BLOB_MISSING",
+    message: "The attached file content is unavailable.",
+    fileId: input.fileId,
+    blobId: input.blobId,
+  });
 }
 
 export async function ensureEffectiveFileAvailability(input: {
@@ -181,25 +197,35 @@ export async function verifyRestoredFileBlob(input: {
   }
 
   const checkedAt = input.now ?? new Date();
-  await knowledgeDb.update(schema.fileBlobs).set({
-    availabilityStatus: "available",
-    availabilityCheckedAt: checkedAt,
-  }).where(eq(schema.fileBlobs.id, blob.id));
-  await logAdminEvent({
-    organizationId: input.organizationId,
-    actorUserId: input.actorUserId,
-    category: "file_blobs",
-    action: "restore_verified",
-    targetType: "file_blob",
-    targetId: blob.id,
-    message: `Verified restored file blob ${blob.id}.`,
-    metadata: {
-      sizeBytes: bytes.byteLength,
-      sha256,
-      availabilityCheckedAt: checkedAt.toISOString(),
-    },
+  const repaired = await knowledgeDb.transaction(async (transaction) => {
+    const [updatedBlob] = await transaction
+      .update(schema.fileBlobs)
+      .set({
+        availabilityStatus: "available",
+        availabilityCheckedAt: checkedAt,
+      })
+      .where(eq(schema.fileBlobs.id, blob.id))
+      .returning();
+    if (!updatedBlob) throw new Error("File blob not found.");
+
+    await insertAdminEvent(transaction, {
+      organizationId: input.organizationId,
+      actorUserId: input.actorUserId,
+      category: "file_blobs",
+      action: "restore_verified",
+      targetType: "file_blob",
+      targetId: blob.id,
+      message: `Verified restored file blob ${blob.id}.`,
+      metadata: {
+        sizeBytes: bytes.byteLength,
+        sha256,
+        availabilityCheckedAt: checkedAt.toISOString(),
+      },
+    });
+
+    return updatedBlob;
   });
-  return { ...blob, availabilityStatus: "available" as const, availabilityCheckedAt: checkedAt };
+  return repaired;
 }
 
 function unavailable(input: { fileId?: string; blobId?: string }): FileAvailabilityError {
