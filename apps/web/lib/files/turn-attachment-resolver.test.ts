@@ -3,6 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  TURN_ATTACHMENT_DEPLOYMENT_CANARY_SHA256,
+  TURN_ATTACHMENT_DEPLOYMENT_CANARY_TEXT,
+  TURN_ATTACHMENT_DEPLOYMENT_CANARY_TURN_ID,
+} from "@kestrel-agents/protocol";
+import { resolveTurnAttachmentDeploymentCanary } from "./turn-attachment-deployment-canary";
+import type { FileStorageProvider } from "./storage-provider";
 
 const webRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -41,4 +48,39 @@ test("turn attachment resolver is a no-store, ticket-bound service boundary", ()
   assert.doesNotMatch(route, /request\.json\(/u);
   assert.doesNotMatch(route, /organizationId/u);
   assert.doesNotMatch(route, /sourceUrl.*console/u);
+});
+
+test("deployment canary mints one fixed harmless R2-backed attachment", async () => {
+  let uploaded = Buffer.alloc(0);
+  let signedKey = "";
+  const storage: FileStorageProvider = {
+    buildOriginalKey: ({ organizationId, blobId }) => `${organizationId}/${blobId}/original`,
+    buildDerivativeKey: () => "unused",
+    putStream: async ({ body }) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of body) chunks.push(Buffer.from(chunk));
+      uploaded = Buffer.concat(chunks);
+    },
+    readBuffer: async () => Buffer.alloc(0),
+    readStream: async () => { throw new Error("unused"); },
+    delete: async () => {},
+    exists: async () => true,
+    signedReadUrl: async (key, expiresInSeconds) => {
+      signedKey = key;
+      assert.equal(expiresInSeconds, 300);
+      return "https://r2.example.test/deployment-canary";
+    },
+  };
+
+  const result = await resolveTurnAttachmentDeploymentCanary({
+    storage,
+    now: new Date("2026-08-23T20:00:00.000Z"),
+  });
+
+  assert.equal(result.turnId, TURN_ATTACHMENT_DEPLOYMENT_CANARY_TURN_ID);
+  assert.deepEqual(uploaded, Buffer.from(TURN_ATTACHMENT_DEPLOYMENT_CANARY_TEXT, "utf8"));
+  assert.equal(signedKey, "deployment-canary/turn-attachment-v1/original");
+  assert.equal(result.attachments[0]?.sha256, TURN_ATTACHMENT_DEPLOYMENT_CANARY_SHA256);
+  assert.equal(result.attachments[0]?.sourceUrl, "https://r2.example.test/deployment-canary");
+  assert.equal(result.attachments[0]?.sourceUrlExpiresAt, "2026-08-23T20:05:00.000Z");
 });

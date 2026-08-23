@@ -27,5 +27,6 @@ updates, durable turn proof, and rollback.
 
 Readiness is provider-native. The process returns 503 until database and gateway
 credential checks pass, workers are registered, and initial maintenance
-succeeds. The image smoke checks missing configuration only; production
-readiness and a completed durable turn must be verified after each rollout.
+succeeds. The production image smoke also runs a one-shot signed attachment canary
+inside the exact image without starting pg-boss. Production readiness and a
+completed durable turn must still be verified after each rollout.

@@ -8,6 +8,8 @@ import {
   resolveTurnAttachments,
   TurnAttachmentResolutionError,
 } from "@/lib/files/turn-attachment-resolver";
+import { resolveTurnAttachmentDeploymentCanary } from "@/lib/files/turn-attachment-deployment-canary";
+import { TURN_ATTACHMENT_DEPLOYMENT_CANARY_TURN_ID } from "@kestrel-agents/protocol";
 
 const paramsSchema = z.object({ turnId: z.string().trim().min(1).max(200) });
 const NO_STORE_HEADERS = {
@@ -31,7 +33,10 @@ export async function POST(
         "Attachment resolution ticket does not match this turn.",
       );
     }
-    return NextResponse.json(await resolveTurnAttachments({ turnId }), {
+    const result = turnId === TURN_ATTACHMENT_DEPLOYMENT_CANARY_TURN_ID
+      ? await resolveTurnAttachmentDeploymentCanary()
+      : await resolveTurnAttachments({ turnId });
+    return NextResponse.json(result, {
       headers: NO_STORE_HEADERS,
     });
   } catch (error) {

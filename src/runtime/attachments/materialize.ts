@@ -3,6 +3,7 @@ import { lookup } from "node:dns/promises";
 import { createReadStream, createWriteStream } from "node:fs";
 import { chmod, copyFile, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { request } from "node:https";
+import type { LookupFunction } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform, type TransformCallback } from "node:stream";
@@ -182,7 +183,7 @@ async function downloadTrustedAttachmentSource(
     const outgoing = request(url, {
       method: "GET",
       headers: { accept: "application/octet-stream" },
-      lookup: (_hostname, _options, callback) => callback(null, pinned.address, pinned.family),
+      lookup: createPinnedAttachmentLookup(pinned),
       timeout: 30_000,
     }, (response) => {
       if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
@@ -200,6 +201,18 @@ async function downloadTrustedAttachmentSource(
     outgoing.once("error", reject);
     outgoing.end();
   });
+}
+
+export function createPinnedAttachmentLookup(
+  pinned: { address: string; family: 4 | 6 },
+): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all === true) {
+      callback(null, [pinned]);
+      return;
+    }
+    callback(null, pinned.address, pinned.family);
+  };
 }
 
 class ByteLimitTransform extends Transform {

@@ -46,16 +46,42 @@ drop below the intended production capacity.
 
 ## 3. Publish the selected image
 
+Load the production `KESTREL_ONE_APP_URL` and
+`KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY` into the local process environment.
+The publication command refuses to publish this role without them.
+
 ```bash
 pnpm production:image:publish \
   --role turn-worker \
   --tag <tag>
 ```
 
-The command builds `linux/amd64`, runs the image smoke, and pushes the selected
-tag. Retain its final JSON output. The smoke proves only the missing-database
-configuration failure; it does not prove database access, gateway credentials,
-worker registration, reconciliation, capacity, or live turn completion.
+The command builds `linux/amd64`, proves the missing-database failure, and then
+runs the image's one-shot attachment canary before pushing. The canary does not
+open Postgres or start pg-boss. It signs a worker request to Web, downloads a
+fixed harmless object through Web-owned R2 signing, verifies size and SHA-256,
+materializes it read-only, removes the temporary file, and emits JSON evidence.
+Any canary failure prevents the push.
+
+After publication, run the exact immutable tag once on a disposable Fly Machine
+in the worker app. This Machine inherits the app's existing secrets, executes
+only the canary command, never joins the queue, and removes itself on exit:
+
+```bash
+fly machine run registry.fly.io/kestrel-one-turn-worker:<tag> \
+  --app kestrel-one-turn-worker \
+  --region iad \
+  --rm \
+  --restart no \
+  --entrypoint pnpm \
+  -- --filter @kestrel/kestrel-one worker:turns:attachment-canary
+```
+
+Retain both JSON results and require `resolver`, `r2Download`, `materialized`,
+and `readOnly` to be `true`, with the requested build ID. Stop before changing
+an existing Machine if either proof fails. These checks do not prove database
+access, gateway credentials, worker registration, reconciliation, capacity, or
+live turn completion.
 
 ## 4. Update started Machines first
 
