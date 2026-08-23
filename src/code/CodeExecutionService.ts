@@ -8,7 +8,7 @@ import type {
   SandboxExecutionOutput,
   SandboxExecutor,
 } from "./contracts.js";
-import { DockerSandboxExecutor, DockerUnavailableError } from "./DockerSandboxExecutor.js";
+import { DockerSandboxCancellationError, DockerSandboxExecutor, DockerUnavailableError } from "./DockerSandboxExecutor.js";
 import { evaluateExecutionPolicy } from "./PolicyEngine.js";
 import {
   fingerprintSandboxCapabilityCatalogV1,
@@ -56,6 +56,7 @@ export class CodeExecutionService {
         request.capability,
         options.capabilityRuntime,
         options.persistCompletedCapabilityResult,
+        options.signal,
         policyDecision.policy,
         config?.retention ?? { persistSummary: true, persistArtifacts: true },
       );
@@ -73,6 +74,9 @@ export class CodeExecutionService {
         capability,
         signal: options.signal,
       });
+      if (options.signal?.aborted === true) {
+        throw new DockerSandboxCancellationError("Docker sandbox execution was cancelled");
+      }
 
       return buildCompletedCodeExecutionResult({
         output,
@@ -349,6 +353,7 @@ async function resolveTavilyCapability(
   selectedValue: unknown,
   runtime: SandboxCapabilityRuntimeContext | undefined,
   persistCompletedCapabilityResult: ((result: CodeExecutionResult) => Promise<void>) | undefined,
+  signal: AbortSignal | undefined,
   appliedPolicy: CodeExecutionResult["policy"],
   retention: CodeExecutionResult["retention"],
 ): Promise<{
@@ -476,7 +481,8 @@ async function resolveTavilyCapability(
         },
         beforeContainerTeardown: async (reason, completedOutput) => {
           try {
-            if (completedOutput !== undefined && persistCompletedCapabilityResult !== undefined) {
+            const effectiveReason = signal?.aborted === true ? "cancelled" : reason;
+            if (effectiveReason !== "cancelled" && completedOutput !== undefined && persistCompletedCapabilityResult !== undefined) {
               await persistCompletedCapabilityResult(buildCompletedCodeExecutionResult({
                 output: completedOutput,
                 policy: appliedPolicy,
@@ -493,7 +499,7 @@ async function resolveTavilyCapability(
             await runtime.leaseCoordinator!.settleBeforeTeardown({
               leaseId: durableLease.leaseId,
               expectedBinding: leaseBinding,
-              reason,
+              reason: effectiveReason,
               disposeSensitiveMaterial,
             });
           } finally {

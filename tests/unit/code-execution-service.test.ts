@@ -236,6 +236,51 @@ test("exact capability result becomes durable before lease cleanup and container
   assert.deepEqual(order, ["exact_result_durable", "lease_cleanup", "containers_removed"]);
 });
 
+for (const providerUsed of [false, true]) {
+  test(`late cancellation suppresses the ${providerUsed ? "provider-used" : "unused"} exact capability result`, async () => {
+    const controller = new AbortController();
+    const capabilityRuntime = runtime();
+    const transitions: string[] = [];
+    const coordinator = capabilityRuntime.leaseCoordinator;
+    const settleBeforeTeardown = coordinator.settleBeforeTeardown.bind(coordinator);
+    coordinator.settleBeforeTeardown = async (...args) => {
+      const settled = await settleBeforeTeardown(...args);
+      transitions.push(settled.terminalOutcome ?? "missing", settled.transition);
+      return settled;
+    };
+    let exactSaves = 0;
+    const completedOutput = { status: "ok" as const, exitCode: 0, stdout: "late output", stderr: "", durationMs: 1, artifacts: [] };
+    const service = new CodeExecutionService({
+      executor: {
+        async execute(input) {
+          if (providerUsed) {
+            await input.capability!.lifecycle!.beforeProviderInvocation();
+            await input.capability!.lifecycle!.commitProviderResult({ result: { results: [] }, responseBytes: 2, resultCount: 0 });
+          }
+          controller.abort(new Error("operator cancelled after output construction"));
+          await input.capability!.lifecycle!.beforeContainerTeardown("completed", completedOutput);
+          return completedOutput;
+        },
+      },
+    });
+
+    await assert.rejects(
+      service.execute(
+        { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+        { language: "javascript", code: "console.log('late output')", capability: { capabilityId: "tavily.search.read", input: { query: providerUsed ? "used" : "unused" } } },
+        {
+          signal: controller.signal,
+          capabilityRuntime,
+          persistCompletedCapabilityResult: async () => { exactSaves += 1; },
+        },
+      ),
+      /cancelled/iu,
+    );
+    assert.equal(exactSaves, 0);
+    assert.deepEqual(transitions, ["cancelled", "cleaned"]);
+  });
+}
+
 test("CodeExecutionService resolves the current credential revision for every selected call", async () => {
   const revisions: string[] = [];
   let executions = 0;

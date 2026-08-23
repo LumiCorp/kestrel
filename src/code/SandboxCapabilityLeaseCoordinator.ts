@@ -265,7 +265,9 @@ export class SandboxCapabilityLeaseCoordinator {
     disposeSensitiveMaterial: () => void | Promise<void>;
   }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
     let current = await this.requireExact(input.leaseId, input.expectedBinding);
-    if (!isTerminal(current.transition)) {
+    const lateCancellation = input.reason === "cancelled"
+      && (current.transition === "consumed" || current.transition === "exhausted");
+    if (!isTerminal(current.transition) || lateCancellation) {
       const transition = input.reason === "cancelled" ? "cancelled" : "revoked";
       current = await this.transition(current, transition, {
         terminalOutcome: input.reason === "cancelled" ? "cancelled" : "failed",

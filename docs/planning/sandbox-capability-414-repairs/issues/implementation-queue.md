@@ -17,6 +17,7 @@ None.
 - [07 — Preserve successful results when a selected capability is unused](07-unused-capability-result.md)
 - [08 — Close the post-handler exact-result crash window](08-post-handler-result-crash-window.md)
 - [09 — Snapshot exact results before asynchronous persistence](09-immutable-result-snapshot.md)
+- [10 — Let cancellation dominate pre-cleanup result persistence](10-cancellation-dominates-result.md)
 
 ## Done
 

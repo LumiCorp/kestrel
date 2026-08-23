@@ -230,7 +230,7 @@ export function assertSandboxCapabilityLeaseTransitionV1(
     issued: ["invoking", "revoked", "expired", "cancelled"],
     invoking: ["consumed", "exhausted", "revoked", "expired", "cancelled"],
     consumed: ["exhausted", "revoked", "expired", "cancelled", "cleaned"],
-    exhausted: ["revoked", "expired", "cleaned"], revoked: ["cleaned"], expired: ["cleaned"], cancelled: ["cleaned"], cleaned: [],
+    exhausted: ["revoked", "expired", "cancelled", "cleaned"], revoked: ["cleaned"], expired: ["cleaned"], cancelled: ["cleaned"], cleaned: [],
   };
   if ((allowed[previous ?? "start"] ?? []).includes(next) === false) {
     fail(`sandbox capability lease transition '${previous ?? "start"}' -> '${next}' is invalid`);

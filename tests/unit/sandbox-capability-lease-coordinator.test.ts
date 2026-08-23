@@ -91,6 +91,29 @@ test("lease coordinator durably reserves before provider and commits result befo
   assert.deepEqual(events, ["requested", "issued", "invoking", "consumed", "exhausted"]);
 });
 
+test("late cancellation replaces a provider-used completed outcome before cleanup", async () => {
+  const store = new FakeLeaseStore();
+  const events: string[] = [];
+  const coordinator = createCoordinator(store, events);
+  const issued = await coordinator.request({ binding, expiresAt: "2026-08-23T12:01:00.000Z", requestLimit: 1, responseByteLimit: 4096 });
+  await coordinator.reserveInvocation(issued.leaseId, binding);
+  await coordinator.commitResult({ leaseId: issued.leaseId, expectedBinding: binding, result: { results: [] }, responseBytes: 2 });
+
+  const cleaned = await coordinator.settleBeforeTeardown({
+    leaseId: issued.leaseId,
+    expectedBinding: binding,
+    reason: "cancelled",
+    disposeSensitiveMaterial: () => {},
+  });
+
+  assert.equal(cleaned.transition, "cleaned");
+  assert.equal(cleaned.terminalOutcome, "cancelled");
+  assert.deepEqual(events.slice(-2), ["cancelled", "cleaned"]);
+  const recovery = await coordinator.recover(issued.leaseId, binding);
+  assert.equal(recovery.kind, "denied");
+  assert.equal(recovery.reason, "terminal_cleaned");
+});
+
 test("lease coordinator revokes ambiguous invoking recovery without provider retry", async () => {
   const store = new FakeLeaseStore();
   const coordinator = createCoordinator(store);
