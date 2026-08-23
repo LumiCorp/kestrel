@@ -39,12 +39,14 @@ export function createExecuteToolCallHandler(
       payload: runtimePayload ?? {},
       sessionState: context.session?.state ?? {},
     };
-    return toolGateway.executePreparedToolCall(
+    const result = await toolGateway.executePreparedToolCall(
       preparedToolCall,
       {
         signal: context.signal,
         runContext,
       },
     );
+    await context.persistCompletedCapabilityResult?.(result);
+    return result;
   };
 }

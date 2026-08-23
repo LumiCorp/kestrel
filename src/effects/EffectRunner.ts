@@ -89,37 +89,40 @@ export class InlineEffectRunner implements EffectRunner {
       }
       try {
         const handler = this.registry.resolve(effect.type);
+        let completedEffectResult: {
+          idempotencyKey: string;
+          status: "DONE";
+          output: unknown;
+          timestamp: string;
+        } | undefined;
+        let completedEffectResultSave: Promise<void> | undefined;
+        const persistCompletedResult = (output: unknown): Promise<void> => {
+          if (completedEffectResult === undefined) {
+            completedEffectResult = {
+              idempotencyKey: effect.idempotencyKey,
+              status: "DONE",
+              output,
+              timestamp: new Date().toISOString(),
+            };
+            completedEffectResultSave = this.persistCompletedEffectResult(
+              effect,
+              completedEffectResult,
+            );
+          } else if (completedEffectResult.output !== output) {
+            return Promise.reject(new Error("Effect handler attempted to persist conflicting completed outputs"));
+          }
+          return completedEffectResultSave!;
+        };
+        const persistCompletedCapabilityResult = (output: unknown): Promise<void> =>
+          readSandboxCapabilityReplayEvidence(output) === undefined
+            ? Promise.resolve()
+            : persistCompletedResult(output);
         const output = await handler(effect, {
           ...context,
           session,
+          persistCompletedCapabilityResult,
         });
-
-        const completedEffectResult = {
-          idempotencyKey: effect.idempotencyKey,
-          status: "DONE" as const,
-          output,
-          timestamp: new Date().toISOString(),
-        };
-        const capabilityReplay = readSandboxCapabilityReplayEvidence(output);
-        if (capabilityReplay === undefined) {
-          await this.store.saveEffectResult(effect.runId, effect.sessionId, completedEffectResult);
-        } else {
-          const capabilityStore = this.store as typeof this.store & Partial<SandboxCapabilityLeaseStore>;
-          if (capabilityStore.saveSandboxCapabilityEffectResult === undefined) {
-            throw new Error("Durable sandbox capability effect-result persistence is unavailable");
-          }
-          if (capabilityReplay.toolCallId !== effect.idempotencyKey) {
-            throw new Error("Sandbox capability replay evidence does not match the exact effect action");
-          }
-          await capabilityStore.saveSandboxCapabilityEffectResult({
-            leaseId: capabilityReplay.leaseId,
-            bindingDigest: capabilityReplay.bindingDigest,
-            toolCallId: capabilityReplay.toolCallId,
-            runId: effect.runId,
-            sessionId: effect.sessionId,
-            result: completedEffectResult,
-          });
-        }
+        await persistCompletedResult(output);
         await this.store.markEffectStatus(effect.idempotencyKey, "DONE");
         if (toolActivity !== undefined) {
           const evidence = readAgentToolResultV2(output);
@@ -212,6 +215,37 @@ export class InlineEffectRunner implements EffectRunner {
       stop: false,
       errors,
     };
+  }
+
+  private async persistCompletedEffectResult(
+    effect: PersistedEffect,
+    result: {
+      idempotencyKey: string;
+      status: "DONE";
+      output: unknown;
+      timestamp: string;
+    },
+  ): Promise<void> {
+    const capabilityReplay = readSandboxCapabilityReplayEvidence(result.output);
+    if (capabilityReplay === undefined) {
+      await this.store.saveEffectResult(effect.runId, effect.sessionId, result);
+      return;
+    }
+    const capabilityStore = this.store as typeof this.store & Partial<SandboxCapabilityLeaseStore>;
+    if (capabilityStore.saveSandboxCapabilityEffectResult === undefined) {
+      throw new Error("Durable sandbox capability effect-result persistence is unavailable");
+    }
+    if (capabilityReplay.toolCallId !== effect.idempotencyKey) {
+      throw new Error("Sandbox capability replay evidence does not match the exact effect action");
+    }
+    await capabilityStore.saveSandboxCapabilityEffectResult({
+      leaseId: capabilityReplay.leaseId,
+      bindingDigest: capabilityReplay.bindingDigest,
+      toolCallId: capabilityReplay.toolCallId,
+      runId: effect.runId,
+      sessionId: effect.sessionId,
+      result,
+    });
   }
 }
 

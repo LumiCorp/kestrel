@@ -147,6 +147,10 @@ test("exact capability effect results require completed provider evidence and ar
     result: { digest: "d".repeat(64), reference: "artifact:provider-result" },
   };
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 3, record: consumed });
+  await store.appendSandboxCapabilityLeaseTransition({
+    expectedSequence: 4,
+    record: { ...consumed, sequence: 5, transition: "cleaned", cleanedAt: "2026-08-23T12:00:05.000Z" },
+  });
   await store.saveSandboxCapabilityEffectResult({
     leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
     runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
@@ -163,6 +167,81 @@ test("exact capability effect results require completed provider evidence and ar
   }), /conflicts with recorded exact replay output/u);
   await assert.rejects(store.saveSandboxCapabilityEffectResult({
     leaseId: "lease-a", bindingDigest: "e".repeat(64), toolCallId: binding.toolCallId,
+    runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
+  }), /completed exact lease action/u);
+});
+
+test("exact capability effect results accept only a cleaned, never-invoked capability", async () => {
+  const store = new InMemorySessionStore();
+  const digest = fingerprintSandboxCapabilityLeaseBindingV1(binding);
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: transition(1, "requested") });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: transition(2, "issued") });
+  await store.appendSandboxCapabilityLeaseTransition({
+    expectedSequence: 2,
+    record: {
+      ...transition(3, "revoked"),
+      issuedAt: "2026-08-23T12:00:02.000Z",
+      terminalOutcome: "failed",
+      terminalReason: "container_teardown_completed",
+    },
+  });
+  await store.appendSandboxCapabilityLeaseTransition({
+    expectedSequence: 3,
+    record: {
+      ...transition(4, "cleaned"),
+      issuedAt: "2026-08-23T12:00:02.000Z",
+      terminalOutcome: "failed",
+      terminalReason: "container_teardown_completed",
+      cleanedAt: "2026-08-23T12:00:04.000Z",
+    },
+  });
+  const exactResult = {
+    idempotencyKey: binding.toolCallId,
+    status: "DONE" as const,
+    output: { status: "OK", outcome: { kind: "success", rawOutput: { status: "ok", stdout: "unused" } } },
+    timestamp: "2026-08-23T12:00:05.000Z",
+  };
+
+  await store.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
+    runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
+  });
+  assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactResult);
+
+  const invokedStore = new InMemorySessionStore();
+  await invokedStore.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: transition(1, "requested") });
+  await invokedStore.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: transition(2, "issued") });
+  await invokedStore.appendSandboxCapabilityLeaseTransition({
+    expectedSequence: 2,
+    record: {
+      ...transition(3, "invoking"),
+      issuedAt: "2026-08-23T12:00:02.000Z",
+      usage: { ...transition(3, "invoking").usage, requestsConsumed: 1 },
+    },
+  });
+  await invokedStore.appendSandboxCapabilityLeaseTransition({
+    expectedSequence: 3,
+    record: {
+      ...transition(4, "revoked"),
+      issuedAt: "2026-08-23T12:00:02.000Z",
+      usage: { ...transition(4, "revoked").usage, requestsConsumed: 1 },
+      terminalOutcome: "failed",
+      terminalReason: "container_teardown_completed",
+    },
+  });
+  await invokedStore.appendSandboxCapabilityLeaseTransition({
+    expectedSequence: 4,
+    record: {
+      ...transition(5, "cleaned"),
+      issuedAt: "2026-08-23T12:00:02.000Z",
+      usage: { ...transition(5, "cleaned").usage, requestsConsumed: 1 },
+      terminalOutcome: "failed",
+      terminalReason: "container_teardown_completed",
+      cleanedAt: "2026-08-23T12:00:05.000Z",
+    },
+  });
+  await assert.rejects(invokedStore.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
     runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
   }), /completed exact lease action/u);
 });

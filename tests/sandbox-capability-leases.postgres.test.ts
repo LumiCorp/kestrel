@@ -72,6 +72,18 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         result: { digest: "d".repeat(64), reference: "artifact:provider-result" },
       },
     });
+    const completedLease = await store.getSandboxCapabilityLease(leaseId);
+    assert.ok(completedLease);
+    await store.appendSandboxCapabilityLeaseTransition({
+      expectedSequence: 4,
+      record: {
+        ...completedLease,
+        sequence: 5,
+        transition: "cleaned",
+        cleanedAt: "2026-08-23T12:00:05.000Z",
+        occurredAt: "2026-08-23T12:00:05.000Z",
+      },
+    });
     await store.saveSandboxCapabilityEffectResult({
       leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
       runId, sessionId, result: exactEffectResult,
@@ -81,6 +93,48 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
       runId, sessionId, result: exactEffectResult,
     });
+    const unusedLeaseId = `unused-lease-${suffix}`;
+    const unusedBinding = { ...binding, toolCallId: `unused-call-${suffix}` };
+    const unusedDigest = fingerprintSandboxCapabilityLeaseBindingV1(unusedBinding);
+    const unusedRecord = (sequence: number, transition: SandboxCapabilityLeaseTransitionRecordV1["transition"]): SandboxCapabilityLeaseTransitionRecordV1 => ({
+      ...record(sequence, transition),
+      leaseId: unusedLeaseId,
+      binding: unusedBinding,
+      bindingDigest: unusedDigest,
+      ...(transition === "issued" || transition === "revoked" || transition === "cleaned"
+        ? { issuedAt: "2026-08-23T12:00:02.000Z" }
+        : {}),
+    });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: unusedRecord(1, "requested") });
+    await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: unusedRecord(2, "issued") });
+    await store.appendSandboxCapabilityLeaseTransition({
+      expectedSequence: 2,
+      record: {
+        ...unusedRecord(3, "revoked"),
+        terminalOutcome: "failed",
+        terminalReason: "container_teardown_completed",
+      },
+    });
+    await store.appendSandboxCapabilityLeaseTransition({
+      expectedSequence: 3,
+      record: {
+        ...unusedRecord(4, "cleaned"),
+        terminalOutcome: "failed",
+        terminalReason: "container_teardown_completed",
+        cleanedAt: "2026-08-23T12:00:04.000Z",
+      },
+    });
+    const unusedEffectResult = {
+      ...exactEffectResult,
+      idempotencyKey: unusedBinding.toolCallId,
+      output: { status: "OK", outcome: { kind: "success", rawOutput: { status: "ok", stdout: "unused" } } },
+      timestamp: "2026-08-23T12:00:05.000Z",
+    };
+    await store.saveSandboxCapabilityEffectResult({
+      leaseId: unusedLeaseId, bindingDigest: unusedDigest, toolCallId: unusedBinding.toolCallId,
+      runId, sessionId, result: unusedEffectResult,
+    });
+    assert.deepEqual(await store.getEffectResult(unusedBinding.toolCallId), unusedEffectResult);
     const childParentId = `child-parent-${suffix}`;
     const childParentBinding = { ...binding, toolCallId: `child-parent-call-${suffix}` };
     const childParentDigest = fingerprintSandboxCapabilityLeaseBindingV1(childParentBinding);

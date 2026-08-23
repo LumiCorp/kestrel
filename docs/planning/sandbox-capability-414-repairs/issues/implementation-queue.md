@@ -14,6 +14,8 @@ None.
 - [04 — Reconcile interrupted requested and child issuance](04-requested-issuance-recovery.md)
 - [05 — Dispose sensitive material before container teardown](05-sensitive-disposal-order.md)
 - [06 — Preserve cancellation outcome during provider invocation](06-provider-cancellation-outcome.md)
+- [07 — Preserve successful results when a selected capability is unused](07-unused-capability-result.md)
+- [08 — Close the post-handler exact-result crash window](08-post-handler-result-crash-window.md)
 
 ## Done
 

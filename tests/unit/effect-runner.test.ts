@@ -5,6 +5,7 @@ import { InlineEffectRunner } from "../../src/effects/EffectRunner.js";
 import { EffectRegistry } from "../../src/effects/EffectRegistry.js";
 import { createExecuteToolCallHandler } from "../../src/effects/handlers/executeToolCall.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
+import { InMemorySessionStore as DurableInMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 import { UnifiedToolRegistry } from "../../tools/runtime/UnifiedToolRegistry.js";
 import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { defaultToolCatalog } from "../../tools/catalog.js";
@@ -16,6 +17,14 @@ import {
   adaptLegacyTestToolGateway,
   prepareTestToolCall,
 } from "../helpers/createTestToolGateway.js";
+import {
+  fingerprintSandboxCapabilityLeaseBindingV1,
+  TAVILY_SEARCH_CAPABILITY_ID,
+  TAVILY_SEARCH_OPERATION,
+  TAVILY_SEARCH_RESOURCE,
+  type SandboxCapabilityLeaseBindingV1,
+  type SandboxCapabilityLeaseTransitionRecordV1,
+} from "../../src/kestrel/contracts/sandbox-capability.js";
 
 
 test("Effect runner reports compiled tool activity", async () => {
@@ -322,6 +331,158 @@ test("completed code capability output is durably bound before the effect is mar
 
   assert.deepEqual(order, ["save-exact-result", "mark-done"]);
   assert.deepEqual((exactResult as { output?: unknown }).output, agentToolResult);
+});
+
+test("execute-tool handler persists the exact completed result before returning to the effect runner", async () => {
+  const order: string[] = [];
+  const toolGateway = adaptLegacyTestToolGateway({
+    validateInput: async (_name, input) => input,
+    call: async (name, input) => {
+      order.push("tool-completed");
+      return buildAgentToolSuccessResult({
+        toolName: name,
+        input,
+        output: { status: "ok" },
+      });
+    },
+  });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: toolGateway,
+    toolName: "code.execute",
+    toolInput: { language: "javascript", code: "return 1" },
+    runId: "run-handler-crash",
+    sessionId: "session-handler-crash",
+    callId: "call-handler-crash",
+  });
+  const handler = createExecuteToolCallHandler(toolGateway);
+  const output = await handler({
+    runId: "run-handler-crash",
+    sessionId: "session-handler-crash",
+    stepIndex: 0,
+    type: "execute_tool_call",
+    payload: { preparedToolCall },
+    idempotencyKey: "call-handler-crash",
+    failurePolicy: "STOP",
+    status: "PENDING",
+    createdAt: "2026-08-23T12:00:00.000Z",
+  }, {
+    runId: "run-handler-crash",
+    sessionId: "session-handler-crash",
+    stepIndex: 0,
+    persistCompletedCapabilityResult: async () => {
+      order.push("exact-result-durable");
+    },
+  });
+  order.push("handler-returned");
+
+  assert.equal((output as { status?: string }).status, "OK");
+  assert.deepEqual(order, ["tool-completed", "exact-result-durable", "handler-returned"]);
+});
+
+test("selected but unused capability persists DONE and replays without live work", async () => {
+  const store = new DurableInMemorySessionStore();
+  const timestamp = "2026-08-23T12:00:00.000Z";
+  const binding: SandboxCapabilityLeaseBindingV1 = {
+    version: 1,
+    tenantId: "tenant-unused",
+    environmentId: "environment-unused",
+    sessionId: "session-unused",
+    runId: "run-unused",
+    toolCallId: "call-unused",
+    profileFingerprint: "a".repeat(64),
+    capabilityCatalogFingerprint: "b".repeat(64),
+    executionBoundaryRevision: "boundary-unused",
+    capabilityId: TAVILY_SEARCH_CAPABILITY_ID,
+    operation: TAVILY_SEARCH_OPERATION,
+    resource: TAVILY_SEARCH_RESOURCE,
+    audience: { tenantId: "tenant-unused", environmentId: "environment-unused" },
+    brokerAuthority: { authorityId: "broker-unused", revision: "broker-revision-unused" },
+    credentialReference: { credentialId: "tool.tavily.default", revision: "credential-unused" },
+    policyRevision: "policy-unused",
+  };
+  const bindingDigest = fingerprintSandboxCapabilityLeaseBindingV1(binding);
+  const lease = (sequence: number, transition: SandboxCapabilityLeaseTransitionRecordV1["transition"]): SandboxCapabilityLeaseTransitionRecordV1 => ({
+    version: 1,
+    leaseId: "lease-unused",
+    sequence,
+    transition,
+    binding,
+    bindingDigest,
+    usage: { requestLimit: 1, requestsConsumed: 0, responseByteLimit: 4096, responseBytesConsumed: 0, exactProviderUsage: null },
+    ...(transition === "issued" || transition === "revoked" || transition === "cleaned" ? { issuedAt: timestamp } : {}),
+    expiresAt: "2026-08-23T13:00:00.000Z",
+    occurredAt: `2026-08-23T12:00:0${sequence}.000Z`,
+  });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: lease(1, "requested") });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: lease(2, "issued") });
+  await store.appendSandboxCapabilityLeaseTransition({
+    expectedSequence: 2,
+    record: { ...lease(3, "revoked"), terminalOutcome: "failed", terminalReason: "container_teardown_completed" },
+  });
+  await store.appendSandboxCapabilityLeaseTransition({
+    expectedSequence: 3,
+    record: { ...lease(4, "cleaned"), terminalOutcome: "failed", terminalReason: "container_teardown_completed", cleanedAt: "2026-08-23T12:00:04.000Z" },
+  });
+
+  const descriptor = defaultToolCatalog.getDescriptorRef("code.execute");
+  assert.ok(descriptor);
+  const activation = createToolActivationRefV1({
+    descriptor,
+    registryGeneration: "generation-unused",
+    scopeFingerprint: fingerprintToolScopeV1({ tenant: "tenant-unused", environment: "environment-unused", gateway: "local-core", authorizationScope: ["runtime"] }),
+  });
+  const rawOutput = {
+    status: "ok",
+    stdout: "completed without provider",
+    capabilityReplayEvidence: { version: 1, leaseId: "lease-unused", bindingDigest, toolCallId: "call-unused" },
+  };
+  const exactToolResult = {
+    version: "v2" as const,
+    toolName: "code.execute",
+    status: "OK" as const,
+    toolCallId: "call-unused",
+    activation,
+    outcome: { version: "v1" as const, callId: "call-unused", activation, kind: "success" as const, startedAt: timestamp, completedAt: timestamp, effectState: "not_applicable" as const, rawOutput },
+    modelContext: { text: "complete", rawOutputRef: "sha256:unused", truncated: false },
+    auditRecord: { toolName: "code.execute", input: { language: "javascript", code: "console.log('done')" }, output: rawOutput, startedAt: timestamp, completedAt: timestamp, durationMs: 0, status: "OK" as const },
+  };
+  let credentialResolutions = 0;
+  let providerCalls = 0;
+  let brokerCalls = 0;
+  let dockerStarts = 0;
+  const registry = new EffectRegistry();
+  registry.register("execute_tool_call", async () => {
+    credentialResolutions += 1;
+    providerCalls += 1;
+    brokerCalls += 1;
+    dockerStarts += 1;
+    return exactToolResult;
+  });
+  const effect = {
+    runId: binding.runId,
+    sessionId: binding.sessionId,
+    stepIndex: 0,
+    type: "execute_tool_call",
+    payload: { toolName: "code.execute", toolInput: {} },
+    idempotencyKey: binding.toolCallId,
+    failurePolicy: "STOP" as const,
+    status: "PENDING" as const,
+    createdAt: timestamp,
+  };
+  const runner = new InlineEffectRunner(store, registry);
+  const completed = await runner.runEffects([effect], { runId: binding.runId, sessionId: binding.sessionId, stepIndex: 0 });
+  assert.equal(completed.stop, false);
+  assert.equal((await store.getEffectResult(binding.toolCallId))?.status, "DONE");
+  assert.deepEqual((await store.getEffectResult(binding.toolCallId))?.output, exactToolResult);
+
+  credentialResolutions = 0;
+  providerCalls = 0;
+  brokerCalls = 0;
+  dockerStarts = 0;
+  const replayed = await runner.runEffects([effect], { runId: binding.runId, sessionId: binding.sessionId, stepIndex: 0 });
+  assert.equal(replayed.stop, false);
+  assert.deepEqual({ credentialResolutions, providerCalls, brokerCalls, dockerStarts }, { credentialResolutions: 0, providerCalls: 0, brokerCalls: 0, dockerStarts: 0 });
+  assert.deepEqual((await store.getEffectResult(binding.toolCallId))?.output, exactToolResult);
 });
 
 test("Effect runner honors existing FAILED result and WAIT policy", async () => {

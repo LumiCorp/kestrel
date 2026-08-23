@@ -4950,6 +4950,18 @@ function assertReplayableSandboxCapabilityEffectBinding(
     result: EffectResult;
   },
 ): asserts lease is SandboxCapabilityLeaseTransitionRecordV1 {
+  const completedProviderAction = lease !== undefined &&
+    lease.terminalOutcome === "completed" &&
+    lease.result !== undefined &&
+    (lease.transition === "consumed" || lease.transition === "exhausted" || lease.transition === "cleaned");
+  const completedUnusedCapability = lease !== undefined &&
+    lease.transition === "cleaned" &&
+    lease.terminalOutcome === "failed" &&
+    lease.terminalReason === "container_teardown_completed" &&
+    lease.result === undefined &&
+    lease.usage.requestsConsumed === 0 &&
+    lease.usage.responseBytesConsumed === 0 &&
+    lease.usage.exactProviderUsage === null;
   if (
     lease === undefined ||
     lease.bindingDigest !== input.bindingDigest ||
@@ -4958,9 +4970,7 @@ function assertReplayableSandboxCapabilityEffectBinding(
     lease.binding.sessionId !== input.sessionId ||
     input.result.idempotencyKey !== input.toolCallId ||
     input.result.status !== "DONE" ||
-    lease.terminalOutcome !== "completed" ||
-    lease.result === undefined ||
-    (lease.transition !== "consumed" && lease.transition !== "exhausted" && lease.transition !== "cleaned")
+    (!completedProviderAction && !completedUnusedCapability)
   ) {
     throw new Error("Sandbox capability effect result is not bound to a completed exact lease action");
   }
