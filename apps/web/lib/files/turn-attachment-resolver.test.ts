@@ -18,6 +18,7 @@ const route = read(
 
 test("turn attachment resolver derives scope from the active durable turn", () => {
   assert.match(resolver, /threadTurnQueueState\.activeTurnId/u);
+  assert.match(resolver, /schema\.threads\.organizationId/u);
   assert.match(resolver, /threadMessageFiles\.messageId/u);
   assert.match(resolver, /fileScopeGrants\.scopeType, "thread"/u);
   assert.match(resolver, /attachmentIdsFromMessageParts/u);

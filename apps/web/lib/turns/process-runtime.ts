@@ -5,6 +5,11 @@ import type {
   KestrelTerminalStatus,
 } from "@kestrel-agents/ai-sdk";
 import type { UIMessage } from "ai";
+import {
+  signTurnAttachmentResolutionTicket,
+  type TurnAttachmentResolutionTicket,
+} from "@lumi/kestrel-environment-auth";
+import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
 import { eq } from "drizzle-orm";
 import {
   cancelInterruptedKestrelOneExecution,
@@ -62,6 +67,154 @@ import {
 } from "@/lib/utils";
 
 const TITLE_FAILURE_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,119}$/u;
+
+type HostedAttachmentFailureCode =
+  | "ATTACHMENT_ACCESS_UNAUTHORIZED"
+  | "ATTACHMENT_SET_INVALID"
+  | "ATTACHMENT_UNAVAILABLE"
+  | "ATTACHMENT_BLOB_MISSING"
+  | "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE";
+
+class HostedAttachmentResolutionError extends Error {
+  readonly code: HostedAttachmentFailureCode;
+  readonly retryable: boolean;
+
+  constructor(code: HostedAttachmentFailureCode, message = "Attachment resolution failed.") {
+    super(message);
+    this.name = "HostedAttachmentResolutionError";
+    this.code = code;
+    this.retryable = code === "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE";
+  }
+}
+
+function attachmentFailureMessage(code: HostedAttachmentFailureCode) {
+  switch (code) {
+    case "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE":
+      return "The attached file service is temporarily unavailable. The turn will retry.";
+    case "ATTACHMENT_BLOB_MISSING":
+      return "An attached file is no longer available. Restore it or replace the file before retrying.";
+    case "ATTACHMENT_UNAVAILABLE":
+      return "An attached file is unavailable or no longer permitted in this Thread.";
+    case "ATTACHMENT_SET_INVALID":
+      return "The attached file set no longer matches the submitted message.";
+    case "ATTACHMENT_ACCESS_UNAUTHORIZED":
+      return "The attached file access authorization could not be verified.";
+  }
+}
+
+function attachmentParts(parts: unknown) {
+  if (!Array.isArray(parts)) return [];
+  return parts.flatMap((part) => {
+    if (typeof part !== "object" || part === null || Array.isArray(part)) return [];
+    const partRecord = part as Record<string, unknown>;
+    if (
+      partRecord.type !== "data-kestrel-attachment" &&
+      partRecord.type !== "data-kestrel-file"
+    ) {
+      return [];
+    }
+    const data = (part as Record<string, unknown>).data;
+    if (typeof data !== "object" || data === null || Array.isArray(data)) return [];
+    const record = data as Record<string, unknown>;
+    const fileId = typeof record.fileId === "string"
+      ? record.fileId.trim()
+      : typeof record.attachmentId === "string" ? record.attachmentId.trim() : "";
+    if (!fileId) {
+      throw new HostedAttachmentResolutionError("ATTACHMENT_SET_INVALID");
+    }
+    return [{
+      fileId,
+      filename: typeof record.filename === "string" ? record.filename : undefined,
+      sizeBytes: typeof record.sizeBytes === "number" ? record.sizeBytes : undefined,
+      mediaType: typeof record.mediaType === "string" ? record.mediaType : undefined,
+    }];
+  });
+}
+
+async function resolveHostedTurnAttachments(input: {
+  turnId: string;
+  parts: unknown;
+}): Promise<RunnerTurnAttachment[]> {
+  const expected = attachmentParts(input.parts);
+  if (expected.length === 0) return [];
+  const now = Math.floor(Date.now() / 1000);
+  const ticket: TurnAttachmentResolutionTicket = {
+    version: 1,
+    audience: "kestrel-turn-attachment-resolver",
+    turnId: input.turnId,
+    issuedAt: now,
+    expiresAt: now + 60,
+    nonce: crypto.randomUUID(),
+  };
+  const token = signTurnAttachmentResolutionTicket({
+    ticket,
+    privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
+  });
+  const baseUrl = process.env.KESTREL_ONE_APP_URL?.trim();
+  if (!baseUrl) {
+    throw new HostedAttachmentResolutionError("ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE");
+  }
+  let response: Response;
+  try {
+    response = await fetch(
+      new URL(`/internal/turn-worker/${encodeURIComponent(input.turnId)}/attachments/resolve`, baseUrl),
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/json",
+          "cache-control": "no-store",
+        },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+  } catch {
+    throw new HostedAttachmentResolutionError("ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE");
+  }
+  const body = await response.json().catch(() => null) as {
+    attachments?: RunnerTurnAttachment[];
+    error?: { code?: unknown };
+  } | null;
+  if (!response.ok) {
+    const code = body?.error?.code;
+    if (
+      code === "ATTACHMENT_ACCESS_UNAUTHORIZED" ||
+      code === "ATTACHMENT_SET_INVALID" ||
+      code === "ATTACHMENT_UNAVAILABLE" ||
+      code === "ATTACHMENT_BLOB_MISSING" ||
+      code === "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE"
+    ) {
+      throw new HostedAttachmentResolutionError(code);
+    }
+    throw new HostedAttachmentResolutionError("ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE");
+  }
+  const attachments = body?.attachments;
+  if (!Array.isArray(attachments) || attachments.length !== expected.length) {
+    throw new HostedAttachmentResolutionError("ATTACHMENT_SET_INVALID");
+  }
+  const seen = new Set<string>();
+  for (const [index, attachment] of attachments.entries()) {
+    const source = expected[index];
+    if (
+      !attachment ||
+      typeof attachment.fileId !== "string" ||
+      attachment.fileId !== source.fileId ||
+      seen.has(attachment.fileId) ||
+      typeof attachment.sourceUrl !== "string" ||
+      typeof attachment.sourceUrlExpiresAt !== "string" ||
+      typeof attachment.sha256 !== "string" ||
+      typeof attachment.sizeBytes !== "number" ||
+      typeof attachment.mimeType !== "string" ||
+      (source.filename !== undefined && attachment.filename !== source.filename) ||
+      (source.sizeBytes !== undefined && attachment.sizeBytes !== source.sizeBytes) ||
+      (source.mediaType !== undefined && attachment.mimeType !== source.mediaType)
+    ) {
+      throw new HostedAttachmentResolutionError("ATTACHMENT_SET_INVALID");
+    }
+    seen.add(attachment.fileId);
+  }
+  return attachments;
+}
 
 function workerRequest(turnId: string) {
   const baseUrl =
@@ -533,7 +686,51 @@ export async function processDurableThreadTurn(
       threadId: turn.threadId,
       organizationId: turn.organizationId,
       userId: turn.authorUserId,
+      checkAvailability: false,
     });
+    let resolvedAttachments: RunnerTurnAttachment[] | null = null;
+    if (!reattachExecutionId && !recoveredCompletedExecutionId) {
+      const attachmentIds = attachmentParts(submittedUserMessage?.parts).map(
+        (attachment) => attachment.fileId,
+      );
+      if (attachmentIds.length > 0) {
+        await appendDurableTurnEvent({
+          turnId: turn.id,
+          type: "attachment.resolution.started",
+          data: { count: attachmentIds.length },
+        }).catch(() => {});
+        try {
+          resolvedAttachments = await resolveHostedTurnAttachments({
+            turnId: turn.id,
+            parts: submittedUserMessage?.parts,
+          });
+          await appendDurableTurnEvent({
+            turnId: turn.id,
+            type: "attachment.resolution.succeeded",
+            data: {
+              count: resolvedAttachments.length,
+              fileIds: resolvedAttachments.map((attachment) => attachment.fileId),
+            },
+          }).catch(() => {});
+        } catch (error) {
+          const code =
+            error instanceof HostedAttachmentResolutionError
+              ? error.code
+              : "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE";
+          await appendDurableTurnEvent({
+            turnId: turn.id,
+            type: "attachment.resolution.failed",
+            data: {
+              code,
+              retryable: code === "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE",
+            },
+          }).catch(() => {});
+          throw error;
+        }
+      } else {
+        resolvedAttachments = [];
+      }
+    }
     const responseInput: KestrelOneAgentResponseInput = {
       request: workerRequest(turn.id),
       session,
@@ -549,6 +746,7 @@ export async function processDurableThreadTurn(
         ? { noninteractive: true }
         : {}),
       messages,
+      resolvedAttachments,
       threadFileInventory,
       modelId: turn.requestedModelId ?? undefined,
       interactionMode: turn.requestedInteractionMode,
@@ -808,6 +1006,11 @@ export async function processDurableThreadTurn(
     ) {
       return { processed: true, nextTurnId: null };
     }
+    if (error instanceof HostedAttachmentResolutionError && error.retryable) {
+      // Let the existing durable queue retry policy handle temporary web or
+      // storage failures. The turn has not started runtime execution yet.
+      throw error;
+    }
     const message =
       error instanceof Error ? error.message : "Durable turn execution failed.";
     const errorCode =
@@ -816,6 +1019,8 @@ export async function processDurableThreadTurn(
       typeof error.code === "string"
         ? error.code
         : null;
+    const attachmentCode =
+      error instanceof HostedAttachmentResolutionError ? error.code : null;
     const stopped =
       cancellationRequested ||
       (await isDurableTurnCancellationRequested(turn.id).catch(() => false));
@@ -831,7 +1036,9 @@ export async function processDurableThreadTurn(
       }
     }
     const failurePresentation = buildFailurePresentation({
-      errorMessage: message,
+      errorMessage: attachmentCode
+        ? attachmentFailureMessage(attachmentCode)
+        : message,
       status: stopped ? "cancelled" : "failed",
       turn,
       assistantMessageId: terminal.assistantMessageId,
@@ -844,6 +1051,8 @@ export async function processDurableThreadTurn(
       replayChunks: failurePresentation.replayChunks,
       failureCode: stopped
         ? "TURN_STOPPED"
+          : attachmentCode
+          ? attachmentCode
           : workerInterrupted
           ? "TURN_WORKER_INTERRUPTED"
           : errorCode === "MODEL_AUTH_ERROR"
@@ -854,7 +1063,11 @@ export async function processDurableThreadTurn(
               errorCode === "RUNNER_EVENT_CURSOR_UNKNOWN"
             ? errorCode
           : "TURN_WORKER_FAILED",
-      failureMessage: stopped ? null : message,
+      failureMessage: stopped
+        ? null
+        : attachmentCode
+          ? attachmentFailureMessage(attachmentCode)
+          : message,
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
   } finally {

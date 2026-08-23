@@ -48,6 +48,32 @@ test(
     assert.equal((packageJson as { type?: string }).type, "module");
   },
 );
+
+test("hosted durable turns resolve attachments through web-owned short-lived access", async () => {
+  const [runtimeSource, coreSource, processContractSource, storageSource] = await Promise.all([
+    readFile(new URL("./process-runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("../agent/kestrel-runtime-core.ts", import.meta.url), "utf8"),
+    readFile(new URL("../runtime/process-contracts.ts", import.meta.url), "utf8"),
+    readFile(new URL("../storage/index.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(runtimeSource, /signTurnAttachmentResolutionTicket/u);
+  assert.match(runtimeSource, /fetch\(/u);
+  assert.match(runtimeSource, /internal\/turn-worker/u);
+  assert.match(runtimeSource, /ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE/u);
+  assert.match(runtimeSource, /error\.retryable/u);
+  assert.match(runtimeSource, /resolvedAttachments/u);
+  assert.match(runtimeSource, /checkAvailability: false/u);
+  assert.doesNotMatch(runtimeSource, /console\.(log|warn|error)[^\n]*sourceUrl/u);
+  assert.doesNotMatch(runtimeSource, /data:\s*.*token/u);
+  assert.doesNotMatch(runtimeSource, /getManagedFileStorageProvider/u);
+  assert.match(coreSource, /resolvedAttachments === undefined/u);
+  assert.match(coreSource, /resolveThreadAttachmentsForExecution/u);
+  assert.match(processContractSource, /TURN_WORKER_PROCESS_CONTRACT/u);
+  assert.match(processContractSource, /\.\.\.BACKUP_CONFIGURATION/u);
+  assert.match(storageSource, /FLY_MACHINE_ID/u);
+  assert.match(storageSource, /Hosted workers cannot use implicit local attachment storage/u);
+});
 test(
   "an exhausted queue job fails its durable turn visibly",
   async () => {

@@ -17,6 +17,7 @@ import type {
   RunnerTelemetry,
   RunnerStream,
 } from "@kestrel-agents/sdk";
+import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -140,6 +141,9 @@ export type KestrelOneAgentResponseInput = {
   durableTurnId?: string | undefined;
   noninteractive?: boolean | undefined;
   messages: UIMessage[];
+  /** Resolved by the durable worker's web-owned attachment boundary. `null`
+   * intentionally skips legacy in-process storage resolution during reattach. */
+  resolvedAttachments?: RunnerTurnAttachment[] | null | undefined;
   threadFileInventory?: Array<{
     fileId: string;
     filename: string;
@@ -263,12 +267,14 @@ export function createKestrelOneAgentResponseFromAgent(
 
       try {
         try {
-          const attachments = await resolveThreadAttachmentsForExecution({
-            attachmentIds,
-            threadId: input.threadId,
-            organizationId: input.organizationId,
-            userId: input.session.user.id,
-          });
+          const attachments = input.resolvedAttachments === undefined
+            ? await resolveThreadAttachmentsForExecution({
+                attachmentIds,
+                threadId: input.threadId,
+                organizationId: input.organizationId,
+                userId: input.session.user.id,
+              })
+            : input.resolvedAttachments ?? [];
           const fileInventory = input.threadFileInventory ?? [];
           const runStream = await input.agent.stream(
             {

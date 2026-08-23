@@ -632,6 +632,7 @@ export async function listThreadFileInventory(input: {
   organizationId: string;
   userId: string;
   limit?: number | undefined;
+  checkAvailability?: boolean | undefined;
 }) {
   const thread = await getThreadForUser(input.threadId, input.userId, input.organizationId);
   if (!thread) throw new Error("Thread not found.");
@@ -659,14 +660,16 @@ export async function listThreadFileInventory(input: {
     ))
     .orderBy(desc(schema.kestrelFiles.createdAt))
     .limit(Math.min(Math.max(input.limit ?? 50, 1), 100));
-  await Promise.all(rows.map((row) => ensureEffectiveFileAvailability({
-    fileId: row.fileId,
-    lifecycleState: row.state,
-    blobId: row.blobId,
-    objectKey: row.objectKey,
-    availabilityStatus: row.availabilityStatus,
-    blobDeletedAt: row.blobDeletedAt,
-  })));
+  if (input.checkAvailability !== false) {
+    await Promise.all(rows.map((row) => ensureEffectiveFileAvailability({
+      fileId: row.fileId,
+      lifecycleState: row.state,
+      blobId: row.blobId,
+      objectKey: row.objectKey,
+      availabilityStatus: row.availabilityStatus,
+      blobDeletedAt: row.blobDeletedAt,
+    })));
+  }
   return rows;
 }
 

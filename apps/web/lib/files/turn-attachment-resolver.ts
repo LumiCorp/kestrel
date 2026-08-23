@@ -86,6 +86,7 @@ export async function resolveTurnAttachments(input: {
       id: schema.threadTurns.id,
       organizationId: schema.threadTurns.organizationId,
       threadId: schema.threadTurns.threadId,
+      threadOrganizationId: schema.threads.organizationId,
       inputMessageId: schema.threadTurns.inputMessageId,
       messageParts: schema.threadMessages.parts,
     })
@@ -96,6 +97,10 @@ export async function resolveTurnAttachments(input: {
         eq(schema.threadTurnQueueState.threadId, schema.threadTurns.threadId),
         eq(schema.threadTurnQueueState.activeTurnId, schema.threadTurns.id),
       ),
+    )
+    .innerJoin(
+      schema.threads,
+      eq(schema.threads.id, schema.threadTurns.threadId),
     )
     .leftJoin(
       schema.threadMessages,
@@ -109,7 +114,10 @@ export async function resolveTurnAttachments(input: {
     )
     .limit(1);
 
-  if (!(turn && turn.inputMessageId && turn.messageParts)) {
+  if (
+    !(turn && turn.inputMessageId && turn.messageParts) ||
+    turn.threadOrganizationId !== turn.organizationId
+  ) {
     throw resolverError(
       "ATTACHMENT_SET_INVALID",
       "The durable turn is not an active running turn.",
