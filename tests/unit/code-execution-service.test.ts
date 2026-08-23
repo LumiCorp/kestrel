@@ -53,6 +53,35 @@ test("CodeExecutionService rejects stale, mismatched, and caller-authored author
   assert.equal(credentialResolutions, 0);
 });
 
+test("CodeExecutionService rejects partial sensitive-value callback configuration before credential resolution", async () => {
+  let credentialResolutions = 0;
+  let executions = 0;
+  const service = new CodeExecutionService({ executor: { async execute() { executions += 1; throw new Error("must not execute"); } } });
+  const config = { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] };
+  const request = { language: "javascript" as const, code: "x", capability: { capabilityId: "tavily.search.read" as const, input: { query: "x" } } };
+  const { credentialSnapshot: _credentialSnapshot, ...runtimeWithoutCredential } = runtime();
+  const base = {
+    ...runtimeWithoutCredential,
+    resolveCredentialSnapshot: async () => {
+    credentialResolutions += 1;
+    return { credentialId: "tool.tavily.default" as const, revision: "credential-rev-1", secret: "real-secret-key" };
+    },
+  };
+
+  for (const callbacks of [
+    { registerSensitiveValue: base.registerSensitiveValue, redactSensitiveValues: undefined },
+    { registerSensitiveValue: undefined, redactSensitiveValues: base.redactSensitiveValues },
+    { registerSensitiveValue: undefined, redactSensitiveValues: undefined },
+  ]) {
+    await assert.rejects(
+      service.execute(config, request, { capabilityRuntime: { ...base, ...callbacks } }),
+      /registration and redaction are required together/u,
+    );
+  }
+  assert.equal(credentialResolutions, 0);
+  assert.equal(executions, 0);
+});
+
 test("CodeExecutionService resolves the current credential revision for every selected call", async () => {
   const revisions: string[] = [];
   let executions = 0;
@@ -316,6 +345,59 @@ test("credential-bearing executor output is redacted before its registration is 
   assert.equal(registry.registeredValueDigests().length, 0);
 });
 
+test("throwing sensitive-value cleanup never replaces success, error, or sanitized cancellation", async () => {
+  const secret = "throwing-cleanup-secret";
+  const config = { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] };
+  const request = { language: "javascript" as const, code: "x", capability: { capabilityId: "tavily.search.read" as const, input: { query: "x" } } };
+
+  for (const mode of ["success", "error", "cancellation"] as const) {
+    const registry = new SensitiveValueRegistry();
+    const controller = new AbortController();
+    let cleanupCalls = 0;
+    const service = new CodeExecutionService({ executor: {
+      async execute() {
+        if (mode === "success") return { status: "ok", exitCode: 0, stdout: "ok", stderr: "", durationMs: 1, artifacts: [] };
+        if (mode === "error") throw new Error("primary execution error");
+        controller.abort();
+        throw Object.assign(new Error(`cancelled ${secret}`), { code: "RUN_CANCELLED" });
+      },
+    } });
+    const capabilityRuntime = {
+      ...runtime(),
+      credentialSnapshot: { credentialId: "tool.tavily.default" as const, revision: `cleanup-${mode}`, secret },
+      registerSensitiveValue: (input: { referenceId: string; value: string }) => {
+        const release = registry.register({
+          reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
+          value: input.value,
+        });
+        return () => {
+          cleanupCalls += 1;
+          release();
+          throw new Error(`cleanup leaked ${secret}`);
+        };
+      },
+      redactSensitiveValues: <T>(value: T) => registry.redact(value).value,
+    };
+
+    if (mode === "cancellation") {
+      await assert.rejects(
+        service.execute(config, request, { signal: controller.signal, capabilityRuntime }),
+        (error) => {
+          assert.equal((error as Error & { code?: string }).code, "RUN_CANCELLED");
+          assert.equal(JSON.stringify({ message: (error as Error).message, ...(error as object) }).includes(secret), false);
+          return true;
+        },
+      );
+    } else {
+      const result = await service.execute(config, request, { capabilityRuntime });
+      assert.equal(result.status, mode === "success" ? "ok" : "error");
+      if (mode === "error") assert.match(result.stderr, /primary execution error/u);
+    }
+    assert.equal(cleanupCalls, 1);
+    assert.equal(registry.registeredValueDigests().length, 0);
+  }
+});
+
 test("cancellation sanitization handles DOMException, frozen errors, and cyclic diagnostics without leaking", async () => {
   const cases = [
     (secret: string): Error => {
@@ -402,6 +484,16 @@ test("cancellation sanitization fails closed for hostile proxies and secret-bear
       throw new Error(secret);
     },
   });
+  const topLevelOwnKeysProxy = new Proxy({}, {
+    ownKeys() {
+      throw new Error(secret);
+    },
+  });
+  const topLevelDescriptorProxy = new Proxy({ detail: secret }, {
+    getOwnPropertyDescriptor() {
+      throw new Error(secret);
+    },
+  });
   const keyedError = Object.assign(new Error(`cancelled ${secret}`), {
     code: "RUN_CANCELLED",
     [secret]: secret,
@@ -411,6 +503,8 @@ test("cancellation sanitization fails closed for hostile proxies and secret-bear
   });
   const cases: Array<{ thrown: unknown; expectedName: string; expectedCode: string }> = [
     { thrown: revoked.proxy, expectedName: "RunCancelledError", expectedCode: "RUN_CANCELLED" },
+    { thrown: topLevelOwnKeysProxy, expectedName: "RunCancelledError", expectedCode: "RUN_CANCELLED" },
+    { thrown: topLevelDescriptorProxy, expectedName: "RunCancelledError", expectedCode: "RUN_CANCELLED" },
     { thrown: keyedError, expectedName: "Error", expectedCode: "RUN_CANCELLED" },
   ];
 
@@ -457,5 +551,5 @@ test("cancellation sanitization fails closed for hostile proxies and secret-bear
 let registeredSensitiveValue = "";
 function runtime(fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ results: [] }), { status: 200 })) {
   registeredSensitiveValue = "";
-  return { tenantId: "tenant-a", environmentId: "env-a", sessionId: "session-a", runId: "run-a", toolCallId: "call-a", profileFingerprint: fingerprintSandboxCapabilityProfileV1(profile), capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([profile]), executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision, brokerAuthority: profile.brokerAuthority, credentialSnapshot: { credentialId: "tool.tavily.default" as const, revision: "credential-rev-1", secret: "real-secret-key" }, fetchImpl, registerSensitiveValue: (input: { value: string }) => { registeredSensitiveValue = input.value; }, now: () => new Date("2026-08-22T12:00:00.000Z") };
+  return { tenantId: "tenant-a", environmentId: "env-a", sessionId: "session-a", runId: "run-a", toolCallId: "call-a", profileFingerprint: fingerprintSandboxCapabilityProfileV1(profile), capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([profile]), executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision, brokerAuthority: profile.brokerAuthority, credentialSnapshot: { credentialId: "tool.tavily.default" as const, revision: "credential-rev-1", secret: "real-secret-key" }, fetchImpl, registerSensitiveValue: (input: { value: string }) => { registeredSensitiveValue = input.value; }, redactSensitiveValues: <T>(value: T) => value, now: () => new Date("2026-08-22T12:00:00.000Z") };
 }

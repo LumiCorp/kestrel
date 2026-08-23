@@ -120,7 +120,12 @@ export class CodeExecutionService {
       };
       return redactCapabilityResult?.(result) ?? result;
     } finally {
-      releaseCapabilitySensitiveValue?.();
+      try {
+        releaseCapabilitySensitiveValue?.();
+      } catch {
+        // Sensitive-value cleanup is best effort and must never replace the
+        // already-produced result or sanitized cancellation diagnostic.
+      }
     }
   }
 }
@@ -257,7 +262,7 @@ function ownKeysSafely(value: object): PropertyKey[] {
   try {
     return Reflect.ownKeys(value);
   } catch {
-    return [];
+    throw new Error("Unsafe cancellation diagnostic");
   }
 }
 
@@ -268,7 +273,7 @@ function getOwnPropertyDescriptorSafely(
   try {
     return Object.getOwnPropertyDescriptor(value, key);
   } catch {
-    return undefined;
+    throw new Error("Unsafe cancellation diagnostic");
   }
 }
 
@@ -336,6 +341,9 @@ async function resolveTavilyCapability(
   if (authored === undefined) throw new Error("Selected sandbox capability is not authored by the resolved profile");
   const profile = parseSandboxCapabilityProfileV1(authored);
   if (runtime === undefined) throw new Error("Trusted sandbox capability runtime context is missing");
+  if (runtime.registerSensitiveValue === undefined || runtime.redactSensitiveValues === undefined) {
+    throw new Error("Sandbox capability sensitive-value registration and redaction are required together");
+  }
   if (runtime.tenantId !== profile.audience.tenantId || runtime.environmentId !== profile.audience.environmentId) throw new Error("Sandbox capability audience does not match the trusted runtime identity");
   if (runtime.brokerAuthority.authorityId !== profile.brokerAuthority.authorityId || runtime.brokerAuthority.revision !== profile.brokerAuthority.revision) throw new Error("Sandbox broker authority is stale or mismatched");
   if (/^[a-f0-9]{64}$/u.test(runtime.profileFingerprint) === false) throw new Error("Sandbox capability resolved-profile fingerprint is invalid");
