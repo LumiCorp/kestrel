@@ -46,6 +46,7 @@ export class CodeExecutionService {
     }
     let capability = options.capability;
     let releaseCapabilitySensitiveValue: (() => void) | undefined;
+    let redactCapabilityResult: (<T>(value: T) => T) | undefined;
     if (request.capability !== undefined) {
       const resolved = await resolveTavilyCapability(
         config,
@@ -54,6 +55,7 @@ export class CodeExecutionService {
       );
       capability = resolved.grant;
       releaseCapabilitySensitiveValue = resolved.releaseSensitiveValue;
+      redactCapabilityResult = resolved.redactSensitiveValues;
     } else if (options.capability !== undefined) {
       throw new Error("Caller-authored sandbox capability grants are not accepted");
     }
@@ -65,7 +67,17 @@ export class CodeExecutionService {
         signal: options.signal,
       });
 
-      return {
+      return redactCapabilityResult?.({
+        status: output.status,
+        exitCode: output.exitCode,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        durationMs: output.durationMs,
+        artifacts: output.artifacts,
+        summary: summarizeExecutionResult(output),
+        policy: policyDecision.policy,
+        retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
+      }) ?? {
         status: output.status,
         exitCode: output.exitCode,
         stdout: output.stdout,
@@ -81,7 +93,7 @@ export class CodeExecutionService {
         throw error;
       }
       if (error instanceof DockerUnavailableError) {
-        return {
+        const result: CodeExecutionResult = {
           status: "runtime_unavailable",
           exitCode: null,
           stdout: "",
@@ -92,9 +104,10 @@ export class CodeExecutionService {
           policy: policyDecision.policy,
           retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
         };
+        return redactCapabilityResult?.(result) ?? result;
       }
 
-      return {
+      const result: CodeExecutionResult = {
         status: "error",
         exitCode: null,
         stdout: "",
@@ -105,6 +118,7 @@ export class CodeExecutionService {
         policy: policyDecision.policy,
         retention: config?.retention ?? { persistSummary: true, persistArtifacts: true },
       };
+      return redactCapabilityResult?.(result) ?? result;
     } finally {
       releaseCapabilitySensitiveValue?.();
     }
@@ -118,6 +132,7 @@ async function resolveTavilyCapability(
 ): Promise<{
   grant: SandboxCapabilityGrant;
   releaseSensitiveValue?: (() => void) | undefined;
+  redactSensitiveValues?: (<T>(value: T) => T) | undefined;
 }> {
   const selected = parseSandboxCapabilitySelectionV1(selectedValue);
   const authoredProfiles = parseSandboxCapabilityProfilesV1(config?.capabilities ?? []);
@@ -201,6 +216,7 @@ async function resolveTavilyCapability(
   return {
     grant,
     ...(releaseSensitiveValue === undefined ? {} : { releaseSensitiveValue }),
+    ...(runtime.redactSensitiveValues === undefined ? {} : { redactSensitiveValues: runtime.redactSensitiveValues }),
   };
 }
 

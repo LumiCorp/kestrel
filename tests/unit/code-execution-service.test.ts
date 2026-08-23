@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CodeExecutionService } from "../../src/code/CodeExecutionService.js";
 import { DEFAULT_CODE_MODE_ENABLED_CONFIG, type SandboxExecutionInput, type SandboxExecutor } from "../../src/code/contracts.js";
-import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
+import { KESTREL_EXECUTION_BOUNDARY_POLICY, SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { fingerprintSandboxCapabilityCatalogV1, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
 
 const profile: SandboxCapabilityProfileV1 = { version: 1, capabilityId: "tavily.search.read", operations: ["search"], resource: "https://api.tavily.com/search", audience: { tenantId: "tenant-a", environmentId: "env-a" }, maxRequests: 1, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096, timeoutMs: 1000, maxExpiryMs: 5000, brokerAuthority: { authorityId: "broker-a", revision: "broker-rev-1" } };
@@ -224,6 +224,52 @@ test("sensitive credential registration is released after error, timeout, and ca
     /cancelled/u,
   );
   assert.equal(activeReferences.size, 0);
+});
+
+test("credential-bearing executor output is redacted before its registration is released", async () => {
+  const registry = new SensitiveValueRegistry();
+  const secret = "real-secret-key";
+  const service = new CodeExecutionService({
+    executor: {
+      async execute() {
+        assert.equal(registry.registeredValueDigests().length, 1);
+        return {
+          status: "error",
+          exitCode: 1,
+          stdout: `provider reflected ${secret}`,
+          stderr: `provider rejected ${secret}`,
+          durationMs: 1,
+          artifacts: [{
+            path: "provider.txt",
+            sizeBytes: secret.length,
+            sha256: "a".repeat(64),
+            preview: { text: secret, truncated: false },
+          }],
+        };
+      },
+    },
+  });
+  const capabilityRuntime = {
+    ...runtime(),
+    registerSensitiveValue: (input: { referenceId: string; value: string }) => registry.register({
+      reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
+      value: input.value,
+    }),
+    redactSensitiveValues: <T>(value: T) => registry.redact(value).value,
+  };
+
+  const result = await service.execute(
+    { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+    { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "x" } } },
+    { capabilityRuntime },
+  );
+
+  assert.equal(JSON.stringify(result).includes(secret), false);
+  assert.match(result.stdout, /redacted/iu);
+  assert.match(result.stderr, /redacted/iu);
+  assert.match(result.summary, /redacted/iu);
+  assert.match(result.artifacts[0]?.preview?.text ?? "", /redacted/iu);
+  assert.equal(registry.registeredValueDigests().length, 0);
 });
 
 let registeredSensitiveValue = "";

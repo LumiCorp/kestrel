@@ -7,8 +7,10 @@ import {
   createModelGatewayForProfile,
   createRuntimeFactoryWithStore,
   resolveManagedWorktreesEnabledForRuntime,
+  resolveSandboxCapabilityRuntimeEnvironment,
 } from "../../cli/runtime/KestrelChatRuntime.js";
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
+import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 
 
@@ -18,6 +20,118 @@ const BASE_PROFILE: TuiProfile = {
   agent: "reference-react",
   sessionPrefix: "reference",
 };
+
+const CAPABILITY_PROFILE: TuiProfile = {
+  ...BASE_PROFILE,
+  codeMode: {
+    enabled: true,
+    languages: ["javascript"],
+    sandbox: {
+      executor: "docker",
+      timeoutMs: 1_000,
+      memoryMb: 128,
+      cpuShares: 256,
+      pidsLimit: 64,
+      maxOutputBytes: 16_000,
+      maxArtifacts: 8,
+      maxArtifactBytes: 1_000_000,
+      workspaceSizeMb: 64,
+      workspaceInodes: 4_096,
+      tmpSizeMb: 32,
+      tmpInodes: 2_048,
+      networkDefault: "off",
+      allowDependencyInstall: false,
+    },
+    retention: { persistSummary: true, persistArtifacts: true },
+    approvalMode: "auto",
+    capabilities: [{
+      version: 1,
+      capabilityId: "tavily.search.read",
+      operations: ["search"],
+      resource: "https://api.tavily.com/search",
+      audience: { tenantId: "tenant-a", environmentId: "environment-a" },
+      maxRequests: 1,
+      maxQueryChars: 100,
+      maxResults: 3,
+      maxResponseBytes: 4_096,
+      timeoutMs: 1_000,
+      maxExpiryMs: 5_000,
+      brokerAuthority: { authorityId: "broker-a", revision: "revision-a" },
+    }],
+  },
+};
+
+function resolveCapabilityRuntime(
+  profile: TuiProfile,
+  trustedAudience: { tenantId: string; environmentId: string } | undefined,
+) {
+  let credentialResolutions = 0;
+  const resolved = resolveSandboxCapabilityRuntimeEnvironment(
+    profile,
+    trustedAudience,
+    "a".repeat(64),
+    "b".repeat(64),
+    async () => {
+      credentialResolutions += 1;
+      return { credentialId: "tool.tavily.default", revision: "credential-a", secret: "secret-a" };
+    },
+    () => undefined,
+    (value) => value,
+  );
+  return { resolved, credentialResolutions };
+}
+
+test("sandbox capability runtime binds the authored audience to independent runtime identity", () => {
+  const { resolved } = resolveCapabilityRuntime(CAPABILITY_PROFILE, {
+    tenantId: "tenant-a",
+    environmentId: "environment-a",
+  });
+  assert.ok(resolved?.sandboxCapabilityRuntime);
+  assert.deepEqual(
+    {
+      tenantId: resolved?.sandboxCapabilityRuntime.tenantId,
+      environmentId: resolved?.sandboxCapabilityRuntime.environmentId,
+      boundaryRevision: resolved?.sandboxCapabilityRuntime.executionBoundaryRevision,
+    },
+    {
+      tenantId: "tenant-a",
+      environmentId: "environment-a",
+      boundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    },
+  );
+});
+
+test("sandbox capability runtime rejects forged tenant and environment audiences before credential resolution", () => {
+  for (const trustedAudience of [
+    { tenantId: "tenant-b", environmentId: "environment-a" },
+    { tenantId: "tenant-a", environmentId: "environment-b" },
+  ]) {
+    let credentialResolutions = 0;
+    assert.throws(
+      () => resolveSandboxCapabilityRuntimeEnvironment(
+        CAPABILITY_PROFILE,
+        trustedAudience,
+        "a".repeat(64),
+        "b".repeat(64),
+        async () => {
+          credentialResolutions += 1;
+          return { credentialId: "tool.tavily.default", revision: "credential-a", secret: "secret-a" };
+        },
+        () => undefined,
+        (value) => value,
+      ),
+      /audience does not match/u,
+    );
+    assert.equal(credentialResolutions, 0);
+  }
+});
+
+test("sandbox capability runtime fails closed without an independent runtime identity", () => {
+  assert.throws(
+    () => resolveCapabilityRuntime(CAPABILITY_PROFILE, undefined),
+    /trusted tenant and environment identity is unavailable/u,
+  );
+});
 
 test("resolveManagedWorktreesEnabledForRuntime defaults off and honors explicit opt-in", () => {
   assert.equal(resolveManagedWorktreesEnabledForRuntime({}), false);

@@ -180,6 +180,7 @@ export interface SandboxCapabilityRuntimeContext {
     referenceId: string;
     value: string;
   }) => (() => void) | void) | undefined;
+  redactSensitiveValues?: (<T>(value: T) => T) | undefined;
 }
 
 export interface SandboxExecutionOutput {

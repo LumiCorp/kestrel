@@ -283,6 +283,8 @@ export interface KestrelRuntimeEnvironment {
   microsoft365Service?: Microsoft365ServicePort | undefined;
   googleWorkspaceService?: GoogleWorkspaceServicePort | undefined;
   sandboxCapabilityCredentialResolver?: (() => Promise<{ credentialId: "tool.tavily.default"; revision: string; secret: string }>) | undefined;
+  /** Host-resolved execution identity. Capability profile content must not populate this authority. */
+  sandboxCapabilityAudience?: { tenantId: string; environmentId: string } | undefined;
 }
 
 export interface RuntimeFactoryWithStoreOptions {
@@ -3351,6 +3353,12 @@ function createRuntimeWithStore(
     codeMode: profile.codeMode,
     ...(resolveSandboxCapabilityRuntimeEnvironment(
       profile,
+      environment?.sandboxCapabilityAudience ?? (profile.modelCredential === undefined
+        ? resolveSandboxCapabilityAudienceFromEnvironment(runtimeEnv)
+        : {
+            tenantId: profile.modelCredential.organizationId,
+            environmentId: profile.modelCredential.environmentId,
+          }),
       fingerprintResolvedProfile(profile),
       fingerprintSandboxCapabilityCatalogV1(profile.codeMode?.capabilities ?? []),
       environment?.sandboxCapabilityCredentialResolver,
@@ -3358,6 +3366,7 @@ function createRuntimeWithStore(
         reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
         value: input.value,
       }),
+      (value) => executionBoundaryRuntime.sensitiveValues.redact(value).value,
     ) ?? {}),
     devShell: profile.devShell,
     kestrelOne: {
@@ -4311,25 +4320,46 @@ function parseEnvString(
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function resolveSandboxCapabilityRuntimeEnvironment(
+function resolveSandboxCapabilityAudienceFromEnvironment(
+  env: NodeJS.ProcessEnv,
+): KestrelRuntimeEnvironment["sandboxCapabilityAudience"] {
+  const tenantId = parseEnvString("KESTREL_TENANT_ID", env);
+  const environmentId = parseEnvString("KESTREL_ENVIRONMENT_ID", env);
+  if (tenantId === undefined || environmentId === undefined) return;
+  return { tenantId, environmentId };
+}
+
+export function resolveSandboxCapabilityRuntimeEnvironment(
   profile: TuiProfile,
+  trustedAudience: KestrelRuntimeEnvironment["sandboxCapabilityAudience"],
   profileFingerprint: string,
   capabilityCatalogFingerprint: string,
   credentialResolver: KestrelRuntimeEnvironment["sandboxCapabilityCredentialResolver"],
   registerSensitiveValue: NonNullable<NonNullable<SharedToolContext["sandboxCapabilityRuntime"]>["registerSensitiveValue"]>,
+  redactSensitiveValues: NonNullable<NonNullable<SharedToolContext["sandboxCapabilityRuntime"]>["redactSensitiveValues"]>,
 ): Pick<SharedToolContext, "sandboxCapabilityRuntime"> | undefined {
   const authored = profile.codeMode?.capabilities?.[0];
   if (authored === undefined || credentialResolver === undefined) return;
+  if (trustedAudience === undefined) {
+    throw new Error("Sandbox capability trusted tenant and environment identity is unavailable.");
+  }
+  if (
+    authored.audience.tenantId !== trustedAudience.tenantId ||
+    authored.audience.environmentId !== trustedAudience.environmentId
+  ) {
+    throw new Error("Sandbox capability audience does not match the trusted runtime identity.");
+  }
   return {
     sandboxCapabilityRuntime: {
-      tenantId: authored.audience.tenantId,
-      environmentId: authored.audience.environmentId,
+      tenantId: trustedAudience.tenantId,
+      environmentId: trustedAudience.environmentId,
       executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
       profileFingerprint,
       capabilityCatalogFingerprint,
       brokerAuthority: authored.brokerAuthority,
       resolveCredentialSnapshot: credentialResolver,
       registerSensitiveValue,
+      redactSensitiveValues,
     },
   };
 }
