@@ -12,6 +12,7 @@ import {
   type SandboxCapabilityChildReservationV1,
   type SandboxCapabilityLeaseTransitionRecordV1,
 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import { SandboxCapabilityExactResultConflictError } from "../../src/kestrel/contracts/store.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 
 const hash = "a".repeat(64);
@@ -172,11 +173,13 @@ test("exact capability effect results require completed provider evidence and ar
     leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
     runId: binding.runId, sessionId: binding.sessionId, result: exactResult, signal: abortAfterCommit.signal,
   });
+  const conflictingSave = new AbortController();
+  conflictingSave.abort();
   await assert.rejects(store.saveSandboxCapabilityEffectResult({
     leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
     runId: binding.runId, sessionId: binding.sessionId,
-    result: { ...exactResult, output: { status: "OK", outcome: { kind: "success", rawOutput: { answer: "different" } } } },
-  }), /conflicts with recorded exact replay output/u);
+    result: { ...exactResult, output: { status: "OK", outcome: { kind: "success", rawOutput: { answer: "different" } } } }, signal: conflictingSave.signal,
+  }), (error) => error instanceof SandboxCapabilityExactResultConflictError);
   await assert.rejects(store.saveSandboxCapabilityEffectResult({
     leaseId: "lease-a", bindingDigest: "e".repeat(64), toolCallId: binding.toolCallId,
     runId: binding.runId, sessionId: binding.sessionId, result: exactResult,

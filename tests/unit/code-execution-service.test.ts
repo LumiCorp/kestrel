@@ -5,7 +5,7 @@ import { SandboxCapabilityLeaseCoordinator, digestSandboxCapabilityResult } from
 import { DEFAULT_CODE_MODE_ENABLED_CONFIG, type SandboxExecutionInput, type SandboxExecutor } from "../../src/code/contracts.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY, SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { fingerprintSandboxCapabilityCatalogV1, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityChildReservationV1, type SandboxCapabilityLeaseTransitionRecordV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
-import type { SandboxCapabilityLeaseStore } from "../../src/kestrel/contracts/store.js";
+import { SandboxCapabilityExactResultConflictError, type SandboxCapabilityLeaseStore } from "../../src/kestrel/contracts/store.js";
 
 const profile: SandboxCapabilityProfileV1 = { version: 1, capabilityId: "tavily.search.read", operations: ["search"], resource: "https://api.tavily.com/search", audience: { tenantId: "tenant-a", environmentId: "env-a" }, maxRequests: 1, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096, timeoutMs: 1000, maxExpiryMs: 5000, brokerAuthority: { authorityId: "broker-a", revision: "broker-rev-1" } };
 
@@ -400,9 +400,19 @@ test("an identical DONE already in the exact store wins over an aborted completi
 test("a conflicting DONE remains rejected when the competing completion is aborted", async () => {
   const controller = new AbortController();
   const capabilityRuntime = runtime();
+  const outcomes: string[] = [];
+  const coordinator = capabilityRuntime.leaseCoordinator;
+  const settleBeforeTeardown = coordinator.settleBeforeTeardown.bind(coordinator);
+  coordinator.settleBeforeTeardown = async (...args) => {
+    const settled = await settleBeforeTeardown(...args);
+    outcomes.push(settled.terminalOutcome ?? "missing", settled.transition);
+    return settled;
+  };
   const completedOutput = { status: "ok" as const, exitCode: 0, stdout: "conflicting output", stderr: "", durationMs: 1, artifacts: [] };
   const service = new CodeExecutionService({ executor: {
     async execute(input) {
+      await input.capability!.lifecycle!.beforeProviderInvocation();
+      await input.capability!.lifecycle!.commitProviderResult({ result: { results: [] }, responseBytes: 2, resultCount: 0 });
       controller.abort(new Error("aborted competing attempt"));
       await input.capability!.lifecycle!.beforeContainerTeardown("cancelled", completedOutput);
       return completedOutput;
@@ -416,11 +426,12 @@ test("a conflicting DONE remains rejected when the competing completion is abort
       {
         signal: controller.signal,
         capabilityRuntime,
-        persistCompletedCapabilityResult: async () => { throw new Error("conflicts with recorded exact replay output"); },
+        persistCompletedCapabilityResult: async () => { throw new SandboxCapabilityExactResultConflictError("conflicts with recorded exact replay output"); },
       },
     ),
     /conflicts with recorded exact replay output/u,
   );
+  assert.deepEqual(outcomes, ["completed", "cleaned"]);
 });
 
 test("CodeExecutionService resolves the current credential revision for every selected call", async () => {

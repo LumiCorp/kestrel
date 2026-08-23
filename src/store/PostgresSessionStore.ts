@@ -3,6 +3,10 @@ import type {
   RuntimeError,
   TransitionStatus,
 } from "../kestrel/contracts/base.js";
+import {
+  SandboxCapabilityExactResultCancelledError,
+  SandboxCapabilityExactResultConflictError,
+} from "../kestrel/contracts/store.js";
 import type {
   RunEvent,
   RunLogEntry,
@@ -1900,7 +1904,7 @@ export class PostgresSessionStore implements SessionStore {
           timestamp: normalizeTimestampString(row.created_at),
         };
         if (canonicalStoreJson(recorded) !== canonicalStoreJson(exactInput.result)) {
-          throw new Error("Sandbox capability effect result conflicts with recorded exact replay output");
+          throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result conflicts with recorded exact replay output");
         }
         return;
       }
@@ -4992,7 +4996,7 @@ function canonicalStoreJson(value: unknown): string {
 }
 
 function throwIfSandboxCapabilityResultPersistenceCancelled(signal: AbortSignal | undefined): void {
-  if (signal?.aborted === true) throw new Error("Sandbox capability exact-result persistence was cancelled");
+  if (signal?.aborted === true) throw new SandboxCapabilityExactResultCancelledError("Sandbox capability exact-result persistence was cancelled");
 }
 
 function readNonEmptyString(value: unknown): string | undefined {

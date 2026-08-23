@@ -7,6 +7,10 @@ import type {
   ConversationTurnSegmentRecord,
   ConversationTurnTerminalEnvelopeV1,
 } from "../kestrel/contracts/orchestration.js";
+import {
+  SandboxCapabilityExactResultCancelledError,
+  SandboxCapabilityExactResultConflictError,
+} from "../kestrel/contracts/store.js";
 import type {
   ClaimConversationTurnExecutionInput,
   ClaimConversationTurnExecutionResult,
@@ -1044,11 +1048,11 @@ export class InMemorySessionStore implements SessionStore {
     const existing = this.effectResults.get(exactInput.result.idempotencyKey);
     if (existing !== undefined) {
       if (canonicalJson(existing) !== canonicalJson(exactInput.result)) {
-        throw new Error("Sandbox capability effect result conflicts with recorded exact replay output");
+        throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result conflicts with recorded exact replay output");
       }
       return;
     }
-    if (input.signal?.aborted === true) throw new Error("Sandbox capability exact-result persistence was cancelled");
+    if (input.signal?.aborted === true) throw new SandboxCapabilityExactResultCancelledError("Sandbox capability exact-result persistence was cancelled");
     this.effectResults.set(exactInput.result.idempotencyKey, structuredClone(exactInput.result));
     this.operationLog.push(`saveSandboxCapabilityEffectResult:${input.leaseId}:${input.toolCallId}`);
   }

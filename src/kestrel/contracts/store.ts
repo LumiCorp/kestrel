@@ -37,6 +37,9 @@ import type {
   RuntimeEvent,
   RuntimeEventIntent,
 } from "./events.js";
+
+export class SandboxCapabilityExactResultCancelledError extends Error {}
+export class SandboxCapabilityExactResultConflictError extends Error {}
 import type {
   ArtifactIntent,
   ClaimIntent,

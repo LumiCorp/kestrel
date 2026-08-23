@@ -20,6 +20,7 @@ import {
   type TavilySearchAdapterResponseV1,
 } from "../kestrel/contracts/sandbox-capability.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
+import { SandboxCapabilityExactResultConflictError } from "../kestrel/contracts/store.js";
 
 export interface CodeExecutionServiceOptions {
   executor?: SandboxExecutor | undefined;
@@ -509,9 +510,11 @@ async function resolveTavilyCapability(
                 persistenceError = error;
               }
             }
-            const settlementReason = signal?.aborted === true && !resultPersistenceCommitted
+            const winningResultCommitted = resultPersistenceCommitted
+              || persistenceError instanceof SandboxCapabilityExactResultConflictError;
+            const settlementReason = signal?.aborted === true && !winningResultCommitted
               ? "cancelled"
-              : resultPersistenceCommitted && completedOutput !== undefined
+              : winningResultCommitted && completedOutput !== undefined
                 ? completedOutput.status === "ok" ? "completed" : completedOutput.status === "timeout" ? "timeout" : "failed"
                 : effectiveReason;
             try {
@@ -522,7 +525,7 @@ async function resolveTavilyCapability(
                 disposeSensitiveMaterial,
               });
             } catch (error) {
-              if (!resultPersistenceCommitted) throw error;
+              if (!winningResultCommitted) throw error;
             }
             if (persistenceError !== undefined) throw persistenceError;
             return { completedResultCommitted: resultPersistenceCommitted };

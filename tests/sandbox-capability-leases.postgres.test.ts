@@ -12,6 +12,7 @@ import {
   type SandboxCapabilityChildReservationV1,
   type SandboxCapabilityLeaseTransitionRecordV1,
 } from "../src/kestrel/contracts/sandbox-capability.js";
+import { SandboxCapabilityExactResultConflictError } from "../src/kestrel/contracts/store.js";
 import { PgSqlExecutor } from "../src/store/PgSqlExecutor.js";
 import { PostgresSessionStore } from "../src/store/PostgresSessionStore.js";
 
@@ -125,6 +126,12 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
       runId, sessionId, result: exactEffectResult, signal: abortAfterCommit.signal,
     });
+    await assert.rejects(store.saveSandboxCapabilityEffectResult({
+      leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
+      runId, sessionId,
+      result: { ...exactEffectResult, output: { status: "OK", outcome: { kind: "success", rawOutput: { answer: "losing output" } } } },
+      signal: abortAfterCommit.signal,
+    }), (error) => error instanceof SandboxCapabilityExactResultConflictError);
     const unusedLeaseId = `unused-lease-${suffix}`;
     const unusedBinding = { ...binding, toolCallId: `unused-call-${suffix}` };
     const unusedDigest = fingerprintSandboxCapabilityLeaseBindingV1(unusedBinding);
