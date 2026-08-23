@@ -190,6 +190,52 @@ test("restart consumes a recorded tool result without repeating the effect", asy
   assert.equal(store.getEffectResults()[0]?.status, "DONE");
 });
 
+test("recorded sandbox capability result replay never resolves credentials, contacts the provider, or starts Docker", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new EffectRegistry();
+  let credentialResolutions = 0;
+  let providerCalls = 0;
+  let dockerStarts = 0;
+  registry.register("execute_tool_call", async () => {
+    credentialResolutions += 1;
+    providerCalls += 1;
+    dockerStarts += 1;
+    return { repeated: true };
+  });
+  await store.saveEffectResult("run-capability-replay", "session-capability-replay", {
+    idempotencyKey: "capability-action-digest-1",
+    status: "DONE",
+    output: { status: "ok", stdout: "recorded Tavily result" },
+    timestamp: "2026-08-23T00:00:00.000Z",
+  });
+
+  const outcome = await new InlineEffectRunner(store, registry).runEffects([{
+    runId: "run-capability-replay",
+    sessionId: "session-capability-replay",
+    stepIndex: 0,
+    type: "execute_tool_call",
+    payload: {
+      toolName: "code.execute",
+      toolInput: { capability: { capabilityId: "tavily.search.read", input: { query: "recorded" } } },
+    },
+    idempotencyKey: "capability-action-digest-1",
+    failurePolicy: "STOP",
+    status: "PENDING",
+    createdAt: "2026-08-23T00:00:00.000Z",
+  }], {
+    runId: "run-capability-replay",
+    sessionId: "session-capability-replay",
+    stepIndex: 0,
+  });
+
+  assert.equal(outcome.stop, false);
+  assert.deepEqual({ credentialResolutions, providerCalls, dockerStarts }, {
+    credentialResolutions: 0,
+    providerCalls: 0,
+    dockerStarts: 0,
+  });
+});
+
 test("Effect runner honors existing FAILED result and WAIT policy", async () => {
   const store = new InMemorySessionStore();
   const registry = new EffectRegistry();

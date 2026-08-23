@@ -59,6 +59,14 @@ import type {
   ThreadAssemblyRecord,
   ThreadRecord,
 } from "../kestrel/contracts/orchestration.js";
+import {
+  assertSandboxCapabilityLeaseTransitionV1,
+  fingerprintSandboxCapabilityLeaseBindingV1,
+  parseSandboxCapabilityChildReservationV1,
+  parseSandboxCapabilityLeaseTransitionRecordV1,
+  type SandboxCapabilityChildReservationV1,
+  type SandboxCapabilityLeaseTransitionRecordV1,
+} from "../kestrel/contracts/sandbox-capability.js";
 import { SessionBusyError, asRuntimeError, createRuntimeFailure } from "../runtime/RuntimeFailure.js";
 import {
   normalizeRuntimeStateForPersist,
@@ -1753,6 +1761,193 @@ export class PostgresSessionStore implements SessionStore {
 
   async appendRunEvent(event: RunEvent): Promise<void> {
     await this.appendRunEventsBatch([event]);
+  }
+
+  async appendSandboxCapabilityLeaseTransition(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
+    await this.ensureSchemaV3();
+    const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
+    if (record.bindingDigest !== fingerprintSandboxCapabilityLeaseBindingV1(record.binding)) {
+      throw new Error("Sandbox capability lease binding digest does not match the immutable binding");
+    }
+    if (record.sequence !== input.expectedSequence + 1) {
+      throw new Error("Sandbox capability lease transition sequence conflict");
+    }
+    return this.withTransaction(async (executor) => {
+      const currentResult = await executor.query<{ sequence: number | string; transition: string; binding_digest: string }>(
+        `SELECT sequence, transition, binding_digest FROM sandbox_capability_leases WHERE lease_id = $1 FOR UPDATE`,
+        [record.leaseId],
+      );
+      const current = currentResult.rows[0];
+      if ((current === undefined ? 0 : Number(current.sequence)) !== input.expectedSequence) {
+        throw new Error("Sandbox capability lease transition sequence conflict");
+      }
+      assertSandboxCapabilityLeaseTransitionV1(current?.transition as SandboxCapabilityLeaseTransitionRecordV1["transition"] | undefined, record.transition);
+      let projected: QueryResult<Record<string, unknown>>;
+      const values = sandboxCapabilityLeaseProjectionValues(record);
+      if (input.expectedSequence === 0) {
+        projected = await executor.query(
+          `INSERT INTO sandbox_capability_leases
+            (lease_id, sequence, transition, run_id, session_id, tool_call_id, binding_digest,
+             binding_json, usage_json, issued_at, expires_at, terminal_outcome, terminal_reason,
+             cleaned_at, result_json, occurred_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::timestamptz,
+                   $11::timestamptz, $12, $13, $14::timestamptz, $15::jsonb, $16::timestamptz)
+           ON CONFLICT DO NOTHING`,
+          values,
+        );
+      } else {
+        projected = await executor.query(
+          `UPDATE sandbox_capability_leases
+              SET sequence = $2, transition = $3, usage_json = $4::jsonb,
+                  issued_at = $5::timestamptz, expires_at = $6::timestamptz,
+                  terminal_outcome = $7, terminal_reason = $8, cleaned_at = $9::timestamptz,
+                  result_json = $10::jsonb, occurred_at = $11::timestamptz
+            WHERE lease_id = $1 AND sequence = $12 AND binding_digest = $13
+              AND binding_json = $14::jsonb`,
+          [
+            record.leaseId,
+            record.sequence,
+            record.transition,
+            stringifySanitizedJson(record.usage),
+            record.issuedAt ?? null,
+            record.expiresAt,
+            record.terminalOutcome ?? null,
+            record.terminalReason ?? null,
+            record.cleanedAt ?? null,
+            stringifySanitizedJson(record.result ?? null),
+            record.occurredAt,
+            input.expectedSequence,
+            record.bindingDigest,
+            stringifySanitizedJson(record.binding),
+          ],
+        );
+      }
+      if (projected.rowCount !== 1) throw new Error("Sandbox capability lease transition sequence conflict");
+      const inserted = await executor.query(
+        `INSERT INTO sandbox_capability_lease_transitions
+          (lease_id, sequence, transition, binding_digest, record_json, occurred_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::timestamptz)
+         ON CONFLICT DO NOTHING`,
+        [record.leaseId, record.sequence, record.transition, record.bindingDigest, stringifySanitizedJson(record), record.occurredAt],
+      );
+      if (inserted.rowCount !== 1) throw new Error("Sandbox capability lease transition sequence conflict");
+      await this.appendRunEventsBatchWithExecutor(executor, [{
+        runId: record.binding.runId,
+        sessionId: record.binding.sessionId,
+        type: `sandbox_capability.${record.transition}` as RunEvent["type"],
+        level: record.transition === "denied" || record.transition === "revoked" || record.transition === "expired" || record.transition === "cancelled" ? "WARN" : "INFO",
+        timestamp: record.occurredAt,
+        metadata: { record },
+      }]);
+      if (["denied", "revoked", "expired", "cancelled", "cleaned"].includes(record.transition)) {
+        await revokePostgresChildReservations(executor, record.leaseId, record.occurredAt, `parent_${record.transition}`);
+      }
+      return record;
+    });
+  }
+
+  async getSandboxCapabilityLease(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1 | null> {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<{ record_json: unknown }>(
+      `SELECT record_json FROM sandbox_capability_lease_transitions
+        WHERE lease_id = $1 ORDER BY sequence DESC LIMIT 1`,
+      [leaseId],
+    );
+    return result.rows[0] === undefined ? null : parseSandboxCapabilityLeaseTransitionRecordV1(result.rows[0].record_json);
+  }
+
+  async listSandboxCapabilityLeaseTransitions(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1[]> {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<{ record_json: unknown }>(
+      `SELECT record_json FROM sandbox_capability_lease_transitions
+        WHERE lease_id = $1 ORDER BY sequence ASC`,
+      [leaseId],
+    );
+    return result.rows.map((row) => parseSandboxCapabilityLeaseTransitionRecordV1(row.record_json));
+  }
+
+  async listRecoverableSandboxCapabilityLeases(input: { before: string; limit?: number | undefined }): Promise<SandboxCapabilityLeaseTransitionRecordV1[]> {
+    await this.ensureSchemaV3();
+    const before = normalizeTimestampString(input.before);
+    const limit = input.limit ?? 100;
+    if (Number.isSafeInteger(limit) === false || limit < 1 || limit > 10_000) throw new Error("Sandbox capability recovery limit is invalid");
+    const result = await this.db.query<{ record_json: unknown }>(
+      `SELECT transition.record_json
+         FROM sandbox_capability_leases lease
+         JOIN sandbox_capability_lease_transitions transition
+           ON transition.lease_id = lease.lease_id AND transition.sequence = lease.sequence
+        WHERE lease.cleaned_at IS NULL
+          AND lease.transition NOT IN ('requested', 'denied', 'cleaned')
+          AND lease.occurred_at <= $1::timestamptz
+        ORDER BY lease.occurred_at ASC, lease.lease_id ASC
+        LIMIT $2`,
+      [before, limit],
+    );
+    return result.rows.map((row) => parseSandboxCapabilityLeaseTransitionRecordV1(row.record_json));
+  }
+
+  async reserveSandboxCapabilityChild(input: { expectedParentSequence: number; reservation: SandboxCapabilityChildReservationV1 }): Promise<SandboxCapabilityChildReservationV1> {
+    await this.ensureSchemaV3();
+    const reservation = parseSandboxCapabilityChildReservationV1(input.reservation);
+    if (reservation.sequence !== 1 || reservation.status !== "reserved") throw new Error("Sandbox capability child reservation must begin reserved at sequence 1");
+    return this.withTransaction(async (executor) => {
+      const parentResult = await executor.query<{ sequence: number | string; transition: string; binding_digest: string; usage_json: unknown }>(
+        `SELECT sequence, transition, binding_digest, usage_json FROM sandbox_capability_leases WHERE lease_id = $1 FOR UPDATE`,
+        [reservation.decision.parentLeaseId],
+      );
+      const parent = parentResult.rows[0];
+      if (parent === undefined || Number(parent.sequence) !== input.expectedParentSequence || parent.binding_digest !== reservation.decision.parentBindingDigest || !["issued", "invoking"].includes(parent.transition)) throw new Error("Sandbox capability parent authorization is unavailable or stale");
+      const usage = parseSandboxCapabilityLeaseTransitionRecordV1((await executor.query<{ record_json: unknown }>(`SELECT record_json FROM sandbox_capability_lease_transitions WHERE lease_id = $1 AND sequence = $2`, [reservation.decision.parentLeaseId, input.expectedParentSequence])).rows[0]?.record_json).usage;
+      const allocated = await executor.query<{ requests_allocated: string; bytes_allocated: string }>(
+        `SELECT COALESCE(SUM(CASE WHEN status = 'reserved' THEN request_limit WHEN status = 'committed' THEN requests_committed ELSE 0 END), 0)::text AS requests_allocated,
+                COALESCE(SUM(CASE WHEN status = 'reserved' THEN response_byte_limit WHEN status = 'committed' THEN response_bytes_committed ELSE 0 END), 0)::text AS bytes_allocated
+           FROM sandbox_capability_child_reservations WHERE parent_lease_id = $1`,
+        [reservation.decision.parentLeaseId],
+      );
+      const requestsAllocated = Number(allocated.rows[0]?.requests_allocated ?? 0);
+      const bytesAllocated = Number(allocated.rows[0]?.bytes_allocated ?? 0);
+      if (usage.requestsConsumed + requestsAllocated + reservation.decision.requestLimit > usage.requestLimit || usage.responseBytesConsumed + bytesAllocated + reservation.decision.responseByteLimit > usage.responseByteLimit) throw new Error("Sandbox capability parent ceiling is exhausted");
+      const inserted = await executor.query(
+        `INSERT INTO sandbox_capability_child_reservations
+          (reservation_id, parent_lease_id, sequence, status, decision_id, parent_binding_digest,
+           child_run_id, child_session_id, child_tool_call_id, request_limit, response_byte_limit,
+           requests_committed, response_bytes_committed, record_json, occurred_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::timestamptz)
+         ON CONFLICT DO NOTHING`, childReservationValues(reservation));
+      if (inserted.rowCount !== 1) throw new Error("Sandbox capability child reservation conflict");
+      await executor.query(`INSERT INTO sandbox_capability_child_reservation_transitions (reservation_id, sequence, status, record_json, occurred_at) VALUES ($1,$2,$3,$4::jsonb,$5::timestamptz)`, [reservation.reservationId, reservation.sequence, reservation.status, stringifySanitizedJson(reservation), reservation.occurredAt]);
+      return reservation;
+    });
+  }
+
+  async settleSandboxCapabilityChild(input: { reservationId: string; expectedSequence: number; status: "committed" | "released"; requestsCommitted: number; responseBytesCommitted: number; reason?: string | undefined; occurredAt: string }): Promise<SandboxCapabilityChildReservationV1> {
+    await this.ensureSchemaV3();
+    return this.withTransaction(async (executor) => {
+      const currentResult = await executor.query<{ sequence: number | string; status: string; record_json: unknown }>(`SELECT sequence, status, record_json FROM sandbox_capability_child_reservations WHERE reservation_id = $1 FOR UPDATE`, [input.reservationId]);
+      const row = currentResult.rows[0];
+      if (row === undefined || Number(row.sequence) !== input.expectedSequence || row.status !== "reserved") throw new Error("Sandbox capability child reservation sequence conflict");
+      const current = parseSandboxCapabilityChildReservationV1(row.record_json);
+      const next = parseSandboxCapabilityChildReservationV1({ ...current, sequence: current.sequence + 1, status: input.status, requestsCommitted: input.requestsCommitted, responseBytesCommitted: input.responseBytesCommitted, ...(input.reason === undefined ? {} : { reason: input.reason }), occurredAt: input.occurredAt });
+      const updated = await executor.query(`UPDATE sandbox_capability_child_reservations SET sequence=$2,status=$3,requests_committed=$4,response_bytes_committed=$5,record_json=$6::jsonb,occurred_at=$7::timestamptz WHERE reservation_id=$1 AND sequence=$8 AND status='reserved'`, [next.reservationId, next.sequence, next.status, next.requestsCommitted, next.responseBytesCommitted, stringifySanitizedJson(next), next.occurredAt, input.expectedSequence]);
+      if (updated.rowCount !== 1) throw new Error("Sandbox capability child reservation sequence conflict");
+      await executor.query(`INSERT INTO sandbox_capability_child_reservation_transitions (reservation_id, sequence, status, record_json, occurred_at) VALUES ($1,$2,$3,$4::jsonb,$5::timestamptz)`, [next.reservationId, next.sequence, next.status, stringifySanitizedJson(next), next.occurredAt]);
+      return next;
+    });
+  }
+
+  async getSandboxCapabilityChildReservation(reservationId: string): Promise<SandboxCapabilityChildReservationV1 | null> {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<{ record_json: unknown }>(`SELECT record_json FROM sandbox_capability_child_reservations WHERE reservation_id=$1`, [reservationId]);
+    return result.rows[0] === undefined ? null : parseSandboxCapabilityChildReservationV1(result.rows[0].record_json);
+  }
+
+  async listSandboxCapabilityChildReservations(parentLeaseId: string): Promise<SandboxCapabilityChildReservationV1[]> {
+    await this.ensureSchemaV3();
+    const result = await this.db.query<{ record_json: unknown }>(`SELECT record_json FROM sandbox_capability_child_reservations WHERE parent_lease_id=$1 ORDER BY occurred_at,reservation_id`, [parentLeaseId]);
+    return result.rows.map((row) => parseSandboxCapabilityChildReservationV1(row.record_json));
   }
 
   async claimConversationTurnExecution(
@@ -4431,6 +4626,41 @@ interface ConversationTurnRow {
   started_at: string | Date;
   updated_at: string | Date;
   completed_at: string | Date | null;
+}
+
+function sandboxCapabilityLeaseProjectionValues(record: SandboxCapabilityLeaseTransitionRecordV1): unknown[] {
+  return [
+    record.leaseId,
+    record.sequence,
+    record.transition,
+    record.binding.runId,
+    record.binding.sessionId,
+    record.binding.toolCallId,
+    record.bindingDigest,
+    stringifySanitizedJson(record.binding),
+    stringifySanitizedJson(record.usage),
+    record.issuedAt ?? null,
+    record.expiresAt,
+    record.terminalOutcome ?? null,
+    record.terminalReason ?? null,
+    record.cleanedAt ?? null,
+    stringifySanitizedJson(record.result ?? null),
+    record.occurredAt,
+  ];
+}
+
+function childReservationValues(record: SandboxCapabilityChildReservationV1): unknown[] {
+  return [record.reservationId, record.decision.parentLeaseId, record.sequence, record.status, record.decision.decisionId, record.decision.parentBindingDigest, record.decision.childRunId, record.decision.childSessionId, record.decision.childToolCallId, record.decision.requestLimit, record.decision.responseByteLimit, record.requestsCommitted, record.responseBytesCommitted, stringifySanitizedJson(record), record.occurredAt];
+}
+
+async function revokePostgresChildReservations(executor: SqlExecutor, parentLeaseId: string, occurredAt: string, reason: string): Promise<void> {
+  const active = await executor.query<{ record_json: unknown }>(`SELECT record_json FROM sandbox_capability_child_reservations WHERE parent_lease_id=$1 AND status='reserved' FOR UPDATE`, [parentLeaseId]);
+  for (const row of active.rows) {
+    const current = parseSandboxCapabilityChildReservationV1(row.record_json);
+    const next = parseSandboxCapabilityChildReservationV1({ ...current, sequence: current.sequence + 1, status: "revoked", reason, occurredAt });
+    await executor.query(`UPDATE sandbox_capability_child_reservations SET sequence=$2,status='revoked',record_json=$3::jsonb,occurred_at=$4::timestamptz WHERE reservation_id=$1 AND sequence=$5 AND status='reserved'`, [next.reservationId, next.sequence, stringifySanitizedJson(next), next.occurredAt, current.sequence]);
+    await executor.query(`INSERT INTO sandbox_capability_child_reservation_transitions (reservation_id, sequence, status, record_json, occurred_at) VALUES ($1,$2,'revoked',$3::jsonb,$4::timestamptz)`, [next.reservationId, next.sequence, stringifySanitizedJson(next), next.occurredAt]);
+  }
 }
 
 interface ConversationTurnSegmentRow {

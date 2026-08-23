@@ -208,6 +208,7 @@ function runRuntimeGroup(): Promise<void> {
       "tests/budget-ledger.postgres.test.ts",
       "tests/mission-control-project-authority.postgres.test.ts",
       "tests/mission-control-review-acceptance.postgres.test.ts",
+      "tests/sandbox-capability-leases.postgres.test.ts",
     ])
   ) {
     throw new Error(

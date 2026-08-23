@@ -4,6 +4,94 @@ import assert from "node:assert/strict";
 import { RunReplayService } from "../../src/replay/RunReplayService.js";
 import { InMemorySessionStore } from "../helpers/InMemorySessionStore.js";
 
+test("RunReplayService projects secret-free sandbox capability lifecycle evidence", async () => {
+  const store = new InMemorySessionStore();
+  const digest = "a".repeat(64);
+  const record = {
+    version: 1 as const,
+    leaseId: "lease-replay-1",
+    sequence: 4,
+    transition: "cleaned" as const,
+    binding: {
+      version: 1 as const,
+      tenantId: "tenant-1",
+      environmentId: "env-1",
+      sessionId: "session-capability",
+      runId: "run-capability",
+      toolCallId: "call-capability",
+      profileFingerprint: digest,
+      capabilityCatalogFingerprint: digest,
+      executionBoundaryRevision: "boundary-v1",
+      capabilityId: "tavily.search.read" as const,
+      operation: "search" as const,
+      resource: "https://api.tavily.com/search" as const,
+      audience: { tenantId: "tenant-1", environmentId: "env-1" },
+      brokerAuthority: { authorityId: "broker", revision: "broker-v1" },
+      credentialReference: { credentialId: "tool.tavily.default" as const, revision: "credential-v2" },
+      policyRevision: "policy-v3",
+      approval: { approvalId: "approval-1", authorityRevision: "approval-v2" },
+      parentAuthorization: { leaseId: "parent-lease", bindingDigest: digest, authorizationDecisionId: "decision-1", reservationId: "reservation-1", requestLimit: 1, responseByteLimit: 4096 },
+    },
+    bindingDigest: digest,
+    usage: {
+      requestLimit: 1,
+      requestsConsumed: 1,
+      responseByteLimit: 10_000,
+      responseBytesConsumed: 2_500,
+      exactProviderUsage: null,
+    },
+    issuedAt: "2026-08-23T10:00:00.000Z",
+    expiresAt: "2026-08-23T10:01:00.000Z",
+    terminalOutcome: "completed" as const,
+    cleanedAt: "2026-08-23T10:00:03.000Z",
+    result: { digest, reference: "effect-result:capability-call" },
+    occurredAt: "2026-08-23T10:00:03.000Z",
+  };
+  await store.appendRunEvent({
+    runId: "run-capability",
+    sessionId: "session-capability",
+    type: "sandbox_capability.cleaned",
+    level: "INFO",
+    timestamp: record.occurredAt,
+    metadata: { record },
+  });
+  await store.appendRunEvent({
+    runId: "run-capability",
+    sessionId: "session-capability",
+    type: "sandbox_capability.consumed",
+    level: "INFO",
+    timestamp: "2026-08-23T10:00:04.000Z",
+    metadata: { record },
+  });
+
+  const replay = await new RunReplayService(store).replay({ runId: "run-capability" });
+
+  assert.deepEqual(replay.sandboxCapabilities, {
+    leases: [{
+      leaseId: "lease-replay-1",
+      bindingDigest: digest,
+      capabilityId: "tavily.search.read",
+      operation: "search",
+      resource: "https://api.tavily.com/search",
+      runId: "run-capability",
+      toolCallId: "call-capability",
+      policyRevision: "policy-v3",
+      approvalAuthorityRevision: "approval-v2",
+      parentLeaseId: "parent-lease",
+      status: "cleaned",
+      expiresAt: "2026-08-23T10:01:00.000Z",
+      remainingRequests: 0,
+      remainingResponseBytes: 7_500,
+      exactProviderUsage: null,
+      terminalOutcome: "completed",
+      cleanedAt: "2026-08-23T10:00:03.000Z",
+      resultReference: "effect-result:capability-call",
+      occurredAt: "2026-08-23T10:00:03.000Z",
+    }],
+    invalidTransitionEvents: 1,
+  });
+});
+
 
 test("RunReplayService reconstructs ordered stream summary and timeline", async () => {
   const store = new InMemorySessionStore();

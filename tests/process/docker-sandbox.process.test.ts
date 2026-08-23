@@ -580,6 +580,7 @@ test(
     const brokerName = `${containerName}-broker`;
     const lease = `opaque-lease-${randomUUID()}`;
     const hostCanary = `host-canary-${randomUUID()}`;
+    const lifecycleOrder: string[] = [];
     const variableName = `KESTREL_CAPABILITY_HOST_${randomUUID().replaceAll("-", "")}`;
     process.env[variableName] = hostCanary;
     try {
@@ -636,6 +637,21 @@ test(
           operation: "search",
           destination: "api.tavily.com",
           response: { answer: "trusted-stub-ok" },
+          lifecycle: {
+            beforeProviderInvocation: async () => {},
+            commitProviderResult: async () => {},
+            recordProviderFailure: async () => {},
+            beforeContainerTeardown: async (reason) => {
+              lifecycleOrder.push(`terminal:${reason}`, "secret_disposed");
+              const [workload, broker] = await Promise.all([
+                execFileAsync("docker", ["inspect", containerName]),
+                execFileAsync("docker", ["inspect", brokerName]),
+              ]);
+              assert.notEqual(workload.stdout.trim(), "");
+              assert.notEqual(broker.stdout.trim(), "");
+              lifecycleOrder.push("containers_still_present");
+            },
+          },
         },
       });
 
@@ -692,6 +708,7 @@ test(
       const retained = `${result.stdout}\n${result.stderr}\n${JSON.stringify(result.artifacts)}`;
       assert.equal(retained.includes(lease), false);
       assert.equal(retained.includes(hostCanary), false);
+      assert.deepEqual(lifecycleOrder, ["terminal:completed", "secret_disposed", "containers_still_present"]);
       await assertContainerAndProcessesRemoved(containerName);
       await assertContainerAndProcessesRemoved(brokerName);
     } finally {

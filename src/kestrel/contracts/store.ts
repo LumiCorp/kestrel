@@ -75,6 +75,7 @@ import type {
   ThreadRecord,
   ThreadStatus,
 } from "./orchestration.js";
+import type { SandboxCapabilityChildReservationV1, SandboxCapabilityLeaseTransitionRecordV1 } from "./sandbox-capability.js";
 
 export interface LegacySessionArchive {
   sessionId: string;
@@ -486,6 +487,34 @@ export interface EventStore {
     turnId?: string | undefined;
     limit?: number | undefined;
   }): Promise<ModelCallProvenanceRecord[]>;
+}
+
+export interface SandboxCapabilityLeaseStore {
+  appendSandboxCapabilityLeaseTransition(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1>;
+  getSandboxCapabilityLease(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1 | null>;
+  listSandboxCapabilityLeaseTransitions(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1[]>;
+  listRecoverableSandboxCapabilityLeases(input: {
+    before: string;
+    limit?: number | undefined;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1[]>;
+  reserveSandboxCapabilityChild(input: {
+    expectedParentSequence: number;
+    reservation: SandboxCapabilityChildReservationV1;
+  }): Promise<SandboxCapabilityChildReservationV1>;
+  settleSandboxCapabilityChild(input: {
+    reservationId: string;
+    expectedSequence: number;
+    status: "committed" | "released";
+    requestsCommitted: number;
+    responseBytesCommitted: number;
+    reason?: string | undefined;
+    occurredAt: string;
+  }): Promise<SandboxCapabilityChildReservationV1>;
+  getSandboxCapabilityChildReservation(reservationId: string): Promise<SandboxCapabilityChildReservationV1 | null>;
+  listSandboxCapabilityChildReservations(parentLeaseId: string): Promise<SandboxCapabilityChildReservationV1[]>;
 }
 
 export interface ArtifactStore {

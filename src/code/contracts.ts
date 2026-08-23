@@ -156,6 +156,20 @@ export interface SandboxCapabilityGrant {
   expectedInput?: { query: string; maxResults: number } | undefined;
   /** Trusted host-only adapter. This function is never serialized into Docker state. */
   adapter?: ((input: { query: string; maxResults: number }, signal: AbortSignal) => Promise<unknown>) | undefined;
+  /**
+   * Host-only durable lifecycle hooks. Like the adapter, these functions are
+   * never serialized into broker or workload state.
+   */
+  lifecycle?: {
+    beforeProviderInvocation: () => Promise<void>;
+    commitProviderResult: (input: {
+      result: unknown;
+      responseBytes: number;
+      resultCount: number;
+    }) => Promise<void>;
+    recordProviderFailure: (error: unknown) => Promise<void>;
+    beforeContainerTeardown: (reason: "completed" | "failed" | "cancelled" | "timeout") => Promise<void>;
+  } | undefined;
 }
 
 export interface SandboxCapabilityRuntimeContext {
@@ -164,16 +178,28 @@ export interface SandboxCapabilityRuntimeContext {
   sessionId: string;
   runId: string;
   toolCallId: string;
+  /** Exact prepared-call policy decision; never inferred from the profile. */
+  policy?: import("../kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined;
+  /** Exact prepared-call approval authority, when policy required approval. */
+  approval?: import("../kestrel/contracts/tool-invocation.js").PreparedToolApprovalAuthorityV1 | undefined;
+  /** A child must carry an independently persisted authorization inside this parent ceiling. */
+  parentAuthorization?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityLeaseBindingV1["parentAuthorization"] | undefined;
   profileFingerprint: string;
   capabilityCatalogFingerprint: string;
   executionBoundaryRevision: string;
   brokerAuthority: { authorityId: string; revision: string };
+  leaseCoordinator?: import("./SandboxCapabilityLeaseCoordinator.js").SandboxCapabilityLeaseCoordinator | undefined;
   credentialSnapshot?: {
     credentialId: "tool.tavily.default";
     revision: string;
     secret: string;
   } | undefined;
   resolveCredentialSnapshot?: (() => Promise<{ credentialId: "tool.tavily.default"; revision: string; secret: string }>) | undefined;
+  resolveParentAuthorization?: ((input: {
+    sessionId: string;
+    runId: string;
+    toolCallId: string;
+  }) => Promise<import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityLeaseBindingV1["parentAuthorization"] | undefined>) | undefined;
   now?: (() => Date) | undefined;
   fetchImpl?: typeof fetch | undefined;
   registerSensitiveValue?: ((input: {

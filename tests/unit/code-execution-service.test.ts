@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CodeExecutionService } from "../../src/code/CodeExecutionService.js";
+import { SandboxCapabilityLeaseCoordinator, digestSandboxCapabilityResult } from "../../src/code/SandboxCapabilityLeaseCoordinator.js";
 import { DEFAULT_CODE_MODE_ENABLED_CONFIG, type SandboxExecutionInput, type SandboxExecutor } from "../../src/code/contracts.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY, SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
-import { fingerprintSandboxCapabilityCatalogV1, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import { fingerprintSandboxCapabilityCatalogV1, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityChildReservationV1, type SandboxCapabilityLeaseTransitionRecordV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import type { SandboxCapabilityLeaseStore } from "../../src/kestrel/contracts/store.js";
 
 const profile: SandboxCapabilityProfileV1 = { version: 1, capabilityId: "tavily.search.read", operations: ["search"], resource: "https://api.tavily.com/search", audience: { tenantId: "tenant-a", environmentId: "env-a" }, maxRequests: 1, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096, timeoutMs: 1000, maxExpiryMs: 5000, brokerAuthority: { authorityId: "broker-a", revision: "broker-rev-1" } };
 
@@ -78,6 +80,29 @@ test("CodeExecutionService rejects partial sensitive-value callback configuratio
       /registration and redaction are required together/u,
     );
   }
+  assert.equal(credentialResolutions, 0);
+  assert.equal(executions, 0);
+});
+
+test("CodeExecutionService fails closed when durable lease coordination is unavailable", async () => {
+  let executions = 0;
+  let credentialResolutions = 0;
+  const service = new CodeExecutionService({ executor: { async execute() { executions += 1; throw new Error("must not execute"); } } });
+  const { leaseCoordinator: _leaseCoordinator, credentialSnapshot: _credentialSnapshot, ...withoutCoordinator } = runtime();
+  await assert.rejects(
+    service.execute(
+      { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] },
+      { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "x" } } },
+      { capabilityRuntime: {
+        ...withoutCoordinator,
+        resolveCredentialSnapshot: async () => {
+          credentialResolutions += 1;
+          return { credentialId: "tool.tavily.default", revision: "r", secret: "secret" };
+        },
+      } },
+    ),
+    /durable sandbox capability lease coordination is unavailable/iu,
+  );
   assert.equal(credentialResolutions, 0);
   assert.equal(executions, 0);
 });
@@ -572,5 +597,51 @@ test("cancellation sanitization fails closed for hostile proxies and secret-bear
 let registeredSensitiveValue = "";
 function runtime(fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ results: [] }), { status: 200 })) {
   registeredSensitiveValue = "";
-  return { tenantId: "tenant-a", environmentId: "env-a", sessionId: "session-a", runId: "run-a", toolCallId: "call-a", profileFingerprint: fingerprintSandboxCapabilityProfileV1(profile), capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([profile]), executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision, brokerAuthority: profile.brokerAuthority, credentialSnapshot: { credentialId: "tool.tavily.default" as const, revision: "credential-rev-1", secret: "real-secret-key" }, fetchImpl, registerSensitiveValue: (input: { value: string }) => { registeredSensitiveValue = input.value; return () => {}; }, redactSensitiveValues: <T>(value: T) => value, now: () => new Date("2026-08-22T12:00:00.000Z") };
+  return { tenantId: "tenant-a", environmentId: "env-a", sessionId: "session-a", runId: "run-a", toolCallId: "call-a", profileFingerprint: fingerprintSandboxCapabilityProfileV1(profile), capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV1([profile]), executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision, brokerAuthority: profile.brokerAuthority, credentialSnapshot: { credentialId: "tool.tavily.default" as const, revision: "credential-rev-1", secret: "real-secret-key" }, fetchImpl, registerSensitiveValue: (input: { value: string }) => { registeredSensitiveValue = input.value; return () => {}; }, redactSensitiveValues: <T>(value: T) => value, now: () => new Date("2026-08-22T12:00:00.000Z"), leaseCoordinator: createTestLeaseCoordinator() };
+}
+
+function createTestLeaseCoordinator(): SandboxCapabilityLeaseCoordinator {
+  const transitions = new Map<string, SandboxCapabilityLeaseTransitionRecordV1[]>();
+  const childReservations = new Map<string, SandboxCapabilityChildReservationV1>();
+  const store: SandboxCapabilityLeaseStore = {
+    async appendSandboxCapabilityLeaseTransition({ expectedSequence, record }) {
+      const records = transitions.get(record.leaseId) ?? [];
+      assert.equal(records.at(-1)?.sequence ?? 0, expectedSequence);
+      records.push(structuredClone(record));
+      transitions.set(record.leaseId, records);
+      return structuredClone(record);
+    },
+    async getSandboxCapabilityLease(leaseId) {
+      return structuredClone(transitions.get(leaseId)?.at(-1) ?? null);
+    },
+    async listSandboxCapabilityLeaseTransitions(leaseId) {
+      return structuredClone(transitions.get(leaseId) ?? []);
+    },
+    async listRecoverableSandboxCapabilityLeases() { return []; },
+    async reserveSandboxCapabilityChild({ reservation }) {
+      childReservations.set(reservation.reservationId, structuredClone(reservation));
+      return structuredClone(reservation);
+    },
+    async settleSandboxCapabilityChild(input) {
+      const current = childReservations.get(input.reservationId)!;
+      const next: SandboxCapabilityChildReservationV1 = { ...current, sequence: input.expectedSequence + 1, status: input.status, requestsCommitted: input.requestsCommitted, responseBytesCommitted: input.responseBytesCommitted, ...(input.reason === undefined ? {} : { reason: input.reason }), occurredAt: input.occurredAt };
+      childReservations.set(input.reservationId, next);
+      return structuredClone(next);
+    },
+    async getSandboxCapabilityChildReservation(reservationId) {
+      return structuredClone(childReservations.get(reservationId) ?? null);
+    },
+    async listSandboxCapabilityChildReservations(parentLeaseId) {
+      return structuredClone([...childReservations.values()].filter((item) => item.decision.parentLeaseId === parentLeaseId));
+    },
+  };
+  return new SandboxCapabilityLeaseCoordinator({
+    store,
+    now: () => new Date("2026-08-22T12:00:00.000Z"),
+    validateCurrent: async () => ({ authorized: true }),
+    persistResult: async ({ leaseId, result }) => ({
+      digest: digestSandboxCapabilityResult(result),
+      reference: `test-result:${leaseId}`,
+    }),
+  });
 }

@@ -16,6 +16,7 @@ import {
   parseSandboxCapabilityProfilesV1,
   parseSandboxCapabilitySelectionV1,
   TAVILY_SEARCH_RESOURCE,
+  type SandboxCapabilityLeaseBindingV1,
   type TavilySearchAdapterResponseV1,
 } from "../kestrel/contracts/sandbox-capability.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../security/ExecutionBoundaryPolicy.js";
@@ -344,6 +345,9 @@ async function resolveTavilyCapability(
   if (runtime.registerSensitiveValue === undefined || runtime.redactSensitiveValues === undefined) {
     throw new Error("Sandbox capability sensitive-value registration and redaction are required together");
   }
+  if (runtime.leaseCoordinator === undefined) {
+    throw new Error("Durable sandbox capability lease coordination is unavailable");
+  }
   if (runtime.tenantId !== profile.audience.tenantId || runtime.environmentId !== profile.audience.environmentId) throw new Error("Sandbox capability audience does not match the trusted runtime identity");
   if (runtime.brokerAuthority.authorityId !== profile.brokerAuthority.authorityId || runtime.brokerAuthority.revision !== profile.brokerAuthority.revision) throw new Error("Sandbox broker authority is stale or mismatched");
   if (/^[a-f0-9]{64}$/u.test(runtime.profileFingerprint) === false) throw new Error("Sandbox capability resolved-profile fingerprint is invalid");
@@ -360,6 +364,45 @@ async function resolveTavilyCapability(
   if (maxResults > profile.maxResults) throw new Error("Sandbox Tavily result request exceeds the profile ceiling");
   const now = (runtime.now ?? (() => new Date()))();
   const expiresAt = new Date(now.getTime() + profile.maxExpiryMs);
+  const leaseBinding: SandboxCapabilityLeaseBindingV1 = {
+    version: 1,
+    tenantId: runtime.tenantId,
+    environmentId: runtime.environmentId,
+    sessionId: runtime.sessionId,
+    runId: runtime.runId,
+    toolCallId: runtime.toolCallId,
+    profileFingerprint: runtime.profileFingerprint,
+    capabilityCatalogFingerprint: runtime.capabilityCatalogFingerprint,
+    executionBoundaryRevision: runtime.executionBoundaryRevision,
+    capabilityId: selected.capabilityId,
+    operation: "search",
+    resource: TAVILY_SEARCH_RESOURCE,
+    audience: profile.audience,
+    brokerAuthority: runtime.brokerAuthority,
+    credentialReference: {
+      credentialId: credentialSnapshot.credentialId,
+      revision: credentialSnapshot.revision,
+    },
+    policyRevision: runtime.policy?.policyRevision ?? runtime.executionBoundaryRevision,
+    ...(runtime.approval === undefined ? {} : { approval: runtime.approval }),
+    ...(runtime.parentAuthorization === undefined ? {} : { parentAuthorization: runtime.parentAuthorization }),
+  };
+  const durableLease = await runtime.leaseCoordinator.request({
+    binding: leaseBinding,
+    expiresAt: expiresAt.toISOString(),
+    requestLimit: profile.maxRequests,
+    responseByteLimit: profile.maxResponseBytes,
+  });
+  if (durableLease.transition !== "issued") {
+    throw new Error(`Sandbox capability lease was not issued: ${durableLease.terminalReason ?? durableLease.transition}`);
+  }
+  let sensitiveMaterialReleased = false;
+  let releaseRegisteredSensitiveValue: (() => void) | undefined;
+  const disposeSensitiveMaterial = () => {
+    if (sensitiveMaterialReleased) return;
+    sensitiveMaterialReleased = true;
+    releaseRegisteredSensitiveValue?.();
+  };
   const grant: SandboxCapabilityGrant = {
     transport: "docker-shared-loopback-v1",
     lease: randomUUID(),
@@ -387,6 +430,34 @@ async function resolveTavilyCapability(
       expiresAt: expiresAt.toISOString(),
     },
     expectedInput: { query, maxResults },
+    lifecycle: {
+        beforeProviderInvocation: async () => {
+          await runtime.leaseCoordinator!.reserveInvocation(durableLease.leaseId, leaseBinding);
+        },
+        commitProviderResult: async ({ result, responseBytes }) => {
+          await runtime.leaseCoordinator!.commitResult({
+            leaseId: durableLease.leaseId,
+            expectedBinding: leaseBinding,
+            result,
+            responseBytes,
+            exactProviderUsage: null,
+          });
+        },
+        recordProviderFailure: async () => {
+          await runtime.leaseCoordinator!.recordProviderFailure(
+            durableLease.leaseId,
+            leaseBinding,
+          );
+        },
+        beforeContainerTeardown: async (reason) => {
+          await runtime.leaseCoordinator!.settleBeforeTeardown({
+            leaseId: durableLease.leaseId,
+            expectedBinding: leaseBinding,
+            reason,
+            disposeSensitiveMaterial,
+          });
+        },
+      },
     adapter: async (adapterInput, signal) => {
       try {
         const remainingExpiryMs = expiresAt.getTime() - (runtime.now ?? (() => new Date()))().getTime();
@@ -417,11 +488,18 @@ async function resolveTavilyCapability(
     value: credentialSnapshot.secret,
   });
   if (typeof releaseSensitiveValue !== "function") {
+    await runtime.leaseCoordinator.settleBeforeTeardown({
+      leaseId: durableLease.leaseId,
+      expectedBinding: leaseBinding,
+      reason: "failed",
+      disposeSensitiveMaterial: () => {},
+    });
     throw new Error("Sandbox capability sensitive-value registration must provide cleanup");
   }
+  releaseRegisteredSensitiveValue = releaseSensitiveValue;
   return {
     grant,
-    releaseSensitiveValue,
+    releaseSensitiveValue: disposeSensitiveMaterial,
     ...(runtime.redactSensitiveValues === undefined ? {} : { redactSensitiveValues: runtime.redactSensitiveValues }),
   };
 }

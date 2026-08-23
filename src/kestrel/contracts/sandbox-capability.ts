@@ -53,6 +53,197 @@ export interface TavilySearchAdapterResponseV1 {
   results: Array<{ title: string; url: string; content: string }>;
 }
 
+export const SANDBOX_CAPABILITY_LEASE_LIFECYCLE_VERSION = 1 as const;
+export type SandboxCapabilityLeaseTransitionV1 =
+  | "requested" | "denied" | "issued" | "invoking" | "consumed" | "exhausted"
+  | "revoked" | "expired" | "cancelled" | "cleaned";
+export type SandboxCapabilityLeaseTerminalOutcomeV1 =
+  | "denied" | "completed" | "failed" | "exhausted" | "revoked" | "expired" | "cancelled";
+
+export interface SandboxCapabilityLeaseBindingV1 {
+  version: 1;
+  tenantId: string;
+  environmentId: string;
+  sessionId: string;
+  runId: string;
+  toolCallId: string;
+  profileFingerprint: string;
+  capabilityCatalogFingerprint: string;
+  executionBoundaryRevision: string;
+  capabilityId: typeof TAVILY_SEARCH_CAPABILITY_ID;
+  operation: typeof TAVILY_SEARCH_OPERATION;
+  resource: typeof TAVILY_SEARCH_RESOURCE;
+  audience: { tenantId: string; environmentId: string };
+  brokerAuthority: { authorityId: string; revision: string };
+  credentialReference: { credentialId: "tool.tavily.default"; revision: string };
+  policyRevision: string;
+  approval?: { approvalId?: string | undefined; authorityRevision: string } | undefined;
+  parentAuthorization?: {
+    leaseId: string;
+    bindingDigest: string;
+    authorizationDecisionId: string;
+    reservationId: string;
+    requestLimit: number;
+    responseByteLimit: number;
+  } | undefined;
+}
+
+export type SandboxCapabilityChildReservationStatusV1 = "reserved" | "committed" | "released" | "revoked";
+export interface SandboxCapabilityChildAuthorizationDecisionV1 {
+  version: 1;
+  decisionId: string;
+  parentLeaseId: string;
+  parentBindingDigest: string;
+  childSessionId: string;
+  childRunId: string;
+  childToolCallId: string;
+  policyRevision: string;
+  approval: { approvalId?: string | undefined; authorityRevision: string };
+  requestLimit: number;
+  responseByteLimit: number;
+  decidedAt: string;
+}
+export interface SandboxCapabilityChildReservationV1 {
+  version: 1;
+  reservationId: string;
+  sequence: number;
+  status: SandboxCapabilityChildReservationStatusV1;
+  decision: SandboxCapabilityChildAuthorizationDecisionV1;
+  requestsCommitted: number;
+  responseBytesCommitted: number;
+  reason?: string | undefined;
+  occurredAt: string;
+}
+
+export function parseSandboxCapabilityChildReservationV1(value: unknown): SandboxCapabilityChildReservationV1 {
+  const record = strictRecord(value, ["version", "reservationId", "sequence", "status", "decision", "requestsCommitted", "responseBytesCommitted", "reason", "occurredAt"], "sandbox capability child reservation");
+  if (record.version !== 1) fail("sandbox capability child reservation version is invalid");
+  const decision = parseSandboxCapabilityChildAuthorizationDecisionV1(record.decision);
+  const statuses: SandboxCapabilityChildReservationStatusV1[] = ["reserved", "committed", "released", "revoked"];
+  if (statuses.includes(record.status as SandboxCapabilityChildReservationStatusV1) === false) fail("sandbox capability child reservation status is invalid");
+  const requestsCommitted = boundedInt(record.requestsCommitted, 0, decision.requestLimit, "child requestsCommitted");
+  const responseBytesCommitted = boundedInt(record.responseBytesCommitted, 0, decision.responseByteLimit, "child responseBytesCommitted");
+  if (record.status === "reserved" && (requestsCommitted !== 0 || responseBytesCommitted !== 0)) fail("reserved child authorization cannot contain committed usage");
+  return { version: 1, reservationId: nonEmpty(record.reservationId, "child reservationId"), sequence: boundedInt(record.sequence, 1, Number.MAX_SAFE_INTEGER, "child reservation sequence"), status: record.status as SandboxCapabilityChildReservationStatusV1, decision, requestsCommitted, responseBytesCommitted, ...(record.reason === undefined ? {} : { reason: nonEmpty(record.reason, "child reservation reason") }), occurredAt: timestamp(record.occurredAt, "child reservation occurredAt") };
+}
+
+export function parseSandboxCapabilityChildAuthorizationDecisionV1(value: unknown): SandboxCapabilityChildAuthorizationDecisionV1 {
+  const record = strictRecord(value, ["version", "decisionId", "parentLeaseId", "parentBindingDigest", "childSessionId", "childRunId", "childToolCallId", "policyRevision", "approval", "requestLimit", "responseByteLimit", "decidedAt"], "sandbox capability child authorization decision");
+  if (record.version !== 1) fail("sandbox capability child authorization decision version is invalid");
+  const approvalRecord = strictRecord(record.approval, ["approvalId", "authorityRevision"], "sandbox capability child approval");
+  return { version: 1, decisionId: nonEmpty(record.decisionId, "child decisionId"), parentLeaseId: nonEmpty(record.parentLeaseId, "child parentLeaseId"), parentBindingDigest: hashValue(record.parentBindingDigest, "child parentBindingDigest"), childSessionId: nonEmpty(record.childSessionId, "child sessionId"), childRunId: nonEmpty(record.childRunId, "child runId"), childToolCallId: nonEmpty(record.childToolCallId, "child toolCallId"), policyRevision: nonEmpty(record.policyRevision, "child policyRevision"), approval: { ...(approvalRecord.approvalId === undefined ? {} : { approvalId: nonEmpty(approvalRecord.approvalId, "child approvalId") }), authorityRevision: nonEmpty(approvalRecord.authorityRevision, "child approval authorityRevision") }, requestLimit: boundedInt(record.requestLimit, 1, 1_000_000, "child requestLimit"), responseByteLimit: boundedInt(record.responseByteLimit, 1, 1_000_000_000, "child responseByteLimit"), decidedAt: timestamp(record.decidedAt, "child decidedAt") };
+}
+
+export interface SandboxCapabilityLeaseUsageV1 {
+  requestLimit: number;
+  requestsConsumed: number;
+  responseByteLimit: number;
+  responseBytesConsumed: number;
+  /** Null means the provider did not return an exact usage measurement. */
+  exactProviderUsage: number | null;
+}
+
+export interface SandboxCapabilityLeaseResultEvidenceV1 {
+  digest: string;
+  reference: string;
+}
+
+export interface SandboxCapabilityLeaseTransitionRecordV1 {
+  version: 1;
+  leaseId: string;
+  sequence: number;
+  transition: SandboxCapabilityLeaseTransitionV1;
+  binding: SandboxCapabilityLeaseBindingV1;
+  bindingDigest: string;
+  usage: SandboxCapabilityLeaseUsageV1;
+  issuedAt?: string | undefined;
+  expiresAt: string;
+  terminalOutcome?: SandboxCapabilityLeaseTerminalOutcomeV1 | undefined;
+  terminalReason?: string | undefined;
+  cleanedAt?: string | undefined;
+  result?: SandboxCapabilityLeaseResultEvidenceV1 | undefined;
+  occurredAt: string;
+}
+
+export function parseSandboxCapabilityLeaseTransitionRecordV1(value: unknown): SandboxCapabilityLeaseTransitionRecordV1 {
+  const record = strictRecord(value, ["version", "leaseId", "sequence", "transition", "binding", "bindingDigest", "usage", "issuedAt", "expiresAt", "terminalOutcome", "terminalReason", "cleanedAt", "result", "occurredAt"], "sandbox capability lease transition");
+  if (record.version !== SANDBOX_CAPABILITY_LEASE_LIFECYCLE_VERSION) fail("sandbox capability lease transition version is invalid");
+  const transition = leaseTransition(record.transition);
+  const binding = parseSandboxCapabilityLeaseBindingV1(record.binding);
+  const usageRecord = strictRecord(record.usage, ["requestLimit", "requestsConsumed", "responseByteLimit", "responseBytesConsumed", "exactProviderUsage"], "sandbox capability lease usage");
+  const usage: SandboxCapabilityLeaseUsageV1 = {
+    requestLimit: boundedInt(usageRecord.requestLimit, 1, 1_000_000, "requestLimit"),
+    requestsConsumed: boundedInt(usageRecord.requestsConsumed, 0, 1_000_000, "requestsConsumed"),
+    responseByteLimit: boundedInt(usageRecord.responseByteLimit, 1, 1_000_000_000, "responseByteLimit"),
+    responseBytesConsumed: boundedInt(usageRecord.responseBytesConsumed, 0, 1_000_000_000, "responseBytesConsumed"),
+    exactProviderUsage: usageRecord.exactProviderUsage === null ? null : boundedInt(usageRecord.exactProviderUsage, 0, 1_000_000_000, "exactProviderUsage"),
+  };
+  if (usage.requestsConsumed > usage.requestLimit || usage.responseBytesConsumed > usage.responseByteLimit) fail("sandbox capability lease usage exceeds its ceiling");
+  const terminalOutcome = record.terminalOutcome === undefined ? undefined : leaseTerminalOutcome(record.terminalOutcome);
+  const cleanedAt = optionalTimestamp(record.cleanedAt, "cleanedAt");
+  if (transition === "cleaned" && cleanedAt === undefined) fail("cleaned lease transition requires cleanedAt");
+  const result = record.result === undefined ? undefined : parseLeaseResult(record.result);
+  return {
+    version: 1,
+    leaseId: nonEmpty(record.leaseId, "sandbox capability lease ID"),
+    sequence: boundedInt(record.sequence, 1, Number.MAX_SAFE_INTEGER, "sandbox capability lease sequence"),
+    transition,
+    binding,
+    bindingDigest: hashValue(record.bindingDigest, "sandbox capability binding digest"),
+    usage,
+    ...(record.issuedAt === undefined ? {} : { issuedAt: timestamp(record.issuedAt, "issuedAt") }),
+    expiresAt: timestamp(record.expiresAt, "expiresAt"),
+    ...(terminalOutcome === undefined ? {} : { terminalOutcome }),
+    ...(record.terminalReason === undefined ? {} : { terminalReason: nonEmpty(record.terminalReason, "terminalReason") }),
+    ...(cleanedAt === undefined ? {} : { cleanedAt }),
+    ...(result === undefined ? {} : { result }),
+    occurredAt: timestamp(record.occurredAt, "occurredAt"),
+  };
+}
+
+export function parseSandboxCapabilityLeaseBindingV1(value: unknown): SandboxCapabilityLeaseBindingV1 {
+  const record = strictRecord(value, ["version", "tenantId", "environmentId", "sessionId", "runId", "toolCallId", "profileFingerprint", "capabilityCatalogFingerprint", "executionBoundaryRevision", "capabilityId", "operation", "resource", "audience", "brokerAuthority", "credentialReference", "policyRevision", "approval", "parentAuthorization"], "sandbox capability lease binding");
+  if (record.version !== 1 || record.capabilityId !== TAVILY_SEARCH_CAPABILITY_ID || record.operation !== TAVILY_SEARCH_OPERATION || record.resource !== TAVILY_SEARCH_RESOURCE) fail("sandbox capability lease binding constants are invalid");
+  const audience = stringPair(record.audience, "tenantId", "environmentId", "sandbox capability lease audience");
+  const brokerAuthority = stringPair(record.brokerAuthority, "authorityId", "revision", "sandbox capability lease broker authority");
+  const credentialReference = stringPair(record.credentialReference, "credentialId", "revision", "sandbox capability lease credential reference");
+  if (credentialReference.credentialId !== "tool.tavily.default") fail("sandbox capability lease credential reference is invalid");
+  const approval = record.approval === undefined ? undefined : (() => { const item = strictRecord(record.approval, ["approvalId", "authorityRevision"], "sandbox capability lease approval"); return { ...(item.approvalId === undefined ? {} : { approvalId: nonEmpty(item.approvalId, "approvalId") }), authorityRevision: nonEmpty(item.authorityRevision, "approval authorityRevision") }; })();
+  const parentAuthorization = record.parentAuthorization === undefined ? undefined : (() => { const item = strictRecord(record.parentAuthorization, ["leaseId", "bindingDigest", "authorizationDecisionId", "reservationId", "requestLimit", "responseByteLimit"], "sandbox capability parent authorization"); return { leaseId: nonEmpty(item.leaseId, "parent leaseId"), bindingDigest: hashValue(item.bindingDigest, "parent bindingDigest"), authorizationDecisionId: nonEmpty(item.authorizationDecisionId, "parent authorizationDecisionId"), reservationId: nonEmpty(item.reservationId, "parent reservationId"), requestLimit: boundedInt(item.requestLimit, 1, 1_000_000, "parent requestLimit"), responseByteLimit: boundedInt(item.responseByteLimit, 1, 1_000_000_000, "parent responseByteLimit") }; })();
+  const output: SandboxCapabilityLeaseBindingV1 = { version: 1, tenantId: nonEmpty(record.tenantId, "tenantId"), environmentId: nonEmpty(record.environmentId, "environmentId"), sessionId: nonEmpty(record.sessionId, "sessionId"), runId: nonEmpty(record.runId, "runId"), toolCallId: nonEmpty(record.toolCallId, "toolCallId"), profileFingerprint: hashValue(record.profileFingerprint, "profileFingerprint"), capabilityCatalogFingerprint: hashValue(record.capabilityCatalogFingerprint, "capabilityCatalogFingerprint"), executionBoundaryRevision: nonEmpty(record.executionBoundaryRevision, "executionBoundaryRevision"), capabilityId: TAVILY_SEARCH_CAPABILITY_ID, operation: TAVILY_SEARCH_OPERATION, resource: TAVILY_SEARCH_RESOURCE, audience, brokerAuthority, credentialReference: { credentialId: "tool.tavily.default", revision: credentialReference.revision }, policyRevision: nonEmpty(record.policyRevision, "policyRevision"), ...(approval === undefined ? {} : { approval }), ...(parentAuthorization === undefined ? {} : { parentAuthorization }) };
+  if (output.tenantId !== audience.tenantId || output.environmentId !== audience.environmentId) fail("sandbox capability lease audience is inconsistent");
+  return output;
+}
+
+export function fingerprintSandboxCapabilityLeaseBindingV1(value: unknown): string {
+  return createHash("sha256").update(canonical(parseSandboxCapabilityLeaseBindingV1(value))).digest("hex");
+}
+
+export function assertSandboxCapabilityLeaseTransitionV1(
+  previous: SandboxCapabilityLeaseTransitionV1 | undefined,
+  next: SandboxCapabilityLeaseTransitionV1,
+): void {
+  const allowed: Record<string, SandboxCapabilityLeaseTransitionV1[]> = {
+    start: ["requested"],
+    requested: ["denied", "issued", "revoked", "expired", "cancelled"],
+    denied: ["cleaned"],
+    issued: ["invoking", "revoked", "expired", "cancelled"],
+    invoking: ["consumed", "exhausted", "revoked", "expired", "cancelled"],
+    consumed: ["exhausted", "revoked", "expired", "cancelled", "cleaned"],
+    exhausted: ["cleaned"], revoked: ["cleaned"], expired: ["cleaned"], cancelled: ["cleaned"], cleaned: [],
+  };
+  if ((allowed[previous ?? "start"] ?? []).includes(next) === false) {
+    fail(`sandbox capability lease transition '${previous ?? "start"}' -> '${next}' is invalid`);
+  }
+}
+
+function leaseTransition(value: unknown): SandboxCapabilityLeaseTransitionV1 { const values: SandboxCapabilityLeaseTransitionV1[] = ["requested", "denied", "issued", "invoking", "consumed", "exhausted", "revoked", "expired", "cancelled", "cleaned"]; if (values.includes(value as SandboxCapabilityLeaseTransitionV1) === false) fail("sandbox capability lease transition is invalid"); return value as SandboxCapabilityLeaseTransitionV1; }
+function leaseTerminalOutcome(value: unknown): SandboxCapabilityLeaseTerminalOutcomeV1 { const values: SandboxCapabilityLeaseTerminalOutcomeV1[] = ["denied", "completed", "failed", "exhausted", "revoked", "expired", "cancelled"]; if (values.includes(value as SandboxCapabilityLeaseTerminalOutcomeV1) === false) fail("sandbox capability lease terminal outcome is invalid"); return value as SandboxCapabilityLeaseTerminalOutcomeV1; }
+function timestamp(value: unknown, label: string): string { const text = nonEmpty(value, label); if (Number.isFinite(Date.parse(text)) === false) fail(`${label} must be a timestamp`); return new Date(text).toISOString(); }
+function optionalTimestamp(value: unknown, label: string): string | undefined { return value === undefined ? undefined : timestamp(value, label); }
+function hashValue(value: unknown, label: string): string { const text = nonEmpty(value, label); if (/^(?:sha256:)?[a-f0-9]{64}$/u.test(text) === false) fail(`${label} must be a SHA-256 digest`); return text; }
+function parseLeaseResult(value: unknown): SandboxCapabilityLeaseResultEvidenceV1 { const record = strictRecord(value, ["digest", "reference"], "sandbox capability lease result evidence"); return { digest: hashValue(record.digest, "result digest"), reference: nonEmpty(record.reference, "result reference") }; }
+
 export function parseSandboxCapabilityProfileV1(value: unknown): SandboxCapabilityProfileV1 {
   const record = strictRecord(value, ["version", "capabilityId", "operations", "resource", "audience", "maxRequests", "maxQueryChars", "maxResults", "maxResponseBytes", "timeoutMs", "maxExpiryMs", "brokerAuthority"], "sandbox capability profile");
   if (record.version !== 1 || record.capabilityId !== TAVILY_SEARCH_CAPABILITY_ID || record.resource !== TAVILY_SEARCH_RESOURCE || record.maxRequests !== 1) fail("sandbox capability profile constants are invalid");

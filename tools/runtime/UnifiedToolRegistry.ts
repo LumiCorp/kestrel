@@ -1293,6 +1293,15 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
                   sessionId: activeContext.runtime?.sessionId ?? prepared.sessionId,
                   toolCallId: prepared.callId,
                 },
+                ...(descriptor.toolId === "code.execute" && activeContext.sandboxCapabilityRuntime !== undefined
+                  ? {
+                      sandboxCapabilityRuntime: {
+                        ...activeContext.sandboxCapabilityRuntime,
+                        preparedPolicy: prepared.policy,
+                        ...(prepared.approval === undefined ? {} : { preparedApproval: prepared.approval }),
+                      },
+                    }
+                  : {}),
               };
           const handlers = defaultToolCatalog.createRawHandlers(
             [descriptor.toolId],

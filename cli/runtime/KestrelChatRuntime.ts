@@ -105,9 +105,17 @@ import {
 } from "../../src/kestrel/contracts/evaluation.js";
 import type { RuntimeEvaluationRuntimeConfiguration } from "../../src/evaluation/RuntimeEvaluationCoordinator.js";
 import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.js";
-import { fingerprintSandboxCapabilityCatalogV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
+import {
+  fingerprintSandboxCapabilityCatalogV1,
+  fingerprintSandboxCapabilityLeaseBindingV1,
+  type SandboxCapabilityLeaseBindingV1,
+} from "../../src/kestrel/contracts/sandbox-capability.js";
+import {
+  digestSandboxCapabilityResult,
+  SandboxCapabilityLeaseCoordinator,
+} from "../../src/code/SandboxCapabilityLeaseCoordinator.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
-import type { SessionStore } from "../../src/kestrel/contracts/store.js";
+import type { SandboxCapabilityLeaseStore, SessionStore } from "../../src/kestrel/contracts/store.js";
 import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import type { RunTurnAttachment } from "../../src/kestrel/contracts/orchestration.js";
 import type { Microsoft365ServicePort } from "../../src/apps/microsoft365.js";
@@ -3349,23 +3357,53 @@ function createRuntimeWithStore(
         })
       : undefined;
   const devShellService = resolveDevShellServiceForProfile(profile, runtimeEnv);
+  const sandboxCapabilityEnvironment = resolveSandboxCapabilityRuntimeEnvironment(
+    profile,
+    environment?.sandboxCapabilityAudience ?? resolveSandboxCapabilityAudienceFromEnvironment(runtimeEnv),
+    environment?.sandboxCapabilityBrokerAuthority ?? resolveSandboxCapabilityBrokerAuthorityFromEnvironment(runtimeEnv),
+    fingerprintResolvedProfile(profile),
+    fingerprintSandboxCapabilityCatalogV1(profile.codeMode?.capabilities ?? []),
+    environment?.sandboxCapabilityCredentialResolver,
+    (input) => executionBoundaryRuntime.sensitiveValues.register({
+      reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
+      value: input.value,
+    }),
+    (value) => executionBoundaryRuntime.sensitiveValues.redact(value).value,
+  );
+  const sandboxCapabilityRuntime = sandboxCapabilityEnvironment?.sandboxCapabilityRuntime;
+  const sandboxCapabilityStore = supportsSandboxCapabilityLeaseStore(store) ? store : undefined;
+  if (sandboxCapabilityRuntime !== undefined) {
+    if (sandboxCapabilityStore === undefined) {
+      throw new Error("Selected sandbox capabilities require a durable lifecycle store");
+    }
+    const profileFingerprint = fingerprintResolvedProfile(profile);
+    const capabilityCatalogFingerprint = fingerprintSandboxCapabilityCatalogV1(profile.codeMode?.capabilities ?? []);
+    sandboxCapabilityRuntime.leaseCoordinator = new SandboxCapabilityLeaseCoordinator({
+      store: sandboxCapabilityStore,
+      validateCurrent: async (binding) => validateSandboxCapabilityLeaseCurrent({
+        binding,
+        profileFingerprint,
+        capabilityCatalogFingerprint,
+        executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+        audience: sandboxCapabilityRuntime,
+        brokerAuthority: sandboxCapabilityRuntime.brokerAuthority,
+        credentialResolver: sandboxCapabilityRuntime.resolveCredentialSnapshot,
+        store,
+      }),
+      persistResult: (input) => persistSandboxCapabilityResultEvidence({
+        ...input,
+        store,
+        redact: (value) => executionBoundaryRuntime.sensitiveValues.redact(value).value,
+      }),
+    });
+    sandboxCapabilityRuntime.resolveParentAuthorization = (input) =>
+      resolveSandboxCapabilityParentAuthorization(store, input);
+  }
   const toolContext: SharedToolContext = {
     store,
     onFinalize,
     codeMode: profile.codeMode,
-    ...(resolveSandboxCapabilityRuntimeEnvironment(
-      profile,
-      environment?.sandboxCapabilityAudience ?? resolveSandboxCapabilityAudienceFromEnvironment(runtimeEnv),
-      environment?.sandboxCapabilityBrokerAuthority ?? resolveSandboxCapabilityBrokerAuthorityFromEnvironment(runtimeEnv),
-      fingerprintResolvedProfile(profile),
-      fingerprintSandboxCapabilityCatalogV1(profile.codeMode?.capabilities ?? []),
-      environment?.sandboxCapabilityCredentialResolver,
-      (input) => executionBoundaryRuntime.sensitiveValues.register({
-        reference: { referenceId: input.referenceId, kind: "credential", scope: "sandbox-capability" },
-        value: input.value,
-      }),
-      (value) => executionBoundaryRuntime.sensitiveValues.redact(value).value,
-    ) ?? {}),
+    ...(sandboxCapabilityEnvironment ?? {}),
     devShell: profile.devShell,
     kestrelOne: {
       appUrl: parseEnvString("KESTREL_ONE_APP_URL", runtimeEnv),
@@ -3572,6 +3610,28 @@ function createRuntimeWithStore(
     },
     reasoningRetentionScope: profile.id,
   });
+  const recoverRuntimeAndSandboxOrphans = recoverOrphanedActiveRun === undefined
+    ? undefined
+    : async (sessionId: string) => {
+        const recovered = await recoverOrphanedActiveRun(sessionId);
+        const coordinator = sandboxCapabilityRuntime?.leaseCoordinator;
+        if (coordinator !== undefined) {
+          const leases = await sandboxCapabilityStore?.listRecoverableSandboxCapabilityLeases({
+            before: new Date().toISOString(),
+          }) ?? [];
+          for (const lease of leases.filter((candidate) => candidate.binding.sessionId === sessionId)) {
+            const disposition = await coordinator.recover(lease.leaseId, lease.binding);
+            if (disposition.kind === "resume") continue;
+            await coordinator.settleBeforeTeardown({
+              leaseId: disposition.lease.leaseId,
+              expectedBinding: disposition.lease.binding,
+              reason: disposition.kind === "replay" ? "completed" : "failed",
+              disposeSensitiveMaterial: () => {},
+            });
+          }
+        }
+        return recovered;
+      };
   let threadRuntime: ThreadRuntime | undefined;
   const threadedTurnExecutor = new RuntimeThreadedTurnExecutor({
     entryStepAgent: registration.entryStepAgent,
@@ -3703,8 +3763,8 @@ function createRuntimeWithStore(
     ...(workspaceGitService !== undefined ? { workspaceGitService } : {}),
     ...(workspaceGitReady !== undefined ? { workspaceGitReady } : {}),
     entryStepAgent: registration.entryStepAgent,
-    ...(recoverOrphanedActiveRun !== undefined
-      ? { recoverOrphanedActiveRun }
+    ...(recoverRuntimeAndSandboxOrphans !== undefined
+      ? { recoverOrphanedActiveRun: recoverRuntimeAndSandboxOrphans }
       : {}),
     reasoningPolicyReady,
     readFinalizedPayload: async (sessionId: string) => {
@@ -4379,6 +4439,131 @@ export function resolveSandboxCapabilityRuntimeEnvironment(
       redactSensitiveValues,
     },
   };
+}
+
+export async function persistSandboxCapabilityResultEvidence(input: {
+  store: SessionStore;
+  leaseId: string;
+  binding: SandboxCapabilityLeaseBindingV1;
+  result: unknown;
+  redact: <T>(value: T) => T;
+}): Promise<{ digest: string; reference: string }> {
+  const sanitized = input.redact(input.result);
+  const digest = digestSandboxCapabilityResult(sanitized);
+  const artifactId = `sandbox-capability-result:${input.leaseId}`;
+  await input.store.appendArtifacts(input.binding.runId, input.binding.sessionId, 0, [{
+    id: artifactId,
+    type: "sandbox_capability_result.v1",
+    payload: {
+      version: 1,
+      leaseId: input.leaseId,
+      bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(input.binding),
+      digest,
+      result: sanitized,
+    },
+  }]);
+  return { digest, reference: `artifact:${artifactId}` };
+}
+
+async function validateSandboxCapabilityLeaseCurrent(input: {
+  binding: SandboxCapabilityLeaseBindingV1;
+  profileFingerprint: string;
+  capabilityCatalogFingerprint: string;
+  executionBoundaryRevision: string;
+  audience: { tenantId: string; environmentId: string };
+  brokerAuthority: { authorityId: string; revision: string };
+  credentialResolver: KestrelRuntimeEnvironment["sandboxCapabilityCredentialResolver"];
+  store: SessionStore;
+}): Promise<{ authorized: boolean; reason?: string | undefined }> {
+  const binding = input.binding;
+  if (binding.profileFingerprint !== input.profileFingerprint) return { authorized: false, reason: "profile_revision_changed" };
+  if (binding.capabilityCatalogFingerprint !== input.capabilityCatalogFingerprint) return { authorized: false, reason: "capability_catalog_changed" };
+  if (binding.executionBoundaryRevision !== input.executionBoundaryRevision) return { authorized: false, reason: "execution_boundary_changed" };
+  if (binding.tenantId !== input.audience.tenantId || binding.environmentId !== input.audience.environmentId) return { authorized: false, reason: "audience_changed" };
+  if (binding.brokerAuthority.authorityId !== input.brokerAuthority.authorityId || binding.brokerAuthority.revision !== input.brokerAuthority.revision) return { authorized: false, reason: "broker_authority_changed" };
+  if (input.credentialResolver === undefined) return { authorized: false, reason: "credential_unavailable" };
+  const credential = await input.credentialResolver();
+  if (credential.credentialId !== binding.credentialReference.credentialId || credential.revision !== binding.credentialReference.revision) {
+    return { authorized: false, reason: "credential_revision_changed" };
+  }
+  if (binding.approval?.approvalId !== undefined) {
+    const grants = await input.store.listApprovalGrants();
+    const grant = grants.find((candidate) =>
+      candidate.grantId === binding.approval?.approvalId &&
+      candidate.authorityRevision === binding.approval.authorityRevision);
+    if (grant === undefined || grant.status === "EXPIRED" || grant.status === "REVOKED") {
+      return { authorized: false, reason: "approval_revoked_or_stale" };
+    }
+  }
+  if (binding.parentAuthorization !== undefined) {
+    if (!supportsSandboxCapabilityLeaseStore(input.store)) {
+      return { authorized: false, reason: "parent_authorization_store_unavailable" };
+    }
+    const parent = await input.store.getSandboxCapabilityLease(binding.parentAuthorization.leaseId);
+    if (parent === null) return { authorized: false, reason: "parent_authorization_missing" };
+    if (parent.bindingDigest !== binding.parentAuthorization.bindingDigest) {
+      return { authorized: false, reason: "parent_authorization_binding_changed" };
+    }
+    if (parent.transition !== "issued" || Date.now() >= Date.parse(parent.expiresAt)) {
+      return { authorized: false, reason: "parent_authorization_inactive" };
+    }
+    if (
+      parent.binding.tenantId !== binding.tenantId ||
+      parent.binding.environmentId !== binding.environmentId ||
+      parent.binding.capabilityId !== binding.capabilityId ||
+      parent.binding.operation !== binding.operation ||
+      parent.binding.resource !== binding.resource
+    ) {
+      return { authorized: false, reason: "parent_authorization_scope_mismatch" };
+    }
+  }
+  return { authorized: true };
+}
+
+async function resolveSandboxCapabilityParentAuthorization(
+  store: SessionStore,
+  input: { sessionId: string; runId: string; toolCallId: string },
+): Promise<SandboxCapabilityLeaseBindingV1["parentAuthorization"] | undefined> {
+  const session = await store.getSession(input.sessionId);
+  const delegation = asRecord(asRecord(session?.state.agent)?.delegation);
+  if (delegation === undefined || typeof delegation.parentRunId !== "string") return;
+  const authorization = asRecord(delegation.sandboxCapabilityParentAuthorization);
+  if (authorization === undefined) {
+    throw new Error("Child sandbox capability requires independent authorization within the parent ceiling");
+  }
+  const leaseId = typeof authorization.leaseId === "string" ? authorization.leaseId.trim() : "";
+  const bindingDigest = typeof authorization.bindingDigest === "string" ? authorization.bindingDigest.trim() : "";
+  const authorizationDecisionId = typeof authorization.authorizationDecisionId === "string"
+    ? authorization.authorizationDecisionId.trim()
+    : "";
+  const reservationId = typeof authorization.reservationId === "string" ? authorization.reservationId.trim() : "";
+  const requestLimit = authorization.requestLimit;
+  const responseByteLimit = authorization.responseByteLimit;
+  if (
+    leaseId.length === 0 ||
+    /^(?:sha256:)?[a-f0-9]{64}$/u.test(bindingDigest) === false ||
+    authorizationDecisionId.length === 0 ||
+    reservationId.length === 0 ||
+    typeof requestLimit !== "number" || !Number.isSafeInteger(requestLimit) || requestLimit <= 0 ||
+    typeof responseByteLimit !== "number" || !Number.isSafeInteger(responseByteLimit) || responseByteLimit <= 0
+  ) {
+    throw new Error("Child sandbox capability parent authorization is invalid");
+  }
+  return { leaseId, bindingDigest, authorizationDecisionId, reservationId, requestLimit, responseByteLimit };
+}
+
+function supportsSandboxCapabilityLeaseStore(
+  store: SessionStore,
+): store is SessionStore & SandboxCapabilityLeaseStore {
+  const candidate = store as SessionStore & Partial<SandboxCapabilityLeaseStore>;
+  return typeof candidate.appendSandboxCapabilityLeaseTransition === "function" &&
+    typeof candidate.getSandboxCapabilityLease === "function" &&
+    typeof candidate.listSandboxCapabilityLeaseTransitions === "function" &&
+    typeof candidate.listRecoverableSandboxCapabilityLeases === "function" &&
+    typeof candidate.reserveSandboxCapabilityChild === "function" &&
+    typeof candidate.settleSandboxCapabilityChild === "function" &&
+    typeof candidate.getSandboxCapabilityChildReservation === "function" &&
+    typeof candidate.listSandboxCapabilityChildReservations === "function";
 }
 
 function normalizePositiveInt(value: number, fallback: number): number {

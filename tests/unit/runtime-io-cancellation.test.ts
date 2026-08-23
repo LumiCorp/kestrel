@@ -22,9 +22,11 @@ import { buildAgentToolSuccessResult } from "../../tools/toolResult.js";
 import { ExecutionBoundaryPolicyRuntime } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { adaptLegacyTestToolGateway } from "../helpers/createTestToolGateway.js";
 import { CodeExecutionService } from "../../src/code/CodeExecutionService.js";
+import { SandboxCapabilityLeaseCoordinator } from "../../src/code/SandboxCapabilityLeaseCoordinator.js";
 import { DEFAULT_CODE_MODE_ENABLED_CONFIG } from "../../src/code/contracts.js";
 import { fingerprintSandboxCapabilityCatalogV1, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
+import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
 
 const guardrailConfig = {
   maxStepsPerRun: 10,
@@ -642,6 +644,11 @@ test("real Tavily adapter echoes are redacted before RuntimeIO persistence and m
     brokerAuthority: { authorityId: "broker-runtime-io", revision: "revision-runtime-io" },
   };
   const boundaryRuntime = new ExecutionBoundaryPolicyRuntime();
+  const leaseCoordinator = new SandboxCapabilityLeaseCoordinator({
+    store: new InMemorySessionStore(),
+    validateCurrent: async () => ({ authorized: true }),
+    persistResult: async () => ({ digest: "b".repeat(64), reference: "artifact:runtime-io-capability-result" }),
+  });
   const service = new CodeExecutionService({
     executor: {
       async execute(input) {
@@ -698,6 +705,7 @@ test("real Tavily adapter echoes are redacted before RuntimeIO persistence and m
             value: input.value,
           }),
           redactSensitiveValues: <T>(value: T) => boundaryRuntime.sensitiveValues.redact(value).value,
+          leaseCoordinator,
         } },
       );
       return buildAgentToolSuccessResult({ toolName: "code.execute", input: { capabilityId: profile.capabilityId }, output });

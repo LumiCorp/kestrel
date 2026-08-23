@@ -28,6 +28,10 @@ import {
   normalizeEvidenceRecoverySummary,
   type EvidenceRecoveryFamily,
 } from "../runtime/evidenceQuality.js";
+import {
+  parseSandboxCapabilityLeaseTransitionRecordV1,
+  type SandboxCapabilityLeaseTransitionRecordV1,
+} from "../kestrel/contracts/sandbox-capability.js";
 
 export interface ReplayQuery {
   runId?: string | undefined;
@@ -338,6 +342,35 @@ export interface ReplayResult {
   adaptation?: ReplayAdaptationSummary | undefined;
   evidenceRecovery?: ReplayEvidenceRecoverySummary | undefined;
   runtimePlan?: ReplayRuntimePlanSummary | undefined;
+  sandboxCapabilities?: ReplaySandboxCapabilityReport | undefined;
+}
+
+export interface ReplaySandboxCapabilityLease {
+  leaseId: string;
+  bindingDigest: string;
+  capabilityId: string;
+  operation: string;
+  resource: string;
+  runId: string;
+  toolCallId: string;
+  policyRevision: string;
+  approvalAuthorityRevision?: string | undefined;
+  parentLeaseId?: string | undefined;
+  status: SandboxCapabilityLeaseTransitionRecordV1["transition"];
+  expiresAt: string;
+  remainingRequests: number;
+  remainingResponseBytes: number;
+  exactProviderUsage: number | null;
+  terminalOutcome?: SandboxCapabilityLeaseTransitionRecordV1["terminalOutcome"];
+  terminalReason?: string | undefined;
+  cleanedAt?: string | undefined;
+  resultReference?: string | undefined;
+  occurredAt: string;
+}
+
+export interface ReplaySandboxCapabilityReport {
+  leases: ReplaySandboxCapabilityLease[];
+  invalidTransitionEvents: number;
 }
 
 export interface ReplayRuntimePlanSummary {
@@ -596,6 +629,7 @@ export class RunReplayService {
     });
     const delegations = await this.buildDelegationReports(lineage, groups, waits.history, events);
     const supervision = this.buildSupervisionReport(delegations, events);
+    const sandboxCapabilities = this.buildSandboxCapabilityReport(events);
 
     return {
       query,
@@ -622,6 +656,61 @@ export class RunReplayService {
       ...(adaptation !== undefined ? { adaptation } : {}),
       ...(evidenceRecovery !== undefined ? { evidenceRecovery } : {}),
       ...(runtimePlan !== undefined ? { runtimePlan } : {}),
+      sandboxCapabilities,
+    };
+  }
+
+  private buildSandboxCapabilityReport(events: RunEvent[]): ReplaySandboxCapabilityReport {
+    const latestByLease = new Map<string, SandboxCapabilityLeaseTransitionRecordV1>();
+    let invalidTransitionEvents = 0;
+    for (const event of events) {
+      if (event.type.startsWith("sandbox_capability.") === false) continue;
+      const metadata = asRecord(event.metadata);
+      const candidate = metadata?.record ?? metadata?.transitionRecord ?? metadata;
+      try {
+        const record = parseSandboxCapabilityLeaseTransitionRecordV1(candidate);
+        if (event.type !== `sandbox_capability.${record.transition}`) {
+          invalidTransitionEvents += 1;
+          continue;
+        }
+        const current = latestByLease.get(record.leaseId);
+        if (current === undefined || record.sequence > current.sequence) {
+          latestByLease.set(record.leaseId, record);
+        }
+      } catch {
+        invalidTransitionEvents += 1;
+      }
+    }
+    return {
+      leases: [...latestByLease.values()]
+        .sort((left, right) => left.leaseId.localeCompare(right.leaseId))
+        .map((record) => ({
+          leaseId: record.leaseId,
+          bindingDigest: record.bindingDigest,
+          capabilityId: record.binding.capabilityId,
+          operation: record.binding.operation,
+          resource: record.binding.resource,
+          runId: record.binding.runId,
+          toolCallId: record.binding.toolCallId,
+          policyRevision: record.binding.policyRevision,
+          ...(record.binding.approval !== undefined
+            ? { approvalAuthorityRevision: record.binding.approval.authorityRevision }
+            : {}),
+          ...(record.binding.parentAuthorization !== undefined
+            ? { parentLeaseId: record.binding.parentAuthorization.leaseId }
+            : {}),
+          status: record.transition,
+          expiresAt: record.expiresAt,
+          remainingRequests: Math.max(0, record.usage.requestLimit - record.usage.requestsConsumed),
+          remainingResponseBytes: Math.max(0, record.usage.responseByteLimit - record.usage.responseBytesConsumed),
+          exactProviderUsage: record.usage.exactProviderUsage,
+          ...(record.terminalOutcome !== undefined ? { terminalOutcome: record.terminalOutcome } : {}),
+          ...(record.terminalReason !== undefined ? { terminalReason: record.terminalReason } : {}),
+          ...(record.cleanedAt !== undefined ? { cleanedAt: record.cleanedAt } : {}),
+          ...(record.result !== undefined ? { resultReference: record.result.reference } : {}),
+          occurredAt: record.occurredAt,
+        })),
+      invalidTransitionEvents,
     };
   }
 

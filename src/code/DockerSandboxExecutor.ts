@@ -121,6 +121,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     let ownedBrokerContainerId: string | undefined;
     const adapterPumpController = new AbortController();
     let adapterPump: Promise<void> | undefined;
+    let teardownReason: "completed" | "failed" | "cancelled" | "timeout" = "failed";
 
     try {
       if (input.capability !== undefined) {
@@ -242,6 +243,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
       }
 
       if (run.timedOut) {
+        teardownReason = "timeout";
         return {
           status: "timeout",
           exitCode: null,
@@ -252,6 +254,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         };
       }
 
+      teardownReason = run.exitCode === 0 ? "completed" : "failed";
       return {
         status: run.exitCode === 0 ? "ok" : "error",
         exitCode: run.exitCode,
@@ -263,6 +266,13 @@ export class DockerSandboxExecutor implements SandboxExecutor {
     } finally {
       adapterPumpController.abort();
       await adapterPump?.catch(() => {});
+      if (input.signal?.aborted === true) teardownReason = "cancelled";
+      let lifecycleError: unknown;
+      try {
+        await input.capability?.lifecycle?.beforeContainerTeardown(teardownReason);
+      } catch (error) {
+        lifecycleError = error;
+      }
       if (ownedWorkloadContainerId !== undefined) {
         await removeContainer(ownedWorkloadContainerId);
       }
@@ -270,6 +280,7 @@ export class DockerSandboxExecutor implements SandboxExecutor {
         await removeContainer(ownedBrokerContainerId);
       }
       await rm(rootDir, { recursive: true, force: true });
+      if (lifecycleError !== undefined) throw lifecycleError;
     }
   }
 }
@@ -598,13 +609,26 @@ async function runCapabilityAdapterPump(
         ) {
           throw new Error("Broker request does not match the trusted capability grant");
         }
-        const response = await invokeAdapterUntilAbort(
-          grant.adapter,
-          grant.expectedInput,
-          signal,
-        );
-        if (Buffer.byteLength(JSON.stringify(response), "utf8") > (grant.maxResponseBytes ?? 64_000)) {
-          throw new Error("Adapter response exceeds the trusted capability ceiling");
+        await grant.lifecycle?.beforeProviderInvocation();
+        let response: unknown;
+        try {
+          response = await invokeAdapterUntilAbort(
+            grant.adapter,
+            grant.expectedInput,
+            signal,
+          );
+          const responseBytes = Buffer.byteLength(JSON.stringify(response), "utf8");
+          if (responseBytes > (grant.maxResponseBytes ?? 64_000)) {
+            throw new Error("Adapter response exceeds the trusted capability ceiling");
+          }
+          await grant.lifecycle?.commitProviderResult({
+            result: response,
+            responseBytes,
+            resultCount: readCapabilityResultCount(response),
+          });
+        } catch (error) {
+          await grant.lifecycle?.recordProviderFailure(error);
+          throw error;
         }
         mediated = { ok: true, response };
       } catch {
@@ -624,6 +648,12 @@ async function runCapabilityAdapterPump(
     }
     await waitForAdapterRequest(signal);
   }
+}
+
+function readCapabilityResultCount(value: unknown): number {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return 0;
+  const results = (value as { results?: unknown }).results;
+  return Array.isArray(results) ? results.length : 0;
 }
 
 async function invokeAdapterUntilAbort(

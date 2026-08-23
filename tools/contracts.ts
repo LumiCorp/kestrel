@@ -218,7 +218,13 @@ export interface SharedToolContext {
   strictFinalizeProvenance?: boolean | undefined;
   codeMode?: CodeModeProfileConfig | undefined;
   codeExecutionService?: CodeExecutionServicePort | undefined;
-  sandboxCapabilityRuntime?: Omit<SandboxCapabilityRuntimeContext, "sessionId" | "runId" | "toolCallId"> | undefined;
+  sandboxCapabilityRuntime?: (
+    Omit<SandboxCapabilityRuntimeContext, "sessionId" | "runId" | "toolCallId" | "policy" | "approval" | "parentAuthorization"> & {
+      /** Set only by the trusted prepared-call path in UnifiedToolRegistry. */
+      preparedPolicy?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined;
+      preparedApproval?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolApprovalAuthorityV1 | undefined;
+    }
+  ) | undefined;
   devShell?: DevShellProfileConfig | undefined;
   devShellService?: DevShellServicePort | undefined;
   desktopHostOpenService?: DesktopHostOpenServicePort | undefined;

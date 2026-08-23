@@ -120,6 +120,7 @@ test("code.execute exposes only the selector input and carries the exact prepare
       executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
       brokerAuthority: capability.brokerAuthority,
       credentialSnapshot: { credentialId: "tool.tavily.default", revision: "credential-r1", secret: "secret" },
+      preparedPolicy: { decision: "allow", policyRevision: "policy-r1" },
     },
     codeExecutionService: { async execute(_config, _request, options) { capturedOptions = options; return { status: "ok", exitCode: 0, stdout: "", stderr: "", durationMs: 1, artifacts: [], summary: "ok", policy: { enabled: true, approvalMode: "auto", executor: "docker", language: "javascript", timeoutMs: 1000, memoryMb: 128, cpuShares: 128, pidsLimit: 64, workspaceSizeMb: 32, workspaceInodes: 100, tmpSizeMb: 16, tmpInodes: 100, network: "off", allowDependencyInstall: false, maxOutputBytes: 1000, maxArtifacts: 1, maxArtifactBytes: 1000 }, retention: { persistSummary: true, persistArtifacts: true } }; } },
   });

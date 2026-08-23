@@ -24,6 +24,14 @@ import type {
   SessionStore,
   UpdateConversationTurnTerminalEnvelopeInput,
 } from "../kestrel/contracts/store.js";
+import {
+  assertSandboxCapabilityLeaseTransitionV1,
+  fingerprintSandboxCapabilityLeaseBindingV1,
+  parseSandboxCapabilityChildReservationV1,
+  parseSandboxCapabilityLeaseTransitionRecordV1,
+  type SandboxCapabilityChildReservationV1,
+  type SandboxCapabilityLeaseTransitionRecordV1,
+} from "../kestrel/contracts/sandbox-capability.js";
 
 import {
   normalizeRuntimeStateForPersist,
@@ -146,6 +154,8 @@ export class InMemorySessionStore implements SessionStore {
   private readonly outboxEvents: OutboxEventRecord[] = [];
   private readonly runLogs: RunLogEntry[] = [];
   private readonly runEvents: RunEvent[] = [];
+  private readonly sandboxCapabilityLeaseTransitions = new Map<string, SandboxCapabilityLeaseTransitionRecordV1[]>();
+  private readonly sandboxCapabilityChildReservations = new Map<string, SandboxCapabilityChildReservationV1[]>();
   private readonly artifacts: PersistedArtifact[] = [];
   private readonly claims: PersistedClaim[] = [];
   private readonly regionWorkItems: InMemoryRegionWorkItem[] = [];
@@ -964,6 +974,100 @@ export class InMemorySessionStore implements SessionStore {
 
   async appendRunEvent(event: RunEvent): Promise<void> {
     await this.appendRunEventsBatch([event]);
+  }
+
+  async appendSandboxCapabilityLeaseTransition(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
+    const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
+    if (record.bindingDigest !== fingerprintSandboxCapabilityLeaseBindingV1(record.binding)) {
+      throw new Error("Sandbox capability lease binding digest does not match the immutable binding");
+    }
+    const ledger = this.sandboxCapabilityLeaseTransitions.get(record.leaseId) ?? [];
+    const current = ledger.at(-1);
+    const currentSequence = current?.sequence ?? 0;
+    if (input.expectedSequence !== currentSequence || record.sequence !== currentSequence + 1) {
+      throw new Error("Sandbox capability lease transition sequence conflict");
+    }
+    assertSandboxCapabilityLeaseTransitionV1(current?.transition, record.transition);
+    if (current !== undefined && (current.bindingDigest !== record.bindingDigest || JSON.stringify(current.binding) !== JSON.stringify(record.binding))) {
+      throw new Error("Sandbox capability lease immutable binding changed");
+    }
+    const persisted = structuredClone(record);
+    ledger.push(persisted);
+    this.sandboxCapabilityLeaseTransitions.set(record.leaseId, ledger);
+    this.runEvents.push({ runId: record.binding.runId, sessionId: record.binding.sessionId, type: `sandbox_capability.${record.transition}` as RunEvent["type"], level: record.transition === "denied" || record.transition === "revoked" || record.transition === "expired" || record.transition === "cancelled" ? "WARN" : "INFO", timestamp: record.occurredAt, metadata: { record: structuredClone(record) } });
+    if (["denied", "revoked", "expired", "cancelled", "cleaned"].includes(record.transition)) {
+      this.revokeInMemoryChildReservations(record.leaseId, record.occurredAt, `parent_${record.transition}`);
+    }
+    this.operationLog.push(`sandboxCapabilityLease:${record.transition}`);
+    return structuredClone(persisted);
+  }
+
+  async getSandboxCapabilityLease(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1 | null> {
+    const record = this.sandboxCapabilityLeaseTransitions.get(leaseId)?.at(-1);
+    return record === undefined ? null : structuredClone(record);
+  }
+
+  async listSandboxCapabilityLeaseTransitions(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1[]> {
+    return (this.sandboxCapabilityLeaseTransitions.get(leaseId) ?? []).map((record) => structuredClone(record));
+  }
+
+  async listRecoverableSandboxCapabilityLeases(input: { before: string; limit?: number | undefined }): Promise<SandboxCapabilityLeaseTransitionRecordV1[]> {
+    const before = Date.parse(input.before);
+    if (Number.isFinite(before) === false) throw new Error("Sandbox capability recovery cutoff must be a timestamp");
+    const limit = input.limit ?? 100;
+    return [...this.sandboxCapabilityLeaseTransitions.values()]
+      .map((ledger) => ledger.at(-1))
+      .filter((record): record is SandboxCapabilityLeaseTransitionRecordV1 => record !== undefined && record.transition !== "cleaned" && record.transition !== "requested" && record.transition !== "denied" && Date.parse(record.occurredAt) <= before)
+      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.leaseId.localeCompare(right.leaseId))
+      .slice(0, limit)
+      .map((record) => structuredClone(record));
+  }
+
+  async reserveSandboxCapabilityChild(input: { expectedParentSequence: number; reservation: SandboxCapabilityChildReservationV1 }): Promise<SandboxCapabilityChildReservationV1> {
+    const reservation = parseSandboxCapabilityChildReservationV1(input.reservation);
+    if (reservation.sequence !== 1 || reservation.status !== "reserved") throw new Error("Sandbox capability child reservation must begin reserved at sequence 1");
+    const parent = await this.getSandboxCapabilityLease(reservation.decision.parentLeaseId);
+    if (parent === null || parent.sequence !== input.expectedParentSequence || parent.bindingDigest !== reservation.decision.parentBindingDigest || !["issued", "invoking"].includes(parent.transition)) throw new Error("Sandbox capability parent authorization is unavailable or stale");
+    if (this.sandboxCapabilityChildReservations.has(reservation.reservationId)) throw new Error("Sandbox capability child reservation conflict");
+    const siblings = this.currentInMemoryChildReservations(parent.leaseId);
+    const requestsAllocated = siblings.reduce((sum, item) => sum + (item.status === "reserved" ? item.decision.requestLimit : item.status === "committed" ? item.requestsCommitted : 0), 0);
+    const bytesAllocated = siblings.reduce((sum, item) => sum + (item.status === "reserved" ? item.decision.responseByteLimit : item.status === "committed" ? item.responseBytesCommitted : 0), 0);
+    if (parent.usage.requestsConsumed + requestsAllocated + reservation.decision.requestLimit > parent.usage.requestLimit || parent.usage.responseBytesConsumed + bytesAllocated + reservation.decision.responseByteLimit > parent.usage.responseByteLimit) throw new Error("Sandbox capability parent ceiling is exhausted");
+    const persisted = structuredClone(reservation);
+    this.sandboxCapabilityChildReservations.set(reservation.reservationId, [persisted]);
+    return structuredClone(persisted);
+  }
+
+  async settleSandboxCapabilityChild(input: { reservationId: string; expectedSequence: number; status: "committed" | "released"; requestsCommitted: number; responseBytesCommitted: number; reason?: string | undefined; occurredAt: string }): Promise<SandboxCapabilityChildReservationV1> {
+    const ledger = this.sandboxCapabilityChildReservations.get(input.reservationId);
+    const current = ledger?.at(-1);
+    if (current === undefined || current.sequence !== input.expectedSequence || current.status !== "reserved") throw new Error("Sandbox capability child reservation sequence conflict");
+    const next = parseSandboxCapabilityChildReservationV1({ ...current, sequence: current.sequence + 1, status: input.status, requestsCommitted: input.requestsCommitted, responseBytesCommitted: input.responseBytesCommitted, ...(input.reason === undefined ? {} : { reason: input.reason }), occurredAt: input.occurredAt });
+    ledger!.push(structuredClone(next));
+    return structuredClone(next);
+  }
+
+  async getSandboxCapabilityChildReservation(reservationId: string): Promise<SandboxCapabilityChildReservationV1 | null> {
+    const current = this.sandboxCapabilityChildReservations.get(reservationId)?.at(-1);
+    return current === undefined ? null : structuredClone(current);
+  }
+
+  async listSandboxCapabilityChildReservations(parentLeaseId: string): Promise<SandboxCapabilityChildReservationV1[]> {
+    return this.currentInMemoryChildReservations(parentLeaseId).map((item) => structuredClone(item));
+  }
+
+  private currentInMemoryChildReservations(parentLeaseId: string): SandboxCapabilityChildReservationV1[] {
+    return [...this.sandboxCapabilityChildReservations.values()].map((ledger) => ledger.at(-1)).filter((item): item is SandboxCapabilityChildReservationV1 => item?.decision.parentLeaseId === parentLeaseId);
+  }
+
+  private revokeInMemoryChildReservations(parentLeaseId: string, occurredAt: string, reason: string): void {
+    for (const current of this.currentInMemoryChildReservations(parentLeaseId)) {
+      if (current.status !== "reserved") continue;
+      this.sandboxCapabilityChildReservations.get(current.reservationId)!.push({ ...structuredClone(current), sequence: current.sequence + 1, status: "revoked", reason, occurredAt });
+    }
   }
 
   async appendRunLogsBatch(entries: RunLogEntry[]): Promise<void> {

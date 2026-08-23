@@ -109,9 +109,23 @@ export const codeExecuteTool: SharedToolModule = {
         : profileConfig.capabilities?.find((item) => item.capabilityId === request.capability?.capabilityId);
       const capabilityRuntime = request.capability === undefined
         ? undefined
-        : (() => {
+        : await (async () => {
             if (selectedProfile === undefined || context.sandboxCapabilityRuntime === undefined || context.runtime?.toolCallId === undefined) {
               throw createToolInputError("code.execute", "Selected capability is unavailable in the trusted runtime context.");
+            }
+            const parentAuthorization = context.sandboxCapabilityRuntime.resolveParentAuthorization === undefined
+              ? undefined
+              : await context.sandboxCapabilityRuntime.resolveParentAuthorization({
+                  sessionId: context.runtime.sessionId,
+                  runId: context.runtime.runId,
+                  toolCallId: context.runtime.toolCallId,
+                });
+            const preparedContext = context.sandboxCapabilityRuntime as typeof context.sandboxCapabilityRuntime & {
+              preparedPolicy?: import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1;
+              preparedApproval?: import("../../src/kestrel/contracts/tool-invocation.js").PreparedToolApprovalAuthorityV1;
+            };
+            if (preparedContext.preparedPolicy === undefined) {
+              throw createToolInputError("code.execute", "Selected capability is missing its prepared policy authority.");
             }
             return {
               ...context.sandboxCapabilityRuntime,
@@ -119,6 +133,9 @@ export const codeExecuteTool: SharedToolModule = {
               runId: context.runtime.runId,
               toolCallId: context.runtime.toolCallId,
               profileFingerprint: context.sandboxCapabilityRuntime.profileFingerprint,
+              policy: preparedContext.preparedPolicy,
+              ...(preparedContext.preparedApproval === undefined ? {} : { approval: preparedContext.preparedApproval }),
+              ...(parentAuthorization === undefined ? {} : { parentAuthorization }),
             };
           })();
       const result = await service.execute(profileConfig, request, {

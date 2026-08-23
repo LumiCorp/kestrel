@@ -10,10 +10,62 @@ import {
   resolveSandboxCapabilityAudienceFromEnvironment,
   resolveSandboxCapabilityBrokerAuthorityFromEnvironment,
   resolveSandboxCapabilityRuntimeEnvironment,
+  persistSandboxCapabilityResultEvidence,
 } from "../../cli/runtime/KestrelChatRuntime.js";
 import type { ModelGateway } from "../../src/kestrel/contracts/model-io.js";
-import { KESTREL_EXECUTION_BOUNDARY_POLICY } from "../../src/security/ExecutionBoundaryPolicy.js";
+import {
+  fingerprintSandboxCapabilityLeaseBindingV1,
+  type SandboxCapabilityLeaseBindingV1,
+} from "../../src/kestrel/contracts/sandbox-capability.js";
+import {
+  KESTREL_EXECUTION_BOUNDARY_POLICY,
+  SensitiveValueRegistry,
+} from "../../src/security/ExecutionBoundaryPolicy.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
+
+test("sandbox capability result artifacts recursively redact registered secrets before digest and persistence", async () => {
+  const store = new InMemorySessionStore();
+  const registry = new SensitiveValueRegistry();
+  const secret = "nested-provider-secret";
+  const release = registry.register({
+    reference: { referenceId: "credential-r1", kind: "credential", scope: "sandbox-capability" },
+    value: secret,
+  });
+  const digest = "a".repeat(64);
+  const binding: SandboxCapabilityLeaseBindingV1 = {
+    version: 1,
+    tenantId: "tenant-a",
+    environmentId: "environment-a",
+    sessionId: "session-a",
+    runId: "run-a",
+    toolCallId: "call-a",
+    profileFingerprint: digest,
+    capabilityCatalogFingerprint: digest,
+    executionBoundaryRevision: KESTREL_EXECUTION_BOUNDARY_POLICY.revision,
+    capabilityId: "tavily.search.read",
+    operation: "search",
+    resource: "https://api.tavily.com/search",
+    audience: { tenantId: "tenant-a", environmentId: "environment-a" },
+    brokerAuthority: { authorityId: "broker-a", revision: "revision-a" },
+    credentialReference: { credentialId: "tool.tavily.default", revision: "credential-r1" },
+    policyRevision: "policy-r1",
+  };
+
+  const evidence = await persistSandboxCapabilityResultEvidence({
+    store,
+    leaseId: "lease-a",
+    binding,
+    result: { results: [{ content: `prefix ${secret} suffix`, nested: { token: secret } }] },
+    redact: <T>(value: T) => registry.redact(value).value,
+  });
+  release();
+
+  const artifact = await store.getArtifact({ artifactId: "sandbox-capability-result:lease-a", sessionId: "session-a" });
+  const serialized = JSON.stringify({ artifact, evidence });
+  assert.equal(serialized.includes(secret), false);
+  assert.match(serialized, /redacted/iu);
+  assert.equal((artifact?.payload as { bindingDigest?: string }).bindingDigest, fingerprintSandboxCapabilityLeaseBindingV1(binding));
+});
 
 
 const BASE_PROFILE: TuiProfile = {
