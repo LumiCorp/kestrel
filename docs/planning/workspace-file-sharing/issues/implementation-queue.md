@@ -12,7 +12,7 @@ None.
 
 ## Blocked
 
-- [Show shared Workspace downloads in Kestrel One Mobile](02-show-downloads-in-kestrel-one-mobile.md) — blocked until the [operator runbook](../../../operations/workspace-file-sharing-mobile-device-validation-runbook.md) records a green mobile verification gate and physical iOS and Android Download-action evidence for the same reviewed commit
+- [Show shared Workspace downloads in Kestrel One Mobile](02-show-downloads-in-kestrel-one-mobile.md) — blocked until the [operator runbook](../../../operations/workspace-file-sharing-mobile-device-validation-runbook.md) records physical iOS and Android Download-action evidence for the verified mobile commit
 
 ## Implemented
 

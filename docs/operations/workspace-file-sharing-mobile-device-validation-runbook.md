@@ -7,8 +7,8 @@ Validate the Kestrel One Mobile Download card on physical iOS and Android device
 ## Authority Boundary
 
 - Agent may: prepare and verify local code, inspect connected-device state, rerun automated checks, and assess nonsensitive evidence.
-- Human must: authorize any dependency-baseline change, provide physical devices and device tooling, sign in to Kestrel One, operate each device, and assess native download behavior.
-- Separately authorized external effects: a scoped Expo SDK patch-alignment change, native development builds, authenticated test access, opening an expiring bearer link, and downloading then deleting test files. This runbook does not authorize those effects.
+- Human must: provide physical devices, sign in to Kestrel One, operate each device, and assess native download behavior.
+- Separately authorized external effects: native development builds, authenticated test access, opening an expiring bearer link, and downloading then deleting test files. This runbook does not authorize those effects.
 
 ## Current State
 
@@ -16,18 +16,16 @@ Verified on August 24, 2026:
 
 - Mobile implementation commit: `b04673d46f35e7bef9e03c78b7e58b4e9f3455cb`.
 - Hosted file-sharing Issue 01 and repair Issues 03 through 10 are Done.
-- Mobile API generation, boundary, parity, lint, typecheck, production audit, 19 Jest suites, and 175 tests passed.
-- `pnpm verify` stops at Expo Doctor because eight installed SDK packages are one patch behind its current expected versions. The file-sharing checks pass before that stop.
+- `CI=true pnpm verify` passed completely on the mobile implementation commit, including API generation, boundary, parity, lint, typecheck, 19 Jest suites, 175 tests, Expo Doctor 20/20, and production audit.
 - `xcrun xctrace list devices` reported `No devices available for the recording`.
-- `adb` was not installed on the validation machine.
+- Android platform tools are installed at the local SDK path, but `adb devices -l` reported no attached devices.
 
 Recheck every item after an interruption. Do not rely on this snapshot as current evidence.
 
 ## Prerequisites
 
-- [ ] Check out mobile commit `b04673d46f35e7bef9e03c78b7e58b4e9f3455cb`, or a reviewed descendant containing only approved follow-up changes.
-- [ ] Obtain explicit approval before changing Expo dependency versions or the lockfile.
-- [ ] Make `CI=true pnpm verify` pass on the exact device-build commit.
+- [x] Check out mobile commit `b04673d46f35e7bef9e03c78b7e58b4e9f3455cb`, or a reviewed descendant containing only approved follow-up changes.
+- [x] Make `CI=true pnpm verify` pass on the exact device-build commit.
 - [ ] Provide one supported physical iOS device with a native development or release build. Expo Go is not accepted.
 - [ ] Provide one supported physical Android device with a native development or release build. Expo Go is not accepted.
 - [ ] Provide authorized Kestrel One test access and a test Thread containing an active `file-share` artifact.
@@ -49,17 +47,17 @@ Do not paste the bearer URL, session data, or signing material into the runbook,
 
 ## Stages
 
-### 1. Restore a green automated baseline
+### 1. Confirm the green automated baseline
 
-- Preconditions: the mobile worktree is clean at the target commit; dependency changes have separate explicit approval.
-- Actor: human authorizes dependency scope; agent or human applies and verifies the approved change.
-- Action: align only the Expo SDK patch versions required by Expo Doctor, regenerate the lockfile, and run `CI=true pnpm verify`.
-- Confirmation gate: stop before editing `package.json` or `pnpm-lock.yaml` until the exact dependency list is approved.
+- Preconditions: the mobile worktree is clean at the exact commit intended for both device builds.
+- Actor: agent or human operator.
+- Action: run `CI=true pnpm verify` without changing the source, manifest, or lockfile.
+- Confirmation gate: none.
 - Expected result: every `pnpm verify` stage passes on the exact commit intended for devices.
-- Evidence: final commit SHA, dependency-only diff, complete green `pnpm verify` result, and Expo Doctor result. Do not retain registry credentials.
-- Stop condition: any major or minor upgrade, native configuration change, failed audit, new warning, or unrelated source change is required.
-- Recovery or rollback: restore the reviewed mobile commit in a separate clean worktree and reassess the dependency plan. Do not discard uncommitted work.
-- Resume checkpoint: recheck the commit SHA, clean worktree, dependency diff, and complete verify result.
+- Evidence: final commit SHA, clean worktree, complete green `pnpm verify` result, and Expo Doctor result. Do not retain registry credentials.
+- Stop condition: verification fails, the worktree is dirty, or the intended device build uses another commit.
+- Recovery or rollback: stop device validation, preserve the failure output, and return the failure to the owning implementation workflow.
+- Resume checkpoint: recheck the commit SHA, clean worktree, and complete verify result.
 
 ### 2. Validate the physical iOS journey
 
@@ -99,7 +97,7 @@ Do not paste the bearer URL, session data, or signing material into the runbook,
 
 ## Completion Criteria
 
-- [ ] `CI=true pnpm verify` passes on the exact device-build commit.
+- [x] `CI=true pnpm verify` passes on the exact device-build commit.
 - [ ] A physical iOS device passes the active, closed, and expired Download-card journey.
 - [ ] A physical Android device passes the active, closed, and expired Download-card journey.
 - [ ] Both downloaded files match the expected filename, byte count, file count, and SHA-256 digest.
