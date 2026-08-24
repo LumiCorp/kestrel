@@ -33,13 +33,14 @@ export async function listFiles(root) {
 }
 
 export async function assertNoBundledAttachmentWorker(files) {
-  const assetWorkers = files.filter((path) =>
-    path.includes("/.next/server/assets/") && path.endsWith(".js")
-  );
-  for (const path of assetWorkers) {
+  const serverJavaScript = files.filter((path) => path.endsWith(".js"));
+  for (const path of serverJavaScript) {
     const source = await readFile(path, "utf8");
     if (source.includes("Attachment processor worker requires a parent port.")) {
-      throw new Error(`Next bundled the attachment worker as a raw server asset: ${path}`);
+      throw new Error(`Next bundled the attachment worker into server output: ${path}`);
+    }
+    if (source.includes("Attachment processor input exceeds the 100 MiB limit.")) {
+      throw new Error(`Next bundled the attachment package into server output: ${path}`);
     }
   }
 }

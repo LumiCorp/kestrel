@@ -1,0 +1,252 @@
+/**
+ * Returns the complete source for the Kestrel-owned, single-payload download
+ * process. The tool writes this source into its generated staging directory so
+ * the managed Workspace process does not depend on a model-selected command or
+ * a system-installed server.
+ */
+export function buildWorkspaceFileShareServerSource(): string {
+  return `const __name = (value) => value;\n(${workspaceFileShareServerMain.toString()})();\n`;
+}
+
+async function workspaceFileShareServerMain(): Promise<void> {
+  const fs = await import("node:fs");
+  const fsPromises = await import("node:fs/promises");
+  const crypto = await import("node:crypto");
+  const http = await import("node:http");
+  const path = await import("node:path");
+
+  const encodedConfig = process.argv[2] ?? process.argv[1];
+  if (!encodedConfig) {
+    throw new Error("Missing Kestrel file-share server configuration.");
+  }
+  const config = JSON.parse(
+    Buffer.from(encodedConfig, "base64url").toString("utf8"),
+  ) as {
+    stagePath: string;
+    payloadPath: string;
+    downloadName: string;
+    mediaType: string;
+    expectedSizeBytes: number;
+    expectedSha256: string;
+    stageDevice: string;
+    stageInode: string;
+  };
+  const payload = await fsPromises.open(
+    config.payloadPath,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  const payloadStat = await payload.stat();
+  if (!payloadStat.isFile()) {
+    await payload.close();
+    throw new Error("Kestrel file-share payload is not a regular file.");
+  }
+  await fsPromises.unlink(config.payloadPath);
+  const digest = crypto.createHash("sha256");
+  const verificationBuffer = Buffer.allocUnsafe(1024 * 1024);
+  let verifiedBytes = 0;
+  for (;;) {
+    const { bytesRead } = await payload.read(
+      verificationBuffer,
+      0,
+      verificationBuffer.length,
+      verifiedBytes,
+    );
+    if (bytesRead === 0) break;
+    digest.update(verificationBuffer.subarray(0, bytesRead));
+    verifiedBytes += bytesRead;
+  }
+  if (
+    verifiedBytes !== config.expectedSizeBytes ||
+    digest.digest("hex") !== config.expectedSha256
+  ) {
+    await payload.close();
+    throw new Error("Kestrel file-share payload changed before publication.");
+  }
+  const route = `/${encodeURIComponent(config.downloadName)}`;
+  const fallbackName = config.downloadName
+    .replace(/[\u0000-\u001f\u007f"\\]/gu, "_")
+    .replace(/[^\x20-\x7e]/gu, "_");
+  const encodedName = encodeURIComponent(config.downloadName).replace(
+    /['()*]/gu,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  const disposition =
+    `attachment; filename="${fallbackName}"; filename*=UTF-8''${encodedName}`;
+
+  const server = http.createServer((request, response) => {
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (requestUrl.pathname !== route || requestUrl.search.length > 0) {
+      response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      response.end("Not found.\n");
+      return;
+    }
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      response.writeHead(405, {
+        allow: "GET, HEAD",
+        "content-type": "text/plain; charset=utf-8",
+      });
+      response.end("Method not allowed.\n");
+      return;
+    }
+
+    const range = parseRange(request.headers.range, payloadStat.size);
+    if (range === "invalid") {
+      response.writeHead(416, {
+        "accept-ranges": "bytes",
+        "content-range": `bytes */${payloadStat.size}`,
+        "content-type": "text/plain; charset=utf-8",
+        "x-content-type-options": "nosniff",
+      });
+      response.end("Range not satisfiable.\n");
+      return;
+    }
+    const start = range?.start ?? 0;
+    const end = range?.end ?? Math.max(0, payloadStat.size - 1);
+    const contentLength = payloadStat.size === 0 ? 0 : end - start + 1;
+    const headers: Record<string, string | number> = {
+      "accept-ranges": "bytes",
+      "content-disposition": disposition,
+      "content-length": contentLength,
+      "content-type": config.mediaType,
+      "x-content-type-options": "nosniff",
+    };
+    if (range !== undefined) {
+      headers["content-range"] = `bytes ${start}-${end}/${payloadStat.size}`;
+    }
+    response.writeHead(range === undefined ? 200 : 206, headers);
+    if (request.method === "HEAD" || payloadStat.size === 0) {
+      response.end();
+      return;
+    }
+    const stream = fs.createReadStream(config.payloadPath, {
+      fd: payload.fd,
+      autoClose: false,
+      start,
+      end,
+    });
+    stream.on("error", () => response.destroy());
+    stream.pipe(response);
+  });
+
+  let shuttingDown = false;
+  const shutdown = async (exitCode: number) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stdin.destroy();
+    const forceClose = setTimeout(() => server.closeAllConnections(), 2_000);
+    forceClose.unref();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    clearTimeout(forceClose);
+    await payload.close().catch(() => undefined);
+    await reclaimOwnedStage().catch(() => undefined);
+    process.exitCode = exitCode;
+  };
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.once(signal, () => void shutdown(0));
+  }
+  // The managed process supervisor owns the write end of stdin. A detached
+  // download server must treat that pipe closing as authoritative owner loss;
+  // otherwise it can retain the unlinked payload after a supervisor crash.
+  process.stdin.once("end", () => void shutdown(1));
+  process.stdin.once("close", () => void shutdown(1));
+  process.stdin.resume();
+  process.once("uncaughtException", () => void shutdown(1));
+  process.once("unhandledRejection", () => void shutdown(1));
+
+  server.listen(0, "127.0.0.1", async () => {
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      await shutdown(1);
+      return;
+    }
+    process.stdout.write(
+      `KESTREL_FILE_SHARE_READY ${JSON.stringify({ port: address.port })}\n`,
+    );
+  });
+
+  async function reclaimOwnedStage(): Promise<void> {
+    const stageStat = await fsPromises.lstat(config.stagePath)
+      .catch(() => undefined);
+    if (
+      stageStat === undefined ||
+      !stageStat.isDirectory() ||
+      stageStat.isSymbolicLink() ||
+      String(stageStat.dev) !== config.stageDevice ||
+      String(stageStat.ino) !== config.stageInode
+    ) {
+      return;
+    }
+    const quarantinePath = path.join(
+      path.dirname(config.stagePath),
+      `.kestrel-file-share-cleanup-${crypto.randomUUID()}`,
+    );
+    await fsPromises.rename(config.stagePath, quarantinePath);
+    const movedStat = await fsPromises.lstat(quarantinePath)
+      .catch(() => undefined);
+    if (
+      movedStat === undefined ||
+      !movedStat.isDirectory() ||
+      movedStat.isSymbolicLink() ||
+      String(movedStat.dev) !== config.stageDevice ||
+      String(movedStat.ino) !== config.stageInode
+    ) {
+      await fsPromises.rename(quarantinePath, config.stagePath).catch(() => undefined);
+      return;
+    }
+    const entries = await fsPromises.readdir(quarantinePath);
+    const generatedEntries = new Set([
+      "metadata.json",
+      "metadata.next.json",
+      "payload",
+      "server.mjs",
+    ]);
+    if (entries.some((entry) => !generatedEntries.has(entry))) {
+      await fsPromises.rename(quarantinePath, config.stagePath).catch(() => undefined);
+      return;
+    }
+    try {
+      for (const entry of entries) {
+        await fsPromises.unlink(path.join(quarantinePath, entry));
+      }
+      await fsPromises.rmdir(quarantinePath);
+    } catch {
+      await fsPromises.rename(quarantinePath, config.stagePath).catch(() => undefined);
+    }
+  }
+
+  function parseRange(
+    header: string | undefined,
+    size: number,
+  ): { start: number; end: number } | "invalid" | undefined {
+    if (header === undefined) return undefined;
+    if (!header.startsWith("bytes=") || header.includes(",") || size === 0) {
+      return "invalid";
+    }
+    const match = /^bytes=(\d*)-(\d*)$/u.exec(header);
+    if (match === null || (match[1] === "" && match[2] === "")) {
+      return "invalid";
+    }
+    if (match[1] === "") {
+      const suffixLength = Number(match[2]);
+      if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+        return "invalid";
+      }
+      return {
+        start: Math.max(0, size - suffixLength),
+        end: size - 1,
+      };
+    }
+    const start = Number(match[1]);
+    const requestedEnd = match[2] === "" ? size - 1 : Number(match[2]);
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(requestedEnd) ||
+      start < 0 ||
+      requestedEnd < start ||
+      start >= size
+    ) {
+      return "invalid";
+    }
+    return { start, end: Math.min(requestedEnd, size - 1) };
+  }
+}

@@ -1578,7 +1578,12 @@
           "title",
           "kind",
           "url",
-          "mediaType"
+          "mediaType",
+          "previewId",
+          "sizeBytes",
+          "fileCount",
+          "expiresAt",
+          "warning"
         ],
         "properties": {
           "type": {
@@ -1601,6 +1606,42 @@
             ]
           },
           "mediaType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "previewId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sizeBytes": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "fileCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "expiresAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IsoDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "warning": {
             "type": [
               "string",
               "null"

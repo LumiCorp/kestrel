@@ -307,6 +307,91 @@ test(
         AND "key" = 'hosted_environments'
     `;
 
+    const previousRuntimeMode = process.env.KESTREL_ENVIRONMENT_RUNTIME;
+    const previousLocalRunnerUrl =
+      process.env.KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL;
+    const validPrivateKey = process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY;
+    process.env.KESTREL_ENVIRONMENT_RUNTIME = "local";
+    process.env.KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL =
+      "http://127.0.0.1:43106";
+    try {
+      const projectContextGrantId = `context-grant-${suffix}`;
+      const localRoute = await executionRoute.resolveEnvironmentExecutionRoute({
+        organizationId: organizationA,
+        threadId: projectThreadId,
+        actorUserId: userA,
+        agentId: "kestrel-one-local",
+        recordExecution: {
+          projectContextRevisionId: revisionId,
+          projectContextGrantId,
+        },
+      });
+      const [localExecution] = await sql<
+        Array<{
+          projectContextGrantId: string | null;
+          runtimeImage: string;
+        }>
+      >`
+        SELECT
+          "project_context_grant_id" AS "projectContextGrantId",
+          "runtime_image" AS "runtimeImage"
+        FROM "environment_run_executions"
+        WHERE "id" = ${localRoute.runId}
+      `;
+      assert.deepEqual(localExecution, {
+        projectContextGrantId,
+        runtimeImage: "local-runner",
+      });
+      await sql`
+        DELETE FROM "environment_run_executions"
+        WHERE "id" = ${localRoute.runId}
+      `;
+
+      process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = "invalid-key";
+      await assert.rejects(
+        executionRoute.resolveEnvironmentExecutionRoute({
+          organizationId: organizationA,
+          threadId: projectThreadId,
+          actorUserId: userA,
+          agentId: "kestrel-one-local",
+          recordExecution: {
+            projectContextRevisionId: revisionId,
+            projectContextGrantId,
+          },
+        }),
+      );
+      const [orphanedLocalExecutions] = await sql<Array<{ count: number }>>`
+        SELECT count(*)::integer AS "count"
+        FROM "environment_run_executions"
+        WHERE "thread_id" = ${projectThreadId}
+          AND "runtime_image" = 'local-runner'
+      `;
+      assert.equal(orphanedLocalExecutions?.count, 0);
+    } finally {
+      if (validPrivateKey === undefined) {
+        Reflect.deleteProperty(
+          process.env,
+          "KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY",
+        );
+      } else {
+        process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY = validPrivateKey;
+      }
+      if (previousRuntimeMode === undefined) {
+        Reflect.deleteProperty(process.env, "KESTREL_ENVIRONMENT_RUNTIME");
+      } else {
+        process.env.KESTREL_ENVIRONMENT_RUNTIME = previousRuntimeMode;
+      }
+      if (previousLocalRunnerUrl === undefined) {
+        Reflect.deleteProperty(
+          process.env,
+          "KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL",
+        );
+      } else {
+        process.env.KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL =
+          previousLocalRunnerUrl;
+      }
+    }
+
     const coldWakeOperationId = `cold-wake-operation-${suffix}`;
     await sql.begin(async (transaction) => {
       await transaction`

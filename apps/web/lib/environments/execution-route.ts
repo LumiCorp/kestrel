@@ -38,6 +38,10 @@ import {
   createExecutionAuthorizationRenewalToken,
   EXECUTION_AUTHORIZATION_RENEWAL_VERSION,
 } from "./authorization-renewal";
+import {
+  LOCAL_ENVIRONMENT_RUNTIME_IMAGE,
+  localEnvironmentExecutionTarget,
+} from "./local-execution";
 
 export type EnvironmentActivationProgress = {
   stage:
@@ -593,6 +597,29 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     organizationId: input.organizationId,
     environmentId: resolved.binding.environmentId,
   });
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const executionTicket = signEnvironmentExecutionTicket({
+    privateKey: process.env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? "",
+    ticket: {
+      version: 2,
+      audience: ENVIRONMENT_ROUTER_AUDIENCE,
+      organizationId: input.organizationId,
+      environmentId: resolved.binding.environmentId,
+      workspaceId: resolved.binding.workspaceId,
+      threadId: input.threadId,
+      runId,
+      actorId: input.actorUserId,
+      agentId: input.agentId ?? "kestrel-one-ui",
+      target: localEnvironmentExecutionTarget(resolved.binding.workspaceId),
+      capabilities: [...ROUTE_CAPABILITIES],
+      issuedAt,
+      expiresAt: issuedAt + 300,
+      nonce: crypto.randomUUID(),
+    },
+  });
+  const renewal = input.recordExecution
+    ? createExecutionAuthorizationRenewalToken()
+    : undefined;
   let mcpPolicy;
   let projectId: string | null | undefined;
   if (input.recordExecution) {
@@ -603,11 +630,13 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
       workspaceId: resolved.binding.workspaceId,
       threadId: input.threadId,
       actorId: input.actorUserId,
-      runtimeImage: "local-runner",
+      runtimeImage: LOCAL_ENVIRONMENT_RUNTIME_IMAGE,
       routeCapabilities: [...ROUTE_CAPABILITIES],
       effectiveCapabilities,
       reasoningPolicy,
       projectContextRevisionId: input.recordExecution.projectContextRevisionId,
+      projectContextGrantId: input.recordExecution.projectContextGrantId,
+      authorizationRenewalTokenHash: renewal?.tokenHash,
       durableTurnId: input.recordExecution.durableTurnId,
     });
     mcpPolicy = await resolveHostedMcpRunPolicy({
@@ -625,7 +654,7 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     provider: "local" as const,
     baseUrl: process.env.KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL ?? "",
     authToken: process.env.KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN ?? "",
-    executionTicket: undefined,
+    executionTicket,
     runId,
     environmentId: resolved.binding.environmentId,
     workspaceId: resolved.binding.workspaceId,
@@ -633,6 +662,18 @@ async function resolveLocalEnvironmentExecutionRoute(input: {
     effectiveCapabilities,
     approvalPolicies,
     reasoningPolicy,
+    ...(renewal
+      ? {
+          authorizationRenewal: {
+            version: EXECUTION_AUTHORIZATION_RENEWAL_VERSION,
+            endpoint: new URL(
+              `/api/runtime/executions/${encodeURIComponent(runId)}/authorization/renew`,
+              resolveKestrelAppUrl(process.env),
+            ).toString(),
+            token: renewal.token,
+          },
+        }
+      : {}),
     ...(mcpPolicy ? { mcpPolicy } : {}),
   };
 }

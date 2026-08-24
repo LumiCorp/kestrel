@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildToolApprovalPresentation } from "../../src/runtime/toolApprovalPresentation.js";
+import { normalizeToolActionInput } from "../../tools/runtime/normalizeToolInput.js";
 
 test("approval presenters show meaningful normalized fields without transport secrets", () => {
   const presentation = buildToolApprovalPresentation({
@@ -113,4 +114,80 @@ test("unknown tools receive a conservative redacted fallback", () => {
     /never-render|also-hidden|apiKey/u,
   );
   assert.match(presentation.summary, /Sensitive request data is hidden/u);
+});
+
+test("Workspace file-share approval names every selected path and public-link control", () => {
+  const presentation = buildToolApprovalPresentation({
+    toolName: "workspace.files.share",
+    effectiveInput: {
+      mode: "zip",
+      paths: ["reports/summary.pdf", "reports/data.csv"],
+      downloadName: "analysis.zip",
+      ttlMinutes: 60,
+    },
+  });
+
+  assert.equal(presentation.title, "Share Workspace files");
+  assert.deepEqual(presentation.fields, [
+    { label: "Mode", value: "zip" },
+    {
+      label: "Selected files",
+      value: '["reports/summary.pdf","reports/data.csv"]',
+    },
+    { label: "Download name", value: "analysis.zip" },
+    { label: "Lifetime (minutes)", value: "60" },
+  ]);
+  assert.match(presentation.warnings.join(" "), /Anyone with the temporary link/u);
+});
+
+test("Workspace file-share approval shows deterministic effective defaults", () => {
+  const fileInput = normalizeToolActionInput("workspace.files.share", {
+    mode: "file",
+    paths: ["reports/final report.pdf"],
+  });
+  const zipInput = normalizeToolActionInput("workspace.files.share", {
+    mode: "zip",
+    paths: ["reports/summary.pdf", "reports/data.csv"],
+  });
+
+  const filePresentation = buildToolApprovalPresentation({
+    toolName: "workspace.files.share",
+    effectiveInput: fileInput,
+  });
+  const zipPresentation = buildToolApprovalPresentation({
+    toolName: "workspace.files.share",
+    effectiveInput: zipInput,
+  });
+
+  assert.deepEqual(filePresentation.fields.slice(2), [
+    { label: "Download name", value: "final report.pdf" },
+    { label: "Lifetime (minutes)", value: "60" },
+  ]);
+  assert.deepEqual(zipPresentation.fields.slice(2), [
+    { label: "Download name", value: "kestrel-files.zip" },
+    { label: "Lifetime (minutes)", value: "60" },
+  ]);
+});
+
+test("Workspace file-share approval preserves comma-bearing path boundaries", () => {
+  const effectiveInput = normalizeToolActionInput("workspace.files.share", {
+    mode: "zip",
+    paths: ["reports/alpha,beta.csv", "reports/alpha", "beta.csv"],
+    downloadName: "  selected reports.zip  ",
+    ttlMinutes: 90,
+  });
+  const presentation = buildToolApprovalPresentation({
+    toolName: "workspace.files.share",
+    effectiveInput,
+  });
+
+  assert.deepEqual(presentation.fields, [
+    { label: "Mode", value: "zip" },
+    {
+      label: "Selected files",
+      value: '["reports/alpha,beta.csv","reports/alpha","beta.csv"]',
+    },
+    { label: "Download name", value: "selected reports.zip" },
+    { label: "Lifetime (minutes)", value: "90" },
+  ]);
 });

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { generateKeyPairSync } from "node:crypto";
 
 function requiredPort(name: string): number {
   const value = process.env[name];
@@ -30,6 +31,7 @@ const inheritedEnv = Object.fromEntries(
     (entry): entry is [string, string] => typeof entry[1] === "string",
   ),
 );
+const executionTicketKeys = generateKeyPairSync("ed25519");
 const webServerEnv = {
   ...inheritedEnv,
   AI_AGENT_API_KEY: "product-contract-key",
@@ -46,6 +48,14 @@ const webServerEnv = {
   KESTREL_BUILD_REVISION: "0".repeat(40),
   KESTREL_BUILD_ID: "local-product-test",
   KESTREL_ENVIRONMENT_GATEWAY_URL: `http://127.0.0.1:${fakeOpenRouterPort}`,
+  KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:
+    executionTicketKeys.privateKey
+      .export({ type: "pkcs8", format: "pem" })
+      .toString(),
+  KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:
+    executionTicketKeys.publicKey
+      .export({ type: "spki", format: "pem" })
+      .toString(),
   KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID: "product-contract-key",
   KESTREL_GATEWAY_CREDENTIAL_KEYS:
     '{"product-contract-key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}',

@@ -108,6 +108,61 @@ test("mobile snapshots preserve the durable Kestrel presentation timeline", () =
   );
 });
 
+test("mobile snapshots expose file-share download fields without changing other artifacts", () => {
+  const parts = mobileMessageParts([
+    {
+      type: "data-kestrel-artifact",
+      data: {
+        id: "file-share:preview-1",
+        title: "analysis.zip",
+        kind: "file-share",
+        url: "https://p-example.preview.kestrelagents.dev/analysis.zip",
+        mediaType: "application/zip",
+        metadata: {
+          previewId: "preview-1",
+          sizeBytes: 12_345,
+          fileCount: 2,
+          expiresAt: "2026-08-24T02:00:00.000Z",
+          warning: "Anyone with this link can download the file.",
+        },
+      },
+    },
+    {
+      type: "data-kestrel-artifact",
+      data: { id: "artifact-2", title: "Analysis", kind: "document" },
+    },
+  ]);
+
+  assert.deepEqual(parts, [
+    {
+      type: "artifact",
+      id: "file-share:preview-1",
+      title: "analysis.zip",
+      kind: "file-share",
+      url: "https://p-example.preview.kestrelagents.dev/analysis.zip",
+      mediaType: "application/zip",
+      previewId: "preview-1",
+      sizeBytes: 12_345,
+      fileCount: 2,
+      expiresAt: "2026-08-24T02:00:00.000Z",
+      warning: "Anyone with this link can download the file.",
+    },
+    {
+      type: "artifact",
+      id: "artifact-2",
+      title: "Analysis",
+      kind: "document",
+      url: null,
+      mediaType: null,
+      previewId: null,
+      sizeBytes: null,
+      fileCount: null,
+      expiresAt: null,
+      warning: null,
+    },
+  ]);
+});
+
 test("mobile snapshots never label runtime progress as agent progress", () => {
   const parts = mobileMessageParts([
     {

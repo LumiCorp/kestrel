@@ -39,6 +39,11 @@ export type MobileMessagePart =
       kind: string;
       url: string | null;
       mediaType: string | null;
+      previewId: string | null;
+      sizeBytes: number | null;
+      fileCount: number | null;
+      expiresAt: string | null;
+      warning: string | null;
     }
   | {
       type: "interaction_status";
@@ -96,6 +101,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function readString(record: Record<string, unknown>, key: string) {
   return typeof record[key] === "string" ? record[key] : null;
+}
+
+function readNumber(record: Record<string, unknown>, key: string) {
+  return typeof record[key] === "number" && Number.isFinite(record[key])
+    ? record[key]
+    : null;
 }
 
 export function mobileMessageParts(value: unknown): MobileMessagePart[] {
@@ -219,6 +230,7 @@ export function mobileMessageParts(value: unknown): MobileMessagePart[] {
       const id = readString(data, "id");
       const title = readString(data, "title");
       const kind = readString(data, "kind");
+      const metadata = asRecord(data.metadata);
       return id && title && kind
         ? [
             {
@@ -228,6 +240,11 @@ export function mobileMessageParts(value: unknown): MobileMessagePart[] {
               kind,
               url: readString(data, "url"),
               mediaType: readString(data, "mediaType"),
+              previewId: metadata ? readString(metadata, "previewId") : null,
+              sizeBytes: metadata ? readNumber(metadata, "sizeBytes") : null,
+              fileCount: metadata ? readNumber(metadata, "fileCount") : null,
+              expiresAt: metadata ? readString(metadata, "expiresAt") : null,
+              warning: metadata ? readString(metadata, "warning") : null,
             },
           ]
         : [];
