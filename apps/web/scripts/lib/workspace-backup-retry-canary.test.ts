@@ -86,6 +86,33 @@ test("an authoritative source Machine GET prevents false deletion when inventory
   ]);
 });
 
+test("an authoritative source Machine GET overrides a stale terminal list state", () => {
+  const machines = mergeSourceMachineIntoInventory({
+    machines: [
+      {
+        id: "source-machine",
+        state: "destroyed",
+        region: "iad",
+        workspaceId: "workspace-1",
+        replacementId: null,
+        mountedVolumeIds: ["source-volume"],
+      },
+    ],
+    sourceMachine: {
+      id: "source-machine",
+      state: "stopping",
+      region: "iad",
+      workspaceId: "workspace-1",
+      mounts: [{ volumeId: "source-volume" }],
+      checks: [{ name: "workspace", status: "warning" }],
+      image: "runtime@sha256:source",
+      resolvedImageDigest: "sha256:source",
+    },
+  });
+
+  assert.equal(machines[0]?.state, "stopping");
+});
+
 test("the executable keeps tenant snapshots and control-worker reads on separate authorities", async () => {
   const source = await readFile(
     new URL("../workspace-backup-retry-canary.ts", import.meta.url),
@@ -116,6 +143,10 @@ test("the executable keeps tenant snapshots and control-worker reads on separate
   assert.match(
     source,
     /sourceResourceObservations: resourceCleanup\.observations[\s\S]*sourceResourceObservationsTruncated/u,
+  );
+  assert.match(
+    source,
+    /workspaceRetirementDeletionState\(\{[\s\S]*sourceMachine:[\s\S]*sourceVolume:[\s\S]*sourceMachineDeleted: deletion\.sourceMachineDeleted[\s\S]*sourceVolumeDeleted: deletion\.sourceVolumeDeleted/u,
   );
 });
 
@@ -744,7 +775,7 @@ test("temporary cleanup preserves the last blocking inventory when it never sett
   );
 });
 
-test("Workspace retirement waits for the source volume to disappear after workspace.deleted", async () => {
+test("Workspace retirement waits through nonterminal source-volume deletion", async () => {
   const value = target();
   let reads = 0;
   let clock = 0;
@@ -764,7 +795,7 @@ test("Workspace retirement waits for the source volume to disappear after worksp
         environment.volumes.push({
           id: value.workspace.flyVolumeId!,
           name: "ws_workspace1",
-          state: "pending_destroy",
+          state: "scheduling_destroy",
           region: "iad",
           sizeGb: 20,
           attachedMachineId: null,
@@ -785,9 +816,46 @@ test("Workspace retirement waits for the source volume to disappear after worksp
       volume: observation.sourceVolume?.state ?? null,
     })),
     [
-      { machine: null, volume: "pending_destroy" },
+      { machine: null, volume: "scheduling_destroy" },
       { machine: null, volume: null },
     ],
+  );
+});
+
+test("Workspace retirement accepts terminal provider tombstones after resources leave inventory", async () => {
+  const value = target();
+  const environment = structuredClone(value.baseline.environment);
+  const sourceMachine = environment.machines.find(
+    (machine) => machine.id === value.workspace.flyMachineId,
+  );
+  const sourceVolume = environment.volumes.find(
+    (volume) => volume.id === value.workspace.flyVolumeId,
+  );
+  assert.ok(sourceMachine);
+  assert.ok(sourceVolume);
+  sourceMachine.state = "destroyed";
+  sourceVolume.state = "pending_destroy";
+  sourceVolume.attachedMachineId = null;
+
+  const cleaned = await waitForWorkspaceRetirementResourceCleanup({
+    sourceMachineId: value.workspace.flyMachineId!,
+    sourceVolumeId: value.workspace.flyVolumeId!,
+    observeEnvironment: async () => environment,
+    deadlineMs: 1,
+    pollIntervalMs: 1,
+  });
+
+  assert.equal(
+    cleaned.environment.machines.find(
+      (machine) => machine.id === value.workspace.flyMachineId,
+    )?.state,
+    "destroyed",
+  );
+  assert.equal(
+    cleaned.environment.volumes.find(
+      (volume) => volume.id === value.workspace.flyVolumeId,
+    )?.state,
+    "pending_destroy",
   );
 });
 
@@ -800,9 +868,10 @@ test("Workspace retirement fails closed with the last source resource inventory"
       sourceVolumeId: value.workspace.flyVolumeId!,
       observeEnvironment: async () => {
         const environment = structuredClone(value.baseline.environment);
-        environment.machines = environment.machines.filter(
-          (machine) => machine.id !== value.workspace.flyMachineId,
+        const sourceMachine = environment.machines.find(
+          (machine) => machine.id === value.workspace.flyMachineId,
         );
+        if (sourceMachine) sourceMachine.state = "stopping";
         const sourceVolume = environment.volumes.find(
           (volume) => volume.id === value.workspace.flyVolumeId,
         );
@@ -823,17 +892,24 @@ test("Workspace retirement fails closed with the last source resource inventory"
         (error as Error & { code?: string }).code,
         "WORKSPACE_BACKUP_RETRY_CANARY_RETIREMENT_CLEANUP_FAILED",
       );
-      assert.match(error.message, /volume .*pending_destroy/u);
+      assert.match(error.message, /Machine .*stopping/u);
       const details = (
         error as Error & {
           details?: {
             sourceResourceObservations?: Array<{
+              sourceMachine: { state: string | null } | null;
               sourceVolume: { state: string | null } | null;
             }>;
             lastEnvironment?: EnvironmentInventory;
           };
         }
       ).details;
+      assert.deepEqual(
+        details?.sourceResourceObservations?.map(
+          (observation) => observation.sourceMachine?.state,
+        ),
+        ["stopping"],
+      );
       assert.deepEqual(
         details?.sourceResourceObservations?.map(
           (observation) => observation.sourceVolume?.state,
@@ -848,6 +924,37 @@ test("Workspace retirement fails closed with the last source resource inventory"
       );
       return true;
     },
+  );
+});
+
+test("Workspace retirement rejects an attached pending-destroy source volume", async () => {
+  const value = target();
+  let clock = 0;
+  await assert.rejects(
+    waitForWorkspaceRetirementResourceCleanup({
+      sourceMachineId: value.workspace.flyMachineId!,
+      sourceVolumeId: value.workspace.flyVolumeId!,
+      observeEnvironment: async () => {
+        const environment = structuredClone(value.baseline.environment);
+        const sourceMachine = environment.machines.find(
+          (machine) => machine.id === value.workspace.flyMachineId,
+        );
+        const sourceVolume = environment.volumes.find(
+          (volume) => volume.id === value.workspace.flyVolumeId,
+        );
+        assert.ok(sourceMachine);
+        assert.ok(sourceVolume);
+        sourceMachine.state = "destroyed";
+        sourceVolume.state = "pending_destroy";
+        sourceVolume.attachedMachineId = "unexpected-machine";
+        return environment;
+      },
+      now: () => clock,
+      delay: async (ms) => void (clock += ms),
+      deadlineMs: 100,
+      pollIntervalMs: 100,
+    }),
+    /volume .*pending_destroy/u,
   );
 });
 
