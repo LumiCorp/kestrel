@@ -55,11 +55,11 @@ export class InlineEffectRunner implements EffectRunner {
       const existingResult = await this.store.getEffectResult(effect.idempotencyKey);
       if (existingResult !== null) {
         if (existingResult.status === "DONE") {
-          await this.store.markEffectStatus(effect.idempotencyKey, "DONE");
+          await this.store.markEffectStatus(effect.idempotencyKey, "DONE", effect);
           continue;
         }
 
-        await this.store.markEffectStatus(effect.idempotencyKey, "FAILED");
+        await this.store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
         if (existingResult.error !== undefined) {
           errors.push(existingResult.error);
         }
@@ -137,7 +137,7 @@ export class InlineEffectRunner implements EffectRunner {
           persistCompletedCapabilityResult,
         });
         await persistCompletedResult(output);
-        await this.store.markEffectStatus(effect.idempotencyKey, "DONE");
+        await this.store.markEffectStatus(effect.idempotencyKey, "DONE", effect);
         if (toolActivity !== undefined) {
           const evidence = readAgentToolResultV2(output);
           await notifyToolActivity(context.onToolActivity, {
@@ -171,7 +171,7 @@ export class InlineEffectRunner implements EffectRunner {
           error: runtimeError,
           timestamp: new Date().toISOString(),
         });
-        await this.store.markEffectStatus(effect.idempotencyKey, "FAILED");
+        await this.store.markEffectStatus(effect.idempotencyKey, "FAILED", effect);
         if (toolActivity !== undefined) {
           await notifyToolActivity(context.onToolActivity, {
             phase: "failed",

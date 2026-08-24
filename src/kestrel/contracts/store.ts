@@ -449,7 +449,11 @@ export interface EffectStore {
   getPersistedEffect?(idempotencyKey: string): Promise<PersistedEffect | null>;
   getEffectResult(idempotencyKey: string): Promise<EffectResult | null>;
   saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void>;
-  markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus): Promise<void>;
+  markEffectStatus(
+    idempotencyKey: string,
+    status: EffectExecutionStatus,
+    owner: { runId: string; sessionId: string },
+  ): Promise<void>;
   listReadyRegionWorkItems(sessionId: string): Promise<RegionWorkItem[]>;
   claimNextRegionWorkItem(sessionId: string, cursor?: string): Promise<RegionWorkItem | null>;
   completeRegionWorkItem(itemId: number, outcome: "DONE" | "FAILED", error?: Record<string, unknown>): Promise<void>;

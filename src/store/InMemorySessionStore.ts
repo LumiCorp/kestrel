@@ -981,8 +981,14 @@ export class InMemorySessionStore implements SessionStore {
     return { status: "cancelled" } as const;
   }
 
-  async saveEffectResult(_runId: string, _sessionId: string, result: EffectResult): Promise<void> {
+  async saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void> {
     const effect = this.effects.find((candidate) => candidate.idempotencyKey === result.idempotencyKey);
+    if (effect === undefined || effect.runId !== runId || effect.sessionId !== sessionId) {
+      throw new SandboxCapabilityExactResultConflictError("Effect result owner does not match the locked effect");
+    }
+    if (!this.hasTrustedEffectTenant(effect, result)) {
+      throw new SandboxCapabilityExactResultConflictError("Effect result tenant does not match durable authority");
+    }
     if (result.status === "DONE" && effect?.status === "FAILED") {
       throw new SandboxCapabilityExactResultCancelledError("Completed effect-result persistence lost to durable cancellation");
     }
@@ -994,16 +1000,72 @@ export class InMemorySessionStore implements SessionStore {
     this.operationLog.push(`saveEffectResult:${result.idempotencyKey}:${result.status}`);
   }
 
-  async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus): Promise<void> {
+  async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, owner: { runId: string; sessionId: string }): Promise<void> {
     for (const effect of this.effects) {
       if (effect.idempotencyKey === idempotencyKey) {
-        if (status === "DONE" && effect.status === "FAILED") {
+        if (status === "DONE" && (
+          effect.runId !== owner.runId ||
+          effect.sessionId !== owner.sessionId ||
+          !this.hasTrustedEffectStatusTenant(effect)
+        )) {
+          throw new SandboxCapabilityExactResultConflictError("Effect status owner or tenant does not match durable authority");
+        }
+        if (
+          status === "DONE" &&
+          effect.status === "FAILED" &&
+          this.effectResults.get(idempotencyKey)?.status !== "DONE"
+        ) {
           throw new SandboxCapabilityExactResultCancelledError("Completed effect status lost to durable cancellation");
         }
         effect.status = status;
       }
     }
     this.operationLog.push(`markEffectStatus:${idempotencyKey}:${status}`);
+  }
+
+  private hasTrustedEffectTenant(effect: InMemoryEffect, result: EffectResult): boolean {
+    if (this.tenantId === undefined) return effect.tenantId === undefined;
+    if (effect.tenantId !== undefined) return effect.tenantId === this.tenantId;
+    if (!exactEffectRequiresCapabilityTenantBinding(effect)) return false;
+    if (result.status === "FAILED") return this.hasTrustedEffectStatusTenant(effect);
+    const read = validateExactEffectResultRead({
+      requested: { runId: effect.runId, sessionId: effect.sessionId, idempotencyKey: effect.idempotencyKey },
+      effect: { ...effect, status: "DONE" },
+      effectResult: result,
+    });
+    if (read.status !== "found") return false;
+    const raw = read.result.outcome.kind === "success" || read.result.outcome.kind === "partial"
+      ? read.result.outcome.rawOutput : undefined;
+    const evidence = typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).capabilityReplayEvidence : undefined;
+    const leaseId = typeof evidence === "object" && evidence !== null && !Array.isArray(evidence)
+      ? (evidence as Record<string, unknown>).leaseId : undefined;
+    const lease = typeof leaseId === "string" ? this.sandboxCapabilityLeaseTransitions.get(leaseId)?.at(-1) ?? null : null;
+    return validateExactEffectResultTenantBinding({
+      read,
+      requested: { runId: effect.runId, sessionId: effect.sessionId, idempotencyKey: effect.idempotencyKey, tenantId: this.tenantId },
+      lease,
+    }).status === "found";
+  }
+
+  private hasTrustedEffectStatusTenant(effect: InMemoryEffect): boolean {
+    if (this.tenantId === undefined) return effect.tenantId === undefined;
+    if (effect.tenantId !== undefined) return effect.tenantId === this.tenantId;
+    if (!exactEffectRequiresCapabilityTenantBinding(effect)) return false;
+    const matches = [...this.sandboxCapabilityLeaseTransitions.values()]
+      .map((ledger) => ledger.at(-1))
+      .filter((lease): lease is SandboxCapabilityLeaseTransitionRecordV1 =>
+        lease !== undefined && lease.binding.runId === effect.runId &&
+        lease.binding.sessionId === effect.sessionId &&
+        lease.binding.toolCallId === effect.idempotencyKey
+      );
+    return matches.length === 1 && validateExactEffectCancellationTenantBinding({
+      requested: {
+        runId: effect.runId, sessionId: effect.sessionId,
+        idempotencyKey: effect.idempotencyKey, tenantId: this.tenantId,
+      },
+      lease: matches[0]!,
+    }) === "ready";
   }
 
   async listUndeliveredOutbox(limit: number, runId?: string): Promise<OutboxEventRecord[]> {
@@ -1134,7 +1196,7 @@ export class InMemorySessionStore implements SessionStore {
       requested: { sessionId: exactInput.sessionId, runId: exactInput.runId, idempotencyKey: exactInput.toolCallId },
       effect,
     });
-    if (candidate === "conflict") {
+    if (candidate !== "ready") {
       throw new SandboxCapabilityExactResultConflictError("Sandbox capability exact result has no matching prepared effect");
     }
     if (effect?.status === "FAILED") {
@@ -1142,6 +1204,9 @@ export class InMemorySessionStore implements SessionStore {
     }
     const lease = this.sandboxCapabilityLeaseTransitions.get(input.leaseId)?.at(-1);
     assertReplayableSandboxCapabilityEffectBinding(lease, exactInput);
+    if (this.tenantId === undefined || lease?.binding.tenantId !== this.tenantId || (effect?.tenantId !== undefined && effect.tenantId !== this.tenantId)) {
+      throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result tenant does not match durable authority");
+    }
     const existing = this.effectResults.get(exactInput.result.idempotencyKey);
     if (existing !== undefined) {
       if (canonicalJson(existing) !== canonicalJson(exactInput.result)) {

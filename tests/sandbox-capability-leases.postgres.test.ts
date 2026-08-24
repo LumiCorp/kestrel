@@ -22,7 +22,7 @@ const databaseUrl = process.env.KESTREL_PRODUCT_RUNNER_DATABASE_URL?.trim();
 test("PostgreSQL capability lease ledger serializes CAS transitions and preserves immutable evidence", async () => {
   assert.ok(databaseUrl, "KESTREL_PRODUCT_RUNNER_DATABASE_URL is required");
   const pool = new Pool({ connectionString: databaseUrl, max: 4 });
-  const store = new PostgresSessionStore(new PgSqlExecutor(pool));
+  const store = new PostgresSessionStore(new PgSqlExecutor(pool), { tenantId: "tenant-pg" });
   const suffix = randomUUID();
   const sessionId = `lease-session-${suffix}`;
   const runId = `lease-run-${suffix}`;
@@ -85,7 +85,16 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
         outcome: {
           version: "v1", callId: binding.toolCallId, activation: preparedToolCall.activation,
           kind: "success", startedAt: "2026-08-23T12:00:03.000Z", completedAt: "2026-08-23T12:00:04.000Z",
-          effectState: "not_applicable", rawOutput: { answer: "recorded" },
+          effectState: "not_applicable",
+          rawOutput: {
+            answer: "recorded",
+            capabilityReplayEvidence: {
+              version: 1,
+              leaseId,
+              bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding),
+              toolCallId: binding.toolCallId,
+            },
+          },
         },
         modelContext: { text: "recorded", rawOutputRef: "sha256:recorded", truncated: false },
         auditRecord: {
@@ -125,7 +134,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
           return executor.query(text, values);
         },
       })),
-    });
+    }, { tenantId: binding.tenantId });
     const cancelledSave = new AbortController();
     const cancelledPersistence = pausingStore.saveSandboxCapabilityEffectResult({
       leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
@@ -156,6 +165,54 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     ((mutableExactEffectResult.output as { outcome: { rawOutput: { answer: string } } }).outcome.rawOutput).answer = "mutated-after-save-started";
     await savingExactEffectResult;
     assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
+    const wrongTenantStore = new PostgresSessionStore(new PgSqlExecutor(pool), { tenantId: "tenant-other" });
+    await assert.rejects(
+      wrongTenantStore.saveEffectResult(runId, sessionId, exactEffectResult),
+      /tenant does not match/u,
+    );
+    await assert.rejects(
+      store.saveEffectResult("run-wrong", sessionId, exactEffectResult),
+      /owner does not match/u,
+    );
+    await assert.rejects(
+      store.saveEffectResult(runId, "session-wrong", exactEffectResult),
+      /owner does not match/u,
+    );
+    await assert.rejects(
+      store.markEffectStatus(binding.toolCallId, "DONE", { runId: "run-wrong", sessionId }),
+      /owner or tenant does not match/u,
+    );
+    await assert.rejects(
+      store.markEffectStatus(binding.toolCallId, "DONE", { runId, sessionId: "session-wrong" }),
+      /owner or tenant does not match/u,
+    );
+    await assert.rejects(
+      wrongTenantStore.markEffectStatus(binding.toolCallId, "DONE", { runId, sessionId }),
+      /owner or tenant does not match/u,
+    );
+    await assert.rejects(
+      wrongTenantStore.saveSandboxCapabilityEffectResult({
+        leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding),
+        toolCallId: binding.toolCallId, runId, sessionId, result: exactEffectResult,
+      }),
+      /tenant does not match/u,
+    );
+    await assert.rejects(
+      store.saveSandboxCapabilityEffectResult({
+        leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding),
+        toolCallId: binding.toolCallId, runId: "run-wrong", sessionId, result: exactEffectResult,
+      }),
+      /no matching prepared effect/u,
+    );
+    await assert.rejects(
+      store.saveSandboxCapabilityEffectResult({
+        leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding),
+        toolCallId: binding.toolCallId, runId, sessionId: "session-wrong", result: exactEffectResult,
+      }),
+      /no matching prepared effect/u,
+    );
+    assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
+    assert.equal((await store.getPersistedEffect(binding.toolCallId))?.status, "PENDING");
     assert.deepEqual(await store.claimExactEffectCancellation({
       sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: "tenant-other",
     }), { status: "not_found" });
@@ -212,7 +269,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       error: { code: "EFFECT_EXECUTION_FAILED", message: "cancelled" },
       timestamp: "2026-08-23T12:00:04.000Z",
     });
-    await assert.rejects(store.markEffectStatus(cancelledToolCallId, "DONE"), /durable cancellation/u);
+    await assert.rejects(store.markEffectStatus(cancelledToolCallId, "DONE", { runId, sessionId }), /durable cancellation/u);
     await assert.rejects(store.saveSandboxCapabilityEffectResult({
       leaseId,
       bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding),
@@ -247,10 +304,52 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     });
     await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: unusedRecord(1, "requested") });
     await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: unusedRecord(2, "issued") });
+    const unusedPreparedToolCall = await prepareTestToolCall({
+      gateway,
+      toolName: "code.execute",
+      toolInput: {
+        language: "javascript",
+        code: "console.log('unused')",
+        capability: { capabilityId: TAVILY_SEARCH_CAPABILITY_ID, input: { query: "unused" } },
+      },
+      runId,
+      sessionId,
+      callId: unusedBinding.toolCallId,
+    });
+    await pool.query(
+      `INSERT INTO effects
+         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at, tenant_id)
+       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW(), $5)`,
+      [runId, sessionId, JSON.stringify({ preparedToolCall: unusedPreparedToolCall }), unusedBinding.toolCallId, binding.tenantId],
+    );
     const unusedEffectResult = {
       ...exactEffectResult,
       idempotencyKey: unusedBinding.toolCallId,
-      output: { status: "OK", outcome: { kind: "success", rawOutput: { status: "ok", stdout: "unused" } } },
+      output: {
+        ...exactEffectResult.output,
+        toolCallId: unusedBinding.toolCallId,
+        activation: unusedPreparedToolCall.activation,
+        outcome: {
+          ...exactEffectResult.output.outcome,
+          callId: unusedBinding.toolCallId,
+          activation: unusedPreparedToolCall.activation,
+          rawOutput: {
+            status: "ok",
+            stdout: "unused",
+            capabilityReplayEvidence: {
+              version: 1,
+              leaseId: unusedLeaseId,
+              bindingDigest: unusedDigest,
+              toolCallId: unusedBinding.toolCallId,
+            },
+          },
+        },
+        auditRecord: {
+          ...exactEffectResult.output.auditRecord,
+          input: unusedPreparedToolCall.effectiveInput,
+          output: { status: "ok", stdout: "unused" },
+        },
+      },
       timestamp: "2026-08-23T12:00:05.000Z",
     };
     await store.saveSandboxCapabilityEffectResult({
@@ -260,7 +359,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     // Simulate a process crash before lease cleanup by discarding the writer
     // instance. A fresh store must observe the exact enclosing result without
     // invoking any live runtime surface.
-    const restartedStore = new PostgresSessionStore(new PgSqlExecutor(pool));
+    const restartedStore = new PostgresSessionStore(new PgSqlExecutor(pool), { tenantId: binding.tenantId });
     assert.deepEqual(await restartedStore.getEffectResult(unusedBinding.toolCallId), unusedEffectResult);
     await store.appendSandboxCapabilityLeaseTransition({
       expectedSequence: 2,

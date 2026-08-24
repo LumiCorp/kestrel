@@ -3082,6 +3082,84 @@ test("late cancellation after DONE but before tool completion cannot replace the
   await host.close();
 });
 
+test("exact-effect cancellation fails closed when trusted arbitration authority is incomplete", async () => {
+  for (const authority of ["missing-store", "missing-tenant"] as const) {
+    const output = new PassThrough();
+    const writer = new EventWriter(output);
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const rl = readline.createInterface({ input: output, terminal: false });
+    rl.on("line", (line) => {
+      events.push(JSON.parse(line) as { type: string; payload: Record<string, unknown> });
+    });
+    let started!: () => void;
+    const toolStarted = new Promise<void>((resolve) => { started = resolve; });
+    let release!: () => void;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    let aborted = false;
+    let claims = 0;
+    const exactStore = {
+      async readExactEffectResult() { return { status: "incomplete" as const }; },
+      async claimExactEffectCancellation() {
+        claims += 1;
+        return { status: "cancelled" as const };
+      },
+    };
+    const host = new RunnerHost(
+      writer,
+      (_profile, _onLog, _onProgress, _onConsole, _onReasoning, _onTask, onRunEvent) => ({
+        runTurn: async (turn, options) => {
+          options?.signal?.addEventListener("abort", () => { aborted = true; }, { once: true });
+          onRunEvent?.(buildPersistedRuntimeEventFromToolUpdate({
+            version: "v1",
+            runId: `run-${authority}`,
+            sessionId: turn.sessionId,
+            ts: "2026-08-23T12:00:00.000Z",
+            seq: 1,
+            toolCallId: `call-${authority}`,
+            toolName: "code.execute",
+            phase: "started",
+          }));
+          started();
+          await paused;
+          return {
+            assistantText: "Completed without cancellation.",
+            output: completedOutput(turn.sessionId, `run-${authority}`),
+          };
+        },
+        close: async () => {},
+      }),
+      undefined,
+      {
+        ...(authority === "missing-store" ? {} : { exactEffectResultStore: exactStore }),
+        ...(authority === "missing-tenant" ? {} : { exactEffectResultTenantId: "tenant-authority" }),
+      },
+    );
+
+    const run = host.runStart(`cmd-${authority}`, {
+      profile,
+      turn: {
+        sessionId: `session-${authority}`,
+        message: "exercise fail-closed cancellation",
+        eventType: "user.message",
+      },
+    });
+    await toolStarted;
+    await host.runCancel(`cancel-${authority}`, { sessionId: `session-${authority}` });
+    assert.equal(aborted, false, authority);
+    assert.equal(claims, 0, authority);
+    assert.equal(events.some((event) => event.type === "run.cancelled"), false, authority);
+    assert.equal(events.some((event) =>
+      event.type === "runner.error" &&
+      event.payload.code === "EXACT_EFFECT_CANCELLATION_UNAVAILABLE"
+    ), true, authority);
+    release();
+    await run;
+    assert.equal(events.some((event) => event.type === "run.completed"), true, authority);
+    rl.close();
+    await host.close();
+  }
+});
+
 test("atomic cancellation claim rejects cancellation when exact completion wins", async () => {
   const output = new PassThrough();
   const writer = new EventWriter(output);

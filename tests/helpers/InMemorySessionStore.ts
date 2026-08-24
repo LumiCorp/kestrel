@@ -630,7 +630,7 @@ export class InMemorySessionStore implements SessionStore {
     this.operationLog.push(`saveEffectResult:${result.idempotencyKey}:${result.status}`);
   }
 
-  async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus): Promise<void> {
+  async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, _owner: { runId: string; sessionId: string }): Promise<void> {
     for (const effect of this.effects) {
       if (effect.idempotencyKey === idempotencyKey) {
         effect.status = status;

@@ -114,7 +114,7 @@ test("exact effect result reads return the complete persisted AgentToolResult on
 });
 
 test("in-memory exact completion and cancellation claims have a single durable winner", async () => {
-  const cancellationWins = new InMemorySessionStore();
+  const cancellationWins = new InMemorySessionStore({ tenantId: "tenant-1" });
   await cancellationWins.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: leaseRecord });
   (cancellationWins as unknown as { effects: PersistedEffect[] }).effects.push({ ...effect, status: "PENDING" });
   assert.deepEqual(await cancellationWins.claimExactEffectCancellation({ ...requested, tenantId: "tenant-2" }), { status: "not_found" });
@@ -131,7 +131,7 @@ test("in-memory exact completion and cancellation claims have a single durable w
     timestamp,
   });
   await assert.rejects(
-    cancellationWins.markEffectStatus(requested.idempotencyKey, "DONE"),
+    cancellationWins.markEffectStatus(requested.idempotencyKey, "DONE", requested),
     SandboxCapabilityExactResultCancelledError,
   );
   await assert.rejects(cancellationWins.saveSandboxCapabilityEffectResult({
@@ -143,7 +143,7 @@ test("in-memory exact completion and cancellation claims have a single durable w
     result: effectResult,
   }), SandboxCapabilityExactResultCancelledError);
 
-  const completionWins = new InMemorySessionStore();
+  const completionWins = new InMemorySessionStore({ tenantId: "tenant-1" });
   await completionWins.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: leaseRecord });
   (completionWins as unknown as { effects: PersistedEffect[] }).effects.push({ ...effect, status: "PENDING" });
   await completionWins.saveEffectResult(requested.runId, requested.sessionId, effectResult);
@@ -168,6 +168,20 @@ test("in-memory ordinary code execution uses store-owned tenant authority for bo
   };
   const cancellationWins = new InMemorySessionStore({ tenantId: "tenant-1" });
   (cancellationWins as unknown as { effects: OwnedEffect[] }).effects.push(ordinaryEffect);
+  await assert.rejects(
+    cancellationWins.saveEffectResult("run-wrong", requested.sessionId, ordinaryEffectResult),
+    /owner does not match/u,
+  );
+  await assert.rejects(
+    cancellationWins.saveEffectResult(requested.runId, "session-wrong", ordinaryEffectResult),
+    /owner does not match/u,
+  );
+  await assert.rejects(
+    cancellationWins.markEffectStatus(requested.idempotencyKey, "DONE", { runId: "run-wrong", sessionId: requested.sessionId }),
+    /owner or tenant does not match/u,
+  );
+  assert.equal(await cancellationWins.getEffectResult(requested.idempotencyKey), null);
+  assert.equal((await cancellationWins.getPersistedEffect(requested.idempotencyKey))?.status, "PENDING");
   assert.deepEqual(await cancellationWins.claimExactEffectCancellation({ ...requested, tenantId: "tenant-2" }), { status: "not_found" });
   assert.deepEqual(await cancellationWins.claimExactEffectCancellation({ ...requested, tenantId: "tenant-1" }), { status: "cancelled" });
   await assert.rejects(cancellationWins.saveEffectResult(requested.runId, requested.sessionId, ordinaryEffectResult), SandboxCapabilityExactResultCancelledError);
@@ -177,6 +191,19 @@ test("in-memory ordinary code execution uses store-owned tenant authority for bo
   await completionWins.saveEffectResult(requested.runId, requested.sessionId, ordinaryEffectResult);
   assert.deepEqual(await completionWins.claimExactEffectCancellation({ ...requested, tenantId: "tenant-2" }), { status: "not_found" });
   assert.deepEqual(await completionWins.claimExactEffectCancellation({ ...requested, tenantId: "tenant-1" }), { status: "completed" });
+
+  const wrongTenant = new InMemorySessionStore({ tenantId: "tenant-2" });
+  (wrongTenant as unknown as { effects: OwnedEffect[] }).effects.push({ ...structuredClone(ordinaryEffect), status: "PENDING" });
+  await assert.rejects(
+    wrongTenant.saveEffectResult(requested.runId, requested.sessionId, ordinaryEffectResult),
+    /tenant does not match/u,
+  );
+  await assert.rejects(
+    wrongTenant.markEffectStatus(requested.idempotencyKey, "DONE", requested),
+    /tenant does not match/u,
+  );
+  assert.equal(await wrongTenant.getEffectResult(requested.idempotencyKey), null);
+  assert.equal((await wrongTenant.getPersistedEffect(requested.idempotencyKey))?.status, "PENDING");
 });
 
 test("in-memory run ownership ignores spoofed event tenant input", async () => {

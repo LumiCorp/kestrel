@@ -468,7 +468,7 @@ function agentToolResultFixture(timestamp: string) {
 }
 
 test("selected but unused capability persists DONE and replays without live work", async () => {
-  const store = new DurableInMemorySessionStore();
+  const store = new DurableInMemorySessionStore({ tenantId: "tenant-unused" });
   const timestamp = "2026-08-23T12:00:00.000Z";
   const binding: SandboxCapabilityLeaseBindingV1 = {
     version: 1,
@@ -550,6 +550,27 @@ test("selected but unused capability persists DONE and replays without live work
     status: "PENDING" as const,
     createdAt: timestamp,
   };
+  const preparedGateway = adaptLegacyTestToolGateway({
+    validateInput: async (_name, input) => input,
+    call: async () => exactToolResult,
+  });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway: preparedGateway,
+    toolName: "code.execute",
+    toolInput: {
+      language: "javascript",
+      code: "console.log('done')",
+      capability: { capabilityId: TAVILY_SEARCH_CAPABILITY_ID, input: { query: "unused" } },
+    },
+    runId: binding.runId,
+    sessionId: binding.sessionId,
+    callId: binding.toolCallId,
+  });
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({
+    ...effect,
+    payload: { preparedToolCall },
+    tenantId: binding.tenantId,
+  });
   const runner = new InlineEffectRunner(store, registry);
   const completed = await runner.runEffects([effect], { runId: binding.runId, sessionId: binding.sessionId, stepIndex: 0 });
   assert.equal(completed.stop, true);

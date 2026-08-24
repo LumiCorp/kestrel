@@ -1440,6 +1440,30 @@ export class RunnerHost {
         const candidate = active.exactEffectCandidate;
         if (
           candidate !== undefined &&
+          (this.exactEffectResultStore === undefined ||
+            this.exactEffectResultTenantId === undefined)
+        ) {
+          this.writer.emit(
+            "runner.error",
+            {
+              code: "EXACT_EFFECT_CANCELLATION_UNAVAILABLE",
+              message:
+                "Cancellation is unavailable because exact-effect arbitration authority is not configured.",
+              details: {
+                sessionId: payload.sessionId,
+                runId: active.runId ?? candidate.runId,
+              },
+            },
+            {
+              commandId,
+              sessionId: payload.sessionId,
+              runId: active.runId ?? candidate.runId,
+            },
+          );
+          return;
+        }
+        if (
+          candidate !== undefined &&
           this.exactEffectResultStore !== undefined &&
           this.exactEffectResultTenantId !== undefined
         ) {
