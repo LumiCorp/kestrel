@@ -868,6 +868,10 @@ export class ThreadRuntime implements ThreadRuntimePort {
           approvalPolicyId: assembly.bundle?.approvalPolicyId,
           modelProvider: readAssemblyString(assembly.bundle?.metadata, "modelProvider"),
           model: readAssemblyString(assembly.bundle?.metadata, "model"),
+          modelCapabilities: {
+            visionInputEnabled:
+              this.profile?.modelCapabilities?.visionInputEnabled === true,
+          },
           promptVariant: readAssemblyString(assembly.bundle?.metadata, "promptVariant"),
           compatibilityProfile: readAssemblyString(assembly.bundle?.metadata, "compatibilityProfile"),
           compatibilityStatus: readAssemblyString(assembly.bundle?.metadata, "compatibilityStatus"),

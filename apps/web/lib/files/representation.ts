@@ -1,3 +1,5 @@
+import { isAttachmentTextExtractable } from "@kestrel-agents/files";
+
 export const FILE_INLINE_REPRESENTATION_UNAVAILABLE_REASON =
   "Inline extraction failed or is unsupported; the original remains available read-only to Workspace tools.";
 
@@ -24,10 +26,21 @@ export function isNativeImageRepresentationMediaType(mediaType: string): boolean
 
 export function modelVisibleMetadataOnlyReason(
   representation: string,
-  internalReason: string | null | undefined,
+  _internalReason: string | null | undefined,
 ): string | undefined {
-  if (representation !== "metadata_only" || !internalReason) return;
+  if (representation !== "metadata_only") return;
   return FILE_INLINE_REPRESENTATION_UNAVAILABLE_REASON;
+}
+
+export function isReusableFileRepresentation(input: {
+  kind: FileRepresentationOutcome;
+  status: "pending" | "ready" | "failed";
+  mediaType: string;
+}): boolean {
+  if (input.status !== "ready") return false;
+  if (input.kind !== "metadata_only") return true;
+  return isAttachmentTextExtractable(input.mediaType) === false
+    && isNativeImageRepresentationMediaType(input.mediaType) === false;
 }
 
 export function recordFileRepresentationOutcome(

@@ -24,6 +24,7 @@ import {
 } from "./availability";
 import {
   isNativeImageRepresentationMediaType,
+  isReusableFileRepresentation,
   modelVisibleMetadataOnlyReason,
   recordFileRepresentationOutcome,
   type FileRepresentationFailureCategory,
@@ -136,7 +137,7 @@ export async function createPublishedFileFromBuffer(input: {
       createdByUserId: input.uploaderUserId,
     });
   });
-  if (await hasReadyRepresentation(blob.id) === false) {
+  if (await hasReusableRepresentation(blob.id, detectedMediaType) === false) {
     await processStoredFileRepresentation({
       blobId: blob.id,
       objectKey: blob.objectKey,
@@ -289,7 +290,10 @@ export async function uploadThreadFile(input: {
     }).where(eq(schema.kestrelFiles.id, file.id));
     if (
       quarantined === false
-      && (canonicalBlob.id === file.blobId || await hasReadyRepresentation(canonicalBlob.id) === false)
+      && (
+        canonicalBlob.id === file.blobId
+        || await hasReusableRepresentation(canonicalBlob.id, detectedMediaType) === false
+      )
     ) {
       await processBlobRepresentation({
         blobId: canonicalBlob.id,
@@ -967,7 +971,9 @@ export async function processStoredFileRepresentation(input: {
     id: `representation-${randomUUID()}`,
     blobId: input.blobId,
     kind,
-    status: error && kind !== "metadata_only" ? "failed" : "ready",
+    status: failureCategory === "extraction_failed" || failureCategory === "empty_extraction"
+      ? "failed"
+      : "ready",
     mediaType: input.mediaType,
     textContent,
     truncated,
@@ -985,11 +991,15 @@ export async function processStoredFileRepresentation(input: {
 
 const processBlobRepresentation = processStoredFileRepresentation;
 
-async function hasReadyRepresentation(blobId: string): Promise<boolean> {
+async function hasReusableRepresentation(blobId: string, mediaType: string): Promise<boolean> {
   const row = await knowledgeDb.query.fileRepresentations.findFirst({
-    where: (table, { and: andOp, eq: eqOp }) => andOp(eqOp(table.blobId, blobId), eqOp(table.status, "ready")),
+    where: (table, { eq: eqOp }) => eqOp(table.blobId, blobId),
   });
-  return row !== undefined;
+  return row !== undefined && isReusableFileRepresentation({
+    kind: row.kind,
+    status: row.status,
+    mediaType,
+  });
 }
 
 async function scheduleBlobDeletionIfUnreferenced(blobId: string): Promise<void> {

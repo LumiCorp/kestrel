@@ -1260,6 +1260,56 @@ test("materialized metadata-only attachments are described as available original
   assert.doesNotMatch(rendered, /"representation":"metadata_only"/u);
 });
 
+test("native images are injected only when the selected model supports vision input", () => {
+  const attachment = {
+    fileId: "file-image",
+    attachmentId: "file-image",
+    threadId: "thread-image",
+    filename: "diagram.png",
+    mimeType: "image/png",
+    sizeBytes: 8,
+    sha256: "b".repeat(64),
+    kind: "image",
+    representationStatus: "native_image",
+    path: "/workspace/.kestrel/attachments/diagram.png",
+    data: Buffer.from("diagram").toString("base64"),
+  } as const;
+  const build = (visionInputEnabled: boolean) => buildKestrelAgentContext({
+    reactState: {},
+    eventPayload: {
+      message: "Describe this image.",
+      attachments: [attachment],
+      metadata: {
+        runtimeAssembly: {
+          modelCapabilities: { visionInputEnabled },
+        },
+      },
+    },
+    eventType: "user.message",
+    goal: "Describe this image.",
+    interactionMode: "chat",
+  });
+
+  const textOnlyUser = [...build(false).messages].reverse().find((message) => message.role === "user");
+  assert.ok(Array.isArray(textOnlyUser?.content));
+  assert.equal(textOnlyUser.content.some((part) => part.type === "image"), false);
+  const textOnlyContent = textOnlyUser.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  assert.match(textOnlyContent, /"inlineRepresentation":"metadata_only"/u);
+  assert.match(textOnlyContent, /selected model does not accept image input/u);
+
+  const visionUser = [...build(true).messages].reverse().find((message) => message.role === "user");
+  assert.ok(Array.isArray(visionUser?.content));
+  assert.equal(visionUser.content.some((part) => part.type === "image"), true);
+  const visionContent = visionUser.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  assert.match(visionContent, /"inlineRepresentation":"native_image"/u);
+});
+
 test("build prompt requires noninteractive turns to finish without conversational waits", () => {
   assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /work without conversational waits/u);
   assert.match(BUILD_MODE_DELIBERATOR_PROMPT, /finish with a concrete blocker/u);

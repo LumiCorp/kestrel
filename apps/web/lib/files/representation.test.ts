@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   FILE_INLINE_REPRESENTATION_UNAVAILABLE_REASON,
   isNativeImageRepresentationMediaType,
+  isReusableFileRepresentation,
   modelVisibleMetadataOnlyReason,
   recordFileRepresentationOutcome,
 } from "./representation";
@@ -21,7 +22,39 @@ test("metadata-only model context describes the original as available", () => {
     modelVisibleMetadataOnlyReason("metadata_only", "private extractor diagnostic"),
     FILE_INLINE_REPRESENTATION_UNAVAILABLE_REASON,
   );
+  assert.equal(
+    modelVisibleMetadataOnlyReason("metadata_only", null),
+    FILE_INLINE_REPRESENTATION_UNAVAILABLE_REASON,
+  );
   assert.equal(modelVisibleMetadataOnlyReason("extracted_text", "diagnostic"), undefined);
+});
+
+test("only terminal representations and genuinely unsupported metadata are reusable", () => {
+  assert.equal(isReusableFileRepresentation({
+    kind: "extracted_text",
+    status: "ready",
+    mediaType: "text/markdown",
+  }), true);
+  assert.equal(isReusableFileRepresentation({
+    kind: "metadata_only",
+    status: "ready",
+    mediaType: "application/octet-stream",
+  }), true);
+  assert.equal(isReusableFileRepresentation({
+    kind: "metadata_only",
+    status: "ready",
+    mediaType: "application/pdf",
+  }), false);
+  assert.equal(isReusableFileRepresentation({
+    kind: "metadata_only",
+    status: "ready",
+    mediaType: "image/png",
+  }), false);
+  assert.equal(isReusableFileRepresentation({
+    kind: "metadata_only",
+    status: "failed",
+    mediaType: "application/pdf",
+  }), false);
 });
 
 test("representation telemetry is structured and content-free", () => {

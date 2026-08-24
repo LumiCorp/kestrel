@@ -21,7 +21,7 @@
     "build": "pnpm run clean && tsc -p tsconfig.json",
     "build:self": "pnpm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "pnpm run build && node --import tsx --test tests/*.test.ts",
     "smoke:import": "node --input-type=module -e \"import('./dist/index.js').then(({ extractAttachmentText }) => { void extractAttachmentText; })\"",
     "release:check": "pnpm run build && pnpm run smoke:import"
   },
