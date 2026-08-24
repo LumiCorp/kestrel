@@ -257,17 +257,17 @@ async function runLiveJourney(config: QualificationConfig, port: number, evidenc
   await capture(evidence, "live-tavily", "live", async () => {
     const marker = `kestrel-live-${randomUUID()}`;
     const result = await client.run(profileId, `provider-used ${marker}`);
-    requireTrue(hasTerminalEvent(result.parsed, "run.completed"), "live Tavily run did not complete");
+    requireRun(hasTerminalEvent(result.parsed, "run.completed"), result, "live Tavily run did not complete");
     if (!result.parsed.codeResults.some((item) => readCapabilityReplayEvidence(item) !== undefined)) {
-      throw new Error("MODEL_DID_NOT_SELECT_CAPABILITY: Luna completed without selecting the optional Tavily capability");
+      throw new QualificationRunAssertionError(result, "MODEL_DID_NOT_SELECT_CAPABILITY: Luna completed without selecting the optional Tavily capability");
     }
     const stdout = result.parsed.codeResults.map(readCodeStdout).join("\n");
-    requireTrue(stdout.includes("DIRECT_NETWORK_BLOCKED direct HTTPS") && stdout.includes("DIRECT_NETWORK_BLOCKED loopback") && stdout.includes("DIRECT_NETWORK_BLOCKED metadata-network"), `live sandbox did not report blocked direct-network probes; observed stdout evidence: ${stdout.slice(0, 4_000)}`);
-    requireTrue(!stdout.includes("DIRECT_NETWORK_UNEXPECTED"), "live sandbox unexpectedly reached a direct-network target");
-    requireTrue(stdout.includes(marker), "live tool evidence did not preserve the unique query marker");
+    requireRun(stdout.includes("DIRECT_NETWORK_BLOCKED direct HTTPS") && stdout.includes("DIRECT_NETWORK_BLOCKED loopback") && stdout.includes("DIRECT_NETWORK_BLOCKED metadata-network"), result, `live sandbox did not report blocked direct-network probes; observed stdout evidence: ${stdout.slice(0, 4_000)}`);
+    requireRun(!stdout.includes("DIRECT_NETWORK_UNEXPECTED"), result, "live sandbox unexpectedly reached a direct-network target");
     assertSecretFree(result.stream, config);
-    await requireCapabilityLease(client, result.runId, { status: "cleaned", remainingRequests: 0 });
     const exact = await client.getExactResult(result);
+    requireRun(readExactCapabilityQuery(exact) === marker, result, "live exact result did not bind the unique Tavily query marker");
+    await requireCapabilityLease(client, result.runId, { status: "cleaned", remainingRequests: 0 });
     await stopRemote(config);
     await setRemoteDockerAvailable(config, false);
     try {
@@ -591,6 +591,15 @@ function summarizePublicRun(result: RunResult): unknown {
 function asRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function readExactCapabilityQuery(value: unknown): string | undefined {
+  const result = asRecord(value);
+  const audit = asRecord(result.auditRecord);
+  const input = asRecord(audit.input);
+  const capability = asRecord(input.capability);
+  const selectionInput = asRecord(capability.input);
+  return typeof selectionInput.query === "string" ? selectionInput.query : undefined;
 }
 
 async function providerEvidence(config: QualificationConfig): Promise<string> {
