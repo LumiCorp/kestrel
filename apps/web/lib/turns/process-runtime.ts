@@ -518,6 +518,7 @@ export async function processDurableThreadTurn(
   };
   let waitingCommitted = false;
   let attachmentFailureFileIds: string[] = [];
+  let transientTitle: Promise<string | null> | null = null;
   try {
     const [session, storedMessages, thread, scheduleRun, turnContract] = await Promise.all([
       loadWorkerSession(turn.authorUserId),
@@ -614,6 +615,38 @@ export async function processDurableThreadTurn(
         resolvedAttachments = [];
       }
     }
+    transientTitle = turn.approvalId
+      ? null
+      : submittedUserMessage
+        ? generateTitleForOrganization({
+            message: submittedUserMessage,
+            modelId: turn.requestedModelId ?? undefined,
+            organizationId: turn.organizationId,
+            environmentId: turn.requestedEnvironmentId,
+          }).catch(async (error: unknown) => {
+            const code =
+              error &&
+              typeof error === "object" &&
+              "code" in error &&
+              typeof error.code === "string" &&
+              TITLE_FAILURE_CODE_PATTERN.test(error.code)
+                ? error.code
+                : "TITLE_GENERATION_FAILED";
+            console.error("Kestrel One title generation failed.", {
+              turnId: turn.id,
+              threadId: turn.threadId,
+              organizationId: turn.organizationId,
+              environmentId: turn.requestedEnvironmentId,
+              code,
+            });
+            await appendDurableTurnEvent({
+              turnId: turn.id,
+              type: "turn.activity",
+              data: { stage: "thread.title.failed", code },
+            }).catch(() => {});
+            return null;
+          })
+        : null;
     const responseInput: KestrelOneAgentResponseInput = {
       request: workerRequest(turn.id),
       session,
@@ -643,38 +676,7 @@ export async function processDurableThreadTurn(
           : undefined,
       interactionResponse: turn.interactionResponse ?? undefined,
       projectContext: projectContext ?? undefined,
-      transientTitle: turn.approvalId
-        ? null
-        : submittedUserMessage
-          ? generateTitleForOrganization({
-              message: submittedUserMessage,
-              modelId: turn.requestedModelId ?? undefined,
-              organizationId: turn.organizationId,
-              environmentId: turn.requestedEnvironmentId,
-            }).catch(async (error: unknown) => {
-              const code =
-                error &&
-                typeof error === "object" &&
-                "code" in error &&
-                typeof error.code === "string" &&
-                TITLE_FAILURE_CODE_PATTERN.test(error.code)
-                  ? error.code
-                  : "TITLE_GENERATION_FAILED";
-              console.error("Kestrel One title generation failed.", {
-                turnId: turn.id,
-                threadId: turn.threadId,
-                organizationId: turn.organizationId,
-                environmentId: turn.requestedEnvironmentId,
-                code,
-              });
-              await appendDurableTurnEvent({
-                turnId: turn.id,
-                type: "turn.activity",
-                data: { stage: "thread.title.failed", code },
-              }).catch(() => {});
-              return null;
-            })
-          : null,
+      transientTitle,
       signal: cancellation.signal,
       abortBehavior: "detach",
       onExecutionRouted: (executionId) => {
@@ -871,6 +873,7 @@ export async function processDurableThreadTurn(
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
   } catch (error) {
+    await transientTitle;
     await eventWrites.catch(() => {});
     if (
       workerInterrupted &&
