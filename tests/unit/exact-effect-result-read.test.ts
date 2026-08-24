@@ -183,6 +183,10 @@ test("in-memory capability ownership reconstruction applies only to legacy unkno
   effects[0]!.tenantOwnershipState = "tenant_bound";
   assert.deepEqual(await store.claimExactEffectCancellation({ ...requested, tenantId: "tenant-1" }), { status: "conflict" });
   effects[0]!.tenantOwnershipState = "legacy_unknown";
+  effects[0]!.tenantId = "tenant-1";
+  assert.deepEqual(await store.claimExactEffectCancellation({ ...requested, tenantId: "tenant-1" }), { status: "conflict" });
+  effects[0]!.tenantId = undefined;
+  effects[0]!.tenantOwnershipState = "legacy_unknown";
   assert.deepEqual(await store.claimExactEffectCancellation({ ...requested, tenantId: "tenant-1" }), { status: "cancelled" });
 });
 

@@ -1694,10 +1694,14 @@ export class PostgresSessionStore implements SessionStore {
       if (candidate !== "ready") return { status: candidate } as const;
       if (effect === null) return { status: "not_found" } as const;
       if (row?.tenant_ownership_state === "explicit_unbound") return { status: "conflict" } as const;
-      if (row?.tenant_id !== null && row?.tenant_id !== input.tenantId) return { status: "not_found" } as const;
+      if (row?.tenant_ownership_state === "tenant_bound") {
+        if (row.tenant_id === null) return { status: "conflict" } as const;
+        if (row.tenant_id !== input.tenantId) return { status: "not_found" } as const;
+      } else if (row?.tenant_id !== null) {
+        return { status: "conflict" } as const;
+      }
       const requiresTenantBinding = exactEffectRequiresCapabilityTenantBinding(effect);
-      if (row?.tenant_id === null &&
-        (row?.tenant_ownership_state !== "legacy_unknown" || !requiresTenantBinding)) {
+      if (row?.tenant_ownership_state === "legacy_unknown" && !requiresTenantBinding) {
         return { status: "conflict" } as const;
       }
       const leaseResult = requiresTenantBinding

@@ -964,9 +964,14 @@ export class InMemorySessionStore implements SessionStore {
     const ownershipState = effect.tenantOwnershipState ??
       (effect.tenantId === undefined ? "legacy_unknown" : "tenant_bound");
     if (ownershipState === "explicit_unbound") return { status: "conflict" } as const;
-    if (effect.tenantId !== undefined && effect.tenantId !== input.tenantId) return { status: "not_found" } as const;
+    if (ownershipState === "tenant_bound") {
+      if (effect.tenantId === undefined) return { status: "conflict" } as const;
+      if (effect.tenantId !== input.tenantId) return { status: "not_found" } as const;
+    } else if (effect.tenantId !== undefined) {
+      return { status: "conflict" } as const;
+    }
     const requiresTenantBinding = exactEffectRequiresCapabilityTenantBinding(effect);
-    if (effect.tenantId === undefined && (ownershipState !== "legacy_unknown" || !requiresTenantBinding)) {
+    if (ownershipState === "legacy_unknown" && !requiresTenantBinding) {
       return { status: "conflict" } as const;
     }
     const matchingLeases = requiresTenantBinding

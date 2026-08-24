@@ -164,6 +164,13 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: binding.tenantId,
     }), { status: "conflict" });
     await pool.query(
+      `UPDATE effects SET tenant_id = $2, tenant_ownership_state = 'legacy_unknown' WHERE idempotency_key = $1`,
+      [binding.toolCallId, binding.tenantId],
+    );
+    assert.deepEqual(await store.claimExactEffectCancellation({
+      sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: binding.tenantId,
+    }), { status: "conflict" });
+    await pool.query(
       `UPDATE effects SET tenant_id = $2, tenant_ownership_state = 'tenant_bound' WHERE idempotency_key = $1`,
       [binding.toolCallId, binding.tenantId],
     );
@@ -276,8 +283,8 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     });
     await pool.query(
       `INSERT INTO effects
-         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at, tenant_id)
-       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW(), $5)`,
+         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at, tenant_id, tenant_ownership_state)
+       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW(), $5, 'tenant_bound')`,
       [runId, sessionId, JSON.stringify({ preparedToolCall: cancelledPreparedToolCall }), cancelledToolCallId, binding.tenantId],
     );
     await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: cancelledRecord(1, "requested") });
@@ -348,8 +355,8 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     });
     await pool.query(
       `INSERT INTO effects
-         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at, tenant_id)
-       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW(), $5)`,
+         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at, tenant_id, tenant_ownership_state)
+       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW(), $5, 'tenant_bound')`,
       [runId, sessionId, JSON.stringify({ preparedToolCall: unusedPreparedToolCall }), unusedBinding.toolCallId, binding.tenantId],
     );
     const unusedEffectResult = {
