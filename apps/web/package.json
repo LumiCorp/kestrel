@@ -65,6 +65,7 @@
     "canary:environment:fly": "tsx scripts/environment-fly-canary.ts",
     "canary:environment:workspace": "tsx scripts/workspace-post-cutover-canary.ts",
     "canary:environment:preview": "tsx scripts/environment-preview-canary.ts",
+    "canary:workspace-backup-retry": "node --conditions=react-server --import ./scripts/register-server-only.mjs --import tsx scripts/workspace-backup-retry-canary.ts",
     "canary:github:oauth": "tsx scripts/github-oauth-canary.ts",
     "canary:github:approval": "tsx scripts/github-approval-canary.ts",
     "test:unit": "pnpm run check:brand && pnpm run check:kestrel-boundary && node ../../scripts/validate.mjs --leaf hermetic apps/web",
