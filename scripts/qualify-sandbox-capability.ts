@@ -209,7 +209,8 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
         const partial = await pending.promise.catch((error) => error instanceof PartialRunError ? error.result : undefined);
         await startRemote(config, "controlled", { credentials: false });
         await waitForHealth(config, port, config.runnerToken);
-        const result = partial ?? await recoverRunIdentity(config, checkpoint);
+        const recovered = await recoverRunIdentity(config, checkpoint);
+        const result = recovered ? { ...recovered, ...partial, idempotencyKey: partial?.idempotencyKey ?? recovered.idempotencyKey } : partial;
         if (!result?.runId || !result.sessionId || !result.idempotencyKey) {
           if (replayExpected) throw new Error(`Crash at ${checkpoint} did not expose exact result identity.`);
           return { stream: "", runId: result?.runId ?? "unknown", sessionId: result?.sessionId ?? "unknown" };
