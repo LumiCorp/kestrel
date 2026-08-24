@@ -74,7 +74,7 @@ test("organization, platform, and personal settings retain separate navigation s
 
   assert.match(pageContainer, /max-w-7xl/u);
   assert.match(gatewayAdmin, /lg:max-w-none/u);
-  assert.match(gatewayAdmin, /lg:w-\[calc\(100vw-20rem\)\]/u);
+  assert.doesNotMatch(gatewayAdmin, /w-\[calc\(100vw-/u);
   assert.match(gatewayAdmin, /className="lg:block"/u);
   assert.match(gatewayAdmin, /Model modality counts/u);
   assert.match(gatewayAdmin, /key=\{selectedBundle.gateway.id\}/u);

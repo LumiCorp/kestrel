@@ -140,6 +140,9 @@ export interface KestrelAgentContextSection {
   rendered: boolean;
 }
 
+const MODEL_IMAGE_INPUT_UNAVAILABLE_REASON =
+  "The selected model does not accept image input; the original remains available read-only to Workspace tools.";
+
 export function buildKestrelAgentContext(
   input: KestrelAgentContextBuildInput,
 ): KestrelAgentContextBuildOutput {
@@ -160,7 +163,10 @@ export function buildKestrelAgentContext(
     benchmarkContext,
   });
   const explicitUserMessage = readUserMessage(input.eventPayload);
-  const attachments = readTurnAttachments(input.eventPayload.attachments);
+  const attachments = adaptAttachmentsForSelectedModel(
+    readTurnAttachments(input.eventPayload.attachments),
+    readSelectedModelVisionInput(input.eventPayload),
+  );
   const attachmentContext = renderAttachmentContext(attachments);
   const userMessage = [explicitUserMessage ?? input.goal, attachmentContext]
     .filter((part) => part.trim().length > 0)
@@ -502,7 +508,13 @@ function renderAttachmentContext(attachments: RunTurnAttachment[]): string {
     mediaType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
     sha256: attachment.sha256,
-    representation: attachment.representationStatus,
+    inlineRepresentation: attachment.representationStatus,
+    ...(attachment.path !== undefined
+      ? {
+          originalAccess: "materialized_read_only",
+          readOnlyPath: attachment.path,
+        }
+      : {}),
     ...(attachment.metadataOnlyReason !== undefined ? { note: attachment.metadataOnlyReason } : {}),
   }));
   const extractedText = attachments.flatMap((attachment) => attachment.text === undefined
@@ -518,6 +530,29 @@ function renderAttachmentContext(attachments: RunTurnAttachment[]): string {
     "</attachments>",
     ...extractedText,
   ].join("\n");
+}
+
+function adaptAttachmentsForSelectedModel(
+  attachments: RunTurnAttachment[],
+  visionInputEnabled: boolean,
+): RunTurnAttachment[] {
+  if (visionInputEnabled) return attachments;
+  return attachments.map((attachment) => attachment.kind !== "image"
+    ? attachment
+    : {
+        ...attachment,
+        kind: "file",
+        representationStatus: "metadata_only",
+        metadataOnlyReason: MODEL_IMAGE_INPUT_UNAVAILABLE_REASON,
+        data: undefined,
+      });
+}
+
+function readSelectedModelVisionInput(eventPayload: Record<string, unknown>): boolean {
+  const metadata = asRecord(eventPayload.metadata);
+  const runtimeAssembly = asRecord(metadata?.runtimeAssembly) ?? asRecord(eventPayload.runtimeAssembly);
+  const modelCapabilities = asRecord(runtimeAssembly?.modelCapabilities);
+  return modelCapabilities?.visionInputEnabled === true;
 }
 
 function attachTurnRepresentationsToLatestUserMessage(

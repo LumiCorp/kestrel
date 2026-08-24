@@ -1163,6 +1163,37 @@ test("Kestrel agent context builder owns tool-result summaries and model context
     ["fs.list . returned 1000 entries (truncated at 1000; unreturned paths may still exist): REDS-INTEL.md"],
   );
 
+  assert.deepEqual(
+    buildRecentFilesystemEvidence({
+      lastActionResult: {
+        kind: "tool",
+        toolName: "fs.read_text",
+        input: { path: "brief.md" },
+        output: {
+          path: "brief.md",
+          content: "# Executive summary\nSentinel content",
+          bytesRead: 36,
+          totalBytes: 40507,
+          range: { startByte: 0, endByte: 36 },
+          complete: false,
+          truncated: true,
+          nextPage: {
+            tool: "fs.read_text_page",
+            input: {
+              path: "brief.md",
+              offsetBytes: 36,
+              expectedRevision: "sha256:brief",
+              maxBytes: 8192,
+            },
+          },
+        },
+      },
+    }),
+    [
+      'fs.read_text brief.md read 36 bytes of 40507 total bytes range=0-36 complete=false truncated=true nextPage={"tool":"fs.read_text_page","input":{"path":"brief.md","offsetBytes":36,"expectedRevision":"sha256:brief","maxBytes":8192}} contentPreview="# Executive summary Sentinel content".',
+    ],
+  );
+
   const context = buildKestrelAgentToolModelContext({
     toolName: "fs.read_text",
     toolInput: { path: "src/file.ts" },
@@ -1191,6 +1222,92 @@ test("shared filesystem evidence contract requires exact-path inspection", () =>
   assert.match(SHARED_DELIBERATOR_PROMPT, /inspect a user-named workspace path directly/u);
   assert.match(SHARED_DELIBERATOR_PROMPT, /before claiming absence or requesting a copy/u);
   assert.match(SHARED_DELIBERATOR_PROMPT, /listings, content search, Git, and knowledge cannot prove absence/u);
+  assert.match(SHARED_DELIBERATOR_PROMPT, /Latest successful tool evidence overrides earlier assistant narration/u);
+  assert.match(SHARED_DELIBERATOR_PROMPT, /positive bytes are readable/u);
+  assert.match(SHARED_DELIBERATOR_PROMPT, /complete=false, follow nextPage/u);
+});
+
+test("materialized metadata-only attachments are described as available originals", () => {
+  const context = buildKestrelAgentContext({
+    reactState: {},
+    eventPayload: {
+      message: "Summarize this file.",
+      attachments: [{
+        fileId: "file-brief",
+        attachmentId: "file-brief",
+        threadId: "thread-brief",
+        filename: "brief.md",
+        mimeType: "text/markdown",
+        sizeBytes: 40507,
+        sha256: "a".repeat(64),
+        kind: "file",
+        representationStatus: "metadata_only",
+        metadataOnlyReason: "Inline extraction failed or is unsupported; the original remains available read-only to Workspace tools.",
+        path: "/workspace/.kestrel/attachments/brief.md",
+      }],
+    },
+    eventType: "user.message",
+    goal: "Summarize this file.",
+    interactionMode: "chat",
+  });
+  const latestUser = [...context.messages].reverse().find((message) => message.role === "user");
+  const rendered = typeof latestUser?.content === "string"
+    ? latestUser.content
+    : latestUser?.content.map((part) => part.type === "text" ? part.text : "").join("\n") ?? "";
+  assert.match(rendered, /"inlineRepresentation":"metadata_only"/u);
+  assert.match(rendered, /"originalAccess":"materialized_read_only"/u);
+  assert.match(rendered, /"readOnlyPath":"\/workspace\/\.kestrel\/attachments\/brief\.md"/u);
+  assert.doesNotMatch(rendered, /"representation":"metadata_only"/u);
+});
+
+test("native images are injected only when the selected model supports vision input", () => {
+  const attachment = {
+    fileId: "file-image",
+    attachmentId: "file-image",
+    threadId: "thread-image",
+    filename: "diagram.png",
+    mimeType: "image/png",
+    sizeBytes: 8,
+    sha256: "b".repeat(64),
+    kind: "image",
+    representationStatus: "native_image",
+    path: "/workspace/.kestrel/attachments/diagram.png",
+    data: Buffer.from("diagram").toString("base64"),
+  } as const;
+  const build = (visionInputEnabled: boolean) => buildKestrelAgentContext({
+    reactState: {},
+    eventPayload: {
+      message: "Describe this image.",
+      attachments: [attachment],
+      metadata: {
+        runtimeAssembly: {
+          modelCapabilities: { visionInputEnabled },
+        },
+      },
+    },
+    eventType: "user.message",
+    goal: "Describe this image.",
+    interactionMode: "chat",
+  });
+
+  const textOnlyUser = [...build(false).messages].reverse().find((message) => message.role === "user");
+  assert.ok(Array.isArray(textOnlyUser?.content));
+  assert.equal(textOnlyUser.content.some((part) => part.type === "image"), false);
+  const textOnlyContent = textOnlyUser.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  assert.match(textOnlyContent, /"inlineRepresentation":"metadata_only"/u);
+  assert.match(textOnlyContent, /selected model does not accept image input/u);
+
+  const visionUser = [...build(true).messages].reverse().find((message) => message.role === "user");
+  assert.ok(Array.isArray(visionUser?.content));
+  assert.equal(visionUser.content.some((part) => part.type === "image"), true);
+  const visionContent = visionUser.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  assert.match(visionContent, /"inlineRepresentation":"native_image"/u);
 });
 
 test("build prompt requires noninteractive turns to finish without conversational waits", () => {

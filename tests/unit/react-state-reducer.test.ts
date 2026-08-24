@@ -43,6 +43,48 @@ test("tool results append evidence without committing workItem state", () => {
   assert.deepEqual(result.transition.novelEvidenceIds, [ledger[0]?.id]);
 });
 
+test("file-read evidence persists byte range, completeness, and exact continuation", () => {
+  const nextPage = {
+    tool: "fs.read_text_page",
+    input: {
+      path: "/app/brief.md",
+      offsetBytes: 8192,
+      expectedRevision: "sha256:brief",
+      maxBytes: 8192,
+    },
+  };
+  const result = applyReactStateEvent({
+    reactState: {},
+    event: {
+      type: "tool_result_observed",
+      stepIndex: 3,
+      toolName: "fs.read_text",
+      toolInput: { path: "/app/brief.md" },
+      toolOutput: {
+        path: "/app/brief.md",
+        content: "KESTREL SUITE PRODUCT OPERATING BRIEF",
+        bytesRead: 8192,
+        totalBytes: 40507,
+        range: { startByte: 0, endByte: 8192 },
+        complete: false,
+        truncated: true,
+        nextOffsetBytes: 8192,
+        nextPage,
+      },
+    },
+  });
+  const entry = (result.reactState.evidenceLedger as Array<Record<string, unknown>>)[0];
+  const facts = entry?.facts as Record<string, unknown>;
+  assert.equal(facts.bytesRead, 8192);
+  assert.equal(facts.totalBytes, 40507);
+  assert.deepEqual(facts.range, { startByte: 0, endByte: 8192 });
+  assert.equal(facts.complete, false);
+  assert.equal(facts.truncated, true);
+  assert.equal(facts.contentBytes, 37);
+  assert.deepEqual(facts.nextPage, nextPage);
+  assert.equal(facts.contentState, undefined);
+});
+
 test("semantic novelty ignores audit time and changed inputs", () => {
   const first = applyReactStateEvent({
     reactState: {},
