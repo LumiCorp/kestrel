@@ -467,6 +467,7 @@ export interface EventStore {
     sessionId?: string | undefined;
     threadId?: string | undefined;
     delegationId?: string | undefined;
+    eventTypes?: RunEvent["type"][] | undefined;
     fromTimestamp?: string | undefined;
     toTimestamp?: string | undefined;
     limit?: number | undefined;

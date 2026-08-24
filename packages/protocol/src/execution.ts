@@ -1003,6 +1003,17 @@ export interface RunnerJobReplayPointerV1 {
   };
 }
 
+export interface RunnerJobManagedResultHandleV1 {
+  version: "job_managed_result_handle_v1";
+  kind: "managed_worktree";
+  worktreePath: string;
+  sourceWorkspaceRoot: string;
+  baseRevision: string;
+  candidateRevision: string;
+  changedFiles: string[];
+  promotionId?: string | undefined;
+}
+
 export interface RunnerJobRunResultV1 {
   version: "job_run_result_v1";
   sessionId: string;
@@ -1010,6 +1021,7 @@ export interface RunnerJobRunResultV1 {
   runId: string;
   status: string;
   waitFor?: Record<string, unknown> | undefined;
+  resultHandle?: RunnerJobManagedResultHandleV1 | undefined;
   replay: RunnerJobReplayPointerV1;
   result: RunnerResultV2<RunnerRunOutput>;
   error?: RunnerRunError | undefined;
@@ -3500,6 +3512,9 @@ function parseJobRunResult(value: unknown, label: string): RunnerJobRunResultV1 
   const runId = requireNonEmptyString(output.runId, `${label}.runId`);
   const status = requireNonEmptyString(output.status, `${label}.status`);
   validateJobReplayPointer(output.replay, `${label}.replay`);
+  const resultHandle = output.resultHandle === undefined
+    ? undefined
+    : parseJobManagedResultHandle(output.resultHandle, `${label}.resultHandle`);
   const result = parseRunnerRunResultV2(output.result);
   if (output.error !== undefined) {
     validateRunError(output.error, `${label}.error`);
@@ -3511,9 +3526,61 @@ function parseJobRunResult(value: unknown, label: string): RunnerJobRunResultV1 
     threadId,
     runId,
     status,
+    ...(resultHandle !== undefined ? { resultHandle } : {}),
     replay: output.replay as RunnerJobReplayPointerV1,
     result,
     ...(output.error !== undefined ? { error: output.error as RunnerRunError } : {}),
+  };
+}
+
+function parseJobManagedResultHandle(
+  value: unknown,
+  label: string,
+): RunnerJobManagedResultHandleV1 {
+  const handle = requireRecord(value, label);
+  rejectUnknownFields(handle, label, [
+    "version",
+    "kind",
+    "worktreePath",
+    "sourceWorkspaceRoot",
+    "baseRevision",
+    "candidateRevision",
+    "changedFiles",
+    "promotionId",
+  ]);
+  if (handle.version !== "job_managed_result_handle_v1") {
+    throw new RunnerProtocolContractError(
+      `${label}.version must be 'job_managed_result_handle_v1'`,
+    );
+  }
+  if (handle.kind !== "managed_worktree") {
+    throw new RunnerProtocolContractError(
+      `${label}.kind must be 'managed_worktree'`,
+    );
+  }
+  const worktreePath = requireNonEmptyString(handle.worktreePath, `${label}.worktreePath`);
+  const sourceWorkspaceRoot = requireNonEmptyString(
+    handle.sourceWorkspaceRoot,
+    `${label}.sourceWorkspaceRoot`,
+  );
+  const baseRevision = requireNonEmptyString(handle.baseRevision, `${label}.baseRevision`);
+  const candidateRevision = requireNonEmptyString(
+    handle.candidateRevision,
+    `${label}.candidateRevision`,
+  );
+  validateNonEmptyStringArray(handle.changedFiles, `${label}.changedFiles`);
+  validateOptionalNonEmptyString(handle.promotionId, `${label}.promotionId`);
+  return {
+    version: "job_managed_result_handle_v1",
+    kind: "managed_worktree",
+    worktreePath,
+    sourceWorkspaceRoot,
+    baseRevision,
+    candidateRevision,
+    changedFiles: [...(handle.changedFiles as string[])],
+    ...(handle.promotionId !== undefined
+      ? { promotionId: handle.promotionId as string }
+      : {}),
   };
 }
 

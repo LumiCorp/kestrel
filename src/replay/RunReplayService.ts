@@ -34,6 +34,7 @@ export interface ReplayQuery {
   sessionId?: string | undefined;
   threadId?: string | undefined;
   delegationId?: string | undefined;
+  eventTypes?: RunEvent["type"][] | undefined;
   fromTimestamp?: string | undefined;
   toTimestamp?: string | undefined;
   limit?: number | undefined;
@@ -534,6 +535,7 @@ export class RunReplayService {
       ...(query.sessionId !== undefined ? { sessionId: query.sessionId } : {}),
       ...(query.threadId !== undefined ? { threadId: query.threadId } : {}),
       ...(query.delegationId !== undefined ? { delegationId: query.delegationId } : {}),
+      ...(query.eventTypes !== undefined ? { eventTypes: query.eventTypes } : {}),
       ...(query.fromTimestamp !== undefined ? { fromTimestamp: query.fromTimestamp } : {}),
       ...(query.toTimestamp !== undefined ? { toTimestamp: query.toTimestamp } : {}),
       ...(fetchLimit !== undefined ? { limit: fetchLimit } : {}),

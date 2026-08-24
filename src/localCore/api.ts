@@ -2804,16 +2804,38 @@ function normalizeReplayQueryBody(value: unknown): ReplayQuery {
       "Replay query fromTimestamp must not be after toTimestamp.",
     );
   }
+  const eventTypes = normalizeReplayQueryEventTypes(record.eventTypes);
   const limit = normalizeReplayQueryLimit(record.limit);
   return {
     ...(runId !== undefined ? { runId } : {}),
     ...(sessionId !== undefined ? { sessionId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
     ...(delegationId !== undefined ? { delegationId } : {}),
+    ...(eventTypes !== undefined ? { eventTypes } : {}),
     ...(fromTimestamp !== undefined ? { fromTimestamp } : {}),
     ...(toTimestamp !== undefined ? { toTimestamp } : {}),
     ...(limit !== undefined ? { limit } : {}),
   };
+}
+
+function normalizeReplayQueryEventTypes(
+  value: unknown,
+): ReplayQuery["eventTypes"] {
+  if (value === undefined) {
+    return;
+  }
+  if (
+    Array.isArray(value) === false ||
+    value.length === 0 ||
+    value.some(
+      (entry) => typeof entry !== "string" || entry.trim().length === 0,
+    )
+  ) {
+    throw invalidReplayQuery(
+      "Replay query field 'eventTypes' must be a non-empty array of non-empty strings.",
+    );
+  }
+  return [...new Set(value.map((entry) => (entry as string).trim()))] as ReplayQuery["eventTypes"];
 }
 
 function normalizeReplayQueryString(
