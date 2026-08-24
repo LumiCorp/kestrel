@@ -539,6 +539,7 @@ function normalizeInventory(inventory: {
   volumes: Array<{
     id: string;
     name: string;
+    state?: string;
     region?: string;
     sizeGb?: number;
     attachedMachineId?: string | null;
@@ -559,9 +560,10 @@ function normalizeInventory(inventory: {
     volumes: inventory.volumes.map((volume) => ({
       id: volume.id,
       name: volume.name,
+      state: volume.state ?? null,
       region: volume.region ?? null,
       sizeGb: volume.sizeGb ?? null,
-      attachedMachineId: volume.attachedMachineId ?? null,
+      attachedMachineId: volume.attachedMachineId,
     })),
   };
 }

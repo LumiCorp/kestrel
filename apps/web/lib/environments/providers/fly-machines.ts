@@ -879,9 +879,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       volumes: parseResponse(z.array(volumeSchema), volumes).map((volume) => ({
         id: volume.id,
         name: volume.name,
+        state: volume.state,
         region: volume.region,
         sizeGb: volume.size_gb,
-        attachedMachineId: volume.attached_machine_id ?? null,
+        attachedMachineId: volume.attached_machine_id,
       })),
     };
   }
