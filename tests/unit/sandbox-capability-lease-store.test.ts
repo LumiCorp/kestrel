@@ -198,6 +198,7 @@ test("exact capability effect results require completed provider evidence and ar
   ((mutableExactResult.output as { outcome: { rawOutput: { answer: string } } }).outcome.rawOutput).answer = "mutated-after-save-started";
   await savingExactResult;
   assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactResult);
+  assert.equal((await store.getPersistedEffect(binding.toolCallId))?.status, "DONE");
   const abortAfterCommit = new AbortController();
   abortAfterCommit.abort();
   await store.saveSandboxCapabilityEffectResult({
@@ -217,6 +218,30 @@ test("exact capability effect results require completed provider evidence and ar
   }), /completed exact lease action/u);
 });
 
+test("an identical exact result repairs only the serialized PENDING completion state", async () => {
+  const store = new InMemorySessionStore({ tenantId: binding.tenantId });
+  await seedPreparedCapabilityEffect(store);
+  const digest = fingerprintSandboxCapabilityLeaseBindingV1(binding);
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: transition(1, "requested") });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: transition(2, "issued") });
+  const exactResult = {
+    idempotencyKey: binding.toolCallId,
+    status: "DONE" as const,
+    output: { status: "OK", outcome: { kind: "success", rawOutput: { answer: "already-recorded" } } },
+    timestamp: "2026-08-23T12:00:04.000Z",
+  };
+  await store.saveEffectResult(binding.runId, binding.sessionId, exactResult);
+  assert.equal((await store.getPersistedEffect(binding.toolCallId))?.status, "PENDING");
+  const aborted = new AbortController();
+  aborted.abort();
+  await store.saveSandboxCapabilityEffectResult({
+    leaseId: "lease-a", bindingDigest: digest, toolCallId: binding.toolCallId,
+    runId: binding.runId, sessionId: binding.sessionId, result: exactResult, signal: aborted.signal,
+  });
+  assert.equal((await store.getPersistedEffect(binding.toolCallId))?.status, "DONE");
+  assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactResult);
+});
+
 test("exact capability effect results persist before cleanup only for a never-invoked capability", async () => {
   const store = new InMemorySessionStore({ tenantId: binding.tenantId });
   await seedPreparedCapabilityEffect(store);
@@ -234,6 +259,7 @@ test("exact capability effect results persist before cleanup only for a never-in
     runId: binding.runId, sessionId: binding.sessionId, result: exactResult,
   });
   assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactResult);
+  assert.equal((await store.getPersistedEffect(binding.toolCallId))?.status, "DONE");
   await store.appendSandboxCapabilityLeaseTransition({
     expectedSequence: 2,
     record: {

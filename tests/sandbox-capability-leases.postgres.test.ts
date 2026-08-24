@@ -194,6 +194,22 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     ((mutableExactEffectResult.output as { outcome: { rawOutput: { answer: string } } }).outcome.rawOutput).answer = "mutated-after-save-started";
     await savingExactEffectResult;
     assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
+    assert.equal((await store.getPersistedEffect(binding.toolCallId))?.status, "DONE");
+    await pool.query(`UPDATE effects SET status = 'PENDING' WHERE idempotency_key = $1`, [binding.toolCallId]);
+    const abortedIdempotentSave = new AbortController();
+    abortedIdempotentSave.abort();
+    await store.saveSandboxCapabilityEffectResult({
+      leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding),
+      toolCallId: binding.toolCallId, runId, sessionId, result: exactEffectResult,
+      signal: abortedIdempotentSave.signal,
+    });
+    assert.equal((await store.getPersistedEffect(binding.toolCallId))?.status, "DONE");
+    assert.equal((await store.readExactEffectResult({
+      sessionId,
+      runId,
+      idempotencyKey: binding.toolCallId,
+      tenantId: binding.tenantId,
+    })).status, "found");
     const wrongTenantStore = new PostgresSessionStore(new PgSqlExecutor(pool), { tenantId: "tenant-other" });
     await assert.rejects(
       wrongTenantStore.saveEffectResult(runId, sessionId, exactEffectResult),
@@ -249,7 +265,7 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       /no matching prepared effect/u,
     );
     assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactEffectResult);
-    assert.equal((await store.getPersistedEffect(binding.toolCallId))?.status, "PENDING");
+    assert.equal((await store.getPersistedEffect(binding.toolCallId))?.status, "DONE");
     assert.deepEqual(await store.claimExactEffectCancellation({
       sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: "tenant-other",
     }), { status: "not_found" });

@@ -9,6 +9,15 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import {
+  hasTerminalEvent,
+  parseNetworkObservations,
+  parseQualificationRunStream,
+  readCapabilityReplayEvidence,
+  readCodeStdout,
+  type ParsedQualificationRun,
+} from "./qualification/sandbox-capability-evidence.js";
+
 const execFileAsync = promisify(execFile);
 const MODES = new Set(["live", "controlled", "all"]);
 const CHECKPOINTS = [
@@ -125,31 +134,29 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
   await capture(evidence, "capability-free", "controlled", async () => {
     const before = await providerEvidence(config);
     const result = await client.run(profileId, "capability-free");
-    requireMatch(result.stream, /run\.completed/u, "capability-free run did not complete");
-    requireNoMatch(result.stream, /capabilityReplayEvidence/u, "capability-free run minted capability evidence");
+    requireTrue(hasTerminalEvent(result.parsed, "run.completed"), "capability-free run did not complete");
+    requireTrue(result.parsed.codeResults.every((item) => readCapabilityReplayEvidence(item) === undefined), "capability-free run minted capability evidence");
     requireEqual(await providerEvidence(config), before, "capability-free run contacted provider");
     return result;
   });
   await capture(evidence, "selected-unused", "controlled", async () => {
     const before = await providerEvidence(config);
     const result = await client.run(profileId, "selected-unused");
-    requireMatch(result.stream, /selected capability intentionally unused/u, "selected-unused output missing");
-    requireMatch(result.stream, /capabilityReplayEvidence/u, "selected-unused exact evidence missing");
+    requireTrue(result.parsed.codeResults.some((item) => readCodeStdout(item).includes("selected capability intentionally unused")), "selected-unused output missing");
+    requireTrue(result.parsed.codeResults.some((item) => readCapabilityReplayEvidence(item) !== undefined), "selected-unused exact evidence missing");
     requireEqual(await providerEvidence(config), before, "selected-unused contacted provider");
-    await assertOperatorLifecycle(client, result.runId, /"status":"cleaned"/u);
+    await requireCapabilityLease(client, result.runId, { status: "cleaned", remainingRequests: 1 });
     return result;
   });
   await capture(evidence, "provider-used", "controlled", async () => {
     const result = await client.run(profileId, "provider-used");
-    requireMatch(result.stream, /run\.completed/u, "provider-used run did not complete");
-    requireMatch(result.stream, /DIRECT_NETWORK_BLOCKED:\{\\"url/u, "controlled sandbox did not report blocked direct-network probes");
-    if (/DIRECT_NETWORK_UNEXPECTED:\{\\"url/u.test(result.stream)) {
-      const observations = result.stream.split("\\n").filter((line) => /DIRECT_NETWORK_UNEXPECTED:\{\\"url/u.test(line)).slice(0, 8);
-      throw new Error(`controlled sandbox unexpectedly reached a direct-network target: ${observations.join(" | ")}`);
-    }
+    requireTrue(hasTerminalEvent(result.parsed, "run.completed"), "provider-used run did not complete");
+    const observations = result.parsed.codeResults.flatMap((item) => parseNetworkObservations(readCodeStdout(item)));
+    requireEqual(observations.map((item) => item.url).sort(), ["http://10.255.255.1:80", "http://127.0.0.1:80", "http://169.254.169.254/latest/meta-data/", "https://example.com"].sort(), "controlled network probe inventory changed");
+    requireTrue(observations.every((item) => item.outcome === "blocked"), `controlled sandbox unexpectedly reached a direct-network target: ${canonical(observations)}`);
     requireMatch(await providerEvidence(config), /qualification-provider-used/u, "controlled provider was not contacted");
     assertSecretFree(result.stream, config);
-    await assertOperatorLifecycle(client, result.runId, /"status":"cleaned"/u);
+    await requireCapabilityLease(client, result.runId, { status: "cleaned", remainingRequests: 0 });
     return result;
   });
   await capture(evidence, "cancellation", "controlled", async () => {
@@ -158,21 +165,21 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
     const sessionId = pending.sessionId;
     await client.cancel(sessionId);
     const result = await pending.promise;
-    requireMatch(result.stream, /run\.cancelled/u, "cancelled run did not terminate as cancelled");
+    requireTrue(hasTerminalEvent(result.parsed, "run.cancelled"), "cancelled run did not terminate as cancelled");
     requireMatch(await providerEvidence(config), /"kind":"provider_abort"/u, "provider abort was not observed");
     await client.expectExactResultUnavailable(result);
     return result;
   });
   await capture(evidence, "timeout", "controlled", async () => {
     const result = await client.run(profileId, "timeout");
-    requireMatch(result.stream, /capability_timeout/u, "timeout code missing");
-    await assertOperatorLifecycle(client, result.runId, /provider_invocation_timeout/u);
+    requireTrue(hasStructuredPublicValue(result.parsed, "capability_timeout"), "timeout code missing");
+    await requireCapabilityLease(client, result.runId, { status: "cleaned", terminalReason: "provider_invocation_timeout" });
     return result;
   });
   const expiryProfile = await client.resolveProfile(config, "controlled", { timeoutMs: 2_000, maxExpiryMs: 100 });
   await capture(evidence, "expiry", "controlled", async () => {
     const result = await client.run(expiryProfile, "expiry");
-    await assertOperatorLifecycle(client, result.runId, /expired/u);
+    await requireCapabilityLease(client, result.runId, { status: "cleaned", terminalReason: "expired" });
     return result;
   });
   await capture(evidence, "secret-reflection", "controlled", async () => {
@@ -192,7 +199,7 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
       await startRemote(config, "controlled", { credentials: false });
       await waitForHealth(config, port, config.runnerToken);
       if (partial?.runId && partial.idempotencyKey) await client.expectExactResultUnavailable(partial);
-      return partial ?? { stream: "", runId: "ambiguous", sessionId: pending.sessionId };
+      return partial ?? { stream: "", parsed: parseQualificationRunStream(""), runId: "ambiguous", sessionId: pending.sessionId };
     } finally {
       await stopRemote(config).catch(() => undefined);
       await startRemote(config, "controlled").catch(() => undefined);
@@ -202,11 +209,10 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
   for (const [checkpoint, replayExpected] of CHECKPOINTS) {
     await capture(evidence, `crash-${checkpoint}`, "controlled", async () => {
       try {
-        const before = await remoteMatchCount(config, "control/events.ndjson", new RegExp(`"checkpoint":"${checkpoint}"`, "u"));
-        await armCheckpoint(config, checkpoint);
+        const barrierNonce = await armCheckpoint(config, checkpoint);
         const pending = client.run(profileId, "provider-used");
         const settled = pending.promise.catch((error) => error instanceof PartialRunError ? error.result : undefined);
-        await waitForRemoteMatch(config, "control/events.ndjson", new RegExp(`"checkpoint":"${checkpoint}"`, "u"), before + 1);
+        await waitForRemoteMatch(config, "control/events.ndjson", new RegExp(`"checkpoint":"${checkpoint}"[^\n]*"barrierNonce":"${barrierNonce}"`, "u"));
         await killRemote(config);
         const partial = await settled;
         await startRemote(config, "controlled", { credentials: false });
@@ -215,7 +221,7 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
         const result = recovered ? { ...recovered, ...partial, idempotencyKey: partial?.idempotencyKey ?? recovered.idempotencyKey } : partial;
         if (!result?.runId || !result.sessionId || !result.idempotencyKey) {
           if (replayExpected) throw new Error(`Crash at ${checkpoint} did not expose exact result identity.`);
-          return { stream: "", runId: result?.runId ?? "unknown", sessionId: result?.sessionId ?? "unknown" };
+          return { stream: "", parsed: parseQualificationRunStream(""), runId: result?.runId ?? "unknown", sessionId: result?.sessionId ?? "unknown" };
         }
         if (replayExpected) await client.getExactResult(result);
         else await client.expectExactResultUnavailable(result);
@@ -250,17 +256,16 @@ async function runLiveJourney(config: QualificationConfig, port: number, evidenc
   await capture(evidence, "live-tavily", "live", async () => {
     const marker = `kestrel-live-${randomUUID()}`;
     const result = await client.run(profileId, `provider-used ${marker}`);
-    requireMatch(result.stream, /run\.completed/u, "live Tavily run did not complete");
-    requireMatch(result.stream, /capabilityReplayEvidence/u, "live exact result evidence missing");
-    if (!/DIRECT_NETWORK_BLOCKED direct HTTPS/u.test(result.stream)
-      || !/DIRECT_NETWORK_BLOCKED loopback/u.test(result.stream)
-      || !/DIRECT_NETWORK_BLOCKED metadata-network/u.test(result.stream)) {
-      const stdout = result.stream.match(/"stdout":"(?:\\.|[^"\\])*"/gu)?.slice(-4) ?? [];
-      throw new Error(`live sandbox did not report blocked direct-network probes; observed stdout evidence: ${stdout.join(" | ")}`);
+    requireTrue(hasTerminalEvent(result.parsed, "run.completed"), "live Tavily run did not complete");
+    if (!result.parsed.codeResults.some((item) => readCapabilityReplayEvidence(item) !== undefined)) {
+      throw new Error("MODEL_DID_NOT_SELECT_CAPABILITY: Luna completed without selecting the optional Tavily capability");
     }
-    requireNoMatch(result.stream, /"stdout":"(?:\\.|[^"\\])*DIRECT_NETWORK_UNEXPECTED/u, "live sandbox unexpectedly reached a direct-network target");
-    requireMatch(result.stream, new RegExp(marker, "u"), "live tool evidence did not preserve the unique query marker");
+    const stdout = result.parsed.codeResults.map(readCodeStdout).join("\n");
+    requireTrue(stdout.includes("DIRECT_NETWORK_BLOCKED direct HTTPS") && stdout.includes("DIRECT_NETWORK_BLOCKED loopback") && stdout.includes("DIRECT_NETWORK_BLOCKED metadata-network"), `live sandbox did not report blocked direct-network probes; observed stdout evidence: ${stdout.slice(0, 4_000)}`);
+    requireTrue(!stdout.includes("DIRECT_NETWORK_UNEXPECTED"), "live sandbox unexpectedly reached a direct-network target");
+    requireTrue(stdout.includes(marker), "live tool evidence did not preserve the unique query marker");
     assertSecretFree(result.stream, config);
+    await requireCapabilityLease(client, result.runId, { status: "cleaned", remainingRequests: 0 });
     const exact = await client.getExactResult(result);
     await stopRemote(config);
     await setRemoteDockerAvailable(config, false);
@@ -277,7 +282,7 @@ async function runLiveJourney(config: QualificationConfig, port: number, evidenc
   });
 }
 
-interface RunResult { stream: string; runId: string; sessionId: string; idempotencyKey?: string }
+interface RunResult { stream: string; parsed: ParsedQualificationRun; runId: string; sessionId: string; idempotencyKey?: string }
 
 class PublicRunnerClient {
   readonly baseUrl: string;
@@ -390,9 +395,8 @@ class PartialRunError extends Error {
 }
 
 function readRunResult(stream: string, sessionId: string): RunResult {
-  const runId = stream.match(/"runId":"([^"]+)"/u)?.[1] ?? "";
-  const idempotencyKey = stream.match(/"idempotencyKey":"([^"]+)"/u)?.[1];
-  return { stream, runId, sessionId, ...(idempotencyKey ? { idempotencyKey } : {}) };
+  const parsed = parseQualificationRunStream(stream);
+  return { stream, parsed, runId: parsed.runId, sessionId, ...(parsed.idempotencyKey ? { idempotencyKey: parsed.idempotencyKey } : {}) };
 }
 
 async function capture(evidence: ScenarioEvidence[], name: string, mode: "live" | "controlled", run: () => Promise<RunResult>): Promise<void> {
@@ -533,9 +537,37 @@ async function waitForHealth(config: QualificationConfig, port: number, token: s
   throw new Error(`Qualification runner health check timed out.${logs ? `\n${logs}` : ""}`);
 }
 
-async function assertOperatorLifecycle(client: PublicRunnerClient, runId: string, pattern: RegExp): Promise<void> {
-  const serialized = JSON.stringify(await client.operatorRun(runId));
-  requireMatch(serialized, pattern, `Operator lifecycle did not match ${pattern}`);
+async function requireCapabilityLease(
+  client: PublicRunnerClient,
+  runId: string,
+  expected: { status?: string; remainingRequests?: number; terminalReason?: string },
+): Promise<Record<string, unknown>> {
+  const response = asRecord(await client.operatorRun(runId));
+  const payload = asRecord(response.payload);
+  const view = asRecord(payload.view);
+  const report = asRecord(view.sandboxCapabilities);
+  const leases = Array.isArray(report.leases) ? report.leases.map(asRecord) : [];
+  if (leases.length !== 1) throw new Error(`Operator projection exposed ${leases.length} capability leases; expected exactly one.`);
+  const lease = leases[0]!;
+  for (const [field, value] of Object.entries(expected)) {
+    if (lease[field] !== value) throw new Error(`Operator capability ${field} mismatch: expected ${JSON.stringify(value)}, received ${JSON.stringify(lease[field])}.`);
+  }
+  return lease;
+}
+
+function hasStructuredPublicValue(run: ParsedQualificationRun, expected: string): boolean {
+  const visit = (value: unknown): boolean => {
+    if (value === expected) return true;
+    if (Array.isArray(value)) return value.some(visit);
+    if (typeof value === "object" && value !== null) return Object.values(value).some(visit);
+    return false;
+  };
+  return run.events.some(visit) || run.codeResults.some(visit);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 }
 
 async function providerEvidence(config: QualificationConfig): Promise<string> {
@@ -561,8 +593,10 @@ function matchCount(value: string, pattern: RegExp): number {
   return value.match(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))?.length ?? 0;
 }
 
-async function armCheckpoint(config: QualificationConfig, checkpoint: string): Promise<void> {
-  await uploadText(config, `${config.controlToken}\n`, `${config.remoteRoot}/runtime/control/${checkpoint}.pause`);
+async function armCheckpoint(config: QualificationConfig, checkpoint: string): Promise<string> {
+  const nonce = randomUUID();
+  await uploadText(config, `${config.controlToken}\n${nonce}\n`, `${config.remoteRoot}/runtime/control/${checkpoint}.pause`);
+  return nonce;
 }
 
 async function recoverRunIdentity(config: QualificationConfig, checkpoint: string): Promise<RunResult | undefined> {
@@ -570,7 +604,7 @@ async function recoverRunIdentity(config: QualificationConfig, checkpoint: strin
   const event = text.split("\n").filter(Boolean).map((line) => JSON.parse(line) as { checkpoint?: string; runId?: string; toolCallId?: string }).reverse().find((candidate) => candidate.checkpoint === checkpoint);
   if (!event?.runId || !event.toolCallId) return undefined;
   const sessionId = event.toolCallId.split(`:${event.runId}:`, 1)[0];
-  return { runId: event.runId, sessionId, idempotencyKey: event.toolCallId, stream: "" };
+  return { runId: event.runId, sessionId, idempotencyKey: event.toolCallId, stream: "", parsed: parseQualificationRunStream("") };
 }
 
 async function writeEvidenceBundle(input: { artifactDir: string; config: QualificationConfig; startedAt: string; scenarios: ScenarioEvidence[]; cleanup: unknown; remoteFacts: unknown; providerSnapshot: string; lifecycleSnapshot: string }): Promise<void> {
@@ -702,6 +736,7 @@ function providerRequestCount(value: string): number { return value.split("\n").
 function requireMatch(value: string, pattern: RegExp, message: string): void { if (!pattern.test(value)) throw new Error(message); }
 function requireNoMatch(value: string, pattern: RegExp, message: string): void { if (pattern.test(value)) throw new Error(message); }
 function requireEqual(actual: unknown, expected: unknown, message: string): void { if (canonical(actual) !== canonical(expected)) throw new Error(`${message}: ${canonical({ actual, expected })}`); }
+function requireTrue(value: boolean, message: string): asserts value { if (!value) throw new Error(message); }
 function canonical(value: unknown): string { return JSON.stringify(sortValue(value)); }
 function sortValue(value: unknown): unknown { if (Array.isArray(value)) return value.map(sortValue); if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, sortValue(item)])); return value; }
 function sha256(value: string | Buffer): string { return createHash("sha256").update(value).digest("hex"); }

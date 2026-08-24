@@ -250,7 +250,7 @@ test("recorded sandbox capability result replay never resolves credentials, cont
   });
 });
 
-test("completed code capability output is durably bound before the effect is marked done", async () => {
+test("completed code capability output delegates atomic DONE ownership to the exact-result store", async () => {
   const store = new InMemorySessionStore();
   const descriptor = defaultToolCatalog.getDescriptorRef("code.execute");
   assert.ok(descriptor);
@@ -329,7 +329,7 @@ test("completed code capability output is durably bound before the effect is mar
     createdAt: timestamp,
   }], { runId: "run-exact", sessionId: "session-exact", stepIndex: 0 });
 
-  assert.deepEqual(order, ["save-exact-result", "mark-done"]);
+  assert.deepEqual(order, ["save-exact-result"]);
   assert.deepEqual((exactResult as { output?: unknown }).output, agentToolResult);
 });
 

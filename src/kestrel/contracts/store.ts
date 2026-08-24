@@ -645,6 +645,7 @@ export interface SandboxCapabilityLeaseStore {
     expectedSequence: number;
     record: SandboxCapabilityLeaseTransitionRecordV1;
   }): Promise<SandboxCapabilityLeaseTransitionRecordV1 & { invocationResponseByteLimit: number }>;
+  /** Atomically persists the exact DONE result and transitions its owning effect to DONE. */
   saveSandboxCapabilityEffectResult(input: {
     leaseId: string;
     bindingDigest: string;

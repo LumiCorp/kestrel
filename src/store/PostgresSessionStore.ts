@@ -2172,7 +2172,19 @@ export class PostgresSessionStore implements SessionStore {
         if (canonicalStoreJson(recorded) !== canonicalStoreJson(exactInput.result)) {
           throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result conflicts with recorded exact replay output");
         }
+        if (effectRow.status === "PENDING") {
+          const completed = await executor.query(
+            `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status = 'PENDING'`,
+            [exactInput.toolCallId],
+          );
+          if (completed.rowCount !== 1) {
+            throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect completion lost its serialized authority");
+          }
+        }
         return;
+      }
+      if (effectRow.status === "DONE") {
+        throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect is DONE without its exact replay result");
       }
       throwIfSandboxCapabilityResultPersistenceCancelled(input.signal);
       await executor.query(
@@ -2187,6 +2199,13 @@ export class PostgresSessionStore implements SessionStore {
           normalizeTimestampString(exactInput.result.timestamp),
         ],
       );
+      const completed = await executor.query(
+        `UPDATE effects SET status = 'DONE' WHERE idempotency_key = $1 AND status = 'PENDING'`,
+        [exactInput.toolCallId],
+      );
+      if (completed.rowCount !== 1) {
+        throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect completion lost its serialized authority");
+      }
       throwIfSandboxCapabilityResultPersistenceCancelled(input.signal);
     });
   }

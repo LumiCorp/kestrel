@@ -1240,6 +1240,9 @@ export class InMemorySessionStore implements SessionStore {
     if (candidate !== "ready") {
       throw new SandboxCapabilityExactResultConflictError("Sandbox capability exact result has no matching prepared effect");
     }
+    if (effect === null) {
+      throw new SandboxCapabilityExactResultConflictError("Sandbox capability exact result has no matching prepared effect");
+    }
     if (effect?.status === "FAILED") {
       throw new SandboxCapabilityExactResultCancelledError("Sandbox capability exact-result persistence was cancelled");
     }
@@ -1258,10 +1261,16 @@ export class InMemorySessionStore implements SessionStore {
       if (canonicalJson(existing) !== canonicalJson(exactInput.result)) {
         throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result conflicts with recorded exact replay output");
       }
+      effect.status = "DONE";
+      this.operationLog.push(`saveSandboxCapabilityEffectResult:${input.leaseId}:${input.toolCallId}:idempotent`);
       return;
+    }
+    if (effect.status === "DONE") {
+      throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect is DONE without its exact replay result");
     }
     if (input.signal?.aborted === true) throw new SandboxCapabilityExactResultCancelledError("Sandbox capability exact-result persistence was cancelled");
     this.effectResults.set(exactInput.result.idempotencyKey, structuredClone(exactInput.result));
+    effect.status = "DONE";
     this.operationLog.push(`saveSandboxCapabilityEffectResult:${input.leaseId}:${input.toolCallId}`);
   }
 

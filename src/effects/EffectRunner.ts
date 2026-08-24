@@ -137,7 +137,9 @@ export class InlineEffectRunner implements EffectRunner {
           persistCompletedCapabilityResult,
         });
         await persistCompletedResult(output);
-        await this.store.markEffectStatus(effect.idempotencyKey, "DONE", effect);
+        if (readSandboxCapabilityReplayEvidence(output) === undefined) {
+          await this.store.markEffectStatus(effect.idempotencyKey, "DONE", effect);
+        }
         if (toolActivity !== undefined) {
           const evidence = readAgentToolResultV2(output);
           await notifyToolActivity(context.onToolActivity, {

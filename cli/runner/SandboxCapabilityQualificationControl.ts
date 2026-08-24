@@ -42,26 +42,33 @@ export async function createSandboxCapabilityQualificationObserver(input: {
         .update(`${event.runId}\0${event.toolCallId}\0${event.leaseId}`)
         .digest("hex");
       const prefix = path.join(controlDir, `${actionId}.${event.checkpoint}`);
-      await appendFile(
-        path.join(controlDir, "events.ndjson"),
-        `${JSON.stringify({ ...event, actionId, observedAt: new Date().toISOString() })}\n`,
-        { encoding: "utf8", mode: 0o600 },
-      );
       const globalPrefix = path.join(controlDir, event.checkpoint);
       const pause = await readFile(`${prefix}.pause`, "utf8").catch(async () =>
         await readFile(`${globalPrefix}.pause`, "utf8").catch(() => undefined));
-      if (pause === undefined || !tokenMatches(pause.trim(), input.token)) return;
+      const barrierNonce = pause === undefined ? undefined : parseControlFile(pause, input.token);
+      await appendFile(
+        path.join(controlDir, "events.ndjson"),
+        `${JSON.stringify({ ...event, actionId, ...(barrierNonce === undefined ? {} : { barrierNonce }), observedAt: new Date().toISOString() })}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+      if (barrierNonce === undefined) return;
 
       const signal = AbortSignal.timeout(120_000);
       while (!signal.aborted) {
         const release = await readFile(`${prefix}.release`, "utf8").catch(async () =>
           await readFile(`${globalPrefix}.release`, "utf8").catch(() => undefined));
-        if (release !== undefined && tokenMatches(release.trim(), input.token)) return;
+        if (release !== undefined && parseControlFile(release, input.token) === barrierNonce) return;
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       throw new Error(`Qualification checkpoint '${event.checkpoint}' was not released.`);
     },
   };
+}
+
+function parseControlFile(value: string, expectedToken: string): string | undefined {
+  const [candidateToken, nonce, ...extra] = value.trim().split("\n");
+  if (extra.length > 0 || candidateToken === undefined || nonce === undefined || !tokenMatches(candidateToken, expectedToken)) return undefined;
+  return /^[a-f0-9-]{36}$/u.test(nonce) ? nonce : undefined;
 }
 
 function tokenMatches(candidate: string, expected: string): boolean {
