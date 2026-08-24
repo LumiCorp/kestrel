@@ -22,10 +22,12 @@ import {
   sanitizeCanaryEvidence,
   stopWorkerWithProviderVerification,
   verifyKwb2Archive,
+  waitForTemporaryResourceCleanup,
   type BackupObservation,
   type CanaryDependencies,
   type CanaryEvidence,
   type CanaryTarget,
+  type EnvironmentInventory,
 } from "./workspace-backup-retry-canary";
 
 const execFileAsync = promisify(execFile);
@@ -607,6 +609,97 @@ test("detached Fly soft-deletion tombstones satisfy temporary volume cleanup", (
   assert.doesNotThrow(() => assertNoTemporaryResources(value, cleaned));
 });
 
+test("temporary cleanup waits through Fly scheduling_destroy propagation", async () => {
+  const value = target();
+  let reads = 0;
+  let clock = 0;
+  const cleaned = await waitForTemporaryResourceCleanup({
+    target: value,
+    observeEnvironment: async () => {
+      reads += 1;
+      const environment = structuredClone(value.baseline.environment);
+      if (reads < 3) {
+        environment.volumes.push({
+          id: "export-volume",
+          name: "ws_workspace1_r_operation1",
+          state: "scheduling_destroy",
+          region: "iad",
+          sizeGb: 20,
+          attachedMachineId: null,
+        });
+      }
+      return environment;
+    },
+    now: () => clock,
+    delay: async (ms) => void (clock += ms),
+    deadlineMs: 1_000,
+    pollIntervalMs: 100,
+  });
+
+  assert.equal(reads, 3);
+  assert.deepEqual(
+    cleaned.observations.map((observation) =>
+      observation.volumes.map((volume) => volume.state),
+    ),
+    [["scheduling_destroy"], []],
+  );
+  assert.equal(
+    cleaned.environment.volumes.some((volume) => volume.id === "export-volume"),
+    false,
+  );
+});
+
+test("temporary cleanup preserves the last blocking inventory when it never settles", async () => {
+  const value = target();
+  let clock = 0;
+  await assert.rejects(
+    waitForTemporaryResourceCleanup({
+      target: value,
+      observeEnvironment: async () => {
+        const environment = structuredClone(value.baseline.environment);
+        environment.volumes.push({
+          id: "export-volume",
+          name: "ws_workspace1_r_operation1",
+          state: "scheduling_destroy",
+          region: "iad",
+          sizeGb: 20,
+          attachedMachineId: null,
+        });
+        return environment;
+      },
+      now: () => clock,
+      delay: async (ms) => void (clock += ms),
+      deadlineMs: 200,
+      pollIntervalMs: 100,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Temporary export resources remain/u);
+      const details = (
+        error as Error & {
+          details?: {
+            cleanupObservations?: Array<{
+              volumes: Array<{ state: string | null }>;
+            }>;
+            lastEnvironment?: EnvironmentInventory;
+          };
+        }
+      ).details;
+      assert.deepEqual(
+        details?.cleanupObservations?.map((observation) =>
+          observation.volumes.map((volume) => volume.state),
+        ),
+        [["scheduling_destroy"]],
+      );
+      assert.equal(
+        details?.lastEnvironment?.volumes.at(-1)?.state,
+        "scheduling_destroy",
+      );
+      return true;
+    },
+  );
+});
+
 test("temporary volume cleanup fails closed for live, unknown, or attached volumes", () => {
   const value = target();
   for (const volume of [
@@ -695,11 +788,11 @@ test("one first-attempt persistence completes on attempt two and retires only af
   fixture.dependencies.observeEnvironment = async () => {
     inventoryReads += 1;
     const environment = structuredClone(target().baseline.environment);
-    if (inventoryReads === 2) {
+    if (inventoryReads === 2 || inventoryReads === 3) {
       environment.volumes.push({
         id: "export-volume",
         name: "ws_workspace1_r_operation1",
-        state: "pending_destroy",
+        state: inventoryReads === 2 ? "scheduling_destroy" : "pending_destroy",
         region: "iad",
         sizeGb: 20,
         attachedMachineId: null,
@@ -720,6 +813,13 @@ test("one first-attempt persistence completes on attempt two and retires only af
   assert.equal(result.backup?.final?.operation.attempt, 2);
   assert.equal(result.workerStop?.confirmedState, "stopped");
   assert.equal(result.cleanup?.backupRecordPreserved, true);
+  assert.equal(inventoryReads, 3);
+  assert.deepEqual(
+    result.environment?.cleanupObservations?.map((observation) =>
+      observation.volumes.map((volume) => volume.state),
+    ),
+    [["scheduling_destroy"], ["pending_destroy"]],
+  );
   assert.deepEqual(
     result.environment?.final.volumes.find(
       (volume) => volume.id === "export-volume",
