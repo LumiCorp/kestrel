@@ -37,6 +37,7 @@ interface QualificationConfig {
   model: string;
   modelCredentialName: string;
   modelCredential: string;
+  baselineContainers: string[];
 }
 
 interface ScenarioEvidence {
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
   try {
     await verifyLocalTree(config.commit);
     await verifyRemoteHost(config);
+    config.baselineContainers = (await remote(config, "docker ps -a --format '{{.Names}}' | grep '^kestrel-' || true")).stdout.trim().split("\n").filter(Boolean);
     remoteFacts = await collectRemoteFacts(config);
     if (config.hostMode === "ssh") {
       await execFileAsync("git", ["archive", "--format=tar.gz", "-o", archivePath, config.commit]);
@@ -422,6 +424,7 @@ async function readConfig(): Promise<QualificationConfig> {
       : optional("KESTREL_QUALIFICATION_MODEL") ?? "openai/gpt-5.6-luna",
     modelCredentialName: validateCredentialName(process.env.KESTREL_QUALIFICATION_MODEL_CREDENTIAL_NAME?.trim() || "OPENROUTER_API_KEY"),
     modelCredential: liveRequired ? required("KESTREL_QUALIFICATION_MODEL_CREDENTIAL") : "",
+    baselineContainers: [],
   };
 }
 
@@ -473,7 +476,7 @@ async function startRemote(config: QualificationConfig, mode: "live" | "controll
   };
   await uploadText(config, Object.entries(env).map(([key, value]) => `${key}=${encodeEnv(value)}`).join("\n") + "\n", `${config.remoteRoot}/runtime/runner.env`);
   const entrypoint = mode === "controlled" ? "dist/cli/runner/qualification-service.js" : "dist/cli/runner/service.js";
-  const modelStart = mode === "controlled" ? `nohup node dist/scripts/qualification/sandbox-capability-model-server.js >${shell(`${config.remoteRoot}/runtime/model.log`)} 2>&1 & echo $! >${shell(`${config.remoteRoot}/runtime/model.pid`)}; ` : "";
+  const modelStart = mode === "controlled" ? `nohup node --import tsx scripts/qualification/sandbox-capability-model-server.ts >${shell(`${config.remoteRoot}/runtime/model.log`)} 2>&1 & echo $! >${shell(`${config.remoteRoot}/runtime/model.pid`)}; ` : "";
   await remote(config, `set -eu; cd ${shell(config.repositoryRoot)}; ${modelStart}nohup sh -c 'set -a; . ${shell(`${config.remoteRoot}/runtime/runner.env`)}; set +a; exec node ${entrypoint}' >${shell(`${config.remoteRoot}/runtime/runner.log`)} 2>&1 & echo $! >${shell(`${config.remoteRoot}/runtime/runner.pid`)}`);
 }
 
@@ -494,7 +497,8 @@ async function setRemoteDockerAvailable(config: QualificationConfig, available: 
 
 async function cleanupRemote(config: QualificationConfig): Promise<{ ok: boolean; containers: string }> {
   await stopRemote(config).catch(() => undefined);
-  const containers = (await remote(config, "docker ps -a --format '{{.Names}}' | grep '^kestrel-' || true")).stdout.trim();
+  const current = (await remote(config, "docker ps -a --format '{{.Names}}' | grep '^kestrel-' || true")).stdout.trim().split("\n").filter(Boolean);
+  const containers = current.filter((name) => !config.baselineContainers.includes(name)).join("\n");
   await remote(config, `set -eu; test -z ${shell(containers)}; rm -rf ${shell(config.remoteRoot)}`);
   return { ok: containers.length === 0, containers };
 }
