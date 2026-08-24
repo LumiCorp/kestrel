@@ -32,7 +32,7 @@ Run `pnpm verify`. Validate the final Download action on physical iOS and Androi
 
 ## Operator handoff
 
-Local implementation is committed in the mobile repository at `b04673d46f35e7bef9e03c78b7e58b4e9f3455cb`. `CI=true pnpm verify` passes completely, including Expo Doctor 20/20. No physical iOS or Android device is connected.
+Local implementation is committed in the mobile repository at `878289596cddd17a3604dd8b85446b80f8bfdca9`. `CI=true pnpm verify` passes completely, including 19 suites, 176 tests, Expo Doctor 20/20, and production audit. No physical iOS or Android device is connected.
 
 Follow the [Workspace File Sharing Mobile Device Validation Operator Runbook](../../../operations/workspace-file-sharing-mobile-device-validation-runbook.md). Resume this issue only with complete physical iOS and Android evidence from the same reviewed commit. Evidence must not contain the preview bearer URL.
 

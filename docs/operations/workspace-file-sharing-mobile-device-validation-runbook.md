@@ -14,9 +14,9 @@ Validate the Kestrel One Mobile Download card on physical iOS and Android device
 
 Verified on August 24, 2026:
 
-- Mobile implementation commit: `b04673d46f35e7bef9e03c78b7e58b4e9f3455cb`.
+- Mobile implementation commit: `878289596cddd17a3604dd8b85446b80f8bfdca9`.
 - Hosted file-sharing Issue 01 and repair Issues 03 through 10 are Done.
-- `CI=true pnpm verify` passed completely on the mobile implementation commit, including API generation, boundary, parity, lint, typecheck, 19 Jest suites, 175 tests, Expo Doctor 20/20, and production audit.
+- `CI=true pnpm verify` passed completely on the mobile implementation commit, including API generation, boundary, parity, lint, typecheck, 19 Jest suites, 176 tests, Expo Doctor 20/20, and production audit.
 - `xcrun xctrace list devices` reported `No devices available for the recording`.
 - Android platform tools are installed at the local SDK path, but `adb devices -l` reported no attached devices.
 
@@ -24,7 +24,7 @@ Recheck every item after an interruption. Do not rely on this snapshot as curren
 
 ## Prerequisites
 
-- [x] Check out mobile commit `b04673d46f35e7bef9e03c78b7e58b4e9f3455cb`, or a reviewed descendant containing only approved follow-up changes.
+- [x] Check out mobile commit `878289596cddd17a3604dd8b85446b80f8bfdca9`, or a reviewed descendant containing only approved follow-up changes.
 - [x] Make `CI=true pnpm verify` pass on the exact device-build commit.
 - [ ] Provide one supported physical iOS device with a native development or release build. Expo Go is not accepted.
 - [ ] Provide one supported physical Android device with a native development or release build. Expo Go is not accepted.
