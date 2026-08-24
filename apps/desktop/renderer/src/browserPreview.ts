@@ -28,6 +28,7 @@ import type {
   DesktopWorkspaceValidationSnapshot,
 } from "../../src/contracts";
 import type { ModelPolicyV1 } from "../../../../src/profile/modelPolicy";
+import { DEFAULT_MODEL_BY_PROVIDER } from "../../../../src/profile/modelDefaults";
 import { resolveDesktopCapabilityView } from "../../../../src/desktopShell/capabilityRegistry";
 import { LOCAL_CORE_CREDENTIAL_IDS } from "../../../../src/localCore/credentialStore";
 import {
@@ -49,7 +50,7 @@ export function ensureBrowserPreviewBridge(): void {
   const previewModelConfiguration = createDesktopModelConfiguration({
     version: 1,
     provider: "openrouter",
-    model: "openai/gpt-5.2",
+    model: DEFAULT_MODEL_BY_PROVIDER.openrouter,
     modelByStage: {},
     modelCapabilities: { visionInputEnabled: false },
   });
@@ -447,7 +448,7 @@ export function ensureBrowserPreviewBridge(): void {
         provider,
         models:
           provider === "openrouter"
-            ? ["z-ai/glm-5.2", "openai/gpt-5.2", "anthropic/claude-sonnet-4.5"]
+            ? [DEFAULT_MODEL_BY_PROVIDER.openrouter, "z-ai/glm-5.2", "anthropic/claude-sonnet-4.5"]
             : [modelPolicy.model],
         source: "fallback" as const,
       };

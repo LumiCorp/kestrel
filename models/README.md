@@ -24,7 +24,7 @@ The public exports are collected in
 
 - Required: `OPENROUTER_API_KEY`
 - Optional: `OPENROUTER_MODEL`, `OPENROUTER_BASE_URL`, `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME`
-- Defaults: base URL `https://openrouter.ai`, model `z-ai/glm-5.2`
+- Defaults: base URL `https://openrouter.ai`, model `openai/gpt-5.6-luna`
 
 ### OpenAI
 

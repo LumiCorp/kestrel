@@ -1,4 +1,5 @@
 import { defaultToolCatalog } from "../../../tools/catalog.js";
+import { DEFAULT_OPENROUTER_MODEL } from "../../../models/openrouter/constants.js";
 import type { AgentRegistrationOptions, ResolvedAgentOptions } from "./types.js";
 
 export const AGENT_STEP_IDS = {
@@ -23,8 +24,8 @@ const DEFAULT_OPTIONS: Required<
     | "reasoningRetention"
   >
 > = {
-  decisionModel: "z-ai/glm-5.2",
-  agentModel: "z-ai/glm-5.2",
+  decisionModel: DEFAULT_OPENROUTER_MODEL,
+  agentModel: DEFAULT_OPENROUTER_MODEL,
   effectResultLookupTool: "effect_result_lookup",
   finalizeToolName: "FinalizeAnswer",
   defaultGoal: "Resolve the request successfully.",

@@ -3,11 +3,12 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { parseDotEnv } from "../cli/config/EnvLoader.js";
+import { DEFAULT_OPENROUTER_MODEL } from "../models/openrouter/constants.js";
 
 export const BENCHMARK_MODEL_PROVIDER = "openrouter" as const;
 export const BENCHMARK_PROVIDER_KEY_ENV = "OPENROUTER_API_KEY";
 export const BENCHMARK_MODEL_ENV = "OPENROUTER_MODEL";
-export const DEFAULT_OPENROUTER_BENCHMARK_MODEL = "z-ai/glm-5.2";
+export const DEFAULT_OPENROUTER_BENCHMARK_MODEL = DEFAULT_OPENROUTER_MODEL;
 export const BENCHMARK_INTERACTION_MODE = "build" as const;
 export const BENCHMARK_ACT_SUBMODE = "full_auto" as const;
 export const BENCHMARK_GUARDRAILS = {

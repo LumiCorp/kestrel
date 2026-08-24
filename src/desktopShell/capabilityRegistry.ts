@@ -121,7 +121,7 @@ const MODEL_CAPABILITIES = [
     description: "Hosted access to models available through OpenRouter.",
     credentialId: "provider.openrouter.default" as const,
     fields: [
-      field("model", "Model", "text", true, false, "z-ai/glm-5.2"),
+      field("model", "Model", "text", true, false, DEFAULT_MODEL_BY_PROVIDER.openrouter),
       field("apiKey", "API key", "secret", true, true),
       field("baseUrl", "Base URL", "url", false, false, "https://openrouter.ai"),
       field("siteUrl", "Site URL", "url", false, false),
