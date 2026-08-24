@@ -41,14 +41,20 @@ export function createHostedRunnerRuntimeFactory(
     env?: NodeJS.ProcessEnv | undefined;
     sandboxCapabilityFetchImpl?: typeof fetch | undefined;
     sandboxCapabilityQualificationObserver?: KestrelRuntimeEnvironment["sandboxCapabilityQualificationObserver"];
+    modelRetryCount?: number | undefined;
   } = {},
 ): RunnerRuntimeFactory {
   const runtimeFactory = createRuntimeFactoryWithStore(store, {
-    resolveEnvironment: () => resolveHostedSandboxCapabilityEnvironment(
-      options.env ?? process.env,
-      options.sandboxCapabilityFetchImpl,
-      options.sandboxCapabilityQualificationObserver,
-    ),
+    resolveEnvironment: () => ({
+      ...resolveHostedSandboxCapabilityEnvironment(
+        options.env ?? process.env,
+        options.sandboxCapabilityFetchImpl,
+        options.sandboxCapabilityQualificationObserver,
+      ),
+      ...(options.modelRetryCount === undefined
+        ? {}
+        : { modelRetryCount: options.modelRetryCount }),
+    }),
   });
   return (
     profile,

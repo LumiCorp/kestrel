@@ -304,6 +304,8 @@ export interface KestrelRuntimeEnvironment {
   sandboxCapabilityFetchImpl?: typeof fetch | undefined;
   /** Host-only qualification observer; ordinary production construction omits it. */
   sandboxCapabilityQualificationObserver?: import("../../src/code/contracts.js").SandboxCapabilityQualificationObserver | undefined;
+  /** Qualification-only model transport override. Ordinary production construction omits it. */
+  modelRetryCount?: number | undefined;
   /** Host-resolved execution identity. Capability profile content must not populate this authority. */
   sandboxCapabilityAudience?: { tenantId: string; environmentId: string } | undefined;
   /** Host-resolved broker identity. Capability profile content must not populate this authority. */
@@ -3531,6 +3533,9 @@ function createRuntimeWithStore(
 
   const modelGateway = createModelGatewayForProfile(profile, {
     env: modelEnv,
+    ...(environment?.modelRetryCount === undefined
+      ? {}
+      : { retryCount: environment.modelRetryCount }),
     onCredentialLease: (lease) => {
       if (lease.apiKey === null || lease.apiKey.length === 0) {
         return;
@@ -3918,6 +3923,8 @@ export function createModelGatewayForProfile(
       | ((lease: GatewayCredentialLease) => (() => void) | void)
       | undefined;
     env?: NodeJS.ProcessEnv | undefined;
+    retryCount?: number | undefined;
+    fetchImpl?: typeof fetch | undefined;
   } = {},
 ) {
   if (profile.modelCredential) {
@@ -3934,7 +3941,8 @@ export function createModelGatewayForProfile(
   const gatewayOptions = {
     env,
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    retryCount: 2,
+    retryCount: options.retryCount ?? 2,
+    ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
     ...(profile.model !== undefined
       ? { envConfig: { model: profile.model } }
       : {}),

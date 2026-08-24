@@ -50,3 +50,29 @@ for (const scenario of ["deadline", "cancel"] as const) {
     }
   });
 }
+
+for (const [status, code] of [[401, "CAPABILITY_PROVIDER_AUTH_REJECTED"], [403, "CAPABILITY_PROVIDER_AUTH_REJECTED"], [429, "CAPABILITY_PROVIDER_RATE_LIMITED"], [500, "CAPABILITY_PROVIDER_FAILED"]] as const) {
+  test(`Tavily status ${status} has stable ${code} evidence`, async () => {
+    await assert.rejects(tavilySearchReadAdapter.invoke(canonicalInput, {
+      fetchImpl: async () => new Response("{}", { status }),
+      credential: "secret",
+      timeoutMs: 1000,
+      expiryMs: 1000,
+      maxResponseBytes: 4096,
+      signal: new AbortController().signal,
+    }), (error) => error instanceof SandboxCapabilityAdapterFailure && error.code === code);
+  });
+}
+
+test("Tavily DNS failure is distinct and secret-free", async () => {
+  await assert.rejects(tavilySearchReadAdapter.invoke(canonicalInput, {
+    fetchImpl: async () => {
+      throw new TypeError("fetch failed", { cause: Object.assign(new Error("dns"), { code: "ENOTFOUND" }) });
+    },
+    credential: "secret",
+    timeoutMs: 1000,
+    expiryMs: 1000,
+    maxResponseBytes: 4096,
+    signal: new AbortController().signal,
+  }), (error) => error instanceof SandboxCapabilityAdapterFailure && error.code === "CAPABILITY_PROVIDER_DNS" && !JSON.stringify(error).includes("secret"));
+});

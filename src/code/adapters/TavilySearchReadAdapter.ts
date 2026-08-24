@@ -23,8 +23,8 @@ export const tavilySearchReadAdapter: SandboxCapabilityAdapter<
   credentialId: "tool.tavily.default",
   effectClass: "read_only",
   modelContract: {
-    description: "Run one bounded Tavily web search through the trusted host adapter while sandbox networking remains disabled.",
-    usage: "Select this only when the code needs fresh public web search results. Omit capability for ordinary isolated computation.",
+    description: "Run one bounded Tavily web search through the trusted host adapter. The sandbox has no direct DNS, internet, loopback, LAN, link-local, or metadata-network access.",
+    usage: "When the user explicitly requires fresh Tavily search results, include this capability in the same code.execute input and invoke only its fixed loopback broker from the sandbox. Omit capability for ordinary isolated computation.",
     optional: true,
     selectionInputSchema: {
       type: "object",
@@ -92,12 +92,24 @@ export const tavilySearchReadAdapter: SandboxCapabilityAdapter<
       if (context.signal.aborted) {
         throw new SandboxCapabilityAdapterFailure("CAPABILITY_CANCELLED", "Sandbox capability adapter invocation was cancelled");
       }
+      if (hasTransportCode(error, "ENOTFOUND") || hasTransportCode(error, "EAI_AGAIN")) {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_DNS", "Sandbox capability provider DNS lookup failed");
+      }
+      if (hasTransportCode(error, "ECONNREFUSED") || hasTransportCode(error, "ECONNRESET") || hasTransportCode(error, "ETIMEDOUT")) {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_NETWORK", "Sandbox capability provider network request failed");
+      }
       throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_FAILED", "Sandbox capability provider request failed");
     }
     if (response.status >= 300 && response.status < 400) {
       throw new SandboxCapabilityAdapterFailure("CAPABILITY_REDIRECT_REJECTED", "Tavily adapter rejected a redirect response");
     }
     if (response.ok === false) {
+      if (response.status === 401 || response.status === 403) {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_AUTH_REJECTED", "Tavily adapter rejected its credential");
+      }
+      if (response.status === 429) {
+        throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_RATE_LIMITED", "Tavily adapter request was rate limited");
+      }
       throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROVIDER_FAILED", `Tavily adapter failed with status ${response.status}`);
     }
     const assertActive = () => {
@@ -171,4 +183,16 @@ function boundedAdapterInteger(value: unknown, min: number, max: number, label: 
     throw new SandboxCapabilityAdapterFailure("CAPABILITY_PROFILE_INVALID", `Tavily adapter ${label} is outside its allowed range`);
   }
   return value as number;
+}
+
+function hasTransportCode(value: unknown, expected: string): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = value;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const record = current as Record<string, unknown>;
+    if (record.code === expected) return true;
+    current = record.cause;
+  }
+  return false;
 }

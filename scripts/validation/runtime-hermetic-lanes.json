@@ -150,6 +150,7 @@
         "tests/unit/sandbox-capability-contract.test.ts",
         "tests/unit/sandbox-capability-deployment-construction.test.ts",
         "tests/unit/sandbox-capability-external-effect-approval.test.ts",
+        "tests/unit/sandbox-capability-live-qualification.test.ts",
         "tests/unit/sandbox-capability-qualification-control.test.ts",
         "tests/unit/sandbox-capability-lease-coordinator.test.ts",
         "tests/unit/sandbox-capability-lease-store.test.ts",

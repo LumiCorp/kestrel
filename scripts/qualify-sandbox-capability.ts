@@ -21,6 +21,14 @@ import {
 
 const execFileAsync = promisify(execFile);
 const MODES = new Set(["live", "controlled", "all"]);
+const QUALIFICATION_NETWORK_TARGETS = [
+  "https://example.com",
+  "http://qualification.invalid",
+  "http://127.0.0.1:80",
+  "http://10.255.255.1:80",
+  "http://169.254.1.1:80",
+  "http://169.254.169.254/latest/meta-data/",
+] as const;
 const CHECKPOINTS = [
   ["before_provider_invocation", false],
   ["provider_response_received", false],
@@ -77,6 +85,7 @@ async function main(): Promise<void> {
   let remoteFacts: unknown = { available: false };
   let providerSnapshot = "";
   let lifecycleSnapshot = "";
+  let readinessSnapshot = "";
   let cleanup: { ok: boolean; containers?: string; error?: string } = { ok: false, error: "cleanup_not_attempted" };
   try {
     await verifyLocalTree(config.commit);
@@ -111,11 +120,14 @@ async function main(): Promise<void> {
   } finally {
     tunnel?.kill("SIGTERM");
     providerSnapshot = await providerEvidence(config).catch(() => "");
+    readinessSnapshot = await remote(config, `test ! -f ${shell(`${config.remoteRoot}/runtime/readiness.json`)} || cat ${shell(`${config.remoteRoot}/runtime/readiness.json`)}`)
+      .then((result) => result.stdout)
+      .catch(() => "");
     lifecycleSnapshot = await remote(config, `test ! -f ${shell(`${config.remoteRoot}/runtime/control/events.ndjson`)} || cat ${shell(`${config.remoteRoot}/runtime/control/events.ndjson`)}`)
       .then((result) => result.stdout)
       .catch(() => "");
     cleanup = await cleanupRemote(config).catch((error) => ({ ok: false, error: errorMessage(error) }));
-    await writeEvidenceBundle({ artifactDir, config, startedAt, scenarios, cleanup, remoteFacts, providerSnapshot, lifecycleSnapshot });
+    await writeEvidenceBundle({ artifactDir, config, startedAt, scenarios, cleanup, remoteFacts, providerSnapshot, lifecycleSnapshot, readinessSnapshot });
     await rm(tempDir, { recursive: true, force: true });
   }
 
@@ -153,7 +165,7 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
     const result = await client.run(profileId, "provider-used");
     requireTrue(hasTerminalEvent(result.parsed, "run.completed"), "provider-used run did not complete");
     const observations = result.parsed.codeResults.flatMap((item) => parseNetworkObservations(readCodeStdout(item)));
-    requireEqual(observations.map((item) => item.url).sort(), ["http://10.255.255.1:80", "http://127.0.0.1:80", "http://169.254.169.254/latest/meta-data/", "https://example.com"].sort(), "controlled network probe inventory changed");
+    requireEqual(observations.map((item) => item.url).sort(), QUALIFICATION_NETWORK_TARGETS.slice().sort(), "controlled network probe inventory changed");
     requireTrue(observations.every((item) => item.outcome === "blocked"), `controlled sandbox unexpectedly reached a direct-network target: ${canonical(observations)}`);
     requireMatch(await providerEvidence(config), /qualification-provider-used/u, "controlled provider was not contacted");
     assertSecretFree(result.stream, config);
@@ -254,18 +266,39 @@ async function runLiveJourney(config: QualificationConfig, port: number, evidenc
   const profileId = await client.resolveProfile(config, "live", { timeoutMs: 10_000, maxExpiryMs: 60_000 });
   await capture(evidence, "live-tavily", "live", async () => {
     const marker = `kestrel-live-${randomUUID()}`;
+    const providerBefore = providerRequestCount(await providerEvidence(config));
     const result = await client.run(profileId, `provider-used ${marker}`);
-    requireRun(hasTerminalEvent(result.parsed, "run.completed"), result, "live Tavily run did not complete");
-    if (!result.parsed.codeResults.some((item) => readCapabilityReplayEvidence(item) !== undefined)) {
-      throw new QualificationRunAssertionError(result, "MODEL_DID_NOT_SELECT_CAPABILITY: Luna completed without selecting the optional Tavily capability");
+    if (!hasTerminalEvent(result.parsed, "run.completed")) {
+      throw new QualificationRunAssertionError(result, classifyLiveTerminalFailure(result.parsed));
     }
-    const stdout = result.parsed.codeResults.map(readCodeStdout).join("\n");
-    requireRun(stdout.includes("DIRECT_NETWORK_BLOCKED direct HTTPS") && stdout.includes("DIRECT_NETWORK_BLOCKED loopback") && stdout.includes("DIRECT_NETWORK_BLOCKED metadata-network"), result, `live sandbox did not report blocked direct-network probes; observed stdout evidence: ${stdout.slice(0, 4_000)}`);
-    requireRun(!stdout.includes("DIRECT_NETWORK_UNEXPECTED"), result, "live sandbox unexpectedly reached a direct-network target");
+    const toolNames = readStartedToolNames(result.parsed);
+    const executions = toolNames.filter((name) => name === "code.execute");
+    requireRun(executions.length === 1, result, executions.length === 0
+      ? "MODEL_DID_NOT_SELECT_CAPABILITY: Luna completed without selecting the required Tavily capability"
+      : "MODEL_SELECTED_MULTIPLE_CODE_EXECUTIONS: Luna selected code.execute more than once");
+    requireRun(
+      toolNames.every((name) => name === "code.execute" || name === "effect_result_lookup" || name === "FinalizeAnswer"),
+      result,
+      "MODEL_SELECTED_UNAUTHORIZED_NETWORK_TOOL: live journey selected an additional tool",
+    );
+    if (result.parsed.codeResults.length !== 1 || readCapabilityReplayEvidence(result.parsed.codeResults[0]!) === undefined) {
+      throw new QualificationRunAssertionError(result, "MODEL_CAPABILITY_RESULT_MISSING: selected code.execute did not produce capability replay evidence");
+    }
+    requireExactNetworkConfinement(result, parseNetworkObservations(readCodeStdout(result.parsed.codeResults[0]!)));
     assertSecretFree(result.stream, config);
     const exact = await client.getExactResult(result);
     requireRun(readExactCapabilityQuery(exact) === marker, result, "live exact result did not bind the unique Tavily query marker");
-    await requireCapabilityLease(client, result, { status: "cleaned", remainingRequests: 0 });
+    const providerAfter = providerRequestCount(await providerEvidence(config));
+    requireRun(providerAfter - providerBefore === 1, result, "live journey did not produce exactly one Tavily provider request");
+    requireRun(await hasProviderMarkerReceipt(config, marker), result, "live Tavily receipt did not bind the selected query marker");
+    const lease = await requireCapabilityLease(client, result, { status: "cleaned", remainingRequests: 0 });
+    result.profileId = profileId;
+    result.structuralEvidence = [{
+      resolvedProfileId: profileId,
+      exactContract: summarizeExactCapabilityContract(exact),
+      providerMarkerDigest: createHash("sha256").update(marker).digest("hex"),
+      lease,
+    }];
     await stopRemote(config);
     await setRemoteDockerAvailable(config, false);
     try {
@@ -281,7 +314,15 @@ async function runLiveJourney(config: QualificationConfig, port: number, evidenc
   });
 }
 
-interface RunResult { stream: string; parsed: ParsedQualificationRun; runId: string; sessionId: string; idempotencyKey?: string }
+interface RunResult {
+  stream: string;
+  parsed: ParsedQualificationRun;
+  runId: string;
+  sessionId: string;
+  idempotencyKey?: string;
+  profileId?: string;
+  structuralEvidence?: unknown[];
+}
 
 class PublicRunnerClient {
   readonly baseUrl: string;
@@ -339,7 +380,7 @@ class PublicRunnerClient {
       turn: {
         sessionId,
         message: mode.startsWith("provider-used ")
-          ? `qualification ${mode}. You must use code.execute exactly once. In the sandbox, attempt direct HTTPS, loopback, and metadata-network fetches with short abort deadlines. Print DIRECT_NETWORK_BLOCKED for each rejected probe and DIRECT_NETWORK_UNEXPECTED if any probe succeeds. Then invoke the selected Tavily capability using the unique marker. Do not use another network tool.`
+          ? `qualification ${mode}. You must use code.execute exactly once and select the advertised V2 tavily.search.read capability with the exact marker from this message as input.query. The sandbox has no direct network access. In that one execution, fetch each exact URL ${JSON.stringify(QUALIFICATION_NETWORK_TARGETS)} with short abort deadlines and print one DIRECT_NETWORK_BLOCKED:{"url":"...","error":"..."} line for every rejection or DIRECT_NETWORK_UNEXPECTED:{"url":"...","status":0} if any succeeds. Then POST {"operation":"search","destination":"api.tavily.com","input":{"query":"<the exact marker>","maxResults":1}} to http://127.0.0.1:43127/v1/capability and print its JSON response. Do not use any other tool or network destination.`
           : `qualification ${mode}`,
         eventType: "user.message",
         interactionMode: "build",
@@ -354,11 +395,20 @@ class PublicRunnerClient {
     return Object.assign(promise, { sessionId, promise });
   }
   async streamCommand(id: string, payload: unknown, sessionId: string): Promise<RunResult> {
-    const response = await fetch(`${this.baseUrl}/commands/stream`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ id, type: "run.start", metadata: this.metadata(), payload }),
-    });
+    const controller = new AbortController();
+    const watchdog = setTimeout(() => controller.abort(new QualificationStreamTimeoutError()), 120_000);
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/commands/stream`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ id, type: "run.start", metadata: this.metadata(), payload }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      clearTimeout(watchdog);
+      throw new PartialRunError(readRunResult("", sessionId), controller.signal.aborted ? controller.signal.reason : error);
+    }
     let stream = "";
     try {
       const reader = response.body?.getReader();
@@ -369,7 +419,9 @@ class PublicRunnerClient {
         stream += new TextDecoder().decode(next.value, { stream: true });
       }
     } catch (error) {
-      throw new PartialRunError(readRunResult(stream, sessionId), error);
+      throw new PartialRunError(readRunResult(stream, sessionId), controller.signal.aborted ? controller.signal.reason : error);
+    } finally {
+      clearTimeout(watchdog);
     }
     if (!response.ok) throw new Error(`run.start failed (${response.status}): ${stream}`);
     return readRunResult(stream, sessionId);
@@ -393,6 +445,11 @@ class PartialRunError extends Error {
   constructor(readonly result: RunResult, cause: unknown) { super(`Run stream ended during qualification: ${errorMessage(cause)}`); }
 }
 
+class QualificationStreamTimeoutError extends Error {
+  readonly code = "LIVE_RUN_STREAM_TIMEOUT";
+  constructor() { super("LIVE_RUN_STREAM_TIMEOUT: public run stream exceeded the qualification watchdog"); }
+}
+
 class QualificationRunAssertionError extends Error {
   constructor(readonly result: RunResult, message: string, readonly supplementalEvidence: unknown[] = []) { super(message); }
 }
@@ -406,14 +463,17 @@ async function capture(evidence: ScenarioEvidence[], name: string, mode: "live" 
   const startedAt = new Date().toISOString();
   try {
     const result = await run();
-    evidence.push({ name, mode, status: "passed", startedAt, completedAt: new Date().toISOString(), runId: result.runId, sessionId: result.sessionId, idempotencyKey: result.idempotencyKey, assertions: ["public_terminal_state", "secret_scan"], publicEvidence: [redactEvidence(result.stream)] });
+    evidence.push({ name, mode, status: "passed", startedAt, completedAt: new Date().toISOString(), runId: result.runId, sessionId: result.sessionId, idempotencyKey: result.idempotencyKey, assertions: ["public_terminal_state", "secret_scan"], publicEvidence: [redactEvidence(result.stream), ...(result.structuralEvidence ?? []).map(redactEvidence)] });
   } catch (error) {
     const failed = failedEvidence(name, mode, error, startedAt);
-    if (error instanceof QualificationRunAssertionError) {
+    if (error instanceof QualificationRunAssertionError || error instanceof PartialRunError) {
       failed.runId = error.result.runId;
       failed.sessionId = error.result.sessionId;
       failed.idempotencyKey = error.result.idempotencyKey;
-      failed.publicEvidence = [summarizePublicRun(error.result), ...error.supplementalEvidence];
+      failed.publicEvidence = [
+        summarizePublicRun(error.result),
+        ...(error instanceof QualificationRunAssertionError ? error.supplementalEvidence : []),
+      ];
     }
     evidence.push(failed);
   }
@@ -495,6 +555,9 @@ async function startRemote(config: QualificationConfig, mode: "live" | "controll
     KESTREL_QUALIFICATION_CONTROL_DIR: `${config.remoteRoot}/runtime/control`,
     KESTREL_QUALIFICATION_CONTROL_TOKEN: config.controlToken,
     KESTREL_QUALIFICATION_PROVIDER_EVIDENCE: `${config.remoteRoot}/runtime/provider.ndjson`,
+    KESTREL_QUALIFICATION_READINESS_EVIDENCE: `${config.remoteRoot}/runtime/readiness.json`,
+    KESTREL_QUALIFICATION_MODEL: config.model,
+    ...(!credentials ? { KESTREL_QUALIFICATION_REPLAY_ONLY: "1" } : {}),
     ...(credentials ? {
       KESTREL_SANDBOX_TAVILY_CREDENTIAL: config.tavilyKey,
       KESTREL_SANDBOX_TAVILY_CREDENTIAL_REVISION: "qualification-live-r1",
@@ -504,7 +567,7 @@ async function startRemote(config: QualificationConfig, mode: "live" | "controll
     ...(!credentials && config.hostMode === "local" ? { DOCKER_HOST: "unix:///tmp/kestrel-qualification-docker-unavailable.sock" } : {}),
   };
   await uploadText(config, Object.entries(env).map(([key, value]) => `${key}=${encodeEnv(value)}`).join("\n") + "\n", `${config.remoteRoot}/runtime/runner.env`);
-  const entrypoint = mode === "controlled" ? "dist/cli/runner/qualification-service.js" : "dist/cli/runner/service.js";
+  const entrypoint = "dist/cli/runner/qualification-service.js";
   const modelStart = mode === "controlled" ? `nohup node --import tsx scripts/qualification/sandbox-capability-model-server.ts >${shell(`${config.remoteRoot}/runtime/model.log`)} 2>&1 & echo $! >${shell(`${config.remoteRoot}/runtime/model.pid`)}; ` : "";
   await remote(config, `set -eu; cd ${shell(config.repositoryRoot)}; ${modelStart}nohup sh -c 'set -a; . ${shell(`${config.remoteRoot}/runtime/runner.env`)}; set +a; exec node ${entrypoint}' >${shell(`${config.remoteRoot}/runtime/runner.log`)} 2>&1 & echo $! >${shell(`${config.remoteRoot}/runtime/runner.pid`)}`);
 }
@@ -541,6 +604,15 @@ async function waitForHealth(config: QualificationConfig, port: number, token: s
   while (!signal.aborted) {
     const response = await fetch(`http://127.0.0.1:${port}/health`, { headers: { authorization: `Bearer ${token}` } }).catch(() => undefined);
     if (response?.ok) return;
+    const readiness = await remote(config, `test ! -f ${shell(`${config.remoteRoot}/runtime/readiness.json`)} || tail -n 1 ${shell(`${config.remoteRoot}/runtime/readiness.json`)}`)
+      .then((result) => result.stdout.trim())
+      .catch(() => "");
+    if (readiness) {
+      const record = asRecord(JSON.parse(readiness));
+      if (record.status === "failed") {
+        throw new Error(`${String(record.code ?? "LIVE_READINESS_FAILED")}: qualification readiness failed before inference`);
+      }
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   const logs = await remote(config, `for f in ${shell(`${config.remoteRoot}/runtime/runner.log`)} ${shell(`${config.remoteRoot}/runtime/model.log`)}; do test ! -f "$f" || tail -n 80 "$f"; done`).then((result) => result.stdout).catch(() => "");
@@ -585,10 +657,27 @@ function hasStructuredPublicValue(run: ParsedQualificationRun, expected: string)
 }
 
 function summarizePublicRun(result: RunResult): unknown {
+  const toolStarts = result.parsed.events.flatMap((event) => {
+    if (event.type !== "run.tool.started") return [];
+    const update = asRecord(asRecord(event.payload).update);
+    return [{ toolName: update.toolName, toolCallId: update.toolCallId, input: update.input }];
+  });
+  const progress = result.parsed.events.filter((event) => event.type === "run.progress").at(-1);
   return {
     terminalEvents: result.parsed.events.filter((event) => event.type === "run.completed" || event.type === "run.cancelled" || event.type === "run.failed").map((event) => ({ type: event.type, runId: event.runId, payload: event.payload })),
+    toolStarts,
+    ...(progress === undefined ? {} : { lastProgress: progress }),
     codeResults: result.parsed.codeResults.map((item) => ({ stdout: item.stdout.slice(0, 4_000), capabilityReplayEvidence: item.capabilityReplayEvidence })),
   };
+}
+
+function classifyLiveTerminalFailure(run: ParsedQualificationRun): string {
+  const failed = run.events.find((event) => event.type === "run.failed");
+  if (failed === undefined) return "LIVE_RUN_MISSING_TERMINAL: live stream ended without a terminal event";
+  const payload = asRecord(failed.payload);
+  const error = asRecord(payload.error);
+  const code = typeof error.code === "string" ? error.code : "LIVE_RUN_FAILED";
+  return `${code}: live Luna journey failed before exact capability completion`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -603,6 +692,26 @@ function readExactCapabilityQuery(value: unknown): string | undefined {
   const capability = asRecord(input.capability);
   const selectionInput = asRecord(capability.input);
   return typeof selectionInput.query === "string" ? selectionInput.query : undefined;
+}
+
+function summarizeExactCapabilityContract(value: unknown): Record<string, unknown> {
+  const result = asRecord(value);
+  const activation = asRecord(result.activation);
+  const descriptor = asRecord(activation.descriptor);
+  const audit = asRecord(result.auditRecord);
+  const input = asRecord(audit.input);
+  const capability = asRecord(input.capability);
+  return {
+    toolName: result.toolName,
+    contractRevision: activation.contractRevision,
+    inputSchemaHash: descriptor.inputSchemaHash,
+    outputSchemaHash: descriptor.outputSchemaHash,
+    adapterId: capability.capabilityId,
+    operation: capability.operation,
+    resource: capability.resource,
+    effectClass: capability.effectClass,
+    selectionDigest: createHash("sha256").update(canonical(capability)).digest("hex"),
+  };
 }
 
 function readConcurrencyOutcomes(result: RunResult): Array<{ status: number; body: unknown }> {
@@ -622,6 +731,35 @@ function readConcurrencyOutcomes(result: RunResult): Array<{ status: number; bod
 
 async function providerEvidence(config: QualificationConfig): Promise<string> {
   return (await remote(config, `test ! -f ${shell(`${config.remoteRoot}/runtime/provider.ndjson`)} || cat ${shell(`${config.remoteRoot}/runtime/provider.ndjson`)}`)).stdout;
+}
+
+async function hasProviderMarkerReceipt(config: QualificationConfig, marker: string): Promise<boolean> {
+  const expected = `sha256:${sha256(marker)}`;
+  return (await providerEvidence(config)).split("\n").filter(Boolean).some((line) => {
+    const record = asRecord(JSON.parse(line) as unknown);
+    return record.kind === "provider_request" && record.mode === "live" && record.queryDigest === expected;
+  });
+}
+
+function readStartedToolNames(run: ParsedQualificationRun): string[] {
+  return run.events.flatMap((event) => {
+    if (event.type !== "run.tool.started") return [];
+    const update = asRecord(asRecord(event.payload).update);
+    return typeof update.toolName === "string" ? [update.toolName] : [];
+  });
+}
+
+function requireExactNetworkConfinement(result: RunResult, observations: ReturnType<typeof parseNetworkObservations>): void {
+  requireRun(
+    canonical(observations.map((item) => item.url).sort()) === canonical(QUALIFICATION_NETWORK_TARGETS.slice().sort()),
+    result,
+    `live sandbox network probe inventory changed: ${canonical(observations)}`,
+  );
+  requireRun(
+    observations.every((item) => item.outcome === "blocked"),
+    result,
+    `live sandbox unexpectedly reached a direct-network target: ${canonical(observations)}`,
+  );
 }
 
 async function waitForRemoteMatch(config: QualificationConfig, relative: string, pattern: RegExp, minimumOccurrences = 1): Promise<void> {
@@ -657,7 +795,7 @@ async function recoverRunIdentity(config: QualificationConfig, checkpoint: strin
   return { runId: event.runId, sessionId, idempotencyKey: event.toolCallId, stream: "", parsed: parseQualificationRunStream("") };
 }
 
-async function writeEvidenceBundle(input: { artifactDir: string; config: QualificationConfig; startedAt: string; scenarios: ScenarioEvidence[]; cleanup: unknown; remoteFacts: unknown; providerSnapshot: string; lifecycleSnapshot: string }): Promise<void> {
+async function writeEvidenceBundle(input: { artifactDir: string; config: QualificationConfig; startedAt: string; scenarios: ScenarioEvidence[]; cleanup: unknown; remoteFacts: unknown; providerSnapshot: string; lifecycleSnapshot: string; readinessSnapshot: string }): Promise<void> {
   const safeConfig = {
     mode: input.config.mode,
     commit: input.config.commit,
@@ -667,7 +805,7 @@ async function writeEvidenceBundle(input: { artifactDir: string; config: Qualifi
     modelProvider: input.config.modelProvider,
     model: input.config.model,
   };
-  const rawEvidence = { scenarios: input.scenarios, providerSnapshot: input.providerSnapshot, lifecycleSnapshot: input.lifecycleSnapshot };
+  const rawEvidence = { scenarios: input.scenarios, providerSnapshot: input.providerSnapshot, lifecycleSnapshot: input.lifecycleSnapshot, readinessSnapshot: input.readinessSnapshot };
   const secretLeakDetected = containsSecret(rawEvidence, input.config);
   if (secretLeakDetected) {
     input.scenarios.push(failedEvidence("evidence-secret-scan", "controlled", new Error("Qualification evidence contained secret material and was redacted before persistence.")));
@@ -683,8 +821,8 @@ async function writeEvidenceBundle(input: { artifactDir: string; config: Qualifi
     config: safeConfig,
     remoteFacts: input.remoteFacts,
     usage: {
-      controlledProviderRequests: providerRequestCount(input.providerSnapshot),
-      liveProviderRequests: "unavailable",
+      controlledProviderRequests: providerRequestCount(input.providerSnapshot, "controlled"),
+      liveProviderRequests: providerRequestCount(input.providerSnapshot, "live"),
       modelUsage: "reported_in_public_run_evidence_when_available",
       estimatedCost: "not_estimated",
     },
@@ -692,6 +830,7 @@ async function writeEvidenceBundle(input: { artifactDir: string; config: Qualifi
     scenarios: input.scenarios,
     providerEvidence: input.providerSnapshot.split("\n").filter(Boolean).map((line) => JSON.parse(line)),
     lifecycleEvidence: input.lifecycleSnapshot.split("\n").filter(Boolean).map((line) => JSON.parse(line)),
+    readinessEvidence: input.readinessSnapshot.split("\n").filter(Boolean).map((line) => JSON.parse(line)),
     cleanup: input.cleanup,
   }, input.config);
   await writeFile(path.join(input.artifactDir, "qualification.json"), `${canonical(document)}\n`, "utf8");
@@ -782,7 +921,12 @@ function qualificationSecrets(config: QualificationConfig): string[] {
   return [config.tavilyKey, config.modelCredential, config.runnerToken, config.controlToken];
 }
 function redactEvidence(value: string): string { return value.length <= 64_000 ? value : `${value.slice(0, 64_000)}\n[truncated]`; }
-function providerRequestCount(value: string): number { return value.split("\n").filter((line) => line.includes('"kind":"provider_request"')).length; }
+function providerRequestCount(value: string, mode?: "live" | "controlled"): number {
+  return value.split("\n").filter(Boolean).filter((line) => {
+    const record = asRecord(JSON.parse(line) as unknown);
+    return record.kind === "provider_request" && (mode === undefined || record.mode === mode);
+  }).length;
+}
 function requireMatch(value: string, pattern: RegExp, message: string): void { if (!pattern.test(value)) throw new Error(message); }
 function requireNoMatch(value: string, pattern: RegExp, message: string): void { if (pattern.test(value)) throw new Error(message); }
 function requireEqual(actual: unknown, expected: unknown, message: string): void { if (canonical(actual) !== canonical(expected)) throw new Error(`${message}: ${canonical({ actual, expected })}`); }

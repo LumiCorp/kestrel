@@ -740,6 +740,34 @@ test("non-managed profiles retain their environment-backed provider behavior", (
   }
 });
 
+test("qualification model retry override permits exactly one provider attempt", async () => {
+  let fetchCalls = 0;
+  let attempts = 0;
+  const gateway = createModelGatewayForProfile({
+    ...BASE_PROFILE,
+    modelProvider: "openrouter",
+    model: "openai/gpt-5.6-luna",
+  }, {
+    env: { OPENROUTER_API_KEY: "qualification-model-key" },
+    retryCount: 0,
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      const cause = Object.assign(new Error("getaddrinfo ENOTFOUND openrouter.ai"), { code: "ENOTFOUND" });
+      throw new TypeError("fetch failed", { cause });
+    },
+  });
+  await assert.rejects(
+    gateway.call({ input: "one authoritative live decision" }, {
+      onEvent(event) {
+        if (event.type === "attempt.started") attempts += 1;
+      },
+    }),
+    /DNS lookup failed/u,
+  );
+  assert.equal(fetchCalls, 1);
+  assert.equal(attempts, 1);
+});
+
 test("non-model runtime surfaces initialize before environment provider credentials are present", async () => {
   const original = process.env.OPENROUTER_API_KEY;
   delete process.env.OPENROUTER_API_KEY;
