@@ -1048,6 +1048,102 @@ test("normalizeToolActionInput defaults dev.shell.run workspaceRoot and keeps ex
   );
 });
 
+test("normalizeToolActionInput resolves exact workspace file-share approval inputs", () => {
+  assert.deepEqual(
+    normalizeToolActionInput("workspace.files.share", {
+      mode: "file",
+      paths: ["reports/final report.pdf"],
+    }),
+    {
+      mode: "file",
+      paths: ["reports/final report.pdf"],
+      downloadName: "final report.pdf",
+      ttlMinutes: 60,
+    },
+  );
+  assert.deepEqual(
+    normalizeToolActionInput("workspace.files.share", {
+      mode: "zip",
+      paths: ["reports/alpha,beta.csv", "reports/alpha", "beta.csv"],
+      downloadName: "  selected reports.zip  ",
+      ttlMinutes: 90,
+    }),
+    {
+      mode: "zip",
+      paths: ["reports/alpha,beta.csv", "reports/alpha", "beta.csv"],
+      downloadName: "selected reports.zip",
+      ttlMinutes: 90,
+    },
+  );
+  assert.deepEqual(
+    normalizeToolActionInput("workspace.files.share", {
+      mode: "zip",
+      paths: ["reports/summary.pdf"],
+    }),
+    {
+      mode: "zip",
+      paths: ["reports/summary.pdf"],
+      downloadName: "kestrel-files.zip",
+      ttlMinutes: 60,
+    },
+  );
+
+  const supplied = {
+    mode: "file",
+    paths: ["reports/final report.pdf"],
+    downloadName: "  final download.pdf  ",
+  };
+  const normalized = normalizeToolActionInput("workspace.files.share", supplied);
+  assert.deepEqual(normalized, {
+    mode: "file",
+    paths: ["reports/final report.pdf"],
+    downloadName: "final download.pdf",
+    ttlMinutes: 60,
+  });
+  assert.deepEqual(
+    normalizeToolActionInput("workspace.files.share", normalized),
+    normalized,
+  );
+  assert.equal(supplied.downloadName, "  final download.pdf  ");
+});
+
+test("workspace file-share normalization preserves invalid fields for schema rejection", () => {
+  const [tool] = defaultToolCatalog.toModelTools(["workspace.files.share"]);
+  assert.ok(tool);
+
+  const invalidTypes = normalizeToolActionInput("workspace.files.share", {
+    mode: "zip",
+    paths: ["reports/summary.pdf"],
+    downloadName: null,
+    ttlMinutes: null,
+  });
+  assert.deepEqual(invalidTypes, {
+    mode: "zip",
+    paths: ["reports/summary.pdf"],
+    downloadName: null,
+    ttlMinutes: null,
+  });
+  assert.throws(() =>
+    validateToolActionSchemas(
+      { kind: "tool", name: "workspace.files.share", input: invalidTypes },
+      [tool],
+    ),
+  );
+
+  const unknownField = normalizeToolActionInput("workspace.files.share", {
+    mode: "zip",
+    paths: ["reports/summary.pdf"],
+    unexpected: true,
+  });
+  assert.equal(unknownField.unexpected, true);
+  assert.throws(() =>
+    validateToolActionSchemas(
+      { kind: "tool", name: "workspace.files.share", input: unknownField },
+      [tool],
+    ),
+  );
+});
+
 test("normalizeToolActionInput clamps dev.shell.run workspaceRoot and cwd to the active workspace root", () => {
   const activeWorkspaceRoot = "/home/sandbox/workspace";
   const normalized = normalizeToolActionInput("dev.shell.run", {

@@ -78,6 +78,7 @@ export const BUILT_IN_TOOL_INPUT_CONTRACTS = {
   "kestrel_one.github_repository_read": { mode: "schema-only" },
   "kestrel_one.github_push_agent_branch": { mode: "schema-only" },
   "workspace.preview.publish": { mode: "schema-only" },
+  "workspace.files.share": { mode: "schema-only" },
   "workspace.preview.list": { mode: "schema-only" },
   "workspace.preview.inspect": { mode: "schema-only" },
   "workspace.preview.renew": { mode: "schema-only" },

@@ -52,10 +52,11 @@ test("Environment runtime mode defaults to Fly and selects local explicitly", ()
   );
 });
 
-test("local Environment mode needs only the loopback runner service", () => {
+test("local Environment mode requires its loopback runner and signing keys", () => {
   const local = {
     KESTREL_ENVIRONMENT_RUNTIME: "local",
     KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL: "http://127.0.0.1:43106",
+    ...validTicketKeys(),
   };
   assert.doesNotThrow(() => assertHostedEnvironmentConfiguration(local));
   assert.doesNotThrow(() => assertLocalEnvironmentRuntimeConfiguration(local));
@@ -71,8 +72,27 @@ test("local Environment mode needs only the loopback runner service", () => {
       assertHostedEnvironmentConfiguration({
         KESTREL_ENVIRONMENT_RUNTIME: "local",
         KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL: "https://runner.example",
+        ...validTicketKeys(),
       }),
     /must target localhost/u
+  );
+  assert.throws(
+    () =>
+      assertHostedEnvironmentConfiguration({
+        KESTREL_ENVIRONMENT_RUNTIME: "local",
+        KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL: "http://127.0.0.1:43106",
+      }),
+    /matching Ed25519 private\/public key pair/u
+  );
+  const mismatched = validTicketKeys();
+  assert.throws(
+    () =>
+      assertHostedEnvironmentConfiguration({
+        ...local,
+        KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:
+          mismatched.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY,
+      }),
+    /matching Ed25519 private\/public key pair/u
   );
 });
 
@@ -84,10 +104,9 @@ test("the checked-in local environment enables hosted Environments", async () =>
   assert.match(envExample, /^KESTREL_ENVIRONMENTS_ENABLED=true$/mu);
 });
 
-function validEnvironment() {
+function validTicketKeys() {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   return {
-    CRON_SECRET: "cron-secret",
     KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY: privateKey.export({
       format: "pem",
       type: "pkcs8",
@@ -96,6 +115,13 @@ function validEnvironment() {
       format: "pem",
       type: "spki",
     }) as string,
+  };
+}
+
+function validEnvironment() {
+  return {
+    CRON_SECRET: "cron-secret",
+    ...validTicketKeys(),
     KESTREL_WORKSPACE_BACKUP_KEY: randomBytes(32).toString("base64"),
     KESTREL_WORKSPACE_BACKUP_KEY_ID: "workspace-backup-v1",
     KESTREL_ONE_APP_URL: "https://kestrel-one.example",

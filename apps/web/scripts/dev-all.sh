@@ -71,6 +71,18 @@ export KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL="${KESTREL_LOCAL_ENVIRONMENT_RUNNER_
 export KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN="${KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN:-kestrel-one-local-dev-runner}"
 export KESTREL_RUNNER_SERVICE_TOKEN="$KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN"
 
+if { [[ -n "${KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:-}" ]] && [[ -z "${KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:-}" ]]; } ||
+  { [[ -z "${KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:-}" ]] && [[ -n "${KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:-}" ]]; }; then
+  log "KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY and KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY must be configured together"
+  exit 1
+fi
+if [[ -z "${KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:-}" ]]; then
+  LOCAL_TICKET_KEYS_PATH="${KESTREL_HOME}/environment-ticket-keys.json"
+  node --import tsx scripts/ensure-local-environment-ticket-keys.ts "$LOCAL_TICKET_KEYS_PATH"
+  export KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; process.stdout.write(JSON.parse(readFileSync(process.argv[1], "utf8")).privateKey)' "$LOCAL_TICKET_KEYS_PATH")"
+  export KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; process.stdout.write(JSON.parse(readFileSync(process.argv[1], "utf8")).publicKey)' "$LOCAL_TICKET_KEYS_PATH")"
+fi
+
 if [[ "${AI_AGENT_API_KEY:-}" == "sk_your_provider_key" ]]; then
   log "Ignoring placeholder AI_AGENT_API_KEY from env defaults"
   unset AI_AGENT_API_KEY

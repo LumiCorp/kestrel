@@ -23,7 +23,12 @@ type Presenter = {
   fields: ReadonlyArray<{
     path: string;
     label: string;
-    format?: "default" | "event_time" | "attendees" | undefined;
+    format?:
+      | "default"
+      | "event_time"
+      | "attendees"
+      | "string_list"
+      | undefined;
   }>;
   warnings?: readonly string[] | undefined;
 };
@@ -243,6 +248,17 @@ const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
       ["ttlMinutes", "Lifetime (minutes)"],
     ],
   ),
+  "workspace.files.share": presenter(
+    "Share Workspace files",
+    "Publish an immutable file or ZIP through a temporary preview link.",
+    [
+      ["mode", "Mode"],
+      ["paths", "Selected files", "string_list"],
+      ["downloadName", "Download name"],
+      ["ttlMinutes", "Lifetime (minutes)"],
+    ],
+    ["Anyone with the temporary link can download the selected payload."],
+  ),
   "workspace.preview.renew": presenter(
     "Renew a workspace preview",
     "Extend the selected preview lease.",
@@ -325,7 +341,11 @@ function presenter(
   title: string,
   summary: string,
   fields: ReadonlyArray<
-    readonly [string, string, ("default" | "event_time" | "attendees")?]
+    readonly [
+      string,
+      string,
+      ("default" | "event_time" | "attendees" | "string_list")?,
+    ]
   >,
   warnings?: readonly string[],
 ): Presenter {
@@ -359,7 +379,11 @@ function readPath(record: Record<string, unknown>, path: string): unknown {
 
 function displayValue(
   value: unknown,
-  format: "default" | "event_time" | "attendees" = "default",
+  format:
+    | "default"
+    | "event_time"
+    | "attendees"
+    | "string_list" = "default",
 ): string {
   if (format === "event_time") {
     const time = readRecord(value);
@@ -378,6 +402,12 @@ function displayValue(
           })
           .join(", ") || "Configured attendees"
       : "Configured attendees";
+  }
+  if (format === "string_list") {
+    return Array.isArray(value) &&
+      value.every((item): item is string => typeof item === "string")
+      ? JSON.stringify(value)
+      : "Configured selection";
   }
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean")

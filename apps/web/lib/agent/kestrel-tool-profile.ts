@@ -102,6 +102,10 @@ const BUILT_IN_TOOL_CAPABILITIES = new Map<
     },
   ],
   [
+    "workspace.files.share",
+    { appKey: "built_in.previews", capabilityKey: "publish" },
+  ],
+  [
     "workspace.preview.publish",
     { appKey: "built_in.previews", capabilityKey: "publish" },
   ],

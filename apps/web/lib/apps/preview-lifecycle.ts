@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { createConnection } from "node:net";
 import type { EnvironmentExecutionTicket } from "@lumi/kestrel-environment-auth";
 import { and, count, eq, inArray, lt, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
@@ -6,6 +7,7 @@ import {
   ENVIRONMENT_ROUTER_CONTROL_REQUEST_TIMEOUT_MS,
   refreshEnvironmentGateway,
 } from "@/lib/environments/gateway-refresh";
+import { getHostedEnvironmentRuntimeMode } from "@/lib/environments/config";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import type { authorizeAppRuntime } from "./runtime";
 import { AppRuntimeError } from "./runtime";
@@ -424,6 +426,14 @@ async function inspectPreviewPort(input: {
   authorization: string;
   port: number;
 }): Promise<{ port: number; status: "listening" | "not_listening" }> {
+  if (getHostedEnvironmentRuntimeMode() === "local") {
+    return {
+      port: input.port,
+      status: (await isLocalPortListening(input.port))
+        ? "listening"
+        : "not_listening",
+    };
+  }
   const environment = await knowledgeDb.query.environments.findFirst({
     where: (table, { eq: equals }) =>
       equals(table.id, input.ticket.environmentId),
@@ -460,6 +470,7 @@ function parsePreviewPort(value: string | undefined) {
 }
 
 async function refreshGateway(ticket: EnvironmentExecutionTicket) {
+  if (getHostedEnvironmentRuntimeMode() === "local") return;
   try {
     await refreshEnvironmentGateway({
       organizationId: ticket.organizationId,
@@ -510,7 +521,10 @@ function describe(
     name: lease.name,
     port: lease.port,
     protocol: "http" as const,
-    url: `https://${lease.hostname}`,
+    url: workspacePreviewUrl(
+      { hostname: lease.hostname, port: lease.port },
+      process.env,
+    ),
     leaseStatus,
     applicationStatus,
     status,
@@ -519,6 +533,30 @@ function describe(
     maximumExpiresAt: lease.maximumExpiresAt.toISOString(),
     publicAccess: "anonymous_bearer_url" as const,
   };
+}
+
+export function workspacePreviewUrl(
+  preview: { hostname: string; port: number },
+  env: Record<string, string | undefined> = process.env,
+) {
+  return getHostedEnvironmentRuntimeMode(env) === "local"
+    ? `http://127.0.0.1:${preview.port}`
+    : `https://${preview.hostname}`;
+}
+
+async function isLocalPortListening(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port });
+    const finish = (listening: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(listening);
+    };
+    socket.setTimeout(ENVIRONMENT_ROUTER_CONTROL_REQUEST_TIMEOUT_MS);
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.once("timeout", () => finish(false));
+  });
 }
 
 export function summarizePreviewStatus(
