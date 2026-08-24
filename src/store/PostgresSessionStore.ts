@@ -1250,24 +1250,20 @@ export class PostgresSessionStore implements SessionStore {
         [runId],
       );
       const row = run.rows[0];
+      const effects = await executor.query<{ tenant_id: string | null }>(
+        `SELECT tenant_id FROM effects WHERE run_id = $1 FOR UPDATE`,
+        [runId],
+      );
       if (
         row === undefined || row.session_id !== event.sessionId || row.event_type !== event.type ||
         row.status !== "RUNNING" || session.rows[0]?.active_run_id !== runId ||
-        (row.tenant_id !== null && row.tenant_id !== this.tenantId)
+        row.tenant_id === null || this.tenantId === undefined || row.tenant_id !== this.tenantId ||
+        effects.rows.some((effect) => effect.tenant_id !== row.tenant_id)
       ) {
         throw createRuntimeFailure(
           "PRESTARTED_RUN_INVALID",
           `Run '${runId}' is not a valid prestarted run for session '${event.sessionId}'.`,
           { runId, sessionId: event.sessionId, eventType: event.type },
-        );
-      }
-      if (this.tenantId !== undefined) {
-        if (row.tenant_id === null) {
-          await executor.query(`UPDATE runs SET tenant_id = $2 WHERE run_id = $1`, [runId, this.tenantId]);
-        }
-        await executor.query(
-          `UPDATE effects SET tenant_id = $2 WHERE run_id = $1 AND tenant_id IS NULL`,
-          [runId, this.tenantId],
         );
       }
     });

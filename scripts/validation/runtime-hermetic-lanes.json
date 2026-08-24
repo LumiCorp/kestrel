@@ -46,6 +46,7 @@
         "tests/unit/devshell-normalize-command.test.ts",
         "tests/unit/docker-sandbox-executor.test.ts",
         "tests/unit/effect-runner.test.ts",
+        "tests/unit/exact-effect-result-read.test.ts",
         "tests/unit/evidence-quality.test.ts",
         "tests/unit/execution-boundary-conformance.test.ts",
         "tests/unit/execution-boundary-policy.test.ts",

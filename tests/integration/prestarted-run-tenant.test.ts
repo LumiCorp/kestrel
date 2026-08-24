@@ -123,19 +123,30 @@ test("PGlite prestarted runs and ordinary code.execute effects retain store tena
      VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NULL)`,
     [runId, sessionId, JSON.stringify({ preparedToolCall: legacyPrepared }), legacyCallId],
   );
-  await handle.executor.query("UPDATE runs SET tenant_id = NULL WHERE run_id = $1", [runId]);
-  await store.validatePrestartedRun(runId, event);
+  await handle.executor.query("UPDATE runs SET tenant_id = $2 WHERE run_id = $1", [runId, tenantId]);
+  await handle.executor.query("UPDATE effects SET tenant_id = $2 WHERE idempotency_key = $1", [legacyCallId, "tenant-other"]);
+  await assert.rejects(store.validatePrestartedRun(runId, event), (error: unknown) =>
+    error instanceof Error && "code" in error && error.code === "PRESTARTED_RUN_INVALID");
   assert.equal((await handle.executor.query<{ tenant_id: string | null }>(
-    "SELECT tenant_id FROM runs WHERE run_id = $1",
-    [runId],
-  )).rows[0]?.tenant_id, tenantId);
-  assert.deepEqual((await handle.executor.query<{ tenant_id: string | null; status: string }>(
-    "SELECT tenant_id, status FROM effects WHERE idempotency_key = $1",
-    [legacyCallId],
-  )).rows, [{ tenant_id: tenantId, status: "PENDING" }]);
+    "SELECT tenant_id FROM effects WHERE idempotency_key = $1", [legacyCallId],
+  )).rows[0]?.tenant_id, "tenant-other");
+
+  await handle.executor.query("UPDATE runs SET tenant_id = NULL WHERE run_id = $1", [runId]);
+  await handle.executor.query("UPDATE effects SET tenant_id = NULL WHERE run_id = $1", [runId]);
+  const wrongStore = new PostgresSessionStore(handle.executor, { enforceSchemaV3: true, tenantId: "tenant-wrong-first" });
+  for (const claimant of [wrongStore, store]) {
+    await assert.rejects(claimant.validatePrestartedRun(runId, event), (error: unknown) =>
+      error instanceof Error && "code" in error && error.code === "PRESTARTED_RUN_INVALID");
+  }
+  assert.equal((await handle.executor.query<{ tenant_id: string | null }>(
+    "SELECT tenant_id FROM runs WHERE run_id = $1", [runId],
+  )).rows[0]?.tenant_id, null);
+  assert.deepEqual((await handle.executor.query<{ tenant_id: string | null }>(
+    "SELECT tenant_id FROM effects WHERE run_id = $1 ORDER BY idempotency_key", [runId],
+  )).rows, [{ tenant_id: null }, { tenant_id: null }]);
 });
 
-test("InMemory prestarted runs bind, reject, and reconcile store-owned tenant authority", async () => {
+test("InMemory prestarted runs bind and reject unproved or mixed tenant ownership without mutation", async () => {
   const store = new InMemorySessionStore({ tenantId });
   await store.ensureSession(sessionId, "agent.loop");
   await store.upsertThread({
@@ -166,9 +177,21 @@ test("InMemory prestarted runs bind, reject, and reconcile store-owned tenant au
   internals.runs.get(runId)!.tenantId = "tenant-wrong";
   await assert.rejects(store.validatePrestartedRun(runId, event), (error: unknown) =>
     error instanceof Error && "code" in error && error.code === "PRESTARTED_RUN_INVALID");
+  internals.runs.get(runId)!.tenantId = tenantId;
+  internals.effects[0]!.tenantId = "tenant-other";
+  await assert.rejects(store.validatePrestartedRun(runId, event), (error: unknown) =>
+    error instanceof Error && "code" in error && error.code === "PRESTARTED_RUN_INVALID");
+  assert.equal(internals.effects[0]?.tenantId, "tenant-other");
+
   internals.runs.get(runId)!.tenantId = undefined;
   internals.effects[0]!.tenantId = undefined;
-  await store.validatePrestartedRun(runId, event);
-  assert.equal(internals.runs.get(runId)?.tenantId, tenantId);
-  assert.equal(internals.effects[0]?.tenantId, tenantId);
+  const wrongStoreView = store as unknown as { tenantId: string | undefined };
+  wrongStoreView.tenantId = "tenant-wrong-first";
+  await assert.rejects(store.validatePrestartedRun(runId, event), (error: unknown) =>
+    error instanceof Error && "code" in error && error.code === "PRESTARTED_RUN_INVALID");
+  wrongStoreView.tenantId = tenantId;
+  await assert.rejects(store.validatePrestartedRun(runId, event), (error: unknown) =>
+    error instanceof Error && "code" in error && error.code === "PRESTARTED_RUN_INVALID");
+  assert.equal(internals.runs.get(runId)?.tenantId, undefined);
+  assert.equal(internals.effects[0]?.tenantId, undefined);
 });

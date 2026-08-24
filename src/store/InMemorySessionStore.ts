@@ -770,18 +770,18 @@ export class InMemorySessionStore implements SessionStore {
         { runId, sessionId: event.sessionId },
       );
     }
-    if (run.tenantId !== undefined && run.tenantId !== this.tenantId) {
+    const effects = this.effects.filter((effect) => effect.runId === runId);
+    if (
+      run.tenantId === undefined ||
+      this.tenantId === undefined ||
+      run.tenantId !== this.tenantId ||
+      effects.some((effect) => effect.tenantId !== run.tenantId)
+    ) {
       throw createRuntimeFailure(
         "PRESTARTED_RUN_INVALID",
         `Run '${runId}' is not bound to the trusted store tenant.`,
         { runId, sessionId: event.sessionId },
       );
-    }
-    if (run.tenantId === undefined && this.tenantId !== undefined) {
-      run.tenantId = this.tenantId;
-      for (const effect of this.effects) {
-        if (effect.runId === runId && effect.tenantId === undefined) effect.tenantId = this.tenantId;
-      }
     }
     this.operationLog.push(`validatePrestartedRun:${runId}`);
   }

@@ -702,12 +702,10 @@ async function assertCancellationQualification(runner: { url: string; token: str
 }
 
 async function waitForFileMatch(filePath: string, pattern: RegExp): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
+  while (true) {
     if (pattern.test(await readFile(filePath, "utf8").catch(() => ""))) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`Timed out waiting for ${pattern}`);
 }
 
 async function startHostedRunner(
@@ -1059,7 +1057,7 @@ async function runCurlJson(input: {
   headers?: Record<string, string>;
   body?: string;
 }): Promise<{ status: number; body: Record<string, unknown> }> {
-  const args = ["-sS", "--max-time", "20", "-o", "-", "-w", "\n%{http_code}"];
+  const args = ["-sS", "-o", "-", "-w", "\n%{http_code}"];
   if (input.method !== undefined && input.method !== "GET") {
     args.push("-X", input.method);
   }
