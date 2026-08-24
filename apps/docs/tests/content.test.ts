@@ -13,8 +13,9 @@ import { DOCS_RELEASE } from "@/lib/release";
 import { CONTENT_ARCHETYPES, DOCS_NAV_SECTIONS, PRODUCT_SURFACES } from "@/lib/types";
 
 
-const RUNTIME_VERSION = "0.8.5";
+const RUNTIME_VERSION = "0.8.7";
 const DESKTOP_VERSION = "0.8.6";
+const KESTREL_ONE_VERSION = "0.8.5";
 
 test("navigation exposes exactly six ordered public journeys", async () => {
   const navigation = await getNavigation();
@@ -173,8 +174,8 @@ test("release metadata separates packages from product availability", async () =
   );
   assert.equal(DOCS_RELEASE.products.cli.version, RUNTIME_VERSION);
   assert.equal(DOCS_RELEASE.products.cli.npmVersion, RUNTIME_VERSION);
-  assert.equal(DOCS_RELEASE.products.cli.installCommand, "npm install -g @kestrel-agents/kestrel@0.8.5");
-  assert.equal(DOCS_RELEASE.products.kestrelOne.version, RUNTIME_VERSION);
+  assert.equal(DOCS_RELEASE.products.cli.installCommand, "npm install -g @kestrel-agents/kestrel@0.8.7");
+  assert.equal(DOCS_RELEASE.products.kestrelOne.version, KESTREL_ONE_VERSION);
   assert.equal(DOCS_RELEASE.products.kestrelOne.channel, "Beta");
   assert.equal(DOCS_RELEASE.products.kestrelOne.hostedAccess, "Invitation");
   assert.doesNotMatch(corpus, /\b\d+\.\d+\.\d+-beta\.\d+\b/gu);

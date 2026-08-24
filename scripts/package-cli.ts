@@ -131,7 +131,6 @@ function writeArtifactDigest(): void {
 function writeCliRuntimeManifest(): void {
   const dependencies = resolveRuntimePackageDependencies({
     repoRoot,
-    runtimeVersion: rootPackageJson.version,
     dependencies: rootPackageJson.dependencies,
     tsxVersion: rootPackageJson.devDependencies?.tsx,
   });

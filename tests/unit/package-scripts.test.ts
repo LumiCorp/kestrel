@@ -67,6 +67,18 @@ test("workspace skills package exports only published build artifacts", async ()
   assert.equal(pkg.files?.includes("src"), false);
 });
 
+test("the public package release gate includes Files", async () => {
+  const pkg = JSON.parse(await readFile(path.join(process.cwd(), "package.json"), "utf8")) as {
+    scripts?: Record<string, string>;
+  };
+
+  assert.equal(
+    pkg.scripts?.["files:release-check"],
+    "pnpm --filter @kestrel-agents/files release:check",
+  );
+  assert.match(pkg.scripts?.["packages:release-check"] ?? "", /pnpm run files:release-check/u);
+});
+
 test("AI SDK builds its conversation dependency before compiling itself", async () => {
   const pkg = JSON.parse(
     await readFile(path.join(process.cwd(), "packages/ai-sdk/package.json"), "utf8"),
