@@ -973,7 +973,7 @@ export interface RunnerResultV2<TOutput = unknown> {
 }
 
 export type RunnerJobStoreDriver = "auto" | "postgres" | "sqlite";
-export type RunnerApprovalPolicyPackId = "dev" | "ci_bot" | "production";
+export type RunnerApprovalPolicyPackId = "dev" | "isolated_code" | "ci_bot" | "production";
 
 export type RunnerJobTurnInput = Omit<RunnerTurnInput, "eventType"> & {
   eventType?: string | undefined;
@@ -987,6 +987,18 @@ export interface RunnerJobInputV1 {
   storeDriver?: RunnerJobStoreDriver | undefined;
   approvalPolicyPackId?: RunnerApprovalPolicyPackId | undefined;
 }
+
+export interface RunnerJobInputV2 extends Omit<RunnerJobInputV1, "version"> {
+  version: "job_input_v2";
+  environmentPresetId:
+    | "cli_safe_local"
+    | "cli_dev_local"
+    | "desktop_safe_local"
+    | "desktop_dev_local"
+    | "workspace_hosted";
+}
+
+export type RunnerJobInput = RunnerJobInputV1 | RunnerJobInputV2;
 
 export interface RunnerJobReplayPointerV1 {
   version: "job_replay_pointer_v1";
@@ -1134,12 +1146,12 @@ export type RunnerProfileReference =
       profileId: string;
     };
 
-type RunnerJobInputWithoutProfileReference = RunnerJobInputV1 & {
+type RunnerJobInputWithoutProfileReference = RunnerJobInput & {
   profile?: never;
   profileId?: never;
 };
 
-type RunnerJobInputWithProfileReference = RunnerJobInputV1 & RunnerProfileReference;
+type RunnerJobInputWithProfileReference = RunnerJobInput & RunnerProfileReference;
 
 export type JobRunCommandPayload =
   | (RunnerProfileReference & {
@@ -3512,10 +3524,17 @@ function validateRunTurn(value: unknown, label: string): void {
   validateOptionalWorkspaceSkills(turn.workspaceSkills, `${label}.workspaceSkills`);
 }
 
-function parseJobInput(value: unknown, label: string): RunnerJobInputV1 {
+function parseJobInput(value: unknown, label: string): RunnerJobInput {
   const input = requireRecord(value, label);
-  if (input.version !== "job_input_v1") {
-    throw new RunnerProtocolContractError(`${label}.version must be 'job_input_v1'`);
+  if (input.version !== "job_input_v1" && input.version !== "job_input_v2") {
+    throw new RunnerProtocolContractError(`${label}.version must be 'job_input_v1' or 'job_input_v2'`);
+  }
+  const allowedKeys = new Set([
+    "version", "environmentPresetId", "turn", "profileId", "profile", "storeDriver", "approvalPolicyPackId",
+  ]);
+  const unknownKey = Object.keys(input).find((key) => !allowedKeys.has(key));
+  if (unknownKey !== undefined) {
+    throw new RunnerProtocolContractError(`${label} contains unknown field '${unknownKey}'`);
   }
   const turn = parseJobTurn(input.turn, `${label}.turn`);
   validateOptionalNonEmptyString(input.profileId, `${label}.profileId`);
@@ -3527,14 +3546,24 @@ function parseJobInput(value: unknown, label: string): RunnerJobInputV1 {
   ]);
   validateOptionalEnum(input.approvalPolicyPackId, `${label}.approvalPolicyPackId`, [
     "dev",
+    "isolated_code",
     "ci_bot",
     "production",
   ]);
+  const environmentPresetId = input.version === "job_input_v2"
+    ? (() => {
+        validateEnum(input.environmentPresetId, `${label}.environmentPresetId`, [
+          "cli_safe_local", "cli_dev_local", "desktop_safe_local", "desktop_dev_local", "workspace_hosted",
+        ]);
+        return input.environmentPresetId;
+      })()
+    : undefined;
   return {
     ...input,
-    version: "job_input_v1",
+    version: input.version,
+    ...(environmentPresetId === undefined ? {} : { environmentPresetId }),
     turn,
-  } as RunnerJobInputV1;
+  } as RunnerJobInput;
 }
 
 function parseJobTurn(value: unknown, label: string): RunnerTurnInput {

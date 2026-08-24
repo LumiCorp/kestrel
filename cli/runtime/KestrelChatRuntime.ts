@@ -302,6 +302,8 @@ export interface KestrelRuntimeEnvironment {
   sandboxCapabilityCredentialResolver?: (() => Promise<{ credentialId: string; revision: string; secret: string }>) | undefined;
   /** Host-only provider transport seam. Production omits this and uses global fetch. */
   sandboxCapabilityFetchImpl?: typeof fetch | undefined;
+  /** Host-only qualification observer; ordinary production construction omits it. */
+  sandboxCapabilityQualificationObserver?: import("../../src/code/contracts.js").SandboxCapabilityQualificationObserver | undefined;
   /** Host-resolved execution identity. Capability profile content must not populate this authority. */
   sandboxCapabilityAudience?: { tenantId: string; environmentId: string } | undefined;
   /** Host-resolved broker identity. Capability profile content must not populate this authority. */
@@ -3381,6 +3383,7 @@ function createRuntimeWithStore(
     }),
     (value) => executionBoundaryRuntime.sensitiveValues.redact(value).value,
     environment?.sandboxCapabilityFetchImpl,
+    environment?.sandboxCapabilityQualificationObserver,
   );
   const sandboxCapabilityRuntime = sandboxCapabilityEnvironment?.sandboxCapabilityRuntime;
   const sandboxCapabilityStore = supportsSandboxCapabilityLeaseStore(store) ? store : undefined;
@@ -4506,6 +4509,7 @@ export function resolveSandboxCapabilityRuntimeEnvironment(
   registerSensitiveValue: NonNullable<NonNullable<SharedToolContext["sandboxCapabilityRuntime"]>["registerSensitiveValue"]>,
   redactSensitiveValues: NonNullable<NonNullable<SharedToolContext["sandboxCapabilityRuntime"]>["redactSensitiveValues"]>,
   fetchImpl?: KestrelRuntimeEnvironment["sandboxCapabilityFetchImpl"],
+  qualificationObserver?: KestrelRuntimeEnvironment["sandboxCapabilityQualificationObserver"],
 ): Pick<SharedToolContext, "sandboxCapabilityRuntime"> | undefined {
   const authored = profile.codeMode?.capabilities?.[0];
   if (authored === undefined || credentialResolver === undefined) return;
@@ -4537,6 +4541,7 @@ export function resolveSandboxCapabilityRuntimeEnvironment(
       brokerAuthority: trustedBrokerAuthority,
       resolveCredentialSnapshot: credentialResolver,
       ...(fetchImpl === undefined ? {} : { fetchImpl }),
+      ...(qualificationObserver === undefined ? {} : { qualificationObserver }),
       registerSensitiveValue,
       redactSensitiveValues,
     },

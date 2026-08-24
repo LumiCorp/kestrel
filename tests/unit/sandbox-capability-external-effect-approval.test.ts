@@ -43,6 +43,13 @@ const externalAdapter: SandboxCapabilityAdapter<SandboxCapabilityProfileV2, { in
   resource: profile.resource,
   credentialId: "tool.test-message.default",
   effectClass: "external_effect",
+  modelContract: {
+    description: "Send one fixed-resource test message.",
+    usage: "Select only for the exact approved test action; omission is allowed.",
+    optional: true,
+    selectionInputSchema: { type: "object", additionalProperties: false },
+    examples: [{ recipient: "test", message: "hello" }],
+  },
   parseProfile: (value) => value as SandboxCapabilityProfileV2,
   parseSelection: (value) => value as { input: typeof canonicalInput },
   canonicalInput: (_profile, selection) => structuredClone(selection.input),

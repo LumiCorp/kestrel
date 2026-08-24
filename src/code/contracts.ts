@@ -218,6 +218,31 @@ export interface SandboxCapabilityRuntimeContext {
     value: string;
   }) => (() => void)) | undefined;
   redactSensitiveValues?: (<T>(value: T) => T) | undefined;
+  /**
+   * Qualification-only host observer. The production runner never installs
+   * this port; it is deliberately absent from model-authored and persisted
+   * capability contracts.
+   */
+  qualificationObserver?: SandboxCapabilityQualificationObserver | undefined;
+}
+
+export type SandboxCapabilityQualificationCheckpoint =
+  | "lease_issued"
+  | "before_provider_invocation"
+  | "provider_response_received"
+  | "provider_result_committed"
+  | "before_exact_result_persistence"
+  | "exact_result_persisted"
+  | "before_lease_cleanup"
+  | "lease_cleanup_completed";
+
+export interface SandboxCapabilityQualificationObserver {
+  checkpoint(input: {
+    checkpoint: SandboxCapabilityQualificationCheckpoint;
+    leaseId: string;
+    runId: string;
+    toolCallId: string;
+  }): Promise<void>;
 }
 
 export interface SandboxExecutionOutput {

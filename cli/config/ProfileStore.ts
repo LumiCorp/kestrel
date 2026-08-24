@@ -24,6 +24,7 @@ import {
 } from "../../src/profile/modelPolicy.js";
 import {
   composeKestrelOneProfile,
+  defaultApprovalPolicyPackForPreset,
   KESTREL_ONE_DIALOG_TOOL_NAMES,
   KESTREL_ONE_POLICY_ID,
   LEGACY_KESTREL_ONE_POLICY_ID,
@@ -662,7 +663,9 @@ export function applyProfileDefaults(profile: TuiProfile): TuiProfile {
     capabilityPacks: [...resolvedProfile.capabilityPacks],
     modelProvider: profile.modelProvider ?? "openrouter",
     storeDriver: profile.storeDriver ?? "auto",
-    approvalPolicyPackId: profile.approvalPolicyPackId ?? "dev",
+    approvalPolicyPackId:
+      profile.approvalPolicyPackId ??
+      defaultApprovalPolicyPackForPreset(resolvedProfile.presetId),
     modeSystemV2Enabled:
       profile.agent === "kestrel" || profile.agent === "reference-react"
         ? true
@@ -1344,11 +1347,11 @@ function parseApprovalPolicyPackId(
   if (value === undefined) {
     return;
   }
-  if (value === "dev" || value === "ci_bot" || value === "production") {
+  if (value === "dev" || value === "isolated_code" || value === "ci_bot" || value === "production") {
     return value;
   }
   throw new Error(
-    `Profile '${profileId}' field 'approvalPolicyPackId' must be dev, ci_bot, or production`,
+    `Profile '${profileId}' field 'approvalPolicyPackId' must be dev, isolated_code, ci_bot, or production`,
   );
 }
 

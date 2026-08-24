@@ -384,7 +384,7 @@ test("spawned Local Core executes an immutable capability profile through Docker
   const response = await runCurlText({
     url: `${runner.url}/commands/stream`, method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
-    body: JSON.stringify({ id: "qualification-provider-used", type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId: runner.qualificationProfileId, turn: { sessionId, message: "qualification provider-used", eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true } } } } }),
+    body: JSON.stringify({ id: "qualification-provider-used", type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId: runner.qualificationProfileId, turn: { sessionId, message: "qualification provider-used", eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true }, approvalPolicy: { strictApprovalPerCall: false } } } } }),
   });
   assert.equal(response.status, 200);
   assert.match(response.body, /event: run\.completed/u);
@@ -474,7 +474,7 @@ test("spawned hosted runner executes a registered capability profile through Doc
   const response = await runCurlText({
     url: `${runner.url}/commands/stream`, method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
-    body: JSON.stringify({ id: "qualification-hosted-provider-used", type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId: resolvedEvent.payload?.profileId, turn: { sessionId, message: "qualification provider-used", eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true } } } } }),
+    body: JSON.stringify({ id: "qualification-hosted-provider-used", type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId: resolvedEvent.payload?.profileId, turn: { sessionId, message: "qualification provider-used", eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true }, approvalPolicy: { strictApprovalPerCall: false } } } } }),
   });
   assert.equal(response.status, 200);
   assert.match(response.body, /event: run\.completed/u);
@@ -537,6 +537,77 @@ test("spawned hosted runner executes a registered capability profile through Doc
   assert.equal(restartedRead.status, 200, JSON.stringify(restartedRead.body));
   assert.deepEqual((restartedRead.body.payload as { result?: unknown }).result, (liveRead.body.payload as { result?: unknown }).result);
   assert.equal(await readFile(evidencePath, "utf8"), evidenceBeforeRestart);
+});
+
+test("spawned hosted runner executes the live Tavily capability through Docker", async (t) => {
+  if (process.env.KESTREL_QUALIFICATION_LIVE !== "1") {
+    t.skip("KESTREL_QUALIFICATION_LIVE=1 is required for the spend-bearing live qualification");
+    return;
+  }
+  const tavilyKey = process.env.TAVILY_API_KEY?.trim();
+  const modelKey = process.env.OPENROUTER_API_KEY?.trim();
+  const model = process.env.OPENROUTER_MODEL?.trim();
+  if (!tavilyKey || !modelKey || !model) {
+    t.skip("TAVILY_API_KEY, OPENROUTER_API_KEY, and OPENROUTER_MODEL are required for live qualification");
+    return;
+  }
+  try { await execFileAsync("docker", ["info", "--format", "{{.ServerVersion}}"]); }
+  catch { t.skip("Docker daemon is required for live capability qualification"); return; }
+
+  const tenantId = `qualification-live-${randomUUID()}`;
+  const environmentId = "qualification-local-docker-desktop";
+  const authorityId = "qualification-live-broker";
+  const authorityRevision = "qualification-live-r1";
+  const runner = await startHostedRunner(t, {
+    OPENROUTER_API_KEY: modelKey,
+    OPENROUTER_BASE_URL: process.env.OPENROUTER_BASE_URL,
+    KESTREL_TENANT_ID: tenantId,
+    KESTREL_ENVIRONMENT_ID: environmentId,
+    KESTREL_SANDBOX_BROKER_AUTHORITY_ID: authorityId,
+    KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION: authorityRevision,
+    KESTREL_SANDBOX_TAVILY_CREDENTIAL: tavilyKey,
+    KESTREL_SANDBOX_TAVILY_CREDENTIAL_REVISION: `qualification-${randomUUID()}`,
+  });
+  const capability = {
+    version: 1 as const,
+    capabilityId: "tavily.search.read" as const,
+    operations: ["search"] as ["search"],
+    resource: "https://api.tavily.com/search" as const,
+    audience: { tenantId, environmentId },
+    maxRequests: 1 as const,
+    maxQueryChars: 256,
+    maxResults: 3,
+    maxResponseBytes: 32_768,
+    timeoutMs: 10_000,
+    maxExpiryMs: 60_000,
+    brokerAuthority: { authorityId, revision: authorityRevision },
+  };
+  const resolved = await runCurlJson({
+    url: `${runner.url}/commands`, method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
+    body: JSON.stringify({ id: `qualification-live-resolve-${randomUUID()}`, type: "execution-profile.resolve", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { environmentPresetId: "workspace_hosted", managedConfiguration: { modelProvider: "openrouter", model, codeMode: { ...structuredClone(DEFAULT_CODE_MODE_ENABLED_CONFIG), capabilities: [capability] } } } }),
+  });
+  assert.equal(resolved.status, 200, JSON.stringify(resolved.body));
+  const profileId = (resolved.body.payload as { profileId?: string }).profileId;
+  assert.ok(profileId);
+
+  const marker = `kestrel-live-${randomUUID()}`;
+  const sessionId = `qualification-live-${randomUUID()}`;
+  const response = await runCurlText({
+    url: `${runner.url}/commands/stream`, method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
+    body: JSON.stringify({ id: `qualification-live-run-${randomUUID()}`, type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId, turn: { sessionId, message: `Use code.execute exactly once with capability tavily.search.read and capability input {"query":"${marker}","maxResults":1}. The JavaScript must first attempt a direct network fetch, catch the rejection, and print DIRECT_NETWORK_BLOCKED; it must then POST {"operation":"search","destination":"api.tavily.com","input":{"query":"${marker}","maxResults":1}} to http://127.0.0.1:43127/v1/capability and print the JSON response.`, eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true }, approvalPolicy: { strictApprovalPerCall: false } } } } }),
+  });
+  assert.equal(response.status, 200, response.body.slice(-10_000));
+  if (!/event: run\.completed/u.test(response.body)) {
+    throw new Error(`Live qualification did not complete. Stream tail:\n${response.body.slice(-20_000)}`);
+  }
+  assert.match(response.body, /"toolName":"code\.execute"/u);
+  assert.match(response.body, /capabilityReplayEvidence/u);
+  assert.match(response.body, /DIRECT_NETWORK_BLOCKED/u);
+  assert.match(response.body, new RegExp(marker, "u"));
+  assert.equal(response.body.includes(tavilyKey), false);
+  assert.equal(response.body.includes(modelKey), false);
 });
 
 test("kestrel web forces shutdown after the grace period when an event stream is still connected", async (t) => {
@@ -647,7 +718,7 @@ async function runCapabilityQualification(
   return await runCurlText({
     url: `${runner.url}/commands/stream`, method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${runner.token}` },
-    body: JSON.stringify({ id: `qualification-${mode}-${randomUUID()}`, type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId, turn: { sessionId, message: `qualification ${mode}`, eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true } } } } }),
+    body: JSON.stringify({ id: `qualification-${mode}-${randomUUID()}`, type: "run.start", metadata: { actor: { actorId: "qualification", actorType: "operator", tenantId }, tenantId }, payload: { profileId, turn: { sessionId, message: `qualification ${mode}`, eventType: "user.message", interactionMode: "build", actSubmode: "full_auto", executionPolicy: { toolClassPolicy: { read_only: true, planning_write: true, sandboxed_only: true, external_side_effect: true }, capabilityPolicy: { "workspace.read": true, "workspace.write": true, "shell.exec": true, "code.execute": true, "network.call": true, "mcp.invoke": true, "external.confirm": true }, approvalPolicy: { strictApprovalPerCall: false } } } } }),
   });
 }
 
@@ -1256,7 +1327,7 @@ async function handleFakeOpenRouterRequest(
     type: "function",
     function: {
       name: codeName,
-      arguments: JSON.stringify({ language: "javascript", code: qualificationUnused ? "console.log('selected capability intentionally unused')" : `fetch('http://127.0.0.1:43127/v1/capability', { method: 'POST', body: JSON.stringify({ operation: 'search', destination: 'api.tavily.com', input: { query: '${qualificationQuery}', maxResults: 1 } }) }).then(async response => console.log(JSON.stringify(await response.json())))`, capability: { capabilityId: "tavily.search.read", input: { query: qualificationUnused ? "unused" : qualificationQuery, maxResults: 1 } } }),
+      arguments: JSON.stringify({ language: "javascript", code: qualificationUnused ? "console.log('selected capability intentionally unused')" : `fetch('http://127.0.0.1:43127/v1/capability', { method: 'POST', body: JSON.stringify({ operation: 'search', destination: 'api.tavily.com', input: { query: '${qualificationQuery}', maxResults: 1 } }) }).then(async response => console.log(JSON.stringify(await response.json())))`, capability: { version: 2, capabilityId: "tavily.search.read", operation: "search", input: { query: qualificationUnused ? "unused" : qualificationQuery, maxResults: 1 } } }),
     },
   } : {
     id: "call_fake_finalize",

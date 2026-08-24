@@ -22,6 +22,21 @@ export const tavilySearchReadAdapter: SandboxCapabilityAdapter<
   resource: TAVILY_SEARCH_RESOURCE,
   credentialId: "tool.tavily.default",
   effectClass: "read_only",
+  modelContract: {
+    description: "Run one bounded Tavily web search through the trusted host adapter while sandbox networking remains disabled.",
+    usage: "Select this only when the code needs fresh public web search results. Omit capability for ordinary isolated computation.",
+    optional: true,
+    selectionInputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        query: { type: "string", minLength: 1, maxLength: 400 },
+        maxResults: { type: "integer", minimum: 1, maximum: 20 },
+      },
+      required: ["query"],
+    },
+    examples: [{ query: "Kestrel agent runtime", maxResults: 5 }],
+  },
   parseProfile(value) {
     const profile = normalizeSandboxCapabilityProfileV2(value);
     if (profile.capabilityId !== TAVILY_SEARCH_CAPABILITY_ID || profile.operation !== TAVILY_SEARCH_OPERATION || profile.resource !== TAVILY_SEARCH_RESOURCE || profile.effectClass !== "read_only") {

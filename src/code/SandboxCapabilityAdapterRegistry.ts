@@ -16,12 +16,22 @@ export interface SandboxCapabilityAdapterInvocationContext {
   signal: AbortSignal;
 }
 
+export interface SandboxCapabilityAdapterModelContract {
+  /** Secret-free model guidance. It is compiled into code.execute. */
+  readonly description: string;
+  readonly usage: string;
+  readonly optional: true;
+  readonly selectionInputSchema: Record<string, unknown>;
+  readonly examples: readonly Record<string, unknown>[];
+}
+
 export interface SandboxCapabilityAdapter<Profile = unknown, Selection = unknown, Input = unknown, Output = unknown> {
   readonly capabilityId: string;
   readonly operation: string;
   readonly resource: string;
   readonly credentialId: string;
   readonly effectClass: SandboxCapabilityEffectClass;
+  readonly modelContract: SandboxCapabilityAdapterModelContract;
   parseProfile(value: unknown): Profile;
   parseSelection(value: unknown): Selection;
   canonicalInput(profile: Profile, selection: Selection): Input;
@@ -76,5 +86,20 @@ function assertExactAdapterDeclaration(adapter: SandboxCapabilityAdapter): void 
   }
   if (adapter.effectClass !== "read_only" && adapter.effectClass !== "external_effect") {
     throw new Error("Sandbox capability adapter effect class is invalid");
+  }
+  const modelContract = adapter.modelContract;
+  if (
+    typeof modelContract !== "object" || modelContract === null ||
+    typeof modelContract.description !== "string" || modelContract.description.trim() === "" ||
+    typeof modelContract.usage !== "string" || modelContract.usage.trim() === "" ||
+    modelContract.optional !== true ||
+    typeof modelContract.selectionInputSchema !== "object" || modelContract.selectionInputSchema === null ||
+    !Array.isArray(modelContract.examples)
+  ) {
+    throw new Error("Sandbox capability adapter model contract is invalid");
+  }
+  const serialized = JSON.stringify(modelContract).toLowerCase();
+  if (/(authorization|bearer|api[_-]?key|credential|secret|token)/u.test(serialized)) {
+    throw new Error("Sandbox capability adapter model contract must be secret-free");
   }
 }

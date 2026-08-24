@@ -331,7 +331,7 @@ export function resolveDesktopCapabilityView(
         withFieldValue(field("path", "Executable PATH", "text", false, false, "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"), settings.developerPath),
         { ...field("envMode", "Environment policy", "select", true, false), value: settings.developerShellEnvMode, options: [{ value: "inherit", label: "Inherit host environment" }, { value: "allowlist", label: "Allow listed variables only" }] },
         withFieldValue(field("allowedEnvNames", "Allowed environment names", "text", false, false, "CI, NODE_ENV"), settings.developerShellAllowedEnvNames.join(", ")),
-        { ...field("approvalPolicy", "Command approval policy", "select", true, false), value: settings.approvalPolicyPackId, options: [{ value: "dev", label: "Developer" }, { value: "production", label: "Production" }, { value: "ci_bot", label: "CI bot" }] },
+        { ...field("approvalPolicy", "Command approval policy", "select", true, false), value: settings.approvalPolicyPackId, options: [{ value: "dev", label: "Developer" }, { value: "isolated_code", label: "Isolated code" }, { value: "production", label: "Production" }, { value: "ci_bot", label: "CI bot" }] },
       ],
     }),
     simpleCapability({

@@ -133,7 +133,7 @@ test("ProfileStore v9 migrates only generated local profiles and emits the isola
         ],
         managedProfileOverlays: {
           "kestrel@cli_dev_local": {
-            approvalPolicyPackId: "production",
+            approvalPolicyPackId: "isolated_code",
             theme: { brandAlt: "#123456" },
           },
         },
@@ -153,7 +153,7 @@ test("ProfileStore v9 migrates only generated local profiles and emits the isola
   assert.equal(reference, undefined);
   assert.equal(custom, undefined);
   assert.equal(managed?.presetId, "cli_safe_local");
-  assert.equal(managed?.approvalPolicyPackId, "production");
+  assert.equal(managed?.approvalPolicyPackId, "isolated_code");
   assert.equal(managed?.theme, undefined);
   assert.deepEqual(store.consumeLoadNotices(), [
     "Migrated profiles.json V6 to the canonical Kestrel profile.",
@@ -163,7 +163,7 @@ test("ProfileStore v9 migrates only generated local profiles and emits the isola
   assert.equal(persisted.version, 10);
   assert.equal(
     persisted.environmentBindings.cli_safe_local.approvals.policyPackId,
-    "production",
+    "isolated_code",
   );
   assert.equal(
     (await readFile(`${filePath}.v6.pre-v10.bak`, "utf8")).includes(

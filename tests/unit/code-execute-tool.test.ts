@@ -124,9 +124,9 @@ test("code.execute exposes only the selector input and carries the exact prepare
     },
     codeExecutionService: { async execute(_config, _request, options) { capturedOptions = options; return { status: "ok", exitCode: 0, stdout: "", stderr: "", durationMs: 1, artifacts: [], summary: "ok", policy: { enabled: true, approvalMode: "auto", executor: "docker", language: "javascript", timeoutMs: 1000, memoryMb: 128, cpuShares: 128, pidsLimit: 64, workspaceSizeMb: 32, workspaceInodes: 100, tmpSizeMb: 16, tmpInodes: 100, network: "off", allowDependencyInstall: false, maxOutputBytes: 1000, maxArtifacts: 1, maxArtifactBytes: 1000 }, retention: { persistSummary: true, persistArtifacts: true } }; } },
   });
-  await handler({ language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "q" } } });
+  await handler({ language: "javascript", code: "x", capability: { version: 2, capabilityId: "tavily.search.read", operation: "search", input: { query: "q" } } });
   assert.equal(capturedOptions?.capabilityRuntime?.toolCallId, "tool-call-a");
-  await assert.rejects(() => handler({ language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "q" }, credentialReference: "forged" } }), /unknown field/u);
+  await assert.rejects(() => handler({ language: "javascript", code: "x", capability: { version: 2, capabilityId: "tavily.search.read", operation: "search", input: { query: "q" }, credentialReference: "forged" } }), /unknown field/u);
   const capabilitySchema = (codeExecuteTool.definition.inputSchema.properties as Record<string, unknown>).capability;
   assert.equal(JSON.stringify(capabilitySchema).includes("credential"), false);
   assert.equal(JSON.stringify(capabilitySchema).includes("destination"), false);
@@ -149,7 +149,7 @@ test("UnifiedToolRegistry preserves capability selection and binds the prepared 
     codeExecutionService: { async execute(_config, request, options) { capturedRequest = request; capturedOptions = options; return { status: "ok", exitCode: 0, stdout: "", stderr: "", durationMs: 1, artifacts: [], summary: "ok", policy: { enabled: true, approvalMode: "auto", executor: "docker", language: "javascript", timeoutMs: 1000, memoryMb: 128, cpuShares: 128, pidsLimit: 64, workspaceSizeMb: 32, workspaceInodes: 100, tmpSizeMb: 16, tmpInodes: 100, network: "off", allowDependencyInstall: false, maxOutputBytes: 1000, maxArtifacts: 1, maxArtifactBytes: 1000 }, retention: { persistSummary: true, persistArtifacts: true } }; } },
   } });
   const snapshot = await registry.createToolSurfaceSnapshot({ toolNames: ["code.execute"] });
-  const intent = registry.resolveModelToolIntent({ snapshot, toolCall: { id: "prepared-call-exact", name: "code.execute", input: { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "q" } } } } });
+  const intent = registry.resolveModelToolIntent({ snapshot, toolCall: { id: "prepared-call-exact", name: "code.execute", input: { language: "javascript", code: "x", capability: { version: 2, capabilityId: "tavily.search.read", operation: "search", input: { query: "q" } } } } });
   const prepared = await registry.prepareToolCall({ runId: "run-a", sessionId: "session-a", callId: intent.modelToolCallId, activation: intent.activation, origin: { kind: "model", snapshotId: intent.snapshotId, modelToolCallId: intent.modelToolCallId }, rawInput: intent.rawInput, policy: { decision: "allow", policyRevision: hashCanonical({ test: "code-execute-capability" }) } });
   const result = await registry.executePreparedToolCall(prepared);
   assert.equal(result.status, "OK", JSON.stringify(result));
@@ -167,6 +167,11 @@ test("UnifiedToolRegistry advertises capability only when authored by the resolv
   assert.equal("capability" in absentSchema.properties, false);
   const capability = { version: 1 as const, capabilityId: "tavily.search.read" as const, operations: ["search"] as ["search"], resource: "https://api.tavily.com/search" as const, audience: { tenantId: "t", environmentId: "e" }, maxRequests: 1 as const, maxQueryChars: 100, maxResults: 2, maxResponseBytes: 4096, timeoutMs: 1000, maxExpiryMs: 5000, brokerAuthority: { authorityId: "b", revision: "r" } };
   const authored = new UnifiedToolRegistry({ allowlist: ["code.execute"], context: { codeMode: { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [capability] } } });
-  const schema = authored.getModelTools().find((tool) => tool.name === "code.execute")?.inputSchema as { properties: Record<string, { properties?: Record<string, { enum?: string[] }> }> };
-  assert.deepEqual(schema.properties.capability?.properties?.capabilityId?.enum, ["tavily.search.read"]);
+  const schema = authored.getModelTools().find((tool) => tool.name === "code.execute")?.inputSchema as {
+    properties: Record<string, { oneOf?: Array<{ properties?: Record<string, { const?: unknown }> }> }>;
+  };
+  assert.equal(schema.properties.capability?.oneOf?.length, 1);
+  assert.equal(schema.properties.capability?.oneOf?.[0]?.properties?.version?.const, 2);
+  assert.equal(schema.properties.capability?.oneOf?.[0]?.properties?.capabilityId?.const, "tavily.search.read");
+  assert.equal(schema.properties.capability?.oneOf?.[0]?.properties?.operation?.const, "search");
 });

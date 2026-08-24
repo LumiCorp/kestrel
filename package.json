@@ -192,6 +192,7 @@
     "swe:passing": "bash scripts/swe-passing.sh",
     "swe:medium-low": "bash scripts/swe-medium-low.sh",
     "runner:service": "node --import tsx cli/runner/service.ts",
+    "qualification:sandbox-capability": "node --import tsx scripts/qualify-sandbox-capability.ts",
     "test:runner-service": "node --import tsx scripts/test-runner-service.ts",
     "test:web-runner": "node --import tsx scripts/test-web-runner.ts",
     "test:web-runner:live": "node --import tsx scripts/test-web-runner-live.ts",

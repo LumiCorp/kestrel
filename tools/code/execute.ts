@@ -1,4 +1,7 @@
-import { CodeExecutionService } from "../../src/code/CodeExecutionService.js";
+import {
+  CodeExecutionService,
+  DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY,
+} from "../../src/code/CodeExecutionService.js";
 import type {
   CodeExecutionRequest,
   CodeNetworkMode,
@@ -6,7 +9,7 @@ import type {
 } from "../../src/code/contracts.js";
 import { mergeCodeModeConfig } from "../../src/code/PolicyEngine.js";
 import {
-  parseSandboxCapabilitySelectionV1,
+  normalizeSandboxCapabilitySelectionV2,
 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import type { SharedToolModule } from "../contracts.js";
 import {
@@ -158,8 +161,26 @@ export function codeExecuteDefinitionForProfile(codeMode: import("../../src/code
   if (authoredIds.length === 0) {
     delete properties.capability;
   } else {
-    const capability = properties.capability as { properties: Record<string, unknown> };
-    capability.properties.capabilityId = { type: "string", enum: authoredIds };
+    const branches = authoredIds.map((capabilityId) => {
+      const adapter = DEFAULT_SANDBOX_CAPABILITY_ADAPTER_REGISTRY.requireExact({ capabilityId });
+      return {
+        type: "object",
+        additionalProperties: false,
+        description: `${adapter.modelContract.description} ${adapter.modelContract.usage}`,
+        properties: {
+          version: { const: 2 },
+          capabilityId: { const: adapter.capabilityId },
+          operation: { const: adapter.operation },
+          input: structuredClone(adapter.modelContract.selectionInputSchema),
+        },
+        required: ["version", "capabilityId", "operation", "input"],
+      };
+    });
+    properties.capability = {
+      description: "Optional trusted host capability. Omit it for ordinary isolated computation; the workload has no direct network access.",
+      oneOf: branches,
+    };
+    definition.description += " The workload has no direct network access. Select an advertised optional capability only when its fixed host operation is required.";
   }
   return definition;
 }
@@ -188,7 +209,7 @@ function parseCodeExecutionRequest(input: unknown): CodeExecutionRequest {
   const args = parseOptionalStringArray(body, "args", 50);
   const capability = body.capability === undefined
     ? undefined
-    : parseSandboxCapabilitySelectionV1(body.capability);
+    : normalizeSandboxCapabilitySelectionV2(body.capability);
 
   return {
     language,

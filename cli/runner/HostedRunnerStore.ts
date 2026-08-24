@@ -37,12 +37,17 @@ export interface HostedRunnerStoreRecovery {
 
 export function createHostedRunnerRuntimeFactory(
   store: SessionStore,
-  options: { env?: NodeJS.ProcessEnv | undefined; sandboxCapabilityFetchImpl?: typeof fetch | undefined } = {},
+  options: {
+    env?: NodeJS.ProcessEnv | undefined;
+    sandboxCapabilityFetchImpl?: typeof fetch | undefined;
+    sandboxCapabilityQualificationObserver?: KestrelRuntimeEnvironment["sandboxCapabilityQualificationObserver"];
+  } = {},
 ): RunnerRuntimeFactory {
   const runtimeFactory = createRuntimeFactoryWithStore(store, {
     resolveEnvironment: () => resolveHostedSandboxCapabilityEnvironment(
       options.env ?? process.env,
       options.sandboxCapabilityFetchImpl,
+      options.sandboxCapabilityQualificationObserver,
     ),
   });
   return (
@@ -67,6 +72,7 @@ export function createHostedRunnerRuntimeFactory(
 export function resolveHostedSandboxCapabilityEnvironment(
   env: NodeJS.ProcessEnv,
   sandboxCapabilityFetchImpl?: typeof fetch | undefined,
+  sandboxCapabilityQualificationObserver?: KestrelRuntimeEnvironment["sandboxCapabilityQualificationObserver"],
 ): KestrelRuntimeEnvironment {
   const tenantId = readTrustedEnv(env, "KESTREL_TENANT_ID");
   const environmentId = readTrustedEnv(env, "KESTREL_ENVIRONMENT_ID");
@@ -88,6 +94,7 @@ export function resolveHostedSandboxCapabilityEnvironment(
       },
     }),
     ...(sandboxCapabilityFetchImpl === undefined ? {} : { sandboxCapabilityFetchImpl }),
+    ...(sandboxCapabilityQualificationObserver === undefined ? {} : { sandboxCapabilityQualificationObserver }),
   };
 }
 

@@ -456,6 +456,15 @@ async function resolveSandboxCapability(
   if (durableLease.transition !== "issued") {
     throw new Error(`Sandbox capability lease was not issued: ${durableLease.terminalReason ?? durableLease.transition}`);
   }
+  const qualificationCheckpoint = async (
+    checkpoint: import("./contracts.js").SandboxCapabilityQualificationCheckpoint,
+  ) => await runtime.qualificationObserver?.checkpoint({
+    checkpoint,
+    leaseId: durableLease.leaseId,
+    runId: runtime.runId,
+    toolCallId: runtime.toolCallId,
+  });
+  await qualificationCheckpoint("lease_issued");
   let sensitiveMaterialReleased = false;
   let resultPersistenceCommitted = false;
   let providerInvocationReserved = false;
@@ -504,45 +513,48 @@ async function resolveSandboxCapability(
     },
     expectedInput: canonicalInputRecord,
     lifecycle: {
-        beforeProviderInvocation: async () => {
-          const reservation = await runtime.leaseCoordinator!.reserveInvocation(durableLease.leaseId, leaseBinding);
-          providerInvocationReserved = true;
-          invocationResponseByteLimit = reservation.invocationResponseByteLimit;
-          return { responseByteLimit: invocationResponseByteLimit };
-        },
-        commitProviderResult: async ({ result, responseBytes }) => {
-          await runtime.leaseCoordinator!.commitResult({
-            leaseId: durableLease.leaseId,
-            expectedBinding: leaseBinding,
-            result,
-            responseBytes,
-            exactProviderUsage: null,
-          });
-          providerResultCommitted = true;
-        },
-        recordProviderFailure: async (error) => {
-          if (
-            error instanceof SandboxCapabilityAdapterFailure &&
-            error.code === "CAPABILITY_DEADLINE_EXCEEDED" &&
-            (runtime.now ?? (() => new Date()))().getTime() >= expiresAt.getTime()
-          ) {
-            await runtime.leaseCoordinator!.expire(durableLease.leaseId, leaseBinding, "lease_expired_during_provider_invocation");
-            return;
-          }
-          await runtime.leaseCoordinator!.recordProviderFailure(
-            durableLease.leaseId,
-            leaseBinding,
-            error instanceof SandboxCapabilityAdapterFailure && error.code === "CAPABILITY_DEADLINE_EXCEEDED"
-              ? "provider_invocation_timeout"
-              : "provider_invocation_failed",
-          );
-        },
-        beforeContainerTeardown: async (reason, completedOutput) => {
-          let persistenceError: unknown;
-          try {
+      beforeProviderInvocation: async () => {
+        await qualificationCheckpoint("before_provider_invocation");
+        const reservation = await runtime.leaseCoordinator!.reserveInvocation(durableLease.leaseId, leaseBinding);
+        providerInvocationReserved = true;
+        invocationResponseByteLimit = reservation.invocationResponseByteLimit;
+        return { responseByteLimit: invocationResponseByteLimit };
+      },
+      commitProviderResult: async ({ result, responseBytes }) => {
+        await runtime.leaseCoordinator!.commitResult({
+          leaseId: durableLease.leaseId,
+          expectedBinding: leaseBinding,
+          result,
+          responseBytes,
+          exactProviderUsage: null,
+        });
+        providerResultCommitted = true;
+        await qualificationCheckpoint("provider_result_committed");
+      },
+      recordProviderFailure: async (error) => {
+        if (
+          error instanceof SandboxCapabilityAdapterFailure &&
+          error.code === "CAPABILITY_DEADLINE_EXCEEDED" &&
+          (runtime.now ?? (() => new Date()))().getTime() >= expiresAt.getTime()
+        ) {
+          await runtime.leaseCoordinator!.expire(durableLease.leaseId, leaseBinding, "lease_expired_during_provider_invocation");
+          return;
+        }
+        await runtime.leaseCoordinator!.recordProviderFailure(
+          durableLease.leaseId,
+          leaseBinding,
+          error instanceof SandboxCapabilityAdapterFailure && error.code === "CAPABILITY_DEADLINE_EXCEEDED"
+            ? "provider_invocation_timeout"
+            : "provider_invocation_failed",
+        );
+      },
+      beforeContainerTeardown: async (reason, completedOutput) => {
+        let persistenceError: unknown;
+        try {
             const effectiveReason = signal?.aborted === true ? "cancelled" : reason;
             if (completedOutput?.status === "ok" && persistCompletedCapabilityResult !== undefined) {
               try {
+                await qualificationCheckpoint("before_exact_result_persistence");
                 await persistCompletedCapabilityResult(buildCompletedCodeExecutionResult({
                   output: completedOutput,
                   policy: appliedPolicy,
@@ -556,6 +568,7 @@ async function resolveSandboxCapability(
                   redact: runtime.redactSensitiveValues,
                 }));
                 resultPersistenceCommitted = true;
+                await qualificationCheckpoint("exact_result_persisted");
               } catch (error) {
                 persistenceError = error;
               }
@@ -568,12 +581,14 @@ async function resolveSandboxCapability(
                 ? completedOutput.status === "ok" ? "completed" : completedOutput.status === "timeout" ? "timeout" : "failed"
                 : effectiveReason;
             try {
+              await qualificationCheckpoint("before_lease_cleanup");
               await runtime.leaseCoordinator!.settleBeforeTeardown({
                 leaseId: durableLease.leaseId,
                 expectedBinding: leaseBinding,
                 reason: settlementReason,
                 disposeSensitiveMaterial,
               });
+              await qualificationCheckpoint("lease_cleanup_completed");
             } catch (error) {
               if (!winningResultCommitted) throw error;
             }
@@ -581,19 +596,19 @@ async function resolveSandboxCapability(
               throw persistenceError;
             }
             return { completedResultCommitted: resultPersistenceCommitted };
-          } finally {
-            // Durable evidence can honestly remain non-cleaned when its store
-            // is unavailable, but process-local authority must still be gone
-            // before Docker is allowed to remove either container.
-            disposeSensitiveMaterial();
-          }
-        },
+        } finally {
+          // Durable evidence can honestly remain non-cleaned when its store
+          // is unavailable, but process-local authority must still be gone
+          // before Docker is allowed to remove either container.
+          disposeSensitiveMaterial();
+        }
       },
+    },
     adapter: async (adapterInput, signal) => {
       try {
         const remainingExpiryMs = expiresAt.getTime() - (runtime.now ?? (() => new Date()))().getTime();
         if (remainingExpiryMs <= 0) throw new Error("Tavily adapter capability expired before provider invocation");
-        return await adapter.invoke(adapterInput, {
+        const response = await adapter.invoke(adapterInput, {
           fetchImpl: runtime.fetchImpl ?? fetch,
           credential: credentialSnapshot.secret,
           timeoutMs: profile.timeoutMs,
@@ -601,6 +616,8 @@ async function resolveSandboxCapability(
           maxResponseBytes: invocationResponseByteLimit,
           signal,
         });
+        await qualificationCheckpoint("provider_response_received");
+        return response;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const sanitized = message.split(credentialSnapshot.secret).join("[redacted:credential]");

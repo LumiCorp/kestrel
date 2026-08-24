@@ -127,7 +127,7 @@ export interface KestrelEnvironmentBindingV1 {
     ociMcpEgressBindings: Array<Record<string, unknown>>;
   };
   approvals: {
-    policyPackId: "dev" | "ci_bot" | "production";
+    policyPackId: "dev" | "isolated_code" | "ci_bot" | "production";
   };
   storage: {
     driver: "auto" | "postgres" | "sqlite";
@@ -515,7 +515,7 @@ const environmentBindingSchema = z
       })
       .strict(),
     approvals: z
-      .object({ policyPackId: z.enum(["dev", "ci_bot", "production"]) })
+      .object({ policyPackId: z.enum(["dev", "isolated_code", "ci_bot", "production"]) })
       .strict(),
     storage: z
       .object({ driver: z.enum(["auto", "postgres", "sqlite"]) })

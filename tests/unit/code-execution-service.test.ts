@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CodeExecutionService } from "../../src/code/CodeExecutionService.js";
 import { SandboxCapabilityLeaseCoordinator, digestSandboxCapabilityResult } from "../../src/code/SandboxCapabilityLeaseCoordinator.js";
-import { DEFAULT_CODE_MODE_ENABLED_CONFIG, type CodeExecutionResult, type SandboxExecutionInput, type SandboxExecutor } from "../../src/code/contracts.js";
+import { DEFAULT_CODE_MODE_ENABLED_CONFIG, type CodeExecutionResult, type SandboxCapabilityRuntimeContext, type SandboxExecutionInput, type SandboxExecutor } from "../../src/code/contracts.js";
 import { KESTREL_EXECUTION_BOUNDARY_POLICY, SensitiveValueRegistry } from "../../src/security/ExecutionBoundaryPolicy.js";
 import { fingerprintSandboxCapabilityCatalogV2, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityChildReservationV1, type SandboxCapabilityLeaseTransitionRecordV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import { SandboxCapabilityExactResultConflictError, type SandboxCapabilityLeaseStore } from "../../src/kestrel/contracts/store.js";
@@ -16,10 +16,16 @@ test("CodeExecutionService derives a bounded Tavily grant before sandbox creatio
   let issuedBinding: SandboxCapabilityLeaseTransitionRecordV1["binding"] | undefined;
   let authorization = "";
   let providerInvoked = false;
+  const qualificationCheckpoints: string[] = [];
   const executor: SandboxExecutor = { async execute(input) { observed = input; assert.equal(providerInvoked, false); await input.capability?.adapter?.(input.capability.expectedInput!, new AbortController().signal); return { status: "ok", exitCode: 0, stdout: "ok", stderr: "", durationMs: 1, artifacts: [] }; } };
-  const capabilityRuntime = runtime(async (_url, input) => { providerInvoked = true; authorization = new Headers(input?.headers).get("authorization") ?? ""; return new Response(JSON.stringify({ results: [{ title: "A", url: "https://example.com/a", content: "bounded" }] }), { status: 200 }); });
-  const originalRequest = capabilityRuntime.leaseCoordinator.request.bind(capabilityRuntime.leaseCoordinator);
-  capabilityRuntime.leaseCoordinator.request = async (input) => { issuedBinding = input.binding; return originalRequest(input); };
+  const capabilityRuntime: SandboxCapabilityRuntimeContext = {
+    ...runtime(async (_url, input) => { providerInvoked = true; authorization = new Headers(input?.headers).get("authorization") ?? ""; return new Response(JSON.stringify({ results: [{ title: "A", url: "https://example.com/a", content: "bounded" }] }), { status: 200 }); }),
+    qualificationObserver: {
+      async checkpoint(input) { qualificationCheckpoints.push(input.checkpoint); },
+    },
+  };
+  const originalRequest = capabilityRuntime.leaseCoordinator!.request.bind(capabilityRuntime.leaseCoordinator);
+  capabilityRuntime.leaseCoordinator!.request = async (input) => { issuedBinding = input.binding; return originalRequest(input); };
   const service = new CodeExecutionService({ executor });
   const result = await service.execute({ ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] }, { language: "javascript", code: "x", capability: { capabilityId: "tavily.search.read", input: { query: "kestrel", maxResults: 2 } } }, { capabilityRuntime });
   assert.equal(result.status, "ok");
@@ -31,6 +37,7 @@ test("CodeExecutionService derives a bounded Tavily grant before sandbox creatio
   assert.equal(issuedBinding?.version, 2);
   assert.equal(issuedBinding?.version === 2 ? issuedBinding.effectClass : undefined, "read_only");
   assert.equal(JSON.stringify(observed).includes("real-secret-key"), false);
+  assert.deepEqual(qualificationCheckpoints, ["lease_issued", "provider_response_received"]);
 });
 
 test("CodeExecutionService applies the atomic invocation byte allowance before provider response delivery", async () => {

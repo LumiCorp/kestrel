@@ -67,7 +67,6 @@ export interface JobRunRejectionV1 {
     mismatches: string[];
   };
 }
-
 export interface JobReplayPointerV1 {
   version: "job_replay_pointer_v1";
   sessionId: string;
@@ -290,16 +289,16 @@ function parseOptionalApprovalPolicyPack(value: unknown): ApprovalPolicyPackId |
   if (value === undefined) {
     return ;
   }
-  if (value === "dev" || value === "ci_bot" || value === "production") {
+  if (value === "dev" || value === "isolated_code" || value === "ci_bot" || value === "production") {
     return value;
   }
-  throw new Error("job input approvalPolicyPackId must be dev|ci_bot|production when present");
+  throw new Error("job input approvalPolicyPackId must be dev|isolated_code|ci_bot|production when present");
 }
 
 function parseRequiredApprovalPolicyPack(value: unknown): ApprovalPolicyPackId {
   const parsed = parseOptionalApprovalPolicyPack(value);
   if (parsed === undefined) {
-    throw new Error("job input approvalPolicyPackId must be dev|ci_bot|production");
+    throw new Error("job input approvalPolicyPackId must be dev|isolated_code|ci_bot|production");
   }
   return parsed;
 }

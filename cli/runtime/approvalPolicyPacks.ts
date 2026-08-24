@@ -24,7 +24,7 @@ const CAPABILITY_CLASSES: ApprovalCapabilityClass[] = [
 ];
 
 export interface ApprovalPolicyPack {
-  id: "dev" | "ci_bot" | "production";
+  id: "dev" | "isolated_code" | "ci_bot" | "production";
   version: 1;
   label: string;
   defaultDeny: true;
@@ -41,6 +41,15 @@ const APPROVAL_POLICY_PACKS: Record<ApprovalPolicyPack["id"], ApprovalPolicyPack
     defaultDeny: true,
     allowedToolClasses: ["read_only", "sandboxed_only", "external_side_effect"],
     allowedCapabilities: ["workspace.read", "workspace.write", "shell.exec", "network.call", "mcp.invoke", "external.confirm"],
+    strictApprovalPerCall: false,
+  },
+  isolated_code: {
+    id: "isolated_code",
+    version: 1,
+    label: "Isolated code",
+    defaultDeny: true,
+    allowedToolClasses: ["read_only", "sandboxed_only"],
+    allowedCapabilities: ["workspace.read", "workspace.write", "code.execute"],
     strictApprovalPerCall: false,
   },
   ci_bot: {
