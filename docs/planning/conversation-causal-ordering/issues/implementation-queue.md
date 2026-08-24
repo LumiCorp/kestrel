@@ -8,7 +8,7 @@ None.
 
 ## In progress
 
-- [Preserve causal message order in the Desktop activity timeline](02-preserve-desktop-message-order.md)
+None.
 
 ## Blocked
 
@@ -21,3 +21,4 @@ None.
 ## Done
 
 - [Keep repeated request-response cycles in causal transcript order](01-project-messages-in-causal-order.md)
+- [Preserve causal message order in the Desktop activity timeline](02-preserve-desktop-message-order.md)
