@@ -71,9 +71,10 @@ export type EnvironmentInventory = {
   volumes: Array<{
     id: string;
     name: string;
+    state: string | null;
     region: string | null;
     sizeGb: number | null;
-    attachedMachineId: string | null;
+    attachedMachineId?: string | null;
   }>;
 };
 
@@ -192,6 +193,10 @@ export type CanaryEvidence = {
     final?: BackupObservation;
   };
   snapshots?: { baseline: FlySnapshot[]; final?: FlySnapshot[] };
+  environment?: {
+    first?: EnvironmentInventory;
+    final?: EnvironmentInventory;
+  };
   workerStop?: WorkerStopEvidence;
   archive?: ArchiveVerification;
   cleanup?: {
@@ -830,8 +835,13 @@ export function assertNoTemporaryResources(
     .map((machine) => machine.id)
     .filter((id) => !baselineMachineIds.has(id));
   const newVolumeIds = observed.volumes
-    .map((volume) => volume.id)
-    .filter((id) => !baselineVolumeIds.has(id));
+    .filter((volume) => !baselineVolumeIds.has(volume.id))
+    .filter(
+      (volume) =>
+        volume.state !== "pending_destroy" ||
+        volume.attachedMachineId !== null,
+    )
+    .map((volume) => volume.id);
   assert(
     newMachineIds.length === 0 && newVolumeIds.length === 0,
     `Temporary export resources remain (machines: ${newMachineIds.join(", ") || "none"}; volumes: ${newVolumeIds.join(", ") || "none"}).`,
@@ -1005,6 +1015,7 @@ export async function runWorkspaceBackupRetryCanary(input: {
       dependencies.observeEnvironment(target),
     ]);
     evidence.snapshots!.final = firstSnapshots;
+    evidence.environment = { first: firstInventory };
     assertFirstAttempt({
       target,
       observation: first,
@@ -1031,6 +1042,10 @@ export async function runWorkspaceBackupRetryCanary(input: {
       dependencies.waitForWorker(target),
     ]);
     evidence.snapshots!.final = finalSnapshots;
+    evidence.environment = {
+      ...evidence.environment,
+      final: finalInventory,
+    };
     evidence.workerAfter = workerAfter;
     assertFinalAttempt({
       target,

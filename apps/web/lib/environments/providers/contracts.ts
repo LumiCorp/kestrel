@@ -76,6 +76,7 @@ export type EnvironmentProviderInventory = {
   volumes: Array<{
     id: string;
     name: string;
+    state?: string | undefined;
     region?: string | undefined;
     sizeGb?: number | undefined;
     attachedMachineId?: string | null | undefined;
