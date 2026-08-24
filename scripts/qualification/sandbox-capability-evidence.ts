@@ -25,7 +25,7 @@ export interface NetworkObservation {
 
 export function parseQualificationRunStream(stream: string): ParsedQualificationRun {
   const events: RunnerEvent[] = [];
-  for (const block of stream.split(/\r?\n\r?\n/u)) {
+  for (const block of completeSseBlocks(stream)) {
     const data = block.split(/\r?\n/u).filter((line) => line.startsWith("data: ")).map((line) => line.slice(6)).join("\n");
     if (data === "" || data === "[DONE]") continue;
     events.push(parseRunnerEventV2(JSON.parse(data)));
@@ -39,6 +39,17 @@ export function parseQualificationRunStream(stream: string): ParsedQualification
   const runId = events.find((event) => typeof event.runId === "string")?.runId ?? "";
   const idempotencyKey = codeResults.map((result) => readCapabilityReplayEvidence(result)?.toolCallId).find((value): value is string => typeof value === "string");
   return { events, runId, codeResults, ...(idempotencyKey === undefined ? {} : { idempotencyKey }) };
+}
+
+function completeSseBlocks(stream: string): string[] {
+  const blocks: string[] = [];
+  const separator = /\r?\n\r?\n/gu;
+  let start = 0;
+  for (const match of stream.matchAll(separator)) {
+    blocks.push(stream.slice(start, match.index));
+    start = match.index + match[0].length;
+  }
+  return blocks;
 }
 
 export function hasTerminalEvent(run: ParsedQualificationRun, type: "run.completed" | "run.cancelled" | "run.failed"): boolean {

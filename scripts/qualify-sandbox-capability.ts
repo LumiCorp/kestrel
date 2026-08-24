@@ -146,7 +146,7 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
     requireTrue(result.parsed.codeResults.some((item) => readCodeStdout(item).includes("selected capability intentionally unused")), "selected-unused output missing");
     requireTrue(result.parsed.codeResults.some((item) => readCapabilityReplayEvidence(item) !== undefined), "selected-unused exact evidence missing");
     requireEqual(await providerEvidence(config), before, "selected-unused contacted provider");
-    await requireCapabilityLease(client, result.runId, { status: "cleaned", remainingRequests: 1 });
+    await requireCapabilityLease(client, result, { status: "cleaned", remainingRequests: 1 });
     return result;
   });
   await capture(evidence, "provider-used", "controlled", async () => {
@@ -157,7 +157,7 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
     requireTrue(observations.every((item) => item.outcome === "blocked"), `controlled sandbox unexpectedly reached a direct-network target: ${canonical(observations)}`);
     requireMatch(await providerEvidence(config), /qualification-provider-used/u, "controlled provider was not contacted");
     assertSecretFree(result.stream, config);
-    await requireCapabilityLease(client, result.runId, { status: "cleaned", remainingRequests: 0 });
+    await requireCapabilityLease(client, result, { status: "cleaned", remainingRequests: 0 });
     return result;
   });
   await capture(evidence, "cancellation", "controlled", async () => {
@@ -174,13 +174,13 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
   await capture(evidence, "timeout", "controlled", async () => {
     const result = await client.run(profileId, "timeout");
     requireRun(hasStructuredPublicValue(result.parsed, "capability_timeout"), result, "timeout code missing");
-    await requireCapabilityLease(client, result.runId, { status: "cleaned", terminalReason: "provider_invocation_timeout" });
+    await requireCapabilityLease(client, result, { status: "cleaned", terminalReason: "provider_invocation_timeout" });
     return result;
   });
   const expiryProfile = await client.resolveProfile(config, "controlled", { timeoutMs: 2_000, maxExpiryMs: 100 });
   await capture(evidence, "expiry", "controlled", async () => {
     const result = await client.run(expiryProfile, "expiry");
-    await requireCapabilityLease(client, result.runId, { status: "cleaned", terminalReason: "lease_expired" });
+    await requireCapabilityLease(client, result, { status: "cleaned", terminalReason: "lease_expired" });
     return result;
   });
   await capture(evidence, "secret-reflection", "controlled", async () => {
@@ -236,18 +236,16 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
     });
   }
   await capture(evidence, "concurrency", "controlled", async () => {
-    const sessionId = `qualification-concurrency-${randomUUID()}`;
-    const commandId = `qualification-concurrency-${randomUUID()}`;
     const before = providerRequestCount(await providerEvidence(config));
-    const [a, b] = await Promise.allSettled([
-      client.run(profileId, "concurrency", { sessionId, commandId }),
-      client.run(profileId, "concurrency", { sessionId, commandId }),
-    ]);
+    const result = await client.run(profileId, "concurrency");
     const after = providerRequestCount(await providerEvidence(config));
-    requireEqual(after - before, 1, "concurrent duplicate contacted provider more than once");
-    const winner = [a, b].find((entry): entry is PromiseFulfilledResult<RunResult> => entry.status === "fulfilled");
-    if (!winner) throw new Error("Concurrent duplicate produced no winner.");
-    return winner.value;
+    requireRun(after - before === 1, result, "concurrent consumers did not produce exactly one provider request");
+    const outcomes = readConcurrencyOutcomes(result);
+    requireRun(outcomes.length === 2, result, "concurrent capability evidence did not contain two consumer outcomes");
+    requireRun(outcomes.filter((outcome) => outcome.status === 200).length === 1, result, "concurrent capability consumers did not produce exactly one winner");
+    requireRun(outcomes.filter((outcome) => outcome.status === 429 && asRecord(outcome.body).error === "request_ceiling_reached").length === 1, result, "concurrent capability loser was not denied by the request ceiling");
+    await requireCapabilityLease(client, result, { status: "cleaned", remainingRequests: 0 });
+    return result;
   });
 }
 
@@ -267,7 +265,7 @@ async function runLiveJourney(config: QualificationConfig, port: number, evidenc
     assertSecretFree(result.stream, config);
     const exact = await client.getExactResult(result);
     requireRun(readExactCapabilityQuery(exact) === marker, result, "live exact result did not bind the unique Tavily query marker");
-    await requireCapabilityLease(client, result.runId, { status: "cleaned", remainingRequests: 0 });
+    await requireCapabilityLease(client, result, { status: "cleaned", remainingRequests: 0 });
     await stopRemote(config);
     await setRemoteDockerAvailable(config, false);
     try {
@@ -396,7 +394,7 @@ class PartialRunError extends Error {
 }
 
 class QualificationRunAssertionError extends Error {
-  constructor(readonly result: RunResult, message: string) { super(message); }
+  constructor(readonly result: RunResult, message: string, readonly supplementalEvidence: unknown[] = []) { super(message); }
 }
 
 function readRunResult(stream: string, sessionId: string): RunResult {
@@ -415,7 +413,7 @@ async function capture(evidence: ScenarioEvidence[], name: string, mode: "live" 
       failed.runId = error.result.runId;
       failed.sessionId = error.result.sessionId;
       failed.idempotencyKey = error.result.idempotencyKey;
-      failed.publicEvidence = [summarizePublicRun(error.result)];
+      failed.publicEvidence = [summarizePublicRun(error.result), ...error.supplementalEvidence];
     }
     evidence.push(failed);
   }
@@ -551,18 +549,23 @@ async function waitForHealth(config: QualificationConfig, port: number, token: s
 
 async function requireCapabilityLease(
   client: PublicRunnerClient,
-  runId: string,
+  result: RunResult,
   expected: { status?: string; remainingRequests?: number; terminalReason?: string },
 ): Promise<Record<string, unknown>> {
-  const response = asRecord(await client.operatorRun(runId));
+  let response: Record<string, unknown> = {};
+  try {
+    response = asRecord(await client.operatorRun(result.runId));
+  } catch (error) {
+    throw new QualificationRunAssertionError(result, `Operator lifecycle lookup failed: ${errorMessage(error)}`);
+  }
   const payload = asRecord(response.payload);
   const view = asRecord(payload.view);
   const report = asRecord(view.sandboxCapabilities);
   const leases = Array.isArray(report.leases) ? report.leases.map(asRecord) : [];
-  if (leases.length !== 1) throw new Error(`Operator projection exposed ${leases.length} capability leases; expected exactly one.`);
+  if (leases.length !== 1) throw new QualificationRunAssertionError(result, `Operator projection exposed ${leases.length} capability leases; expected exactly one.`, [{ operatorProjection: response }]);
   const lease = leases[0]!;
   for (const [field, value] of Object.entries(expected)) {
-    if (lease[field] !== value) throw new Error(`Operator capability ${field} mismatch: expected ${JSON.stringify(value)}, received ${JSON.stringify(lease[field])}.`);
+    if (lease[field] !== value) throw new QualificationRunAssertionError(result, `Operator capability ${field} mismatch: expected ${JSON.stringify(value)}, received ${JSON.stringify(lease[field])}.`, [{ operatorProjection: response }]);
   }
   return lease;
 }
@@ -600,6 +603,21 @@ function readExactCapabilityQuery(value: unknown): string | undefined {
   const capability = asRecord(input.capability);
   const selectionInput = asRecord(capability.input);
   return typeof selectionInput.query === "string" ? selectionInput.query : undefined;
+}
+
+function readConcurrencyOutcomes(result: RunResult): Array<{ status: number; body: unknown }> {
+  for (const codeResult of result.parsed.codeResults) {
+    for (const line of codeResult.stdout.split(/\r?\n/u)) {
+      if (!line.startsWith("CAPABILITY_CONCURRENCY:")) continue;
+      const value = JSON.parse(line.slice("CAPABILITY_CONCURRENCY:".length)) as unknown;
+      if (!Array.isArray(value)) return [];
+      return value.flatMap((item) => {
+        const record = asRecord(item);
+        return typeof record.status === "number" ? [{ status: record.status, body: record.body }] : [];
+      });
+    }
+  }
+  return [];
 }
 
 async function providerEvidence(config: QualificationConfig): Promise<string> {

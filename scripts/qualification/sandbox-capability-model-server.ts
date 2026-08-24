@@ -74,6 +74,14 @@ function qualificationArguments(mode: string): Record<string, unknown> {
       capability: { version: 2, capabilityId: "tavily.search.read", operation: "search", input: { query: "unused", maxResults: 1 } },
     };
   }
+  if (mode === "concurrency") {
+    const request = "{method:'POST',body:JSON.stringify({operation:'search',destination:'api.tavily.com',input:{query:\"qualification-concurrency\",maxResults:1}})}";
+    return {
+      language: "javascript",
+      code: `(async()=>{const responses=await Promise.all([fetch('http://127.0.0.1:43127/v1/capability',${request}),fetch('http://127.0.0.1:43127/v1/capability',${request})]);const outcomes=await Promise.all(responses.map(async response=>({status:response.status,body:await response.json()})));console.log('CAPABILITY_CONCURRENCY:'+JSON.stringify(outcomes))})()`,
+      capability: { version: 2, capabilityId: "tavily.search.read", operation: "search", input: { query: "qualification-concurrency", maxResults: 1 } },
+    };
+  }
   const query = mode === "cancel" || mode === "timeout" || mode === "expiry"
     ? `qualification-block-${mode}`
     : mode === "reflect-secret" ? "qualification-reflect-secret" : `qualification-${mode}`;

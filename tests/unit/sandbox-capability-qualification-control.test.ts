@@ -69,6 +69,9 @@ test("qualification evidence ignores audited source strings and parses only stru
     { outcome: "blocked", url: "https://example.com", error: "TimeoutError" },
     { outcome: "unexpected", url: "http://127.0.0.1:80", status: 200 },
   ]);
+  const withTruncatedTail = parseQualificationRunStream(`${sourceOnly}data: {\"id\":\"truncated`);
+  assert.equal(withTruncatedTail.events.length, 1);
+  assert.equal(withTruncatedTail.runId, "run-a");
 });
 
 function sse(event: unknown): string {
