@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-None.
+- [Preserve causal message order in the Desktop activity timeline](02-preserve-desktop-message-order.md)
 
 ## In progress
 
@@ -12,12 +12,12 @@ None.
 
 ## Blocked
 
-- [Preserve causal message order in the Desktop activity timeline](02-preserve-desktop-message-order.md) — blocked by [Keep repeated request-response cycles in causal transcript order](01-project-messages-in-causal-order.md)
+None.
 
 ## Implemented
 
-- [Keep repeated request-response cycles in causal transcript order](01-project-messages-in-causal-order.md)
+None.
 
 ## Done
 
-None.
+- [Keep repeated request-response cycles in causal transcript order](01-project-messages-in-causal-order.md)
