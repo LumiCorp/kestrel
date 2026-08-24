@@ -18,6 +18,12 @@ const attachmentRouteRuntimeFiles = [
 ];
 
 const nextConfig: NextConfig = {
+  experimental: {
+    // A custom Webpack hook disables Next's default build worker. Keep the
+    // compiler isolated so its heap is released before TypeScript analysis.
+    webpackBuildWorker: true,
+  },
+
   env: {
     KESTREL_APP_VERSION: kestrelBuildIdentity.version,
     KESTREL_BUILD_REVISION: kestrelBuildIdentity.revision,
@@ -52,6 +58,18 @@ const nextConfig: NextConfig = {
     "@discordjs/ws",
     "zlib-sync",
   ],
+
+  webpack(config, { isServer }) {
+    if (isServer) {
+      // Next's serverExternalPackages matcher only recognizes resolved paths
+      // below node_modules. pnpm resolves this workspace dependency to its
+      // monorepo source path, so keep the exact package request external too.
+      config.externals.push({
+        "@kestrel-agents/files": "commonjs @kestrel-agents/files",
+      });
+    }
+    return config;
+  },
 };
 
 export default nextConfig;
