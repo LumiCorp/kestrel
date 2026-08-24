@@ -19,6 +19,11 @@ import {
 import { ensureCoreAppCatalog, ensureEnvironmentAppPolicies } from "./service";
 import type { AppConnectionSummary } from "./types";
 import type { AppConnectionModel, AppConnectionRequirement } from "./types";
+import {
+  githubCapabilityHasReadyResource,
+  listAuthorizedGitHubResources,
+} from "@/lib/integrations/github-resource-access";
+import type { GitHubCapability } from "@/lib/integrations/github-policy-contract";
 
 export type ProjectAppConnection = AppConnectionSummary & {
   scope: "shared" | "personal";
@@ -40,6 +45,7 @@ export type ProjectAppCapability = {
   loggingMode: ToolLoggingMode;
   rateLimitMode: ToolRateLimitMode;
   inherited: boolean;
+  resourceReady: boolean;
 };
 
 export type ProjectAppConfiguration = {
@@ -355,6 +361,7 @@ export async function listProjectAppConfigurations(input: {
               loggingMode: grant?.loggingMode ?? "metadata_only",
               rateLimitMode: grant?.rateLimitMode ?? "strict",
               inherited: !policy,
+              resourceReady: true,
             };
           }),
         dependencies: [],
@@ -362,7 +369,41 @@ export async function listProjectAppConfigurations(input: {
       };
     },
   );
-  return addProjectAppDependencyStatuses(configurations);
+  const withDependencies = addProjectAppDependencyStatuses(configurations);
+  const github = withDependencies.find(
+    (configuration) => configuration.app.key === "github",
+  );
+  const githubConnection = github
+    ? selectEffectiveConnection({
+        connectionModel: github.app.connectionModel,
+        connections: github.attachedConnections,
+      })
+    : null;
+  if (!(github && githubConnection)) return withDependencies;
+  const resources = await listAuthorizedGitHubResources({
+    projectId: input.projectId,
+    connectionId: githubConnection.id,
+  });
+  return withDependencies.map((configuration) =>
+    configuration.app.key !== "github"
+      ? configuration
+      : {
+          ...configuration,
+          dependencyReady: configuration.capabilities.some((capability) =>
+            githubCapabilityHasReadyResource(
+              capability.key as GitHubCapability,
+              resources,
+            ),
+          ),
+          capabilities: configuration.capabilities.map((capability) => ({
+            ...capability,
+            resourceReady: githubCapabilityHasReadyResource(
+              capability.key as GitHubCapability,
+              resources,
+            ),
+          })),
+        },
+  );
 }
 
 export async function resolveEffectiveProjectAppsAccess(input: {
@@ -384,7 +425,7 @@ export async function resolveEffectiveProjectAppsAccess(input: {
       return [];
     }
     const capabilities = configuration.capabilities.flatMap((capability) =>
-      capability.enabled && capability.runtimeName
+      capability.enabled && capability.resourceReady && capability.runtimeName
         ? [
             {
               key: capability.key,
@@ -796,6 +837,8 @@ export async function resolveEffectiveProjectAppAccess(input: {
   projectId: string;
   appKey: string;
   userId: string;
+  includePolicyOnly?: boolean | undefined;
+  skipResourceReadiness?: boolean | undefined;
 }) {
   let context: Awaited<ReturnType<typeof requireProjectAppContext>>;
   try {
@@ -897,7 +940,7 @@ export async function resolveEffectiveProjectAppAccess(input: {
       !grant?.enabled ||
       grant.approvalMode === "deny" ||
       (policy && (!policy.enabled || policy.approvalMode === "deny")) ||
-      !capability.runtimeName ||
+      !(capability.runtimeName || input.includePolicyOnly) ||
       (selectedMicrosoftPacks !== null &&
         !microsoft365PackAllowsCapability({
           selectedPacks: [...selectedMicrosoftPacks],
@@ -927,13 +970,41 @@ export async function resolveEffectiveProjectAppAccess(input: {
     ];
   });
   if (!effectiveCapabilities.length) return null;
+  const filteredCapabilities =
+    input.appKey === "github" && selectedConnection && !input.skipResourceReadiness
+      ? await filterGitHubCapabilitiesByResource({
+          projectId: input.projectId,
+          connectionId: selectedConnection.id,
+          capabilities: effectiveCapabilities,
+        })
+      : effectiveCapabilities;
+  if (!filteredCapabilities.length) return null;
   return {
     appKey: input.appKey,
     projectId: input.projectId,
     environmentId: binding.environmentId,
     connectionId: selectedConnection?.id ?? null,
-    capabilities: effectiveCapabilities,
+    capabilities: filteredCapabilities,
   };
+}
+
+async function filterGitHubCapabilitiesByResource<T extends { key: string }>(
+  input: {
+    projectId: string;
+    connectionId: string;
+    capabilities: T[];
+  },
+) {
+  const resources = await listAuthorizedGitHubResources({
+    projectId: input.projectId,
+    connectionId: input.connectionId,
+  });
+  return input.capabilities.filter((capability) =>
+    githubCapabilityHasReadyResource(
+      capability.key as GitHubCapability,
+      resources,
+    ),
+  );
 }
 
 export function selectEffectiveConnection(input: {

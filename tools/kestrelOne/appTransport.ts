@@ -4,7 +4,7 @@ import type { SharedToolContext } from "../contracts.js";
 export function resolveKestrelOneAppRequest(
   context: SharedToolContext,
   pathname: string,
-): { url: URL; authorization: string } {
+): { url: URL; authorization: string; viaRelay: boolean } {
   const relayUrl = context.kestrelOne?.appRelayUrl?.trim();
   const relayToken = context.kestrelOne?.appRelayToken?.trim();
   const executionRunId = context.kestrelOne?.executionRunId?.trim();
@@ -15,6 +15,7 @@ export function resolveKestrelOneAppRequest(
         relayUrl,
       ),
       authorization: relayToken,
+      viaRelay: true,
     };
   }
   const appUrl = context.kestrelOne?.appUrl?.trim();
@@ -23,6 +24,7 @@ export function resolveKestrelOneAppRequest(
     return {
       url: new URL(normalizePath(pathname), appUrl),
       authorization: executionTicket,
+      viaRelay: false,
     };
   }
   throw createRuntimeFailure(

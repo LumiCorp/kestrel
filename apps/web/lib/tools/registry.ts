@@ -372,6 +372,16 @@ export const TOOL_PROVIDER_REGISTRY: ToolProviderDefinition[] = [
         defaultPolicy: { approvalMode: "auto" },
       }),
       createCapability({
+        key: "repository.initialize",
+        runtimeName: null,
+        displayName: "Initialize repository",
+        description:
+          "Create main in an empty, explicitly granted repository from one reviewed Workspace candidate.",
+        accessMode: "write",
+        defaultPolicy: { approvalMode: "ask" },
+        minimumApprovalMode: "ask",
+      }),
+      createCapability({
         key: "pull_request.write",
         runtimeName: "kestrel_one.github_pull_request_create",
         displayName: "Create and update pull requests",

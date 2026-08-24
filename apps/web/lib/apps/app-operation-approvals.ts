@@ -26,12 +26,15 @@ export async function recordAppOperationApprovalRequest(input: {
   projectId: string;
   requestedExecutionId: string;
   expiresAt: Date;
+  approvedByUserId?: string | undefined;
 }) {
   const now = new Date();
   await expireStaleAppOperationApprovals(now);
   if (
     !Number.isFinite(input.expiresAt.getTime()) ||
-    input.expiresAt.getTime() <= now.getTime()
+    input.expiresAt.getTime() <= now.getTime() ||
+    (input.approvedByUserId !== undefined &&
+      input.approvedByUserId !== input.binding.actorUserId)
   ) {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_EXPIRY_INVALID");
   }
@@ -62,6 +65,7 @@ export async function recordAppOperationApprovalRequest(input: {
       projectId: input.projectId,
       appKey: input.binding.appKey,
       userId: input.binding.actorUserId,
+      includePolicyOnly: true,
     }),
     knowledgeDb.query.appConnectionResources.findFirst({
       where: (table, { and: all, eq: equals }) =>
@@ -78,9 +82,7 @@ export async function recordAppOperationApprovalRequest(input: {
     (candidate) => candidate.key === input.binding.capabilityKey
   );
   if (
-    !thread ||
-    !execution ||
-    !resource ||
+    !((thread && execution) && resource) ||
     access?.environmentId !== input.binding.environmentId ||
     access.connectionId !== input.binding.connectionId ||
     capability?.approvalMode !== "ask"
@@ -129,6 +131,13 @@ export async function recordAppOperationApprovalRequest(input: {
       externalApprovalBinding,
       authorityRevision,
       expiresAt,
+      ...(input.approvedByUserId
+        ? {
+            status: "approved" as const,
+            decidedByUserId: input.approvedByUserId,
+            decidedAt: now,
+          }
+        : {}),
     })
     .onConflictDoNothing({
       target: [
@@ -291,7 +300,7 @@ export async function consumeAppOperationApproval(input: {
       ),
     columns: { projectId: true },
   });
-  if (!existing || !thread?.projectId) {
+  if (!(existing && thread?.projectId)) {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
   }
   const [access, resource] = await Promise.all([
@@ -300,6 +309,7 @@ export async function consumeAppOperationApproval(input: {
       projectId: thread.projectId,
       appKey: input.binding.appKey,
       userId: input.binding.actorUserId,
+      includePolicyOnly: true,
     }),
     knowledgeDb.query.appConnectionResources.findFirst({
       where: (table, { and: all, eq: equals }) =>

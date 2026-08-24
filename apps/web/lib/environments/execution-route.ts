@@ -1132,6 +1132,21 @@ export async function resolveEnvironmentExecutionRecoveryRoute(input: {
   });
 }
 
+export async function resolveEnvironmentPublicationRoute(input: {
+  organizationId: string;
+  executionId: string;
+}) {
+  return resolvePersistedEnvironmentExecutionRoute({
+    ...input,
+    statuses: ["completed"],
+    capabilities: [
+      "session.read",
+      "workspace.promotions.read",
+      "workspace.git.publish",
+    ],
+  });
+}
+
 async function resolvePersistedEnvironmentExecutionRoute(input: {
   organizationId: string;
   executionId: string;
@@ -1206,6 +1221,9 @@ async function resolvePersistedEnvironmentExecutionRoute(input: {
   return {
     baseUrl: route.routerUrl,
     authToken,
+    environmentId: route.environmentId,
+    workspaceId: route.workspaceId,
+    threadId: route.threadId,
     runtimeRunId: route.runtimeRunId,
     lastRuntimeEventId: route.lastRuntimeEventId,
     status: route.status,

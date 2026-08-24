@@ -12,8 +12,26 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { StandaloneWorkspaceSetup } from "./standalone-workspace-setup";
 import {
@@ -40,6 +58,7 @@ type WorkspaceApplication = {
 
 type WorkspacePromotion = {
   promotionId: string;
+  runId?: string;
   status: string;
   changedFiles: string[];
   candidateFingerprint?: string;
@@ -63,6 +82,46 @@ type WorkspacePromotionPreview = {
     }>;
   };
 };
+
+type GitHubPublicationRepository = {
+  repositoryId: string;
+  fullName: string;
+  isPrivate: boolean;
+  defaultBranch: string | null;
+  isEmpty: boolean | null;
+  canPush: boolean;
+  source: boolean;
+  granted: boolean;
+};
+
+const GITHUB_PUBLICATION_RECOVERY: Record<string, string> = {
+  GITHUB_REPOSITORY_NOT_SYNCED:
+    "Refresh GitHub repositories, then select the repository again.",
+  GITHUB_REPOSITORY_NOT_GRANTED:
+    "Grant this repository in the Project GitHub App settings.",
+  GITHUB_REPOSITORY_READ_DENIED:
+    "Reconnect GitHub with repository read access or choose another repository.",
+  GITHUB_REPOSITORY_PUSH_DENIED:
+    "Reconnect GitHub with push access or choose another repository.",
+  GITHUB_REPOSITORY_INITIALIZATION_REQUIRED:
+    "Review the candidate and publish the empty repository to main.",
+  GITHUB_REPOSITORY_NOT_EMPTY:
+    "Refresh repositories and publish a Kestrel agent branch instead.",
+  GITHUB_PUSH_CANDIDATE_CHANGED:
+    "Review the latest candidate before publishing it.",
+  GITHUB_CONTENT_NOT_FOUND:
+    "Choose an existing path; a missing file does not determine whether a repository can be published.",
+};
+
+function githubPublicationFailure(
+  error: string | { code?: string; message?: string } | undefined,
+) {
+  if (typeof error === "string") return error;
+  const code = error?.code;
+  const recovery = code ? GITHUB_PUBLICATION_RECOVERY[code] : undefined;
+  return error?.message ?? (code && recovery ? `${code}: ${recovery}` : code) ??
+    "GitHub publication failed.";
+}
 
 export function WorkspaceClient({
   standalone,
@@ -114,6 +173,12 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
     useState<WorkspacePromotionPreview | null>(null);
   const [acceptingPromotion, setAcceptingPromotion] = useState(false);
   const [pushingPromotion, setPushingPromotion] = useState(false);
+  const [publicationRepositories, setPublicationRepositories] = useState<
+    GitHubPublicationRepository[]
+  >([]);
+  const [selectedRepositoryId, setSelectedRepositoryId] = useState("");
+  const [initializationOpen, setInitializationOpen] = useState(false);
+  const [reviewQueryHandled, setReviewQueryHandled] = useState(false);
   const [filesOpen, setFilesOpen] = useState(true);
   const [candidatesOpen, setCandidatesOpen] = useState(true);
   const [terminalPanelOpen, setTerminalPanelOpen] = useState(true);
@@ -139,6 +204,24 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
     };
     setPromotions(payload.promotions ?? []);
   }, [base]);
+
+  const loadPublicationRepositories = useCallback(async () => {
+    const response = await fetch(`/api/threads/${threadId}/github/publications`, {
+      cache: "no-store",
+    });
+    if (!response.ok) return;
+    const payload = (await response.json()) as {
+      repositories?: GitHubPublicationRepository[];
+    };
+    const repositories = payload.repositories ?? [];
+    setPublicationRepositories(repositories);
+    setSelectedRepositoryId((current) => {
+      if (repositories.some((repository) => repository.repositoryId === current)) {
+        return current;
+      }
+      return repositories.length === 1 ? repositories[0]!.repositoryId : "";
+    });
+  }, [threadId]);
 
   const loadTree = useCallback(
     async (path: string, showLoading = true) => {
@@ -204,7 +287,11 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
         });
         if (!(ready && !cancelled)) return;
         await loadTree("", false);
-        await Promise.all([loadApplications(), loadPromotions()]);
+        await Promise.all([
+          loadApplications(),
+          loadPromotions(),
+          loadPublicationRepositories(),
+        ]);
         if (!cancelled) setStatus("Environment ready");
       } catch (error) {
         if (!cancelled) {
@@ -223,7 +310,14 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
       cancelled = true;
       activationController.abort();
     };
-  }, [base, loadApplications, loadPromotions, loadTree, threadId]);
+  }, [
+    base,
+    loadApplications,
+    loadPromotions,
+    loadPublicationRepositories,
+    loadTree,
+    threadId,
+  ]);
 
   useEffect(() => {
     if (activation.status !== "ready") return;
@@ -460,6 +554,7 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
       );
     }
     setPromotionPreview(payload.preview);
+    await loadPublicationRepositories();
     setStatus("Candidate preview ready");
   }
 
@@ -496,35 +591,102 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
     }
   }
 
-  async function pushPromotion() {
+  async function publishPromotion(mode: "agent_branch" | "initialize") {
     const preview = promotionPreview;
-    if (!(preview?.candidateFingerprint && preview.status === "ready")) return;
+    const repository = publicationRepositories.find(
+      (candidate) => candidate.repositoryId === selectedRepositoryId,
+    );
+    if (
+      !(
+        preview?.candidateFingerprint &&
+        preview.status === "ready" &&
+        repository
+      )
+    ) {
+      return;
+    }
     setPushingPromotion(true);
-    setStatus("Pushing candidate to its Kestrel agent branch…");
+    setStatus(
+      mode === "initialize"
+        ? `Initializing ${repository.fullName} on main…`
+        : `Pushing candidate to ${repository.fullName}…`,
+    );
     try {
-      const response = await fetch(`${base}/git/push-agent-branch`, {
+      const response = await fetch(
+        `/api/threads/${threadId}/github/publications`,
+        {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           promotionId: preview.promotion.promotionId,
           candidateFingerprint: preview.candidateFingerprint,
+          repositoryId: repository.repositoryId,
+          mode,
         }),
-      });
+        },
+      );
       const payload = (await response.json()) as {
         branch?: string;
         repository?: string;
-        error?: { code?: string };
+        mode?: "agent_branch" | "initialize";
+        error?: string | { code?: string; message?: string };
       };
       if (!(response.ok && payload.branch)) {
-        throw new Error(payload.error?.code ?? "Candidate branch push failed.");
+        throw new Error(githubPublicationFailure(payload.error));
       }
       setStatus(
-        `Pushed ${payload.repository ?? "repository"}#${payload.branch}`,
+        payload.mode === "initialize"
+          ? `Initialized ${payload.repository ?? repository.fullName} on ${payload.branch}`
+          : `Pushed ${payload.repository ?? repository.fullName}#${payload.branch}`,
       );
+      await loadPublicationRepositories();
     } finally {
       setPushingPromotion(false);
+      setInitializationOpen(false);
     }
   }
+
+  useEffect(() => {
+    if (reviewQueryHandled || activation.status !== "ready") return;
+    const query = new URLSearchParams(window.location.search);
+    const runId = query.get("runId");
+    const repositoryName = query.get("repository");
+    if (!runId) {
+      setReviewQueryHandled(true);
+      return;
+    }
+    const promotion = promotions.find((candidate) => candidate.runId === runId);
+    if (!promotion) return;
+    const repository = publicationRepositories.find(
+      (candidate) => candidate.fullName === repositoryName,
+    );
+    if (repository) setSelectedRepositoryId(repository.repositoryId);
+    setReviewQueryHandled(true);
+    setMobilePane("candidates");
+    setCandidatesOpen(true);
+    void (async () => {
+      const response = await fetch(`${base}/promotions/${promotion.promotionId}`, {
+        cache: "no-store",
+      });
+      const payload = (await response.json()) as {
+        preview?: WorkspacePromotionPreview;
+      };
+      if (response.ok && payload.preview) {
+        setPromotionPreview(payload.preview);
+        setStatus("Candidate preview ready");
+      }
+    })();
+  }, [
+    activation.status,
+    base,
+    promotions,
+    publicationRepositories,
+    reviewQueryHandled,
+  ]);
+
+  const selectedPublicationRepository = publicationRepositories.find(
+    (repository) => repository.repositoryId === selectedRepositoryId,
+  );
 
   const environmentReady = activation.status === "ready";
 
@@ -787,26 +949,74 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
                 ))}
               </div>
               <div className="grid gap-2">
+                <Select
+                  disabled={pushingPromotion || publicationRepositories.length === 0}
+                  onValueChange={setSelectedRepositoryId}
+                  value={selectedRepositoryId}
+                >
+                  <SelectTrigger aria-label="GitHub publication target" size="sm">
+                    <SelectValue placeholder="Select a repository" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {publicationRepositories.map((repository) => (
+                      <SelectItem
+                        key={repository.repositoryId}
+                        value={repository.repositoryId}
+                      >
+                        {repository.fullName}
+                        {repository.isPrivate ? " · Private" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedPublicationRepository ? (
+                  <div className="flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
+                    {selectedPublicationRepository.isPrivate ? (
+                      <Badge variant="outline">Private</Badge>
+                    ) : null}
+                    <span>
+                      {selectedPublicationRepository.isEmpty === true
+                        ? "Empty repository · publishes one clean root commit to main."
+                        : selectedPublicationRepository.isEmpty === false
+                          ? `Publishes a Kestrel agent branch from ${selectedPublicationRepository.defaultBranch ?? "the default branch"}.`
+                          : "Refresh GitHub repositories to verify whether this target is empty."}
+                    </span>
+                  </div>
+                ) : null}
                 <Button
                   className="w-full"
                   disabled={
                     promotionPreview.status !== "ready" ||
                     !promotionPreview.candidateFingerprint ||
+                    !selectedPublicationRepository ||
+                    selectedPublicationRepository.isEmpty === null ||
                     pushingPromotion
                   }
-                  onClick={() =>
-                    void pushPromotion().catch((error: unknown) =>
-                      setStatus(
-                        error instanceof Error
-                          ? error.message
-                          : "Candidate branch push failed.",
-                      ),
-                    )
-                  }
+                  onClick={() => {
+                    if (selectedPublicationRepository?.isEmpty === true) {
+                      setInitializationOpen(true);
+                      return;
+                    }
+                    if (selectedPublicationRepository?.isEmpty !== false) return;
+                    void publishPromotion("agent_branch").catch(
+                      (error: unknown) =>
+                        setStatus(
+                          error instanceof Error
+                            ? error.message
+                            : "Candidate branch push failed.",
+                        ),
+                    );
+                  }}
                   size="sm"
                   variant="outline"
                 >
-                  {pushingPromotion ? "Pushing…" : "Push agent branch"}
+                  {pushingPromotion
+                    ? "Publishing…"
+                    : selectedPublicationRepository?.isEmpty === true
+                      ? "Publish to main"
+                      : selectedPublicationRepository?.isEmpty === false
+                        ? "Push agent branch"
+                        : "Refresh repository state"}
                 </Button>
                 <Button
                   className="w-full"
@@ -833,6 +1043,50 @@ function ConnectedWorkspaceClient({ threadId }: { threadId: string }) {
           ) : null}
         </aside>
       </div>
+      <AlertDialog onOpenChange={setInitializationOpen} open={initializationOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Initialize this GitHub repository?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  Kestrel will publish the reviewed candidate as one clean root
+                  commit on <span className="font-mono">main</span>. It will not
+                  publish the Workspace&apos;s internal Git history or change the
+                  repository visibility.
+                </p>
+                <div className="rounded-md border bg-muted/40 p-3 text-foreground">
+                  <div className="font-medium">
+                    {selectedPublicationRepository?.fullName ?? "Repository"}
+                    {selectedPublicationRepository?.isPrivate ? " · Private" : ""}
+                  </div>
+                  <div className="mt-2 break-all font-mono text-xs">
+                    Candidate: {promotionPreview?.candidateFingerprint}
+                  </div>
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pushingPromotion}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={pushingPromotion}
+              onClick={(event) => {
+                event.preventDefault();
+                void publishPromotion("initialize").catch((error: unknown) =>
+                  setStatus(
+                    error instanceof Error
+                      ? error.message
+                      : "Repository initialization failed.",
+                  ),
+                );
+              }}
+            >
+              {pushingPromotion ? "Publishing…" : "Confirm and publish to main"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <section className="border-t bg-background">
         <div className="flex min-h-11 flex-wrap items-center gap-2 px-3 py-1.5">
           <span className="mr-1 font-medium text-xs">Applications</span>

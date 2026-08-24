@@ -1,6 +1,7 @@
 export const GITHUB_CAPABILITIES = [
   "repository.read",
   "repository.push_agent_branch",
+  "repository.initialize",
   "pull_request.write",
   "issue.write",
   "merge.write",

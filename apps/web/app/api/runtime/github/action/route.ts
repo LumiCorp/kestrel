@@ -68,12 +68,14 @@ const inputSchema = z.discriminatedUnion("operation", [
 
 export async function POST(request: Request) {
   let ticket: EnvironmentExecutionTicket | null = null;
+  let operation: z.infer<typeof inputSchema>["operation"] | null = null;
   try {
     ticket = verifyEnvironmentExecutionTicket({
       token: readBearer(request.headers.get("authorization")),
       publicKey: process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
     });
     const input = inputSchema.parse(await request.json());
+    operation = input.operation;
     const capability = capabilityForOperation(input.operation);
     const policy = await authorizeGitHubCapability({
       ticket,
@@ -130,6 +132,18 @@ export async function POST(request: Request) {
       { headers: { "cache-control": "no-store" } }
     );
   } catch (error) {
+    if (
+      operation === "repository.read_file" &&
+      error &&
+      typeof error === "object" &&
+      "status" in error &&
+      error.status === 404
+    ) {
+      return NextResponse.json(
+        { error: { code: "GITHUB_CONTENT_NOT_FOUND" } },
+        { status: 404 },
+      );
+    }
     if (
       error instanceof GitHubPolicyError ||
       error instanceof GitHubActionApprovalError

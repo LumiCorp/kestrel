@@ -80,6 +80,9 @@ test(
     const repositoryResourceId = crypto.randomUUID();
     const githubAccountId = `github-account-${suffix}`;
     const githubConnectionId = crypto.randomUUID();
+    const grantedRepositoryResourceId = crypto.randomUUID();
+    const isolatedGithubConnectionId = crypto.randomUUID();
+    const isolatedRepositoryResourceId = crypto.randomUUID();
     const actorRestrictionId = crypto.randomUUID();
     const agentRestrictionId = crypto.randomUUID();
     const now = new Date();
@@ -965,7 +968,9 @@ test(
         (${createdEnvironment.environment.id}, 'github', 'issue.write', true,
          'auto', 'metadata_only', 'default'),
         (${createdEnvironment.environment.id}, 'github', 'repository.read', true,
-         'auto', 'metadata_only', 'default')
+         'auto', 'metadata_only', 'default'),
+        (${createdEnvironment.environment.id}, 'github',
+         'repository.push_agent_branch', true, 'auto', 'metadata_only', 'default')
       ON CONFLICT ("environment_id", "app_key", "capability_key")
       DO UPDATE SET "enabled" = true, "approval_mode" = 'auto'
     `;
@@ -1087,6 +1092,104 @@ test(
     assert.equal(authorization.resource.id, repositoryResourceId);
     assert.equal(authorization.connection.id, githubConnectionId);
     assert.equal(authorization.approvalMode, "ask");
+
+    await sql`
+      INSERT INTO "app_connection_resources" (
+        "id", "connection_id", "external_id", "resource_type", "label",
+        "permissions", "metadata"
+      ) VALUES (
+        ${grantedRepositoryResourceId}, ${githubConnectionId},
+        'repository-id:500', 'repository', 'acme/riverbats',
+        ${sql.json({ pull: true, push: true, admin: false })},
+        ${sql.json({ repositoryId: "500", defaultBranch: null, private: true })}
+      )
+    `;
+    await sql`
+      UPDATE "project_apps"
+      SET "settings" = ${sql.json({
+        repositoryGrantsV1: [
+          { repositoryId: "500", fullName: "acme/riverbats" },
+        ],
+      })}
+      WHERE "project_id" = ${projectId} AND "app_key" = 'github'
+    `;
+    const grantedAuthorizationInput = {
+      ticket,
+      repository: "acme/riverbats",
+      capability: "repository.push_agent_branch" as const,
+      requireRunExecution: true,
+    };
+    const grantedAuthorization =
+      await githubPolicy.authorizeGitHubCapability(grantedAuthorizationInput);
+    assert.equal(grantedAuthorization.resource.id, grantedRepositoryResourceId);
+
+    await sql`
+      INSERT INTO "app_connections" (
+        "id", "organization_id", "app_key", "owner_type", "user_id",
+        "name", "status", "external_account_id", "external_account_label",
+        "scopes"
+      ) VALUES (
+        ${isolatedGithubConnectionId}, ${organizationA}, 'github', 'personal',
+        ${userB}, 'environment-user-b', 'connected', 'github-user-b',
+        'environment-user-b', ${sql.json(["repo"])}
+      )
+    `;
+    await sql`
+      INSERT INTO "app_connection_resources" (
+        "id", "connection_id", "external_id", "resource_type", "label",
+        "permissions", "metadata"
+      ) VALUES (
+        ${isolatedRepositoryResourceId}, ${isolatedGithubConnectionId},
+        'repository-id:500', 'repository', 'acme/riverbats',
+        ${sql.json({ pull: true, push: true, admin: false })},
+        ${sql.json({ repositoryId: "500", defaultBranch: null, private: true })}
+      )
+    `;
+    await sql`
+      INSERT INTO "project_app_connections" (
+        "project_id", "app_key", "connection_id", "scope", "user_id",
+        "is_default", "added_by_user_id"
+      ) VALUES (
+        ${projectId}, 'github', ${isolatedGithubConnectionId}, 'personal',
+        ${userB}, true, ${userA}
+      )
+    `;
+    await sql`
+      UPDATE "app_connection_resources"
+      SET "permissions" = ${sql.json({ pull: true, push: false, admin: false })}
+      WHERE "id" = ${grantedRepositoryResourceId}
+    `;
+    await assert.rejects(
+      githubPolicy.authorizeGitHubCapability(grantedAuthorizationInput),
+      (error: unknown) =>
+        error instanceof githubPolicy.GitHubPolicyError &&
+        error.code === "GITHUB_REPOSITORY_PUSH_DENIED",
+    );
+    await sql`
+      UPDATE "app_connection_resources"
+      SET "permissions" = ${sql.json({ pull: true, push: true, admin: false })}
+      WHERE "id" = ${grantedRepositoryResourceId}
+    `;
+    await sql`
+      UPDATE "project_apps"
+      SET "settings" = '{}'::jsonb
+      WHERE "project_id" = ${projectId} AND "app_key" = 'github'
+    `;
+    await assert.rejects(
+      githubPolicy.authorizeGitHubCapability(grantedAuthorizationInput),
+      (error: unknown) =>
+        error instanceof githubPolicy.GitHubPolicyError &&
+        error.code === "GITHUB_REPOSITORY_NOT_GRANTED",
+    );
+    await sql`
+      UPDATE "project_apps"
+      SET "settings" = ${sql.json({
+        repositoryGrantsV1: [
+          { repositoryId: "500", fullName: "acme/riverbats" },
+        ],
+      })}
+      WHERE "project_id" = ${projectId} AND "app_key" = 'github'
+    `;
 
     const assertGitHubDenied = async (code: string) => {
       await assert.rejects(

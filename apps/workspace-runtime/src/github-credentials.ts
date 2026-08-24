@@ -2,7 +2,8 @@ import { WorkspaceRequestError } from "./security.js";
 
 type GitHubCredentialOperation =
   | "git.upload_pack"
-  | "repository.push_agent_branch";
+  | "repository.push_agent_branch"
+  | "repository.initialize";
 
 export async function requestGitHubToolCredential(input: {
   controlPlaneUrl: string;
@@ -10,6 +11,9 @@ export async function requestGitHubToolCredential(input: {
   resourceId: string;
   operation: GitHubCredentialOperation;
   candidateFingerprint?: string | undefined;
+  candidateCommit?: string | undefined;
+  approvalId?: string | undefined;
+  branch?: "main" | undefined;
   fetchImpl?: typeof fetch | undefined;
 }) {
   const response = await (input.fetchImpl ?? fetch)(
@@ -26,6 +30,11 @@ export async function requestGitHubToolCredential(input: {
         ...(input.candidateFingerprint
           ? { candidateFingerprint: input.candidateFingerprint }
           : {}),
+        ...(input.candidateCommit
+          ? { candidateCommit: input.candidateCommit }
+          : {}),
+        ...(input.approvalId ? { approvalId: input.approvalId } : {}),
+        ...(input.branch ? { branch: input.branch } : {}),
       }),
     },
   );
