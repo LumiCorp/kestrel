@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { createWorkspaceBackupEncryptionStream } from "@/lib/environments/backup-crypto";
 import {
   CanaryInconclusiveError,
@@ -21,6 +24,8 @@ import {
   type CanaryDependencies,
   type CanaryTarget,
 } from "./workspace-backup-retry-canary";
+
+const execFileAsync = promisify(execFile);
 
 test("snapshot inventory delegates to the organization-scoped provider", async () => {
   const calls: Array<{ appName: string; volumeId: string }> = [];
@@ -63,6 +68,75 @@ test("the executable keeps tenant snapshots and control-worker reads on separate
     /async function readControlWorkerMachines[\s\S]*captureJson\("fly", \[\s*"machine",\s*"list",/u,
   );
   assert.doesNotMatch(source, /"volumes",\s*"snapshots",\s*"list"/u);
+});
+
+test("the executable loads production configuration before initializing pg-boss", async () => {
+  const source = await readFile(
+    new URL("../workspace-backup-retry-canary.ts", import.meta.url),
+    "utf8",
+  );
+  const environmentLoad = source.indexOf("await loadProductionEnvironment()");
+  const deferredBackupImport = source.search(
+    /await import\(\s*["']@\/lib\/environments\/backups["']\s*\)/u,
+  );
+  const deferredQueueImport = source.search(
+    /await import\(\s*["']@\/lib\/knowledge\/queue["']\s*\)/u,
+  );
+
+  assert.ok(environmentLoad >= 0, "production environment loading is missing");
+  assert.ok(deferredBackupImport >= 0, "the backup import is not deferred");
+  assert.ok(deferredQueueImport >= 0, "the pg-boss import is not deferred");
+  assert.ok(
+    deferredBackupImport > environmentLoad &&
+      deferredQueueImport > environmentLoad,
+    "backup and pg-boss modules must initialize only after production environment loading",
+  );
+  assert.doesNotMatch(
+    source,
+    /from\s+["']@\/lib\/(?:environments\/backups|knowledge\/queue)["']/u,
+    "a static backup or pg-boss import captures an empty database URL before environment loading",
+  );
+});
+
+test("importing the executable does not capture database configuration early", async () => {
+  const childEnvironment = { ...process.env };
+  delete childEnvironment.DATABASE_URL;
+  delete childEnvironment.POSTGRES_URL;
+  const executableUrl = new URL(
+    "../workspace-backup-retry-canary.ts",
+    import.meta.url,
+  ).href;
+  const queueStateUrl = new URL(
+    "../../lib/knowledge/queue-state.ts",
+    import.meta.url,
+  ).href;
+  const sentinel = "postgresql://canary-initialization-sentinel.invalid/db";
+  const probe = `
+    await import(${JSON.stringify(executableUrl)});
+    process.env.DATABASE_URL = ${JSON.stringify(sentinel)};
+    const { knowledgeQueueState } = await import(${JSON.stringify(queueStateUrl)});
+    if (knowledgeQueueState.databaseUrl !== process.env.DATABASE_URL) {
+      throw new Error("pg-boss captured database configuration before production loading");
+    }
+  `;
+
+  await execFileAsync(
+    process.execPath,
+    [
+      "--conditions=react-server",
+      "--import",
+      "./scripts/register-server-only.mjs",
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      probe,
+    ],
+    {
+      cwd: fileURLToPath(new URL("../../", import.meta.url)),
+      env: childEnvironment,
+    },
+  );
 });
 
 test("arguments and exact confirmation bind every destructive target", () => {
