@@ -12,7 +12,7 @@ None.
 
 ## Blocked
 
-- [Show shared Workspace downloads in Kestrel One Mobile](02-show-downloads-in-kestrel-one-mobile.md) — blocked until the [operator runbook](../../../operations/workspace-file-sharing-mobile-device-validation-runbook.md) records physical iOS and Android Download-action evidence for the verified mobile commit
+None.
 
 ## Implemented
 
@@ -29,3 +29,7 @@ None.
 - [Bound retained downloads across supervisor restart](08-bound-retained-downloads-across-supervisor-restart.md)
 - [Bound expired-stage registry iteration](09-bound-expired-stage-registry-iteration.md)
 - [Reject compatibility-normalized Windows device names](10-reject-compatibility-normalized-device-names.md)
+
+## Out of scope
+
+- [Show shared Workspace downloads in Kestrel One Mobile](02-show-downloads-in-kestrel-one-mobile.md) — separate mobile-client implementation and physical-device validation are not part of this Kestrel One delivery

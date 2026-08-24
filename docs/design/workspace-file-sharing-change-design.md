@@ -153,7 +153,7 @@ This design intentionally accepts the current preview operating model: the link 
 
 The result normalizer emits one `ConversationArtifactPresentation` with `kind: "file-share"`. Its metadata contains `previewId`, `sizeBytes`, `fileCount`, and `expiresAt`.
 
-Web and mobile render this kind as a Download card with the filename, size, expiry, and direct download action. The card repeats the anonymous bearer-link warning. Other artifact kinds keep their current presentation.
+Kestrel One web renders this kind as a Download card with the filename, size, expiry, and direct download action. The card repeats the anonymous bearer-link warning. The hosted artifact projection carries the same additive metadata for downstream clients. Other artifact kinds keep their current presentation. The separate Kestrel One Mobile client is outside this change.
 
 The exact URL follows the existing Preview App persistence contract. It remains in the authenticated conversation, generic tool-result envelope, and artifact presentation so replay and later rendering can reproduce the Download card. File-share-specific operational logs and audit summaries must use the preview ID and stable metadata instead of copying the bearer URL. A future separation of conversation presentation from generic tool-result audit persistence is a cross-cutting security change, not part of this composite tool.
 
@@ -207,7 +207,7 @@ Delivery must verify:
 - `GET`, `HEAD`, and range requests;
 - process-start, packaging, publication, cancellation, and cleanup failures;
 - preview list, renew, close, and expiry behavior;
-- web and mobile Download-card presentation;
+- Kestrel One web Download-card presentation and hosted artifact projection;
 - existing preview canaries and process-retention tests remain green.
 
 ## Decisions

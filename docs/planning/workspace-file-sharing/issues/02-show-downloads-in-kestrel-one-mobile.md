@@ -1,5 +1,9 @@
 # Show shared Workspace downloads in Kestrel One Mobile
 
+## Scope disposition
+
+This separate-client issue is out of scope for the Kestrel One Workspace File Sharing delivery. Kestrel One Mobile implementation and physical-device validation are not acceptance gates for this plan. Retain this file only as an unscheduled follow-up; do not place it on the active delivery frontier.
+
 ## Useful outcome
 
 A Kestrel One Mobile user can recognize a shared Workspace file as a download, see its filename, size, and expiry, and open the temporary HTTPS link on iOS or Android.
@@ -29,12 +33,6 @@ Add focused coverage in `tests/thread-ui.test.tsx` for the file-share card, acce
 The mobile product boundary forbids uploads, artifact editing, runner controls, management data, and generic hosted-web behavior. The client must not log or place the bearer URL in analytics, push payloads, or crash reports. Existing encrypted offline storage and sign-out purge behavior remain unchanged.
 
 Run `pnpm verify`. Validate the final Download action on physical iOS and Android devices because browser handoff and native link behavior are not accepted through Expo Go alone.
-
-## Operator handoff
-
-Local implementation is committed in the mobile repository at `878289596cddd17a3604dd8b85446b80f8bfdca9`. `CI=true pnpm verify` passes completely, including 19 suites, 176 tests, Expo Doctor 20/20, and production audit. No physical iOS or Android device is connected.
-
-Follow the [Workspace File Sharing Mobile Device Validation Operator Runbook](../../../operations/workspace-file-sharing-mobile-device-validation-runbook.md). Resume this issue only with complete physical iOS and Android evidence from the same reviewed commit. Evidence must not contain the preview bearer URL.
 
 ## Done when
 

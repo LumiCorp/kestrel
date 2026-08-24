@@ -22,7 +22,7 @@ This initiative must produce these outcomes:
 - A share can be closed with `workspace.preview.close`; no separate share lifecycle is introduced.
 - Failures identify the correct packaging, path, process, publication, or cleanup stage.
 
-The delivery boundary covers Workspace path selection, one-file copying, ZIP creation, temporary staging, the single-purpose download process, preview publication, conversation presentation, cleanup, and verification in web and mobile clients.
+The delivery boundary covers Workspace path selection, one-file copying, ZIP creation, temporary staging, the single-purpose download process, preview publication, Kestrel One web presentation, hosted artifact projection, and cleanup.
 
 This initiative does not:
 
@@ -33,6 +33,7 @@ This initiative does not:
 - Remove the compute cost of retaining an active preview.
 - Create a durable Project file library or long-term delivery link.
 - Verify that the agent originally authored a selected file.
+- Change or validate the separate Kestrel One Mobile client.
 - Add file-extension, content-type, or filename heuristics.
 - Serve Workspace directories or accept directory inputs.
 
@@ -164,7 +165,8 @@ If preview publication fails, the existing publication helper closes any provisi
 
 - The tool result normalizer must emit one `ConversationArtifactPresentation` with `kind: "file-share"`.
 - The presentation must include the exact URL, download name, media type, preview ID, size, file count, and expiry.
-- Web and mobile must render `file-share` as a Download card with a direct download action.
+- Kestrel One web must render `file-share` as a Download card with a direct download action.
+- The hosted artifact projection must expose the additive metadata required by downstream clients without making a separate client part of this delivery.
 - Other artifact kinds must keep their current presentation.
 - The card must repeat the anonymous bearer-link warning and preview expiry.
 - The exact URL may remain in the authenticated conversation, generic tool-result envelope, and persisted Download-card presentation because those existing records carry replay and rendering state for Preview App results.
@@ -192,7 +194,7 @@ If preview publication fails, the existing publication helper closes any provisi
 - Tests must prove that directory listing, traversal, linked files, unselected files, duplicate entries, mutation methods, and unknown routes are unavailable.
 - HTTP tests must cover `GET`, `HEAD`, valid and invalid ranges, attachment headers, length, and filename encoding.
 - Lifecycle tests must cover process start, publication, cancellation, list, renew, close, expiry, abnormal exit, and cleanup evidence.
-- Presentation tests must cover Download cards in web and mobile without changing other artifacts.
+- Presentation tests must cover the Kestrel One web Download card and hosted artifact projection without changing other artifacts.
 - Existing preview process-retention tests and the environment preview canary must remain green.
 - `pnpm validate` and the process boundary gate must pass before the change is ready to publish.
 
@@ -222,7 +224,7 @@ Success is observable when:
 - Preview list, renew, close, and expiry work for download previews without new lifecycle tools.
 - Closing a share revokes the link, stops the process, and removes staging.
 - Failures leave no active public URL and preserve the primary stable failure with cleanup evidence.
-- Web and mobile render the result as a Download card.
+- Kestrel One web renders the result as a Download card, and the hosted artifact projection carries the same metadata.
 - Existing application previews behave unchanged.
 - Focused tool, path, ZIP, server, lifecycle, cleanup, and presentation tests pass.
 - `pnpm validate` and the process boundary gate pass.
