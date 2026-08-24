@@ -138,6 +138,23 @@ test("UserTerminalService marks previously running metadata lost after Local Cor
   await service.close();
 });
 
+test("UserTerminalService isolates concurrent metadata writers during Local Core restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kestrel-user-terminal-concurrent-persist-"));
+  const metadataPath = path.join(root, "nested", "terminal-state.json");
+  const first = new UserTerminalService({ metadataPath });
+  const second = new UserTerminalService({ metadataPath });
+
+  await Promise.all([first.initialize(), second.initialize()]);
+
+  const persisted = JSON.parse(await readFile(metadataPath, "utf8")) as {
+    version?: number;
+    terminals?: unknown[];
+  };
+  assert.equal(persisted.version, 1);
+  assert.deepEqual(persisted.terminals, []);
+  await Promise.all([first.close(), second.close()]);
+});
+
 async function waitForTerminal(
   service: UserTerminalService,
   terminalId: string,

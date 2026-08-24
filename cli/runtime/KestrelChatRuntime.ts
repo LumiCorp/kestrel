@@ -288,6 +288,8 @@ export interface RuntimeFactoryWithStoreOptions {
     | undefined;
   enableUserTerminals?: boolean | undefined;
   enableWorkspaceChanges?: boolean | undefined;
+  enableManagedWorktrees?: boolean | undefined;
+  managedWorktreeHomeDir?: string | undefined;
   resolveAttachments?:
     | ((
         threadId: string,
@@ -3163,6 +3165,8 @@ function createDefaultRuntime(
     undefined,
     false,
     false,
+    false,
+    undefined,
     undefined,
     storeHandle.driver === "sqlite"
       ? (sessionId) =>
@@ -3211,6 +3215,8 @@ export function createRuntimeFactoryWithStore(
         environment,
         options.enableUserTerminals === true,
         options.enableWorkspaceChanges === true,
+        options.enableManagedWorktrees === true,
+        options.managedWorktreeHomeDir,
         options.resolveAttachments,
         store.recoverOrphanedActiveRun === undefined
           ? undefined
@@ -3239,6 +3245,8 @@ function createRuntimeWithStore(
   environment?: KestrelRuntimeEnvironment | undefined,
   enableUserTerminals = false,
   enableWorkspaceChanges = false,
+  enableManagedWorktrees = false,
+  managedWorktreeHomeDir?: string | undefined,
   resolveAttachments?: RuntimeFactoryWithStoreOptions["resolveAttachments"],
   recoverOrphanedActiveRun?:
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
@@ -3320,9 +3328,12 @@ function createRuntimeWithStore(
   const workspaceGitReady = workspaceGitService?.initialize();
   const userTerminalReady = userTerminalService?.initialize();
   const managedTaskWorktreeService =
+    enableManagedWorktrees ||
     profile.shellKind === "desktop" ||
     resolveManagedWorktreesEnabledForRuntime(runtimeEnv)
-      ? new ManagedTaskWorktreeService()
+      ? new ManagedTaskWorktreeService({
+          homeDir: managedWorktreeHomeDir,
+        })
       : undefined;
   const devShellService = resolveDevShellServiceForProfile(profile, runtimeEnv);
   const toolContext: SharedToolContext = {

@@ -66,12 +66,17 @@ export class UserTerminalService {
   private readonly terminals = new Map<string, ActiveTerminal>();
   private readonly records = new Map<string, UserTerminalRecord>();
   private persistTail: Promise<void> = Promise.resolve();
+  private readonly metadataTempPath: string;
 
   constructor(private readonly options: {
     metadataPath: string;
     maxOutputBytes?: number | undefined;
     now?: (() => Date) | undefined;
-  }) {}
+  }) {
+    // A Local Core restart can overlap a prior instance's final persistence.
+    // Never let separate instances rename or remove the same temporary file.
+    this.metadataTempPath = `${this.options.metadataPath}.${randomUUID()}.tmp`;
+  }
 
   async initialize(): Promise<void> {
     await mkdir(path.dirname(this.options.metadataPath), { recursive: true });
@@ -311,10 +316,10 @@ export class UserTerminalService {
       version: 1,
       terminals: [...this.records.values()].map((record) => ({ ...record })),
     };
-    const tempPath = `${this.options.metadataPath}.tmp`;
     this.persistTail = this.persistTail.then(async () => {
-      await writeFile(tempPath, `${JSON.stringify(snapshot)}\n`, { encoding: "utf8", mode: 0o600 });
-      await rename(tempPath, this.options.metadataPath);
+      await mkdir(path.dirname(this.options.metadataPath), { recursive: true, mode: 0o700 });
+      await writeFile(this.metadataTempPath, `${JSON.stringify(snapshot)}\n`, { encoding: "utf8", mode: 0o600 });
+      await rename(this.metadataTempPath, this.options.metadataPath);
     });
     await this.persistTail;
   }
