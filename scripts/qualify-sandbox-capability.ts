@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import {
   hasTerminalEvent,
   parseNetworkObservations,
+  qualificationEvidenceLabels,
   parseExactAgentToolResult,
   parseQualificationRunStream,
   readCapabilityReplayEvidence,
@@ -826,7 +827,7 @@ async function writeEvidenceBundle(input: { artifactDir: string; config: Qualifi
   const document = redactSecrets({
     version: 1,
     evidenceClass: "informational",
-    evidenceLabels: ["hosted_runner_black_box", "live_provider", "controlled_provider"],
+    evidenceLabels: qualificationEvidenceLabels(input.config.mode),
     signature: null,
     integrity: "sha256",
     startedAt: input.startedAt,

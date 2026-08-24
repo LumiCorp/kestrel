@@ -5,7 +5,11 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { createSandboxCapabilityQualificationObserver } from "../../cli/runner/SandboxCapabilityQualificationControl.js";
-import { parseNetworkObservations, parseQualificationRunStream } from "../../scripts/qualification/sandbox-capability-evidence.js";
+import {
+  parseNetworkObservations,
+  parseQualificationRunStream,
+  qualificationEvidenceLabels,
+} from "../../scripts/qualification/sandbox-capability-evidence.js";
 
 test("qualification observer records a secret-free checkpoint without pausing by default", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-qualification-control-"));
@@ -72,6 +76,12 @@ test("qualification evidence ignores audited source strings and parses only stru
   const withTruncatedTail = parseQualificationRunStream(`${sourceOnly}data: {\"id\":\"truncated`);
   assert.equal(withTruncatedTail.events.length, 1);
   assert.equal(withTruncatedTail.runId, "run-a");
+});
+
+test("controlled and live qualification evidence labels cannot substitute for each other", () => {
+  assert.deepEqual(qualificationEvidenceLabels("controlled"), ["hosted_runner_black_box", "controlled_provider"]);
+  assert.deepEqual(qualificationEvidenceLabels("live"), ["hosted_runner_black_box", "live_provider"]);
+  assert.deepEqual(qualificationEvidenceLabels("all"), ["hosted_runner_black_box", "live_provider", "controlled_provider"]);
 });
 
 function sse(event: unknown): string {

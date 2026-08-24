@@ -102,6 +102,14 @@ export function parseNetworkObservations(stdout: string): NetworkObservation[] {
   return observations;
 }
 
+export function qualificationEvidenceLabels(mode: "live" | "controlled" | "all"): string[] {
+  return [
+    "hosted_runner_black_box",
+    ...(mode === "live" || mode === "all" ? ["live_provider"] : []),
+    ...(mode === "controlled" || mode === "all" ? ["controlled_provider"] : []),
+  ];
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
