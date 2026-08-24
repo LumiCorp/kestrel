@@ -12,6 +12,7 @@ export const WORKSPACE_BACKUP_RETRY_DEADLINE_MS = 15 * 60_000;
 export const WORKER_STOP_VERIFICATION_DEADLINE_MS = 30_000;
 export const WORKER_STOP_POLL_INTERVAL_MS = 500;
 export const WORKER_RECOVERY_DEADLINE_MS = 180_000;
+export const TEMPORARY_RESOURCE_CLEANUP_POLL_INTERVAL_MS = 500;
 
 export type WorkspaceBackupRetryCanaryArgs = {
   threadId: string;
@@ -74,6 +75,16 @@ export type EnvironmentInventory = {
     state: string | null;
     region: string | null;
     sizeGb: number | null;
+    attachedMachineId?: string | null;
+  }>;
+};
+
+export type TemporaryResourceCleanupObservation = {
+  elapsedMs: number;
+  machines: Array<{ id: string; state: string | null }>;
+  volumes: Array<{
+    id: string;
+    state: string | null;
     attachedMachineId?: string | null;
   }>;
 };
@@ -196,6 +207,8 @@ export type CanaryEvidence = {
   environment?: {
     first?: EnvironmentInventory;
     final?: EnvironmentInventory;
+    cleanupObservations?: TemporaryResourceCleanupObservation[];
+    cleanupObservationsTruncated?: boolean;
   };
   workerStop?: WorkerStopEvidence;
   archive?: ArchiveVerification;
@@ -825,6 +838,17 @@ export function assertNoTemporaryResources(
   target: CanaryTarget,
   observed: EnvironmentInventory,
 ) {
+  const remaining = temporaryResources(target, observed);
+  assert(
+    remaining.machineIds.length === 0 && remaining.volumeIds.length === 0,
+    temporaryResourceFailureMessage(remaining),
+  );
+}
+
+function temporaryResources(
+  target: CanaryTarget,
+  observed: EnvironmentInventory,
+) {
   const baselineMachineIds = new Set(
     target.baseline.environment.machines.map((machine) => machine.id),
   );
@@ -838,14 +862,113 @@ export function assertNoTemporaryResources(
     .filter((volume) => !baselineVolumeIds.has(volume.id))
     .filter(
       (volume) =>
-        volume.state !== "pending_destroy" ||
-        volume.attachedMachineId !== null,
+        volume.state !== "pending_destroy" || volume.attachedMachineId !== null,
     )
     .map((volume) => volume.id);
-  assert(
-    newMachineIds.length === 0 && newVolumeIds.length === 0,
-    `Temporary export resources remain (machines: ${newMachineIds.join(", ") || "none"}; volumes: ${newVolumeIds.join(", ") || "none"}).`,
+  return { machineIds: newMachineIds, volumeIds: newVolumeIds };
+}
+
+function temporaryResourceFailureMessage(input: {
+  machineIds: string[];
+  volumeIds: string[];
+}) {
+  return `Temporary export resources remain (machines: ${input.machineIds.join(", ") || "none"}; volumes: ${input.volumeIds.join(", ") || "none"}).`;
+}
+
+function cleanupObservation(input: {
+  target: CanaryTarget;
+  observed: EnvironmentInventory;
+  elapsedMs: number;
+}): TemporaryResourceCleanupObservation {
+  const baselineMachineIds = new Set(
+    input.target.baseline.environment.machines.map((machine) => machine.id),
   );
+  const baselineVolumeIds = new Set(
+    input.target.baseline.environment.volumes.map((volume) => volume.id),
+  );
+  return {
+    elapsedMs: input.elapsedMs,
+    machines: input.observed.machines
+      .filter((machine) => !baselineMachineIds.has(machine.id))
+      .map((machine) => ({ id: machine.id, state: machine.state })),
+    volumes: input.observed.volumes
+      .filter((volume) => !baselineVolumeIds.has(volume.id))
+      .map((volume) => ({
+        id: volume.id,
+        state: volume.state,
+        ...(Object.hasOwn(volume, "attachedMachineId")
+          ? { attachedMachineId: volume.attachedMachineId }
+          : {}),
+      })),
+  };
+}
+
+export async function waitForTemporaryResourceCleanup(input: {
+  target: CanaryTarget;
+  observeEnvironment(): Promise<EnvironmentInventory>;
+  now?: () => number;
+  delay?: (ms: number) => Promise<void>;
+  deadlineMs?: number;
+  pollIntervalMs?: number;
+}) {
+  const now = input.now ?? Date.now;
+  const wait =
+    input.delay ??
+    ((ms: number) =>
+      new Promise<void>((resolveDelay) => setTimeout(resolveDelay, ms)));
+  const deadlineMs = input.deadlineMs ?? WORKSPACE_BACKUP_RETRY_DEADLINE_MS;
+  const pollIntervalMs =
+    input.pollIntervalMs ?? TEMPORARY_RESOURCE_CLEANUP_POLL_INTERVAL_MS;
+  const startedAt = now();
+  const deadline = startedAt + deadlineMs;
+  const observations: TemporaryResourceCleanupObservation[] = [];
+  let observationsTruncated = false;
+  let lastObservationSignature: string | undefined;
+
+  while (true) {
+    const observed = await input.observeEnvironment();
+    const remaining = temporaryResources(input.target, observed);
+    const observation = cleanupObservation({
+      target: input.target,
+      observed,
+      elapsedMs: Math.max(0, now() - startedAt),
+    });
+    const observationSignature = stableJson({
+      machines: observation.machines,
+      volumes: observation.volumes,
+    });
+    if (observationSignature !== lastObservationSignature) {
+      lastObservationSignature = observationSignature;
+      if (observations.length < 25) {
+        observations.push(observation);
+      } else {
+        observationsTruncated = true;
+        observations[observations.length - 1] = observation;
+      }
+    }
+    if (remaining.machineIds.length === 0 && remaining.volumeIds.length === 0) {
+      return {
+        environment: observed,
+        observations,
+        observationsTruncated,
+      };
+    }
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) {
+      throw Object.assign(
+        new Error(temporaryResourceFailureMessage(remaining)),
+        {
+          code: "WORKSPACE_BACKUP_RETRY_CANARY_CLEANUP_FAILED",
+          details: {
+            cleanupObservations: observations,
+            cleanupObservationsTruncated: observationsTruncated,
+            lastEnvironment: observed,
+          },
+        },
+      );
+    }
+    await wait(Math.min(pollIntervalMs, Math.max(1, remainingMs)));
+  }
 }
 
 export function assertSourceWorkspaceUnchanged(
@@ -1036,15 +1159,24 @@ export async function runWorkspaceBackupRetryCanary(input: {
       deadlineMs: WORKSPACE_BACKUP_RETRY_DEADLINE_MS,
     });
     evidence.backup.final = final;
-    const [finalSnapshots, finalInventory, workerAfter] = await Promise.all([
+    const cleanupWait = await waitForTemporaryResourceCleanup({
+      target,
+      observeEnvironment: () => dependencies.observeEnvironment(target),
+      deadlineMs: WORKSPACE_BACKUP_RETRY_DEADLINE_MS,
+    });
+    const finalInventory = cleanupWait.environment;
+    const [finalSnapshots, workerAfter] = await Promise.all([
       dependencies.listSnapshots(target),
-      dependencies.observeEnvironment(target),
       dependencies.waitForWorker(target),
     ]);
     evidence.snapshots!.final = finalSnapshots;
     evidence.environment = {
       ...evidence.environment,
       final: finalInventory,
+      cleanupObservations: cleanupWait.observations,
+      ...(cleanupWait.observationsTruncated
+        ? { cleanupObservationsTruncated: true }
+        : {}),
     };
     evidence.workerAfter = workerAfter;
     assertFinalAttempt({
