@@ -143,7 +143,10 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
     const result = await client.run(profileId, "provider-used");
     requireMatch(result.stream, /run\.completed/u, "provider-used run did not complete");
     requireMatch(result.stream, /DIRECT_NETWORK_BLOCKED/u, "controlled sandbox did not report blocked direct-network probes");
-    requireNoMatch(result.stream, /DIRECT_NETWORK_UNEXPECTED/u, "controlled sandbox unexpectedly reached a direct-network target");
+    if (/DIRECT_NETWORK_UNEXPECTED/u.test(result.stream)) {
+      const observations = result.stream.split("\\n").filter((line) => line.includes("DIRECT_NETWORK_UNEXPECTED")).slice(0, 8);
+      throw new Error(`controlled sandbox unexpectedly reached a direct-network target: ${observations.join(" | ")}`);
+    }
     requireMatch(await providerEvidence(config), /qualification-provider-used/u, "controlled provider was not contacted");
     assertSecretFree(result.stream, config);
     await assertOperatorLifecycle(client, result.runId, /"status":"cleaned"/u);

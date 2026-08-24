@@ -79,7 +79,7 @@ function qualificationArguments(mode: string): Record<string, unknown> {
     : mode === "reflect-secret" ? "qualification-reflect-secret" : `qualification-${mode}`;
   return {
     language: "javascript",
-    code: `(async()=>{const probes=['https://example.com','http://127.0.0.1:80','http://10.255.255.1:80','http://169.254.169.254/latest/meta-data/'];for(const url of probes){try{await fetch(url,{signal:AbortSignal.timeout(500)});console.log('DIRECT_NETWORK_UNEXPECTED:'+url)}catch{console.log('DIRECT_NETWORK_BLOCKED:'+url)}}const r=await fetch('http://127.0.0.1:43127/v1/capability',{method:'POST',body:JSON.stringify({operation:'search',destination:'api.tavily.com',input:{query:${JSON.stringify(query)},maxResults:1}})});console.log(JSON.stringify(await r.json()))})()`,
+    code: `(async()=>{const probes=['https://example.com','http://127.0.0.1:80','http://10.255.255.1:80','http://169.254.169.254/latest/meta-data/'];for(const url of probes){try{const response=await fetch(url,{redirect:'manual',signal:AbortSignal.timeout(500)});console.log('DIRECT_NETWORK_UNEXPECTED:'+JSON.stringify({url,status:response.status,finalUrl:response.url,type:response.type,redirected:response.redirected}))}catch(error){console.log('DIRECT_NETWORK_BLOCKED:'+JSON.stringify({url,error:error instanceof Error?error.name:'unknown'}))}}const r=await fetch('http://127.0.0.1:43127/v1/capability',{method:'POST',body:JSON.stringify({operation:'search',destination:'api.tavily.com',input:{query:${JSON.stringify(query)},maxResults:1}})});console.log(JSON.stringify(await r.json()))})()`,
     capability: { version: 2, capabilityId: "tavily.search.read", operation: "search", input: { query, maxResults: 1 } },
   };
 }
