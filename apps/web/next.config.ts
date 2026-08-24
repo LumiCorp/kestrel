@@ -18,6 +18,12 @@ const attachmentRouteRuntimeFiles = [
 ];
 
 const nextConfig: NextConfig = {
+  experimental: {
+    // A custom Webpack hook disables Next's default build worker. Keep the
+    // compiler isolated so its heap is released before TypeScript analysis.
+    webpackBuildWorker: true,
+  },
+
   env: {
     KESTREL_APP_VERSION: kestrelBuildIdentity.version,
     KESTREL_BUILD_REVISION: kestrelBuildIdentity.revision,

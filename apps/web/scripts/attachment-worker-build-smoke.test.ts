@@ -24,6 +24,7 @@ test("production build externalizes and traces the attachment package", async ()
     readFile(new URL("../../../packages/attachments/package.json", import.meta.url), "utf8"),
   ]);
   assert.match(config, /serverExternalPackages:[\s\S]*"@kestrel-agents\/files"/u);
+  assert.match(config, /webpackBuildWorker: true/u);
   assert.match(config, /"@kestrel-agents\/files": "commonjs @kestrel-agents\/files"/u);
   assert.match(config, /"\.\.\/\.\.\/packages\/attachments\/dist\/\*\*\/\*"/u);
   assert.match(config, /"\/api\/cron\/attachments\/\*\*"/u);
