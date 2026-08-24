@@ -19,6 +19,7 @@ test("runtime package manifests replace workspace links with exact packed versio
       dependencies: {
         "@kestrel-agents/protocol": "workspace:*",
         "@kestrel-agents/conversation": "workspace:*",
+        "@kestrel-agents/files": "workspace:*",
         "@kestrel-agents/sdk": "workspace:*",
         "@kestrel-agents/workspace-skills": "workspace:*",
         "@kestrel-agents/memory": "workspace:*",
@@ -30,6 +31,7 @@ test("runtime package manifests replace workspace links with exact packed versio
     {
       "@kestrel-agents/protocol": "0.5.1",
       "@kestrel-agents/conversation": "0.5.1",
+      "@kestrel-agents/files": "0.5.1",
       "@kestrel-agents/sdk": "0.5.1",
       "@kestrel-agents/workspace-skills": "0.5.1",
       "@kestrel-agents/memory": "0.5.1",
@@ -58,6 +60,7 @@ test("runtime package manifests reject protocol and runtime version drift", asyn
       dependencies: {
         "@kestrel-agents/protocol": "workspace:*",
         "@kestrel-agents/conversation": "workspace:*",
+        "@kestrel-agents/files": "workspace:*",
         "@kestrel-agents/sdk": "workspace:*",
         "@kestrel-agents/workspace-skills": "workspace:*",
         "@kestrel-agents/memory": "workspace:*",
@@ -75,6 +78,7 @@ async function writeWorkspaceManifests(
   for (const [directory, name, packageVersion] of [
     ["protocol", "@kestrel-agents/protocol", version],
     ["conversation", "@kestrel-agents/conversation", version],
+    ["attachments", "@kestrel-agents/files", version],
     ["sdk", "@kestrel-agents/sdk", version],
     ["workspace-skills", "@kestrel-agents/workspace-skills", version],
     ["memory", "@kestrel-agents/memory", version],

@@ -10,14 +10,6 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-interface NpmPackFile {
-  path: string;
-}
-
-interface NpmPackResult {
-  files: NpmPackFile[];
-}
-
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 const npmCacheDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-pack-cache-"));
@@ -26,6 +18,7 @@ const extractDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-extract-"
 const consumerDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-runtime-consumer-"));
 
 const externalRuntimeWorkspacePackages = [
+  { directory: "packages/attachments", tarballPrefix: "kestrel-agents-files-" },
   { directory: "packages/conversation", tarballPrefix: "kestrel-agents-conversation-" },
   { directory: "packages/protocol", tarballPrefix: "kestrel-agents-protocol-" },
   { directory: "packages/sdk", tarballPrefix: "kestrel-agents-sdk-" },
@@ -47,6 +40,7 @@ const bundledDependencyPrefixes = [
 ] as const;
 
 const allowedWorkspacePackagePrefixes = [
+  "packages/attachments/",
   "packages/protocol/",
   "packages/workspace-skills/",
   "packages/memory/",
@@ -69,6 +63,8 @@ const requiredFiles = [
   "db/migrations/001_sessions_runs.sql",
   "db/migrations/023_runner_protocol_events.sql",
   "db/migrations/024_provider_reasoning_state.sql",
+  "packages/attachments/package.json",
+  "packages/attachments/dist/index.js",
   "packages/protocol/package.json",
   "packages/protocol/dist/index.js",
   "packages/workspace-skills/package.json",
@@ -96,24 +92,22 @@ const requiredFiles = [
 ] as const;
 
 try {
-  const output = execFileSync(
-    resolveNpmCommand(),
-    ["pack", "--dry-run", "--json", "--ignore-scripts"],
-    {
-      cwd: repoRoot,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        npm_config_cache: npmCacheDir,
-      },
-      maxBuffer: 20 * 1024 * 1024,
-    },
+  execFileSync("pnpm", ["pack", "--config.node-linker=hoisted", "--pack-destination", packDir], {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  const tarballName = readdirSync(packDir).find(
+    (entry) => entry.startsWith("kestrel-agents-kestrel-") && entry.endsWith(".tgz"),
   );
-  const results = JSON.parse(output) as NpmPackResult[];
-  assert.equal(results.length, 1, "npm pack must describe exactly one runtime package.");
-
-  const filePaths = new Set(results[0]?.files.map((file) => file.path) ?? []);
-  assert.ok(filePaths.size > 0, "npm pack returned an empty runtime package.");
+  assert.ok(tarballName, "pnpm pack did not produce a runtime tarball.");
+  const tarballPath = path.join(packDir, tarballName);
+  execFileSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
+    cwd: repoRoot,
+    stdio: "pipe",
+  });
+  const packedFiles = listFilesRecursively(path.join(extractDir, "package"));
+  const filePaths = new Set(packedFiles);
+  assert.ok(filePaths.size > 0, "pnpm pack produced an empty runtime package.");
 
   for (const filePath of filePaths) {
     if (filePath.startsWith("node_modules/")) {
@@ -186,24 +180,12 @@ try {
   assert.ok(filePaths.has(manifest.main), `runtime package main '${manifest.main}' is not packed`);
   assert.ok(filePaths.has(manifest.types), `runtime package types '${manifest.types}' are not packed`);
 
-  execFileSync("pnpm", ["pack", "--config.node-linker=hoisted", "--pack-destination", packDir], {
-    cwd: repoRoot,
-    stdio: "pipe",
-  });
-  const tarballName = readdirSync(packDir).find(
-    (entry) => entry.startsWith("kestrel-agents-kestrel-") && entry.endsWith(".tgz"),
-  );
-  assert.ok(tarballName, "pnpm pack did not produce a runtime tarball.");
-  const tarballPath = path.join(packDir, tarballName);
-  execFileSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
-    cwd: repoRoot,
-    stdio: "pipe",
-  });
-  const packedFiles = listFilesRecursively(path.join(extractDir, "package"));
   const packedFileSet = new Set(packedFiles);
   for (const requiredPackedFile of [
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
+    "packages/attachments/package.json",
+    "packages/attachments/dist/index.js",
     "packages/protocol/package.json",
     "packages/protocol/dist/index.js",
     "packages/workspace-skills/package.json",
