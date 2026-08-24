@@ -7,6 +7,7 @@ import { KESTREL_EXECUTION_BOUNDARY_POLICY, SensitiveValueRegistry } from "../..
 import { fingerprintSandboxCapabilityCatalogV2, fingerprintSandboxCapabilityProfileV1, type SandboxCapabilityChildReservationV1, type SandboxCapabilityLeaseTransitionRecordV1, type SandboxCapabilityProfileV1 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import { SandboxCapabilityExactResultConflictError, type SandboxCapabilityLeaseStore } from "../../src/kestrel/contracts/store.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
+import { createTestToolGateway, prepareTestToolCall } from "../helpers/createTestToolGateway.js";
 
 const profile: SandboxCapabilityProfileV1 = { version: 1, capabilityId: "tavily.search.read", operations: ["search"], resource: "https://api.tavily.com/search", audience: { tenantId: "tenant-a", environmentId: "env-a" }, maxRequests: 1, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096, timeoutMs: 1000, maxExpiryMs: 5000, brokerAuthority: { authorityId: "broker-a", revision: "broker-rev-1" } };
 
@@ -444,7 +445,7 @@ test("a conflicting DONE remains rejected when the competing completion is abort
 });
 
 test("independent in-memory attempts preserve a winner paused before cleanup", async () => {
-  const store = new InMemorySessionStore();
+  const store = new InMemorySessionStore({ tenantId: "tenant-a" });
   const losingController = new AbortController();
   const coordinator = new SandboxCapabilityLeaseCoordinator({
     store,
@@ -510,6 +511,17 @@ test("independent in-memory attempts preserve a winner paused before cleanup", a
   } });
   const config = { ...DEFAULT_CODE_MODE_ENABLED_CONFIG, capabilities: [profile] };
   const request = { language: "javascript" as const, code: "x", capability: { capabilityId: "tavily.search.read" as const, input: { query: "race" } } };
+  const gateway = createTestToolGateway({ "code.execute": async () => ({ status: "ok" }) });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway, toolName: "code.execute", toolInput: request,
+    runId: winnerRuntime.runId, sessionId: winnerRuntime.sessionId, callId: winnerRuntime.toolCallId,
+  });
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({
+    runId: winnerRuntime.runId, sessionId: winnerRuntime.sessionId, stepIndex: 1,
+    type: "execute_tool_call", payload: { preparedToolCall }, idempotencyKey: winnerRuntime.toolCallId,
+    failurePolicy: "STOP", status: "PENDING", createdAt: "2026-08-23T12:00:00.000Z",
+    tenantId: "tenant-a", tenantOwnershipState: "tenant_bound",
+  });
   const winner = winnerService.execute(config, request, {
     capabilityRuntime: winnerRuntime,
     persistCompletedCapabilityResult: (result) => persistThroughStore(winnerRuntime, undefined, result),
