@@ -11,6 +11,7 @@ from typing import Mapping
 try:
     from .provider_config import (
         BENCHMARK_MODEL_PROVIDER,
+        DEFAULT_OPENROUTER_BENCHMARK_MODEL,
         assert_benchmark_profile_mode,
         assert_benchmark_provider_env,
         assert_benchmark_turn_mode,
@@ -22,6 +23,7 @@ try:
 except ImportError:
     from provider_config import (  # type: ignore[no-redef]
         BENCHMARK_MODEL_PROVIDER,
+        DEFAULT_OPENROUTER_BENCHMARK_MODEL,
         assert_benchmark_profile_mode,
         assert_benchmark_provider_env,
         assert_benchmark_turn_mode,
@@ -247,7 +249,11 @@ def terminal_bench_job_input_contract_hash(job_input: Mapping[str, object]) -> s
 
 
 def default_model_for_provider(provider: str) -> str:
-    return resolve_benchmark_provider_config().model if provider == BENCHMARK_MODEL_PROVIDER else "z-ai/glm-5.2"
+    return (
+        resolve_benchmark_provider_config().model
+        if provider == BENCHMARK_MODEL_PROVIDER
+        else DEFAULT_OPENROUTER_BENCHMARK_MODEL
+    )
 
 
 def default_decision_model_for_provider(provider: str) -> str:

@@ -409,9 +409,9 @@ test("command mode model show and set operate on shared model policy", async () 
       await runCliCommand(["model", "show"], cwd);
     });
     assert.match(initial, /provider: openrouter/u);
-    assert.match(initial, /model: z-ai\/glm-5\.2/u);
+    assert.match(initial, /model: openai\/gpt-5\.6-luna/u);
     assert.match(initial, /Recommended models for 'openrouter':/u);
-    assert.match(initial, /\* z-ai\/glm-5\.2/u);
+    assert.match(initial, /\* openai\/gpt-5\.6-luna/u);
     assert.match(initial, /Use kestrel model search <query> to browse/u);
 
     await captureStdout(async () => {
