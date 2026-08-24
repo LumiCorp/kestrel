@@ -17,6 +17,11 @@ test("runtime package publishes only the public executable boundary", async () =
   assert.equal(pkg.types, "dist/src/index.d.ts");
   assert.equal(pkg.dependencies?.["@kestrel-agents/protocol"], "workspace:*");
   assert.equal(pkg.dependencies?.["@kestrel-agents/workspace-skills"], "workspace:*");
+  assert.equal(
+    pkg.dependencies?.["@kestrel/mcp-security"],
+    undefined,
+    "the private MCP security workspace is vendored into the runtime package, not fetched from npm",
+  );
   for (const required of [
     "dist/src",
     "dist/agents",
@@ -60,6 +65,18 @@ test("workspace skills package exports only published build artifacts", async ()
   assert.equal(pkg.exports?.["."]?.types, "./dist/index.d.ts");
   assert.ok(pkg.files?.includes("dist"));
   assert.equal(pkg.files?.includes("src"), false);
+});
+
+test("the public package release gate includes Files", async () => {
+  const pkg = JSON.parse(await readFile(path.join(process.cwd(), "package.json"), "utf8")) as {
+    scripts?: Record<string, string>;
+  };
+
+  assert.equal(
+    pkg.scripts?.["files:release-check"],
+    "pnpm --filter @kestrel-agents/files release:check",
+  );
+  assert.match(pkg.scripts?.["packages:release-check"] ?? "", /pnpm run files:release-check/u);
 });
 
 test("AI SDK builds its conversation dependency before compiling itself", async () => {

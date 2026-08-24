@@ -5,6 +5,11 @@ import {
   acquireWorkspaceSnapshot,
   type WorkspaceSnapshotEvidence,
 } from "./backup-snapshot";
+import {
+  cleanupWorkspaceBackupExportResources,
+  mergeWorkspaceBackupExportResources,
+  readWorkspaceBackupExportResources,
+} from "./backup-export-cleanup";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
@@ -265,5 +270,171 @@ test("a retry reloads the owned snapshot ID from workspace_backups", async (cont
   assert.equal(
     completed.manifest.flySnapshotLastObservedAt,
     "2026-08-23T22:27:03.000Z",
+  );
+});
+
+test("a retry reloads and clears exact export resource ownership from workspace_backups", async (context) => {
+  assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
+  let firstWorkerSql: ReturnType<typeof postgres> | null = postgres(
+    databaseUrl,
+    {
+      max: 1,
+    },
+  );
+  const suffix = crypto.randomUUID();
+  const organizationId = `org-backup-export-${suffix}`;
+  const userId = `user-backup-export-${suffix}`;
+  const environmentId = `environment-backup-export-${suffix}`;
+  const workspaceId = `workspace-backup-export-${suffix}`;
+  const operationId = `operation-backup-export-${suffix}`;
+  const backupId = `backup-export-${suffix}`;
+  const now = new Date("2026-08-23T22:15:07.232Z");
+  const resources = {
+    replacementId: operationId,
+    machineId: `machine-export-${suffix}`,
+    volumeId: `volume-export-${suffix}`,
+  };
+  let secondWorkerSql: ReturnType<typeof postgres> | null = null;
+
+  context.after(async () => {
+    await firstWorkerSql?.end({ timeout: 0 }).catch(() => {});
+    await secondWorkerSql?.end({ timeout: 0 }).catch(() => {});
+    const cleanupSql = postgres(databaseUrl, { max: 1 });
+    await cleanupSql`
+      DELETE FROM "organization" WHERE "id" = ${organizationId}
+    `.catch(() => {});
+    await cleanupSql`
+      DELETE FROM "user" WHERE "id" = ${userId}
+    `.catch(() => {});
+    await cleanupSql.end({ timeout: 0 });
+  });
+
+  const setupSql = firstWorkerSql;
+  await setupSql.begin(async (transaction) => {
+    await transaction`
+      INSERT INTO "user" (
+        "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+      ) VALUES (
+        ${userId}, 'Backup Export User', ${`${userId}@example.test`},
+        true, ${now}, ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+      VALUES (${organizationId}, 'Backup Export Org', ${`backup-export-${suffix}`}, ${now})
+    `;
+    await transaction`
+      INSERT INTO "environments" (
+        "id", "organization_id", "created_by_user_id", "name", "slug",
+        "region", "status", "fly_app_name", "runtime_image"
+      ) VALUES (
+        ${environmentId}, ${organizationId}, ${userId},
+        'Backup Export Environment', ${`backup-export-${suffix}`},
+        'iad', 'ready', ${`fly-backup-export-${suffix}`},
+        'registry.example/workspace@sha256:test'
+      )
+    `;
+    await transaction`
+      INSERT INTO "environment_workspaces" (
+        "id", "organization_id", "environment_id", "personal_owner_user_id",
+        "created_by_user_id", "name", "kind", "status", "fly_machine_id",
+        "fly_volume_id", "runtime_image"
+      ) VALUES (
+        ${workspaceId}, ${organizationId}, ${environmentId}, ${userId},
+        ${userId}, 'Backup Export Workspace', 'scratch', 'ready',
+        ${`machine-${suffix}`}, ${`volume-${suffix}`},
+        'registry.example/workspace@sha256:test'
+      )
+    `;
+    await transaction`
+      INSERT INTO "environment_operations" (
+        "id", "organization_id", "environment_id", "workspace_id",
+        "requested_by_user_id", "type", "status", "stage", "idempotency_key",
+        "attempt", "created_at", "updated_at"
+      ) VALUES (
+        ${operationId}, ${organizationId}, ${environmentId}, ${workspaceId},
+        ${userId}, 'workspace.backup', 'queued', 'workspace.backup.retrying',
+        ${`workspace.backup.checkpoint:${workspaceId}:${suffix}`}, 1, ${now}, ${now}
+      )
+    `;
+    await transaction`
+      INSERT INTO "workspace_backups" (
+        "id", "organization_id", "environment_id", "workspace_id",
+        "operation_id", "reason", "status", "manifest", "expires_at",
+        "created_at", "updated_at"
+      ) VALUES (
+        ${backupId}, ${organizationId}, ${environmentId}, ${workspaceId},
+        ${operationId}, 'checkpoint', 'queued',
+        ${setupSql.json(
+          JSON.parse(
+            JSON.stringify(
+              mergeWorkspaceBackupExportResources(
+                {
+                  flySnapshotId: "vs_test",
+                  flySnapshotSourceVolumeId: `volume-${suffix}`,
+                },
+                resources,
+              ),
+            ),
+          ),
+        )},
+        ${new Date(now.getTime() + 86_400_000)}, ${now}, ${now}
+      )
+    `;
+  });
+  await setupSql.end({ timeout: 0 });
+  firstWorkerSql = null;
+
+  const retrySql = postgres(databaseUrl, { max: 1 });
+  secondWorkerSql = retrySql;
+  const [reloaded] = await retrySql<
+    Array<{ manifest: Record<string, unknown> }>
+  >`
+    SELECT "manifest" FROM "workspace_backups" WHERE "id" = ${backupId}
+  `;
+  const reloadedResources = readWorkspaceBackupExportResources(
+    reloaded.manifest,
+  );
+  assert.deepEqual(reloadedResources, resources);
+  const deleted: string[] = [];
+  await cleanupWorkspaceBackupExportResources({
+    appName: `fly-backup-export-${suffix}`,
+    resources: reloadedResources,
+    deleteMachine: async ({ machineId }) => {
+      deleted.push(machineId);
+    },
+    deleteVolume: async ({ volumeId }) => {
+      deleted.push(volumeId);
+    },
+    persistResources: async (nextResources) => {
+      const [current] = await retrySql<
+        Array<{ manifest: Record<string, unknown> }>
+      >`
+        SELECT "manifest" FROM "workspace_backups" WHERE "id" = ${backupId}
+      `;
+      const nextManifest = mergeWorkspaceBackupExportResources(
+        current.manifest,
+        nextResources,
+      );
+      await retrySql`
+        UPDATE "workspace_backups"
+        SET "manifest" = ${retrySql.json(JSON.parse(JSON.stringify(nextManifest)))},
+            "updated_at" = now()
+        WHERE "id" = ${backupId}
+      `;
+    },
+  });
+
+  assert.deepEqual(deleted, [resources.machineId, resources.volumeId]);
+  const [completed] = await retrySql<
+    Array<{ manifest: Record<string, unknown> }>
+  >`
+    SELECT "manifest" FROM "workspace_backups" WHERE "id" = ${backupId}
+  `;
+  assert.equal(readWorkspaceBackupExportResources(completed.manifest), null);
+  assert.equal(completed.manifest.flySnapshotId, "vs_test");
+  assert.equal(
+    completed.manifest.flySnapshotSourceVolumeId,
+    `volume-${suffix}`,
   );
 });

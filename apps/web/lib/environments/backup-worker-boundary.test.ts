@@ -47,7 +47,7 @@ test(
     );
     assert.match(
       backupSource,
-      /const exportReplacementId = crypto\.randomUUID\(\)/u,
+      /const exportReplacementId = workspaceBackupExportReplacementId\(operationId\)/u,
     );
   },
 );

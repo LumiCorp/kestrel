@@ -15,6 +15,11 @@ const RUNTIME_WORKSPACE_PACKAGES = [
     tarballPrefix: "kestrel-agents-conversation-",
   },
   {
+    name: "@kestrel-agents/files",
+    directory: "packages/attachments",
+    tarballPrefix: "kestrel-agents-files-",
+  },
+  {
     name: "@kestrel-agents/sdk",
     directory: "packages/sdk",
     tarballPrefix: "kestrel-agents-sdk-",
@@ -38,7 +43,6 @@ const RUNTIME_WORKSPACE_PACKAGES = [
 
 export function resolveRuntimePackageDependencies(input: {
   repoRoot: string;
-  runtimeVersion: string;
   dependencies?: Record<string, string> | undefined;
   tsxVersion?: string | undefined;
 }): Record<string, string> {
@@ -65,14 +69,6 @@ export function resolveRuntimePackageDependencies(input: {
       ) {
         throw new Error(
           `Workspace manifest at '${manifestPath}' must declare ${workspacePackage.name} and a version.`,
-        );
-      }
-      if (
-        workspacePackage.name !== "@lumi/kestrel-environment-auth" &&
-        manifest.version !== input.runtimeVersion
-      ) {
-        throw new Error(
-          `Runtime version ${input.runtimeVersion} must match ${workspacePackage.name} ${manifest.version}.`,
         );
       }
       return [workspacePackage.name, manifest.version.trim()];

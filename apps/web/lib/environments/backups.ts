@@ -15,6 +15,13 @@ import {
   type WorkspaceSnapshotEvidence,
 } from "./backup-snapshot";
 import {
+  cleanupWorkspaceBackupExportResources,
+  mergeWorkspaceBackupExportResources,
+  readWorkspaceBackupExportResourcesForOperation,
+  type WorkspaceBackupExportResources,
+  workspaceBackupExportReplacementId,
+} from "./backup-export-cleanup";
+import {
   createWorkspaceBackupDecryptionStream,
   createWorkspaceBackupEncryptionStream,
 } from "./backup-crypto";
@@ -135,13 +142,51 @@ export async function createWorkspaceBackup(input: {
   const sourceVolumeId = workspace.flyVolumeId;
   const backupRecord = await knowledgeDb.query.workspaceBackups.findFirst({
     where: (table, { eq }) => eq(table.id, backupId),
-    columns: { manifest: true },
+    columns: { manifest: true, objectKey: true },
   });
   let snapshotManifest = asRecord(backupRecord?.manifest) ?? {};
-  let exportMachineId: string | null = null;
-  let exportVolumeId: string | null = null;
+  let pendingArchiveObjectKey = backupRecord?.objectKey ?? null;
+  const exportReplacementId = workspaceBackupExportReplacementId(operationId);
+  let exportResources: WorkspaceBackupExportResources | null = null;
+  const persistManifest = async (manifest: Record<string, unknown>) => {
+    snapshotManifest = manifest;
+    await knowledgeDb
+      .update(schema.workspaceBackups)
+      .set({ manifest: snapshotManifest, updatedAt: new Date() })
+      .where(eq(schema.workspaceBackups.id, backupId));
+  };
+  const persistExportResources = (
+    resources: WorkspaceBackupExportResources | null,
+  ) =>
+    persistManifest(
+      mergeWorkspaceBackupExportResources(snapshotManifest, resources),
+    );
+  const cleanupExportResources = async () => {
+    if (!exportResources) return;
+    exportResources = await cleanupWorkspaceBackupExportResources({
+      appName: flyAppName,
+      resources: exportResources,
+      deleteMachine: (cleanupInput) => provider.deleteMachine(cleanupInput),
+      deleteVolume: (cleanupInput) => provider.deleteVolume(cleanupInput),
+      persistResources: persistExportResources,
+    });
+  };
+  const deletePendingArchive = async () => {
+    if (!pendingArchiveObjectKey) return;
+    const storage = getStorageAdapter();
+    await storage.deleteObject(pendingArchiveObjectKey);
+    await knowledgeDb
+      .update(schema.workspaceBackups)
+      .set({ objectKey: null, updatedAt: new Date() })
+      .where(eq(schema.workspaceBackups.id, backupId));
+    pendingArchiveObjectKey = null;
+  };
   try {
     input.signal?.throwIfAborted();
+    exportResources = readWorkspaceBackupExportResourcesForOperation(
+      snapshotManifest,
+      exportReplacementId,
+    );
     const persistedSnapshot = readWorkspaceSnapshotEvidence(snapshotManifest);
     const snapshot = await acquireWorkspaceSnapshot({
       appName: flyAppName,
@@ -152,14 +197,7 @@ export async function createWorkspaceBackup(input: {
         volumeId: snapshotInput.volumeId,
       }),
       persistSnapshot: async (evidence) => {
-        snapshotManifest = {
-          ...snapshotManifest,
-          ...evidence,
-        };
-        await knowledgeDb
-          .update(schema.workspaceBackups)
-          .set({ manifest: snapshotManifest, updatedAt: new Date() })
-          .where(eq(schema.workspaceBackups.id, backupId));
+        await persistManifest({ ...snapshotManifest, ...evidence });
       },
       waitForSnapshot: ({ snapshotId }) =>
         waitForWorkspaceSnapshot({
@@ -172,7 +210,6 @@ export async function createWorkspaceBackup(input: {
         }),
     });
     const snapshotId = snapshot.id;
-    const exportReplacementId = crypto.randomUUID();
     const exportVolume = await provider.createReplacementWorkspaceVolume({
       appName: environment.flyAppName,
       workspaceId: workspace.id,
@@ -181,7 +218,12 @@ export async function createWorkspaceBackup(input: {
       snapshotId,
       sourceVolumeId: workspace.flyVolumeId,
     });
-    exportVolumeId = exportVolume.id;
+    exportResources = {
+      replacementId: exportReplacementId,
+      machineId: exportResources?.machineId ?? null,
+      volumeId: exportVolume.id,
+    };
+    await persistExportResources(exportResources);
     const workspaceServiceToken = createEnvironmentServiceToken();
     const exportMachine = await provider.createReplacementWorkspaceMachine({
       appName: environment.flyAppName,
@@ -207,7 +249,12 @@ export async function createWorkspaceBackup(input: {
       idleTimeoutMinutes: environment.idleTimeoutMinutes,
       replacementId: exportReplacementId,
     });
-    exportMachineId = exportMachine.id;
+    exportResources = {
+      replacementId: exportReplacementId,
+      machineId: exportMachine.id,
+      volumeId: exportVolume.id,
+    };
+    await persistExportResources(exportResources);
     if (exportMachine.state !== "started") {
       await provider.waitForMachine({
         appName: environment.flyAppName,
@@ -247,6 +294,8 @@ export async function createWorkspaceBackup(input: {
         flyVolumeId: workspace.flyVolumeId,
       });
       if (reusable) {
+        await cleanupExportResources();
+        await deletePendingArchive();
         const retainedUntil = await protectWorkspaceBackup({
           backupId: reusable.id,
           workspaceId: input.workspaceId,
@@ -261,7 +310,7 @@ export async function createWorkspaceBackup(input: {
           retainedUntil,
           reusableManifest: reusable.manifest,
           snapshotId,
-          snapshotSourceVolumeId: workspace.flyVolumeId,
+          snapshotSourceVolumeId: sourceVolumeId,
         });
         return {
           backupId: reusable.id,
@@ -293,6 +342,8 @@ export async function createWorkspaceBackup(input: {
             { code: "WORKSPACE_BACKUP_REVISION_IN_PROGRESS" },
           );
         }
+        await cleanupExportResources();
+        await deletePendingArchive();
         const retainedUntil = await protectWorkspaceBackup({
           backupId: concurrent.id,
           workspaceId: input.workspaceId,
@@ -307,7 +358,7 @@ export async function createWorkspaceBackup(input: {
           retainedUntil,
           reusableManifest: concurrent.manifest,
           snapshotId: snapshot.id,
-          snapshotSourceVolumeId: workspace.flyVolumeId,
+          snapshotSourceVolumeId: sourceVolumeId,
         });
         return {
           backupId: concurrent.id,
@@ -342,6 +393,11 @@ export async function createWorkspaceBackup(input: {
       input.workspaceId,
       `${backupId}.kwb2`,
     );
+    await knowledgeDb
+      .update(schema.workspaceBackups)
+      .set({ objectKey, updatedAt: new Date() })
+      .where(eq(schema.workspaceBackups.id, backupId));
+    pendingArchiveObjectKey = objectKey;
     await storage.putObjectStream({
       key: objectKey,
       body: archive
@@ -356,6 +412,7 @@ export async function createWorkspaceBackup(input: {
     });
     const checksumSha256 = archiveHash.digest("hex");
     input.signal?.throwIfAborted();
+    await cleanupExportResources();
     const completedAt = new Date();
     await knowledgeDb.transaction(async (transaction) => {
       await transaction
@@ -444,22 +501,7 @@ export async function createWorkspaceBackup(input: {
     });
     throw error;
   } finally {
-    if (exportMachineId) {
-      await provider
-        .deleteMachine({
-          appName: environment.flyAppName,
-          machineId: exportMachineId,
-        })
-        .catch(() => {});
-    }
-    if (exportVolumeId) {
-      await provider
-        .deleteVolume({
-          appName: environment.flyAppName,
-          volumeId: exportVolumeId,
-        })
-        .catch(() => {});
-    }
+    await cleanupExportResources().catch(() => {});
   }
 }
 
@@ -1152,7 +1194,6 @@ async function prepareWorkspaceBackup(input: {
           .update(schema.workspaceBackups)
           .set({
             status: input.initialStatus === "queued" ? "queued" : "creating",
-            objectKey: null,
             encryptionKeyId: null,
             checksumSha256: null,
             sizeBytes: null,
@@ -1314,6 +1355,7 @@ export function isDeterministicBackupFailure(code: string) {
     "WORKSPACE_BACKUP_CAPACITY_INVALID",
     "WORKSPACE_BACKUP_PORTABLE_STATE_INVALID",
     "WORKSPACE_BACKUP_SNAPSHOT_SOURCE_VOLUME_MISMATCH",
+    "WORKSPACE_BACKUP_EXPORT_OWNERSHIP_INVALID",
     "ENVIRONMENT_ROUTE_FORBIDDEN",
     "ENVIRONMENT_ROUTE_UNAUTHORIZED",
   ]).has(code);
