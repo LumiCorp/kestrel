@@ -509,8 +509,12 @@ async function cleanupRemote(config: QualificationConfig): Promise<{ ok: boolean
   await stopRemote(config).catch(() => undefined);
   const current = (await remote(config, "docker ps -a --format '{{.Names}}' | grep '^kestrel-' || true")).stdout.trim().split("\n").filter(Boolean);
   const containers = current.filter((name) => !config.baselineContainers.includes(name)).join("\n");
-  await remote(config, `set -eu; test -z ${shell(containers)}; rm -rf ${shell(config.remoteRoot)}`);
-  return { ok: containers.length === 0, containers };
+  if (containers.length > 0) {
+    await remote(config, `docker rm -f ${containers.split("\n").map(shell).join(" ")} >/dev/null`);
+  }
+  const remaining = (await remote(config, "docker ps -a --format '{{.Names}}' | grep '^kestrel-' || true")).stdout.trim().split("\n").filter(Boolean).filter((name) => !config.baselineContainers.includes(name));
+  await remote(config, `set -eu; test ${remaining.length} -eq 0; rm -rf ${shell(config.remoteRoot)}`);
+  return { ok: remaining.length === 0, containers: remaining.join("\n") };
 }
 
 async function waitForHealth(config: QualificationConfig, port: number, token: string): Promise<void> {
