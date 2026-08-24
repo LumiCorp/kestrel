@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import {
+  assertFileRouteUsesExternalPackage,
   assertNoBundledAttachmentWorker,
   listFiles,
   resolveTracedAttachmentPackage,
@@ -31,7 +32,7 @@ test("production build externalizes and traces the attachment package", async ()
   assert.match(config, /"\/api\/files\/\*\*"/u);
   assert.match(config, /"\/api\/knowledge\/documents\/\*\*"/u);
   assert.match(manifest, /next build --webpack && pnpm run smoke:attachment-worker-build/u);
-  assert.match(attachmentManifest, /"require": "\.\/dist\/index\.js"/u);
+  assert.match(attachmentManifest, /"require": "\.\/dist\/index\.cjs"/u);
 });
 
 test("build smoke rejects an attachment worker bundled anywhere in server output", async (context) => {
@@ -68,6 +69,7 @@ test("build smoke requires the complete package boundary in every owning route t
     await writeFile(path, JSON.stringify({
       files: [
         resolve(root, "packages/attachments/package.json"),
+        resolve(root, "packages/attachments/dist/index.cjs"),
         resolve(root, "packages/attachments/dist/index.js"),
         resolve(root, "packages/attachments/dist/worker.js"),
       ],
@@ -76,10 +78,25 @@ test("build smoke requires the complete package boundary in every owning route t
   const files = await listFiles(serverRoot);
   assert.equal(
     await resolveTracedAttachmentPackage(files),
-    resolve(root, "packages/attachments/dist/index.js"),
+    resolve(root, "packages/attachments/dist/index.cjs"),
   );
 
   const brokenTrace = join(serverRoot, routeTraces[0] as string);
   await writeFile(brokenTrace, JSON.stringify({ files: [] }));
   await assert.rejects(resolveTracedAttachmentPackage(files), /is missing/u);
+});
+
+test("build smoke requires the compiled file route to load the external package", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "attachment-route-external-smoke-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const route = join(root, ".next/server/app/api/files/route.js");
+  await mkdir(dirname(route), { recursive: true });
+  await writeFile(route, 'module.exports = require("@kestrel-agents/files");');
+  const files = await listFiles(join(root, ".next/server"));
+  await assertFileRouteUsesExternalPackage(files);
+  await writeFile(route, "module.exports = {};");
+  await assert.rejects(
+    assertFileRouteUsesExternalPackage(files),
+    /does not use the external attachment package/u,
+  );
 });

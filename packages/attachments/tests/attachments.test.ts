@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import JSZip from "jszip";
@@ -31,6 +32,44 @@ test("isolated extraction does not inherit Vercel runtime execArgv", () => {
   ], { encoding: "utf8", timeout: 15_000 });
 
   assert.equal(child.status, 0, [child.stdout, child.stderr].filter(Boolean).join("\n"));
+});
+
+test("CommonJS consumers resolve the bridge and preserve the extraction contract", async () => {
+  const require = createRequire(import.meta.url);
+  const packagePath = require.resolve("@kestrel-agents/files");
+  assert.match(packagePath, /dist\/index\.cjs$/u);
+  const commonJs = require("@kestrel-agents/files") as typeof import("../src/index.js");
+  const mediaTypes = [
+    "application/pdf",
+    "application/json",
+    "application/yaml",
+    "application/x-yaml",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/zip",
+    "audio/mpeg",
+    "text/csv",
+    "text/html",
+    "text/markdown",
+    "text/plain",
+    "text/x-enterprise-format",
+    "text/yaml",
+  ];
+  for (const mediaType of mediaTypes) {
+    assert.equal(
+      commonJs.isAttachmentTextExtractable(mediaType),
+      isAttachmentTextExtractable(mediaType),
+      `CommonJS media contract drifted for ${mediaType}`,
+    );
+  }
+  const sentinel = "commonjs-attachment-bridge-sentinel";
+  const extracted = await commonJs.extractAttachmentTextIsolated({
+    buffer: Buffer.from(sentinel),
+    filename: "sentinel.md",
+    mediaType: "text/markdown",
+  });
+  assert.equal(extracted.text, sentinel);
 });
 
 test("does not initialize the PDF runtime while importing the attachment package", async () => {
