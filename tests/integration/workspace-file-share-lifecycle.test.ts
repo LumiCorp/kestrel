@@ -4,13 +4,17 @@ import {
   access,
   mkdtemp,
   mkdir,
+  open,
   readFile,
   readdir,
   realpath,
+  rename,
+  rm,
   symlink,
   truncate,
   writeFile,
 } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -18,6 +22,7 @@ import { DevShellSupervisor } from "../../src/devshell/DevShellSupervisor.js";
 import { InMemoryDevShellStore } from "../../src/devshell/InMemoryDevShellStore.js";
 import { RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { workspaceFilesShareTool } from "../../tools/kestrelOne/workspaceFileShare.js";
+import { inspectPortableZipEntryName } from "../../tools/kestrelOne/workspaceFileSharePathSafety.js";
 import { workspacePreviewCloseTool } from "../../tools/kestrelOne/workspacePreviews.js";
 
 test("workspace.files.share serves one immutable binary payload with safe HTTP behavior", async () => {
@@ -113,6 +118,7 @@ test("workspace.files.share streams a ZIP containing only normalized selected pa
   const fixture = await createFixture();
   await mkdir(path.join(fixture.workspaceRoot, "reports"), { recursive: true });
   await writeFile(path.join(fixture.workspaceRoot, "reports", "summary.txt"), "summary\n");
+  await writeFile(path.join(fixture.workspaceRoot, "reports", "überblick.txt"), "Überblick\n");
   await writeFile(path.join(fixture.workspaceRoot, "data.bin"), Buffer.from([1, 2, 3]));
   await writeFile(path.join(fixture.workspaceRoot, "not-selected.txt"), "nope");
   const expiredStage = path.join(fixture.tempRoot, "kestrel-file-share-orphan");
@@ -125,7 +131,7 @@ test("workspace.files.share streams a ZIP containing only normalized selected pa
   try {
     const output = await workspaceFilesShareTool.createHandler(fixture.context)({
       mode: "zip",
-      paths: ["reports/summary.txt", "data.bin"],
+      paths: ["reports/summary.txt", "reports/überblick.txt", "data.bin"],
       downloadName: "package.zip",
     }) as ShareResult;
     const response = await fetch(
@@ -134,18 +140,291 @@ test("workspace.files.share streams a ZIP containing only normalized selected pa
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), "application/zip");
     const entries = readStoredZip(Buffer.from(await response.arrayBuffer()));
-    assert.deepEqual([...entries.keys()], ["reports/summary.txt", "data.bin"]);
+    assert.deepEqual([...entries.keys()], [
+      "reports/summary.txt",
+      "reports/überblick.txt",
+      "data.bin",
+    ]);
     assert.equal(entries.get("reports/summary.txt")?.toString("utf8"), "summary\n");
+    assert.equal(entries.get("reports/überblick.txt")?.toString("utf8"), "Überblick\n");
     assert.deepEqual(entries.get("data.bin"), Buffer.from([1, 2, 3]));
     assert.equal(entries.has("not-selected.txt"), false);
-    assert.equal(output.share.fileCount, 2);
+    assert.equal(output.share.fileCount, 3);
     assert.equal(output.share.mediaType, "application/zip");
-    await assert.rejects(access(expiredStage));
+    await access(expiredStage);
     await workspacePreviewCloseTool.createHandler(fixture.context)({
       previewId: output.share.previewId,
     });
   } finally {
     await fixture.supervisor.close();
+  }
+});
+
+test("workspace.files.share completes forced short file writes before publication", async () => {
+  const fixture = await createFixture();
+  const sourceBytes = Buffer.alloc((1024 * 1024) + 37);
+  for (let index = 0; index < sourceBytes.length; index += 1) {
+    sourceBytes[index] = index % 251;
+  }
+  await writeFile(path.join(fixture.workspaceRoot, "short-write.bin"), sourceBytes);
+  let shortWrites = 0;
+  try {
+    const output = await withFileHandleWriteOverride(async (original, handle, buffer, offset, length, position) => {
+      const requested = length >= 1024 * 1024 ? Math.floor(length / 3) : length;
+      if (requested !== length) shortWrites += 1;
+      return original.call(handle, buffer, offset, requested, position);
+    }, async () => workspaceFilesShareTool.createHandler(fixture.context)({
+      mode: "file",
+      paths: ["short-write.bin"],
+    }) as Promise<ShareResult>);
+
+    assert.ok(shortWrites >= 1, "the regression must force a successful short write");
+    assert.equal(output.share.sizeBytes, sourceBytes.length);
+    const response = await fetch(
+      `http://127.0.0.1:${fixture.publishedPort}/short-write.bin`,
+    );
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), sourceBytes);
+    await workspacePreviewCloseTool.createHandler(fixture.context)({
+      previewId: output.share.previewId,
+    });
+  } finally {
+    await fixture.supervisor.close();
+  }
+});
+
+test("workspace.files.share rejects portable-unsafe ZIP names and portable collisions", async () => {
+  const fixture = await createFixture();
+  for (const name of ["unsafe\\entry.txt", "C:drive.txt", "trailing.", "CON.txt"]) {
+    await writeFile(path.join(fixture.workspaceRoot, name), name);
+  }
+  try {
+    for (const unsafePath of ["unsafe\\entry.txt", "C:drive.txt", "trailing.", "CON.txt"]) {
+      await assert.rejects(
+        workspaceFilesShareTool.createHandler(fixture.context)({
+          mode: "zip",
+          paths: [unsafePath],
+        }),
+        (error: unknown) => {
+          assert.equal((error as RuntimeFailure).code, "WORKSPACE_FILE_SHARE_PATH_INVALID");
+          return true;
+        },
+      );
+    }
+    assert.equal(fixture.publishCalls, 0);
+
+    const fileShare = await workspaceFilesShareTool.createHandler(fixture.context)({
+      mode: "file",
+      paths: ["C:drive.txt"],
+      downloadName: "drive.txt",
+    }) as ShareResult;
+    assert.equal(fileShare.share.downloadName, "drive.txt");
+    await workspacePreviewCloseTool.createHandler(fixture.context)({
+      previewId: fileShare.share.previewId,
+    });
+
+    const composed = inspectPortableZipEntryName("Reports/Évidence.txt");
+    const decomposed = inspectPortableZipEntryName("reports/E\u0301VIDENCE.TXT");
+    assert.ok(!("reason" in composed));
+    assert.ok(!("reason" in decomposed));
+    assert.equal(composed.collisionKey, decomposed.collisionKey);
+    const safe = inspectPortableZipEntryName("資料/結果.txt");
+    assert.deepEqual("reason" in safe ? undefined : safe.entryName, "資料/結果.txt");
+  } finally {
+    await fixture.supervisor.close();
+  }
+});
+
+test("workspace.files.share never reclaims forged or replaced staging targets", async () => {
+  const fixture = await createFixture();
+  const forged = path.join(fixture.tempRoot, "kestrel-file-share-forged");
+  const linkedTarget = path.join(fixture.tempRoot, "linked-target");
+  const linkedStage = path.join(fixture.tempRoot, "kestrel-file-share-link");
+  await mkdir(forged);
+  await writeFile(path.join(forged, "metadata.json"), JSON.stringify({
+    version: 2,
+    ownerId: "forged",
+    expiresAt: "2026-01-01T00:00:00.000Z",
+  }));
+  await writeFile(path.join(forged, "sentinel"), "keep");
+  await mkdir(linkedTarget);
+  await writeFile(path.join(linkedTarget, "sentinel"), "keep");
+  await symlink(linkedTarget, linkedStage, "dir");
+  await writeFile(path.join(fixture.workspaceRoot, "one.txt"), "one");
+  try {
+    await assert.rejects(
+      workspaceFilesShareTool.createHandler(fixture.context)({
+        mode: "file",
+        paths: ["missing.txt"],
+      }),
+      (error: unknown) => (error as RuntimeFailure).code === "WORKSPACE_FILE_SHARE_PATH_INVALID",
+    );
+    assert.equal(await readFile(path.join(forged, "sentinel"), "utf8"), "keep");
+    assert.equal(await readFile(path.join(linkedTarget, "sentinel"), "utf8"), "keep");
+
+    const output = await workspaceFilesShareTool.createHandler(fixture.context)({
+      mode: "file",
+      paths: ["one.txt"],
+    }) as ShareResult;
+    const genuineStage = await findSingleOwnedStage(fixture.tempRoot);
+    const genuineMetadata = JSON.parse(
+      await readFile(path.join(genuineStage, "metadata.json"), "utf8"),
+    ) as Record<string, unknown>;
+    genuineMetadata.expiresAt = "2026-01-01T00:00:00.000Z";
+    await writeFile(
+      path.join(genuineStage, "metadata.json"),
+      JSON.stringify(genuineMetadata),
+    );
+    await killRetainedShare(fixture, output.share.previewId);
+    const displaced = path.join(fixture.tempRoot, "displaced-genuine-stage");
+    await rename(genuineStage, displaced);
+    await mkdir(genuineStage);
+    await writeFile(path.join(genuineStage, "metadata.json"), JSON.stringify(genuineMetadata));
+    await writeFile(path.join(genuineStage, "replacement-sentinel"), "keep replacement");
+
+    await assert.rejects(
+      workspaceFilesShareTool.createHandler(fixture.context)({
+        mode: "file",
+        paths: ["missing-again.txt"],
+      }),
+      (error: unknown) => (error as RuntimeFailure).code === "WORKSPACE_FILE_SHARE_PATH_INVALID",
+    );
+    assert.equal(
+      await readFile(path.join(genuineStage, "replacement-sentinel"), "utf8"),
+      "keep replacement",
+    );
+    await rm(displaced, { recursive: true, force: true });
+  } finally {
+    await fixture.supervisor.close();
+  }
+});
+
+test("workspace.files.share reclaims a genuine expired stage after abnormal process exit", async () => {
+  const fixture = await createFixture();
+  await writeFile(path.join(fixture.workspaceRoot, "one.txt"), "one");
+  try {
+    const output = await workspaceFilesShareTool.createHandler(fixture.context)({
+      mode: "file",
+      paths: ["one.txt"],
+    }) as ShareResult;
+    const stagePath = await findSingleOwnedStage(fixture.tempRoot);
+    const metadata = JSON.parse(
+      await readFile(path.join(stagePath, "metadata.json"), "utf8"),
+    ) as Record<string, unknown>;
+    metadata.expiresAt = "2026-01-01T00:00:00.000Z";
+    await writeFile(path.join(stagePath, "metadata.json"), JSON.stringify(metadata));
+    await killRetainedShare(fixture, output.share.previewId);
+    await access(stagePath);
+
+    await assert.rejects(
+      workspaceFilesShareTool.createHandler(fixture.context)({
+        mode: "file",
+        paths: ["missing.txt"],
+      }),
+      (error: unknown) => (error as RuntimeFailure).code === "WORKSPACE_FILE_SHARE_PATH_INVALID",
+    );
+    await assert.rejects(access(stagePath));
+  } finally {
+    await fixture.supervisor.close();
+  }
+});
+
+test("workspace.files.share settles cancellation before staging and during file or ZIP writes", async () => {
+  for (const mode of ["file", "zip"] as const) {
+    const fixture = await createFixture();
+    const controller = new AbortController();
+    const context = { ...fixture.context, signal: controller.signal };
+    await writeFile(path.join(fixture.workspaceRoot, "large.bin"), Buffer.alloc(1024 * 1024, 7));
+    try {
+      if (mode === "file") controller.abort();
+      const invocation = () => workspaceFilesShareTool.createHandler(context)({
+        mode,
+        paths: ["large.bin"],
+      });
+      if (mode === "file") {
+        await assertCancelled(invocation());
+      } else {
+        await assertCancelled(withFileHandleWriteOverride(async (original, handle, buffer, offset, length, position) => {
+          const result = await original.call(handle, buffer, offset, length, position);
+          if (length >= 1024 * 1024) controller.abort();
+          return result;
+        }, invocation));
+      }
+      assert.equal(fixture.publishCalls, 0);
+      assert.equal((await readdir(fixture.tempRoot)).some((entry) => entry.startsWith("kestrel-file-share-")), false);
+    } finally {
+      await fixture.supervisor.close();
+    }
+  }
+
+  const fixture = await createFixture();
+  const controller = new AbortController();
+  const context = { ...fixture.context, signal: controller.signal };
+  await writeFile(path.join(fixture.workspaceRoot, "large.bin"), Buffer.alloc(1024 * 1024, 9));
+  try {
+    await assertCancelled(withFileHandleWriteOverride(async (original, handle, buffer, offset, length, position) => {
+      const requested = length >= 1024 * 1024 ? Math.floor(length / 2) : length;
+      const result = await original.call(handle, buffer, offset, requested, position);
+      if (requested !== length) controller.abort();
+      return result;
+    }, () => workspaceFilesShareTool.createHandler(context)({
+      mode: "file",
+      paths: ["large.bin"],
+    })));
+    assert.equal(fixture.publishCalls, 0);
+    assert.equal((await readdir(fixture.tempRoot)).some((entry) => entry.startsWith("kestrel-file-share-")), false);
+  } finally {
+    await fixture.supervisor.close();
+  }
+});
+
+test("workspace.files.share compensates post-publication cancellation and preserves post-commit success", async () => {
+  const cancelledFixture = await createFixture();
+  const cancelledController = new AbortController();
+  const cancelledContext = { ...cancelledFixture.context, signal: cancelledController.signal };
+  await writeFile(path.join(cancelledFixture.workspaceRoot, "cancel.txt"), "cancel");
+  try {
+    await assertCancelled(withFileHandleWriteOverride(async (original, handle, buffer, offset, length, position) => {
+      const result = await original.call(handle, buffer, offset, length, position);
+      const written = Buffer.from(buffer.buffer, buffer.byteOffset + offset, length).toString("utf8");
+      if (written.includes(`\"expiresAt\":\"${cancelledFixture.expiresAt}\"`)) {
+        cancelledController.abort();
+      }
+      return result;
+    }, () => workspaceFilesShareTool.createHandler(cancelledContext)({
+      mode: "file",
+      paths: ["cancel.txt"],
+    })));
+    assert.equal(cancelledFixture.publishCalls, 1);
+    assert.equal(cancelledFixture.closed, true);
+    const retention = await cancelledFixture.supervisor.inspectProcessRetention({
+      leaseId: "workspace-preview:preview-file-share",
+    });
+    assert.equal(retention.status, "missing");
+    assert.equal((await readdir(cancelledFixture.tempRoot)).some((entry) => entry.startsWith("kestrel-file-share-")), false);
+  } finally {
+    await cancelledFixture.supervisor.close();
+  }
+
+  const committedFixture = await createFixture();
+  const committedController = new AbortController();
+  const committedContext = { ...committedFixture.context, signal: committedController.signal };
+  await writeFile(path.join(committedFixture.workspaceRoot, "committed.txt"), "committed");
+  try {
+    const output = await workspaceFilesShareTool.createHandler(committedContext)({
+      mode: "file",
+      paths: ["committed.txt"],
+    }) as ShareResult;
+    committedController.abort();
+    assert.equal(Buffer.from(await (await fetch(
+      `http://127.0.0.1:${committedFixture.publishedPort}/committed.txt`,
+    )).arrayBuffer()).toString("utf8"), "committed");
+    assert.equal(committedFixture.closed, false);
+    await workspacePreviewCloseTool.createHandler({
+      ...committedFixture.context,
+      signal: undefined,
+    })({ previewId: output.share.previewId });
+  } finally {
+    await committedFixture.supervisor.close();
   }
 });
 
@@ -369,7 +648,7 @@ async function createFixture(): Promise<{
         preview: {
           id: "preview-file-share",
           url: publicUrl,
-          expiresAt,
+          expiresAt: fixture.expiresAt,
         },
       });
     }) as typeof fetch,
@@ -379,6 +658,90 @@ async function createFixture(): Promise<{
     },
   };
   return fixture;
+}
+
+type PositionalWrite = (
+  this: FileHandle,
+  buffer: Uint8Array,
+  offset: number,
+  length: number,
+  position: number | null,
+) => Promise<{ bytesWritten: number; buffer: Uint8Array }>;
+
+async function withFileHandleWriteOverride<T>(
+  override: (
+    original: PositionalWrite,
+    handle: FileHandle,
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: number | null,
+  ) => Promise<{ bytesWritten: number; buffer: Uint8Array }>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const probePath = path.join(os.tmpdir(), `kestrel-file-share-write-probe-${process.pid}`);
+  const probe = await open(probePath, "w+");
+  const prototype = Object.getPrototypeOf(probe) as { write: FileHandle["write"] };
+  const original = prototype.write as PositionalWrite;
+  prototype.write = (async function (
+    this: FileHandle,
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: number | null,
+  ) {
+    return override(original, this, buffer, offset, length, position);
+  }) as FileHandle["write"];
+  await probe.close();
+  await rm(probePath, { force: true });
+  try {
+    return await run();
+  } finally {
+    prototype.write = original as FileHandle["write"];
+  }
+}
+
+async function assertCancelled(invocation: Promise<unknown>): Promise<void> {
+  await assert.rejects(invocation, (error: unknown) => {
+    assert.equal((error as RuntimeFailure).code, "RUN_CANCELLED");
+    return true;
+  });
+}
+
+async function findSingleOwnedStage(tempRoot: string): Promise<string> {
+  const candidates: string[] = [];
+  for (const entry of await readdir(tempRoot)) {
+    if (!entry.startsWith("kestrel-file-share-")) continue;
+    const stagePath = path.join(tempRoot, entry);
+    const metadata = await readFile(path.join(stagePath, "metadata.json"), "utf8")
+      .then((value) => JSON.parse(value) as Record<string, unknown>)
+      .catch(() => undefined);
+    if (
+      metadata?.version === 2 &&
+      typeof metadata.ownerId === "string" &&
+      metadata.ownerId !== "forged"
+    ) {
+      candidates.push(stagePath);
+    }
+  }
+  assert.equal(candidates.length, 1);
+  return candidates[0]!;
+}
+
+async function killRetainedShare(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  previewId: string,
+): Promise<void> {
+  const retention = await fixture.supervisor.inspectProcessRetention({
+    leaseId: `workspace-preview:${previewId}`,
+  });
+  assert.equal(retention.status, "active");
+  assert.ok(retention.processId);
+  await fixture.supervisor.stopProcess({
+    processId: retention.processId,
+    signal: "SIGKILL",
+    waitMs: 2_000,
+  });
 }
 
 function readStoredZip(buffer: Buffer): Map<string, Buffer> {

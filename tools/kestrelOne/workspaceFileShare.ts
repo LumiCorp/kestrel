@@ -6,16 +6,21 @@ import {
   mkdtemp,
   open,
   readdir,
-  readFile,
   realpath,
   rename,
+  rmdir,
   rm,
-  writeFile,
+  unlink,
 } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
-import { createRuntimeFailure, RuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
+import {
+  createRuntimeFailure,
+  RunCancelledError,
+  RuntimeFailure,
+} from "../../src/runtime/RuntimeFailure.js";
 import type { DevProcessStartResult } from "../../src/devshell/contracts.js";
 import type { SharedToolContext, SharedToolModule } from "../contracts.js";
 import { parseObjectInput } from "../helpers.js";
@@ -29,6 +34,7 @@ import {
   withCleanupEvidence,
 } from "./workspacePreviews.js";
 import { buildWorkspaceFileShareServerSource } from "./workspaceFileShareServerSource.js";
+import { inspectPortableZipEntryName } from "./workspaceFileSharePathSafety.js";
 
 const TOOL_NAME = "workspace.files.share";
 const STAGING_PREFIX = "kestrel-file-share-";
@@ -52,6 +58,14 @@ interface OpenSource {
   entryName: string;
   stat: Stats;
 }
+
+interface OwnedStage {
+  ownerId: string;
+  device: number;
+  inode: number;
+}
+
+const ownedStages = new Map<string, OwnedStage>();
 
 interface ShareOutput {
   share: {
@@ -182,6 +196,7 @@ async function shareWorkspaceFiles(
   });
 
   const sources = await openShareSources(
+    input.mode,
     input.paths,
     configuredWorkspaceRoot,
     workspaceRoot,
@@ -192,11 +207,13 @@ async function shareWorkspaceFiles(
   let processId: string | undefined;
   let createdPreviewId: string | undefined;
   try {
+    throwIfCancelled(context.signal);
     const downloadName = resolveDownloadName(input, sources);
     const mediaType = input.mode === "zip"
       ? "application/zip"
       : "application/octet-stream";
     stagePath = await mkdtemp(path.join(tempRoot, STAGING_PREFIX));
+    const ownedStage = await registerOwnedStage(stagePath);
     const payloadPath = path.join(stagePath, "payload");
     const serverPath = path.join(stagePath, "server.mjs");
     const sizeBytes = input.mode === "file"
@@ -204,13 +221,20 @@ async function shareWorkspaceFiles(
       : await writeZipPayload(sources, payloadPath, context.signal);
     await Promise.all(sources.map((source) => source.handle.close()));
     sources.length = 0;
-    await writeFile(serverPath, buildWorkspaceFileShareServerSource(), {
-      encoding: "utf8",
-      mode: 0o500,
-      flag: "wx",
-    });
-    await writeStageMetadata(stagePath, { expiresAt: null });
+    throwIfCancelled(context.signal);
+    await writeExclusiveFile(
+      serverPath,
+      Buffer.from(buildWorkspaceFileShareServerSource(), "utf8"),
+      0o500,
+      context.signal,
+    );
+    await writeStageMetadata(
+      stagePath,
+      { ownerId: ownedStage.ownerId, expiresAt: null },
+      context.signal,
+    );
 
+    throwIfCancelled(context.signal);
     const started = await startDownloadProcess(context, {
       stagePath,
       payloadPath,
@@ -228,9 +252,15 @@ async function shareWorkspaceFiles(
     });
     const preview = requirePublishedPreview(published);
     createdPreviewId = preview.id;
+    throwIfCancelled(context.signal);
     const baseUrl = requirePreviewBaseUrl(preview);
     const url = `${baseUrl.replace(/\/+$/u, "")}/${encodeURIComponent(downloadName)}`;
-    await writeStageMetadata(stagePath, { expiresAt: preview.expiresAt });
+    await writeStageMetadata(
+      stagePath,
+      { ownerId: ownedStage.ownerId, expiresAt: preview.expiresAt },
+      context.signal,
+    );
+    throwIfCancelled(context.signal);
     return {
       share: {
         previewId: preview.id,
@@ -244,6 +274,9 @@ async function shareWorkspaceFiles(
       warning: FILE_SHARE_WARNING,
     };
   } catch (error) {
+    const primaryError = context.signal?.aborted === true
+      ? cancellationFailure()
+      : error;
     const cleanupFailures: Array<{ operation: string; message: string }> = [];
     await Promise.all(sources.map((source) => source.handle.close().catch((closeError) => {
       cleanupFailures.push({ operation: "close_source", message: errorMessage(closeError) });
@@ -251,7 +284,10 @@ async function shareWorkspaceFiles(
     let previewCloseCompleted = false;
     if (createdPreviewId !== undefined) {
       try {
-        await closeRetainedWorkspacePreview(context, createdPreviewId);
+        await closeRetainedWorkspacePreview(
+          { ...context, signal: undefined },
+          createdPreviewId,
+        );
         previewCloseCompleted = true;
       } catch (closeError) {
         cleanupFailures.push({ operation: "close_preview", message: errorMessage(closeError) });
@@ -270,8 +306,9 @@ async function shareWorkspaceFiles(
       await rm(stagePath, { recursive: true, force: true }).catch((removeError) => {
         cleanupFailures.push({ operation: "remove_file_share_staging", message: errorMessage(removeError) });
       });
+      ownedStages.delete(stagePath);
     }
-    throw withCleanupEvidence(error, cleanupFailures);
+    throw withCleanupEvidence(primaryError, cleanupFailures);
   }
 }
 
@@ -335,6 +372,7 @@ function parseShareInput(input: unknown): ShareInput {
 }
 
 async function openShareSources(
+  mode: ShareMode,
   inputPaths: string[],
   configuredWorkspaceRoot: string,
   workspaceRoot: string,
@@ -368,8 +406,16 @@ async function openShareSources(
         throw pathFailure(inputPath, "The same source file was selected more than once.");
       }
       const entryName = normalizedEntryName(workspaceRoot, resolved.realPath);
-      if (entryNames.has(entryName)) {
-        throw pathFailure(inputPath, "Two selected files would create the same ZIP entry name.");
+      let portableEntryKey: string | undefined;
+      if (mode === "zip") {
+        const portableEntry = inspectPortableZipEntryName(entryName);
+        if ("reason" in portableEntry) {
+          throw pathFailure(inputPath, portableEntry.reason);
+        }
+        portableEntryKey = portableEntry.collisionKey;
+        if (entryNames.has(portableEntryKey)) {
+          throw pathFailure(inputPath, "Two selected files would collide on a supported extraction platform.");
+        }
       }
       const handle = await open(
         resolved.absolutePath,
@@ -396,7 +442,7 @@ async function openShareSources(
       }
       canonicalPaths.add(resolved.realPath);
       openedFileIds.add(openedFileId);
-      entryNames.add(entryName);
+      if (portableEntryKey !== undefined) entryNames.add(portableEntryKey);
       sources.push({
         handle,
         entryName,
@@ -459,7 +505,7 @@ async function copySinglePayload(
           { stage: "staging", sizeBytes: total + bytesRead },
         );
       }
-      await output.write(buffer, 0, bytesRead, total);
+      await writeBufferFully(output, buffer.subarray(0, bytesRead), total, signal);
       total += bytesRead;
     }
     await output.sync();
@@ -613,19 +659,32 @@ class StreamingZipWriter {
         { stage: "archive", sizeBytes: this.offset + buffer.length },
       );
     }
-    let written = 0;
-    while (written < buffer.length) {
-      throwIfCancelled(this.signal);
-      const result = await this.output.write(
-        buffer,
-        written,
-        buffer.length - written,
-        this.offset + written,
-      );
-      written += result.bytesWritten;
-    }
+    await writeBufferFully(this.output, buffer, this.offset, this.signal);
     this.offset += buffer.length;
   }
+}
+
+async function writeBufferFully(
+  output: FileHandle,
+  buffer: Buffer,
+  position: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  let written = 0;
+  while (written < buffer.length) {
+    throwIfCancelled(signal);
+    const result = await output.write(
+      buffer,
+      written,
+      buffer.length - written,
+      position + written,
+    );
+    if (result.bytesWritten <= 0) {
+      throw new Error("The payload writer made no progress.");
+    }
+    written += result.bytesWritten;
+  }
+  throwIfCancelled(signal);
 }
 
 async function startDownloadProcess(
@@ -752,42 +811,180 @@ function parseServerReady(text: string): number | undefined {
 
 async function writeStageMetadata(
   stagePath: string,
-  metadata: { expiresAt: string | null },
+  metadata: { ownerId: string; expiresAt: string | null },
+  signal: AbortSignal | undefined,
 ): Promise<void> {
   const nextPath = path.join(stagePath, "metadata.next.json");
   const targetPath = path.join(stagePath, "metadata.json");
-  await writeFile(nextPath, JSON.stringify({ version: 1, ...metadata }), {
-    encoding: "utf8",
-    mode: 0o600,
-  });
+  await writeExclusiveFile(
+    nextPath,
+    Buffer.from(JSON.stringify({ version: 2, ...metadata }), "utf8"),
+    0o600,
+    signal,
+  );
+  throwIfCancelled(signal);
   await rename(nextPath, targetPath);
+  throwIfCancelled(signal);
 }
 
 async function cleanExpiredStaging(tempRoot: string): Promise<void> {
-  const entries = await readdir(tempRoot, { withFileTypes: true }).catch(() => []);
-  await Promise.all(entries.flatMap((entry) => {
-    if (!entry.isDirectory() || !entry.name.startsWith(STAGING_PREFIX)) return [];
-    const stagePath = path.join(tempRoot, entry.name);
-    return [readExpiredStage(stagePath).then(async (expired) => {
-      if (expired) await rm(stagePath, { recursive: true, force: true });
-    })];
-  }));
+  const root = path.resolve(tempRoot);
+  for (const [stagePath, ownership] of ownedStages) {
+    if (path.dirname(stagePath) !== root) continue;
+    await reclaimExpiredOwnedStage(stagePath, ownership, root);
+  }
 }
 
-async function readExpiredStage(stagePath: string): Promise<boolean> {
+async function registerOwnedStage(stagePath: string): Promise<OwnedStage> {
   const stageStat = await lstat(stagePath).catch(() => undefined);
-  if (!stageStat?.isDirectory() || stageStat.isSymbolicLink()) return false;
-  const metadata = await readFile(path.join(stagePath, "metadata.json"), "utf8")
-    .catch(() => undefined);
-  if (!metadata) return false;
+  if (!stageStat?.isDirectory() || stageStat.isSymbolicLink()) {
+    throw fileShareFailure(
+      "WORKSPACE_FILE_SHARE_SERVER_FAILED",
+      "Kestrel could not establish ownership of its file-share staging directory.",
+      { stage: "staging" },
+    );
+  }
+  const ownership = {
+    ownerId: randomUUID(),
+    device: stageStat.dev,
+    inode: stageStat.ino,
+  };
+  ownedStages.set(stagePath, ownership);
+  return ownership;
+}
+
+async function reclaimExpiredOwnedStage(
+  stagePath: string,
+  ownership: OwnedStage,
+  tempRoot: string,
+): Promise<void> {
+  const stageStat = await lstatOrUndefined(stagePath);
+  if (stageStat === undefined) {
+    ownedStages.delete(stagePath);
+    return;
+  }
+  if (!sameOwnedDirectory(stageStat, ownership)) {
+    ownedStages.delete(stagePath);
+    return;
+  }
+  const metadata = await readOwnedStageMetadata(stagePath, ownership.ownerId);
+  if (metadata?.expired !== true) return;
+
+  const quarantinePath = path.join(tempRoot, `.kestrel-file-share-cleanup-${randomUUID()}`);
   try {
-    const value = JSON.parse(metadata) as { version?: unknown; expiresAt?: unknown };
-    return value.version === 1 &&
+    await rename(stagePath, quarantinePath);
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    await forgetOwnedStageUnlessStillPresent(stagePath, ownership);
+    return;
+  }
+  ownedStages.delete(stagePath);
+  ownedStages.set(quarantinePath, ownership);
+  const movedStat = await lstatOrUndefined(quarantinePath);
+  if (movedStat === undefined) {
+    ownedStages.delete(quarantinePath);
+    return;
+  }
+  if (!sameOwnedDirectory(movedStat, ownership)) {
+    ownedStages.delete(quarantinePath);
+    throw new Error("The owned file-share staging directory changed during cleanup.");
+  }
+
+  const movedMetadata = await readOwnedStageMetadata(quarantinePath, ownership.ownerId);
+  const entries = await readdir(quarantinePath);
+  if (
+    movedMetadata?.expired !== true ||
+    entries.length !== 1 ||
+    entries[0] !== "metadata.json"
+  ) {
+    await rename(quarantinePath, stagePath);
+    ownedStages.delete(quarantinePath);
+    ownedStages.set(stagePath, ownership);
+    return;
+  }
+
+  await unlink(path.join(quarantinePath, "metadata.json"));
+  await rmdir(quarantinePath);
+  ownedStages.delete(quarantinePath);
+}
+
+async function forgetOwnedStageUnlessStillPresent(
+  stagePath: string,
+  ownership: OwnedStage,
+): Promise<void> {
+  const current = await lstatOrUndefined(stagePath);
+  if (current === undefined || !sameOwnedDirectory(current, ownership)) {
+    ownedStages.delete(stagePath);
+  }
+}
+
+async function lstatOrUndefined(targetPath: string): Promise<Stats | undefined> {
+  try {
+    return await lstat(targetPath);
+  } catch (error) {
+    if (isMissingPathError(error)) return undefined;
+    throw error;
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+async function readOwnedStageMetadata(
+  stagePath: string,
+  ownerId: string,
+): Promise<{ expired: boolean } | undefined> {
+  let metadataHandle: FileHandle | undefined;
+  try {
+    metadataHandle = await open(
+      path.join(stagePath, "metadata.json"),
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+    );
+    const stat = await metadataHandle.stat();
+    if (!stat.isFile() || stat.size > 4_096) return undefined;
+    const value = JSON.parse(await metadataHandle.readFile("utf8")) as {
+      version?: unknown;
+      ownerId?: unknown;
+      expiresAt?: unknown;
+    };
+    return value.version === 2 &&
+      value.ownerId === ownerId &&
       typeof value.expiresAt === "string" &&
       Number.isFinite(new Date(value.expiresAt).getTime()) &&
-      new Date(value.expiresAt).getTime() <= Date.now();
+      new Date(value.expiresAt).getTime() <= Date.now()
+      ? { expired: true }
+      : { expired: false };
   } catch {
-    return false;
+    return undefined;
+  } finally {
+    await metadataHandle?.close().catch(() => undefined);
+  }
+}
+
+function sameOwnedDirectory(stat: Stats, ownership: OwnedStage): boolean {
+  return stat.isDirectory() &&
+    !stat.isSymbolicLink() &&
+    stat.dev === ownership.device &&
+    stat.ino === ownership.inode;
+}
+
+async function writeExclusiveFile(
+  targetPath: string,
+  contents: Buffer,
+  mode: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(targetPath, "wx", mode);
+    await writeBufferFully(handle, contents, 0, signal);
+    await handle.sync();
+    throwIfCancelled(signal);
+  } finally {
+    await handle?.close();
   }
 }
 
@@ -922,13 +1119,14 @@ function fileShareFailure(
 
 function throwIfCancelled(signal: AbortSignal | undefined): void {
   if (signal?.aborted !== true) return;
-  throw signal.reason instanceof Error
-    ? signal.reason
-    : createRuntimeFailure(
-        "RUN_CANCELLED",
-        "Workspace file sharing was cancelled.",
-        { subsystem: "tooling", recoverable: true },
-      );
+  throw cancellationFailure();
+}
+
+function cancellationFailure(): RunCancelledError {
+  return new RunCancelledError({
+    subsystem: "tooling",
+    toolName: TOOL_NAME,
+  });
 }
 
 function dosTimestamp(date: Date): { dosTime: number; dosDate: number } {

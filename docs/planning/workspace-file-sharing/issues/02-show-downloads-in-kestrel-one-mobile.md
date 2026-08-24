@@ -18,7 +18,7 @@ This issue completes the mobile part of the file-sharing scenario after the host
 
 ## Requirements and delivery context
 
-This issue is implemented in `/Users/gregasher/Projects/kestrel-one-mobile`. Follow that repository's `AGENTS.md` product and release guardrails.
+This issue is implemented in the separate `kestrel-one-mobile` repository. Follow that repository's `AGENTS.md` product and release guardrails.
 
 The hosted message-part contract is validated in `src/lib/api/contracts.ts`. Artifact presentation is owned by `src/components/message-part-detail.tsx`, which already rejects unsafe links through `safeWebUrl` and opens accepted links through React Native `Linking`. Extend these seams rather than adding a parallel download subsystem.
 

@@ -1,4 +1,4 @@
-import { relative, resolve, sep } from "node:path";
+import { basename, relative, resolve, sep } from "node:path";
 import { normalizeDevShellExecCommand } from "../../src/devshell/normalizeCommand.js";
 import { asNonEmptyRecord } from "../helpers.js";
 
@@ -661,6 +661,27 @@ export function normalizeToolActionInput(
       ...(normalizeOptionalInteger(input.maxBytes) !== undefined
         ? { maxBytes: normalizeOptionalInteger(input.maxBytes) }
         : {}),
+    };
+  }
+
+  if (name === "workspace.files.share") {
+    const paths = input.paths;
+    const defaultDownloadName =
+      input.mode === "zip"
+        ? "kestrel-files.zip"
+        : Array.isArray(paths) && typeof paths[0] === "string"
+          ? basename(paths[0]).trim()
+          : undefined;
+    const hasDownloadName = Object.hasOwn(input, "downloadName");
+    const downloadName = hasDownloadName
+      ? typeof input.downloadName === "string" && input.downloadName.length > 0
+        ? normalizeOptionalString(input.downloadName) ?? defaultDownloadName
+        : input.downloadName
+      : defaultDownloadName;
+    return {
+      ...input,
+      ...(downloadName === undefined ? {} : { downloadName }),
+      ttlMinutes: Object.hasOwn(input, "ttlMinutes") ? input.ttlMinutes : 60,
     };
   }
 

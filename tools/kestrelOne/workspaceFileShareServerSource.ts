@@ -117,6 +117,12 @@ async function workspaceFileShareServerMain(): Promise<void> {
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     process.once(signal, () => void shutdown(0));
   }
+  // The managed process supervisor owns the write end of stdin. A detached
+  // download server must treat that pipe closing as authoritative owner loss;
+  // otherwise it can retain the unlinked payload after a supervisor crash.
+  process.stdin.once("end", () => void shutdown(1));
+  process.stdin.once("close", () => void shutdown(1));
+  process.stdin.resume();
   process.once("uncaughtException", () => void shutdown(1));
   process.once("unhandledRejection", () => void shutdown(1));
 
