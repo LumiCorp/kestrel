@@ -30,6 +30,12 @@ The mobile product boundary forbids uploads, artifact editing, runner controls, 
 
 Run `pnpm verify`. Validate the final Download action on physical iOS and Android devices because browser handoff and native link behavior are not accepted through Expo Go alone.
 
+## Operator handoff
+
+Local implementation is committed in the mobile repository at `b04673d46f35e7bef9e03c78b7e58b4e9f3455cb`. Automated product checks pass, but Expo Doctor currently requires a separately approved patch-level SDK alignment. No physical iOS device is connected, and Android platform tools are unavailable.
+
+Follow the [Workspace File Sharing Mobile Device Validation Operator Runbook](../../../operations/workspace-file-sharing-mobile-device-validation-runbook.md). Resume this issue only with a green `CI=true pnpm verify` result and complete physical iOS and Android evidence from the same reviewed commit. Evidence must not contain the preview bearer URL.
+
 ## Done when
 
 - A mobile Thread containing a hosted `file-share` artifact shows a Download card with the exact filename, readable size, expiry, warning, and accessible action.

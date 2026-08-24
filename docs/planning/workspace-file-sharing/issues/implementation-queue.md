@@ -4,7 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Show shared Workspace downloads in Kestrel One Mobile](02-show-downloads-in-kestrel-one-mobile.md)
+None.
 
 ## In progress
 
@@ -12,7 +12,7 @@ None.
 
 ## Blocked
 
-None.
+- [Show shared Workspace downloads in Kestrel One Mobile](02-show-downloads-in-kestrel-one-mobile.md) — blocked until the [operator runbook](../../../operations/workspace-file-sharing-mobile-device-validation-runbook.md) records a green mobile verification gate and physical iOS and Android Download-action evidence for the same reviewed commit
 
 ## Implemented
 
