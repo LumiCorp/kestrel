@@ -60,6 +60,23 @@ export type FlySnapshot = {
   state: string;
 };
 
+export async function readProviderVolumeSnapshots(input: {
+  provider: {
+    listVolumeSnapshots(input: {
+      appName: string;
+      volumeId: string;
+    }): Promise<FlySnapshot[]>;
+  };
+  appName: string;
+  volumeId: string;
+}) {
+  if (!(input.appName && input.volumeId)) return [];
+  return input.provider.listVolumeSnapshots({
+    appName: input.appName,
+    volumeId: input.volumeId,
+  });
+}
+
 export type CanaryTarget = {
   operator: string;
   thread: {

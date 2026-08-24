@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import test from "node:test";
@@ -12,6 +13,7 @@ import {
   assertNoTemporaryResources,
   exactCanaryConfirmation,
   parseWorkspaceBackupRetryCanaryArgs,
+  readProviderVolumeSnapshots,
   runWorkspaceBackupRetryCanary,
   sanitizeCanaryEvidence,
   verifyKwb2Archive,
@@ -19,6 +21,49 @@ import {
   type CanaryDependencies,
   type CanaryTarget,
 } from "./workspace-backup-retry-canary";
+
+test("snapshot inventory delegates to the organization-scoped provider", async () => {
+  const calls: Array<{ appName: string; volumeId: string }> = [];
+  const snapshots = await readProviderVolumeSnapshots({
+    provider: {
+      async listVolumeSnapshots(input) {
+        calls.push(input);
+        return [{ id: "snapshot-1", state: "running" }];
+      },
+    },
+    appName: "tenant-environment-app",
+    volumeId: "tenant-source-volume",
+  });
+
+  assert.deepEqual(calls, [
+    {
+      appName: "tenant-environment-app",
+      volumeId: "tenant-source-volume",
+    },
+  ]);
+  assert.deepEqual(snapshots, [{ id: "snapshot-1", state: "running" }]);
+});
+
+test("the executable keeps tenant snapshots and control-worker reads on separate authorities", async () => {
+  const source = await readFile(
+    new URL("../workspace-backup-retry-canary.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(
+    source,
+    /createFlyProviderClient\(thread\.organizationId\)[\s\S]*readProviderVolumeSnapshots\(\{\s*provider,/u,
+  );
+  assert.match(
+    source,
+    /async function readSourceVolumeSnapshots[\s\S]*createFlyProviderClient\(target\.thread\.organizationId\)[\s\S]*readProviderVolumeSnapshots\(\{\s*provider,/u,
+  );
+  assert.match(
+    source,
+    /async function readControlWorkerMachines[\s\S]*captureJson\("fly", \[\s*"machine",\s*"list",/u,
+  );
+  assert.doesNotMatch(source, /"volumes",\s*"snapshots",\s*"list"/u);
+});
 
 test("arguments and exact confirmation bind every destructive target", () => {
   const args = parseWorkspaceBackupRetryCanaryArgs([

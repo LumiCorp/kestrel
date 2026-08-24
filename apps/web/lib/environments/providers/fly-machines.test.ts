@@ -1097,6 +1097,42 @@ test("Fly on-demand snapshots use the Workspace volume endpoint", async () => {
   assert.match(requestedUrl, /\/apps\/app-1\/volumes\/vol-1\/snapshots$/u);
 });
 
+test("Fly snapshot inventory uses the provider client's scoped authority", async () => {
+  const requests: Array<{ authorization: string | null; url: string }> = [];
+  const client = new FlyMachinesClient({
+    token: "organization-scoped-token",
+    organizationSlug: "kestrel-test",
+    fetchImpl: (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const headers = new Headers(init?.headers);
+      requests.push({
+        authorization: headers.get("authorization"),
+        url: String(input),
+      });
+      return Response.json([
+        { id: "snapshot-1", status: "running" },
+        { id: "snapshot-2", state: "created" },
+      ]);
+    }) as typeof fetch,
+  });
+
+  assert.deepEqual(
+    await client.listVolumeSnapshots({ appName: "app-1", volumeId: "vol-1" }),
+    [
+      { id: "snapshot-1", state: "running" },
+      { id: "snapshot-2", state: "created" },
+    ],
+  );
+  assert.deepEqual(requests, [
+    {
+      authorization: "Bearer organization-scoped-token",
+      url: "https://api.machines.dev/v1/apps/app-1/volumes/vol-1/snapshots",
+    },
+  ]);
+});
+
 test("Fly image updates are idempotent across tag aliases of the same digest", async () => {
   const requests: Array<{ method: string; url: string }> = [];
   const digest = `sha256:${"a".repeat(64)}`;
