@@ -770,6 +770,19 @@ export class InMemorySessionStore implements SessionStore {
         { runId, sessionId: event.sessionId },
       );
     }
+    if (run.tenantId !== undefined && run.tenantId !== this.tenantId) {
+      throw createRuntimeFailure(
+        "PRESTARTED_RUN_INVALID",
+        `Run '${runId}' is not bound to the trusted store tenant.`,
+        { runId, sessionId: event.sessionId },
+      );
+    }
+    if (run.tenantId === undefined && this.tenantId !== undefined) {
+      run.tenantId = this.tenantId;
+      for (const effect of this.effects) {
+        if (effect.runId === runId && effect.tenantId === undefined) effect.tenantId = this.tenantId;
+      }
+    }
     this.operationLog.push(`validatePrestartedRun:${runId}`);
   }
 
@@ -1001,25 +1014,23 @@ export class InMemorySessionStore implements SessionStore {
   }
 
   async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, owner: { runId: string; sessionId: string }): Promise<void> {
-    for (const effect of this.effects) {
-      if (effect.idempotencyKey === idempotencyKey) {
-        if (status === "DONE" && (
-          effect.runId !== owner.runId ||
-          effect.sessionId !== owner.sessionId ||
-          !this.hasTrustedEffectStatusTenant(effect)
-        )) {
-          throw new SandboxCapabilityExactResultConflictError("Effect status owner or tenant does not match durable authority");
-        }
-        if (
-          status === "DONE" &&
-          effect.status === "FAILED" &&
-          this.effectResults.get(idempotencyKey)?.status !== "DONE"
-        ) {
-          throw new SandboxCapabilityExactResultCancelledError("Completed effect status lost to durable cancellation");
-        }
-        effect.status = status;
-      }
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+    if (
+      effect === undefined ||
+      effect.runId !== owner.runId ||
+      effect.sessionId !== owner.sessionId ||
+      !this.hasTrustedEffectStatusTenant(effect)
+    ) {
+      throw new SandboxCapabilityExactResultConflictError("Effect status owner or tenant does not match durable authority");
     }
+    if (
+      status === "DONE" &&
+      effect.status === "FAILED" &&
+      this.effectResults.get(idempotencyKey)?.status !== "DONE"
+    ) {
+      throw new SandboxCapabilityExactResultCancelledError("Completed effect status lost to durable cancellation");
+    }
+    effect.status = status;
     this.operationLog.push(`markEffectStatus:${idempotencyKey}:${status}`);
   }
 
@@ -1730,6 +1741,7 @@ export class InMemorySessionStore implements SessionStore {
       startedAt: now,
       completedAt: undefined,
       error: undefined,
+      ...(this.tenantId === undefined ? {} : { tenantId: this.tenantId }),
     });
     const rootRunId = existing?.rootRunId ?? input.proposedRunId;
     this.conversationTurns.set(input.turnId, {

@@ -180,6 +180,10 @@ test("in-memory ordinary code execution uses store-owned tenant authority for bo
     cancellationWins.markEffectStatus(requested.idempotencyKey, "DONE", { runId: "run-wrong", sessionId: requested.sessionId }),
     /owner or tenant does not match/u,
   );
+  await assert.rejects(
+    cancellationWins.markEffectStatus(requested.idempotencyKey, "FAILED", { runId: "run-wrong", sessionId: requested.sessionId }),
+    /owner or tenant does not match/u,
+  );
   assert.equal(await cancellationWins.getEffectResult(requested.idempotencyKey), null);
   assert.equal((await cancellationWins.getPersistedEffect(requested.idempotencyKey))?.status, "PENDING");
   assert.deepEqual(await cancellationWins.claimExactEffectCancellation({ ...requested, tenantId: "tenant-2" }), { status: "not_found" });
@@ -200,6 +204,10 @@ test("in-memory ordinary code execution uses store-owned tenant authority for bo
   );
   await assert.rejects(
     wrongTenant.markEffectStatus(requested.idempotencyKey, "DONE", requested),
+    /tenant does not match/u,
+  );
+  await assert.rejects(
+    wrongTenant.markEffectStatus(requested.idempotencyKey, "FAILED", requested),
     /tenant does not match/u,
   );
   assert.equal(await wrongTenant.getEffectResult(requested.idempotencyKey), null);

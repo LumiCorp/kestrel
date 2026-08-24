@@ -183,11 +183,19 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
       /owner or tenant does not match/u,
     );
     await assert.rejects(
+      store.markEffectStatus(binding.toolCallId, "FAILED", { runId: "run-wrong", sessionId }),
+      /owner or tenant does not match/u,
+    );
+    await assert.rejects(
       store.markEffectStatus(binding.toolCallId, "DONE", { runId, sessionId: "session-wrong" }),
       /owner or tenant does not match/u,
     );
     await assert.rejects(
       wrongTenantStore.markEffectStatus(binding.toolCallId, "DONE", { runId, sessionId }),
+      /owner or tenant does not match/u,
+    );
+    await assert.rejects(
+      wrongTenantStore.markEffectStatus(binding.toolCallId, "FAILED", { runId, sessionId }),
       /owner or tenant does not match/u,
     );
     await assert.rejects(

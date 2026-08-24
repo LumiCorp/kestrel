@@ -1238,69 +1238,39 @@ export class PostgresSessionStore implements SessionStore {
 
   async validatePrestartedRun(runId: string, event: RuntimeEvent): Promise<void> {
     await this.ensureSchemaV3();
-    const result = await this.db.query<{
-      run_id: string | null;
-      run_session_id: string | null;
-      event_type: string | null;
-      run_status: string | null;
-      run_tenant_id: string | null;
-      active_run_id: string | null;
-    }>(
-      `SELECT runs.run_id,
-              runs.session_id AS run_session_id,
-              runs.event_type,
-              runs.status AS run_status,
-              runs.tenant_id AS run_tenant_id,
-              sessions.active_run_id
-         FROM sessions
-         LEFT JOIN runs
-           ON runs.run_id = $1
-        WHERE sessions.session_id = $2`,
-      [runId, event.sessionId],
-    );
-    const row = result.rows[0];
-    if (
-      row?.run_id !== runId ||
-      row.run_session_id !== event.sessionId ||
-      row.event_type !== event.type ||
-      row.run_status !== "RUNNING" ||
-      row.active_run_id !== runId ||
-      (row.run_tenant_id !== null && row.run_tenant_id !== this.tenantId)
-    ) {
-      throw createRuntimeFailure(
-        "PRESTARTED_RUN_INVALID",
-        `Run '${runId}' is not a valid prestarted run for session '${event.sessionId}'.`,
-        {
-          runId,
-          sessionId: event.sessionId,
-          eventType: event.type,
-          observedRunId: row?.run_id ?? undefined,
-          observedRunSessionId: row?.run_session_id ?? undefined,
-          observedEventType: row?.event_type ?? undefined,
-          observedRunStatus: row?.run_status ?? undefined,
-          observedActiveRunId: row?.active_run_id ?? undefined,
-        },
+    await this.withTransaction(async (executor) => {
+      const session = await executor.query<{ active_run_id: string | null }>(
+        `SELECT active_run_id FROM sessions WHERE session_id = $1 FOR UPDATE`,
+        [event.sessionId],
       );
-    }
-    if (row.run_tenant_id === null && this.tenantId !== undefined) {
-      const reconciled = await this.db.query(
-        `UPDATE runs SET tenant_id = $2 WHERE run_id = $1 AND tenant_id IS NULL`,
-        [runId, this.tenantId],
+      const run = await executor.query<{
+        session_id: string; event_type: string; status: string; tenant_id: string | null;
+      }>(
+        `SELECT session_id, event_type, status, tenant_id FROM runs WHERE run_id = $1 FOR UPDATE`,
+        [runId],
       );
-      if (reconciled.rowCount !== 1) {
-        const current = await this.db.query<{ tenant_id: string | null }>(
-          `SELECT tenant_id FROM runs WHERE run_id = $1`,
-          [runId],
+      const row = run.rows[0];
+      if (
+        row === undefined || row.session_id !== event.sessionId || row.event_type !== event.type ||
+        row.status !== "RUNNING" || session.rows[0]?.active_run_id !== runId ||
+        (row.tenant_id !== null && row.tenant_id !== this.tenantId)
+      ) {
+        throw createRuntimeFailure(
+          "PRESTARTED_RUN_INVALID",
+          `Run '${runId}' is not a valid prestarted run for session '${event.sessionId}'.`,
+          { runId, sessionId: event.sessionId, eventType: event.type },
         );
-        if (current.rows[0]?.tenant_id !== this.tenantId) {
-          throw createRuntimeFailure(
-            "PRESTARTED_RUN_INVALID",
-            `Run '${runId}' is not bound to the trusted store tenant.`,
-            { runId, sessionId: event.sessionId },
-          );
-        }
       }
-    }
+      if (this.tenantId !== undefined) {
+        if (row.tenant_id === null) {
+          await executor.query(`UPDATE runs SET tenant_id = $2 WHERE run_id = $1`, [runId, this.tenantId]);
+        }
+        await executor.query(
+          `UPDATE effects SET tenant_id = $2 WHERE run_id = $1 AND tenant_id IS NULL`,
+          [runId, this.tenantId],
+        );
+      }
+    });
   }
 
   async recoverOrphanedActiveRun(sessionId: string): Promise<{ runId?: string | undefined }> {
@@ -1858,9 +1828,7 @@ export class PostgresSessionStore implements SessionStore {
         [idempotencyKey],
       );
       const row = effect.rows[0];
-      if (status === "DONE" && (
-        row === undefined || row.run_id !== owner.runId || row.session_id !== owner.sessionId
-      )) {
+      if (row === undefined || row.run_id !== owner.runId || row.session_id !== owner.sessionId) {
         throw new SandboxCapabilityExactResultConflictError("Effect status owner or tenant does not match the locked effect");
       }
       if (status === "DONE" && row?.status === "FAILED") {
@@ -1872,7 +1840,7 @@ export class PostgresSessionStore implements SessionStore {
           throw new SandboxCapabilityExactResultCancelledError("Completed effect status lost to durable cancellation");
         }
       }
-      if (status === "DONE" && row !== undefined && !await this.hasTrustedPostgresEffectTenant(executor, {
+      if (!await this.hasTrustedPostgresEffectTenant(executor, {
         runId: row.run_id, sessionId: row.session_id, stepIndex: row.step_index,
         type: row.effect_type, payload: row.payload_json, idempotencyKey,
         failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
