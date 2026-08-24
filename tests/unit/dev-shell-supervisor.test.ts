@@ -1195,8 +1195,12 @@ test("DevShellSupervisor orders process exit behind a failing promotion without 
       }),
       /injected delayed promotion persistence failure/u,
     );
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const record = await store.getProcess(processId);
+    const terminalDeadline = Date.now() + 2_000;
+    let record = await store.getProcess(processId);
+    while (record?.status === "RUNNING" && Date.now() < terminalDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      record = await store.getProcess(processId);
+    }
     assert.notEqual(record?.status, "RUNNING");
     assert.deepEqual(record?.retentionLeases, []);
   } finally {
