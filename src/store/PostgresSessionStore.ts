@@ -1771,10 +1771,11 @@ export class PostgresSessionStore implements SessionStore {
     await this.withTransaction(async (executor) => {
       const effect = await executor.query<{
         run_id: string; session_id: string; status: PersistedEffect["status"];
-        tenant_id: string | null; effect_type: string; payload_json: Record<string, unknown>;
+        tenant_id: string | null; tenant_ownership_state: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
+        effect_type: string; payload_json: Record<string, unknown>;
         step_index: number; failure_policy: PersistedEffect["failurePolicy"]; created_at: string;
       }>(
-        `SELECT run_id, session_id, status, tenant_id, effect_type, payload_json,
+        `SELECT run_id, session_id, status, tenant_id, tenant_ownership_state, effect_type, payload_json,
                 step_index, failure_policy, created_at
            FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
         [result.idempotencyKey],
@@ -1790,7 +1791,7 @@ export class PostgresSessionStore implements SessionStore {
         runId: row.run_id, sessionId: row.session_id, stepIndex: row.step_index,
         type: row.effect_type, payload: row.payload_json, idempotencyKey: result.idempotencyKey,
         failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
-      }, row.tenant_id, result)) {
+      }, row.tenant_id, row.tenant_ownership_state, result)) {
         throw new SandboxCapabilityExactResultConflictError("Effect result tenant does not match durable authority");
       }
       await executor.query(
@@ -1820,10 +1821,11 @@ export class PostgresSessionStore implements SessionStore {
     await this.withTransaction(async (executor) => {
       const effect = await executor.query<{
         run_id: string; session_id: string; status: PersistedEffect["status"];
-        tenant_id: string | null; effect_type: string; payload_json: Record<string, unknown>;
+        tenant_id: string | null; tenant_ownership_state: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
+        effect_type: string; payload_json: Record<string, unknown>;
         step_index: number; failure_policy: PersistedEffect["failurePolicy"]; created_at: string;
       }>(
-        `SELECT run_id, session_id, status, tenant_id, effect_type, payload_json,
+        `SELECT run_id, session_id, status, tenant_id, tenant_ownership_state, effect_type, payload_json,
                 step_index, failure_policy, created_at
            FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
         [idempotencyKey],
@@ -1845,7 +1847,7 @@ export class PostgresSessionStore implements SessionStore {
         runId: row.run_id, sessionId: row.session_id, stepIndex: row.step_index,
         type: row.effect_type, payload: row.payload_json, idempotencyKey,
         failurePolicy: row.failure_policy, status: row.status, createdAt: normalizeTimestampString(row.created_at),
-      }, row.tenant_id)) {
+      }, row.tenant_id, row.tenant_ownership_state)) {
         throw new SandboxCapabilityExactResultConflictError("Effect status owner or tenant does not match durable authority");
       }
       await executor.query(
@@ -1859,10 +1861,15 @@ export class PostgresSessionStore implements SessionStore {
     executor: SqlExecutor,
     effect: PersistedEffect,
     persistedTenantId: string | null,
+    ownershipState: "legacy_unknown" | "explicit_unbound" | "tenant_bound",
     result?: EffectResult | undefined,
   ): Promise<boolean> {
-    if (this.tenantId === undefined) return persistedTenantId === null;
-    if (persistedTenantId !== null) return persistedTenantId === this.tenantId;
+    if (this.tenantId === undefined) {
+      return ownershipState === "explicit_unbound" && persistedTenantId === null;
+    }
+    if (persistedTenantId !== null) {
+      return ownershipState === "tenant_bound" && persistedTenantId === this.tenantId;
+    }
     if (!exactEffectRequiresCapabilityTenantBinding(effect)) return false;
     const leases = await executor.query<{ record_json: unknown }>(
       `SELECT transition.record_json
@@ -2085,9 +2092,10 @@ export class PostgresSessionStore implements SessionStore {
         payload_json: Record<string, unknown>; idempotency_key: string;
         failure_policy: PersistedEffect["failurePolicy"]; status: PersistedEffect["status"]; created_at: string;
         tenant_id: string | null;
+        tenant_ownership_state: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
       }>(
         `SELECT run_id, session_id, step_index, effect_type, payload_json,
-                idempotency_key, failure_policy, status, created_at, tenant_id
+                idempotency_key, failure_policy, status, created_at, tenant_id, tenant_ownership_state
            FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
         [exactInput.toolCallId],
       );
@@ -2124,7 +2132,8 @@ export class PostgresSessionStore implements SessionStore {
       if (
         this.tenantId === undefined ||
         lease?.binding.tenantId !== this.tenantId ||
-        (effectRow?.tenant_id !== null && effectRow?.tenant_id !== this.tenantId)
+        (effectRow !== undefined && effectRow.tenant_id !== null &&
+          (effectRow.tenant_ownership_state !== "tenant_bound" || effectRow.tenant_id !== this.tenantId))
       ) {
         throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result tenant does not match durable authority");
       }

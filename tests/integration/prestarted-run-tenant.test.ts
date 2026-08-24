@@ -206,13 +206,29 @@ test("InMemory explicitly tenant-unbound prestarted runs remain valid while lega
   assert.deepEqual(await store.claimConversationTurnExecution(claimInput()), { kind: "claimed", runId });
   const event = { id: "event-memory-unbound", type: "user.message", sessionId, payload: {} };
   await store.validatePrestartedRun(runId, event);
+  const gateway = createTestToolGateway({ "code.execute": async () => ({ status: "ok" }) });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway, toolName: "code.execute", toolInput: { language: "javascript", code: "console.log('ok')" },
+    runId, sessionId, callId: toolCallId,
+  });
+  await store.commitStep({
+    runId, event, sessionId, expectedVersion: 0, stepAgent: "agent.loop", nextStepAgent: "agent.loop",
+    statePatch: {}, effects: [{ type: "execute_tool_call", payload: { preparedToolCall }, idempotencyKey: toolCallId, failurePolicy: "STOP" }],
+    emitEvents: [], stepIndex: 0,
+  });
+  await store.markEffectStatus(toolCallId, "FAILED", { runId, sessionId });
   const internals = store as unknown as {
     runs: Map<string, { tenantOwnershipState: string }>;
+    effects: Array<{ tenantOwnershipState: string; status: string }>;
   };
   assert.equal(internals.runs.get(runId)?.tenantOwnershipState, "explicit_unbound");
   internals.runs.get(runId)!.tenantOwnershipState = "legacy_unknown";
+  internals.effects[0]!.tenantOwnershipState = "legacy_unknown";
   await assert.rejects(store.validatePrestartedRun(runId, event), (error: unknown) =>
     error instanceof Error && "code" in error && error.code === "PRESTARTED_RUN_INVALID");
+  await assert.rejects(
+    store.markEffectStatus(toolCallId, "FAILED", { runId, sessionId }), /tenant does not match/u,
+  );
 });
 
 test("PGlite explicitly tenant-unbound prestarted runs remain valid while legacy unknown rows fail closed", async (t) => {
@@ -232,12 +248,32 @@ test("PGlite explicitly tenant-unbound prestarted runs remain valid while legacy
   assert.deepEqual(await store.claimConversationTurnExecution(claimInput()), { kind: "claimed", runId });
   const event = { id: "event-pglite-unbound", type: "user.message", sessionId, payload: {} };
   await store.validatePrestartedRun(runId, event);
+  const gateway = createTestToolGateway({ "code.execute": async () => ({ status: "ok" }) });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway, toolName: "code.execute", toolInput: { language: "javascript", code: "console.log('ok')" },
+    runId, sessionId, callId: toolCallId,
+  });
+  await store.commitStep({
+    runId, event, sessionId, expectedVersion: 0, stepAgent: "agent.loop", nextStepAgent: "agent.loop",
+    statePatch: {}, effects: [{ type: "execute_tool_call", payload: { preparedToolCall }, idempotencyKey: toolCallId, failurePolicy: "STOP" }],
+    emitEvents: [], stepIndex: 0,
+  });
+  await store.markEffectStatus(toolCallId, "FAILED", { runId, sessionId });
   assert.deepEqual((await handle.executor.query<{ tenant_id: string | null; tenant_ownership_state: string }>(
     "SELECT tenant_id, tenant_ownership_state FROM runs WHERE run_id = $1", [runId],
   )).rows, [{ tenant_id: null, tenant_ownership_state: "explicit_unbound" }]);
   await handle.executor.query(
     "UPDATE runs SET tenant_ownership_state = 'legacy_unknown' WHERE run_id = $1", [runId],
   );
+  await handle.executor.query(
+    "UPDATE effects SET tenant_ownership_state = 'legacy_unknown', status = 'PENDING' WHERE run_id = $1", [runId],
+  );
   await assert.rejects(store.validatePrestartedRun(runId, event), (error: unknown) =>
     error instanceof Error && "code" in error && error.code === "PRESTARTED_RUN_INVALID");
+  await assert.rejects(
+    store.markEffectStatus(toolCallId, "FAILED", { runId, sessionId }), /tenant does not match/u,
+  );
+  assert.equal((await handle.executor.query<{ status: string }>(
+    "SELECT status FROM effects WHERE idempotency_key = $1", [toolCallId],
+  )).rows[0]?.status, "PENDING");
 });

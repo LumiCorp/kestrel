@@ -1041,8 +1041,14 @@ export class InMemorySessionStore implements SessionStore {
   }
 
   private hasTrustedEffectTenant(effect: InMemoryEffect, result: EffectResult): boolean {
-    if (this.tenantId === undefined) return effect.tenantId === undefined;
-    if (effect.tenantId !== undefined) return effect.tenantId === this.tenantId;
+    const ownershipState = effect.tenantOwnershipState ??
+      (effect.tenantId === undefined ? "legacy_unknown" : "tenant_bound");
+    if (this.tenantId === undefined) {
+      return ownershipState === "explicit_unbound" && effect.tenantId === undefined;
+    }
+    if (effect.tenantId !== undefined) {
+      return ownershipState === "tenant_bound" && effect.tenantId === this.tenantId;
+    }
     if (!exactEffectRequiresCapabilityTenantBinding(effect)) return false;
     if (result.status === "FAILED") return this.hasTrustedEffectStatusTenant(effect);
     const read = validateExactEffectResultRead({
@@ -1066,8 +1072,14 @@ export class InMemorySessionStore implements SessionStore {
   }
 
   private hasTrustedEffectStatusTenant(effect: InMemoryEffect): boolean {
-    if (this.tenantId === undefined) return effect.tenantId === undefined;
-    if (effect.tenantId !== undefined) return effect.tenantId === this.tenantId;
+    const ownershipState = effect.tenantOwnershipState ??
+      (effect.tenantId === undefined ? "legacy_unknown" : "tenant_bound");
+    if (this.tenantId === undefined) {
+      return ownershipState === "explicit_unbound" && effect.tenantId === undefined;
+    }
+    if (effect.tenantId !== undefined) {
+      return ownershipState === "tenant_bound" && effect.tenantId === this.tenantId;
+    }
     if (!exactEffectRequiresCapabilityTenantBinding(effect)) return false;
     const matches = [...this.sandboxCapabilityLeaseTransitions.values()]
       .map((ledger) => ledger.at(-1))
