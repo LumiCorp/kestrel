@@ -185,9 +185,10 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
     try {
       const before = await remoteMatchCount(config, "provider.ndjson", /qualification-block-cancel/u);
       const pending = client.run(profileId, "cancel");
+      const settled = pending.promise.catch((error) => error instanceof PartialRunError ? error.result : undefined);
       await waitForRemoteMatch(config, "provider.ndjson", /qualification-block-cancel/u, before + 1);
       await killRemote(config);
-      const partial = await pending.promise.catch((error) => error instanceof PartialRunError ? error.result : undefined);
+      const partial = await settled;
       await startRemote(config, "controlled", { credentials: false });
       await waitForHealth(config, port, config.runnerToken);
       if (partial?.runId && partial.idempotencyKey) await client.expectExactResultUnavailable(partial);
@@ -204,9 +205,10 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
         const before = await remoteMatchCount(config, "control/events.ndjson", new RegExp(`"checkpoint":"${checkpoint}"`, "u"));
         await armCheckpoint(config, checkpoint);
         const pending = client.run(profileId, "provider-used");
+        const settled = pending.promise.catch((error) => error instanceof PartialRunError ? error.result : undefined);
         await waitForRemoteMatch(config, "control/events.ndjson", new RegExp(`"checkpoint":"${checkpoint}"`, "u"), before + 1);
         await killRemote(config);
-        const partial = await pending.promise.catch((error) => error instanceof PartialRunError ? error.result : undefined);
+        const partial = await settled;
         await startRemote(config, "controlled", { credentials: false });
         await waitForHealth(config, port, config.runnerToken);
         const recovered = await recoverRunIdentity(config, checkpoint);
