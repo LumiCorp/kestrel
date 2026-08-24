@@ -24,7 +24,7 @@ test("model policy store bootstraps defaults when the file is missing", async ()
     assert.deepEqual(policy, createDefaultModelPolicy());
     const raw = JSON.parse(await readFile(path.join(tempDir, MODEL_POLICY_FILE_NAME), "utf8")) as Record<string, unknown>;
     assert.equal(raw.provider, "openrouter");
-    assert.equal(raw.model, "z-ai/glm-5.2");
+    assert.equal(raw.model, "openai/gpt-5.6-luna");
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

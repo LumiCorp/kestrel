@@ -1,7 +1,13 @@
 import type { OpenRouterEnvConfig } from "../contracts.js";
+import {
+  DEFAULT_OPENROUTER_BASE_URL,
+  DEFAULT_OPENROUTER_MODEL,
+} from "./constants.js";
 
-export const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai";
-export const DEFAULT_OPENROUTER_MODEL = "z-ai/glm-5.2";
+export {
+  DEFAULT_OPENROUTER_BASE_URL,
+  DEFAULT_OPENROUTER_MODEL,
+} from "./constants.js";
 
 export function loadOpenRouterEnv(env: NodeJS.ProcessEnv = process.env): OpenRouterEnvConfig {
   const apiKey = env.OPENROUTER_API_KEY;

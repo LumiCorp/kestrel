@@ -94,6 +94,7 @@ const groups = [
       "lib/knowledge/queue.postgres.test.ts",
       "lib/projects/skills.postgres.test.ts",
       "lib/schedules/store.postgres.test.ts",
+      "scripts/lib/reset-organization-files.postgres.test.ts",
     ],
   },
   {

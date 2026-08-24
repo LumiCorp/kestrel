@@ -944,11 +944,11 @@ test("model command lists current provider options", async () => {
     model: string;
   };
   assert.equal(policy.provider, "openrouter");
-  assert.equal(policy.model, "z-ai/glm-5.2");
+  assert.equal(policy.model, "openai/gpt-5.6-luna");
 
   const rawHistory = await readFile(historyPath, "utf8");
   assert.match(rawHistory, /Recommended models for 'openrouter':/u);
-  assert.match(rawHistory, /\* z-ai\/glm-5\.2/u);
+  assert.match(rawHistory, /\* openai\/gpt-5\.6-luna/u);
   assert.match(rawHistory, /Use \/model search <query> to browse/u);
 });
 
@@ -1032,7 +1032,7 @@ test("model set-provider requires a follow-up model selection before mutating po
       model: string;
     };
     assert.equal(policy.provider, "openrouter");
-    assert.equal(policy.model, "z-ai/glm-5.2");
+    assert.equal(policy.model, "openai/gpt-5.6-luna");
 
     let rawHistory = await readFile(historyPath, "utf8");
     assert.match(rawHistory, /Provider 'ollama' selected\. Choose a model to finish the switch\./u);

@@ -329,8 +329,8 @@ class CliTaskRunnerTest(unittest.TestCase):
 
         model_by_stage = profile["agentStageConfig"]["modelByStage"]
         self.assertEqual(profile["modelProvider"], "openrouter")
-        self.assertEqual(profile["model"], "z-ai/glm-5.2")
-        self.assertEqual(model_by_stage["agent.loop"], "z-ai/glm-5.2")
+        self.assertEqual(profile["model"], "openai/gpt-5.6-luna")
+        self.assertEqual(model_by_stage["agent.loop"], "openai/gpt-5.6-luna")
 
     def test_profile_rejects_deprecated_tbench_model_alias(self) -> None:
         with mock.patch.dict(
