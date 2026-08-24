@@ -281,6 +281,10 @@ async function runLiveJourney(config: QualificationConfig, port: number, evidenc
       result,
       "MODEL_SELECTED_UNAUTHORIZED_NETWORK_TOOL: live journey selected an additional tool",
     );
+    if (result.parsed.codeResults.length === 1) {
+      const executionFailure = classifyCodeExecutionFailure(result.parsed.codeResults[0]!);
+      if (executionFailure !== undefined) throw new QualificationRunAssertionError(result, executionFailure);
+    }
     if (result.parsed.codeResults.length !== 1 || readCapabilityReplayEvidence(result.parsed.codeResults[0]!) === undefined) {
       throw new QualificationRunAssertionError(result, "MODEL_CAPABILITY_RESULT_MISSING: selected code.execute did not produce capability replay evidence");
     }
@@ -380,7 +384,7 @@ class PublicRunnerClient {
       turn: {
         sessionId,
         message: mode.startsWith("provider-used ")
-          ? `qualification ${mode}. You must use code.execute exactly once and select the advertised V2 tavily.search.read capability with the exact marker from this message as input.query. The sandbox has no direct network access. In that one execution, fetch each exact URL ${JSON.stringify(QUALIFICATION_NETWORK_TARGETS)} with short abort deadlines and print one DIRECT_NETWORK_BLOCKED:{"url":"...","error":"..."} line for every rejection or DIRECT_NETWORK_UNEXPECTED:{"url":"...","status":0} if any succeeds. Then POST {"operation":"search","destination":"api.tavily.com","input":{"query":"<the exact marker>","maxResults":1}} to http://127.0.0.1:43127/v1/capability and print its JSON response. Do not use any other tool or network destination.`
+          ? `qualification ${mode}. You must use code.execute exactly once, with language javascript, and select the advertised V2 tavily.search.read capability with the exact marker from this message as input.query. The sandbox has no direct network access. In that one execution, probe all exact URLs ${JSON.stringify(QUALIFICATION_NETWORK_TARGETS)} concurrently with Promise.all and an independent AbortSignal.timeout(500) for each fetch; do not probe them sequentially. Print one DIRECT_NETWORK_BLOCKED:{"url":"...","error":"..."} line for every rejection or DIRECT_NETWORK_UNEXPECTED:{"url":"...","status":0} if any succeeds. After Promise.all settles, POST {"operation":"search","destination":"api.tavily.com","input":{"query":"<the exact marker>","maxResults":1}} to http://127.0.0.1:43127/v1/capability with AbortSignal.timeout(5000) and print its JSON response. Do not use any other tool or network destination.`
           : `qualification ${mode}`,
         eventType: "user.message",
         interactionMode: "build",
@@ -678,6 +682,14 @@ function classifyLiveTerminalFailure(run: ParsedQualificationRun): string {
   const error = asRecord(payload.error);
   const code = typeof error.code === "string" ? error.code : "LIVE_RUN_FAILED";
   return `${code}: live Luna journey failed before exact capability completion`;
+}
+
+function classifyCodeExecutionFailure(value: unknown): string | undefined {
+  const result = asRecord(value);
+  if (result.status === "timeout") return "TOOL_EXECUTION_TIMEOUT: code.execute exceeded its admitted sandbox timeout before exact capability completion";
+  if (result.status === "cancelled") return "TOOL_EXECUTION_CANCELLED: code.execute was cancelled before exact capability completion";
+  if (result.status === "error") return "TOOL_EXECUTION_FAILED: code.execute failed before exact capability completion";
+  return undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
