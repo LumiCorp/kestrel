@@ -13,6 +13,7 @@ import {
   loadProductionEnvironment,
 } from "./lib/production-command";
 import {
+  mergeSourceMachineIntoInventory,
   parseWorkspaceBackupRetryCanaryArgs,
   readProviderVolumeSnapshots,
   recoverWorkerAfterInterruption,
@@ -21,6 +22,7 @@ import {
   snapshotEvidence,
   stopWorkerWithProviderVerification,
   verifyKwb2Archive,
+  waitForWorkspaceRetirementResourceCleanup,
   type BackupObservation,
   type CanaryEvidence,
   type CanaryTarget,
@@ -508,18 +510,10 @@ async function readProviderEnvironmentInventory(input: {
       : null,
   ]);
   return normalizeInventory({
-    machines: inventory.machines.map((machine) =>
-      machine.id === sourceMachine?.id
-        ? {
-            ...machine,
-            healthStatus:
-              sourceMachine.checks?.find((check) => check.name === "workspace")
-                ?.status ?? null,
-            image: sourceMachine.image ?? null,
-            resolvedImageDigest: sourceMachine.resolvedImageDigest ?? null,
-          }
-        : machine,
-    ),
+    machines: mergeSourceMachineIntoInventory({
+      machines: inventory.machines,
+      sourceMachine,
+    }),
     volumes: inventory.volumes,
   });
 }
@@ -687,11 +681,18 @@ async function retireWorkspace(
     await delay(1_000);
   }
   const provider = await createFlyProviderClient(target.thread.organizationId);
-  const inventory = await readProviderEnvironmentInventory({
-    provider,
-    appName: target.environment.flyAppName ?? "",
+  const resourceCleanup = await waitForWorkspaceRetirementResourceCleanup({
     sourceMachineId: target.workspace.flyMachineId ?? "",
+    sourceVolumeId: target.workspace.flyVolumeId ?? "",
+    deadlineMs: Math.max(1, deadline - Date.now()),
+    observeEnvironment: () =>
+      readProviderEnvironmentInventory({
+        provider,
+        appName: target.environment.flyAppName ?? "",
+        sourceMachineId: target.workspace.flyMachineId ?? "",
+      }),
   });
+  const inventory = resourceCleanup.environment;
   const preservedBackup = await knowledgeDb.query.workspaceBackups.findFirst({
     where: eq(schema.workspaceBackups.id, backup.backup.id),
     columns: { id: true, objectKey: true },
@@ -710,6 +711,10 @@ async function retireWorkspace(
     ),
     backupRecordPreserved: preservedBackup?.id === backup.backup.id,
     archivePreserved,
+    sourceResourceObservations: resourceCleanup.observations,
+    ...(resourceCleanup.observationsTruncated
+      ? { sourceResourceObservationsTruncated: true }
+      : {}),
   };
 }
 

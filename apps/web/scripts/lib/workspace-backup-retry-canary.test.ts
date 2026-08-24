@@ -15,6 +15,7 @@ import {
   assertFirstAttempt,
   assertNoTemporaryResources,
   exactCanaryConfirmation,
+  mergeSourceMachineIntoInventory,
   parseWorkspaceBackupRetryCanaryArgs,
   readProviderVolumeSnapshots,
   recoverWorkerAfterInterruption,
@@ -23,6 +24,7 @@ import {
   stopWorkerWithProviderVerification,
   verifyKwb2Archive,
   waitForTemporaryResourceCleanup,
+  waitForWorkspaceRetirementResourceCleanup,
   type BackupObservation,
   type CanaryDependencies,
   type CanaryEvidence,
@@ -54,6 +56,36 @@ test("snapshot inventory delegates to the organization-scoped provider", async (
   assert.deepEqual(snapshots, [{ id: "snapshot-1", state: "running" }]);
 });
 
+test("an authoritative source Machine GET prevents false deletion when inventory omits it", () => {
+  const machines = mergeSourceMachineIntoInventory({
+    machines: [],
+    sourceMachine: {
+      id: "source-machine",
+      state: "stopping",
+      region: "iad",
+      workspaceId: "workspace-1",
+      mounts: [{ volumeId: "source-volume" }],
+      checks: [{ name: "workspace", status: "warning" }],
+      image: "runtime@sha256:source",
+      resolvedImageDigest: "sha256:source",
+    },
+  });
+
+  assert.deepEqual(machines, [
+    {
+      id: "source-machine",
+      state: "stopping",
+      region: "iad",
+      workspaceId: "workspace-1",
+      replacementId: null,
+      mountedVolumeIds: ["source-volume"],
+      healthStatus: "warning",
+      image: "runtime@sha256:source",
+      resolvedImageDigest: "sha256:source",
+    },
+  ]);
+});
+
 test("the executable keeps tenant snapshots and control-worker reads on separate authorities", async () => {
   const source = await readFile(
     new URL("../workspace-backup-retry-canary.ts", import.meta.url),
@@ -73,6 +105,18 @@ test("the executable keeps tenant snapshots and control-worker reads on separate
     /async function readControlWorkerMachines[\s\S]*captureJson\(\s*"fly",\s*\[\s*"machine",\s*"list",/u,
   );
   assert.doesNotMatch(source, /"volumes",\s*"snapshots",\s*"list"/u);
+  assert.match(
+    source,
+    /mergeSourceMachineIntoInventory\(\{\s*machines: inventory\.machines,\s*sourceMachine,/u,
+  );
+  assert.match(
+    source,
+    /waitForWorkspaceRetirementResourceCleanup\(\{[\s\S]*sourceMachineId: target\.workspace\.flyMachineId[\s\S]*sourceVolumeId: target\.workspace\.flyVolumeId[\s\S]*deadlineMs: Math\.max\(1, deadline - Date\.now\(\)\)[\s\S]*observeEnvironment: \(\) =>\s*readProviderEnvironmentInventory/u,
+  );
+  assert.match(
+    source,
+    /sourceResourceObservations: resourceCleanup\.observations[\s\S]*sourceResourceObservationsTruncated/u,
+  );
 });
 
 test("the executable loads production configuration before initializing pg-boss", async () => {
@@ -694,6 +738,113 @@ test("temporary cleanup preserves the last blocking inventory when it never sett
       assert.equal(
         details?.lastEnvironment?.volumes.at(-1)?.state,
         "scheduling_destroy",
+      );
+      return true;
+    },
+  );
+});
+
+test("Workspace retirement waits for the source volume to disappear after workspace.deleted", async () => {
+  const value = target();
+  let reads = 0;
+  let clock = 0;
+  const cleaned = await waitForWorkspaceRetirementResourceCleanup({
+    sourceMachineId: value.workspace.flyMachineId!,
+    sourceVolumeId: value.workspace.flyVolumeId!,
+    observeEnvironment: async () => {
+      reads += 1;
+      const environment = structuredClone(value.baseline.environment);
+      environment.machines = environment.machines.filter(
+        (machine) => machine.id !== value.workspace.flyMachineId,
+      );
+      environment.volumes = environment.volumes.filter(
+        (volume) => volume.id !== value.workspace.flyVolumeId,
+      );
+      if (reads < 3) {
+        environment.volumes.push({
+          id: value.workspace.flyVolumeId!,
+          name: "ws_workspace1",
+          state: "pending_destroy",
+          region: "iad",
+          sizeGb: 20,
+          attachedMachineId: null,
+        });
+      }
+      return environment;
+    },
+    now: () => clock,
+    delay: async (ms) => void (clock += ms),
+    deadlineMs: 1_000,
+    pollIntervalMs: 100,
+  });
+
+  assert.equal(reads, 3);
+  assert.deepEqual(
+    cleaned.observations.map((observation) => ({
+      machine: observation.sourceMachine?.state ?? null,
+      volume: observation.sourceVolume?.state ?? null,
+    })),
+    [
+      { machine: null, volume: "pending_destroy" },
+      { machine: null, volume: null },
+    ],
+  );
+});
+
+test("Workspace retirement fails closed with the last source resource inventory", async () => {
+  const value = target();
+  let clock = 0;
+  await assert.rejects(
+    waitForWorkspaceRetirementResourceCleanup({
+      sourceMachineId: value.workspace.flyMachineId!,
+      sourceVolumeId: value.workspace.flyVolumeId!,
+      observeEnvironment: async () => {
+        const environment = structuredClone(value.baseline.environment);
+        environment.machines = environment.machines.filter(
+          (machine) => machine.id !== value.workspace.flyMachineId,
+        );
+        const sourceVolume = environment.volumes.find(
+          (volume) => volume.id === value.workspace.flyVolumeId,
+        );
+        if (sourceVolume) {
+          sourceVolume.state = "pending_destroy";
+          sourceVolume.attachedMachineId = null;
+        }
+        return environment;
+      },
+      now: () => clock,
+      delay: async (ms) => void (clock += ms),
+      deadlineMs: 200,
+      pollIntervalMs: 100,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(
+        (error as Error & { code?: string }).code,
+        "WORKSPACE_BACKUP_RETRY_CANARY_RETIREMENT_CLEANUP_FAILED",
+      );
+      assert.match(error.message, /volume .*pending_destroy/u);
+      const details = (
+        error as Error & {
+          details?: {
+            sourceResourceObservations?: Array<{
+              sourceVolume: { state: string | null } | null;
+            }>;
+            lastEnvironment?: EnvironmentInventory;
+          };
+        }
+      ).details;
+      assert.deepEqual(
+        details?.sourceResourceObservations?.map(
+          (observation) => observation.sourceVolume?.state,
+        ),
+        ["pending_destroy"],
+      );
+      assert.equal(
+        details?.lastEnvironment?.volumes.find(
+          (volume) => volume.id === value.workspace.flyVolumeId,
+        )?.state,
+        "pending_destroy",
       );
       return true;
     },
