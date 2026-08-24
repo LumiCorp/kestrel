@@ -6,7 +6,13 @@ export interface ParsedQualificationRun {
   events: RunnerEvent[];
   runId: string;
   idempotencyKey?: string | undefined;
-  codeResults: AgentToolResultV2[];
+  codeResults: QualificationCodeResult[];
+}
+
+export interface QualificationCodeResult {
+  output: Record<string, unknown>;
+  stdout: string;
+  capabilityReplayEvidence?: { leaseId: string; bindingDigest: string; toolCallId: string } | undefined;
 }
 
 export interface NetworkObservation {
@@ -28,7 +34,7 @@ export function parseQualificationRunStream(stream: string): ParsedQualification
     if (event.type !== "run.tool.completed") return [];
     const update = event.payload.update as unknown as Record<string, unknown>;
     if (update.toolName !== "code.execute" || update.output === undefined) return [];
-    try { return [parseAgentToolResultV2(update.output)]; } catch { return []; }
+    return parseQualificationCodeResult(update.output);
   });
   const runId = events.find((event) => typeof event.runId === "string")?.runId ?? "";
   const idempotencyKey = codeResults.map((result) => readCapabilityReplayEvidence(result)?.toolCallId).find((value): value is string => typeof value === "string");
@@ -39,22 +45,32 @@ export function hasTerminalEvent(run: ParsedQualificationRun, type: "run.complet
   return run.events.some((event) => event.type === type);
 }
 
-export function readCapabilityReplayEvidence(result: AgentToolResultV2): { leaseId: string; bindingDigest: string; toolCallId: string } | undefined {
-  const raw = readRawOutput(result);
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-  const evidence = (raw as Record<string, unknown>).capabilityReplayEvidence;
+export function readCapabilityReplayEvidence(result: QualificationCodeResult): { leaseId: string; bindingDigest: string; toolCallId: string } | undefined {
+  return result.capabilityReplayEvidence;
+}
+
+export function readCodeStdout(result: QualificationCodeResult): string {
+  return result.stdout;
+}
+
+export function parseExactAgentToolResult(value: unknown): AgentToolResultV2 {
+  return parseAgentToolResultV2(value);
+}
+
+function parseQualificationCodeResult(value: unknown): QualificationCodeResult[] {
+  const output = asRecord(value);
+  if (output === undefined) return [];
+  const stdout = typeof output.stdout === "string" ? output.stdout : "";
+  const evidence = parseReplayEvidence(output.capabilityReplayEvidence);
+  return [{ output, stdout, ...(evidence === undefined ? {} : { capabilityReplayEvidence: evidence }) }];
+}
+
+function parseReplayEvidence(evidence: unknown): { leaseId: string; bindingDigest: string; toolCallId: string } | undefined {
   if (typeof evidence !== "object" || evidence === null || Array.isArray(evidence)) return undefined;
   const record = evidence as Record<string, unknown>;
   return typeof record.leaseId === "string" && typeof record.bindingDigest === "string" && typeof record.toolCallId === "string"
     ? { leaseId: record.leaseId, bindingDigest: record.bindingDigest, toolCallId: record.toolCallId }
     : undefined;
-}
-
-export function readCodeStdout(result: AgentToolResultV2): string {
-  const raw = readRawOutput(result);
-  return typeof raw === "object" && raw !== null && !Array.isArray(raw) && typeof (raw as Record<string, unknown>).stdout === "string"
-    ? (raw as Record<string, unknown>).stdout as string
-    : "";
 }
 
 export function parseNetworkObservations(stdout: string): NetworkObservation[] {
@@ -75,6 +91,8 @@ export function parseNetworkObservations(stdout: string): NetworkObservation[] {
   return observations;
 }
 
-function readRawOutput(result: AgentToolResultV2): unknown {
-  return result.outcome.kind === "success" || result.outcome.kind === "partial" ? result.outcome.rawOutput : undefined;
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }

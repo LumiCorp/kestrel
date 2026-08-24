@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import {
   hasTerminalEvent,
   parseNetworkObservations,
+  parseExactAgentToolResult,
   parseQualificationRunStream,
   readCapabilityReplayEvidence,
   readCodeStdout,
@@ -179,7 +180,7 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
   const expiryProfile = await client.resolveProfile(config, "controlled", { timeoutMs: 2_000, maxExpiryMs: 100 });
   await capture(evidence, "expiry", "controlled", async () => {
     const result = await client.run(expiryProfile, "expiry");
-    await requireCapabilityLease(client, result.runId, { status: "cleaned", terminalReason: "expired" });
+    await requireCapabilityLease(client, result.runId, { status: "cleaned", terminalReason: "lease_expired" });
     return result;
   });
   await capture(evidence, "secret-reflection", "controlled", async () => {
@@ -381,7 +382,7 @@ class PublicRunnerClient {
     if (!result.idempotencyKey) throw new Error("Run did not expose an idempotency key.");
     const body = await this.command("effect.result.get", { sessionId: result.sessionId, runId: result.runId, idempotencyKey: result.idempotencyKey });
     if (body.type !== "effect.result.loaded") throw new Error(`Exact result unavailable: ${JSON.stringify(body)}`);
-    return body.payload.result;
+    return parseExactAgentToolResult(body.payload.result);
   }
   async expectExactResultUnavailable(result: Pick<RunResult, "sessionId" | "runId" | "idempotencyKey">): Promise<void> {
     try { await this.getExactResult(result); } catch { return; }
