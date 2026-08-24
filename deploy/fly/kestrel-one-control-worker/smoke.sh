@@ -15,10 +15,11 @@ node -e '
 ' "$matrix_output"
 
 knowledge_output="$(docker run --rm \
-  --entrypoint node \
+  --workdir /workspace/apps/web \
+  --entrypoint pnpm \
   "$image" \
-  --import tsx \
-  /workspace/apps/web/scripts/knowledge-pdf-image-smoke.mjs)"
+  exec tsx \
+  scripts/knowledge-pdf-image-smoke.mjs)"
 node -e '
   const evidence = JSON.parse(process.argv[1]);
   if (evidence.ok !== true) throw new Error("control worker Knowledge PDF evidence is invalid");

@@ -24,6 +24,7 @@ const runtimeFiles = [
   "packages/attachments/dist/index.cjs",
   "packages/attachments/dist/index.js",
   "packages/attachments/dist/worker.js",
+  "packages/attachments/node_modules/pdf-parse/package.json",
   "packages/attachments/node_modules/pdfjs-dist/package.json",
   "apps/web/node_modules/pdfjs-dist/package.json",
   "node_modules/pdf-parse/package.json",

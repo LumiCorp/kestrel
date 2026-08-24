@@ -41,6 +41,7 @@ export const REQUIRED_RUNTIME_PATHS = [
   /packages\/attachments\/dist\/index\.cjs$/u,
   /packages\/attachments\/dist\/index\.js$/u,
   /packages\/attachments\/dist\/worker\.js$/u,
+  /packages\/attachments\/node_modules\/pdf-parse\/package\.json$/u,
   /packages\/attachments\/node_modules\/pdfjs-dist\/package\.json$/u,
   /apps\/web\/node_modules\/pdfjs-dist\/package\.json$/u,
   /node_modules\/pdf-parse\/package\.json$/u,
@@ -158,9 +159,7 @@ export async function assertRuntimeSymlinksContained(root) {
   }
 }
 
-async function materializeTracedRuntime(files, isolatedRoot) {
-  const traces = await readRequiredRouteTraces(files);
-  const sourceFiles = [...new Set(traces.flatMap(({ resolvedFiles }) => resolvedFiles))];
+async function materializeTracedRuntime(sourceFiles, isolatedRoot) {
   const symlinks = new Map();
   const copiedPaths = new Set();
   for (const sourcePath of sourceFiles) {
@@ -196,60 +195,68 @@ async function materializeTracedRuntime(files, isolatedRoot) {
   await assertRuntimeSymlinksContained(isolatedRoot);
 }
 
-export async function runTracedExtractionSmoke(files, commonJsIndexPath) {
-  const isolatedRoot = await mkdtemp(join(tmpdir(), "kestrel-attachment-runtime-"));
-  try {
-    await materializeTracedRuntime(files, isolatedRoot);
-    const fixtureRoot = resolve(isolatedRoot, ".kestrel-smoke/fixtures");
-    const matrixPath = resolve(isolatedRoot, ".kestrel-smoke/extraction-matrix.mjs");
-    const runnerPath = resolve(isolatedRoot, ".kestrel-smoke/run.mjs");
-    await mkdir(dirname(matrixPath), { recursive: true });
-    await copyFile(resolve(repositoryRoot, "packages/attachments/scripts/extraction-matrix.mjs"), matrixPath);
-    await cp(resolve(repositoryRoot, "packages/attachments/tests/fixtures"), fixtureRoot, { recursive: true });
+export async function runTracedExtractionSmoke(files) {
+  const traces = await readRequiredRouteTraces(files);
+  for (const { tracePath, resolvedFiles } of traces) {
+    const isolatedRoot = await mkdtemp(join(tmpdir(), "kestrel-attachment-runtime-"));
+    try {
+      const runtimeRoot = resolve(isolatedRoot, "runtime");
+      const harnessRoot = resolve(isolatedRoot, "harness");
+      await materializeTracedRuntime(resolvedFiles, runtimeRoot);
+      const fixtureRoot = resolve(harnessRoot, "fixtures");
+      const matrixPath = resolve(harnessRoot, "extraction-matrix.mjs");
+      const runnerPath = resolve(harnessRoot, "run.mjs");
+      await mkdir(harnessRoot, { recursive: true });
+      await copyFile(resolve(repositoryRoot, "packages/attachments/scripts/extraction-matrix.mjs"), matrixPath);
+      await cp(resolve(repositoryRoot, "packages/attachments/tests/fixtures"), fixtureRoot, { recursive: true });
 
-    const canonicalCommonJsPath = await realpath(commonJsIndexPath);
-    const isolatedCommonJsPath = resolve(isolatedRoot, relative(repositoryRoot, canonicalCommonJsPath));
-    const requireBase = resolve(isolatedRoot, "apps/web/.next/server/app/api/files/route.js");
-    await writeFile(runnerPath, [
-      'import assert from "node:assert/strict";',
-      'import { realpath } from "node:fs/promises";',
-      'import { createRequire } from "node:module";',
-      `import { runExtractionMatrix } from ${JSON.stringify(pathToFileURL(matrixPath).href)};`,
-      `const expectedEntry = ${JSON.stringify(isolatedCommonJsPath)};`,
-      `const require = createRequire(${JSON.stringify(requireBase)});`,
-      'assert.equal(await realpath(require.resolve("@kestrel-agents/files")), await realpath(expectedEntry));',
-      `const outcomes = await runExtractionMatrix({ entryPath: expectedEntry, fixtureRoot: ${JSON.stringify(fixtureRoot)} });`,
-      'process.stdout.write(`${JSON.stringify({ ok: true, outcomes })}\\n`);',
-    ].join("\n"));
+      const commonJsIndexPath = resolvedFiles.find((path) => /packages\/attachments\/dist\/index\.cjs$/u.test(slash(path)));
+      if (!commonJsIndexPath) throw new Error(`Route trace ${tracePath} has no CommonJS attachment entrypoint.`);
+      const canonicalCommonJsPath = await realpath(commonJsIndexPath);
+      const isolatedCommonJsPath = resolve(runtimeRoot, relative(repositoryRoot, canonicalCommonJsPath));
+      const sourceRoutePath = tracePath.slice(0, -".nft.json".length);
+      const requireBase = resolve(runtimeRoot, relative(repositoryRoot, sourceRoutePath));
+      await writeFile(runnerPath, [
+        'import assert from "node:assert/strict";',
+        'import { realpath } from "node:fs/promises";',
+        'import { createRequire } from "node:module";',
+        `import { runExtractionMatrix } from ${JSON.stringify(pathToFileURL(matrixPath).href)};`,
+        `const expectedEntry = ${JSON.stringify(isolatedCommonJsPath)};`,
+        `const require = createRequire(${JSON.stringify(requireBase)});`,
+        'assert.equal(await realpath(require.resolve("@kestrel-agents/files")), await realpath(expectedEntry));',
+        `const outcomes = await runExtractionMatrix({ entryPath: expectedEntry, fixtureRoot: ${JSON.stringify(fixtureRoot)} });`,
+        'process.stdout.write(`${JSON.stringify({ ok: true, outcomes })}\\n`);',
+      ].join("\n"));
 
-    const child = spawnSync(process.execPath, [
-      "--expose-gc",
-      "--max-semi-space-size=34",
-      "--max-old-space-size=1844",
-      runnerPath,
-    ], {
-      cwd: isolatedRoot,
-      encoding: "utf8",
-      env: {
-        LANG: "C.UTF-8",
-        NODE_OPTIONS: "",
-        NODE_PATH: "",
-        PATH: process.env.PATH ?? "",
-        TMPDIR: tmpdir(),
-      },
-      timeout: 90_000,
-    });
-    if (child.status !== 0 || RUNTIME_WARNING.test(child.stderr)) {
-      throw new Error([
-        "Traced attachment extraction failed inside the hermetic Vercel runtime closure.",
-        child.stdout,
-        child.stderr,
-      ].filter(Boolean).join("\n"));
+      const child = spawnSync(process.execPath, [
+        "--expose-gc",
+        "--max-semi-space-size=34",
+        "--max-old-space-size=1844",
+        runnerPath,
+      ], {
+        cwd: runtimeRoot,
+        encoding: "utf8",
+        env: {
+          LANG: "C.UTF-8",
+          NODE_OPTIONS: "",
+          NODE_PATH: "",
+          PATH: process.env.PATH ?? "",
+          TMPDIR: tmpdir(),
+        },
+        timeout: 90_000,
+      });
+      if (child.status !== 0 || RUNTIME_WARNING.test(child.stderr)) {
+        throw new Error([
+          `Route trace ${tracePath} failed its hermetic Vercel runtime closure.`,
+          child.stdout,
+          child.stderr,
+        ].filter(Boolean).join("\n"));
+      }
+      const evidence = JSON.parse(child.stdout.trim());
+      if (evidence.ok !== true) throw new Error(`Route trace ${tracePath} returned invalid extraction evidence.`);
+    } finally {
+      await rm(isolatedRoot, { recursive: true, force: true });
     }
-    const evidence = JSON.parse(child.stdout.trim());
-    if (evidence.ok !== true) throw new Error("Hermetic extraction smoke returned invalid evidence.");
-  } finally {
-    await rm(isolatedRoot, { recursive: true, force: true });
   }
 }
 
@@ -257,9 +264,9 @@ export async function runAttachmentWorkerBuildSmoke() {
   const files = await listFiles(nextServerRoot);
   await assertNoBundledAttachmentWorker(files);
   await assertFileRouteUsesExternalPackage(files);
-  const commonJsIndexPath = await resolveTracedAttachmentPackage(files);
-  await runTracedExtractionSmoke(files, commonJsIndexPath);
-  process.stdout.write("Hermetic attachment runtime closure smoke passed.\n");
+  await resolveTracedAttachmentPackage(files);
+  await runTracedExtractionSmoke(files);
+  process.stdout.write(`Hermetic attachment runtime closure smoke passed for ${REQUIRED_ROUTE_TRACES.length} route traces.\n`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

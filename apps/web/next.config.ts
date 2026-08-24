@@ -23,7 +23,14 @@ const pdfRuntimeFiles = [
 const attachmentRuntimeFiles = [
   "../../packages/attachments/package.json",
   "../../packages/attachments/dist/**/*",
+  "../../packages/attachments/node_modules/@napi-rs/canvas/package.json",
+  "../../packages/attachments/node_modules/jszip/package.json",
+  "../../packages/attachments/node_modules/mammoth/package.json",
+  "../../packages/attachments/node_modules/pdf-parse/package.json",
   "../../packages/attachments/node_modules/pdfjs-dist/package.json",
+  "../../packages/attachments/node_modules/xlsx/package.json",
+  "./node_modules/@napi-rs/canvas/package.json",
+  "./node_modules/pdf-parse/package.json",
   "./node_modules/pdfjs-dist/package.json",
 ];
 const attachmentRouteRuntimeFiles = [
