@@ -8,6 +8,14 @@ const canvasRuntimeFiles = [
   "../../node_modules/.pnpm/@napi-rs+canvas@*/node_modules/@napi-rs/canvas/**/*",
   "../../node_modules/.pnpm/@napi-rs+canvas-*@*/node_modules/@napi-rs/canvas-*/**/*",
 ];
+const attachmentRuntimeFiles = [
+  "../../packages/attachments/package.json",
+  "../../packages/attachments/dist/**/*",
+];
+const attachmentRouteRuntimeFiles = [
+  ...canvasRuntimeFiles,
+  ...attachmentRuntimeFiles,
+];
 
 const nextConfig: NextConfig = {
   env: {
@@ -26,15 +34,17 @@ const nextConfig: NextConfig = {
 
   outputFileTracingRoot: monorepoRoot,
   outputFileTracingIncludes: {
-    "/knowledge": canvasRuntimeFiles,
-    "/api/cron/attachments/**": canvasRuntimeFiles,
-    "/api/files/**": canvasRuntimeFiles,
-    "/api/knowledge/documents/**": canvasRuntimeFiles,
-    "/api/projects/**/files": canvasRuntimeFiles,
-    "/api/threads/**/attachments/**": canvasRuntimeFiles,
+    "/knowledge": attachmentRouteRuntimeFiles,
+    "/api/attachments/**": attachmentRouteRuntimeFiles,
+    "/api/cron/attachments/**": attachmentRouteRuntimeFiles,
+    "/api/files/**": attachmentRouteRuntimeFiles,
+    "/api/knowledge/documents/**": attachmentRouteRuntimeFiles,
+    "/api/projects/**/files": attachmentRouteRuntimeFiles,
+    "/api/threads/**/attachments/**": attachmentRouteRuntimeFiles,
   },
 
   serverExternalPackages: [
+    "@kestrel-agents/files",
     "pdf-parse",
     "@napi-rs/canvas",
     "@chat-adapter/discord",
