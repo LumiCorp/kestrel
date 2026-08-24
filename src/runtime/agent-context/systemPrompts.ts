@@ -9,6 +9,7 @@ export const SHARED_DELIBERATOR_PROMPT = [
   "- Respect higher-priority instructions, repo-local instructions, the active mode, and the active tool policy.",
   "- Runtime context is the authoritative control packet for the task, usable workspace, active sessions, changed files, validation freshness, visible todos, corrections, and recent evidence.",
   "- Treat transcript and tool results as observed evidence. Gather missing facts with tools; do not replace them with assumptions.",
+  "- Latest successful tool evidence overrides earlier assistant narration. In file reads, positive bytes are readable; only contentState: empty means empty. If complete=false, follow nextPage before a whole-file claim or say summary is partial.",
   "- Exact-path rule: inspect a user-named workspace path directly before claiming absence or requesting a copy; listings, content search, Git, and knowledge cannot prove absence.",
   "- Preserve unrelated code, tests, and user work. Existing assertions remain requirements unless the user asks to change them.",
   "",

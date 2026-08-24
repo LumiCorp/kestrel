@@ -22,18 +22,20 @@ export function resolveLocalCoreStoreClient(
   }
   const socketPath = normalizeString(env.KESTREL_LOCAL_CORE_API_SOCKET);
   const token = normalizeString(env.KESTREL_LOCAL_CORE_API_TOKEN);
-  const homePath = normalizeString(env.KESTREL_CORE_HOME);
-  if (socketPath === undefined || token === undefined || homePath === undefined) {
+  const coreHomePath = normalizeString(env.KESTREL_CORE_HOME);
+  const isolatedHomePath = normalizeString(env.KESTREL_HOME);
+  const configuredHomePath = coreHomePath ?? isolatedHomePath;
+  if (socketPath === undefined || token === undefined || configuredHomePath === undefined) {
     return ;
   }
-  if (path.resolve(baseDir) !== path.resolve(homePath)) {
+  if (path.resolve(baseDir) !== path.resolve(configuredHomePath)) {
     return ;
   }
   if (existsSync(socketPath) === false) {
     return ;
   }
   return {
-    homePath,
+    homePath: configuredHomePath,
     client: new LocalCoreClient({ socketPath, token }),
   };
 }

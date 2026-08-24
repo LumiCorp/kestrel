@@ -12,7 +12,10 @@ import {
 } from "@/lib/files/service";
 import { ensureEffectiveFileAvailability } from "@/lib/files/availability";
 import { enqueueKnowledgeDocumentRun } from "@/lib/knowledge/queue";
-import { normalizeMediaType } from "./shared";
+import {
+  isKnowledgeDocumentMediaTypeSupported,
+  normalizeMediaType,
+} from "./shared";
 import {
   createKnowledgeDocument,
   createOrReuseKnowledgeIngestionRun,
@@ -94,6 +97,12 @@ export async function publishFileToKnowledge(input: {
     availabilityStatus: file.availabilityStatus,
     blobDeletedAt: file.blobDeletedAt,
   });
+  if (!isKnowledgeDocumentMediaTypeSupported(
+    file.detectedMediaType ?? file.declaredMediaType ?? "",
+    file.filename,
+  )) {
+    throw new Error("This file type is not supported for Knowledge.");
+  }
   await publishFileScope({
     fileId: file.id,
     organizationId: input.organizationId,

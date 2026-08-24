@@ -67,6 +67,7 @@ import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn, generateUUID } from "@/lib/utils";
 import { PromptInputSpeechButton } from "./ai-elements/prompt-input";
+import { selectKnowledgePromotionCandidates } from "./attachment-knowledge-promotion";
 import { ComposerToolbar } from "./composer-toolbar";
 import { PromptInput, PromptInputTextarea } from "./elements/prompt-input";
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from "./icons";
@@ -739,7 +740,7 @@ function PureMultimodalInput({
       if (successful.length > 0) {
         setAttachments((current) => [...current, ...successful]);
       }
-      const promotionCandidates = successful;
+      const promotionCandidates = selectKnowledgePromotionCandidates(successful);
       if (promotionCandidates.length > 0) {
         setPendingKnowledgePromotion(promotionCandidates);
         setPromotionOpen(true);

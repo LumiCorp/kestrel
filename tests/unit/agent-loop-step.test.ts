@@ -2596,6 +2596,75 @@ test("chat direct answers use one required structured call", async () => {
   assert.equal(((commands[0]?.input as Record<string, unknown>).message), "The concise direct answer.");
 });
 
+test("agent loop summarizes the latest readable Markdown instead of stale empty-file narration", async () => {
+  const chatContext = context();
+  chatContext.event.payload = {
+    message: "Summarize brief.md.",
+    interactionMode: "chat",
+  };
+  chatContext.session.state.agent = {
+    interactionMode: "chat",
+    modelTranscript: {
+      version: 1,
+      windowId: 1,
+      items: [
+        {
+          id: "turn_markdown_user",
+          createdAt: "2026-08-24T12:00:00.000Z",
+          kind: "user",
+          content: "Summarize brief.md.",
+        },
+        {
+          id: "turn_markdown_stale",
+          createdAt: "2026-08-24T12:00:01.000Z",
+          kind: "assistant_text",
+          content: "The file is empty, so there is nothing to summarize.",
+        },
+      ],
+    },
+    lastActionResult: {
+      kind: "tool",
+      status: "passed",
+      name: "fs.read_text",
+      toolName: "fs.read_text",
+      input: { path: "brief.md" },
+      output: {
+        path: "brief.md",
+        content: "# Launch brief\n\nQuartz sentinel ships on Friday.",
+        bytesRead: 48,
+        totalBytes: 48,
+        range: { startByte: 0, endByte: 48 },
+        complete: true,
+        truncated: false,
+      },
+    },
+  };
+
+  const transition = await buildStep({ tools: [READ_TEXT_TOOL] })(chatContext, {
+    useModel: async (request: ModelRequest) => {
+      const rendered = JSON.stringify(request.messages);
+      assert.match(rendered, /read 48 bytes of 48 total bytes/u);
+      assert.match(rendered, /Quartz sentinel ships on Friday/u);
+      assert.match(rendered, /The file is empty/u);
+      return modelResponse({
+        reason: "The successful file read supersedes the stale empty-file narration.",
+        nextAction: {
+          kind: "finalize",
+          status: "goal_satisfied",
+          message: "The launch brief says the Quartz sentinel ships on Friday.",
+        },
+      });
+    },
+  } satisfies StepIO);
+
+  assert.equal(transition.nextStepAgent, "agent.exec.dispatch");
+  const agent = transition.statePatch?.agent as Record<string, unknown>;
+  const commands = (agent.commandBatch as Record<string, unknown>).commands as Array<Record<string, unknown>>;
+  const message = (commands[0]?.input as Record<string, unknown>).message;
+  assert.equal(message, "The launch brief says the Quartz sentinel ships on Friday.");
+  assert.doesNotMatch(String(message), /empty/u);
+});
+
 test("required-action failure diagnostics do not retain prose as retry output", async () => {
   const buildContext = context();
   buildContext.event.payload = {

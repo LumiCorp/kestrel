@@ -5,6 +5,8 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
+  existsSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -300,12 +302,12 @@ try {
   const cliEnv = {
     ...process.env,
     KESTREL_HOME: path.join(consumerDir, ".kestrel"),
-    KESTREL_CORE_HOME: path.join(consumerDir, ".kestrel"),
     KESTREL_CORE_IDLE_TIMEOUT_MS: "500",
     KESTREL_DISABLE_DOTENV: "1",
     DATABASE_URL: "",
     FORCE_COLOR: "0",
   };
+  delete cliEnv.KESTREL_CORE_HOME;
   const cliVersion = execFileSync(cliCommand, ["--version"], {
     cwd: consumerDir,
     encoding: "utf8",
@@ -361,6 +363,75 @@ try {
     protocolSmoke,
     /kchat smoke: protocol ok/u,
     "clean-installed runtime CLI must start Local Core and round-trip protocol commands",
+  );
+  const preflightInputPath = path.join(consumerDir, "job-preflight-input.json");
+  const preflightOutputPath = path.join(consumerDir, "job-preflight-output.json");
+  const preflightHome = path.join(consumerDir, ".kestrel-preflight");
+  const preflightCliEnv = { ...cliEnv, KESTREL_HOME: preflightHome };
+  writeFileSync(preflightInputPath, JSON.stringify({
+    version: "job_input_v2",
+    profileId: "kestrel",
+    environmentPresetId: "cli_dev_local",
+    approvalPolicyPackId: "dev",
+    requiredTools: ["exec_command"],
+    turn: { sessionId: "runtime-release-preflight", message: "Verify compatibility" },
+  }));
+  execFileSync(
+    cliCommand,
+    ["job", "preflight", "--json-in", preflightInputPath, "--json-out", preflightOutputPath],
+    { cwd: consumerDir, encoding: "utf8", env: preflightCliEnv, timeout: 90_000 },
+  );
+  const preflight = JSON.parse(readFileSync(preflightOutputPath, "utf8")) as {
+    version?: string;
+    capability?: string;
+    status?: string;
+    missingTools?: string[];
+    executionProfileBinding?: { approvalPolicyPack?: { digest?: string } };
+  };
+  assert.equal(preflight.version, "job_preflight_v1");
+  assert.equal(preflight.capability, "local-core.execution-profile-resolution.v2");
+  assert.equal(preflight.status, "ready");
+  assert.deepEqual(preflight.missingTools, []);
+  assert.match(preflight.executionProfileBinding?.approvalPolicyPack?.digest ?? "", /^[a-f0-9]{64}$/u);
+  const rejectionInputPath = path.join(consumerDir, "job-run-rejection-input.json");
+  const rejectionOutputPath = path.join(consumerDir, "job-run-rejection-output.json");
+  writeFileSync(rejectionInputPath, JSON.stringify({
+    version: "job_input_v2",
+    profileId: "kestrel",
+    environmentPresetId: "cli_dev_local",
+    approvalPolicyPackId: "dev",
+    requiredTools: ["exec_command"],
+    turn: { sessionId: "runtime-release-rejection", message: "Must not dispatch" },
+    executionProfileBinding: {
+      ...(preflight as { executionProfileBinding: Record<string, unknown> }).executionProfileBinding,
+      approvalPolicyPack: {
+        ...(preflight as { executionProfileBinding: { approvalPolicyPack: Record<string, unknown> } }).executionProfileBinding.approvalPolicyPack,
+        digest: "0".repeat(64),
+      },
+    },
+  }));
+  assert.throws(
+    () => execFileSync(
+      cliCommand,
+      ["job", "run", "--json-in", rejectionInputPath, "--json-out", rejectionOutputPath],
+      { cwd: consumerDir, encoding: "utf8", env: preflightCliEnv, timeout: 90_000 },
+    ),
+    /Command failed/u,
+  );
+  const rejection = JSON.parse(readFileSync(rejectionOutputPath, "utf8")) as {
+    version?: string;
+    code?: string;
+  };
+  assert.deepEqual(rejection, {
+    version: "job_run_rejection_v1",
+    code: "COMPATIBILITY_ERROR",
+    message: "The execution profile binding is missing, stale, or has been altered.",
+    details: { mismatches: ["approval policy pack does not match current preflight evidence"] },
+  });
+  assert.equal(
+    existsSync(path.join(preflightHome, "worktrees")),
+    false,
+    "preflight must not create a worktree root",
   );
 
   console.log(`runtime release-check passed (${filePaths.size} files)`);

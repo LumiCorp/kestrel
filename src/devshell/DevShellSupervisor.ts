@@ -1226,12 +1226,16 @@ export class DevShellSupervisor {
     record: DevShellProcessRecord,
     transcriptSize: number,
   ): Promise<DevShellProcessRecord> {
+    const stored = await this.store.getProcess(record.processId);
+    const authoritativeRecord = stored === null
+      ? record
+      : preferSettledProcessRecord(record, stored);
     const updated: DevShellProcessRecord = {
-      ...record,
-      outputCursor: Math.max(record.outputCursor, transcriptSize),
+      ...authoritativeRecord,
+      outputCursor: Math.max(authoritativeRecord.outputCursor, transcriptSize),
       updatedAt: this.now().toISOString(),
-      ...(record.lifecycle === "interactive"
-        ? { expiresAt: this.bumpExpiry(record.expiresAt, record.idleTimeoutMs) }
+      ...(authoritativeRecord.lifecycle === "interactive"
+        ? { expiresAt: this.bumpExpiry(authoritativeRecord.expiresAt, authoritativeRecord.idleTimeoutMs) }
         : {}),
     };
     await this.store.upsertProcess(updated);

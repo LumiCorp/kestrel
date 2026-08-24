@@ -4686,6 +4686,7 @@ test("ThreadRuntime composes and injects a thread-scoped runtime assembly", asyn
     effectiveAssemblyLabel?: string | undefined;
     bundleId?: string | undefined;
     toolAllowlist?: string[] | undefined;
+    modelCapabilities?: { visionInputEnabled: boolean } | undefined;
   };
   assert.equal(runtimeAssembly.bundleId, expectedBundleId);
   assert.equal(runtimeAssembly.agentProfileId, "reference");
@@ -4693,6 +4694,7 @@ test("ThreadRuntime composes and injects a thread-scoped runtime assembly", asyn
   assert.equal(runtimeAssembly.environmentShellKind, "web");
   assert.equal(runtimeAssembly.environmentPresetId, "web_balanced");
   assert.deepEqual(runtimeAssembly.environmentCapabilityPackIds, ["balanced"]);
+  assert.deepEqual(runtimeAssembly.modelCapabilities, { visionInputEnabled: false });
   assert.equal(runtimeAssembly.effectiveAssemblyId, expectedBundleId);
   assert.equal(runtimeAssembly.effectiveAssemblyLabel, "Reference on web:web_balanced");
   assert.deepEqual(runtimeAssembly.toolAllowlist, ["fs.read_text", "web.search"]);

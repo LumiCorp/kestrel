@@ -22,6 +22,13 @@ import {
   ensureEffectiveFileAvailability,
   ensureFileBlobAvailable,
 } from "./availability";
+import {
+  isNativeImageRepresentationMediaType,
+  isReusableFileRepresentation,
+  modelVisibleMetadataOnlyReason,
+  recordFileRepresentationOutcome,
+  type FileRepresentationFailureCategory,
+} from "./representation";
 
 export type FileScanResult = "clean" | "quarantined" | "unavailable";
 export type FileScanner = (input: {
@@ -130,7 +137,7 @@ export async function createPublishedFileFromBuffer(input: {
       createdByUserId: input.uploaderUserId,
     });
   });
-  if (await hasReadyRepresentation(blob.id) === false) {
+  if (await hasReusableRepresentation(blob.id, detectedMediaType) === false) {
     await processStoredFileRepresentation({
       blobId: blob.id,
       objectKey: blob.objectKey,
@@ -283,7 +290,10 @@ export async function uploadThreadFile(input: {
     }).where(eq(schema.kestrelFiles.id, file.id));
     if (
       quarantined === false
-      && (canonicalBlob.id === file.blobId || await hasReadyRepresentation(canonicalBlob.id) === false)
+      && (
+        canonicalBlob.id === file.blobId
+        || await hasReusableRepresentation(canonicalBlob.id, detectedMediaType) === false
+      )
     ) {
       await processBlobRepresentation({
         blobId: canonicalBlob.id,
@@ -501,6 +511,10 @@ export async function resolveThreadFilesForExecution(input: {
   const files = await resolveReadyThreadFiles(input);
   const storage = getManagedFileStorageProvider();
   return await Promise.all(files.map(async (file) => {
+    const metadataOnlyReason = modelVisibleMetadataOnlyReason(
+      file.representationStatus,
+      file.metadataOnlyReason,
+    );
     const kind = file.representationStatus === "native_image"
       ? "image" as const
       : file.representationStatus === "extracted_text" ? "text" as const : "file" as const;
@@ -524,7 +538,7 @@ export async function resolveThreadFilesForExecution(input: {
       ...source,
       ...(file.representationText ? { text: file.representationText } : {}),
       ...(file.textTruncated ? { textTruncated: true } : {}),
-      ...(file.metadataOnlyReason ? { metadataOnlyReason: file.metadataOnlyReason } : {}),
+      ...(metadataOnlyReason ? { metadataOnlyReason } : {}),
     } satisfies RunnerTurnAttachment;
   }));
 }
@@ -908,6 +922,7 @@ export async function processStoredFileRepresentation(input: {
   filename: string;
   mediaType: string;
 }) {
+  const startedAt = Date.now();
   const storage = getManagedFileStorageProvider();
   const blob = await knowledgeDb.query.fileBlobs.findFirst({
     where: eq(schema.fileBlobs.id, input.blobId),
@@ -923,9 +938,11 @@ export async function processStoredFileRepresentation(input: {
   let textContent: string | null = null;
   let truncated = false;
   let error: string | null = NO_INTERPRETER_REASON;
-  if (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(input.mediaType)) {
+  let failureCategory: FileRepresentationFailureCategory | undefined = "unsupported_media_type";
+  if (isNativeImageRepresentationMediaType(input.mediaType)) {
     kind = "native_image";
     error = null;
+    failureCategory = undefined;
   } else if (isAttachmentTextExtractable(input.mediaType)) {
     try {
       const extraction = await extractAttachmentTextIsolated({
@@ -939,9 +956,14 @@ export async function processStoredFileRepresentation(input: {
         textContent = extraction.text;
         truncated = extraction.truncated;
         error = null;
+        failureCategory = undefined;
+      } else {
+        error = "Attachment extractor returned no text.";
+        failureCategory = "empty_extraction";
       }
     } catch (cause) {
       error = cause instanceof Error ? cause.message.slice(0, 500) : "File processing failed.";
+      failureCategory = "extraction_failed";
     }
   }
   await knowledgeDb.delete(schema.fileRepresentations).where(eq(schema.fileRepresentations.blobId, input.blobId));
@@ -949,7 +971,9 @@ export async function processStoredFileRepresentation(input: {
     id: `representation-${randomUUID()}`,
     blobId: input.blobId,
     kind,
-    status: error && kind !== "metadata_only" ? "failed" : "ready",
+    status: failureCategory === "extraction_failed" || failureCategory === "empty_extraction"
+      ? "failed"
+      : "ready",
     mediaType: input.mediaType,
     textContent,
     truncated,
@@ -957,15 +981,25 @@ export async function processStoredFileRepresentation(input: {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  recordFileRepresentationOutcome({
+    outcome: kind,
+    mediaType: input.mediaType,
+    durationMs: Date.now() - startedAt,
+    ...(failureCategory !== undefined ? { failureCategory } : {}),
+  });
 }
 
 const processBlobRepresentation = processStoredFileRepresentation;
 
-async function hasReadyRepresentation(blobId: string): Promise<boolean> {
+async function hasReusableRepresentation(blobId: string, mediaType: string): Promise<boolean> {
   const row = await knowledgeDb.query.fileRepresentations.findFirst({
-    where: (table, { and: andOp, eq: eqOp }) => andOp(eqOp(table.blobId, blobId), eqOp(table.status, "ready")),
+    where: (table, { eq: eqOp }) => eqOp(table.blobId, blobId),
   });
-  return row !== undefined;
+  return row !== undefined && isReusableFileRepresentation({
+    kind: row.kind,
+    status: row.status,
+    mediaType,
+  });
 }
 
 async function scheduleBlobDeletionIfUnreferenced(blobId: string): Promise<void> {

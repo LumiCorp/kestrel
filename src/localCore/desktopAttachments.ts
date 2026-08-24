@@ -17,6 +17,8 @@ export const DESKTOP_MAX_TOTAL_ATTACHMENT_BYTES = 500 * 1024 * 1024;
 export const DESKTOP_DRAFT_ATTACHMENT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_INLINE_TEXT_BYTES = 1024 * 1024;
 const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
+const INLINE_REPRESENTATION_UNAVAILABLE_REASON =
+  "Inline extraction failed or is unsupported; the original remains available read-only to Workspace tools.";
 
 export interface DesktopAttachmentMetadata {
   fileId: string;
@@ -226,6 +228,7 @@ export class DesktopAttachmentStore {
           ? await createBoundedImageDerivative(blobFile).catch(() => undefined)
           : undefined;
         let documentText: { text: string; truncated: boolean } | undefined;
+        let documentExtractionFailed = false;
         if (entry.kind === "file" && isAttachmentTextExtractable(entry.detectedMimeType)) {
           try {
             const extraction = await extractAttachmentTextIsolated({
@@ -234,9 +237,13 @@ export class DesktopAttachmentStore {
               mediaType: entry.detectedMimeType,
               timeoutMs: 30_000,
             });
-            if (extraction.text) documentText = extraction;
+            if (extraction.text) {
+              documentText = extraction;
+            } else {
+              documentExtractionFailed = true;
+            }
           } catch {
-            documentText = undefined;
+            documentExtractionFailed = true;
           }
         }
         return {
@@ -248,10 +255,14 @@ export class DesktopAttachmentStore {
           sizeBytes: entry.sizeBytes,
           sha256: entry.sha256,
           kind: entry.kind,
-          representationStatus: documentText !== undefined ? "extracted_text" : entry.representationStatus,
+          representationStatus: documentText !== undefined
+            ? "extracted_text"
+            : documentExtractionFailed ? "metadata_only" : entry.representationStatus,
           createdAt: entry.createdAt,
           path: blobFile,
-          ...(entry.metadataOnlyReason !== undefined ? { metadataOnlyReason: entry.metadataOnlyReason } : {}),
+          ...(documentExtractionFailed
+            ? { metadataOnlyReason: INLINE_REPRESENTATION_UNAVAILABLE_REASON }
+            : entry.metadataOnlyReason !== undefined ? { metadataOnlyReason: entry.metadataOnlyReason } : {}),
           ...(entry.kind === "image" && imageBytes !== undefined
             ? { data: imageBytes.toString("base64") }
             : entry.kind === "text" && inlineBytes !== undefined
@@ -433,7 +444,7 @@ function validateAttachment(filename: string, data: Buffer, claimedMime?: string
     representationStatus: isAttachmentTextExtractable(detected) ? "staged_file" : "metadata_only",
     ...(isAttachmentTextExtractable(detected)
       ? {}
-      : { metadataOnlyReason: "No automatic interpreter is available; the original is staged read-only for tools." }),
+      : { metadataOnlyReason: INLINE_REPRESENTATION_UNAVAILABLE_REASON }),
   };
 }
 
@@ -467,7 +478,7 @@ function validateAttachmentSample(
     mimeType: detected,
     representationStatus: isAttachmentTextExtractable(detected) ? "staged_file" : "metadata_only",
     ...(isAttachmentTextExtractable(detected) ? {} : {
-      metadataOnlyReason: "No automatic interpreter is available; the original is staged read-only for tools.",
+      metadataOnlyReason: INLINE_REPRESENTATION_UNAVAILABLE_REASON,
     }),
   };
 }

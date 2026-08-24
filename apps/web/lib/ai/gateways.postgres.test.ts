@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import postgres from "postgres";
+import { withGatewayModelEconomicsProfile } from "./model-economics-profile";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
@@ -20,6 +21,22 @@ test(
     const modelAId = `default-model-a-${suffix}`;
     const modelBId = `default-model-b-${suffix}`;
     const now = new Date();
+    const modelAMetadata = withGatewayModelEconomicsProfile({
+      metadata: { context_length: 32_768, max_completion_tokens: 8_192 },
+      provider: "openai",
+      model: "model-a",
+      approved: true,
+      modality: "language",
+    });
+    const modelBMetadata = withGatewayModelEconomicsProfile({
+      metadata: { context_length: 32_768, max_completion_tokens: 8_192 },
+      provider: "openai",
+      model: "model-b",
+      approved: true,
+      modality: "language",
+    });
+    assert.ok(modelAMetadata);
+    assert.ok(modelBMetadata);
 
     context.after(async () => {
       await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
@@ -42,10 +59,10 @@ test(
       await transaction`
         INSERT INTO "ai_gateway_models" (
           "id", "organization_id", "gateway_id", "raw_model_id", "modality",
-          "approved", "is_default"
+          "approved", "is_default", "metadata"
         ) VALUES
-          (${modelAId}, ${organizationId}, ${gatewayId}, 'model-a', 'language', true, true),
-          (${modelBId}, ${organizationId}, ${gatewayId}, 'model-b', 'language', true, false)
+          (${modelAId}, ${organizationId}, ${gatewayId}, 'model-a', 'language', true, true, ${transaction.json(JSON.parse(JSON.stringify(modelAMetadata)))}),
+          (${modelBId}, ${organizationId}, ${gatewayId}, 'model-b', 'language', true, false, ${transaction.json(JSON.parse(JSON.stringify(modelBMetadata)))})
       `;
     });
 
@@ -58,7 +75,6 @@ test(
         modality: "language",
         approved: true,
         isDefault: true,
-        requireEconomicsProfile: false,
       }),
       /Gateway model not found/u
     );
@@ -76,7 +92,7 @@ test(
         modality: "language",
         approved: true,
         isDefault: true,
-        requireEconomicsProfile: false,
+        metadata: modelAMetadata,
       }),
       saveGatewayModel({
         organizationId,
@@ -86,7 +102,7 @@ test(
         modality: "language",
         approved: true,
         isDefault: true,
-        requireEconomicsProfile: false,
+        metadata: modelBMetadata,
       }),
     ]);
 

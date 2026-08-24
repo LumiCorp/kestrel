@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { TuiProfile } from "../../cli/contracts.js";
-import { parseJobInputV1, type JobOutputV1 } from "../../cli/job/contracts.js";
+import {
+  parseJobInputV1,
+  parseJobInputV2,
+  type JobOutputV1,
+} from "../../cli/job/contracts.js";
 import { RunnerHost, type RunnerRuntime } from "../../cli/runner/RunnerHost.js";
 
 
@@ -64,6 +68,53 @@ test("parseJobInputV1 rejects invalid turn mode fields", () => {
       },
     }),
     /turn\.actSubmode must be one of strict, safe, full_auto/u,
+  );
+});
+
+test("parseJobInputV2 accepts deterministic preflight input and optional binding", () => {
+  const parsed = parseJobInputV2({
+    version: "job_input_v2",
+    profileId: "kestrel",
+    environmentPresetId: "cli_dev_local",
+    approvalPolicyPackId: "dev",
+    requiredTools: ["exec_command"],
+    turn: { sessionId: "session-v2", message: "Run the job" },
+    executionProfileBinding: {
+      version: "job_execution_profile_binding_v1",
+      authoringProfileId: "kestrel",
+      environmentPresetId: "cli_dev_local",
+      resolvedProfileId: `kestrel:cli_dev_local:${"a".repeat(64)}`,
+      profileFingerprint: "a".repeat(64),
+      policy: { id: "kestrel", version: 1 },
+      approvalPolicyPack: { id: "dev", version: 1, digest: "b".repeat(64) },
+    },
+  });
+
+  assert.equal(parsed.version, "job_input_v2");
+  assert.deepEqual(parsed.requiredTools, ["exec_command"]);
+  assert.equal(parsed.executionProfileBinding?.approvalPolicyPack.version, 1);
+});
+
+test("parseJobInputV2 rejects unknown fields and nondeterministic tool arrays", () => {
+  const base = {
+    version: "job_input_v2",
+    profileId: "kestrel",
+    environmentPresetId: "cli_dev_local",
+    approvalPolicyPackId: "dev",
+    requiredTools: ["exec_command"],
+    turn: { sessionId: "session-v2", message: "Run the job" },
+  };
+  assert.throws(
+    () => parseJobInputV2({ ...base, unexpected: true }),
+    /unknown field\(s\): unexpected/u,
+  );
+  assert.throws(
+    () => parseJobInputV2({ ...base, requiredTools: ["z", "a"] }),
+    /must be sorted/u,
+  );
+  assert.throws(
+    () => parseJobInputV2({ ...base, requiredTools: ["a", "a"] }),
+    /must be sorted and contain unique/u,
   );
 });
 

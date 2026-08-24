@@ -3,7 +3,8 @@ import path from "node:path";
 import {
   LOCAL_CORE_SCHEMA_VERSION,
   LOCAL_CORE_STATE_EPOCH,
-  LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY,
+  LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY_V1,
+  LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY_V2,
   type EnsureLocalCoreReadyOptions,
   type LocalCoreConfiguredDatabaseMode,
   type LocalCoreDatabaseStatus,
@@ -132,7 +133,8 @@ export async function ensureLocalCoreReady(options: EnsureLocalCoreReadyOptions)
   const manifestCapabilities = [
     "local-core.contract.v2",
     "local-core.state-epoch.0.6",
-    LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY,
+    LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY_V1,
+    LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY_V2,
     ...(databaseMode === "pglite" ? ["local-core.store.pglite"] : ["local-core.store.external-postgres"]),
   ].sort();
   let manifest = existingManifest;

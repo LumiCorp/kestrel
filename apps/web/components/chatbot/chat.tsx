@@ -910,7 +910,6 @@ export function BootstrapChat({
         }
         newTurnDisabledReason={newTurnDisabledReason}
         workspaceModeControl={
-          projectId ? (
           <label
             className="flex items-center gap-2 px-1 text-muted-foreground text-sm"
             htmlFor="start-in-new-worktree"
@@ -925,7 +924,6 @@ export function BootstrapChat({
             />
             <span>Start in new worktree</span>
           </label>
-          ) : null
         }
         composerWorkspaceMode={startInNewWorktree ? "isolated" : "primary"}
         onFeedbackChange={() => {}}

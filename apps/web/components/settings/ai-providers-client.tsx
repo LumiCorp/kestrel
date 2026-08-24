@@ -607,7 +607,7 @@ function ModelsAdminClient() {
   } = useGatewayBundles();
 
   return (
-    <SettingsPage className="lg:w-[calc(100vw-20rem)] lg:max-w-none">
+    <SettingsPage className="lg:max-w-none">
       <SettingsPageHeader
         eyebrow="AI Runtime"
         description="Approve models, set defaults, and inspect each provider catalog."
@@ -1074,6 +1074,7 @@ function GatewayModelCatalogPane({
         title={providerLabels[bundle.gateway.provider]}
       >
         <SettingsDisclosure
+          defaultOpen
           description={`${bundle.models.filter((model) => model.approved).length} approved · ${bundle.models.filter((model) => model.isDefault).length} default · ${bundle.models.length} total`}
           title="Model catalog"
         >

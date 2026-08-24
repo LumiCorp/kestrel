@@ -65,8 +65,12 @@ export function parseLocalCoreBuildIdentity(value: unknown): LocalCoreBuildIdent
  * prepare an execution. This is deliberately separate from the shell/Core
  * release version: an endpoint contract can change within a release line.
  */
-export const LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY =
+export const LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY_V1 =
   "local-core.execution-profile-resolution.v1";
+export const LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY_V2 =
+  "local-core.execution-profile-resolution.v2";
+export const LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY =
+  LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY_V1;
 
 export type LocalCoreExecutionProfileResolveRequest =
   | {
@@ -76,6 +80,7 @@ export type LocalCoreExecutionProfileResolveRequest =
   | {
       client: "cli";
       profileId: string;
+      environmentPresetId?: "cli_safe_local" | "cli_dev_local" | undefined;
     }
   | {
       client: "web";
@@ -121,14 +126,39 @@ export function parseLocalCoreExecutionProfileResolveRequest(
       selection: parseDesktopExecutionSelection(record.selection),
     };
   }
-  if (record.client === "cli" || record.client === "web") {
+  if (record.client === "cli") {
+    rejectUnknownLocalCoreFields(
+      record,
+      new Set(["client", "profileId", "environmentPresetId"]),
+      "execution profile resolve request",
+    );
+    const environmentPresetId = record.environmentPresetId;
+    if (
+      environmentPresetId !== undefined
+      && environmentPresetId !== "cli_safe_local"
+      && environmentPresetId !== "cli_dev_local"
+    ) {
+      throw new Error(
+        "Local Core execution profile resolve request.environmentPresetId must be cli_safe_local or cli_dev_local.",
+      );
+    }
+    return {
+      client: "cli",
+      profileId: requireLocalCoreString(
+        record.profileId,
+        "execution profile resolve request.profileId",
+      ),
+      ...(environmentPresetId !== undefined ? { environmentPresetId } : {}),
+    };
+  }
+  if (record.client === "web") {
     rejectUnknownLocalCoreFields(
       record,
       new Set(["client", "profileId"]),
       "execution profile resolve request",
     );
     return {
-      client: record.client,
+      client: "web",
       profileId: requireLocalCoreString(
         record.profileId,
         "execution profile resolve request.profileId",
