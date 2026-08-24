@@ -14,6 +14,7 @@ import {
 } from "../../src/kestrel/contracts/sandbox-capability.js";
 import { SandboxCapabilityExactResultConflictError } from "../../src/kestrel/contracts/store.js";
 import { InMemorySessionStore } from "../../src/store/InMemorySessionStore.js";
+import { createTestToolGateway, prepareTestToolCall } from "../helpers/createTestToolGateway.js";
 
 const hash = "a".repeat(64);
 const binding: SandboxCapabilityLeaseBindingV1 = {
@@ -34,6 +35,35 @@ function transition(sequence: number, state: SandboxCapabilityLeaseTransitionRec
     expiresAt: "2026-08-23T12:05:00.000Z", occurredAt: `2026-08-23T12:00:0${sequence}.000Z`,
     ...(state === "issued" ? { issuedAt: "2026-08-23T12:00:02.000Z" } : {}),
   };
+}
+
+async function seedPreparedCapabilityEffect(store: InMemorySessionStore): Promise<void> {
+  const gateway = createTestToolGateway({ "code.execute": async () => ({ status: "ok" }) });
+  const preparedToolCall = await prepareTestToolCall({
+    gateway,
+    toolName: "code.execute",
+    toolInput: {
+      language: "javascript",
+      code: "console.log('ok')",
+      capability: { capabilityId: TAVILY_SEARCH_CAPABILITY_ID, input: { query: "ok" } },
+    },
+    runId: binding.runId,
+    sessionId: binding.sessionId,
+    callId: binding.toolCallId,
+  });
+  (store as unknown as { effects: Array<Record<string, unknown>> }).effects.push({
+    runId: binding.runId,
+    sessionId: binding.sessionId,
+    stepIndex: 1,
+    type: "execute_tool_call",
+    payload: { preparedToolCall },
+    idempotencyKey: binding.toolCallId,
+    failurePolicy: "STOP",
+    status: "PENDING",
+    createdAt: "2026-08-23T12:00:00.000Z",
+    tenantId: binding.tenantId,
+    tenantOwnershipState: "tenant_bound",
+  });
 }
 
 test("lease parser rejects secrets, inconsistent audience, invented provider usage, and over-ceiling usage", () => {
@@ -121,7 +151,8 @@ test("in-memory lease store appends an immutable CAS ledger and exposes recovera
 });
 
 test("exact capability effect results require completed provider evidence and are idempotent", async () => {
-  const store = new InMemorySessionStore();
+  const store = new InMemorySessionStore({ tenantId: binding.tenantId });
+  await seedPreparedCapabilityEffect(store);
   const digest = fingerprintSandboxCapabilityLeaseBindingV1(binding);
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: transition(1, "requested") });
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: transition(2, "issued") });
@@ -187,7 +218,8 @@ test("exact capability effect results require completed provider evidence and ar
 });
 
 test("exact capability effect results persist before cleanup only for a never-invoked capability", async () => {
-  const store = new InMemorySessionStore();
+  const store = new InMemorySessionStore({ tenantId: binding.tenantId });
+  await seedPreparedCapabilityEffect(store);
   const digest = fingerprintSandboxCapabilityLeaseBindingV1(binding);
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: transition(1, "requested") });
   await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: transition(2, "issued") });
@@ -223,7 +255,8 @@ test("exact capability effect results persist before cleanup only for a never-in
   });
   assert.deepEqual(await store.getEffectResult(binding.toolCallId), exactResult);
 
-  const invokedStore = new InMemorySessionStore();
+  const invokedStore = new InMemorySessionStore({ tenantId: binding.tenantId });
+  await seedPreparedCapabilityEffect(invokedStore);
   await invokedStore.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: transition(1, "requested") });
   await invokedStore.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: transition(2, "issued") });
   await invokedStore.appendSandboxCapabilityLeaseTransition({
