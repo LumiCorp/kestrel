@@ -10,7 +10,7 @@ last_verified_at: 2026-07-30
 
 ## Executive conclusion
 
-**Raw score: 132.5 / 200**
+**Raw score: 133 / 200**
 
 **Critical-control result: Fail**
 
@@ -62,7 +62,7 @@ Repository search located candidate evidence. The implementation, its owning bou
 | 2 | Context Window Compaction & Sliding | 7 / 8 | Pass | E03 |
 | 3 | Dynamic Tool Schema Registry | 5 / 8 | Fail | E04 |
 | 4 | Durable State & Session Checkpointing | 6.5 / 8 | Pass | E05 |
-| 5 | Sandboxed Runtime Isolation | 3.5 / 8 | Fail; critical zeros | E06 |
+| 5 | Sandboxed Runtime Isolation | 4 / 8 | Fail; critical zeros | E06, E26-E30 |
 | 6 | Two-Tier Memory Storage Interface | 5.5 / 8 | Fail | E07 |
 | 7 | Human-in-the-Loop Interception | 5.5 / 8 | Fail | E08 |
 | 8 | Inline Policy Guardrails & Filters | 4.5 / 8 | Fail | E09 |
@@ -83,7 +83,7 @@ Repository search located candidate evidence. The implementation, its owning bou
 | 23 | Fine-Grained Network Egress Control | 2 / 8 | Fail; critical zeros | E24 |
 | 24 | Concurrency & Parallel Sub-Task Forking | 5.5 / 8 | Fail | E12, E25 |
 | 25 | Graceful Degradation & Fallback Strategy Execution | 5 / 8 | Fail; critical zero | E11, E26 |
-|  | **Total** | **132.5 / 200** | **Critical: Fail** | |
+|  | **Total** | **133 / 200** | **Critical: Fail** | |
 
 ## Evidence register
 
@@ -114,6 +114,11 @@ Repository search located candidate evidence. The implementation, its owning bou
 | E23 | [`src/runtime/agent-context/assembleContext.ts`](../../src/runtime/agent-context/assembleContext.ts), [`src/orchestration/RuntimeComposer.ts`](../../src/orchestration/RuntimeComposer.ts), [`src/mcp/McpClientManager.ts`](../../src/mcp/McpClientManager.ts), [`tests/unit/runtime-assembly.test.ts`](../../tests/unit/runtime-assembly.test.ts) |
 | E24 | [`src/code/DockerSandboxExecutor.ts`](../../src/code/DockerSandboxExecutor.ts), [`tools/devshell/execCommand.ts`](../../tools/devshell/execCommand.ts), [`src/mcp/McpClientManager.ts`](../../src/mcp/McpClientManager.ts), [`packages/mcp-security/src/index.ts`](../../packages/mcp-security/src/index.ts), [`apps/web/lib/mcp/contracts.test.ts`](../../apps/web/lib/mcp/contracts.test.ts), [`SECURITY.md`](../../SECURITY.md) |
 | E25 | [`src/engine/ToolJobQueue.ts`](../../src/engine/ToolJobQueue.ts), [`src/orchestration/DelegationSupervisor.ts`](../../src/orchestration/DelegationSupervisor.ts), [`tests/unit/tool-job-queue.test.ts`](../../tests/unit/tool-job-queue.test.ts) |
+| E26 — shared adapter contract | [`src/code/SandboxCapabilityAdapterRegistry.ts`](../../src/code/SandboxCapabilityAdapterRegistry.ts), [`src/code/CodeExecutionService.ts`](../../src/code/CodeExecutionService.ts), [`tests/unit/sandbox-capability-adapter-conformance.test.ts`](../../tests/unit/sandbox-capability-adapter-conformance.test.ts), [`tests/unit/sandbox-capability-external-effect-approval.test.ts`](../../tests/unit/sandbox-capability-external-effect-approval.test.ts) |
+| E27 — Docker process isolation | [`src/code/DockerSandboxExecutor.ts`](../../src/code/DockerSandboxExecutor.ts), [`tests/process/docker-sandbox.process.test.ts`](../../tests/process/docker-sandbox.process.test.ts) |
+| E28 — deployment qualification | [`src/localCore/executionRuntime.ts`](../../src/localCore/executionRuntime.ts), [`cli/runner/HostedRunnerStore.ts`](../../cli/runner/HostedRunnerStore.ts), [`tests/integration/web-command.test.ts`](../../tests/integration/web-command.test.ts), [`tests/fixtures/sandbox-capability-fetch-preload.mjs`](../../tests/fixtures/sandbox-capability-fetch-preload.mjs). Local Core and hosted-runner production entrypoints are exercised locally with real Docker and an explicitly isolated provider fixture; this is not a live external-provider or hosted-cloud test. |
+| E29 — transaction parity | [`src/code/SandboxCapabilityLeaseCoordinator.ts`](../../src/code/SandboxCapabilityLeaseCoordinator.ts), [`src/store/InMemorySessionStore.ts`](../../src/store/InMemorySessionStore.ts), [`src/store/PostgresSessionStore.ts`](../../src/store/PostgresSessionStore.ts), [`tests/sandbox-capability-leases.postgres.test.ts`](../../tests/sandbox-capability-leases.postgres.test.ts) |
+| E30 — operator and exact replay | [`src/replay/RunReplayService.ts`](../../src/replay/RunReplayService.ts), [`cli/runner/RunnerHost.ts`](../../cli/runner/RunnerHost.ts), [`tests/unit/run-replay-service.test.ts`](../../tests/unit/run-replay-service.test.ts), [`tests/unit/exact-effect-result-read.test.ts`](../../tests/unit/exact-effect-result-read.test.ts), [`tests/integration/runner-protocol.test.ts`](../../tests/integration/runner-protocol.test.ts) |
 | E26 | [`src/orchestration/AssemblyCompatibility.ts`](../../src/orchestration/AssemblyCompatibility.ts), [`src/engine/RunLifecycleController.ts`](../../src/engine/RunLifecycleController.ts), [`src/io/ModelGateway.ts`](../../src/io/ModelGateway.ts), [`tests/unit/runtime-assembly.test.ts`](../../tests/unit/runtime-assembly.test.ts) |
 | V01 | Current `CI=true pnpm validate` result recorded in [Validation](#validation) |
 
@@ -171,7 +176,7 @@ Repository search located candidate evidence. The implementation, its owning bou
 | 031 | Fork provenance | 0.5 | Resume/retry/replay/delegation lineage exists; one complete live-fork checkpoint contract does not. E12, E20 |
 | 032 | Storage governance | 0.5 | Retention, deletion, tenant scope, and hosted encryption/backup exist across surfaces, not as one verified state-governance contract. E05 |
 
-### 5. Sandboxed Runtime Isolation — 3.5 / 8 — Fail
+### 5. Sandboxed Runtime Isolation — 4 / 8 — Fail
 
 | ID | Control | Score | Evidence-based finding |
 |---:|---|---:|---|
@@ -180,7 +185,7 @@ Repository search located candidate evidence. The implementation, its owning bou
 | 035 ◆ | Resource quotas | 0.5 | Docker enforces memory, CPU shares, wall time, and output limits; process-count and full disk quotas are absent. E06 |
 | 036 | Mount policy | 0.5 | Workspace mounts and traversal checks exist; modes and symlink/device handling are not complete across backends. E06, E18 |
 | 037 | Network capability hook | 0.5 | Docker accepts `none` or `bridge`; it does not accept fine-grained enforceable policy. E06, E24 |
-| 038 | Scoped secret injection | 0.5 | Hosted child environments strip sensitive variables, but there is no universal sandbox secret channel contract. E16 |
+| 038 | Scoped secret injection | 1 | Registered adapters receive credentials only in the trusted host boundary; durable authority binds the exact tenant, run, call, operation, resource, policy, approval, credential revision, and ceilings. Route-free Docker workloads receive only bounded normalized results. Local Core and hosted-runner qualification prove lifecycle cleanup, cancellation, expiry, timeout, selected-unused authority, exact restart reads, and recursive secret absence with an isolated provider fixture. E26-E30 |
 | 039 | Snapshot and cleanup | 1 | Docker teardown plus workspace checkpoint/cleanup paths are deterministic and tested. E06, E18 |
 | 040 ◆ | Escape testing | 0 | No suite covers privilege/namespace escape, fork bombs, disk fill, symlink attacks, and secret theft as required. E06 |
 
