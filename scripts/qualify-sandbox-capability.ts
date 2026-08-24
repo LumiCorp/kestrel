@@ -173,7 +173,7 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
   });
   await capture(evidence, "timeout", "controlled", async () => {
     const result = await client.run(profileId, "timeout");
-    requireTrue(hasStructuredPublicValue(result.parsed, "capability_timeout"), "timeout code missing");
+    requireRun(hasStructuredPublicValue(result.parsed, "capability_timeout"), result, "timeout code missing");
     await requireCapabilityLease(client, result.runId, { status: "cleaned", terminalReason: "provider_invocation_timeout" });
     return result;
   });
@@ -395,6 +395,10 @@ class PartialRunError extends Error {
   constructor(readonly result: RunResult, cause: unknown) { super(`Run stream ended during qualification: ${errorMessage(cause)}`); }
 }
 
+class QualificationRunAssertionError extends Error {
+  constructor(readonly result: RunResult, message: string) { super(message); }
+}
+
 function readRunResult(stream: string, sessionId: string): RunResult {
   const parsed = parseQualificationRunStream(stream);
   return { stream, parsed, runId: parsed.runId, sessionId, ...(parsed.idempotencyKey ? { idempotencyKey: parsed.idempotencyKey } : {}) };
@@ -406,7 +410,14 @@ async function capture(evidence: ScenarioEvidence[], name: string, mode: "live" 
     const result = await run();
     evidence.push({ name, mode, status: "passed", startedAt, completedAt: new Date().toISOString(), runId: result.runId, sessionId: result.sessionId, idempotencyKey: result.idempotencyKey, assertions: ["public_terminal_state", "secret_scan"], publicEvidence: [redactEvidence(result.stream)] });
   } catch (error) {
-    evidence.push(failedEvidence(name, mode, error, startedAt));
+    const failed = failedEvidence(name, mode, error, startedAt);
+    if (error instanceof QualificationRunAssertionError) {
+      failed.runId = error.result.runId;
+      failed.sessionId = error.result.sessionId;
+      failed.idempotencyKey = error.result.idempotencyKey;
+      failed.publicEvidence = [summarizePublicRun(error.result)];
+    }
+    evidence.push(failed);
   }
 }
 
@@ -563,7 +574,18 @@ function hasStructuredPublicValue(run: ParsedQualificationRun, expected: string)
     if (typeof value === "object" && value !== null) return Object.values(value).some(visit);
     return false;
   };
-  return run.events.some(visit) || run.codeResults.some(visit);
+  if (run.events.some(visit) || run.codeResults.some(visit)) return true;
+  return run.codeResults.some((result) => result.stdout.split(/\r?\n/u).some((line) => {
+    if (line.trim() === "") return false;
+    try { return visit(JSON.parse(line)); } catch { return false; }
+  }));
+}
+
+function summarizePublicRun(result: RunResult): unknown {
+  return {
+    terminalEvents: result.parsed.events.filter((event) => event.type === "run.completed" || event.type === "run.cancelled" || event.type === "run.failed").map((event) => ({ type: event.type, runId: event.runId, payload: event.payload })),
+    codeResults: result.parsed.codeResults.map((item) => ({ stdout: item.stdout.slice(0, 4_000), capabilityReplayEvidence: item.capabilityReplayEvidence })),
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -738,6 +760,7 @@ function requireMatch(value: string, pattern: RegExp, message: string): void { i
 function requireNoMatch(value: string, pattern: RegExp, message: string): void { if (pattern.test(value)) throw new Error(message); }
 function requireEqual(actual: unknown, expected: unknown, message: string): void { if (canonical(actual) !== canonical(expected)) throw new Error(`${message}: ${canonical({ actual, expected })}`); }
 function requireTrue(value: boolean, message: string): asserts value { if (!value) throw new Error(message); }
+function requireRun(value: boolean, result: RunResult, message: string): asserts value { if (!value) throw new QualificationRunAssertionError(result, message); }
 function canonical(value: unknown): string { return JSON.stringify(sortValue(value)); }
 function sortValue(value: unknown): unknown { if (Array.isArray(value)) return value.map(sortValue); if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, sortValue(item)])); return value; }
 function sha256(value: string | Buffer): string { return createHash("sha256").update(value).digest("hex"); }
