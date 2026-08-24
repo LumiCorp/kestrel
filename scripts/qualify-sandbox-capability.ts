@@ -86,13 +86,13 @@ async function main(): Promise<void> {
 
     if (config.mode === "controlled" || config.mode === "all") {
       await startRemote(config, "controlled");
-      await waitForHealth(localPort, config.runnerToken);
+      await waitForHealth(config, localPort, config.runnerToken);
       await runControlledJourney(config, localPort, scenarios);
       await stopRemote(config);
     }
     if (config.mode === "live" || config.mode === "all") {
       await startRemote(config, "live");
-      await waitForHealth(localPort, config.runnerToken);
+      await waitForHealth(config, localPort, config.runnerToken);
       await runLiveJourney(config, localPort, scenarios);
       await stopRemote(config);
     }
@@ -185,13 +185,13 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
       await killRemote(config);
       const partial = await pending.promise.catch((error) => error instanceof PartialRunError ? error.result : undefined);
       await startRemote(config, "controlled", { credentials: false });
-      await waitForHealth(port, config.runnerToken);
+      await waitForHealth(config, port, config.runnerToken);
       if (partial?.runId && partial.idempotencyKey) await client.expectExactResultUnavailable(partial);
       return partial ?? { stream: "", runId: "ambiguous", sessionId: pending.sessionId };
     } finally {
       await stopRemote(config).catch(() => undefined);
       await startRemote(config, "controlled").catch(() => undefined);
-      await waitForHealth(port, config.runnerToken).catch(() => undefined);
+      await waitForHealth(config, port, config.runnerToken).catch(() => undefined);
     }
   });
   for (const [checkpoint, replayExpected] of CHECKPOINTS) {
@@ -203,7 +203,7 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
         await killRemote(config);
         const partial = await pending.promise.catch((error) => error instanceof PartialRunError ? error.result : undefined);
         await startRemote(config, "controlled", { credentials: false });
-        await waitForHealth(port, config.runnerToken);
+        await waitForHealth(config, port, config.runnerToken);
         const result = partial ?? await recoverRunIdentity(config, checkpoint);
         if (!result?.runId || !result.sessionId || !result.idempotencyKey) {
           if (replayExpected) throw new Error(`Crash at ${checkpoint} did not expose exact result identity.`);
@@ -216,7 +216,7 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
         await stopRemote(config).catch(() => undefined);
         await remote(config, `rm -f ${shell(`${config.remoteRoot}/runtime/control/${checkpoint}.pause`)} ${shell(`${config.remoteRoot}/runtime/control/${checkpoint}.release`)}`).catch(() => undefined);
         await startRemote(config, "controlled").catch(() => undefined);
-        await waitForHealth(port, config.runnerToken).catch(() => undefined);
+        await waitForHealth(config, port, config.runnerToken).catch(() => undefined);
       }
     });
   }
@@ -253,7 +253,7 @@ async function runLiveJourney(config: QualificationConfig, port: number, evidenc
     await setRemoteDockerAvailable(config, false);
     try {
       await startRemote(config, "live", { credentials: false });
-      await waitForHealth(port, config.runnerToken);
+      await waitForHealth(config, port, config.runnerToken);
       const replay = await client.getExactResult(result);
       requireEqual(canonical(replay), canonical(exact), "post-restart exact result changed");
     } finally {
@@ -503,14 +503,15 @@ async function cleanupRemote(config: QualificationConfig): Promise<{ ok: boolean
   return { ok: containers.length === 0, containers };
 }
 
-async function waitForHealth(port: number, token: string): Promise<void> {
+async function waitForHealth(config: QualificationConfig, port: number, token: string): Promise<void> {
   const signal = AbortSignal.timeout(60_000);
   while (!signal.aborted) {
     const response = await fetch(`http://127.0.0.1:${port}/health`, { headers: { authorization: `Bearer ${token}` } }).catch(() => undefined);
     if (response?.ok) return;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error("Qualification runner health check timed out.");
+  const logs = await remote(config, `for f in ${shell(`${config.remoteRoot}/runtime/runner.log`)} ${shell(`${config.remoteRoot}/runtime/model.log`)}; do test ! -f "$f" || tail -n 80 "$f"; done`).then((result) => result.stdout).catch(() => "");
+  throw new Error(`Qualification runner health check timed out.${logs ? `\n${logs}` : ""}`);
 }
 
 async function assertOperatorLifecycle(client: PublicRunnerClient, runId: string, pattern: RegExp): Promise<void> {
