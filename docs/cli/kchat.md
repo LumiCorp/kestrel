@@ -27,7 +27,7 @@ Workspace setup and scheduling guide: [docs/cli/workspaces.md](https://github.co
 ## Launch
 
 - Local dev: `pnpm run tui`
-- Public install: `npm install -g @kestrel-agents/kestrel@0.8.5`
+- Public install: `npm install -g @kestrel-agents/kestrel@0.8.7`
 - Secondary macOS archive: `kestrel-cli-0.8.5-darwin-arm64.tar.gz`
 - Packaged CLI bins: `kestrel`, `ks`, `kcron`
 - Contributor shims: `pnpm run install:cli`

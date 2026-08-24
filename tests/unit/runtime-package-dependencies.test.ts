@@ -15,7 +15,6 @@ test("runtime package manifests replace workspace links with exact packed versio
   assert.deepEqual(
     resolveRuntimePackageDependencies({
       repoRoot,
-      runtimeVersion: "0.5.1",
       dependencies: {
         "@kestrel-agents/protocol": "workspace:*",
         "@kestrel-agents/conversation": "workspace:*",
@@ -42,7 +41,7 @@ test("runtime package manifests replace workspace links with exact packed versio
   );
 });
 
-test("runtime package manifests reject protocol and runtime version drift", async (t) => {
+test("runtime package manifests pin each independently versioned workspace dependency", async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-dependencies-drift-"));
   t.after(async () => await rm(repoRoot, { recursive: true, force: true }));
   await writeWorkspaceManifests(repoRoot, "0.5.1");
@@ -53,10 +52,9 @@ test("runtime package manifests reject protocol and runtime version drift", asyn
     "utf8",
   );
 
-  assert.throws(
-    () => resolveRuntimePackageDependencies({
+  assert.equal(
+    resolveRuntimePackageDependencies({
       repoRoot,
-      runtimeVersion: "0.5.1",
       dependencies: {
         "@kestrel-agents/protocol": "workspace:*",
         "@kestrel-agents/conversation": "workspace:*",
@@ -66,8 +64,8 @@ test("runtime package manifests reject protocol and runtime version drift", asyn
         "@kestrel-agents/memory": "workspace:*",
         "@lumi/kestrel-environment-auth": "workspace:^",
       },
-    }),
-    /Runtime version 0\.5\.1 must match @kestrel-agents\/protocol 0\.5\.2/u,
+    })["@kestrel-agents/protocol"],
+    "0.5.2",
   );
 });
 

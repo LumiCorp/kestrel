@@ -25,6 +25,15 @@ const externalRuntimeWorkspacePackages = [
   { directory: "packages/workspace-skills", tarballPrefix: "kestrel-agents-workspace-skills-" },
 ] as const;
 
+const exactRuntimeWorkspaceDependencies = [
+  { name: "@kestrel-agents/conversation", directory: "packages/conversation" },
+  { name: "@kestrel-agents/files", directory: "packages/attachments" },
+  { name: "@kestrel-agents/protocol", directory: "packages/protocol" },
+  { name: "@kestrel-agents/sdk", directory: "packages/sdk" },
+  { name: "@kestrel-agents/workspace-skills", directory: "packages/workspace-skills" },
+  { name: "@kestrel-agents/memory", directory: "packages/memory" },
+] as const;
+
 const forbiddenPrefixes = [
   "apps/",
   "tests/",
@@ -218,42 +227,37 @@ try {
   const packedManifest = JSON.parse(
     readFileSync(path.join(extractDir, "package", "package.json"), "utf8"),
   ) as { dependencies?: Record<string, string>; version?: string };
-  assert.equal(
-    packedManifest.dependencies?.["@kestrel-agents/conversation"],
-    packedManifest.version,
-    "packed runtime must depend on the exact matching Conversation version",
-  );
-  assert.equal(
-    packedManifest.dependencies?.["@kestrel-agents/protocol"],
-    packedManifest.version,
-    "packed runtime must depend on the exact matching protocol version",
-  );
-  assert.equal(
-    packedManifest.dependencies?.["@kestrel-agents/sdk"],
-    packedManifest.version,
-    "packed runtime must depend on the exact matching SDK version",
-  );
-  assert.equal(
-    packedManifest.dependencies?.["@kestrel-agents/workspace-skills"],
-    packedManifest.version,
-    "packed runtime must depend on the exact matching workspace-skills version",
-  );
-  assert.equal(
-    packedManifest.dependencies?.["@kestrel-agents/memory"],
-    packedManifest.version,
-    "packed runtime must depend on the exact matching memory version",
-  );
-  for (const bundledManifestPath of [
-    "node_modules/@kestrel-agents/memory/package.json",
-    "node_modules/@lumi/kestrel-environment-auth/package.json",
+  for (const workspaceDependency of exactRuntimeWorkspaceDependencies) {
+    const workspaceManifest = JSON.parse(
+      readFileSync(path.join(repoRoot, workspaceDependency.directory, "package.json"), "utf8"),
+    ) as { name?: string; version?: string };
+    assert.equal(workspaceManifest.name, workspaceDependency.name);
+    assert.equal(
+      packedManifest.dependencies?.[workspaceDependency.name],
+      workspaceManifest.version,
+      `packed runtime must pin ${workspaceDependency.name} to its workspace version`,
+    );
+  }
+  for (const bundledDependency of [
+    {
+      packedManifestPath: "node_modules/@kestrel-agents/memory/package.json",
+      workspaceManifestPath: "packages/memory/package.json",
+    },
+    {
+      packedManifestPath: "node_modules/@lumi/kestrel-environment-auth/package.json",
+      workspaceManifestPath: "packages/environment-auth/package.json",
+    },
   ]) {
     const bundledManifest = JSON.parse(
-      readFileSync(path.join(extractDir, "package", bundledManifestPath), "utf8"),
+      readFileSync(path.join(extractDir, "package", bundledDependency.packedManifestPath), "utf8"),
+    ) as { name?: string; version?: string };
+    const workspaceManifest = JSON.parse(
+      readFileSync(path.join(repoRoot, bundledDependency.workspaceManifestPath), "utf8"),
     ) as { name?: string; version?: string };
     assert.equal(
       bundledManifest.version,
-      packedManifest.version,
-      `bundled ${bundledManifest.name ?? bundledManifestPath} manifest must match the runtime version`,
+      workspaceManifest.version,
+      `bundled ${bundledManifest.name ?? bundledDependency.packedManifestPath} manifest must match its workspace version`,
     );
   }
 
