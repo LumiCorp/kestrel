@@ -773,7 +773,7 @@ export function assertFinalAttempt(input: {
     "The final observed snapshot state is not created.",
   );
   assert(
-    input.final.operation.attempt === 2,
+    input.final.operation.attempt >= 2,
     "The Environment operation did not reach attempt 2.",
   );
   assert(

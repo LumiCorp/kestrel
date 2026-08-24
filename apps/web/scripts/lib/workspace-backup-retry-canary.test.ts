@@ -532,6 +532,46 @@ test("final retry preserves snapshot identity, source volume, and requested time
   );
 });
 
+test("final retry accepts completion after more than one snapshot-not-ready retry", () => {
+  const value = target();
+  const first = observation({ state: "prepare", attempt: 1 });
+  const final = observation({
+    state: "created",
+    attempt: 3,
+    backupStatus: "available",
+    operationStatus: "completed",
+    stage: "workspace.backup.available",
+    retryCount: 1,
+    lastObservedAt: "2026-08-23T00:03:00.000Z",
+  });
+
+  assert.doesNotThrow(() =>
+    assertFinalAttempt({
+      target: value,
+      first,
+      final,
+      snapshots: [{ id: "snapshot-1", state: "created" }],
+      environment: value.baseline.environment,
+      worker: value.controlWorker.selected,
+    }),
+  );
+
+  const notRetried = structuredClone(final);
+  notRetried.operation.attempt = 1;
+  assert.throws(
+    () =>
+      assertFinalAttempt({
+        target: value,
+        first,
+        final: notRetried,
+        snapshots: [{ id: "snapshot-1", state: "created" }],
+        environment: value.baseline.environment,
+        worker: value.controlWorker.selected,
+      }),
+    /did not reach attempt 2/u,
+  );
+});
+
 test("temporary export resource leaks fail the canary", () => {
   const value = target();
   const leaked = structuredClone(value.baseline.environment);
