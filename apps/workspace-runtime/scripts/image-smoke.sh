@@ -6,6 +6,18 @@ image="${1:?usage: image-smoke.sh IMAGE}"
 container="kestrel-workspace-runtime-smoke-$$"
 health_file="/tmp/kestrel-workspace-runtime-health-$$"
 
+matrix_output="$(docker run --rm \
+  --entrypoint node \
+  "$image" \
+  /app/packages/attachments/scripts/extraction-matrix.mjs \
+  /app/packages/attachments/dist/index.js \
+  /app/packages/attachments/tests/fixtures)"
+node -e '
+  const evidence = JSON.parse(process.argv[1]);
+  if (evidence.ok !== true) throw new Error("Workspace Runtime extraction matrix evidence is invalid");
+' "$matrix_output"
+printf 'Workspace Runtime extraction matrix passed\n'
+
 cleanup() {
   docker rm -f "$container" >/dev/null 2>&1 || true
   rm -f "$health_file"

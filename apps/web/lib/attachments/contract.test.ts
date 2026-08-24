@@ -24,6 +24,20 @@ test("two-phase attachment routes stream opaque bytes behind Thread authorizatio
   assert.doesNotMatch(initialize, /accept=/u);
 });
 
+test("project-task and standalone attachment uploads share representation contracts", () => {
+  const projectUpload = read("app/api/files/[fileId]/route.ts");
+  const standaloneUpload = read("app/api/threads/[id]/attachments/[attachmentId]/route.ts");
+  assert.match(projectUpload, /uploadThreadFile/u);
+  assert.match(projectUpload, /fileApiRepresentationContract\(file\)/u);
+  assert.match(standaloneUpload, /uploadThreadAttachment/u);
+  assert.match(standaloneUpload, /modelVisibleMetadataOnlyReason/u);
+  assert.match(standaloneUpload, /isKnowledgeDocumentMediaTypeSupported/u);
+  for (const source of [projectUpload, standaloneUpload]) {
+    assert.match(source, /representation/u);
+    assert.match(source, /downloadUrl/u);
+  }
+});
+
 test("submission and execution fail closed for missing, duplicate, oversized, or quarantined files", () => {
   const store = read("lib/attachments/store.ts");
   const service = read("lib/files/service.ts");
