@@ -142,9 +142,9 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
   await capture(evidence, "provider-used", "controlled", async () => {
     const result = await client.run(profileId, "provider-used");
     requireMatch(result.stream, /run\.completed/u, "provider-used run did not complete");
-    requireMatch(result.stream, /DIRECT_NETWORK_BLOCKED/u, "controlled sandbox did not report blocked direct-network probes");
-    if (/DIRECT_NETWORK_UNEXPECTED/u.test(result.stream)) {
-      const observations = result.stream.split("\\n").filter((line) => line.includes("DIRECT_NETWORK_UNEXPECTED")).slice(0, 8);
+    requireMatch(result.stream, /DIRECT_NETWORK_BLOCKED:\{\\"url/u, "controlled sandbox did not report blocked direct-network probes");
+    if (/DIRECT_NETWORK_UNEXPECTED:\{\\"url/u.test(result.stream)) {
+      const observations = result.stream.split("\\n").filter((line) => /DIRECT_NETWORK_UNEXPECTED:\{\\"url/u.test(line)).slice(0, 8);
       throw new Error(`controlled sandbox unexpectedly reached a direct-network target: ${observations.join(" | ")}`);
     }
     requireMatch(await providerEvidence(config), /qualification-provider-used/u, "controlled provider was not contacted");
@@ -183,8 +183,9 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
   });
   await capture(evidence, "crash-during-provider-invocation", "controlled", async () => {
     try {
+      const before = await remoteMatchCount(config, "provider.ndjson", /qualification-block-cancel/u);
       const pending = client.run(profileId, "cancel");
-      await waitForRemoteMatch(config, "provider.ndjson", /qualification-block-cancel/u);
+      await waitForRemoteMatch(config, "provider.ndjson", /qualification-block-cancel/u, before + 1);
       await killRemote(config);
       const partial = await pending.promise.catch((error) => error instanceof PartialRunError ? error.result : undefined);
       await startRemote(config, "controlled", { credentials: false });
@@ -200,9 +201,10 @@ async function runControlledJourney(config: QualificationConfig, port: number, e
   for (const [checkpoint, replayExpected] of CHECKPOINTS) {
     await capture(evidence, `crash-${checkpoint}`, "controlled", async () => {
       try {
+        const before = await remoteMatchCount(config, "control/events.ndjson", new RegExp(`"checkpoint":"${checkpoint}"`, "u"));
         await armCheckpoint(config, checkpoint);
         const pending = client.run(profileId, "provider-used");
-        await waitForRemoteMatch(config, "control/events.ndjson", new RegExp(`"checkpoint":"${checkpoint}"`, "u"));
+        await waitForRemoteMatch(config, "control/events.ndjson", new RegExp(`"checkpoint":"${checkpoint}"`, "u"), before + 1);
         await killRemote(config);
         const partial = await pending.promise.catch((error) => error instanceof PartialRunError ? error.result : undefined);
         await startRemote(config, "controlled", { credentials: false });
@@ -247,8 +249,8 @@ async function runLiveJourney(config: QualificationConfig, port: number, evidenc
     const result = await client.run(profileId, `provider-used ${marker}`);
     requireMatch(result.stream, /run\.completed/u, "live Tavily run did not complete");
     requireMatch(result.stream, /capabilityReplayEvidence/u, "live exact result evidence missing");
-    requireMatch(result.stream, /DIRECT_NETWORK_BLOCKED/u, "live sandbox did not report blocked direct-network probes");
-    requireNoMatch(result.stream, /DIRECT_NETWORK_UNEXPECTED/u, "live sandbox unexpectedly reached a direct-network target");
+    requireMatch(result.stream, /DIRECT_NETWORK_BLOCKED:\{\\"url/u, "live sandbox did not report blocked direct-network probes");
+    requireNoMatch(result.stream, /DIRECT_NETWORK_UNEXPECTED:\{\\"url/u, "live sandbox unexpectedly reached a direct-network target");
     requireMatch(result.stream, new RegExp(marker, "u"), "live tool evidence did not preserve the unique query marker");
     assertSecretFree(result.stream, config);
     const exact = await client.getExactResult(result);
@@ -528,14 +530,23 @@ async function providerEvidence(config: QualificationConfig): Promise<string> {
   return (await remote(config, `test ! -f ${shell(`${config.remoteRoot}/runtime/provider.ndjson`)} || cat ${shell(`${config.remoteRoot}/runtime/provider.ndjson`)}`)).stdout;
 }
 
-async function waitForRemoteMatch(config: QualificationConfig, relative: string, pattern: RegExp): Promise<void> {
+async function waitForRemoteMatch(config: QualificationConfig, relative: string, pattern: RegExp, minimumOccurrences = 1): Promise<void> {
   const signal = AbortSignal.timeout(120_000);
   while (!signal.aborted) {
     const text = (await remote(config, `test ! -f ${shell(`${config.remoteRoot}/runtime/${relative}`)} || cat ${shell(`${config.remoteRoot}/runtime/${relative}`)}`)).stdout;
-    if (pattern.test(text)) return;
+    if (matchCount(text, pattern) >= minimumOccurrences) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Remote evidence did not match ${pattern}.`);
+}
+
+async function remoteMatchCount(config: QualificationConfig, relative: string, pattern: RegExp): Promise<number> {
+  const text = (await remote(config, `test ! -f ${shell(`${config.remoteRoot}/runtime/${relative}`)} || cat ${shell(`${config.remoteRoot}/runtime/${relative}`)}`)).stdout;
+  return matchCount(text, pattern);
+}
+
+function matchCount(value: string, pattern: RegExp): number {
+  return value.match(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))?.length ?? 0;
 }
 
 async function armCheckpoint(config: QualificationConfig, checkpoint: string): Promise<void> {
