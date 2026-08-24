@@ -52,6 +52,18 @@ const nextConfig: NextConfig = {
     "@discordjs/ws",
     "zlib-sync",
   ],
+
+  webpack(config, { isServer }) {
+    if (isServer) {
+      // Next's serverExternalPackages matcher only recognizes resolved paths
+      // below node_modules. pnpm resolves this workspace dependency to its
+      // monorepo source path, so keep the exact package request external too.
+      config.externals.push({
+        "@kestrel-agents/files": "commonjs @kestrel-agents/files",
+      });
+    }
+    return config;
+  },
 };
 
 export default nextConfig;
