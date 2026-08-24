@@ -16,7 +16,7 @@
 
 <p align="center">
   Kestrel artifacts release independently. The current public lines are
-  Desktop 0.8.6, Runtime and CLI/TUI 0.8.7, the remaining public packages
+  Desktop 0.8.6, Runtime and CLI/TUI 0.8.8, the remaining public packages
   0.8.5, and Kestrel One source 0.8.5.
   Each surface keeps explicit compatibility, execution, Mission Control,
   recovery, approval, memory, and evidence contracts.
@@ -36,7 +36,7 @@
   <a href="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml"><img src="https://github.com/LumiCorp/kestrel/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-1f6f5f.svg" alt="MIT license" /></a>
   <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/Desktop-0.8.6-2f7d32.svg" alt="Kestrel Desktop 0.8.6" /></a>
-  <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/Runtime-0.8.7-245b78.svg" alt="Kestrel Runtime 0.8.7" /></a>
+  <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/Runtime-0.8.8-245b78.svg" alt="Kestrel Runtime 0.8.8" /></a>
   <a href="https://docs.kestrelagents.dev/start/release-status"><img src="https://img.shields.io/badge/status-Beta-245b78.svg" alt="Kestrel Beta" /></a>
 </p>
 
@@ -91,14 +91,14 @@ operator control, Mission Control, profiles, tools, jobs, and Local Core.
 Requirements: Node.js 22 on macOS arm64 or Linux x64.
 
 ```bash
-npm install -g @kestrel-agents/kestrel@0.8.7
+npm install -g @kestrel-agents/kestrel@0.8.8
 kestrel --version
 kestrel
 ```
 
 The checksum-bearing macOS arm64 standalone archive remains available from the
 Runtime/CLI `v0.8.5` GitHub release and reports product version `0.8.5`. npm is
-the canonical distribution for Runtime/CLI 0.8.7.
+the canonical distribution for Runtime/CLI 0.8.8.
 
 [CLI installation](https://docs.kestrelagents.dev/cli/install) ·
 [Command suite](https://docs.kestrelagents.dev/cli/command-suite) ·
@@ -107,7 +107,7 @@ the canonical distribution for Runtime/CLI 0.8.7.
 ## Build with Kestrel
 
 Install the exact package versions shown in the compatibility matrix. Runtime
-is 0.8.7 and its nine public dependencies are 0.8.5; independently versioned
+is 0.8.8 and its nine public dependencies are 0.8.5; independently versioned
 products such as Desktop do not need to share either number. Kestrel does not
 provide a 0.7 wire/API compatibility shim around the current Runtime, Protocol, SDK,
 adapters, or clients.

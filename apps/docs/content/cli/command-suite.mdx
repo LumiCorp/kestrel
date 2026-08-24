@@ -25,15 +25,21 @@ from scripts.
 | `core` | `kestrel core <status or restart> [--wait]` | Inspect build compatibility or safely restart the Local Core daemon |
 | `workspace` | `kestrel workspace <status or list>` | Resolve the current workspace or list registered workspaces |
 | `web` | `kestrel web [--host <host>] [--port <port>] [--token <token>]` | Expose Local Core to a trusted local server over authenticated HTTP |
-| `job` | `kestrel job run --json-in <file> --json-out <file> [--profile <id>]` | Run non-interactive work with strict JSON input and output |
+| `job` | `kestrel job <preflight or run> --json-in <file> --json-out <file>` | Prove compatibility, then run non-interactive work with strict JSON input and output |
 | `operator` | `kestrel operator <resume-wait or approve or retry-delegation or doctor-export> ...` | Respond to waits, approvals, delegations, and diagnostic exports |
 | `runtime` | `kestrel runtime <replay or doctor> <query> [--json]` | Inspect recorded runtime evidence |
 | `runtime bundle` | `kestrel runtime bundle <query> --out <file>` | Export a diagnostic bundle |
 | `setup` | `kestrel setup [--profile <id>] [--approval-pack <dev, ci_bot, or production>] [--full]` | Check or configure a local installation |
 | `uninstall` | `kestrel uninstall plan --scope <current, software, or complete>` | Plan or apply a macOS uninstall with blockers, typed confirmations, and final verification |
 
-`job run` is the protocol-native non-interactive surface. Its required
-`--json-in` and `--json-out` files keep request and result handling explicit.
+`job preflight` resolves and registers an immutable execution profile and writes
+`job_preflight_v1`. It does not create a job, thread, run, repository checkout,
+or worktree. A ready V2 preflight binding is mandatory for V2 `job run`; binding
+drift writes `job_run_rejection_v1` and stops before dispatch. Existing direct
+clients may continue to submit `job_input_v1` to `job run`.
+
+Both commands require `--json-in` and `--json-out`. Kestrel continues to use
+`KESTREL_HOME` for isolated state. It does not implement `--state-dir`.
 
 ## Interactive commands
 

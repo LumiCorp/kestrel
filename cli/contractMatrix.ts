@@ -224,7 +224,7 @@ export function buildCliContractMatrixV1(generatedAt = new Date().toISOString())
       },
       {
         command: "job",
-        usage: "kestrel job run --json-in <file> --json-out <file> [--profile <id>]",
+        usage: "kestrel job <preflight|run> --json-in <file> --json-out <file>",
         flags: ["--json-in", "--json-out", "--profile"],
       },
       {

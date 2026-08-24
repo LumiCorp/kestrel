@@ -181,6 +181,7 @@
       "isolation": "shared-process",
       "workers": 4,
       "files": [
+        "tests/unit/approval-policy-pack-digest.test.ts",
         "tests/unit/cli-activity-format.test.ts",
         "tests/unit/cli-app-input.test.ts",
         "tests/unit/cli-app-palette.test.ts",
