@@ -4,8 +4,7 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Bound expired-stage registry iteration](09-bound-expired-stage-registry-iteration.md)
-- [Reject compatibility-normalized Windows device names](10-reject-compatibility-normalized-device-names.md)
+None.
 
 ## In progress
 
@@ -24,6 +23,8 @@ None.
 - [Reject unsafe cross-platform ZIP entry names](06-reject-unsafe-cross-platform-zip-entry-names.md) — independent review found blocking repair issue [10](10-reject-compatibility-normalized-device-names.md)
 - [Settle file-share cancellation before returning success](07-settle-file-share-cancellation-before-success.md)
 - [Bound retained downloads across supervisor restart](08-bound-retained-downloads-across-supervisor-restart.md)
+- [Bound expired-stage registry iteration](09-bound-expired-stage-registry-iteration.md)
+- [Reject compatibility-normalized Windows device names](10-reject-compatibility-normalized-device-names.md)
 
 ## Done
 

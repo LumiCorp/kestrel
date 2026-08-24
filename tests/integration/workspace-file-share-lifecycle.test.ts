@@ -12,6 +12,7 @@ import {
   rm,
   symlink,
   truncate,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
@@ -194,11 +195,23 @@ test("workspace.files.share completes forced short file writes before publicatio
 
 test("workspace.files.share rejects portable-unsafe ZIP names and portable collisions", async () => {
   const fixture = await createFixture();
-  for (const name of ["unsafe\\entry.txt", "C:drive.txt", "trailing.", "CON.txt"]) {
+  const unsafeNames = [
+    "unsafe\\entry.txt",
+    "C:drive.txt",
+    "trailing.",
+    "CON.txt",
+    "COM¹.txt",
+    "COM²",
+    "COM³.log",
+    "LPT¹.txt",
+    "LPT²",
+    "LPT³",
+  ];
+  for (const name of unsafeNames) {
     await writeFile(path.join(fixture.workspaceRoot, name), name);
   }
   try {
-    for (const unsafePath of ["unsafe\\entry.txt", "C:drive.txt", "trailing.", "CON.txt"]) {
+    for (const unsafePath of unsafeNames) {
       await assert.rejects(
         workspaceFilesShareTool.createHandler(fixture.context)({
           mode: "zip",
@@ -229,6 +242,16 @@ test("workspace.files.share rejects portable-unsafe ZIP names and portable colli
     assert.equal(composed.collisionKey, decomposed.collisionKey);
     const safe = inspectPortableZipEntryName("資料/結果.txt");
     assert.deepEqual("reason" in safe ? undefined : safe.entryName, "資料/結果.txt");
+    for (const deviceName of [
+      "COM¹.txt",
+      "COM²",
+      "COM³.log",
+      "LPT¹.txt",
+      "LPT²",
+      "LPT³",
+    ]) {
+      assert.ok("reason" in inspectPortableZipEntryName(deviceName));
+    }
   } finally {
     await fixture.supervisor.close();
   }
@@ -324,6 +347,62 @@ test("workspace.files.share reclaims a genuine expired stage after abnormal proc
     );
     await assert.rejects(access(stagePath));
   } finally {
+    await fixture.supervisor.close();
+  }
+});
+
+test("workspace.files.share visits an unrestorable expired stage once per cleanup pass", { timeout: 8_000 }, async () => {
+  const fixture = await createFixture();
+  await writeFile(path.join(fixture.workspaceRoot, "one.txt"), "one");
+  let watchdogFired = false;
+  let watchdog: NodeJS.Timeout | undefined;
+  let watchdogRecovery: Promise<void> | undefined;
+  try {
+    const output = await workspaceFilesShareTool.createHandler(fixture.context)({
+      mode: "file",
+      paths: ["one.txt"],
+    }) as ShareResult;
+    const stagePath = await findSingleOwnedStage(fixture.tempRoot);
+    const metadata = JSON.parse(
+      await readFile(path.join(stagePath, "metadata.json"), "utf8"),
+    ) as Record<string, unknown>;
+    metadata.expiresAt = "2026-01-01T00:00:00.000Z";
+    await writeFile(path.join(stagePath, "metadata.json"), JSON.stringify(metadata));
+    await killRetainedShare(fixture, output.share.previewId);
+    const unexpectedPath = path.join(stagePath, "unexpected-entry");
+    await writeFile(unexpectedPath, "must remain");
+
+    watchdogRecovery = new Promise<void>((resolve) => {
+      watchdog = setTimeout(() => {
+        watchdogFired = true;
+        void removeUnexpectedStageEntry(fixture.tempRoot, "unexpected-entry").finally(resolve);
+      }, 2_000);
+    });
+    await assert.rejects(
+      workspaceFilesShareTool.createHandler(fixture.context)({
+        mode: "file",
+        paths: ["missing.txt"],
+      }),
+      (error: unknown) => (error as RuntimeFailure).code === "WORKSPACE_FILE_SHARE_PATH_INVALID",
+    );
+    if (watchdog !== undefined) clearTimeout(watchdog);
+    if (watchdogFired) await watchdogRecovery;
+
+    assert.equal(watchdogFired, false, "cleanup revisited the restored registry entry");
+    assert.equal(await readFile(unexpectedPath, "utf8"), "must remain");
+    await unlink(unexpectedPath);
+
+    await assert.rejects(
+      workspaceFilesShareTool.createHandler(fixture.context)({
+        mode: "file",
+        paths: ["still-missing.txt"],
+      }),
+      (error: unknown) => (error as RuntimeFailure).code === "WORKSPACE_FILE_SHARE_PATH_INVALID",
+    );
+    await assert.rejects(access(stagePath));
+  } finally {
+    if (watchdog !== undefined) clearTimeout(watchdog);
+    if (watchdogFired) await watchdogRecovery;
     await fixture.supervisor.close();
   }
 });
@@ -742,6 +821,30 @@ async function killRetainedShare(
     signal: "SIGKILL",
     waitMs: 2_000,
   });
+}
+
+async function removeUnexpectedStageEntry(
+  tempRoot: string,
+  entryName: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    for (const candidate of await readdir(tempRoot)) {
+      if (
+        !candidate.startsWith("kestrel-file-share-") &&
+        !candidate.startsWith(".kestrel-file-share-cleanup-")
+      ) {
+        continue;
+      }
+      try {
+        await unlink(path.join(tempRoot, candidate, entryName));
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Could not disarm the expired-stage cleanup watchdog.");
 }
 
 function readStoredZip(buffer: Buffer): Map<string, Buffer> {

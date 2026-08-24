@@ -829,7 +829,8 @@ async function writeStageMetadata(
 
 async function cleanExpiredStaging(tempRoot: string): Promise<void> {
   const root = path.resolve(tempRoot);
-  for (const [stagePath, ownership] of ownedStages) {
+  const stagesAtPassStart = [...ownedStages.entries()];
+  for (const [stagePath, ownership] of stagesAtPassStart) {
     if (path.dirname(stagePath) !== root) continue;
     await reclaimExpiredOwnedStage(stagePath, ownership, root);
   }

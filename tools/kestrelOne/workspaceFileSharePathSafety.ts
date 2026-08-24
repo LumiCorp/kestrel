@@ -30,29 +30,37 @@ export function inspectPortableZipEntryName(
 
   const collisionSegments: string[] = [];
   for (const segment of segments) {
-    if (/[\u0000-\u001f\u007f<>:"|?*]/u.test(segment)) {
-      return { reason: "A ZIP entry path segment contains characters unsafe on Windows." };
-    }
-    if (/[ .]$/u.test(segment)) {
-      return { reason: "ZIP entry path segments cannot end in a space or period." };
-    }
-    if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/iu.test(segment)) {
-      return { reason: "A ZIP entry path segment is a reserved Windows device name." };
-    }
-
     const compatibilityName = segment.normalize("NFKC");
-    if (
-      compatibilityName.includes("/") ||
-      compatibilityName.includes("\\") ||
-      compatibilityName === "." ||
-      compatibilityName === ".."
-    ) {
-      return { reason: "A ZIP entry path segment has an ambiguous portable form." };
-    }
+    const unsafeReason =
+      portableWindowsSegmentFailure(segment) ??
+      portableWindowsSegmentFailure(compatibilityName);
+    if (unsafeReason !== undefined) return { reason: unsafeReason };
     collisionSegments.push(
       compatibilityName.toUpperCase().toLowerCase().normalize("NFC"),
     );
   }
 
   return { entryName, collisionKey: collisionSegments.join("/") };
+}
+
+function portableWindowsSegmentFailure(segment: string): string | undefined {
+  if (
+    segment.length === 0 ||
+    segment === "." ||
+    segment === ".." ||
+    segment.includes("/") ||
+    segment.includes("\\")
+  ) {
+    return "A ZIP entry path segment has an ambiguous portable form.";
+  }
+  if (/[\u0000-\u001f\u007f<>:"|?*]/u.test(segment)) {
+    return "A ZIP entry path segment contains characters unsafe on Windows.";
+  }
+  if (/[ .]$/u.test(segment)) {
+    return "ZIP entry path segments cannot end in a space or period.";
+  }
+  if (/^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/iu.test(segment)) {
+    return "A ZIP entry path segment is a reserved Windows device name.";
+  }
+  return undefined;
 }
