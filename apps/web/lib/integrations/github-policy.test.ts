@@ -15,6 +15,7 @@ test("GitHub policy intersection can only narrow automatic access", () => {
 test("GitHub external mutations always require explicit approval", () => {
   assert.equal(requiresExplicitApproval("repository.read"), false);
   assert.equal(requiresExplicitApproval("repository.push_agent_branch"), false);
+  assert.equal(requiresExplicitApproval("repository.initialize"), true);
   for (const capability of [
     "issue.write",
     "pull_request.write",

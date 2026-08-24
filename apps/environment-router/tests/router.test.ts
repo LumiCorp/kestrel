@@ -108,6 +108,26 @@ const promotionToken = signEnvironmentExecutionTicket({
     nonce: "nonce-3",
   },
 });
+const publicationToken = signEnvironmentExecutionTicket({
+  privateKey,
+  ticket: {
+    version: 1,
+    audience: ENVIRONMENT_ROUTER_AUDIENCE,
+    organizationId: "org-1",
+    environmentId: "env-1",
+    workspaceId: "workspace-1",
+    threadId: "thread-1",
+    runId: "run-publication",
+    actorId: "user-1",
+    agentId: "kestrel-one-ui",
+    flyAppName: "kestrel-env-1",
+    flyMachineId: "machine-1",
+    capabilities: ["workspace.git.publish"],
+    issuedAt: 1000,
+    expiresAt: 1300,
+    nonce: "nonce-publication",
+  },
+});
 const backupToken = signEnvironmentExecutionTicket({
   privateKey,
   ticket: {
@@ -427,6 +447,23 @@ test("router authorizes candidate preview and acceptance by exact path", () => {
     }).status,
     403
   );
+});
+
+test("router authorizes reviewed candidate publication by exact path", () => {
+  assert.equal(authorizeEnvironmentHttpRequest({
+    authorization: `Bearer ${publicationToken}`,
+    pathname: "/v1/git/publish-candidate",
+    method: "POST",
+    publicKey,
+    now: 1100,
+  }).status, 200);
+  assert.equal(authorizeEnvironmentHttpRequest({
+    authorization: `Bearer ${publicationToken}`,
+    pathname: "/v1/git/push-agent-branch",
+    method: "POST",
+    publicKey,
+    now: 1100,
+  }).status, 403);
 });
 
 test("router authorizes the exact tenant and Thread into a signed Fly App", () => {

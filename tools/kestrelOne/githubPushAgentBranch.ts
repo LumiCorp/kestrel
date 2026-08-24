@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import { RuntimeFailure, createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import type { SharedToolModule } from "../contracts.js";
@@ -16,7 +18,7 @@ export const kestrelOneGitHubPushAgentBranchTool: SharedToolModule = {
   definition: {
     name: TOOL_NAME,
     description:
-      "Push the current managed worktree HEAD to a deterministic Kestrel-owned agent branch in an explicitly granted GitHub repository.",
+      "Publish the complete current managed-worktree candidate to a deterministic Kestrel-owned agent branch in an explicitly granted GitHub repository. If the repository is empty, return a Workspace review link instead of probing a file or retrying.",
     inputSchema: {
       type: "object",
       properties: {
@@ -71,100 +73,165 @@ export const kestrelOneGitHubPushAgentBranchTool: SharedToolModule = {
           }
         );
       }
-      const transport = resolveKestrelOneAppRequest(
-        context,
-        "/api/runtime/github/token",
-      );
-      const credentialResponse = await (context.fetchImpl ?? fetch)(
-        transport.url,
-        {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${transport.authorization}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            repository,
-            capability: "repository.push_agent_branch",
-          }),
-        }
-      );
-      const credential = parseObjectInput(
-        `${TOOL_NAME} credential response`,
-        await credentialResponse.json().catch(() => ({}))
-      );
-      await throwIfExecutionAuthorizationRejected({
-        response: credentialResponse,
-        body: credential,
-        toolName: TOOL_NAME,
-      });
-      const credentialToken = readString(credential, "token");
-      if (!(credentialResponse.ok && credentialToken)) {
-        throw new RuntimeFailure(
-          "KESTREL_ONE_GITHUB_PUSH_CREDENTIAL_FAILED",
-          `Kestrel One rejected GitHub branch credentials with HTTP ${credentialResponse.status}.`,
-          {
-            subsystem: "tooling",
-            toolName: TOOL_NAME,
-            status: credentialResponse.status,
-            classification: "policy",
-            recoverable: false,
-          }
-        );
-      }
-      const branch = `kestrel/agents/${gitRefSegment(sessionId)}/${gitRefSegment(runId)}`;
       const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-github-push-"));
-      const askPassPath = path.join(temporaryRoot, "askpass.sh");
-      await writeFile(
-        askPassPath,
-        '#!/bin/sh\ncase "$1" in *Username*) echo x-access-token ;; *) echo "$KESTREL_GITHUB_TOKEN" ;; esac\n',
-        "utf8"
-      );
-      await chmod(askPassPath, 0o700);
+      const bundlePath = path.join(temporaryRoot, "candidate.bundle");
+      const indexPath = path.join(temporaryRoot, "candidate.index");
+      const bundleRef = `refs/kestrel/bundles/${gitRefSegment(runId)}`;
       try {
-        await execFileAsync(
-          "git",
+        const baseHead = await gitOutput(workspaceRoot, ["rev-parse", "HEAD"]);
+        const candidateEnvironment = {
+          GIT_INDEX_FILE: indexPath,
+          GIT_AUTHOR_NAME: "Kestrel Agent",
+          GIT_AUTHOR_EMAIL: "agent@kestrel.invalid",
+          GIT_COMMITTER_NAME: "Kestrel Agent",
+          GIT_COMMITTER_EMAIL: "agent@kestrel.invalid",
+        };
+        await git(workspaceRoot, ["read-tree", baseHead], candidateEnvironment);
+        await git(workspaceRoot, ["add", "-A", "--", "."], candidateEnvironment);
+        const candidateTree = await gitOutput(
+          workspaceRoot,
+          ["write-tree"],
+          candidateEnvironment,
+        );
+        const candidateCommit = await gitOutput(
+          workspaceRoot,
           [
-            "-C",
-            workspaceRoot,
-            "push",
-            "--porcelain",
-            `https://github.com/${repository}.git`,
-            `HEAD:refs/heads/${branch}`,
+            "commit-tree",
+            candidateTree,
+            "-p",
+            baseHead,
+            "-m",
+            `Kestrel candidate ${runId}`,
           ],
+          candidateEnvironment,
+        );
+        await git(workspaceRoot, ["update-ref", bundleRef, candidateCommit]);
+        await git(workspaceRoot, [
+          "bundle",
+          "create",
+          bundlePath,
+          bundleRef,
+        ]);
+
+        const credentialTransport = resolveKestrelOneAppRequest(
+          context,
+          "/api/runtime/github/credentials",
+        );
+        const credentialResponse = await (context.fetchImpl ?? fetch)(
+          credentialTransport.url,
           {
-            env: {
-              ...process.env,
-              GIT_ASKPASS: askPassPath,
-              GIT_TERMINAL_PROMPT: "0",
-              KESTREL_GITHUB_TOKEN: credentialToken,
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${credentialTransport.authorization}`,
+              "content-type": "application/json",
             },
-            maxBuffer: 10 * 1024 * 1024,
-          }
+            body: JSON.stringify({
+              operation: "repository.push_agent_branch",
+              repository,
+              candidateFingerprint: candidateCommit,
+              candidateCommit,
+            }),
+          },
         );
-      } catch (error) {
-        throw new RuntimeFailure(
-          "KESTREL_ONE_GITHUB_PUSH_FAILED",
-          "GitHub rejected the Kestrel agent branch push.",
+        const credential = parseObjectInput(
+          `${TOOL_NAME} credential response`,
+          await credentialResponse.json().catch(() => ({})),
+        );
+        await throwIfExecutionAuthorizationRejected({
+          response: credentialResponse,
+          body: credential,
+          toolName: TOOL_NAME,
+        });
+        const credentialToken = readString(credential, "token");
+        const resourceId = readString(credential, "resourceId");
+        if (!(credentialResponse.ok && credentialToken && resourceId)) {
+          throw githubFailure(
+            credentialResponse,
+            credential,
+            "GITHUB_CREDENTIAL_UNAVAILABLE",
+          );
+        }
+
+        const pushTransport = resolveKestrelOneAppRequest(
+          context,
+          "/api/runtime/github/push",
+        );
+        const pushResponse = await (context.fetchImpl ?? fetch)(
+          pushTransport.url,
           {
-            subsystem: "tooling",
-            toolName: TOOL_NAME,
-            classification: "runtime",
-            recoverable: true,
-            cause: error instanceof Error ? error.message : String(error),
-          }
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${
+                pushTransport.viaRelay
+                  ? pushTransport.authorization
+                  : credentialToken
+              }`,
+              "content-type": "application/x-git-bundle",
+              ...(pushTransport.viaRelay
+                ? { "x-kestrel-tool-credential": credentialToken }
+                : {}),
+              "x-kestrel-resource-id": resourceId,
+              "x-kestrel-candidate-fingerprint": candidateCommit,
+              "x-kestrel-candidate-commit": candidateCommit,
+            },
+            body: Readable.toWeb(createReadStream(bundlePath)) as ReadableStream,
+            duplex: "half",
+          } as RequestInit & { duplex: "half" },
         );
+        const pushed = parseObjectInput(
+          `${TOOL_NAME} push response`,
+          await pushResponse.json().catch(() => ({})),
+        );
+        if (!pushResponse.ok) {
+          const errorCode = readErrorCode(pushed);
+          if (errorCode === "GITHUB_REPOSITORY_INITIALIZATION_REQUIRED") {
+            const workspaceUrl = `/threads/${encodeURIComponent(
+              sessionId,
+            )}/workspace?runId=${encodeURIComponent(
+              runId,
+            )}&repository=${encodeURIComponent(repository)}`;
+            const output = {
+              status: "review_required",
+              repository,
+              candidateFingerprint: candidateCommit,
+              workspaceUrl,
+              message: "Review and initialize in Workspace",
+            };
+            return {
+              output,
+              presentation: {
+                artifacts: [
+                  {
+                    id: `github-initialize:${repository}:${runId}`,
+                    title: "Review and initialize in Workspace",
+                    kind: "workspace_action",
+                    url: workspaceUrl,
+                    metadata: { repository, candidateFingerprint: candidateCommit },
+                  },
+                ],
+              },
+            };
+          }
+          throw githubFailure(pushResponse, pushed, "GITHUB_PUSH_FAILED");
+        }
+        return pushed;
       } finally {
-        delete credential.token;
+        await git(workspaceRoot, ["update-ref", "-d", bundleRef]).catch(() => {});
         await rm(temporaryRoot, { recursive: true, force: true });
       }
-      return {
-        repository,
-        branch,
-        ref: `refs/heads/${branch}`,
-        pushed: true,
-      };
     };
+  },
+  normalizeResult(value) {
+    const result = parseObjectInput(`${TOOL_NAME} result`, value);
+    if (Object.hasOwn(result, "output")) {
+      return {
+        output: result.output,
+        ...(Object.hasOwn(result, "presentation")
+          ? { presentation: result.presentation as never }
+          : {}),
+      };
+    }
+    return { output: result };
   },
 };
 
@@ -186,4 +253,53 @@ function readRepository(input: unknown) {
 function gitRefSegment(value: string) {
   const segment = value.replace(/[^A-Za-z0-9._-]+/gu, "-").slice(0, 80);
   return segment || "run";
+}
+
+async function git(
+  workspaceRoot: string,
+  args: string[],
+  environment: Record<string, string> = {},
+) {
+  await execFileAsync("git", ["-C", workspaceRoot, ...args], {
+    env: { ...process.env, ...environment },
+    maxBuffer: 10 * 1024 * 1024,
+  });
+}
+
+async function gitOutput(
+  workspaceRoot: string,
+  args: string[],
+  environment: Record<string, string> = {},
+) {
+  const { stdout } = await execFileAsync(
+    "git",
+    ["-C", workspaceRoot, ...args],
+    {
+      env: { ...process.env, ...environment },
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  return stdout.trim();
+}
+
+function readErrorCode(value: Record<string, unknown>) {
+  const error = value.error;
+  return error && typeof error === "object"
+    ? readString(error as Record<string, unknown>, "code")
+    : undefined;
+}
+
+function githubFailure(
+  response: Response,
+  body: Record<string, unknown>,
+  fallbackCode: string,
+) {
+  const code = readErrorCode(body) ?? fallbackCode;
+  return new RuntimeFailure(code, `GitHub publication failed: ${code}.`, {
+    subsystem: "tooling",
+    toolName: TOOL_NAME,
+    status: response.status,
+    classification: response.status >= 500 ? "runtime" : "policy",
+    recoverable: response.status === 409 || response.status >= 500,
+  });
 }

@@ -44,6 +44,7 @@ test("Workspace binds push credentials to the candidate fingerprint", async () =
     resourceId: "11111111-1111-4111-8111-111111111111",
     operation: "repository.push_agent_branch",
     candidateFingerprint: "candidate-sha256",
+    candidateCommit: "a".repeat(40),
     fetchImpl: async (_url, init) => {
       body = JSON.parse(String(init?.body));
       return Response.json({ token: "push-token", expiresAt: 1060 });
@@ -53,6 +54,7 @@ test("Workspace binds push credentials to the candidate fingerprint", async () =
     operation: "repository.push_agent_branch",
     resourceId: "11111111-1111-4111-8111-111111111111",
     candidateFingerprint: "candidate-sha256",
+    candidateCommit: "a".repeat(40),
   });
 });
 

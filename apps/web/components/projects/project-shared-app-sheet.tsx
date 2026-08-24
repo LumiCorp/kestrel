@@ -13,6 +13,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppIcon } from "@/components/apps/app-icon";
+import { GitHubProjectRepositoryGrants } from "@/components/projects/github-project-repository-grants";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -464,6 +465,14 @@ export function ProjectSharedAppSheet({
                     )}
                   </div>
                 </section>
+
+                {appKey === "github" ? (
+                  <GitHubProjectRepositoryGrants
+                    canEdit={canEdit}
+                    enabled={configuration.enabled}
+                    projectId={projectId}
+                  />
+                ) : null}
 
                 <details className="group border-t py-7">
                   <summary className="flex cursor-pointer list-none items-start justify-between gap-4 outline-none marker:hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden">

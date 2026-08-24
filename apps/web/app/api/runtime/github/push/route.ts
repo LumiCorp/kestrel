@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -8,8 +7,10 @@ import {
   type EnvironmentToolCredentialTicket,
   verifyEnvironmentToolCredential,
 } from "@lumi/kestrel-environment-auth";
+import { Octokit } from "@octokit/rest";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { auth } from "@/lib/auth";
 import {
@@ -18,6 +19,10 @@ import {
   readGithubDefaultBranch,
 } from "@/lib/integrations/github-agent-push-contract";
 import {
+  GitHubPublicationGitError,
+  publishGitHubCandidateBundle,
+} from "@/lib/integrations/github-publication-git";
+import {
   authorizeGitHubCapability,
   GitHubPolicyError,
 } from "@/lib/integrations/github-policy";
@@ -25,7 +30,7 @@ import {
   githubToolCredentialMatchesRequest,
   githubToolCredentialRequestSchema,
 } from "@/lib/integrations/github-tool-credential-contract";
-import { knowledgeDb } from "@/lib/knowledge/db";
+import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { errorResponse } from "@/lib/knowledge/http";
 
 export const runtime = "nodejs";
@@ -33,6 +38,8 @@ export const runtime = "nodejs";
 const headersSchema = z.object({
   resourceId: z.string().uuid(),
   candidateFingerprint: z.string().trim().min(1).max(512),
+  candidateCommit: z.string().trim().regex(/^[0-9a-f]{40,64}$/u),
+  approvalId: z.string().trim().min(1).max(512).optional(),
 });
 
 export async function POST(request: Request) {
@@ -55,12 +62,34 @@ export async function POST(request: Request) {
       candidateFingerprint: request.headers.get(
         "x-kestrel-candidate-fingerprint"
       ),
+      candidateCommit: request.headers.get("x-kestrel-candidate-commit"),
+      approvalId: request.headers.get("x-kestrel-approval-id") ?? undefined,
     });
-    const credentialRequest = githubToolCredentialRequestSchema.parse({
-      operation: "repository.push_agent_branch",
-      resourceId: input.resourceId,
-      candidateFingerprint: input.candidateFingerprint,
-    });
+    const mode = verifiedTicket.operation === "repository.initialize"
+      ? "initialize"
+      : verifiedTicket.operation === "repository.push_agent_branch"
+        ? "agent_branch"
+        : null;
+    if (!mode) {
+      throw new GitHubPolicyError("GITHUB_CREDENTIAL_SCOPE_DENIED");
+    }
+    const credentialRequest = githubToolCredentialRequestSchema.parse(
+      mode === "initialize"
+        ? {
+            operation: "repository.initialize",
+            resourceId: input.resourceId,
+            candidateFingerprint: input.candidateFingerprint,
+            candidateCommit: input.candidateCommit,
+            approvalId: input.approvalId,
+            branch: "main",
+          }
+        : {
+            operation: "repository.push_agent_branch",
+            resourceId: input.resourceId,
+            candidateFingerprint: input.candidateFingerprint,
+            candidateCommit: input.candidateCommit,
+          },
+    );
     if (
       !githubToolCredentialMatchesRequest({
         ticket: verifiedTicket,
@@ -83,17 +112,23 @@ export async function POST(request: Request) {
     const policy = await authorizeGitHubCapability({
       ticket: verifiedTicket,
       repository: resource.label,
-      capability: "repository.push_agent_branch",
+      capability:
+        mode === "initialize"
+          ? "repository.initialize"
+          : "repository.push_agent_branch",
       requireRunExecution: true,
     });
-    if (policy.approvalMode !== "auto") {
+    if (
+      (mode === "agent_branch" && policy.approvalMode !== "auto") ||
+      (mode === "initialize" && policy.approvalMode !== "ask")
+    ) {
       throw new GitHubPolicyError("GITHUB_APPROVAL_REQUIRED", 409);
     }
     const defaultBranch = readGithubDefaultBranch(resource.metadata);
-    if (!defaultBranch) {
-      throw new GitHubPolicyError("GITHUB_DEFAULT_BRANCH_UNAVAILABLE", 409);
-    }
-    const branch = githubAgentBranchName(verifiedTicket.runId);
+    const branch =
+      mode === "initialize"
+        ? "main"
+        : githubAgentBranchName(verifiedTicket.runId);
     const bundleRef = `refs/kestrel/bundles/${verifiedTicket.runId}`;
     const remoteUrl = githubRepositoryRemoteUrl(resource.label);
     const credential = await auth.api.getAccessToken({
@@ -125,49 +160,36 @@ export async function POST(request: Request) {
       GIT_TERMINAL_PROMPT: "0",
       KESTREL_GITHUB_TOKEN: credential.accessToken,
     };
-    await runGit(["init", "--bare", repositoryPath], temporaryRoot, {});
-    await runGit(
-      [
-        "-C",
-        repositoryPath,
-        "fetch",
-        "--no-tags",
-        remoteUrl,
-        `refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`,
-      ],
-      temporaryRoot,
-      gitEnvironment
-    );
-    await runGit(
-      ["-C", repositoryPath, "bundle", "verify", bundlePath],
-      temporaryRoot,
-      {}
-    );
-    await runGit(
-      ["-C", repositoryPath, "fetch", bundlePath, bundleRef],
-      temporaryRoot,
-      {}
-    );
-    await runGit(
-      [
-        "-C",
-        repositoryPath,
-        "push",
-        "--force",
-        remoteUrl,
-        `FETCH_HEAD:refs/heads/${branch}`,
-      ],
-      temporaryRoot,
-      gitEnvironment
-    );
+    await publishGitHubCandidateBundle({
+      repositoryPath,
+      bundlePath,
+      bundleRef,
+      remoteUrl,
+      mode,
+      defaultBranch,
+      targetBranch: branch,
+      expectedCommit: input.candidateCommit,
+      gitEnvironment,
+    });
+    await refreshRepositoryMetadata({
+      resource,
+      accessToken: credential.accessToken,
+      initializationSucceeded: mode === "initialize",
+    });
     await logAdminEvent({
       organizationId: verifiedTicket.organizationId,
       actorUserId: verifiedTicket.actorId,
       category: "environment-tools",
-      action: "github.repository.push_agent_branch",
+      action:
+        mode === "initialize"
+          ? "github.repository.initialized"
+          : "github.repository.push_agent_branch",
       targetType: "environment",
       targetId: verifiedTicket.environmentId,
-      message: `Pushed the managed candidate to ${resource.label}#${branch}.`,
+      message:
+        mode === "initialize"
+          ? `Initialized ${resource.label}#main from the reviewed candidate.`
+          : `Pushed the managed candidate to ${resource.label}#${branch}.`,
       metadata: {
         workspaceId: verifiedTicket.workspaceId,
         threadId: verifiedTicket.threadId,
@@ -177,11 +199,18 @@ export async function POST(request: Request) {
         repository: resource.label,
         branch,
         candidateFingerprint: input.candidateFingerprint,
+        candidateCommit: input.candidateCommit,
+        mode,
         loggingMode: policy.loggingMode,
       },
     });
     return NextResponse.json(
-      { repository: resource.label, branch },
+      {
+        repository: resource.label,
+        branch,
+        commit: input.candidateCommit,
+        mode,
+      },
       { headers: { "cache-control": "no-store" } }
     );
   } catch (error) {
@@ -189,6 +218,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: { code: error.code } },
         { status: error.status }
+      );
+    }
+    if (error instanceof GitHubPublicationGitError) {
+      return NextResponse.json(
+        { error: { code: error.code } },
+        { status: error.status },
       );
     }
     return errorResponse(error, ticket ? 400 : 401);
@@ -199,30 +234,51 @@ export async function POST(request: Request) {
   }
 }
 
-function runGit(
-  args: string[],
-  cwd: string,
-  extraEnvironment: Record<string, string>
-) {
-  return new Promise<void>((resolve, reject) => {
-    const child = spawn("git", args, {
-      cwd,
-      env: { ...process.env, ...extraEnvironment },
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    child.stderr.resume();
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      if (code === 0) resolve();
-      else reject(new GitHubPolicyError("GITHUB_PUSH_GIT_FAILED", 502));
-    });
-  });
-}
-
 function readBearer(value: string | null) {
   const match = value?.match(/^Bearer ([^\s]+)$/u);
   if (!match?.[1]) {
     throw new Error("A scoped GitHub credential is required.");
   }
   return match[1];
+}
+
+async function refreshRepositoryMetadata(input: {
+  resource: typeof schema.appConnectionResources.$inferSelect;
+  accessToken: string;
+  initializationSucceeded: boolean;
+}) {
+  const [owner, repository] = input.resource.label.split("/");
+  let metadata: Record<string, unknown> = {
+    ...(input.resource.metadata ?? {}),
+    ...(input.initializationSucceeded ? { defaultBranch: "main" } : {}),
+  };
+  let permissions = input.resource.permissions;
+  if (owner && repository) {
+    try {
+      const response = await new Octokit({ auth: input.accessToken }).rest.repos.get({
+        owner,
+        repo: repository,
+      });
+      metadata = {
+        ...metadata,
+        repositoryId: String(response.data.id),
+        defaultBranch: response.data.default_branch,
+        isEmpty: false,
+        private: response.data.private,
+        htmlUrl: response.data.html_url,
+      };
+      permissions = {
+        pull: response.data.permissions?.pull ?? false,
+        push: response.data.permissions?.push ?? false,
+        admin: response.data.permissions?.admin ?? false,
+      };
+    } catch {
+      // The publication already succeeded. Preserve that fact and let the next
+      // explicit repository refresh reconcile the remaining provider metadata.
+    }
+  }
+  await knowledgeDb
+    .update(schema.appConnectionResources)
+    .set({ metadata, permissions, updatedAt: new Date() })
+    .where(eq(schema.appConnectionResources.id, input.resource.id));
 }

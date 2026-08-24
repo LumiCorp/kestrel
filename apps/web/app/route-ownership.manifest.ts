@@ -1708,6 +1708,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/threads/[id]/github/publications/route.ts",
+    "/api/threads/:id/github/publications",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/threads/[id]/mcp/interactions/route.ts",
     "/api/threads/:id/mcp/interactions",
     "threads",
@@ -2032,6 +2039,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/projects/[id]/apps/[appKey]/capabilities/[capabilityKey]/route.ts",
     "/api/projects/:id/apps/:appKey/capabilities/:capabilityKey",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/apps/github/repositories/route.ts",
+    "/api/projects/:id/apps/github/repositories",
     "apps",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,

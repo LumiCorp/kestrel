@@ -65,7 +65,8 @@ test("Workspace Git traffic exchanges the broad execution ticket before use", ()
   );
   assert.match(source, /requestGitHubToolCredential/u);
   assert.match(source, /operation:\s*"git\.upload_pack"/u);
-  assert.match(source, /operation:\s*"repository\.push_agent_branch"/u);
+  assert.match(source, /"repository\.push_agent_branch"/u);
+  assert.match(source, /"repository\.initialize"/u);
   assert.doesNotMatch(
     source,
     /GIT_CONFIG_VALUE_0:\s*`Authorization:\s*\$\{authorization\}`/u
