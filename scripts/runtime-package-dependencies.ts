@@ -15,6 +15,11 @@ const RUNTIME_WORKSPACE_PACKAGES = [
     tarballPrefix: "kestrel-agents-conversation-",
   },
   {
+    name: "@kestrel-agents/files",
+    directory: "packages/attachments",
+    tarballPrefix: "kestrel-agents-files-",
+  },
+  {
     name: "@kestrel-agents/sdk",
     directory: "packages/sdk",
     tarballPrefix: "kestrel-agents-sdk-",
