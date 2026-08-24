@@ -402,15 +402,16 @@ async function readConfig(): Promise<QualificationConfig> {
   const commit = (await execFileAsync("git", ["rev-parse", "HEAD"])).stdout.trim();
   const liveRequired = mode === "live" || mode === "all";
   const hostMode = process.env.KESTREL_QUALIFICATION_HOST_MODE?.trim() === "ssh" ? "ssh" : "local";
-  const repositoryRoot = (await execFileAsync("git", ["rev-parse", "--show-toplevel"])).stdout.trim();
+  const localRepositoryRoot = (await execFileAsync("git", ["rev-parse", "--show-toplevel"])).stdout.trim();
+  const remoteRoot = process.env.KESTREL_QUALIFICATION_REMOTE_ROOT?.trim() || (hostMode === "ssh" ? `/opt/kestrel-qualification/${commit.slice(0, 12)}` : path.join(os.tmpdir(), `kestrel-qualification-${commit.slice(0, 12)}`));
   return {
     hostMode,
     sshTarget: hostMode === "ssh" ? required("KESTREL_QUALIFICATION_SSH_TARGET") : "local-docker-desktop",
     sshKeyPath: hostMode === "ssh" ? path.resolve(required("KESTREL_QUALIFICATION_SSH_KEY")) : "",
     mode: mode as QualificationConfig["mode"],
     commit,
-    remoteRoot: process.env.KESTREL_QUALIFICATION_REMOTE_ROOT?.trim() || (hostMode === "ssh" ? `/opt/kestrel-qualification/${commit.slice(0, 12)}` : path.join(os.tmpdir(), `kestrel-qualification-${commit.slice(0, 12)}`)),
-    repositoryRoot,
+    remoteRoot,
+    repositoryRoot: hostMode === "ssh" ? remoteRoot : localRepositoryRoot,
     tenantId: optional("KESTREL_QUALIFICATION_TENANT_ID") ?? `qualification-tenant-${randomUUID()}`,
     environmentId: optional("KESTREL_QUALIFICATION_ENVIRONMENT_ID") ?? `qualification-environment-${randomUUID()}`,
     runnerToken: optional("KESTREL_QUALIFICATION_RUNNER_TOKEN") ?? `${randomUUID()}${randomUUID()}`.replaceAll("-", ""),
@@ -454,6 +455,7 @@ async function startRemote(config: QualificationConfig, mode: "live" | "controll
   const env: Record<string, string> = {
     KESTREL_DISABLE_DOTENV: "1",
     KESTREL_RUNNER_STORE_DIR: `${config.remoteRoot}/runtime/store`,
+    KESTREL_STORE_MIGRATIONS_DIR: `${config.repositoryRoot}/db/migrations`,
     KESTREL_HOME: `${config.remoteRoot}/runtime/home`,
     KESTREL_RUNNER_SERVICE_HOST: "127.0.0.1",
     KESTREL_RUNNER_SERVICE_PORT: "43105",
