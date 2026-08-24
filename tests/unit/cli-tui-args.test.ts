@@ -46,4 +46,5 @@ test("top-level version and help args are recognized before interactive parsing"
   assert.equal(isHelpArgs(["help"]), true);
   assert.match(formatKestrelHelp(), /Usage: kestrel/u);
   assert.match(formatKestrelHelp(), /workspace status\|list/u);
+  assert.match(formatKestrelHelp(), /runtime replay .*--event-type/u);
 });
