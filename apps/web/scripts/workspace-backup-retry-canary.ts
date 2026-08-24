@@ -4,10 +4,8 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { queueWorkspaceBackup } from "@/lib/environments/backups";
 import { createFlyProviderClient } from "@/lib/environments/fly-connection";
 import { requestWorkspaceRetirement } from "@/lib/environments/store";
-import { enqueueEnvironmentOperation } from "@/lib/knowledge/queue";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { getStorageAdapter } from "@/lib/storage";
 import {
@@ -35,7 +33,7 @@ const CONTROL_WORKER_ROLE = "control-worker";
 const POLL_INTERVAL_MS = 500;
 const WORKER_HEALTH_DEADLINE_MS = 180_000;
 
-async function main() {
+export async function main() {
   const args = parseWorkspaceBackupRetryCanaryArgs(process.argv.slice(2));
   const vercelOperator = await loadProductionEnvironment();
   const flyOperator = await captureText("fly", ["auth", "whoami"]);
@@ -92,6 +90,9 @@ function productionDependencies(operator: string) {
     },
     confirm: confirmExact,
     async queueBackup(target: CanaryTarget) {
+      const { queueWorkspaceBackup } = await import(
+        "@/lib/environments/backups"
+      );
       const queued = await queueWorkspaceBackup({
         organizationId: target.thread.organizationId,
         environmentId: target.environment.id,
@@ -637,6 +638,7 @@ async function retireWorkspace(
   target: CanaryTarget,
   backup: BackupObservation,
 ) {
+  const { enqueueEnvironmentOperation } = await import("@/lib/knowledge/queue");
   const operation = await requestWorkspaceRetirement({
     organizationId: target.thread.organizationId,
     environmentId: target.environment.id,
@@ -798,9 +800,14 @@ function delay(ms: number) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
-void main().catch((error: unknown) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : "Workspace backup retry canary failed."}\n`,
-  );
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  void main().catch((error: unknown) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : "Workspace backup retry canary failed."}\n`,
+    );
+    process.exitCode = 1;
+  });
+}
