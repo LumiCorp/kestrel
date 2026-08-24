@@ -152,12 +152,7 @@ async function runQualificationReadiness(mode: "live" | "controlled", replayOnly
       if (!auth.ok) throw new QualificationReadinessError("MODEL_AUTH_INVALID");
       record("openrouter_auth", "passed");
       const model = required("KESTREL_QUALIFICATION_MODEL");
-      const models = await fetch(`https://openrouter.ai/api/v1/model/${encodeURIComponent(model)}`, {
-        headers: { authorization },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (models.status === 404) throw new QualificationReadinessError("MODEL_UNAVAILABLE");
-      if (!models.ok) throw new QualificationReadinessError("MODEL_CATALOG_UNAVAILABLE");
+      await verifyOpenRouterModelAvailability(model, authorization);
       record("luna_model", "passed");
       record("tavily_credential", "deferred", "VALIDATED_BY_SINGLE_JOURNEY_REQUEST");
     }
@@ -168,6 +163,28 @@ async function runQualificationReadiness(mode: "live" | "controlled", replayOnly
     await appendFile(evidencePath, `${JSON.stringify({ mode, status: "failed", code, checks })}\n`, { encoding: "utf8", mode: 0o600 });
     throw new Error(`${code}: live qualification readiness failed`);
   }
+}
+
+export async function verifyOpenRouterModelAvailability(
+  model: string,
+  authorization: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const response = await fetchImpl("https://openrouter.ai/api/v1/models", {
+    headers: { authorization },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) throw new QualificationReadinessError("MODEL_CATALOG_UNAVAILABLE");
+  const payload = await response.json() as unknown;
+  const record = typeof payload === "object" && payload !== null && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {};
+  const entries = Array.isArray(record.data) ? record.data : [];
+  const found = entries.some((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return false;
+    return (entry as Record<string, unknown>).id === model;
+  });
+  if (!found) throw new QualificationReadinessError("MODEL_UNAVAILABLE");
 }
 
 async function requireTlsOrigin(hostname: string, dnsCode: string, tlsCode: string): Promise<void> {

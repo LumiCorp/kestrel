@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createQualificationProviderFetch } from "../../cli/runner/qualification-service.js";
+import {
+  createQualificationProviderFetch,
+  verifyOpenRouterModelAvailability,
+} from "../../cli/runner/qualification-service.js";
 import { tavilySearchReadAdapter } from "../../src/code/adapters/TavilySearchReadAdapter.js";
 
 test("live qualification provider receipts bind request and response without retaining the query", async () => {
@@ -39,4 +42,25 @@ test("Tavily model contract explains the required fixed capability path without 
   assert.match(tavilySearchReadAdapter.modelContract.usage, /fixed loopback broker/u);
   assert.equal(tavilySearchReadAdapter.modelContract.optional, true);
   assert.equal(tavilySearchReadAdapter.resource, "https://api.tavily.com/search");
+});
+
+test("live readiness verifies the exact Luna ID from the authenticated OpenRouter catalog", async () => {
+  let requestedUrl = "";
+  await verifyOpenRouterModelAvailability(
+    "openai/gpt-5.6-luna",
+    "Bearer qualification-key",
+    async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({ data: [{ id: "openai/gpt-5.6-luna" }] }), { status: 200 });
+    },
+  );
+  assert.equal(requestedUrl, "https://openrouter.ai/api/v1/models");
+  await assert.rejects(
+    verifyOpenRouterModelAvailability(
+      "openai/gpt-5.6-luna-missing",
+      "Bearer qualification-key",
+      async () => new Response(JSON.stringify({ data: [{ id: "openai/gpt-5.6-luna" }] }), { status: 200 }),
+    ),
+    /MODEL_UNAVAILABLE/u,
+  );
 });
