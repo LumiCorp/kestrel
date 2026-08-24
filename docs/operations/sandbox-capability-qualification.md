@@ -24,6 +24,13 @@ remote sandbox execution backend.
 
 ## Host requirements
 
+The default host mode is local Docker Desktop. On macOS it uses the current
+clean repository checkout, a private disposable runtime directory under the
+system temporary directory, and the local Docker daemon. Tenant, environment,
+runner-token, and control-token values are generated per run when omitted.
+
+For a remote Ubuntu host, set `KESTREL_QUALIFICATION_HOST_MODE=ssh` and supply:
+
 Supply a new disposable Ubuntu 24.04 VM with:
 
 - SSH host-key verification already configured in the operator's `known_hosts`
@@ -53,6 +60,11 @@ export KESTREL_QUALIFICATION_MODEL='openai/gpt-5.6-luna'
 export KESTREL_QUALIFICATION_MODEL_CREDENTIAL_NAME=OPENROUTER_API_KEY
 export KESTREL_QUALIFICATION_MODEL_CREDENTIAL=...
 ```
+
+For local Docker Desktop, the SSH variables are omitted. Existing `.env`
+credentials may be mapped into the qualification variables by the operator;
+the qualification itself runs with dotenv disabled and never copies `.env`
+into its evidence bundle.
 
 Run both evidence classes:
 

@@ -21,11 +21,13 @@ const CHECKPOINTS = [
 ] as const;
 
 interface QualificationConfig {
+  hostMode: "local" | "ssh";
   sshTarget: string;
   sshKeyPath: string;
   mode: "live" | "controlled" | "all";
   commit: string;
   remoteRoot: string;
+  repositoryRoot: string;
   tenantId: string;
   environmentId: string;
   runnerToken: string;
@@ -69,11 +71,16 @@ async function main(): Promise<void> {
     await verifyLocalTree(config.commit);
     await verifyRemoteHost(config);
     remoteFacts = await collectRemoteFacts(config);
-    await execFileAsync("git", ["archive", "--format=tar.gz", "-o", archivePath, config.commit]);
-    await upload(config, archivePath, "/tmp/kestrel-sandbox-qualification.tar.gz");
-    await remote(config, bootstrapCommand(config));
-    localPort = await reservePort();
-    tunnel = await openTunnel(config, localPort, 43105);
+    if (config.hostMode === "ssh") {
+      await execFileAsync("git", ["archive", "--format=tar.gz", "-o", archivePath, config.commit]);
+      await upload(config, archivePath, "/tmp/kestrel-sandbox-qualification.tar.gz");
+      await remote(config, bootstrapCommand(config));
+      localPort = await reservePort();
+      tunnel = await openTunnel(config, localPort, 43105);
+    } else {
+      await remote(config, bootstrapCommand(config));
+      localPort = 43105;
+    }
 
     if (config.mode === "controlled" || config.mode === "all") {
       await startRemote(config, "controlled");
@@ -392,16 +399,20 @@ async function readConfig(): Promise<QualificationConfig> {
   if (!MODES.has(mode)) throw new Error("KESTREL_QUALIFICATION_MODE must be live, controlled, or all.");
   const commit = (await execFileAsync("git", ["rev-parse", "HEAD"])).stdout.trim();
   const liveRequired = mode === "live" || mode === "all";
+  const hostMode = process.env.KESTREL_QUALIFICATION_HOST_MODE?.trim() === "ssh" ? "ssh" : "local";
+  const repositoryRoot = (await execFileAsync("git", ["rev-parse", "--show-toplevel"])).stdout.trim();
   return {
-    sshTarget: required("KESTREL_QUALIFICATION_SSH_TARGET"),
-    sshKeyPath: path.resolve(required("KESTREL_QUALIFICATION_SSH_KEY")),
+    hostMode,
+    sshTarget: hostMode === "ssh" ? required("KESTREL_QUALIFICATION_SSH_TARGET") : "local-docker-desktop",
+    sshKeyPath: hostMode === "ssh" ? path.resolve(required("KESTREL_QUALIFICATION_SSH_KEY")) : "",
     mode: mode as QualificationConfig["mode"],
     commit,
-    remoteRoot: process.env.KESTREL_QUALIFICATION_REMOTE_ROOT?.trim() || `/opt/kestrel-qualification/${commit.slice(0, 12)}`,
-    tenantId: required("KESTREL_QUALIFICATION_TENANT_ID"),
-    environmentId: required("KESTREL_QUALIFICATION_ENVIRONMENT_ID"),
-    runnerToken: required("KESTREL_QUALIFICATION_RUNNER_TOKEN"),
-    controlToken: required("KESTREL_QUALIFICATION_CONTROL_TOKEN"),
+    remoteRoot: process.env.KESTREL_QUALIFICATION_REMOTE_ROOT?.trim() || (hostMode === "ssh" ? `/opt/kestrel-qualification/${commit.slice(0, 12)}` : path.join(os.tmpdir(), `kestrel-qualification-${commit.slice(0, 12)}`)),
+    repositoryRoot,
+    tenantId: optional("KESTREL_QUALIFICATION_TENANT_ID") ?? `qualification-tenant-${randomUUID()}`,
+    environmentId: optional("KESTREL_QUALIFICATION_ENVIRONMENT_ID") ?? `qualification-environment-${randomUUID()}`,
+    runnerToken: optional("KESTREL_QUALIFICATION_RUNNER_TOKEN") ?? `${randomUUID()}${randomUUID()}`.replaceAll("-", ""),
+    controlToken: optional("KESTREL_QUALIFICATION_CONTROL_TOKEN") ?? `${randomUUID()}${randomUUID()}`.replaceAll("-", ""),
     tavilyKey: liveRequired
       ? required("KESTREL_QUALIFICATION_TAVILY_KEY")
       : optional("KESTREL_QUALIFICATION_TAVILY_KEY") ?? `qualification-controlled-${randomUUID()}`,
@@ -421,11 +432,17 @@ async function verifyLocalTree(commit: string): Promise<void> {
 }
 
 async function verifyRemoteHost(config: QualificationConfig): Promise<void> {
+  if (config.hostMode === "local") {
+    const output = await remote(config, "set -eu; command -v docker; docker info >/dev/null; command -v node; test \"$(node -p 'process.versions.node.split(`.`)[0]')\" = 22; test ! -e " + shell(config.remoteRoot));
+    if (output.stderr.trim()) process.stderr.write(output.stderr);
+    return;
+  }
   const output = await remote(config, "set -eu; test \"$(uname -s)\" = Linux; . /etc/os-release; test \"$ID\" = ubuntu; test \"$VERSION_ID\" = 24.04; command -v docker; docker info >/dev/null; command -v node; test \"$(node -p 'process.versions.node.split(`.`)[0]')\" = 22; test ! -e " + shell(config.remoteRoot));
   if (output.stderr.trim()) process.stderr.write(output.stderr);
 }
 
 function bootstrapCommand(config: QualificationConfig): string {
+  if (config.hostMode === "local") return `set -eu; mkdir -m 700 -p ${shell(`${config.remoteRoot}/runtime/control`)} ${shell(`${config.remoteRoot}/runtime/store`)} ${shell(`${config.remoteRoot}/runtime/home`)}`;
   return `set -eu; sudo mkdir -p ${shell(config.remoteRoot)}; sudo chown \"$(id -u):$(id -g)\" ${shell(config.remoteRoot)}; tar -xzf /tmp/kestrel-sandbox-qualification.tar.gz -C ${shell(config.remoteRoot)}; cd ${shell(config.remoteRoot)}; corepack enable; pnpm install --frozen-lockfile; pnpm exec tsc -p tsconfig.json; mkdir -m 700 -p runtime/control runtime/store runtime/home; rm -f /tmp/kestrel-sandbox-qualification.tar.gz`;
 }
 
@@ -452,22 +469,24 @@ async function startRemote(config: QualificationConfig, mode: "live" | "controll
       [config.modelCredentialName]: mode === "controlled" ? "qualification-model-key" : config.modelCredential,
     } : {}),
     ...(mode === "controlled" ? { OPENROUTER_BASE_URL: "http://127.0.0.1:43191" } : {}),
+    ...(!credentials && config.hostMode === "local" ? { DOCKER_HOST: "unix:///tmp/kestrel-qualification-docker-unavailable.sock" } : {}),
   };
   await uploadText(config, Object.entries(env).map(([key, value]) => `${key}=${encodeEnv(value)}`).join("\n") + "\n", `${config.remoteRoot}/runtime/runner.env`);
   const entrypoint = mode === "controlled" ? "dist/cli/runner/qualification-service.js" : "dist/cli/runner/service.js";
-  const modelStart = mode === "controlled" ? `nohup node dist/scripts/qualification/sandbox-capability-model-server.js >runtime/model.log 2>&1 & echo $! >runtime/model.pid; ` : "";
-  await remote(config, `set -eu; cd ${shell(config.remoteRoot)}; ${modelStart}nohup sh -c 'set -a; . runtime/runner.env; set +a; exec node ${entrypoint}' >runtime/runner.log 2>&1 & echo $! >runtime/runner.pid`);
+  const modelStart = mode === "controlled" ? `nohup node dist/scripts/qualification/sandbox-capability-model-server.js >${shell(`${config.remoteRoot}/runtime/model.log`)} 2>&1 & echo $! >${shell(`${config.remoteRoot}/runtime/model.pid`)}; ` : "";
+  await remote(config, `set -eu; cd ${shell(config.repositoryRoot)}; ${modelStart}nohup sh -c 'set -a; . ${shell(`${config.remoteRoot}/runtime/runner.env`)}; set +a; exec node ${entrypoint}' >${shell(`${config.remoteRoot}/runtime/runner.log`)} 2>&1 & echo $! >${shell(`${config.remoteRoot}/runtime/runner.pid`)}`);
 }
 
 async function stopRemote(config: QualificationConfig): Promise<void> {
-  await remote(config, `set +e; cd ${shell(config.remoteRoot)}; for f in runtime/runner.pid runtime/model.pid; do if test -f \"$f\"; then kill -TERM \"$(cat \"$f\")\" 2>/dev/null; fi; done; sleep 1; for f in runtime/runner.pid runtime/model.pid; do if test -f \"$f\"; then kill -KILL \"$(cat \"$f\")\" 2>/dev/null; rm -f \"$f\"; fi; done; exit 0`);
+  await remote(config, `set +e; for f in ${shell(`${config.remoteRoot}/runtime/runner.pid`)} ${shell(`${config.remoteRoot}/runtime/model.pid`)}; do if test -f \"$f\"; then kill -TERM \"$(cat \"$f\")\" 2>/dev/null; fi; done; sleep 1; for f in ${shell(`${config.remoteRoot}/runtime/runner.pid`)} ${shell(`${config.remoteRoot}/runtime/model.pid`)}; do if test -f \"$f\"; then kill -KILL \"$(cat \"$f\")\" 2>/dev/null; rm -f \"$f\"; fi; done; exit 0`);
 }
 
 async function killRemote(config: QualificationConfig): Promise<void> {
-  await remote(config, `set -eu; cd ${shell(config.remoteRoot)}; kill -KILL \"$(cat runtime/runner.pid)\"; rm -f runtime/runner.pid`);
+  await remote(config, `set -eu; kill -KILL \"$(cat ${shell(`${config.remoteRoot}/runtime/runner.pid`)})\"; rm -f ${shell(`${config.remoteRoot}/runtime/runner.pid`)}`);
 }
 
 async function setRemoteDockerAvailable(config: QualificationConfig, available: boolean): Promise<void> {
+  if (config.hostMode === "local") return;
   await remote(config, available
     ? "set -eu; sudo systemctl start docker.service; docker info >/dev/null"
     : "set -eu; sudo systemctl stop docker.service docker.socket; test ! -S /var/run/docker.sock");
@@ -476,7 +495,7 @@ async function setRemoteDockerAvailable(config: QualificationConfig, available: 
 async function cleanupRemote(config: QualificationConfig): Promise<{ ok: boolean; containers: string }> {
   await stopRemote(config).catch(() => undefined);
   const containers = (await remote(config, "docker ps -a --format '{{.Names}}' | grep '^kestrel-' || true")).stdout.trim();
-  await remote(config, `set -eu; test -z ${shell(containers)}; sudo rm -rf ${shell(config.remoteRoot)}`);
+  await remote(config, `set -eu; test -z ${shell(containers)}; rm -rf ${shell(config.remoteRoot)}`);
   return { ok: containers.length === 0, containers };
 }
 
@@ -566,7 +585,8 @@ async function writeEvidenceBundle(input: { artifactDir: string; config: Qualifi
 }
 
 async function collectRemoteFacts(config: QualificationConfig): Promise<unknown> {
-  const output = await remote(config, "set -eu; printf 'os='; . /etc/os-release; printf '%s\\n' \"$PRETTY_NAME\"; printf 'kernel='; uname -r; printf 'arch='; uname -m; printf 'node='; node --version; printf 'pnpm='; pnpm --version; printf 'docker='; docker version --format '{{.Server.Version}}'");
+  const osFact = config.hostMode === "local" ? "sw_vers -productVersion" : ". /etc/os-release; printf '%s' \"$PRETTY_NAME\"";
+  const output = await remote(config, `set -eu; printf 'os='; ${osFact}; printf '\\n'; printf 'kernel='; uname -r; printf 'arch='; uname -m; printf 'node='; node --version; printf 'pnpm='; pnpm --version; printf 'docker='; docker version --format '{{.Server.Version}}'`);
   return Object.fromEntries(output.stdout.trim().split("\n").map((line) => {
     const index = line.indexOf("=");
     return index < 0 ? [line, true] : [line.slice(0, index), line.slice(index + 1)];
@@ -574,6 +594,7 @@ async function collectRemoteFacts(config: QualificationConfig): Promise<unknown>
 }
 
 async function remote(config: QualificationConfig, command: string) {
+  if (config.hostMode === "local") return await execFileAsync("sh", ["-c", command], { maxBuffer: 16 * 1024 * 1024 });
   return await execFileAsync("ssh", sshArgs(config, [config.sshTarget, command]), { maxBuffer: 16 * 1024 * 1024 });
 }
 
@@ -582,6 +603,10 @@ async function upload(config: QualificationConfig, source: string, destination: 
 }
 
 async function uploadText(config: QualificationConfig, content: string, destination: string): Promise<void> {
+  if (config.hostMode === "local") {
+    await writeFile(destination, content, { encoding: "utf8", mode: 0o600 });
+    return;
+  }
   await new Promise<void>((resolve, reject) => {
     const child = spawn("ssh", sshArgs(config, [config.sshTarget, `umask 077; cat > ${shell(destination)}`]), { stdio: ["pipe", "ignore", "pipe"] });
     let stderr = "";
