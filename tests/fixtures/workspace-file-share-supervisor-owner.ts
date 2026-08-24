@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { lstat, readFile, writeFile } from "node:fs/promises";
 
 import { DevShellSupervisor } from "../../src/devshell/DevShellSupervisor.js";
 import { InMemoryDevShellStore } from "../../src/devshell/InMemoryDevShellStore.js";
@@ -25,6 +26,10 @@ const config = Buffer.from(
     payloadPath,
     downloadName: "restart-proof.txt",
     mediaType: "text/plain",
+    expectedSizeBytes: (await lstat(payloadPath)).size,
+    expectedSha256: createHash("sha256").update(await readFile(payloadPath)).digest("hex"),
+    stageDevice: String((await lstat(stagePath)).dev),
+    stageInode: String((await lstat(stagePath)).ino),
   }),
   "utf8",
 ).toString("base64url");

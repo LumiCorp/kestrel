@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   access,
+  chmod,
   mkdtemp,
   mkdir,
   open,
@@ -115,6 +116,54 @@ test("workspace.files.share serves one immutable binary payload with safe HTTP b
   }
 });
 
+test("workspace.files.share accepts a loopback preview only from a loopback Kestrel One app", async () => {
+  const fixture = await createFixture({ localPreview: true });
+  fixture.context.kestrelOne = {
+    appUrl: "http://127.0.0.1:43103",
+    executionTicket: "signed-ticket",
+  };
+  await writeFile(path.join(fixture.workspaceRoot, "local.txt"), "local\n");
+  try {
+    const output = await workspaceFilesShareTool.createHandler(fixture.context)({
+      mode: "file",
+      paths: ["local.txt"],
+    }) as ShareResult;
+    assert.equal(
+      output.share.url,
+      `http://127.0.0.1:${fixture.publishedPort}/local.txt`,
+    );
+    assert.equal(await (await fetch(output.share.url)).text(), "local\n");
+    await workspacePreviewCloseTool.createHandler(fixture.context)({
+      previewId: output.share.previewId,
+    });
+  } finally {
+    await fixture.supervisor.close();
+  }
+});
+
+test("workspace.files.share rejects a loopback preview returned to a hosted app context", async () => {
+  const fixture = await createFixture({ localPreview: true });
+  await writeFile(path.join(fixture.workspaceRoot, "hosted.txt"), "hosted\n");
+  try {
+    await assert.rejects(
+      workspaceFilesShareTool.createHandler(fixture.context)({
+        mode: "file",
+        paths: ["hosted.txt"],
+      }),
+      (error: unknown) => {
+        assert.equal(
+          (error as RuntimeFailure).code,
+          "WORKSPACE_FILE_SHARE_SERVER_FAILED",
+        );
+        return true;
+      },
+    );
+    assert.equal(fixture.closed, true);
+  } finally {
+    await fixture.supervisor.close();
+  }
+});
+
 test("workspace.files.share streams a ZIP containing only normalized selected paths", async () => {
   const fixture = await createFixture();
   await mkdir(path.join(fixture.workspaceRoot, "reports"), { recursive: true });
@@ -188,6 +237,47 @@ test("workspace.files.share completes forced short file writes before publicatio
     await workspacePreviewCloseTool.createHandler(fixture.context)({
       previewId: output.share.previewId,
     });
+  } finally {
+    await fixture.supervisor.close();
+  }
+});
+
+test("workspace.files.share refuses a staged payload replaced before process launch", async () => {
+  const fixture = await createFixture();
+  await writeFile(path.join(fixture.workspaceRoot, "approved.txt"), "approved");
+  const originalService = fixture.context.devShellService!;
+  let sawEmbeddedServer = false;
+  const guardedService = new Proxy(originalService, {
+    get(target, property, receiver) {
+      if (property === "startProcess") {
+        return async (input: Parameters<typeof target.startProcess>[0]) => {
+          sawEmbeddedServer = input.command.includes("--input-type=module --eval");
+          const stageName = (await readdir(fixture.tempRoot))
+            .find((entry) => entry.startsWith("kestrel-file-share-"));
+          assert.ok(stageName);
+          const payloadPath = path.join(fixture.tempRoot, stageName, "payload");
+          await chmod(payloadPath, 0o600);
+          await writeFile(payloadPath, "replaced");
+          return target.startProcess(input);
+        };
+      }
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  try {
+    await assert.rejects(
+      workspaceFilesShareTool.createHandler({
+        ...fixture.context,
+        devShellService: guardedService,
+      })({ mode: "file", paths: ["approved.txt"] }),
+      (error: unknown) => {
+        assert.equal((error as RuntimeFailure).code, "WORKSPACE_FILE_SHARE_SERVER_FAILED");
+        return true;
+      },
+    );
+    assert.equal(sawEmbeddedServer, true);
+    assert.equal(fixture.publishCalls, 0);
   } finally {
     await fixture.supervisor.close();
   }
@@ -318,6 +408,37 @@ test("workspace.files.share never reclaims forged or replaced staging targets", 
     await rm(displaced, { recursive: true, force: true });
   } finally {
     await fixture.supervisor.close();
+  }
+});
+
+test("workspace.files.share normal shutdown leaves a replacement stage untouched", async () => {
+  const fixture = await createFixture();
+  await writeFile(path.join(fixture.workspaceRoot, "one.txt"), "one");
+  let displaced: string | undefined;
+  let replacement: string | undefined;
+  try {
+    const output = await workspaceFilesShareTool.createHandler(fixture.context)({
+      mode: "file",
+      paths: ["one.txt"],
+    }) as ShareResult;
+    const stagePath = await findSingleOwnedStage(fixture.tempRoot);
+    displaced = path.join(fixture.tempRoot, "displaced-live-stage");
+    replacement = stagePath;
+    await rename(stagePath, displaced);
+    await mkdir(replacement);
+    await writeFile(path.join(replacement, "sentinel"), "keep replacement");
+
+    await workspacePreviewCloseTool.createHandler(fixture.context)({
+      previewId: output.share.previewId,
+    });
+    assert.equal(
+      await readFile(path.join(replacement, "sentinel"), "utf8"),
+      "keep replacement",
+    );
+  } finally {
+    await fixture.supervisor.close();
+    if (displaced !== undefined) await rm(displaced, { recursive: true, force: true });
+    if (replacement !== undefined) await rm(replacement, { recursive: true, force: true });
   }
 });
 
@@ -573,6 +694,40 @@ test("workspace.files.share preserves preview publication failure and removes it
   }
 });
 
+test("workspace.files.share closes a created preview whose result omits its URL", async () => {
+  const fixture = await createFixture();
+  await writeFile(path.join(fixture.workspaceRoot, "report.txt"), "report\n");
+  fixture.context.fetchImpl = (async (_input, init) => {
+    if (init?.method === "DELETE") {
+      fixture.closed = true;
+      return Response.json({ ok: true });
+    }
+    fixture.publishCalls += 1;
+    return Response.json({
+      preview: {
+        id: "preview-file-share",
+        expiresAt: fixture.expiresAt,
+      },
+    });
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      workspaceFilesShareTool.createHandler(fixture.context)({
+        mode: "file",
+        paths: ["report.txt"],
+      }),
+      (error: unknown) => {
+        assert.equal((error as RuntimeFailure).code, "WORKSPACE_FILE_SHARE_SERVER_FAILED");
+        return true;
+      },
+    );
+    assert.equal(fixture.closed, true);
+    assert.equal(fixture.publishCalls, 1);
+  } finally {
+    await fixture.supervisor.close();
+  }
+});
+
 test("workspace.files.share stops a process when its readiness read fails", async () => {
   const fixture = await createFixture();
   await writeFile(path.join(fixture.workspaceRoot, "report.txt"), "report\n");
@@ -665,7 +820,7 @@ interface ShareResult {
   warning: string;
 }
 
-async function createFixture(): Promise<{
+async function createFixture(options: { localPreview?: boolean } = {}): Promise<{
   supervisor: DevShellSupervisor;
   workspaceRoot: string;
   tempRoot: string;
@@ -726,7 +881,9 @@ async function createFixture(): Promise<{
       return Response.json({
         preview: {
           id: "preview-file-share",
-          url: publicUrl,
+          url: options.localPreview
+            ? `http://127.0.0.1:${body.port}`
+            : publicUrl,
           expiresAt: fixture.expiresAt,
         },
       });

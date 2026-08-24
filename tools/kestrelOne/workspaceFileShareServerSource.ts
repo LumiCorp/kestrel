@@ -11,10 +11,11 @@ export function buildWorkspaceFileShareServerSource(): string {
 async function workspaceFileShareServerMain(): Promise<void> {
   const fs = await import("node:fs");
   const fsPromises = await import("node:fs/promises");
+  const crypto = await import("node:crypto");
   const http = await import("node:http");
   const path = await import("node:path");
 
-  const encodedConfig = process.argv[2];
+  const encodedConfig = process.argv[2] ?? process.argv[1];
   if (!encodedConfig) {
     throw new Error("Missing Kestrel file-share server configuration.");
   }
@@ -25,6 +26,10 @@ async function workspaceFileShareServerMain(): Promise<void> {
     payloadPath: string;
     downloadName: string;
     mediaType: string;
+    expectedSizeBytes: number;
+    expectedSha256: string;
+    stageDevice: string;
+    stageInode: string;
   };
   const payload = await fsPromises.open(
     config.payloadPath,
@@ -34,6 +39,28 @@ async function workspaceFileShareServerMain(): Promise<void> {
   if (!payloadStat.isFile()) {
     await payload.close();
     throw new Error("Kestrel file-share payload is not a regular file.");
+  }
+  await fsPromises.unlink(config.payloadPath);
+  const digest = crypto.createHash("sha256");
+  const verificationBuffer = Buffer.allocUnsafe(1024 * 1024);
+  let verifiedBytes = 0;
+  for (;;) {
+    const { bytesRead } = await payload.read(
+      verificationBuffer,
+      0,
+      verificationBuffer.length,
+      verifiedBytes,
+    );
+    if (bytesRead === 0) break;
+    digest.update(verificationBuffer.subarray(0, bytesRead));
+    verifiedBytes += bytesRead;
+  }
+  if (
+    verifiedBytes !== config.expectedSizeBytes ||
+    digest.digest("hex") !== config.expectedSha256
+  ) {
+    await payload.close();
+    throw new Error("Kestrel file-share payload changed before publication.");
   }
   const route = `/${encodeURIComponent(config.downloadName)}`;
   const fallbackName = config.downloadName
@@ -105,13 +132,13 @@ async function workspaceFileShareServerMain(): Promise<void> {
   const shutdown = async (exitCode: number) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    process.stdin.destroy();
     const forceClose = setTimeout(() => server.closeAllConnections(), 2_000);
     forceClose.unref();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     clearTimeout(forceClose);
     await payload.close().catch(() => undefined);
-    await fsPromises.rm(config.stagePath, { recursive: true, force: true })
-      .catch(() => undefined);
+    await reclaimOwnedStage().catch(() => undefined);
     process.exitCode = exitCode;
   };
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
@@ -132,12 +159,60 @@ async function workspaceFileShareServerMain(): Promise<void> {
       await shutdown(1);
       return;
     }
-    await fsPromises.unlink(config.payloadPath);
-    await fsPromises.unlink(process.argv[1] ?? "").catch(() => undefined);
     process.stdout.write(
       `KESTREL_FILE_SHARE_READY ${JSON.stringify({ port: address.port })}\n`,
     );
   });
+
+  async function reclaimOwnedStage(): Promise<void> {
+    const stageStat = await fsPromises.lstat(config.stagePath)
+      .catch(() => undefined);
+    if (
+      stageStat === undefined ||
+      !stageStat.isDirectory() ||
+      stageStat.isSymbolicLink() ||
+      String(stageStat.dev) !== config.stageDevice ||
+      String(stageStat.ino) !== config.stageInode
+    ) {
+      return;
+    }
+    const quarantinePath = path.join(
+      path.dirname(config.stagePath),
+      `.kestrel-file-share-cleanup-${crypto.randomUUID()}`,
+    );
+    await fsPromises.rename(config.stagePath, quarantinePath);
+    const movedStat = await fsPromises.lstat(quarantinePath)
+      .catch(() => undefined);
+    if (
+      movedStat === undefined ||
+      !movedStat.isDirectory() ||
+      movedStat.isSymbolicLink() ||
+      String(movedStat.dev) !== config.stageDevice ||
+      String(movedStat.ino) !== config.stageInode
+    ) {
+      await fsPromises.rename(quarantinePath, config.stagePath).catch(() => undefined);
+      return;
+    }
+    const entries = await fsPromises.readdir(quarantinePath);
+    const generatedEntries = new Set([
+      "metadata.json",
+      "metadata.next.json",
+      "payload",
+      "server.mjs",
+    ]);
+    if (entries.some((entry) => !generatedEntries.has(entry))) {
+      await fsPromises.rename(quarantinePath, config.stagePath).catch(() => undefined);
+      return;
+    }
+    try {
+      for (const entry of entries) {
+        await fsPromises.unlink(path.join(quarantinePath, entry));
+      }
+      await fsPromises.rmdir(quarantinePath);
+    } catch {
+      await fsPromises.rename(quarantinePath, config.stagePath).catch(() => undefined);
+    }
+  }
 
   function parseRange(
     header: string | undefined,
