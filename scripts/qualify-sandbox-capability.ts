@@ -468,7 +468,7 @@ async function capture(evidence: ScenarioEvidence[], name: string, mode: "live" 
   const startedAt = new Date().toISOString();
   try {
     const result = await run();
-    evidence.push({ name, mode, status: "passed", startedAt, completedAt: new Date().toISOString(), runId: result.runId, sessionId: result.sessionId, idempotencyKey: result.idempotencyKey, assertions: ["public_terminal_state", "secret_scan"], publicEvidence: [redactEvidence(result.stream), ...(result.structuralEvidence ?? []).map(redactEvidence)] });
+    evidence.push({ name, mode, status: "passed", startedAt, completedAt: new Date().toISOString(), runId: result.runId, sessionId: result.sessionId, idempotencyKey: result.idempotencyKey, assertions: ["public_terminal_state", "secret_scan"], publicEvidence: [redactEvidence(result.stream), ...(result.structuralEvidence ?? [])] });
   } catch (error) {
     const failed = failedEvidence(name, mode, error, startedAt);
     if (error instanceof QualificationRunAssertionError || error instanceof PartialRunError) {
