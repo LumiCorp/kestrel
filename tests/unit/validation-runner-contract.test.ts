@@ -512,6 +512,9 @@ test("product validation provisions the exact economics-admitted model it runs",
     /const rawModelId = process\.env\.AI_AGENT_MODEL\?\.trim\(\)/u,
   );
   assert.match(productGatewaySeed, /rawModelId,/u);
+  assert.match(productGatewaySeed, /id: syncedModel\.id/u);
+  assert.match(productGatewaySeed, /resolveOpenRouterModel: true/u);
+  assert.match(productGatewaySeed, /expectedModelUpdatedAt: syncedModel\.updatedAt/u);
 });
 
 test("required pull-request validation is the minimal portable gate", () => {

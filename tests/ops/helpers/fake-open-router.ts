@@ -8,6 +8,8 @@ export interface FakeOpenRouterServer {
   close(): Promise<void>;
 }
 
+const PRODUCT_CONTRACT_MODEL = "z-ai/glm-5.2";
+
 interface FakeOpenRouterScenarioState {
   delayReleased: boolean;
   delayResolvers: Set<() => void>;
@@ -86,7 +88,42 @@ async function handleFakeOpenRouterRequest(
       connection: "close",
     });
     response.end(JSON.stringify({
-      data: [{ id: "openai/gpt-5.2-chat" }],
+      data: [{
+        id: PRODUCT_CONTRACT_MODEL,
+        context_length: 131_072,
+        top_provider: {
+          context_length: 131_072,
+          max_completion_tokens: 16_384,
+        },
+      }],
+    }));
+    return;
+  }
+
+  if (request.url === "/api/v1/model/z-ai/glm-5.2" && request.method === "GET") {
+    const authorization = request.headers.authorization;
+    if (authorization !== "Bearer product-contract-key") {
+      response.writeHead(401, {
+        "content-type": "application/json",
+        connection: "close",
+      });
+      response.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
+    response.writeHead(200, {
+      "content-type": "application/json",
+      connection: "close",
+    });
+    response.end(JSON.stringify({
+      data: {
+        id: PRODUCT_CONTRACT_MODEL,
+        canonical_slug: PRODUCT_CONTRACT_MODEL,
+        context_length: 131_072,
+        top_provider: {
+          context_length: 131_072,
+          max_completion_tokens: 16_384,
+        },
+      },
     }));
     return;
   }
@@ -197,7 +234,7 @@ async function handleFakeOpenRouterRequest(
         object: "response",
         created_at: Math.floor(Date.now() / 1000),
         status: "completed",
-        model: "openai/gpt-5.2-chat",
+        model: PRODUCT_CONTRACT_MODEL,
         output: [
           {
             id: `fake-message-${requests.length}`,
@@ -264,7 +301,7 @@ async function handleFakeOpenRouterRequest(
     });
     response.end(
       JSON.stringify({
-        model: "openai/gpt-5.2-chat",
+        model: PRODUCT_CONTRACT_MODEL,
         choices: [
           { message: { content: JSON.stringify({ notNextAction: true }) } },
         ],
@@ -316,7 +353,7 @@ async function handleFakeOpenRouterRequest(
       });
       response.write(
         `data: ${JSON.stringify({
-          model: "openai/gpt-5.2-chat",
+          model: PRODUCT_CONTRACT_MODEL,
           choices: [
             {
               delta: {
@@ -346,7 +383,7 @@ async function handleFakeOpenRouterRequest(
     });
     response.end(
       JSON.stringify({
-        model: "openai/gpt-5.2-chat",
+        model: PRODUCT_CONTRACT_MODEL,
         output: [{ content: [functionCall] }],
         choices: [
           {
@@ -378,7 +415,7 @@ async function handleFakeOpenRouterRequest(
   });
   response.end(
     JSON.stringify({
-      model: "openai/gpt-5.2-chat",
+      model: PRODUCT_CONTRACT_MODEL,
       choices: [
         {
           message: {

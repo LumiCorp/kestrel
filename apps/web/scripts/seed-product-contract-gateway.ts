@@ -50,8 +50,13 @@ const gateway = await createGateway({
   enabled: true,
   supportedModalities: ["language"],
 });
-await syncGatewayModels(organizationId, gateway.id);
+const sync = await syncGatewayModels(organizationId, gateway.id);
+const syncedModel = sync.models.find((model) => model.rawModelId === rawModelId);
+if (!syncedModel) {
+  throw new Error(`Product contract model '${rawModelId}' was not advertised by the fake OpenRouter.`);
+}
 await saveGatewayModel({
+  id: syncedModel.id,
   organizationId,
   gatewayId: gateway.id,
   rawModelId,
@@ -59,5 +64,7 @@ await saveGatewayModel({
   approved: true,
   isDefault: true,
   description: "Deterministic product-contract model",
+  resolveOpenRouterModel: true,
+  expectedModelUpdatedAt: syncedModel.updatedAt,
 });
 await resetDbRuntimeForTests();

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import postgres from "postgres";
+import { withGatewayModelEconomicsProfile } from "@/lib/ai/model-economics-profile";
 
 const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
@@ -43,6 +44,22 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     lifecycleCreatorMember: `schedule-lifecycle-creator-member-${suffix}`,
   };
   const now = new Date("2026-08-13T16:30:00.000Z");
+  const modelMetadata = withGatewayModelEconomicsProfile({
+    metadata: { context_length: 32_768, max_completion_tokens: 8_192 },
+    provider: "openrouter",
+    model: "test-schedule-model",
+    approved: true,
+    modality: "language",
+  });
+  const scopedModelMetadata = withGatewayModelEconomicsProfile({
+    metadata: { context_length: 32_768, max_completion_tokens: 8_192 },
+    provider: "openrouter",
+    model: "environment-only-schedule-model",
+    approved: true,
+    modality: "language",
+  });
+  assert.ok(modelMetadata);
+  assert.ok(scopedModelMetadata);
 
   context.after(async () => {
     await sql`DELETE FROM "organization" WHERE "id" = ${ids.organization}`;
@@ -149,15 +166,17 @@ test("Project prompt schedules preserve authority, occurrence, and materializati
     await transaction`
       INSERT INTO "ai_gateway_models" (
         "id", "organization_id", "gateway_id", "raw_model_id", "modality",
-        "approved", "is_default"
+        "approved", "is_default", "metadata"
       ) VALUES
         (
           ${ids.model}, ${ids.organization}, ${ids.gateway},
-          'test-schedule-model', 'language', true, true
+          'test-schedule-model', 'language', true, true,
+          ${transaction.json(JSON.parse(JSON.stringify(modelMetadata)))}
         ),
         (
           ${ids.scopedModel}, ${ids.organization}, ${ids.scopedGateway},
-          'environment-only-schedule-model', 'language', true, false
+          'environment-only-schedule-model', 'language', true, false,
+          ${transaction.json(JSON.parse(JSON.stringify(scopedModelMetadata)))}
         )
     `;
   });
