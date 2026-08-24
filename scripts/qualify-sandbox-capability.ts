@@ -540,9 +540,11 @@ async function armCheckpoint(config: QualificationConfig, checkpoint: string): P
 }
 
 async function recoverRunIdentity(config: QualificationConfig, checkpoint: string): Promise<RunResult | undefined> {
-  const text = (await remote(config, `tail -n 1 ${shell(`${config.remoteRoot}/runtime/control/events.ndjson`)} 2>/dev/null || true`)).stdout;
-  const event = JSON.parse(text || "{}") as { runId?: string };
-  return event.runId ? { runId: event.runId, sessionId: `unknown-${checkpoint}`, stream: "" } : undefined;
+  const text = (await remote(config, `test ! -f ${shell(`${config.remoteRoot}/runtime/control/events.ndjson`)} || cat ${shell(`${config.remoteRoot}/runtime/control/events.ndjson`)}`)).stdout;
+  const event = text.split("\n").filter(Boolean).map((line) => JSON.parse(line) as { checkpoint?: string; runId?: string; toolCallId?: string }).reverse().find((candidate) => candidate.checkpoint === checkpoint);
+  if (!event?.runId || !event.toolCallId) return undefined;
+  const sessionId = event.toolCallId.split(`:${event.runId}:`, 1)[0];
+  return { runId: event.runId, sessionId, idempotencyKey: event.toolCallId, stream: "" };
 }
 
 async function writeEvidenceBundle(input: { artifactDir: string; config: QualificationConfig; startedAt: string; scenarios: ScenarioEvidence[]; cleanup: unknown; remoteFacts: unknown; providerSnapshot: string; lifecycleSnapshot: string }): Promise<void> {
