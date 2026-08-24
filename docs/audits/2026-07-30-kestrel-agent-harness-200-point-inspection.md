@@ -504,7 +504,7 @@ The shortest path to a passing critical gate is therefore architectural enforcem
 
 ## 2026-08-23 control 038 re-verification
 
-This dated supplement updates only control 038 against Kestrel `0.8.5` at implementation commit `aabe26d27`. It does not rewrite the 2026-07-30 audit snapshot above.
+This dated supplement updates only control 038 against Kestrel `0.8.5`. The implementation baseline is `aabe26d27`; authority-correct qualification fixtures and the final verification tree are `6aea9fa1e`. It does not rewrite the 2026-07-30 audit snapshot above.
 
 - **Re-verified control:** 038, Scoped secret injection
 - **Updated score:** 1 (previously 0.5)
@@ -528,7 +528,7 @@ Verification for this supplement:
 - Focused ownership, exact-result, adapter, replay, and deployment qualification suites: passed.
 - Spawned Local Core and hosted-runner qualification: passed with real Docker and isolated provider transport.
 - `pnpm validate:postgres`: the runtime PostgreSQL contracts, including sandbox capability lease parity, passed; the full lane remained red on two unrelated pre-existing Web model-fixture failures.
-- `pnpm validate`: runtime capability fixtures pass after the re-verification fixture update; the Web hermetic lane remains environment-blocked by `listen EPERM` in `worker-health.test.ts` under this managed sandbox.
+- `pnpm validate`: passed in 74.7 seconds on the verification tree (run outside the managed sandbox so the Web worker-health test could bind its loopback port).
 
 ## 2026-07-31 disposition
 
