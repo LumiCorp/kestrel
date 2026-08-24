@@ -4,11 +4,11 @@ Each issue appears in one state. `Ready` is the current dependency-free frontier
 
 ## Ready
 
-- [Preserve causal message order in the Desktop activity timeline](02-preserve-desktop-message-order.md)
+None.
 
 ## In progress
 
-None.
+- [Preserve causal message order in the Desktop activity timeline](02-preserve-desktop-message-order.md)
 
 ## Blocked
 
