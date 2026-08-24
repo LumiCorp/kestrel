@@ -10,7 +10,7 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.js"
+      "require": "./dist/index.cjs"
     }
   },
   "files": ["dist", "README.md", "LICENSE"],
@@ -24,7 +24,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --import tsx --test tests/*.test.ts",
     "smoke:import": "node --input-type=module -e \"import('./dist/index.js').then(({ extractAttachmentText }) => { void extractAttachmentText; })\"",
-    "release:check": "pnpm run build && pnpm run smoke:import"
+    "smoke:require": "node -e \"const { extractAttachmentText } = require('.'); void extractAttachmentText;\"",
+    "release:check": "pnpm run build && pnpm run smoke:import && pnpm run smoke:require"
   },
   "dependencies": {
     "@napi-rs/canvas": "0.1.80",

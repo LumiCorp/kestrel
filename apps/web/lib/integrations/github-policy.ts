@@ -8,6 +8,10 @@ import {
   intersectApprovalModes,
   requiresExplicitApproval,
 } from "./github-policy-contract";
+import {
+  parseGitHubRepositoryGrants,
+  readGitHubRepositoryId,
+} from "./github-repository-grants";
 
 export type { GitHubCapability } from "./github-policy-contract";
 
@@ -56,6 +60,8 @@ export async function authorizeGitHubCapability(input: {
     projectId: thread.projectId,
     appKey: "github",
     userId: ticket.actorId,
+    includePolicyOnly: input.capability === "repository.initialize",
+    skipResourceReadiness: true,
   });
   const capability = access?.capabilities.find(
     (candidate) => candidate.key === input.capability
@@ -67,7 +73,14 @@ export async function authorizeGitHubCapability(input: {
     throw new GitHubPolicyError("GITHUB_CAPABILITY_DENIED");
   }
   const connectionId = access.connectionId;
-  const [connection, workspace, binding, resource, subjectRestrictions] =
+  const [
+    connection,
+    workspace,
+    binding,
+    resource,
+    projectApp,
+    subjectRestrictions,
+  ] =
     await Promise.all([
       knowledgeDb.query.appConnections.findFirst({
         where: (table, { and, eq }) =>
@@ -104,10 +117,19 @@ export async function authorizeGitHubCapability(input: {
         where: (table, { and, eq }) =>
           and(
             eq(table.connectionId, connectionId),
-            eq(table.externalId, `repository:${input.repository}`),
+            eq(table.label, input.repository),
             eq(table.resourceType, "repository"),
             eq(table.enabled, true)
           ),
+      }),
+      knowledgeDb.query.projectApps.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.projectId, thread.projectId!),
+            eq(table.appKey, "github"),
+            eq(table.enabled, true),
+          ),
+        columns: { settings: true },
       }),
       knowledgeDb
         .select()
@@ -156,14 +178,45 @@ export async function authorizeGitHubCapability(input: {
           )
         ),
     ]);
+  if (!connection?.externalAccountId) {
+    throw new GitHubPolicyError("GITHUB_CONNECTION_UNAVAILABLE", 409);
+  }
+  if (!(workspace && binding)) {
+    throw new GitHubPolicyError("GITHUB_CONTEXT_DENIED");
+  }
+  if (!resource) {
+    throw new GitHubPolicyError("GITHUB_REPOSITORY_NOT_SYNCED", 409);
+  }
+  const repositoryId = readGitHubRepositoryId(resource.metadata);
+  const explicitlyGranted = Boolean(
+    repositoryId &&
+      parseGitHubRepositoryGrants(projectApp?.settings).some(
+        (grant) => grant.repositoryId === repositoryId,
+      ),
+  );
+  const sourceResource = workspace.sourceResourceId
+    ? await knowledgeDb.query.appConnectionResources.findFirst({
+        where: (table, { eq: equals }) =>
+          equals(table.id, workspace.sourceResourceId!),
+        columns: { metadata: true },
+      })
+    : null;
+  const sourceRepositoryId = readGitHubRepositoryId(sourceResource?.metadata);
+  const isSourceRepository =
+    resource.id === workspace.sourceResourceId ||
+    (repositoryId !== null && repositoryId === sourceRepositoryId);
+  if (!(isSourceRepository || explicitlyGranted)) {
+    throw new GitHubPolicyError("GITHUB_REPOSITORY_NOT_GRANTED");
+  }
+  if (input.capability === "repository.read" && !resource.permissions?.pull) {
+    throw new GitHubPolicyError("GITHUB_REPOSITORY_READ_DENIED");
+  }
   if (
-    !(connection?.externalAccountId && workspace && binding && resource) ||
-    workspace.sourceResourceId !== resource.id ||
-    (input.capability === "repository.read" && !resource.permissions?.pull) ||
-    (input.capability === "repository.push_agent_branch" &&
-      !resource.permissions?.push)
+    (input.capability === "repository.push_agent_branch" ||
+      input.capability === "repository.initialize") &&
+    !resource.permissions?.push
   ) {
-    throw new GitHubPolicyError("GITHUB_ACTOR_RESOURCE_DENIED");
+    throw new GitHubPolicyError("GITHUB_REPOSITORY_PUSH_DENIED");
   }
   if (input.requireRunExecution) {
     const execution =

@@ -56,6 +56,7 @@ test("GitHub exposes governed repository capabilities", () => {
     [
       ["repository.read", "auto"],
       ["repository.push_agent_branch", "auto"],
+      ["repository.initialize", "ask"],
       ["pull_request.write", "ask"],
       ["issue.write", "ask"],
       ["merge.write", "ask"],

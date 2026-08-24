@@ -263,23 +263,40 @@ const server = createServer(async (request, response) => {
     }
     if (
       request.method === "POST" &&
-      url.pathname === "/v1/git/push-agent-branch"
+      (url.pathname === "/v1/git/publish-candidate" ||
+        url.pathname === "/v1/git/push-agent-branch")
     ) {
+      if (url.pathname === "/v1/git/publish-candidate") {
+        requireCapability(ticket.capabilities, "workspace.git.publish");
+      }
       const body = parseJson(await readBody(request, 100_000));
       if (
         !isRecord(body) ||
         typeof body.promotionId !== "string" ||
         !body.promotionId.trim() ||
         typeof body.candidateFingerprint !== "string" ||
-        !body.candidateFingerprint.trim()
+        !body.candidateFingerprint.trim() ||
+        (url.pathname === "/v1/git/publish-candidate" &&
+          (typeof body.resourceId !== "string" ||
+            !body.resourceId.trim() ||
+            (body.mode !== "agent_branch" && body.mode !== "initialize")))
       ) {
         throw new WorkspaceRequestError(400, "GITHUB_PUSH_INPUT_INVALID");
       }
-      const result = await pushManagedCandidateBranch({
+      const result = await publishManagedCandidate({
         ticket,
         authorization: request.headers.authorization ?? "",
         promotionId: body.promotionId,
-        candidateFingerprint: body.candidateFingerprint
+        candidateFingerprint: body.candidateFingerprint,
+        resourceId:
+          typeof body.resourceId === "string" && body.resourceId.trim()
+            ? body.resourceId.trim()
+            : config.sourceResourceId ?? "",
+        mode: body.mode === "initialize" ? "initialize" : "agent_branch",
+        approvalId:
+          typeof body.approvalId === "string" && body.approvalId.trim()
+            ? body.approvalId.trim()
+            : undefined
       });
       writeJson(response, 200, result);
       return;
@@ -823,14 +840,17 @@ async function initializeGitHubSource(authorization: string) {
   }
 }
 
-async function pushManagedCandidateBranch(input: {
+async function publishManagedCandidate(input: {
   ticket: ReturnType<typeof authorizeWorkspaceRequest>;
   authorization: string;
   promotionId: string;
   candidateFingerprint: string;
+  resourceId: string;
+  mode: "agent_branch" | "initialize";
+  approvalId?: string | undefined;
 }) {
-  if (!(config.sourceResourceId && config.controlPlaneUrl)) {
-    throw new WorkspaceRequestError(500, "WORKSPACE_SOURCE_NOT_CONFIGURED");
+  if (!(input.resourceId && config.controlPlaneUrl)) {
+    throw new WorkspaceRequestError(500, "GITHUB_PUBLICATION_TARGET_REQUIRED");
   }
   const preview = await withRunnerClient(
     (client, context) =>
@@ -887,17 +907,19 @@ async function pushManagedCandidateBranch(input: {
         candidateEnvironment
       )
     ).trim();
+    const commitArguments = [
+      "commit-tree",
+      candidateTree,
+      ...(input.mode === "agent_branch" ? ["-p", baseHead] : []),
+      "-m",
+      input.mode === "initialize"
+        ? "Initialize repository from Kestrel"
+        : `Kestrel candidate ${input.ticket.runId}`
+    ];
     const candidateCommit = (
       await runProcessOutput(
         "git",
-        [
-          "commit-tree",
-          candidateTree,
-          "-p",
-          baseHead,
-          "-m",
-          `Kestrel candidate ${input.ticket.runId}`
-        ],
+        commitArguments,
         worktreeRoot,
         candidateEnvironment
       )
@@ -910,19 +932,53 @@ async function pushManagedCandidateBranch(input: {
     );
     await runProcess(
       "git",
-      ["bundle", "create", bundlePath, bundleRef, `^${baseHead}`],
+      [
+        "bundle",
+        "create",
+        bundlePath,
+        bundleRef
+      ],
       worktreeRoot,
       {}
     );
+    const revalidatedPreview = await withRunnerClient(
+      (client, context) =>
+        client.previewWorkspacePromotion(
+          {
+            sessionId: input.ticket.threadId,
+            promotionId: input.promotionId
+          },
+          context
+        ),
+      input.ticket
+    );
+    if (
+      revalidatedPreview.preview?.status !== "ready" ||
+      revalidatedPreview.preview.candidateFingerprint !==
+        input.candidateFingerprint ||
+      revalidatedPreview.preview.promotion?.runId !== input.ticket.runId
+    ) {
+      throw new WorkspaceRequestError(409, "GITHUB_PUSH_CANDIDATE_CHANGED");
+    }
     const bundleStream = Readable.toWeb(
       createReadStream(bundlePath)
     ) as ReadableStream<Uint8Array>;
     const credential = await requestGitHubToolCredential({
       controlPlaneUrl: config.controlPlaneUrl,
       executionAuthorization: input.authorization,
-      resourceId: config.sourceResourceId,
-      operation: "repository.push_agent_branch",
-      candidateFingerprint: input.candidateFingerprint
+      resourceId: input.resourceId,
+      operation:
+        input.mode === "initialize"
+          ? "repository.initialize"
+          : "repository.push_agent_branch",
+      candidateFingerprint: input.candidateFingerprint,
+      candidateCommit,
+      ...(input.mode === "initialize"
+        ? {
+            approvalId: input.approvalId,
+            branch: "main" as const
+          }
+        : {})
     });
     const pushResponse = await fetch(
       new URL("/api/runtime/github/push", config.controlPlaneUrl),
@@ -931,8 +987,12 @@ async function pushManagedCandidateBranch(input: {
         headers: {
           authorization: credential.authorization,
           "content-type": "application/x-git-bundle",
-          "x-kestrel-resource-id": config.sourceResourceId,
-          "x-kestrel-candidate-fingerprint": input.candidateFingerprint
+          "x-kestrel-resource-id": input.resourceId,
+          "x-kestrel-candidate-fingerprint": input.candidateFingerprint,
+          "x-kestrel-candidate-commit": candidateCommit,
+          ...(input.approvalId
+            ? { "x-kestrel-approval-id": input.approvalId }
+            : {})
         },
         body: bundleStream,
         duplex: "half"
@@ -940,6 +1000,8 @@ async function pushManagedCandidateBranch(input: {
     );
     const payload = (await pushResponse.json()) as {
       branch?: string;
+      commit?: string;
+      mode?: "agent_branch" | "initialize";
       repository?: string;
       error?: { code?: string };
     };

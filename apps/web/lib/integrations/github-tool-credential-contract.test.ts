@@ -63,22 +63,28 @@ test("GitHub read credentials bind upload-pack to one repository resource", () =
 });
 
 test("GitHub push credentials bind the exact candidate fingerprint", () => {
+  const candidateCommit = "a".repeat(40);
   const request = githubToolCredentialRequestSchema.parse({
     operation: "repository.push_agent_branch",
     resourceId,
     candidateFingerprint: "candidate-sha256",
+    candidateCommit,
   });
   assert.equal(
     githubCapabilityForCredentialRequest(request),
     "repository.push_agent_branch"
   );
-  assert.equal(githubCredentialOperationBinding(request), "candidate-sha256");
+  const operationBinding = JSON.stringify({
+    candidateFingerprint: "candidate-sha256",
+    candidateCommit,
+  });
+  assert.equal(githubCredentialOperationBinding(request), operationBinding);
   assert.equal(
     githubToolCredentialMatchesRequest({
       ticket: ticket({
         capability: "repository.push_agent_branch",
         operation: "repository.push_agent_branch",
-        operationBinding: "candidate-sha256",
+        operationBinding,
       }),
       request,
     }),
@@ -94,5 +100,29 @@ test("GitHub push credentials bind the exact candidate fingerprint", () => {
       request,
     }),
     false
+  );
+});
+
+test("GitHub initialization credentials bind approval, fingerprint, commit, and main", () => {
+  const request = githubToolCredentialRequestSchema.parse({
+    operation: "repository.initialize",
+    resourceId,
+    candidateFingerprint: "candidate-sha256",
+    candidateCommit: "b".repeat(40),
+    approvalId: "approval-1",
+    branch: "main",
+  });
+  assert.equal(
+    githubCapabilityForCredentialRequest(request),
+    "repository.initialize",
+  );
+  assert.equal(
+    githubCredentialOperationBinding(request),
+    JSON.stringify({
+      candidateFingerprint: "candidate-sha256",
+      candidateCommit: "b".repeat(40),
+      approvalId: "approval-1",
+      branch: "main",
+    }),
   );
 });
