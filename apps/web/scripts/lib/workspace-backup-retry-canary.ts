@@ -89,6 +89,74 @@ export type TemporaryResourceCleanupObservation = {
   }>;
 };
 
+export type WorkspaceRetirementResourceObservation = {
+  elapsedMs: number;
+  sourceMachine: { id: string; state: string | null } | null;
+  sourceVolume: {
+    id: string;
+    state: string | null;
+    attachedMachineId?: string | null;
+  } | null;
+};
+
+export function mergeSourceMachineIntoInventory(input: {
+  machines: Array<{
+    id: string;
+    state?: string;
+    region?: string;
+    workspaceId: string | null;
+    replacementId: string | null;
+    mountedVolumeIds?: string[];
+    healthStatus?: string | null;
+    image?: string | null;
+    resolvedImageDigest?: string | null;
+  }>;
+  sourceMachine: {
+    id: string;
+    state: string;
+    region: string;
+    workspaceId?: string;
+    mounts?: Array<{ volumeId: string }>;
+    checks?: Array<{ name: string; status: string }>;
+    image?: string;
+    resolvedImageDigest?: string;
+  } | null;
+}) {
+  if (!input.sourceMachine) return input.machines;
+  const sourceMachine = input.sourceMachine;
+  const healthStatus =
+    sourceMachine.checks?.find((check) => check.name === "workspace")?.status ??
+    null;
+  let found = false;
+  const merged = input.machines.map((machine) => {
+    if (machine.id !== sourceMachine.id) return machine;
+    found = true;
+    return {
+      ...machine,
+      healthStatus,
+      image: sourceMachine.image ?? null,
+      resolvedImageDigest: sourceMachine.resolvedImageDigest ?? null,
+    };
+  });
+  return found
+    ? merged
+    : [
+        ...merged,
+        {
+          id: sourceMachine.id,
+          state: sourceMachine.state,
+          region: sourceMachine.region,
+          workspaceId: sourceMachine.workspaceId ?? null,
+          replacementId: null,
+          mountedVolumeIds:
+            sourceMachine.mounts?.map((mount) => mount.volumeId) ?? [],
+          healthStatus,
+          image: sourceMachine.image ?? null,
+          resolvedImageDigest: sourceMachine.resolvedImageDigest ?? null,
+        },
+      ];
+}
+
 export type FlySnapshot = {
   id: string;
   state: string;
@@ -219,6 +287,8 @@ export type CanaryEvidence = {
     sourceVolumeDeleted: boolean;
     backupRecordPreserved: boolean;
     archivePreserved: boolean;
+    sourceResourceObservations?: WorkspaceRetirementResourceObservation[];
+    sourceResourceObservationsTruncated?: boolean;
   };
   workerAfter?: ProviderMachine;
   diagnostics?: {
@@ -273,6 +343,8 @@ export type CanaryDependencies = {
     sourceVolumeDeleted: boolean;
     backupRecordPreserved: boolean;
     archivePreserved: boolean;
+    sourceResourceObservations?: WorkspaceRetirementResourceObservation[];
+    sourceResourceObservationsTruncated?: boolean;
   }>;
   writeEvidence(evidence: CanaryEvidence): Promise<void>;
   captureFailureEvidence?(input: {
@@ -963,6 +1035,90 @@ export async function waitForTemporaryResourceCleanup(input: {
             cleanupObservations: observations,
             cleanupObservationsTruncated: observationsTruncated,
             lastEnvironment: observed,
+          },
+        },
+      );
+    }
+    await wait(Math.min(pollIntervalMs, Math.max(1, remainingMs)));
+  }
+}
+
+export async function waitForWorkspaceRetirementResourceCleanup(input: {
+  sourceMachineId: string;
+  sourceVolumeId: string;
+  observeEnvironment(): Promise<EnvironmentInventory>;
+  now?: () => number;
+  delay?: (ms: number) => Promise<void>;
+  deadlineMs?: number;
+  pollIntervalMs?: number;
+}) {
+  const now = input.now ?? Date.now;
+  const wait =
+    input.delay ??
+    ((ms: number) =>
+      new Promise<void>((resolveDelay) => setTimeout(resolveDelay, ms)));
+  const deadlineMs = input.deadlineMs ?? WORKSPACE_BACKUP_RETRY_DEADLINE_MS;
+  const pollIntervalMs =
+    input.pollIntervalMs ?? TEMPORARY_RESOURCE_CLEANUP_POLL_INTERVAL_MS;
+  const startedAt = now();
+  const deadline = startedAt + deadlineMs;
+  const observations: WorkspaceRetirementResourceObservation[] = [];
+  let observationsTruncated = false;
+  let lastObservationSignature: string | undefined;
+
+  while (true) {
+    const environment = await input.observeEnvironment();
+    const sourceMachine =
+      environment.machines.find(
+        (machine) => machine.id === input.sourceMachineId,
+      ) ?? null;
+    const sourceVolume =
+      environment.volumes.find(
+        (volume) => volume.id === input.sourceVolumeId,
+      ) ?? null;
+    const observation: WorkspaceRetirementResourceObservation = {
+      elapsedMs: Math.max(0, now() - startedAt),
+      sourceMachine: sourceMachine
+        ? { id: sourceMachine.id, state: sourceMachine.state }
+        : null,
+      sourceVolume: sourceVolume
+        ? {
+            id: sourceVolume.id,
+            state: sourceVolume.state,
+            ...(Object.hasOwn(sourceVolume, "attachedMachineId")
+              ? { attachedMachineId: sourceVolume.attachedMachineId }
+              : {}),
+          }
+        : null,
+    };
+    const observationSignature = stableJson({
+      sourceMachine: observation.sourceMachine,
+      sourceVolume: observation.sourceVolume,
+    });
+    if (observationSignature !== lastObservationSignature) {
+      lastObservationSignature = observationSignature;
+      if (observations.length < 25) {
+        observations.push(observation);
+      } else {
+        observationsTruncated = true;
+        observations[observations.length - 1] = observation;
+      }
+    }
+    if (!(sourceMachine || sourceVolume)) {
+      return { environment, observations, observationsTruncated };
+    }
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) {
+      throw Object.assign(
+        new Error(
+          `Scratch Workspace retirement resources remain: Machine ${input.sourceMachineId}=${sourceMachine?.state ?? "absent"}; volume ${input.sourceVolumeId}=${sourceVolume?.state ?? "absent"}.`,
+        ),
+        {
+          code: "WORKSPACE_BACKUP_RETRY_CANARY_RETIREMENT_CLEANUP_FAILED",
+          details: {
+            sourceResourceObservations: observations,
+            sourceResourceObservationsTruncated: observationsTruncated,
+            lastEnvironment: environment,
           },
         },
       );
