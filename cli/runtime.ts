@@ -126,17 +126,12 @@ async function runBundle(args: string[]): Promise<void> {
   );
 }
 
-function readReplayQuery(args: string[]): {
-  runId?: string | undefined;
-  sessionId?: string | undefined;
-  threadId?: string | undefined;
-  delegationId?: string | undefined;
-  limit?: number | undefined;
-} {
+function readReplayQuery(args: string[]): import("../src/replay/RunReplayService.js").ReplayQuery {
   const runId = readArg(args, "--run-id");
   const sessionId = readArg(args, "--session-id");
   const threadId = readArg(args, "--thread-id");
   const delegationId = readArg(args, "--delegation-id");
+  const eventTypes = readMultiArg(args, "--event-type");
   if (runId === undefined && sessionId === undefined && threadId === undefined && delegationId === undefined) {
     throw new Error("Expected --run-id <id>, --session-id <id>, --thread-id <id>, or --delegation-id <id>");
   }
@@ -146,8 +141,26 @@ function readReplayQuery(args: string[]): {
     ...(sessionId !== undefined ? { sessionId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
     ...(delegationId !== undefined ? { delegationId } : {}),
+    ...(eventTypes.length > 0
+      ? { eventTypes: eventTypes as import("../src/replay/RunReplayService.js").ReplayQuery["eventTypes"] }
+      : {}),
     ...(limit !== undefined ? { limit } : {}),
   };
+}
+
+function readMultiArg(args: string[], name: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== name) {
+      continue;
+    }
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`${name} requires a value`);
+    }
+    values.push(value);
+  }
+  return values;
 }
 
 function readArg(args: string[], name: string): string | undefined {

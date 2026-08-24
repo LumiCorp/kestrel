@@ -85,6 +85,17 @@ export interface JobReplayPointerV1 {
   };
 }
 
+export interface JobManagedResultHandleV1 {
+  version: "job_managed_result_handle_v1";
+  kind: "managed_worktree";
+  worktreePath: string;
+  sourceWorkspaceRoot: string;
+  baseRevision: string;
+  candidateRevision: string;
+  changedFiles: string[];
+  promotionId?: string | undefined;
+}
+
 export interface JobRunResultV1 {
   version: "job_run_result_v1";
   sessionId: string;
@@ -92,6 +103,7 @@ export interface JobRunResultV1 {
   runId: string;
   status: RunTurnResult["output"]["status"];
   waitFor?: RunTurnResult["output"]["waitFor"] | undefined;
+  resultHandle?: JobManagedResultHandleV1 | undefined;
   replay: JobReplayPointerV1;
   result: RunTurnResult;
   error?:

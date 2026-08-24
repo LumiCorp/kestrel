@@ -1156,6 +1156,7 @@ export class InMemorySessionStore implements SessionStore {
     sessionId?: string | undefined;
     threadId?: string | undefined;
     delegationId?: string | undefined;
+    eventTypes?: RunEvent["type"][] | undefined;
     fromTimestamp?: string | undefined;
     toTimestamp?: string | undefined;
     limit?: number | undefined;
@@ -1180,6 +1181,9 @@ export class InMemorySessionStore implements SessionStore {
           return false;
         }
         if (input.sessionId !== undefined && event.sessionId !== input.sessionId) {
+          return false;
+        }
+        if (input.eventTypes !== undefined && input.eventTypes.includes(event.type) === false) {
           return false;
         }
         const matchesThread =

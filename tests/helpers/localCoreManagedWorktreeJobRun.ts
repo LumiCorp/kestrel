@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -112,14 +112,48 @@ export async function runLocalCoreManagedWorktreeJobRegression(): Promise<void> 
     const completed = events.filter((event) => event.type === "job.completed");
     assert.equal(completed.length, scenarios.length);
     const runIdsBySession = new Map<string, string>();
+    const resultHandlesBySession = new Map<string, {
+      version?: string;
+      kind?: string;
+      worktreePath?: string;
+      sourceWorkspaceRoot?: string;
+      baseRevision?: string;
+      candidateRevision?: string;
+      changedFiles?: string[];
+      promotionId?: string;
+    }>();
     for (const event of completed) {
       const payload = event.payload as {
-        output?: { runId?: string; sessionId?: string; status?: string };
+        output?: {
+          runId?: string;
+          sessionId?: string;
+          status?: string;
+          resultHandle?: {
+            version?: string;
+            kind?: string;
+            worktreePath?: string;
+            sourceWorkspaceRoot?: string;
+            baseRevision?: string;
+            candidateRevision?: string;
+            changedFiles?: string[];
+            promotionId?: string;
+          };
+        };
       };
       assert.equal(payload.output?.status, "COMPLETED");
       assert.equal(typeof payload.output?.sessionId, "string");
       assert.equal(typeof payload.output?.runId, "string");
       runIdsBySession.set(payload.output!.sessionId!, payload.output!.runId!);
+      assert.equal(payload.output?.resultHandle?.version, "job_managed_result_handle_v1");
+      assert.equal(payload.output?.resultHandle?.kind, "managed_worktree");
+      assert.equal(payload.output?.resultHandle?.sourceWorkspaceRoot, await realpath(repo));
+      assert.equal(payload.output?.resultHandle?.baseRevision, await git(repo, ["rev-parse", "HEAD"]));
+      assert.equal(typeof payload.output?.resultHandle?.candidateRevision, "string");
+      assert.equal(typeof payload.output?.resultHandle?.promotionId, "string");
+      resultHandlesBySession.set(
+        payload.output!.sessionId!,
+        payload.output!.resultHandle!,
+      );
     }
 
     assert.equal(await git(repo, ["status", "--porcelain"]), "");
@@ -139,6 +173,9 @@ export async function runLocalCoreManagedWorktreeJobRegression(): Promise<void> 
       });
       assert.equal(typeof binding.worktreeRoot, "string");
       const worktreeRoot = String(binding.worktreeRoot);
+      const resultHandle = resultHandlesBySession.get(scenario.sessionId);
+      assert.equal(resultHandle?.worktreePath, worktreeRoot);
+      assert.deepEqual(resultHandle?.changedFiles, [scenario.fileName]);
       assert.equal(
         path.relative(path.join(managedWorktreeHome, "worktrees"), worktreeRoot).startsWith(".."),
         false,

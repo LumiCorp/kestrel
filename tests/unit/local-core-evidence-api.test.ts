@@ -66,6 +66,17 @@ test("Local Core owns replay, doctor, and bundle reads from its canonical runtim
       timestamp: "2026-07-13T12:00:03.000Z",
       metadata: { status: "COMPLETED" },
     });
+    await handle.store.appendRunEvent({
+      runId: "run-core-evidence",
+      sessionId: "session-core-evidence",
+      type: "managed_worktree.promotion_candidate",
+      level: "INFO",
+      timestamp: "2026-07-13T12:00:04.000Z",
+      metadata: {
+        worktreeRoot: "/tmp/managed-result",
+        changedFiles: ["src/result.ts"],
+      },
+    });
     await handle.store.completeRun("run-core-evidence", "COMPLETED");
 
     const client = new LocalCoreClient({
@@ -74,9 +85,19 @@ test("Local Core owns replay, doctor, and bundle reads from its canonical runtim
     });
     const replay = await client.runtimeReplay({ runId: " run-core-evidence " });
     assert.equal(replay.query.runId, "run-core-evidence");
-    assert.equal(replay.summary.eventCount, 4);
+    assert.equal(replay.summary.eventCount, 5);
     assert.equal(replay.summary.terminalStatus, "COMPLETED");
     assert.equal(replay.events[1]?.type, "step.selected");
+
+    const promotionReplay = await client.runtimeReplay({
+      runId: "run-core-evidence",
+      eventTypes: ["managed_worktree.promotion_candidate"],
+    });
+    assert.deepEqual(
+      promotionReplay.events.map((event) => event.type),
+      ["managed_worktree.promotion_candidate"],
+    );
+    assert.equal(promotionReplay.summary.eventCount, 1);
 
     const doctor = await client.runtimeDoctor({ runId: "run-core-evidence" });
     assert.equal(doctor.focus.runId, "run-core-evidence");
@@ -87,7 +108,7 @@ test("Local Core owns replay, doctor, and bundle reads from its canonical runtim
     const bundle = await client.runtimeBundle({ runId: "run-core-evidence" });
     assert.equal(bundle.version, "runtime_replay_bundle_v1");
     assert.equal(bundle.focus.runId, "run-core-evidence");
-    assert.equal(bundle.replay.summary.eventCount, 4);
+    assert.equal(bundle.replay.summary.eventCount, 5);
     assert.equal(bundle.doctor.status, "COMPLETED");
 
     await assert.rejects(

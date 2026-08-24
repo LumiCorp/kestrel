@@ -1193,6 +1193,7 @@ function readReplayQueryFlags(args: string[]): ReplayQuery {
   const sessionId = readFlag(args, "--session-id");
   const threadId = readFlag(args, "--thread-id");
   const delegationId = readFlag(args, "--delegation-id");
+  const eventTypes = readMultiFlag(args, "--event-type");
   const limit = readOptionalInteger(readFlag(args, "--limit"));
   if (
     runId === undefined &&
@@ -1209,6 +1210,9 @@ function readReplayQueryFlags(args: string[]): ReplayQuery {
     ...(sessionId !== undefined ? { sessionId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
     ...(delegationId !== undefined ? { delegationId } : {}),
+    ...(eventTypes.length > 0
+      ? { eventTypes: eventTypes as ReplayQuery["eventTypes"] }
+      : {}),
     ...(limit !== undefined ? { limit } : {}),
   };
 }

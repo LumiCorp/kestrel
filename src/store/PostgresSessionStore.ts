@@ -2906,6 +2906,7 @@ export class PostgresSessionStore implements SessionStore {
     sessionId?: string | undefined;
     threadId?: string | undefined;
     delegationId?: string | undefined;
+    eventTypes?: RunEvent["type"][] | undefined;
     fromTimestamp?: string | undefined;
     toTimestamp?: string | undefined;
     limit?: number | undefined;
@@ -2922,6 +2923,11 @@ export class PostgresSessionStore implements SessionStore {
     if (input.sessionId !== undefined) {
       values.push(input.sessionId);
       clauses.push(`session_id = $${values.length}`);
+    }
+
+    if (input.eventTypes !== undefined) {
+      values.push(input.eventTypes);
+      clauses.push(`event_type = ANY($${values.length}::text[])`);
     }
 
     let threadSessionId: string | undefined;
