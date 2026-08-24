@@ -8,6 +8,7 @@ import {
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { isKnowledgeDocumentMediaTypeSupported } from "@/lib/knowledge/documents/shared";
+import { modelVisibleMetadataOnlyReason } from "@/lib/files/representation";
 
 const paramsSchema = z.object({
   id: z.string().min(1),
@@ -37,7 +38,7 @@ export async function GET(
       sha256: attachment.sha256,
       status: attachment.lifecycleState,
       representationStatus: attachment.representationStatus,
-      metadataOnlyReason: attachment.metadataOnlyReason,
+      metadataOnlyReason: modelVisibleMetadataOnlyReason(attachment.representationStatus, attachment.metadataOnlyReason),
       downloadUrl: `/api/threads/${encodeURIComponent(params.id)}/attachments/${encodeURIComponent(params.attachmentId)}/content`,
       knowledgeEligible: attachment.detectedMediaType
         ? isKnowledgeDocumentMediaTypeSupported(attachment.detectedMediaType, attachment.filename)
@@ -78,7 +79,7 @@ export async function PUT(
       sha256: attachment.sha256,
       status: attachment.lifecycleState,
       representationStatus: attachment.representationStatus,
-      metadataOnlyReason: attachment.metadataOnlyReason,
+      metadataOnlyReason: modelVisibleMetadataOnlyReason(attachment.representationStatus, attachment.metadataOnlyReason),
       downloadUrl: `/api/threads/${encodeURIComponent(params.id)}/attachments/${encodeURIComponent(params.attachmentId)}/content`,
       knowledgeEligible: attachment.detectedMediaType
         ? isKnowledgeDocumentMediaTypeSupported(attachment.detectedMediaType, attachment.filename)

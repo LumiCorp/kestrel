@@ -54,6 +54,23 @@ test("Desktop attachment store preserves unknown, malformed, spoofed, and binary
   });
 });
 
+test("Desktop extraction failures remain available as materialized metadata-only originals", async () => {
+  await withStore(async (store) => {
+    const malformedPdf = await store.import({
+      threadId: "thread-1",
+      filename: "malformed.pdf",
+      mimeType: "application/pdf",
+      data: Buffer.from("%PDF- malformed"),
+    });
+    assert.equal(malformedPdf.representationStatus, "staged_file");
+
+    const [resolved] = await store.resolve("thread-1", [malformedPdf.attachmentId]);
+    assert.equal(resolved?.representationStatus, "metadata_only");
+    assert.match(resolved?.metadataOnlyReason ?? "", /original remains available read-only/u);
+    assert.ok(resolved?.path);
+  });
+});
+
 test("Desktop attachment store accepts each bounded image format by content signature", async () => {
   await withStore(async (store) => {
     const images = [

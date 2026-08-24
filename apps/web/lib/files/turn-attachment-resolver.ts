@@ -9,6 +9,7 @@ import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { attachmentIdsFromMessageParts } from "@/lib/attachments/store";
 import { ensureEffectiveFileAvailability, FileAvailabilityError } from "./availability";
+import { modelVisibleMetadataOnlyReason } from "./representation";
 import { getManagedFileStorageProvider, type FileStorageProvider } from "./storage-provider";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 
@@ -338,6 +339,10 @@ export async function resolveTurnAttachments(input: {
           : representationStatus === "extracted_text"
             ? "text"
             : "file";
+      const metadataOnlyReason = modelVisibleMetadataOnlyReason(
+        representationStatus,
+        representation?.error,
+      );
       return {
         fileId: row.fileId,
         attachmentId: row.fileId,
@@ -359,9 +364,7 @@ export async function resolveTurnAttachments(input: {
               ...(representation.truncated ? { textTruncated: true } : {}),
             }
           : {}),
-        ...(representation?.error
-          ? { metadataOnlyReason: representation.error }
-          : {}),
+        ...(metadataOnlyReason ? { metadataOnlyReason } : {}),
       } satisfies RunnerTurnAttachment;
     }),
   );

@@ -5,6 +5,7 @@ import {
   getFileMetadataForUser,
   uploadThreadFile,
 } from "@/lib/files/service";
+import { fileApiRepresentationContract } from "@/lib/files/api-contract";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 
@@ -27,9 +28,9 @@ export async function GET(
       sha256: file.sha256,
       state: file.lifecycleState,
       representation: file.representationStatus,
-      metadataOnlyReason: file.metadataOnlyReason,
       scopes: file.scopes,
       downloadUrl: `/api/files/${encodeURIComponent(file.id)}/content`,
+      ...fileApiRepresentationContract(file),
     });
   } catch (error) {
     return errorResponse(error, 404);
@@ -66,8 +67,8 @@ export async function PUT(
       sha256: file.sha256,
       state: file.lifecycleState,
       representation: file.representationStatus,
-      metadataOnlyReason: file.metadataOnlyReason,
       downloadUrl: `/api/files/${encodeURIComponent(file.id)}/content`,
+      ...fileApiRepresentationContract(file),
     });
   } catch (error) {
     return errorResponse(error, 400);

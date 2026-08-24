@@ -502,7 +502,13 @@ function renderAttachmentContext(attachments: RunTurnAttachment[]): string {
     mediaType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
     sha256: attachment.sha256,
-    representation: attachment.representationStatus,
+    inlineRepresentation: attachment.representationStatus,
+    ...(attachment.path !== undefined
+      ? {
+          originalAccess: "materialized_read_only",
+          readOnlyPath: attachment.path,
+        }
+      : {}),
     ...(attachment.metadataOnlyReason !== undefined ? { note: attachment.metadataOnlyReason } : {}),
   }));
   const extractedText = attachments.flatMap((attachment) => attachment.text === undefined

@@ -28,7 +28,9 @@ export async function extractAttachmentTextIsolated(input: {
     throw new Error("Attachment processor input exceeds the 100 MiB limit.");
   }
   const worker = new Worker(new URL("./worker.js", import.meta.url), {
-    execArgv: process.execArgv.filter((argument) => argument.startsWith("--input-type") === false),
+    // The extractor owns its worker runtime. Hosting platforms may start the
+    // parent with flags that Node explicitly rejects for Worker instances.
+    execArgv: [],
     resourceLimits: {
       maxOldGenerationSizeMb: 256,
       maxYoungGenerationSizeMb: 32,

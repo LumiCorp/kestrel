@@ -706,9 +706,32 @@ function buildToolFacts(
       : {}),
     ...(readContent !== undefined
       ? {
+          contentBytes: Buffer.byteLength(readContent, "utf8"),
           contentPreview: clamp(readContent, 2000),
           contentPreviewTruncated: readContent.length > 2000,
+          ...(readContent.length === 0 ? { contentState: "empty" } : {}),
         }
+      : {}),
+    ...(isFileTextReadToolName(toolName) && typeof output?.bytesRead === "number" && Number.isFinite(output.bytesRead)
+      ? { bytesRead: Math.max(0, Math.trunc(output.bytesRead)) }
+      : {}),
+    ...(isFileTextReadToolName(toolName) && typeof output?.totalBytes === "number" && Number.isFinite(output.totalBytes)
+      ? { totalBytes: Math.max(0, Math.trunc(output.totalBytes)) }
+      : {}),
+    ...(isFileTextReadToolName(toolName) && asRecord(output?.range) !== undefined
+      ? { range: asRecord(output?.range) }
+      : {}),
+    ...(isFileTextReadToolName(toolName) && typeof output?.complete === "boolean"
+      ? { complete: output.complete }
+      : {}),
+    ...(isFileTextReadToolName(toolName) && typeof output?.truncated === "boolean"
+      ? { truncated: output.truncated }
+      : {}),
+    ...(isFileTextReadToolName(toolName) && typeof output?.nextOffsetBytes === "number" && Number.isFinite(output.nextOffsetBytes)
+      ? { nextOffsetBytes: Math.max(0, Math.trunc(output.nextOffsetBytes)) }
+      : {}),
+    ...(isFileTextReadToolName(toolName) && asRecord(output?.nextPage) !== undefined
+      ? { nextPage: asRecord(output?.nextPage) }
       : {}),
     ...(toolName === "fs.search_text" && asString(input?.query) !== undefined
       ? { query: asString(input?.query) }

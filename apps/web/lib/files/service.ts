@@ -22,6 +22,12 @@ import {
   ensureEffectiveFileAvailability,
   ensureFileBlobAvailable,
 } from "./availability";
+import {
+  isNativeImageRepresentationMediaType,
+  modelVisibleMetadataOnlyReason,
+  recordFileRepresentationOutcome,
+  type FileRepresentationFailureCategory,
+} from "./representation";
 
 export type FileScanResult = "clean" | "quarantined" | "unavailable";
 export type FileScanner = (input: {
@@ -501,6 +507,10 @@ export async function resolveThreadFilesForExecution(input: {
   const files = await resolveReadyThreadFiles(input);
   const storage = getManagedFileStorageProvider();
   return await Promise.all(files.map(async (file) => {
+    const metadataOnlyReason = modelVisibleMetadataOnlyReason(
+      file.representationStatus,
+      file.metadataOnlyReason,
+    );
     const kind = file.representationStatus === "native_image"
       ? "image" as const
       : file.representationStatus === "extracted_text" ? "text" as const : "file" as const;
@@ -524,7 +534,7 @@ export async function resolveThreadFilesForExecution(input: {
       ...source,
       ...(file.representationText ? { text: file.representationText } : {}),
       ...(file.textTruncated ? { textTruncated: true } : {}),
-      ...(file.metadataOnlyReason ? { metadataOnlyReason: file.metadataOnlyReason } : {}),
+      ...(metadataOnlyReason ? { metadataOnlyReason } : {}),
     } satisfies RunnerTurnAttachment;
   }));
 }
@@ -908,6 +918,7 @@ export async function processStoredFileRepresentation(input: {
   filename: string;
   mediaType: string;
 }) {
+  const startedAt = Date.now();
   const storage = getManagedFileStorageProvider();
   const blob = await knowledgeDb.query.fileBlobs.findFirst({
     where: eq(schema.fileBlobs.id, input.blobId),
@@ -923,9 +934,11 @@ export async function processStoredFileRepresentation(input: {
   let textContent: string | null = null;
   let truncated = false;
   let error: string | null = NO_INTERPRETER_REASON;
-  if (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(input.mediaType)) {
+  let failureCategory: FileRepresentationFailureCategory | undefined = "unsupported_media_type";
+  if (isNativeImageRepresentationMediaType(input.mediaType)) {
     kind = "native_image";
     error = null;
+    failureCategory = undefined;
   } else if (isAttachmentTextExtractable(input.mediaType)) {
     try {
       const extraction = await extractAttachmentTextIsolated({
@@ -939,9 +952,14 @@ export async function processStoredFileRepresentation(input: {
         textContent = extraction.text;
         truncated = extraction.truncated;
         error = null;
+        failureCategory = undefined;
+      } else {
+        error = "Attachment extractor returned no text.";
+        failureCategory = "empty_extraction";
       }
     } catch (cause) {
       error = cause instanceof Error ? cause.message.slice(0, 500) : "File processing failed.";
+      failureCategory = "extraction_failed";
     }
   }
   await knowledgeDb.delete(schema.fileRepresentations).where(eq(schema.fileRepresentations.blobId, input.blobId));
@@ -956,6 +974,12 @@ export async function processStoredFileRepresentation(input: {
     error,
     createdAt: new Date(),
     updatedAt: new Date(),
+  });
+  recordFileRepresentationOutcome({
+    outcome: kind,
+    mediaType: input.mediaType,
+    durationMs: Date.now() - startedAt,
+    ...(failureCategory !== undefined ? { failureCategory } : {}),
   });
 }
 
