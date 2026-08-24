@@ -15,9 +15,11 @@ import {
 import {
   parseWorkspaceBackupRetryCanaryArgs,
   readProviderVolumeSnapshots,
+  recoverWorkerAfterInterruption,
   runWorkspaceBackupRetryCanary,
   sanitizeCanaryEvidence,
   snapshotEvidence,
+  stopWorkerWithProviderVerification,
   verifyKwb2Archive,
   type BackupObservation,
   type CanaryEvidence,
@@ -32,6 +34,7 @@ const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const CONTROL_WORKER_ROLE = "control-worker";
 const POLL_INTERVAL_MS = 500;
 const WORKER_HEALTH_DEADLINE_MS = 180_000;
+const FLY_COMMAND_TIMEOUT_MS = 30_000;
 
 export async function main() {
   const args = parseWorkspaceBackupRetryCanaryArgs(process.argv.slice(2));
@@ -90,9 +93,8 @@ function productionDependencies(operator: string) {
     },
     confirm: confirmExact,
     async queueBackup(target: CanaryTarget) {
-      const { queueWorkspaceBackup } = await import(
-        "@/lib/environments/backups"
-      );
+      const { queueWorkspaceBackup } =
+        await import("@/lib/environments/backups");
       const queued = await queueWorkspaceBackup({
         organizationId: target.thread.organizationId,
         environmentId: target.environment.id,
@@ -131,29 +133,47 @@ function productionDependencies(operator: string) {
     },
     observeEnvironment: readEnvironmentInventory,
     listSnapshots: readSourceVolumeSnapshots,
-    stopWorker(target: CanaryTarget) {
-      return runFly([
-        "machine",
-        "stop",
-        target.controlWorker.selected.id,
-        "--app",
-        target.controlWorker.app,
-        "--signal",
-        "SIGKILL",
-        "--timeout",
-        "1",
-      ]);
+    stopWorker(target: CanaryTarget, onStopRequested: () => void) {
+      return stopWorkerWithProviderVerification({
+        target,
+        onStopRequested,
+        stop: (timeoutMs) =>
+          runFly(
+            [
+              "machine",
+              "stop",
+              target.controlWorker.selected.id,
+              "--app",
+              target.controlWorker.app,
+              "--signal",
+              "SIGKILL",
+              "--timeout",
+              "1",
+            ],
+            timeoutMs,
+          ),
+        readMachines: (timeoutMs) =>
+          readControlWorkerMachines(target.controlWorker.app, timeoutMs),
+      });
     },
-    async startWorker(target: CanaryTarget) {
-      const selected = await readSelectedWorker(target);
-      if (selected.state === "started") return;
-      await runFly([
-        "machine",
-        "start",
-        target.controlWorker.selected.id,
-        "--app",
-        target.controlWorker.app,
-      ]);
+    startWorker(target: CanaryTarget, context: { postStopConfirmed: boolean }) {
+      return recoverWorkerAfterInterruption({
+        target,
+        postStopConfirmed: context.postStopConfirmed,
+        start: (timeoutMs) =>
+          runFly(
+            [
+              "machine",
+              "start",
+              target.controlWorker.selected.id,
+              "--app",
+              target.controlWorker.app,
+            ],
+            timeoutMs,
+          ),
+        readMachines: (timeoutMs) =>
+          readControlWorkerMachines(target.controlWorker.app, timeoutMs),
+      }).then(() => undefined);
     },
     waitForWorker,
     waitForCompletion(input: {
@@ -555,14 +575,15 @@ async function readSourceVolumeSnapshots(target: CanaryTarget) {
   });
 }
 
-async function readControlWorkerMachines(app: string) {
-  const value = await captureJson("fly", [
-    "machine",
-    "list",
-    "--app",
-    app,
-    "--json",
-  ]);
+async function readControlWorkerMachines(
+  app: string,
+  timeoutMs = FLY_COMMAND_TIMEOUT_MS,
+) {
+  const value = await captureJson(
+    "fly",
+    ["machine", "list", "--app", app, "--json"],
+    timeoutMs,
+  );
   if (!Array.isArray(value)) throw new Error("Fly returned invalid Machines.");
   return value.map(parseProviderMachine);
 }
@@ -750,8 +771,12 @@ function requiredEnvironment(name: string) {
   return value;
 }
 
-async function captureJson(command: string, args: string[]) {
-  const value = await captureText(command, args);
+async function captureJson(
+  command: string,
+  args: string[],
+  timeoutMs = FLY_COMMAND_TIMEOUT_MS,
+) {
+  const value = await captureText(command, args, timeoutMs);
   try {
     return JSON.parse(value) as unknown;
   } catch {
@@ -759,12 +784,17 @@ async function captureJson(command: string, args: string[]) {
   }
 }
 
-async function captureText(command: string, args: string[]) {
+async function captureText(
+  command: string,
+  args: string[],
+  timeoutMs = FLY_COMMAND_TIMEOUT_MS,
+) {
   try {
     const { stdout } = await execFileAsync(command, args, {
       encoding: "utf8",
       env: process.env,
       maxBuffer: 10 * 1024 * 1024,
+      timeout: timeoutMs,
     });
     const value = stdout.trim();
     if (!value) throw new Error(`${command} returned no output.`);
@@ -774,12 +804,13 @@ async function captureText(command: string, args: string[]) {
   }
 }
 
-async function runFly(args: string[]) {
+async function runFly(args: string[], timeoutMs = FLY_COMMAND_TIMEOUT_MS) {
   try {
     await execFileAsync("fly", args, {
       encoding: "utf8",
       env: process.env,
       maxBuffer: 10 * 1024 * 1024,
+      timeout: timeoutMs,
     });
   } catch (error) {
     throw new Error(`fly ${args[0] ?? ""} failed.`, { cause: error });

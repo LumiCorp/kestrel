@@ -17,11 +17,14 @@ import {
   exactCanaryConfirmation,
   parseWorkspaceBackupRetryCanaryArgs,
   readProviderVolumeSnapshots,
+  recoverWorkerAfterInterruption,
   runWorkspaceBackupRetryCanary,
   sanitizeCanaryEvidence,
+  stopWorkerWithProviderVerification,
   verifyKwb2Archive,
   type BackupObservation,
   type CanaryDependencies,
+  type CanaryEvidence,
   type CanaryTarget,
 } from "./workspace-backup-retry-canary";
 
@@ -65,7 +68,7 @@ test("the executable keeps tenant snapshots and control-worker reads on separate
   );
   assert.match(
     source,
-    /async function readControlWorkerMachines[\s\S]*captureJson\("fly", \[\s*"machine",\s*"list",/u,
+    /async function readControlWorkerMachines[\s\S]*captureJson\(\s*"fly",\s*\[\s*"machine",\s*"list",/u,
   );
   assert.doesNotMatch(source, /"volumes",\s*"snapshots",\s*"list"/u);
 });
@@ -95,6 +98,138 @@ test("the executable loads production configuration before initializing pg-boss"
     source,
     /from\s+["']@\/lib\/(?:environments\/backups|knowledge\/queue)["']/u,
     "a static backup or pg-boss import captures an empty database URL before environment loading",
+  );
+});
+
+test("a nonzero Fly stop polls stale and transitional state until the exact Machine is stopped", async () => {
+  const value = target();
+  const stopFailure = new Error("fly machine failed after SIGKILL");
+  const states = ["started", "started", "stopping", "stopped"];
+  let reads = 0;
+  let clock = 0;
+
+  const evidence = await stopWorkerWithProviderVerification({
+    target: value,
+    stop: async () => {
+      throw stopFailure;
+    },
+    readMachines: async () => [
+      {
+        ...value.controlWorker.selected,
+        state: states[Math.min(reads++, states.length - 1)]!,
+      },
+    ],
+    now: () => clock,
+    delay: async (ms) => void (clock += ms),
+    deadlineMs: 1_000,
+    pollIntervalMs: 100,
+  });
+
+  assert.deepEqual(evidence, {
+    machineId: "worker-1",
+    commandOutcome: "nonzero",
+    commandError: { name: "Error", message: stopFailure.message },
+    observedStates: ["started", "stopping", "stopped"],
+    confirmedState: "stopped",
+  });
+  assert.equal(reads, 4);
+});
+
+test("worker stop verification fails closed on fleet drift or missing stop confirmation", async () => {
+  const value = target();
+  let stopCalls = 0;
+  await assert.rejects(
+    stopWorkerWithProviderVerification({
+      target: value,
+      stop: async () => void (stopCalls += 1),
+      readMachines: async () => [
+        ...value.controlWorker.machines,
+        { ...value.controlWorker.selected, id: "worker-2" },
+      ],
+    }),
+    /fleet changed before interruption/u,
+  );
+  assert.equal(stopCalls, 0);
+
+  let clock = 0;
+  await assert.rejects(
+    stopWorkerWithProviderVerification({
+      target: value,
+      stop: async () => undefined,
+      readMachines: async () => value.controlWorker.machines,
+      now: () => clock,
+      delay: async (ms) => void (clock += ms),
+      deadlineMs: 100,
+      pollIntervalMs: 50,
+    }),
+    (error: unknown) => {
+      const failure = error as Error & {
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+      assert.equal(failure.code, "WORKER_STOP_VERIFICATION_FAILED");
+      assert.deepEqual(failure.details?.observedStates, ["started"]);
+      return true;
+    },
+  );
+});
+
+test("worker stop verification preserves both command and provider-read failures", async () => {
+  const value = target();
+  const childFailure = Object.assign(
+    new Error("Command failed: fly machine stop\nmust-not-enter-evidence"),
+    {
+      code: 1,
+      signal: "SIGKILL",
+      killed: true,
+      stderr: "must-not-enter-evidence",
+      cmd: "fly machine stop worker-1",
+    },
+  );
+  const stopFailure = new Error("fly machine failed.", {
+    cause: childFailure,
+  });
+  let reads = 0;
+
+  await assert.rejects(
+    stopWorkerWithProviderVerification({
+      target: value,
+      stop: async () => {
+        throw stopFailure;
+      },
+      readMachines: async () => {
+        reads += 1;
+        if (reads === 1) return value.controlWorker.machines;
+        throw new Error("Fly inventory read failed");
+      },
+    }),
+    (error: unknown) => {
+      const failure = error as Error & {
+        code?: string;
+        details?: Record<string, unknown>;
+      };
+      assert.equal(failure.code, "WORKER_STOP_VERIFICATION_FAILED");
+      assert.deepEqual(failure.details?.commandError, {
+        name: "Error",
+        message: stopFailure.message,
+        cause: {
+          name: "Error",
+          message: "Subprocess command failed.",
+          code: "1",
+          signal: "SIGKILL",
+          killed: true,
+        },
+      });
+      assert.deepEqual(failure.details?.verificationError, {
+        name: "Error",
+        message: "Fly inventory read failed",
+      });
+      assert.doesNotMatch(
+        JSON.stringify(failure.details),
+        /must-not-enter-evidence/u,
+      );
+      return true;
+    },
   );
 });
 
@@ -467,6 +602,7 @@ test("one first-attempt persistence completes on attempt two and retires only af
   assert.equal(result.outcome, "passed");
   assert.equal(result.backup?.first?.operation.attempt, 1);
   assert.equal(result.backup?.final?.operation.attempt, 2);
+  assert.equal(result.workerStop?.confirmedState, "stopped");
   assert.equal(result.cleanup?.backupRecordPreserved, true);
   assert.equal(fixture.stopCalls, 1);
   assert.ok(fixture.startCalls >= 2);
@@ -498,6 +634,105 @@ test("post-confirmation target drift blocks every mutation", async () => {
   );
   assert.equal(queued, false);
   assert.equal(fixture.stopCalls, 0);
+});
+
+test("pre-stop fleet rejection does not authorize a worker restart", async () => {
+  const fixture = orchestrationFixture(null);
+  fixture.dependencies.stopWorker = async () => {
+    throw new Error("The control-worker fleet changed before interruption.");
+  };
+
+  await assert.rejects(
+    runWorkspaceBackupRetryCanary({
+      args: {
+        threadId: "thread-1",
+        controlWorkerMachineId: "worker-1",
+        tag: "candidate-tag",
+      },
+      dependencies: fixture.dependencies,
+    }),
+    /fleet changed before interruption/u,
+  );
+  assert.equal(fixture.stopCalls, 0);
+  assert.equal(fixture.startCalls, 0);
+});
+
+test("stop verification failure after interruption always restarts and preserves evidence", async () => {
+  const fixture = orchestrationFixture(null);
+  const failure = Object.assign(
+    new Error(
+      "Fly did not confirm the selected control-worker Machine stopped.",
+    ),
+    {
+      code: "WORKER_STOP_VERIFICATION_FAILED",
+      details: { observedStates: ["started", "stopping"] },
+    },
+  );
+  let stopCalls = 0;
+  let recoveryCalls = 0;
+  let providerStartCalls = 0;
+  let reads = 0;
+  let clock = 0;
+  const states = [
+    "started",
+    "read-error",
+    "started",
+    "stopping",
+    "stopped",
+    "stopped",
+    "started",
+  ];
+  let writtenEvidence: CanaryEvidence | undefined;
+  fixture.dependencies.stopWorker = async (_target, onStopRequested) => {
+    onStopRequested();
+    stopCalls += 1;
+    throw failure;
+  };
+  fixture.dependencies.startWorker = async (value, context) => {
+    recoveryCalls += 1;
+    await recoverWorkerAfterInterruption({
+      target: value,
+      postStopConfirmed: context.postStopConfirmed,
+      start: async () => void (providerStartCalls += 1),
+      readMachines: async () => {
+        const state = states[Math.min(reads++, states.length - 1)]!;
+        if (state === "read-error") {
+          clock += 600;
+          throw new Error("temporary provider read failure");
+        }
+        return [{ ...value.controlWorker.selected, state }];
+      },
+      now: () => clock,
+      delay: async (ms) => void (clock += ms),
+      deadlineMs: 2_000,
+      pollIntervalMs: 100,
+    });
+  };
+  fixture.dependencies.writeEvidence = async (evidence) => {
+    writtenEvidence = evidence;
+  };
+
+  await assert.rejects(
+    runWorkspaceBackupRetryCanary({
+      args: {
+        threadId: "thread-1",
+        controlWorkerMachineId: "worker-1",
+        tag: "candidate-tag",
+      },
+      dependencies: fixture.dependencies,
+    }),
+    failure,
+  );
+  assert.equal(stopCalls, 1);
+  assert.equal(providerStartCalls, 1);
+  assert.equal(recoveryCalls, 2, "catch and finally must recover the worker");
+  assert.equal(reads, 8);
+  assert.deepEqual(writtenEvidence?.error, {
+    name: "Error",
+    message: failure.message,
+    code: failure.code,
+    details: failure.details,
+  });
 });
 
 test("every post-stop failure guarantees a worker restart attempt", async (context) => {
@@ -753,7 +988,16 @@ function orchestrationFixture(
       }
       return [{ id: "snapshot-1", state: "created" }];
     },
-    stopWorker: async () => void (stopCalls += 1),
+    stopWorker: async (_target, onStopRequested) => {
+      onStopRequested();
+      stopCalls += 1;
+      return {
+        machineId: "worker-1",
+        commandOutcome: "completed",
+        observedStates: ["stopped"],
+        confirmedState: "stopped",
+      };
+    },
     startWorker: async () => {
       startCalls += 1;
       if (failurePoint === "start" && startCalls === 1)

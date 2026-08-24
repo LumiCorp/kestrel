@@ -9,6 +9,9 @@ import {
 } from "./production-command";
 
 export const WORKSPACE_BACKUP_RETRY_DEADLINE_MS = 15 * 60_000;
+export const WORKER_STOP_VERIFICATION_DEADLINE_MS = 30_000;
+export const WORKER_STOP_POLL_INTERVAL_MS = 500;
+export const WORKER_RECOVERY_DEADLINE_MS = 180_000;
 
 export type WorkspaceBackupRetryCanaryArgs = {
   threadId: string;
@@ -32,6 +35,25 @@ export type ProviderMachine = {
   imageDigest: string | null;
   workerCheckStatus: string | null;
   workerBuildId: string | null;
+};
+
+export type CanaryErrorRecord = {
+  name: string;
+  message: string;
+  code?: string;
+  signal?: string;
+  killed?: boolean;
+  cause?: CanaryErrorRecord;
+  causes?: CanaryErrorRecord[];
+  details?: Record<string, unknown>;
+};
+
+export type WorkerStopEvidence = {
+  machineId: string;
+  commandOutcome: "completed" | "nonzero";
+  commandError?: CanaryErrorRecord;
+  observedStates: string[];
+  confirmedState: "stopped";
 };
 
 export type EnvironmentInventory = {
@@ -170,6 +192,7 @@ export type CanaryEvidence = {
     final?: BackupObservation;
   };
   snapshots?: { baseline: FlySnapshot[]; final?: FlySnapshot[] };
+  workerStop?: WorkerStopEvidence;
   archive?: ArchiveVerification;
   cleanup?: {
     retirementOperationId: string;
@@ -184,7 +207,7 @@ export type CanaryEvidence = {
     environment?: EnvironmentInventory;
     archiveObjectExists?: boolean;
   };
-  error?: { name: string; message: string; code?: string };
+  error?: CanaryErrorRecord;
 };
 
 export type CanaryDependencies = {
@@ -207,8 +230,14 @@ export type CanaryDependencies = {
   }): Promise<BackupObservation>;
   observeEnvironment(target: CanaryTarget): Promise<EnvironmentInventory>;
   listSnapshots(target: CanaryTarget): Promise<FlySnapshot[]>;
-  stopWorker(target: CanaryTarget): Promise<void>;
-  startWorker(target: CanaryTarget): Promise<void>;
+  stopWorker(
+    target: CanaryTarget,
+    onStopRequested: () => void,
+  ): Promise<WorkerStopEvidence>;
+  startWorker(
+    target: CanaryTarget,
+    context: { postStopConfirmed: boolean },
+  ): Promise<void>;
   waitForWorker(target: CanaryTarget): Promise<ProviderMachine>;
   waitForCompletion(input: {
     backupId: string;
@@ -283,6 +312,236 @@ export function exactCanaryConfirmation(target: CanaryTarget) {
     target.controlWorker.selected.id,
     target.requestedTag,
   ].join(" ");
+}
+
+export async function stopWorkerWithProviderVerification(input: {
+  target: CanaryTarget;
+  stop(timeoutMs: number): Promise<void>;
+  readMachines(timeoutMs: number): Promise<ProviderMachine[]>;
+  onStopRequested?: () => void;
+  now?: () => number;
+  delay?: (ms: number) => Promise<void>;
+  deadlineMs?: number;
+  pollIntervalMs?: number;
+}): Promise<WorkerStopEvidence> {
+  const now = input.now ?? Date.now;
+  const wait =
+    input.delay ??
+    ((ms: number) =>
+      new Promise<void>((resolveDelay) => setTimeout(resolveDelay, ms)));
+  const deadlineMs = input.deadlineMs ?? WORKER_STOP_VERIFICATION_DEADLINE_MS;
+  const pollIntervalMs = input.pollIntervalMs ?? WORKER_STOP_POLL_INTERVAL_MS;
+  const before = await input.readMachines(deadlineMs);
+  assertCanaryWorkerFleet(input.target, before, true);
+
+  const deadline = now() + deadlineMs;
+  const remainingMs = () => deadline - now();
+  let stopError: unknown;
+  const stopTimeoutMs = remainingMs();
+  if (stopTimeoutMs <= 0) {
+    throw workerStopVerificationError({
+      message:
+        "The control-worker stop verification deadline expired before interruption.",
+      observedStates: [],
+    });
+  }
+  input.onStopRequested?.();
+  try {
+    await input.stop(stopTimeoutMs);
+  } catch (error) {
+    stopError = error;
+  }
+  const commandError =
+    stopError === undefined ? undefined : errorRecord(stopError);
+  const observedStates: string[] = [];
+  while (true) {
+    const readTimeoutMs = remainingMs();
+    if (readTimeoutMs <= 0) {
+      throw workerStopVerificationError({
+        message:
+          "Fly did not confirm the selected control-worker Machine stopped.",
+        commandError,
+        observedStates,
+        cause: stopError,
+      });
+    }
+    try {
+      const machines = await input.readMachines(readTimeoutMs);
+      assertCanaryWorkerFleet(input.target, machines, false);
+      const selected = machines.find(
+        (machine) => machine.id === input.target.controlWorker.selected.id,
+      )!;
+      if (observedStates.at(-1) !== selected.state) {
+        observedStates.push(selected.state);
+      }
+      if (selected.state === "stopped") {
+        return {
+          machineId: selected.id,
+          commandOutcome: stopError === undefined ? "completed" : "nonzero",
+          ...(commandError ? { commandError } : {}),
+          observedStates,
+          confirmedState: "stopped",
+        };
+      }
+    } catch (verificationError) {
+      throw workerStopVerificationError({
+        message:
+          "The control-worker stop result could not be verified with Fly.",
+        commandError,
+        observedStates,
+        verificationError,
+        cause:
+          stopError === undefined
+            ? verificationError
+            : new AggregateError([stopError, verificationError]),
+      });
+    }
+    await wait(Math.min(pollIntervalMs, Math.max(1, remainingMs())));
+  }
+}
+
+export async function recoverWorkerAfterInterruption(input: {
+  target: CanaryTarget;
+  postStopConfirmed: boolean;
+  start(timeoutMs: number): Promise<void>;
+  readMachines(timeoutMs: number): Promise<ProviderMachine[]>;
+  now?: () => number;
+  delay?: (ms: number) => Promise<void>;
+  deadlineMs?: number;
+  pollIntervalMs?: number;
+}): Promise<ProviderMachine> {
+  const now = input.now ?? Date.now;
+  const wait =
+    input.delay ??
+    ((ms: number) =>
+      new Promise<void>((resolveDelay) => setTimeout(resolveDelay, ms)));
+  const deadlineMs = input.deadlineMs ?? WORKER_RECOVERY_DEADLINE_MS;
+  const pollIntervalMs = input.pollIntervalMs ?? WORKER_STOP_POLL_INTERVAL_MS;
+  const deadline = now() + deadlineMs;
+  let postStopConfirmed = input.postStopConfirmed;
+  let startAccepted = false;
+  let lastStartError: unknown;
+  let lastReadError: unknown;
+
+  while (true) {
+    const readTimeoutMs = deadline - now();
+    if (readTimeoutMs <= 0) {
+      throw workerRecoveryError(lastStartError ?? lastReadError);
+    }
+    let machines: ProviderMachine[];
+    try {
+      machines = await input.readMachines(readTimeoutMs);
+      lastReadError = undefined;
+    } catch (error) {
+      lastReadError = error;
+      await wait(Math.min(pollIntervalMs, Math.max(1, deadline - now())));
+      continue;
+    }
+    assertCanaryWorkerFleet(input.target, machines, false);
+    const selected = machines.find(
+      (machine) => machine.id === input.target.controlWorker.selected.id,
+    )!;
+
+    if (
+      selected.state === "stopping" ||
+      selected.state === "stopped" ||
+      selected.state === "starting" ||
+      selected.state === "restarting"
+    ) {
+      postStopConfirmed = true;
+    }
+
+    if (selected.state === "stopped" && !startAccepted) {
+      const startTimeoutMs = deadline - now();
+      if (startTimeoutMs <= 0) {
+        throw workerRecoveryError(lastStartError ?? lastReadError);
+      }
+      try {
+        await input.start(startTimeoutMs);
+        startAccepted = true;
+        lastStartError = undefined;
+      } catch (error) {
+        lastStartError = error;
+      }
+    } else if (
+      postStopConfirmed &&
+      isHealthyCandidateWorker(input.target, selected)
+    ) {
+      return selected;
+    }
+
+    await wait(Math.min(pollIntervalMs, Math.max(1, deadline - now())));
+  }
+}
+
+function workerRecoveryError(cause: unknown) {
+  const error = new Error(
+    "The control-worker Machine could not be proven healthy after interruption.",
+    { cause },
+  );
+  error.name = "WorkerRecoveryError";
+  return Object.assign(error, { code: "WORKER_RECOVERY_FAILED" });
+}
+
+export function assertCanaryWorkerFleet(
+  target: CanaryTarget,
+  machines: ProviderMachine[],
+  beforeStop: boolean,
+) {
+  const selected = machines.find(
+    (machine) => machine.id === target.controlWorker.selected.id,
+  );
+  assert(selected, "The selected control-worker Machine disappeared.");
+  assert(
+    selected.imageTag === target.requestedTag &&
+      selected.imageRepository === target.controlWorker.repository &&
+      selected.imageDigest === target.controlWorker.selected.imageDigest,
+    "The selected control-worker image changed before interruption.",
+  );
+  const observedOthers = machines.filter(
+    (machine) => machine.id !== selected.id,
+  );
+  const expectedOthers = target.controlWorker.machines.filter(
+    (machine) => machine.id !== selected.id,
+  );
+  assert(
+    stableJson(observedOthers) === stableJson(expectedOthers),
+    "The control-worker fleet changed before interruption.",
+  );
+  assert(
+    machines.every(
+      (machine) => machine.state !== "started" || machine.id === selected.id,
+    ),
+    "Another control-worker Machine started before interruption.",
+  );
+  if (beforeStop) {
+    assert(
+      stableJson(machines) === stableJson(target.controlWorker.machines),
+      "The control-worker target changed before interruption.",
+    );
+    assertHealthyCandidateWorker(target, selected);
+  }
+}
+
+function workerStopVerificationError(input: {
+  message: string;
+  commandError?: CanaryErrorRecord;
+  observedStates: string[];
+  verificationError?: unknown;
+  cause?: unknown;
+}) {
+  const error = new Error(input.message, { cause: input.cause });
+  error.name = "WorkerStopVerificationError";
+  return Object.assign(error, {
+    code: "WORKER_STOP_VERIFICATION_FAILED",
+    details: {
+      ...(input.commandError ? { commandError: input.commandError } : {}),
+      observedStates: input.observedStates,
+      ...(input.verificationError
+        ? { verificationError: errorRecord(input.verificationError) }
+        : {}),
+    },
+  });
 }
 
 export function assertCanaryTargetUnchanged(
@@ -615,14 +874,23 @@ export function assertHealthyCandidateWorker(
   worker: ProviderMachine,
 ) {
   assert(
-    worker.id === target.controlWorker.selected.id &&
-      worker.state === "started" &&
-      worker.imageTag === target.requestedTag &&
-      worker.imageRepository === target.controlWorker.repository &&
-      worker.imageDigest === target.controlWorker.selected.imageDigest &&
-      worker.workerCheckStatus === "passing" &&
-      worker.workerBuildId === target.requestedTag,
+    isHealthyCandidateWorker(target, worker),
     "The control-worker Machine is not healthy on the original candidate image.",
+  );
+}
+
+function isHealthyCandidateWorker(
+  target: CanaryTarget,
+  worker: ProviderMachine,
+) {
+  return (
+    worker.id === target.controlWorker.selected.id &&
+    worker.state === "started" &&
+    worker.imageTag === target.requestedTag &&
+    worker.imageRepository === target.controlWorker.repository &&
+    worker.imageDigest === target.controlWorker.selected.imageDigest &&
+    worker.workerCheckStatus === "passing" &&
+    worker.workerBuildId === target.requestedTag
   );
 }
 
@@ -719,6 +987,8 @@ export async function runWorkspaceBackupRetryCanary(input: {
     snapshots: { baseline: target.baseline.sourceVolumeSnapshots },
   };
   let workerStopRequested = false;
+  let workerStopConfirmed = false;
+  let workerRecovered = false;
   try {
     const queued = await dependencies.queueBackup(target);
     evidence.backup = {
@@ -742,10 +1012,13 @@ export async function runWorkspaceBackupRetryCanary(input: {
       environment: firstInventory,
     });
 
-    workerStopRequested = true;
-    await dependencies.stopWorker(target);
-    await dependencies.startWorker(target);
+    evidence.workerStop = await dependencies.stopWorker(target, () => {
+      workerStopRequested = true;
+    });
+    workerStopConfirmed = true;
+    await dependencies.startWorker(target, { postStopConfirmed: true });
     await dependencies.waitForWorker(target);
+    workerRecovered = true;
 
     const final = await dependencies.waitForCompletion({
       ...queued,
@@ -789,10 +1062,15 @@ export async function runWorkspaceBackupRetryCanary(input: {
       error instanceof CanaryInconclusiveError ? "inconclusive" : "failed";
     evidence.finishedAt = dependencies.now().toISOString();
     evidence.error = errorRecord(error);
-    if (workerStopRequested) {
+    if (workerStopRequested && !workerRecovered) {
       await dependencies
-        .startWorker(target)
+        .startWorker(target, {
+          postStopConfirmed: workerStopConfirmed,
+        })
         .then(() => dependencies.waitForWorker(target))
+        .then(() => {
+          workerRecovered = true;
+        })
         .catch(() => undefined);
     }
     if (dependencies.captureFailureEvidence) {
@@ -826,7 +1104,9 @@ export async function runWorkspaceBackupRetryCanary(input: {
     throw error;
   } finally {
     if (workerStopRequested) {
-      await dependencies.startWorker(target);
+      await dependencies.startWorker(target, {
+        postStopConfirmed: workerStopConfirmed || workerRecovered,
+      });
       await dependencies.waitForWorker(target);
     }
   }
@@ -853,19 +1133,70 @@ function requiredManifestDate(manifest: Record<string, unknown>, key: string) {
   return value;
 }
 
-function errorRecord(error: unknown) {
+function errorRecord(
+  error: unknown,
+  depth = 0,
+  seen: Set<object> = new Set(),
+): CanaryErrorRecord {
+  if (depth >= 3) {
+    return { name: "Error", message: "Nested error details omitted." };
+  }
+  if (typeof error === "object" && error !== null) {
+    if (seen.has(error)) {
+      return { name: "Error", message: "Circular error cause omitted." };
+    }
+    seen.add(error);
+  }
   const candidate = error as {
     name?: unknown;
     message?: unknown;
     code?: unknown;
+    signal?: unknown;
+    killed?: unknown;
+    cause?: unknown;
+    errors?: unknown;
+    details?: unknown;
+    stdout?: unknown;
+    stderr?: unknown;
+    cmd?: unknown;
   };
+  const isSubprocessFailure =
+    typeof candidate?.cmd === "string" ||
+    candidate?.stdout !== undefined ||
+    candidate?.stderr !== undefined ||
+    typeof candidate?.signal === "string" ||
+    typeof candidate?.killed === "boolean";
+  const aggregateErrors = Array.isArray(candidate?.errors)
+    ? candidate.errors.slice(0, 5)
+    : [];
   return {
     name: typeof candidate?.name === "string" ? candidate.name : "Error",
-    message:
-      typeof candidate?.message === "string"
+    message: isSubprocessFailure
+      ? "Subprocess command failed."
+      : typeof candidate?.message === "string"
         ? candidate.message
         : "Workspace backup retry canary failed.",
-    ...(typeof candidate?.code === "string" ? { code: candidate.code } : {}),
+    ...(typeof candidate?.code === "string" ||
+    typeof candidate?.code === "number"
+      ? { code: String(candidate.code) }
+      : {}),
+    ...(typeof candidate?.signal === "string"
+      ? { signal: candidate.signal }
+      : {}),
+    ...(typeof candidate?.killed === "boolean"
+      ? { killed: candidate.killed }
+      : {}),
+    ...(candidate?.cause !== undefined
+      ? { cause: errorRecord(candidate.cause, depth + 1, seen) }
+      : {}),
+    ...(aggregateErrors.length > 0
+      ? {
+          causes: aggregateErrors.map((cause) =>
+            errorRecord(cause, depth + 1, seen),
+          ),
+        }
+      : {}),
+    ...(isRecord(candidate?.details) ? { details: candidate.details } : {}),
   };
 }
 
