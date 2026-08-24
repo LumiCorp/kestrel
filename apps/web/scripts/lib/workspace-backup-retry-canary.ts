@@ -99,6 +99,21 @@ export type WorkspaceRetirementResourceObservation = {
   } | null;
 };
 
+export function workspaceRetirementDeletionState(input: {
+  sourceMachine: EnvironmentInventory["machines"][number] | null;
+  sourceVolume: EnvironmentInventory["volumes"][number] | null;
+}) {
+  return {
+    sourceMachineDeleted:
+      input.sourceMachine === null || input.sourceMachine.state === "destroyed",
+    sourceVolumeDeleted:
+      input.sourceVolume === null ||
+      ((input.sourceVolume.state === "pending_destroy" ||
+        input.sourceVolume.state === "destroyed") &&
+        input.sourceVolume.attachedMachineId === null),
+  };
+}
+
 export function mergeSourceMachineIntoInventory(input: {
   machines: Array<{
     id: string;
@@ -133,6 +148,7 @@ export function mergeSourceMachineIntoInventory(input: {
     found = true;
     return {
       ...machine,
+      state: sourceMachine.state,
       healthStatus,
       image: sourceMachine.image ?? null,
       resolvedImageDigest: sourceMachine.resolvedImageDigest ?? null,
@@ -1104,7 +1120,11 @@ export async function waitForWorkspaceRetirementResourceCleanup(input: {
         observations[observations.length - 1] = observation;
       }
     }
-    if (!(sourceMachine || sourceVolume)) {
+    const deletion = workspaceRetirementDeletionState({
+      sourceMachine,
+      sourceVolume,
+    });
+    if (deletion.sourceMachineDeleted && deletion.sourceVolumeDeleted) {
       return { environment, observations, observationsTruncated };
     }
     const remainingMs = deadline - now();

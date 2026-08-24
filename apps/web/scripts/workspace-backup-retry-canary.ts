@@ -23,6 +23,7 @@ import {
   stopWorkerWithProviderVerification,
   verifyKwb2Archive,
   waitForWorkspaceRetirementResourceCleanup,
+  workspaceRetirementDeletionState,
   type BackupObservation,
   type CanaryEvidence,
   type CanaryTarget,
@@ -693,6 +694,16 @@ async function retireWorkspace(
       }),
   });
   const inventory = resourceCleanup.environment;
+  const deletion = workspaceRetirementDeletionState({
+    sourceMachine:
+      inventory.machines.find(
+        (machine) => machine.id === target.workspace.flyMachineId,
+      ) ?? null,
+    sourceVolume:
+      inventory.volumes.find(
+        (volume) => volume.id === target.workspace.flyVolumeId,
+      ) ?? null,
+  });
   const preservedBackup = await knowledgeDb.query.workspaceBackups.findFirst({
     where: eq(schema.workspaceBackups.id, backup.backup.id),
     columns: { id: true, objectKey: true },
@@ -703,12 +714,8 @@ async function retireWorkspace(
   return {
     retirementOperationId: operation.id,
     workspaceDeleted: true,
-    sourceMachineDeleted: !inventory.machines.some(
-      (machine) => machine.id === target.workspace.flyMachineId,
-    ),
-    sourceVolumeDeleted: !inventory.volumes.some(
-      (volume) => volume.id === target.workspace.flyVolumeId,
-    ),
+    sourceMachineDeleted: deletion.sourceMachineDeleted,
+    sourceVolumeDeleted: deletion.sourceVolumeDeleted,
     backupRecordPreserved: preservedBackup?.id === backup.backup.id,
     archivePreserved,
     sourceResourceObservations: resourceCleanup.observations,
