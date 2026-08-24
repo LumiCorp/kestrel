@@ -252,11 +252,13 @@ async function runLiveJourney(config: QualificationConfig, port: number, evidenc
     const result = await client.run(profileId, `provider-used ${marker}`);
     requireMatch(result.stream, /run\.completed/u, "live Tavily run did not complete");
     requireMatch(result.stream, /capabilityReplayEvidence/u, "live exact result evidence missing");
-    if (!/DIRECT_NETWORK_BLOCKED:\{\\"url/u.test(result.stream)) {
+    if (!/DIRECT_NETWORK_BLOCKED direct HTTPS/u.test(result.stream)
+      || !/DIRECT_NETWORK_BLOCKED loopback/u.test(result.stream)
+      || !/DIRECT_NETWORK_BLOCKED metadata-network/u.test(result.stream)) {
       const stdout = result.stream.match(/"stdout":"(?:\\.|[^"\\])*"/gu)?.slice(-4) ?? [];
       throw new Error(`live sandbox did not report blocked direct-network probes; observed stdout evidence: ${stdout.join(" | ")}`);
     }
-    requireNoMatch(result.stream, /DIRECT_NETWORK_UNEXPECTED:\{\\"url/u, "live sandbox unexpectedly reached a direct-network target");
+    requireNoMatch(result.stream, /"stdout":"(?:\\.|[^"\\])*DIRECT_NETWORK_UNEXPECTED/u, "live sandbox unexpectedly reached a direct-network target");
     requireMatch(result.stream, new RegExp(marker, "u"), "live tool evidence did not preserve the unique query marker");
     assertSecretFree(result.stream, config);
     const exact = await client.getExactResult(result);
