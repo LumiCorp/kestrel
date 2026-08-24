@@ -78,7 +78,7 @@ test("job input V2 requires an exact preset while V1 remains compatible", () => 
       turn,
       surprise: true,
     }),
-    /unknown field 'surprise'/u,
+    /unknown field\(s\): surprise/u,
   );
   assert.throws(
     () => parseJobInput({
