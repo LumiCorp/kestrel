@@ -112,6 +112,7 @@ test("Workspace preview tools follow Environment App approval capabilities", () 
     profile: {
       ...profile,
       toolAllowlist: [
+        "workspace.files.share",
         "workspace.preview.publish",
         "workspace.preview.list",
         "workspace.preview.inspect",
@@ -127,12 +128,14 @@ test("Workspace preview tools follow Environment App approval capabilities", () 
     ],
   });
   assert.deepEqual(restricted.toolAllowlist, [
+    "workspace.files.share",
     "workspace.preview.publish",
     "workspace.preview.list",
     "workspace.preview.inspect",
     "workspace.preview.close",
   ]);
   assert.deepEqual(restricted.kestrelOneAppApprovalModes, {
+    "workspace.files.share": "auto",
     "workspace.preview.publish": "auto",
     "workspace.preview.list": "auto",
     "workspace.preview.inspect": "auto",

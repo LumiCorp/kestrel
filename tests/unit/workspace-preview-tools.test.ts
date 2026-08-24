@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  publishRetainedWorkspacePreview,
   workspacePreviewCloseTool,
   workspacePreviewInspectTool,
   workspacePreviewListTool,
@@ -167,6 +168,49 @@ test("Workspace preview tools select the renewable hosted App relay", async () =
     url: "http://gateway.internal:43100/internal/apps/execution-1/api/runtime/apps/built_in.previews/inspect/auto/ports/43110",
     authorization: "Bearer stable-workspace-token",
   }]);
+});
+
+test("shared retained publication uses the invoking file-share approval without changing the Preview App route", async () => {
+  const requests: string[] = [];
+  const context = {
+    fetchImpl: (async (input) => {
+      requests.push(String(input));
+      return Response.json({
+        preview: {
+          id: "preview-share",
+          url: "https://public.example",
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      });
+    }) as typeof fetch,
+    devShellService: {
+      async retainProcess(input: DevProcessRetainInput) {
+        return { status: "active" as const, processId: input.processId, lifecycle: "retained" as const, leases: [] };
+      },
+      async promoteProcessRetention(input: DevProcessRetentionPromoteInput) {
+        return { status: "active" as const, processId: input.processId, lifecycle: "retained" as const, leases: [] };
+      },
+      async releaseProcessRetention() {
+        return { status: "missing" as const, leases: [] };
+      },
+    } as unknown as DevShellServicePort,
+    runtime: { runId: "run-1", sessionId: "session-1", approvalId: "approval-1" },
+    kestrelOne: {
+      appUrl: "https://kestrel.example",
+      executionTicket: "signed-ticket",
+      appApprovalModes: { "workspace.files.share": "ask" as const },
+    },
+  };
+
+  await publishRetainedWorkspacePreview(context, {
+    port: 43110,
+    sessionId: "process-1",
+    approvalToolName: "workspace.files.share",
+  });
+
+  assert.deepEqual(requests, [
+    "https://kestrel.example/api/runtime/apps/built_in.previews/publish/confirmed%3Aapproval-1/previews",
+  ]);
 });
 
 test("Workspace preview publication does not call Edge when provisional retention fails", async () => {

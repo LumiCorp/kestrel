@@ -114,3 +114,24 @@ test("unknown tools receive a conservative redacted fallback", () => {
   );
   assert.match(presentation.summary, /Sensitive request data is hidden/u);
 });
+
+test("Workspace file-share approval names every selected path and public-link control", () => {
+  const presentation = buildToolApprovalPresentation({
+    toolName: "workspace.files.share",
+    effectiveInput: {
+      mode: "zip",
+      paths: ["reports/summary.pdf", "reports/data.csv"],
+      downloadName: "analysis.zip",
+      ttlMinutes: 60,
+    },
+  });
+
+  assert.equal(presentation.title, "Share Workspace files");
+  assert.deepEqual(presentation.fields, [
+    { label: "Mode", value: "zip" },
+    { label: "Selected files", value: "reports/summary.pdf, reports/data.csv" },
+    { label: "Download name", value: "analysis.zip" },
+    { label: "Lifetime (minutes)", value: "60" },
+  ]);
+  assert.match(presentation.warnings.join(" "), /Anyone with the temporary link/u);
+});

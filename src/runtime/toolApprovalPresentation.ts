@@ -243,6 +243,17 @@ const PRESENTERS: Readonly<Record<string, Presenter>> = Object.freeze({
       ["ttlMinutes", "Lifetime (minutes)"],
     ],
   ),
+  "workspace.files.share": presenter(
+    "Share Workspace files",
+    "Publish an immutable file or ZIP through a temporary preview link.",
+    [
+      ["mode", "Mode"],
+      ["paths", "Selected files"],
+      ["downloadName", "Download name"],
+      ["ttlMinutes", "Lifetime (minutes)"],
+    ],
+    ["Anyone with the temporary link can download the selected payload."],
+  ),
   "workspace.preview.renew": presenter(
     "Renew a workspace preview",
     "Extend the selected preview lease.",

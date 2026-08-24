@@ -200,6 +200,19 @@ test("mobile responses, snapshots, message parts, errors, and SSE are concrete",
     "readState",
   ]);
   assert.ok(Array.isArray(contract.components.schemas.MessagePart.oneOf));
+  assert.deepEqual(contract.components.schemas.ArtifactPart.required, [
+    "type",
+    "id",
+    "title",
+    "kind",
+    "url",
+    "mediaType",
+    "previewId",
+    "sizeBytes",
+    "fileCount",
+    "expiresAt",
+    "warning",
+  ]);
   assert.deepEqual(
     (
       contract.components.schemas.MessagePart.oneOf as Array<{ $ref: string }>
