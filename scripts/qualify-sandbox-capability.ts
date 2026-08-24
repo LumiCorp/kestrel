@@ -369,7 +369,7 @@ class PublicRunnerClient {
   async operatorRun(runId: string): Promise<unknown> { return await this.command("operator.run", { runId }); }
   async getExactResult(result: Pick<RunResult, "sessionId" | "runId" | "idempotencyKey">): Promise<unknown> {
     if (!result.idempotencyKey) throw new Error("Run did not expose an idempotency key.");
-    const body = await this.command("effect.result.get", result);
+    const body = await this.command("effect.result.get", { sessionId: result.sessionId, runId: result.runId, idempotencyKey: result.idempotencyKey });
     if (body.type !== "effect.result.loaded") throw new Error(`Exact result unavailable: ${JSON.stringify(body)}`);
     return body.payload.result;
   }
