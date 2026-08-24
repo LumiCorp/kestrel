@@ -16,6 +16,7 @@ import {
 } from "./lib/production-command";
 import {
   parseWorkspaceBackupRetryCanaryArgs,
+  readProviderVolumeSnapshots,
   runWorkspaceBackupRetryCanary,
   sanitizeCanaryEvidence,
   snapshotEvidence,
@@ -24,7 +25,6 @@ import {
   type CanaryEvidence,
   type CanaryTarget,
   type EnvironmentInventory,
-  type FlySnapshot,
   type ProviderMachine,
   type WorkspaceBackupRetryCanaryArgs,
 } from "./lib/workspace-backup-retry-canary";
@@ -310,7 +310,11 @@ async function resolveCanaryTarget(
       appName: environment.flyAppName ?? "",
       sourceMachineId: workspace.flyMachineId ?? "",
     }),
-    readSnapshots(environment.flyAppName ?? "", workspace.flyVolumeId ?? ""),
+    readProviderVolumeSnapshots({
+      provider,
+      appName: environment.flyAppName ?? "",
+      volumeId: workspace.flyVolumeId ?? "",
+    }),
   ]);
   const selected = controlWorkerMachines.find(
     (machine) => machine.id === args.controlWorkerMachineId,
@@ -542,31 +546,11 @@ function normalizeInventory(inventory: {
 }
 
 async function readSourceVolumeSnapshots(target: CanaryTarget) {
-  return readSnapshots(
-    target.environment.flyAppName ?? "",
-    target.workspace.flyVolumeId ?? "",
-  );
-}
-
-async function readSnapshots(app: string, volumeId: string) {
-  if (!(app && volumeId)) return [];
-  const value = await captureJson("fly", [
-    "volumes",
-    "snapshots",
-    "list",
-    volumeId,
-    "--app",
-    app,
-    "--json",
-  ]);
-  if (!Array.isArray(value)) throw new Error("Fly returned invalid snapshots.");
-  return value.map((entry): FlySnapshot => {
-    const snapshot = record(entry);
-    const id = stringValue(snapshot?.id ?? snapshot?.snapshot_id);
-    const state = stringValue(snapshot?.status ?? snapshot?.state);
-    if (!(id && state))
-      throw new Error("Fly returned an invalid snapshot record.");
-    return { id, state };
+  const provider = await createFlyProviderClient(target.thread.organizationId);
+  return readProviderVolumeSnapshots({
+    provider,
+    appName: target.environment.flyAppName ?? "",
+    volumeId: target.workspace.flyVolumeId ?? "",
   });
 }
 
