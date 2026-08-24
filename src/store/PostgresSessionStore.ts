@@ -1677,9 +1677,10 @@ export class PostgresSessionStore implements SessionStore {
         run_id: string; session_id: string; step_index: number; effect_type: string;
         payload_json: Record<string, unknown>; idempotency_key: string;
         failure_policy: PersistedEffect["failurePolicy"]; status: PersistedEffect["status"]; created_at: string; tenant_id: string | null;
+        tenant_ownership_state: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
       }>(
         `SELECT run_id, session_id, step_index, effect_type, payload_json,
-                idempotency_key, failure_policy, status, created_at, tenant_id
+                idempotency_key, failure_policy, status, created_at, tenant_id, tenant_ownership_state
            FROM effects WHERE idempotency_key = $1 FOR UPDATE`,
         [input.idempotencyKey],
       );
@@ -1692,9 +1693,13 @@ export class PostgresSessionStore implements SessionStore {
       const candidate = validateExactEffectCancellationCandidate({ requested: input, effect });
       if (candidate !== "ready") return { status: candidate } as const;
       if (effect === null) return { status: "not_found" } as const;
+      if (row?.tenant_ownership_state === "explicit_unbound") return { status: "conflict" } as const;
       if (row?.tenant_id !== null && row?.tenant_id !== input.tenantId) return { status: "not_found" } as const;
       const requiresTenantBinding = exactEffectRequiresCapabilityTenantBinding(effect);
-      if (row?.tenant_id === null && !requiresTenantBinding) return { status: "conflict" } as const;
+      if (row?.tenant_id === null &&
+        (row?.tenant_ownership_state !== "legacy_unknown" || !requiresTenantBinding)) {
+        return { status: "conflict" } as const;
+      }
       const leaseResult = requiresTenantBinding
         ? await executor.query<{ record_json: unknown }>(
         `SELECT transition.record_json
@@ -1870,6 +1875,7 @@ export class PostgresSessionStore implements SessionStore {
     if (persistedTenantId !== null) {
       return ownershipState === "tenant_bound" && persistedTenantId === this.tenantId;
     }
+    if (ownershipState !== "legacy_unknown") return false;
     if (!exactEffectRequiresCapabilityTenantBinding(effect)) return false;
     const leases = await executor.query<{ record_json: unknown }>(
       `SELECT transition.record_json
@@ -2132,8 +2138,10 @@ export class PostgresSessionStore implements SessionStore {
       if (
         this.tenantId === undefined ||
         lease?.binding.tenantId !== this.tenantId ||
-        (effectRow !== undefined && effectRow.tenant_id !== null &&
-          (effectRow.tenant_ownership_state !== "tenant_bound" || effectRow.tenant_id !== this.tenantId))
+        effectRow === undefined ||
+        (effectRow.tenant_ownership_state === "tenant_bound"
+          ? effectRow.tenant_id !== this.tenantId
+          : effectRow.tenant_ownership_state !== "legacy_unknown" || effectRow.tenant_id !== null)
       ) {
         throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result tenant does not match durable authority");
       }

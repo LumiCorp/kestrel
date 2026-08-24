@@ -961,9 +961,14 @@ export class InMemorySessionStore implements SessionStore {
     const candidate = validateExactEffectCancellationCandidate({ requested: input, effect });
     if (candidate !== "ready") return { status: candidate } as const;
     if (effect === null) return { status: "not_found" } as const;
+    const ownershipState = effect.tenantOwnershipState ??
+      (effect.tenantId === undefined ? "legacy_unknown" : "tenant_bound");
+    if (ownershipState === "explicit_unbound") return { status: "conflict" } as const;
     if (effect.tenantId !== undefined && effect.tenantId !== input.tenantId) return { status: "not_found" } as const;
     const requiresTenantBinding = exactEffectRequiresCapabilityTenantBinding(effect);
-    if (effect.tenantId === undefined && !requiresTenantBinding) return { status: "conflict" } as const;
+    if (effect.tenantId === undefined && (ownershipState !== "legacy_unknown" || !requiresTenantBinding)) {
+      return { status: "conflict" } as const;
+    }
     const matchingLeases = requiresTenantBinding
       ? [...this.sandboxCapabilityLeaseTransitions.values()]
           .map((ledger) => ledger.at(-1))
@@ -1049,6 +1054,7 @@ export class InMemorySessionStore implements SessionStore {
     if (effect.tenantId !== undefined) {
       return ownershipState === "tenant_bound" && effect.tenantId === this.tenantId;
     }
+    if (ownershipState !== "legacy_unknown") return false;
     if (!exactEffectRequiresCapabilityTenantBinding(effect)) return false;
     if (result.status === "FAILED") return this.hasTrustedEffectStatusTenant(effect);
     const read = validateExactEffectResultRead({
@@ -1080,6 +1086,7 @@ export class InMemorySessionStore implements SessionStore {
     if (effect.tenantId !== undefined) {
       return ownershipState === "tenant_bound" && effect.tenantId === this.tenantId;
     }
+    if (ownershipState !== "legacy_unknown") return false;
     if (!exactEffectRequiresCapabilityTenantBinding(effect)) return false;
     const matches = [...this.sandboxCapabilityLeaseTransitions.values()]
       .map((ledger) => ledger.at(-1))
@@ -1233,7 +1240,12 @@ export class InMemorySessionStore implements SessionStore {
     }
     const lease = this.sandboxCapabilityLeaseTransitions.get(input.leaseId)?.at(-1);
     assertReplayableSandboxCapabilityEffectBinding(lease, exactInput);
-    if (this.tenantId === undefined || lease?.binding.tenantId !== this.tenantId || (effect?.tenantId !== undefined && effect.tenantId !== this.tenantId)) {
+    const ownershipState = effect?.tenantOwnershipState ??
+      (effect?.tenantId === undefined ? "legacy_unknown" : "tenant_bound");
+    const effectTenantAuthorized = ownershipState === "tenant_bound"
+      ? effect?.tenantId === this.tenantId
+      : ownershipState === "legacy_unknown" && effect?.tenantId === undefined;
+    if (this.tenantId === undefined || lease?.binding.tenantId !== this.tenantId || !effectTenantAuthorized) {
       throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result tenant does not match durable authority");
     }
     const existing = this.effectResults.get(exactInput.result.idempotencyKey);

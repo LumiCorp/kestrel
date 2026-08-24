@@ -153,6 +153,39 @@ test("in-memory exact completion and cancellation claims have a single durable w
   assert.equal((await completionWins.getPersistedEffect(requested.idempotencyKey))?.status, "PENDING");
 });
 
+test("in-memory capability ownership reconstruction applies only to legacy unknown effects", async () => {
+  type StatefulEffect = PersistedEffect & {
+    tenantId?: string | undefined;
+    tenantOwnershipState: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
+  };
+  const store = new InMemorySessionStore({ tenantId: "tenant-1" });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: leaseRecord });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 1, record: {
+    ...(leaseRecord as unknown as Record<string, unknown>), sequence: 2, transition: "issued", issuedAt: timestamp,
+  } as never });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 2, record: {
+    ...(leaseRecord as unknown as Record<string, unknown>), sequence: 3, transition: "invoking", issuedAt: timestamp,
+  } as never });
+  await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 3, record: {
+    ...(leaseRecord as unknown as Record<string, unknown>), sequence: 4, transition: "consumed", issuedAt: timestamp,
+    usage: { requestLimit: 1, requestsConsumed: 1, responseByteLimit: 4096, responseBytesConsumed: 18, exactProviderUsage: null },
+    terminalOutcome: "completed", result: { digest: "d".repeat(64), reference: "artifact:provider-result" },
+  } as never });
+  const effects = (store as unknown as { effects: StatefulEffect[] }).effects;
+  effects.push({ ...effect, status: "PENDING", tenantOwnershipState: "explicit_unbound" });
+  assert.deepEqual(await store.claimExactEffectCancellation({ ...requested, tenantId: "tenant-1" }), { status: "conflict" });
+  await assert.rejects(
+    store.saveSandboxCapabilityEffectResult({
+      leaseId: "lease-1", bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(leaseBinding), toolCallId: requested.idempotencyKey,
+      runId: requested.runId, sessionId: requested.sessionId, result: effectResult,
+    }), /tenant does not match/u,
+  );
+  effects[0]!.tenantOwnershipState = "tenant_bound";
+  assert.deepEqual(await store.claimExactEffectCancellation({ ...requested, tenantId: "tenant-1" }), { status: "conflict" });
+  effects[0]!.tenantOwnershipState = "legacy_unknown";
+  assert.deepEqual(await store.claimExactEffectCancellation({ ...requested, tenantId: "tenant-1" }), { status: "cancelled" });
+});
+
 test("in-memory ordinary code execution uses store-owned tenant authority for both winner orders", async () => {
   type OwnedEffect = PersistedEffect & { tenantId: string };
   const { capability: _ignoredCapability, ...ordinaryInput } = preparedToolCall.effectiveInput;

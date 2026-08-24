@@ -58,8 +58,8 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     });
     await pool.query(
       `INSERT INTO effects
-         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at, tenant_id)
-       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW(), $5)`,
+         (run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at, tenant_id, tenant_ownership_state)
+       VALUES ($1, $2, 1, 'execute_tool_call', $3::jsonb, $4, 'STOP', 'PENDING', NOW(), $5, 'tenant_bound')`,
       [runId, sessionId, JSON.stringify({ preparedToolCall }), binding.toolCallId, binding.tenantId],
     );
     await store.appendSandboxCapabilityLeaseTransition({ expectedSequence: 0, record: record(1, "requested") });
@@ -145,6 +145,28 @@ test("PostgreSQL capability lease ledger serializes CAS transitions and preserve
     releasePausedInsert();
     await assert.rejects(cancelledPersistence, /cancelled/u);
     assert.equal(await store.getEffectResult(binding.toolCallId), null);
+    await pool.query(
+      `UPDATE effects SET tenant_id = NULL, tenant_ownership_state = 'explicit_unbound' WHERE idempotency_key = $1`,
+      [binding.toolCallId],
+    );
+    assert.deepEqual(await store.claimExactEffectCancellation({
+      sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: binding.tenantId,
+    }), { status: "conflict" });
+    await assert.rejects(store.saveSandboxCapabilityEffectResult({
+      leaseId, bindingDigest: fingerprintSandboxCapabilityLeaseBindingV1(binding), toolCallId: binding.toolCallId,
+      runId, sessionId, result: exactEffectResult,
+    }), /tenant does not match/u);
+    await pool.query(
+      `UPDATE effects SET tenant_ownership_state = 'tenant_bound' WHERE idempotency_key = $1`,
+      [binding.toolCallId],
+    );
+    assert.deepEqual(await store.claimExactEffectCancellation({
+      sessionId, runId, idempotencyKey: binding.toolCallId, tenantId: binding.tenantId,
+    }), { status: "conflict" });
+    await pool.query(
+      `UPDATE effects SET tenant_id = $2, tenant_ownership_state = 'tenant_bound' WHERE idempotency_key = $1`,
+      [binding.toolCallId, binding.tenantId],
+    );
     const completedLease = await store.getSandboxCapabilityLease(leaseId);
     assert.ok(completedLease);
     await store.appendSandboxCapabilityLeaseTransition({
