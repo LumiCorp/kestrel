@@ -1886,10 +1886,19 @@ test("Fly inventory preserves exact Workspace ownership metadata", async () => {
             {
               id: "volume-1",
               name: "ws_workspace1",
+              state: "pending_destroy",
               region: "iad",
               size_gb: 20,
               encrypted: true,
               attached_machine_id: "machine-1",
+            },
+            {
+              id: "volume-tombstone",
+              name: "ws_workspace1_r_operation1",
+              state: "pending_destroy",
+              region: "iad",
+              size_gb: 20,
+              encrypted: true,
             },
           ])) as typeof fetch,
   });
@@ -1910,9 +1919,18 @@ test("Fly inventory preserves exact Workspace ownership metadata", async () => {
         {
           id: "volume-1",
           name: "ws_workspace1",
+          state: "pending_destroy",
           region: "iad",
           sizeGb: 20,
           attachedMachineId: "machine-1",
+        },
+        {
+          id: "volume-tombstone",
+          name: "ws_workspace1_r_operation1",
+          state: "pending_destroy",
+          region: "iad",
+          sizeGb: 20,
+          attachedMachineId: undefined,
         },
       ],
     },

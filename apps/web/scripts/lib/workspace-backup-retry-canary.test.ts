@@ -592,6 +592,66 @@ test("temporary export resource leaks fail the canary", () => {
   );
 });
 
+test("detached Fly soft-deletion tombstones satisfy temporary volume cleanup", () => {
+  const value = target();
+  const cleaned = structuredClone(value.baseline.environment);
+  cleaned.volumes.push({
+    id: "export-volume",
+    name: "ws_workspace1_r_operation1",
+    state: "pending_destroy",
+    region: "iad",
+    sizeGb: 20,
+    attachedMachineId: null,
+  });
+
+  assert.doesNotThrow(() => assertNoTemporaryResources(value, cleaned));
+});
+
+test("temporary volume cleanup fails closed for live, unknown, or attached volumes", () => {
+  const value = target();
+  for (const volume of [
+    {
+      id: "export-volume-created",
+      name: "ws_workspace1_r_created",
+      state: "created",
+      region: "iad",
+      sizeGb: 20,
+      attachedMachineId: null,
+    },
+    {
+      id: "export-volume-unknown",
+      name: "ws_workspace1_r_unknown",
+      state: null,
+      region: "iad",
+      sizeGb: 20,
+      attachedMachineId: null,
+    },
+    {
+      id: "export-volume-attached",
+      name: "ws_workspace1_r_attached",
+      state: "pending_destroy",
+      region: "iad",
+      sizeGb: 20,
+      attachedMachineId: "export-machine",
+    },
+    {
+      id: "export-volume-attachment-unknown",
+      name: "ws_workspace1_r_attachment_unknown",
+      state: "pending_destroy",
+      region: "iad",
+      sizeGb: 20,
+      attachedMachineId: undefined,
+    },
+  ]) {
+    const leaked = structuredClone(value.baseline.environment);
+    leaked.volumes.push(volume);
+    assert.throws(
+      () => assertNoTemporaryResources(value, leaked),
+      /Temporary export resources remain/u,
+    );
+  }
+});
+
 test("KWB2 archive verification authenticates and checksums the decrypted stream", async () => {
   const key = randomBytes(32);
   const archive = Buffer.from("workspace backup retry canary archive");
@@ -631,6 +691,22 @@ test("KWB2 archive verification authenticates and checksums the decrypted stream
 
 test("one first-attempt persistence completes on attempt two and retires only after proof", async () => {
   const fixture = orchestrationFixture(null);
+  let inventoryReads = 0;
+  fixture.dependencies.observeEnvironment = async () => {
+    inventoryReads += 1;
+    const environment = structuredClone(target().baseline.environment);
+    if (inventoryReads === 2) {
+      environment.volumes.push({
+        id: "export-volume",
+        name: "ws_workspace1_r_operation1",
+        state: "pending_destroy",
+        region: "iad",
+        sizeGb: 20,
+        attachedMachineId: null,
+      });
+    }
+    return environment;
+  };
   const result = await runWorkspaceBackupRetryCanary({
     args: {
       threadId: "thread-1",
@@ -644,6 +720,19 @@ test("one first-attempt persistence completes on attempt two and retires only af
   assert.equal(result.backup?.final?.operation.attempt, 2);
   assert.equal(result.workerStop?.confirmedState, "stopped");
   assert.equal(result.cleanup?.backupRecordPreserved, true);
+  assert.deepEqual(
+    result.environment?.final.volumes.find(
+      (volume) => volume.id === "export-volume",
+    ),
+    {
+      id: "export-volume",
+      name: "ws_workspace1_r_operation1",
+      state: "pending_destroy",
+      region: "iad",
+      sizeGb: 20,
+      attachedMachineId: null,
+    },
+  );
   assert.equal(fixture.stopCalls, 1);
   assert.ok(fixture.startCalls >= 2);
 });
@@ -909,6 +998,7 @@ function target(): CanaryTarget {
           {
             id: "source-volume",
             name: "workspace-volume",
+            state: "created",
             region: "iad",
             sizeGb: 20,
             attachedMachineId: "source-machine",
