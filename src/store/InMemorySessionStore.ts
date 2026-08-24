@@ -125,6 +125,7 @@ interface InMemoryRun {
   completedAt: string | undefined;
   error: RuntimeError | undefined;
   tenantId?: string | undefined;
+  tenantOwnershipState: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
 }
 
 interface InMemoryEffect {
@@ -138,6 +139,7 @@ interface InMemoryEffect {
   status: EffectExecutionStatus;
   createdAt: string;
   tenantId?: string | undefined;
+  tenantOwnershipState: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
 }
 
 interface InMemoryRegionWorkItem extends RegionWorkItem {
@@ -751,6 +753,7 @@ export class InMemorySessionStore implements SessionStore {
       completedAt: undefined,
       error: undefined,
       ...(this.tenantId === undefined ? {} : { tenantId: this.tenantId }),
+      tenantOwnershipState: this.tenantId === undefined ? "explicit_unbound" : "tenant_bound",
     });
     this.operationLog.push(`startRun:${runId}`);
   }
@@ -772,10 +775,12 @@ export class InMemorySessionStore implements SessionStore {
     }
     const effects = this.effects.filter((effect) => effect.runId === runId);
     if (
-      run.tenantId === undefined ||
-      this.tenantId === undefined ||
-      run.tenantId !== this.tenantId ||
-      effects.some((effect) => effect.tenantId !== run.tenantId)
+      run.tenantOwnershipState === "legacy_unknown" ||
+      (run.tenantOwnershipState === "tenant_bound"
+        ? this.tenantId === undefined || run.tenantId !== this.tenantId
+        : this.tenantId !== undefined || run.tenantId !== undefined) ||
+      effects.some((effect) =>
+        effect.tenantOwnershipState !== run.tenantOwnershipState || effect.tenantId !== run.tenantId)
     ) {
       throw createRuntimeFailure(
         "PRESTARTED_RUN_INVALID",
@@ -854,6 +859,7 @@ export class InMemorySessionStore implements SessionStore {
         status: "PENDING",
         createdAt: new Date().toISOString(),
         ...(this.runs.get(input.runId)?.tenantId === undefined ? {} : { tenantId: this.runs.get(input.runId)!.tenantId }),
+        tenantOwnershipState: this.runs.get(input.runId)?.tenantOwnershipState ?? "legacy_unknown",
       };
       this.effects.push(persisted);
       persistedEffects.push({ ...persisted });
@@ -1742,6 +1748,7 @@ export class InMemorySessionStore implements SessionStore {
       completedAt: undefined,
       error: undefined,
       ...(this.tenantId === undefined ? {} : { tenantId: this.tenantId }),
+      tenantOwnershipState: this.tenantId === undefined ? "explicit_unbound" : "tenant_bound",
     });
     const rootRunId = existing?.rootRunId ?? input.proposedRunId;
     this.conversationTurns.set(input.turnId, {

@@ -195,3 +195,49 @@ test("InMemory prestarted runs bind and reject unproved or mixed tenant ownershi
   assert.equal(internals.runs.get(runId)?.tenantId, undefined);
   assert.equal(internals.effects[0]?.tenantId, undefined);
 });
+
+test("InMemory explicitly tenant-unbound prestarted runs remain valid while legacy unknown rows fail closed", async () => {
+  const store = new InMemorySessionStore();
+  await store.ensureSession(sessionId, "agent.loop");
+  await store.upsertThread({
+    threadId, sessionId, title: "Unbound claim", status: "IDLE",
+    createdAt: "2026-08-23T12:00:00.000Z", updatedAt: "2026-08-23T12:00:00.000Z",
+  });
+  assert.deepEqual(await store.claimConversationTurnExecution(claimInput()), { kind: "claimed", runId });
+  const event = { id: "event-memory-unbound", type: "user.message", sessionId, payload: {} };
+  await store.validatePrestartedRun(runId, event);
+  const internals = store as unknown as {
+    runs: Map<string, { tenantOwnershipState: string }>;
+  };
+  assert.equal(internals.runs.get(runId)?.tenantOwnershipState, "explicit_unbound");
+  internals.runs.get(runId)!.tenantOwnershipState = "legacy_unknown";
+  await assert.rejects(store.validatePrestartedRun(runId, event), (error: unknown) =>
+    error instanceof Error && "code" in error && error.code === "PRESTARTED_RUN_INVALID");
+});
+
+test("PGlite explicitly tenant-unbound prestarted runs remain valid while legacy unknown rows fail closed", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-prestarted-unbound-"));
+  const handle = createSqlExecutorFromEnv({ driver: "sqlite", sqlitePath: path.join(root, "runtime") });
+  t.after(async () => {
+    await handle.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  await handle.ready();
+  const store = new PostgresSessionStore(handle.executor, { enforceSchemaV3: true });
+  await store.ensureSession(sessionId, "agent.loop");
+  await store.upsertThread({
+    threadId, sessionId, title: "Unbound claim", status: "IDLE",
+    createdAt: "2026-08-23T12:00:00.000Z", updatedAt: "2026-08-23T12:00:00.000Z",
+  });
+  assert.deepEqual(await store.claimConversationTurnExecution(claimInput()), { kind: "claimed", runId });
+  const event = { id: "event-pglite-unbound", type: "user.message", sessionId, payload: {} };
+  await store.validatePrestartedRun(runId, event);
+  assert.deepEqual((await handle.executor.query<{ tenant_id: string | null; tenant_ownership_state: string }>(
+    "SELECT tenant_id, tenant_ownership_state FROM runs WHERE run_id = $1", [runId],
+  )).rows, [{ tenant_id: null, tenant_ownership_state: "explicit_unbound" }]);
+  await handle.executor.query(
+    "UPDATE runs SET tenant_ownership_state = 'legacy_unknown' WHERE run_id = $1", [runId],
+  );
+  await assert.rejects(store.validatePrestartedRun(runId, event), (error: unknown) =>
+    error instanceof Error && "code" in error && error.code === "PRESTARTED_RUN_INVALID");
+});

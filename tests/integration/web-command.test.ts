@@ -702,10 +702,12 @@ async function assertCancellationQualification(runner: { url: string; token: str
 }
 
 async function waitForFileMatch(filePath: string, pattern: RegExp): Promise<void> {
-  while (true) {
+  const signal = AbortSignal.timeout(120_000);
+  while (!signal.aborted) {
     if (pattern.test(await readFile(filePath, "utf8").catch(() => ""))) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+  throw new Error(`Qualification evidence did not match ${pattern.toString()}.`);
 }
 
 async function startHostedRunner(
@@ -1073,6 +1075,7 @@ async function runCurlJson(input: {
     cwd: process.cwd(),
     env: process.env,
     maxBuffer: 16 * 1024 * 1024,
+    timeout: 120_000,
   });
   const stdout = result.stdout.trimEnd();
   const newline = stdout.lastIndexOf("\n");
@@ -1115,6 +1118,7 @@ async function runCurlText(input: {
     cwd: process.cwd(),
     env: process.env,
     maxBuffer: 16 * 1024 * 1024,
+    timeout: 120_000,
   });
   const stdout = result.stdout.trimEnd();
   const newline = stdout.lastIndexOf("\n");

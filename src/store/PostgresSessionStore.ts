@@ -1229,9 +1229,9 @@ export class PostgresSessionStore implements SessionStore {
       await this.reconcileTerminalActiveRunWithExecutor(executor, session);
       await this.acquireRunLeaseWithExecutor(executor, runId, event.sessionId);
       await executor.query(
-        `INSERT INTO runs (run_id, session_id, event_type, status, tenant_id)
-         VALUES ($1, $2, $3, 'RUNNING', $4)`,
-        [runId, event.sessionId, event.type, this.tenantId ?? null],
+        `INSERT INTO runs (run_id, session_id, event_type, status, tenant_id, tenant_ownership_state)
+         VALUES ($1, $2, $3, 'RUNNING', $4, $5)`,
+        [runId, event.sessionId, event.type, this.tenantId ?? null, this.tenantId === undefined ? "explicit_unbound" : "tenant_bound"],
       );
     });
   }
@@ -1245,20 +1245,25 @@ export class PostgresSessionStore implements SessionStore {
       );
       const run = await executor.query<{
         session_id: string; event_type: string; status: string; tenant_id: string | null;
+        tenant_ownership_state: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
       }>(
-        `SELECT session_id, event_type, status, tenant_id FROM runs WHERE run_id = $1 FOR UPDATE`,
+        `SELECT session_id, event_type, status, tenant_id, tenant_ownership_state FROM runs WHERE run_id = $1 FOR UPDATE`,
         [runId],
       );
       const row = run.rows[0];
-      const effects = await executor.query<{ tenant_id: string | null }>(
-        `SELECT tenant_id FROM effects WHERE run_id = $1 FOR UPDATE`,
+      const effects = await executor.query<{ tenant_id: string | null; tenant_ownership_state: string }>(
+        `SELECT tenant_id, tenant_ownership_state FROM effects WHERE run_id = $1 FOR UPDATE`,
         [runId],
       );
       if (
         row === undefined || row.session_id !== event.sessionId || row.event_type !== event.type ||
         row.status !== "RUNNING" || session.rows[0]?.active_run_id !== runId ||
-        row.tenant_id === null || this.tenantId === undefined || row.tenant_id !== this.tenantId ||
-        effects.rows.some((effect) => effect.tenant_id !== row.tenant_id)
+        row.tenant_ownership_state === "legacy_unknown" ||
+        (row.tenant_ownership_state === "tenant_bound"
+          ? this.tenantId === undefined || row.tenant_id !== this.tenantId
+          : this.tenantId !== undefined || row.tenant_id !== null) ||
+        effects.rows.some((effect) =>
+          effect.tenant_ownership_state !== row.tenant_ownership_state || effect.tenant_id !== row.tenant_id)
       ) {
         throw createRuntimeFailure(
           "PRESTARTED_RUN_INVALID",
@@ -2580,9 +2585,9 @@ export class PostgresSessionStore implements SessionStore {
       }
       await this.acquireRunLeaseWithExecutor(executor, input.proposedRunId, input.sessionId);
       await executor.query(
-        `INSERT INTO runs (run_id, session_id, event_type, status, started_at, tenant_id)
-         VALUES ($1, $2, $3, 'RUNNING', $4::timestamptz, $5)`,
-        [input.proposedRunId, input.sessionId, input.eventType, normalizeTimestampString(input.startedAt), this.tenantId ?? null],
+        `INSERT INTO runs (run_id, session_id, event_type, status, started_at, tenant_id, tenant_ownership_state)
+         VALUES ($1, $2, $3, 'RUNNING', $4::timestamptz, $5, $6)`,
+        [input.proposedRunId, input.sessionId, input.eventType, normalizeTimestampString(input.startedAt), this.tenantId ?? null, this.tenantId === undefined ? "explicit_unbound" : "tenant_bound"],
       );
 
       const claimMetadata = {
@@ -3004,7 +3009,7 @@ export class PostgresSessionStore implements SessionStore {
         stringifySanitizedJson(effect.payload),
       );
       tuples.push(
-        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}::jsonb, 'PENDING', (SELECT tenant_id FROM runs WHERE run_id = $${offset + 1}))`,
+        `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}::jsonb, 'PENDING', (SELECT tenant_id FROM runs WHERE run_id = $${offset + 1}), (SELECT tenant_ownership_state FROM runs WHERE run_id = $${offset + 1}))`,
       );
     }
 
@@ -3020,7 +3025,7 @@ export class PostgresSessionStore implements SessionStore {
       created_at: string;
     }>(
       `INSERT INTO effects
-         (run_id, session_id, step_index, effect_type, idempotency_key, failure_policy, payload_json, status, tenant_id)
+         (run_id, session_id, step_index, effect_type, idempotency_key, failure_policy, payload_json, status, tenant_id, tenant_ownership_state)
        VALUES ${tuples.join(", ")}
        ON CONFLICT (idempotency_key) DO NOTHING
        RETURNING run_id, session_id, step_index, effect_type, payload_json, idempotency_key, failure_policy, status, created_at`,
