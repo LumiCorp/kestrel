@@ -116,6 +116,7 @@ export function formatKestrelHelp(): string {
     "  core status|restart [--wait]",
     "  workspace status|list",
     "  web [--host <host>] [--port <port>] [--token <token>]",
+    "  job preflight --json-in <file> --json-out <file>",
     "  job run --json-in <file> --json-out <file> [--profile <id>]",
     "  setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]",
     "  runtime <replay|doctor> <query> [--json]",

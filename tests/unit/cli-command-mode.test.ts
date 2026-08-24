@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -8,6 +8,7 @@ import { parseRunnerCommandV2 } from "@kestrel-agents/protocol";
 
 import {
   buildResolvedJobRunCommandPayload,
+  compareJobBinding,
   runCliCommand,
   shouldRunCommandMode,
 } from "../../cli/commandMode.js";
@@ -260,6 +261,140 @@ test("command mode rejects job-owned persistence selection", () => {
     /Local Core owns persistence/u,
   );
 });
+
+test("job preflight reports ready without creating job, thread, run, or worktree state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-preflight-ready-"));
+  const inputPath = path.join(root, "input.json");
+  const outputPath = path.join(root, "output.json");
+  let resolutionCalls = 0;
+  const client = {
+    resolveExecutionProfile: async () => {
+      resolutionCalls += 1;
+      return executionProfileResolution(["exec_command", "fs.read_text"]);
+    },
+  };
+  await writeFile(inputPath, JSON.stringify(jobPreflightInput()), "utf8");
+  try {
+    await captureStdout(async () => {
+      await runCliCommand(
+        ["job", "preflight", "--json-in", inputPath, "--json-out", outputPath],
+        root,
+        {
+          prepareLocalCore: () => Promise.resolve({ client } as unknown as CliLocalCoreStatus),
+        },
+      );
+    });
+    const output = JSON.parse(await readFile(outputPath, "utf8")) as Record<string, unknown>;
+    assert.equal(output.status, "ready");
+    assert.deepEqual(output.effectiveTools, ["exec_command", "fs.read_text"]);
+    assert.deepEqual(output.missingTools, []);
+    assert.equal(resolutionCalls, 1);
+    assert.deepEqual((await readdir(root)).sort(), ["input.json", "output.json"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("job preflight reports missing tools without dispatching work", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-preflight-missing-"));
+  const inputPath = path.join(root, "input.json");
+  const outputPath = path.join(root, "output.json");
+  let resolutionCalls = 0;
+  const client = {
+    resolveExecutionProfile: async () => {
+      resolutionCalls += 1;
+      return executionProfileResolution(["fs.read_text"]);
+    },
+  };
+  await writeFile(inputPath, JSON.stringify(jobPreflightInput()), "utf8");
+  try {
+    await assert.rejects(
+      runCliCommand(
+        ["job", "preflight", "--json-in", inputPath, "--json-out", outputPath],
+        root,
+        {
+          prepareLocalCore: () => Promise.resolve({ client } as unknown as CliLocalCoreStatus),
+        },
+      ),
+      /SETUP_REQUIRED/u,
+    );
+    const output = JSON.parse(await readFile(outputPath, "utf8")) as Record<string, unknown>;
+    assert.equal(output.status, "setup_required");
+    assert.deepEqual(output.requiredTools, ["exec_command"]);
+    assert.deepEqual(output.missingTools, ["exec_command"]);
+    assert.equal(resolutionCalls, 1);
+    assert.deepEqual((await readdir(root)).sort(), ["input.json", "output.json"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("job binding comparison rejects every mutable execution authority", () => {
+  const binding = {
+    version: "job_execution_profile_binding_v1" as const,
+    authoringProfileId: "kestrel",
+    environmentPresetId: "cli_dev_local" as const,
+    resolvedProfileId: `kestrel:cli_dev_local:${"a".repeat(64)}`,
+    profileFingerprint: "a".repeat(64),
+    policy: { id: "kestrel", version: 3 },
+    approvalPolicyPack: { id: "dev" as const, version: 1 as const, digest: "b".repeat(64) },
+  };
+  const preflight = {
+    version: "job_preflight_v1" as const,
+    capability: "local-core.execution-profile-resolution.v2" as const,
+    status: "ready" as const,
+    requestedPresetId: "cli_dev_local" as const,
+    resolvedPresetId: "cli_dev_local" as const,
+    profileId: binding.resolvedProfileId,
+    profileFingerprint: binding.profileFingerprint,
+    policyRevision: "kestrel:v3/cli_dev_local:v1",
+    approvalPolicyPackId: "dev" as const,
+    effectiveTools: ["exec_command"],
+    requiredTools: ["exec_command"],
+    missingTools: [],
+    executionProfileBinding: binding,
+  };
+  assert.deepEqual(compareJobBinding(binding, preflight), []);
+  for (const altered of [
+    { ...binding, authoringProfileId: "other" },
+    { ...binding, environmentPresetId: "cli_safe_local" as const },
+    { ...binding, resolvedProfileId: `kestrel:cli_dev_local:${"c".repeat(64)}` },
+    { ...binding, profileFingerprint: "c".repeat(64) },
+    { ...binding, policy: { id: "kestrel", version: 2 } },
+    { ...binding, approvalPolicyPack: { ...binding.approvalPolicyPack, id: "ci_bot" as const } },
+    { ...binding, approvalPolicyPack: { ...binding.approvalPolicyPack, digest: "c".repeat(64) } },
+  ]) {
+    assert.equal(compareJobBinding(altered, preflight).length, 1);
+  }
+});
+
+function jobPreflightInput() {
+  return {
+    version: "job_input_v2",
+    profileId: "kestrel",
+    environmentPresetId: "cli_dev_local",
+    approvalPolicyPackId: "dev",
+    requiredTools: ["exec_command"],
+    turn: { sessionId: "preflight-test", message: "Verify compatibility" },
+  };
+}
+
+function executionProfileResolution(toolAllowlist: string[]) {
+  return {
+    version: 1 as const,
+    profileId: `kestrel:cli_dev_local:${"a".repeat(64)}`,
+    fingerprint: "a".repeat(64),
+    policy: { id: "kestrel", version: 3 },
+    environmentPreset: { id: "cli_dev_local" as const, version: 1 },
+    resolvedProfile: {
+      id: "kestrel",
+      label: "Kestrel",
+      agent: "kestrel" as const,
+      sessionPrefix: "kestrel",
+      toolAllowlist,
+    },
+  };
+}
 
 test("command mode model show and set operate on shared model policy", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "kestrel-command-model-"));

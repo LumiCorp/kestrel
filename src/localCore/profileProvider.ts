@@ -110,8 +110,12 @@ export async function resolveLocalCoreExecutionProfile(
         `Legacy profile '${request.profileId}' is available for historical inspection only.`,
       );
     }
+    const requestedCliPreset =
+      request.client === "cli"
+        ? request.environmentPresetId ?? "cli_safe_local"
+        : "cli_safe_local";
     const store = new ProfileStore(homePath, {
-      managedEnvironmentPresetId: "cli_safe_local",
+      managedEnvironmentPresetId: requestedCliPreset,
     });
     const configuredProfiles = resolveLocalCoreConfiguredProfiles(
       await store.load(),
@@ -126,10 +130,7 @@ export async function resolveLocalCoreExecutionProfile(
         ? resolveKestrelWebProfile(selected)
         : selected.id === KESTREL_ONE_POLICY_ID
           ? composeKestrelOneProfile({
-              environmentPresetId:
-                selected.presetId === "cli_dev_local"
-                  ? "cli_dev_local"
-                  : "cli_safe_local",
+              environmentPresetId: requestedCliPreset,
               overlay: {
                 label: selected.label,
                 modelProvider: selected.modelProvider,
@@ -152,9 +153,7 @@ export async function resolveLocalCoreExecutionProfile(
     environmentPresetId =
       request.client === "web"
         ? "web_balanced"
-        : profile.presetId === "cli_dev_local"
-          ? "cli_dev_local"
-          : "cli_safe_local";
+        : requestedCliPreset;
   }
   const provenance = buildExecutionProfileRevisionProvenance(
     request,

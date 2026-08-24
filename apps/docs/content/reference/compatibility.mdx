@@ -16,11 +16,13 @@ Use the exact package versions shown below across Runtime, Protocol, Conversatio
 
 <ReleaseCompatibilityTable />
 
-All ten public npm artifacts are now available. Runtime/CLI is 0.8.7; Protocol, Conversation, Files, SDK, Memory, Next.js, AI SDK, Observability, and Workspace Skills are 0.8.5. A package may remain optional to an application, but every installed Kestrel package must match the versions shown above. Do not combine 0.7 and 0.8 contracts or add an application-side shim for removed APIs.
+All ten public npm artifacts are now available. Runtime/CLI is 0.8.8; Protocol, Conversation, Files, SDK, Memory, Next.js, AI SDK, Observability, and Workspace Skills are 0.8.5. A package may remain optional to an application, but every installed Kestrel package must match the versions shown above. Do not combine 0.7 and 0.8 contracts or add an application-side shim for removed APIs.
 
 ## Product matrix
 
-CLI/TUI uses Runtime 0.8.7 and supports Node.js 22 on macOS arm64 and Linux x64. Desktop 0.8.6 is an independently versioned signed macOS arm64 application available by DMG and stable OTA. Kestrel One source is tagged 0.8.5; Lumi hosting runs an identified deployment of that product version.
+CLI/TUI uses Runtime 0.8.8 and supports Node.js 22 on macOS arm64 and Linux x64. Desktop 0.8.6 is an independently versioned signed macOS arm64 application available by DMG and stable OTA. Kestrel One source is tagged 0.8.5; Lumi hosting runs an identified deployment of that product version.
+
+Runtime/CLI 0.8.8 preserves `job_input_v1` and adds strict `job_input_v2`, `job preflight`, and immutable execution-profile binding. Clients that need assignment-time compatibility proof must require the V2 Local Core capability and must not downgrade to V1 after a failed preflight.
 
 ## Platform matrix
 

@@ -15,7 +15,7 @@ export const DOCS_RELEASE = {
       "@kestrel-agents/workspace-skills",
     ],
     versions: {
-      "@kestrel-agents/kestrel": "0.8.7",
+      "@kestrel-agents/kestrel": "0.8.8",
       "@kestrel-agents/protocol": "0.8.5",
       "@kestrel-agents/conversation": "0.8.5",
       "@kestrel-agents/files": "0.8.5",
@@ -30,11 +30,11 @@ export const DOCS_RELEASE = {
   },
   products: {
     cli: {
-      version: "0.8.7",
+      version: "0.8.8",
       channel: "Stable",
       mode: "npm",
-      npmVersion: "0.8.7",
-      installCommand: "npm install -g @kestrel-agents/kestrel@0.8.7",
+      npmVersion: "0.8.8",
+      installCommand: "npm install -g @kestrel-agents/kestrel@0.8.8",
       supportedPlatforms: ["macOS arm64", "Linux x64"],
       runtimeRequirement: "Node.js 22",
     },
@@ -58,7 +58,7 @@ export const DOCS_RELEASE = {
     },
   },
   compatibility: [
-    { surface: "Runtime", version: "0.8.7", channel: "Stable", note: "Runtime and CLI distribution; package compatibility follows its declared dependencies" },
+    { surface: "Runtime", version: "0.8.8", channel: "Stable", note: "Runtime and CLI distribution; package compatibility follows its declared dependencies" },
     { surface: "Protocol", version: "0.8.5", channel: "Stable", note: "Owns execution, conversations, executable plugins, approvals, recovery, Mission Control, and events" },
     { surface: "Conversation", version: "0.8.5", channel: "Stable", note: "Projects durable turns, streaming presentation, queues, composer actions, and typed host interactions" },
     { surface: "Files", version: "0.8.5", channel: "Stable", note: "Classifies uploaded media and extracts bounded host-side representations" },
@@ -68,7 +68,7 @@ export const DOCS_RELEASE = {
     { surface: "AI SDK", version: "0.8.5", channel: "Stable", note: "Adapts runner streams to AI SDK presentation events" },
     { surface: "Observability", version: "0.8.5", channel: "Stable", note: "Carries compatible trace context and correlation" },
     { surface: "Workspace skills", version: "0.8.5", channel: "Stable", note: "Installs and verifies portable workspace guidance" },
-    { surface: "CLI", version: "0.8.7", channel: "Stable", note: "Install the canonical npm artifact on macOS arm64 or Linux x64 with Node.js 22" },
+    { surface: "CLI", version: "0.8.8", channel: "Stable", note: "Install the canonical npm artifact on macOS arm64 or Linux x64 with Node.js 22" },
     { surface: "Desktop", version: "0.8.6", channel: "Beta", note: "Signed and notarized macOS arm64 application with stable OTA support" },
     { surface: "Kestrel One", version: "0.8.5", channel: "Beta", note: "Versioned source plus an invitation-only Lumi-hosted deployment" },
   ],

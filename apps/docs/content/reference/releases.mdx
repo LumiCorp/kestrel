@@ -8,6 +8,10 @@ sourceKind: curated
 updatedAt: 2026-08-20
 ---
 
+## Runtime 0.8.8 job compatibility binding
+
+Runtime/CLI 0.8.8 adds strict `job_input_v2` preflight and immutable execution-profile binding while preserving `job_input_v1` for existing direct clients. `job preflight` proves the requested preset, approval policy pack, required tools, profile fingerprint, and policy revision without creating a job, thread, run, checkout, or worktree. V2 `job run` rejects missing, stale, or altered binding evidence before dispatch. Install it with `npm install -g @kestrel-agents/kestrel@0.8.8` on Node.js 22.
+
 ## Runtime 0.8.7 packaging correction
 
 Runtime/CLI 0.8.7 replaces the unusable npm-only 0.8.6 artifact. Version 0.8.6 referenced a private MCP security package and the not-yet-published Files package, so a clean npm install could not resolve its dependency graph. Do not install Runtime 0.8.6.
@@ -39,7 +43,7 @@ At the coordinated 0.8.5 release, nine public packages used version 0.8.5. Conve
 
 ## CLI/TUI
 
-The coordinated release installed with `npm install -g @kestrel-agents/kestrel@0.8.5` on Node.js 22. Use Runtime/CLI 0.8.7 for current npm installs. Release verification covers macOS arm64 and Linux x64. The TUI uses the shared Conversation platform for durable turns, streaming activity, composer behavior, cancellation, reconnect, and readable history.
+The coordinated release installed with `npm install -g @kestrel-agents/kestrel@0.8.5` on Node.js 22. Use Runtime/CLI 0.8.8 for current npm installs. Release verification covers macOS arm64 and Linux x64. The TUI uses the shared Conversation platform for durable turns, streaming activity, composer behavior, cancellation, reconnect, and readable history.
 
 ## Desktop
 
@@ -75,7 +79,7 @@ The coordinated [`v0.8.5` release](https://github.com/LumiCorp/kestrel/releases/
 
 ## Earlier 0.8 history
 
-The v0.8.0 release established the coordinated 0.8 contracts and signed Desktop installed base. Runtime npm versions 0.8.1 and 0.8.2 were packaging corrections. Version 0.8.4 was staged on npm and tagged for provenance but was never promoted to GitHub Latest, npm latest, Desktop stable, or production because its Runtime package was incomplete. The coordinated 0.8.5 line superseded them; Runtime 0.8.7 now supersedes the broken npm-only 0.8.6 artifact.
+The v0.8.0 release established the coordinated 0.8 contracts and signed Desktop installed base. Runtime npm versions 0.8.1 and 0.8.2 were packaging corrections. Version 0.8.4 was staged on npm and tagged for provenance but was never promoted to GitHub Latest, npm latest, Desktop stable, or production because its Runtime package was incomplete. The coordinated 0.8.5 line superseded them; Runtime 0.8.7 superseded the broken npm-only 0.8.6 artifact, and Runtime 0.8.8 adds strict job compatibility binding.
 
 ## Kestrel 0.7.0 history
 

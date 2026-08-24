@@ -3,7 +3,7 @@ id: cli-contract-matrix
 domain: cli
 status: active
 owner: kestrel-cli
-last_verified_at: 2026-08-04
+last_verified_at: 2026-08-24
 depends_on:
   - ./kchat.md
   - ./kchat-protocol.md
@@ -30,7 +30,7 @@ This page is generated from `cli/contractMatrix.ts` and must stay aligned with p
 | `core` | `kestrel core status; kestrel core restart [--wait]` | `--wait` |
 | `workspace` | `kestrel workspace <status|list>` | - |
 | `web` | `kestrel web ...` | - |
-| `job` | `kestrel job run --json-in <file> --json-out <file> [--profile <id>]` | `--json-in`, `--json-out`, `--profile` |
+| `job` | `kestrel job <preflight|run> --json-in <file> --json-out <file>` | `--json-in`, `--json-out`, `--profile` |
 | `operator` | `kestrel operator <resume-wait|approve|retry-delegation|doctor-export> ...` | `--thread-id`, `--request-id`, `--delegation-id`, `--run-id`, `--out`, `--reason` |
 | `runtime` | `kestrel runtime <replay|doctor> <query> [--json]; kestrel runtime bundle <query> --out <file>` | `--run-id`, `--session-id`, `--thread-id`, `--delegation-id`, `--out`, `--limit`, `--json` |
 | `setup` | `kestrel setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]` | `--profile`, `--approval-pack`, `--full` |

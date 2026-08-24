@@ -8,7 +8,13 @@ sourceKind: curated
 updatedAt: 2026-08-04
 ---
 
-Kestrel 0.8 is an exact-contract upgrade. Use the versions in the compatibility matrix together: Runtime 0.8.7 consumes the exact 0.8.5 Protocol, Conversation, Files, SDK, Memory, and Workspace Skills packages, while the other public adapters remain 0.8.5.
+Kestrel 0.8 is an exact-contract upgrade. Use the versions in the compatibility matrix together: Runtime 0.8.8 consumes the exact 0.8.5 Protocol, Conversation, Files, SDK, Memory, and Workspace Skills packages, while the other public adapters remain 0.8.5.
+
+## Adopt strict job preflight
+
+Runtime/CLI 0.8.8 keeps `job_input_v1` for existing direct clients and adds `job_input_v2` for clients that require proof before assignment. Submit V2 to `kestrel job preflight --json-in <file> --json-out <file>`, preserve the returned `job_execution_profile_binding_v1`, and submit that binding unchanged with `job run`. A missing or altered fingerprint, policy, preset, authoring profile, approval pack, digest, or required tool is a `COMPATIBILITY_ERROR` before job or worktree creation.
+
+Kestrel state isolation still uses `KESTREL_HOME`. There is no Kestrel `--state-dir` option; wrappers that expose such an option must map it to the child process environment.
 
 ## Who must upgrade
 
