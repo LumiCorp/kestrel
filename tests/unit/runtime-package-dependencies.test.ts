@@ -4,11 +4,36 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveRuntimePackageDependencies } from "../../scripts/runtime-package-dependencies.js";
+import {
+  RUNTIME_WORKSPACE_PACKAGES,
+  resolveRuntimePackageDependencies,
+} from "../../scripts/runtime-package-dependencies.js";
 
+test("Runtime workspace descriptors cover exactly the seven installed packages", () => {
+  assert.deepEqual(
+    RUNTIME_WORKSPACE_PACKAGES.map(({ name }) => name),
+    [
+      "@kestrel-agents/protocol",
+      "@kestrel-agents/conversation",
+      "@kestrel-agents/files",
+      "@kestrel-agents/sdk",
+      "@kestrel-agents/workspace-skills",
+      "@kestrel-agents/memory",
+      "@lumi/kestrel-environment-auth",
+    ],
+  );
+  assert.equal(
+    RUNTIME_WORKSPACE_PACKAGES.map(({ name }): string => name).includes(
+      "@kestrel/mcp-security",
+    ),
+    false,
+  );
+});
 
 test("runtime package manifests replace workspace links with exact packed versions", async (t) => {
-  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-dependencies-"));
+  const repoRoot = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-runtime-dependencies-"),
+  );
   t.after(async () => await rm(repoRoot, { recursive: true, force: true }));
   await writeWorkspaceManifests(repoRoot, "0.5.1");
 
@@ -42,7 +67,9 @@ test("runtime package manifests replace workspace links with exact packed versio
 });
 
 test("runtime package manifests pin each independently versioned workspace dependency", async (t) => {
-  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-dependencies-drift-"));
+  const repoRoot = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-runtime-dependencies-drift-"),
+  );
   t.after(async () => await rm(repoRoot, { recursive: true, force: true }));
   await writeWorkspaceManifests(repoRoot, "0.5.1");
   const protocolDir = path.join(repoRoot, "packages", "protocol");
