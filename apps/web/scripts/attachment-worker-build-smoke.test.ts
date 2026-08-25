@@ -24,12 +24,11 @@ const runtimeFiles = [
   "packages/attachments/dist/index.cjs",
   "packages/attachments/dist/index.js",
   "packages/attachments/dist/worker.js",
-  "packages/attachments/node_modules/pdf-parse/package.json",
-  "packages/attachments/node_modules/pdfjs-dist/package.json",
-  "apps/web/node_modules/pdfjs-dist/package.json",
+  "packages/attachments/node_modules/pdf-parse",
   "node_modules/pdf-parse/package.json",
   "node_modules/pdf-parse/dist/worker/cjs/index.cjs",
   "node_modules/pdf-parse/dist/worker/pdf.worker.mjs",
+  "node_modules/.pnpm/pdf-parse@2.4.5/node_modules/pdfjs-dist",
   "node_modules/pdfjs-dist/package.json",
   "node_modules/pdfjs-dist/legacy/build/pdf.mjs",
   "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
@@ -60,8 +59,8 @@ test("production build externalizes and traces the attachment package", async ()
   assert.match(config, /"@napi-rs\/canvas"/u);
   assert.doesNotMatch(
     config,
-    /(?:packages\/attachments|\.)\/node_modules\/@napi-rs\/canvas\/package\.json/u,
-    "explicit scoped workspace symlink tracing breaks Vercel function materialization",
+    /(?:packages\/attachments|\.)\/node_modules\/(?:@napi-rs\/canvas|jszip|mammoth|pdf-parse|pdfjs-dist|xlsx)\//u,
+    "explicit workspace symlink tracing breaks Vercel function materialization",
   );
   assert.match(config, /"\/api\/cron\/attachments\/\*\*"/u);
   assert.match(config, /"\/api\/files\/\*\*"/u);

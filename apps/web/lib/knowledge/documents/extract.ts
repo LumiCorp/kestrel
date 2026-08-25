@@ -1,8 +1,7 @@
 import JSZip from "jszip";
 import mammoth from "mammoth";
 import { read, utils } from "xlsx";
-import { createRequire } from "node:module";
-import { dirname, join, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import {
   getDirectRuntimeConfig,
   warnIfPlaceholderRuntimeConfig,
@@ -35,11 +34,11 @@ async function initializePdfRuntime() {
     import("pdf-parse"),
     import("pdf-parse/worker"),
   ]);
-  PDFParse.setWorker(getPath());
-  const require = createRequire(import.meta.url);
+  const workerPath = getPath();
+  PDFParse.setWorker(workerPath);
   return {
     PDFParse,
-    pdfJsRoot: dirname(require.resolve("pdfjs-dist/package.json")),
+    pdfJsRoot: resolve(dirname(workerPath), "../../..", "pdfjs-dist"),
   };
 }
 

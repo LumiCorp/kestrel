@@ -1,8 +1,7 @@
 import JSZip from "jszip";
 import mammoth from "mammoth";
 import { read, utils } from "xlsx";
-import { createRequire } from "node:module";
-import { dirname, join, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { Worker } from "node:worker_threads";
 
 export const DEFAULT_ATTACHMENT_EXTRACTED_TEXT_BYTES = 1024 * 1024;
@@ -197,9 +196,12 @@ async function initializePdfRuntime() {
     import("pdf-parse"),
     import("pdf-parse/worker"),
   ]);
-  PDFParse.setWorker(getPath());
-  const require = createRequire(import.meta.url);
-  const pdfJsRoot = dirname(require.resolve("pdfjs-dist/package.json"));
+  const workerPath = getPath();
+  PDFParse.setWorker(workerPath);
+  // Resolve PDF.js through pdf-parse's dependency edge. Next's file tracer
+  // preserves that pnpm edge for each function, while an explicitly included
+  // workspace-level pdfjs-dist symlink cannot be materialized by Vercel.
+  const pdfJsRoot = resolve(dirname(workerPath), "../../..", "pdfjs-dist");
   return { PDFParse, pdfJsRoot };
 }
 
