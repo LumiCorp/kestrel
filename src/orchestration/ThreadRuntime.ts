@@ -1309,6 +1309,9 @@ export class ThreadRuntime implements ThreadRuntimePort {
         },
       });
     }
+    const blockedToolScope = asRecord(
+      resolved.request.metadata?.blockedToolScope,
+    );
     const result = await this.submitAcceptedTurn({
       threadId: input.threadId,
       message: input.message,
@@ -1324,6 +1327,10 @@ export class ThreadRuntime implements ThreadRuntimePort {
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
       metadata: {
         requestId: resolved.request.requestId,
+        blockedRunId: resolved.request.runId,
+        ...(blockedToolScope === undefined
+          ? {}
+          : { blockedToolScope: structuredClone(blockedToolScope) }),
         ...(resolved.grant !== undefined ? { grantId: resolved.grant.grantId } : {}),
         ...(resolved.request.delegationId !== undefined ? { delegationId: resolved.request.delegationId } : {}),
       },

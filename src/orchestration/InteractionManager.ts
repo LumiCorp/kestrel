@@ -13,6 +13,7 @@ import {
 } from "../runtime/RuntimeFailure.js";
 import { parseEvaluationReviewBindingV1 } from "../kestrel/contracts/evaluation.js";
 import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
+import type { HostedMcpContext } from "../mcp/hosted-contracts.js";
 import type {
   ApprovalGrantRecord,
   InteractionRequestRecord,
@@ -32,6 +33,7 @@ export class InteractionManager {
     turnId?: string | undefined;
     runId?: string | undefined;
     actor?: RuntimeTurnActor | undefined;
+    blockedMcpContext?: HostedMcpContext | undefined;
     delegationId?: string | undefined;
     waitFor?:
       | {
@@ -76,6 +78,15 @@ export class InteractionManager {
 
     const eventType = waitFor.eventType;
     const requestKind = waitFor.kind === "approval" ? "approval" : "user_input";
+    const blockedToolScope =
+      requestKind === "approval" && input.runId !== undefined
+        ? {
+            runId: input.runId,
+            ...(input.blockedMcpContext === undefined
+              ? {}
+              : { mcpContext: structuredClone(input.blockedMcpContext) }),
+          }
+        : undefined;
     const existing = pending.find((request) =>
       requestMatchesWaitFor(request, {
         kind: requestKind,
@@ -91,6 +102,7 @@ export class InteractionManager {
         ...(input.runId !== undefined ? { runId: input.runId } : {}),
         metadata: {
           ...(existing.metadata ?? {}),
+          ...(blockedToolScope === undefined ? {} : { blockedToolScope }),
           ...(input.turnId !== undefined ? { conversationTurnId: input.turnId } : {}),
           ...(input.runId !== undefined ? { conversationRunId: input.runId } : {}),
         },
@@ -132,6 +144,7 @@ export class InteractionManager {
         : {}),
       metadata: {
         ...metadata,
+        ...(blockedToolScope === undefined ? {} : { blockedToolScope }),
         ...(input.turnId !== undefined ? { conversationTurnId: input.turnId } : {}),
         ...(input.runId !== undefined ? { conversationRunId: input.runId } : {}),
         ...(input.actor !== undefined

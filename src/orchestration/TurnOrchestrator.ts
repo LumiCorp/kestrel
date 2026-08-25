@@ -117,6 +117,9 @@ export class TurnOrchestrator {
         : {}),
       runId: execution.output.runId,
       ...(input.actor !== undefined ? { actor: input.actor } : {}),
+      ...(input.runtimeTurn?.mcpContext !== undefined
+        ? { blockedMcpContext: input.runtimeTurn.mcpContext }
+        : {}),
       ...(delegation !== null ? { delegationId: delegation.delegationId } : {}),
       waitFor: execution.output.waitFor,
     });
