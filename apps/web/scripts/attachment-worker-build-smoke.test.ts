@@ -58,6 +58,11 @@ test("production build externalizes and traces the attachment package", async ()
   assert.match(config, /"pdf-parse"/u);
   assert.match(config, /"pdfjs-dist"/u);
   assert.match(config, /"@napi-rs\/canvas"/u);
+  assert.doesNotMatch(
+    config,
+    /(?:packages\/attachments|\.)\/node_modules\/@napi-rs\/canvas\/package\.json/u,
+    "explicit scoped workspace symlink tracing breaks Vercel function materialization",
+  );
   assert.match(config, /"\/api\/cron\/attachments\/\*\*"/u);
   assert.match(config, /"\/api\/files\/\*\*"/u);
   assert.match(config, /"\/api\/knowledge\/documents\/\*\*"/u);
