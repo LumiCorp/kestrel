@@ -40,6 +40,7 @@ test(
     assert.match(dockerignore, /^tmp$/mu);
     assert.match(dockerignore, /^\.pnpm-store$/mu);
     assert.match(dockerignore, /^apps\/web\/\.next$/mu);
+    assert.match(dockerignore, /^apps\/web\/\.kestrel-runtime$/mu);
     assert.match(dockerignore, /^apps\/web\/node_modules$/mu);
     assert.equal(
       packageJson.scripts?.["worker:turns"],

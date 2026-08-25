@@ -13,6 +13,7 @@ import {
 } from "@kestrel-agents/conversation";
 import type { RunnerTurnAttachment } from "@kestrel-agents/protocol";
 import { extractAttachmentTextIsolated, isAttachmentTextExtractable } from "@kestrel-agents/files";
+import { configurePdfCanvasNativeBinding } from "./pdf-runtime-binding";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { canManageOrganization } from "@/lib/knowledge/organization-access";
 import { getProjectAccess, requireProjectRole } from "@/lib/projects/access";
@@ -1030,6 +1031,7 @@ export async function processStoredFileRepresentation(input: {
     failureCategory = undefined;
   } else if (isAttachmentTextExtractable(input.mediaType)) {
     try {
+      configurePdfCanvasNativeBinding();
       const extraction = await extractAttachmentTextIsolated({
         buffer: await storage.readBuffer(input.objectKey),
         filename: input.filename,

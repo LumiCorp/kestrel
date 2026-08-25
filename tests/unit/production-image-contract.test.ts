@@ -102,6 +102,45 @@ test("attachment-owning image smokes gate publication on exact-build canary evid
   assert.match(workspaceDockerfile, /KESTREL_BUILD_ID=\$KESTREL_BUILD_ID/u);
 });
 
+test("partial Docker build contexts include root pnpm patches before install", async () => {
+  const dockerfiles = await Promise.all(
+    [
+      "apps/environment-router/Dockerfile",
+      "apps/mcp-service/Dockerfile",
+      "apps/preview-edge/Dockerfile",
+      "apps/workspace-runtime/Dockerfile",
+    ].map((file) => readFile(file, "utf8")),
+  );
+
+  for (const dockerfile of dockerfiles) {
+    const patchCopy = dockerfile.indexOf("COPY patches patches");
+    const dependencyInstall = dockerfile.indexOf("RUN pnpm install --frozen-lockfile");
+    assert.ok(
+      patchCopy >= 0 && patchCopy < dependencyInstall,
+      "root pnpm patches must be available before a partial-context install",
+    );
+  }
+});
+
+test("Fly image contexts exclude host-staged Vercel native bindings", async () => {
+  const dockerignores = await Promise.all(
+    [
+      ".dockerignore",
+      "deploy/fly/kestrel-one-control-worker/Dockerfile.dockerignore",
+      "deploy/fly/kestrel-one-turn-worker/Dockerfile.dockerignore",
+      "deploy/fly/kestrel-one-runpod-worker/Dockerfile.dockerignore",
+    ].map((file) => readFile(file, "utf8")),
+  );
+
+  for (const dockerignore of dockerignores) {
+    assert.match(
+      dockerignore,
+      /^apps\/web\/\.kestrel-runtime$/mu,
+      "a host-native Vercel binding must never enter a Linux image context",
+    );
+  }
+});
+
 test("local Fly deployment names one platform Machine and operator tag", () => {
   assert.deepEqual(
     parseFlyMachineDeploymentArgs([
