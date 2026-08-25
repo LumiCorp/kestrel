@@ -395,6 +395,8 @@ function readExternalApprovalBinding(
       {
         classification: "policy",
         recoverable: false,
+        effectStatus: "not_started",
+        retryable: false,
         cause: error instanceof Error ? error.message : String(error),
       },
     );
@@ -417,7 +419,7 @@ function normalizeTrustedActor(
     throw createRuntimeFailure(
       "APPROVAL_ACTOR_INVALID",
       "Approval decisions require trusted actor metadata.",
-      { classification: "policy", recoverable: false },
+      { classification: "policy", recoverable: false, effectStatus: "not_started", retryable: false },
     );
   }
   return {
@@ -439,7 +441,12 @@ function validateExecutableApproval(input: {
     throw createRuntimeFailure(
       "APPROVAL_ACTOR_REQUIRED",
       "External-effect approval requires authenticated actor metadata.",
-      { classification: "policy", recoverable: false },
+      {
+        classification: "policy",
+        recoverable: false,
+        effectStatus: "not_started",
+        retryable: false,
+      },
     );
   }
   if (
@@ -454,6 +461,8 @@ function validateExecutableApproval(input: {
       {
         classification: "policy",
         recoverable: false,
+        effectStatus: "not_started",
+        retryable: false,
         requestId: input.request.requestId,
       },
     );
@@ -475,7 +484,7 @@ function validateExecutableApproval(input: {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_ACTION_MISMATCH",
       "External-effect approval does not match the exact pending action and payload.",
-      { classification: "policy", recoverable: false },
+      { classification: "policy", recoverable: false, effectStatus: "not_started", retryable: false },
     );
   }
   if (Date.parse(input.binding.expiresAt) <= Date.now()) {
@@ -485,6 +494,8 @@ function validateExecutableApproval(input: {
       {
         classification: "policy",
         recoverable: true,
+        effectStatus: "not_started",
+        retryable: false,
         approvalId: input.binding.approvalId,
       },
     );
@@ -501,7 +512,7 @@ function validateExecutableApproval(input: {
     throw createRuntimeFailure(
       "APPROVAL_ACTOR_MISMATCH",
       "External-effect approval must be decided by the authenticated actor that requested it.",
-      { classification: "policy", recoverable: false },
+      { classification: "policy", recoverable: false, effectStatus: "not_started", retryable: false },
     );
   }
 }

@@ -16,8 +16,10 @@ const historyLock = JSON.parse(
   fs.readFileSync(path.join(migrations, "meta/history-lock.json"), "utf8"),
 ) as Record<string, string>;
 
-test("Knowledge document ownership migration is registered last", () => {
-  const entry = journal.entries.at(-1);
+test("Knowledge document ownership migration remains registered", () => {
+  const entry = journal.entries.find(
+    (candidate) => candidate.tag === "0081_knowledge_document_file_ownership",
+  );
   assert.deepEqual(entry, {
     idx: 81,
     version: "7",

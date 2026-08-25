@@ -60,6 +60,7 @@
     "organization-costs:backfill": "node --conditions=react-server --import tsx scripts/backfill-organization-costs.ts",
     "gateway-model-economics:backfill": "node --conditions=react-server --import tsx scripts/backfill-model-economics-profiles.ts",
     "thread-attachments:backfill": "node --conditions=react-server --import tsx scripts/backfill-thread-attachments.ts",
+    "incident:reconcile-hosted-approvals": "node --conditions=react-server --import ./scripts/register-server-only.mjs --import tsx scripts/reconcile-hosted-approval-incident.ts",
     "organization-files:reset-lumi": "node --conditions=react-server --import tsx scripts/reset-lumi-files.ts",
     "setup": "tsx scripts/setup.ts",
     "fixtures:rag": "pnpm exec tsx scripts/generate-rag-fixtures.ts",

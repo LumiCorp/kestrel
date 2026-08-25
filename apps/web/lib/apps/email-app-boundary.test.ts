@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 test("Email App requires project access, ask approval, and organization sender configuration", async () => {
   const source = await readFile(new URL("../../app/api/runtime/email/action/route.ts", import.meta.url), "utf8");
   assert.match(source, /resolveEffectiveProjectAppAccess/u);
-  assert.match(source, /capability\?\.approvalMode === "ask"/u);
+  assert.match(source, /capability\.approvalMode === "ask"/u);
   assert.match(source, /consumeAppOperationApproval/u);
   assert.match(source, /resolveOrganizationEmailConfig\(ticket\.organizationId\)/u);
   assert.doesNotMatch(source, /resolvePlatformEmailConfig|RESEND_API_KEY/u);
@@ -32,5 +32,8 @@ test("Email App has no attachment input and expired payloads are redacted", asyn
   ]);
   assert.doesNotMatch(tool, /attachments?\s*:/u);
   assert.match(approvals, /expireStaleAppOperationApprovals/u);
-  assert.match(approvals, /'email'[\s\S]*redacted/u);
+  assert.match(
+    approvals,
+    /jsonb_build_object\('redacted', true, 'operation'/u,
+  );
 });

@@ -288,3 +288,44 @@ test("mobile snapshots replace MCP sampling prompts with safe copy", () => {
   ]);
   assert.doesNotMatch(JSON.stringify(parts), /provider|credentials/iu);
 });
+
+test("mobile lifecycle stays legacy by default and expands only when requested", () => {
+  const part = {
+    type: "data-kestrel-interaction",
+    data: {
+      requestId: "request-1",
+      kind: "approval",
+      prompt: "Approve?",
+      status: "failed",
+      approvalOutcome: {
+        failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+        publicMessage: "Authorization expired.",
+        retryEligible: true,
+      },
+    },
+  };
+  assert.deepEqual(mobileMessageParts([part]), [
+    {
+      type: "interaction_status",
+      requestId: "request-1",
+      kind: "approval",
+      prompt: "Approve?",
+      status: "cancelled",
+    },
+  ]);
+  assert.deepEqual(
+    mobileMessageParts([part], { richInteractionLifecycle: true }),
+    [
+      {
+        type: "interaction_status",
+        requestId: "request-1",
+        kind: "approval",
+        prompt: "Approve?",
+        status: "failed",
+        failureCode: "EXTERNAL_APPROVAL_EXPIRED",
+        message: "Authorization expired.",
+        retryEligible: true,
+      },
+    ],
+  );
+});

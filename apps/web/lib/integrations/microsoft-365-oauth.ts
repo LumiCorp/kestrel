@@ -160,6 +160,29 @@ export async function syncMicrosoft365Connection(input: {
       .returning();
     if (!connection) throw new Error("Microsoft 365 connection could not be recorded.");
 
+    await transaction
+      .insert(schema.appConnectionResources)
+      .values({
+        id: `${connection.id}:account`,
+        connectionId: connection.id,
+        externalId: "primary",
+        resourceType: "account",
+        label,
+        enabled: true,
+        permissions: {},
+        metadata: { logical: true },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [
+          schema.appConnectionResources.connectionId,
+          schema.appConnectionResources.resourceType,
+          schema.appConnectionResources.externalId,
+        ],
+        set: { label, enabled: true, updatedAt: now },
+      });
+
     return connection;
   });
 }

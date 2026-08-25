@@ -184,20 +184,23 @@ test("createKestrelOneAgentResponse streams completed runner output and persists
   });
 
   const body = await response.text();
+  const kestrelOneCapabilities = capturedInput?.clientCapabilities?.kestrelOne as
+    | {
+        requestId: string;
+        correlationId: string;
+        tenantId: string;
+        capabilities: Array<{ name: string }>;
+      }
+    | undefined;
 
   assert.equal(capturedInput?.sessionId, "chat_123");
   assert.equal(capturedInput?.message, "What changed?");
   assert.equal(capturedInput?.interactionMode, "build");
-  assert.equal(capturedInput?.clientCapabilities?.kestrelOne?.requestId, "req_123");
-  assert.equal(
-    capturedInput?.clientCapabilities?.kestrelOne?.correlationId,
-    "req_123",
-  );
-  assert.equal(capturedInput?.clientCapabilities?.kestrelOne?.tenantId, "org_123");
+  assert.equal(kestrelOneCapabilities?.requestId, "req_123");
+  assert.equal(kestrelOneCapabilities?.correlationId, "req_123");
+  assert.equal(kestrelOneCapabilities?.tenantId, "org_123");
   assert.deepEqual(
-    capturedInput?.clientCapabilities?.kestrelOne?.capabilities.map(
-      (capability) => capability.name,
-    ),
+    kestrelOneCapabilities?.capabilities.map((capability) => capability.name),
     [
       "kestrel.files.search",
       "kestrel.files.open",

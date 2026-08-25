@@ -13,6 +13,7 @@ test("PostgreSQL orchestration store round-trips the complete interaction envelo
   const row = {
     request_id: interaction.requestId,
     thread_id: "thread-review",
+    run_id: null,
     kind: "user_input",
     status: "PENDING",
     event_type: "user.reply",
@@ -31,7 +32,7 @@ test("PostgreSQL orchestration store round-trips the complete interaction envelo
       rowCount: 1,
     },
     {
-      match: /^SELECT request_id, thread_id, kind, status, event_type, delegation_id, wait_kind, prompt, interaction_json/u,
+      match: /^SELECT request_id, thread_id, run_id, kind, status, event_type, delegation_id, wait_kind, prompt, interaction_json/u,
       rows: [row],
     },
   ]);
@@ -51,7 +52,7 @@ test("PostgreSQL orchestration store round-trips the complete interaction envelo
   });
   const restored = await store.getInteractionRequest(interaction.requestId);
 
-  assert.equal(sql.queries[0]?.values?.[8], JSON.stringify(interaction));
+  assert.equal(sql.queries[0]?.values?.[9], JSON.stringify(interaction));
   assert.deepEqual(restored?.interaction, interaction);
   sql.assertExhausted();
 });

@@ -94,6 +94,7 @@ export interface KestrelPresentationSnapshot {
   terminalStatus: KestrelTerminalStatus;
   errorMessage: string | null;
   errorCode?: string | undefined;
+  errorDetails?: Record<string, unknown> | undefined;
   failureVisible: boolean;
   interaction: KestrelInteractionPresentation | null;
   finalizedPayload?: unknown | undefined;
