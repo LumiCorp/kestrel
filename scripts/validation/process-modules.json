@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "id": "unit",
+      "description": "root unit tests that exercise process-owned runtime boundaries",
+      "prefixes": ["tests/unit/", "tests/workspaceCheckpointService.test.ts"]
+    },
+    {
+      "id": "integration",
+      "description": "root integration journeys",
+      "prefixes": ["tests/integration/"]
+    },
+    {
+      "id": "e2e",
+      "description": "root end-to-end journeys",
+      "prefixes": ["tests/e2e/"]
+    },
+    {
+      "id": "ops",
+      "description": "CLI, TUI, and operational process journeys",
+      "prefixes": ["tests/ops/"]
+    },
+    {
+      "id": "smoke",
+      "description": "root smoke journeys",
+      "prefixes": ["tests/smoke/"]
+    },
+    {
+      "id": "process",
+      "description": "direct process-boundary proofs",
+      "prefixes": ["tests/process/"]
+    },
+    {
+      "id": "desktop",
+      "description": "Desktop process and persistence journeys",
+      "prefixes": ["apps/desktop/"]
+    },
+    {
+      "id": "environment-router",
+      "description": "environment router and relay journeys",
+      "prefixes": ["apps/environment-router/"]
+    },
+    {
+      "id": "preview-edge",
+      "description": "preview edge process journeys",
+      "prefixes": ["apps/preview-edge/"]
+    },
+    {
+      "id": "workspace-runtime",
+      "description": "Workspace Runtime process journeys",
+      "prefixes": ["apps/workspace-runtime/"]
+    },
+    {
+      "id": "sdk",
+      "description": "SDK consumer process journeys",
+      "prefixes": ["packages/sdk/"]
+    }
+  ]
+}

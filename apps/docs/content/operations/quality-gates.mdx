@@ -36,6 +36,15 @@ iteration, but they do not establish pull-request readiness.
 | `test-proofs:mutations` | current killed mutations for high- and critical-risk contracts |
 | `validate:release:macos` | CLI and Desktop macOS package readiness during release preparation |
 
+Process validation can be narrowed to one declared module while debugging:
+
+```bash
+pnpm validate:process:modules
+pnpm validate:process -- --module unit
+```
+
+`pnpm validate:process` remains the complete aggregate process gate.
+
 ## Package and release proofs
 
 Pack all nine public packages, inspect contents and exact internal pins, and install them into a clean external consumer. Release evidence also covers CLI archives/checksums, signed Desktop artifacts, deployment revision/digests, and registry metadata.
