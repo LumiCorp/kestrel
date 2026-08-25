@@ -52,6 +52,26 @@
       "prefixes": ["apps/workspace-runtime/"]
     },
     {
+      "id": "attachments",
+      "description": "attachment extraction process journeys",
+      "prefixes": ["packages/attachments/"]
+    },
+    {
+      "id": "mcp-service",
+      "description": "hosted MCP service process journeys",
+      "prefixes": ["apps/mcp-service/"]
+    },
+    {
+      "id": "kestrel-one-tools",
+      "description": "Kestrel One operational tool journeys",
+      "prefixes": ["tools/kestrelOne/"]
+    },
+    {
+      "id": "web",
+      "description": "Kestrel One Web process journeys",
+      "prefixes": ["apps/web/"]
+    },
+    {
       "id": "sdk",
       "description": "SDK consumer process journeys",
       "prefixes": ["packages/sdk/"]

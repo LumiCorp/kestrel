@@ -141,7 +141,11 @@ test("process validation has explicit, disjoint module ownership", () => {
     "tests/unit/local-core-api.test.ts",
     "tests/integration/runner-protocol.test.ts",
     "apps/desktop/tests/projectRuns.test.ts",
+    "apps/mcp-service/tests/discovery-worker.test.ts",
+    "apps/web/lib/integrations/github-publication-git.process.test.ts",
+    "packages/attachments/tests/attachments.test.ts",
     "packages/sdk/tests/local-client.test.ts",
+    "tools/kestrelOne/githubPushAgentBranch.test.ts",
   ]);
 
   assert.equal(assignments.get("tests/unit/local-core-api.test.ts"), "unit");
@@ -154,8 +158,26 @@ test("process validation has explicit, disjoint module ownership", () => {
     "desktop",
   );
   assert.equal(
+    assignments.get("apps/mcp-service/tests/discovery-worker.test.ts"),
+    "mcp-service",
+  );
+  assert.equal(
+    assignments.get(
+      "apps/web/lib/integrations/github-publication-git.process.test.ts",
+    ),
+    "web",
+  );
+  assert.equal(
+    assignments.get("packages/attachments/tests/attachments.test.ts"),
+    "attachments",
+  );
+  assert.equal(
     assignments.get("packages/sdk/tests/local-client.test.ts"),
     "sdk",
+  );
+  assert.equal(
+    assignments.get("tools/kestrelOne/githubPushAgentBranch.test.ts"),
+    "kestrel-one-tools",
   );
   assert.deepEqual(processModuleIds(processModuleManifest), [
     "unit",
@@ -168,6 +190,10 @@ test("process validation has explicit, disjoint module ownership", () => {
     "environment-router",
     "preview-edge",
     "workspace-runtime",
+    "attachments",
+    "mcp-service",
+    "kestrel-one-tools",
+    "web",
     "sdk",
   ]);
   assert.throws(
