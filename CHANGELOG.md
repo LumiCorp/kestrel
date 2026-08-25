@@ -13,11 +13,23 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Kestrel Runtime and Kestrel One can resume an approved built-in tool after a
+  runtime rebuild when the original static tool scope is preserved. Older
+  requests without that evidence remain fail-closed and must be resubmitted.
+- Kestrel One now carries explicit retry evidence for failures that occur
+  before provider execution starts across Web and Mobile, instead of
+  presenting a recorded approval as an executed action.
 - Kestrel One now extracts ordinary and CMap-backed PDF text consistently in
   uploads and Knowledge while keeping empty or scanned originals available as
   read-only files instead of indexing generated page markers.
 - Kestrel One production rollouts now preserve active and stopped Fly Machine
   state and avoid false retries while health-checking stopped Workspaces.
+
+### Security
+
+- Kestrel One now requires one exact transaction chain from the runner approval
+  request through the user's decision, App grant, resumed turn, and consuming
+  execution before a hosted provider action can run.
 
 ## Runtime and CLI 0.8.8 - 2026-08-24
 
