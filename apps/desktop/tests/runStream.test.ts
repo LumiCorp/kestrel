@@ -383,6 +383,180 @@ test("Desktop restores authoritative turn order from a scrambled persisted trans
   );
 });
 
+test("Desktop weaves run activity around repeated interaction messages without regrouping their roles", () => {
+  const transcript = [
+    {
+      role: "user" as const,
+      text: "What happened?",
+      timestamp: "2026-08-24T12:00:00.000Z",
+      data: { kind: "desktop.user-message.v1", messageId: "message-input" },
+    },
+    {
+      role: "assistant" as const,
+      text: "What would you like me to explain?",
+      timestamp: "2026-08-24T12:00:01.000Z",
+      data: { kestrelMessageId: "message-request-1" },
+    },
+    {
+      role: "user" as const,
+      text: "The attached files.",
+      timestamp: "2026-08-24T12:00:02.000Z",
+      data: { kind: "desktop.user-message.v1", messageId: "message-response-1" },
+    },
+    {
+      role: "assistant" as const,
+      text: "Which attached file?",
+      timestamp: "2026-08-24T12:00:03.000Z",
+      data: { kestrelMessageId: "message-request-2" },
+    },
+    {
+      role: "user" as const,
+      text: "The PDF.",
+      timestamp: "2026-08-24T12:00:04.000Z",
+      data: { kind: "desktop.user-message.v1", messageId: "message-response-2" },
+    },
+    {
+      role: "assistant" as const,
+      text: "I cannot access the PDF.",
+      timestamp: "2026-08-24T12:00:05.000Z",
+      data: { kestrelMessageId: "message-continuation" },
+    },
+  ];
+  const turns = [{
+    turnId: "turn-1",
+    threadId: "thread-1",
+    sessionId: "session-1",
+    sequence: 1,
+    status: "COMPLETED" as const,
+    sourceMessageId: "message-input",
+    rootRunId: "run-1",
+    terminalRunId: "run-1",
+    startedAt: "2026-08-24T12:00:00.000Z",
+    updatedAt: "2026-08-24T12:00:05.000Z",
+    completedAt: "2026-08-24T12:00:05.000Z",
+  }];
+  const routes = transcript.map((line, index) => ({
+    messageId: index === 0
+      ? "message-input"
+      : index === 1
+        ? "message-request-1"
+        : index === 2
+          ? "message-response-1"
+          : index === 3
+            ? "message-request-2"
+            : index === 4
+              ? "message-response-2"
+              : "message-continuation",
+    disposition: "replied" as const,
+    createdAt: line.timestamp,
+    runId: "run-1",
+    turnId: "turn-1",
+  }));
+  const runStream = [
+    {
+      id: "activity:explain",
+      runId: "run-1",
+      kind: "agent_progress" as const,
+      label: "Agent progress",
+      text: "Checking the attachments.",
+      timestamp: "2026-08-24T12:00:01.500Z",
+      status: "completed" as const,
+    },
+    {
+      id: "activity:pdf",
+      runId: "run-1",
+      kind: "tool" as const,
+      label: "Tool action",
+      text: "Read PDF metadata.",
+      timestamp: "2026-08-24T12:00:04.500Z",
+      status: "completed" as const,
+    },
+  ];
+
+  const timeline = projectDesktopConversationTimeline(transcript, runStream, turns, routes);
+
+  assert.deepEqual(
+    timeline.map((item) => item.type === "transcript" ? item.line.text : item.item.text),
+    [
+      "What happened?",
+      "What would you like me to explain?",
+      "Checking the attachments.",
+      "The attached files.",
+      "Which attached file?",
+      "The PDF.",
+      "Read PDF metadata.",
+      "I cannot access the PDF.",
+    ],
+  );
+});
+
+test("Desktop preserves ordered unsegmented messages and leaves legacy activity unowned", () => {
+  const transcript = [
+    {
+      role: "user" as const,
+      text: "Continue.",
+      timestamp: "2026-08-24T13:00:00.000Z",
+      data: { kind: "desktop.user-message.v1", messageId: "message-input" },
+    },
+    {
+      role: "assistant" as const,
+      text: "Which file should I use?",
+      timestamp: "2026-08-24T13:00:01.000Z",
+      data: { kestrelMessageId: "message-request" },
+    },
+    {
+      role: "user" as const,
+      text: "The PDF.",
+      timestamp: "2026-08-24T13:00:02.000Z",
+      data: { kind: "desktop.user-message.v1", messageId: "message-response" },
+    },
+    {
+      role: "assistant" as const,
+      text: "I will continue without it.",
+      timestamp: "2026-08-24T13:00:03.000Z",
+      data: { kestrelMessageId: "message-continuation" },
+    },
+  ];
+  const turns = [{
+    turnId: "turn-1",
+    threadId: "thread-1",
+    sessionId: "session-1",
+    sequence: 1,
+    status: "COMPLETED" as const,
+    sourceMessageId: "message-input",
+    startedAt: "2026-08-24T13:00:00.000Z",
+    updatedAt: "2026-08-24T13:00:03.000Z",
+    completedAt: "2026-08-24T13:00:03.000Z",
+  }];
+  const routes = ["message-input", "message-request", "message-response", "message-continuation"].map(
+    (messageId, index) => ({
+      messageId,
+      disposition: "replied" as const,
+      createdAt: transcript[index]!.timestamp,
+      turnId: "turn-1",
+    }),
+  );
+  const timeline = projectDesktopConversationTimeline(transcript, [{
+    id: "activity:legacy",
+    kind: "status",
+    label: "Runtime",
+    text: "Legacy runtime detail.",
+    timestamp: "2026-08-24T13:00:04.000Z",
+    status: "completed",
+  }], turns, routes);
+
+  assert.deepEqual(
+    timeline.map((item) => item.type === "transcript" ? item.line.text : item.item.text),
+    [
+      "Continue.",
+      "Which file should I use?",
+      "The PDF.",
+      "I will continue without it.",
+      "Legacy runtime detail.",
+    ],
+  );
+});
+
 test("Desktop keeps unowned legacy messages and activity in chronological display slots", () => {
   const firstTimestamp = "2026-08-13T12:00:00.000Z";
   const legacyTimestamp = "2026-08-13T12:01:00.000Z";

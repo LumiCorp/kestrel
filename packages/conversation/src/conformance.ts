@@ -88,6 +88,50 @@ export const conversationProjectionConformanceScenarios: readonly ConversationPr
       interactionIds: ["interaction-request"],
     }],
   }),
+  scenario({
+    name: "two resolved waits retain causal transcript order",
+    messages: [
+      message("message-z-input", "user", "turn-two-waits"),
+      message("message-z-request-1", "assistant", "turn-two-waits"),
+      message("message-a-response-1", "user", "turn-two-waits"),
+      message("message-z-request-2", "assistant", "turn-two-waits"),
+      message("message-a-response-2", "user", "turn-two-waits"),
+      message("message-a-continuation", "assistant", "turn-two-waits"),
+    ],
+    turns: [turn("turn-two-waits", 1, "message-z-input", "completed")],
+    interactions: [
+      interaction({
+        id: "interaction-z-first",
+        requestId: "request-first",
+        turnId: "turn-two-waits",
+        assistantMessageId: "message-z-request-1",
+        responseMessageId: "message-a-response-1",
+        kind: "user_input",
+        status: "resolved",
+      }),
+      interaction({
+        id: "interaction-a-second",
+        requestId: "request-second",
+        turnId: "turn-two-waits",
+        assistantMessageId: "message-z-request-2",
+        responseMessageId: "message-a-response-2",
+        kind: "user_input",
+        status: "resolved",
+      }),
+    ],
+    expected: [{
+      turnId: "turn-two-waits",
+      messageIds: [
+        "message-z-input",
+        "message-z-request-1",
+        "message-a-response-1",
+        "message-z-request-2",
+        "message-a-response-2",
+        "message-a-continuation",
+      ],
+      interactionIds: ["interaction-z-first", "interaction-a-second"],
+    }],
+  }),
   ...(["completed", "failed", "cancelled"] as const).map((status, index) => scenario({
     name: `${status} terminal state`,
     messages: [
@@ -295,13 +339,14 @@ function interaction(input: {
   assistantMessageId: string | null;
   responseMessageId: string | null;
   kind: ConversationInteraction["kind"];
+  status?: ConversationInteraction["status"];
 }): ConversationInteraction {
   return {
     ...input,
     source: "runtime",
     eventType: "runtime.user_input",
     prompt: "Continue?",
-    status: "pending",
+    status: input.status ?? "pending",
     createdAt,
   };
 }
