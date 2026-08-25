@@ -201,7 +201,97 @@ test("manual runtime activation changes only the exact canary and channel pointe
     runtimeImage: initial.runtimeImage,
     routerImage: initial.routerImage,
   });
+
+  const rollback = await runtime.requestEnvironmentRuntimeUpdate({
+    organizationId,
+    environmentId: canaryId,
+    runtimeVersionId: initial.id,
+    actorUserId: userId,
+  });
+  await completeUpdate(connection, {
+    environmentId: canaryId,
+    operationId: rollback.operation.id,
+    runtimeImage: initial.runtimeImage,
+    routerImage: initial.routerImage,
+  });
+
+  const repeatedForward = await runtime.requestEnvironmentRuntimeUpdate({
+    organizationId,
+    environmentId: canaryId,
+    runtimeVersionId: proposed.id,
+    actorUserId: userId,
+  });
+  assert.equal(repeatedForward.operation.status, "queued");
+  assert.notEqual(repeatedForward.operation.id, requested.operation.id);
+  const duplicateRepeatedForward =
+    await runtime.requestEnvironmentRuntimeUpdate({
+      organizationId,
+      environmentId: canaryId,
+      runtimeVersionId: proposed.id,
+      actorUserId: userId,
+    });
+  assert.equal(
+    duplicateRepeatedForward.operation.id,
+    repeatedForward.operation.id,
+  );
+
+  const siblingForward = await runtime.requestEnvironmentRuntimeUpdate({
+    organizationId,
+    environmentId: siblingId,
+    runtimeVersionId: proposed.id,
+    actorUserId: userId,
+  });
+  await connection`BEGIN`;
+  let siblingTransactionOpen = true;
+  try {
+    await connection`
+      SELECT id FROM environments WHERE id = ${siblingId} FOR UPDATE
+    `;
+    const racedDuplicate = runtime.requestEnvironmentRuntimeUpdate({
+      organizationId,
+      environmentId: siblingId,
+      runtimeVersionId: proposed.id,
+      actorUserId: userId,
+    });
+    await waitForEnvironmentRowLock(connection);
+    await completeUpdate(connection, {
+      environmentId: siblingId,
+      operationId: siblingForward.operation.id,
+      runtimeImage: proposed.runtimeImage,
+      routerImage: proposed.routerImage,
+    });
+    await connection`COMMIT`;
+    siblingTransactionOpen = false;
+    const settledDuplicate = await racedDuplicate;
+    assert.equal(settledDuplicate.operation.id, siblingForward.operation.id);
+    assert.equal(settledDuplicate.operation.status, "completed");
+  } finally {
+    if (siblingTransactionOpen) await connection`ROLLBACK`;
+  }
+  const [siblingOperationCount] = await connection<Array<{ count: number }>>`
+    SELECT count(*)::int AS count
+    FROM environment_operations
+    WHERE environment_id = ${siblingId}
+  `;
+  assert.equal(siblingOperationCount?.count, 1);
 });
+
+async function waitForEnvironmentRowLock(
+  sql: Awaited<ReturnType<postgres.Sql["reserve"]>>,
+) {
+  for (let attempt = 0; attempt < 250; attempt += 1) {
+    const [blocked] = await sql<Array<{ count: number }>>`
+      SELECT count(*)::int AS count
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+        AND pid <> pg_backend_pid()
+        AND pg_backend_pid() = ANY(pg_blocking_pids(pid))
+    `;
+    if ((blocked?.count ?? 0) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("The concurrent runtime request did not wait on the Environment row lock.");
+}
 
 async function completeUpdate(
   sql: Awaited<ReturnType<postgres.Sql["reserve"]>>,
