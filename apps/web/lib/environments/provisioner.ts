@@ -1016,16 +1016,16 @@ export class EnvironmentProvisioner {
         },
         stopConfig: KESTREL_WORKSPACE_STOP_CONFIG,
       });
-      if (
+      const startedExplicitly =
         machine.state === "stopped" ||
-        (input.restoreStopped && machine.state !== "started")
-      ) {
+        (input.restoreStopped && machine.state !== "started");
+      if (startedExplicitly) {
         await this.provider.startMachine({
           appName: input.appName,
           machineId: input.machineId,
         });
       }
-      if (machine.state !== "started") {
+      if (machine.state !== "started" && !startedExplicitly) {
         await this.provider.waitForMachine({
           appName: input.appName,
           machineId: input.machineId,
@@ -1033,6 +1033,9 @@ export class EnvironmentProvisioner {
           timeoutSeconds: WORKSPACE_MACHINE_HEALTH_TIMEOUT_SECONDS,
         });
       }
+      // A successful Workspace health check is the authoritative readiness proof
+      // after an explicit start. Fly's state wait can observe a stale stopped
+      // snapshot during the same start/stop verification cycle.
       await this.provider.waitForMachineHealth({
         appName: input.appName,
         machineId: input.machineId,

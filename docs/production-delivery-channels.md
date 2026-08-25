@@ -141,6 +141,10 @@ pnpm production:fly:machine \
 The command prints the signed-in Fly identity, current provider record, exact
 requested image, and confirmation text. Read it, type the exact confirmation,
 and retain the fresh provider record printed after `fly machine update`.
+Provider output is limited to Machine identity, state, region, and image
+identity; it never prints Machine environment configuration. The command
+rejects transitional pre-update states, applies `--skip-start` to stopped
+Machines, and verifies that every Machine returns to its original stable state.
 
 Inventory all Machine states before the first update. For a role with more than
 one Machine, update and verify every started Machine in scope before updating
