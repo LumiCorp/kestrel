@@ -57,10 +57,18 @@ test("production build externalizes and traces the attachment package", async ()
   assert.match(config, /"pdf-parse"/u);
   assert.match(config, /"pdfjs-dist"/u);
   assert.match(config, /"@napi-rs\/canvas"/u);
-  assert.doesNotMatch(
-    config,
-    /(?:packages\/attachments|\.)\/node_modules\/(?:@napi-rs\/canvas|jszip|mammoth|pdf-parse|pdfjs-dist|xlsx)\//u,
-    "explicit workspace symlink tracing breaks Vercel function materialization",
+  const workspaceModulePaths = [...config.matchAll(/"([^"\n]*node_modules\/[^"\n]+)"/gu)]
+    .map((match) => match[1] as string)
+    .filter((path) => path.startsWith("../../packages/attachments/node_modules/") || path.startsWith("./node_modules/"));
+  const workspaceSymlinkDescendants = workspaceModulePaths.filter((path) => {
+    const packagePath = path.split("/node_modules/")[1]?.split("/") ?? [];
+    const packageSegmentCount = packagePath[0]?.startsWith("@") ? 2 : 1;
+    return packagePath.length > packageSegmentCount;
+  });
+  assert.deepEqual(
+    workspaceSymlinkDescendants,
+    [],
+    "workspace symlink descendants break Vercel function materialization",
   );
   assert.match(config, /"\/api\/cron\/attachments\/\*\*"/u);
   assert.match(config, /"\/api\/files\/\*\*"/u);
