@@ -185,6 +185,106 @@ test("orders an explicit historical interaction request before its response", ()
   assert.deepEqual(item.messages.map((entry) => entry.id), ["user-input", "assistant-request", "user-response"]);
 });
 
+test("preserves source order when an interaction link is incomplete or crosses turns", () => {
+  const projected = projectConversation({
+    turns: [
+      turn("turn-1", 1, "input-1"),
+      turn("turn-2", 2, "input-2"),
+    ],
+    interactions: [
+      {
+        id: "interaction-incomplete",
+        requestId: "request-incomplete",
+        source: "runtime",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Continue?",
+        status: "resolved",
+        turnId: "turn-1",
+        assistantMessageId: null,
+        responseMessageId: "response-1",
+        createdAt,
+      },
+      {
+        id: "interaction-cross-turn",
+        requestId: "request-cross-turn",
+        source: "runtime",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Continue?",
+        status: "resolved",
+        turnId: "turn-1",
+        assistantMessageId: "assistant-1",
+        responseMessageId: "input-2",
+        createdAt,
+      },
+    ],
+    messages: [
+      message("input-1", "user", "turn-1"),
+      message("response-1", "user", "turn-1"),
+      message("assistant-1", "assistant", "turn-1"),
+      message("input-2", "user", "turn-2"),
+    ],
+  });
+  const first = projected.items[0];
+  assert.equal(first?.kind, "durable_turn");
+  if (first?.kind !== "durable_turn") assert.fail("expected first durable turn");
+  assert.deepEqual(first.messages.map((entry) => entry.id), ["input-1", "response-1", "assistant-1"]);
+  assert.equal(
+    projected.issues.some((issue) => issue.code === "MESSAGE_ORDER_CONFLICT"),
+    false,
+  );
+});
+
+test("reports causal cycles while retaining every message in source order", () => {
+  const projected = projectConversation({
+    turns: [turn("turn-1", 1, "input-1")],
+    interactions: [
+      {
+        id: "interaction-a",
+        requestId: "request-a",
+        source: "runtime",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Continue?",
+        status: "resolved",
+        turnId: "turn-1",
+        assistantMessageId: "message-a",
+        responseMessageId: "message-b",
+        createdAt,
+      },
+      {
+        id: "interaction-b",
+        requestId: "request-b",
+        source: "runtime",
+        kind: "user_input",
+        eventType: "user.reply",
+        prompt: "Continue?",
+        status: "resolved",
+        turnId: "turn-1",
+        assistantMessageId: "message-b",
+        responseMessageId: "message-a",
+        createdAt,
+      },
+    ],
+    messages: [
+      message("input-1", "user", "turn-1"),
+      message("message-b", "user", "turn-1"),
+      message("message-a", "assistant", "turn-1"),
+    ],
+  });
+  const item = projected.items[0];
+  assert.equal(item?.kind, "durable_turn");
+  if (item?.kind !== "durable_turn") assert.fail("expected durable turn");
+  assert.deepEqual(item.messages.map((entry) => entry.id), ["input-1", "message-b", "message-a"]);
+  assert.deepEqual(projected.issues.find((issue) => issue.code === "MESSAGE_ORDER_CONFLICT"), {
+    code: "MESSAGE_ORDER_CONFLICT",
+    message: "Durable turn 'turn-1' has contradictory causal message ordering.",
+    turnId: "turn-1",
+    messageIds: ["message-b", "message-a"],
+  });
+});
+
 test("runs every shared activity conformance scenario", () => {
   for (const fixture of conversationActivityConformanceScenarios) {
     const result = fixture.events.reduce(reduceConversationActivity, []);

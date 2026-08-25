@@ -81,6 +81,11 @@ export interface ConversationQueueState {
 
 export interface ConversationSnapshot<Message extends ConversationMessageLike = ConversationMessageLike> {
   threadId: string;
+  /**
+   * The host's durable transcript order. This order never establishes turn
+   * ownership; after ownership is established, projection preserves it unless
+   * explicit turn or interaction identities require a causal reordering.
+   */
   messages: Message[];
   turns: ConversationTurn[];
   interactions: ConversationInteraction[];

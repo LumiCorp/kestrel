@@ -15,6 +15,12 @@ export type ConversationProjectionIssue =
       code: "TURN_SEQUENCE_CONFLICT" | "TURN_SEQUENCE_MISSING";
       message: string;
       turnId: string;
+    }
+  | {
+      code: "MESSAGE_ORDER_CONFLICT";
+      message: string;
+      turnId: string;
+      messageIds: string[];
     };
 
 export type ProjectedConversationItem<Message, Turn, Interaction> =
@@ -36,6 +42,10 @@ export type ProjectedConversation<Message, Turn, Interaction> = {
 /**
  * Projects conversation ownership from durable identities only. Timestamps,
  * text and array adjacency are deliberately never used to infer a turn.
+ *
+ * Once ownership is known, message array position is the host's durable
+ * transcript preference. Explicit turn and interaction identities can impose
+ * causal constraints on that presentation order, but roles and UUIDs cannot.
  */
 export function projectConversation<
   Message extends ConversationMessageLike,
@@ -49,6 +59,7 @@ export function projectConversation<
   const orderedTurns = [...input.turns].sort(compareTurns);
   const turnsById = new Map(orderedTurns.map((turn) => [turn.id, turn]));
   const turnIdByMessageId = new Map<string, string>();
+  const conflictingMessageIds = new Set<string>();
   const issues: ConversationProjectionIssue[] = [];
   const turnIdBySequence = new Map<number, string>();
 
@@ -77,6 +88,7 @@ export function projectConversation<
     if (!messageId || !turnId) return;
     const existing = turnIdByMessageId.get(messageId);
     if (existing && existing !== turnId) {
+      conflictingMessageIds.add(messageId);
       issues.push({
         code: "MESSAGE_TURN_CONFLICT",
         message: `Message '${messageId}' is bound to multiple durable turns.`,
@@ -117,22 +129,25 @@ export function projectConversation<
     }
   }
 
-  const interactionAssistantIds = new Set(
-    input.interactions.flatMap((interaction) =>
-      interaction.assistantMessageId === null ? [] : [interaction.assistantMessageId]),
-  );
-  const interactionResponseIds = new Set(
-    input.interactions.flatMap((interaction) =>
-      interaction.responseMessageId === null ? [] : [interaction.responseMessageId]),
-  );
   for (const turn of orderedTurns) {
     const messages = messagesByTurnId.get(turn.id);
     if (messages === undefined) continue;
-    messages.sort((left, right) =>
-      messagePhase(left, turn, interactionAssistantIds, interactionResponseIds) -
-        messagePhase(right, turn, interactionAssistantIds, interactionResponseIds) ||
-      left.id.localeCompare(right.id),
-    );
+    const ordered = orderTurnMessages({
+      messages,
+      turn,
+      interactions: input.interactions,
+      turnIdByMessageId,
+      conflictingMessageIds,
+    });
+    messagesByTurnId.set(turn.id, ordered.messages);
+    if (ordered.cycleMessageIds.length > 0) {
+      issues.push({
+        code: "MESSAGE_ORDER_CONFLICT",
+        message: `Durable turn '${turn.id}' has contradictory causal message ordering.`,
+        turnId: turn.id,
+        messageIds: ordered.cycleMessageIds,
+      });
+    }
   }
 
   const interactionsByTurnId = new Map<string, Interaction[]>();
@@ -164,17 +179,124 @@ export function projectConversation<
   return { items, issues };
 }
 
-function messagePhase(
-  message: ConversationMessageLike,
-  turn: ConversationTurn,
-  interactionAssistantIds: ReadonlySet<string>,
-  interactionResponseIds: ReadonlySet<string>,
-): number {
-  if (message.id === turn.inputMessageId) return 0;
-  if (interactionAssistantIds.has(message.id)) return 1;
-  if (interactionResponseIds.has(message.id)) return 2;
-  if (message.role === "user") return 2;
-  return 3;
+function orderTurnMessages<Message extends ConversationMessageLike>(input: {
+  messages: readonly Message[];
+  turn: ConversationTurn;
+  interactions: readonly ConversationInteraction[];
+  turnIdByMessageId: ReadonlyMap<string, string>;
+  conflictingMessageIds: ReadonlySet<string>;
+}): { messages: Message[]; cycleMessageIds: string[] } {
+  const messageIndexById = new Map(input.messages.map((message, index) => [message.id, index]));
+  const outgoing = input.messages.map(() => new Set<number>());
+  const indegree = input.messages.map(() => 0);
+  const addEdge = (from: number, to: number) => {
+    if (outgoing[from]!.has(to)) return;
+    outgoing[from]!.add(to);
+    indegree[to] = (indegree[to] ?? 0) + 1;
+  };
+
+  const inputIndex = input.turn.inputMessageId === null
+    ? undefined
+    : messageIndexById.get(input.turn.inputMessageId);
+  if (inputIndex !== undefined) {
+    for (let index = 0; index < input.messages.length; index += 1) {
+      if (index === inputIndex) continue;
+      addEdge(inputIndex, index);
+    }
+  }
+
+  for (const interaction of input.interactions) {
+    if (
+      interaction.turnId !== input.turn.id ||
+      interaction.assistantMessageId === null ||
+      interaction.responseMessageId === null ||
+      input.conflictingMessageIds.has(interaction.assistantMessageId) ||
+      input.conflictingMessageIds.has(interaction.responseMessageId) ||
+      input.turnIdByMessageId.get(interaction.assistantMessageId) !== input.turn.id ||
+      input.turnIdByMessageId.get(interaction.responseMessageId) !== input.turn.id
+    ) continue;
+    const assistantIndex = messageIndexById.get(interaction.assistantMessageId);
+    const responseIndex = messageIndexById.get(interaction.responseMessageId);
+    if (assistantIndex === undefined || responseIndex === undefined) continue;
+    addEdge(assistantIndex, responseIndex);
+  }
+
+  const ready = indegree.flatMap((degree, index) => degree === 0 ? [index] : []);
+  const orderedIndices: number[] = [];
+  while (ready.length > 0) {
+    const next = ready.shift()!;
+    orderedIndices.push(next);
+    for (const target of outgoing[next]!) {
+      indegree[target] = (indegree[target] ?? 0) - 1;
+      if (indegree[target] !== 0) continue;
+      insertBySourceOrdinal(ready, target);
+    }
+  }
+
+  if (orderedIndices.length !== input.messages.length) {
+    return {
+      messages: [...input.messages],
+      cycleMessageIds: findCycleMessageIds(outgoing, input.messages),
+    };
+  }
+  return {
+    messages: orderedIndices.map((index) => input.messages[index]!),
+    cycleMessageIds: [],
+  };
+}
+
+function insertBySourceOrdinal(ready: number[], index: number) {
+  const insertionPoint = ready.findIndex((candidate) => candidate > index);
+  if (insertionPoint === -1) ready.push(index);
+  else ready.splice(insertionPoint, 0, index);
+}
+
+function findCycleMessageIds<Message extends ConversationMessageLike>(
+  outgoing: ReadonlyArray<ReadonlySet<number>>,
+  messages: readonly Message[],
+): string[] {
+  const indexByNode = new Array<number>(messages.length).fill(-1);
+  const lowLinkByNode = new Array<number>(messages.length).fill(-1);
+  const onStack = new Array<boolean>(messages.length).fill(false);
+  const stack: number[] = [];
+  const cycleNodes = new Set<number>();
+  let nextIndex = 0;
+
+  const visit = (node: number) => {
+    indexByNode[node] = nextIndex;
+    lowLinkByNode[node] = nextIndex;
+    nextIndex += 1;
+    stack.push(node);
+    onStack[node] = true;
+
+    for (const target of outgoing[node]!) {
+      if (indexByNode[target] === -1) {
+        visit(target);
+        lowLinkByNode[node] = Math.min(lowLinkByNode[node]!, lowLinkByNode[target]!);
+      } else if (onStack[target]) {
+        lowLinkByNode[node] = Math.min(lowLinkByNode[node]!, indexByNode[target]!);
+      }
+    }
+
+    if (lowLinkByNode[node] !== indexByNode[node]) return;
+    const component: number[] = [];
+    let member: number;
+    do {
+      member = stack.pop()!;
+      onStack[member] = false;
+      component.push(member);
+    } while (member !== node);
+    if (component.length > 1 || outgoing[node]!.has(node)) {
+      for (const cycleNode of component) cycleNodes.add(cycleNode);
+    }
+  };
+
+  for (let node = 0; node < messages.length; node += 1) {
+    if (indexByNode[node] === -1) visit(node);
+  }
+  return [...cycleNodes]
+    .sort((left, right) => left - right)
+    .map((index) => messages[index]!.id);
 }
 
 export function projectConversationSnapshot<Message extends ConversationMessageLike>(
