@@ -163,7 +163,6 @@
         "tests/unit/timestamps.test.ts",
         "tests/unit/transition-validator.test.ts",
         "tests/unit/turn-objective.test.ts",
-        "tests/unit/unified-release-evidence.test.ts",
         "tests/unit/uninstall-contracts.test.ts",
         "tests/unit/user-reply-intent.test.ts",
         "tests/unit/user-terminal-service.test.ts",
