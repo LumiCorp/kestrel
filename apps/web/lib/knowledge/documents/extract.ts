@@ -6,6 +6,7 @@ import {
   getDirectRuntimeConfig,
   warnIfPlaceholderRuntimeConfig,
 } from "@/lib/ai/surface-policy";
+import { configurePdfCanvasNativeBinding } from "@/lib/files/pdf-runtime-binding";
 import type { ExtractedDocumentBlock } from "./chunk";
 import { normalizeMediaType, stripMarkup } from "./shared";
 
@@ -25,6 +26,7 @@ const NULL_BYTE_CHARACTER = "\u0000";
 let pdfRuntimePromise: ReturnType<typeof initializePdfRuntime> | undefined;
 
 async function initializePdfRuntime() {
+  configurePdfCanvasNativeBinding();
   const { DOMMatrix, ImageData, Path2D } = await import("@napi-rs/canvas");
   const runtimeGlobals = globalThis as unknown as Record<string, unknown>;
   runtimeGlobals.DOMMatrix ??= DOMMatrix;

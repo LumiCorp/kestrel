@@ -17,6 +17,7 @@ apps/desktop/resources
 apps/desktop/static/renderer
 apps/desktop/.desktop-package
 apps/desktop/.forge-package
+apps/web/.kestrel-runtime
 .kestrel
 runs
 jobs

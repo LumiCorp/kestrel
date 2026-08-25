@@ -56,6 +56,7 @@ export const REQUIRED_RUNTIME_PATHS = [
   /node_modules\/@napi-rs\/canvas\/js-binding\.js$/u,
   /node_modules\/@napi-rs\/canvas-[^/]+\/package\.json$/u,
   /node_modules\/@napi-rs\/canvas-[^/]+\/[^/]+\.node$/u,
+  /apps\/web\/\.kestrel-runtime\/canvas-native\.node$/u,
 ];
 
 const RUNTIME_WARNING = /Cannot load "@napi-rs\/canvas"|fake worker|pdf\.worker load error|Unable to load.+(?:CMap|font|WASM)|(?:cMapUrl|standardFontDataUrl|wasmUrl).+(?:missing|invalid)/iu;
@@ -194,6 +195,15 @@ async function materializeTracedRuntime(sourceFiles, isolatedRoot) {
   await assertRuntimeSymlinksContained(isolatedRoot);
 }
 
+async function removeCanvasNativeSymlinkEdges(root) {
+  for (const path of await listFiles(root)) {
+    const stats = await lstat(path);
+    if (stats.isSymbolicLink() && /canvas-(?:darwin|linux|win32|android|freebsd)/u.test(path)) {
+      await rm(path, { force: true });
+    }
+  }
+}
+
 export async function runTracedExtractionSmoke(files) {
   const traces = await readRequiredRouteTraces(files);
   for (const { tracePath, resolvedFiles } of traces) {
@@ -202,6 +212,7 @@ export async function runTracedExtractionSmoke(files) {
       const runtimeRoot = resolve(isolatedRoot, "runtime");
       const harnessRoot = resolve(isolatedRoot, "harness");
       await materializeTracedRuntime(resolvedFiles, runtimeRoot);
+      await removeCanvasNativeSymlinkEdges(runtimeRoot);
       const fixtureRoot = resolve(harnessRoot, "fixtures");
       const matrixPath = resolve(harnessRoot, "extraction-matrix.mjs");
       const runnerPath = resolve(harnessRoot, "run.mjs");
@@ -213,6 +224,7 @@ export async function runTracedExtractionSmoke(files) {
       if (!commonJsIndexPath) throw new Error(`Route trace ${tracePath} has no CommonJS attachment entrypoint.`);
       const canonicalCommonJsPath = await realpath(commonJsIndexPath);
       const isolatedCommonJsPath = resolve(runtimeRoot, relative(repositoryRoot, canonicalCommonJsPath));
+      const stagedCanvasNativePath = resolve(runtimeRoot, "apps/web/.kestrel-runtime/canvas-native.node");
       const sourceRoutePath = tracePath.slice(0, -".nft.json".length);
       const requireBase = resolve(runtimeRoot, relative(repositoryRoot, sourceRoutePath));
       await writeFile(runnerPath, [
@@ -237,6 +249,7 @@ export async function runTracedExtractionSmoke(files) {
         encoding: "utf8",
         env: {
           LANG: "C.UTF-8",
+          NAPI_RS_NATIVE_LIBRARY_PATH: stagedCanvasNativePath,
           NODE_OPTIONS: "",
           NODE_PATH: "",
           PATH: process.env.PATH ?? "",

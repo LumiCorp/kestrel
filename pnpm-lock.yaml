@@ -7,6 +7,11 @@ settings:
 overrides:
   baseline-browser-mapping: 2.10.43
 
+patchedDependencies:
+  '@napi-rs/canvas@0.1.80':
+    hash: l3l3b6ulpa7ki7qpo56dyqhpgi
+    path: patches/@napi-rs__canvas@0.1.80.patch
+
 importers:
 
   .:
@@ -548,7 +553,7 @@ importers:
         version: link:../../packages/environment-auth
       '@napi-rs/canvas':
         specifier: 0.1.80
-        version: 0.1.80
+        version: 0.1.80(patch_hash=l3l3b6ulpa7ki7qpo56dyqhpgi)
       '@octokit/auth-app':
         specifier: ^8.2.0
         version: 8.2.0
@@ -1028,7 +1033,7 @@ importers:
     dependencies:
       '@napi-rs/canvas':
         specifier: 0.1.80
-        version: 0.1.80
+        version: 0.1.80(patch_hash=l3l3b6ulpa7ki7qpo56dyqhpgi)
       jszip:
         specifier: ^3.10.1
         version: 3.10.1
@@ -13146,7 +13151,7 @@ snapshots:
   '@napi-rs/canvas-win32-x64-msvc@0.1.80':
     optional: true
 
-  '@napi-rs/canvas@0.1.80':
+  '@napi-rs/canvas@0.1.80(patch_hash=l3l3b6ulpa7ki7qpo56dyqhpgi)':
     optionalDependencies:
       '@napi-rs/canvas-android-arm64': 0.1.80
       '@napi-rs/canvas-darwin-arm64': 0.1.80
@@ -20199,12 +20204,12 @@ snapshots:
 
   pdf-parse@2.4.5:
     dependencies:
-      '@napi-rs/canvas': 0.1.80
+      '@napi-rs/canvas': 0.1.80(patch_hash=l3l3b6ulpa7ki7qpo56dyqhpgi)
       pdfjs-dist: 5.4.296
 
   pdfjs-dist@5.4.296:
     optionalDependencies:
-      '@napi-rs/canvas': 0.1.80
+      '@napi-rs/canvas': 0.1.80(patch_hash=l3l3b6ulpa7ki7qpo56dyqhpgi)
 
   pe-library@0.4.1: {}
 

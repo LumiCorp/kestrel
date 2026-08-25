@@ -2,6 +2,7 @@ FROM node:22-bookworm-slim AS build
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches patches
 COPY apps/preview-edge/package.json apps/preview-edge/package.json
 COPY packages/environment-auth/package.json packages/environment-auth/package.json
 RUN pnpm install --frozen-lockfile --filter @kestrel/preview-edge...
