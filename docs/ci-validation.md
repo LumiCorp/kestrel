@@ -75,3 +75,17 @@ pnpm run test-proofs:mutations -- <mutation-id>
 `validate:process` builds shared, root, and Workspace Runtime artifacts before
 starting its process tests, so it can run directly after a clean dependency
 install.
+
+Process validation is modular for focused iteration. The aggregate command
+remains the complete process gate; list or select one explicit module when
+debugging a failure:
+
+```bash
+pnpm validate:process:modules
+pnpm validate:process -- --module unit
+pnpm validate:process -- --module integration
+```
+
+Every discovered process test must belong to exactly one declared module. A
+module selection changes only the test set; it does not bypass the process
+validation setup or change the aggregate `all` coverage.
