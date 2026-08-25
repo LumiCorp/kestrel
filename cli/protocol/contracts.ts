@@ -185,6 +185,7 @@ export interface RunCancelCommandPayload {
   runId?: string | undefined;
   commandId?: string | undefined;
 }
+export interface EffectResultGetCommandPayload { sessionId: string; runId: string; idempotencyKey: string }
 
 export interface SessionDescribeCommandPayload {
   sessionId: string;
@@ -494,6 +495,7 @@ export interface RunnerCommandPayloadByType {
   "job.run": JobRunCommandPayload;
   "run.start": RunStartCommandPayload;
   "run.cancel": RunCancelCommandPayload;
+  "effect.result.get": EffectResultGetCommandPayload;
   "session.describe": SessionDescribeCommandPayload;
   "session.state": SessionStateCommandPayload;
   "operator.inbox": OperatorInboxCommandPayload;
@@ -691,6 +693,14 @@ export interface RunFailedEventPayload {
     message: string;
     details?: Record<string, unknown> | undefined;
   };
+}
+
+export interface EffectResultLoadedEventPayload {
+  version: 1;
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+  result: Record<string, unknown>;
 }
 
 export interface RunnerErrorEventPayload {
@@ -985,6 +995,7 @@ export interface RunnerEventPayloadByType {
   "run.agent_progress": RunAgentProgressEventPayload;
   "run.completed": RunCompletedEventPayload;
   "run.failed": RunFailedEventPayload;
+  "effect.result.loaded": EffectResultLoadedEventPayload;
   "runner.error": RunnerErrorEventPayload;
   "runner.pong": RunnerPongEventPayload;
   "session.described": SessionDescribedEventPayload;

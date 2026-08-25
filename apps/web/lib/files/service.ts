@@ -18,9 +18,11 @@ import { canManageOrganization } from "@/lib/knowledge/organization-access";
 import { getProjectAccess, requireProjectRole } from "@/lib/projects/access";
 import { getThreadForUser } from "@/lib/threads/store";
 import { getManagedFileStorageProvider } from "./storage-provider";
+import { resolveRunnerAttachmentSource } from "./turn-attachment-resolver";
 import {
   ensureEffectiveFileAvailability,
   ensureFileBlobAvailable,
+  FileAvailabilityError,
 } from "./availability";
 import {
   isNativeImageRepresentationMediaType,
@@ -73,7 +75,11 @@ export async function createPublishedFileFromBuffer(input: {
   });
   const storage = getManagedFileStorageProvider();
   if (blob) {
-    await ensureReusableBlob(blob);
+    blob = await ensureReusableBlob(blob, {
+      body: Readable.from(input.buffer),
+      contentType: detectedMediaType,
+      contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    });
   }
   if (!blob) {
     const blobId = `blob-${randomUUID()}`;
@@ -280,6 +286,7 @@ export async function uploadThreadFile(input: {
       file,
       sha256: verified.sha256,
       scanResult,
+      detectedMediaType,
     });
     const quarantined = scanResult === "quarantined" || canonicalBlob.scanStatus === "quarantined";
     await knowledgeDb.update(schema.kestrelFiles).set({
@@ -518,12 +525,13 @@ export async function resolveThreadFilesForExecution(input: {
     const kind = file.representationStatus === "native_image"
       ? "image" as const
       : file.representationStatus === "extracted_text" ? "text" as const : "file" as const;
-    const source = storage.signedReadUrl
+    const resolvedSource = await resolveRunnerAttachmentSource(storage, file.objectKey, 900);
+    const source = resolvedSource.sourceUrl
       ? {
-          sourceUrl: await storage.signedReadUrl(file.objectKey, 900),
+          sourceUrl: resolvedSource.sourceUrl,
           sourceUrlExpiresAt: new Date(Date.now() + 14 * 60 * 1000).toISOString(),
         }
-      : { data: (await storage.readBuffer(file.objectKey)).toString("base64") };
+      : { data: resolvedSource.data };
     return {
       fileId: file.id,
       attachmentId: file.id,
@@ -587,14 +595,17 @@ export async function publishFileScope(input: {
   } else if (!canManage) {
     throw new Error("Organization administrator access is required to publish organization files.");
   }
-  const existing = await knowledgeDb.select().from(schema.fileScopeGrants).where(and(
+  const scopePredicate = and(
     eq(schema.fileScopeGrants.fileId, file.id),
+    eq(schema.fileScopeGrants.organizationId, input.organizationId),
     eq(schema.fileScopeGrants.scopeType, input.scope),
     input.scope === "project"
       ? eq(schema.fileScopeGrants.projectId, input.projectId as string)
       : isNull(schema.fileScopeGrants.projectId),
     isNull(schema.fileScopeGrants.revokedAt),
-  )).limit(1);
+  );
+  const existing = await knowledgeDb.select().from(schema.fileScopeGrants)
+    .where(scopePredicate).limit(1);
   if (existing[0]) return existing[0];
   const [grant] = await knowledgeDb.insert(schema.fileScopeGrants).values({
     id: `grant-${randomUUID()}`,
@@ -604,8 +615,12 @@ export async function publishFileScope(input: {
     threadId: null,
     projectId: input.scope === "project" ? input.projectId ?? null : null,
     createdByUserId: input.userId,
-  }).returning();
-  return grant;
+  }).onConflictDoNothing().returning();
+  if (grant) return grant;
+  const concurrent = await knowledgeDb.select().from(schema.fileScopeGrants)
+    .where(scopePredicate).limit(1);
+  if (concurrent[0]) return concurrent[0];
+  throw new Error("File scope grant could not be created or reused.");
 }
 
 export async function revokeFileScope(input: {
@@ -863,6 +878,7 @@ async function finalizeBlobDeduplication(input: {
   file: FileRow;
   sha256: string;
   scanResult: FileScanResult;
+  detectedMediaType: string;
 }) {
   const existing = await knowledgeDb.query.fileBlobs.findFirst({
     where: (table, { and: andOp, eq: eqOp, isNull: isNullOp }) => andOp(
@@ -872,12 +888,17 @@ async function finalizeBlobDeduplication(input: {
     ),
   });
   if (existing && existing.id !== input.file.blobId) {
-    await ensureReusableBlob(existing);
+    const source = await getManagedFileStorageProvider().readStream(input.file.objectKey);
+    const restored = await ensureReusableBlob(existing, {
+      body: Readable.from(source),
+      contentType: input.detectedMediaType,
+      contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(input.file.filename)}`,
+    });
     await knowledgeDb.update(schema.kestrelFiles).set({ blobId: existing.id })
       .where(eq(schema.kestrelFiles.id, input.file.id));
     await knowledgeDb.delete(schema.fileBlobs).where(eq(schema.fileBlobs.id, input.file.blobId));
     await getManagedFileStorageProvider().delete(input.file.objectKey).catch(() => {});
-    return existing;
+    return restored;
   }
   let updated: typeof schema.fileBlobs.$inferSelect | undefined;
   try {
@@ -896,24 +917,88 @@ async function finalizeBlobDeduplication(input: {
       ),
     });
     if (!raced || raced.id === input.file.blobId) throw error;
-    await ensureReusableBlob(raced);
+    const source = await getManagedFileStorageProvider().readStream(input.file.objectKey);
+    const restored = await ensureReusableBlob(raced, {
+      body: Readable.from(source),
+      contentType: input.detectedMediaType,
+      contentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(input.file.filename)}`,
+    });
     await knowledgeDb.update(schema.kestrelFiles).set({ blobId: raced.id })
       .where(eq(schema.kestrelFiles.id, input.file.id));
     await knowledgeDb.delete(schema.fileBlobs).where(eq(schema.fileBlobs.id, input.file.blobId));
     await getManagedFileStorageProvider().delete(input.file.objectKey).catch(() => {});
-    return raced;
+    return restored;
   }
   if (!updated) throw new Error("File blob could not be finalized.");
   return updated;
 }
 
-async function ensureReusableBlob(blob: typeof schema.fileBlobs.$inferSelect) {
+async function ensureReusableBlob(
+  blob: typeof schema.fileBlobs.$inferSelect,
+  restoration?: {
+    body: Readable;
+    contentType: string;
+    contentDisposition?: string | undefined;
+  },
+) {
+  let current = blob;
+  if (current.availabilityStatus === "unknown" && restoration) {
+    try {
+      await ensureFileBlobAvailable({
+        blobId: current.id,
+        objectKey: current.objectKey,
+        availabilityStatus: current.availabilityStatus,
+        deletedAt: current.deletedAt,
+      });
+    } catch (error) {
+      if (!(error instanceof FileAvailabilityError) || error.code !== "ATTACHMENT_BLOB_MISSING") {
+        throw error;
+      }
+    }
+    const classified = await knowledgeDb.query.fileBlobs.findFirst({
+      where: eq(schema.fileBlobs.id, current.id),
+    });
+    if (!classified) throw new Error("File blob not found.");
+    current = classified;
+    if (current.availabilityStatus === "available" && !current.deletedAt) {
+      return current;
+    }
+  }
+  if (current.availabilityStatus === "missing" && restoration) {
+    const storage = getManagedFileStorageProvider();
+    await storage.putStream({
+      key: current.objectKey,
+      body: restoration.body,
+      contentType: restoration.contentType,
+      ...(restoration.contentDisposition
+        ? { contentDisposition: restoration.contentDisposition }
+        : {}),
+    });
+    const [restored] = await knowledgeDb.update(schema.fileBlobs).set({
+      availabilityStatus: "available",
+      availabilityCheckedAt: new Date(),
+      deletedAt: null,
+    }).where(and(
+      eq(schema.fileBlobs.id, current.id),
+      eq(schema.fileBlobs.sha256, current.sha256 ?? ""),
+      eq(schema.fileBlobs.availabilityStatus, "missing"),
+      isNull(schema.fileBlobs.deletedAt),
+    )).returning();
+    if (restored) return restored;
+    const committed = await knowledgeDb.query.fileBlobs.findFirst({
+      where: eq(schema.fileBlobs.id, current.id),
+    });
+    if (committed?.availabilityStatus === "available" && !committed.deletedAt) {
+      return committed;
+    }
+  }
   await ensureFileBlobAvailable({
-    blobId: blob.id,
-    objectKey: blob.objectKey,
-    availabilityStatus: blob.availabilityStatus,
-    deletedAt: blob.deletedAt,
+    blobId: current.id,
+    objectKey: current.objectKey,
+    availabilityStatus: current.availabilityStatus,
+    deletedAt: current.deletedAt,
   });
+  return current;
 }
 
 export async function processStoredFileRepresentation(input: {
@@ -966,20 +1051,24 @@ export async function processStoredFileRepresentation(input: {
       failureCategory = "extraction_failed";
     }
   }
-  await knowledgeDb.delete(schema.fileRepresentations).where(eq(schema.fileRepresentations.blobId, input.blobId));
-  await knowledgeDb.insert(schema.fileRepresentations).values({
-    id: `representation-${randomUUID()}`,
-    blobId: input.blobId,
-    kind,
-    status: failureCategory === "extraction_failed" || failureCategory === "empty_extraction"
-      ? "failed"
-      : "ready",
-    mediaType: input.mediaType,
-    textContent,
-    truncated,
-    error,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+  await knowledgeDb.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`kestrel:file-representation:${input.blobId}`}, 0))`);
+    await tx.delete(schema.fileRepresentations)
+      .where(eq(schema.fileRepresentations.blobId, input.blobId));
+    await tx.insert(schema.fileRepresentations).values({
+      id: `representation-${randomUUID()}`,
+      blobId: input.blobId,
+      kind,
+      status: failureCategory === "extraction_failed" || failureCategory === "empty_extraction"
+        ? "failed"
+        : "ready",
+      mediaType: input.mediaType,
+      textContent,
+      truncated,
+      error,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
   });
   recordFileRepresentationOutcome({
     outcome: kind,

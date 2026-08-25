@@ -92,7 +92,7 @@ export type ModelProviderId =
   | "ollama"
   | "lmstudio";
 export type StoreDriverId = "auto" | "postgres" | "sqlite";
-export type ApprovalPolicyPackId = "dev" | "ci_bot" | "production";
+export type ApprovalPolicyPackId = "dev" | "isolated_code" | "ci_bot" | "production";
 export interface AgentStageConfig {
   modelByStage?: Record<string, string> | undefined;
 }

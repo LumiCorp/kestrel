@@ -155,8 +155,8 @@ test("runtime hermetic lane manifest is explicit, complete, and independently ru
   const assigned = Object.values(runtimeHermeticLaneManifest.lanes).flatMap(
     (definition) => definition.files,
   );
-  assert.equal(assigned.length, 344);
-  assert.equal(new Set(assigned).size, 344);
+  assert.equal(assigned.length, 356);
+  assert.equal(new Set(assigned).size, 356);
   assert.ok(
     runtimeHermeticLaneManifest.lanes["cli-command-mode"]?.files.includes(
       "tests/unit/approval-policy-pack-digest.test.ts",
@@ -491,6 +491,13 @@ test("portable validation harnesses do not enforce wall-clock correctness gates"
   assert.match(productPlaywright, /KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY/u);
   assert.match(productPlaywright, /KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY/u);
   assert.match(productPlaywright, /KESTREL_WORKSPACE_SERVICE_TOKEN/u);
+});
+
+test("product validation starts a distinct local Knowledge worker", () => {
+  assert.match(productStack, /worker:knowledge:local/u);
+  assert.match(productStack, /KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT/u);
+  assert.match(productPlaywright, /KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT/u);
+  assert.match(runner, /KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT/u);
 });
 
 test("product validation provisions the exact economics-admitted model it runs", () => {

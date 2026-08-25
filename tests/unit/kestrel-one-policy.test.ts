@@ -50,6 +50,7 @@ test("canonical Kestrel policy composes parity across product environments", () 
     environmentPresetId: "workspace_hosted",
     overlay: LUNA_ROUTE,
   });
+  assert.equal(KESTREL_ONE_ENVIRONMENT_PRESETS.workspace_hosted.version, 2);
 
   for (const composed of [
     cliSafe,
@@ -60,7 +61,7 @@ test("canonical Kestrel policy composes parity across product environments", () 
   ]) {
     assert.equal(composed.profile.agentProfileId, "kestrel");
     assert.equal(composed.provenance.policyId, "kestrel");
-    assert.equal(composed.provenance.policyVersion, 3);
+    assert.equal(composed.provenance.policyVersion, 4);
     assert.equal(composed.provenance.policyVersion, KESTREL_POLICY_VERSION);
     assert.equal(composed.provenance.promptPolicyId, "kestrel");
     assert.equal(
@@ -96,9 +97,11 @@ test("canonical Kestrel policy composes parity across product environments", () 
   assert.equal(desktopSafe.profile.codeMode?.enabled, true);
   assert.equal(cliDev.profile.devShell?.enabled, true);
   assert.equal(desktopDev.profile.devShell?.enabled, true);
-  assert.deepEqual(cliDev.profile.toolAllowlist, hosted.profile.toolAllowlist);
-  assert.deepEqual(cliDev.profile.codeMode, hosted.profile.codeMode);
   assert.deepEqual(cliDev.profile.devShell, hosted.profile.devShell);
+  assert.equal(cliDev.profile.codeMode?.enabled, false);
+  assert.equal(hosted.profile.codeMode?.enabled, true);
+  assert.equal(cliDev.profile.toolAllowlist?.includes("code.execute"), false);
+  assert.equal(hosted.profile.toolAllowlist?.includes("code.execute"), true);
 
   assert.equal(cliSafe.profile.toolAllowlist?.includes("desktop.host.open"), false);
   assert.equal(
@@ -135,13 +138,14 @@ test("canonical Kestrel One policy and presets are immutable versioned definitio
   assert.equal(Object.isFrozen(KESTREL_ONE_ENVIRONMENT_PRESETS), true);
   assert.equal(Object.isFrozen(KESTREL_HARNESS_ECONOMICS), true);
   assert.equal(
-    Object.values(KESTREL_ONE_ENVIRONMENT_PRESETS).every(
-      (preset) => Object.isFrozen(preset) && preset.version === 1,
+    Object.values(KESTREL_ONE_ENVIRONMENT_PRESETS).every((preset) =>
+      Object.isFrozen(preset) && preset.version ===
+        (preset.id === "workspace_hosted" ? 2 : 1)
     ),
     true,
   );
   assert.equal(KESTREL_ONE_POLICY.allowNestedCollaborators, false);
-  assert.equal(KESTREL_POLICY_VERSION, 3);
+  assert.equal(KESTREL_POLICY_VERSION, 4);
   assert.deepEqual(
     KESTREL_HARNESS_ECONOMICS.modelProfiles.find(
       (profile) =>
@@ -526,13 +530,13 @@ test("legacy composition fingerprint includes Kestrel and economics policy revis
   });
   const expected = digestCanonical({
     policyId: "kestrel",
-    policyVersion: 3,
+    policyVersion: 4,
     promptPolicyId: "kestrel",
     harnessEconomicsControlVersion: 1,
     harnessEconomicsPolicyId: "economics:kestrel:v2",
     harnessEconomicsPolicyVersion: 1,
     environmentPresetId: "workspace_hosted",
-    environmentPresetVersion: 1,
+    environmentPresetVersion: 2,
     environmentCapabilityPacks: composed.profile.capabilityPacks,
     overlay: LUNA_ROUTE,
     toolAllowlist: composed.profile.toolAllowlist,

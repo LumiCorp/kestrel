@@ -136,6 +136,24 @@ test("ProfilesFileV10 strictly contains one canonical profile and environment bi
   );
 });
 
+test("V10 preserves authored sandbox capability profiles through update and resolution", () => {
+  const current = createDefaultProfilesFileV10("cli_safe_local");
+  const profile = resolveProfilesFileV10Profile(current, "cli_safe_local");
+  const capability = {
+    version: 1 as const, capabilityId: "tavily.search.read" as const, operations: ["search"] as ["search"],
+    resource: "https://api.tavily.com/search" as const, audience: { tenantId: "tenant", environmentId: "environment" },
+    maxRequests: 1 as const, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096, timeoutMs: 1000, maxExpiryMs: 5000,
+    brokerAuthority: { authorityId: "broker", revision: "r1" },
+  };
+  const updated = updateProfilesFileV10FromProfile({
+    current,
+    presetId: "cli_safe_local",
+    profile: { ...profile, codeMode: { ...profile.codeMode!, capabilities: [capability] } },
+  });
+  const resolved = resolveProfilesFileV10Profile(updated, "cli_safe_local");
+  assert.deepEqual(resolved.codeMode?.capabilities, [capability]);
+});
+
 test("V9 migration excludes reference and custom authority instead of merging it", () => {
   const prepared = prepareProfilesFileV10Migration({ raw: v9Source() });
   const safe = prepared.profilesFile.environmentBindings.cli_safe_local;

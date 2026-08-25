@@ -34,3 +34,18 @@ test("attachment availability errors preserve retryable HTTP semantics", async (
   assert.equal(temporary.status, 503);
   assert.equal(missing.status, 404);
 });
+
+test("database failures never expose query text or parameters", async () => {
+  const error = Object.assign(
+    new Error('Failed query: insert into "file_scope_grants" params: private-id'),
+    { code: "23505" },
+  );
+  const response = errorResponse(error, 400);
+
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), {
+    error: "Database operation failed.",
+    code: "DATABASE_OPERATION_FAILED",
+    category: "query_failed",
+  });
+});

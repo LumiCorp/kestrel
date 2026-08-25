@@ -2,6 +2,7 @@ import { DEFAULT_MODEL_BY_PROVIDER, type ModelProviderId } from "./runtimeProfil
 
 const RAW_MODEL_ALLOWLIST_BY_PROVIDER: Record<ModelProviderId, readonly string[]> = {
   openrouter: [
+    "gpt-5-nano-2025-08-07",
     "z-ai/glm-5.2",
     "openai/gpt-5.4-mini",
     "openai/gpt-5.2-chat",

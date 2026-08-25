@@ -10,6 +10,7 @@ import {
 import { LocalCoreProtocolEventJournal } from "../../src/localCore/protocolEventJournal.js";
 import { PostgresSessionStore } from "../../src/store/PostgresSessionStore.js";
 import { KestrelChatRuntime, createRuntimeFactoryWithStore } from "../runtime/KestrelChatRuntime.js";
+import type { KestrelRuntimeEnvironment } from "../runtime/KestrelChatRuntime.js";
 import {
   createLiveOnlyProgressListener,
   type RunnerHost,
@@ -36,8 +37,25 @@ export interface HostedRunnerStoreRecovery {
 
 export function createHostedRunnerRuntimeFactory(
   store: SessionStore,
+  options: {
+    env?: NodeJS.ProcessEnv | undefined;
+    sandboxCapabilityFetchImpl?: typeof fetch | undefined;
+    sandboxCapabilityQualificationObserver?: KestrelRuntimeEnvironment["sandboxCapabilityQualificationObserver"];
+    modelRetryCount?: number | undefined;
+  } = {},
 ): RunnerRuntimeFactory {
-  const runtimeFactory = createRuntimeFactoryWithStore(store);
+  const runtimeFactory = createRuntimeFactoryWithStore(store, {
+    resolveEnvironment: () => ({
+      ...resolveHostedSandboxCapabilityEnvironment(
+        options.env ?? process.env,
+        options.sandboxCapabilityFetchImpl,
+        options.sandboxCapabilityQualificationObserver,
+      ),
+      ...(options.modelRetryCount === undefined
+        ? {}
+        : { modelRetryCount: options.modelRetryCount }),
+    }),
+  });
   return (
     profile,
     onRunLog,
@@ -57,8 +75,43 @@ export function createHostedRunnerRuntimeFactory(
     });
 }
 
+export function resolveHostedSandboxCapabilityEnvironment(
+  env: NodeJS.ProcessEnv,
+  sandboxCapabilityFetchImpl?: typeof fetch | undefined,
+  sandboxCapabilityQualificationObserver?: KestrelRuntimeEnvironment["sandboxCapabilityQualificationObserver"],
+): KestrelRuntimeEnvironment {
+  const tenantId = readTrustedEnv(env, "KESTREL_TENANT_ID");
+  const environmentId = readTrustedEnv(env, "KESTREL_ENVIRONMENT_ID");
+  const authorityId = readTrustedEnv(env, "KESTREL_SANDBOX_BROKER_AUTHORITY_ID");
+  const authorityRevision = readTrustedEnv(env, "KESTREL_SANDBOX_BROKER_AUTHORITY_REVISION");
+  return {
+    runtimeEnv: env,
+    modelEnv: env,
+    internetEnv: env,
+    mcpEnv: env,
+    ...(tenantId && environmentId ? { sandboxCapabilityAudience: { tenantId, environmentId } } : {}),
+    ...(authorityId && authorityRevision ? { sandboxCapabilityBrokerAuthority: { authorityId, revision: authorityRevision } } : {}),
+    ...(readTrustedEnv(env, "KESTREL_SANDBOX_TAVILY_CREDENTIAL") === undefined ? {} : {
+      sandboxCapabilityCredentialResolver: async () => {
+        const secret = readTrustedEnv(env, "KESTREL_SANDBOX_TAVILY_CREDENTIAL");
+        const revision = readTrustedEnv(env, "KESTREL_SANDBOX_TAVILY_CREDENTIAL_REVISION");
+        if (secret === undefined || revision === undefined) throw new Error("Authoritative hosted Tavily credential and revision are required");
+        return { credentialId: "tool.tavily.default", revision, secret };
+      },
+    }),
+    ...(sandboxCapabilityFetchImpl === undefined ? {} : { sandboxCapabilityFetchImpl }),
+    ...(sandboxCapabilityQualificationObserver === undefined ? {} : { sandboxCapabilityQualificationObserver }),
+  };
+}
+
+function readTrustedEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const value = env[name]?.trim();
+  return value === undefined || value.length === 0 ? undefined : value;
+}
+
 export async function createHostedRunnerStore(input: {
   storeDir: string;
+  tenantId?: string | undefined;
   onStoreQuarantined?:
     | ((recovery: HostedRunnerStoreRecovery) => void | Promise<void>)
     | undefined;
@@ -66,7 +119,7 @@ export async function createHostedRunnerStore(input: {
   const sqlitePath = path.join(path.resolve(input.storeDir), "pglite");
 
   try {
-    return await initializeHostedRunnerStore(sqlitePath);
+    return await initializeHostedRunnerStore(sqlitePath, input.tenantId);
   } catch (error) {
     if (asRuntimeError(error).code !== "STORE_SQLITE_INIT_FAILED") {
       throw error;
@@ -77,7 +130,7 @@ export async function createHostedRunnerStore(input: {
     if (archived) {
       await input.onStoreQuarantined?.({ sqlitePath, recoveryPath });
     }
-    return await initializeHostedRunnerStore(sqlitePath);
+    return await initializeHostedRunnerStore(sqlitePath, input.tenantId);
   }
 }
 
@@ -104,6 +157,7 @@ export async function createHostedRunnerStoreFromEnv(input: {
   }
   return await createHostedRunnerStore({
     storeDir,
+    tenantId: readTrustedEnv(input.env ?? process.env, "KESTREL_TENANT_ID"),
     ...(input.onStoreQuarantined !== undefined
       ? { onStoreQuarantined: input.onStoreQuarantined }
       : {}),
@@ -112,6 +166,7 @@ export async function createHostedRunnerStoreFromEnv(input: {
 
 async function initializeHostedRunnerStore(
   sqlitePath: string,
+  tenantId?: string | undefined,
 ): Promise<HostedRunnerStore> {
   let handle: SqlExecutorStoreHandle | undefined;
   try {
@@ -125,6 +180,7 @@ async function initializeHostedRunnerStore(
       eventJournal: new LocalCoreProtocolEventJournal(handle.executor),
       store: new PostgresSessionStore(handle.executor, {
         enforceSchemaV3: true,
+        tenantId,
       }),
       sqlitePath,
       ready: handle.ready,

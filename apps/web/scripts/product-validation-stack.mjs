@@ -9,6 +9,7 @@ const host = "127.0.0.1";
 const appPort = required("KESTREL_PRODUCT_APP_PORT");
 const runnerPort = required("KESTREL_PRODUCT_RUNNER_PORT");
 const workerHealthPort = required("KESTREL_PRODUCT_WORKER_HEALTH_PORT");
+const knowledgeWorkerHealthPort = required("KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT");
 const children = [];
 
 process.once("SIGINT", () => shutdown(130));
@@ -39,6 +40,15 @@ try {
     `http://${host}:${workerHealthPort}/healthz`,
     worker,
     "Turn worker",
+  );
+
+  const knowledgeWorker = start(pnpm, ["worker:knowledge:local"], webRoot, {
+    KESTREL_WORKER_HEALTH_PORT: knowledgeWorkerHealthPort,
+  });
+  await waitForUrl(
+    `http://${host}:${knowledgeWorkerHealthPort}/healthz`,
+    knowledgeWorker,
+    "Knowledge worker",
   );
 
   const web = start(pnpm, ["exec", "next", "start", "--hostname", host, "--port", appPort], webRoot);

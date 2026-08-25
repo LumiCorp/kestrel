@@ -53,6 +53,8 @@ import {
 } from "../../src/runtime/RuntimeFailure.js";
 import { ExecutionAuthorizationProvider } from "../../src/runtime/ExecutionAuthorizationProvider.js";
 import { defaultToolCatalog } from "../catalog.js";
+import { createBuiltInToolDescriptor } from "../catalog.js";
+import { codeExecuteDefinitionForProfile } from "../code/execute.js";
 import type {
   RuntimeToolRunContext,
   SharedToolContext,
@@ -126,6 +128,7 @@ type PinnedExecutionSource = {
   pinned: Omit<PinnedToolExecutionV1, "handler">;
   createHandler: (
     options: ToolGatewayCallOptions,
+    prepared?: PreparedToolCallV1 | undefined,
   ) => (input: unknown) => Promise<unknown>;
   retain?: (() => void) | undefined;
   release?: (() => Promise<void> | void) | undefined;
@@ -228,6 +231,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         .toModelTools(builtInNames)
         .map((tool) => [tool.name, tool] as const),
     );
+    const codeExecuteDefinition = codeExecuteDefinitionForProfile(this.builtInContext.codeMode);
+    this.builtInDescriptors.set("code.execute", createBuiltInToolDescriptor(codeExecuteDefinition));
+    this.builtInToolSpecs.set("code.execute", {
+      name: codeExecuteDefinition.name,
+      description: codeExecuteDefinition.description,
+      inputSchema: codeExecuteDefinition.inputSchema,
+    });
 
     this.builtInCapabilities = new Map(
       defaultToolCatalog
@@ -802,13 +812,27 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       options.runContext,
     );
     try {
+      let persistCompletedCapabilityRawOutput: ((rawOutput: unknown) => Promise<void>) | undefined;
+      const preparedHandler = source.createHandler({
+        ...options,
+        persistCompletedCapabilityRawOutput: (rawOutput) => {
+          if (persistCompletedCapabilityRawOutput === undefined) {
+            throw new Error("Capability result persistence is unavailable for this prepared execution.");
+          }
+          return persistCompletedCapabilityRawOutput(rawOutput);
+        },
+      }, prepared);
       let result = await executePinnedToolCallV1({
         prepared,
         pinned: {
           ...source.pinned,
-          handler: source.createHandler(options),
+          handler: (toolInput, lifecycle) => {
+            persistCompletedCapabilityRawOutput = lifecycle?.persistCompletedCapabilityResult;
+            return preparedHandler(toolInput);
+          },
         },
         signal: options.signal,
+        persistCompletedCapabilityResult: options.persistCompletedCapabilityResult,
       });
       if (
         result.outcome.kind === "failure" &&
@@ -826,13 +850,27 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             options.runContext,
           );
           try {
+            let persistRetryCapabilityRawOutput: ((rawOutput: unknown) => Promise<void>) | undefined;
+            const retryHandler = retrySource.createHandler({
+              ...options,
+              persistCompletedCapabilityRawOutput: (rawOutput) => {
+                if (persistRetryCapabilityRawOutput === undefined) {
+                  throw new Error("Capability result persistence is unavailable for this prepared execution.");
+                }
+                return persistRetryCapabilityRawOutput(rawOutput);
+              },
+            }, prepared);
             result = await executePinnedToolCallV1({
               prepared,
               pinned: {
                 ...retrySource.pinned,
-                handler: retrySource.createHandler(options),
+                handler: (toolInput, lifecycle) => {
+                  persistRetryCapabilityRawOutput = lifecycle?.persistCompletedCapabilityResult;
+                  return retryHandler(toolInput);
+                },
               },
               signal: options.signal,
+              persistCompletedCapabilityResult: options.persistCompletedCapabilityResult,
             });
           } finally {
             await retrySource.release?.();
@@ -1272,13 +1310,39 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           }
           return record;
         },
-        createHandler: (handlerOptions: ToolGatewayCallOptions) => {
+        createHandler: (handlerOptions: ToolGatewayCallOptions, prepared) => {
+          const executionContext = prepared === undefined
+            ? activeContext
+            : {
+                ...activeContext,
+                runtime: {
+                  ...activeContext.runtime,
+                  runId: activeContext.runtime?.runId ?? prepared.runId,
+                  sessionId: activeContext.runtime?.sessionId ?? prepared.sessionId,
+                  toolCallId: prepared.callId,
+                },
+                ...(descriptor.toolId === "code.execute" && activeContext.sandboxCapabilityRuntime !== undefined
+                  ? {
+                      sandboxCapabilityRuntime: {
+                        ...activeContext.sandboxCapabilityRuntime,
+                        preparedPolicy: prepared.policy,
+                        ...(prepared.approval === undefined ? {} : { preparedApproval: prepared.approval }),
+                      },
+                    }
+                  : {}),
+              };
+          const contextWithResultPersistence = handlerOptions.persistCompletedCapabilityRawOutput === undefined
+            ? executionContext
+            : {
+                ...executionContext,
+                persistCompletedCapabilityResult: handlerOptions.persistCompletedCapabilityRawOutput,
+              };
           const handlers = defaultToolCatalog.createRawHandlers(
             [descriptor.toolId],
             handlerOptions.console === undefined
-              ? { ...activeContext, signal: handlerOptions.signal }
+              ? { ...contextWithResultPersistence, signal: handlerOptions.signal }
               : {
-                  ...activeContext,
+                  ...contextWithResultPersistence,
                   toolConsole: handlerOptions.console,
                   signal: handlerOptions.signal,
                 },

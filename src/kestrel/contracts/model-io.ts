@@ -387,6 +387,10 @@ export interface ToolGatewayCallOptions {
   runContext?: ToolRunContext | undefined;
   toolNames?: readonly string[] | undefined;
   runtimeBudgetRemainingMs?: number | undefined;
+  /** Durable exact-result sink used by capability-bearing tools before host teardown. */
+  persistCompletedCapabilityResult?: ((result: AgentToolResultV2) => Promise<void>) | undefined;
+  /** @internal Gateway bridge from a raw tool handler to its exact result envelope. */
+  persistCompletedCapabilityRawOutput?: ((rawOutput: unknown) => Promise<void>) | undefined;
 }
 
 export type ToolConsoleSink = (event: ToolConsoleEvent) => void | Promise<void>;

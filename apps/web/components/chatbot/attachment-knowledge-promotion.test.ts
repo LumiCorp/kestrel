@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
 import type { Attachment } from "@/lib/types";
-import { selectKnowledgePromotionCandidates } from "./attachment-knowledge-promotion";
+import {
+  beginKnowledgePromotion,
+  finishKnowledgePromotion,
+  selectKnowledgePromotionCandidates,
+} from "./attachment-knowledge-promotion";
 
 const base: Attachment = {
   attachmentId: "file-1",
@@ -26,4 +29,12 @@ test("Knowledge promotion is offered only for eligible uploads", () => {
     knowledgeEligible: false,
   };
   assert.deepEqual(selectKnowledgePromotionCandidates([eligible, unsupported]), [eligible]);
+});
+
+test("Knowledge promotion synchronously admits only one request", () => {
+  const singleFlight = { current: false };
+  assert.equal(beginKnowledgePromotion(singleFlight), true);
+  assert.equal(beginKnowledgePromotion(singleFlight), false);
+  finishKnowledgePromotion(singleFlight);
+  assert.equal(beginKnowledgePromotion(singleFlight), true);
 });

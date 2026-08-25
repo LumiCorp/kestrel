@@ -312,21 +312,13 @@ export async function resolveTurnAttachments(input: {
 
   const attachments = await Promise.all(
     rows.map(async (row) => {
-      if (!storage.signedReadUrl) {
-        throw resolverError(
-          "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE",
-          "The attachment service cannot mint temporary file access.",
-          row.fileId,
-          true,
-        );
-      }
-      let sourceUrl: string;
+      let source: Awaited<ReturnType<typeof resolveRunnerAttachmentSource>>;
       try {
-        sourceUrl = await storage.signedReadUrl(row.objectKey, 900);
+        source = await resolveRunnerAttachmentSource(storage, row.objectKey, 900);
       } catch {
         throw resolverError(
           "ATTACHMENT_SOURCE_TEMPORARILY_UNAVAILABLE",
-          "The attachment service could not mint temporary file access.",
+          "The attachment service could not prepare temporary file access.",
           row.fileId,
           true,
         );
@@ -354,10 +346,14 @@ export async function resolveTurnAttachments(input: {
         kind,
         representationStatus,
         createdAt: row.createdAt.toISOString(),
-        sourceUrl,
-        sourceUrlExpiresAt: new Date(
-          (input.now ?? new Date()).getTime() + 15 * 60 * 1000,
-        ).toISOString(),
+        ...(source.sourceUrl
+          ? {
+              sourceUrl: source.sourceUrl,
+              sourceUrlExpiresAt: new Date(
+                (input.now ?? new Date()).getTime() + 15 * 60 * 1000,
+              ).toISOString(),
+            }
+          : { data: source.data }),
         ...(representation?.textContent
           ? {
               text: representation.textContent,
@@ -392,6 +388,21 @@ export async function resolveTurnAttachments(input: {
   }
 
   return { version: 1, turnId: turn.id, attachments };
+}
+
+export async function resolveRunnerAttachmentSource(
+  storage: Pick<FileStorageProvider, "signedReadUrl" | "readBuffer">,
+  objectKey: string,
+  expiresInSeconds: number,
+): Promise<{ sourceUrl: string; data?: never } | { data: string; sourceUrl?: never }> {
+  if (storage.signedReadUrl) {
+    const candidate = await storage.signedReadUrl(objectKey, expiresInSeconds);
+    const parsed = new URL(candidate);
+    if (parsed.protocol === "https:" && !parsed.username && !parsed.password) {
+      return { sourceUrl: candidate };
+    }
+  }
+  return { data: (await storage.readBuffer(objectKey)).toString("base64") };
 }
 
 function resolverError(

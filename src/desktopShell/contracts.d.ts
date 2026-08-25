@@ -566,7 +566,7 @@ export interface DesktopSettings {
     developerPath?: string | undefined;
     developerShellEnvMode: "inherit" | "allowlist";
     developerShellAllowedEnvNames: string[];
-    approvalPolicyPackId: "dev" | "ci_bot" | "production";
+    approvalPolicyPackId: "dev" | "isolated_code" | "ci_bot" | "production";
     agentStageConfig?: DesktopAgentStageConfig | undefined;
     modelTimeoutMs?: number | undefined;
     databaseUrl?: string | undefined;

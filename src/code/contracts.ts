@@ -20,6 +20,7 @@ export interface CodeExecutionRequest {
   network?: CodeNetworkMode | undefined;
   dependencies?: string[] | undefined;
   args?: string[] | undefined;
+  capability?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilitySelection | undefined;
 }
 
 export interface CodeExecutionArtifact {
@@ -62,6 +63,12 @@ export interface CodeExecutionResult {
   summary: string;
   policy: AppliedCodeExecutionPolicy;
   retention: CodeModeRetentionConfig;
+  capabilityReplayEvidence?: {
+    version: 1;
+    leaseId: string;
+    bindingDigest: string;
+    toolCallId: string;
+  } | undefined;
 }
 
 export interface CodeModeSandboxConfig {
@@ -92,6 +99,7 @@ export interface CodeModeProfileConfig {
   sandbox: CodeModeSandboxConfig;
   retention: CodeModeRetentionConfig;
   approvalMode: "auto";
+  capabilities?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityProfile[] | undefined;
 }
 
 export const DEFAULT_CODE_MODE_SANDBOX: CodeModeSandboxConfig = {
@@ -132,7 +140,109 @@ export const DEFAULT_CODE_MODE_ENABLED_CONFIG: CodeModeProfileConfig = {
 export interface SandboxExecutionInput {
   request: CodeExecutionRequest;
   policy: AppliedCodeExecutionPolicy;
+  capability?: SandboxCapabilityGrant | undefined;
   signal?: AbortSignal | undefined;
+}
+
+/**
+ * A short-lived grant supplied by trusted runtime code. It is deliberately not
+ * part of CodeExecutionRequest or profile configuration, so model-authored and
+ * persisted inputs cannot contain the lease.
+ */
+export interface SandboxCapabilityGrant {
+  transport: "docker-shared-loopback-v1";
+  lease: string;
+  operation: string;
+  destination: string;
+  response: unknown;
+  expiresAt?: string | undefined;
+  maxRequests?: 1 | undefined;
+  maxResponseBytes?: number | undefined;
+  authority?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityAuthorityV1 | import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityAuthorityV2 | undefined;
+  /** Adapter-owned canonical input. The broker compares this exact value. */
+  expectedInput?: Record<string, unknown> | undefined;
+  /** Trusted host-only adapter. This function is never serialized into Docker state. */
+  adapter?: ((input: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>) | undefined;
+  /**
+   * Host-only durable lifecycle hooks. Like the adapter, these functions are
+   * never serialized into broker or workload state.
+   */
+  lifecycle?: {
+    beforeProviderInvocation: () => Promise<{ responseByteLimit: number } | void>;
+    commitProviderResult: (input: {
+      result: unknown;
+      responseBytes: number;
+      resultCount: number;
+    }) => Promise<void>;
+    recordProviderFailure: (error: unknown) => Promise<void>;
+    beforeContainerTeardown: (
+      reason: "completed" | "failed" | "cancelled" | "timeout",
+      completedOutput?: SandboxExecutionOutput | undefined,
+    ) => Promise<{ completedResultCommitted: boolean } | void>;
+  } | undefined;
+}
+
+export interface SandboxCapabilityRuntimeContext {
+  tenantId: string;
+  environmentId: string;
+  sessionId: string;
+  runId: string;
+  toolCallId: string;
+  threadId?: string | undefined;
+  /** Exact prepared-call policy decision; never inferred from the profile. */
+  policy?: import("../kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined;
+  /** Exact prepared-call approval authority, when policy required approval. */
+  approval?: import("../kestrel/contracts/tool-invocation.js").PreparedToolApprovalAuthorityV1 | undefined;
+  /** A child must carry an independently persisted authorization inside this parent ceiling. */
+  parentAuthorization?: import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityLeaseBindingV1["parentAuthorization"] | undefined;
+  profileFingerprint: string;
+  capabilityCatalogFingerprint: string;
+  executionBoundaryRevision: string;
+  brokerAuthority: { authorityId: string; revision: string };
+  leaseCoordinator?: import("./SandboxCapabilityLeaseCoordinator.js").SandboxCapabilityLeaseCoordinator | undefined;
+  credentialSnapshot?: {
+    credentialId: string;
+    revision: string;
+    secret: string;
+  } | undefined;
+  resolveCredentialSnapshot?: (() => Promise<{ credentialId: string; revision: string; secret: string }>) | undefined;
+  resolveParentAuthorization?: ((input: {
+    sessionId: string;
+    runId: string;
+    toolCallId: string;
+  }) => Promise<import("../kestrel/contracts/sandbox-capability.js").SandboxCapabilityLeaseBindingV1["parentAuthorization"] | undefined>) | undefined;
+  now?: (() => Date) | undefined;
+  fetchImpl?: typeof fetch | undefined;
+  registerSensitiveValue?: ((input: {
+    referenceId: string;
+    value: string;
+  }) => (() => void)) | undefined;
+  redactSensitiveValues?: (<T>(value: T) => T) | undefined;
+  /**
+   * Qualification-only host observer. The production runner never installs
+   * this port; it is deliberately absent from model-authored and persisted
+   * capability contracts.
+   */
+  qualificationObserver?: SandboxCapabilityQualificationObserver | undefined;
+}
+
+export type SandboxCapabilityQualificationCheckpoint =
+  | "lease_issued"
+  | "before_provider_invocation"
+  | "provider_response_received"
+  | "provider_result_committed"
+  | "before_exact_result_persistence"
+  | "exact_result_persisted"
+  | "before_lease_cleanup"
+  | "lease_cleanup_completed";
+
+export interface SandboxCapabilityQualificationObserver {
+  checkpoint(input: {
+    checkpoint: SandboxCapabilityQualificationCheckpoint;
+    leaseId: string;
+    runId: string;
+    toolCallId: string;
+  }): Promise<void>;
 }
 
 export interface SandboxExecutionOutput {
@@ -152,6 +262,11 @@ export interface CodeExecutionServicePort {
   execute(
     config: CodeModeProfileConfig,
     request: CodeExecutionRequest,
-    options?: { signal?: AbortSignal | undefined },
+    options?: {
+      signal?: AbortSignal | undefined;
+      capability?: SandboxCapabilityGrant | undefined;
+      capabilityRuntime?: SandboxCapabilityRuntimeContext | undefined;
+      persistCompletedCapabilityResult?: ((result: CodeExecutionResult) => Promise<void>) | undefined;
+    },
   ): Promise<CodeExecutionResult>;
 }

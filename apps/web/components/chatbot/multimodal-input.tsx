@@ -67,7 +67,11 @@ import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn, generateUUID } from "@/lib/utils";
 import { PromptInputSpeechButton } from "./ai-elements/prompt-input";
-import { selectKnowledgePromotionCandidates } from "./attachment-knowledge-promotion";
+import {
+  beginKnowledgePromotion,
+  finishKnowledgePromotion,
+  selectKnowledgePromotionCandidates,
+} from "./attachment-knowledge-promotion";
 import { ComposerToolbar } from "./composer-toolbar";
 import { PromptInput, PromptInputTextarea } from "./elements/prompt-input";
 import { ArrowUpIcon, PaperclipIcon, StopIcon } from "./icons";
@@ -278,6 +282,8 @@ function PureMultimodalInput({
   const [toolCapabilitiesResolved, setToolCapabilitiesResolved] =
     useState(false);
   const [promotionOpen, setPromotionOpen] = useState(false);
+  const [promotionPending, setPromotionPending] = useState(false);
+  const promotionSingleFlight = useRef(false);
   const [pendingKnowledgePromotion, setPendingKnowledgePromotion] = useState<
     Attachment[]
   >([]);
@@ -982,6 +988,11 @@ function PureMultimodalInput({
                   void uploadFile(upload.file, upload.id).then((attachment) => {
                     if (attachment) {
                       setAttachments((current) => [...current, attachment]);
+                      const promotionCandidates = selectKnowledgePromotionCandidates([attachment]);
+                      if (promotionCandidates.length > 0) {
+                        setPendingKnowledgePromotion(promotionCandidates);
+                        setPromotionOpen(true);
+                      }
                     }
                   });
                 } : undefined}
@@ -1120,7 +1131,12 @@ function PureMultimodalInput({
         />
       </PromptInput>
 
-      <Dialog onOpenChange={setPromotionOpen} open={promotionOpen}>
+      <Dialog
+        onOpenChange={(open) => {
+          if (!promotionPending) setPromotionOpen(open);
+        }}
+        open={promotionOpen}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
@@ -1142,6 +1158,7 @@ function PureMultimodalInput({
           </div>
           <DialogFooter>
             <Button
+              disabled={promotionPending}
               onClick={() => {
                 setPromotionOpen(false);
                 setPendingKnowledgePromotion([]);
@@ -1151,7 +1168,10 @@ function PureMultimodalInput({
               Chat only
             </Button>
             <Button
+              disabled={promotionPending}
               onClick={async () => {
+                if (!beginKnowledgePromotion(promotionSingleFlight)) return;
+                setPromotionPending(true);
                 try {
                   const uploads = pendingKnowledgePromotion.map((attachment) => ({
                     fileId: attachment.attachmentId,
@@ -1179,6 +1199,8 @@ function PureMultimodalInput({
                       : "Knowledge import failed."
                   );
                 } finally {
+                  finishKnowledgePromotion(promotionSingleFlight);
+                  setPromotionPending(false);
                   setPromotionOpen(false);
                   setPendingKnowledgePromotion([]);
                 }

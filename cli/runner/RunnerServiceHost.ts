@@ -44,6 +44,8 @@ export interface RunnerServiceHostOptions {
   profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
   serviceVersion: string;
   eventJournal?: RunnerServiceEventJournal | undefined;
+  exactEffectResultStore?: NonNullable<ConstructorParameters<typeof RunnerHost>[3]>["exactEffectResultStore"];
+  exactEffectResultTenantId?: string | undefined;
 }
 
 export interface RunnerServiceHostCloseOptions {
@@ -542,7 +544,7 @@ export class RunnerServiceHost {
       this.events,
       options.runtimeFactory,
       options.profileProvider,
-      { profileSourcePolicy: options.profileSourcePolicy },
+      { profileSourcePolicy: options.profileSourcePolicy, exactEffectResultStore: options.exactEffectResultStore, exactEffectResultTenantId: options.exactEffectResultTenantId },
     );
     this.router = new CommandRouter(this.host, this.events);
     this.health = createRunnerHealthV1({

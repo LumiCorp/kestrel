@@ -2,6 +2,7 @@ import type { TuiProfile } from "../../cli/contracts.js";
 import type { McpServerConfig } from "../mcp/contracts.js";
 import {
   composeKestrelOneProfile,
+  defaultApprovalPolicyPackForPreset,
 } from "../profile/kestrelOnePolicy.js";
 import {
   resolveProfileWithModelPolicy,
@@ -55,11 +56,13 @@ export function resolveDesktopKestrelOneProfile(input: {
       return connection?.kind !== "authorization" || connection.runtime !== "native";
     })
     .map(desktopMcpServerToRuntime);
-  const approvalPolicyPackId =
+  const explicitApprovalPolicyPackId =
+    input.settings.approvalPolicyPackId === "dev" ||
+    input.settings.approvalPolicyPackId === "isolated_code" ||
     input.settings.approvalPolicyPackId === "ci_bot" ||
     input.settings.approvalPolicyPackId === "production"
       ? input.settings.approvalPolicyPackId
-      : "dev";
+      : undefined;
   const developerShellEnvMode =
     input.settings.developerShellEnvMode === "allowlist"
       ? "allowlist"
@@ -83,6 +86,9 @@ export function resolveDesktopKestrelOneProfile(input: {
       : capabilityPacks.includes("dev_shell")
         ? "desktop_dev_local"
         : "desktop_safe_local";
+  const approvalPolicyPackId =
+    explicitApprovalPolicyPackId ??
+    defaultApprovalPolicyPackForPreset(environmentPresetId);
   const base = composeKestrelOneProfile({
     environmentPresetId,
     overlay: {

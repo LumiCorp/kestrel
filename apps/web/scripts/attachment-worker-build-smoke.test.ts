@@ -77,6 +77,16 @@ test("production build externalizes and traces the attachment package", async ()
   assert.match(attachmentManifest, /"require": "\.\/dist\/index\.cjs"/u);
 });
 
+test("attachment extraction resolves its worker through the package boundary", async () => {
+  const source = await readFile(
+    new URL("../../../packages/attachments/src/index.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /createRequire\(import\.meta\.url\)\.resolve/u);
+  assert.match(source, /@kestrel-agents\/files\/worker-runtime/u);
+  assert.doesNotMatch(source, /new URL\("\.\/worker\.js", import\.meta\.url\)/u);
+});
+
 test("build smoke rejects an attachment worker bundled anywhere in server output", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "attachment-build-smoke-"));
   context.after(() => rm(root, { recursive: true, force: true }));

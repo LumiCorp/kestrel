@@ -468,7 +468,7 @@ function validateToolDefinition(definition: SharedToolDefinition): void {
   });
 }
 
-function createBuiltInToolDescriptor(
+export function createBuiltInToolDescriptor(
   definition: SharedToolDefinition,
 ): ToolDescriptorV1 {
   const presentation = resolveToolPresentationMetadata({

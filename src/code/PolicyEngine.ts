@@ -171,6 +171,9 @@ export function mergeCodeModeConfig(
       persistArtifacts: config?.retention?.persistArtifacts ?? base.retention.persistArtifacts,
     },
     approvalMode: "auto",
+    ...(config?.capabilities !== undefined
+      ? { capabilities: config.capabilities.map((capability) => structuredClone(capability)) }
+      : {}),
   };
 }
 

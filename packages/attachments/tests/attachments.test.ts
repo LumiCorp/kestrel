@@ -72,6 +72,15 @@ test("CommonJS consumers resolve the bridge and preserve the extraction contract
   assert.equal(extracted.text, sentinel);
 });
 
+test("isolated extraction resolves the package-owned worker entry", async () => {
+  const extracted = await extractAttachmentTextIsolated({
+    buffer: Buffer.from("package worker sentinel", "utf8"),
+    filename: "sentinel.md",
+    mediaType: "text/markdown",
+  });
+  assert.equal(extracted.text, "package worker sentinel");
+});
+
 test("does not initialize the PDF runtime while importing the attachment package", async () => {
   const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /^import .* from ["']pdf-parse["'];$/mu);

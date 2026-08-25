@@ -14,6 +14,9 @@ export interface EffectExecutionContext {
   runtimeBudgetRemainingMs?: number | undefined;
   signal?: AbortSignal | undefined;
   session?: SessionRecord | null | undefined;
+  // Capability-bearing tool handlers cross the durable boundary before they
+  // return, closing the otherwise unobservable post-handler crash window.
+  persistCompletedCapabilityResult?: ((output: unknown) => Promise<void>) | undefined;
 }
 
 export type EffectHandler = (

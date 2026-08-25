@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { isAdminUser } from "@/lib/knowledge/admin-user";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 
@@ -95,7 +95,7 @@ export function getKnowledgeDocumentByFileScope(input: {
   });
 }
 
-export async function createKnowledgeDocument(input: {
+export async function createOrGetKnowledgeDocumentByChecksumSerialized(input: {
   id: string;
   fileId: string;
   organizationId: string;
@@ -109,7 +109,74 @@ export async function createKnowledgeDocument(input: {
   storageKey: string;
   projectId?: string | null;
 }) {
-  const [document] = await knowledgeDb
+  const scopeKey = input.projectId ?? "organization";
+  const lockKey = [
+    "kestrel:knowledge-document-content",
+    input.organizationId,
+    scopeKey,
+    input.checksumSha256,
+  ].join(":");
+  return knowledgeDb.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`,
+    );
+    const [existing] = await tx
+      .select()
+      .from(schema.knowledgeDocuments)
+      .where(and(
+        eq(schema.knowledgeDocuments.organizationId, input.organizationId),
+        eq(schema.knowledgeDocuments.checksumSha256, input.checksumSha256),
+        input.projectId
+          ? eq(schema.knowledgeDocuments.projectId, input.projectId)
+          : and(
+              eq(schema.knowledgeDocuments.scope, "organization"),
+              isNull(schema.knowledgeDocuments.projectId),
+            ),
+      ))
+      .orderBy(desc(schema.knowledgeDocuments.updatedAt))
+      .limit(1);
+    if (existing) return { document: existing, created: false };
+
+    const [document] = await tx
+      .insert(schema.knowledgeDocuments)
+      .values({
+        id: input.id,
+        fileId: input.fileId,
+        organizationId: input.organizationId,
+        scope: input.projectId ? "project" : "organization",
+        projectId: input.projectId ?? null,
+        uploaderUserId: input.uploaderUserId,
+        title: input.title ?? null,
+        filename: input.filename,
+        originalFilename: input.originalFilename,
+        mediaType: input.mediaType,
+        sizeBytes: input.sizeBytes,
+        checksumSha256: input.checksumSha256,
+        storageKey: input.storageKey,
+        status: "uploaded",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning();
+    if (!document) throw new Error("Knowledge document could not be created.");
+    return { document, created: true };
+  });
+}
+
+export async function createOrGetKnowledgeDocumentByFileScope(input: {
+  id: string;
+  fileId: string;
+  organizationId: string;
+  uploaderUserId: string;
+  filename: string;
+  originalFilename: string;
+  mediaType: string;
+  sizeBytes: number;
+  checksumSha256: string;
+  storageKey: string;
+  projectId?: string | null;
+}) {
+  const [created] = await knowledgeDb
     .insert(schema.knowledgeDocuments)
     .values({
       id: input.id,
@@ -118,7 +185,7 @@ export async function createKnowledgeDocument(input: {
       scope: input.projectId ? "project" : "organization",
       projectId: input.projectId ?? null,
       uploaderUserId: input.uploaderUserId,
-      title: input.title ?? null,
+      title: null,
       filename: input.filename,
       originalFilename: input.originalFilename,
       mediaType: input.mediaType,
@@ -129,9 +196,16 @@ export async function createKnowledgeDocument(input: {
       createdAt: new Date(),
       updatedAt: new Date(),
     })
+    .onConflictDoNothing()
     .returning();
-
-  return document;
+  if (created) return { document: created, created: true };
+  const concurrent = await getKnowledgeDocumentByFileScope({
+    organizationId: input.organizationId,
+    fileId: input.fileId,
+    projectId: input.projectId,
+  });
+  if (concurrent) return { document: concurrent, created: false };
+  throw new Error("Knowledge document could not be created or reused.");
 }
 
 export async function updateKnowledgeDocument(

@@ -17,6 +17,7 @@ const port = requiredPort("KESTREL_PRODUCT_APP_PORT");
 const fakeOpenRouterPort = requiredPort("KESTREL_PRODUCT_FAKE_OPENROUTER_PORT");
 const runnerPort = requiredPort("KESTREL_PRODUCT_RUNNER_PORT");
 const workerHealthPort = requiredPort("KESTREL_PRODUCT_WORKER_HEALTH_PORT");
+const knowledgeWorkerHealthPort = requiredPort("KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT");
 const baseURL = `http://localhost:${port}`;
 const databaseUrl = process.env.KESTREL_PRODUCT_DATABASE_URL;
 if (!databaseUrl) {
@@ -66,6 +67,7 @@ const webServerEnv = {
   KESTREL_ONE_TOOL_TOKEN: "product-contract-tool",
   KESTREL_PRODUCT_CONTRACT: "true",
   KESTREL_WORKER_HEALTH_PORT: String(workerHealthPort),
+  KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT: String(knowledgeWorkerHealthPort),
   KESTREL_RUNNER_SERVICE_PORT: String(runnerPort),
   KESTREL_RUNNER_SERVICE_TOKEN: "product-contract-runner-token",
   KESTREL_WORKSPACE_SERVICE_TOKEN: "product-contract-workspace-token",

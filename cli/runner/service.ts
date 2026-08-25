@@ -30,6 +30,13 @@ async function main(): Promise<void> {
             close: store.close,
           },
           eventJournal: store.eventJournal,
+          ...(store.store.readExactEffectResult === undefined || store.store.claimExactEffectCancellation === undefined ? {} : {
+            exactEffectResultStore: {
+              readExactEffectResult: store.store.readExactEffectResult.bind(store.store),
+              claimExactEffectCancellation: store.store.claimExactEffectCancellation.bind(store.store),
+            },
+            exactEffectResultTenantId: process.env.KESTREL_TENANT_ID,
+          }),
         }),
     profileSourcePolicy: "registered-only",
     onRuntimeStoreEvent: (event) => {

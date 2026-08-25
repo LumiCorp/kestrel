@@ -247,7 +247,7 @@ export function buildCliContractMatrixV1(generatedAt = new Date().toISOString())
       },
       {
         command: "setup",
-        usage: "kestrel setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]",
+        usage: "kestrel setup [--profile <id>] [--approval-pack dev|isolated_code|ci_bot|production] [--full]",
         flags: ["--profile", "--approval-pack", "--full"],
       },
       {

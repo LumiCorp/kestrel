@@ -117,7 +117,7 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
     status = status === 500 ? 503 : status;
   }
 
-  if (dbError.category !== "unknown" && status === 500) {
+  if (dbError.category !== "unknown") {
     status =
       dbError.category === "query_failed"
         ? 500
@@ -125,14 +125,19 @@ export function errorResponse(error: unknown, fallbackStatus = 500) {
             dbError.category === "authentication_failed" ||
             dbError.retryable
           ? 503
-          : status;
+          : 500;
+    console.error("Database operation failed.", {
+      category: dbError.category,
+      retryable: dbError.retryable,
+    });
+    return NextResponse.json({
+      error: "Database operation failed.",
+      code: "DATABASE_OPERATION_FAILED",
+      category: dbError.category,
+    }, { status });
   }
 
   const body = details ? { error: message, details } : { error: message };
-
-  if (dbError.category !== "unknown") {
-    Object.assign(body, { category: dbError.category });
-  }
 
   return NextResponse.json(body, { status });
 }

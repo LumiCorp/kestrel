@@ -39,6 +39,7 @@ export interface RuntimeReplayBundleV1 {
     compatibility?: ReplayResult["compatibility"] | undefined;
     adaptation?: ReplayResult["adaptation"] | undefined;
     evidenceRecovery?: ReplayResult["evidenceRecovery"] | undefined;
+    sandboxCapabilities?: ReplayResult["sandboxCapabilities"] | undefined;
   };
   artifactReferences: string[];
   evaluation?: RecordedRuntimeEvaluationEvidenceV1 | undefined;
@@ -101,6 +102,7 @@ export async function buildRuntimeReplayBundle(
       ...(replay.compatibility !== undefined ? { compatibility: replay.compatibility } : {}),
       ...(replay.adaptation !== undefined ? { adaptation: replay.adaptation } : {}),
       ...(replay.evidenceRecovery !== undefined ? { evidenceRecovery: replay.evidenceRecovery } : {}),
+      ...(replay.sandboxCapabilities !== undefined ? { sandboxCapabilities: replay.sandboxCapabilities } : {}),
     },
     artifactReferences: collectArtifactReferences(replay),
     ...(evaluation !== undefined ? { evaluation } : {}),
