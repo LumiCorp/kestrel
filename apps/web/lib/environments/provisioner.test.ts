@@ -827,6 +827,58 @@ test("Environment updates prove stopped Workspaces and restore them to stopped",
   assert.deepEqual(completion?.restoredStoppedWorkspaceIds, ["workspace-id"]);
 });
 
+test("Environment update trusts Workspace health after an explicit start when Fly started wait is stale", async () => {
+  const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
+  const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;
+  const { repository, provider, calls } = fixture("environment.update", null, {
+    runtimeImage,
+    routerImage,
+    automaticRollback: false,
+  });
+  repository.listEnvironmentWorkspaces = async () => [
+    {
+      id: "workspace-id",
+      status: "stopped",
+      flyMachineId: "workspace-machine-id",
+      flyVolumeId: "workspace-volume-id",
+      runtimeImage: "registry.example/runtime@sha256:old",
+    },
+  ];
+  provider.updateMachineImage = async (input) => ({
+    id: input.machineId,
+    state: input.machineId === "workspace-machine-id" ? "stopped" : "started",
+    region: "iad",
+  });
+  provider.startMachine = async (input) => {
+    calls.push(`provider:start:${input.machineId}`);
+  };
+  provider.waitForMachine = async (input) => {
+    calls.push(`provider:wait:${input.machineId}:${input.state}`);
+    if (input.machineId === "workspace-machine-id" && input.state === "started") {
+      throw new EnvironmentProviderError(
+        "FLY_PROVIDER_TIMEOUT",
+        "Fly reported a stale stopped snapshot after the Machine started",
+      );
+    }
+  };
+  provider.waitForMachineHealth = async (input) => {
+    calls.push(`provider:health:${input.machineId}`);
+  };
+  provider.stopMachine = async (input) => {
+    calls.push(`provider:stop:${input.machineId}`);
+  };
+
+  assert.equal(
+    await createProvisioner(repository, provider).process("operation-id"),
+    "processed",
+  );
+  assert.ok(calls.includes("provider:start:workspace-machine-id"));
+  assert.ok(calls.includes("provider:health:workspace-machine-id"));
+  assert.ok(calls.includes("provider:stop:workspace-machine-id"));
+  assert.ok(calls.includes("provider:wait:workspace-machine-id:stopped"));
+  assert.ok(!calls.includes("provider:wait:workspace-machine-id:started"));
+});
+
 test("Environment update retry does not verify a stopped Workspace until restop succeeds", async () => {
   const runtimeImage = `ghcr.io/lumicorp/kestrel-workspace-runtime@sha256:${"a".repeat(64)}`;
   const routerImage = `ghcr.io/lumicorp/kestrel-environment-router@sha256:${"b".repeat(64)}`;

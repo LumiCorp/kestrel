@@ -39,6 +39,7 @@ export function flyMachineUpdateArgs(input: {
   app: string;
   image: string;
   machineId: string;
+  state: "started" | "stopped";
 }) {
   return [
     "machine",
@@ -49,6 +50,33 @@ export function flyMachineUpdateArgs(input: {
     "--image",
     input.image,
     "--yes",
+    ...(input.state === "stopped" ? ["--skip-start"] : []),
+  ];
+}
+
+export function flyMachineStateArgs(input: {
+  action: "start" | "stop";
+  app: string;
+  machineId: string;
+}) {
+  return ["machine", input.action, input.machineId, "--app", input.app];
+}
+
+export function flyMachineWaitArgs(input: {
+  app: string;
+  machineId: string;
+  state: "started" | "stopped";
+}) {
+  return [
+    "machine",
+    "wait",
+    input.machineId,
+    "--app",
+    input.app,
+    "--state",
+    input.state,
+    "--wait-timeout",
+    "2m",
   ];
 }
 
@@ -80,9 +108,15 @@ export async function deployProductionFlyMachine(
     machine: before,
     phase: "before",
   });
+  const intendedState = stableMachineState(before);
+  if (!intendedState) {
+    throw new Error(
+      `Fly Machine ${parsed.machineId} must be stably started or stopped before an image update.`,
+    );
+  }
   const expected = `${parsed.role} ${parsed.machineId} ${parsed.tag}`;
   process.stdout.write(
-    `${JSON.stringify({ action: "update-image", providerIdentity, app: role.app, role: parsed.role, machineId: parsed.machineId, current: before, requestedImage: image }, null, 2)}\n`,
+    `${JSON.stringify({ action: "update-image", providerIdentity, app: role.app, role: parsed.role, machineId: parsed.machineId, current: summarizeFlyMachineForOutput(before), requestedImage: image }, null, 2)}\n`,
   );
   await confirm(expected);
   const updated = runner(
@@ -91,11 +125,12 @@ export async function deployProductionFlyMachine(
       app: role.app,
       image,
       machineId: parsed.machineId,
+      state: intendedState,
     }),
     true,
   );
   if (updated.status !== 0) throw new Error("fly machine update failed.");
-  const after = readMachine(
+  let after = readMachine(
     captureJson(runner, "fly", flyMachineListArgs(role.app)),
     parsed.machineId,
   );
@@ -108,8 +143,74 @@ export async function deployProductionFlyMachine(
     machine: after,
     phase: "after",
   });
-  process.stdout.write(`${JSON.stringify({ providerResult: after }, null, 2)}\n`);
+  if (stableMachineState(after) !== intendedState) {
+    const restored = runner(
+      "fly",
+      flyMachineStateArgs({
+        action: intendedState === "started" ? "start" : "stop",
+        app: role.app,
+        machineId: parsed.machineId,
+      }),
+      true,
+    );
+    if (restored.status !== 0) {
+      throw new Error(
+        `fly machine ${intendedState === "started" ? "start" : "stop"} failed while restoring the pre-update state.`,
+      );
+    }
+    const waited = runner(
+      "fly",
+      flyMachineWaitArgs({
+        app: role.app,
+        machineId: parsed.machineId,
+        state: intendedState,
+      }),
+      true,
+    );
+    if (waited.status !== 0) {
+      throw new Error(
+        `fly machine wait failed while restoring the pre-update ${intendedState} state.`,
+      );
+    }
+    after = readMachine(
+      captureJson(runner, "fly", flyMachineListArgs(role.app)),
+      parsed.machineId,
+    );
+    if (!after) {
+      throw new Error(
+        `Fly did not return Machine ${parsed.machineId} in ${role.app} after restoring its pre-update state.`,
+      );
+    }
+    assertRoleDeploymentContract({
+      role: parsed.role,
+      machineId: parsed.machineId,
+      machine: after,
+      phase: "after",
+    });
+    if (stableMachineState(after) !== intendedState) {
+      throw new Error(
+        `Fly Machine ${parsed.machineId} did not return to its pre-update ${intendedState} state.`,
+      );
+    }
+  }
+  process.stdout.write(
+    `${JSON.stringify({ providerResult: summarizeFlyMachineForOutput(after) }, null, 2)}\n`,
+  );
   return { providerIdentity, app: role.app, image, before, after, ...parsed };
+}
+
+export function summarizeFlyMachineForOutput(value: unknown) {
+  const machine = record(value);
+  const imageRef = record(machine?.image_ref);
+  return {
+    id: stringValue(machine?.id),
+    state: stringValue(machine?.state),
+    region: stringValue(machine?.region),
+    image: {
+      repository: stringValue(imageRef?.repository),
+      tag: stringValue(imageRef?.tag),
+    },
+  };
 }
 
 async function confirmDeployment(expected: string) {
@@ -148,6 +249,11 @@ function readMachine(value: unknown, machineId: string) {
       return (candidate as Record<string, unknown>).id === machineId;
     }) ?? null
   );
+}
+
+function stableMachineState(value: unknown): "started" | "stopped" | null {
+  const state = record(value)?.state;
+  return state === "started" || state === "stopped" ? state : null;
 }
 
 function assertRoleDeploymentContract(input: {
@@ -217,6 +323,10 @@ function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : undefined;
 }
 
 function operatorArgs(args: string[]) {

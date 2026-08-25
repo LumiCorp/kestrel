@@ -9,8 +9,11 @@ import {
 import {
   deployProductionFlyMachine,
   flyMachineListArgs,
+  flyMachineStateArgs,
   flyMachineUpdateArgs,
+  flyMachineWaitArgs,
   parseFlyMachineDeploymentArgs,
+  summarizeFlyMachineForOutput,
 } from "../../scripts/deploy-production-fly-machine.js";
 import {
   assertProductionImageCanaryEnvironment,
@@ -166,6 +169,7 @@ test("local Fly deployment names one platform Machine and operator tag", () => {
       app: "example",
       image: `registry.fly.io/kestrel-preview-edge:${tag}`,
       machineId: "e2865",
+      state: "started",
     }),
     [
       "machine",
@@ -178,6 +182,90 @@ test("local Fly deployment names one platform Machine and operator tag", () => {
       "--yes",
     ],
   );
+  assert.deepEqual(
+    flyMachineUpdateArgs({
+      app: "example",
+      image: `registry.fly.io/kestrel-preview-edge:${tag}`,
+      machineId: "e2865",
+      state: "stopped",
+    }),
+    [
+      "machine",
+      "update",
+      "e2865",
+      "--app",
+      "example",
+      "--image",
+      `registry.fly.io/kestrel-preview-edge:${tag}`,
+      "--yes",
+      "--skip-start",
+    ],
+  );
+  assert.deepEqual(
+    flyMachineStateArgs({
+      action: "start",
+      app: "example",
+      machineId: "e2865",
+    }),
+    ["machine", "start", "e2865", "--app", "example"],
+  );
+  assert.deepEqual(
+    flyMachineStateArgs({
+      action: "stop",
+      app: "example",
+      machineId: "e2865",
+    }),
+    ["machine", "stop", "e2865", "--app", "example"],
+  );
+  assert.deepEqual(
+    flyMachineWaitArgs({
+      app: "example",
+      machineId: "e2865",
+      state: "started",
+    }),
+    [
+      "machine",
+      "wait",
+      "e2865",
+      "--app",
+      "example",
+      "--state",
+      "started",
+      "--wait-timeout",
+      "2m",
+    ],
+  );
+});
+
+test("local Fly deployment output excludes Machine configuration and credentials", () => {
+  const summary = summarizeFlyMachineForOutput({
+    id: "worker1",
+    state: "started",
+    region: "iad",
+    image_ref: {
+      repository: "registry.fly.io/kestrel-one-control-worker",
+      tag,
+    },
+    config: {
+      env: {
+        SECRET_TOKEN: "must-not-appear",
+      },
+      metadata: {
+        private: "must-not-appear",
+      },
+    },
+  });
+
+  assert.deepEqual(summary, {
+    id: "worker1",
+    state: "started",
+    region: "iad",
+    image: {
+      repository: "registry.fly.io/kestrel-one-control-worker",
+      tag,
+    },
+  });
+  assert.ok(!JSON.stringify(summary).includes("must-not-appear"));
 });
 
 test("local Fly deployment selects the exact Machine from provider lists", async () => {
@@ -217,6 +305,168 @@ test("local Fly deployment selects the exact Machine from provider lists", async
   assert.equal(calls.filter(({ args }) => args[1] === "list").length, 2);
   assert.equal(calls.filter(({ args }) => args[1] === "update").length, 1);
   assert.ok(calls.every(({ args }) => !args.includes("status")));
+});
+
+test("local Fly deployment refuses a transitional Machine before mutation", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  await assert.rejects(
+    deployProductionFlyMachine(
+      ["--role", "control-worker", "--machine", "worker1", "--tag", tag],
+      (command, args) => {
+        calls.push({ command, args });
+        if (args[0] === "auth") {
+          return { status: 0, stdout: "operator@example.com\n" };
+        }
+        if (args[0] === "machine" && args[1] === "list") {
+          return {
+            status: 0,
+            stdout: JSON.stringify([{ id: "worker1", state: "replacing" }]),
+          };
+        }
+        return { status: 0, stdout: "" };
+      },
+      async () => {},
+    ),
+    /must be stably started or stopped before an image update/u,
+  );
+  assert.equal(calls.filter(({ args }) => args[1] === "update").length, 0);
+});
+
+test("local Fly deployment restores a started Machine after an image update stops it", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  let listCount = 0;
+  let waitedForStarted = false;
+  const result = await deployProductionFlyMachine(
+    ["--role", "control-worker", "--machine", "worker1", "--tag", tag],
+    (command, args) => {
+      calls.push({ command, args });
+      if (args[0] === "auth") {
+        return { status: 0, stdout: "operator@example.com\n" };
+      }
+      if (args[0] === "machine" && args[1] === "list") {
+        listCount += 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              id: "worker1",
+              state:
+                listCount === 1 || waitedForStarted ? "started" : "stopped",
+              image_ref: { tag: listCount === 1 ? "old" : tag },
+            },
+          ]),
+        };
+      }
+      if (
+        args[0] === "machine" &&
+        (args[1] === "update" || args[1] === "start")
+      ) {
+        return { status: 0, stdout: "" };
+      }
+      if (args[0] === "machine" && args[1] === "wait") {
+        waitedForStarted = true;
+        return { status: 0, stdout: "" };
+      }
+      return { status: 1, stdout: "" };
+    },
+    async () => {},
+  );
+
+  assert.equal(result.before.state, "started");
+  assert.equal(result.after.state, "started");
+  assert.equal(calls.filter(({ args }) => args[1] === "start").length, 1);
+  assert.equal(calls.filter(({ args }) => args[1] === "wait").length, 1);
+  assert.equal(calls.filter(({ args }) => args[1] === "list").length, 3);
+});
+
+test("local Fly deployment keeps an ordinary stopped Machine stopped during update", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  let listCount = 0;
+  const result = await deployProductionFlyMachine(
+    ["--role", "turn-worker", "--machine", "standby1", "--tag", tag],
+    (command, args) => {
+      calls.push({ command, args });
+      if (args[0] === "auth") {
+        return { status: 0, stdout: "operator@example.com\n" };
+      }
+      if (args[0] === "machine" && args[1] === "list") {
+        listCount += 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              id: "standby1",
+              state: "stopped",
+              image_ref: { tag: listCount === 1 ? "old" : tag },
+            },
+          ]),
+        };
+      }
+      if (args[0] === "machine" && args[1] === "update") {
+        return { status: 0, stdout: "" };
+      }
+      return { status: 1, stdout: "" };
+    },
+    async () => {},
+  );
+
+  assert.equal(result.before.state, "stopped");
+  assert.equal(result.after.state, "stopped");
+  const update = calls.find(({ args }) => args[1] === "update");
+  assert.ok(update?.args.includes("--skip-start"));
+  assert.equal(calls.filter(({ args }) => args[1] === "start").length, 0);
+  assert.equal(calls.filter(({ args }) => args[1] === "stop").length, 0);
+  assert.equal(calls.filter(({ args }) => args[1] === "wait").length, 0);
+  assert.equal(calls.filter(({ args }) => args[1] === "list").length, 2);
+});
+
+test("local Fly deployment restores a stopped Machine if an image update starts it", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  let listCount = 0;
+  let waitedForStopped = false;
+  const result = await deployProductionFlyMachine(
+    ["--role", "turn-worker", "--machine", "standby1", "--tag", tag],
+    (command, args) => {
+      calls.push({ command, args });
+      if (args[0] === "auth") {
+        return { status: 0, stdout: "operator@example.com\n" };
+      }
+      if (args[0] === "machine" && args[1] === "list") {
+        listCount += 1;
+        return {
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              id: "standby1",
+              state:
+                listCount === 1 || waitedForStopped ? "stopped" : "started",
+              image_ref: { tag: listCount === 1 ? "old" : tag },
+            },
+          ]),
+        };
+      }
+      if (
+        args[0] === "machine" &&
+        (args[1] === "update" || args[1] === "stop")
+      ) {
+        return { status: 0, stdout: "" };
+      }
+      if (args[0] === "machine" && args[1] === "wait") {
+        waitedForStopped = true;
+        return { status: 0, stdout: "" };
+      }
+      return { status: 1, stdout: "" };
+    },
+    async () => {},
+  );
+
+  assert.equal(result.before.state, "stopped");
+  assert.equal(result.after.state, "stopped");
+  const update = calls.find(({ args }) => args[1] === "update");
+  assert.ok(update?.args.includes("--skip-start"));
+  assert.equal(calls.filter(({ args }) => args[1] === "stop").length, 1);
+  assert.equal(calls.filter(({ args }) => args[1] === "wait").length, 1);
+  assert.equal(calls.filter(({ args }) => args[1] === "list").length, 3);
 });
 
 test("Preview Edge image deployment refuses missing or invalid ingress before mutation", async () => {
