@@ -12,6 +12,7 @@ import {
   listThreadInteractionsForUser,
 } from "@/lib/turns/store";
 import { getMobileV2ThreadSnapshot } from "@/lib/mobile/v2/snapshot";
+import { mobileInteractionLifecycleRequested } from "@/lib/mobile/interaction-lifecycle";
 
 type StoredMessage = NonNullable<
   Awaited<ReturnType<typeof getThreadWithMessagesForUser>>
@@ -31,6 +32,7 @@ export async function getMobileThreadSnapshot(input: {
   threadId: string;
   organizationId: string;
   userId: string;
+  richInteractionLifecycle?: boolean;
 }) {
   const thread = await getThreadWithMessagesForUser(
     input.threadId,
@@ -75,8 +77,16 @@ export async function getMobileThreadSnapshot(input: {
         .map((turn) => turn.id),
     },
     interactions: interactions
-      .filter((interaction) => interaction.status === "pending")
-      .map(mobileInteractionDto),
+      .filter((interaction) =>
+        input.richInteractionLifecycle
+          ? interaction.status !== "cancelled"
+          : interaction.status === "pending",
+      )
+      .map((interaction) =>
+        mobileInteractionDto(interaction, {
+          richInteractionLifecycle: input.richInteractionLifecycle,
+        }),
+      ),
   };
 }
 
@@ -84,7 +94,10 @@ export function getMobileThreadSnapshotForRequest(
   request: Request,
   input: { threadId: string; organizationId: string; userId: string }
 ) {
-  return new URL(request.url).pathname.includes("/api/mobile/v2/")
-    ? getMobileV2ThreadSnapshot(input)
+  const isV2 = new URL(request.url).pathname.includes("/api/mobile/v2/");
+  const richInteractionLifecycle =
+    isV2 && mobileInteractionLifecycleRequested(request);
+  return isV2
+    ? getMobileV2ThreadSnapshot({ ...input, richInteractionLifecycle })
     : getMobileThreadSnapshot(input);
 }

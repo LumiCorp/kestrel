@@ -19,7 +19,6 @@ import {
 import type { InferUIMessageChunk, UIMessage } from "ai";
 import { buildKestrelOneCapabilityDescriptors } from "@/lib/agent/kestrel-capabilities";
 import { createRecoveredKestrelOneCompletion } from "@/lib/agent/kestrel-reconnect-stream";
-import { recordEmailAppApprovalRequest } from "@/lib/apps/email-app-approvals";
 import { generateKestrelOneExternalReplyFromAgent } from "@/lib/agent/kestrel-external-runtime-core";
 import {
   adaptKestrelAgentForKestrelOne,
@@ -60,7 +59,7 @@ import {
   updateEnvironmentExecutionRuntimeIdentity,
   updateEnvironmentExecutionStatus,
 } from "@/lib/environments/execution-route";
-import { recordGitHubActionApprovalRequest } from "@/lib/integrations/github-action-approvals";
+import { recordHostedAppApprovalRequest } from "@/lib/apps/hosted-app-approval-recorder";
 import type { ChatMessage } from "@/lib/types";
 import type { KestrelOneInteractionMode } from "@/lib/turns/interaction-mode";
 import { synchronizeProjectSkills } from "@/lib/projects/skills";
@@ -381,6 +380,7 @@ export type KestrelOneAgentResponseInput = {
   signal?: AbortSignal;
   abortBehavior?: "cancel" | "detach" | undefined;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
+  onApplicationProgress?: (progress: { stage: string; detail: string; status: string }) => Promise<void> | void;
   onUiChunk?: (chunk: KestrelUiStreamChunk) => void;
   onRuntimeEvent?: (event: RunnerRunStreamEvent) => void;
   onFinishPersist?: (
@@ -401,6 +401,7 @@ function createModelAwareKestrelOneAgent(input: {
   projectContextRevisionId?: string | undefined;
   projectContextGrantId?: string | undefined;
   onExecutionRouted?: (executionId: string) => Promise<void> | void;
+  onApplicationProgress?: (progress: { stage: string; detail: string; status: string }) => Promise<void> | void;
 }): KestrelOneAgent {
   const clients = new Set<KestrelOneRunnerClient>();
   return {
@@ -409,7 +410,6 @@ function createModelAwareKestrelOneAgent(input: {
       void (async () => {
         let client: KestrelOneRunnerClient | null = null;
         let executionId: string | null = null;
-        let environmentProgressSequence = 0;
         const hostedAgentId = getKestrelOneHostedAgentId();
         const pendingDialogs = new Set<string>();
         const dialogAbort = new AbortController();
@@ -442,26 +442,7 @@ function createModelAwareKestrelOneAgent(input: {
               projectContextGrantId: input.projectContextGrantId,
               durableTurnId: input.durableTurnId,
             },
-            onProgress: (progress) =>
-              routed.push({
-                id: crypto.randomUUID(),
-                type: "run.agent_progress",
-                ts: new Date().toISOString(),
-                runId: `environment:${input.threadId}`,
-                sessionId: input.threadId,
-                payload: {
-                  update: {
-                    version: "v1",
-                    runId: `environment:${input.threadId}`,
-                    sessionId: input.threadId,
-                    ts: new Date().toISOString(),
-                    seq: (environmentProgressSequence += 1),
-                    message: progress.detail,
-                    stepIndex: 0,
-                    stepAgent: "environment.route",
-                  },
-                },
-              }),
+            onProgress: (progress) => input.onApplicationProgress?.(progress),
           });
           executionId = route.runId;
           await input.onExecutionRouted?.(executionId);
@@ -637,19 +618,7 @@ function createModelAwareKestrelOneAgent(input: {
           mainTerminal = true;
           if (pendingDialogs.size === 0) dialogAbort.abort();
           else retainClientForDialog = true;
-          await recordGitHubActionApprovalRequest({
-            identity: {
-              organizationId: input.organizationId,
-              environmentId: route.environmentId,
-              workspaceId: route.workspaceId,
-              threadId: input.threadId,
-              actorId: input.actorUserId,
-              agentId: hostedAgentId,
-            },
-            requestedExecutionId: route.runId,
-            event: terminal,
-          });
-          await recordEmailAppApprovalRequest({
+          await recordHostedAppApprovalRequest({
             organizationId: input.organizationId,
             environmentId: route.environmentId,
             workspaceId: route.workspaceId,
@@ -663,6 +632,7 @@ function createModelAwareKestrelOneAgent(input: {
             organizationId: input.organizationId,
             executionId,
             status: terminalExecutionStatus(terminal),
+            ...terminalFailureEvidence(terminal),
           });
           routed.complete(terminal);
         } catch (error) {
@@ -674,6 +644,9 @@ function createModelAwareKestrelOneAgent(input: {
               organizationId: input.organizationId,
               executionId,
               status: "failed",
+              failureCode: readRuntimeErrorCode(error) ?? "RUNTIME_FAILED",
+              failureMessage:
+                error instanceof Error ? error.message : "Runtime execution failed.",
             }).catch(() => {});
           }
           routed.fail(error);
@@ -1056,6 +1029,9 @@ export async function generateKestrelOneExternalReply(input: {
       organizationId: input.organizationId,
       executionId: route.runId,
       status: externalFailureExecutionStatus(error),
+      failureCode: readRuntimeErrorCode(error) ?? "RUNTIME_FAILED",
+      failureMessage:
+        error instanceof Error ? error.message : "Runtime execution failed.",
     }).catch(() => {});
     throw error;
   } finally {
@@ -1148,6 +1124,7 @@ export async function createKestrelOneAgentResponse(
         projectContextRevisionId: input.projectContext?.contextRevisionId,
         projectContextGrantId: input.projectContext?.grantId,
         onExecutionRouted: input.onExecutionRouted,
+        onApplicationProgress: input.onApplicationProgress,
       });
 
   return createKestrelOneAgentResponseFromAgent({
@@ -1226,6 +1203,7 @@ export async function createKestrelOneReattachmentResponse(
             organizationId: input.organizationId,
             executionId: input.executionId,
             status: terminalExecutionStatus(terminal),
+            ...terminalFailureEvidence(terminal),
           });
         },
         async (error: unknown) => {
@@ -1243,6 +1221,9 @@ export async function createKestrelOneReattachmentResponse(
             organizationId: input.organizationId,
             executionId: input.executionId,
             status: "failed",
+            failureCode: code ?? "RUNTIME_FAILED",
+            failureMessage:
+              error instanceof Error ? error.message : "Runtime execution failed.",
           });
         },
       );
@@ -1405,6 +1386,15 @@ function terminalExecutionStatus(
   if (terminal.type === "run.cancelled") return "cancelled";
   if (terminal.type === "run.failed") return "failed";
   return "completed";
+}
+
+function terminalFailureEvidence(terminal: RunnerRunTerminalEvent) {
+  return terminal.type === "run.failed"
+    ? {
+        failureCode: terminal.payload.error.code,
+        failureMessage: terminal.payload.error.message,
+      }
+    : {};
 }
 
 function readRuntimeErrorCode(error: unknown): string | undefined {

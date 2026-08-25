@@ -161,14 +161,39 @@ const elicitationSchema = z.object({
 });
 
 export function mobileInteractionDto(
-  interaction:
-    | typeof schema.mcpInteractionCheckpoints.$inferSelect
-    | typeof schema.threadInteractions.$inferSelect
+  interaction: {
+    id: string;
+    requestId?: string;
+    source?: "runtime" | "mcp";
+    kind: string;
+    prompt?: string;
+    status: string;
+    requestEnvelope: Record<string, unknown>;
+    createdAt: Date;
+    approvalOutcome?: {
+      decision: "approved" | "denied";
+      authorizationState: "pending" | "accepted" | "failed";
+      effectState: "not_started" | "started" | "unknown";
+      failureCode?: string;
+      publicMessage?: string;
+      retryEligible: boolean;
+    };
+  },
+  options: { richInteractionLifecycle?: boolean } = {},
 ) {
-  const isShared = "source" in interaction;
-  const id = isShared ? interaction.requestId : interaction.id;
+  const isShared = typeof interaction.requestId === "string";
+  const id = interaction.requestId ?? interaction.id;
   const kind = interaction.kind;
-  const prompt = isShared ? interaction.prompt : null;
+  const prompt = isShared ? interaction.prompt ?? null : null;
+  const lifecycle =
+    isShared && options.richInteractionLifecycle
+      ? {
+          status: interaction.status,
+          ...(interaction.approvalOutcome
+            ? { approvalOutcome: interaction.approvalOutcome }
+            : {}),
+        }
+      : {};
   if (kind === "sampling" || kind === "mcp_sampling" || kind === "approval") {
     return {
       id,
@@ -179,6 +204,7 @@ export function mobileInteractionDto(
         "The agent requested a protected operation. Review and allow or deny it.",
       fields: [],
       createdAt: interaction.createdAt.toISOString(),
+      ...lifecycle,
     };
   }
   if (kind === "user_input") {
@@ -190,6 +216,7 @@ export function mobileInteractionDto(
       prompt: interaction.prompt,
       fields: fieldsFromJsonSchema(inputSchema),
       createdAt: interaction.createdAt.toISOString(),
+      ...lifecycle,
     };
   }
   const urlRequest = parseUrlElicitation(interaction.requestEnvelope);
@@ -201,6 +228,7 @@ export function mobileInteractionDto(
       prompt: urlRequest.message,
       fields: [],
       createdAt: interaction.createdAt.toISOString(),
+      ...lifecycle,
     };
   }
   const request = elicitationSchema.safeParse(interaction.requestEnvelope);
@@ -212,6 +240,7 @@ export function mobileInteractionDto(
       prompt: "Review this request in Kestrel One on the web.",
       fields: [],
       createdAt: interaction.createdAt.toISOString(),
+      ...lifecycle,
     };
   }
   const required = new Set(request.data.requestedSchema.required ?? []);
@@ -240,6 +269,7 @@ export function mobileInteractionDto(
       })
     ),
     createdAt: interaction.createdAt.toISOString(),
+    ...lifecycle,
   };
 }
 

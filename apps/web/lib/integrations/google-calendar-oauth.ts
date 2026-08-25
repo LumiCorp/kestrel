@@ -123,6 +123,28 @@ export async function syncGoogleCalendarUserConnection(input: {
     if (!appConnection) {
       throw new Error("Google Calendar App connection could not be recorded.");
     }
+    await transaction
+      .insert(schema.appConnectionResources)
+      .values({
+        id: `${appConnection.id}:primary-calendar`,
+        connectionId: appConnection.id,
+        externalId: "primary",
+        resourceType: "calendar",
+        label: "Primary calendar",
+        enabled: true,
+        permissions: {},
+        metadata: { logical: true },
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [
+          schema.appConnectionResources.connectionId,
+          schema.appConnectionResources.resourceType,
+          schema.appConnectionResources.externalId,
+        ],
+        set: { enabled: true, updatedAt: now },
+      });
     return appConnection;
   });
 }

@@ -186,6 +186,82 @@ test("Always Approve always hands persistent policy changes to Environment Apps"
   assert.match(html, /This Project narrows the Environment policy/u);
 });
 
+test("hosted approval lifecycle distinguishes recorded, accepted, and failed authorization", () => {
+  const approval = {
+    ...interaction,
+    kind: "approval" as const,
+    eventType: "user.approval",
+    requestEnvelope: {
+      approval: {
+        toolCallId: "runtime-approval-1",
+        toolName: "kestrel_one.email_send",
+      },
+    },
+    responseEnvelope: { approved: true },
+  };
+  const processing = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...approval,
+        status: "processing",
+        approvalOutcome: {
+          decision: "approved",
+          authorizationState: "pending",
+          effectState: "not_started",
+          retryEligible: false,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(processing, /Decision recorded/u);
+  assert.doesNotMatch(processing, /Approve Once/u);
+
+  const accepted = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...approval,
+        status: "resolved",
+        approvalOutcome: {
+          decision: "approved",
+          authorizationState: "accepted",
+          effectState: "not_started",
+          retryEligible: false,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(accepted, /Authorization accepted/u);
+
+  const failed = renderToStaticMarkup(
+    <InteractionPanel
+      interactions={[{
+        ...approval,
+        status: "failed",
+        approvalOutcome: {
+          decision: "approved",
+          authorizationState: "failed",
+          effectState: "not_started",
+          failureCode: "EXTERNAL_APPROVAL_IDENTITY_MISMATCH",
+          publicMessage: "The approval binding was rejected.",
+          retryEligible: true,
+        },
+      }]}
+      onResolved={async () => {}}
+      onRuntimeResponse={async () => {}}
+      threadId="thread-1"
+    />,
+  );
+  assert.match(failed, /Authorization failed — operation not executed/u);
+  assert.match(failed, /EXTERNAL_APPROVAL_IDENTITY_MISMATCH/u);
+  assert.match(failed, /Retry authorization/u);
+});
+
 test("Always Approve is unavailable for runtime-strict approvals", () => {
   const html = renderToStaticMarkup(
     <InteractionPanel

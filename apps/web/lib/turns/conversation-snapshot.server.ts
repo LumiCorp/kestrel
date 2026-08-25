@@ -8,6 +8,7 @@ import type { ProjectRole } from "@/lib/projects/access";
 import { projectRoleAllows } from "@/lib/projects/access";
 import type { ThreadAccess } from "@/lib/threads/store";
 import type { ThreadConversationSnapshot } from "@/lib/turns/client-contract";
+import { projectSafeThreadInteraction } from "@/lib/turns/interaction-projection";
 import { convertToUIMessages } from "@/lib/utils";
 
 type ConversationSnapshotRead = {
@@ -200,25 +201,16 @@ export async function readThreadConversationSnapshotForUser(input: {
               typeof responseEnvelope.messageId === "string"
                 ? responseEnvelope.messageId
                 : null;
-            return {
-              id: interaction.id,
-              requestId: interaction.requestId,
-              source: interaction.source,
-              sourceCheckpointId: interaction.sourceCheckpointId,
-              kind: interaction.kind,
-              eventType: interaction.eventType,
-              prompt: interaction.prompt,
-              status: interaction.status,
-              requestEnvelope: interaction.requestEnvelope,
-              responseEnvelope: interaction.responseEnvelope,
-              responseMessageId:
+            const projected = projectSafeThreadInteraction(
+              interaction,
                 envelopeMessageId ??
                 responseMessageIds.get(interaction.requestId) ??
                 null,
-              turnId: interaction.turnId,
-              assistantMessageId: interaction.assistantMessageId,
-              createdAt: interaction.createdAt.toISOString(),
-              resolvedAt: interaction.resolvedAt?.toISOString() ?? null,
+            );
+            return {
+              ...projected,
+              createdAt: projected.createdAt.toISOString(),
+              resolvedAt: projected.resolvedAt?.toISOString() ?? null,
             };
           }),
           turns: turns.map((turn) => ({

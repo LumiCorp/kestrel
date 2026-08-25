@@ -17,13 +17,16 @@ import {
 } from "@/lib/turns/store";
 import { getMobileV2MessageWindow, getMobileV2ReadState } from "./store";
 
-function messageDto(message: typeof schema.threadMessages.$inferSelect) {
+function messageDto(
+  message: typeof schema.threadMessages.$inferSelect,
+  richInteractionLifecycle: boolean,
+) {
   return {
     id: message.id,
     turnId: message.turnId ?? null,
     sourceMessageId: message.sourceMessageId ?? null,
     role: message.role,
-    parts: mobileMessageParts(message.parts).filter((part) =>
+    parts: mobileMessageParts(message.parts, { richInteractionLifecycle }).filter((part) =>
       mobileV2DurablePartTypes.has(part.type)
     ),
     createdAt: message.createdAt.toISOString(),
@@ -34,6 +37,7 @@ export async function getMobileV2ThreadSnapshot(input: {
   threadId: string;
   organizationId: string;
   userId: string;
+  richInteractionLifecycle?: boolean;
 }) {
   const thread = await knowledgeDb.query.threads.findFirst({
     where: eq(schema.threads.id, input.threadId),
@@ -104,7 +108,9 @@ export async function getMobileV2ThreadSnapshot(input: {
         : null,
     },
     messageWindow: {
-      items: window.messages.map(messageDto),
+      items: window.messages.map((message) =>
+        messageDto(message, input.richInteractionLifecycle === true),
+      ),
       nextCursor: window.nextCursor,
     },
     turns: visibleTurns.map((turn) => {
@@ -131,10 +137,21 @@ export async function getMobileV2ThreadSnapshot(input: {
         .map((turn) => turn.id),
     },
     interactions: interactions
-      .filter((interaction) => interaction.status === "pending")
+      .filter((interaction) =>
+        input.richInteractionLifecycle
+          ? interaction.status !== "cancelled"
+          : interaction.status === "pending",
+      )
       .flatMap((interaction) => {
         const turnId = interaction.turnId ?? queueState.queue.activeTurnId;
-        return turnId ? [{ ...mobileInteractionDto(interaction), turnId }] : [];
+        return turnId
+          ? [{
+              ...mobileInteractionDto(interaction, {
+                richInteractionLifecycle: input.richInteractionLifecycle,
+              }),
+              turnId,
+            }]
+          : [];
       }),
     readState,
   };
