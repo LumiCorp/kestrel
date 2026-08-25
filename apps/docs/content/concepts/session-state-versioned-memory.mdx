@@ -1,0 +1,41 @@
+---
+title: Session state and versioned memory
+summary: Update a Session's continuing working state without overwriting a concurrent change or confusing it with governed long-term memory.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+Two workers read the same Session. One records the verified test command. The other records a newly discovered risk. If both write back the snapshot they originally read, the second writer can erase the first writer's finding.
+
+That is why Session memory has a revision.
+
+```ts
+const memory = await agent.session(sessionId).memory.get(context);
+
+await agent.session(sessionId).memory.update(
+  {
+    expectedRevision: memory.revision,
+    patch: { findings: "Checkout totals require a currency code." },
+  },
+  context,
+);
+```
+
+## The conflict happens between the read and the write
+
+`expectedRevision` says which state the patch was based on. If another update has already advanced the version, the runner can reject the stale write. The caller then reads current state, reconciles intentionally, and submits a new patch. It does not win by accident because it arrived last.
+
+The root SDK presents this state as Session memory, persisted through the Session's versioned task graph. That keeps continuing findings, plans, and linked artifacts close to the work state that uses them.
+
+The stale writer now has useful evidence: its premise changed. This is not a transient network failure to retry with the same payload. It fetches the new revision, decides how the verified command and the discovered risk coexist, then sends a patch based on that state.
+
+## Three stores that answer different questions
+
+Session state is useful for continuity inside one line of work. It is not the governed memory package's cross-session store. It does not by itself supply namespace policy, subject and issuer provenance, tenant-scoped read bindings, retention, or query behavior.
+
+Likewise, it is not conversation history. History records what happened; the snapshot records selected current working state. A complete implementation may use all three without merging their authority.
+
+[Task graphs and work state](/concepts/task-graphs-work-state) explains the durable structure beneath the snapshot. [Governed memory](/concepts/governed-memory) covers authorized recall beyond one Session.

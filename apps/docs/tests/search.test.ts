@@ -20,6 +20,7 @@ test("search represents every public journey without leaking internal metadata",
 
   const cases: Array<[string, string, string]> = [
     ["Start", "choose your first Kestrel journey", "/start/quickstart"],
+    ["Concepts", "agent loop model proposal durable work", "/concepts/agent-loop"],
     ["Desktop", "provider setup", "/desktop/providers"],
     ["Kestrel One", "Threads Projects Knowledge", "/kestrel-one"],
     ["Build", "protocol terminal results", "/build/protocol-and-results"],
@@ -29,6 +30,25 @@ test("search represents every public journey without leaking internal metadata",
   for (const [section, query, expected] of cases) {
     const matches = searchWithIndex(index, query);
     assert.ok(matches.some((result) => result.url === expected), `${section} missing for ${query}`);
+  }
+
+  const conceptCases: Array<[string, string]> = [
+    ["signed URL fileId attachments", "/concepts/files-attachments"],
+    ["context compaction history", "/concepts/context-management-compaction"],
+    ["interaction modes autonomy", "/concepts/interaction-modes-autonomy"],
+    ["background jobs noninteractive", "/concepts/background-jobs"],
+    ["delegation child agents", "/concepts/delegation-child-agents"],
+    ["task graph expectedVersion work state", "/concepts/task-graphs-work-state"],
+    ["workspace checkpoints promotions", "/concepts/workspace-checkpoints-promotions"],
+    ["MCP catalog refresh", "/concepts/apps-mcp-services"],
+    ["idempotency duplicate command concurrency", "/concepts/concurrency-idempotency"],
+    ["Next.js server identity", "/concepts/nextjs-routes"],
+    ["AI SDK presentation accumulator", "/concepts/ai-sdk-presentation"],
+    ["observability trace context", "/concepts/observability-trace-context"],
+  ];
+  for (const [query, expected] of conceptCases) {
+    const matches = searchWithIndex(index, query);
+    assert.ok(matches.some((result) => result.url === expected), `Concepts missing ${expected} for ${query}`);
   }
 
   const serializedPublicPayload = JSON.stringify({ initialResults, serializedIndex });

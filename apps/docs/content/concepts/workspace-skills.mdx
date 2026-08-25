@@ -1,0 +1,31 @@
+---
+title: Workspace skills
+summary: Load project-owned instructions and assets with source validation, provenance, and a coherent version for each run.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+A Run begins using a repository's review skill. While the agent is working, another process edits `SKILL.md` and replaces one of its referenced assets.
+
+Should the next model step see the old instruction and new asset together? No. A skill is useful only when its source is coherent.
+
+## Freeze the lesson, not the whole workspace
+
+Workspace skill contracts describe the skill, its entrypoint, and its provenance. The store can discover installed skills; the installer validates and places a skill under the workspace ownership model. Relative references resolve from the skill's own source, not an arbitrary process directory.
+
+Validation should reject missing entrypoints, malformed metadata, or paths that escape the allowed skill root. Installation is not permission to execute arbitrary installer code.
+
+Once selected, a skill's instructions and assets should be read from one known version or snapshot. Mid-run source changes can be detected and deferred until the runtime is idle, avoiding a prompt assembled from incompatible revisions.
+
+Provenance lets later inspection answer which skill source influenced the Run. That matters when an instruction changes after an outcome is recorded.
+
+## The lesson carries no keys
+
+A skill can explain a workflow, provide examples, and point to available tools. It does not create those tools, connect an App, grant filesystem access, or approve an external effect. The effective profile and execution boundaries still decide what actions are possible.
+
+That separation makes skills portable: the same guidance can run in a restricted environment and adapt to the capabilities actually present rather than smuggling authority through prose.
+
+The [Workspace Skills reference](/reference/workspace-skills) owns installation and store contracts. Code and file containment belongs to [Sandbox and workspace execution](/concepts/sandbox-workspace-execution), even when a skill taught the workflow.

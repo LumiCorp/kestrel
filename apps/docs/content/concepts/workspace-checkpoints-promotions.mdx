@@ -1,0 +1,41 @@
+---
+title: Workspace checkpoints and promotions
+summary: Capture, compare, restore, and promote workspace state without confusing runtime snapshots with Git history or deployment.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The agent produces a good fix, then makes a broad cleanup that breaks an unrelated test. The workspace still contains both sets of edits.
+
+A checkpoint gives the runtime a deliberate place to return.
+
+## Known-good
+
+The advanced runner can capture a workspace checkpoint, list known checkpoints, inspect metadata, and compare a checkpoint with current state. The record binds the snapshot to the managed workspace and the action that created it.
+
+Checkpoints are runtime workspace artifacts. They can include state that has not been committed to Git, and they do not carry branch history or review meaning merely because they preserve files.
+
+## Risky edit
+
+The broad cleanup changes the live workspace. A checkpoint did not prevent that mutation; it preserved a named comparison point. Diffing current state against the checkpoint reveals both the good fix and the unwanted cleanup.
+
+## Inspect before returning
+
+Inspection and diff are read operations. Restore changes the workspace and should validate the current target, expected state, and authority before applying. A restore can discard newer workspace changes, so the interface should show what will move rather than present it as an invisible recovery shortcut.
+
+Cleanup removes checkpoint artifacts according to their lifecycle; it should not delete the live workspace.
+
+## Restore deliberately
+
+Restore is a mutation that can discard newer workspace changes. Validate the target and current state, and show what will move before applying it. Cleanup is different: it removes checkpoint artifacts according to lifecycle without deleting the live workspace.
+
+## Promotion is another transition
+
+A promotion can preview a candidate transition, apply it, and where supported undo that application. Preview establishes what would change. Apply performs the workspace transition. Undo addresses that promotion's changes under the current state contract.
+
+Promotion is not deployment. It may prepare or accept workspace content that a later Git, build, review, or deployment workflow consumes. Likewise, a checkpoint is not a Git commit and cannot replace repository history.
+
+[Project actions and review](/concepts/project-actions-review) owns acceptance and Git-facing work. Exact checkpoint and promotion commands live in [Protocol reference](/reference/protocol).

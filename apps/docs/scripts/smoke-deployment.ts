@@ -21,6 +21,13 @@ async function fetchPage(pathname: string, init?: RequestInit) {
 const publicRoutes = [
   "/",
   "/start",
+  "/concepts",
+  "/concepts/agent-loop",
+  "/concepts/files-attachments",
+  "/concepts/structured-output-terminal-results",
+  "/concepts/background-jobs",
+  "/concepts/workspace-checkpoints-promotions",
+  "/concepts/nextjs-routes",
   "/desktop",
   "/kestrel-one",
   "/build",
@@ -53,6 +60,12 @@ const redirects = [
   ["/apps/desktop", "/desktop"],
   ["/apps/web", "/kestrel-one"],
   ["/deploy", "/operate"],
+  ["/start/concepts", "/concepts"],
+  ["/docs/core-concepts", "/concepts"],
+  ["/start/architecture", "/concepts/architecture"],
+  ["/docs/architecture-overview", "/concepts/architecture"],
+  ["/start/runtime-model", "/concepts/agent-loop"],
+  ["/docs/runtime-model", "/concepts/agent-loop"],
 ] as const;
 
 for (const [source, destination] of redirects) {

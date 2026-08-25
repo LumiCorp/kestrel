@@ -65,7 +65,7 @@ export function HomePage() {
       </section>
 
       <nav className="home-secondary-paths" aria-label="Build, operate, and reference Kestrel">
-        <Link href="/start/runtime-model">
+        <Link href="/concepts/agent-loop">
           <Cloud size={32} aria-hidden="true" />
           <span><strong>Understand the runtime</strong><small>Follow a request through identity, execution, recovery, and durable evidence.</small></span>
           <ArrowRight size={18} aria-hidden="true" />

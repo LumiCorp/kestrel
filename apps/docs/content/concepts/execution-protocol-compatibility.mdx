@@ -1,0 +1,39 @@
+---
+title: Execution protocol and compatibility
+summary: Validate commands, events, health, and advertised capabilities when applications and runners upgrade independently.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+An application deploys a new SDK before its runner is upgraded. The TCP connection works. The first new workspace command fails.
+
+Reachability was never proof of protocol compatibility.
+
+## First, ask health what this runner speaks
+
+Runner health identifies the service version, execution protocol version, command contract version, event contract version, and advertised capabilities. An application can parse that response before enabling controls that depend on a particular contract.
+
+Exact version checks and capability checks answer different questions. Matching contracts means both sides understand the envelope. A capability such as `workspace.checkpoint` says the runner implements that command family. It does not authorize the current actor to use it.
+
+## Then, gate the control on capability
+
+Exact version checks and capability checks answer different questions. Matching contracts means both sides understand the envelope. A capability such as `workspace.checkpoint` says the runner implements that command family. It does not authorize the current actor to use it.
+
+## Parse every command on the way in
+
+Commands carry IDs, types, metadata, and payloads. Events carry their own versioned shapes and correlation. Both should be parsed before use, even when they came from a nominally trusted deployment. Invalid or unknown data should produce a structured protocol error rather than be cast into an application type.
+
+## Parse every event on the way out
+
+Events carry versioned shapes and correlation. Unknown events deserve forward-compatible handling: preserve or ignore them according to the consumer contract without rendering them as a known terminal state.
+
+## Let the SDK keep failures attributable
+
+Most applications use typed SDK methods. The advanced runner client also exposes `sendCommand()` for supported raw command envelopes. Both paths should distinguish configuration errors, HTTP failures, service failures, and protocol-contract failures so recovery can target the owning boundary.
+
+Correlation identifiers connect request, command, Run, events, and result. They help trace the path but do not replace each object's own identity.
+
+[Compatibility reference](/reference/compatibility) owns exact release expectations. [Architecture and execution boundaries](/concepts/architecture) places the protocol between trusted clients and execution authority.

@@ -1,15 +1,15 @@
 ---
 title: Integrate with Next.js
-summary: Expose the Reference agent through server-only JSON, SSE, or webhook routes while keeping credentials and actor context on the server.
+summary: Expose the canonical Kestrel agent through server-only JSON, SSE, or webhook routes while keeping credentials and actor context on the server.
 section: build
 audience: integrators
 status: stable
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-25
 ---
 
 <GuideNote step="Step 5">
-Wrap the Reference-agent client in a Next.js Route Handler; browser code never receives the Local Core or runner-service token.
+Wrap the canonical `kestrel`-profile client in a Next.js Route Handler; browser code never receives the Local Core or runner-service token.
 </GuideNote>
 
 ## Install
@@ -18,7 +18,7 @@ Wrap the Reference-agent client in a Next.js Route Handler; browser code never r
 pnpm add @kestrel-agents/next@0.8.5 @kestrel-agents/sdk@0.8.5
 ```
 
-Create the `agent` in a server-only module using the `reference` profile, as in
+Create the `agent` in a server-only module using the `kestrel` profile, as in
 the first Build step. Resolve the actor and tenant from the authenticated server
 session for each request.
 

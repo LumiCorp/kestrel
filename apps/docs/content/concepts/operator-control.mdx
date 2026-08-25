@@ -1,0 +1,41 @@
+---
+title: Operator control
+summary: Inspect and steer running or waiting work through exact, actor-bound controls without taking over project acceptance authority.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The original user is offline. Their Run is waiting for a recovery choice after a provider failure, and an on-call operator needs to understand what happened.
+
+Operator control exists for that moment.
+
+## The inbox names the interruption
+
+Runner inspection can expose pending operator items and then retrieve the owning thread, Session, Run, status, and available control surface. Reasoning inspection may help explain the current decision, while durable progress and tool evidence show what actually occurred.
+
+The operator should not have to infer the target from a transcript search. Controls bind to exact identities and current state.
+
+## Inspection reconstructs the exact state
+
+Thread and Run inspection establishes which attempt is waiting, what evidence preceded it, and which controls are currently registered. Reasoning inspection can explain the decision; durable progress and tool evidence establish what actually occurred.
+
+## Intervention rechecks the current actor
+
+An operator can submit the supported response, select a registered recovery option, cancel a Run, or perform another explicit command exposed by the runner. Current actor and tenant context accompany the command. Being able to inspect a Run does not automatically grant every steering action.
+
+Stale controls must fail. If the user already resumed the request, an operator's old response cannot satisfy it again.
+
+## Stale control is no control
+
+If the user already resumed the request, an operator's old response cannot satisfy it again. Exact target and current state protect the Run from a delayed inbox action.
+
+## Continuation is not acceptance
+
+Operator control owns the running or waiting conversation. Mission Control and project review own whether candidate work, evidence, and changes are accepted. An operator can help a Run continue without declaring its patch reviewed or production-ready.
+
+This separation also keeps audit trails clear: who changed execution state, who approved an effect, and who accepted project work can be three different actors.
+
+[Waiting, resume, and cancellation](/concepts/waiting-resume-cancellation) owns the runtime interaction. [Project actions and review](/concepts/project-actions-review) owns downstream acceptance.

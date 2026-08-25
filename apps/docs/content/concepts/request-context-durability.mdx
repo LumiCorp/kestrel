@@ -1,0 +1,33 @@
+---
+title: Request context and durability
+summary: Keep caller identity trustworthy and choose explicitly whether a Run cancels or continues when its initiating request disconnects.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The browser disappeared. The Run did not.
+
+That can be the correct result for a long deployment check—and a surprising one for a live chat response. Kestrel makes the choice part of the request contract rather than inferring it from a broken connection.
+
+## Before the browser disappears
+
+Request context identifies the call: actor, tenant, correlation, and other server-owned metadata. Model context is the material assembled for the model: instructions, conversation history, tool results, memory, and selected files. They may influence the same Run, but they have different trust and lifecycle rules.
+
+A bearer token authenticates the application to a runner. Actor metadata says on whose behalf that trusted application is calling. The browser must not forge either relationship through arbitrary headers or JSON fields. Authenticate first, derive actor and tenant on the server, and then construct the SDK context. [Next.js routes](/concepts/nextjs-routes) applies that ordering to concrete handlers.
+
+At the same time, the runtime assembles model context from instructions, conversation history, tool results, memory, and selected files. Request context can authorize which material is eligible, but it is not pasted into the prompt as an interchangeable blob.
+
+## After the browser disappears
+
+For an interactive stream, the application may choose `cancel_on_disconnect`: aborting the response signals cancellation of that exact upstream Run. For durable work, it may choose continuation: the initiating HTTP request can end while the runner and its stores preserve progress and the eventual terminal result.
+
+Detaching means the caller stopped observing. Cancelling asks the runner to stop. Neither means rollback. A tool or external effect may already have committed before cancellation reached its owner.
+
+Durable continuation requires an identity the application can use later. A Run can be reattached through its exact stream identity; broader background activity can be consumed through a filtered subscription and cursor. The consumer should resume from recorded position rather than guess which events it missed.
+
+An early network failure can leave the caller uncertain whether the runner accepted the command. That is where command identity and idempotency matter. Do not turn uncertainty into an automatic duplicate mutation.
+
+Observation can resume after the request is gone; [Subscriptions, cursors, and reattachment](/concepts/subscriptions-cursors-reattachment) distinguishes returning to one Run from watching a wider scope.

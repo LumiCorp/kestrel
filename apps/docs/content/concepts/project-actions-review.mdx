@@ -1,0 +1,31 @@
+---
+title: Project actions and review
+summary: Move from a completed Run to inspected, validated, and explicitly accepted project work with durable evidence.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The Run completed and says the checkout bug is fixed. The workspace contains a patch. Neither fact means the Project has accepted the change.
+
+## Follow the candidate, not the confidence
+
+Project state can bind candidate work to a fingerprint, attempt, Session or Thread, workspace changes, and collected evidence. The fingerprint prevents feedback or acceptance intended for one candidate from drifting onto a later revision.
+
+Change inspection shows what the workspace actually contains. Feedback records requested revision. Review evaluates the candidate against project expectations. Validation records the tests or gates that ran and their outcomes. Git actions move accepted material through repository state under their own preconditions.
+
+The terminal Run result answers whether one execution attempt completed. It does not fingerprint the candidate or accept it. A completed Run can produce rejected work; a failed Run can still leave useful evidence or changes worth inspecting.
+
+Mission Control carries the candidate through changes, feedback, review, validation, and Git actions. Each action keeps its own actor, target, candidate identity, expected state, and evidence. Downstream rejection can protect a boundary without becoming proof that boundary authored the original defect.
+
+## Acceptance is a Project decision
+
+The terminal Run result answers whether one execution attempt completed. Project review asks whether the resulting work is correct, sufficiently evidenced, and acceptable to the owning Project. A completed Run can produce rejected work. A failed Run can still leave useful evidence or changes worth inspecting.
+
+Mission Control owns project work, attempts, evidence, review, and acceptance. It should not infer acceptance from optimistic assistant prose or a green status emitted before the owning validation finished.
+
+This model lets product surfaces show one coherent review story while retaining the exact evidence behind it.
+
+[Task graphs and work state](/concepts/task-graphs-work-state) remains the runtime plan. [Review and state workflows](/operate/review-and-state) shows the acceptance surface in use.

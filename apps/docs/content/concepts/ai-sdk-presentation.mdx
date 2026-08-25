@@ -1,0 +1,31 @@
+---
+title: AI SDK presentation
+summary: Accumulate Kestrel events into coherent typed UI parts while preserving interactions, failure, and the authoritative terminal result.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+A chat interface renders every runner event as a new message. Reasoning deltas, tool starts, tool results, and assistant-text chunks interleave. After reconnect, persisted parts arrive and the entire answer appears twice.
+
+The runtime stream is rich enough to build a good UI, but it is not already a list of chat messages.
+
+## Build one answer from many typed parts
+
+The Kestrel AI SDK adapter maps runner events into typed presentation parts. Its accumulator groups deltas, tool activity, progress, and interactions according to their contract identities. The exported presentation keys let an application recognize Kestrel-owned data parts without parsing labels.
+
+This state can be written into an AI SDK UI message stream while preserving the difference between provider reasoning, agent progress, tool output, and assistant text.
+
+`readKestrelTerminalInteraction()` extracts an interaction the UI can answer, including its exact request identity. A mode-change or approval control can then submit an explicit response rather than turning a button click into an unrelated assistant message.
+
+Failures also have a dedicated writer. Safe error presentation should retain the structured failure category and user-facing message without leaking private diagnostics.
+
+## Stop the adapter at the presentation boundary
+
+The adapter does not execute tools, retry Runs, approve effects, or decide whether a stream completed. The terminal event and SDK result remain authoritative. The application owns persistence and reconciliation between live parts and its stored conversation.
+
+Keeping this boundary narrow makes it possible to change the UI framework without changing runtime semantics.
+
+[Conversation state and projection](/concepts/conversation-state-projection) owns reconciliation. [Structured output and terminal results](/concepts/structured-output-terminal-results) owns the result the UI must preserve.

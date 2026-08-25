@@ -1,0 +1,43 @@
+---
+title: Subscriptions, cursors, and reattachment
+summary: Observe durable background activity and reconnect to exact Runs without losing, duplicating, or broadening event scope.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+A dashboard subscribes to `task.updated` and immediately triggers a job. The first update never appears because the subscription was not ready when the job began.
+
+Correct ordering starts before the first event.
+
+```ts
+const events = agent.subscribe(
+  { sessionId, eventTypes: ["task.updated"] },
+  context,
+);
+
+await events.ready;
+// Trigger work only after readiness.
+```
+
+## Establish the starting line before the race
+
+The root SDK requires an explicit filter rather than exposing a global firehose. Session, event type, and other supported filters limit which durable activity the caller observes. Actor and tenant context still apply.
+
+Readiness establishes that the runner accepted the subscription and its starting position. It does not mean no older matching events exist.
+
+The cursor returned for that scope is the consumer's position in durable history. After disconnect, continue from it rather than reconstructing position from wall-clock time. Delivery can include duplicates around reconnect or acknowledgement boundaries, so projection uses event identity and remains idempotent.
+
+A durable cursor lets the consumer continue ordered history after a disconnect. Delivery can still include duplicates around reconnect or acknowledgement boundaries, so consumers should use event identity and idempotent projection. They should not throw away cursor state and infer position from a timestamp.
+
+An expired or unknown cursor is a real state. The application may need to rebuild from persisted source data and establish a new subscription rather than silently skipping an unknown interval.
+
+## Decide whether you lost one screen or a whole feed
+
+Reattaching to a Run resumes the event stream for that exact execution attempt. A subscription watches a broader filtered activity surface, potentially across Runs. Choosing one depends on whether the application is restoring one live screen or maintaining background state.
+
+Neither operation restarts execution. They restore observation.
+
+[Streaming, progress, and reasoning](/concepts/streaming-progress-reasoning) explains what the recovered events mean. [Background jobs](/concepts/background-jobs) is a common reason to maintain the broader feed.

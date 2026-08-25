@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 export const DOCS_SECTIONS = [
   "home",
   "start",
+  "concepts",
   "desktop",
   "kestrel-one",
   "docs",
@@ -19,7 +20,7 @@ export const DOCS_SECTIONS = [
 ] as const;
 
 export type DocsSection = (typeof DOCS_SECTIONS)[number];
-export const DOCS_NAV_SECTIONS = ["start", "desktop", "kestrel-one", "build", "operate", "reference"] as const;
+export const DOCS_NAV_SECTIONS = ["start", "concepts", "desktop", "kestrel-one", "build", "operate", "reference"] as const;
 export type DocsNavSection = (typeof DOCS_NAV_SECTIONS)[number];
 
 export const DOCS_AUDIENCES = ["everyone", "evaluators", "integrators", "maintainers"] as const;
@@ -101,7 +102,23 @@ export type SearchCapability =
   | "gateways"
   | "protocol"
   | "terminal results"
-  | "access control";
+  | "access control"
+  | "agent loop"
+  | "context"
+  | "attachments"
+  | "streaming"
+  | "subscriptions"
+  | "jobs"
+  | "task graphs"
+  | "delegation"
+  | "checkpoints"
+  | "interaction modes"
+  | "structured output"
+  | "mcp"
+  | "skills"
+  | "sandbox"
+  | "idempotency"
+  | "observability";
 
 export interface TocItem {
   id: string;
@@ -158,6 +175,7 @@ export interface DocsPageMeta {
   estimatedTime?: string;
   journey?: JourneyMeta;
   related: string[];
+  showSectionListing: boolean;
   archiveGroup?: ArchiveGroup;
 }
 
@@ -185,6 +203,7 @@ export interface RegisteredPageSpec {
   journeyId?: DocsJourneyId;
   priority?: number;
   capabilities?: SearchCapability[];
+  showSectionListing?: boolean;
 }
 
 export interface NavEntry {

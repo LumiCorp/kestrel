@@ -6,8 +6,11 @@ const databaseUrl = process.env.KESTREL_ENVIRONMENT_DB_TEST_URL?.trim();
 
 test("manual runtime activation changes only the exact canary and channel pointers", async (context) => {
   assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
-  process.env.DATABASE_URL = databaseUrl;
-  process.env.POSTGRES_URL = databaseUrl;
+  const runtimeApplicationName = `runtime-channel-race-${crypto.randomUUID()}`;
+  const runtimeDatabaseUrl = new URL(databaseUrl);
+  runtimeDatabaseUrl.searchParams.set("application_name", runtimeApplicationName);
+  process.env.DATABASE_URL = runtimeDatabaseUrl.toString();
+  process.env.POSTGRES_URL = runtimeDatabaseUrl.toString();
   const [{ resetDbRuntimeForTests }, runtime, processRuntime] = await Promise.all([
     import("@/lib/db/runtime"),
     import("./runtime-channel"),
@@ -247,13 +250,38 @@ test("manual runtime activation changes only the exact canary and channel pointe
     await connection`
       SELECT id FROM environments WHERE id = ${siblingId} FOR UPDATE
     `;
+    const [holder] = await connection<Array<{ holderPid: number }>>`
+      SELECT pg_backend_pid()::int AS "holderPid"
+    `;
+    assert.ok(holder);
+    assert.equal(
+      (
+        await directlyBlockedByHolder(
+          connection,
+          holder.holderPid,
+          runtimeApplicationName,
+        )
+      ).length,
+      0,
+    );
     const racedDuplicate = runtime.requestEnvironmentRuntimeUpdate({
       organizationId,
       environmentId: siblingId,
       runtimeVersionId: proposed.id,
       actorUserId: userId,
     });
-    await waitForEnvironmentRowLock(connection);
+    const waiter = await waitForEnvironmentRowLock(
+      connection,
+      holder.holderPid,
+      runtimeApplicationName,
+    );
+    const [observedWaiter] = await connection<
+      Array<{ blockerPids: number[] }>
+    >`
+      SELECT pg_blocking_pids(${waiter.waiterPid})::int[] AS "blockerPids"
+    `;
+    assert.ok(observedWaiter);
+    assert.ok(observedWaiter.blockerPids.includes(holder.holderPid));
     await completeUpdate(connection, {
       environmentId: siblingId,
       operationId: siblingForward.operation.id,
@@ -278,19 +306,60 @@ test("manual runtime activation changes only the exact canary and channel pointe
 
 async function waitForEnvironmentRowLock(
   sql: Awaited<ReturnType<postgres.Sql["reserve"]>>,
+  holderPid: number,
+  runtimeApplicationName: string,
 ) {
   for (let attempt = 0; attempt < 250; attempt += 1) {
-    const [blocked] = await sql<Array<{ count: number }>>`
-      SELECT count(*)::int AS count
-      FROM pg_stat_activity
-      WHERE datname = current_database()
-        AND pid <> pg_backend_pid()
-        AND pg_backend_pid() = ANY(pg_blocking_pids(pid))
-    `;
-    if ((blocked?.count ?? 0) > 0) return;
+    const blocked = await directlyBlockedByHolder(
+      sql,
+      holderPid,
+      runtimeApplicationName,
+    );
+    if (blocked.length > 0) {
+      assert.equal(
+        blocked.length,
+        1,
+        "The holder transaction blocked more than the duplicate runtime request.",
+      );
+      const [waiter] = blocked;
+      assert.ok(waiter);
+      assert.equal(waiter.applicationName, runtimeApplicationName);
+      assert.equal(waiter.waitEventType, "Lock");
+      assert.ok(waiter.blockerPids.includes(holderPid));
+      return waiter;
+    }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error("The concurrent runtime request did not wait on the Environment row lock.");
+}
+
+function directlyBlockedByHolder(
+  sql: Awaited<ReturnType<postgres.Sql["reserve"]>>,
+  holderPid: number,
+  runtimeApplicationName: string,
+) {
+  return sql<
+    Array<{
+      waiterPid: number;
+      applicationName: string;
+      waitEventType: string | null;
+      blockerPids: number[];
+      query: string;
+    }>
+  >`
+    SELECT
+      pid::int AS "waiterPid",
+      application_name AS "applicationName",
+      wait_event_type AS "waitEventType",
+      pg_blocking_pids(pid)::int[] AS "blockerPids",
+      query
+    FROM pg_stat_activity
+    WHERE datname = current_database()
+      AND pid <> ${holderPid}
+      AND application_name = ${runtimeApplicationName}
+      AND ${holderPid} = ANY(pg_blocking_pids(pid))
+    ORDER BY pid
+  `;
 }
 
 async function completeUpdate(

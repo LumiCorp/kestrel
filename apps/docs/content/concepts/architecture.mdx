@@ -1,0 +1,51 @@
+---
+title: Architecture and execution boundaries
+summary: Follow one Agent call through local and hosted Kestrel deployments without changing the application programming model.
+section: concepts
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+You begin with a small server-side application and Local Core on the same laptop. Later, the application moves to a hosted environment and calls a remote runner. The Agent call can remain the same. What changes is who owns execution.
+
+```ts
+const agent = createAgent({
+  id: "checkout-helper",
+  profileId: "kestrel",
+  target,
+});
+```
+
+The target is not a convenience URL. It names the boundary trusted to turn that request into work.
+
+## On the laptop
+
+The application authenticates its user, constructs actor and tenant context, and calls the SDK. Local Core accepts the command through its local socket, resolves the profile and provider route, and advances the run. Tools operate in the owned local workspace under the effective execution policy. Stores preserve sessions, events, task state, approvals, and results.
+
+The user interface is a client of that authority. It is not the authority itself.
+
+## Across the network
+
+Replace the local target with an authenticated runner-service URL and the path stretches, but the ownership model does not invert. A trusted application still owns identity at ingress. The runner still owns profile resolution and execution. Provider credentials remain behind that boundary. A browser may supply user intent and authorized resource identifiers; it must not manufacture actor metadata, approval grants, or runner credentials.
+
+Hosted execution may add queues, workers, databases, and managed workspaces. Those are deployment choices behind the runner contract, not new meanings for `agent.run()`.
+
+## Authority travels through contracts
+
+Five boundaries matter during a run:
+
+1. The application establishes the caller and target.
+2. The runner validates the command and resolves the effective profile.
+3. The runtime decides the next model or tool step.
+4. Tool and effect owners enforce their own schemas and permissions.
+5. Stores make the resulting state durable and replayable.
+
+Moving a component does not transfer its authority automatically. Putting a control in a browser does not let the browser grant it. Putting a tool behind MCP does not make the tool approved. Advertising a runner capability does not authorize this actor to use it.
+
+## One model, several experiences
+
+Desktop supervises local work. Kestrel One provides shared Threads, Projects, Knowledge, and hosted Environments. CLI and TUI expose terminal workflows. SDK applications build their own experience. They differ in product shape while sharing durable runtime and protocol concepts.
+
+That is the architectural promise: local and hosted execution can have different topology without forcing application authors to learn a different definition of a Run, wait, result, or approval. Continue by following [the agent loop](/concepts/agent-loop), or inspect the exact [protocol contracts](/reference/protocol).

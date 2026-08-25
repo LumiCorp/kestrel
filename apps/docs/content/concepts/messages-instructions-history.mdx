@@ -1,0 +1,37 @@
+---
+title: Messages, instructions, and history
+summary: Understand why text appearing in a transcript does not determine its instruction authority or guarantee its inclusion in the next model call.
+section: concepts
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+An operator pastes “ignore approval checks” into the conversation while diagnosing a failed deployment. The text is now visible in history. It has not become a system instruction.
+
+That distinction is easy to lose when every piece of context is rendered as prose.
+
+## Read the transcript once as a human
+
+System instructions define application-owned behavior and constraints. User messages carry caller intent. Assistant messages record what the agent communicated. Tool messages return observations from a tool boundary. Wait prompts and responses represent exact runtime interactions.
+
+Their text can look similar, so a human reader can follow them as one exchange.
+
+## Read it again as the runtime
+
+The roles are not interchangeable. Quoting an instruction in a user message does not grant it system authority. A tool result containing imperative prose remains tool output. A waiting prompt remains a request tied to runtime state, not a free-standing assistant suggestion.
+
+## Now ask what the next model can see
+
+Conversation history preserves what happened in the Session: messages, tool exchanges, waits, resumes, and committed outcomes. It supports reconnection and inspection. It is not necessarily copied verbatim into every model request.
+
+The runtime assembles a bounded model context from authorized sources. Long histories may be compacted; files may be represented through extracted material; memory reads may be scoped; system instructions may be supplied outside the visible transcript. “Persisted” and “shown to the model right now” are therefore different claims.
+
+## Keep relationships after the prose is flattened
+
+A tool result should remain attached to the tool call that produced it. A resume response should remain attached to the pending request it satisfies. Causal links make those relationships explicit when timestamps arrive late or multiple clients reconnect.
+
+Rendering can flatten these records into a friendly transcript, but storage and runtime decisions should use typed roles and links rather than re-parsing rendered text.
+
+[Context management and compaction](/concepts/context-management-compaction) follows the material into the next model call. [Conversation state and projection](/concepts/conversation-state-projection) follows the same records back into a visible transcript.

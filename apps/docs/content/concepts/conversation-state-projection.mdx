@@ -1,0 +1,39 @@
+---
+title: Conversation state and projection
+summary: Reconcile live and persisted activity into one causal conversation instead of sorting loosely related records by timestamp.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+A Run asks for deployment approval. The live UI renders the prompt immediately. The user responds, the connection drops, and after reload the response appears above the prompt.
+
+Both records have valid IDs and timestamps. The conversation is still wrong.
+
+## First place the request
+
+Kestrel conversation records describe activity: user and assistant messages, tool calls and results, waits and responses, progress, and terminal outcomes. A projector turns those typed records into the ordered state an interface can render.
+
+## Then attach what answered it
+
+The projector needs more than chronological sorting. A tool result belongs to one tool call. A resume response satisfies one pending interaction. A terminal result settles one Run. Explicit links and owning identities preserve those relationships when clocks differ, events arrive late, or a consumer sees a partial stream.
+
+## Reconnect without making twins
+
+During a stream, the interface may hold provisional live parts that have not yet appeared in its persisted query. On reconnect, persisted history may contain the same events plus newer state. Reconciliation should recognize shared identities, replace provisional records with committed ones, and avoid duplicating content.
+
+Unknown or malformed activity should fail conformance checks or remain visibly unsupported. Silently coercing it into a generic assistant message destroys the evidence needed to diagnose contract drift.
+
+## Leave strange records strange
+
+Unknown or malformed activity should fail conformance checks or remain visibly unsupported. Silently coercing it into a generic assistant message destroys the evidence needed to diagnose contract drift.
+
+## Finally, remember what projection cannot decide
+
+The visible transcript can make a waiting Run understandable, but it does not decide whether the Run is actually waiting. It can render a tool result, but it does not authorize or execute the tool. It can show a final answer, but the terminal result remains the authoritative completion contract.
+
+This separation lets several products render the same durable activity differently without changing what happened.
+
+[Composer queues and interactions](/concepts/composer-queues-interactions) picks up where projected state becomes a user control. [AI SDK presentation](/concepts/ai-sdk-presentation) is one concrete rendering adapter.
