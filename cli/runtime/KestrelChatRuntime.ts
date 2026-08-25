@@ -653,6 +653,12 @@ export class KestrelChatRuntime {
     return this.kestrel.getToolRuntimeStatus();
   }
 
+  async getReplay(
+    input: import("../../src/replay/RunReplayService.js").ReplayQuery,
+  ): Promise<import("../../src/replay/RunReplayService.js").ReplayResult> {
+    return this.kestrel.getReplay(input);
+  }
+
   async describeSession(sessionId: string): Promise<
     | {
         sessionId: string;

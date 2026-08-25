@@ -1544,6 +1544,16 @@ test("canonical event parser normalizes terminal assistant text without changing
     payload: {
       output: {
         ...jobOutput,
+        resultHandle: {
+          version: "job_managed_result_handle_v1",
+          kind: "managed_worktree",
+          worktreePath: "/tmp/kestrel-managed-result",
+          sourceWorkspaceRoot: "/tmp/kestrel-source",
+          baseRevision: "base-revision",
+          candidateRevision: "candidate-revision",
+          changedFiles: ["src/App.tsx"],
+          promotionId: "promotion-1",
+        },
         result: {
           assistantText: "  Deployment job completed.  ",
           finalizedPayload,
@@ -1563,7 +1573,41 @@ test("canonical event parser normalizes terminal assistant text without changing
       jobTerminal.payload.output.result?.finalizedPayload,
       finalizedPayload,
     );
+    assert.deepEqual(jobTerminal.payload.output.resultHandle, {
+      version: "job_managed_result_handle_v1",
+      kind: "managed_worktree",
+      worktreePath: "/tmp/kestrel-managed-result",
+      sourceWorkspaceRoot: "/tmp/kestrel-source",
+      baseRevision: "base-revision",
+      candidateRevision: "candidate-revision",
+      changedFiles: ["src/App.tsx"],
+      promotionId: "promotion-1",
+    });
   }
+
+  assert.throws(
+    () => parseRunnerEventV2({
+      id: "event-job-invalid-result-handle",
+      type: "job.completed",
+      ts: "2026-07-13T12:00:00.000Z",
+      payload: {
+        output: {
+          ...jobOutput,
+          resultHandle: {
+            version: "job_managed_result_handle_v1",
+            kind: "managed_worktree",
+            worktreePath: "/tmp/kestrel-managed-result",
+            sourceWorkspaceRoot: "/tmp/kestrel-source",
+            baseRevision: "base-revision",
+            candidateRevision: "candidate-revision",
+            changedFiles: [],
+          },
+        },
+        replay,
+      },
+    }),
+    /resultHandle\.changedFiles must contain at least one entry/u,
+  );
 
   const taskTerminal = parseRunnerEventV2({
     id: "event-task-terminal",

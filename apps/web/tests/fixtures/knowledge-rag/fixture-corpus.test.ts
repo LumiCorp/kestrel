@@ -16,6 +16,10 @@ const fixtureRoot = path.join(
   "fixtures",
   "knowledge-rag"
 );
+const attachmentFixtureRoot = path.resolve(
+  process.cwd(),
+  "../../packages/attachments/tests/fixtures",
+);
 
 type FixtureManifest = {
   corpusVersion: number;
@@ -118,4 +122,43 @@ test("Knowledge extraction produces searchable HTML and PPTX chunks", async () =
       new RegExp(fixture.anchor),
     );
   }
+});
+
+test("Knowledge PDF extraction supports predefined CMaps without indexing page markers", async () => {
+  const extracted = await extractKnowledgeDocument({
+    buffer: await readFile(path.join(attachmentFixtureRoot, "issue3521.pdf")),
+    filename: "issue3521.pdf",
+    mediaType: "application/pdf",
+  });
+  assert.equal(extracted.pageCount, 1);
+  assert.deepEqual(extracted.warnings, ["pdf_text_sparse"]);
+  assert.match(extracted.blocks.map((block) => block.text).join("\n"), /我们都是黑体字/u);
+  assert.doesNotMatch(extracted.blocks.map((block) => block.text).join("\n"), /-- \d+ of \d+ --/u);
+});
+
+test("Knowledge PDF extraction reports an empty document without marker chunks", async () => {
+  const matrix = await import("../../../../../packages/attachments/scripts/extraction-matrix.mjs") as {
+    createBlankPdf(): Buffer;
+  };
+  const extracted = await extractKnowledgeDocument({
+    buffer: matrix.createBlankPdf(),
+    filename: "blank.pdf",
+    mediaType: "application/pdf",
+  });
+  assert.equal(extracted.pageCount, 1);
+  assert.deepEqual(extracted.blocks, []);
+  assert.deepEqual(extracted.warnings, ["pdf_text_empty"]);
+});
+
+test("Knowledge PDF extraction fails closed for malformed and encrypted input", async () => {
+  await assert.rejects(extractKnowledgeDocument({
+    buffer: Buffer.from("%PDF- malformed"),
+    filename: "malformed.pdf",
+    mediaType: "application/pdf",
+  }));
+  await assert.rejects(extractKnowledgeDocument({
+    buffer: await readFile(path.join(attachmentFixtureRoot, "password-123456.pdf")),
+    filename: "encrypted.pdf",
+    mediaType: "application/pdf",
+  }), /No password given/u);
 });

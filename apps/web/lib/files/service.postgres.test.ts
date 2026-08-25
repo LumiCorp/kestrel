@@ -260,6 +260,28 @@ test(
     }
     assert.notEqual(blobIds[0], blobIds[1]);
 
+    const matrix = await import("../../../../packages/attachments/scripts/extraction-matrix.mjs") as {
+      createBlankPdf(): Buffer;
+    };
+    const blankPdf = await files.createPublishedFileFromBuffer({
+      organizationId: organizations[0]!.organizationId,
+      uploaderUserId: organizations[0]!.userId,
+      filename: "blank.pdf",
+      declaredMediaType: "application/pdf",
+      buffer: matrix.createBlankPdf(),
+    });
+    assert.equal(blankPdf.representationStatus, "metadata_only");
+    assert.equal(blankPdf.metadataOnlyReason, "Attachment extractor returned no text.");
+    const [blankRepresentation] = await sql<Array<{ status: string; error: string | null }>>`
+      SELECT "status", "error"
+      FROM "file_representations"
+      WHERE "blob_id" = ${blankPdf.blobId}
+    `;
+    assert.deepEqual(blankRepresentation, {
+      status: "failed",
+      error: "Attachment extractor returned no text.",
+    });
+
     const opaque = await files.createPublishedFileFromBuffer({
       organizationId: organizations[0]!.organizationId,
       uploaderUserId: organizations[0]!.userId,

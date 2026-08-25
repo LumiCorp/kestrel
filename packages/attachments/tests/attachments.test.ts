@@ -75,8 +75,24 @@ test("CommonJS consumers resolve the bridge and preserve the extraction contract
 test("does not initialize the PDF runtime while importing the attachment package", async () => {
   const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /^import .* from ["']pdf-parse["'];$/mu);
-  assert.match(source, /await import\(["']pdf-parse["']\)/u);
+  assert.match(source, /import\(["']pdf-parse["']\)/u);
+  assert.match(source, /import\(["']pdf-parse\/worker["']\)/u);
   assert.match(source, /await import\(["']@napi-rs\/canvas["']\)/u);
+});
+
+test("pins one compatible PDF parser and PDF.js runtime", async () => {
+  const [attachmentManifest, webManifest, pdfParseManifest] = await Promise.all([
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../../../apps/web/package.json", import.meta.url), "utf8"),
+    readFile(new URL("../node_modules/pdf-parse/package.json", import.meta.url), "utf8"),
+  ]).then((values) => values.map((value) => JSON.parse(value) as {
+    dependencies?: Record<string, string>;
+  }));
+  assert.equal(attachmentManifest.dependencies?.["pdf-parse"], "2.4.5");
+  assert.equal(webManifest.dependencies?.["pdf-parse"], "2.4.5");
+  assert.equal(attachmentManifest.dependencies?.["pdfjs-dist"], "5.4.296");
+  assert.equal(webManifest.dependencies?.["pdfjs-dist"], "5.4.296");
+  assert.equal(pdfParseManifest.dependencies?.["pdfjs-dist"], "5.4.296");
 });
 
 test("isolated extraction enforces its timeout", async () => {
@@ -136,6 +152,29 @@ test("loads the native PDF runtime only for PDF extraction", async () => {
   assert.equal(extracted.truncated, false);
 });
 
+test("extracts predefined CMap text and omits generated page markers", async () => {
+  const extracted = await extractAttachmentText({
+    buffer: await readFile(new URL("./fixtures/issue3521.pdf", import.meta.url)),
+    filename: "issue3521.pdf",
+    mediaType: "application/pdf",
+  });
+  assert.match(extracted.text, /我们都是黑体字/u);
+  assert.doesNotMatch(extracted.text, /-- \d+ of \d+ --/u);
+});
+
+test("returns genuinely empty text for a blank PDF", async () => {
+  const matrix = await import("../scripts/extraction-matrix.mjs") as {
+    createBlankPdf(): Buffer;
+  };
+  const extracted = await extractAttachmentText({
+    buffer: matrix.createBlankPdf(),
+    filename: "blank.pdf",
+    mediaType: "application/pdf",
+  });
+  assert.equal(extracted.text, "");
+  assert.deepEqual(extracted.warnings, []);
+});
+
 test("extracts common Office document formats", async () => {
   const fixtures = [
     {
@@ -183,6 +222,14 @@ test("malformed documents and unsupported binaries fail closed", async () => {
     filename: "opaque.bin",
     mediaType: "application/octet-stream",
   }), /No attachment text extractor is registered/u);
+});
+
+test("password-protected PDFs fail extraction without indexing content", async () => {
+  await assert.rejects(extractAttachmentText({
+    buffer: await readFile(new URL("./fixtures/password-123456.pdf", import.meta.url)),
+    filename: "encrypted.pdf",
+    mediaType: "application/pdf",
+  }), /No password given/u);
 });
 
 test("processor registry distinguishes supported documents from opaque binaries", () => {

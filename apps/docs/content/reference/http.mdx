@@ -59,4 +59,4 @@ not come from the runner's OpenAI compatibility layer.
 
 ## Compatibility limitations
 
-This surface preserves existing OpenAI-style clients, not 0.7 Kestrel wire compatibility. It exposes the canonical `kestrel` model and a subset of native control. Runtime, server, and compatibility adapter must still use the exact 0.8 line.
+This surface preserves existing OpenAI-style clients, not 0.7 Kestrel wire compatibility. It exposes the canonical `kestrel` model and a subset of native control. Runtime, server, and compatibility adapter must follow their declared exact dependency contracts; compatible packages do not need equal semantic versions.

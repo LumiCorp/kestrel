@@ -1,12 +1,21 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { request } from "node:http";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { parseRunnerHealthV1 } from "../packages/protocol/src/index.js";
+import { RUNTIME_WORKSPACE_PACKAGES } from "./runtime-package-dependencies.js";
 import {
   LOCAL_CORE_BUILD_MANIFEST_NAME,
   createSourceLocalCoreBuildIdentity,
@@ -16,8 +25,10 @@ import {
 
 const root = resolveRepoRoot(process.cwd());
 const TARGET_VERSION = readRootPackageVersion(root);
-const TARGET_PLATFORM = process.env.KESTREL_CLI_PACKAGE_PLATFORM?.trim() || process.platform;
-const TARGET_ARCH = process.env.KESTREL_CLI_PACKAGE_ARCH?.trim() || process.arch;
+const TARGET_PLATFORM =
+  process.env.KESTREL_CLI_PACKAGE_PLATFORM?.trim() || process.platform;
+const TARGET_ARCH =
+  process.env.KESTREL_CLI_PACKAGE_ARCH?.trim() || process.arch;
 const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;
 const REMOVED_CLI_NAMES = ["kwork", "kchat", "kcode"] as const;
 const REQUIRED_LIBEXEC_PATHS = [
@@ -54,7 +65,9 @@ const REQUIRED_LIBEXEC_PATHS = [
   "src/localCore/protocolEventJournal.ts",
   "src/localCore/runtimeEnvironment.ts",
   "src/localCore/store.ts",
+  "packages/mcp-security/package.json",
   "packages/mcp-security/src/index.ts",
+  "packages/mcp-security/src/oci-egress-policy.ts",
   "packages/protocol/dist/index.js",
   "packages/workspace-skills/dist/index.js",
   "packages/memory/dist/index.js",
@@ -91,10 +104,15 @@ const REQUIRED_DEPENDENCIES = [
   "pg",
   "ink",
   "@electric-sql/pglite",
-  "@kestrel-agents/protocol",
 ] as const;
 
-const artifactPath = path.join(root, "apps", "cli", "out", `kestrel-cli-${TARGET_VERSION}-${TARGET_PLATFORM}-${TARGET_ARCH}.tar.gz`);
+const artifactPath = path.join(
+  root,
+  "apps",
+  "cli",
+  "out",
+  `kestrel-cli-${TARGET_VERSION}-${TARGET_PLATFORM}-${TARGET_ARCH}.tar.gz`,
+);
 const errors: string[] = [];
 
 await main();
@@ -108,9 +126,14 @@ async function main(): Promise<void> {
   }
   checkArtifactDigest();
 
-  const extractRoot = mkdtempSync(path.join(os.tmpdir(), "kestrel-cli-release-"));
+  const extractRoot = mkdtempSync(
+    path.join(os.tmpdir(), "kestrel-cli-release-"),
+  );
   try {
-    execFileSync("tar", ["-xzf", artifactPath, "-C", extractRoot], { cwd: root, stdio: "pipe" });
+    execFileSync("tar", ["-xzf", artifactPath, "-C", extractRoot], {
+      cwd: root,
+      stdio: "pipe",
+    });
     await checkExtractedArtifact(extractRoot);
   } finally {
     rmSync(extractRoot, { recursive: true, force: true });
@@ -120,14 +143,20 @@ async function main(): Promise<void> {
 }
 
 function checkSuiteVersion(): void {
-  const manifest = readJson(path.join(root, "package.json")) as { version?: unknown };
+  const manifest = readJson(path.join(root, "package.json")) as {
+    version?: unknown;
+  };
   if (manifest.version !== TARGET_VERSION) {
-    errors.push(`root package.json version must be ${TARGET_VERSION}; found ${String(manifest.version)}`);
+    errors.push(
+      `root package.json version must be ${TARGET_VERSION}; found ${String(manifest.version)}`,
+    );
   }
 }
 
 async function checkExtractedArtifact(extractRoot: string): Promise<void> {
-  const bundleManifest = readJson(path.join(extractRoot, "kestrel-bundle.json")) as {
+  const bundleManifest = readJson(
+    path.join(extractRoot, "kestrel-bundle.json"),
+  ) as {
     version?: unknown;
     package?: unknown;
     packageVersion?: unknown;
@@ -140,11 +169,19 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
   if (bundleManifest.version !== "kestrel_cli_bundle_v1") {
     errors.push("artifact kestrel-bundle.json must use kestrel_cli_bundle_v1");
   }
-  if (bundleManifest.package !== "@kestrel-agents/kestrel" || bundleManifest.packageVersion !== TARGET_VERSION) {
+  if (
+    bundleManifest.package !== "@kestrel-agents/kestrel" ||
+    bundleManifest.packageVersion !== TARGET_VERSION
+  ) {
     errors.push("artifact bundle manifest package identity is invalid");
   }
-  if (bundleManifest.platform !== TARGET_PLATFORM || bundleManifest.arch !== TARGET_ARCH) {
-    errors.push("artifact bundle manifest target does not match the release artifact");
+  if (
+    bundleManifest.platform !== TARGET_PLATFORM ||
+    bundleManifest.arch !== TARGET_ARCH
+  ) {
+    errors.push(
+      "artifact bundle manifest target does not match the release artifact",
+    );
   }
   if (bundleManifest.entrypoint !== "bin/kestrel") {
     errors.push("artifact bundle manifest entrypoint must be bin/kestrel");
@@ -161,7 +198,9 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
       dependencyRoot: path.join(extractRoot, "libexec"),
     });
   } catch (error) {
-    errors.push(`artifact Local Core build identity is invalid: ${error instanceof Error ? error.message : String(error)}`);
+    errors.push(
+      `artifact Local Core build identity is invalid: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   if (coreBuildIdentity !== undefined) {
     const sourceIdentity = createSourceLocalCoreBuildIdentity({
@@ -169,16 +208,25 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
       suiteVersion: TARGET_VERSION,
     });
     if (bundleManifest.coreBuildId !== coreBuildIdentity.buildId) {
-      errors.push("artifact bundle manifest coreBuildId must match the embedded Local Core build identity");
+      errors.push(
+        "artifact bundle manifest coreBuildId must match the embedded Local Core build identity",
+      );
     }
-    if (bundleManifest.coreBuildManifest !== `libexec/${LOCAL_CORE_BUILD_MANIFEST_NAME}`) {
+    if (
+      bundleManifest.coreBuildManifest !==
+      `libexec/${LOCAL_CORE_BUILD_MANIFEST_NAME}`
+    ) {
       errors.push("artifact bundle manifest coreBuildManifest is invalid");
     }
     if (coreBuildIdentity.source !== "packaged_payload") {
-      errors.push("artifact Local Core build identity must describe a packaged payload");
+      errors.push(
+        "artifact Local Core build identity must describe a packaged payload",
+      );
     }
     if (coreBuildIdentity.buildId !== sourceIdentity.buildId) {
-      errors.push("artifact Local Core build identity does not match current runtime inputs");
+      errors.push(
+        "artifact Local Core build identity does not match current runtime inputs",
+      );
     }
   }
   const binRoot = path.join(extractRoot, "bin");
@@ -194,13 +242,26 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
     }
     const launcherSource = readFileSync(launcherPath, "utf8");
     if (launcherSource.includes(root)) {
-      errors.push(`artifact launcher bin/${name} must not reference the source checkout`);
+      errors.push(
+        `artifact launcher bin/${name} must not reference the source checkout`,
+      );
     }
-    if (!(launcherSource.includes("libexecRoot") && launcherSource.includes("\"libexec\""))) {
+    if (
+      !(
+        launcherSource.includes("libexecRoot") &&
+        launcherSource.includes('"libexec"')
+      )
+    ) {
       errors.push(`artifact launcher bin/${name} must resolve ../libexec`);
     }
-    if (!launcherSource.includes("TSX_TSCONFIG_PATH: path.join(libexecRoot, \"tsconfig.json\")")) {
-      errors.push(`artifact launcher bin/${name} must pin the bundled TSX config`);
+    if (
+      !launcherSource.includes(
+        'TSX_TSCONFIG_PATH: path.join(libexecRoot, "tsconfig.json")',
+      )
+    ) {
+      errors.push(
+        `artifact launcher bin/${name} must pin the bundled TSX config`,
+      );
     }
   }
   for (const name of REMOVED_CLI_NAMES) {
@@ -209,7 +270,9 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
     }
   }
   if (existsSync(path.join(binRoot, "kestrel-core"))) {
-    errors.push("artifact must not expose internal daemon as public bin/kestrel-core");
+    errors.push(
+      "artifact must not expose internal daemon as public bin/kestrel-core",
+    );
   }
 
   for (const relativePath of REQUIRED_LIBEXEC_PATHS) {
@@ -219,7 +282,9 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
   }
   for (const relativePath of FORBIDDEN_LIBEXEC_PATHS) {
     if (existsSync(path.join(libexecRoot, relativePath))) {
-      errors.push(`artifact must not include embedded CLI execution authority libexec/${relativePath}`);
+      errors.push(
+        `artifact must not include embedded CLI execution authority libexec/${relativePath}`,
+      );
     }
   }
 
@@ -227,33 +292,49 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
     name?: unknown;
     version?: unknown;
     type?: unknown;
+    dependencies?: Record<string, unknown>;
   };
-  if (runtimePackage.name !== "@kestrel-agents/kestrel" || runtimePackage.type !== "module") {
-    errors.push("libexec/package.json must preserve the canonical source runtime descriptor");
+  if (
+    runtimePackage.name !== "@kestrel-agents/kestrel" ||
+    runtimePackage.type !== "module"
+  ) {
+    errors.push(
+      "libexec/package.json must preserve the canonical source runtime descriptor",
+    );
   }
   if (runtimePackage.version !== TARGET_VERSION) {
-    errors.push(`libexec/package.json version must be ${TARGET_VERSION}; found ${String(runtimePackage.version)}`);
+    errors.push(
+      `libexec/package.json version must be ${TARGET_VERSION}; found ${String(runtimePackage.version)}`,
+    );
   }
   for (const dependency of REQUIRED_DEPENDENCIES) {
-    if (!existsSync(path.join(libexecRoot, "node_modules", dependency, "package.json"))) {
+    if (
+      !existsSync(
+        path.join(libexecRoot, "node_modules", dependency, "package.json"),
+      )
+    ) {
       errors.push(`artifact missing libexec/node_modules/${dependency}`);
     }
   }
-  const installedProtocolPath = path.join(
-    libexecRoot,
-    "node_modules",
-    "@kestrel-agents",
-    "protocol",
-    "package.json",
-  );
-  if (existsSync(installedProtocolPath)) {
-    const installedProtocol = readJson(installedProtocolPath) as { version?: unknown };
-    if (installedProtocol.version !== TARGET_VERSION) {
-      errors.push(`artifact must install @kestrel-agents/protocol ${TARGET_VERSION}`);
-    }
+  checkPackagedWorkspaceDependencies(libexecRoot, runtimePackage.dependencies);
+  if (runtimePackage.dependencies?.["@kestrel/mcp-security"] !== undefined) {
+    errors.push(
+      "artifact must keep vendored @kestrel/mcp-security out of dependencies",
+    );
+  }
+  if (
+    existsSync(
+      path.join(libexecRoot, "node_modules", "@kestrel", "mcp-security"),
+    )
+  ) {
+    errors.push(
+      "artifact must not install vendored @kestrel/mcp-security in node_modules",
+    );
   }
   if (existsSync(path.join(libexecRoot, "packages", "protocol", "src"))) {
-    errors.push("artifact Local Core build inputs must include only the built protocol payload, not package source");
+    errors.push(
+      "artifact Local Core build inputs must include only the built protocol payload, not package source",
+    );
   }
 
   for (const envFile of collectLocalEnvFiles(libexecRoot)) {
@@ -263,16 +344,54 @@ async function checkExtractedArtifact(extractRoot: string): Promise<void> {
   await runSmokeChecks(extractRoot);
 }
 
+function checkPackagedWorkspaceDependencies(
+  libexecRoot: string,
+  declaredDependencies: Record<string, unknown> | undefined,
+): void {
+  for (const descriptor of RUNTIME_WORKSPACE_PACKAGES) {
+    const sourceManifest = readJson(
+      path.join(root, descriptor.directory, "package.json"),
+    ) as { version?: unknown };
+    const expectedVersion = sourceManifest.version;
+    const declaredVersion = declaredDependencies?.[descriptor.name];
+    if (declaredVersion !== expectedVersion) {
+      errors.push(
+        `artifact dependency ${descriptor.name} must resolve to source version ${String(expectedVersion)}; found ${String(declaredVersion)}`,
+      );
+    }
+    const installedPath = path.join(
+      libexecRoot,
+      "node_modules",
+      ...descriptor.name.split("/"),
+      "package.json",
+    );
+    const installedVersion = existsSync(installedPath)
+      ? (readJson(installedPath) as { version?: unknown }).version
+      : undefined;
+    if (installedVersion !== expectedVersion) {
+      errors.push(
+        `artifact must install ${descriptor.name} ${String(expectedVersion)}; found ${String(installedVersion)}`,
+      );
+    }
+  }
+}
+
 function checkArtifactDigest(): void {
   const digestPath = `${artifactPath}.sha256`;
   if (!existsSync(digestPath)) {
-    errors.push(`missing CLI artifact digest: ${path.relative(root, digestPath)}`);
+    errors.push(
+      `missing CLI artifact digest: ${path.relative(root, digestPath)}`,
+    );
     return;
   }
   const expected = readFileSync(digestPath, "utf8").trim().split(/\s+/u)[0];
-  const actual = createHash("sha256").update(readFileSync(artifactPath)).digest("hex");
+  const actual = createHash("sha256")
+    .update(readFileSync(artifactPath))
+    .digest("hex");
   if (expected !== actual) {
-    errors.push(`CLI artifact digest mismatch: expected ${String(expected)}, got ${actual}`);
+    errors.push(
+      `CLI artifact digest mismatch: expected ${String(expected)}, got ${actual}`,
+    );
   }
 }
 
@@ -283,7 +402,8 @@ async function runSmokeChecks(extractRoot: string): Promise<void> {
     ...process.env,
     KESTREL_CORE_HOME: home,
     KESTREL_CORE_IDLE_TIMEOUT_MS: "1000",
-    DATABASE_URL: "postgresql://host-env-should-not-be-used.invalid:5432/kestrel",
+    DATABASE_URL:
+      "postgresql://host-env-should-not-be-used.invalid:5432/kestrel",
     KESTREL_DISABLE_DOTENV: "1",
     FORCE_COLOR: "0",
   };
@@ -292,13 +412,62 @@ async function runSmokeChecks(extractRoot: string): Promise<void> {
 
   try {
     const versionPattern = new RegExp(escapeRegExp(TARGET_VERSION), "u");
-    expectOutput(kestrel, ["--version"], cwd, env, versionPattern, "kestrel --version");
-    expectOutput(kestrel, ["--help"], cwd, env, /Usage: kestrel/u, "kestrel --help");
-    expectOutput(kestrel, ["core", "status"], cwd, env, /Expected build: sha256:[a-f0-9]{64}/u, "kestrel core status");
-    expectOutput(kestrel, ["workspace", "status"], cwd, env, /Workspace:/u, "kestrel workspace status");
-    expectOutput(kestrel, ["status"], cwd, env, /Kestrel Local Core|Local Core/u, "kestrel status");
-    expectOutput(kestrel, ["core", "restart"], cwd, env, /(?:Started|Restarted) Kestrel Local Core/u, "kestrel core restart");
-    expectOutput(kcron, ["--version"], cwd, env, versionPattern, "kcron --version");
+    expectOutput(
+      kestrel,
+      ["--version"],
+      cwd,
+      env,
+      versionPattern,
+      "kestrel --version",
+    );
+    expectOutput(
+      kestrel,
+      ["--help"],
+      cwd,
+      env,
+      /Usage: kestrel/u,
+      "kestrel --help",
+    );
+    expectOutput(
+      kestrel,
+      ["core", "status"],
+      cwd,
+      env,
+      /Expected build: sha256:[a-f0-9]{64}/u,
+      "kestrel core status",
+    );
+    expectOutput(
+      kestrel,
+      ["workspace", "status"],
+      cwd,
+      env,
+      /Workspace:/u,
+      "kestrel workspace status",
+    );
+    expectOutput(
+      kestrel,
+      ["status"],
+      cwd,
+      env,
+      /Kestrel Local Core|Local Core/u,
+      "kestrel status",
+    );
+    expectOutput(
+      kestrel,
+      ["core", "restart"],
+      cwd,
+      env,
+      /(?:Started|Restarted) Kestrel Local Core/u,
+      "kestrel core restart",
+    );
+    expectOutput(
+      kcron,
+      ["--version"],
+      cwd,
+      env,
+      versionPattern,
+      "kcron --version",
+    );
     expectOutput(kcron, ["status"], cwd, env, /kcron:/u, "kcron status");
     smokePackagedProtocolClient(extractRoot, cwd, env);
     await smokeWebRunner(kestrel, cwd, env);
@@ -318,21 +487,29 @@ function smokePackagedProtocolClient(
   const tsxImport = require.resolve("tsx");
   const smokeScript = path.join(libexecRoot, "scripts", "kchat-smoke.ts");
   try {
-    const output = execFileSync(process.execPath, ["--import", tsxImport, smokeScript], {
-      cwd,
-      env: {
-        ...env,
-        KESTREL_CLI_LIBEXEC: libexecRoot,
+    const output = execFileSync(
+      process.execPath,
+      ["--import", tsxImport, smokeScript],
+      {
+        cwd,
+        env: {
+          ...env,
+          KESTREL_CLI_LIBEXEC: libexecRoot,
+        },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30_000,
       },
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 30_000,
-    });
+    );
     if (!/kchat smoke: protocol ok/u.test(output)) {
-      errors.push(`packaged protocol client smoke output was unexpected: ${JSON.stringify(output.slice(0, 400))}`);
+      errors.push(
+        `packaged protocol client smoke output was unexpected: ${JSON.stringify(output.slice(0, 400))}`,
+      );
     }
   } catch (error) {
-    errors.push(`packaged protocol client smoke failed: ${error instanceof Error ? error.message : String(error)}`);
+    errors.push(
+      `packaged protocol client smoke failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -353,14 +530,22 @@ function expectOutput(
       timeout: 20_000,
     });
     if (!pattern.test(output)) {
-      errors.push(`${label} output did not match ${pattern}: ${JSON.stringify(output.slice(0, 400))}`);
+      errors.push(
+        `${label} output did not match ${pattern}: ${JSON.stringify(output.slice(0, 400))}`,
+      );
     }
   } catch (error) {
-    errors.push(`${label} failed: ${error instanceof Error ? error.message : String(error)}`);
+    errors.push(
+      `${label} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
-async function smokeWebRunner(kestrel: string, cwd: string, env: NodeJS.ProcessEnv): Promise<void> {
+async function smokeWebRunner(
+  kestrel: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
   const port = await reservePort();
   const child = spawn(kestrel, ["web", "--port", String(port)], {
     cwd,
@@ -383,11 +568,20 @@ async function smokeWebRunner(kestrel: string, cwd: string, env: NodeJS.ProcessE
   });
 
   try {
-    await waitFor(() => stdout.includes("export KESTREL_RUNNER_SERVICE_TOKEN="), 20_000);
-    const url = stdout.match(/export KESTREL_RUNNER_SERVICE_URL='([^']+)'/u)?.[1];
-    const token = stdout.match(/export KESTREL_RUNNER_SERVICE_TOKEN='([^']+)'/u)?.[1];
+    await waitFor(
+      () => stdout.includes("export KESTREL_RUNNER_SERVICE_TOKEN="),
+      20_000,
+    );
+    const url = stdout.match(
+      /export KESTREL_RUNNER_SERVICE_URL='([^']+)'/u,
+    )?.[1];
+    const token = stdout.match(
+      /export KESTREL_RUNNER_SERVICE_TOKEN='([^']+)'/u,
+    )?.[1];
     if (url === undefined || token === undefined) {
-      errors.push(`kestrel web did not print URL/token exports: ${stdout.slice(0, 800)}`);
+      errors.push(
+        `kestrel web did not print URL/token exports: ${stdout.slice(0, 800)}`,
+      );
       return;
     }
     const health = await httpJson(`${url}/health`);
@@ -397,7 +591,9 @@ async function smokeWebRunner(kestrel: string, cwd: string, env: NodeJS.ProcessE
       try {
         parseRunnerHealthV1(health.body);
       } catch (error) {
-        errors.push(`kestrel web health contract failed: ${error instanceof Error ? error.message : String(error)}`);
+        errors.push(
+          `kestrel web health contract failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     }
     const ping = await httpJson(`${url}/commands`, {
@@ -422,45 +618,62 @@ async function smokeWebRunner(kestrel: string, cwd: string, env: NodeJS.ProcessE
         },
       }),
     });
-    if (ping.status !== 200 || (ping.body as { type?: unknown }).type !== "runner.pong") {
+    if (
+      ping.status !== 200 ||
+      (ping.body as { type?: unknown }).type !== "runner.pong"
+    ) {
       errors.push(`kestrel web ping failed: ${JSON.stringify(ping)}`);
     }
   } catch (error) {
-    errors.push(`kestrel web smoke failed: ${error instanceof Error ? error.message : String(error)} stderr=${stderr.slice(0, 800)}`);
+    errors.push(
+      `kestrel web smoke failed: ${error instanceof Error ? error.message : String(error)} stderr=${stderr.slice(0, 800)}`,
+    );
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGINT");
     }
     await waitForChild(childClose, 30_000).catch((error) => {
-      errors.push(`kestrel web did not stop cleanly: ${error instanceof Error ? error.message : String(error)}`);
+      errors.push(
+        `kestrel web did not stop cleanly: ${error instanceof Error ? error.message : String(error)}`,
+      );
       child.kill("SIGKILL");
     });
   }
 }
 
-function httpJson(url: string, options: {
-  method?: string | undefined;
-  headers?: Record<string, string> | undefined;
-  body?: string | undefined;
-} = {}): Promise<{ status: number; body: unknown }> {
+function httpJson(
+  url: string,
+  options: {
+    method?: string | undefined;
+    headers?: Record<string, string> | undefined;
+    body?: string | undefined;
+  } = {},
+): Promise<{ status: number; body: unknown }> {
   return new Promise((resolve, reject) => {
-    const req = request(url, {
-      method: options.method ?? "GET",
-      headers: options.headers,
-    }, (res) => {
-      let raw = "";
-      res.setEncoding("utf8");
-      res.on("data", (chunk) => {
-        raw += chunk;
-      });
-      res.on("end", () => {
-        try {
-          resolve({ status: res.statusCode ?? 0, body: raw.length > 0 ? JSON.parse(raw) : undefined });
-        } catch (error) {
-          reject(error);
-        }
-      });
-    });
+    const req = request(
+      url,
+      {
+        method: options.method ?? "GET",
+        headers: options.headers,
+      },
+      (res) => {
+        let raw = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          raw += chunk;
+        });
+        res.on("end", () => {
+          try {
+            resolve({
+              status: res.statusCode ?? 0,
+              body: raw.length > 0 ? JSON.parse(raw) : undefined,
+            });
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    );
     req.on("error", reject);
     if (options.body !== undefined) {
       req.write(options.body);
@@ -486,18 +699,23 @@ function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
   });
 }
 
-function waitForChild(childClose: Promise<void>, timeoutMs: number): Promise<void> {
+function waitForChild(
+  childClose: Promise<void>,
+  timeoutMs: number,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`Timed out after ${timeoutMs}ms.`));
     }, timeoutMs);
-    childClose.then(() => {
-      clearTimeout(timer);
-      resolve();
-    }).catch((error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
+    childClose
+      .then(() => {
+        clearTimeout(timer);
+        resolve();
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
   });
 }
 
@@ -513,8 +731,13 @@ function collectLocalEnvFiles(rootPath: string): string[] {
         visit(entryPath);
         continue;
       }
-      if (entry.isFile() && (entry.name === ".env" || entry.name.startsWith(".env."))) {
-        matches.push(path.relative(rootPath, entryPath).split(path.sep).join("/"));
+      if (
+        entry.isFile() &&
+        (entry.name === ".env" || entry.name.startsWith(".env."))
+      ) {
+        matches.push(
+          path.relative(rootPath, entryPath).split(path.sep).join("/"),
+        );
       }
     }
   };
@@ -543,8 +766,13 @@ function readJson(filePath: string): unknown {
 }
 
 function readRootPackageVersion(repoRoot: string): string {
-  const manifest = readJson(path.join(repoRoot, "package.json")) as { version?: unknown };
-  if (typeof manifest.version !== "string" || manifest.version.trim().length === 0) {
+  const manifest = readJson(path.join(repoRoot, "package.json")) as {
+    version?: unknown;
+  };
+  if (
+    typeof manifest.version !== "string" ||
+    manifest.version.trim().length === 0
+  ) {
     throw new Error("root package.json must declare a version.");
   }
   return manifest.version.trim();
@@ -573,9 +801,13 @@ function report(): void {
     for (const error of errors) {
       process.stderr.write(`[cli-release] ${error}\n`);
     }
-    process.stderr.write(`[cli-release] failed with ${errors.length} issue(s)\n`);
+    process.stderr.write(
+      `[cli-release] failed with ${errors.length} issue(s)\n`,
+    );
     process.exitCode = 1;
     return;
   }
-  process.stdout.write(`[cli-release] CLI ${TARGET_VERSION} ${TARGET_PLATFORM}-${TARGET_ARCH} release checks passed\n`);
+  process.stdout.write(
+    `[cli-release] CLI ${TARGET_VERSION} ${TARGET_PLATFORM}-${TARGET_ARCH} release checks passed\n`,
+  );
 }

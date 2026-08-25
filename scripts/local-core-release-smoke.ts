@@ -14,14 +14,23 @@ import {
 } from "../src/localCore/index.js";
 import { WorkspaceStore } from "../cli/workspace/WorkspaceStore.js";
 import { SessionStore } from "../cli/session/SessionStore.js";
+import { LOCAL_CORE_STATE_EPOCH } from "../src/localCore/constants.js";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const VERSION = (
-  JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
-    version?: string;
-  }
-).version ?? "";
-assert.match(VERSION, /^\d+\.\d+\.\d+$/u, "root package version must be numeric");
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+);
+const VERSION =
+  (
+    JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")) as {
+      version?: string;
+    }
+  ).version ?? "";
+assert.match(
+  VERSION,
+  /^\d+\.\d+\.\d+$/u,
+  "root package version must be numeric",
+);
 const SMOKE_TEMP_ROOT = process.platform === "darwin" ? "/tmp" : os.tmpdir();
 
 async function main(): Promise<void> {
@@ -51,10 +60,16 @@ async function smokeInheritedDatabaseUrlRejection(home: string): Promise<void> {
     databaseMode: "external",
   });
   assert.equal(status.state, "blocked");
-  assert.equal(status.lastError?.code, "LOCAL_CORE_EXTERNAL_DATABASE_URL_REQUIRED");
+  assert.equal(
+    status.lastError?.code,
+    "LOCAL_CORE_EXTERNAL_DATABASE_URL_REQUIRED",
+  );
 }
 
-async function smokeShellAttachOrder(home: string, label: string): Promise<void> {
+async function smokeShellAttachOrder(
+  home: string,
+  label: string,
+): Promise<void> {
   const server = await startLocalCoreApiServer({
     env: {
       KESTREL_CORE_HOME: home,
@@ -72,9 +87,12 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
     process.env.KESTREL_LOCAL_CORE_API_SOCKET = server.socketPath;
     process.env.KESTREL_LOCAL_CORE_API_TOKEN = server.token;
 
-    const client = new LocalCoreClient({ socketPath: server.socketPath, token: server.token });
+    const client = new LocalCoreClient({
+      socketPath: server.socketPath,
+      token: server.token,
+    });
     const status = await client.status();
-    const stateHome = path.join(home, "state", "0.7");
+    const stateHome = path.join(home, "state", LOCAL_CORE_STATE_EPOCH);
     assert.equal(status.state, "healthy");
     assert.equal(status.home.productRootPath, home);
     assert.equal(status.home.homePath, stateHome);
@@ -83,34 +101,48 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
 
     await new WorkspaceStore(stateHome).save({
       version: 3,
-      workspaces: [{
-        workspaceId: `${label}-workspace`,
-        rootPath: home,
-        automationEnabled: false,
-        discoveredAt: "2026-06-17T00:00:00.000Z",
-        updatedAt: "2026-06-17T00:00:00.000Z",
-      }],
+      workspaces: [
+        {
+          workspaceId: `${label}-workspace`,
+          rootPath: home,
+          automationEnabled: false,
+          discoveredAt: "2026-06-17T00:00:00.000Z",
+          updatedAt: "2026-06-17T00:00:00.000Z",
+        },
+      ],
     });
-    assert.equal((await new WorkspaceStore(stateHome).load()).workspaces[0]?.workspaceId, `${label}-workspace`);
+    assert.equal(
+      (await new WorkspaceStore(stateHome).load()).workspaces[0]?.workspaceId,
+      `${label}-workspace`,
+    );
 
     await new SessionStore(stateHome).save({
       version: 5,
       activeSessionName: `${label}-session`,
-      sessions: [{
-        name: `${label}-session`,
-        sessionId: `${label}-session-id`,
-        profileId: "kestrel",
-        createdAt: "2026-06-17T00:00:00.000Z",
-        updatedAt: "2026-06-17T00:00:00.000Z",
-        started: true,
-        interactionMode: "build",
-      }],
+      sessions: [
+        {
+          name: `${label}-session`,
+          sessionId: `${label}-session-id`,
+          profileId: "kestrel",
+          createdAt: "2026-06-17T00:00:00.000Z",
+          updatedAt: "2026-06-17T00:00:00.000Z",
+          started: true,
+          interactionMode: "build",
+        },
+      ],
     });
-    assert.equal((await new SessionStore(stateHome).load()).activeSessionName, `${label}-session`);
+    assert.equal(
+      (await new SessionStore(stateHome).load()).activeSessionName,
+      `${label}-session`,
+    );
 
-    const lease = await client.postJson("/v1/kcron/lease/acquire", { ownerPid: process.pid }) as { acquired?: boolean };
+    const lease = (await client.postJson("/v1/kcron/lease/acquire", {
+      ownerPid: process.pid,
+    })) as { acquired?: boolean };
     assert.equal(lease.acquired, true);
-    const duplicate = await client.postJson("/v1/kcron/lease/acquire", { ownerPid: process.pid + 1 }) as { acquired?: boolean };
+    const duplicate = (await client.postJson("/v1/kcron/lease/acquire", {
+      ownerPid: process.pid + 1,
+    })) as { acquired?: boolean };
     assert.equal(duplicate.acquired, false);
 
     const supportBundle = await client.supportBundle();
@@ -124,10 +156,7 @@ async function smokeShellAttachOrder(home: string, label: string): Promise<void>
       /^kestrel:cli_safe_local:[a-f0-9]{64}$/u,
     );
     assert.equal(executionProfile.resolvedProfile.agentProfileId, "kestrel");
-    assert.equal(
-      executionProfile.resolvedProfile.presetId,
-      "cli_safe_local",
-    );
+    assert.equal(executionProfile.resolvedProfile.presetId, "cli_safe_local");
     assert.equal(
       executionProfile.resolvedProfile.toolAllowlist?.includes("dev.shell.run"),
       false,
@@ -187,7 +216,10 @@ async function smokeStaleLockClassification(home: string): Promise<void> {
     now: new Date("2026-06-17T00:01:00.000Z"),
   });
   assert.equal(lock.state, "stale");
-  assert.equal(resolveLocalCorePaths(home).lockPath.endsWith("core/lock.json"), true);
+  assert.equal(
+    resolveLocalCorePaths(home).lockPath.endsWith("core/lock.json"),
+    true,
+  );
 }
 
 function restoreEnv(key: string, value: string | undefined): void {
@@ -199,6 +231,8 @@ function restoreEnv(key: string, value: string | undefined): void {
 }
 
 void main().catch((error) => {
-  process.stderr.write(`[local-core-smoke] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+  process.stderr.write(
+    `[local-core-smoke] ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+  );
   process.exitCode = 1;
 });

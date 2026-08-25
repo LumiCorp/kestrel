@@ -255,3 +255,183 @@ test("RunnerHost preserves waitFor in job completed output", async () => {
   assert.equal(payload.output.waitFor?.eventType, "user.reply");
   assert.equal(payload.output.waitFor?.metadata?.reason, "max_model_calls_continuation");
 });
+
+test("RunnerHost emits the managed result handle in completed job output", async () => {
+  const events: Array<{ type: string; payload: unknown }> = [];
+  const runtime: RunnerRuntime = {
+    async close() {},
+    async getReplay(query) {
+      assert.deepEqual(query, {
+        runId: "run-managed-result",
+        sessionId: "session-managed-result",
+        eventTypes: [
+          "managed_worktree.promotion_candidate",
+          "managed_worktree.fan_in_candidate",
+        ],
+      });
+      return {
+        query,
+        events: [{
+          runId: "run-managed-result",
+          sessionId: "session-managed-result",
+          type: "managed_worktree.promotion_candidate",
+          level: "INFO",
+          timestamp: "2026-08-24T20:20:00.000Z",
+          metadata: {
+            worktreeRoot: "/tmp/kestrel-managed-result",
+            sourceWorkspaceRoot: "/tmp/kestrel-source",
+            baseHead: "base-revision",
+            scope: { kind: "sessionId", value: "session-managed-result" },
+            changedFiles: ["src/App.tsx", "src/marker.ts"],
+            candidateFingerprint: "candidate-revision",
+            promotionId: "promotion-managed-result",
+          },
+        }],
+      } as never;
+    },
+    async runTurn(input) {
+      return {
+        assistantText: "Implemented and validated.",
+        output: {
+          status: "COMPLETED",
+          sessionId: input.sessionId,
+          runId: "run-managed-result",
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          errors: [],
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 1,
+            modelCalls: 1,
+            durationMs: 1,
+          },
+        },
+      };
+    },
+  };
+  const host = new RunnerHost(
+    {
+      emit(type, payload) {
+        events.push({ type, payload });
+      },
+    },
+    () => runtime,
+  );
+  const profile: TuiProfile = {
+    id: "job-managed-result-profile",
+    label: "Job Managed Result Profile",
+    agent: "reference-react",
+    sessionPrefix: "job-managed-result",
+  };
+
+  await host.jobRun("cmd-job-managed-result", {
+    input: {
+      version: "job_input_v1",
+      profile,
+      turn: {
+        sessionId: "session-managed-result",
+        message: "implement the change",
+        eventType: "job.run",
+      },
+    },
+  });
+  await host.close();
+
+  const completed = events.find((event) => event.type === "job.completed");
+  assert.ok(completed);
+  const payload = completed.payload as {
+    output: {
+      resultHandle?: {
+        version?: string;
+        kind?: string;
+        worktreePath?: string;
+        sourceWorkspaceRoot?: string;
+        baseRevision?: string;
+        candidateRevision?: string;
+        changedFiles?: string[];
+        promotionId?: string;
+      };
+    };
+  };
+  assert.deepEqual(payload.output.resultHandle, {
+    version: "job_managed_result_handle_v1",
+    kind: "managed_worktree",
+    worktreePath: "/tmp/kestrel-managed-result",
+    sourceWorkspaceRoot: "/tmp/kestrel-source",
+    baseRevision: "base-revision",
+    candidateRevision: "candidate-revision",
+    changedFiles: ["src/App.tsx", "src/marker.ts"],
+    promotionId: "promotion-managed-result",
+  });
+});
+
+test("RunnerHost preserves completed output when result handle lookup fails", async () => {
+  const events: Array<{ type: string; payload: unknown }> = [];
+  const runtime: RunnerRuntime = {
+    async close() {},
+    async getReplay() {
+      throw new Error("replay unavailable");
+    },
+    async runTurn(input) {
+      return {
+        assistantText: "Implemented and validated.",
+        output: {
+          status: "COMPLETED",
+          sessionId: input.sessionId,
+          runId: "run-replay-unavailable",
+          quality: {
+            citationCoverage: 1,
+            unresolvedClaims: 0,
+            reworkRate: 0,
+            thrashIndex: 0,
+          },
+          errors: [],
+          telemetry: {
+            stepsExecuted: 1,
+            toolCalls: 1,
+            modelCalls: 1,
+            durationMs: 1,
+          },
+        },
+      };
+    },
+  };
+  const host = new RunnerHost(
+    {
+      emit(type, payload) {
+        events.push({ type, payload });
+      },
+    },
+    () => runtime,
+  );
+  const profile: TuiProfile = {
+    id: "job-replay-unavailable-profile",
+    label: "Job Replay Unavailable Profile",
+    agent: "reference-react",
+    sessionPrefix: "job-replay-unavailable",
+  };
+
+  await host.jobRun("cmd-job-replay-unavailable", {
+    input: {
+      version: "job_input_v1",
+      profile,
+      turn: {
+        sessionId: "session-replay-unavailable",
+        message: "implement the change",
+        eventType: "job.run",
+      },
+    },
+  });
+  await host.close();
+
+  const completed = events.find((event) => event.type === "job.completed");
+  assert.ok(completed);
+  assert.equal(events.some((event) => event.type === "job.failed"), false);
+  const payload = completed.payload as { output: { status: string; resultHandle?: unknown } };
+  assert.equal(payload.output.status, "COMPLETED");
+  assert.equal(payload.output.resultHandle, undefined);
+});

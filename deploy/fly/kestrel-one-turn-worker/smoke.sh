@@ -3,6 +3,18 @@ set -euo pipefail
 
 image="${1:?usage: smoke.sh IMAGE}"
 
+matrix_output="$(docker run --rm \
+  --entrypoint node \
+  "$image" \
+  /workspace/packages/attachments/scripts/extraction-matrix.mjs \
+  /workspace/packages/attachments/dist/index.js \
+  /workspace/packages/attachments/tests/fixtures)"
+node -e '
+  const evidence = JSON.parse(process.argv[1]);
+  if (evidence.ok !== true) throw new Error("turn worker extraction matrix evidence is invalid");
+' "$matrix_output"
+printf 'turn worker extraction matrix passed\n'
+
 if output="$(docker run --rm "$image" 2>&1)"; then
   printf 'turn worker unexpectedly started without a database\n' >&2
   exit 1

@@ -53,8 +53,10 @@ import type { OperatorAssemblySummary, TuiProfile } from "../contracts.js";
 import { DiagnosticLogStore } from "../diagnostics/DiagnosticLogStore.js";
 import {
   buildJobReplayPointer,
+  type JobManagedResultHandleV1,
   type JobRunResultV1,
 } from "../job/contracts.js";
+import type { ReplayQuery, ReplayResult } from "../../src/replay/RunReplayService.js";
 import { readDatabaseUrlSource } from "../localCoreEnv.js";
 import type {
   JobRunCommandPayload,
@@ -190,6 +192,7 @@ export interface RunnerRuntime {
     input: RunTurnInput,
     options?: { signal?: AbortSignal | undefined }
   ): Promise<RunTurnResult>;
+  getReplay?: ((input: ReplayQuery) => Promise<ReplayResult>) | undefined;
   cancelActiveRun?:
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
     | undefined;
@@ -1153,6 +1156,12 @@ export class RunnerHost {
         threadId,
         runId: result.output.runId,
       });
+      const resultHandle = result.output.status === "COMPLETED"
+        ? await resolveJobManagedResultHandle(runtime, {
+            runId: result.output.runId,
+            sessionId: turn.sessionId,
+          })
+        : undefined;
       const output: JobRunResultV1 = {
         version: "job_run_result_v1",
         sessionId: turn.sessionId,
@@ -1162,6 +1171,7 @@ export class RunnerHost {
         ...(result.output.waitFor !== undefined
           ? { waitFor: result.output.waitFor }
           : {}),
+        ...(resultHandle !== undefined ? { resultHandle } : {}),
         replay,
         result,
       };
@@ -3519,6 +3529,95 @@ export class RunnerHost {
         // Diagnostics must never change terminal handoff behavior.
     });
   }
+}
+
+const JOB_MANAGED_RESULT_EVENT_TYPES = [
+  "managed_worktree.promotion_candidate",
+  "managed_worktree.fan_in_candidate",
+] as const;
+
+async function resolveJobManagedResultHandle(
+  runtime: RunnerRuntime,
+  input: { runId: string; sessionId: string },
+): Promise<JobManagedResultHandleV1 | undefined> {
+  if (runtime.getReplay === undefined) {
+    return;
+  }
+  let replay: ReplayResult;
+  try {
+    replay = await runtime.getReplay({
+      runId: input.runId,
+      sessionId: input.sessionId,
+      eventTypes: [...JOB_MANAGED_RESULT_EVENT_TYPES],
+    });
+  } catch {
+    // The handle improves handoff, but replay lookup must not replace a real
+    // completed result with a runner failure. Consumers retain replay fallback.
+    return;
+  }
+  for (const event of [...replay.events].reverse()) {
+    if (
+      event.runId !== input.runId ||
+      event.sessionId !== input.sessionId ||
+      JOB_MANAGED_RESULT_EVENT_TYPES.includes(
+        event.type as (typeof JOB_MANAGED_RESULT_EVENT_TYPES)[number],
+      ) === false
+    ) {
+      continue;
+    }
+    const metadata = readJobManagedResultMetadata(event.metadata);
+    if (metadata === undefined) {
+      continue;
+    }
+    return {
+      version: "job_managed_result_handle_v1",
+      kind: "managed_worktree",
+      worktreePath: metadata.worktreeRoot,
+      sourceWorkspaceRoot: metadata.sourceWorkspaceRoot,
+      baseRevision: metadata.baseHead,
+      candidateRevision: metadata.candidateFingerprint,
+      changedFiles: [...new Set(metadata.changedFiles)],
+      ...(metadata.promotionId !== undefined
+        ? { promotionId: metadata.promotionId }
+        : {}),
+    };
+  }
+  return;
+}
+
+function readJobManagedResultMetadata(value: unknown): {
+  worktreeRoot: string;
+  sourceWorkspaceRoot: string;
+  baseHead: string;
+  candidateFingerprint: string;
+  changedFiles: string[];
+  promotionId?: string | undefined;
+} | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return;
+  }
+  const metadata = value as Record<string, unknown>;
+  const changedFiles = metadata.changedFiles;
+  if (
+    typeof metadata.worktreeRoot !== "string" || metadata.worktreeRoot.length === 0 ||
+    typeof metadata.sourceWorkspaceRoot !== "string" || metadata.sourceWorkspaceRoot.length === 0 ||
+    typeof metadata.baseHead !== "string" || metadata.baseHead.length === 0 ||
+    typeof metadata.candidateFingerprint !== "string" || metadata.candidateFingerprint.length === 0 ||
+    Array.isArray(changedFiles) === false || changedFiles.length === 0 ||
+    changedFiles.some((entry) => typeof entry !== "string" || entry.length === 0)
+  ) {
+    return;
+  }
+  return {
+    worktreeRoot: metadata.worktreeRoot,
+    sourceWorkspaceRoot: metadata.sourceWorkspaceRoot,
+    baseHead: metadata.baseHead,
+    candidateFingerprint: metadata.candidateFingerprint,
+    changedFiles: changedFiles as string[],
+    ...(typeof metadata.promotionId === "string" && metadata.promotionId.length > 0
+      ? { promotionId: metadata.promotionId }
+      : {}),
+  };
 }
 
 function buildNonResponsiveTerminalResult(input: {
