@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { SessionsFile, TuiSessionMeta } from "../contracts.js";
@@ -72,7 +73,17 @@ export class SessionStore {
     }
 
     await mkdir(this.baseDir, { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+    const temporaryPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporaryPath, `${JSON.stringify(file, null, 2)}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      await rename(temporaryPath, this.filePath);
+    } catch (error) {
+      await rm(temporaryPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   upsert(file: SessionsFile, session: TuiSessionMeta): SessionsFile {
