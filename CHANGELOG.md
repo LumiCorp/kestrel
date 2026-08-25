@@ -11,6 +11,12 @@ Kestrel packages use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Fixed
+
+- Kestrel One now extracts ordinary and CMap-backed PDF text consistently in
+  uploads and Knowledge while keeping empty or scanned originals available as
+  read-only files instead of indexing generated page markers.
+
 ## Runtime and CLI 0.8.8 - 2026-08-24
 
 ### Added
