@@ -9,6 +9,7 @@ import {
   parseNetworkObservations,
   parseQualificationRunStream,
   qualificationEvidenceLabels,
+  renderSha256Sidecar,
 } from "../../scripts/qualification/sandbox-capability-evidence.js";
 
 test("qualification observer records a secret-free checkpoint without pausing by default", async () => {
@@ -82,6 +83,14 @@ test("controlled and live qualification evidence labels cannot substitute for ea
   assert.deepEqual(qualificationEvidenceLabels("controlled"), ["hosted_runner_black_box", "controlled_provider"]);
   assert.deepEqual(qualificationEvidenceLabels("live"), ["hosted_runner_black_box", "live_provider"]);
   assert.deepEqual(qualificationEvidenceLabels("all"), ["hosted_runner_black_box", "live_provider", "controlled_provider"]);
+});
+
+test("qualification manifest sidecar hashes the exact persisted bytes", () => {
+  const manifestBytes = '{"algorithm":"sha256","version":1}\n';
+  assert.equal(
+    renderSha256Sidecar("manifest.json", manifestBytes),
+    "102ce6c4ae5d68b77cee85402ec40438efe154b5fa2353808a8e144f6a6daaca  manifest.json\n",
+  );
 });
 
 function sse(event: unknown): string {

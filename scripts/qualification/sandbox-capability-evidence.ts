@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { parseRunnerEventV2, type RunnerEvent } from "@kestrel-agents/protocol";
 
 import { parseAgentToolResultV2, type AgentToolResultV2 } from "../../src/kestrel/contracts/tool-invocation.js";
@@ -108,6 +110,11 @@ export function qualificationEvidenceLabels(mode: "live" | "controlled" | "all")
     ...(mode === "live" || mode === "all" ? ["live_provider"] : []),
     ...(mode === "controlled" || mode === "all" ? ["controlled_provider"] : []),
   ];
+}
+
+export function renderSha256Sidecar(fileName: string, bytes: string | Buffer): string {
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  return `${digest}  ${fileName}\n`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

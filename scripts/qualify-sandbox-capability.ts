@@ -17,6 +17,7 @@ import {
   parseQualificationRunStream,
   readCapabilityReplayEvidence,
   readCodeStdout,
+  renderSha256Sidecar,
   type ParsedQualificationRun,
 } from "./qualification/sandbox-capability-evidence.js";
 
@@ -852,8 +853,13 @@ async function writeEvidenceBundle(input: { artifactDir: string; config: Qualifi
   const entries = [];
   for (const file of files) entries.push({ file, sha256: sha256(await readFile(path.join(input.artifactDir, file))) });
   const manifest = canonical({ version: 1, algorithm: "sha256", signed: false, files: entries });
-  await writeFile(path.join(input.artifactDir, "manifest.json"), `${manifest}\n`, "utf8");
-  await writeFile(path.join(input.artifactDir, "manifest.sha256"), `${sha256(manifest)}  manifest.json\n`, "utf8");
+  const manifestBytes = `${manifest}\n`;
+  await writeFile(path.join(input.artifactDir, "manifest.json"), manifestBytes, "utf8");
+  await writeFile(
+    path.join(input.artifactDir, "manifest.sha256"),
+    renderSha256Sidecar("manifest.json", manifestBytes),
+    "utf8",
+  );
 }
 
 async function collectRemoteFacts(config: QualificationConfig): Promise<unknown> {
