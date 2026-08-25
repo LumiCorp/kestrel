@@ -1491,6 +1491,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/mobile/v1/threads/[id]/interactions/[checkpointId]/retry/route.ts",
+    "/api/mobile/v1/threads/:id/interactions/:checkpointId/retry",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/mobile/v1/turns/[turnId]/route.ts",
     "/api/mobile/v1/turns/:turnId",
     "mobile",
@@ -1617,6 +1624,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/mobile/v2/threads/[id]/interactions/[checkpointId]/retry/route.ts",
+    "/api/mobile/v2/threads/:id/interactions/:checkpointId/retry",
+    "mobile",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/mobile/v2/turns/[turnId]/route.ts",
     "/api/mobile/v2/turns/:turnId",
     "mobile",
@@ -1708,6 +1722,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
     AUTHENTICATED_API.unauthorized,
   ),
   api(
+    "app/api/threads/[id]/github/publications/route.ts",
+    "/api/threads/:id/github/publications",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
     "app/api/threads/[id]/mcp/interactions/route.ts",
     "/api/threads/:id/mcp/interactions",
     "threads",
@@ -1717,6 +1738,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/threads/[id]/mcp/interactions/[checkpointId]/route.ts",
     "/api/threads/:id/mcp/interactions/:checkpointId",
+    "threads",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/threads/[id]/interactions/[requestId]/retry/route.ts",
+    "/api/threads/:id/interactions/:requestId/retry",
     "threads",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,
@@ -2032,6 +2060,13 @@ export const KESTREL_ONE_ROUTE_OWNERSHIP_MANIFEST = [
   api(
     "app/api/projects/[id]/apps/[appKey]/capabilities/[capabilityKey]/route.ts",
     "/api/projects/:id/apps/:appKey/capabilities/:capabilityKey",
+    "apps",
+    AUTHENTICATED_API.access,
+    AUTHENTICATED_API.unauthorized,
+  ),
+  api(
+    "app/api/projects/[id]/apps/github/repositories/route.ts",
+    "/api/projects/:id/apps/github/repositories",
     "apps",
     AUTHENTICATED_API.access,
     AUTHENTICATED_API.unauthorized,

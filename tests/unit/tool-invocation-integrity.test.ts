@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import {
   AllowlistedToolGateway,
@@ -297,6 +300,150 @@ test("restart rehydrates only an exact static built-in activation", async () => 
   const result = await restarted.executePreparedToolCall(prepared);
   assert.equal(result.status, "OK");
   assert.equal(result.activation.descriptor.contractRevision, prepared.activation.descriptor.contractRevision);
+});
+
+test("approval resume rehydrates an exact static built-in before inspection and preparation", async (t) => {
+  const workspaceRoot = await mkdtemp(
+    path.join(tmpdir(), "kestrel-static-approval-resume-"),
+  );
+  t.after(() => rm(workspaceRoot, { recursive: true, force: true }));
+  await writeFile(path.join(workspaceRoot, "sentinel.txt"), "sentinel", "utf8");
+  const runContext = {
+    runId: "run-static-approval-resume",
+    sessionId: "session-static-approval-resume",
+    payload: {
+      workspace: { workspaceRoot },
+      mcpContext: {
+        gatewayUrl: "https://gateway.example.test",
+        grantId: "11111111-1111-4111-8111-111111111111",
+        protocolVersion: "2025-11-25",
+        organizationId: "organization-static-approval-resume",
+        environmentId: "environment-static-approval-resume",
+        projectId: "project-static-approval-resume",
+        threadId: "thread-static-approval-resume",
+      },
+    },
+    sessionState: {},
+  };
+
+  const original = new UnifiedToolRegistry({ allowlist: ["fs.list"] });
+  await original.refresh();
+  const snapshot = await original.createToolSurfaceSnapshot({
+    runContext,
+    toolNames: ["fs.list"],
+  });
+  const intent = structuredClone(
+    original.resolveModelToolIntent({
+      snapshot,
+      toolCall: { id: "call-static-approval-resume", name: "fs.list", input: { path: "." } },
+    }),
+  );
+  await original.releaseToolSurfaceSnapshot(snapshot.snapshotId);
+  await original.close();
+
+  const resumed = new UnifiedToolRegistry({ allowlist: ["fs.list"] });
+  await resumed.refresh();
+  const resumedRunContext = {
+    ...runContext,
+    runId: "run-static-approval-continuation",
+    payload: {
+      ...runContext.payload,
+      resumeBlockedRun: true,
+      metadata: {
+        blockedRunId: runContext.runId,
+        blockedToolScope: {
+          runId: runContext.runId,
+          mcpContext: runContext.payload.mcpContext,
+        },
+      },
+      mcpContext: {
+        ...runContext.payload.mcpContext,
+        grantId: "22222222-2222-4222-8222-222222222222",
+      },
+    },
+  };
+  const origin = {
+    kind: "model" as const,
+    snapshotId: intent.snapshotId,
+    modelToolCallId: intent.modelToolCallId,
+  };
+  assert.deepEqual(
+    await resumed.inspectToolCall!(
+      { activation: intent.activation, origin, rawInput: intent.rawInput },
+      { runContext: resumedRunContext },
+    ),
+    { effectiveInput: { path: "." } },
+  );
+  const prepared = await resumed.prepareToolCall(
+    {
+      runId: resumedRunContext.runId,
+      sessionId: runContext.sessionId,
+      callId: intent.modelToolCallId,
+      activation: intent.activation,
+      origin,
+      rawInput: intent.rawInput,
+      policy: {
+        decision: "allow",
+        policyRevision: hashCanonical({ source: "approved-resume" }),
+      },
+    },
+    { runContext: resumedRunContext },
+  );
+  const result = await resumed.executePreparedToolCall(prepared, {
+    runContext: resumedRunContext,
+  });
+  assert.equal(result.status, "OK");
+  assert.match(JSON.stringify(result.auditRecord.output), /sentinel\.txt/u);
+  for (const rejectedRunContext of [
+    {
+      ...resumedRunContext,
+      payload: {
+        ...resumedRunContext.payload,
+        metadata: { blockedRunId: "run-unrelated" },
+      },
+    },
+    {
+      ...resumedRunContext,
+      payload: {
+        ...resumedRunContext.payload,
+        workspace: { workspaceRoot: path.join(workspaceRoot, "other") },
+      },
+    },
+    {
+      ...resumedRunContext,
+      payload: {
+        ...resumedRunContext.payload,
+        orchestration: { blockedRunId: "run-conflicting" },
+      },
+    },
+    {
+      ...resumedRunContext,
+      payload: {
+        ...resumedRunContext.payload,
+        metadata: {
+          ...resumedRunContext.payload.metadata,
+          blockedToolScope: {
+            runId: runContext.runId,
+            mcpContext: {
+              ...runContext.payload.mcpContext,
+              environmentId: "environment-unrelated",
+            },
+          },
+        },
+      },
+    },
+  ]) {
+    await assert.rejects(
+      () => resumed.inspectToolCall!(
+        { activation: intent.activation, origin, rawInput: intent.rawInput },
+        { runContext: rejectedRunContext },
+      ),
+      (error) =>
+        error instanceof RuntimeFailure &&
+        error.code === "TOOL_PINNED_HANDLER_UNAVAILABLE",
+    );
+  }
+  await resumed.close();
 });
 
 test("static restart rehydration rejects changed workspace authority", async () => {

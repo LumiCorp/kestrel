@@ -1,0 +1,35 @@
+---
+title: Context management and compaction
+summary: Assemble a bounded model input from durable history and authorized sources without confusing retention with immediate visibility.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+On Monday, an agent learns that deployment requires a maintenance window. By Thursday, the Session contains hundreds of messages, tool results, and file excerpts. The next model call cannot carry every byte.
+
+Nothing has to be deleted for the context window to be full.
+
+## Monday's message is not Thursday's context
+
+Model context is a deliberate projection. It can combine system instructions, selected conversation history, the latest user intent, relevant tool results, authorized memory, file representations, and current runtime state. Each source has its own trust and precedence rules.
+
+The persisted conversation remains the historical record. The assembled context is what this model invocation can see. Treating those as the same object makes it impossible to explain why the agent omitted an old detail—or why an untrusted transcript line did not override a system rule.
+
+The durable conversation is still the historical record. Thursday's assembled input is a bounded projection for one invocation. That distinction explains both why an old detail may be absent and why an untrusted transcript line cannot override a system rule.
+
+As pressure rises, Kestrel can replace older material with a compact representation. Compaction changes form, not history. A useful compact representation preserves facts, unresolved commitments, causal relationships, and exact pending interactions needed to continue, and records that the transformation occurred.
+
+When the input grows too large, Kestrel can replace older material with a compact representation. Good compaction preserves the facts, unresolved commitments, causal relationships, and exact pending interactions needed to continue. It also records that a transformation occurred.
+
+A summary cannot preserve every nuance. It should not claim to be a byte-for-byte substitute, and it must not promote lower-authority text into higher-authority instructions. The original durable records remain available for inspection even when no longer sent to the model.
+
+## The maintenance window has to survive semantically
+
+Governed memory and Kestrel One Knowledge can bring relevant material into a call, but neither is an excuse to stuff every stored fact into context. Read binding, tenant and subject scope, provenance, relevance, and budget all affect whether a source belongs in this invocation.
+
+If the Monday maintenance-window rule matters on Thursday, the reliable path is an authorized durable source whose meaning survives compaction—not hope that the exact Monday message remains in the final token budget.
+
+[Governed memory](/concepts/governed-memory) explains authorized recall. [Messages, instructions, and history](/concepts/messages-instructions-history) explains why the role of recalled and retained material must survive assembly.

@@ -1,0 +1,45 @@
+---
+title: Profiles, models, and capabilities
+summary: Learn why a profile is more than a model alias and how Kestrel decides whether a provider route is actually ready for a run.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The screenshot-review agent worked yesterday. Today it says it cannot inspect the image. Someone changed the profile to use a cheaper model and assumed the rest of the behavior would follow.
+
+The agent did not lose its instructions. It lost a qualified route with vision capability.
+
+## Yesterday: the authored profile
+
+An application sends a `profileId`, commonly the canonical `kestrel` profile. The runner resolves that authored profile into effective runtime policy: model routing, capability packs, tool availability, recovery, budgets, memory, evaluation, and other execution choices owned by the profile boundary.
+
+A provider/model pair is one ingredient. Treating the profile as a model nickname hides the policies that make two calls to the same model behave differently.
+
+## Today: resolution chooses an effective route
+
+At dispatch, the runner combines that authored profile with its current provider registry and execution environment. It resolves an effective provider and model route; the application does not have enough current server-side evidence to safely reproduce that choice itself.
+
+## The screenshot stops at one broken link
+
+For the screenshot request to run, the selected route may need to be:
+
+- configured with valid provider and model identity;
+- reachable from the execution environment;
+- compatible with the expected protocol and request shape;
+- capable of accepting the requested media and tools;
+- qualified by the runtime's evidence and policy;
+- authorized for this actor, tenant, budget, and environment;
+- ready at the moment of dispatch.
+
+Failure at one stage should not be rewritten as failure at another. A reachable text model is still the wrong route for an image request. A capability advertised by a runner is still not permission for this caller. Qualification says the route has acceptable evidence for the work; authorization says this actor may use it. Neither implies the other.
+
+## Tomorrow: use the receipt, not a guess
+
+The effective route should leave a receipt or fingerprint that says what profile and provider path were actually selected. That evidence lets an operator distinguish “the authored profile changed” from “the provider was unavailable” or “the request required an unsupported capability.” It also makes replay and evaluation meaningful: later inspection can identify the route that produced the result.
+
+The application usually chooses the profile, not the raw provider. The runner owns exact resolution because it has the current provider registry, capability evidence, and execution policy. Application code should handle an explicit unavailable or incompatible result rather than silently substituting a route with weaker capabilities.
+
+When the screenshot reviewer “loses its eyes,” inspect that receipt before changing prompts or UI code. The exact configuration surface lives in [runtime profiles and providers](/reference/runtime-profiles-and-providers); [Creating an Agent](/concepts/creating-an-agent) shows where the authored `profileId` enters the call.

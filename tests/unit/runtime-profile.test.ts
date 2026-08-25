@@ -102,6 +102,20 @@ test("web defaults stay narrow and do not expose local mutation tools", () => {
   assert.equal(resolved.toolAllowlist.includes("code.execute"), false);
 });
 
+test("trusted hosted preset exposes sandbox code while web defaults remain narrow", () => {
+  const hosted = resolveRuntimeProfileSelection({
+    shellKind: "cli",
+    presetId: "workspace_hosted",
+  });
+  const web = resolveRuntimeProfileSelection({ shellKind: "web" });
+
+  assert.deepEqual(hosted.capabilityPacks, ["balanced", "filesystem", "dev_shell", "sandbox_code"]);
+  assert.equal(hosted.codeMode.enabled, true);
+  assert.equal(hosted.toolAllowlist.includes("code.execute"), true);
+  assert.deepEqual(web.capabilityPacks, ["balanced"]);
+  assert.equal(web.toolAllowlist.includes("code.execute"), false);
+});
+
 test("runtime shape stays preset-first even when legacy codeMode input is present", () => {
   const resolved = resolveRuntimeProfileSelection({
     shellKind: "web",

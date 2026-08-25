@@ -9,8 +9,10 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./worker-runtime": "./dist/worker.js"
   },
   "files": ["dist", "README.md", "LICENSE"],
   "sideEffects": false,
@@ -21,15 +23,17 @@
     "build": "pnpm run clean && tsc -p tsconfig.json",
     "build:self": "pnpm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "pnpm run build && node --import tsx --test tests/*.test.ts",
     "smoke:import": "node --input-type=module -e \"import('./dist/index.js').then(({ extractAttachmentText }) => { void extractAttachmentText; })\"",
-    "release:check": "pnpm run build && pnpm run smoke:import"
+    "smoke:require": "node -e \"const { extractAttachmentText } = require('.'); void extractAttachmentText;\"",
+    "release:check": "pnpm run build && pnpm run smoke:import && pnpm run smoke:require"
   },
   "dependencies": {
     "@napi-rs/canvas": "0.1.80",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
-    "pdf-parse": "^2.4.5",
+    "pdf-parse": "2.4.5",
+    "pdfjs-dist": "5.4.296",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

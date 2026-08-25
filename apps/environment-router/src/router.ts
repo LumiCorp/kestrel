@@ -223,6 +223,9 @@ function workspaceHttpCapability(method: string, pathname: string) {
   ) {
     return "workspace.promotions.apply";
   }
+  if (method === "POST" && pathname === "/v1/git/publish-candidate") {
+    return "workspace.git.publish";
+  }
   if (
     (method === "POST" && pathname === "/v1/backups/imports") ||
     (method === "PUT" &&

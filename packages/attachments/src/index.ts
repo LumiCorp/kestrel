@@ -1,12 +1,14 @@
 import JSZip from "jszip";
 import mammoth from "mammoth";
 import { read, utils } from "xlsx";
+import { createRequire } from "node:module";
+import { dirname, join, resolve, sep } from "node:path";
 import { Worker } from "node:worker_threads";
 
 export const DEFAULT_ATTACHMENT_EXTRACTED_TEXT_BYTES = 1024 * 1024;
 export const MAX_ATTACHMENT_PROCESSOR_INPUT_BYTES = 100 * 1024 * 1024;
 
-const MAX_OFFICE_ARCHIVE_ENTRIES = 5_000;
+const MAX_OFFICE_ARCHIVE_ENTRIES = 5000;
 const MAX_OFFICE_ARCHIVE_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_OFFICE_ARCHIVE_TOTAL_BYTES = 256 * 1024 * 1024;
 const MAX_OFFICE_ARCHIVE_COMPRESSION_RATIO = 200;
@@ -27,8 +29,17 @@ export async function extractAttachmentTextIsolated(input: {
   if (input.buffer.byteLength > MAX_ATTACHMENT_PROCESSOR_INPUT_BYTES) {
     throw new Error("Attachment processor input exceeds the 100 MiB limit.");
   }
-  const worker = new Worker(new URL("./worker.js", import.meta.url), {
-    execArgv: process.execArgv.filter((argument) => argument.startsWith("--input-type") === false),
+  // Resolve the worker through the package export instead of deriving it from
+  // import.meta.url. Server bundlers can rewrite import.meta.url to a generated
+  // chunk, while Node package resolution continues to identify the physical
+  // worker shipped with this package.
+  const workerPath = createRequire(import.meta.url).resolve(
+    "@kestrel-agents/files/worker-runtime",
+  );
+  const worker = new Worker(workerPath, {
+    // The extractor owns its worker runtime. Hosting platforms may start the
+    // parent with flags that Node explicitly rejects for Worker instances.
+    execArgv: [],
     resourceLimits: {
       maxOldGenerationSizeMb: 256,
       maxYoungGenerationSizeMb: 32,
@@ -79,7 +90,7 @@ export async function extractAttachmentTextIsolated(input: {
   });
 }
 
-const EXTRACTABLE_MEDIA_TYPES = new Set([
+export const ATTACHMENT_TEXT_EXTRACTABLE_MEDIA_TYPES = [
   "application/pdf",
   "application/json",
   "application/yaml",
@@ -92,7 +103,11 @@ const EXTRACTABLE_MEDIA_TYPES = new Set([
   "text/markdown",
   "text/plain",
   "text/yaml",
-]);
+] as const;
+
+const EXTRACTABLE_MEDIA_TYPES = new Set<string>(
+  ATTACHMENT_TEXT_EXTRACTABLE_MEDIA_TYPES,
+);
 
 export function isAttachmentTextExtractable(mediaType: string): boolean {
   return mediaType.startsWith("text/") || EXTRACTABLE_MEDIA_TYPES.has(mediaType);
@@ -111,12 +126,21 @@ export async function extractAttachmentText(input: {
   let text = "";
   const warnings: string[] = [];
   if (mediaType === "application/pdf") {
-    const PDFParse = await loadPdfParser();
-    const parser = new PDFParse({ data: input.buffer });
+    const { PDFParse, pdfJsRoot } = await loadPdfParser();
+    const parser = new PDFParse({
+      data: input.buffer,
+      cMapUrl: `${join(pdfJsRoot, "cmaps")}${sep}`,
+      cMapPacked: true,
+      standardFontDataUrl: `${join(pdfJsRoot, "standard_fonts")}${sep}`,
+      wasmUrl: `${join(pdfJsRoot, "wasm")}${sep}`,
+    });
     try {
       const parsed = await parser.getText();
-      text = parsed.text?.trim() ?? "";
-      if (text.length < 80) warnings.push("pdf_text_sparse");
+      text = parsed.pages
+        .map((page) => page.text.trim())
+        .filter(Boolean)
+        .join("\n\n");
+      if (text.length > 0 && text.length < 80) warnings.push("pdf_text_sparse");
     } finally {
       await parser.destroy().catch(() => {});
     }
@@ -172,14 +196,35 @@ export async function extractAttachmentText(input: {
   };
 }
 
-async function loadPdfParser(): Promise<typeof import("pdf-parse").PDFParse> {
+let pdfRuntimePromise: ReturnType<typeof initializePdfRuntime> | undefined;
+
+async function initializePdfRuntime() {
   const { DOMMatrix, ImageData, Path2D } = await import("@napi-rs/canvas");
   const runtimeGlobals = globalThis as unknown as Record<string, unknown>;
   runtimeGlobals.DOMMatrix ??= DOMMatrix;
   runtimeGlobals.ImageData ??= ImageData;
   runtimeGlobals.Path2D ??= Path2D;
-  const { PDFParse } = await import("pdf-parse");
-  return PDFParse;
+  const [{ PDFParse }, { getPath }] = await Promise.all([
+    import("pdf-parse"),
+    import("pdf-parse/worker"),
+  ]);
+  const workerPath = getPath();
+  PDFParse.setWorker(workerPath);
+  // Resolve PDF.js through pdf-parse's dependency edge. Next's file tracer
+  // preserves that pnpm edge for each function, while an explicitly included
+  // workspace-level pdfjs-dist symlink cannot be materialized by Vercel.
+  const pdfJsRoot = resolve(dirname(workerPath), "../../..", "pdfjs-dist");
+  return { PDFParse, pdfJsRoot };
+}
+
+async function loadPdfParser() {
+  pdfRuntimePromise ??= initializePdfRuntime();
+  try {
+    return await pdfRuntimePromise;
+  } catch (error) {
+    pdfRuntimePromise = undefined;
+    throw error;
+  }
 }
 
 async function assertSafeOfficeArchive(buffer: Buffer): Promise<void> {

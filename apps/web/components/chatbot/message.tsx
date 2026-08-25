@@ -4,6 +4,7 @@ import {
   ActivityIcon,
   CircleCheckIcon,
   CircleXIcon,
+  DownloadIcon,
   LoaderCircleIcon,
 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -143,6 +144,86 @@ function ConsoleArtifactDisclosure({
       </div>
     </details>
   );
+}
+
+function FileShareDownloadCard({
+  title,
+  url,
+  rawMetadata,
+}: {
+  title: string;
+  url: string;
+  rawMetadata: unknown;
+}) {
+  const metadata = asStructuredRecord(rawMetadata) ?? {};
+  const sizeBytes =
+    typeof metadata.sizeBytes === "number" &&
+    Number.isFinite(metadata.sizeBytes) &&
+    metadata.sizeBytes >= 0
+      ? metadata.sizeBytes
+      : undefined;
+  const fileCount =
+    typeof metadata.fileCount === "number" &&
+    Number.isInteger(metadata.fileCount) &&
+    metadata.fileCount > 0
+      ? metadata.fileCount
+      : undefined;
+  const expiresAt =
+    typeof metadata.expiresAt === "string" ? metadata.expiresAt : undefined;
+  const warning =
+    typeof metadata.warning === "string" && metadata.warning.trim().length > 0
+      ? metadata.warning
+      : "Anyone with this link can download the file until the preview closes or expires.";
+
+  return (
+    <aside
+      className="not-prose space-y-3 rounded-lg border bg-muted/20 px-4 py-3 text-sm"
+      data-testid="file-share-download-card"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-medium">{title}</p>
+          <p className="text-muted-foreground text-xs">
+            {[
+              sizeBytes === undefined ? undefined : formatFileShareSize(sizeBytes),
+              fileCount === undefined
+                ? undefined
+                : `${fileCount} ${fileCount === 1 ? "file" : "files"}`,
+              expiresAt === undefined ? undefined : `Expires ${formatFileShareExpiry(expiresAt)}`,
+            ].filter((value): value is string => value !== undefined).join(" · ")}
+          </p>
+        </div>
+        <a
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 py-2 font-medium text-primary-foreground text-xs"
+          download={title}
+          href={url}
+          rel="noreferrer"
+          target="_blank"
+        >
+          <DownloadIcon aria-hidden="true" className="size-3.5" />
+          Download
+        </a>
+      </div>
+      <p className="text-muted-foreground text-xs">{warning}</p>
+    </aside>
+  );
+}
+
+function formatFileShareSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB"];
+  let value = bytes / 1024;
+  let unit = units[0]!;
+  for (let index = 1; index < units.length && value >= 1024; index += 1) {
+    value /= 1024;
+    unit = units[index]!;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`;
+}
+
+function formatFileShareExpiry(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? `${date.toISOString().replace("T", " ").replace(".000Z", " UTC")}` : value;
 }
 
 const isKestrelPresentationPart = (part: ChatMessage["parts"][number]) =>
@@ -592,6 +673,16 @@ const PurePreviewMessage = ({
             }
 
             if (part.type === "data-kestrel-artifact") {
+              if (part.data.kind === "file-share" && part.data.url) {
+                return (
+                  <FileShareDownloadCard
+                    key={key}
+                    rawMetadata={part.data.metadata}
+                    title={part.data.title}
+                    url={part.data.url}
+                  />
+                );
+              }
               return (
                 <aside
                   className="rounded-lg border bg-muted/20 px-3 py-2 text-sm"

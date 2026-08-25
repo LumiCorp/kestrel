@@ -9,6 +9,8 @@ const APP_RELAY_PATH = /^\/internal\/apps\/([^/]+)(\/api\/.*)$/u;
 const LEGACY_APP_PATHS = new Set([
   "/api/kestrel/tools/search-knowledge-documents",
   "/api/runtime/github/action",
+  "/api/runtime/github/credentials",
+  "/api/runtime/github/push",
   "/api/runtime/github/token",
   "/api/runtime/google-calendar/action",
   "/api/runtime/email/action",
@@ -59,16 +61,6 @@ export async function handleAppRelay(input: {
     writeError(input.response, 401, "APP_RELAY_AUTHORIZATION_REQUIRED");
     return;
   }
-  let body: Buffer | undefined;
-  try {
-    body = input.request.method === "GET" || input.request.method === "HEAD"
-      ? undefined
-      : await readBoundedBody(input.request);
-  } catch {
-    writeError(input.response, 413, "APP_RELAY_BODY_TOO_LARGE");
-    return;
-  }
-
   let scope = await resolveGrant(input.config, token, runId, false);
   if (!scope) {
     logRelay("environment.app_grant.refresh", {
@@ -98,6 +90,30 @@ export async function handleAppRelay(input: {
     return;
   }
 
+  const isScopedGitHubPush =
+    upstreamPath === "/api/runtime/github/push" &&
+    input.request.method === "POST";
+  const toolCredential = isScopedGitHubPush
+    ? readSingleHeader(input.request.headers["x-kestrel-tool-credential"])
+    : undefined;
+  if (isScopedGitHubPush && !toolCredential) {
+    writeError(input.response, 401, "APP_RELAY_TOOL_CREDENTIAL_REQUIRED");
+    return;
+  }
+  let body: RequestInit["body"];
+  if (isScopedGitHubPush) {
+    body = input.request as unknown as NonNullable<RequestInit["body"]>;
+  } else {
+    try {
+      body = input.request.method === "GET" || input.request.method === "HEAD"
+        ? undefined
+        : await readBoundedBody(input.request);
+    } catch {
+      writeError(input.response, 413, "APP_RELAY_BODY_TOO_LARGE");
+      return;
+    }
+  }
+
   const relayAbort = createRelayAbort(
     input.request,
     input.response,
@@ -109,11 +125,16 @@ export async function handleAppRelay(input: {
       controlPlaneUrl: input.config.controlPlaneUrl,
       upstreamPath,
       executionTicket: scope.grant.executionTicket,
+      ...(toolCredential ? { toolCredential } : {}),
       body,
       signal: relayAbort.signal,
       fetchImpl: input.fetchImpl,
     });
-    if (upstream.status === 401 && await hasErrorCode(upstream, "TICKET_EXPIRED")) {
+    if (
+      !toolCredential &&
+      upstream.status === 401 &&
+      await hasErrorCode(upstream, "TICKET_EXPIRED")
+    ) {
       logRelay("environment.app_grant.refresh", {
         runId,
         workspaceId: scope.workspaceId,
@@ -219,7 +240,8 @@ function requestControlPlane(input: {
   controlPlaneUrl: URL;
   upstreamPath: string;
   executionTicket: string;
-  body: Buffer | undefined;
+  toolCredential?: string | undefined;
+  body: RequestInit["body"];
   signal: AbortSignal;
   fetchImpl?: typeof fetch | undefined;
 }) {
@@ -227,6 +249,9 @@ function requestControlPlane(input: {
     "x-kestrel-runtime-approval",
     "x-kestrel-approval-id",
     "x-kestrel-request-id",
+    "x-kestrel-resource-id",
+    "x-kestrel-candidate-fingerprint",
+    "x-kestrel-candidate-commit",
     "x-kestrel-tenant-id",
     "x-organization-id",
   ] as const;
@@ -237,7 +262,7 @@ function requestControlPlane(input: {
     method: input.request.method ?? "GET",
     headers: {
       accept: input.request.headers.accept ?? "application/json",
-      authorization: `Bearer ${input.executionTicket}`,
+      authorization: `Bearer ${input.toolCredential ?? input.executionTicket}`,
       ...(input.request.headers["content-type"]
         ? { "content-type": input.request.headers["content-type"] }
         : {}),
@@ -249,8 +274,9 @@ function requestControlPlane(input: {
       ),
     },
     ...(input.body !== undefined ? { body: input.body } : {}),
+    ...(input.toolCredential ? { duplex: "half" } : {}),
     signal: input.signal,
-  }, input.signal);
+  } as RequestInit & { duplex?: "half" }, input.signal);
 }
 
 function createRelayAbort(
@@ -376,6 +402,10 @@ function matchesToken(token: string, expectedHash: string) {
   );
   const expected = Buffer.from(expectedHash, "utf8");
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
+
+function readSingleHeader(value: string | string[] | undefined) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function hasScopedGrant(

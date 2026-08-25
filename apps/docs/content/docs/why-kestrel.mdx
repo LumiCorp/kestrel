@@ -5,7 +5,7 @@ section: start
 audience: everyone
 status: active
 sourceKind: curated
-updatedAt: 2026-08-04
+updatedAt: 2026-08-25
 ---
 
 Kestrel is for work that must remain understandable after the first model call: a person needs to continue it, inspect what happened, recover it, authorize a consequential action, or prove which system produced the result.
@@ -27,6 +27,6 @@ Mission Control records project work and review. Operator control steers running
 
 ## Use only what you need
 
-Start with one surface and add others as the work grows. A local project does not require Kestrel One; a compatible HTTP client does not require every SDK package. Installed Kestrel packages and connected clients must still use the exact matching release line.
+Start with one surface and add others as the work grows. A local project does not require Kestrel One; a compatible HTTP client does not require every SDK package. Installed Kestrel packages and connected clients must follow the exact dependency contracts declared by their owning packages; compatible packages do not need equal semantic versions.
 
-Choose a path in the [Quickstart](/start/quickstart), or follow the [Runtime model](/start/runtime-model) before designing an integration.
+Choose a path in the [Quickstart](/start/quickstart), or follow [the agent loop](/concepts/agent-loop) before designing an integration.

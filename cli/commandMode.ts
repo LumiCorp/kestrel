@@ -24,8 +24,19 @@ import {
   type RuntimeSettingsFile,
 } from "./config/RuntimeSettings.js";
 import { resolveKestrelHome } from "./config/kestrelHome.js";
-import type { JobInputV1, JobOutputV1 } from "./job/contracts.js";
-import { parseJobInputV1 } from "./job/contracts.js";
+import type {
+  JobExecutionProfileBindingV1,
+  JobInputV1,
+  JobInputV2,
+  JobOutputV1,
+  JobPreflightV1,
+  JobRunRejectionV1,
+} from "./job/contracts.js";
+import { parseJobInput } from "./job/contracts.js";
+import {
+  digestApprovalPolicyPack,
+  getApprovalPolicyPack,
+} from "./runtime/approvalPolicyPacks.js";
 import type {
   JobRunCommandPayload,
   OperatorControlCommandPayload,
@@ -74,13 +85,13 @@ import {
 } from "../src/uninstall/contracts.js";
 
 export interface CliCommandServices {
-  prepareLocalCore(): Promise<void>;
+  prepareLocalCore(): Promise<void | CliLocalCoreStatus>;
   requireLocalCore(): Promise<CliLocalCoreStatus>;
 }
 
 const DEFAULT_CLI_COMMAND_SERVICES: CliCommandServices = {
   prepareLocalCore: async () => {
-    await ensureCliLocalCoreReady();
+    return await ensureCliLocalCoreReady();
   },
   requireLocalCore: ensureCliLocalCoreReady,
 };
@@ -115,8 +126,8 @@ export async function runCliCommand(
     return;
   }
   if (command === "job") {
-    await services.prepareLocalCore();
-    await runJobCommand(rest, cwd);
+    const status = await services.prepareLocalCore();
+    await runJobCommand(rest, cwd, status?.client);
     return;
   }
   if (command === "operator") {
@@ -620,21 +631,48 @@ async function writeCommandModeModelPolicy(
   return store.write(policy);
 }
 
-async function runJobCommand(args: string[], cwd: string): Promise<void> {
+async function runJobCommand(
+  args: string[],
+  cwd: string,
+  localCoreClient?: LocalCoreClient | undefined,
+): Promise<void> {
   const [subcommand, ...rest] = args;
-  if (subcommand !== "run") {
+  if (subcommand !== "run" && subcommand !== "preflight") {
     throw new Error(
-      "Usage: kestrel job run --json-in <file> --json-out <file> [--profile <id>]",
+      "Usage: kestrel job <preflight|run> --json-in <file> --json-out <file> [--profile <id>]",
     );
   }
-  rejectClientOwnedStoreSelection(rest, "kestrel job run");
+  rejectClientOwnedStoreSelection(rest, `kestrel job ${subcommand}`);
   const jsonIn = readRequiredFlag(rest, "--json-in");
   const jsonOut = readRequiredFlag(rest, "--json-out");
   const profileIdFlag = readFlag(rest, "--profile");
 
-  const settings = await readRuntimeSettings(resolveKestrelHome(cwd));
   const rawInput = await readFile(resolveFromCwd(cwd, jsonIn), "utf8");
-  const input = parseJobInputV1(JSON.parse(rawInput));
+  const parsedInput = parseJobInput(JSON.parse(rawInput));
+  if (subcommand === "preflight") {
+    if (parsedInput.version !== "job_input_v2") {
+      throw new Error("kestrel job preflight requires job_input_v2");
+    }
+    if (profileIdFlag !== undefined) {
+      throw new Error("kestrel job preflight does not accept --profile; use job_input_v2.profileId");
+    }
+    const { output } = await resolveJobPreflight(cwd, parsedInput, localCoreClient);
+    await writeJson(resolveFromCwd(cwd, jsonOut), output);
+    if (output.status === "setup_required") {
+      throw new Error(`SETUP_REQUIRED: ${output.remediation ?? "Required tools are unavailable."}`);
+    }
+    process.stdout.write(`job preflight ready profile=${output.profileId}\n`);
+    return;
+  }
+  if (parsedInput.version === "job_input_v2") {
+    if (profileIdFlag !== undefined) {
+      throw new Error("kestrel job run does not accept --profile with job_input_v2");
+    }
+    await runBoundJobV2(cwd, jsonOut, parsedInput, localCoreClient);
+    return;
+  }
+  const input = parsedInput;
+  const settings = await readRuntimeSettings(resolveKestrelHome(cwd));
   if (input.storeDriver !== undefined) {
     throw new Error(
       "job input storeDriver is no longer supported; Local Core owns persistence for every local run.",
@@ -667,7 +705,7 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
   };
 
   const client = createConfiguredCliProtocolClient();
-  const core = requireLocalCoreClient(cwd);
+  const core = requireLocalCoreClient(cwd, localCoreClient);
   const executionProfile = await core.resolveExecutionProfile({
     client: "cli",
     profileId: profile.id,
@@ -719,6 +757,187 @@ async function runJobCommand(args: string[], cwd: string): Promise<void> {
     unsubscribe?.();
     await client.close();
   }
+}
+
+async function resolveJobPreflight(
+  cwd: string,
+  input: JobInputV2,
+  localCoreClient?: LocalCoreClient | undefined,
+): Promise<{ output: JobPreflightV1; resolvedProfile: TuiProfile }> {
+  const core = requireLocalCoreClient(cwd, localCoreClient);
+  const resolution = await core.resolveExecutionProfile({
+    client: "cli",
+    profileId: input.profileId,
+    environmentPresetId: input.environmentPresetId,
+  });
+  if (
+    resolution.environmentPreset.id !== "cli_safe_local"
+    && resolution.environmentPreset.id !== "cli_dev_local"
+  ) {
+    throw new Error(
+      `COMPATIBILITY_ERROR: Local Core resolved unsupported preset '${resolution.environmentPreset.id}'.`,
+    );
+  }
+  const pack = getApprovalPolicyPack(input.approvalPolicyPackId);
+  const effectiveTools = sortedUnique(resolution.resolvedProfile.toolAllowlist ?? []);
+  const requiredTools = sortedUnique(input.requiredTools);
+  const missingTools = requiredTools.filter((tool) => !effectiveTools.includes(tool));
+  const policyRevision =
+    `${resolution.policy.id}:v${resolution.policy.version}`
+    + `/${resolution.environmentPreset.id}:v${resolution.environmentPreset.version}`;
+  const executionProfileBinding: JobExecutionProfileBindingV1 = {
+    version: "job_execution_profile_binding_v1",
+    authoringProfileId: input.profileId,
+    environmentPresetId: resolution.environmentPreset.id,
+    resolvedProfileId: resolution.profileId,
+    profileFingerprint: resolution.fingerprint,
+    policy: { ...resolution.policy },
+    approvalPolicyPack: {
+      id: pack.id,
+      version: pack.version,
+      digest: digestApprovalPolicyPack(pack),
+    },
+  };
+  const output: JobPreflightV1 = {
+    version: "job_preflight_v1",
+    capability: "local-core.execution-profile-resolution.v2",
+    status: missingTools.length === 0 ? "ready" : "setup_required",
+    requestedPresetId: input.environmentPresetId,
+    resolvedPresetId: resolution.environmentPreset.id,
+    profileId: resolution.profileId,
+    profileFingerprint: resolution.fingerprint,
+    policyRevision,
+    approvalPolicyPackId: pack.id,
+    effectiveTools,
+    requiredTools,
+    missingTools,
+    executionProfileBinding,
+    ...(missingTools.length > 0
+      ? {
+          code: "SETUP_REQUIRED" as const,
+          remediation: `Enable the required tool(s) in the resolved profile: ${missingTools.join(", ")}.`,
+        }
+      : {}),
+  };
+  return { output, resolvedProfile: resolution.resolvedProfile };
+}
+
+async function runBoundJobV2(
+  cwd: string,
+  jsonOut: string,
+  input: JobInputV2,
+  localCoreClient?: LocalCoreClient | undefined,
+): Promise<void> {
+  const binding = input.executionProfileBinding;
+  if (binding === undefined) {
+    return await rejectBoundJob(cwd, jsonOut, ["executionProfileBinding is required for job run"]);
+  }
+  let evidence: Awaited<ReturnType<typeof resolveJobPreflight>>;
+  try {
+    evidence = await resolveJobPreflight(cwd, input, localCoreClient);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return await rejectBoundJob(cwd, jsonOut, [
+      `current preflight failed: ${message}`,
+    ]);
+  }
+  const preflight = evidence.output;
+  const mismatches = compareJobBinding(binding, preflight);
+  if (preflight.missingTools.length > 0) {
+    mismatches.push(`required tools are unavailable: ${preflight.missingTools.join(", ")}`);
+  }
+  if (mismatches.length > 0) {
+    return await rejectBoundJob(cwd, jsonOut, mismatches);
+  }
+
+  const effectiveProfile: TuiProfile = {
+    ...evidence.resolvedProfile,
+    approvalPolicyPackId: input.approvalPolicyPackId,
+  };
+  const client = createConfiguredCliProtocolClient();
+  const eventLogPath = process.env.KESTREL_JOB_EVENT_LOG_PATH?.trim();
+  const unsubscribe =
+    eventLogPath !== undefined && eventLogPath.length > 0
+      ? client.onEvent((event) => {
+          appendFileSync(eventLogPath, `${JSON.stringify(event)}\n`, "utf8");
+        })
+      : undefined;
+  try {
+    if (eventLogPath !== undefined && eventLogPath.length > 0) {
+      await mkdir(path.dirname(eventLogPath), { recursive: true });
+    }
+    const commandPayload = buildResolvedJobRunCommandPayload(
+      {
+        version: "job_input_v1",
+        turn: input.turn,
+        approvalPolicyPackId: input.approvalPolicyPackId,
+      },
+      effectiveProfile,
+      binding.resolvedProfileId,
+    );
+    const response = await client.sendCommandWithId(
+      randomUUID(),
+      "job.run",
+      commandPayload,
+    );
+    if (response.type !== "job.completed" && response.type !== "job.failed") {
+      throw new Error(`Unexpected job response '${response.type}'.`);
+    }
+    const output: JobOutputV1 = {
+      version: "job_output_v1",
+      terminalEventType: response.type,
+      job: response.payload.output,
+    };
+    await writeJson(resolveFromCwd(cwd, jsonOut), output);
+    process.stdout.write(
+      `job ${response.type === "job.completed" ? "completed" : "failed"} session=${output.job.sessionId} thread=${output.job.threadId} run=${output.job.runId}\n`,
+    );
+    if (response.type === "job.failed") {
+      throw new Error(`${response.payload.error.code}: ${response.payload.error.message}`);
+    }
+  } finally {
+    unsubscribe?.();
+    await client.close();
+  }
+}
+
+export function compareJobBinding(
+  binding: JobExecutionProfileBindingV1,
+  preflight: JobPreflightV1,
+): string[] {
+  const expected = preflight.executionProfileBinding;
+  const mismatches: string[] = [];
+  const compare = (label: string, actual: unknown, wanted: unknown): void => {
+    if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
+      mismatches.push(`${label} does not match current preflight evidence`);
+    }
+  };
+  compare("authoring profile", binding.authoringProfileId, expected.authoringProfileId);
+  compare("environment preset", binding.environmentPresetId, expected.environmentPresetId);
+  compare("resolved profile", binding.resolvedProfileId, expected.resolvedProfileId);
+  compare("profile fingerprint", binding.profileFingerprint, expected.profileFingerprint);
+  compare("policy", binding.policy, expected.policy);
+  compare("approval policy pack", binding.approvalPolicyPack, expected.approvalPolicyPack);
+  return mismatches;
+}
+
+async function rejectBoundJob(
+  cwd: string,
+  jsonOut: string,
+  mismatches: string[],
+): Promise<never> {
+  const output: JobRunRejectionV1 = {
+    version: "job_run_rejection_v1",
+    code: "COMPATIBILITY_ERROR",
+    message: "The execution profile binding is missing, stale, or has been altered.",
+    details: { mismatches: sortedUnique(mismatches) },
+  };
+  await writeJson(resolveFromCwd(cwd, jsonOut), output);
+  throw new Error(`COMPATIBILITY_ERROR: ${output.message}`);
+}
+
+function sortedUnique(values: readonly string[]): string[] {
+  return [...new Set(values)].sort();
 }
 
 export function buildResolvedJobRunCommandPayload(
@@ -974,6 +1193,7 @@ function readReplayQueryFlags(args: string[]): ReplayQuery {
   const sessionId = readFlag(args, "--session-id");
   const threadId = readFlag(args, "--thread-id");
   const delegationId = readFlag(args, "--delegation-id");
+  const eventTypes = readMultiFlag(args, "--event-type");
   const limit = readOptionalInteger(readFlag(args, "--limit"));
   if (
     runId === undefined &&
@@ -990,6 +1210,9 @@ function readReplayQueryFlags(args: string[]): ReplayQuery {
     ...(sessionId !== undefined ? { sessionId } : {}),
     ...(threadId !== undefined ? { threadId } : {}),
     ...(delegationId !== undefined ? { delegationId } : {}),
+    ...(eventTypes.length > 0
+      ? { eventTypes: eventTypes as ReplayQuery["eventTypes"] }
+      : {}),
     ...(limit !== undefined ? { limit } : {}),
   };
 }
@@ -1071,15 +1294,15 @@ function readOptionalInteger(value: string | undefined): number | undefined {
 
 function readOptionalApprovalPack(
   value: string | undefined,
-): "dev" | "ci_bot" | "production" | undefined {
+): "dev" | "isolated_code" | "ci_bot" | "production" | undefined {
   if (value === undefined) {
     return;
   }
-  if (value === "dev" || value === "ci_bot" || value === "production") {
+  if (value === "dev" || value === "isolated_code" || value === "ci_bot" || value === "production") {
     return value;
   }
   throw new Error(
-    `Unsupported approval pack '${value}'. Expected dev|ci_bot|production.`,
+    `Unsupported approval pack '${value}'. Expected dev|isolated_code|ci_bot|production.`,
   );
 }
 

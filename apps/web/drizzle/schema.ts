@@ -1029,6 +1029,7 @@ export const threadTurns = pgTable(
       () => environmentRunExecutions.id,
       { onDelete: "set null" },
     ),
+    resumeInteractionId: text("resume_interaction_id"),
     requestedEnvironmentId: text("requested_environment_id"),
     idempotencyKey: text("idempotency_key").notNull(),
     sequence: integer("sequence").notNull(),
@@ -1092,6 +1093,11 @@ export const threadTurns = pgTable(
     ),
     index("thread_turns_execution_idx").on(table.environmentExecutionId),
     index("thread_turns_environment_idx").on(table.requestedEnvironmentId),
+    uniqueIndex("thread_turns_active_interaction_retry_idx")
+      .on(table.resumeInteractionId)
+      .where(
+        sql`${table.resumeInteractionId} is not null and ${table.status} in ('queued', 'running', 'waiting_for_input')`,
+      ),
     foreignKey({
       columns: [table.organizationId, table.requestedEnvironmentId],
       foreignColumns: [environments.organizationId, environments.id],
@@ -1100,9 +1106,13 @@ export const threadTurns = pgTable(
     check(
       "thread_turns_input_contract_check",
       sql`(
-        (${table.inputMessageId} IS NOT NULL AND ${table.approvalId} IS NULL AND ${table.approvalApproved} IS NULL AND ${table.approvalReason} IS NULL)
+        (${table.resumeInteractionId} IS NULL AND (
+          (${table.inputMessageId} IS NOT NULL AND ${table.approvalId} IS NULL AND ${table.approvalApproved} IS NULL AND ${table.approvalReason} IS NULL)
+          OR
+          (${table.inputMessageId} IS NULL AND ${table.approvalId} IS NOT NULL AND ${table.approvalApproved} IS NOT NULL)
+        ))
         OR
-        (${table.inputMessageId} IS NULL AND ${table.approvalId} IS NOT NULL AND ${table.approvalApproved} IS NOT NULL)
+        (${table.resumeInteractionId} IS NOT NULL AND ${table.inputMessageId} IS NULL AND ${table.approvalId} IS NULL AND ${table.approvalApproved} IS NULL AND ${table.approvalReason} IS NULL)
       )`,
     ),
   ],
@@ -2302,6 +2312,8 @@ export const environmentRunExecutions = pgTable(
     })
       .notNull()
       .default("routed"),
+    failureCode: text("failure_code"),
+    failureMessage: text("failure_message"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -4624,6 +4636,14 @@ export const threadInteractions = pgTable(
       .notNull(),
     responseEnvelope:
       jsonb("response_envelope").$type<Record<string, unknown>>(),
+    runtimeApprovalId: text("runtime_approval_id"),
+    sourceRuntimeRunId: text("source_runtime_run_id"),
+    responseFailureCode: text("response_failure_code"),
+    responseFailureMessage: text("response_failure_message"),
+    effectStatus: text("effect_status", {
+      enum: ["not_started", "started", "unknown"],
+    }),
+    responseRetryable: boolean("response_retryable"),
     resolvedByUserId: text("resolved_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -4646,6 +4666,12 @@ export const threadInteractions = pgTable(
       table.status,
     ),
     index("thread_interactions_turn_idx").on(table.turnId),
+    index("thread_interactions_runtime_approval_idx")
+      .on(table.organizationId, table.runtimeApprovalId)
+      .where(sql`${table.runtimeApprovalId} is not null`),
+    index("thread_interactions_source_runtime_run_idx")
+      .on(table.sourceRuntimeRunId)
+      .where(sql`${table.sourceRuntimeRunId} is not null`),
     check(
       "thread_interactions_source_contract_check",
       sql`(
@@ -5662,13 +5688,13 @@ export const knowledgeDocuments = pgTable(
     index("knowledge_documents_uploader_user_id_idx").on(table.uploaderUserId),
     index("knowledge_documents_status_idx").on(table.status),
     index("knowledge_documents_created_at_idx").on(table.createdAt),
-    uniqueIndex("knowledge_documents_org_checksum_idx")
+    index("knowledge_documents_org_checksum_idx")
       .on(table.organizationId, table.checksumSha256)
       .where(sql`${table.projectId} is null`),
-    uniqueIndex("knowledge_documents_project_checksum_idx")
+    index("knowledge_documents_project_checksum_idx")
       .on(table.projectId, table.checksumSha256)
       .where(sql`${table.projectId} is not null`),
-    uniqueIndex("knowledge_documents_storage_key_idx").on(table.storageKey),
+    index("knowledge_documents_storage_key_idx").on(table.storageKey),
   ],
 );
 

@@ -12,26 +12,19 @@ import {
 } from "@/lib/files/service";
 import { ensureEffectiveFileAvailability } from "@/lib/files/availability";
 import { enqueueKnowledgeDocumentRun } from "@/lib/knowledge/queue";
-import { normalizeMediaType } from "./shared";
 import {
-  createKnowledgeDocument,
+  isKnowledgeDocumentMediaTypeSupported,
+  normalizeMediaType,
+} from "./shared";
+import {
+  createOrGetKnowledgeDocumentByChecksumSerialized,
+  createOrGetKnowledgeDocumentByFileScope,
   createOrReuseKnowledgeIngestionRun,
   deleteKnowledgeDocumentGraph,
   getKnowledgeDocumentByChecksum,
   getKnowledgeDocumentByFileScope,
   getKnowledgeDocumentById,
 } from "./store";
-
-function isChecksumConflict(error: unknown) {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  return (
-    error.message.includes("knowledge_documents_org_checksum_idx") ||
-    error.message.includes("duplicate key")
-  );
-}
 
 export async function createKnowledgeDocumentFromUpload(input: {
   organizationId: string;
@@ -94,6 +87,12 @@ export async function publishFileToKnowledge(input: {
     availabilityStatus: file.availabilityStatus,
     blobDeletedAt: file.blobDeletedAt,
   });
+  if (!isKnowledgeDocumentMediaTypeSupported(
+    file.detectedMediaType ?? file.declaredMediaType ?? "",
+    file.filename,
+  )) {
+    throw new Error("This file type is not supported for Knowledge.");
+  }
   await publishFileScope({
     fileId: file.id,
     organizationId: input.organizationId,
@@ -113,7 +112,7 @@ export async function publishFileToKnowledge(input: {
     });
     return { document: existing, run, deduped: true };
   }
-  const document = await createKnowledgeDocument({
+  const documentResult = await createOrGetKnowledgeDocumentByFileScope({
     id: crypto.randomUUID(),
     fileId: file.id,
     organizationId: input.organizationId,
@@ -126,16 +125,25 @@ export async function publishFileToKnowledge(input: {
     checksumSha256: file.sha256,
     storageKey: file.objectKey,
   });
-  const { run } = await createOrReuseKnowledgeIngestionRun({
-    organizationId: input.organizationId,
-    documentId: document.id,
-    requestedByUserId: input.uploaderUserId,
-  });
-  await enqueueKnowledgeDocumentRun({
-    runId: run.id,
-    documentId: document.id,
-  });
-  return { document, run, deduped: false };
+  const { document } = documentResult;
+  let run;
+  if (documentResult.created) {
+    ({ run } = await createOrReuseKnowledgeIngestionRun({
+      organizationId: input.organizationId,
+      documentId: document.id,
+      requestedByUserId: input.uploaderUserId,
+    }));
+    await enqueueKnowledgeDocumentRun({
+      runId: run.id,
+      documentId: document.id,
+    });
+  } else {
+    run = await ensureKnowledgeDocumentIngestion({
+      document,
+      requestedByUserId: input.uploaderUserId,
+    });
+  }
+  return { document, run, deduped: !documentResult.created };
 }
 
 export async function revokeFileFromKnowledge(input: {
@@ -218,54 +226,31 @@ async function createKnowledgeDocumentFromBuffer(input: {
     buffer: input.buffer,
   });
 
-  let document: Awaited<ReturnType<typeof createKnowledgeDocument>> | null =
-    null;
-
-  try {
-    document = await createKnowledgeDocument({
-      id: documentId,
-      fileId: file.id,
-      organizationId: input.organizationId,
-      uploaderUserId: input.uploaderUserId,
-      projectId: input.projectId,
-      filename: input.filename,
-      originalFilename: input.originalFilename,
-      mediaType: input.mediaType,
-      sizeBytes: input.buffer.length,
-      checksumSha256,
-      storageKey: file.objectKey,
-    });
-  } catch (error) {
-    if (!isChecksumConflict(error)) {
-      throw error;
-    }
-
+  const documentResult = await createOrGetKnowledgeDocumentByChecksumSerialized({
+    id: documentId,
+    fileId: file.id,
+    organizationId: input.organizationId,
+    uploaderUserId: input.uploaderUserId,
+    projectId: input.projectId,
+    filename: input.filename,
+    originalFilename: input.originalFilename,
+    mediaType: input.mediaType,
+    sizeBytes: input.buffer.length,
+    checksumSha256,
+    storageKey: file.objectKey,
+  });
+  const { document } = documentResult;
+  if (!documentResult.created) {
     await discardUnreferencedFile(file.id, { removeScopeGrants: true }).catch(() => {});
-
-    const concurrentDocument = await getKnowledgeDocumentByChecksum(
-      input.organizationId,
-      checksumSha256,
-      input.projectId
-    );
-
-    if (!concurrentDocument) {
-      throw error;
-    }
-
     const run = await ensureKnowledgeDocumentIngestion({
-      document: concurrentDocument,
+      document,
       requestedByUserId: input.uploaderUserId,
     });
-
     return {
-      document: concurrentDocument,
+      document,
       run,
       deduped: true,
     };
-  }
-
-  if (!document) {
-    throw new Error("Knowledge document could not be created");
   }
 
   const { run } = await createOrReuseKnowledgeIngestionRun({

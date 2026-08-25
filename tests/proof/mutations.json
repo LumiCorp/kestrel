@@ -63,6 +63,51 @@
       "testFiles": ["apps/web/lib/turns/mobile-store.postgres.test.ts"]
     },
     {
+      "id": "interaction-run-id-persistence-omission",
+      "target": "src/orchestration/PostgresOrchestrationStore.ts",
+      "find": "  if (typeof row.run_id === \"string\") {\n    request.runId = row.run_id;\n  }",
+      "replace": "  if (false && typeof row.run_id === \"string\") {\n    request.runId = row.run_id;\n  }",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=preserves the waiting run identity", "tests/action-bound-approval-grants.postgres.test.ts"],
+      "testFiles": ["tests/action-bound-approval-grants.postgres.test.ts"]
+    },
+    {
+      "id": "runtime-approval-id-binding-bypass",
+      "target": "apps/web/lib/apps/trusted-terminal-approval.ts",
+      "find": "    runtimeApprovalId !== binding.approvalId ||",
+      "replace": "    false ||",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "lib/apps/trusted-terminal-approval.test.ts"],
+      "testFiles": ["apps/web/lib/apps/trusted-terminal-approval.test.ts"]
+    },
+    {
+      "id": "hosted-app-consume-before-provider-omission",
+      "target": "apps/web/app/api/runtime/email/action/route.ts",
+      "find": "      : await consumeAppOperationApproval({",
+      "replace": "      : consumeAppOperationApproval({",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--import", "tsx", "--test", "lib/apps/hosted-app-transaction-boundary.test.ts"],
+      "testFiles": ["apps/web/lib/apps/hosted-app-transaction-boundary.test.ts"]
+    },
+    {
+      "id": "hosted-app-consuming-execution-binding-bypass",
+      "target": "apps/web/lib/apps/app-operation-approvals.ts",
+      "find": "            eq(schema.threadTurns.environmentExecutionId, input.consumedExecutionId),",
+      "replace": "            eq(schema.threadTurns.status, \"running\"),",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=Environment Apps persist", "lib/apps/service.postgres.test.ts"],
+      "testFiles": ["apps/web/lib/apps/service.postgres.test.ts"]
+    },
+    {
+      "id": "hosted-app-decision-transaction-detachment",
+      "target": "apps/web/lib/turns/store.ts",
+      "find": "      await decideAppOperationApprovalInTransaction(tx, {",
+      "replace": "      void decideAppOperationApprovalInTransaction(tx, {",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--import", "tsx", "--test", "lib/apps/hosted-app-transaction-boundary.test.ts"],
+      "testFiles": ["apps/web/lib/apps/hosted-app-transaction-boundary.test.ts"]
+    },
+    {
       "id": "worker-claim-recovery-disabled",
       "target": "apps/web/lib/turns/queue.ts",
       "find": "if (turn.status === \"running\") {",
@@ -389,8 +434,8 @@
     {
       "id": "docker-capability-drop-removal",
       "target": "src/code/DockerSandboxExecutor.ts",
-      "find": "    \"--cap-drop\",",
-      "replace": "    \"--cap-add\",",
+      "find": "    \"--cap-drop\",\n    \"ALL\",",
+      "replace": "    \"--cap-add\",\n    \"ALL\",",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
       "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
@@ -398,8 +443,8 @@
     {
       "id": "docker-no-new-privileges-removal",
       "target": "src/code/DockerSandboxExecutor.ts",
-      "find": "    \"no-new-privileges\",",
-      "replace": "    \"seccomp=unconfined\",",
+      "find": "    \"no-new-privileges\",\n    \"--network\",",
+      "replace": "    \"seccomp=unconfined\",\n    \"--network\",",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
       "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
@@ -407,8 +452,8 @@
     {
       "id": "docker-read-only-root-removal",
       "target": "src/code/DockerSandboxExecutor.ts",
-      "find": "    \"--read-only\",",
-      "replace": "    \"--read-write\",",
+      "find": "    \"--read-only\",\n    \"--memory\",",
+      "replace": "    \"--read-write\",\n    \"--memory\",",
       "command": "node",
       "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
       "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
@@ -671,6 +716,69 @@
       "command": "pnpm",
       "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=cancellation acknowledgement cannot", "lib/turns/worker-boundary.test.ts"],
       "testFiles": ["apps/web/lib/turns/worker-boundary.test.ts"]
+    },
+    {
+      "id": "sandbox-lease-binding-bypass",
+      "target": "src/code/SandboxCapabilityLeaseCoordinator.ts",
+      "find": "if (current.bindingDigest !== digest) throw new Error(\"Sandbox capability lease binding does not match the exact action\");",
+      "replace": "if (false && current.bindingDigest !== digest) throw new Error(\"Sandbox capability lease binding does not match the exact action\");",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=fails stale binding closed", "tests/unit/sandbox-capability-lease-coordinator.test.ts"],
+      "testFiles": ["tests/unit/sandbox-capability-lease-coordinator.test.ts"]
+    },
+    {
+      "id": "sandbox-lease-expiry-bypass",
+      "target": "src/code/SandboxCapabilityLeaseCoordinator.ts",
+      "find": "return this.now().getTime() >= Date.parse(record.expiresAt);",
+      "replace": "return false;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=refuses an expired lease", "tests/unit/sandbox-capability-lease-coordinator.test.ts"],
+      "testFiles": ["tests/unit/sandbox-capability-lease-coordinator.test.ts"]
+    },
+    {
+      "id": "sandbox-recorded-replay-provider-reuse",
+      "target": "src/effects/EffectRunner.ts",
+      "find": "        if (existingResult.status === \"DONE\") {",
+      "replace": "        if (false && existingResult.status === \"DONE\") {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=recorded sandbox capability result replay", "tests/unit/effect-runner.test.ts"],
+      "testFiles": ["tests/unit/effect-runner.test.ts"]
+    },
+    {
+      "id": "sandbox-lease-response-ceiling-bypass",
+      "target": "src/code/SandboxCapabilityLeaseCoordinator.ts",
+      "find": "        current.usage.responseBytesConsumed + childResponseBytesAllocated + input.responseBytes > current.usage.responseByteLimit) {",
+      "replace": "        false && current.usage.responseBytesConsumed + childResponseBytesAllocated + input.responseBytes > current.usage.responseByteLimit) {",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=beyond the response-byte ceiling", "tests/unit/sandbox-capability-lease-coordinator.test.ts"],
+      "testFiles": ["tests/unit/sandbox-capability-lease-coordinator.test.ts"]
+    },
+    {
+      "id": "sandbox-capability-result-secret-persistence",
+      "target": "cli/runtime/KestrelChatRuntime.ts",
+      "find": "  const sanitized = input.redact(input.result);",
+      "replace": "  const sanitized = input.result;",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=result artifacts recursively redact", "tests/unit/cli-chat-runtime.test.ts"],
+      "testFiles": ["tests/unit/cli-chat-runtime.test.ts"]
+    },
+    {
+      "id": "sandbox-capability-raw-key-injection",
+      "target": "src/kestrel/contracts/sandbox-capability.ts",
+      "find": "  if (unknown.length > 0) fail(`${label} contains unknown field '${unknown[0]}'`);",
+      "replace": "  if (false && unknown.length > 0) fail(`${label} contains unknown field '${unknown[0]}'`);",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=lease parser rejects secrets", "tests/unit/sandbox-capability-lease-store.test.ts"],
+      "testFiles": ["tests/unit/sandbox-capability-lease-store.test.ts"]
+    },
+    {
+      "id": "sandbox-unrestricted-network-fallback",
+      "target": "src/code/DockerSandboxExecutor.ts",
+      "find": "input.capability === undefined ? \"none\" :",
+      "replace": "input.capability === undefined ? \"bridge\" :",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=canonical sandbox hardening contract", "tests/unit/docker-sandbox-executor.test.ts"],
+      "testFiles": ["tests/unit/docker-sandbox-executor.test.ts"]
     },
     {
       "id": "durable-turn-worker-concurrency-regression",

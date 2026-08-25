@@ -573,6 +573,7 @@ export interface OperatorRunView {
     providers: string[];
     models: string[];
   };
+  sandboxCapabilities?: import("../replay/RunReplayService.js").ReplaySandboxCapabilityReport | undefined;
   runtimePlan?: OperatorRuntimePlanSummary | undefined;
   timeline: OperatorRunTimelineEntry[];
 }

@@ -820,18 +820,26 @@ export async function expireWorkspaceBackups(now: Date, limit = 100) {
               inArray(table.status, ["failed", "expired"]),
               lt(table.updatedAt, tombstoneCutoff),
             ),
-          columns: { id: true },
+          columns: { id: true, objectKey: true },
           orderBy: (table, { asc }) => [asc(table.updatedAt), asc(table.id)],
           limit: tombstoneLimit,
         });
   counters.inspected += tombstones.length;
-  if (tombstones.length > 0) {
-    await knowledgeDb.delete(schema.workspaceBackups).where(
-      inArray(
-        schema.workspaceBackups.id,
-        tombstones.map((row) => row.id),
-      ),
-    );
+  for (const tombstone of tombstones) {
+    try {
+      if (tombstone.objectKey) {
+        await storage.deleteObject(tombstone.objectKey);
+      }
+      await knowledgeDb
+        .delete(schema.workspaceBackups)
+        .where(eq(schema.workspaceBackups.id, tombstone.id));
+    } catch {
+      await knowledgeDb
+        .update(schema.workspaceBackups)
+        .set({ status: "delete_failed", updatedAt: now })
+        .where(eq(schema.workspaceBackups.id, tombstone.id));
+      counters.deletionFailed += 1;
+    }
   }
   console.info("Workspace backup lifecycle reconciliation completed.", {
     batchLimit: boundedLimit,

@@ -1,0 +1,39 @@
+---
+title: Composer queues and interactions
+summary: Understand how one input surface changes meaning across idle, running, queued, waiting, failed, and mode-transition states.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The text box looks the same, but Send does not always mean “start another Turn.”
+
+While the Session is idle, a message can begin new work. During an active Run, the application may queue the message for later rather than interrupting current execution. At an approval wait, the same button may need to answer one exact interaction. After failure, it may preserve the draft while offering a separate retry or recovery action.
+
+## Idle: send
+
+The conversation package models composer behavior from activity and interaction state rather than a single `disabled` flag. Useful states include idle, active, queued, waiting, and failed. The available intents can include send, enqueue, respond, stop, reset, retry, or switch mode.
+
+At idle, Send can create new work from a message and selected attachments. Reset can clear local draft state; it does not delete durable history.
+
+## Active: queue or stop
+
+During an active Run, a follow-up can be queued for later. Stop targets the current execution; it is not a new user message whose content happens to be “stop.”
+
+## Waiting: respond
+
+When the runtime is waiting, the composer should surface the request being answered. The response carries its request ID through `resume()` or `resumeStream()`. If the request has already been satisfied, cancelled, or superseded, the application should reject the stale response instead of attaching it wherever it happens to fit.
+
+Information and approval interactions can also need different controls. Free-form text may answer a question; an approval UI should show the exact action, parameters, environment, and authority being granted.
+
+## Failed: recover without rewriting history
+
+After failure, the composer may retain the draft and expose retry or a registered recovery path. Those controls should create the documented new attempt or recovery action; they should not repaint the failed Run as active.
+
+## Mode switch: submit again on purpose
+
+An action rejected in Chat does not become valid merely because the UI flips to Build after the rejection. The application can preserve the user's intent, establish the new mode contract, and explicitly submit a new attempt. This keeps the event history honest and gives the new Run its own identity.
+
+Projection tells the composer what state exists; the composer expresses user intent; the runtime owns the resulting transition. [Conversation state and projection](/concepts/conversation-state-projection) owns the first boundary and [Waiting, resume, and cancellation](/concepts/waiting-resume-cancellation) the second.

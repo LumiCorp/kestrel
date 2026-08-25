@@ -124,6 +124,37 @@ every started Machine in scope is healthy.
 
 ## 5. Prove durable Knowledge ingestion
 
+For a release that changes Workspace backup creation, persistence, export, or
+cleanup, first run the forced-retry production canary against an isolated
+standalone scratch Workspace:
+
+```bash
+pnpm --dir apps/web canary:workspace-backup-retry -- \
+  --thread <scratch-canary-thread-id> \
+  --control-worker-machine <started-machine-id> \
+  --tag <tag>
+```
+
+The command performs a read-only database and Fly preflight before printing an
+exact four-part confirmation containing the Thread, Workspace, control-worker
+Machine, and image tag. It queues one checkpoint backup, interrupts the sole
+started control worker only after snapshot ownership is durable, proves pg-boss
+retry/resume reuses that snapshot, authenticates and checksums the KWB2 archive,
+checks temporary export cleanup, and retires the scratch Workspace. If the
+snapshot is already ready at the interruption boundary, the result is
+inconclusive and must be rerun with a fresh isolated fixture.
+
+The command writes secret-free evidence under `test-results/canaries/`. On a
+failure it restarts the control worker and preserves the Workspace, backup,
+queue, snapshot, archive, and provider identities for diagnosis. Do not remove
+an unexpected resource until its operation relationship is known. This
+15-minute canary deadline is an observation limit; it does not change the
+product's 120-second snapshot timeout.
+
+Require a passing backup retry canary before the Knowledge proof below and
+before updating a stopped standby. A passing backup canary does not replace the
+Knowledge consumer proof.
+
 Use a known queued or stranded Knowledge document, or upload a bounded fixture
 through the production product. Record its document and run IDs. Verify:
 

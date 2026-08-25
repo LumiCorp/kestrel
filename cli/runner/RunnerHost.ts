@@ -46,6 +46,7 @@ import type {
   MissionControlProjectStateRecord,
 } from "../../src/index.js";
 import { maybeBuildDatabaseConnectionFailure } from "../../src/runtime/databasePreflight.js";
+import type { ExactEffectResultStore } from "../../src/kestrel/contracts/store.js";
 import { createRuntimeFailure } from "../../src/runtime/RuntimeFailure.js";
 import { resolveKestrelHome } from "../config/kestrelHome.js";
 import { ProfileStore } from "../config/ProfileStore.js";
@@ -53,8 +54,10 @@ import type { OperatorAssemblySummary, TuiProfile } from "../contracts.js";
 import { DiagnosticLogStore } from "../diagnostics/DiagnosticLogStore.js";
 import {
   buildJobReplayPointer,
+  type JobManagedResultHandleV1,
   type JobRunResultV1,
 } from "../job/contracts.js";
+import type { ReplayQuery, ReplayResult } from "../../src/replay/RunReplayService.js";
 import { readDatabaseUrlSource } from "../localCoreEnv.js";
 import type {
   JobRunCommandPayload,
@@ -79,6 +82,7 @@ import type {
   ProjectReviewGetCommandPayload,
   ProjectSnapshotGetCommandPayload,
   RunCancelCommandPayload,
+  EffectResultGetCommandPayload,
   RunnerCommandMetadata,
   RunnerPingCommandPayload,
   SessionDescribeCommandPayload,
@@ -171,6 +175,10 @@ interface ActiveRunEntry {
   runId?: string | undefined;
   cancelRequested?: boolean | undefined;
   finalizingAnswer?: boolean | undefined;
+  exactEffectCandidate?: {
+    runId: string;
+    idempotencyKey: string;
+  } | undefined;
 }
 
 export interface RunnerProfileProvider {
@@ -190,6 +198,7 @@ export interface RunnerRuntime {
     input: RunTurnInput,
     options?: { signal?: AbortSignal | undefined }
   ): Promise<RunTurnResult>;
+  getReplay?: ((input: ReplayQuery) => Promise<ReplayResult>) | undefined;
   cancelActiveRun?:
     | ((sessionId: string) => Promise<{ runId?: string | undefined }>)
     | undefined;
@@ -593,6 +602,8 @@ export class RunnerHost {
   private readonly profileProvider: RunnerProfileProvider;
   private readonly profileSourcePolicy: RunnerProfileSourcePolicy;
   private readonly diagnosticsStore: Pick<DiagnosticLogStore, "append">;
+  private readonly exactEffectResultStore: ExactEffectResultStore | undefined;
+  private readonly exactEffectResultTenantId: string | undefined;
   private readonly runtimes = new Map<string, RuntimeEntry>();
   private readonly commandBySession = new Map<string, string>();
   private readonly commandTypeBySession = new Map<
@@ -621,6 +632,8 @@ export class RunnerHost {
     options: {
       profileSourcePolicy?: RunnerProfileSourcePolicy | undefined;
       diagnosticsStore?: Pick<DiagnosticLogStore, "append"> | undefined;
+      exactEffectResultStore?: ExactEffectResultStore | undefined;
+      exactEffectResultTenantId?: string | undefined;
     } = {},
   ) {
     this.writer = writer;
@@ -629,6 +642,26 @@ export class RunnerHost {
     this.profileSourcePolicy =
       options.profileSourcePolicy ?? "inline-or-registered";
     this.diagnosticsStore = options.diagnosticsStore ?? new DiagnosticLogStore();
+    this.exactEffectResultStore = options.exactEffectResultStore;
+    this.exactEffectResultTenantId = options.exactEffectResultTenantId?.trim() || undefined;
+  }
+
+  async effectResultGet(commandId: string, payload: EffectResultGetCommandPayload, metadata?: RunnerCommandMetadata): Promise<void> {
+    if (this.exactEffectResultStore === undefined || this.exactEffectResultTenantId === undefined) {
+      this.writer.emit("runner.error", { code: "EFFECT_RESULT_LOOKUP_UNAVAILABLE", message: "Exact effect result lookup is unavailable." }, { commandId });
+      return;
+    }
+    if (metadata?.tenantId !== this.exactEffectResultTenantId || metadata.actor?.tenantId !== this.exactEffectResultTenantId) {
+      this.writer.emit("runner.error", { code: "RUNNER_FORBIDDEN", message: "Exact effect result lookup is not authorized for this tenant." }, { commandId });
+      return;
+    }
+    const read = await this.exactEffectResultStore.readExactEffectResult({ ...payload, tenantId: this.exactEffectResultTenantId });
+    if (read.status !== "found") {
+      const code = read.status === "not_found" ? "EFFECT_RESULT_NOT_FOUND" : read.status === "incomplete" ? "EFFECT_RESULT_INCOMPLETE" : "EFFECT_RESULT_CONFLICT";
+      this.writer.emit("runner.error", { code, message: "The requested exact effect result is not available." }, { commandId });
+      return;
+    }
+    this.writer.emit("effect.result.loaded", { version: 1, ...payload, result: { ...read.result } }, { commandId, sessionId: payload.sessionId, runId: payload.runId });
   }
 
   async profileList(
@@ -888,6 +921,20 @@ export class RunnerHost {
         active.runId = requestedRunId ?? terminalResult.output.runId;
       }
       const emittedRunId = requestedRunId ?? terminalResult.output.runId;
+      const cancellationPending = abortController.signal.aborted &&
+        active?.commandId === commandId &&
+        active.cancelRequested === true;
+      const durableCompletionWon = cancellationPending
+        ? await this.hasDurableCompletedEffect(active, turn.sessionId, emittedRunId)
+        : false;
+      if (cancellationPending && !durableCompletionWon) {
+        this.writer.emit("run.cancelled", {
+          sessionId: turn.sessionId,
+          runId: emittedRunId,
+          result: buildNonResponsiveTerminalResult({ status: "CANCELLED", sessionId: turn.sessionId, runId: emittedRunId }),
+        }, { commandId, runId: emittedRunId, sessionId: turn.sessionId });
+        return;
+      }
       if (
         requestedRunId !== undefined &&
         terminalResult.output.runId !== requestedRunId
@@ -1153,6 +1200,12 @@ export class RunnerHost {
         threadId,
         runId: result.output.runId,
       });
+      const resultHandle = result.output.status === "COMPLETED"
+        ? await resolveJobManagedResultHandle(runtime, {
+            runId: result.output.runId,
+            sessionId: turn.sessionId,
+          })
+        : undefined;
       const output: JobRunResultV1 = {
         version: "job_run_result_v1",
         sessionId: turn.sessionId,
@@ -1162,6 +1215,7 @@ export class RunnerHost {
         ...(result.output.waitFor !== undefined
           ? { waitFor: result.output.waitFor }
           : {}),
+        ...(resultHandle !== undefined ? { resultHandle } : {}),
         replay,
         result,
       };
@@ -1329,10 +1383,12 @@ export class RunnerHost {
     let cancelledRunId: string | undefined;
     let cancelled = false;
     if (active !== undefined) {
+      const authoritativeRunId =
+        active.runId ?? active.exactEffectCandidate?.runId;
       const matchesRunId =
         payload.runId === undefined ||
-        active.runId === undefined ||
-        payload.runId === active.runId;
+        authoritativeRunId === undefined ||
+        payload.runId === authoritativeRunId;
       const matchesCommandId =
         payload.commandId === undefined ||
         payload.commandId === active.commandId;
@@ -1361,6 +1417,70 @@ export class RunnerHost {
           );
           return;
         }
+        const rejectDurablyCompletedCancellation = () => {
+          this.writer.emit(
+            "runner.error",
+            {
+              code: "RUN_ALREADY_COMPLETED",
+              message:
+                "The run has durably committed an exact tool result and is no longer cancellable.",
+              details: {
+                sessionId: payload.sessionId,
+                ...(active.runId !== undefined ? { runId: active.runId } : {}),
+                activeCommandId: active.commandId,
+              },
+            },
+            {
+              commandId,
+              sessionId: payload.sessionId,
+              ...(active.runId !== undefined ? { runId: active.runId } : {}),
+            },
+          );
+        };
+        const candidate = active.exactEffectCandidate;
+        if (
+          candidate !== undefined &&
+          (this.exactEffectResultStore === undefined ||
+            this.exactEffectResultTenantId === undefined)
+        ) {
+          this.writer.emit(
+            "runner.error",
+            {
+              code: "EXACT_EFFECT_CANCELLATION_UNAVAILABLE",
+              message:
+                "Cancellation is unavailable because exact-effect arbitration authority is not configured.",
+              details: {
+                sessionId: payload.sessionId,
+                runId: active.runId ?? candidate.runId,
+              },
+            },
+            {
+              commandId,
+              sessionId: payload.sessionId,
+              runId: active.runId ?? candidate.runId,
+            },
+          );
+          return;
+        }
+        if (
+          candidate !== undefined &&
+          this.exactEffectResultStore !== undefined &&
+          this.exactEffectResultTenantId !== undefined
+        ) {
+          const claim = await this.exactEffectResultStore.claimExactEffectCancellation({
+            sessionId: payload.sessionId,
+            runId: active.runId ?? payload.runId ?? candidate.runId,
+            idempotencyKey: candidate.idempotencyKey,
+            tenantId: this.exactEffectResultTenantId,
+          });
+          if (claim.status === "completed") {
+            rejectDurablyCompletedCancellation();
+            return;
+          }
+          if (claim.status !== "cancelled") {
+            return this.emitRunCancelNotFound(commandId, payload, active.runId);
+          }
+        }
         active.cancelRequested = true;
         active.abortController.abort();
         cancelledRunId = active.runId;
@@ -1375,34 +1495,9 @@ export class RunnerHost {
     }
 
     if (cancelled === false) {
-      this.writer.emit(
-        "runner.error",
-        {
-          code: "RUN_CANCEL_NOT_FOUND",
-          message: "No matching cancellable run was found.",
-          details: {
-            sessionId: payload.sessionId,
-            ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
-            ...(payload.commandId !== undefined
-              ? { commandId: payload.commandId }
-              : {}),
-            ...(active?.runId !== undefined
-              ? { activeRunId: active.runId }
-              : {}),
-            ...(active?.commandId !== undefined
-              ? { activeCommandId: active.commandId }
-              : {}),
-          },
-        },
-        {
-          commandId,
-          sessionId: payload.sessionId,
-          ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
-        }
-      );
+      this.emitRunCancelNotFound(commandId, payload);
       return;
     }
-
     this.writer.emit(
       "run.cancelled",
       {
@@ -1419,6 +1514,34 @@ export class RunnerHost {
         sessionId: payload.sessionId,
         ...(cancelledRunId !== undefined ? { runId: cancelledRunId } : {}),
       }
+    );
+  }
+
+  private emitRunCancelNotFound(
+    commandId: string,
+    payload: RunCancelCommandPayload,
+    activeRunId?: string | undefined,
+  ): void {
+    const active = this.activeRuns.get(payload.sessionId);
+    const effectiveActiveRunId = activeRunId ?? active?.runId;
+    this.writer.emit(
+      "runner.error",
+      {
+        code: "RUN_CANCEL_NOT_FOUND",
+        message: "No matching cancellable run was found.",
+        details: {
+          sessionId: payload.sessionId,
+          ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+          ...(payload.commandId !== undefined ? { commandId: payload.commandId } : {}),
+          ...(effectiveActiveRunId !== undefined ? { activeRunId: effectiveActiveRunId } : {}),
+          ...(active?.commandId !== undefined ? { activeCommandId: active.commandId } : {}),
+        },
+      },
+      {
+        commandId,
+        sessionId: payload.sessionId,
+        ...(payload.runId !== undefined ? { runId: payload.runId } : {}),
+      },
     );
   }
 
@@ -3311,6 +3434,18 @@ export class RunnerHost {
   private emitToolUpdate(update: RunToolUpdateV1): void {
     const normalizedUpdate = this.normalizeActiveRunIdentity(update);
     if (
+      (normalizedUpdate.phase === "started" || normalizedUpdate.phase === "completed") &&
+      normalizedUpdate.toolName === "code.execute"
+    ) {
+      const active = this.activeRuns.get(normalizedUpdate.sessionId);
+      if (active !== undefined) {
+        active.exactEffectCandidate = {
+          runId: normalizedUpdate.runId,
+          idempotencyKey: normalizedUpdate.toolCallId,
+        };
+      }
+    }
+    if (
       normalizedUpdate.phase === "completed" &&
       normalizedUpdate.toolName === "FinalizeAnswer"
     ) {
@@ -3339,6 +3474,32 @@ export class RunnerHost {
         ...(commandId !== undefined ? { commandId } : {}),
       }
     );
+  }
+
+  private async hasDurableCompletedEffect(
+    active: ActiveRunEntry,
+    sessionId: string,
+    runId: string | undefined,
+  ): Promise<boolean> {
+    const candidate = active.exactEffectCandidate;
+    if (
+      candidate === undefined ||
+      this.exactEffectResultStore === undefined ||
+      this.exactEffectResultTenantId === undefined
+    ) {
+      return false;
+    }
+    if (runId !== undefined && candidate.runId !== runId) {
+      return false;
+    }
+    const effectiveRunId = runId ?? candidate.runId;
+    const read = await this.exactEffectResultStore.readExactEffectResult({
+      sessionId,
+      runId: effectiveRunId,
+      idempotencyKey: candidate.idempotencyKey,
+      tenantId: this.exactEffectResultTenantId,
+    });
+    return read.status === "found";
   }
 
   private normalizeActiveRunIdentity<
@@ -3519,6 +3680,95 @@ export class RunnerHost {
         // Diagnostics must never change terminal handoff behavior.
     });
   }
+}
+
+const JOB_MANAGED_RESULT_EVENT_TYPES = [
+  "managed_worktree.promotion_candidate",
+  "managed_worktree.fan_in_candidate",
+] as const;
+
+async function resolveJobManagedResultHandle(
+  runtime: RunnerRuntime,
+  input: { runId: string; sessionId: string },
+): Promise<JobManagedResultHandleV1 | undefined> {
+  if (runtime.getReplay === undefined) {
+    return;
+  }
+  let replay: ReplayResult;
+  try {
+    replay = await runtime.getReplay({
+      runId: input.runId,
+      sessionId: input.sessionId,
+      eventTypes: [...JOB_MANAGED_RESULT_EVENT_TYPES],
+    });
+  } catch {
+    // The handle improves handoff, but replay lookup must not replace a real
+    // completed result with a runner failure. Consumers retain replay fallback.
+    return;
+  }
+  for (const event of [...replay.events].reverse()) {
+    if (
+      event.runId !== input.runId ||
+      event.sessionId !== input.sessionId ||
+      JOB_MANAGED_RESULT_EVENT_TYPES.includes(
+        event.type as (typeof JOB_MANAGED_RESULT_EVENT_TYPES)[number],
+      ) === false
+    ) {
+      continue;
+    }
+    const metadata = readJobManagedResultMetadata(event.metadata);
+    if (metadata === undefined) {
+      continue;
+    }
+    return {
+      version: "job_managed_result_handle_v1",
+      kind: "managed_worktree",
+      worktreePath: metadata.worktreeRoot,
+      sourceWorkspaceRoot: metadata.sourceWorkspaceRoot,
+      baseRevision: metadata.baseHead,
+      candidateRevision: metadata.candidateFingerprint,
+      changedFiles: [...new Set(metadata.changedFiles)],
+      ...(metadata.promotionId !== undefined
+        ? { promotionId: metadata.promotionId }
+        : {}),
+    };
+  }
+  return;
+}
+
+function readJobManagedResultMetadata(value: unknown): {
+  worktreeRoot: string;
+  sourceWorkspaceRoot: string;
+  baseHead: string;
+  candidateFingerprint: string;
+  changedFiles: string[];
+  promotionId?: string | undefined;
+} | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return;
+  }
+  const metadata = value as Record<string, unknown>;
+  const changedFiles = metadata.changedFiles;
+  if (
+    typeof metadata.worktreeRoot !== "string" || metadata.worktreeRoot.length === 0 ||
+    typeof metadata.sourceWorkspaceRoot !== "string" || metadata.sourceWorkspaceRoot.length === 0 ||
+    typeof metadata.baseHead !== "string" || metadata.baseHead.length === 0 ||
+    typeof metadata.candidateFingerprint !== "string" || metadata.candidateFingerprint.length === 0 ||
+    Array.isArray(changedFiles) === false || changedFiles.length === 0 ||
+    changedFiles.some((entry) => typeof entry !== "string" || entry.length === 0)
+  ) {
+    return;
+  }
+  return {
+    worktreeRoot: metadata.worktreeRoot,
+    sourceWorkspaceRoot: metadata.sourceWorkspaceRoot,
+    baseHead: metadata.baseHead,
+    candidateFingerprint: metadata.candidateFingerprint,
+    changedFiles: changedFiles as string[],
+    ...(typeof metadata.promotionId === "string" && metadata.promotionId.length > 0
+      ? { promotionId: metadata.promotionId }
+      : {}),
+  };
 }
 
 function buildNonResponsiveTerminalResult(input: {

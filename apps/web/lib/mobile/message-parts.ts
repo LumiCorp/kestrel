@@ -39,6 +39,11 @@ export type MobileMessagePart =
       kind: string;
       url: string | null;
       mediaType: string | null;
+      previewId: string | null;
+      sizeBytes: number | null;
+      fileCount: number | null;
+      expiresAt: string | null;
+      warning: string | null;
     }
   | {
       type: "interaction_status";
@@ -46,6 +51,9 @@ export type MobileMessagePart =
       kind: MobileInteractionKind;
       prompt: string;
       status: MobileInteractionStatus;
+      failureCode?: string | null;
+      message?: string | null;
+      retryEligible?: boolean;
     }
   | {
       type: "assistant_status";
@@ -63,7 +71,12 @@ type MobileToolState =
   | "denied"
   | "unavailable";
 type MobileInteractionKind = "question" | "approval";
-type MobileInteractionStatus = "pending" | "resolved" | "cancelled";
+type MobileInteractionStatus =
+  | "pending"
+  | "processing"
+  | "resolved"
+  | "cancelled"
+  | "failed";
 type MobileAssistantStatus =
   | "working"
   | "completed"
@@ -98,7 +111,16 @@ function readString(record: Record<string, unknown>, key: string) {
   return typeof record[key] === "string" ? record[key] : null;
 }
 
-export function mobileMessageParts(value: unknown): MobileMessagePart[] {
+function readNumber(record: Record<string, unknown>, key: string) {
+  return typeof record[key] === "number" && Number.isFinite(record[key])
+    ? record[key]
+    : null;
+}
+
+export function mobileMessageParts(
+  value: unknown,
+  options: { richInteractionLifecycle?: boolean } = {},
+): MobileMessagePart[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((raw): MobileMessagePart[] => {
     const part = asRecord(raw);
@@ -219,6 +241,7 @@ export function mobileMessageParts(value: unknown): MobileMessagePart[] {
       const id = readString(data, "id");
       const title = readString(data, "title");
       const kind = readString(data, "kind");
+      const metadata = asRecord(data.metadata);
       return id && title && kind
         ? [
             {
@@ -228,6 +251,11 @@ export function mobileMessageParts(value: unknown): MobileMessagePart[] {
               kind,
               url: readString(data, "url"),
               mediaType: readString(data, "mediaType"),
+              previewId: metadata ? readString(metadata, "previewId") : null,
+              sizeBytes: metadata ? readNumber(metadata, "sizeBytes") : null,
+              fileCount: metadata ? readNumber(metadata, "fileCount") : null,
+              expiresAt: metadata ? readString(metadata, "expiresAt") : null,
+              warning: metadata ? readString(metadata, "warning") : null,
             },
           ]
         : [];
@@ -241,8 +269,29 @@ export function mobileMessageParts(value: unknown): MobileMessagePart[] {
         readString(data, "prompt")
       );
       const status = mobileInteractionStatus(readString(data, "status"));
-      return requestId && kind && prompt && status
-        ? [{ type: "interaction_status", requestId, kind, prompt, status }]
+      const approvalOutcome = asRecord(data.approvalOutcome);
+      const visibleStatus = options.richInteractionLifecycle
+        ? status
+        : status === "processing"
+          ? "pending"
+          : status === "failed"
+            ? "cancelled"
+            : status;
+      return requestId && kind && prompt && visibleStatus
+        ? [{
+            type: "interaction_status",
+            requestId,
+            kind,
+            prompt,
+            status: visibleStatus,
+            ...(options.richInteractionLifecycle && approvalOutcome
+              ? {
+                  failureCode: readString(approvalOutcome, "failureCode"),
+                  message: readString(approvalOutcome, "publicMessage"),
+                  retryEligible: approvalOutcome.retryEligible === true,
+                }
+              : {}),
+          }]
         : [];
     }
     if (type === "data-kestrel-status") {
@@ -305,7 +354,11 @@ function mobileInteractionPrompt(
 function mobileInteractionStatus(
   value: string | null
 ): MobileInteractionStatus | null {
-  return value === "pending" || value === "resolved" || value === "cancelled"
+  return value === "pending" ||
+    value === "processing" ||
+    value === "resolved" ||
+    value === "cancelled" ||
+    value === "failed"
     ? value
     : null;
 }

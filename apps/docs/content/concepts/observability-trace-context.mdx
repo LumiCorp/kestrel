@@ -1,0 +1,39 @@
+---
+title: Observability and trace context
+summary: Relate requests, Runs, tools, providers, and replay attempts in traces without treating telemetry as durable runtime evidence.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+One slow browser request becomes a runner command, three model calls, two tools, and a later replay. Without relationships, the trace looks like unrelated latency.
+
+## Create: this request begins new work
+
+Kestrel trace context can start new work, continue an incoming relationship, replay recorded work, or fork a related attempt. The directive makes that choice explicit instead of guessing from whichever header happened to be present.
+
+Request, correlation, Session, Run, Turn, tool, provider, and effect identities can become span attributes or links. They should not be collapsed into one trace ID: each answers a different operational question.
+
+## Continue: the runner belongs to the request
+
+Continuing carries the incoming relationship across the Agent boundary. Child spans can cover runner transport, model invocations, tools, and adapters without inventing a new unrelated root.
+
+## Replay: inspect old evidence in a new attempt
+
+Replay links to the original evidence while remaining a distinct attempt. It does not overwrite the old timeline or pretend the same Run happened twice.
+
+## Fork: related work takes another path
+
+A fork preserves relationship without claiming direct continuation. That distinction is useful when a recovery or investigation shares origin but owns a different execution lifecycle.
+
+## Export the relationships
+
+The observability package supplies trace context parsing and resolution plus tracers, spans, processors, and exporters. An application can wrap Agent calls, attach the resolved context, and export through console, in-memory inspection, or an OpenTelemetry bridge according to deployment needs.
+
+Spans remain telemetry. They may be sampled, delayed, dropped, or stored under a different retention policy. They help explain performance and relationships, but they do not replace persisted terminal results, effect receipts, approvals, task updates, or provider reasoning records.
+
+Likewise, a successful span means the instrumented operation returned according to its span contract. It does not independently prove that a real-world effect committed or project work was accepted.
+
+Package contracts live in [Observability reference](/reference/observability); [Add observability](/build/adding-observability) carries them into an application.

@@ -8,8 +8,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import {
+  DOCKER_CAPABILITY_ENDPOINT,
   DockerSandboxCancellationError,
   DockerSandboxExecutor,
+  DockerUnavailableError,
+  type DockerProcessResult,
 } from "../../src/code/DockerSandboxExecutor.js";
 import type {
   AppliedCodeExecutionPolicy,
@@ -570,6 +573,722 @@ test(
 );
 
 test(
+  "Docker sandbox capability transport reaches only the exact trusted stub without exposing its lease",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability");
+    const brokerName = `${containerName}-broker`;
+    const lease = `opaque-lease-${randomUUID()}`;
+    const hostCanary = `host-canary-${randomUUID()}`;
+    const lifecycleOrder: string[] = [];
+    const variableName = `KESTREL_CAPABILITY_HOST_${randomUUID().replaceAll("-", "")}`;
+    process.env[variableName] = hostCanary;
+    try {
+      const execution = fixedNameExecutor(containerName).execute({
+        request: {
+          language: "javascript",
+          code: `
+            const http = require("node:http");
+            const fs = require("node:fs");
+            function request(url, options = {}) {
+              return new Promise(resolve => {
+                const call = http.request(url, { ...options, timeout: 500 }, response => {
+                  let body = ""; response.on("data", chunk => body += chunk);
+                  response.on("end", () => resolve({ status: response.statusCode, body }));
+                });
+                call.on("timeout", () => call.destroy(new Error("timeout")));
+                call.on("error", error => resolve({ error: error.code ?? error.message }));
+                if (options.body) call.write(options.body);
+                call.end();
+              });
+            }
+            (async () => {
+              const endpoint = ${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)};
+              const malformed = await request(endpoint, { method: "POST", body: "{" });
+              const nullBody = await request(endpoint, { method: "POST", body: "null" });
+              const primitive = await request(endpoint, { method: "POST", body: "42" });
+              const array = await request(endpoint, { method: "POST", body: "[]" });
+              const oversized = await request(endpoint, { method: "POST", body: JSON.stringify({ padding: "x".repeat(5000) }) });
+              const unknownOperation = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "write", destination: "api.tavily.com" }) });
+              const unknownDestination = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "example.com" }) });
+              const forwarding = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", url: "http://example.com" }) });
+              const exact = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com" }) });
+              const overCeiling = await request(endpoint, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com" }) });
+              const probes = {};
+              for (const [name, url] of Object.entries({
+                provider: "http://api.tavily.com",
+                internet: "http://1.1.1.1",
+                lan: "http://192.168.1.1",
+                loopback: "http://127.0.0.1:43128",
+                linkLocal: "http://169.254.1.1",
+                metadata: "http://169.254.169.254/latest/meta-data/",
+              })) probes[name] = await request(url);
+              await new Promise(resolve => setTimeout(resolve, 750));
+              let brokerConfigReadable = true;
+              try { fs.readFileSync("/run/kestrel/config"); } catch { brokerConfigReadable = false; }
+              console.log(JSON.stringify({ malformed, nullBody, primitive, array, oversized, exact, overCeiling, unknownOperation, unknownDestination, forwarding, probes, envKeys: Object.keys(process.env), brokerConfigReadable }));
+            })();
+          `,
+        },
+        policy: policy({ timeoutMs: 10_000 }),
+        capability: {
+          transport: "docker-shared-loopback-v1",
+          lease,
+          operation: "search",
+          destination: "api.tavily.com",
+          response: { answer: "trusted-stub-ok" },
+          lifecycle: {
+            beforeProviderInvocation: async () => {},
+            commitProviderResult: async () => {},
+            recordProviderFailure: async () => {},
+            beforeContainerTeardown: async (reason) => {
+              lifecycleOrder.push(`terminal:${reason}`, "secret_disposed");
+              const [workload, broker] = await Promise.all([
+                execFileAsync("docker", ["inspect", containerName]),
+                execFileAsync("docker", ["inspect", brokerName]),
+              ]);
+              assert.notEqual(workload.stdout.trim(), "");
+              assert.notEqual(broker.stdout.trim(), "");
+              lifecycleOrder.push("containers_still_present");
+            },
+          },
+        },
+      });
+
+      await waitForContainer(containerName, true);
+      await waitForContainer(brokerName, true);
+      const [workloadInspect, brokerInspect, workloadTop, brokerTop, deletedBootstrap] = await Promise.all([
+        execFileAsync("docker", ["inspect", containerName]),
+        execFileAsync("docker", ["inspect", brokerName]),
+        execFileAsync("docker", ["top", containerName]),
+        execFileAsync("docker", ["top", brokerName]),
+        execFileAsync("docker", ["exec", brokerName, "test", "!", "-e", "/run/kestrel/config"]),
+      ]);
+      const visible = [workloadInspect.stdout, brokerInspect.stdout, workloadTop.stdout, brokerTop.stdout].join("\n");
+      assert.equal(visible.includes(lease), false);
+      assert.equal(visible.includes(hostCanary), false);
+      assert.equal(deletedBootstrap.stdout, "");
+      const parsedBroker = JSON.parse(brokerInspect.stdout)[0] as { Id: string; HostConfig: { NetworkMode: string } };
+      assert.equal(JSON.parse(workloadInspect.stdout)[0].HostConfig.NetworkMode, `container:${parsedBroker.Id}`);
+      assert.equal(parsedBroker.HostConfig.NetworkMode, "none");
+
+      const result = await execution;
+      assert.equal(result.status, "ok", result.stderr);
+      const evidence = JSON.parse(result.stdout.trim()) as {
+        malformed: { status: number };
+        nullBody: { status: number };
+        primitive: { status: number };
+        array: { status: number };
+        oversized: { status: number };
+        exact: { status: number; body: string };
+        overCeiling: { status: number };
+        unknownOperation: { status: number };
+        unknownDestination: { status: number };
+        forwarding: { status: number };
+        probes: Record<string, { error?: string }>;
+        envKeys: string[];
+        brokerConfigReadable: boolean;
+      };
+      assert.equal(evidence.malformed.status, 400);
+      assert.equal(evidence.nullBody.status, 400);
+      assert.equal(evidence.primitive.status, 400);
+      assert.equal(evidence.array.status, 400);
+      assert.equal(evidence.oversized.status, 413);
+      assert.equal(evidence.exact.status, 200);
+      assert.deepEqual(JSON.parse(evidence.exact.body), { answer: "trusted-stub-ok" });
+      assert.equal(evidence.overCeiling.status, 429);
+      assert.equal(evidence.unknownOperation.status, 403);
+      assert.equal(evidence.unknownDestination.status, 403);
+      assert.equal(evidence.forwarding.status, 403);
+      for (const [name, probe] of Object.entries(evidence.probes)) {
+        assert.equal(typeof probe.error, "string", name);
+      }
+      assert.equal(evidence.envKeys.includes(variableName), false);
+      assert.equal(evidence.brokerConfigReadable, false);
+      const retained = `${result.stdout}\n${result.stderr}\n${JSON.stringify(result.artifacts)}`;
+      assert.equal(retained.includes(lease), false);
+      assert.equal(retained.includes(hostCanary), false);
+      assert.deepEqual(lifecycleOrder, ["terminal:completed", "secret_disposed", "containers_still_present"]);
+      await assertContainerAndProcessesRemoved(containerName);
+      await assertContainerAndProcessesRemoved(brokerName);
+    } finally {
+      delete process.env[variableName];
+    }
+  },
+);
+
+test(
+  "Docker sandbox leaves a preexisting workload container intact after a create-name collision",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("workload-collision");
+    await execFileAsync("docker", ["create", "--name", containerName, "node:20-alpine", "sh", "-c", "while :; do sleep 3600; done"]);
+    try {
+      await assert.rejects(
+        fixedNameExecutor(containerName).execute({
+          request: { language: "javascript", code: "console.log('must not run')" },
+          policy: policy(),
+          capability: {
+            transport: "docker-shared-loopback-v1",
+            lease: `opaque-lease-${randomUUID()}`,
+            operation: "search",
+            destination: "api.tavily.com",
+            response: { answer: "must not run" },
+          },
+        }),
+        /Unable to create sandbox container/u,
+      );
+      assert.equal(await containerExists(containerName), true);
+      assert.equal(await containerExists(`${containerName}-broker`), false);
+    } finally {
+      await execFileAsync("docker", ["rm", "--force", containerName]);
+    }
+  },
+);
+
+test(
+  "Docker sandbox broker rejects an expired authenticated capability",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-expired");
+    const result = await fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com" }) }).then(async response => console.log(JSON.stringify({ status: response.status, body: await response.json() })))`,
+      },
+      policy: policy(),
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: { answer: "must not return" },
+        expiresAt: "2000-01-01T00:00:00.000Z",
+        maxRequests: 1,
+      },
+    });
+    assert.equal(result.status, "ok", result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), { status: 410, body: { error: "capability_expired" } });
+  },
+);
+
+test(
+  "Docker sandbox broker invokes the trusted host adapter only after the exact workload request",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-mediated");
+    const hostCredential = `tavily-key-${randomUUID()}`;
+    let adapterCalls = 0;
+    const execution = fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `(async () => {
+          const denied = await fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "example.com", input: { query: "kestrel", maxResults: 2 } }) });
+          const response = await fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", input: { query: "kestrel", maxResults: 2 } }) });
+          console.log(JSON.stringify({ denied: denied.status, status: response.status, body: await response.json() }));
+        })()`,
+      },
+      policy: policy(),
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: undefined,
+        expectedInput: { query: "kestrel", maxResults: 2 },
+        expiresAt: new Date(Date.now() + 10_000).toISOString(),
+        maxRequests: 1,
+        maxResponseBytes: 4096,
+        adapter: async (input) => {
+          adapterCalls += 1;
+          assert.deepEqual(input, { query: "kestrel", maxResults: 2 });
+          assert.equal(hostCredential.startsWith("tavily-key-"), true);
+          return { version: 1, results: [{ title: "Exact", url: "https://example.com/", content: "mediated" }] };
+        },
+      },
+    });
+    assert.equal(adapterCalls, 0);
+    await waitForContainer(containerName, true);
+    const result = await execution;
+    assert.equal(result.status, "ok", result.stderr);
+    assert.equal(adapterCalls, 1);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), { denied: 403, status: 200, body: { version: 1, results: [{ title: "Exact", url: "https://example.com/", content: "mediated" }] } });
+    assert.equal(`${result.stdout}${result.stderr}${JSON.stringify(result.artifacts)}`.includes(hostCredential), false);
+  },
+);
+
+test(
+  "Docker sandbox timeout cancels the host adapter pump and removes both containers",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-pump-timeout");
+    let adapterObservedAbort = false;
+    let providerFailures = 0;
+    const teardownReasons: string[] = [];
+    const result = await fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", input: { query: "wait", maxResults: 1 } }) })`,
+      },
+      policy: policy({ timeoutMs: 500 }),
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: undefined,
+        expectedInput: { query: "wait", maxResults: 1 },
+        expiresAt: new Date(Date.now() + 10_000).toISOString(),
+        maxRequests: 1,
+        adapter: async (_input, signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            adapterObservedAbort = true;
+            reject(signal.reason);
+          }, { once: true });
+        }),
+        lifecycle: {
+          beforeProviderInvocation: async () => {},
+          commitProviderResult: async () => {},
+          recordProviderFailure: async () => { providerFailures += 1; },
+          beforeContainerTeardown: async (reason) => { teardownReasons.push(reason); },
+        },
+      },
+    });
+    assert.equal(result.status, "timeout");
+    assert.equal(adapterObservedAbort, true);
+    assert.equal(providerFailures, 0);
+    assert.deepEqual(teardownReasons, ["timeout"]);
+    await assertContainerAndProcessesRemoved(containerName);
+    await assertContainerAndProcessesRemoved(`${containerName}-broker`);
+  },
+);
+
+test(
+  "Docker sandbox cancellation during the first provider operation preserves cancellation classification",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-provider-cancel");
+    const controller = new AbortController();
+    let providerStarted!: () => void;
+    const providerStart = new Promise<void>((resolve) => { providerStarted = resolve; });
+    let providerFailures = 0;
+    const teardownReasons: string[] = [];
+    const execution = fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", input: { query: "cancel", maxResults: 1 } }) })`,
+      },
+      policy: policy({ timeoutMs: 10_000 }),
+      signal: controller.signal,
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: undefined,
+        expectedInput: { query: "cancel", maxResults: 1 },
+        expiresAt: new Date(Date.now() + 10_000).toISOString(),
+        maxRequests: 1,
+        adapter: async (_input, signal) => {
+          providerStarted();
+          return await new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+        lifecycle: {
+          beforeProviderInvocation: async () => {},
+          commitProviderResult: async () => { throw new Error("late provider result must not commit"); },
+          recordProviderFailure: async () => { providerFailures += 1; },
+          beforeContainerTeardown: async (reason) => { teardownReasons.push(reason); },
+        },
+      },
+    });
+    await providerStart;
+    controller.abort(new Error("operator cancelled"));
+    await assert.rejects(execution, /cancel/iu);
+    assert.equal(providerFailures, 0);
+    assert.deepEqual(teardownReasons, ["cancelled"]);
+    await assertContainerAndProcessesRemoved(containerName);
+    await assertContainerAndProcessesRemoved(`${containerName}-broker`);
+  },
+);
+
+test(
+  "Docker sandbox broker does not deliver an adapter response after capability expiry",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-expiry-delivery");
+    const result = await fixedNameExecutor(containerName).execute({
+      request: {
+        language: "javascript",
+        code: `fetch(${JSON.stringify(DOCKER_CAPABILITY_ENDPOINT)}, { method: "POST", body: JSON.stringify({ operation: "search", destination: "api.tavily.com", input: { query: "late", maxResults: 1 } }) }).then(async response => console.log(JSON.stringify({ status: response.status, body: await response.json() })))`,
+      },
+      policy: policy({ timeoutMs: 4_000 }),
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: undefined,
+        expectedInput: { query: "late", maxResults: 1 },
+        expiresAt: new Date(Date.now() + 2_000).toISOString(),
+        maxRequests: 1,
+        maxResponseBytes: 4096,
+        adapter: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+          return { version: 1, results: [] };
+        },
+      },
+    });
+    assert.equal(result.status, "ok", result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), {
+      status: 410,
+      body: { error: "capability_expired" },
+    });
+    await assertContainerAndProcessesRemoved(containerName);
+    await assertContainerAndProcessesRemoved(`${containerName}-broker`);
+  },
+);
+
+test(
+  "Docker sandbox exits and cleans up when a selected capability is never requested",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("unused-capability");
+    let adapterCalls = 0;
+    const result = await fixedNameExecutor(containerName).execute({
+      request: { language: "javascript", code: "console.log('done')" },
+      policy: policy({ timeoutMs: 1000 }),
+      capability: {
+        transport: "docker-shared-loopback-v1", lease: `opaque-lease-${randomUUID()}`,
+        operation: "search", destination: "api.tavily.com", response: undefined,
+        expectedInput: { query: "unused", maxResults: 1 }, expiresAt: new Date(Date.now() + 10_000).toISOString(), maxRequests: 1,
+        adapter: async () => { adapterCalls += 1; return { results: [] }; },
+      },
+    });
+    assert.equal(result.status, "ok");
+    assert.equal(result.stdout.trim(), "done");
+    assert.equal(adapterCalls, 0);
+    await assertContainerAndProcessesRemoved(containerName);
+    await assertContainerAndProcessesRemoved(`${containerName}-broker`);
+  },
+);
+
+test(
+  "Docker sandbox leaves a preexisting broker container intact after a create-name collision",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("broker-collision");
+    const brokerName = `${containerName}-broker`;
+    await execFileAsync("docker", ["create", "--name", brokerName, "node:20-alpine", "sh", "-c", "while :; do sleep 3600; done"]);
+    try {
+      await assert.rejects(
+        fixedNameExecutor(containerName).execute({
+          request: { language: "javascript", code: "console.log('must not run')" },
+          policy: policy(),
+          capability: {
+            transport: "docker-shared-loopback-v1",
+            lease: `opaque-lease-${randomUUID()}`,
+            operation: "search",
+            destination: "api.tavily.com",
+            response: { answer: "must not run" },
+          },
+        }),
+        /Unable to create confined capability broker/u,
+      );
+      assert.equal(await containerExists(brokerName), true);
+      assert.equal(await containerExists(containerName), false);
+    } finally {
+      await execFileAsync("docker", ["rm", "--force", brokerName]);
+    }
+  },
+);
+
+test(
+  "Docker sandbox removes its workload when Docker create succeeds behind a timed-out CLI result",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("workload-create-timeout");
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return ambiguousDockerResult("timeout");
+      },
+    });
+
+    await assert.rejects(
+      executor.execute({
+        request: { language: "javascript", code: "console.log('must not run')" },
+        policy: policy(),
+      }),
+      /Timed out while attempting to create sandbox container/u,
+    );
+    await assertContainerAndProcessesRemoved(containerName);
+  },
+);
+
+test(
+  "Docker sandbox removes its broker when Docker create succeeds behind a cancelled CLI result",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("broker-create-cancel");
+    const brokerName = `${containerName}-broker`;
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return ambiguousDockerResult("cancel");
+      },
+    });
+
+    await assert.rejects(
+      executor.execute({
+        request: { language: "javascript", code: "console.log('must not run')" },
+        policy: policy(),
+        capability: {
+          transport: "docker-shared-loopback-v1",
+          lease: `opaque-lease-${randomUUID()}`,
+          operation: "search",
+          destination: "api.tavily.com",
+          response: { answer: "must not run" },
+        },
+      }),
+      (error: unknown) => error instanceof DockerSandboxCancellationError,
+    );
+    await assertContainerAndProcessesRemoved(brokerName);
+    assert.equal(await containerExists(containerName), false);
+  },
+);
+
+test(
+  "Docker sandbox retains successful workload ownership when ownership inspect is unavailable",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("workload-inspect-unavailable");
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      ownershipInspectRunner: async () => {
+        throw new Error("ownership inspect must not run after successful create");
+      },
+    });
+    const result = await executor.execute({
+      request: { language: "javascript", code: "console.log('ok')" },
+      policy: policy(),
+    });
+    assert.equal(result.status, "ok", result.stderr);
+    await assertContainerAndProcessesRemoved(containerName);
+  },
+);
+
+test(
+  "Docker sandbox retains successful broker ownership when ownership inspect is inconclusive",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("broker-inspect-inconclusive");
+    const brokerName = `${containerName}-broker`;
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      ownershipInspectRunner: async () => ambiguousDockerResult("timeout"),
+    });
+    const result = await executor.execute({
+      request: { language: "javascript", code: "console.log('ok')" },
+      policy: policy(),
+      capability: {
+        transport: "docker-shared-loopback-v1",
+        lease: `opaque-lease-${randomUUID()}`,
+        operation: "search",
+        destination: "api.tavily.com",
+        response: { answer: "ok" },
+      },
+    });
+    assert.equal(result.status, "ok", result.stderr);
+    await assertContainerAndProcessesRemoved(containerName);
+    await assertContainerAndProcessesRemoved(brokerName);
+  },
+);
+
+test(
+  "Docker sandbox removes an ambiguously created container by ID without deleting its same-name replacement",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("replacement-race");
+    let replacementId = "";
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return ambiguousDockerResult("timeout");
+      },
+      beforeAmbiguousCreateCleanup: async (_name, ownedContainerId) => {
+        await execFileAsync("docker", ["rm", "--force", ownedContainerId]);
+        const replacement = await execFileAsync("docker", [
+          "create", "--name", containerName, "node:20-alpine",
+          "sh", "-c", "while :; do sleep 3600; done",
+        ]);
+        replacementId = replacement.stdout.trim();
+      },
+    });
+    try {
+      await assert.rejects(
+        executor.execute({
+          request: { language: "javascript", code: "console.log('must not run')" },
+          policy: policy(),
+        }),
+        /Timed out while attempting to create sandbox container/u,
+      );
+      assert.equal(await containerExists(containerName), true);
+      const inspected = await execFileAsync("docker", [
+        "inspect", "--format", "{{.Id}}", containerName,
+      ]);
+      assert.equal(inspected.stdout.trim(), replacementId);
+    } finally {
+      await execFileAsync("docker", ["rm", "--force", containerName]);
+    }
+  },
+);
+
+test(
+  "Docker sandbox reconciles a successful workload create with missing stdout after an inconclusive inspect",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("workload-reconcile");
+    let inspectAttempts = 0;
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return {
+          exitCode: 0,
+          timedOut: false,
+          cancelled: false,
+          stdout: "",
+          stderr: "",
+        };
+      },
+      ownershipInspectRunner: async (name) => {
+        inspectAttempts += 1;
+        return inspectAttempts === 1
+          ? ambiguousDockerResult("timeout")
+          : inspectOwnership(name);
+      },
+    });
+
+    const result = await executor.execute({
+      request: { language: "javascript", code: "console.log('ok')" },
+      policy: policy(),
+    });
+    assert.equal(result.status, "ok", result.stderr);
+    assert.equal(inspectAttempts, 2);
+    await assertContainerAndProcessesRemoved(containerName);
+  },
+);
+
+test(
+  "Docker sandbox reconciles a cancelled broker create after an inconclusive inspect",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("broker-reconcile");
+    const brokerName = `${containerName}-broker`;
+    let inspectAttempts = 0;
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return ambiguousDockerResult("cancel");
+      },
+      ownershipInspectRunner: async (name) => {
+        inspectAttempts += 1;
+        if (inspectAttempts === 1) {
+          throw new Error("transient Docker inspect transport failure");
+        }
+        return inspectOwnership(name);
+      },
+    });
+
+    await assert.rejects(
+      executor.execute({
+        request: { language: "javascript", code: "console.log('must not run')" },
+        policy: policy(),
+        capability: {
+          transport: "docker-shared-loopback-v1",
+          lease: `opaque-lease-${randomUUID()}`,
+          operation: "search",
+          destination: "api.tavily.com",
+          response: { answer: "must not run" },
+        },
+      }),
+      (error: unknown) => error instanceof DockerSandboxCancellationError,
+    );
+    assert.equal(inspectAttempts, 2);
+    await assertContainerAndProcessesRemoved(brokerName);
+    assert.equal(await containerExists(containerName), false);
+  },
+);
+
+test(
+  "Docker sandbox bounds persistent ambiguous-create inspection without unsafe removal",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("persistent-inspect-failure");
+    let inspectAttempts = 0;
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      createCommandRunner: async (args) => {
+        await execFileAsync("docker", args);
+        return ambiguousDockerResult("cancel");
+      },
+      ownershipInspectRunner: async () => {
+        inspectAttempts += 1;
+        return ambiguousDockerResult("timeout");
+      },
+    });
+
+    try {
+      await assert.rejects(
+        executor.execute({
+          request: { language: "javascript", code: "console.log('must not run')" },
+          policy: policy(),
+        }),
+        (error: unknown) => error instanceof DockerSandboxCancellationError,
+      );
+      assert.equal(inspectAttempts, 5);
+      assert.equal(await containerExists(containerName), true);
+    } finally {
+      await execFileAsync("docker", ["rm", "--force", containerName]);
+    }
+  },
+);
+
+test(
+  "Docker sandbox fails before container creation when capability confinement is unavailable",
+  async () => {
+    await requireDocker();
+    const containerName = testContainerName("capability-unavailable");
+    const executor = new DockerSandboxExecutor({
+      containerNameFactory: () => containerName,
+      capabilityConfinementProbe: async () => false,
+    });
+    await assert.rejects(
+      executor.execute({
+        request: { language: "javascript", code: "console.log('must not run')" },
+        policy: policy(),
+        capability: {
+          transport: "docker-shared-loopback-v1",
+          lease: `opaque-lease-${randomUUID()}`,
+          operation: "search",
+          destination: "api.tavily.com",
+          response: { answer: "must not run" },
+        },
+      }),
+      (error: unknown) => error instanceof DockerUnavailableError,
+    );
+    assert.equal(await containerExists(containerName), false);
+    assert.equal(await containerExists(`${containerName}-broker`), false);
+  },
+);
+
+test(
   "Docker sandbox cancellation enforces hardening and removes the named workload",
   async () => {
     await requireDocker();
@@ -630,6 +1349,43 @@ function fixedNameExecutor(containerName: string): DockerSandboxExecutor {
   return new DockerSandboxExecutor({
     containerNameFactory: () => containerName,
   });
+}
+
+function ambiguousDockerResult(outcome: "cancel" | "timeout"): DockerProcessResult {
+  return {
+    exitCode: null,
+    timedOut: outcome === "timeout",
+    cancelled: outcome === "cancel",
+    stdout: "",
+    stderr: "",
+  };
+}
+
+async function inspectOwnership(containerName: string): Promise<DockerProcessResult> {
+  try {
+    const inspected = await execFileAsync("docker", [
+      "inspect",
+      "--format",
+      '{{.Id}}|{{index .Config.Labels "com.kestrel.code.invocation"}}',
+      containerName,
+    ]);
+    return {
+      exitCode: 0,
+      timedOut: false,
+      cancelled: false,
+      stdout: inspected.stdout,
+      stderr: inspected.stderr,
+    };
+  } catch (error) {
+    const failure = error as { code?: unknown; stdout?: unknown; stderr?: unknown };
+    return {
+      exitCode: typeof failure.code === "number" ? failure.code : 1,
+      timedOut: false,
+      cancelled: false,
+      stdout: typeof failure.stdout === "string" ? failure.stdout : "",
+      stderr: typeof failure.stderr === "string" ? failure.stderr : "",
+    };
+  }
 }
 
 async function executeWithName(

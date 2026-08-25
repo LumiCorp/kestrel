@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { generateKeyPairSync } from "node:crypto";
 
 function requiredPort(name: string): number {
   const value = process.env[name];
@@ -16,6 +17,7 @@ const port = requiredPort("KESTREL_PRODUCT_APP_PORT");
 const fakeOpenRouterPort = requiredPort("KESTREL_PRODUCT_FAKE_OPENROUTER_PORT");
 const runnerPort = requiredPort("KESTREL_PRODUCT_RUNNER_PORT");
 const workerHealthPort = requiredPort("KESTREL_PRODUCT_WORKER_HEALTH_PORT");
+const knowledgeWorkerHealthPort = requiredPort("KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT");
 const baseURL = `http://localhost:${port}`;
 const databaseUrl = process.env.KESTREL_PRODUCT_DATABASE_URL;
 if (!databaseUrl) {
@@ -30,6 +32,7 @@ const inheritedEnv = Object.fromEntries(
     (entry): entry is [string, string] => typeof entry[1] === "string",
   ),
 );
+const executionTicketKeys = generateKeyPairSync("ed25519");
 const webServerEnv = {
   ...inheritedEnv,
   AI_AGENT_API_KEY: "product-contract-key",
@@ -46,6 +49,14 @@ const webServerEnv = {
   KESTREL_BUILD_REVISION: "0".repeat(40),
   KESTREL_BUILD_ID: "local-product-test",
   KESTREL_ENVIRONMENT_GATEWAY_URL: `http://127.0.0.1:${fakeOpenRouterPort}`,
+  KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:
+    executionTicketKeys.privateKey
+      .export({ type: "pkcs8", format: "pem" })
+      .toString(),
+  KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:
+    executionTicketKeys.publicKey
+      .export({ type: "spki", format: "pem" })
+      .toString(),
   KESTREL_GATEWAY_CREDENTIAL_ACTIVE_KEY_ID: "product-contract-key",
   KESTREL_GATEWAY_CREDENTIAL_KEYS:
     '{"product-contract-key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}',
@@ -56,6 +67,7 @@ const webServerEnv = {
   KESTREL_ONE_TOOL_TOKEN: "product-contract-tool",
   KESTREL_PRODUCT_CONTRACT: "true",
   KESTREL_WORKER_HEALTH_PORT: String(workerHealthPort),
+  KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT: String(knowledgeWorkerHealthPort),
   KESTREL_RUNNER_SERVICE_PORT: String(runnerPort),
   KESTREL_RUNNER_SERVICE_TOKEN: "product-contract-runner-token",
   KESTREL_WORKSPACE_SERVICE_TOKEN: "product-contract-workspace-token",

@@ -7,7 +7,7 @@ last_verified_at: 2026-07-23
 depends_on:
   - docs/index.md
   - docs/references/architecture-rules.json
-  - apps/docs/content/docs/architecture-overview.mdx
+  - apps/docs/content/concepts/architecture.mdx
 ---
 
 # Kestrel Architecture
@@ -244,7 +244,7 @@ evaluation specifications and maintains the Kestrel evaluation adapter.
 
 ## Read Next
 
-- [Core concepts](apps/docs/content/docs/core-concepts.mdx)
+- [Concepts](apps/docs/content/concepts/index.mdx)
 - [Kestrel Desktop](apps/docs/content/apps/desktop.mdx)
 - [Build your first agent](apps/docs/content/build/building-your-first-agent.mdx)
 - [Terminology](apps/docs/content/reference/terminology.mdx)

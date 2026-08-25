@@ -15,7 +15,12 @@ const STRUCTURED_MEDIA_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]);
 
-const IMAGE_MEDIA_PREFIX = "image/";
+const SUPPORTED_IMAGE_MEDIA_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
 
 export function normalizeMediaType(
   mediaType: string | null | undefined,
@@ -75,7 +80,7 @@ export function isKnowledgeDocumentMediaTypeSupported(
 ) {
   const normalized = normalizeMediaType(mediaType, filename);
   return (
-    normalized.startsWith(IMAGE_MEDIA_PREFIX) ||
+    SUPPORTED_IMAGE_MEDIA_TYPES.has(normalized) ||
     STRUCTURED_MEDIA_TYPES.has(normalized)
   );
 }

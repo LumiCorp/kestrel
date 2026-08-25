@@ -163,6 +163,77 @@ test("app relay allowlists only supported app methods and contracts", () => {
     "/api/runtime/apps/arbitrary/read/auto/data",
     "POST",
   ), false);
+  assert.equal(isAllowedAppRequest(
+    "/api/runtime/github/credentials",
+    "POST",
+  ), true);
+  assert.equal(isAllowedAppRequest(
+    "/api/runtime/github/push",
+    "POST",
+  ), true);
+  assert.equal(isAllowedAppRequest(
+    "/api/runtime/github/push",
+    "GET",
+  ), false);
+});
+
+test("GitHub bundle relay authenticates the Workspace and forwards only the scoped credential", async () => {
+  const observed: Array<Record<string, unknown>> = [];
+  const controlPlane = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    observed.push({
+      authorization: request.headers.authorization,
+      contentType: request.headers["content-type"],
+      resourceId: request.headers["x-kestrel-resource-id"],
+      body: Buffer.concat(chunks).toString("utf8"),
+      toolCredentialHeader: request.headers["x-kestrel-tool-credential"],
+    });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ok: true }));
+  });
+  controlPlane.listen(0, "127.0.0.1");
+  await once(controlPlane, "listening");
+  const controlPlaneAddress = controlPlane.address();
+  assert.ok(controlPlaneAddress && typeof controlPlaneAddress !== "string");
+  const fixture = await createRelayFixture(
+    `http://127.0.0.1:${controlPlaneAddress.port}`,
+  );
+  const relay = createServer((request, response) => {
+    void handleAppRelay({ request, response, config: fixture.config });
+  });
+  relay.listen(0, "127.0.0.1");
+  await once(relay, "listening");
+  const relayAddress = relay.address();
+  assert.ok(relayAddress && typeof relayAddress !== "string");
+
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${relayAddress.port}/internal/apps/${fixture.runId}/api/runtime/github/push`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${fixture.workspaceToken}`,
+          "content-type": "application/x-git-bundle",
+          "x-kestrel-tool-credential": "scoped-tool-credential",
+          "x-kestrel-resource-id": "resource-1",
+        },
+        body: "bundle-bytes",
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(observed, [{
+      authorization: "Bearer scoped-tool-credential",
+      contentType: "application/x-git-bundle",
+      resourceId: "resource-1",
+      body: "bundle-bytes",
+      toolCredentialHeader: undefined,
+    }]);
+  } finally {
+    relay.close();
+    controlPlane.close();
+    fixture.config.stop();
+  }
 });
 
 test("app relay times out one stalled upstream request", async () => {
@@ -258,13 +329,15 @@ test("app relay aborts its upstream request when the downstream closes", async (
   }
 });
 
-async function createRelayFixture() {
+async function createRelayFixture(
+  controlPlaneUrl = "http://127.0.0.1:18081",
+) {
   const environmentId = randomUUID();
   const workspaceId = randomUUID();
   const runId = randomUUID();
   const workspaceToken = "workspace-secret";
   const config = new EnvironmentGatewayConfigClient({
-    controlPlaneUrl: "http://127.0.0.1:18081",
+    controlPlaneUrl,
     environmentId,
     serviceToken: "gateway-secret",
     fetchImpl: (async () =>

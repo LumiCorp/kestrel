@@ -506,7 +506,7 @@ export class DevShellSupervisor {
     input: DevProcessRetentionPromoteInput,
   ): Promise<DevProcessRetentionResult> {
     const running = await this.requireLiveProcess(input.processId);
-    return this.mutateLiveProcessRecord(running, async () => {
+    const promotion = this.mutateLiveProcessRecord(running, async () => {
       this.requireRetainableProcess(running);
       const activeLeases = activeRetentionLeases(running.record.retentionLeases, this.now());
       const sourceLease = activeLeases.find((lease) => lease.leaseId === input.fromLeaseId);
@@ -566,6 +566,14 @@ export class DevShellSupervisor {
       }
       return describeRetention(running.record);
     });
+    try {
+      return await promotion;
+    } catch (error) {
+      if (isProcessRunning(running.child) === false) {
+        await running.settlement;
+      }
+      throw error;
+    }
   }
 
   async inspectProcessRetention(
@@ -1226,12 +1234,16 @@ export class DevShellSupervisor {
     record: DevShellProcessRecord,
     transcriptSize: number,
   ): Promise<DevShellProcessRecord> {
+    const stored = await this.store.getProcess(record.processId);
+    const authoritativeRecord = stored === null
+      ? record
+      : preferSettledProcessRecord(record, stored);
     const updated: DevShellProcessRecord = {
-      ...record,
-      outputCursor: Math.max(record.outputCursor, transcriptSize),
+      ...authoritativeRecord,
+      outputCursor: Math.max(authoritativeRecord.outputCursor, transcriptSize),
       updatedAt: this.now().toISOString(),
-      ...(record.lifecycle === "interactive"
-        ? { expiresAt: this.bumpExpiry(record.expiresAt, record.idleTimeoutMs) }
+      ...(authoritativeRecord.lifecycle === "interactive"
+        ? { expiresAt: this.bumpExpiry(authoritativeRecord.expiresAt, authoritativeRecord.idleTimeoutMs) }
         : {}),
     };
     await this.store.upsertProcess(updated);

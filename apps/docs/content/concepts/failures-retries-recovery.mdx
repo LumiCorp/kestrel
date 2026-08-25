@@ -1,0 +1,41 @@
+---
+title: Failures, retries, and recovery
+summary: Classify where a failure began and choose a recovery that changes its premise instead of replaying the same unsafe attempt.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The interface says “failed.” That single word could mean the SDK configuration was invalid, the runner was unreachable, the protocol response was malformed, a tool rejected its arguments, the Run reached a terminal failure, or an external effect timed out after dispatch.
+
+Those cases do not share a safe retry.
+
+## Configuration failed before transport
+
+SDK configuration errors describe a client that could not form a valid request. Retrying unchanged configuration only reproduces the defect.
+
+## Transport failed before an answer
+
+HTTP failure says the request path did not return a usable service response. It does not, by itself, prove whether an accepted mutation began; command submission and external-effect evidence determine how cautious the next step must be.
+
+## Protocol parsing rejected the answer
+
+A parser rejecting an invalid event does not mean the parser authored it. Preserve the raw correlation and inspect the producing version rather than casting malformed data into a known result.
+
+## Tool or runtime evidence names a later owner
+
+A tool can reject its own arguments while the runner remains healthy. A Run can reach structured terminal failure after several valid steps. Diagnosis starts where behavior first became wrong—not at the downstream component that finally made the problem visible.
+
+## Recovery must change a premise
+
+A pre-dispatch failure may be safe for the application to resubmit when it can establish that Kestrel did not accept the command. A stale revision conflict requires reading current state first. A model timeout may justify a new Run with recorded recovery policy. An unknown external effect must be reconciled before another mutation is attempted.
+
+Retries should be bounded and visible. They create new attempt evidence rather than rewriting the first Run as though it succeeded on the first try.
+
+A registered recovery option can select a different provider route, re-establish a runner connection, resume an exact wait, or replan stalled work. Its identifier binds to observed state. Free-form “try again” is not a recovery contract.
+
+When repeated mutation attempts make no progress, the safe response is to preserve current evidence and form a different plan—not rank more blind retries with a heuristic.
+
+Exact codes and actions belong in [Recovery reference](/reference/recovery). [Limits, budgets, and guardrails](/concepts/limits-budgets-guardrails) covers stops that only look like generic failures.

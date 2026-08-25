@@ -42,6 +42,7 @@ const runtimeFiles = execFileSync(
     "tests/budget-ledger.postgres.test.ts",
     "tests/mission-control-project-authority.postgres.test.ts",
     "tests/mission-control-review-acceptance.postgres.test.ts",
+    "tests/sandbox-capability-leases.postgres.test.ts",
   )
   .filter((file, index, all) => all.indexOf(file) === index)
   .sort();
@@ -94,6 +95,7 @@ const groups = [
       "lib/knowledge/queue.postgres.test.ts",
       "lib/projects/skills.postgres.test.ts",
       "lib/schedules/store.postgres.test.ts",
+      "scripts/lib/reset-organization-files.postgres.test.ts",
     ],
   },
   {
@@ -207,6 +209,7 @@ function runRuntimeGroup(): Promise<void> {
       "tests/budget-ledger.postgres.test.ts",
       "tests/mission-control-project-authority.postgres.test.ts",
       "tests/mission-control-review-acceptance.postgres.test.ts",
+      "tests/sandbox-capability-leases.postgres.test.ts",
     ])
   ) {
     throw new Error(

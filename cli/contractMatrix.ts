@@ -224,7 +224,7 @@ export function buildCliContractMatrixV1(generatedAt = new Date().toISOString())
       },
       {
         command: "job",
-        usage: "kestrel job run --json-in <file> --json-out <file> [--profile <id>]",
+        usage: "kestrel job <preflight|run> --json-in <file> --json-out <file>",
         flags: ["--json-in", "--json-out", "--profile"],
       },
       {
@@ -247,7 +247,7 @@ export function buildCliContractMatrixV1(generatedAt = new Date().toISOString())
       },
       {
         command: "setup",
-        usage: "kestrel setup [--profile <id>] [--approval-pack dev|ci_bot|production] [--full]",
+        usage: "kestrel setup [--profile <id>] [--approval-pack dev|isolated_code|ci_bot|production] [--full]",
         flags: ["--profile", "--approval-pack", "--full"],
       },
       {

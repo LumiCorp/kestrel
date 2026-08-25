@@ -3142,6 +3142,9 @@ export class ExecutionEngine {
         : {
             authorityRevision: bindingAuthorityRevision!,
             approvalId,
+            ...(exactApprovalBinding === undefined
+              ? {}
+              : { externalApprovalBinding: exactApprovalBinding }),
           };
       const preparedToolCall = await this.deps.toolGateway.prepareToolCall(
         {

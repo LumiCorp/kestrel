@@ -5,7 +5,10 @@ import {
   CONVERSATION_ATTACHMENT_MAX_COUNT,
   CONVERSATION_ATTACHMENT_MAX_TURN_BYTES,
 } from "@kestrel-agents/conversation";
-import { parseRunnerStructuredReviewInteractionV1 } from "@kestrel-agents/protocol";
+import {
+  parseRunnerExternalApprovalBindingV1,
+  parseRunnerStructuredReviewInteractionV1,
+} from "@kestrel-agents/protocol";
 import {
   and,
   asc,
@@ -14,6 +17,7 @@ import {
   gt,
   inArray,
   isNull,
+  isNotNull,
   lt,
   lte,
   max,
@@ -23,6 +27,10 @@ import {
 } from "drizzle-orm";
 import { shouldInvalidateGatewayCredential } from "@/lib/ai/gateway-credential-health";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
+import { isHostedMutationToolName } from "@/lib/apps/hosted-app-operation-contract";
+import { decideAppOperationApprovalInTransaction } from "@/lib/apps/app-operation-approvals";
+import { hashAppApprovalAuthority } from "@/lib/apps/app-operation-approval-contract";
+import { resolveEffectiveProjectAppAccess } from "@/lib/apps/project-service";
 import { meterPersistedModelMessages } from "@/lib/costs/metering";
 import type { DbThreadTurn, DbThreadTurnEvent } from "@/lib/knowledge/db-types";
 import {
@@ -42,6 +50,7 @@ import {
   defaultThreadWorkspaceMode,
   resolveTurnConcurrencyGroup,
 } from "@/lib/turns/concurrency";
+import { projectSafeThreadInteraction } from "@/lib/turns/interaction-projection";
 
 export type TurnTransaction = Parameters<
   Parameters<typeof knowledgeDb.transaction>[0]
@@ -273,9 +282,20 @@ async function appendTurnEvent(
   tx: TurnTransaction,
   input: { turnId: string; type: string; data?: unknown },
 ): Promise<DbThreadTurnEvent> {
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`thread-turn-events:${input.turnId}`}, 0))`,
-  );
+  // The parent turn row is the single serialization authority for its event
+  // sequence. Other durable-turn transactions already lock this row before
+  // appending events, so taking the same lock here preserves one lock order
+  // and avoids the parent-row/advisory-lock inversion that can deadlock the
+  // worker during terminal persistence.
+  const [turn] = await tx
+    .select({ id: schema.threadTurns.id })
+    .from(schema.threadTurns)
+    .where(eq(schema.threadTurns.id, input.turnId))
+    .limit(1)
+    .for("update");
+  if (!turn) {
+    throw new DurableTurnError("TURN_NOT_FOUND", "Turn not found.");
+  }
   const [latest] = await tx
     .select({ sequence: max(schema.threadTurnEvents.sequence) })
     .from(schema.threadTurnEvents)
@@ -332,15 +352,27 @@ type DurableThreadTurnInput = {
       attachmentIds?: string[];
       sourceMessageId?: string | null;
       approvalDecision?: undefined;
+      resumeInteractionId?: undefined;
     }
   | {
       messageId?: null;
       messageParts?: undefined;
+      assistantMessage?: {
+        id: string;
+        parts: unknown;
+      };
       approvalDecision: {
         approvalId: string;
         approved: boolean;
         reason?: string | undefined;
       };
+      resumeInteractionId?: undefined;
+    }
+  | {
+      messageId?: null;
+      messageParts?: undefined;
+      approvalDecision?: undefined;
+      resumeInteractionId: string;
     }
 );
 
@@ -348,6 +380,64 @@ export async function createDurableThreadTurn(input: DurableThreadTurnInput) {
   return knowledgeDb.transaction((tx) =>
     createDurableThreadTurnInTransaction(tx, input),
   );
+}
+
+export async function createDurableApprovalResponseTurn(
+  input: Extract<DurableThreadTurnInput, { approvalDecision: object }>,
+) {
+  return knowledgeDb.transaction(async (tx) => {
+    const persistedInteraction = await tx.query.threadInteractions.findFirst({
+      where: and(
+        eq(schema.threadInteractions.organizationId, input.organizationId),
+        eq(schema.threadInteractions.threadId, input.threadId),
+        eq(
+          schema.threadInteractions.runtimeApprovalId,
+          input.approvalDecision.approvalId,
+        ),
+      ),
+      columns: { runtimeApprovalId: true, requestEnvelope: true },
+    });
+    const persistedApproval = readPlainRecord(
+      persistedInteraction?.requestEnvelope,
+    );
+    const hostedMutation = isHostedMutationToolName(
+      readPlainRecord(persistedApproval?.approval)?.toolName,
+    );
+    await decideAppOperationApprovalInTransaction(tx, {
+      organizationId: input.organizationId,
+      threadId: input.threadId,
+      userId: input.authorUserId,
+      runtimeApprovalId:
+        persistedInteraction?.runtimeApprovalId ??
+        input.approvalDecision.approvalId,
+      approved: input.approvalDecision.approved,
+      required: hostedMutation,
+      now: new Date(),
+    });
+    if (input.assistantMessage) {
+      await tx
+        .insert(schema.threadMessages)
+        .values({
+          id: input.assistantMessage.id,
+          threadId: input.threadId,
+          role: "assistant",
+          authorUserId: null,
+          projectContextRevisionId: input.projectContextRevisionId,
+          parts: input.assistantMessage.parts,
+          searchText: "",
+          source: input.source,
+        })
+        .onConflictDoUpdate({
+          target: schema.threadMessages.id,
+          set: {
+            parts: input.assistantMessage.parts,
+            projectContextRevisionId: input.projectContextRevisionId,
+            source: input.source,
+          },
+        });
+    }
+    return createDurableThreadTurnInTransaction(tx, input);
+  });
 }
 
 export async function createDurableThreadTurnInTransaction(
@@ -373,6 +463,17 @@ export async function createDurableThreadTurnInTransaction(
     )
     .limit(1);
   if (existing) {
+    if (
+      input.approvalDecision &&
+      (existing.authorUserId !== input.authorUserId ||
+        existing.approvalId !== input.approvalDecision.approvalId ||
+        existing.approvalApproved !== input.approvalDecision.approved)
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "The approval response conflicts with the recorded decision.",
+      );
+    }
     const queueState = await tx.query.threadTurnQueueState.findFirst({
       where: eq(schema.threadTurnQueueState.threadId, input.threadId),
     });
@@ -539,6 +640,7 @@ export async function createDurableThreadTurnInTransaction(
       approvalId: input.approvalDecision?.approvalId ?? null,
       approvalApproved: input.approvalDecision?.approved ?? null,
       approvalReason: input.approvalDecision?.reason ?? null,
+      resumeInteractionId: input.resumeInteractionId ?? null,
       projectContextRevisionId: input.projectContextRevisionId ?? null,
       requestedEnvironmentId: input.requestedEnvironmentId,
       idempotencyKey: input.idempotencyKey,
@@ -582,7 +684,7 @@ export async function createDurableThreadTurnInTransaction(
     },
   });
   const resumesTerminallyPausedQueue = Boolean(
-    input.messageId &&
+    (input.messageId || input.resumeInteractionId) &&
     queueState?.state === "paused" &&
     (queueState.pauseReason === "turn_failed" ||
       queueState.pauseReason === "turn_cancelled") &&
@@ -952,13 +1054,20 @@ export async function claimDurableThreadTurn(
       return null;
     }
     const isInitialClaim = turn.status === "queued";
-    const interaction =
-      turn.status === "waiting_for_input"
+    const interaction = turn.resumeInteractionId
+      ? await tx.query.threadInteractions.findFirst({
+          where: and(
+            eq(schema.threadInteractions.id, turn.resumeInteractionId),
+            eq(schema.threadInteractions.status, "processing"),
+            isNull(schema.threadInteractions.resumedAt),
+          ),
+        })
+      : turn.status === "waiting_for_input"
         ? await tx.query.threadInteractions.findFirst({
             where: and(
               eq(schema.threadInteractions.turnId, turn.id),
               eq(schema.threadInteractions.source, "runtime"),
-              eq(schema.threadInteractions.status, "resolved"),
+              eq(schema.threadInteractions.status, "processing"),
               isNull(schema.threadInteractions.resumedAt),
             ),
             orderBy: (table, { asc }) => [asc(table.resolvedAt)],
@@ -1244,6 +1353,8 @@ export async function persistDurableAssistantOutcome(input: {
   turnId: string;
   messages: DurableAssistantOutcomeMessage[];
   interaction: KestrelInteractionPresentation | null;
+  sourceRuntimeRunId?: string | undefined;
+  runtimeApprovalId?: string | undefined;
   replayChunks?: readonly DurableReplayChunk[];
 }) {
   const result = await knowledgeDb.transaction(async (tx) => {
@@ -1333,6 +1444,8 @@ export async function persistDurableAssistantOutcome(input: {
         prompt: input.interaction.prompt,
         status: "pending",
         requestEnvelope,
+        sourceRuntimeRunId: input.sourceRuntimeRunId ?? null,
+        runtimeApprovalId: input.runtimeApprovalId ?? null,
         createdAt: requestConflict?.createdAt ?? now,
         updatedAt: now,
       })
@@ -1342,6 +1455,8 @@ export async function persistDurableAssistantOutcome(input: {
           assistantMessageId,
           prompt: input.interaction.prompt,
           requestEnvelope,
+          sourceRuntimeRunId: input.sourceRuntimeRunId ?? null,
+          runtimeApprovalId: input.runtimeApprovalId ?? null,
           updatedAt: now,
         },
       })
@@ -1575,14 +1690,29 @@ export async function resolveDurableRuntimeInteraction(input: {
         "The interaction response event type does not match the pending request.",
       );
     }
-    if (interaction.status === "resolved") {
+    if (
+      interaction.status === "processing" ||
+      interaction.status === "resolved" ||
+      interaction.status === "failed"
+    ) {
+      const recordedResponse = readPlainRecord(interaction.responseEnvelope);
+      if (
+        interaction.resolvedByUserId !== input.userId ||
+        (interaction.kind === "approval" &&
+          recordedResponse?.approved !== input.approved)
+      ) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The interaction response conflicts with the recorded decision.",
+        );
+      }
       const [resolvedEvent] = await tx
         .select({ sequence: schema.threadTurnEvents.sequence })
         .from(schema.threadTurnEvents)
         .where(
           and(
             eq(schema.threadTurnEvents.turnId, interaction.turnId),
-            eq(schema.threadTurnEvents.type, "interaction.resolved"),
+            eq(schema.threadTurnEvents.type, "interaction.decision_recorded"),
             sql`${schema.threadTurnEvents.data}->>'requestId' = ${input.requestId}`,
           ),
         )
@@ -1700,10 +1830,30 @@ export async function resolveDurableRuntimeInteraction(input: {
       source: input.source,
       createdAt: now,
     });
+    const requestEnvelope = readPlainRecord(interaction.requestEnvelope);
+    const approvalEnvelope = readPlainRecord(requestEnvelope?.approval);
+    const hostedMutation = isHostedMutationToolName(approvalEnvelope?.toolName);
+    if (hostedMutation) {
+      if (!interaction.runtimeApprovalId) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The hosted App approval is missing its runtime approval identity.",
+        );
+      }
+      await decideAppOperationApprovalInTransaction(tx, {
+        organizationId: input.organizationId,
+        threadId: input.threadId,
+        userId: input.userId,
+        runtimeApprovalId: interaction.runtimeApprovalId,
+        approved: input.approved === true,
+        required: true,
+        now,
+      });
+    }
     await tx
       .update(schema.threadInteractions)
       .set({
-        status: "resolved",
+        status: "processing",
         responseEnvelope,
         resolvedByUserId: input.userId,
         resolvedAt: now,
@@ -1724,7 +1874,13 @@ export async function resolveDurableRuntimeInteraction(input: {
             parts: setInteractionPresentationStatus(
               assistantMessage.parts,
               interaction.requestId,
-              "resolved",
+              "processing",
+              {
+                decision: input.approved ? "approved" : "denied",
+                authorizationState: "pending",
+                effectState: "not_started",
+                retryEligible: false,
+              },
             ),
           })
           .where(eq(schema.threadMessages.id, interaction.assistantMessageId));
@@ -1741,11 +1897,11 @@ export async function resolveDurableRuntimeInteraction(input: {
       .where(eq(schema.threadTurnQueueState.threadId, input.threadId));
     const resolvedEvent = await appendTurnEvent(tx, {
       turnId: turn.id,
-      type: "interaction.resolved",
+      type: "interaction.decision_recorded",
       data: {
         requestId: input.requestId,
         eventType: input.eventType,
-        status: "resolved",
+        status: "processing",
         messageId: input.messageId,
       },
     });
@@ -1755,6 +1911,420 @@ export async function resolveDurableRuntimeInteraction(input: {
       replayAfterSequence: resolvedEvent.sequence,
     };
   });
+}
+
+export async function recordDurableRuntimeStarted(input: {
+  turnId: string;
+  eventId: string;
+  executionId: string;
+  runtimeRunId: string;
+  requestedInteractionMode: string | null;
+  effectiveInteractionMode: string | null;
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    const existingStartedEvent = await tx.query.threadTurnEvents.findFirst({
+      where: and(
+        eq(schema.threadTurnEvents.turnId, input.turnId),
+        eq(schema.threadTurnEvents.type, "runtime.started"),
+        sql`${schema.threadTurnEvents.data}->>'eventId' = ${input.eventId}`,
+      ),
+    });
+    if (!existingStartedEvent) {
+      await appendTurnEvent(tx, {
+        turnId: input.turnId,
+        type: "runtime.started",
+        data: {
+          eventId: input.eventId,
+          executionId: input.executionId,
+          runtimeRunId: input.runtimeRunId,
+          requestedInteractionMode: input.requestedInteractionMode,
+          effectiveInteractionMode: input.effectiveInteractionMode,
+        },
+      });
+    }
+    const currentTurn = await tx.query.threadTurns.findFirst({
+      where: eq(schema.threadTurns.id, input.turnId),
+      columns: { resumeInteractionId: true },
+    });
+    const interaction = await tx.query.threadInteractions.findFirst({
+      where: and(
+        currentTurn?.resumeInteractionId
+          ? eq(schema.threadInteractions.id, currentTurn.resumeInteractionId)
+          : eq(schema.threadInteractions.turnId, input.turnId),
+        eq(schema.threadInteractions.source, "runtime"),
+        inArray(schema.threadInteractions.status, ["processing", "resolved"]),
+        isNotNull(schema.threadInteractions.resumedAt),
+      ),
+    });
+    if (!interaction) return false;
+    if (interaction.status === "processing") {
+      const now = new Date();
+      await tx
+        .update(schema.threadInteractions)
+        .set({
+          status: "resolved",
+          responseFailureCode: null,
+          responseFailureMessage: null,
+          effectStatus: null,
+          responseRetryable: false,
+          updatedAt: now,
+        })
+        .where(eq(schema.threadInteractions.id, interaction.id));
+      await updateInteractionMessagePresentation(tx, interaction, "resolved", {
+        decision: readApprovalDecision(interaction.responseEnvelope),
+        authorizationState: "accepted",
+        effectState: "not_started",
+        retryEligible: false,
+      });
+      await appendTurnEvent(tx, {
+        turnId: input.turnId,
+        type: "interaction.authorization_accepted",
+        data: {
+          requestId: interaction.requestId,
+          runtimeRunId: input.runtimeRunId,
+          code: "AUTHORIZATION_ACCEPTED",
+        },
+      });
+    }
+    return true;
+  });
+}
+
+export type DurableInteractionFailureEvidence = {
+  failureCode: string;
+  failureMessage: string;
+  effectStatus: "not_started" | "unknown";
+  retryable: boolean;
+};
+
+function publicInteractionFailureMessage(failureCode: string) {
+  switch (failureCode) {
+    case "EXTERNAL_APPROVAL_IDENTITY_MISMATCH":
+      return "Authorization no longer matches the requested operation. Request a fresh approval.";
+    case "TURN_DISPATCH_FAILED":
+      return "Authorization could not be started. The operation was not executed.";
+    case "TURN_STOPPED":
+      return "Authorization was cancelled before the operation started.";
+    default:
+      return "Authorization failed before the operation could be confirmed.";
+  }
+}
+
+async function failDurableRuntimeInteractionInTransaction(
+  tx: TurnTransaction,
+  turnId: string,
+  input: DurableInteractionFailureEvidence,
+) {
+  const currentTurn = await tx.query.threadTurns.findFirst({
+    where: eq(schema.threadTurns.id, turnId),
+    columns: { resumeInteractionId: true },
+  });
+  const interaction = await tx.query.threadInteractions.findFirst({
+    where: and(
+      currentTurn?.resumeInteractionId
+        ? eq(schema.threadInteractions.id, currentTurn.resumeInteractionId)
+        : eq(schema.threadInteractions.turnId, turnId),
+      eq(schema.threadInteractions.source, "runtime"),
+      eq(schema.threadInteractions.status, "processing"),
+      isNotNull(schema.threadInteractions.resumedAt),
+    ),
+  });
+  if (!interaction) return false;
+  const retryable = input.effectStatus === "not_started" && input.retryable;
+  const now = new Date();
+  await tx
+    .update(schema.threadInteractions)
+    .set({
+      status: "failed",
+      responseFailureCode: input.failureCode,
+      responseFailureMessage: input.failureMessage,
+      effectStatus: input.effectStatus,
+      responseRetryable: retryable,
+      updatedAt: now,
+    })
+    .where(eq(schema.threadInteractions.id, interaction.id));
+  if (interaction.runtimeApprovalId && !retryable) {
+    await tx
+      .update(schema.appOperationApprovals)
+      .set({
+        status: "expired",
+        payload: sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.appOperationApprovals.organizationId, interaction.organizationId),
+          eq(schema.appOperationApprovals.runtimeApprovalId, interaction.runtimeApprovalId),
+          inArray(schema.appOperationApprovals.status, ["pending", "approved"]),
+        ),
+      );
+  }
+  await updateInteractionMessagePresentation(tx, interaction, "failed", {
+    decision: readApprovalDecision(interaction.responseEnvelope),
+    authorizationState: "failed",
+    effectState: input.effectStatus,
+    failureCode: input.failureCode,
+    publicMessage: publicInteractionFailureMessage(input.failureCode),
+    retryEligible: retryable,
+  });
+  await appendTurnEvent(tx, {
+    turnId,
+    type: "interaction.authorization_failed",
+    data: {
+      requestId: interaction.requestId,
+      failureCode: input.failureCode,
+      effectStatus: input.effectStatus,
+      retryable,
+    },
+  });
+  return true;
+}
+
+export async function failDurableRuntimeInteractionBeforeStart(input: {
+  turnId: string;
+  failureCode: string;
+  failureMessage: string;
+  effectStatus: "not_started" | "unknown";
+  retryable: boolean;
+}) {
+  return knowledgeDb.transaction((tx) =>
+    failDurableRuntimeInteractionInTransaction(tx, input.turnId, input),
+  );
+}
+
+export async function retryFailedDurableRuntimeInteraction(input: {
+  threadId: string;
+  organizationId: string;
+  userId: string;
+  requestId: string;
+  idempotencyKey: string;
+  source: ThreadTurnSource;
+}) {
+  return knowledgeDb.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${queueLockKey(input.threadId)}, 0))`,
+    );
+    const accessibleThread = await lockAccessibleThread(tx, input);
+    const [interaction] = await tx
+      .select()
+      .from(schema.threadInteractions)
+      .where(
+        and(
+          eq(schema.threadInteractions.requestId, input.requestId),
+          eq(schema.threadInteractions.threadId, input.threadId),
+          eq(schema.threadInteractions.organizationId, input.organizationId),
+          eq(schema.threadInteractions.source, "runtime"),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (
+      !interaction?.turnId ||
+      interaction.kind !== "approval" ||
+      interaction.status !== "failed" ||
+      interaction.effectStatus !== "not_started" ||
+      interaction.responseRetryable !== true ||
+      interaction.resolvedByUserId !== input.userId ||
+      !interaction.runtimeApprovalId ||
+      !interaction.sourceRuntimeRunId ||
+      !interaction.responseEnvelope
+    ) {
+      throw new DurableTurnError(
+        "TURN_CONFLICT",
+        "This authorization cannot be retried safely; request fresh approval.",
+      );
+    }
+    const requestEnvelope = readPlainRecord(interaction.requestEnvelope);
+    const approvalEnvelope = readPlainRecord(requestEnvelope?.approval);
+    if (isHostedMutationToolName(approvalEnvelope?.toolName)) {
+      if (!accessibleThread.projectId) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The hosted App approval no longer has a Project authority context.",
+        );
+      }
+      const appApproval = await tx.query.appOperationApprovals.findFirst({
+        where: and(
+          eq(schema.appOperationApprovals.organizationId, input.organizationId),
+          eq(schema.appOperationApprovals.threadId, input.threadId),
+          eq(schema.appOperationApprovals.actorUserId, input.userId),
+          eq(schema.appOperationApprovals.runtimeApprovalId, interaction.runtimeApprovalId),
+          eq(schema.appOperationApprovals.status, "approved"),
+          isNull(schema.appOperationApprovals.consumedExecutionId),
+          gt(schema.appOperationApprovals.expiresAt, new Date()),
+        ),
+      });
+      if (!(appApproval?.externalApprovalBinding && appApproval.authorityRevision)) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The hosted App approval is no longer reusable; request fresh approval.",
+        );
+      }
+      const responseEnvelope = readPlainRecord(interaction.responseEnvelope);
+      let runnerBinding;
+      try {
+        runnerBinding = parseRunnerExternalApprovalBindingV1(
+          appApproval.externalApprovalBinding,
+        );
+      } catch {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The hosted App approval binding is invalid; request fresh approval.",
+        );
+      }
+      if (
+        responseEnvelope?.approved !== true ||
+        appApproval.decidedByUserId !== input.userId ||
+        runnerBinding.approvalId !== interaction.runtimeApprovalId ||
+        runnerBinding.threadId !== interaction.threadId ||
+        runnerBinding.runId !== interaction.sourceRuntimeRunId ||
+        runnerBinding.actionKey !== approvalEnvelope?.toolName ||
+        Date.parse(runnerBinding.expiresAt) <= Date.now()
+      ) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The hosted App approval evidence changed; request fresh approval.",
+        );
+      }
+      const [access, resource] = await Promise.all([
+        resolveEffectiveProjectAppAccess(
+          {
+            organizationId: input.organizationId,
+            projectId: accessibleThread.projectId,
+            appKey: appApproval.appKey,
+            userId: input.userId,
+            includePolicyOnly: true,
+            skipResourceReadiness: true,
+            skipInitialization: true,
+          },
+          tx as unknown as typeof knowledgeDb,
+        ),
+        tx.query.appConnectionResources.findFirst({
+          where: and(
+            eq(schema.appConnectionResources.id, appApproval.resourceId),
+            eq(schema.appConnectionResources.connectionId, appApproval.connectionId),
+            eq(schema.appConnectionResources.resourceType, appApproval.resourceType),
+            eq(schema.appConnectionResources.enabled, true),
+          ),
+          columns: { id: true },
+        }),
+      ]);
+      const capability = access?.capabilities.find(
+        (candidate) => candidate.key === appApproval.capabilityKey,
+      );
+      if (
+        !resource ||
+        access?.environmentId !== appApproval.environmentId ||
+        access.connectionId !== appApproval.connectionId ||
+        !capability ||
+        capability.approvalMode === "deny"
+      ) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The hosted App authority changed; request fresh approval.",
+        );
+      }
+      const currentAuthorityRevision = hashAppApprovalAuthority({
+        organizationId: input.organizationId,
+        projectId: accessibleThread.projectId,
+        environmentId: access.environmentId,
+        actorUserId: input.userId,
+        appKey: access.appKey,
+        connectionId: access.connectionId,
+        capability: {
+          key: capability.key,
+          approvalMode: capability.approvalMode,
+          loggingMode: capability.loggingMode,
+          rateLimitMode: capability.rateLimitMode,
+          settings: capability.settings,
+        },
+        resource: { id: resource.id, type: appApproval.resourceType },
+      });
+      if (currentAuthorityRevision !== appApproval.authorityRevision) {
+        throw new DurableTurnError(
+          "TURN_CONFLICT",
+          "The hosted App authority changed; request fresh approval.",
+        );
+      }
+    }
+    const originalTurn = await tx.query.threadTurns.findFirst({
+      where: eq(schema.threadTurns.id, interaction.turnId),
+    });
+    if (!originalTurn?.requestedEnvironmentId) {
+      throw new DurableTurnError("TURN_CONFLICT", "The original execution route is unavailable.");
+    }
+    const now = new Date();
+    await tx
+      .update(schema.threadInteractions)
+      .set({
+        status: "processing",
+        resumedAt: null,
+        responseFailureCode: null,
+        responseFailureMessage: null,
+        effectStatus: null,
+        responseRetryable: false,
+        updatedAt: now,
+      })
+      .where(eq(schema.threadInteractions.id, interaction.id));
+    await updateInteractionMessagePresentation(tx, interaction, "processing", {
+      decision: readApprovalDecision(interaction.responseEnvelope),
+      authorizationState: "pending",
+      effectState: "not_started",
+      retryEligible: false,
+    });
+    const durable = await createDurableThreadTurnInTransaction(tx, {
+      threadId: input.threadId,
+      organizationId: input.organizationId,
+      authorUserId: input.userId,
+      messageId: null,
+      resumeInteractionId: interaction.id,
+      idempotencyKey: input.idempotencyKey,
+      requestedEnvironmentId: originalTurn.requestedEnvironmentId,
+      projectContextRevisionId: originalTurn.projectContextRevisionId,
+      requestedModelId: originalTurn.requestedModelId,
+      requestedInteractionMode: originalTurn.requestedInteractionMode,
+      source: input.source,
+    });
+    await appendTurnEvent(tx, {
+      turnId: durable.turn.id,
+      type: "interaction.retry_requested",
+      data: {
+        requestId: interaction.requestId,
+        sourceTurnId: interaction.turnId,
+        effectStatus: "not_started",
+      },
+    });
+    return durable;
+  });
+}
+
+async function updateInteractionMessagePresentation(
+  tx: TurnTransaction,
+  interaction: typeof schema.threadInteractions.$inferSelect,
+  status: "processing" | "resolved" | "failed",
+  outcome: Record<string, unknown>,
+) {
+  if (!interaction.assistantMessageId) return;
+  const message = await tx.query.threadMessages.findFirst({
+    where: eq(schema.threadMessages.id, interaction.assistantMessageId),
+    columns: { parts: true },
+  });
+  if (!message) return;
+  await tx
+    .update(schema.threadMessages)
+    .set({
+      parts: setInteractionPresentationStatus(
+        message.parts,
+        interaction.requestId,
+        status,
+        outcome,
+      ),
+    })
+    .where(eq(schema.threadMessages.id, interaction.assistantMessageId));
+}
+
+function readApprovalDecision(value: unknown): "approved" | "denied" {
+  return readPlainRecord(value)?.approved === true ? "approved" : "denied";
 }
 
 function readPlainRecord(value: unknown): Record<string, unknown> | null {
@@ -1827,7 +2397,8 @@ function appendInteractionPresentationParts(
 function setInteractionPresentationStatus(
   value: unknown,
   requestId: string,
-  status: "resolved" | "cancelled",
+  status: "processing" | "resolved" | "cancelled" | "failed",
+  approvalOutcome?: Record<string, unknown>,
 ) {
   if (!Array.isArray(value)) return value;
   return value.map((part) => {
@@ -1846,7 +2417,14 @@ function setInteractionPresentationStatus(
     ) {
       return part;
     }
-    return { ...record, data: { ...data, status } };
+    return {
+      ...record,
+      data: {
+        ...data,
+        status,
+        ...(approvalOutcome ? { approvalOutcome } : {}),
+      },
+    };
   });
 }
 
@@ -1878,7 +2456,7 @@ export async function listThreadInteractionsForUser(input: {
             .where(
               and(
                 inArray(schema.threadTurnEvents.turnId, turnIds),
-                eq(schema.threadTurnEvents.type, "interaction.resolved"),
+                eq(schema.threadTurnEvents.type, "interaction.decision_recorded"),
               ),
             );
     const responseMessageIds = new Map<string, string>();
@@ -1898,13 +2476,12 @@ export async function listThreadInteractionsForUser(input: {
         responseEnvelope && typeof responseEnvelope.messageId === "string"
           ? responseEnvelope.messageId
           : null;
-      return {
-        ...interaction,
-        responseMessageId:
-          envelopeMessageId ??
+      return projectSafeThreadInteraction(
+        interaction,
+        envelopeMessageId ??
           responseMessageIds.get(interaction.requestId) ??
           null,
-      };
+      );
     });
   });
 }
@@ -1914,9 +2491,12 @@ async function terminalizeTurnEnvironmentExecution(
   turn: {
     environmentExecutionId: string | null;
     organizationId: string;
+    failureCode?: string | null;
+    failureMessage?: string | null;
   },
   status: ThreadTurnTerminalStatus,
   now: Date,
+  failure?: { code?: string | null; message?: string | null },
 ) {
   if (!turn.environmentExecutionId) return;
   const executionStatus =
@@ -1927,7 +2507,19 @@ async function terminalizeTurnEnvironmentExecution(
         : "failed";
   await tx
     .update(schema.environmentRunExecutions)
-    .set({ status: executionStatus, completedAt: now, updatedAt: now })
+    .set({
+      status: executionStatus,
+      failureCode:
+        executionStatus === "failed"
+          ? failure?.code ?? turn.failureCode ?? null
+          : null,
+      failureMessage:
+        executionStatus === "failed"
+          ? failure?.message ?? turn.failureMessage ?? null
+          : null,
+      completedAt: now,
+      updatedAt: now,
+    })
     .where(
       and(
         eq(schema.environmentRunExecutions.id, turn.environmentExecutionId),
@@ -2052,6 +2644,7 @@ export async function completeDurableThreadTurn(input: {
   failureMessage?: string | null;
   messages?: DurableAssistantOutcomeMessage[];
   replayChunks?: readonly DurableReplayChunk[];
+  interactionFailure?: DurableInteractionFailureEvidence;
 }) {
   let persistedMessages = false;
   const result = await knowledgeDb.transaction(async (tx) => {
@@ -2115,7 +2708,17 @@ export async function completeDurableThreadTurn(input: {
         now
       );
     }
-    await terminalizeTurnEnvironmentExecution(tx, turn, input.status, now);
+    if (input.interactionFailure) {
+      await failDurableRuntimeInteractionInTransaction(
+        tx,
+        turn.id,
+        input.interactionFailure,
+      );
+    }
+    await terminalizeTurnEnvironmentExecution(tx, turn, input.status, now, {
+      code: input.failureCode,
+      message: input.failureMessage,
+    });
     await appendDurableReplayChunks(tx, turn.id, input.replayChunks ?? []);
     await appendTurnEvent(tx, {
       turnId: turn.id,

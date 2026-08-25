@@ -1,10 +1,14 @@
 import "server-only";
 
 import { and, eq, gt, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import {
+  parseRunnerExternalApprovalBindingV1,
+  serializeCanonicalApprovalPayload,
+  type RunnerExternalApprovalBindingV1,
+} from "@kestrel-agents/protocol";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   assertAppOperationApprovalBinding,
-  assertAppExternalApprovalBinding,
   createAppExternalApprovalBinding,
   hashAppApprovalAuthority,
   hashAppOperationPayload,
@@ -13,6 +17,7 @@ import {
 import { resolveEffectiveProjectAppAccess } from "./project-service";
 
 const APPROVAL_TTL_MS = 5 * 60_000;
+type ApprovalTransaction = Parameters<Parameters<typeof knowledgeDb.transaction>[0]>[0];
 
 export class AppOperationApprovalError extends Error {
   constructor(readonly code: string) {
@@ -26,12 +31,16 @@ export async function recordAppOperationApprovalRequest(input: {
   projectId: string;
   requestedExecutionId: string;
   expiresAt: Date;
+  runtimeBinding?: RunnerExternalApprovalBindingV1 | undefined;
+  approvedByUserId?: string | undefined;
 }) {
   const now = new Date();
   await expireStaleAppOperationApprovals(now);
   if (
     !Number.isFinite(input.expiresAt.getTime()) ||
-    input.expiresAt.getTime() <= now.getTime()
+    input.expiresAt.getTime() <= now.getTime() ||
+    (input.approvedByUserId !== undefined &&
+      input.approvedByUserId !== input.binding.actorUserId)
   ) {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_EXPIRY_INVALID");
   }
@@ -62,6 +71,7 @@ export async function recordAppOperationApprovalRequest(input: {
       projectId: input.projectId,
       appKey: input.binding.appKey,
       userId: input.binding.actorUserId,
+      includePolicyOnly: true,
     }),
     knowledgeDb.query.appConnectionResources.findFirst({
       where: (table, { and: all, eq: equals }) =>
@@ -78,12 +88,10 @@ export async function recordAppOperationApprovalRequest(input: {
     (candidate) => candidate.key === input.binding.capabilityKey
   );
   if (
-    !thread ||
-    !execution ||
-    !resource ||
+    !((thread && execution) && resource) ||
     access?.environmentId !== input.binding.environmentId ||
     access.connectionId !== input.binding.connectionId ||
-    capability?.approvalMode !== "ask"
+    !capability || capability.approvalMode === "deny"
   ) {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_ACCESS_DENIED");
   }
@@ -99,13 +107,22 @@ export async function recordAppOperationApprovalRequest(input: {
       resourceId: resource.id,
     }),
   );
-  const externalApprovalBinding = createAppExternalApprovalBinding({
-    binding: input.binding,
-    requestedExecutionId: input.requestedExecutionId,
-    authorityRevision,
-    requestedAt: now,
-    expiresAt,
-  });
+  const runtimeBinding = input.runtimeBinding
+    ? parseRunnerExternalApprovalBindingV1(input.runtimeBinding)
+    : createAppExternalApprovalBinding({
+        binding: input.binding,
+        requestedExecutionId: input.requestedExecutionId,
+        authorityRevision,
+        requestedAt: now,
+        expiresAt,
+      });
+  if (
+    runtimeBinding.approvalId !== input.binding.runtimeApprovalId ||
+    runtimeBinding.threadId !== input.binding.threadId ||
+    input.expiresAt.getTime() > Date.parse(runtimeBinding.expiresAt)
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
+  }
   const payloadHash = hashAppOperationPayload(input.binding.payload);
   const [created] = await knowledgeDb
     .insert(schema.appOperationApprovals)
@@ -126,9 +143,16 @@ export async function recordAppOperationApprovalRequest(input: {
       runtimeApprovalId: input.binding.runtimeApprovalId,
       payloadHash,
       payload: input.binding.payload,
-      externalApprovalBinding,
+      externalApprovalBinding: runtimeBinding,
       authorityRevision,
       expiresAt,
+      ...(input.approvedByUserId
+        ? {
+            status: "approved" as const,
+            decidedByUserId: input.approvedByUserId,
+            decidedAt: now,
+          }
+        : {}),
     })
     .onConflictDoNothing({
       target: [
@@ -169,12 +193,10 @@ export async function recordAppOperationApprovalRequest(input: {
       },
       input.binding
     );
-    assertAppExternalApprovalBinding({
-      stored: existing.externalApprovalBinding,
-      actual: input.binding,
-      requestedExecutionId: existing.requestedExecutionId,
-      authorityRevision,
-    });
+    if (
+      serializeCanonicalApprovalPayload(existing.externalApprovalBinding) !==
+      serializeCanonicalApprovalPayload(runtimeBinding)
+    ) throw new Error("runtime binding mismatch");
   } catch {
     throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_BINDING_MISMATCH");
   }
@@ -196,7 +218,7 @@ export async function decideAppOperationApproval(input: {
       status: input.approved ? "approved" : "denied",
       payload: input.approved
         ? sql`${schema.appOperationApprovals.payload}`
-        : sql`case when ${schema.appOperationApprovals.appKey} = 'email' then '{"redacted":true}'::jsonb else ${schema.appOperationApprovals.payload} end`,
+        : sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
       decidedByUserId: input.userId,
       decidedAt: now,
       updatedAt: now,
@@ -248,6 +270,71 @@ export async function decideAppOperationApproval(input: {
   throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_NOT_PENDING");
 }
 
+export async function decideAppOperationApprovalInTransaction(
+  tx: ApprovalTransaction,
+  input: {
+    organizationId: string;
+    threadId: string;
+    userId: string;
+    runtimeApprovalId: string;
+    approved: boolean;
+    required: boolean;
+    now: Date;
+  },
+) {
+  const [approval] = await tx
+    .select()
+    .from(schema.appOperationApprovals)
+    .where(
+      and(
+        eq(schema.appOperationApprovals.organizationId, input.organizationId),
+        eq(schema.appOperationApprovals.threadId, input.threadId),
+        eq(schema.appOperationApprovals.runtimeApprovalId, input.runtimeApprovalId),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (!approval) {
+    if (input.required) {
+      throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_REQUIRED");
+    }
+    return null;
+  }
+  const exactRepeatedDecision =
+    approval.actorUserId === input.userId &&
+    approval.decidedByUserId === input.userId &&
+    Boolean(approval.externalApprovalBinding) &&
+    Boolean(approval.authorityRevision) &&
+    approval.expiresAt.getTime() > input.now.getTime() &&
+    (input.approved
+      ? approval.status === "approved" || approval.status === "consumed"
+      : approval.status === "denied");
+  if (exactRepeatedDecision) return approval;
+  if (
+    approval.status !== "pending" ||
+    approval.actorUserId !== input.userId ||
+    !approval.externalApprovalBinding ||
+    !approval.authorityRevision ||
+    approval.expiresAt.getTime() <= input.now.getTime()
+  ) {
+    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_NOT_PENDING");
+  }
+  const [decided] = await tx
+    .update(schema.appOperationApprovals)
+    .set({
+      status: input.approved ? "approved" : "denied",
+      payload: input.approved
+        ? approval.payload
+        : { redacted: true, operation: approval.operationKey },
+      decidedByUserId: input.userId,
+      decidedAt: input.now,
+      updatedAt: input.now,
+    })
+    .where(eq(schema.appOperationApprovals.id, approval.id))
+    .returning();
+  return decided ?? null;
+}
+
 export async function decideAppOperationApprovalIfPresent(input: {
   organizationId: string;
   threadId: string;
@@ -274,122 +361,202 @@ export async function consumeAppOperationApproval(input: {
   binding: AppOperationApprovalBinding;
   consumedExecutionId: string;
 }) {
-  const now = new Date();
-  const existing = await knowledgeDb.query.appOperationApprovals.findFirst({
-    where: (table, { and: all, eq: equals }) =>
-      all(
-        equals(table.organizationId, input.binding.organizationId),
-        equals(table.threadId, input.binding.threadId),
-        equals(table.runtimeApprovalId, input.binding.runtimeApprovalId),
-      ),
-  });
-  const thread = await knowledgeDb.query.threads.findFirst({
-    where: (table, { and: all, eq: equals }) =>
-      all(
-        equals(table.id, input.binding.threadId),
-        equals(table.organizationId, input.binding.organizationId),
-      ),
-    columns: { projectId: true },
-  });
-  if (!existing || !thread?.projectId) {
-    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
-  }
-  const [access, resource] = await Promise.all([
-    resolveEffectiveProjectAppAccess({
-      organizationId: input.binding.organizationId,
-      projectId: thread.projectId,
-      appKey: input.binding.appKey,
-      userId: input.binding.actorUserId,
-    }),
-    knowledgeDb.query.appConnectionResources.findFirst({
-      where: (table, { and: all, eq: equals }) =>
-        all(
-          equals(table.id, input.binding.resourceId),
-          equals(table.connectionId, input.binding.connectionId),
-          equals(table.resourceType, input.binding.resourceType),
-          equals(table.enabled, true),
+  return knowledgeDb.transaction(async (tx) => {
+    const now = new Date();
+    const [existing] = await tx
+      .select()
+      .from(schema.appOperationApprovals)
+      .where(
+        and(
+          eq(schema.appOperationApprovals.organizationId, input.binding.organizationId),
+          eq(schema.appOperationApprovals.threadId, input.binding.threadId),
+          eq(schema.appOperationApprovals.runtimeApprovalId, input.binding.runtimeApprovalId),
         ),
-      columns: { id: true },
-    }),
-  ]);
-  const capability = access?.capabilities.find(
-    (candidate) => candidate.key === input.binding.capabilityKey,
-  );
-  if (
-    !resource ||
-    access?.environmentId !== input.binding.environmentId ||
-    access.connectionId !== input.binding.connectionId ||
-    capability?.approvalMode !== "ask"
-  ) {
-    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
-  }
-  const authorityRevision = hashAppApprovalAuthority(
-    appApprovalPolicyEvidence({
-      binding: input.binding,
-      projectId: thread.projectId,
-      access,
-      capability,
-      resourceId: resource.id,
-    }),
-  );
-  try {
-    assertAppExternalApprovalBinding({
-      stored: existing.externalApprovalBinding,
-      actual: input.binding,
-      requestedExecutionId: existing.requestedExecutionId,
-      authorityRevision,
-    });
-  } catch {
-    throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
-  }
-  const [consumed] = await knowledgeDb
-    .update(schema.appOperationApprovals)
-    .set({
-      status: "consumed",
-      payload:
-        input.binding.appKey === "email"
-          ? { redacted: true, operation: "email.send" }
-          : input.binding.payload,
-      consumedExecutionId: input.consumedExecutionId,
-      consumedAt: now,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(schema.appOperationApprovals.id, existing.id),
-        eq(schema.appOperationApprovals.organizationId, input.binding.organizationId),
-        eq(schema.appOperationApprovals.environmentId, input.binding.environmentId),
-        eq(schema.appOperationApprovals.workspaceId, input.binding.workspaceId),
-        eq(schema.appOperationApprovals.threadId, input.binding.threadId),
-        eq(schema.appOperationApprovals.actorUserId, input.binding.actorUserId),
-        eq(schema.appOperationApprovals.agentId, input.binding.agentId),
-        eq(schema.appOperationApprovals.appKey, input.binding.appKey),
-        eq(schema.appOperationApprovals.capabilityKey, input.binding.capabilityKey),
-        eq(schema.appOperationApprovals.connectionId, input.binding.connectionId),
-        eq(schema.appOperationApprovals.resourceId, input.binding.resourceId),
-        eq(schema.appOperationApprovals.resourceType, input.binding.resourceType),
-        eq(schema.appOperationApprovals.operationKey, input.binding.operationKey),
-        eq(
-          schema.appOperationApprovals.runtimeApprovalId,
-          input.binding.runtimeApprovalId
-        ),
-        eq(
-          schema.appOperationApprovals.payloadHash,
-          hashAppOperationPayload(input.binding.payload)
-        ),
-        eq(schema.appOperationApprovals.authorityRevision, authorityRevision),
-        eq(schema.appOperationApprovals.status, "approved"),
-        gt(schema.appOperationApprovals.expiresAt, now)
       )
-    )
-    .returning();
-  if (consumed) return consumed;
-  await expireAppOperationApproval({
-    organizationId: input.binding.organizationId,
-    runtimeApprovalId: input.binding.runtimeApprovalId,
-    now,
+      .limit(1)
+      .for("update");
+    if (!existing) {
+      throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+    }
+    try {
+      assertAppOperationApprovalBinding(
+        {
+          organizationId: existing.organizationId,
+          environmentId: existing.environmentId,
+          workspaceId: existing.workspaceId,
+          threadId: existing.threadId,
+          actorUserId: existing.actorUserId,
+          agentId: existing.agentId,
+          appKey: existing.appKey,
+          capabilityKey: existing.capabilityKey,
+          connectionId: existing.connectionId,
+          resourceId: existing.resourceId,
+          resourceType: existing.resourceType,
+          operationKey: existing.operationKey,
+          runtimeApprovalId: existing.runtimeApprovalId,
+          payload: existing.payload,
+          payloadHash: existing.payloadHash,
+        },
+        input.binding,
+      );
+    } catch {
+      throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+    }
+    const [thread, resource, execution, consumingTurn, interaction, requestedExecution] =
+      await Promise.all([
+        tx.query.threads.findFirst({
+          where: and(
+            eq(schema.threads.id, input.binding.threadId),
+            eq(schema.threads.organizationId, input.binding.organizationId),
+          ),
+          columns: { projectId: true },
+        }),
+        tx.query.appConnectionResources.findFirst({
+          where: and(
+            eq(schema.appConnectionResources.id, input.binding.resourceId),
+            eq(schema.appConnectionResources.connectionId, input.binding.connectionId),
+            eq(schema.appConnectionResources.resourceType, input.binding.resourceType),
+            eq(schema.appConnectionResources.enabled, true),
+          ),
+          columns: { id: true },
+        }),
+        tx.query.environmentRunExecutions.findFirst({
+          where: and(
+            eq(schema.environmentRunExecutions.id, input.consumedExecutionId),
+            eq(schema.environmentRunExecutions.organizationId, input.binding.organizationId),
+            eq(schema.environmentRunExecutions.environmentId, input.binding.environmentId),
+            eq(schema.environmentRunExecutions.workspaceId, input.binding.workspaceId),
+            eq(schema.environmentRunExecutions.threadId, input.binding.threadId),
+            eq(schema.environmentRunExecutions.actorId, input.binding.actorUserId),
+            eq(schema.environmentRunExecutions.status, "running"),
+          ),
+        }),
+        tx.query.threadTurns.findFirst({
+          where: and(
+            eq(schema.threadTurns.organizationId, input.binding.organizationId),
+            eq(schema.threadTurns.threadId, input.binding.threadId),
+            eq(schema.threadTurns.environmentExecutionId, input.consumedExecutionId),
+            eq(schema.threadTurns.status, "running"),
+          ),
+          columns: { id: true, resumeInteractionId: true },
+        }),
+        tx.query.threadInteractions.findFirst({
+          where: and(
+            eq(schema.threadInteractions.organizationId, input.binding.organizationId),
+            eq(schema.threadInteractions.threadId, input.binding.threadId),
+            eq(schema.threadInteractions.runtimeApprovalId, input.binding.runtimeApprovalId),
+            eq(schema.threadInteractions.source, "runtime"),
+          ),
+        }),
+        tx.query.environmentRunExecutions.findFirst({
+          where: and(
+            eq(schema.environmentRunExecutions.id, existing.requestedExecutionId),
+            eq(schema.environmentRunExecutions.organizationId, input.binding.organizationId),
+            eq(schema.environmentRunExecutions.environmentId, input.binding.environmentId),
+            eq(schema.environmentRunExecutions.workspaceId, input.binding.workspaceId),
+            eq(schema.environmentRunExecutions.threadId, input.binding.threadId),
+            eq(schema.environmentRunExecutions.actorId, input.binding.actorUserId),
+          ),
+        }),
+      ]);
+    if (!(thread?.projectId && resource && execution && consumingTurn && interaction && requestedExecution)) {
+      throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+    }
+    const sourceTurn = await tx.query.threadTurns.findFirst({
+      where: and(
+        eq(schema.threadTurns.id, interaction.turnId!),
+        eq(schema.threadTurns.organizationId, input.binding.organizationId),
+        eq(schema.threadTurns.threadId, input.binding.threadId),
+      ),
+      columns: { id: true },
+    });
+    const requestApproval = interaction.requestEnvelope.approval;
+    const requestToolName =
+      requestApproval && typeof requestApproval === "object" &&
+      typeof (requestApproval as Record<string, unknown>).toolName === "string"
+        ? (requestApproval as Record<string, unknown>).toolName
+        : null;
+    let runnerBinding: RunnerExternalApprovalBindingV1;
+    try {
+      runnerBinding = parseRunnerExternalApprovalBindingV1(existing.externalApprovalBinding);
+    } catch {
+      throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+    }
+    const directSourceTurn = interaction.turnId === consumingTurn.id;
+    const retrySourceTurn = consumingTurn.resumeInteractionId === interaction.id;
+    if (
+      !sourceTurn ||
+      interaction.status !== "resolved" ||
+      !(directSourceTurn || retrySourceTurn) ||
+      runnerBinding.approvalId !== interaction.runtimeApprovalId ||
+      runnerBinding.threadId !== interaction.threadId ||
+      runnerBinding.runId !== interaction.sourceRuntimeRunId ||
+      runnerBinding.actionKey !== requestToolName ||
+      !runnerBinding.payloadHash.startsWith("sha256:") ||
+      runnerBinding.capabilities.length === 0 ||
+      Date.parse(runnerBinding.expiresAt) <= now.getTime() ||
+      requestedExecution.runtimeRunId !== interaction.sourceRuntimeRunId ||
+      existing.status !== "approved" ||
+      existing.expiresAt.getTime() <= now.getTime()
+    ) {
+      throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+    }
+    const access = await resolveEffectiveProjectAppAccess(
+      {
+        organizationId: input.binding.organizationId,
+        projectId: thread.projectId,
+        appKey: input.binding.appKey,
+        userId: input.binding.actorUserId,
+        includePolicyOnly: true,
+        skipResourceReadiness: true,
+        skipInitialization: true,
+      },
+      tx as unknown as typeof knowledgeDb,
+    );
+    const capability = access?.capabilities.find(
+      (candidate) => candidate.key === input.binding.capabilityKey,
+    );
+    if (
+      access?.environmentId !== input.binding.environmentId ||
+      access.connectionId !== input.binding.connectionId ||
+      !capability || capability.approvalMode === "deny"
+    ) {
+      throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+    }
+    const authorityRevision = hashAppApprovalAuthority(
+      appApprovalPolicyEvidence({
+        binding: input.binding,
+        projectId: thread.projectId,
+        access,
+        capability,
+        resourceId: resource.id,
+      }),
+    );
+    if (authorityRevision !== existing.authorityRevision) {
+      throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+    }
+    const [consumed] = await tx
+      .update(schema.appOperationApprovals)
+      .set({
+        status: "consumed",
+        payload: { redacted: true, operation: input.binding.operationKey },
+        consumedExecutionId: input.consumedExecutionId,
+        consumedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(schema.appOperationApprovals.id, existing.id),
+          eq(schema.appOperationApprovals.status, "approved"),
+          gt(schema.appOperationApprovals.expiresAt, now),
+        ),
+      )
+      .returning();
+    if (!consumed) {
+      throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
+    }
+    return consumed;
   });
-  throw new AppOperationApprovalError("APP_OPERATION_APPROVAL_INVALID");
 }
 
 type EffectiveProjectAppAccess = NonNullable<
@@ -433,7 +600,7 @@ async function expireAppOperationApproval(input: {
     .update(schema.appOperationApprovals)
     .set({
       status: "expired",
-      payload: sql`case when ${schema.appOperationApprovals.appKey} = 'email' then '{"redacted":true}'::jsonb else ${schema.appOperationApprovals.payload} end`,
+      payload: sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
       updatedAt: input.now,
     })
     .where(
@@ -454,7 +621,7 @@ export async function expireStaleAppOperationApprovals(now = new Date()) {
     .update(schema.appOperationApprovals)
     .set({
       status: "expired",
-      payload: sql`case when ${schema.appOperationApprovals.appKey} = 'email' then '{"redacted":true}'::jsonb else ${schema.appOperationApprovals.payload} end`,
+      payload: sql`jsonb_build_object('redacted', true, 'operation', ${schema.appOperationApprovals.operationKey})`,
       updatedAt: now,
     })
     .where(

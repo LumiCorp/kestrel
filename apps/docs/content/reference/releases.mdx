@@ -8,11 +8,21 @@ sourceKind: curated
 updatedAt: 2026-08-20
 ---
 
+## Runtime 0.8.8 job compatibility binding
+
+Runtime/CLI 0.8.8 adds strict `job_input_v2` preflight and immutable execution-profile binding while preserving `job_input_v1` for existing direct clients. `job preflight` proves the requested preset, approval policy pack, required tools, profile fingerprint, and policy revision without creating a job, thread, run, checkout, or worktree. V2 `job run` rejects missing, stale, or altered binding evidence before dispatch. Install it with `npm install -g @kestrel-agents/kestrel@0.8.8` on Node.js 22.
+
+## Runtime 0.8.7 packaging correction
+
+Runtime/CLI 0.8.7 replaces the unusable npm-only 0.8.6 artifact. Version 0.8.6 referenced a private MCP security package and the not-yet-published Files package, so a clean npm install could not resolve its dependency graph. Do not install Runtime 0.8.6.
+
+The 0.8.7 package removes the private MCP package from the npm dependency graph, publishes `@kestrel-agents/files@0.8.5`, excludes compiled test artifacts, and validates the same packed tarball that is installed during the clean consumer smoke. Runtime remains compatible with the exact 0.8.5 public dependency versions declared in its manifest. Install it with `npm install -g @kestrel-agents/kestrel@0.8.7` on Node.js 22.
+
 ## Desktop 0.8.6 hotfix
 
 Desktop 0.8.6 fixes a finalization failure where a stale queued conversation message could reject detached follow-up processing and abort Local Core. The queue now pauses and reports the route failure instead, leaving the running conversation and Desktop process available for recovery.
 
-This is a Desktop-only release. Its signed [DMG](https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/Kestrel-0.8.6-mac-arm64.dmg), ZIP, [checksums](https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/SHA256SUMS.txt), notarization evidence, and updater metadata are published under the immutable Desktop 0.8.6 release path. Runtime and public package versions remain 0.8.5 because they are not part of this publication.
+This is a Desktop-only release. Its signed [DMG](https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/Kestrel-0.8.6-mac-arm64.dmg), ZIP, [checksums](https://updates.lumicorp.ai/desktop/releases/0.8.6/arm64/SHA256SUMS.txt), notarization evidence, and updater metadata are published under the immutable Desktop 0.8.6 release path. The later Runtime 0.8.7 packaging correction remains independent of this Desktop release.
 
 ## Kestrel 0.8.5 overview
 
@@ -29,11 +39,11 @@ Kestrel 0.8.5 was the last coordinated source release and aligned Desktop, CLI/T
 
 ## SDK, Memory, and adapters
 
-All nine public packages use version 0.8.5. Conversation is now a public package and supplies the framework-neutral thread, streaming, queue, composer, activity, and interaction kernel used by first-party clients. Upgrade installed Kestrel packages together.
+At the coordinated 0.8.5 release, nine public packages used version 0.8.5. Conversation became a public package and supplies the framework-neutral thread, streaming, queue, composer, activity, and interaction kernel used by first-party clients. Files 0.8.5 was added to npm with the later Runtime packaging correction.
 
 ## CLI/TUI
 
-Install with `npm install -g @kestrel-agents/kestrel@0.8.5` on Node.js 22. Release verification covers macOS arm64 and Linux x64. The TUI now uses the shared Conversation platform for durable turns, streaming activity, composer behavior, cancellation, reconnect, and readable history.
+The coordinated release installed with `npm install -g @kestrel-agents/kestrel@0.8.5` on Node.js 22. Use Runtime/CLI 0.8.8 for current npm installs. Release verification covers macOS arm64 and Linux x64. The TUI uses the shared Conversation platform for durable turns, streaming activity, composer behavior, cancellation, reconnect, and readable history.
 
 ## Desktop
 
@@ -69,7 +79,7 @@ The coordinated [`v0.8.5` release](https://github.com/LumiCorp/kestrel/releases/
 
 ## Earlier 0.8 history
 
-The v0.8.0 release established the coordinated 0.8 contracts and signed Desktop installed base. Runtime npm versions 0.8.1 and 0.8.2 were packaging corrections. Version 0.8.4 was staged on npm and tagged for provenance but was never promoted to GitHub Latest, npm latest, Desktop stable, or production because its Runtime package was incomplete. The canonical 0.8.5 line supersedes all of them.
+The v0.8.0 release established the coordinated 0.8 contracts and signed Desktop installed base. Runtime npm versions 0.8.1 and 0.8.2 were packaging corrections. Version 0.8.4 was staged on npm and tagged for provenance but was never promoted to GitHub Latest, npm latest, Desktop stable, or production because its Runtime package was incomplete. The coordinated 0.8.5 line superseded them; Runtime 0.8.7 superseded the broken npm-only 0.8.6 artifact, and Runtime 0.8.8 adds strict job compatibility binding.
 
 ## Kestrel 0.7.0 history
 

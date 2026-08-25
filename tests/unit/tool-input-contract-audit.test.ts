@@ -26,6 +26,17 @@ test("trusted compatibility normalization strips unexpected top-level keys", () 
   );
 
   for (const tool of strictTools) {
+    if (tool.name === "code.execute") {
+      assert.throws(
+        () => adaptTrustedLegacyToolInput({
+          name: tool.name,
+          schema: tool.inputSchema,
+          value: { unexpected: true },
+        }),
+        /unknown field 'unexpected'/u,
+      );
+      continue;
+    }
     const sanitized = adaptTrustedLegacyToolInput({
       name: tool.name,
       schema: tool.inputSchema,

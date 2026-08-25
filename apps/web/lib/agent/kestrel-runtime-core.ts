@@ -121,6 +121,7 @@ export type KestrelOneAgentResponsePersistMeta = {
   title: string | null;
   errorMessage: string | null;
   errorCode?: string | undefined;
+  errorDetails?: Record<string, unknown> | undefined;
   failureVisible: boolean;
   terminalStatus: KestrelTerminalStatus;
   interaction: KestrelInteractionPresentation | null;
@@ -394,6 +395,7 @@ export function createKestrelOneAgentResponseFromAgent(
         title: title ?? null,
         errorMessage: streamResult.errorMessage,
         errorCode: streamResult.errorCode,
+        errorDetails: streamResult.errorDetails,
         failureVisible: streamResult.failureVisible,
         terminalStatus: streamResult.terminalStatus,
         interaction: streamResult.interaction,

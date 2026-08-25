@@ -309,9 +309,12 @@ function describeLedgerFilesystemEntry(entry: Record<string, unknown>): string |
   }
   if (isFileTextReadToolName(toolName)) {
     const preview = asString(facts.contentPreview);
-    return preview !== undefined
-      ? `${toolName} ${targetPath ?? "."}: ${clampEvidencePreview(preview)}`
-      : `${toolName} ${targetPath ?? "."}.`;
+    return formatFileReadEvidence({
+      toolName,
+      targetPath,
+      facts,
+      preview,
+    });
   }
   if (toolName === "fs.list") {
     const count = typeof facts.entryCount === "number" ? Math.trunc(facts.entryCount) : undefined;
@@ -377,11 +380,12 @@ function describeFilesystemResult(record: Record<string, unknown>): string | und
   if (isFileTextReadToolName(toolName)) {
     const targetPath = asString(output?.path) ?? asString(input?.path);
     const content = asString(output?.content);
-    const truncated = output?.truncated === true ? " (truncated)" : "";
-    if (targetPath !== undefined && content !== undefined) {
-      return `${toolName} ${targetPath}${truncated}: ${clampEvidencePreview(content)}`;
-    }
-    return targetPath !== undefined ? `${toolName} ${targetPath}${truncated}.` : undefined;
+    return formatFileReadEvidence({
+      toolName,
+      targetPath,
+      facts: output ?? {},
+      preview: content,
+    });
   }
   if (toolName === "fs.search_text") {
     const targetPath = asString(output?.path) ?? asString(input?.path);
@@ -422,6 +426,45 @@ function describeFilesystemResult(record: Record<string, unknown>): string | und
 
 function isRunningStatus(value: unknown): boolean {
   return typeof value === "string" && value.trim().toLowerCase() === "running";
+}
+
+function formatFileReadEvidence(input: {
+  toolName: string;
+  targetPath?: string | undefined;
+  facts: Record<string, unknown>;
+  preview?: string | undefined;
+}): string {
+  const bytesRead = readFiniteNumber(input.facts.bytesRead) ?? readFiniteNumber(input.facts.contentBytes);
+  const totalBytes = readFiniteNumber(input.facts.totalBytes);
+  const complete = typeof input.facts.complete === "boolean" ? input.facts.complete : undefined;
+  const truncated = typeof input.facts.truncated === "boolean" ? input.facts.truncated : undefined;
+  const range = asRecord(input.facts.range);
+  const startByte = readFiniteNumber(range?.startByte);
+  const endByte = readFiniteNumber(range?.endByte);
+  const nextPage = asRecord(input.facts.nextPage);
+  const nextOffsetBytes = readFiniteNumber(input.facts.nextOffsetBytes);
+  const contentState = asString(input.facts.contentState)
+    ?? (input.preview !== undefined && input.preview.length === 0 ? "empty" : undefined);
+  return [
+    `${input.toolName} ${input.targetPath ?? "."}`,
+    bytesRead !== undefined
+      ? `read ${Math.max(0, Math.trunc(bytesRead))} byte${Math.trunc(bytesRead) === 1 ? "" : "s"}`
+      : undefined,
+    totalBytes !== undefined ? `of ${Math.max(0, Math.trunc(totalBytes))} total bytes` : undefined,
+    startByte !== undefined && endByte !== undefined
+      ? `range=${Math.trunc(startByte)}-${Math.trunc(endByte)}`
+      : undefined,
+    complete !== undefined ? `complete=${String(complete)}` : undefined,
+    truncated !== undefined ? `truncated=${String(truncated)}` : undefined,
+    contentState !== undefined ? `contentState=${contentState}` : undefined,
+    nextOffsetBytes !== undefined
+      ? `nextOffsetBytes=${Math.max(0, Math.trunc(nextOffsetBytes))}`
+      : undefined,
+    nextPage !== undefined ? `nextPage=${JSON.stringify(nextPage)}` : undefined,
+    input.preview !== undefined && input.preview.length > 0
+      ? `contentPreview=${JSON.stringify(clampEvidencePreview(input.preview))}`
+      : undefined,
+  ].filter((item): item is string => item !== undefined).join(" ") + ".";
 }
 
 function describeLastActionToolResult(

@@ -80,6 +80,15 @@ export const PreviewAttachment = ({
         </div>
       ) : null}
 
+      {!isUploading && attachment.representationStatus === "metadata_only" && attachment.metadataOnlyReason ? (
+        <div
+          className="absolute inset-x-0 bottom-4 truncate bg-amber-950/90 px-1 py-0.5 text-[9px] text-amber-50"
+          title={attachment.metadataOnlyReason}
+        >
+          Original available
+        </div>
+      ) : null}
+
       {onRemove && !isUploading && (
         <Button
           className="absolute top-0.5 right-0.5 size-4 rounded-full p-0 opacity-0 transition-opacity group-hover:opacity-100"

@@ -125,6 +125,7 @@ export function assertLocalEnvironmentRuntimeConfiguration(
       "KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL must target localhost."
     );
   }
+  assertEnvironmentTicketKeyPair(env);
 }
 
 export function assertHostedEnvironmentRuntimeConfiguration(
@@ -157,6 +158,12 @@ export function assertHostedEnvironmentRuntimeConfiguration(
     );
   }
   assertGatewayCredentialEncryptionConfigured(env as NodeJS.ProcessEnv);
+  assertEnvironmentTicketKeyPair(env);
+}
+
+function assertEnvironmentTicketKeyPair(
+  env: Record<string, string | undefined>
+) {
   try {
     const privateKey = createPrivateKey(
       env.KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY ?? ""

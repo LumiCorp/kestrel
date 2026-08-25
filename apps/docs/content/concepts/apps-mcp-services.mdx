@@ -1,0 +1,37 @@
+---
+title: Apps and MCP services
+summary: Understand how installed Apps, capability packs, MCP connections, and changing remote tool catalogs meet at runtime.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The CRM App says “connected.” Yesterday its MCP service exposed `find_contact`; today the service exposes a new version of the catalog and the old connection is unhealthy.
+
+Configuration alone cannot answer whether the agent can use the tool now.
+
+## “Is it installed?”
+
+An App manifest describes an integration, its driver, requested capability pack, configuration, and install scope. Product state can record that the App belongs to a user, organization, Project, or environment. The driver knows how that installation becomes a runtime connection.
+
+The manifest is not the live tool catalog. It says what integration should exist and under what ownership.
+
+## “Can the service answer?”
+
+An MCP connection has transport and protocol state. The runner can inspect status, refresh the connection, and obtain a current catalog snapshot. Tools discovered from that snapshot still pass through Kestrel's tool descriptions, schemas, capability policy, and effect rules.
+
+A previously cached catalog may be useful for display, but the runtime should not pretend a stale tool is ready. “Configured,” “connected,” “catalog loaded,” and “tool usable for this Run” are different states worth exposing separately.
+
+## “Which catalog did this Run receive?”
+
+Refreshing MCP can add, remove, or change tools. A Run should operate against a coherent snapshot rather than have its tool vocabulary mutate halfway through a model decision. Later Runs can resolve a newer snapshot with new provenance.
+
+Credentials and external authority remain behind the trusted App and runner boundaries.
+
+## “May this actor use that tool?”
+
+Discovering an MCP tool does not grant an actor permission to perform its consequential operation. The discovered descriptor still passes through Kestrel's visibility, capability, schema, approval, and effect boundaries. This is the last question, not something “connected” answered at the start.
+
+[Desktop Apps](/desktop/apps) owns the installation experience. [Tools and tool results](/concepts/tools-tool-results) follows one catalog entry through execution.

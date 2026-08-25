@@ -502,6 +502,34 @@ The score is deliberately conservative where an implementation exists without th
 
 The shortest path to a passing critical gate is therefore architectural enforcement and adversarial evidence, not score-oriented documentation.
 
+## 2026-08-23 control 038 re-verification
+
+This dated supplement updates only control 038 against Kestrel `0.8.5`. The implementation baseline is `aabe26d27`; authority-correct qualification fixtures and the final verification tree are `6aea9fa1e`. It does not rewrite the 2026-07-30 audit snapshot above.
+
+- **Re-verified control:** 038, Scoped secret injection
+- **Updated score:** 1 (previously 0.5)
+- **Updated domain 5 score:** 4 / 8; Fail because critical controls 033 and 040 remain zero
+- **Updated raw score:** 133 / 200; Critical: Fail
+- **Finding:** Registered adapters receive credentials only inside the trusted host boundary. Durable authority binds the exact tenant, run, call, operation, resource, policy, approval, credential revision, and ceilings. Route-free Docker workloads receive only bounded normalized results. Local Core and hosted-runner qualification prove cleanup, cancellation, expiry, timeout, selected-unused authority, exact restart reads, and recursive secret absence with an isolated provider fixture.
+
+Supplemental evidence:
+
+| ID | Evidence class | Evidence |
+|---|---|---|
+| E27 | Shared adapter contract | [`src/code/SandboxCapabilityAdapterRegistry.ts`](../../src/code/SandboxCapabilityAdapterRegistry.ts), [`src/code/CodeExecutionService.ts`](../../src/code/CodeExecutionService.ts), [`tests/unit/sandbox-capability-adapter-conformance.test.ts`](../../tests/unit/sandbox-capability-adapter-conformance.test.ts), [`tests/unit/sandbox-capability-external-effect-approval.test.ts`](../../tests/unit/sandbox-capability-external-effect-approval.test.ts) |
+| E28 | Docker process isolation | [`src/code/DockerSandboxExecutor.ts`](../../src/code/DockerSandboxExecutor.ts), [`tests/process/docker-sandbox.process.test.ts`](../../tests/process/docker-sandbox.process.test.ts) |
+| E29 | Deployment qualification | [`src/localCore/executionRuntime.ts`](../../src/localCore/executionRuntime.ts), [`cli/runner/HostedRunnerStore.ts`](../../cli/runner/HostedRunnerStore.ts), [`tests/integration/web-command.test.ts`](../../tests/integration/web-command.test.ts), [`tests/fixtures/sandbox-capability-fetch-preload.mjs`](../../tests/fixtures/sandbox-capability-fetch-preload.mjs). Local Core and hosted-runner production entrypoints run locally with real Docker and an isolated provider fixture; this is not a live external-provider or hosted-cloud test. |
+| E30 | Transaction parity | [`src/code/SandboxCapabilityLeaseCoordinator.ts`](../../src/code/SandboxCapabilityLeaseCoordinator.ts), [`src/store/InMemorySessionStore.ts`](../../src/store/InMemorySessionStore.ts), [`src/store/PostgresSessionStore.ts`](../../src/store/PostgresSessionStore.ts), [`tests/sandbox-capability-leases.postgres.test.ts`](../../tests/sandbox-capability-leases.postgres.test.ts) |
+| E31 | Operator and exact replay | [`src/replay/RunReplayService.ts`](../../src/replay/RunReplayService.ts), [`cli/runner/RunnerHost.ts`](../../cli/runner/RunnerHost.ts), [`tests/unit/run-replay-service.test.ts`](../../tests/unit/run-replay-service.test.ts), [`tests/unit/exact-effect-result-read.test.ts`](../../tests/unit/exact-effect-result-read.test.ts), [`tests/integration/runner-protocol.test.ts`](../../tests/integration/runner-protocol.test.ts) |
+
+Verification for this supplement:
+
+- `pnpm run typecheck:self`: passed.
+- Focused ownership, exact-result, adapter, replay, and deployment qualification suites: passed.
+- Spawned Local Core and hosted-runner qualification: passed with real Docker and isolated provider transport.
+- `pnpm validate:postgres`: the runtime PostgreSQL contracts, including sandbox capability lease parity, passed; the full lane remained red on two unrelated pre-existing Web model-fixture failures.
+- `pnpm validate`: passed in 74.7 seconds on the verification tree (run outside the managed sandbox so the Web worker-health test could bind its loopback port).
+
 ## 2026-07-31 disposition
 
 This audit remains a historical snapshot; its score and evidence above are not

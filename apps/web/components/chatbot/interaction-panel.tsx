@@ -176,6 +176,32 @@ export function InteractionPanel({
     }
   }
 
+  async function retryRuntime(interaction: ThreadInteractionView) {
+    setBusy(interaction.requestId);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/threads/${threadId}/interactions/${encodeURIComponent(interaction.requestId)}/retry`,
+        { method: "POST" },
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Authorization retry was refused.");
+      }
+      await onResolved();
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Authorization retry was refused.",
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const visibleInteractions = interactions.filter(
     (interaction) =>
       !(
@@ -222,6 +248,32 @@ export function InteractionPanel({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              {interaction.status !== "pending" ? (
+                <p
+                  className={
+                    interaction.status === "failed"
+                      ? "text-destructive text-sm font-medium"
+                      : "text-muted-foreground text-sm font-medium"
+                  }
+                  role="status"
+                >
+                  {interaction.status === "processing"
+                    ? "Decision recorded"
+                    : interaction.status === "resolved"
+                      ? "Authorization accepted"
+                      : interaction.approvalOutcome?.effectState === "not_started"
+                        ? "Authorization failed — operation not executed"
+                        : "Authorization failed — effect status unknown"}
+                </p>
+              ) : null}
+              {interaction.approvalOutcome?.publicMessage ? (
+                <p className="text-muted-foreground text-sm">
+                  {interaction.approvalOutcome.publicMessage}
+                  {interaction.approvalOutcome.failureCode
+                    ? ` (${interaction.approvalOutcome.failureCode})`
+                    : ""}
+                </p>
+              ) : null}
               <p className="text-sm">{interaction.prompt}</p>
               {structuredReview.kind === "invalid_review" ? (
                 <p className="text-muted-foreground text-sm" role="alert">
@@ -368,6 +420,7 @@ export function InteractionPanel({
                   ))}
                 </section>
               ) : null}
+              {interaction.status === "pending" ? (
               <div className="flex justify-end gap-2">
                 {interaction.source === "runtime" ? (
                   structuredReview.kind === "structured_review" ? (
@@ -474,6 +527,18 @@ export function InteractionPanel({
                   </>
                 )}
               </div>
+              ) : interaction.status === "failed" &&
+                interaction.approvalOutcome?.retryEligible ? (
+                <div className="flex justify-end gap-2">
+                  <Button
+                    disabled={busy !== null}
+                    onClick={() => void retryRuntime(interaction)}
+                    size="sm"
+                  >
+                    Retry authorization
+                  </Button>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         );

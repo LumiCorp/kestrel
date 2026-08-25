@@ -1,6 +1,6 @@
 {
   "name": "@kestrel-agents/kestrel",
-  "version": "0.8.5",
+  "version": "0.8.8",
   "description": "Minimal durable runtime kernel for agentic step execution",
   "type": "module",
   "main": "dist/src/index.js",
@@ -66,7 +66,6 @@
     "!cli/**/*.spec.*"
   ],
   "bundledDependencies": [
-    "@kestrel-agents/files",
     "@kestrel-agents/memory",
     "@lumi/kestrel-environment-auth"
   ],
@@ -117,6 +116,8 @@
     "conversation:test": "pnpm --filter @kestrel-agents/conversation test",
     "conversation:smoke": "pnpm --filter @kestrel-agents/conversation smoke:import",
     "conversation:release-check": "pnpm --filter @kestrel-agents/conversation release:check",
+    "files:release-check": "pnpm --filter @kestrel-agents/files release:check",
+    "files:repair-representations": "pnpm --filter @kestrel/kestrel-one files:repair-representations",
     "memory:release-check": "pnpm --filter @kestrel-agents/memory release:check",
     "workspace-skills:release-check": "pnpm --filter @kestrel-agents/workspace-skills release:check",
     "sdk:build": "pnpm --filter @kestrel-agents/sdk build",
@@ -138,7 +139,7 @@
     "next:release-check": "pnpm --filter @kestrel-agents/next release:check",
     "ecosystem:e2e": "pnpm run sdk:build && pnpm run observability:build && pnpm run next:build && node --import tsx --test tests/e2e/sdk-ecosystem/ecosystem.test.ts tests/e2e/sdk-ecosystem/realtime-faults.test.ts",
     "ecosystem:next-fixture": "pnpm run sdk:build && pnpm run next:build && node --import tsx --test tests/e2e/sdk-ecosystem/next-fixture.test.ts",
-    "packages:release-check": "pnpm run protocol:release-check && pnpm run conversation:release-check && pnpm run memory:release-check && pnpm run workspace-skills:release-check && pnpm run sdk:release-check && pnpm run next:release-check && pnpm run ai-sdk:release-check && pnpm run observability:release-check && pnpm run runtime:release-check",
+    "packages:release-check": "pnpm run protocol:release-check && pnpm run conversation:release-check && pnpm run files:release-check && pnpm run memory:release-check && pnpm run workspace-skills:release-check && pnpm run sdk:release-check && pnpm run next:release-check && pnpm run ai-sdk:release-check && pnpm run observability:release-check && pnpm run runtime:release-check",
     "ecosystem:release-check": "pnpm run packages:release-check && pnpm run ecosystem:e2e && pnpm run ecosystem:next-fixture",
     "desktop:dev": "pnpm --filter @kestrel/desktop dev",
     "desktop:build": "pnpm --filter @kestrel/desktop build",
@@ -193,6 +194,7 @@
     "swe:passing": "bash scripts/swe-passing.sh",
     "swe:medium-low": "bash scripts/swe-medium-low.sh",
     "runner:service": "node --import tsx cli/runner/service.ts",
+    "qualification:sandbox-capability": "node --import tsx scripts/qualify-sandbox-capability.ts",
     "test:runner-service": "node --import tsx scripts/test-runner-service.ts",
     "test:web-runner": "node --import tsx scripts/test-web-runner.ts",
     "test:web-runner:live": "node --import tsx scripts/test-web-runner-live.ts",
@@ -257,6 +259,9 @@
   "pnpm": {
     "overrides": {
       "baseline-browser-mapping": "2.10.43"
+    },
+    "patchedDependencies": {
+      "@napi-rs/canvas@0.1.80": "patches/@napi-rs__canvas@0.1.80.patch"
     }
   },
   "packageManager": "pnpm@9.12.2+sha512.22721b3a11f81661ae1ec68ce1a7b879425a1ca5b991c975b074ac220b187ce56c708fe5db69f4c962c989452eee76c82877f4ee80f474cebd61ee13461b6228",
@@ -268,7 +273,6 @@
     "@kestrel-agents/protocol": "workspace:*",
     "@kestrel-agents/sdk": "workspace:*",
     "@kestrel-agents/workspace-skills": "workspace:*",
-    "@kestrel/mcp-security": "workspace:*",
     "@lumi/kestrel-environment-auth": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@tavily/core": "^0.7.2",

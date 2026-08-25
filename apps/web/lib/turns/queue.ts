@@ -166,6 +166,12 @@ export async function finalizeExhaustedDurableTurnJob(input: {
     failureCode: "TURN_DISPATCH_FAILED",
     failureMessage:
       "The Kestrel agent could not start this turn. Please try again.",
+    interactionFailure: {
+      failureCode: "TURN_DISPATCH_FAILED",
+      failureMessage: "The durable queue exhausted dispatch before the runner started.",
+      effectStatus: "not_started",
+      retryable: true,
+    },
   });
   return true;
 }
@@ -228,7 +234,7 @@ async function hasResolvedUnconsumedRuntimeInteraction(turnId: string) {
     where: and(
       eq(schema.threadInteractions.turnId, turnId),
       eq(schema.threadInteractions.source, "runtime"),
-      eq(schema.threadInteractions.status, "resolved"),
+      eq(schema.threadInteractions.status, "processing"),
       isNull(schema.threadInteractions.resumedAt),
     ),
   });
@@ -297,6 +303,12 @@ async function reconcileDurableThreadTurnQueueWithBoss(boss: PgBoss) {
         failureCode: "TURN_WORKER_INTERRUPTED",
         failureMessage:
           "The Kestrel agent was interrupted before this turn finished. Please try again.",
+        interactionFailure: {
+          failureCode: "TURN_WORKER_INTERRUPTED",
+          failureMessage: "The orphaned worker could not prove whether execution started.",
+          effectStatus: "unknown",
+          retryable: false,
+        },
       });
     }
   }

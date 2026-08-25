@@ -69,7 +69,7 @@ Use `mission_control.project.get` to inspect project work, attempts, evidence, r
 
 ## Compatibility
 
-Runtime, Protocol, SDK, adapters, and clients must use the exact matching 0.8 line. Kestrel does not add a 0.7 wire or API shim around removed project actions.
+Runtime, Protocol, SDK, adapters, and clients must follow their declared exact dependency contracts; compatible packages do not need equal semantic versions. Kestrel does not add a 0.7 wire or API shim around removed project actions.
 
 <Outcome>
   <p>Your consumer renders committed output, handles every terminal state, and routes recovery, approval, and Mission Control actions to their owning contracts.</p>

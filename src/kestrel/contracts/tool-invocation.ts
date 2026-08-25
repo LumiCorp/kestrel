@@ -9,6 +9,7 @@ import {
   parseToolActivationRefV1,
   type ToolActivationRefV1,
 } from "./tool-contract.js";
+import { parseRunnerExternalApprovalBindingV1, type RunnerExternalApprovalBindingV1 } from "@kestrel-agents/protocol";
 
 export const PREPARED_TOOL_CALL_VERSION = "v1" as const;
 export const TOOL_EXECUTION_OUTCOME_VERSION = "v1" as const;
@@ -44,6 +45,7 @@ export interface PreparedToolPolicyDispositionV1 {
 export interface PreparedToolApprovalAuthorityV1 {
   authorityRevision: string;
   approvalId?: string | undefined;
+  externalApprovalBinding?: RunnerExternalApprovalBindingV1 | undefined;
 }
 
 export interface PreparedToolInputAdapterV1 {
@@ -165,6 +167,7 @@ const POLICY_KEYS = new Set([
 const APPROVAL_KEYS = new Set([
   "authorityRevision",
   "approvalId",
+  "externalApprovalBinding",
 ]);
 const INPUT_ADAPTER_KEYS = new Set(["adapterId", "metadata"]);
 const OUTCOME_KEYS = new Set([
@@ -571,6 +574,9 @@ function parseApproval(value: unknown): PreparedToolApprovalAuthorityV1 {
     ...(input.approvalId === undefined
       ? {}
       : { approvalId: stringValue(input.approvalId, "prepared tool call.approval.approvalId") }),
+    ...(input.externalApprovalBinding === undefined
+      ? {}
+      : { externalApprovalBinding: parseRunnerExternalApprovalBindingV1(input.externalApprovalBinding) }),
   };
 }
 

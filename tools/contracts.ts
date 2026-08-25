@@ -1,6 +1,7 @@
 import type {
   CodeExecutionServicePort,
   CodeModeProfileConfig,
+  SandboxCapabilityRuntimeContext,
 } from "../src/code/contracts.js";
 import type {
   DevShellProfileConfig,
@@ -124,6 +125,8 @@ export interface DelegationTaskSpawnRequest {
 export interface RuntimeToolRunContext {
   runId: string;
   sessionId: string;
+  /** Exact prepared call identity supplied by the trusted tool gateway. */
+  toolCallId?: string | undefined;
   projectId?: string | undefined;
   approvalId?: string | undefined;
   threadId?: string | undefined;
@@ -215,6 +218,15 @@ export interface SharedToolContext {
   strictFinalizeProvenance?: boolean | undefined;
   codeMode?: CodeModeProfileConfig | undefined;
   codeExecutionService?: CodeExecutionServicePort | undefined;
+  /** Gateway-owned raw-output sink; capability tools invoke it before teardown. */
+  persistCompletedCapabilityResult?: ((rawOutput: unknown) => Promise<void>) | undefined;
+  sandboxCapabilityRuntime?: (
+    Omit<SandboxCapabilityRuntimeContext, "sessionId" | "runId" | "toolCallId" | "policy" | "approval" | "parentAuthorization"> & {
+      /** Set only by the trusted prepared-call path in UnifiedToolRegistry. */
+      preparedPolicy?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolPolicyDispositionV1 | undefined;
+      preparedApproval?: import("../src/kestrel/contracts/tool-invocation.js").PreparedToolApprovalAuthorityV1 | undefined;
+    }
+  ) | undefined;
   devShell?: DevShellProfileConfig | undefined;
   devShellService?: DevShellServicePort | undefined;
   desktopHostOpenService?: DesktopHostOpenServicePort | undefined;

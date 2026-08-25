@@ -630,7 +630,7 @@ export class InMemorySessionStore implements SessionStore {
     this.operationLog.push(`saveEffectResult:${result.idempotencyKey}:${result.status}`);
   }
 
-  async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus): Promise<void> {
+  async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, _owner: { runId: string; sessionId: string }): Promise<void> {
     for (const effect of this.effects) {
       if (effect.idempotencyKey === idempotencyKey) {
         effect.status = status;
@@ -1266,6 +1266,7 @@ export class InMemorySessionStore implements SessionStore {
     sessionId?: string | undefined;
     threadId?: string | undefined;
     delegationId?: string | undefined;
+    eventTypes?: RunEvent["type"][] | undefined;
     fromTimestamp?: string | undefined;
     toTimestamp?: string | undefined;
     limit?: number | undefined;
@@ -1290,6 +1291,9 @@ export class InMemorySessionStore implements SessionStore {
           return false;
         }
         if (input.sessionId !== undefined && event.sessionId !== input.sessionId) {
+          return false;
+        }
+        if (input.eventTypes !== undefined && input.eventTypes.includes(event.type) === false) {
           return false;
         }
         const matchesThread =

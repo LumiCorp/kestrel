@@ -159,7 +159,7 @@ Transport, HTTP, protocol-validation, terminal failure, cancellation, and waitin
 - use explicit filters for subscriptions; the SDK does not expose a global event firehose
 - use `stream.result` or `run()` results for terminal state rather than inferring completion from a disconnected stream
 - close long-lived clients when the owning server process or scope ends
-- use exact matching 0.8 Runtime, Protocol, SDK, adapter, and client versions
+- follow the exact dependency contracts declared by Runtime, Protocol, SDK, adapters, and clients; equal semantic versions are not required
 
 Start with [Build your first agent](/build/building-your-first-agent), then use
 [Next.js integration](/build/integrating-with-nextjs) or the

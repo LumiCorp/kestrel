@@ -60,6 +60,7 @@ import {
   isDurableTurnCancellationRequested,
   listMessagesForDurableTurn,
   persistDurableAssistantOutcome,
+  recordDurableRuntimeStarted,
   recordMobileTurnActivity,
   recordMobileTurnRuntimeActivity,
 } from "@/lib/turns/store";
@@ -422,6 +423,8 @@ export async function processDurableThreadTurn(
   let persistedAssistantMessageCount = 0;
   let environmentExecutionId = turn.environmentExecutionId;
   let runtimeStartedRecorded = false;
+  let runnerRunStartedObserved = false;
+  let runnerInvocationBegan = false;
   let runtimeTerminalObserved = false;
   let runtimeStartedEvent: {
     eventId: string;
@@ -436,16 +439,13 @@ export async function processDurableThreadTurn(
     ) {
       return;
     }
-    await appendDurableTurnEvent({
+    await recordDurableRuntimeStarted({
       turnId: turn.id,
-      type: "runtime.started",
-      data: {
-        eventId: runtimeStartedEvent.eventId,
-        executionId: environmentExecutionId,
-        runtimeRunId: runtimeStartedEvent.runtimeRunId,
-        requestedInteractionMode: turn.requestedInteractionMode,
-        effectiveInteractionMode: runtimeStartedEvent.effectiveInteractionMode,
-      },
+      eventId: runtimeStartedEvent.eventId,
+      executionId: environmentExecutionId,
+      runtimeRunId: runtimeStartedEvent.runtimeRunId,
+      requestedInteractionMode: turn.requestedInteractionMode,
+      effectiveInteractionMode: runtimeStartedEvent.effectiveInteractionMode,
     });
     runtimeStartedRecorded = true;
   };
@@ -501,6 +501,7 @@ export async function processDurableThreadTurn(
     status: KestrelTerminalStatus;
     error: string | null;
     errorCode: string | null;
+    errorDetails: Record<string, unknown> | null;
     interaction: KestrelInteractionPresentation | null;
     messages: DurableAssistantOutcomeMessage[];
     replayChunks: DurableReplayChunk[];
@@ -510,6 +511,7 @@ export async function processDurableThreadTurn(
     status: "contract_failure",
     error: null,
     errorCode: null,
+    errorDetails: null,
     interaction: null,
     messages: [],
     replayChunks: [],
@@ -518,6 +520,7 @@ export async function processDurableThreadTurn(
   };
   let waitingCommitted = false;
   let attachmentFailureFileIds: string[] = [];
+  let transientTitle: Promise<string | null> | null = null;
   try {
     const [session, storedMessages, thread, scheduleRun, turnContract] = await Promise.all([
       loadWorkerSession(turn.authorUserId),
@@ -614,6 +617,38 @@ export async function processDurableThreadTurn(
         resolvedAttachments = [];
       }
     }
+    transientTitle = turn.approvalId
+      ? null
+      : submittedUserMessage
+        ? generateTitleForOrganization({
+            message: submittedUserMessage,
+            modelId: turn.requestedModelId ?? undefined,
+            organizationId: turn.organizationId,
+            environmentId: turn.requestedEnvironmentId,
+          }).catch(async (error: unknown) => {
+            const code =
+              error &&
+              typeof error === "object" &&
+              "code" in error &&
+              typeof error.code === "string" &&
+              TITLE_FAILURE_CODE_PATTERN.test(error.code)
+                ? error.code
+                : "TITLE_GENERATION_FAILED";
+            console.error("Kestrel One title generation failed.", {
+              turnId: turn.id,
+              threadId: turn.threadId,
+              organizationId: turn.organizationId,
+              environmentId: turn.requestedEnvironmentId,
+              code,
+            });
+            await appendDurableTurnEvent({
+              turnId: turn.id,
+              type: "turn.activity",
+              data: { stage: "thread.title.failed", code },
+            }).catch(() => {});
+            return null;
+          })
+        : null;
     const responseInput: KestrelOneAgentResponseInput = {
       request: workerRequest(turn.id),
       session,
@@ -643,43 +678,26 @@ export async function processDurableThreadTurn(
           : undefined,
       interactionResponse: turn.interactionResponse ?? undefined,
       projectContext: projectContext ?? undefined,
-      transientTitle: turn.approvalId
-        ? null
-        : submittedUserMessage
-          ? generateTitleForOrganization({
-              message: submittedUserMessage,
-              modelId: turn.requestedModelId ?? undefined,
-              organizationId: turn.organizationId,
-              environmentId: turn.requestedEnvironmentId,
-            }).catch(async (error: unknown) => {
-              const code =
-                error &&
-                typeof error === "object" &&
-                "code" in error &&
-                typeof error.code === "string" &&
-                TITLE_FAILURE_CODE_PATTERN.test(error.code)
-                  ? error.code
-                  : "TITLE_GENERATION_FAILED";
-              console.error("Kestrel One title generation failed.", {
-                turnId: turn.id,
-                threadId: turn.threadId,
-                organizationId: turn.organizationId,
-                environmentId: turn.requestedEnvironmentId,
-                code,
-              });
-              await appendDurableTurnEvent({
-                turnId: turn.id,
-                type: "turn.activity",
-                data: { stage: "thread.title.failed", code },
-              }).catch(() => {});
-              return null;
-            })
-          : null,
+      transientTitle,
       signal: cancellation.signal,
       abortBehavior: "detach",
       onExecutionRouted: (executionId) => {
         environmentExecutionId = executionId;
         eventWrites = eventWrites.then(recordRuntimeStarted);
+      },
+      onApplicationProgress(progress) {
+        eventWrites = eventWrites.then(() =>
+          appendDurableTurnEvent({
+            turnId: turn.id,
+            type: "application.progress",
+            data: {
+              channel: "environment_activation",
+              code: progress.stage,
+              detail: progress.detail,
+              status: progress.status,
+            },
+          }).then(() => {}),
+        );
       },
       onRuntimeEvent(event) {
         if (isFinalizeAnswerCompletedEvent(event)) {
@@ -695,20 +713,20 @@ export async function processDurableThreadTurn(
         ) {
           runtimeTerminalObserved = true;
         }
+        if (event.type === "run.started") {
+          runnerRunStartedObserved = true;
+          if (event.runId) {
+            runtimeStartedEvent = {
+              eventId: event.id,
+              runtimeRunId: event.runId,
+              effectiveInteractionMode: event.payload.interactionMode ?? null,
+            };
+          }
+          eventWrites = eventWrites.then(recordRuntimeStarted);
+          return;
+        }
         eventWrites = eventWrites.then(async () => {
           try {
-            if (event.type === "run.started") {
-              if (event.runId) {
-                runtimeStartedEvent = {
-                  eventId: event.id,
-                  runtimeRunId: event.runId,
-                  effectiveInteractionMode:
-                    event.payload.interactionMode ?? null,
-                };
-              }
-              await recordRuntimeStarted();
-              return;
-            }
             await recordMobileTurnRuntimeActivity({
               turnId: turn.id,
               eventId: event.id,
@@ -766,6 +784,7 @@ export async function processDurableThreadTurn(
         terminal.status = meta.terminalStatus;
         terminal.error = meta.errorMessage;
         terminal.errorCode = meta.errorCode ?? null;
+        terminal.errorDetails = meta.errorDetails ?? null;
         terminal.interaction = meta.interaction;
         const messagesForPersistence =
           prepareKestrelRuntimeMessagesForPersistence(finishedMessages, meta);
@@ -791,6 +810,10 @@ export async function processDurableThreadTurn(
           await persistDurableAssistantOutcome({
             turnId: turn.id,
             interaction: meta.interaction,
+            ...(meta.runId ? { sourceRuntimeRunId: meta.runId } : {}),
+            ...(meta.interaction.approval?.toolCallId
+              ? { runtimeApprovalId: meta.interaction.approval.toolCallId }
+              : {}),
             messages: terminal.messages,
             replayChunks: terminal.replayChunks,
           });
@@ -815,6 +838,7 @@ export async function processDurableThreadTurn(
         }
       },
     };
+    runnerInvocationBegan = true;
     const response = recoveredCompletedExecutionId
       ? await createKestrelOneRecoveredCompletionResponse({
           ...responseInput,
@@ -847,6 +871,19 @@ export async function processDurableThreadTurn(
     // result is authoritative even if the worker lease ends immediately after
     // it. Earlier worker loss reaches the failed/catch paths instead.
     const completionStatus = terminalTurnStatus(terminal.status);
+    const interactionFailure = completionStatus === "failed" && !runnerRunStartedObserved
+      ? {
+          failureCode: terminal.errorCode ?? "RUNTIME_FAILED",
+          failureMessage:
+            terminal.error ?? "Authorization failed before execution started.",
+          effectStatus: terminal.errorDetails?.effectStatus === "not_started"
+            ? "not_started" as const
+            : "unknown" as const,
+          retryable:
+            terminal.errorDetails?.effectStatus === "not_started" &&
+            terminal.errorDetails?.retryable === true,
+        }
+      : undefined;
     const completion = await completeDurableThreadTurn({
       turnId: turn.id,
       status: completionStatus,
@@ -856,22 +893,22 @@ export async function processDurableThreadTurn(
         completionStatus === "failed"
           ? workerInterrupted
             ? "TURN_WORKER_INTERRUPTED"
-            : terminal.errorCode === "MODEL_AUTH_ERROR"
-              ? terminal.errorCode
-            : terminal.errorCode === "AGENT_CONNECTION_INTERRUPTED"
-              ? "AGENT_CONNECTION_INTERRUPTED"
-            : terminal.errorCode === "RUNNER_EVENT_CURSOR_EXPIRED" ||
-                terminal.errorCode === "RUNNER_EVENT_CURSOR_UNKNOWN"
-              ? terminal.errorCode
             : terminal.status === "contract_failure"
               ? "PRESENTATION_CONTRACT_FAILURE"
-              : "RUNTIME_FAILED"
+              : terminal.errorCode ?? "RUNTIME_FAILED"
           : null,
       failureMessage: terminal.error,
+      interactionFailure,
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
   } catch (error) {
+    await transientTitle;
     await eventWrites.catch(() => {});
+    if (runnerRunStartedObserved && !runtimeStartedRecorded) {
+      // The runner may already have begun executing. Leave the turn running so
+      // a later worker can reattach and commit the start acknowledgement.
+      throw error;
+    }
     if (
       workerInterrupted &&
       environmentExecutionId &&
@@ -955,6 +992,16 @@ export async function processDurableThreadTurn(
         : attachmentCode
           ? attachmentFailureMessage(attachmentCode, attachmentFileIds)
           : message,
+      interactionFailure: runnerRunStartedObserved
+        ? undefined
+        : {
+            failureCode: stopped
+              ? "TURN_STOPPED"
+              : attachmentCode ?? errorCode ?? "TURN_WORKER_FAILED",
+            failureMessage: stopped ? "Turn stopped." : message,
+            effectStatus: runnerInvocationBegan ? "unknown" : "not_started",
+            retryable: false,
+          },
     });
     return { processed: true, nextTurnId: completion.nextTurnId };
   } finally {

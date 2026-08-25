@@ -706,6 +706,41 @@ test(
     });
     assert.match(requestedApproval.authorityRevision ?? "", /^sha256:[0-9a-f]{64}$/u);
     assert.equal(requestedApproval.externalApprovalBinding?.authorityKind, "hosted_app_policy");
+    const approvalTurnId = `approval-turn-${suffix}`;
+    await sql`
+      UPDATE "environment_run_executions"
+      SET "status" = 'running', "runtime_run_id" = ${runId}, "started_at" = ${now}
+      WHERE "id" = ${runId}
+    `;
+    await sql`
+      INSERT INTO "thread_turns" (
+        "id", "organization_id", "thread_id", "author_user_id",
+        "approval_id", "approval_approved",
+        "environment_execution_id", "requested_environment_id",
+        "idempotency_key", "sequence", "queue_ordinal", "status"
+      ) VALUES (
+        ${approvalTurnId}, ${organizationId}, ${threadId}, ${userId},
+        ${`turn-approval-${suffix}`}, true,
+        ${runId}, ${environmentId}, ${`approval-turn-${suffix}`}, 1, 1, 'running'
+      )
+    `;
+    const bindApprovalInteraction = async (runtimeApprovalId: string) => {
+      await sql`
+        INSERT INTO "thread_interactions" (
+          "id", "request_id", "organization_id", "thread_id", "turn_id",
+          "source", "kind", "event_type", "prompt", "status",
+          "request_envelope", "response_envelope", "runtime_approval_id",
+          "source_runtime_run_id", "resolved_by_user_id", "resolved_at", "resumed_at"
+        ) VALUES (
+          ${`interaction-${runtimeApprovalId}`}, ${`request-${runtimeApprovalId}`},
+          ${organizationId}, ${threadId}, ${approvalTurnId}, 'runtime', 'approval',
+          'user.approval', 'Approve?', 'resolved',
+          ${sql.json({ approval: { toolName: "tavily.research" } })},
+          ${sql.json({ approved: true })}, ${runtimeApprovalId}, ${runId},
+          ${userId}, ${now}, ${now}
+        )
+      `;
+    };
     await sql`
       INSERT INTO "environment_run_executions" (
         "id", "organization_id", "environment_id", "workspace_id", "thread_id",
@@ -718,15 +753,22 @@ test(
         ])}
       )
     `;
-    const replayedApproval =
-      await appApprovals.recordAppOperationApprovalRequest({
+    await sql`
+      UPDATE "environment_run_executions"
+      SET "status" = 'running', "runtime_run_id" = ${replayRunId}, "started_at" = ${now}
+      WHERE "id" = ${replayRunId}
+    `;
+    await assert.rejects(
+      appApprovals.recordAppOperationApprovalRequest({
         binding: approvalBinding,
         projectId,
         requestedExecutionId: replayRunId,
         expiresAt: new Date(Date.now() + 60_000),
-      });
-    assert.equal(replayedApproval.id, requestedApproval.id);
-    assert.equal(replayedApproval.requestedExecutionId, runId);
+      }),
+      (error: unknown) =>
+        error instanceof appApprovals.AppOperationApprovalError &&
+        error.code === "APP_OPERATION_APPROVAL_BINDING_MISMATCH",
+    );
     await assert.rejects(
       appApprovals.decideAppOperationApproval({
         organizationId,
@@ -755,6 +797,7 @@ test(
     });
     assert.equal(repeatedApproval.id, approved.id);
     assert.equal(repeatedApproval.status, "approved");
+    await bindApprovalInteraction(approvalBinding.runtimeApprovalId);
     const concurrentConsumption = await Promise.allSettled([
       appApprovals.consumeAppOperationApproval({
         binding: approvalBinding,
@@ -779,6 +822,46 @@ test(
     assert.equal(consumedReplay.id, approved.id);
     assert.equal(consumedReplay.status, "consumed");
 
+    const directlyApprovedBinding = {
+      ...approvalBinding,
+      runtimeApprovalId: `approval-direct-${suffix}`,
+      payload: { query: "confirmed in the owning UI" },
+    };
+    const directlyApproved =
+      await appApprovals.recordAppOperationApprovalRequest({
+        binding: directlyApprovedBinding,
+        projectId,
+        requestedExecutionId: runId,
+        expiresAt: new Date(Date.now() + 5 * 60_000),
+        approvedByUserId: userId,
+      });
+    assert.equal(directlyApproved.status, "approved");
+    assert.equal(directlyApproved.decidedByUserId, userId);
+    await bindApprovalInteraction(directlyApprovedBinding.runtimeApprovalId);
+    await assert.rejects(
+      appApprovals.consumeAppOperationApproval({
+        binding: directlyApprovedBinding,
+        consumedExecutionId: replayRunId,
+      }),
+      (error: unknown) =>
+        error instanceof appApprovals.AppOperationApprovalError &&
+        error.code === "APP_OPERATION_APPROVAL_INVALID",
+    );
+    const directlyConsumed = await appApprovals.consumeAppOperationApproval({
+      binding: directlyApprovedBinding,
+      consumedExecutionId: runId,
+    });
+    assert.equal(directlyConsumed.status, "consumed");
+    await assert.rejects(
+      appApprovals.consumeAppOperationApproval({
+        binding: directlyApprovedBinding,
+        consumedExecutionId: runId,
+      }),
+      (error: unknown) =>
+        error instanceof appApprovals.AppOperationApprovalError &&
+        error.code === "APP_OPERATION_APPROVAL_INVALID",
+    );
+
     const changedPolicyBinding = {
       ...approvalBinding,
       runtimeApprovalId: `approval-policy-${suffix}`,
@@ -790,6 +873,7 @@ test(
       requestedExecutionId: runId,
       expiresAt: new Date(Date.now() + 60_000),
     });
+    await bindApprovalInteraction(changedPolicyBinding.runtimeApprovalId);
     await appApprovals.decideAppOperationApproval({
       organizationId,
       threadId,
@@ -1842,19 +1926,31 @@ test(
       actorUserId: userId,
       installed: true,
     });
+    let githubRepositories = [
+      {
+        id: 4242,
+        node_id: "repository-node-4242",
+        full_name: "kestrel/apps-proof",
+        default_branch: "main" as string | null,
+        private: true,
+        html_url: "https://github.com/kestrel/apps-proof",
+        permissions: { pull: true, push: true, admin: false },
+      },
+    ];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
-      const body = url.includes("/user/repos")
-        ? [
-            {
-              full_name: "kestrel/apps-proof",
-              default_branch: "main",
-              private: true,
-              html_url: "https://github.com/kestrel/apps-proof",
-              permissions: { pull: true, push: true, admin: false },
+      const body = url.includes("/graphql")
+        ? {
+            data: {
+              nodes: githubRepositories.map((repository) => ({
+                id: repository.node_id,
+                isEmpty: repository.default_branch === null,
+              })),
             },
-          ]
-        : { login: "apps-proof-user" };
+          }
+        : url.includes("/user/repos")
+          ? githubRepositories
+          : { login: "apps-proof-user" };
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -1890,6 +1986,98 @@ test(
       status: "connected",
       resourceCount: "1",
     });
+    const [initialRepository] = await sql<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "app_connection_resources"
+      WHERE "connection_id" = ${githubSync.connection.id}
+        AND "external_id" = 'repository-id:4242'
+    `;
+    assert.ok(initialRepository);
+    githubRepositories = [
+      {
+        ...githubRepositories[0]!,
+        full_name: "kestrel/apps-proof-renamed",
+        html_url: "https://github.com/kestrel/apps-proof-renamed",
+      },
+      {
+        id: 9898,
+        node_id: "repository-node-9898",
+        full_name: "kestrel/new-private-empty",
+        default_branch: null,
+        private: true,
+        html_url: "https://github.com/kestrel/new-private-empty",
+        permissions: { pull: true, push: true, admin: true },
+      },
+    ];
+    await githubOauth.syncGithubUserConnection({
+      organizationId,
+      userId,
+      authAccountId: githubAuthAccountId,
+      providerAccountId: githubProviderAccountId,
+      accessToken: "github-test-token",
+      scopes: ["repo"],
+    });
+    const refreshedRepositories = await sql<
+      Array<{
+        id: string;
+        externalId: string;
+        label: string;
+        enabled: boolean;
+        repositoryId: string;
+        defaultBranch: string | null;
+        isEmpty: boolean;
+        isPrivate: boolean;
+      }>
+    >`
+      SELECT "id",
+             "external_id" AS "externalId",
+             "label",
+             "enabled",
+             "metadata"->>'repositoryId' AS "repositoryId",
+             "metadata"->>'defaultBranch' AS "defaultBranch",
+             ("metadata"->>'isEmpty')::boolean AS "isEmpty",
+             ("metadata"->>'private')::boolean AS "isPrivate"
+      FROM "app_connection_resources"
+      WHERE "connection_id" = ${githubSync.connection.id}
+      ORDER BY "external_id"
+    `;
+    assert.deepEqual([...refreshedRepositories], [
+      {
+        id: initialRepository.id,
+        externalId: "repository-id:4242",
+        label: "kestrel/apps-proof-renamed",
+        enabled: true,
+        repositoryId: "4242",
+        defaultBranch: "main",
+        isEmpty: false,
+        isPrivate: true,
+      },
+      {
+        id: refreshedRepositories[1]?.id,
+        externalId: "repository-id:9898",
+        label: "kestrel/new-private-empty",
+        enabled: true,
+        repositoryId: "9898",
+        defaultBranch: null,
+        isEmpty: true,
+        isPrivate: true,
+      },
+    ]);
+    githubRepositories = [githubRepositories[1]!];
+    await githubOauth.syncGithubUserConnection({
+      organizationId,
+      userId,
+      authAccountId: githubAuthAccountId,
+      providerAccountId: githubProviderAccountId,
+      accessToken: "github-test-token",
+      scopes: ["repo"],
+    });
+    const [revokedRepository] = await sql<Array<{ enabled: boolean }>>`
+      SELECT "enabled"
+      FROM "app_connection_resources"
+      WHERE "id" = ${initialRepository.id}
+    `;
+    assert.deepEqual(revokedRepository, { enabled: false });
     const githubLegacyWrites = await sql<Array<{ count: string }>>`
       SELECT count(*)::text AS "count"
       FROM "user_tool_connections"

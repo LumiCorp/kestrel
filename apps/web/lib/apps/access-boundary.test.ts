@@ -30,6 +30,7 @@ test("Project editors own shared App and capability policy changes", () => {
   for (const relativePath of [
     "app/api/projects/[id]/apps/[appKey]/route.ts",
     "app/api/projects/[id]/apps/[appKey]/capabilities/[capabilityKey]/route.ts",
+    "app/api/projects/[id]/apps/github/repositories/route.ts",
   ]) {
     const source = readAppSource(relativePath);
     assert.match(source, /requireProjectRole\(/u);

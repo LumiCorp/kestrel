@@ -148,13 +148,11 @@ export function projectDesktopConversationTimeline(
         (message) => message.metadata?.kestrelRunId === runId,
       );
       const runActivities = activities.filter((activity) => activity.runId === runId);
-      const timelineItems = [
-        ...runMessages.filter((message) => message.role === "user").map((message) =>
+      const timelineItems = weaveRunActivityAroundMessages(
+        runMessages.map((message) =>
           toTranscriptTimelineItem(message.line, transcript.indexOf(message.line))),
-        ...runActivities.map(toRunStreamTimelineItem),
-        ...runMessages.filter((message) => message.role !== "user").map((message) =>
-          toTranscriptTimelineItem(message.line, transcript.indexOf(message.line))),
-      ];
+        runActivities.map(toRunStreamTimelineItem),
+      );
       if (timelineItems.length === 0) continue;
       const key = `turn:${item.turnId}:run:${runId}`;
       segments.set(key, {
@@ -173,13 +171,11 @@ export function projectDesktopConversationTimeline(
     );
     const ungroupedActivities = activities.filter((activity) => activity.runId === undefined);
     if (ungroupedMessages.length > 0 || ungroupedActivities.length > 0) {
-      const timelineItems = [
-        ...ungroupedMessages.filter((message) => message.role === "user").map((message) =>
+      const timelineItems = weaveRunActivityAroundMessages(
+        ungroupedMessages.map((message) =>
           toTranscriptTimelineItem(message.line, transcript.indexOf(message.line))),
-        ...ungroupedActivities.map(toRunStreamTimelineItem),
-        ...ungroupedMessages.filter((message) => message.role !== "user").map((message) =>
-          toTranscriptTimelineItem(message.line, transcript.indexOf(message.line))),
-      ];
+        ungroupedActivities.map(toRunStreamTimelineItem),
+      );
       const key = `turn:${item.turnId}:unsegmented`;
       segments.set(key, {
         id: key,
@@ -253,6 +249,39 @@ function toRunStreamTimelineItem(item: DesktopRunStreamItem): DesktopConversatio
 
 function toTranscriptTimelineItem(line: RendererTranscriptLine, index: number): DesktopConversationTimelineItem {
   return { id: `transcript:${messageIdentity(line) ?? `${index}:${line.timestamp}`}`, type: "transcript", line };
+}
+
+/**
+ * Shared projection has already established message order. Runtime activity is
+ * displayed in timestamp order around those fixed anchors, while retaining the
+ * run stream's own sequence when timestamps arrive out of order.
+ */
+function weaveRunActivityAroundMessages(
+  messages: readonly DesktopConversationTimelineItem[],
+  activities: readonly DesktopConversationTimelineItem[],
+): DesktopConversationTimelineItem[] {
+  const activityBuckets = Array.from({ length: messages.length + 1 }, () =>
+    [] as DesktopConversationTimelineItem[]);
+  let earliestAllowedBucket = 0;
+  for (const activity of activities) {
+    let bucket = 0;
+    while (
+      bucket < messages.length &&
+      compareTimelineItems(messages[bucket]!, activity) <= 0
+    ) {
+      bucket += 1;
+    }
+    bucket = Math.max(bucket, earliestAllowedBucket);
+    activityBuckets[bucket]!.push(activity);
+    earliestAllowedBucket = bucket;
+  }
+
+  const timeline: DesktopConversationTimelineItem[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    timeline.push(...activityBuckets[index]!, messages[index]!);
+  }
+  timeline.push(...activityBuckets[messages.length]!);
+  return timeline;
 }
 
 function earliestTimelineTimestamp(items: readonly DesktopConversationTimelineItem[]): string {

@@ -1,6 +1,6 @@
 {
   "version": "cli_contract_matrix_v1",
-  "generatedAt": "2026-08-04T15:41:57.189Z",
+  "generatedAt": "2026-08-24T12:31:48.752Z",
   "executables": [
     {
       "name": "kestrel",
@@ -45,7 +45,7 @@
     },
     {
       "command": "job",
-      "usage": "kestrel job run --json-in <file> --json-out <file> [--profile <id>]",
+      "usage": "kestrel job <preflight|run> --json-in <file> --json-out <file>",
       "flags": [
         "--json-in",
         "--json-out",

@@ -7,6 +7,7 @@ import {
 import { getVisibleFileForThread } from "@/lib/files/service";
 import { ensureEffectiveFileAvailability } from "@/lib/files/availability";
 import { getManagedFileStorageProvider } from "@/lib/files/storage-provider";
+import { modelVisibleMetadataOnlyReason } from "@/lib/files/representation";
 import { errorResponse } from "@/lib/knowledge/http";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 
@@ -50,6 +51,10 @@ export async function POST(request: Request) {
     const sourceUrl = storage.signedReadUrl
       ? await storage.signedReadUrl(file.objectKey, 900)
       : undefined;
+    const metadataOnlyReason = modelVisibleMetadataOnlyReason(
+      file.representationStatus,
+      file.metadataOnlyReason,
+    );
     return NextResponse.json({
       fileId: file.id,
       filename: file.filename,
@@ -58,7 +63,7 @@ export async function POST(request: Request) {
       sha256: file.sha256,
       representation: file.representationStatus,
       ...(file.representationText ? { text: file.representationText, truncated: file.textTruncated } : {}),
-      ...(file.metadataOnlyReason ? { metadataOnlyReason: file.metadataOnlyReason } : {}),
+      ...(metadataOnlyReason ? { metadataOnlyReason } : {}),
       ...(sourceUrl ? { sourceUrl, sourceUrlExpiresInSeconds: 900 } : {}),
     });
   } catch (error) {

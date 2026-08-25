@@ -35,7 +35,7 @@ test("docs chrome and README identify Lumi maintenance and support", async () =>
   assert.match(readme, /Kestrel is maintained and supported by/u);
   assert.match(readme, /https:\/\/www\.lumicorp\.ai/u);
   assert.match(readme, /Desktop 0\.8\.6/u);
-  assert.match(readme, /packages and CLI\/TUI 0\.8\.5/u);
+  assert.match(readme, /Runtime and CLI\/TUI 0\.8\.8/u);
   assert.match(readme, /updates\.lumicorp\.ai\/desktop\/releases\/0\.8\.6\/arm64\/Kestrel-0\.8\.6-mac-arm64\.dmg/u);
   assert.doesNotMatch(readme, /one coordinated release across Desktop/iu);
 });
@@ -60,8 +60,12 @@ test("superseded product and operations URLs are permanent redirects", async () 
     { source: "/apps/web", destination: "/kestrel-one", permanent: true },
     { source: "/docs", destination: "/start", permanent: true },
     { source: "/docs/quickstart", destination: "/start/quickstart", permanent: true },
-    { source: "/docs/core-concepts", destination: "/start/concepts", permanent: true },
-    { source: "/docs/architecture-overview", destination: "/start/architecture", permanent: true },
+    { source: "/start/concepts", destination: "/concepts", permanent: true },
+    { source: "/docs/core-concepts", destination: "/concepts", permanent: true },
+    { source: "/start/architecture", destination: "/concepts/architecture", permanent: true },
+    { source: "/docs/architecture-overview", destination: "/concepts/architecture", permanent: true },
+    { source: "/start/runtime-model", destination: "/concepts/agent-loop", permanent: true },
+    { source: "/docs/runtime-model", destination: "/concepts/agent-loop", permanent: true },
     { source: "/docs/faq", destination: "/start/faq", permanent: true },
     { source: "/deploy", destination: "/operate", permanent: true },
     { source: "/deploy/running-the-runner-service", destination: "/operate/runner-service", permanent: true },

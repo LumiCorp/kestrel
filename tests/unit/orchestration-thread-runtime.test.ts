@@ -1728,6 +1728,20 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
     message: "change files",
     eventType: "user.message",
     actor: { actorType: "operator", actorId: "operator" },
+    runtimeTurn: {
+      sessionId: "session-thread-approval",
+      message: "change files",
+      eventType: "user.message",
+      mcpContext: {
+        gatewayUrl: "https://gateway.example.test",
+        grantId: "11111111-1111-4111-8111-111111111111",
+        protocolVersion: "2025-11-25",
+        organizationId: "organization-thread-approval",
+        environmentId: "environment-thread-approval",
+        projectId: "project-thread-approval",
+        threadId: "thread-approval",
+      },
+    },
   });
   const requestId = waiting.wait?.request?.requestId;
   assert.ok(requestId);
@@ -1766,6 +1780,22 @@ test("ThreadRuntime resolves approval requests and expires turn-scoped grants af
   assert.equal(resumed.output.status, "COMPLETED");
   assert.equal(executor.inputs.length, 2);
   assert.equal(executor.inputs[1]?.resumeBlockedRun, true);
+  assert.equal(
+    executor.inputs[1]?.metadata?.blockedRunId,
+    waiting.output.runId,
+  );
+  assert.deepEqual(executor.inputs[1]?.metadata?.blockedToolScope, {
+    runId: waiting.output.runId,
+    mcpContext: {
+      gatewayUrl: "https://gateway.example.test",
+      grantId: "11111111-1111-4111-8111-111111111111",
+      protocolVersion: "2025-11-25",
+      organizationId: "organization-thread-approval",
+      environmentId: "environment-thread-approval",
+      projectId: "project-thread-approval",
+      threadId: "thread-approval",
+    },
+  });
   assert.equal(executor.inputs[1]?.eventType, "user.approval");
   assert.equal(executor.inputs[1]?.interactionMode, "build");
   assert.equal(executor.inputs[1]?.actSubmode, "full_auto");
@@ -4686,6 +4716,7 @@ test("ThreadRuntime composes and injects a thread-scoped runtime assembly", asyn
     effectiveAssemblyLabel?: string | undefined;
     bundleId?: string | undefined;
     toolAllowlist?: string[] | undefined;
+    modelCapabilities?: { visionInputEnabled: boolean } | undefined;
   };
   assert.equal(runtimeAssembly.bundleId, expectedBundleId);
   assert.equal(runtimeAssembly.agentProfileId, "reference");
@@ -4693,6 +4724,7 @@ test("ThreadRuntime composes and injects a thread-scoped runtime assembly", asyn
   assert.equal(runtimeAssembly.environmentShellKind, "web");
   assert.equal(runtimeAssembly.environmentPresetId, "web_balanced");
   assert.deepEqual(runtimeAssembly.environmentCapabilityPackIds, ["balanced"]);
+  assert.deepEqual(runtimeAssembly.modelCapabilities, { visionInputEnabled: false });
   assert.equal(runtimeAssembly.effectiveAssemblyId, expectedBundleId);
   assert.equal(runtimeAssembly.effectiveAssemblyLabel, "Reference on web:web_balanced");
   assert.deepEqual(runtimeAssembly.toolAllowlist, ["fs.read_text", "web.search"]);

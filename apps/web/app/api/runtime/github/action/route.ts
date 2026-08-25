@@ -4,14 +4,14 @@ import {
 } from "@lumi/kestrel-environment-auth";
 import { Octokit } from "@octokit/rest";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import type { z } from "zod";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { auth } from "@/lib/auth";
 import {
-  consumeGitHubActionApproval,
-  GitHubActionApprovalError,
-  type GitHubMutationOperation,
-} from "@/lib/integrations/github-action-approvals";
+  AppOperationApprovalError,
+  consumeAppOperationApproval,
+} from "@/lib/apps/app-operation-approvals";
+import { githubRuntimeActionInputSchema } from "@/lib/apps/hosted-app-operation-contract";
 import {
   authorizeGitHubCapability,
   type GitHubCapability,
@@ -19,61 +19,18 @@ import {
 } from "@/lib/integrations/github-policy";
 import { errorResponse } from "@/lib/knowledge/http";
 
-const repositorySchema = z.string().regex(/^[^/\s]+\/[^/\s]+$/u);
-const inputSchema = z.discriminatedUnion("operation", [
-  z.object({
-    operation: z.literal("repository.read_file"),
-    repository: repositorySchema,
-    path: z.string().trim().min(1).max(4096),
-    ref: z.string().trim().min(1).max(255).optional(),
-  }),
-  z.object({
-    operation: z.literal("issue.create"),
-    repository: repositorySchema,
-    title: z.string().trim().min(1).max(256),
-    body: z.string().max(65_536).optional(),
-  }),
-  z.object({
-    operation: z.literal("pull_request.create"),
-    repository: repositorySchema,
-    title: z.string().trim().min(1).max(256),
-    head: z.string().trim().min(1).max(255),
-    base: z.string().trim().min(1).max(255),
-    body: z.string().max(65_536).optional(),
-  }),
-  z.object({
-    operation: z.literal("pull_request.merge"),
-    repository: repositorySchema,
-    pullNumber: z.number().int().positive(),
-    method: z.enum(["merge", "squash", "rebase"]).optional(),
-  }),
-  z.object({
-    operation: z.literal("release.create"),
-    repository: repositorySchema,
-    tagName: z.string().trim().min(1).max(255),
-    name: z.string().trim().max(256).optional(),
-    body: z.string().max(125_000).optional(),
-    targetCommitish: z.string().trim().min(1).max(255).optional(),
-    draft: z.boolean().optional(),
-    prerelease: z.boolean().optional(),
-  }),
-  z.object({
-    operation: z.literal("workflow.dispatch"),
-    repository: repositorySchema,
-    workflowId: z.union([z.string().trim().min(1).max(255), z.number().int()]),
-    ref: z.string().trim().min(1).max(255),
-    inputs: z.record(z.string(), z.string()).optional(),
-  }),
-]);
+const inputSchema = githubRuntimeActionInputSchema;
 
 export async function POST(request: Request) {
   let ticket: EnvironmentExecutionTicket | null = null;
+  let operation: z.infer<typeof inputSchema>["operation"] | null = null;
   try {
     ticket = verifyEnvironmentExecutionTicket({
       token: readBearer(request.headers.get("authorization")),
       publicKey: process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
     });
     const input = inputSchema.parse(await request.json());
+    operation = input.operation;
     const capability = capabilityForOperation(input.operation);
     const policy = await authorizeGitHubCapability({
       ticket,
@@ -82,18 +39,33 @@ export async function POST(request: Request) {
       requireRunExecution: true,
     });
     let consumedApprovalId: string | null = null;
-    if (policy.approvalMode === "ask") {
-      consumedApprovalId = readApprovalId(
-        request.headers.get("x-kestrel-approval-id")
-      );
-      await consumeGitHubActionApproval({
-        identity: ticket,
-        runtimeApprovalId: consumedApprovalId,
-        resourceId: policy.resource.id,
-        repository: input.repository,
-        operation: input.operation as GitHubMutationOperation,
-        payload: input,
+    const runtimeApprovalId = readApprovalId(
+      request.headers.get("x-kestrel-approval-id"),
+    );
+    if (policy.approvalMode === "ask" && runtimeApprovalId === null) {
+      throw new GitHubPolicyError("GITHUB_APPROVAL_REQUIRED", 409);
+    }
+    if (input.operation !== "repository.read_file" && runtimeApprovalId !== null) {
+      const consumed = await consumeAppOperationApproval({
+        consumedExecutionId: ticket.runId,
+        binding: {
+          organizationId: ticket.organizationId,
+          environmentId: ticket.environmentId,
+          workspaceId: ticket.workspaceId,
+          threadId: ticket.threadId,
+          actorUserId: ticket.actorId,
+          agentId: ticket.agentId,
+          appKey: "github",
+          capabilityKey: capability,
+          connectionId: policy.connection.id,
+          resourceId: policy.resource.id,
+          resourceType: "repository",
+          operationKey: input.operation,
+          runtimeApprovalId,
+          payload: input,
+        },
       });
+      consumedApprovalId = consumed.id;
     }
     const credential = await auth.api.getAccessToken({
       body: {
@@ -131,8 +103,20 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     if (
+      operation === "repository.read_file" &&
+      error &&
+      typeof error === "object" &&
+      "status" in error &&
+      error.status === 404
+    ) {
+      return NextResponse.json(
+        { error: { code: "GITHUB_CONTENT_NOT_FOUND" } },
+        { status: 404 },
+      );
+    }
+    if (
       error instanceof GitHubPolicyError ||
-      error instanceof GitHubActionApprovalError
+      error instanceof AppOperationApprovalError
     ) {
       if (ticket) {
         await logAdminEvent({
@@ -156,11 +140,7 @@ export async function POST(request: Request) {
         { error: { code: error.code } },
         {
           status:
-            error instanceof GitHubPolicyError
-              ? error.status
-              : error.code === "GITHUB_APPROVAL_BINDING_MISMATCH"
-                ? 403
-                : 409,
+            error instanceof GitHubPolicyError ? error.status : 409,
         }
       );
     }
@@ -280,8 +260,5 @@ function readBearer(value: string | null) {
 
 function readApprovalId(value: string | null) {
   const approvalId = value?.trim();
-  if (!approvalId || approvalId.length > 500) {
-    throw new GitHubActionApprovalError("GITHUB_APPROVAL_REQUIRED");
-  }
-  return approvalId;
+  return approvalId && approvalId.length <= 500 ? approvalId : null;
 }

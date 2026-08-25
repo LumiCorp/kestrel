@@ -1,6 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { shouldCopyDesktopResourceEntry } from "./prepare-desktop-resources.js";
@@ -20,8 +29,10 @@ import {
   verifyPreparedDesktopPostgresBundle,
 } from "./prepare-desktop-postgres-bundle.js";
 
-const TARGET_PLATFORM = process.env.KESTREL_CLI_PACKAGE_PLATFORM?.trim() || process.platform;
-const TARGET_ARCH = process.env.KESTREL_CLI_PACKAGE_ARCH?.trim() || process.arch;
+const TARGET_PLATFORM =
+  process.env.KESTREL_CLI_PACKAGE_PLATFORM?.trim() || process.platform;
+const TARGET_ARCH =
+  process.env.KESTREL_CLI_PACKAGE_ARCH?.trim() || process.arch;
 const CLI_NAMES = ["kestrel", "ks", "kcron"] as const;
 const CLI_RESOURCE_DIRECTORIES = [
   "cli",
@@ -51,7 +62,9 @@ const npmCacheDir = path.join(cliDir, ".npm-cache");
 const artifactName = `kestrel-cli-${rootPackageJson.version}-${TARGET_PLATFORM}-${TARGET_ARCH}.tar.gz`;
 const artifactPath = path.join(outDir, artifactName);
 const excludedRuntimePaths = new Set(
-  CLI_EXCLUDED_RUNTIME_PATHS.map((relativePath) => path.resolve(repoRoot, relativePath)),
+  CLI_EXCLUDED_RUNTIME_PATHS.map((relativePath) =>
+    path.resolve(repoRoot, relativePath),
+  ),
 );
 
 if (process.platform !== TARGET_PLATFORM || process.arch !== TARGET_ARCH) {
@@ -63,7 +76,9 @@ if (
   (TARGET_PLATFORM !== "darwin" && TARGET_PLATFORM !== "linux") ||
   (TARGET_ARCH !== "arm64" && TARGET_ARCH !== "x64")
 ) {
-  throw new Error(`Unsupported CLI package target: ${TARGET_PLATFORM}-${TARGET_ARCH}.`);
+  throw new Error(
+    `Unsupported CLI package target: ${TARGET_PLATFORM}-${TARGET_ARCH}.`,
+  );
 }
 
 rmSync(stageDir, { recursive: true, force: true });
@@ -71,13 +86,13 @@ mkdirSync(libexecDir, { recursive: true });
 mkdirSync(binDir, { recursive: true });
 mkdirSync(outDir, { recursive: true });
 
-writeCliRuntimeManifest();
 copyCliRuntimeResources();
 copyCliRuntimeTsconfig();
 if (TARGET_PLATFORM === "darwin") {
   prepareCliPostgresBundle();
   copyCliPostgresBundle();
 }
+writeCliRuntimeManifest();
 installRuntimeDependenciesWithPackedProtocol();
 verifyLocalCoreWorkspacePackagePayloads({
   sourceRoot: repoRoot,
@@ -87,6 +102,7 @@ copyLocalCoreBuildInputs({
   sourceRoot: repoRoot,
   targetRoot: libexecDir,
 });
+writeCliRuntimeManifest();
 const coreBuildIdentity = writePackagedLocalCoreBuildIdentity({
   sourceRoot: repoRoot,
   targetRoot: libexecDir,
@@ -104,34 +120,45 @@ writeArtifactDigest();
 
 console.log(`[cli] packaged ${artifactPath}`);
 
-function writeBundleManifest(coreBuildIdentity: LocalCoreBuildIdentityV1): void {
+function writeBundleManifest(
+  coreBuildIdentity: LocalCoreBuildIdentityV1,
+): void {
   writeFileSync(
     path.join(stageDir, "kestrel-bundle.json"),
-    `${JSON.stringify({
-      version: "kestrel_cli_bundle_v1",
-      package: rootPackageJson.name,
-      packageVersion: rootPackageJson.version,
-      coreBuildId: coreBuildIdentity.buildId,
-      coreBuildManifest: "libexec/kestrel-core-build.json",
-      platform: TARGET_PLATFORM,
-      arch: TARGET_ARCH,
-      nodeRequirement: rootPackageJson.engines?.node ?? null,
-      entrypoint: "bin/kestrel",
-    }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        version: "kestrel_cli_bundle_v1",
+        package: rootPackageJson.name,
+        packageVersion: rootPackageJson.version,
+        coreBuildId: coreBuildIdentity.buildId,
+        coreBuildManifest: "libexec/kestrel-core-build.json",
+        platform: TARGET_PLATFORM,
+        arch: TARGET_ARCH,
+        nodeRequirement: rootPackageJson.engines?.node ?? null,
+        entrypoint: "bin/kestrel",
+      },
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
 }
 
 function writeArtifactDigest(): void {
-  const digest = createHash("sha256").update(readFileSync(artifactPath)).digest("hex");
-  writeFileSync(`${artifactPath}.sha256`, `${digest}  ${path.basename(artifactPath)}\n`, "utf8");
+  const digest = createHash("sha256")
+    .update(readFileSync(artifactPath))
+    .digest("hex");
+  writeFileSync(
+    `${artifactPath}.sha256`,
+    `${digest}  ${path.basename(artifactPath)}\n`,
+    "utf8",
+  );
   console.log(`[cli] sha256 ${digest}`);
 }
 
 function writeCliRuntimeManifest(): void {
   const dependencies = resolveRuntimePackageDependencies({
     repoRoot,
-    runtimeVersion: rootPackageJson.version,
     dependencies: rootPackageJson.dependencies,
     tsxVersion: rootPackageJson.devDependencies?.tsx,
   });
@@ -140,12 +167,7 @@ function writeCliRuntimeManifest(): void {
     path.join(libexecDir, "package.json"),
     `${JSON.stringify(
       {
-        name: "kestrel-cli-runtime",
-        version: rootPackageJson.version,
-        private: true,
-        type: "module",
-        ...(rootPackageJson.packageManager !== undefined ? { packageManager: rootPackageJson.packageManager } : {}),
-        ...(rootPackageJson.engines !== undefined ? { engines: rootPackageJson.engines } : {}),
+        ...rootPackageJson,
         dependencies,
       },
       null,
@@ -169,11 +191,17 @@ function copyCliRuntimeResources(): void {
 }
 
 function copyCliRuntimeTsconfig(): void {
-  cpSync(path.join(repoRoot, "tsconfig.json"), path.join(libexecDir, "tsconfig.json"));
+  cpSync(
+    path.join(repoRoot, "tsconfig.json"),
+    path.join(libexecDir, "tsconfig.json"),
+  );
 }
 
 function shouldCopyCliRuntimeResourceEntry(entry: string): boolean {
-  return shouldCopyDesktopResourceEntry(entry) && excludedRuntimePaths.has(path.resolve(entry)) === false;
+  return (
+    shouldCopyDesktopResourceEntry(entry) &&
+    excludedRuntimePaths.has(path.resolve(entry)) === false
+  );
 }
 
 function prepareCliPostgresBundle(): void {
@@ -184,7 +212,9 @@ function prepareCliPostgresBundle(): void {
     strict: true,
   });
   if (result.prepared === false) {
-    throw new Error(`Unable to prepare the CLI Postgres bundle: ${result.reason ?? "unavailable"}.`);
+    throw new Error(
+      `Unable to prepare the CLI Postgres bundle: ${result.reason ?? "unavailable"}.`,
+    );
   }
   verifyPreparedDesktopPostgresBundle({
     targetRoot: result.targetRoot,
@@ -194,9 +224,17 @@ function prepareCliPostgresBundle(): void {
 }
 
 function copyCliPostgresBundle(): void {
-  const sourcePath = path.join(repoRoot, "apps", "desktop", "resources", "postgres-bundle");
+  const sourcePath = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "postgres-bundle",
+  );
   if (existsSync(sourcePath) === false) {
-    throw new Error(`CLI package requires the managed Postgres bundle at '${sourcePath}'.`);
+    throw new Error(
+      `CLI package requires the managed Postgres bundle at '${sourcePath}'.`,
+    );
   }
   cpSync(sourcePath, path.join(libexecDir, "postgres-bundle"), {
     recursive: true,
@@ -205,7 +243,9 @@ function copyCliPostgresBundle(): void {
 }
 
 function installRuntimeDependenciesWithPackedProtocol(): void {
-  const localPackageDir = mkdtempSync(path.join(os.tmpdir(), "kestrel-cli-runtime-pack-"));
+  const localPackageDir = mkdtempSync(
+    path.join(os.tmpdir(), "kestrel-cli-runtime-pack-"),
+  );
   try {
     installRuntimeDependencies(
       packRuntimeWorkspacePackages({ repoRoot, packDir: localPackageDir }),
@@ -217,21 +257,28 @@ function installRuntimeDependenciesWithPackedProtocol(): void {
 
 function installRuntimeDependencies(localPackages: readonly string[]): void {
   mkdirSync(npmCacheDir, { recursive: true });
-  execFileSync(resolveNpmCommand(), resolveRuntimeDependencyInstallArgs(localPackages), {
-    cwd: libexecDir,
-    env: {
-      ...process.env,
-      CI: "1",
-      npm_config_cache: npmCacheDir,
+  execFileSync(
+    resolveNpmCommand(),
+    resolveRuntimeDependencyInstallArgs(localPackages),
+    {
+      cwd: libexecDir,
+      env: {
+        ...process.env,
+        CI: "1",
+        npm_config_cache: npmCacheDir,
+      },
+      stdio: "inherit",
     },
-    stdio: "inherit",
-  });
+  );
 }
 
 function writeLaunchers(): void {
   for (const name of CLI_NAMES) {
     const launcherPath = path.join(binDir, name);
-    writeFileSync(launcherPath, buildLauncherSource(name), { encoding: "utf8", mode: 0o755 });
+    writeFileSync(launcherPath, buildLauncherSource(name), {
+      encoding: "utf8",
+      mode: 0o755,
+    });
     const mode = statSync(launcherPath).mode;
     if ((mode & 0o111) === 0) {
       throw new Error(`Generated launcher is not executable: ${launcherPath}`);
@@ -296,7 +343,7 @@ child.on("error", (error) => {
 `;
 }
 
-function readPackageJson(packageJsonPath: string): {
+function readPackageJson(packageJsonPath: string): Record<string, unknown> & {
   name: string;
   version: string;
   packageManager?: string | undefined;
@@ -313,18 +360,41 @@ function readPackageJson(packageJsonPath: string): {
     devDependencies?: unknown;
   };
   if (typeof parsed.name !== "string" || parsed.name.trim().length === 0) {
-    throw new Error(`Package manifest at '${packageJsonPath}' must declare a name.`);
+    throw new Error(
+      `Package manifest at '${packageJsonPath}' must declare a name.`,
+    );
   }
-  if (typeof parsed.version !== "string" || parsed.version.trim().length === 0) {
-    throw new Error(`Package manifest at '${packageJsonPath}' must declare a version.`);
+  if (
+    typeof parsed.version !== "string" ||
+    parsed.version.trim().length === 0
+  ) {
+    throw new Error(
+      `Package manifest at '${packageJsonPath}' must declare a version.`,
+    );
   }
-  return {
-    name: parsed.name,
-    version: parsed.version,
-    ...(typeof parsed.packageManager === "string" ? { packageManager: parsed.packageManager } : {}),
-    ...(isStringRecord(parsed.engines) ? { engines: parsed.engines } : {}),
-    ...(isStringRecord(parsed.dependencies) ? { dependencies: parsed.dependencies } : {}),
-    ...(isStringRecord(parsed.devDependencies) ? { devDependencies: parsed.devDependencies } : {}),
+  if (
+    parsed.dependencies !== undefined &&
+    !isStringRecord(parsed.dependencies)
+  ) {
+    throw new Error(
+      `Package manifest at '${packageJsonPath}' has invalid dependencies.`,
+    );
+  }
+  if (
+    parsed.devDependencies !== undefined &&
+    !isStringRecord(parsed.devDependencies)
+  ) {
+    throw new Error(
+      `Package manifest at '${packageJsonPath}' has invalid devDependencies.`,
+    );
+  }
+  return parsed as Record<string, unknown> & {
+    name: string;
+    version: string;
+    packageManager?: string | undefined;
+    engines?: Record<string, string> | undefined;
+    dependencies?: Record<string, string> | undefined;
+    devDependencies?: Record<string, string> | undefined;
   };
 }
 

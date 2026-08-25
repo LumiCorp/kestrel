@@ -850,6 +850,42 @@ test("DevShellSupervisor keeps an explicit timeout active after startProcess ret
   }
 });
 
+test("DevShellSupervisor does not let a stale running read overwrite a terminal process record", async () => {
+  const { supervisor, workspaceRoot, store } = await createSupervisor();
+  try {
+    const started = await supervisor.startProcess({
+      workspaceRoot,
+      command: "printf 'ready\\n'; sleep 5",
+      yieldTimeMs: 20,
+      timeoutMs: 100,
+      maxOutputBytes: 4096,
+    });
+    const processId = started.processId!;
+    const staleRunningRecord = await store.getProcess(processId);
+    assert.equal(staleRunningRecord?.status, "RUNNING");
+
+    const settled = await readProcessUntilTerminal({
+      supervisor,
+      processId,
+      timeoutMs: TEST_COMMAND_TIMEOUT_MS,
+    });
+    assert.equal(settled.status, "FAILED");
+
+    const updated = await (supervisor as unknown as {
+      updateStoredProcessRecord(
+        record: DevShellProcessRecord,
+        transcriptSize: number,
+      ): Promise<DevShellProcessRecord>;
+    }).updateStoredProcessRecord(staleRunningRecord!, settled.nextCursor);
+    assert.equal(updated.status, "FAILED");
+    assert.equal(updated.exitCode, 124);
+    assert.match(updated.failureReason ?? "", /timed out after 100 ms/u);
+    assert.equal((await store.getProcess(processId))?.status, "FAILED");
+  } finally {
+    await supervisor.close();
+  }
+});
+
 test("DevShellSupervisor clears the original wall timeout when provisional preview retention is acquired", async () => {
   const { supervisor, workspaceRoot } = await createSupervisor();
   try {
@@ -1159,8 +1195,12 @@ test("DevShellSupervisor orders process exit behind a failing promotion without 
       }),
       /injected delayed promotion persistence failure/u,
     );
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const record = await store.getProcess(processId);
+    const terminalDeadline = Date.now() + 2_000;
+    let record = await store.getProcess(processId);
+    while (record?.status === "RUNNING" && Date.now() < terminalDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      record = await store.getProcess(processId);
+    }
     assert.notEqual(record?.status, "RUNNING");
     assert.deepEqual(record?.retentionLeases, []);
   } finally {

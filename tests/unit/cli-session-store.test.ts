@@ -41,6 +41,32 @@ test("SessionStore persists pending waitFor metadata", async () => {
   assert.equal(loadedSession?.lastMessagePreview, "latest session preview");
 });
 
+test("SessionStore readers never observe a partially written sessions file", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-atomic-"));
+  const store = new SessionStore(tempDir);
+  const now = new Date().toISOString();
+  const makeFile = (revision: number) => ({
+    version: 5 as const,
+    activeSessionName: `session-${revision}`,
+    sessions: Array.from({ length: 250 }, (_, index): TuiSessionMeta => ({
+      name: index === 0 ? `session-${revision}` : `session-${revision}-${index}`,
+      sessionId: `session-${revision}-${index}-${"x".repeat(256)}`,
+      profileId: "reference",
+      createdAt: now,
+      updatedAt: now,
+      started: true,
+    })),
+  });
+
+  await store.save(makeFile(0));
+  const writes = Array.from({ length: 12 }, (_, revision) => store.save(makeFile(revision + 1)));
+  const reads = Array.from({ length: 120 }, () => store.load());
+  const loaded = await Promise.all(reads);
+  await Promise.all(writes);
+
+  assert.equal(loaded.every((file) => file.version === 5 && file.sessions.length === 250), true);
+});
+
 test("SessionStore resolves a unique session id fragment without changing name precedence", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "kestrel-session-store-selector-"));
   const store = new SessionStore(tempDir);

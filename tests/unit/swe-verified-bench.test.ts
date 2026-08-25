@@ -159,8 +159,8 @@ test("swe verified bench accepts an explicit Python interpreter", () => {
 
 test("swe verified bench resolves runtime model overrides without label drift", () => {
   assert.deepEqual(resolveSweVerifiedModelSelection({ OPENROUTER_API_KEY: "sk-test" }), {
-    modelName: "z-ai/glm-5.2",
-    runtimeModelName: "z-ai/glm-5.2",
+    modelName: "openai/gpt-5.6-luna",
+    runtimeModelName: "openai/gpt-5.6-luna",
   });
   assert.deepEqual(resolveSweVerifiedModelSelection({
     OPENROUTER_API_KEY: "sk-test",

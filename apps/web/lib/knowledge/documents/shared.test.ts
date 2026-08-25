@@ -40,6 +40,8 @@ test("knowledge document support and inline rendering match the intended formats
     isKnowledgeDocumentMediaTypeSupported("application/zip", "archive.zip"),
     false
   );
+  assert.equal(isKnowledgeDocumentMediaTypeSupported("image/png", "diagram.png"), true);
+  assert.equal(isKnowledgeDocumentMediaTypeSupported("image/svg+xml", "diagram.svg"), false);
 
   assert.equal(isInlineRenderableMediaType("text/html"), true);
   assert.equal(isInlineRenderableMediaType("application/yaml"), true);

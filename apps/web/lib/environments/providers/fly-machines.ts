@@ -515,18 +515,35 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
     sourceVolumeId: string;
     snapshotId: string;
   }): Promise<boolean> {
+    const snapshots = await this.listVolumeSnapshots({
+      appName: input.appName,
+      volumeId: input.sourceVolumeId,
+    });
+    const snapshot = snapshots.find(
+      (candidate) => candidate.id === input.snapshotId,
+    );
+    return snapshot?.state === "created";
+  }
+
+  async listVolumeSnapshots(input: { appName: string; volumeId: string }) {
     const snapshots = parseResponse(
       volumeSnapshotsSchema,
       await this.request(
         "fly.workspace.snapshot.list",
-        `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.sourceVolumeId)}/snapshots`,
+        `/apps/${encodeURIComponent(input.appName)}/volumes/${encodeURIComponent(input.volumeId)}/snapshots`,
         { method: "GET" },
       ),
     );
-    const snapshot = snapshots.find(
-      (candidate) => candidate.id === input.snapshotId,
-    );
-    return (snapshot?.status ?? snapshot?.state) === "created";
+    return snapshots.map((snapshot) => {
+      const state = snapshot.status ?? snapshot.state;
+      if (!state) {
+        throw new EnvironmentProviderError(
+          "FLY_RESPONSE_INVALID",
+          "Fly returned an invalid snapshot record.",
+        );
+      }
+      return { id: snapshot.id, state };
+    });
   }
 
   private async waitForVolumeCreated(appName: string, volumeId: string) {
@@ -862,9 +879,10 @@ export class FlyMachinesClient implements EnvironmentInfrastructureProvider {
       volumes: parseResponse(z.array(volumeSchema), volumes).map((volume) => ({
         id: volume.id,
         name: volume.name,
+        state: volume.state,
         region: volume.region,
         sizeGb: volume.size_gb,
-        attachedMachineId: volume.attached_machine_id ?? null,
+        attachedMachineId: volume.attached_machine_id,
       })),
     };
   }

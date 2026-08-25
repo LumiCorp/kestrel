@@ -1161,6 +1161,9 @@ export async function saveGatewayModel(input: {
         })
       : Promise.resolve(undefined),
   ]);
+  if (input.id && !storedModel) {
+    throw new Error("Gateway model not found");
+  }
   const gatewayProvider = gateway?.provider;
   const approved = input.approved ?? true;
   const requiresOpenRouterResolution =

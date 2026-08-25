@@ -423,6 +423,14 @@ test("normalizeToolActionInput preserves existing code.execute arrays for schema
   );
 });
 
+test("normalizeToolActionInput preserves code.execute capability and rejects forged fields", () => {
+  const capability = { capabilityId: "tavily.search.read", input: { query: "kestrel", maxResults: 2 } };
+  assert.deepEqual(normalizeToolActionInput("code.execute", { language: "javascript", code: "x", capability }).capability, capability);
+  for (const forged of ["authority", "credentialReference", "lease", "unknown"]) {
+    assert.throws(() => normalizeToolActionInput("code.execute", { language: "javascript", code: "x", [forged]: "forged" }), new RegExp(`unknown field '${forged}'`, "u"));
+  }
+});
+
 test("validateToolActionSchemas returns compact expected and received details for runtime feedback", () => {
   let error: (Error & { diagnostics?: Record<string, unknown> }) | undefined;
   try {
@@ -590,12 +598,6 @@ test("trusted compatibility adapts evidence.extract aliases", () => {
 });
 
 test("normalizeToolActionInput strips unsupported fields from strict tool schemas", () => {
-  const codeExecute = normalizeToolActionInput("code.execute", {
-    language: "python",
-    code: "print('ok')",
-    timeoutMs: "1000",
-    extra: "ignored",
-  });
   const internetSearch = normalizeToolActionInput("internet.search", {
     query: "latest tariffs",
     freshness: "day",
@@ -627,11 +629,6 @@ test("normalizeToolActionInput strips unsupported fields from strict tool schema
     extra: "ignored",
   });
 
-  assert.deepEqual(codeExecute, {
-    language: "python",
-    code: "print('ok')",
-    timeoutMs: 1000,
-  });
   assert.deepEqual(internetSearch, {
     query: "latest tariffs",
     freshness: "day",
@@ -1044,6 +1041,102 @@ test("normalizeToolActionInput defaults dev.shell.run workspaceRoot and keeps ex
         input: normalized,
       },
       DEV_SHELL_TOOLS,
+    ),
+  );
+});
+
+test("normalizeToolActionInput resolves exact workspace file-share approval inputs", () => {
+  assert.deepEqual(
+    normalizeToolActionInput("workspace.files.share", {
+      mode: "file",
+      paths: ["reports/final report.pdf"],
+    }),
+    {
+      mode: "file",
+      paths: ["reports/final report.pdf"],
+      downloadName: "final report.pdf",
+      ttlMinutes: 60,
+    },
+  );
+  assert.deepEqual(
+    normalizeToolActionInput("workspace.files.share", {
+      mode: "zip",
+      paths: ["reports/alpha,beta.csv", "reports/alpha", "beta.csv"],
+      downloadName: "  selected reports.zip  ",
+      ttlMinutes: 90,
+    }),
+    {
+      mode: "zip",
+      paths: ["reports/alpha,beta.csv", "reports/alpha", "beta.csv"],
+      downloadName: "selected reports.zip",
+      ttlMinutes: 90,
+    },
+  );
+  assert.deepEqual(
+    normalizeToolActionInput("workspace.files.share", {
+      mode: "zip",
+      paths: ["reports/summary.pdf"],
+    }),
+    {
+      mode: "zip",
+      paths: ["reports/summary.pdf"],
+      downloadName: "kestrel-files.zip",
+      ttlMinutes: 60,
+    },
+  );
+
+  const supplied = {
+    mode: "file",
+    paths: ["reports/final report.pdf"],
+    downloadName: "  final download.pdf  ",
+  };
+  const normalized = normalizeToolActionInput("workspace.files.share", supplied);
+  assert.deepEqual(normalized, {
+    mode: "file",
+    paths: ["reports/final report.pdf"],
+    downloadName: "final download.pdf",
+    ttlMinutes: 60,
+  });
+  assert.deepEqual(
+    normalizeToolActionInput("workspace.files.share", normalized),
+    normalized,
+  );
+  assert.equal(supplied.downloadName, "  final download.pdf  ");
+});
+
+test("workspace file-share normalization preserves invalid fields for schema rejection", () => {
+  const [tool] = defaultToolCatalog.toModelTools(["workspace.files.share"]);
+  assert.ok(tool);
+
+  const invalidTypes = normalizeToolActionInput("workspace.files.share", {
+    mode: "zip",
+    paths: ["reports/summary.pdf"],
+    downloadName: null,
+    ttlMinutes: null,
+  });
+  assert.deepEqual(invalidTypes, {
+    mode: "zip",
+    paths: ["reports/summary.pdf"],
+    downloadName: null,
+    ttlMinutes: null,
+  });
+  assert.throws(() =>
+    validateToolActionSchemas(
+      { kind: "tool", name: "workspace.files.share", input: invalidTypes },
+      [tool],
+    ),
+  );
+
+  const unknownField = normalizeToolActionInput("workspace.files.share", {
+    mode: "zip",
+    paths: ["reports/summary.pdf"],
+    unexpected: true,
+  });
+  assert.equal(unknownField.unexpected, true);
+  assert.throws(() =>
+    validateToolActionSchemas(
+      { kind: "tool", name: "workspace.files.share", input: unknownField },
+      [tool],
     ),
   );
 });

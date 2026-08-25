@@ -1,11 +1,12 @@
 import JSZip from "jszip";
 import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
 import { read, utils } from "xlsx";
+import { dirname, join, resolve, sep } from "node:path";
 import {
   getDirectRuntimeConfig,
   warnIfPlaceholderRuntimeConfig,
 } from "@/lib/ai/surface-policy";
+import { configurePdfCanvasNativeBinding } from "@/lib/files/pdf-runtime-binding";
 import type { ExtractedDocumentBlock } from "./chunk";
 import { normalizeMediaType, stripMarkup } from "./shared";
 
@@ -21,6 +22,37 @@ const TRAILING_SLASHES_REGEX = /\/+$/;
 const PPTX_SLIDE_FILE_REGEX = /^ppt\/slides\/slide\d+\.xml$/;
 const PPTX_TEXT_REGEX = /<a:t>([\s\S]*?)<\/a:t>/g;
 const NULL_BYTE_CHARACTER = "\u0000";
+
+let pdfRuntimePromise: ReturnType<typeof initializePdfRuntime> | undefined;
+
+async function initializePdfRuntime() {
+  configurePdfCanvasNativeBinding();
+  const { DOMMatrix, ImageData, Path2D } = await import("@napi-rs/canvas");
+  const runtimeGlobals = globalThis as unknown as Record<string, unknown>;
+  runtimeGlobals.DOMMatrix ??= DOMMatrix;
+  runtimeGlobals.ImageData ??= ImageData;
+  runtimeGlobals.Path2D ??= Path2D;
+  const [{ PDFParse }, { getPath }] = await Promise.all([
+    import("pdf-parse"),
+    import("pdf-parse/worker"),
+  ]);
+  const workerPath = getPath();
+  PDFParse.setWorker(workerPath);
+  return {
+    PDFParse,
+    pdfJsRoot: resolve(dirname(workerPath), "../../..", "pdfjs-dist"),
+  };
+}
+
+async function loadPdfRuntime() {
+  pdfRuntimePromise ??= initializePdfRuntime();
+  try {
+    return await pdfRuntimePromise;
+  } catch (error) {
+    pdfRuntimePromise = undefined;
+    throw error;
+  }
+}
 
 async function extractTextFromImageWithVision(
   buffer: Buffer,
@@ -104,13 +136,29 @@ async function extractTextFromImageWithVision(
 async function extractPdf(
   buffer: Buffer
 ): Promise<ExtractKnowledgeDocumentResult> {
-  const parser = new PDFParse({ data: buffer });
-  const parsed = await parser.getText();
-  await parser.destroy().catch(() => {
-    // Best-effort cleanup for parser resources.
+  const { PDFParse, pdfJsRoot } = await loadPdfRuntime();
+  const parser = new PDFParse({
+    data: buffer,
+    cMapUrl: `${join(pdfJsRoot, "cmaps")}${sep}`,
+    cMapPacked: true,
+    standardFontDataUrl: `${join(pdfJsRoot, "standard_fonts")}${sep}`,
+    wasmUrl: `${join(pdfJsRoot, "wasm")}${sep}`,
   });
-  const text = parsed.text?.trim() ?? "";
-  const warnings = text.length < 80 ? ["pdf_text_sparse"] : [];
+  let parsed;
+  try {
+    parsed = await parser.getText();
+  } finally {
+    await parser.destroy().catch(() => {
+      // Best-effort cleanup for parser resources.
+    });
+  }
+  const text = parsed.pages
+    .map((page) => page.text.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const warnings = text.length === 0
+    ? ["pdf_text_empty"]
+    : text.length < 80 ? ["pdf_text_sparse"] : [];
 
   return {
     title: null,

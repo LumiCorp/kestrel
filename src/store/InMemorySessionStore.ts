@@ -1,11 +1,21 @@
 import type { EffectExecutionStatus, RuntimeError, TransitionStatus } from "../kestrel/contracts/base.js";
 import type { RunEvent, RunLogEntry, RuntimeEvent } from "../kestrel/contracts/events.js";
 import type { EffectResult, RegionWorkIntent, RegionWorkItem } from "../kestrel/contracts/execution.js";
+import { canonicalJson } from "../kestrel/contracts/tool-contract.js";
 import type {
   ConversationTurnRecord,
   ConversationTurnSegmentRecord,
   ConversationTurnTerminalEnvelopeV1,
 } from "../kestrel/contracts/orchestration.js";
+import {
+  SandboxCapabilityExactResultCancelledError,
+  SandboxCapabilityExactResultConflictError,
+  exactEffectRequiresCapabilityTenantBinding,
+  validateExactEffectCancellationCandidate,
+  validateExactEffectCancellationTenantBinding,
+  validateExactEffectResultRead,
+  validateExactEffectResultTenantBinding,
+} from "../kestrel/contracts/store.js";
 import type {
   ClaimConversationTurnExecutionInput,
   ClaimConversationTurnExecutionResult,
@@ -15,6 +25,7 @@ import type {
   OutboxEventRecord,
   PersistedArtifact,
   PersistedClaim,
+  PersistedEffect,
   PersistedRunRecord,
   PersistedRunStateRecord,
   PersistedRunSummaryRecord,
@@ -24,6 +35,14 @@ import type {
   SessionStore,
   UpdateConversationTurnTerminalEnvelopeInput,
 } from "../kestrel/contracts/store.js";
+import {
+  assertSandboxCapabilityLeaseTransitionV1,
+  fingerprintSandboxCapabilityLeaseBinding,
+  parseSandboxCapabilityChildReservationV1,
+  parseSandboxCapabilityLeaseTransitionRecordV1,
+  type SandboxCapabilityChildReservationV1,
+  type SandboxCapabilityLeaseTransitionRecordV1,
+} from "../kestrel/contracts/sandbox-capability.js";
 
 import {
   normalizeRuntimeStateForPersist,
@@ -105,6 +124,8 @@ interface InMemoryRun {
   startedAt: string;
   completedAt: string | undefined;
   error: RuntimeError | undefined;
+  tenantId?: string | undefined;
+  tenantOwnershipState: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
 }
 
 interface InMemoryEffect {
@@ -117,6 +138,8 @@ interface InMemoryEffect {
   failurePolicy: "STOP" | "CONTINUE" | "WAIT";
   status: EffectExecutionStatus;
   createdAt: string;
+  tenantId?: string | undefined;
+  tenantOwnershipState: "legacy_unknown" | "explicit_unbound" | "tenant_bound";
 }
 
 interface InMemoryRegionWorkItem extends RegionWorkItem {
@@ -124,6 +147,7 @@ interface InMemoryRegionWorkItem extends RegionWorkItem {
 }
 
 export class InMemorySessionStore implements SessionStore {
+  private readonly tenantId: string | undefined;
   private readonly orchestrationStore = new InMemoryOrchestrationStore();
   private readonly sessions = new Map<string, InMemorySession>();
   private readonly productStates = new Map<string, InMemoryProductState>();
@@ -146,9 +170,15 @@ export class InMemorySessionStore implements SessionStore {
   private readonly outboxEvents: OutboxEventRecord[] = [];
   private readonly runLogs: RunLogEntry[] = [];
   private readonly runEvents: RunEvent[] = [];
+  private readonly sandboxCapabilityLeaseTransitions = new Map<string, SandboxCapabilityLeaseTransitionRecordV1[]>();
+  private readonly sandboxCapabilityChildReservations = new Map<string, SandboxCapabilityChildReservationV1[]>();
   private readonly artifacts: PersistedArtifact[] = [];
   private readonly claims: PersistedClaim[] = [];
   private readonly regionWorkItems: InMemoryRegionWorkItem[] = [];
+
+  constructor(options: { tenantId?: string | undefined } = {}) {
+    this.tenantId = options.tenantId?.trim() || undefined;
+  }
   private readonly conversationTurns = new Map<string, ConversationTurnRecord>();
   private readonly conversationTurnSegments = new Map<string, ConversationTurnSegmentRecord>();
   private readonly legacyArchives: LegacySessionArchive[] = [];
@@ -722,6 +752,8 @@ export class InMemorySessionStore implements SessionStore {
       startedAt: new Date().toISOString(),
       completedAt: undefined,
       error: undefined,
+      ...(this.tenantId === undefined ? {} : { tenantId: this.tenantId }),
+      tenantOwnershipState: this.tenantId === undefined ? "explicit_unbound" : "tenant_bound",
     });
     this.operationLog.push(`startRun:${runId}`);
   }
@@ -738,6 +770,21 @@ export class InMemorySessionStore implements SessionStore {
       throw createRuntimeFailure(
         "PRESTARTED_RUN_INVALID",
         `Run '${runId}' is not the active prestarted run for session '${event.sessionId}'.`,
+        { runId, sessionId: event.sessionId },
+      );
+    }
+    const effects = this.effects.filter((effect) => effect.runId === runId);
+    if (
+      run.tenantOwnershipState === "legacy_unknown" ||
+      (run.tenantOwnershipState === "tenant_bound"
+        ? this.tenantId === undefined || run.tenantId !== this.tenantId
+        : this.tenantId !== undefined || run.tenantId !== undefined) ||
+      effects.some((effect) =>
+        effect.tenantOwnershipState !== run.tenantOwnershipState || effect.tenantId !== run.tenantId)
+    ) {
+      throw createRuntimeFailure(
+        "PRESTARTED_RUN_INVALID",
+        `Run '${runId}' is not bound to the trusted store tenant.`,
         { runId, sessionId: event.sessionId },
       );
     }
@@ -811,6 +858,8 @@ export class InMemorySessionStore implements SessionStore {
         failurePolicy: effect.failurePolicy,
         status: "PENDING",
         createdAt: new Date().toISOString(),
+        ...(this.runs.get(input.runId)?.tenantId === undefined ? {} : { tenantId: this.runs.get(input.runId)!.tenantId }),
+        tenantOwnershipState: this.runs.get(input.runId)?.tenantOwnershipState ?? "legacy_unknown",
       };
       this.effects.push(persisted);
       persistedEffects.push({ ...persisted });
@@ -873,6 +922,11 @@ export class InMemorySessionStore implements SessionStore {
       .map((effect) => ({ ...effect }));
   }
 
+  async getPersistedEffect(idempotencyKey: string): Promise<PersistedEffect | null> {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+    return effect === undefined ? null : structuredClone(effect);
+  }
+
   async getEffectResult(idempotencyKey: string): Promise<EffectResult | null> {
     const result = this.effectResults.get(idempotencyKey);
     if (result === undefined) {
@@ -881,7 +935,92 @@ export class InMemorySessionStore implements SessionStore {
     return { ...result };
   }
 
-  async saveEffectResult(_runId: string, _sessionId: string, result: EffectResult): Promise<void> {
+  async readExactEffectResult(input: { sessionId: string; runId: string; idempotencyKey: string; tenantId: string }) {
+    const read = validateExactEffectResultRead({
+      requested: input,
+      effect: await this.getPersistedEffect(input.idempotencyKey),
+      effectResult: await this.getEffectResult(input.idempotencyKey),
+    });
+    if (read.status !== "found") return read;
+    const rawOutput = read.result.outcome.kind === "success" || read.result.outcome.kind === "partial" ? read.result.outcome.rawOutput : undefined;
+    const evidence = typeof rawOutput === "object" && rawOutput !== null && !Array.isArray(rawOutput)
+      ? (rawOutput as Record<string, unknown>).capabilityReplayEvidence
+      : undefined;
+    const leaseId = typeof evidence === "object" && evidence !== null && !Array.isArray(evidence)
+      ? (evidence as Record<string, unknown>).leaseId
+      : undefined;
+    return validateExactEffectResultTenantBinding({
+      read,
+      requested: input,
+      lease: typeof leaseId === "string" ? await this.getSandboxCapabilityLease(leaseId) : null,
+    });
+  }
+
+  async claimExactEffectCancellation(input: { sessionId: string; runId: string; idempotencyKey: string; tenantId: string }) {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === input.idempotencyKey) ?? null;
+    const candidate = validateExactEffectCancellationCandidate({ requested: input, effect });
+    if (candidate !== "ready") return { status: candidate } as const;
+    if (effect === null) return { status: "not_found" } as const;
+    const ownershipState = effect.tenantOwnershipState ??
+      (effect.tenantId === undefined ? "legacy_unknown" : "tenant_bound");
+    if (ownershipState === "explicit_unbound") return { status: "conflict" } as const;
+    if (ownershipState === "tenant_bound") {
+      if (effect.tenantId === undefined) return { status: "conflict" } as const;
+      if (effect.tenantId !== input.tenantId) return { status: "not_found" } as const;
+    } else if (effect.tenantId !== undefined) {
+      return { status: "conflict" } as const;
+    }
+    const requiresTenantBinding = exactEffectRequiresCapabilityTenantBinding(effect);
+    if (ownershipState === "legacy_unknown" && !requiresTenantBinding) {
+      return { status: "conflict" } as const;
+    }
+    const matchingLeases = requiresTenantBinding
+      ? [...this.sandboxCapabilityLeaseTransitions.values()]
+          .map((ledger) => ledger.at(-1))
+          .filter((lease): lease is SandboxCapabilityLeaseTransitionRecordV1 =>
+            lease !== undefined &&
+            lease.binding.sessionId === input.sessionId &&
+            lease.binding.runId === input.runId &&
+            lease.binding.toolCallId === input.idempotencyKey
+          )
+      : [];
+    if (requiresTenantBinding) {
+      if (matchingLeases.length > 1) return { status: "conflict" } as const;
+      const tenantBinding = validateExactEffectCancellationTenantBinding({
+        requested: input,
+        lease: matchingLeases[0] ?? null,
+      });
+      if (tenantBinding !== "ready") return { status: tenantBinding } as const;
+    }
+    const result = this.effectResults.get(input.idempotencyKey) ?? null;
+    if (result !== null) {
+      const read = validateExactEffectResultRead({ requested: input, effect: { ...effect, status: "DONE" }, effectResult: result });
+      const tenantRead = requiresTenantBinding
+        ? validateExactEffectResultTenantBinding({ read, requested: input, lease: matchingLeases[0] ?? null })
+        : read;
+      return {
+        status: tenantRead.status === "found"
+          ? "completed"
+          : tenantRead.status === "not_found" ? "not_found" : "conflict",
+      } as const;
+    }
+    if (effect.status !== "PENDING") return { status: "conflict" } as const;
+    effect.status = "FAILED";
+    this.operationLog.push(`claimExactEffectCancellation:${input.idempotencyKey}`);
+    return { status: "cancelled" } as const;
+  }
+
+  async saveEffectResult(runId: string, sessionId: string, result: EffectResult): Promise<void> {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === result.idempotencyKey);
+    if (effect === undefined || effect.runId !== runId || effect.sessionId !== sessionId) {
+      throw new SandboxCapabilityExactResultConflictError("Effect result owner does not match the locked effect");
+    }
+    if (!this.hasTrustedEffectTenant(effect, result)) {
+      throw new SandboxCapabilityExactResultConflictError("Effect result tenant does not match durable authority");
+    }
+    if (result.status === "DONE" && effect?.status === "FAILED") {
+      throw new SandboxCapabilityExactResultCancelledError("Completed effect-result persistence lost to durable cancellation");
+    }
     if (this.effectResults.has(result.idempotencyKey)) {
       return;
     }
@@ -890,13 +1029,84 @@ export class InMemorySessionStore implements SessionStore {
     this.operationLog.push(`saveEffectResult:${result.idempotencyKey}:${result.status}`);
   }
 
-  async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus): Promise<void> {
-    for (const effect of this.effects) {
-      if (effect.idempotencyKey === idempotencyKey) {
-        effect.status = status;
-      }
+  async markEffectStatus(idempotencyKey: string, status: EffectExecutionStatus, owner: { runId: string; sessionId: string }): Promise<void> {
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === idempotencyKey);
+    if (
+      effect === undefined ||
+      effect.runId !== owner.runId ||
+      effect.sessionId !== owner.sessionId ||
+      !this.hasTrustedEffectStatusTenant(effect)
+    ) {
+      throw new SandboxCapabilityExactResultConflictError("Effect status owner or tenant does not match durable authority");
     }
+    if (
+      status === "DONE" &&
+      effect.status === "FAILED" &&
+      this.effectResults.get(idempotencyKey)?.status !== "DONE"
+    ) {
+      throw new SandboxCapabilityExactResultCancelledError("Completed effect status lost to durable cancellation");
+    }
+    effect.status = status;
     this.operationLog.push(`markEffectStatus:${idempotencyKey}:${status}`);
+  }
+
+  private hasTrustedEffectTenant(effect: InMemoryEffect, result: EffectResult): boolean {
+    const ownershipState = effect.tenantOwnershipState ??
+      (effect.tenantId === undefined ? "legacy_unknown" : "tenant_bound");
+    if (this.tenantId === undefined) {
+      return ownershipState === "explicit_unbound" && effect.tenantId === undefined;
+    }
+    if (effect.tenantId !== undefined) {
+      return ownershipState === "tenant_bound" && effect.tenantId === this.tenantId;
+    }
+    if (ownershipState !== "legacy_unknown") return false;
+    if (!exactEffectRequiresCapabilityTenantBinding(effect)) return false;
+    if (result.status === "FAILED") return this.hasTrustedEffectStatusTenant(effect);
+    const read = validateExactEffectResultRead({
+      requested: { runId: effect.runId, sessionId: effect.sessionId, idempotencyKey: effect.idempotencyKey },
+      effect: { ...effect, status: "DONE" },
+      effectResult: result,
+    });
+    if (read.status !== "found") return false;
+    const raw = read.result.outcome.kind === "success" || read.result.outcome.kind === "partial"
+      ? read.result.outcome.rawOutput : undefined;
+    const evidence = typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).capabilityReplayEvidence : undefined;
+    const leaseId = typeof evidence === "object" && evidence !== null && !Array.isArray(evidence)
+      ? (evidence as Record<string, unknown>).leaseId : undefined;
+    const lease = typeof leaseId === "string" ? this.sandboxCapabilityLeaseTransitions.get(leaseId)?.at(-1) ?? null : null;
+    return validateExactEffectResultTenantBinding({
+      read,
+      requested: { runId: effect.runId, sessionId: effect.sessionId, idempotencyKey: effect.idempotencyKey, tenantId: this.tenantId },
+      lease,
+    }).status === "found";
+  }
+
+  private hasTrustedEffectStatusTenant(effect: InMemoryEffect): boolean {
+    const ownershipState = effect.tenantOwnershipState ??
+      (effect.tenantId === undefined ? "legacy_unknown" : "tenant_bound");
+    if (this.tenantId === undefined) {
+      return ownershipState === "explicit_unbound" && effect.tenantId === undefined;
+    }
+    if (effect.tenantId !== undefined) {
+      return ownershipState === "tenant_bound" && effect.tenantId === this.tenantId;
+    }
+    if (ownershipState !== "legacy_unknown") return false;
+    if (!exactEffectRequiresCapabilityTenantBinding(effect)) return false;
+    const matches = [...this.sandboxCapabilityLeaseTransitions.values()]
+      .map((ledger) => ledger.at(-1))
+      .filter((lease): lease is SandboxCapabilityLeaseTransitionRecordV1 =>
+        lease !== undefined && lease.binding.runId === effect.runId &&
+        lease.binding.sessionId === effect.sessionId &&
+        lease.binding.toolCallId === effect.idempotencyKey
+      );
+    return matches.length === 1 && validateExactEffectCancellationTenantBinding({
+      requested: {
+        runId: effect.runId, sessionId: effect.sessionId,
+        idempotencyKey: effect.idempotencyKey, tenantId: this.tenantId,
+      },
+      lease: matches[0]!,
+    }) === "ready";
   }
 
   async listUndeliveredOutbox(limit: number, runId?: string): Promise<OutboxEventRecord[]> {
@@ -964,6 +1174,216 @@ export class InMemorySessionStore implements SessionStore {
 
   async appendRunEvent(event: RunEvent): Promise<void> {
     await this.appendRunEventsBatch([event]);
+  }
+
+  async appendSandboxCapabilityLeaseTransition(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
+    return this.appendSandboxCapabilityLeaseTransitionNow(input);
+  }
+
+  async issueSandboxCapabilityLease(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+    childReservation?: SandboxCapabilityChildReservationV1 | undefined;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1> {
+    const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
+    if (record.transition !== "issued") throw new Error("Sandbox capability issuance must transition to issued");
+    const child = input.childReservation === undefined
+      ? undefined
+      : this.validateInMemoryChildReservation(input.childReservation);
+    const persisted = this.appendSandboxCapabilityLeaseTransitionNow({
+      expectedSequence: input.expectedSequence,
+      record,
+    });
+    if (child !== undefined) {
+      this.sandboxCapabilityChildReservations.set(child.reservationId, [structuredClone(child)]);
+    }
+    return persisted;
+  }
+
+  async reserveSandboxCapabilityInvocation(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): Promise<SandboxCapabilityLeaseTransitionRecordV1 & { invocationResponseByteLimit: number }> {
+    const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
+    if (record.transition !== "invoking") throw new Error("Sandbox capability invocation must transition to invoking");
+    const current = this.sandboxCapabilityLeaseTransitions.get(record.leaseId)?.at(-1);
+    if (current === undefined || current.sequence !== input.expectedSequence) throw new Error("Sandbox capability lease transition sequence conflict");
+    const allocated = this.inMemoryChildCapacity(current.leaseId);
+    const invocationResponseByteLimit = record.usage.responseByteLimit - record.usage.responseBytesConsumed - allocated.bytes;
+    if (record.usage.requestsConsumed + allocated.requests > record.usage.requestLimit || invocationResponseByteLimit <= 0) {
+      throw new Error("Sandbox capability parent ceiling is reserved by child authority");
+    }
+    return { ...this.appendSandboxCapabilityLeaseTransitionNow(input), invocationResponseByteLimit };
+  }
+
+  async saveSandboxCapabilityEffectResult(input: {
+    leaseId: string;
+    bindingDigest: string;
+    toolCallId: string;
+    runId: string;
+    sessionId: string;
+    result: EffectResult;
+    signal?: AbortSignal | undefined;
+  }): Promise<void> {
+    const exactInput = {
+      ...input,
+      result: JSON.parse(canonicalJson(input.result)) as EffectResult,
+    };
+    const effect = this.effects.find((candidate) => candidate.idempotencyKey === input.toolCallId) ?? null;
+    const candidate = validateExactEffectCancellationCandidate({
+      requested: { sessionId: exactInput.sessionId, runId: exactInput.runId, idempotencyKey: exactInput.toolCallId },
+      effect,
+    });
+    if (candidate !== "ready") {
+      throw new SandboxCapabilityExactResultConflictError("Sandbox capability exact result has no matching prepared effect");
+    }
+    if (effect === null) {
+      throw new SandboxCapabilityExactResultConflictError("Sandbox capability exact result has no matching prepared effect");
+    }
+    if (effect?.status === "FAILED") {
+      throw new SandboxCapabilityExactResultCancelledError("Sandbox capability exact-result persistence was cancelled");
+    }
+    const lease = this.sandboxCapabilityLeaseTransitions.get(input.leaseId)?.at(-1);
+    assertReplayableSandboxCapabilityEffectBinding(lease, exactInput);
+    const ownershipState = effect?.tenantOwnershipState ??
+      (effect?.tenantId === undefined ? "legacy_unknown" : "tenant_bound");
+    const effectTenantAuthorized = ownershipState === "tenant_bound"
+      ? effect?.tenantId === this.tenantId
+      : ownershipState === "legacy_unknown" && effect?.tenantId === undefined;
+    if (this.tenantId === undefined || lease?.binding.tenantId !== this.tenantId || !effectTenantAuthorized) {
+      throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result tenant does not match durable authority");
+    }
+    const existing = this.effectResults.get(exactInput.result.idempotencyKey);
+    if (existing !== undefined) {
+      if (canonicalJson(existing) !== canonicalJson(exactInput.result)) {
+        throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect result conflicts with recorded exact replay output");
+      }
+      effect.status = "DONE";
+      this.operationLog.push(`saveSandboxCapabilityEffectResult:${input.leaseId}:${input.toolCallId}:idempotent`);
+      return;
+    }
+    if (effect.status === "DONE") {
+      throw new SandboxCapabilityExactResultConflictError("Sandbox capability effect is DONE without its exact replay result");
+    }
+    if (input.signal?.aborted === true) throw new SandboxCapabilityExactResultCancelledError("Sandbox capability exact-result persistence was cancelled");
+    this.effectResults.set(exactInput.result.idempotencyKey, structuredClone(exactInput.result));
+    effect.status = "DONE";
+    this.operationLog.push(`saveSandboxCapabilityEffectResult:${input.leaseId}:${input.toolCallId}`);
+  }
+
+  private appendSandboxCapabilityLeaseTransitionNow(input: {
+    expectedSequence: number;
+    record: SandboxCapabilityLeaseTransitionRecordV1;
+  }): SandboxCapabilityLeaseTransitionRecordV1 {
+    const record = parseSandboxCapabilityLeaseTransitionRecordV1(input.record);
+    if (record.bindingDigest !== fingerprintSandboxCapabilityLeaseBinding(record.binding)) {
+      throw new Error("Sandbox capability lease binding digest does not match the immutable binding");
+    }
+    const ledger = this.sandboxCapabilityLeaseTransitions.get(record.leaseId) ?? [];
+    const current = ledger.at(-1);
+    const currentSequence = current?.sequence ?? 0;
+    if (input.expectedSequence !== currentSequence || record.sequence !== currentSequence + 1) {
+      throw new Error("Sandbox capability lease transition sequence conflict");
+    }
+    assertSandboxCapabilityLeaseTransitionV1(current?.transition, record.transition);
+    if (current !== undefined && (current.bindingDigest !== record.bindingDigest || JSON.stringify(current.binding) !== JSON.stringify(record.binding))) {
+      throw new Error("Sandbox capability lease immutable binding changed");
+    }
+    const persisted = structuredClone(record);
+    ledger.push(persisted);
+    this.sandboxCapabilityLeaseTransitions.set(record.leaseId, ledger);
+    this.runEvents.push({ runId: record.binding.runId, sessionId: record.binding.sessionId, type: `sandbox_capability.${record.transition}` as RunEvent["type"], level: record.transition === "denied" || record.transition === "revoked" || record.transition === "expired" || record.transition === "cancelled" ? "WARN" : "INFO", timestamp: record.occurredAt, metadata: { record: structuredClone(record) } });
+    if (["denied", "revoked", "expired", "cancelled", "cleaned"].includes(record.transition)) {
+      this.revokeInMemoryChildReservations(record.leaseId, record.occurredAt, `parent_${record.transition}`);
+    }
+    this.operationLog.push(`sandboxCapabilityLease:${record.transition}`);
+    return structuredClone(persisted);
+  }
+
+  async getSandboxCapabilityLease(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1 | null> {
+    const record = this.sandboxCapabilityLeaseTransitions.get(leaseId)?.at(-1);
+    return record === undefined ? null : structuredClone(record);
+  }
+
+  async listSandboxCapabilityLeaseTransitions(leaseId: string): Promise<SandboxCapabilityLeaseTransitionRecordV1[]> {
+    return (this.sandboxCapabilityLeaseTransitions.get(leaseId) ?? []).map((record) => structuredClone(record));
+  }
+
+  async listRecoverableSandboxCapabilityLeases(input: { before: string; limit?: number | undefined }): Promise<SandboxCapabilityLeaseTransitionRecordV1[]> {
+    const before = Date.parse(input.before);
+    if (Number.isFinite(before) === false) throw new Error("Sandbox capability recovery cutoff must be a timestamp");
+    const limit = input.limit ?? 100;
+    return [...this.sandboxCapabilityLeaseTransitions.values()]
+      .map((ledger) => ledger.at(-1))
+      .filter((record): record is SandboxCapabilityLeaseTransitionRecordV1 => record !== undefined && record.transition !== "cleaned" && record.transition !== "denied" && Date.parse(record.occurredAt) <= before)
+      .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.leaseId.localeCompare(right.leaseId))
+      .slice(0, limit)
+      .map((record) => structuredClone(record));
+  }
+
+  async reserveSandboxCapabilityChild(input: { expectedParentSequence: number; reservation: SandboxCapabilityChildReservationV1 }): Promise<SandboxCapabilityChildReservationV1> {
+    const reservation = this.validateInMemoryChildReservation(input.reservation, input.expectedParentSequence);
+    const persisted = structuredClone(reservation);
+    this.sandboxCapabilityChildReservations.set(reservation.reservationId, [persisted]);
+    return structuredClone(persisted);
+  }
+
+  private validateInMemoryChildReservation(value: SandboxCapabilityChildReservationV1, expectedParentSequence?: number): SandboxCapabilityChildReservationV1 {
+    const reservation = parseSandboxCapabilityChildReservationV1(value);
+    if (reservation.sequence !== 1 || reservation.status !== "reserved") throw new Error("Sandbox capability child reservation must begin reserved at sequence 1");
+    const parent = this.sandboxCapabilityLeaseTransitions.get(reservation.decision.parentLeaseId)?.at(-1);
+    if (
+      parent === undefined ||
+      (expectedParentSequence !== undefined && parent.sequence !== expectedParentSequence) ||
+      parent.bindingDigest !== reservation.decision.parentBindingDigest ||
+      parent.transition !== "issued"
+    ) throw new Error("Sandbox capability parent authorization is unavailable or stale");
+    if (this.sandboxCapabilityChildReservations.has(reservation.reservationId)) throw new Error("Sandbox capability child reservation conflict");
+    const allocated = this.inMemoryChildCapacity(parent.leaseId);
+    if (parent.usage.requestsConsumed + allocated.requests + reservation.decision.requestLimit > parent.usage.requestLimit || parent.usage.responseBytesConsumed + allocated.bytes + reservation.decision.responseByteLimit > parent.usage.responseByteLimit) throw new Error("Sandbox capability parent ceiling is exhausted");
+    return reservation;
+  }
+
+  async settleSandboxCapabilityChild(input: { reservationId: string; expectedSequence: number; status: "committed" | "released"; requestsCommitted: number; responseBytesCommitted: number; reason?: string | undefined; occurredAt: string }): Promise<SandboxCapabilityChildReservationV1> {
+    const ledger = this.sandboxCapabilityChildReservations.get(input.reservationId);
+    const current = ledger?.at(-1);
+    if (current === undefined || current.sequence !== input.expectedSequence || current.status !== "reserved") throw new Error("Sandbox capability child reservation sequence conflict");
+    const next = parseSandboxCapabilityChildReservationV1({ ...current, sequence: current.sequence + 1, status: input.status, requestsCommitted: input.requestsCommitted, responseBytesCommitted: input.responseBytesCommitted, ...(input.reason === undefined ? {} : { reason: input.reason }), occurredAt: input.occurredAt });
+    ledger!.push(structuredClone(next));
+    return structuredClone(next);
+  }
+
+  async getSandboxCapabilityChildReservation(reservationId: string): Promise<SandboxCapabilityChildReservationV1 | null> {
+    const current = this.sandboxCapabilityChildReservations.get(reservationId)?.at(-1);
+    return current === undefined ? null : structuredClone(current);
+  }
+
+  async listSandboxCapabilityChildReservations(parentLeaseId: string): Promise<SandboxCapabilityChildReservationV1[]> {
+    return this.currentInMemoryChildReservations(parentLeaseId).map((item) => structuredClone(item));
+  }
+
+  private currentInMemoryChildReservations(parentLeaseId: string): SandboxCapabilityChildReservationV1[] {
+    return [...this.sandboxCapabilityChildReservations.values()].map((ledger) => ledger.at(-1)).filter((item): item is SandboxCapabilityChildReservationV1 => item?.decision.parentLeaseId === parentLeaseId);
+  }
+
+  private inMemoryChildCapacity(parentLeaseId: string): { requests: number; bytes: number } {
+    return this.currentInMemoryChildReservations(parentLeaseId).reduce(
+      (sum, item) => ({
+        requests: sum.requests + (item.status === "reserved" ? item.decision.requestLimit : item.status === "committed" ? item.requestsCommitted : 0),
+        bytes: sum.bytes + (item.status === "reserved" ? item.decision.responseByteLimit : item.status === "committed" ? item.responseBytesCommitted : 0),
+      }),
+      { requests: 0, bytes: 0 },
+    );
+  }
+
+  private revokeInMemoryChildReservations(parentLeaseId: string, occurredAt: string, reason: string): void {
+    for (const current of this.currentInMemoryChildReservations(parentLeaseId)) {
+      if (current.status !== "reserved") continue;
+      this.sandboxCapabilityChildReservations.get(current.reservationId)!.push({ ...structuredClone(current), sequence: current.sequence + 1, status: "revoked", reason, occurredAt });
+    }
   }
 
   async appendRunLogsBatch(entries: RunLogEntry[]): Promise<void> {
@@ -1156,6 +1576,7 @@ export class InMemorySessionStore implements SessionStore {
     sessionId?: string | undefined;
     threadId?: string | undefined;
     delegationId?: string | undefined;
+    eventTypes?: RunEvent["type"][] | undefined;
     fromTimestamp?: string | undefined;
     toTimestamp?: string | undefined;
     limit?: number | undefined;
@@ -1180,6 +1601,9 @@ export class InMemorySessionStore implements SessionStore {
           return false;
         }
         if (input.sessionId !== undefined && event.sessionId !== input.sessionId) {
+          return false;
+        }
+        if (input.eventTypes !== undefined && input.eventTypes.includes(event.type) === false) {
           return false;
         }
         const matchesThread =
@@ -1361,6 +1785,8 @@ export class InMemorySessionStore implements SessionStore {
       startedAt: now,
       completedAt: undefined,
       error: undefined,
+      ...(this.tenantId === undefined ? {} : { tenantId: this.tenantId }),
+      tenantOwnershipState: this.tenantId === undefined ? "explicit_unbound" : "tenant_bound",
     });
     const rootRunId = existing?.rootRunId ?? input.proposedRunId;
     this.conversationTurns.set(input.turnId, {
@@ -1963,6 +2389,41 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function assertReplayableSandboxCapabilityEffectBinding(
+  lease: SandboxCapabilityLeaseTransitionRecordV1 | undefined,
+  input: {
+    bindingDigest: string;
+    toolCallId: string;
+    runId: string;
+    sessionId: string;
+    result: EffectResult;
+  },
+): asserts lease is SandboxCapabilityLeaseTransitionRecordV1 {
+  const completedProviderAction = lease !== undefined &&
+    lease.terminalOutcome === "completed" &&
+    lease.result !== undefined &&
+    (lease.transition === "consumed" || lease.transition === "exhausted" || lease.transition === "cleaned");
+  const completedUnusedCapability = lease !== undefined &&
+    ((lease.transition === "issued" && lease.terminalOutcome === undefined && lease.terminalReason === undefined) ||
+      (lease.transition === "cleaned" && lease.terminalOutcome === "failed" && lease.terminalReason === "container_teardown_completed")) &&
+    lease.result === undefined &&
+    lease.usage.requestsConsumed === 0 &&
+    lease.usage.responseBytesConsumed === 0 &&
+    lease.usage.exactProviderUsage === null;
+  if (
+    lease === undefined ||
+    lease.bindingDigest !== input.bindingDigest ||
+    lease.binding.toolCallId !== input.toolCallId ||
+    lease.binding.runId !== input.runId ||
+    lease.binding.sessionId !== input.sessionId ||
+    input.result.idempotencyKey !== input.toolCallId ||
+    input.result.status !== "DONE" ||
+    (!completedProviderAction && !completedUnusedCapability)
+  ) {
+    throw new Error("Sandbox capability effect result is not bound to a completed exact lease action");
+  }
 }
 
 function readMissionControlRunCorrelation(value: unknown) {

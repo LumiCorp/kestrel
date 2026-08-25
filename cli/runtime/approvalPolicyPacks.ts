@@ -3,6 +3,7 @@ import type {
   ExecutionPolicyOverride,
   ToolExecutionClass,
 } from "../../src/index.js";
+import { createHash } from "node:crypto";
 
 const TOOL_CLASSES: ToolExecutionClass[] = [
   "read_only",
@@ -23,7 +24,8 @@ const CAPABILITY_CLASSES: ApprovalCapabilityClass[] = [
 ];
 
 export interface ApprovalPolicyPack {
-  id: "dev" | "ci_bot" | "production";
+  id: "dev" | "isolated_code" | "ci_bot" | "production";
+  version: 1;
   label: string;
   defaultDeny: true;
   allowedToolClasses: ToolExecutionClass[];
@@ -34,14 +36,25 @@ export interface ApprovalPolicyPack {
 const APPROVAL_POLICY_PACKS: Record<ApprovalPolicyPack["id"], ApprovalPolicyPack> = {
   dev: {
     id: "dev",
+    version: 1,
     label: "Developer",
     defaultDeny: true,
     allowedToolClasses: ["read_only", "sandboxed_only", "external_side_effect"],
     allowedCapabilities: ["workspace.read", "workspace.write", "shell.exec", "network.call", "mcp.invoke", "external.confirm"],
     strictApprovalPerCall: false,
   },
+  isolated_code: {
+    id: "isolated_code",
+    version: 1,
+    label: "Isolated code",
+    defaultDeny: true,
+    allowedToolClasses: ["read_only", "sandboxed_only"],
+    allowedCapabilities: ["workspace.read", "workspace.write", "code.execute"],
+    strictApprovalPerCall: false,
+  },
   ci_bot: {
     id: "ci_bot",
+    version: 1,
     label: "CI Bot",
     defaultDeny: true,
     allowedToolClasses: ["read_only", "sandboxed_only"],
@@ -50,6 +63,7 @@ const APPROVAL_POLICY_PACKS: Record<ApprovalPolicyPack["id"], ApprovalPolicyPack
   },
   production: {
     id: "production",
+    version: 1,
     label: "Production",
     defaultDeny: true,
     allowedToolClasses: ["read_only"],
@@ -66,6 +80,18 @@ export function getApprovalPolicyPack(
   id: ApprovalPolicyPack["id"] | undefined,
 ): ApprovalPolicyPack {
   return clonePack(APPROVAL_POLICY_PACKS[id ?? "dev"]);
+}
+
+export function digestApprovalPolicyPack(pack: ApprovalPolicyPack): string {
+  const canonical = JSON.stringify({
+    id: pack.id,
+    version: pack.version,
+    defaultDeny: pack.defaultDeny,
+    allowedToolClasses: [...new Set(pack.allowedToolClasses)].sort(),
+    allowedCapabilities: [...new Set(pack.allowedCapabilities)].sort(),
+    strictApprovalPerCall: pack.strictApprovalPerCall,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 export function buildExecutionPolicyFromPack(

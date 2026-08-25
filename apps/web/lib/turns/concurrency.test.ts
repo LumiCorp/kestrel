@@ -66,7 +66,7 @@ test("isolated, legacy, and ownerless Threads keep Thread-specific groups", () =
   }
 });
 
-test("Web and Mobile creation seams use the contextual default with a Web override", async () => {
+test("Web and Mobile creation seams use the contextual default with an explicit Web control", async () => {
   const [api, chat, store] = await Promise.all([
     readFile(new URL("../../app/api/threads/route.ts", import.meta.url), "utf8"),
     readFile(
@@ -77,6 +77,6 @@ test("Web and Mobile creation seams use the contextual default with a Web overri
   ]);
   assert.match(api, /defaultThreadWorkspaceMode\(body\.projectId\)/u);
   assert.match(chat, /useState\(\s*Boolean\(projectId\)/u);
-  assert.match(chat, /projectId \? \(/u);
+  assert.match(chat, /aria-label="Start in new worktree"/u);
   assert.match(store, /workspaceMode: defaultThreadWorkspaceMode\(input\.projectId\)/u);
 });

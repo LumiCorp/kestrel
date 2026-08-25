@@ -73,6 +73,7 @@ const TERMINAL_EVENT_TYPES = new Set<RunnerEvent["type"]>([
   "conversation.messages",
   "operator.runs",
   "operator.run",
+  "effect.result.loaded",
   "operator.controlled",
   "task.graph",
   "workspace.checkpoint",
@@ -91,6 +92,8 @@ interface RunnerServiceRuntimeOptions {
   serviceVersion?: string | undefined;
   eventJournal?: RunnerServiceEventJournal | undefined;
   runtimeStore?: RunnerRuntimeStoreLifecycle | undefined;
+  exactEffectResultStore?: NonNullable<ConstructorParameters<typeof RunnerHost>[3]>["exactEffectResultStore"];
+  exactEffectResultTenantId?: string | undefined;
   onRuntimeStoreEvent?: ((event: RunnerRuntimeStoreEvent) => void) | undefined;
 }
 
@@ -258,6 +261,8 @@ export function createRunnerServiceHttpHandler(
     profileSourcePolicy: options.profileSourcePolicy,
     serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
     eventJournal: options.eventJournal,
+    exactEffectResultStore: options.exactEffectResultStore,
+    exactEffectResultTenantId: options.exactEffectResultTenantId,
   });
   const runtimeStore = createRunnerRuntimeStoreReadiness(
     options.runtimeStore,
@@ -389,6 +394,8 @@ export async function createRunnerServiceServer(options: RunnerServiceOptions = 
     serviceVersion: options.serviceVersion,
     eventJournal: options.eventJournal,
     runtimeStore: options.runtimeStore,
+    exactEffectResultStore: options.exactEffectResultStore,
+    exactEffectResultTenantId: options.exactEffectResultTenantId,
     onRuntimeStoreEvent: options.onRuntimeStoreEvent,
   });
   await handler.ready();
@@ -550,6 +557,8 @@ export function createInMemoryRunnerService(options: RunnerServiceOptions = {}):
     profileProvider: options.profileProvider,
     serviceVersion: options.serviceVersion ?? DEFAULT_RUNNER_SERVICE_VERSION,
     eventJournal: options.eventJournal,
+    exactEffectResultStore: options.exactEffectResultStore,
+    exactEffectResultTenantId: options.exactEffectResultTenantId,
   });
 
   return {

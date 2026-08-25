@@ -8,7 +8,10 @@ import {
   decryptWorkspaceBackup,
   encryptWorkspaceBackup,
 } from "./backup-crypto";
-import { createAuxiliaryVolumeSnapshot } from "./backup-snapshot";
+import {
+  acquireWorkspaceSnapshot,
+  createAuxiliaryVolumeSnapshot,
+} from "./backup-snapshot";
 import {
   isDeterministicBackupFailure,
   shouldFallbackToLegacyBackupExport,
@@ -80,6 +83,125 @@ test("an accepted asynchronous Fly snapshot remains auxiliary", async () => {
     state: "prepare",
     errorMessage: null,
   });
+});
+
+test("a later backup retry resumes the persisted snapshot instead of creating another", async () => {
+  let createCalls = 0;
+  let persistedSnapshot:
+    | {
+        flySnapshotId: string;
+        flySnapshotSourceVolumeId: string;
+        flySnapshotState: string;
+        flySnapshotRequestedAt: string;
+        flySnapshotLastObservedAt: string;
+      }
+    | undefined;
+  let waitCalls = 0;
+  const timestamps = [
+    "2026-08-23T22:15:07.232Z",
+    "2026-08-23T22:17:11.198Z",
+    "2026-08-23T22:27:03.000Z",
+  ];
+  let timestampIndex = 0;
+
+  const firstAttempt = acquireWorkspaceSnapshot({
+    appName: "kestrel-env-test",
+    sourceVolumeId: "vol_test",
+    persistedSnapshot: undefined,
+    createSnapshot: async () => {
+      createCalls += 1;
+      return { id: "vs_test", state: "prepare" };
+    },
+    persistSnapshot: async (snapshot) => {
+      persistedSnapshot = snapshot;
+    },
+    waitForSnapshot: async () => {
+      waitCalls += 1;
+      throw Object.assign(
+        new Error("Fly Workspace snapshot was not ready for archive export."),
+        {
+          code: "WORKSPACE_BACKUP_SNAPSHOT_NOT_READY",
+          lastObservation: {
+            state: "prepare",
+            observedAt: timestamps[1],
+          },
+        },
+      );
+    },
+    now: () => new Date(timestamps[timestampIndex++]),
+  });
+
+  await assert.rejects(firstAttempt, {
+    code: "WORKSPACE_BACKUP_SNAPSHOT_NOT_READY",
+  });
+  assert.deepEqual(persistedSnapshot, {
+    flySnapshotId: "vs_test",
+    flySnapshotSourceVolumeId: "vol_test",
+    flySnapshotState: "prepare",
+    flySnapshotRequestedAt: timestamps[0],
+    flySnapshotLastObservedAt: timestamps[1],
+  });
+
+  const retry = await acquireWorkspaceSnapshot({
+    appName: "kestrel-env-test",
+    sourceVolumeId: "vol_test",
+    persistedSnapshot,
+    createSnapshot: async () => {
+      createCalls += 1;
+      return { id: "vs_unexpected_retry", state: "prepare" };
+    },
+    persistSnapshot: async (snapshot) => {
+      persistedSnapshot = snapshot;
+    },
+    waitForSnapshot: async ({ snapshotId }) => {
+      waitCalls += 1;
+      assert.equal(snapshotId, "vs_test");
+      return { state: "created", observedAt: timestamps[2] };
+    },
+    now: () => new Date("2026-08-23T22:30:00.000Z"),
+  });
+
+  assert.deepEqual(retry, {
+    id: "vs_test",
+    state: "created",
+  });
+  assert.deepEqual(persistedSnapshot, {
+    flySnapshotId: "vs_test",
+    flySnapshotSourceVolumeId: "vol_test",
+    flySnapshotState: "created",
+    flySnapshotRequestedAt: timestamps[0],
+    flySnapshotLastObservedAt: timestamps[2],
+  });
+  assert.equal(createCalls, 1);
+  assert.equal(waitCalls, 2);
+});
+
+test("a persisted snapshot from another source volume is rejected before polling", async () => {
+  let createCalls = 0;
+  await assert.rejects(
+    acquireWorkspaceSnapshot({
+      appName: "kestrel-env-test",
+      sourceVolumeId: "vol_current",
+      persistedSnapshot: {
+        flySnapshotId: "vs_wrong_volume",
+        flySnapshotSourceVolumeId: "vol_previous",
+        flySnapshotState: "prepare",
+        flySnapshotRequestedAt: "2026-08-23T22:15:07.232Z",
+        flySnapshotLastObservedAt: "2026-08-23T22:17:11.198Z",
+      },
+      createSnapshot: async () => {
+        createCalls += 1;
+        return { id: "vs_unexpected", state: "prepare" };
+      },
+      persistSnapshot: async () => {},
+      waitForSnapshot: async () => ({
+        state: "created",
+        observedAt: "2026-08-23T22:27:03.000Z",
+      }),
+    }),
+    { code: "WORKSPACE_BACKUP_SNAPSHOT_SOURCE_VOLUME_MISMATCH" },
+  );
+  assert.equal(createCalls, 0);
 });
 
 test("backup preparation falls back only for legacy router responses", () => {

@@ -926,7 +926,7 @@ async function ensureKnowledgeSchema(connection: Sql) {
     CREATE INDEX IF NOT EXISTS "knowledge_documents_uploader_user_id_idx" ON "knowledge_documents" ("uploader_user_id");
     CREATE INDEX IF NOT EXISTS "knowledge_documents_status_idx" ON "knowledge_documents" ("status");
     CREATE INDEX IF NOT EXISTS "knowledge_documents_created_at_idx" ON "knowledge_documents" ("created_at");
-    CREATE UNIQUE INDEX IF NOT EXISTS "knowledge_documents_storage_key_idx" ON "knowledge_documents" ("storage_key");
+    CREATE INDEX IF NOT EXISTS "knowledge_documents_storage_key_idx" ON "knowledge_documents" ("storage_key");
     CREATE INDEX IF NOT EXISTS "knowledge_ingestion_runs_org_id_idx" ON "knowledge_ingestion_runs" ("organization_id");
     CREATE INDEX IF NOT EXISTS "knowledge_ingestion_runs_document_id_idx" ON "knowledge_ingestion_runs" ("document_id");
     CREATE INDEX IF NOT EXISTS "knowledge_ingestion_runs_status_idx" ON "knowledge_ingestion_runs" ("status");

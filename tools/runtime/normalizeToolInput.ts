@@ -1,4 +1,4 @@
-import { relative, resolve, sep } from "node:path";
+import { basename, relative, resolve, sep } from "node:path";
 import { normalizeDevShellExecCommand } from "../../src/devshell/normalizeCommand.js";
 import { asNonEmptyRecord } from "../helpers.js";
 
@@ -8,6 +8,11 @@ export function normalizeToolActionInput(
   workspaceRoot: string | undefined = ".",
 ): Record<string, unknown> {
   if (name === "code.execute") {
+    const allowed = new Set(["language", "code", "files", "timeoutMs", "network", "dependencies", "args", "capability"]);
+    const unknown = Object.keys(input).find((key) => allowed.has(key) === false);
+    if (unknown !== undefined) {
+      throw new Error(`code.execute contains unknown field '${unknown}'.`);
+    }
     const {
       language: _language,
       code: _code,
@@ -16,6 +21,7 @@ export function normalizeToolActionInput(
       network: _network,
       dependencies: _dependencies,
       args: _args,
+      capability: _capability,
     } = input;
     return {
       ...(normalizeOptionalString(_language) !== undefined
@@ -39,6 +45,7 @@ export function normalizeToolActionInput(
       ...(normalizeCodeExecuteStringArray(_args) !== undefined
         ? { args: normalizeCodeExecuteStringArray(_args) }
         : {}),
+      ...(_capability === undefined ? {} : { capability: _capability }),
     };
   }
 
@@ -661,6 +668,27 @@ export function normalizeToolActionInput(
       ...(normalizeOptionalInteger(input.maxBytes) !== undefined
         ? { maxBytes: normalizeOptionalInteger(input.maxBytes) }
         : {}),
+    };
+  }
+
+  if (name === "workspace.files.share") {
+    const paths = input.paths;
+    const defaultDownloadName =
+      input.mode === "zip"
+        ? "kestrel-files.zip"
+        : Array.isArray(paths) && typeof paths[0] === "string"
+          ? basename(paths[0]).trim()
+          : undefined;
+    const hasDownloadName = Object.hasOwn(input, "downloadName");
+    const downloadName = hasDownloadName
+      ? typeof input.downloadName === "string" && input.downloadName.length > 0
+        ? normalizeOptionalString(input.downloadName) ?? defaultDownloadName
+        : input.downloadName
+      : defaultDownloadName;
+    return {
+      ...input,
+      ...(downloadName === undefined ? {} : { downloadName }),
+      ttlMinutes: Object.hasOwn(input, "ttlMinutes") ? input.ttlMinutes : 60,
     };
   }
 

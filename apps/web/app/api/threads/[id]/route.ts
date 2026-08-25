@@ -1,11 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { decideAppOperationApprovalIfPresent } from "@/lib/apps/app-operation-approvals";
 import { attachmentIdsFromMessageParts } from "@/lib/attachments/store";
 import { threadTurnBodySchema } from "@/lib/chat/thread-turn-request-contract";
 import { applySubmittedToolApproval } from "@/lib/chat/tool-approval-response";
 import { resolveThreadEnvironment } from "@/lib/environments/store";
-import { decideGitHubActionApproval } from "@/lib/integrations/github-action-approvals";
 import { requireActiveOrganization } from "@/lib/knowledge/auth";
 import { errorResponse } from "@/lib/knowledge/http";
 import { routeIdSchema } from "@/lib/knowledge/validation";
@@ -17,7 +15,6 @@ import {
   createThreadForUser,
   getThreadWithMessagesForUser,
   permanentlyDeleteThreadForUser,
-  saveThreadMessages,
   updateThreadInteractionModeForUser,
   updateThreadTitleForUser,
 } from "@/lib/threads/store";
@@ -27,6 +24,7 @@ import { createDurableTurnReplayResponse } from "@/lib/turns/replay-response";
 import { readThreadConversationSnapshotForUser } from "@/lib/turns/conversation-snapshot.server";
 import {
   createDurableThreadTurn,
+  createDurableApprovalResponseTurn,
   resolveDurableRuntimeInteraction,
 } from "@/lib/turns/store";
 import { convertToUIMessages } from "@/lib/utils";
@@ -202,35 +200,6 @@ export async function POST(
     if (!environment) {
       throw new Error("No Environment is available for this Thread.");
     }
-    if (approvalResponse) {
-      const decidedAppOperation = await decideAppOperationApprovalIfPresent({
-        organizationId,
-        threadId: thread.id,
-        userId: user.id,
-        runtimeApprovalId: approvalResponse.approvalId,
-        approved: approvalResponse.approved,
-      });
-      if (!decidedAppOperation) {
-        await decideGitHubActionApproval({
-          organizationId,
-          threadId: thread.id,
-          userId: user.id,
-          runtimeApprovalId: approvalResponse.approvalId,
-          approved: approvalResponse.approved,
-        });
-      }
-      await saveThreadMessages([
-        {
-          id: approvalResponse.assistantMessage.id,
-          threadId: thread.id,
-          role: "assistant",
-          authorUserId: null,
-          projectContextRevisionId: projectContext?.contextRevision.id ?? null,
-          parts: approvalResponse.assistantMessage.parts,
-        },
-      ]);
-    }
-
     const idempotencyKey = approvalResponse
       ? `approval:${approvalResponse.approvalId}`
       : request.headers.get("idempotency-key")?.trim() || newUserMessage?.id;
@@ -242,7 +211,7 @@ export async function POST(
     }
     let durable;
     if (approvalResponse) {
-      durable = await createDurableThreadTurn({
+      durable = await createDurableApprovalResponseTurn({
         threadId: thread.id,
         organizationId,
         authorUserId: user.id,
@@ -253,6 +222,10 @@ export async function POST(
           ...(approvalResponse.reason
             ? { reason: approvalResponse.reason }
             : {}),
+        },
+        assistantMessage: {
+          id: approvalResponse.assistantMessage.id,
+          parts: approvalResponse.assistantMessage.parts,
         },
         idempotencyKey,
         requestedEnvironmentId: environment.id,

@@ -1,0 +1,43 @@
+---
+title: Next.js routes
+summary: Adapt browser and webhook intent to Kestrel while keeping actor identity, runner credentials, correlation, and disconnect policy on the server.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+A browser sends this JSON:
+
+```json
+{
+  "sessionId": "customer-42",
+  "message": "Delete the draft release",
+  "actor": { "actorType": "operator", "tenantId": "another-company" }
+}
+```
+
+The message may be valid user intent. The actor object is not trustworthy identity.
+
+## The server owns the translation
+
+`@kestrel-agents/next` supplies JSON, SSE, and webhook route helpers around an Agent. The JSON and SSE helpers parse their expected application payloads and call a server-owned `resolveContext`. Authentication and authorization must happen before browser fields can influence actor, tenant, profile, approval, or runner authority.
+
+The route may accept an authorized `sessionId` and message. It should derive who may use that Session from the authenticated application state.
+
+## JSON and SSE choose different lifecycles
+
+A JSON route waits for the terminal event and returns it as structured data. An SSE route forwards typed stream events and the terminal outcome. Passing `request.signal` into the SDK makes browser disconnect cancel the exact Run; omitting that policy can allow durable continuation. Choose deliberately for the product experience.
+
+Both route types preserve request and correlation headers so downstream logs and traces can be connected without using them as authorization.
+
+## A webhook helper starts after verification
+
+`createWebhookRunRouteHandler` reads the request body with `request.json()`, resolves trusted context, and passes the parsed value to `mapPayload`. It does not verify a provider signature, enforce freshness, or retain the raw body needed by signature schemes that sign exact bytes.
+
+Put verification in an outer route or wrapper that runs before this helper, while the raw request body is still available. Only after signature and freshness checks succeed should the verified payload reach the mapper. Derive tenant and actor from the verified integration, not arbitrary payload claims. Providers retry webhooks, so deduplicate the logical delivery at the application boundary before submitting consequential work.
+
+The route adapter does not weaken the runtime contract: waiting, cancelled, failed, assistant text, and structured finalized output remain distinct.
+
+Build the handlers in [Integrate with Next.js](/build/integrating-with-nextjs), and revisit [Request context and durability](/concepts/request-context-durability) for disconnect behavior.

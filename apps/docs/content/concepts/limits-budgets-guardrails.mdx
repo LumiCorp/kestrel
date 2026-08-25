@@ -1,0 +1,39 @@
+---
+title: Limits, budgets, and guardrails
+summary: Tell mechanical execution ceilings, governed spend, and policy stops apart when a responsive agent cannot continue.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The model is responding normally when the Run stops. “The AI crashed” is an attractive explanation—and often the wrong one.
+
+## The tenth loop step
+
+Invocation and loop limits cap how many model or execution cycles one attempt may consume. Timeouts and output bounds protect a specific boundary. Reaching one should produce evidence naming that ceiling rather than a generic provider failure.
+
+Limits keep a malformed or unproductive loop finite.
+
+## The third identical attempt
+
+No-progress detection addresses a different problem: the Run is spending steps without changing its situation. It can stop below a numeric ceiling because repetition itself is the evidence. The remedy is a different plan, not simply a larger loop limit.
+
+## The last authorized dollar
+
+Budgets represent owned resources such as model cost or another metered allocation. A durable ledger can reserve value before dispatch, commit actual spend, release unused reservation, and reconcile uncertain outcomes. Idempotent allocation evidence prevents a retry from charging the same logical use twice.
+
+Budget exhaustion is not a model capability failure. Increasing a token limit does not replenish an organization allocation.
+
+## The action policy forbids
+
+Guardrails stop or redirect work because it violates an execution or autonomy rule: disallowed tool class, missing capability, approval requirement, project restriction, or another policy-owned boundary. They should identify the owning rule and the action that could not proceed.
+
+Depending on the stop, the Run may fail, wait for an exact intervention, or preserve valid accumulated history for a later attempt. It must not report success because partial work looked promising.
+
+## The remedy starts with the owner
+
+Operators need these categories to choose a real remedy: reduce scope, increase an approved limit, allocate budget, change the plan, satisfy an approval, or fix configuration. A blanket retry does not answer which premise changed.
+
+[Failures, retries, and recovery](/concepts/failures-retries-recovery) deals with what can safely happen next. Operational budget ownership is documented in [Budgets and allocations](/operate/budgets-and-allocations).

@@ -570,7 +570,7 @@ test(
       WHERE interaction."request_id" = ${requestId}
     `;
     assert.deepEqual(committedResumeWindow, {
-      interactionStatus: "resolved",
+      interactionStatus: "processing",
       queueState: "running",
       resumedAt: null,
       turnStatus: "waiting_for_input",
@@ -608,6 +608,25 @@ test(
       eventType: "user.reply",
       message: "Workspace A",
     });
+    assert.equal(
+      await store.recordDurableRuntimeStarted({
+        turnId: waiting.turn.id,
+        eventId: `run-started-${suffix}`,
+        executionId: `execution-${suffix}`,
+        runtimeRunId: `resumed-run-${suffix}`,
+        requestedInteractionMode: "chat",
+        effectiveInteractionMode: "chat",
+      }),
+      true,
+    );
+    assert.equal(
+      (await store.listThreadInteractionsForUser({
+        threadId: interactionThreadId,
+        organizationId,
+        userId,
+      }))[0]?.status,
+      "resolved",
+    );
     await store.persistDurableAssistantOutcome({
       turnId: waiting.turn.id,
       interaction: null,

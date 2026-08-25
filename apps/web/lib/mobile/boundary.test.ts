@@ -30,6 +30,7 @@ test("mobile OpenAPI contract contains every implemented companion route", () =>
     "/threads/{id}",
     "/threads/{id}/branches",
     "/threads/{id}/interactions/{checkpointId}",
+    "/threads/{id}/interactions/{checkpointId}/retry",
     "/threads/{id}/messages",
     "/threads/{id}/outline",
     "/threads/{id}/queue",
@@ -57,6 +58,7 @@ test("every Thread mutation returns the authoritative snapshot", () => {
     ["/threads/{id}/queue", "put", ["200"]],
     ["/threads/{id}/branches", "post", ["200", "202"]],
     ["/threads/{id}/interactions/{checkpointId}", "post", ["200"]],
+    ["/threads/{id}/interactions/{checkpointId}/retry", "post", ["200"]],
     ["/turns/{turnId}", "delete", ["200"]],
     ["/turns/{turnId}/retry", "post", ["200", "202"]],
     ["/turns/{turnId}/stop", "post", ["202"]],
@@ -200,6 +202,19 @@ test("mobile responses, snapshots, message parts, errors, and SSE are concrete",
     "readState",
   ]);
   assert.ok(Array.isArray(contract.components.schemas.MessagePart.oneOf));
+  assert.deepEqual(contract.components.schemas.ArtifactPart.required, [
+    "type",
+    "id",
+    "title",
+    "kind",
+    "url",
+    "mediaType",
+    "previewId",
+    "sizeBytes",
+    "fileCount",
+    "expiresAt",
+    "warning",
+  ]);
   assert.deepEqual(
     (
       contract.components.schemas.MessagePart.oneOf as Array<{ $ref: string }>

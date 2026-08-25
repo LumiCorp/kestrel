@@ -84,7 +84,7 @@ export const kestrelOneGitHubRepositoryReadTool = createGitHubActionTool({
   name: "kestrel_one.github_repository_read",
   displayName: "GitHub Repository Read",
   description:
-    "Read a file or directory from a GitHub repository explicitly granted to this Environment.",
+    "Read a file or directory from the Workspace source or a GitHub repository explicitly granted to this Project. Reading a file is not a push preflight; an empty repository can be a valid reviewed publication target.",
   operation: "repository.read_file",
   readOnly: true,
   inputSchema: {

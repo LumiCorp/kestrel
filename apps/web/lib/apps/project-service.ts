@@ -19,6 +19,11 @@ import {
 import { ensureCoreAppCatalog, ensureEnvironmentAppPolicies } from "./service";
 import type { AppConnectionSummary } from "./types";
 import type { AppConnectionModel, AppConnectionRequirement } from "./types";
+import {
+  githubCapabilityHasReadyResource,
+  listAuthorizedGitHubResources,
+} from "@/lib/integrations/github-resource-access";
+import type { GitHubCapability } from "@/lib/integrations/github-policy-contract";
 
 export type ProjectAppConnection = AppConnectionSummary & {
   scope: "shared" | "personal";
@@ -40,6 +45,7 @@ export type ProjectAppCapability = {
   loggingMode: ToolLoggingMode;
   rateLimitMode: ToolRateLimitMode;
   inherited: boolean;
+  resourceReady: boolean;
 };
 
 export type ProjectAppConfiguration = {
@@ -355,6 +361,7 @@ export async function listProjectAppConfigurations(input: {
               loggingMode: grant?.loggingMode ?? "metadata_only",
               rateLimitMode: grant?.rateLimitMode ?? "strict",
               inherited: !policy,
+              resourceReady: true,
             };
           }),
         dependencies: [],
@@ -362,7 +369,41 @@ export async function listProjectAppConfigurations(input: {
       };
     },
   );
-  return addProjectAppDependencyStatuses(configurations);
+  const withDependencies = addProjectAppDependencyStatuses(configurations);
+  const github = withDependencies.find(
+    (configuration) => configuration.app.key === "github",
+  );
+  const githubConnection = github
+    ? selectEffectiveConnection({
+        connectionModel: github.app.connectionModel,
+        connections: github.attachedConnections,
+      })
+    : null;
+  if (!(github && githubConnection)) return withDependencies;
+  const resources = await listAuthorizedGitHubResources({
+    projectId: input.projectId,
+    connectionId: githubConnection.id,
+  });
+  return withDependencies.map((configuration) =>
+    configuration.app.key !== "github"
+      ? configuration
+      : {
+          ...configuration,
+          dependencyReady: configuration.capabilities.some((capability) =>
+            githubCapabilityHasReadyResource(
+              capability.key as GitHubCapability,
+              resources,
+            ),
+          ),
+          capabilities: configuration.capabilities.map((capability) => ({
+            ...capability,
+            resourceReady: githubCapabilityHasReadyResource(
+              capability.key as GitHubCapability,
+              resources,
+            ),
+          })),
+        },
+  );
 }
 
 export async function resolveEffectiveProjectAppsAccess(input: {
@@ -384,7 +425,7 @@ export async function resolveEffectiveProjectAppsAccess(input: {
       return [];
     }
     const capabilities = configuration.capabilities.flatMap((capability) =>
-      capability.enabled && capability.runtimeName
+      capability.enabled && capability.resourceReady && capability.runtimeName
         ? [
             {
               key: capability.key,
@@ -796,10 +837,58 @@ export async function resolveEffectiveProjectAppAccess(input: {
   projectId: string;
   appKey: string;
   userId: string;
-}) {
+  includePolicyOnly?: boolean | undefined;
+  skipResourceReadiness?: boolean | undefined;
+  skipInitialization?: boolean | undefined;
+}, executor: typeof knowledgeDb = knowledgeDb) {
+  const db = executor;
   let context: Awaited<ReturnType<typeof requireProjectAppContext>>;
   try {
-    context = await requireProjectAppContext(input);
+    if (input.skipInitialization) {
+      const [binding, definition, installation] = await Promise.all([
+        db.query.projects.findFirst({
+          where: (table, { and: all, eq: equals }) =>
+            all(
+              equals(table.id, input.projectId),
+              equals(table.organizationId, input.organizationId),
+            ),
+          columns: {
+            id: true,
+            organizationId: true,
+            environmentId: true,
+            updatedAt: true,
+          },
+        }),
+        db.query.appDefinitions.findFirst({
+          where: (table, { eq: equals }) => equals(table.key, input.appKey),
+        }),
+        db.query.appInstallations.findFirst({
+          where: (table, { and: all, eq: equals }) =>
+            all(
+              equals(table.organizationId, input.organizationId),
+              equals(table.appKey, input.appKey),
+            ),
+        }),
+      ]);
+      if (!binding) {
+        throw new ProjectAppError("PROJECT_NOT_FOUND", "Project not found.");
+      }
+      if (!definition) {
+        throw new ProjectAppError("APP_NOT_FOUND", "App not found.");
+      }
+      if (
+        definition.installMode !== "inherited" &&
+        installation?.status !== "installed"
+      ) {
+        throw new ProjectAppError(
+          "APP_NOT_INSTALLED",
+          "Install this App before adding it to a Project.",
+        );
+      }
+      context = { binding, definition };
+    } else {
+      context = await requireProjectAppContext(input);
+    }
   } catch (error) {
     if (
       error instanceof ProjectAppError &&
@@ -810,7 +899,7 @@ export async function resolveEffectiveProjectAppAccess(input: {
     throw error;
   }
   const { binding, definition } = context;
-  const projectApp = await knowledgeDb.query.projectApps.findFirst({
+  const projectApp = await db.query.projectApps.findFirst({
     where: (table, { and: all, eq: equals }) =>
       all(
         equals(table.projectId, input.projectId),
@@ -821,7 +910,7 @@ export async function resolveEffectiveProjectAppAccess(input: {
     projectApp?.enabled ?? definition.installMode === "inherited";
   if (!projectEnabled) return null;
   const [attachments, grants, policies, capabilities] = await Promise.all([
-    knowledgeDb.query.projectAppConnections.findMany({
+    db.query.projectAppConnections.findMany({
       where: (table, { and: all, eq: equals }) =>
         all(
           equals(table.projectId, input.projectId),
@@ -829,21 +918,21 @@ export async function resolveEffectiveProjectAppAccess(input: {
           equals(table.isDefault, true),
         ),
     }),
-    knowledgeDb.query.environmentAppCapabilityGrants.findMany({
+    db.query.environmentAppCapabilityGrants.findMany({
       where: (table, { and: all, eq: equals }) =>
         all(
           equals(table.environmentId, binding.environmentId),
           equals(table.appKey, input.appKey),
         ),
     }),
-    knowledgeDb.query.projectAppCapabilityPolicies.findMany({
+    db.query.projectAppCapabilityPolicies.findMany({
       where: (table, { and: all, eq: equals }) =>
         all(
           equals(table.projectId, input.projectId),
           equals(table.appKey, input.appKey),
         ),
     }),
-    knowledgeDb.query.appCapabilities.findMany({
+    db.query.appCapabilities.findMany({
       where: (table, { eq: equals }) => equals(table.appKey, input.appKey),
     }),
   ]);
@@ -856,7 +945,7 @@ export async function resolveEffectiveProjectAppAccess(input: {
     return null;
   }
   const selectedConnection = selectedAttachment
-    ? await knowledgeDb.query.appConnections.findFirst({
+    ? await db.query.appConnections.findFirst({
         where: (table, { and: all, eq: equals }) =>
           all(
             equals(table.id, selectedAttachment.connectionId),
@@ -897,7 +986,7 @@ export async function resolveEffectiveProjectAppAccess(input: {
       !grant?.enabled ||
       grant.approvalMode === "deny" ||
       (policy && (!policy.enabled || policy.approvalMode === "deny")) ||
-      !capability.runtimeName ||
+      !(capability.runtimeName || input.includePolicyOnly) ||
       (selectedMicrosoftPacks !== null &&
         !microsoft365PackAllowsCapability({
           selectedPacks: [...selectedMicrosoftPacks],
@@ -927,13 +1016,41 @@ export async function resolveEffectiveProjectAppAccess(input: {
     ];
   });
   if (!effectiveCapabilities.length) return null;
+  const filteredCapabilities =
+    input.appKey === "github" && selectedConnection && !input.skipResourceReadiness
+      ? await filterGitHubCapabilitiesByResource({
+          projectId: input.projectId,
+          connectionId: selectedConnection.id,
+          capabilities: effectiveCapabilities,
+        })
+      : effectiveCapabilities;
+  if (!filteredCapabilities.length) return null;
   return {
     appKey: input.appKey,
     projectId: input.projectId,
     environmentId: binding.environmentId,
     connectionId: selectedConnection?.id ?? null,
-    capabilities: effectiveCapabilities,
+    capabilities: filteredCapabilities,
   };
+}
+
+async function filterGitHubCapabilitiesByResource<T extends { key: string }>(
+  input: {
+    projectId: string;
+    connectionId: string;
+    capabilities: T[];
+  },
+) {
+  const resources = await listAuthorizedGitHubResources({
+    projectId: input.projectId,
+    connectionId: input.connectionId,
+  });
+  return input.capabilities.filter((capability) =>
+    githubCapabilityHasReadyResource(
+      capability.key as GitHubCapability,
+      resources,
+    ),
+  );
 }
 
 export function selectEffectiveConnection(input: {

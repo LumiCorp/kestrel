@@ -9,6 +9,7 @@ import {
   createCoreManifest,
   ensureLocalCoreReady,
   LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY,
+  LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY_V2,
   parseLocalCoreRuntimeStoreReset,
   parseLocalCoreRuntimeStoreResetRequest,
   parseLocalCoreRuntimeStoreResetResult,
@@ -697,6 +698,12 @@ test("ensureLocalCoreReady updates executable metadata without changing compatib
     assert.equal(
       status.manifest?.capabilities.includes(
         LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY,
+      ),
+      true,
+    );
+    assert.equal(
+      status.manifest?.capabilities.includes(
+        LOCAL_CORE_EXECUTION_PROFILE_RESOLUTION_CAPABILITY_V2,
       ),
       true,
     );

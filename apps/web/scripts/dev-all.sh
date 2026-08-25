@@ -10,6 +10,8 @@ HEALTH_URL="http://${HOST}:${PORT}/api/health"
 RUNNER_HOST="${KESTREL_RUNNER_SERVICE_HOST:-127.0.0.1}"
 RUNNER_PORT="${KESTREL_RUNNER_SERVICE_PORT:-43106}"
 RUNNER_HEALTH_URL="http://${RUNNER_HOST}:${RUNNER_PORT}/health"
+TURN_WORKER_HEALTH_PORT="${KESTREL_LOCAL_TURN_WORKER_HEALTH_PORT:-43107}"
+KNOWLEDGE_WORKER_HEALTH_PORT="${KESTREL_LOCAL_KNOWLEDGE_WORKER_HEALTH_PORT:-43108}"
 RUNNER_DATABASE_NAME="kestrel_runtime"
 RUNNER_DATABASE_MANAGED="false"
 
@@ -70,6 +72,18 @@ export KESTREL_RUNNER_SERVICE_PORT="$RUNNER_PORT"
 export KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL="${KESTREL_LOCAL_ENVIRONMENT_RUNNER_URL:-http://${RUNNER_HOST}:${RUNNER_PORT}}"
 export KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN="${KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN:-kestrel-one-local-dev-runner}"
 export KESTREL_RUNNER_SERVICE_TOKEN="$KESTREL_LOCAL_ENVIRONMENT_RUNNER_TOKEN"
+
+if { [[ -n "${KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:-}" ]] && [[ -z "${KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:-}" ]]; } ||
+  { [[ -z "${KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:-}" ]] && [[ -n "${KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY:-}" ]]; }; then
+  log "KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY and KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY must be configured together"
+  exit 1
+fi
+if [[ -z "${KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY:-}" ]]; then
+  LOCAL_TICKET_KEYS_PATH="${KESTREL_HOME}/environment-ticket-keys.json"
+  node --import tsx scripts/ensure-local-environment-ticket-keys.ts "$LOCAL_TICKET_KEYS_PATH"
+  export KESTREL_ENVIRONMENT_TICKET_PRIVATE_KEY="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; process.stdout.write(JSON.parse(readFileSync(process.argv[1], "utf8")).privateKey)' "$LOCAL_TICKET_KEYS_PATH")"
+  export KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; process.stdout.write(JSON.parse(readFileSync(process.argv[1], "utf8")).publicKey)' "$LOCAL_TICKET_KEYS_PATH")"
+fi
 
 if [[ "${AI_AGENT_API_KEY:-}" == "sk_your_provider_key" ]]; then
   log "Ignoring placeholder AI_AGENT_API_KEY from env defaults"
@@ -138,7 +152,7 @@ require_pgvector() {
 
 cleanup() {
   local pid
-  for pid in "${TURN_WORKER_PID:-}" "${APP_PID:-}" "${RUNNER_PID:-}"; do
+  for pid in "${KNOWLEDGE_WORKER_PID:-}" "${TURN_WORKER_PID:-}" "${APP_PID:-}" "${RUNNER_PID:-}"; do
     if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
       kill "$pid" >/dev/null 2>&1 || true
     fi
@@ -156,6 +170,12 @@ monitor_app_processes() {
     if ! kill -0 "$TURN_WORKER_PID" >/dev/null 2>&1; then
       log "Durable turn worker exited; stopping the local stack"
       wait "$TURN_WORKER_PID"
+      return $?
+    fi
+
+    if ! kill -0 "$KNOWLEDGE_WORKER_PID" >/dev/null 2>&1; then
+      log "Knowledge worker exited; stopping the local stack"
+      wait "$KNOWLEDGE_WORKER_PID"
       return $?
     fi
 
@@ -178,6 +198,9 @@ if [[ -z "${DOCKER_BIN}" ]]; then
   log "docker is required. Install Docker Desktop or another Docker runtime and try again."
   exit 1
 fi
+
+log "Building the physical attachment worker"
+pnpm --filter @kestrel-agents/files build
 
 log "Starting docker compose infra"
 "${DOCKER_BIN}" compose up -d postgres redis minio minio-init
@@ -259,8 +282,16 @@ until curl -fsS "$HEALTH_URL" >/dev/null 2>&1; do
 done
 
 log "Starting durable turn worker"
-pnpm worker:turns &
+KESTREL_WORKER_HEALTH_PORT="$TURN_WORKER_HEALTH_PORT" pnpm worker:turns &
 TURN_WORKER_PID=$!
+
+wait_for_command "Turn worker" 60 curl -fsS "http://127.0.0.1:${TURN_WORKER_HEALTH_PORT}/healthz"
+
+log "Starting local Knowledge worker"
+KESTREL_WORKER_HEALTH_PORT="$KNOWLEDGE_WORKER_HEALTH_PORT" pnpm worker:knowledge:local &
+KNOWLEDGE_WORKER_PID=$!
+
+wait_for_command "Knowledge worker" 60 curl -fsS "http://127.0.0.1:${KNOWLEDGE_WORKER_HEALTH_PORT}/healthz"
 
 log "Ready at http://${HOST}:${PORT}"
 monitor_app_processes

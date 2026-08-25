@@ -53,6 +53,8 @@ import {
 } from "../../src/runtime/RuntimeFailure.js";
 import { ExecutionAuthorizationProvider } from "../../src/runtime/ExecutionAuthorizationProvider.js";
 import { defaultToolCatalog } from "../catalog.js";
+import { createBuiltInToolDescriptor } from "../catalog.js";
+import { codeExecuteDefinitionForProfile } from "../code/execute.js";
 import type {
   RuntimeToolRunContext,
   SharedToolContext,
@@ -126,6 +128,7 @@ type PinnedExecutionSource = {
   pinned: Omit<PinnedToolExecutionV1, "handler">;
   createHandler: (
     options: ToolGatewayCallOptions,
+    prepared?: PreparedToolCallV1 | undefined,
   ) => (input: unknown) => Promise<unknown>;
   retain?: (() => void) | undefined;
   release?: (() => Promise<void> | void) | undefined;
@@ -228,6 +231,13 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
         .toModelTools(builtInNames)
         .map((tool) => [tool.name, tool] as const),
     );
+    const codeExecuteDefinition = codeExecuteDefinitionForProfile(this.builtInContext.codeMode);
+    this.builtInDescriptors.set("code.execute", createBuiltInToolDescriptor(codeExecuteDefinition));
+    this.builtInToolSpecs.set("code.execute", {
+      name: codeExecuteDefinition.name,
+      description: codeExecuteDefinition.description,
+      inputSchema: codeExecuteDefinition.inputSchema,
+    });
 
     this.builtInCapabilities = new Map(
       defaultToolCatalog
@@ -559,7 +569,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             .get(input.origin.snapshotId)
             ?.get(input.activation.descriptor.toolId)
         : this.findPinnedExecutionSource(input.activation);
-    let source = snapshotSource;
+    let source =
+      snapshotSource ??
+      this.rehydrateStaticBuiltInExecution(input, options.runContext);
     if (source === undefined) {
       throw createRuntimeFailure(
         "TOOL_PINNED_HANDLER_UNAVAILABLE",
@@ -699,7 +711,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             .get(input.origin.snapshotId)
             ?.get(input.activation.descriptor.toolId)
         : this.findPinnedExecutionSource(input.activation);
-    let source = snapshotSource;
+    let source =
+      snapshotSource ??
+      this.rehydrateStaticBuiltInExecution(input, options.runContext);
     if (source === undefined) {
       throw createRuntimeFailure(
         "TOOL_PINNED_HANDLER_UNAVAILABLE",
@@ -802,13 +816,27 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
       options.runContext,
     );
     try {
+      let persistCompletedCapabilityRawOutput: ((rawOutput: unknown) => Promise<void>) | undefined;
+      const preparedHandler = source.createHandler({
+        ...options,
+        persistCompletedCapabilityRawOutput: (rawOutput) => {
+          if (persistCompletedCapabilityRawOutput === undefined) {
+            throw new Error("Capability result persistence is unavailable for this prepared execution.");
+          }
+          return persistCompletedCapabilityRawOutput(rawOutput);
+        },
+      }, prepared);
       let result = await executePinnedToolCallV1({
         prepared,
         pinned: {
           ...source.pinned,
-          handler: source.createHandler(options),
+          handler: (toolInput, lifecycle) => {
+            persistCompletedCapabilityRawOutput = lifecycle?.persistCompletedCapabilityResult;
+            return preparedHandler(toolInput);
+          },
         },
         signal: options.signal,
+        persistCompletedCapabilityResult: options.persistCompletedCapabilityResult,
       });
       if (
         result.outcome.kind === "failure" &&
@@ -826,13 +854,27 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             options.runContext,
           );
           try {
+            let persistRetryCapabilityRawOutput: ((rawOutput: unknown) => Promise<void>) | undefined;
+            const retryHandler = retrySource.createHandler({
+              ...options,
+              persistCompletedCapabilityRawOutput: (rawOutput) => {
+                if (persistRetryCapabilityRawOutput === undefined) {
+                  throw new Error("Capability result persistence is unavailable for this prepared execution.");
+                }
+                return persistRetryCapabilityRawOutput(rawOutput);
+              },
+            }, prepared);
             result = await executePinnedToolCallV1({
               prepared,
               pinned: {
                 ...retrySource.pinned,
-                handler: retrySource.createHandler(options),
+                handler: (toolInput, lifecycle) => {
+                  persistRetryCapabilityRawOutput = lifecycle?.persistCompletedCapabilityResult;
+                  return retryHandler(toolInput);
+                },
               },
               signal: options.signal,
+              persistCompletedCapabilityResult: options.persistCompletedCapabilityResult,
             });
           } finally {
             await retrySource.release?.();
@@ -1272,13 +1314,39 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
           }
           return record;
         },
-        createHandler: (handlerOptions: ToolGatewayCallOptions) => {
+        createHandler: (handlerOptions: ToolGatewayCallOptions, prepared) => {
+          const executionContext = prepared === undefined
+            ? activeContext
+            : {
+                ...activeContext,
+                runtime: {
+                  ...activeContext.runtime,
+                  runId: activeContext.runtime?.runId ?? prepared.runId,
+                  sessionId: activeContext.runtime?.sessionId ?? prepared.sessionId,
+                  toolCallId: prepared.callId,
+                },
+                ...(descriptor.toolId === "code.execute" && activeContext.sandboxCapabilityRuntime !== undefined
+                  ? {
+                      sandboxCapabilityRuntime: {
+                        ...activeContext.sandboxCapabilityRuntime,
+                        preparedPolicy: prepared.policy,
+                        ...(prepared.approval === undefined ? {} : { preparedApproval: prepared.approval }),
+                      },
+                    }
+                  : {}),
+              };
+          const contextWithResultPersistence = handlerOptions.persistCompletedCapabilityRawOutput === undefined
+            ? executionContext
+            : {
+                ...executionContext,
+                persistCompletedCapabilityResult: handlerOptions.persistCompletedCapabilityRawOutput,
+              };
           const handlers = defaultToolCatalog.createRawHandlers(
             [descriptor.toolId],
             handlerOptions.console === undefined
-              ? { ...activeContext, signal: handlerOptions.signal }
+              ? { ...contextWithResultPersistence, signal: handlerOptions.signal }
               : {
-                  ...activeContext,
+                  ...contextWithResultPersistence,
                   toolConsole: handlerOptions.console,
                   signal: handlerOptions.signal,
                 },
@@ -1328,24 +1396,40 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   private rehydrateStaticBuiltInExecution(
-    prepared: PreparedToolCallV1,
+    input: { activation: PreparedToolCallV1["activation"] },
     runContext: ToolRunContext | undefined,
   ): PinnedExecutionSource | undefined {
     const descriptor = this.builtInDescriptors.get(
-      prepared.activation.descriptor.toolId,
+      input.activation.descriptor.toolId,
     );
+    const blockedResumeScope = resolveBlockedResumeScope(runContext);
+    const scopeMatches =
+      input.activation.scopeFingerprint ===
+        fingerprintToolRunScopeV1(runContext) ||
+      (runContext !== undefined &&
+        blockedResumeScope !== undefined &&
+        input.activation.scopeFingerprint ===
+          fingerprintToolRunScopeV1({
+            ...runContext,
+            runId: blockedResumeScope.runId,
+            payload: {
+              ...(asRecord(runContext.payload) ?? {}),
+              ...(blockedResumeScope.mcpContext === undefined
+                ? {}
+                : { mcpContext: blockedResumeScope.mcpContext }),
+            },
+          }));
     if (
       descriptor === undefined ||
       hashCanonical(toToolDescriptorRefV1(descriptor)) !==
-        hashCanonical(prepared.activation.descriptor) ||
-      prepared.activation.scopeFingerprint !==
-        fingerprintToolRunScopeV1(runContext)
+        hashCanonical(input.activation.descriptor) ||
+      scopeMatches === false
     ) {
       return;
     }
     return this.createPinnedExecutionSource(
       descriptor,
-      prepared.activation,
+      input.activation,
       runContext,
     );
   }
@@ -2147,6 +2231,61 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function resolveBlockedResumeScope(
+  runContext: ToolRunContext | undefined,
+):
+  | {
+      runId: string;
+      mcpContext?: Record<string, unknown> | undefined;
+    }
+  | undefined {
+  const payload = asRecord(runContext?.payload);
+  if (payload?.resumeBlockedRun !== true) {
+    return;
+  }
+  const metadata = asRecord(payload.metadata);
+  const orchestration = asRecord(payload.orchestration);
+  const blockedToolScope = asRecord(metadata?.blockedToolScope);
+  const candidates = [
+    metadata?.blockedRunId,
+    orchestration?.blockedRunId,
+    blockedToolScope?.runId,
+  ]
+    .flatMap((value) =>
+      typeof value === "string" && value.trim().length > 0
+        ? [value.trim()]
+        : [],
+    );
+  const distinct = [...new Set(candidates)];
+  if (distinct.length !== 1) {
+    return;
+  }
+  const currentMcpContext = asRecord(payload.mcpContext);
+  const blockedMcpContext = asRecord(blockedToolScope?.mcpContext);
+  if (
+    (currentMcpContext === undefined) !== (blockedMcpContext === undefined) ||
+    (currentMcpContext !== undefined &&
+      blockedMcpContext !== undefined &&
+      hashCanonical(withoutGrantId(currentMcpContext)) !==
+        hashCanonical(withoutGrantId(blockedMcpContext)))
+  ) {
+    return;
+  }
+  return {
+    runId: distinct[0]!,
+    ...(blockedMcpContext === undefined
+      ? {}
+      : { mcpContext: blockedMcpContext }),
+  };
+}
+
+function withoutGrantId(
+  context: Record<string, unknown>,
+): Record<string, unknown> {
+  const { grantId: _grantId, ...stableContext } = context;
+  return stableContext;
 }
 
 function preparedExecutionKey(prepared: PreparedToolCallV1): string {

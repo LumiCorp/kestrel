@@ -7,12 +7,16 @@ import {
 import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
 import {
+  AppOperationApprovalError,
+  consumeAppOperationApproval,
+} from "@/lib/apps/app-operation-approvals";
+import {
   authorizeGitHubCapability,
   GitHubPolicyError,
 } from "@/lib/integrations/github-policy";
 import {
-  githubCapabilityForCredentialRequest,
   githubCredentialOperationBinding,
+  githubToolCredentialRequestInputSchema,
   githubToolCredentialRequestSchema,
 } from "@/lib/integrations/github-tool-credential-contract";
 import { knowledgeDb } from "@/lib/knowledge/db";
@@ -24,28 +28,70 @@ export async function POST(request: Request) {
       token: readBearer(request.headers.get("authorization")),
       publicKey: process.env.KESTREL_ENVIRONMENT_TICKET_PUBLIC_KEY ?? "",
     });
-    const input = githubToolCredentialRequestSchema.parse(await request.json());
-    const capability = githubCapabilityForCredentialRequest(input);
-    const resource = await knowledgeDb.query.toolConnectionResources.findFirst({
-      where: (table, { and, eq }) =>
-        and(
-          eq(table.id, input.resourceId),
-          eq(table.organizationId, executionTicket.organizationId),
-          eq(table.providerKey, "github"),
-          eq(table.resourceType, "repository"),
-          eq(table.enabled, true)
-        ),
-    });
-    if (!resource) {
-      throw new GitHubPolicyError("GITHUB_CONTEXT_DENIED");
+    const requested = githubToolCredentialRequestInputSchema.parse(
+      await request.json(),
+    );
+    const requestedResource = requested.resourceId
+      ? await knowledgeDb.query.appConnectionResources.findFirst({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.id, requested.resourceId!),
+              eq(table.resourceType, "repository"),
+              eq(table.enabled, true),
+            ),
+        })
+      : null;
+    const repository = requested.repository ?? requestedResource?.label;
+    if (!repository) {
+      throw new GitHubPolicyError("GITHUB_REPOSITORY_NOT_SYNCED", 409);
     }
+    const capability =
+      requested.operation === "git.upload_pack"
+        ? "repository.read"
+        : requested.operation;
     const policy = await authorizeGitHubCapability({
       ticket: executionTicket,
-      repository: resource.label,
+      repository,
       capability,
-      requireRunExecution: input.operation === "repository.push_agent_branch",
+      requireRunExecution: requested.operation !== "git.upload_pack",
     });
-    if (policy.approvalMode !== "auto") {
+    const resource = policy.resource;
+    if (requested.resourceId && requested.resourceId !== resource.id) {
+      throw new GitHubPolicyError("GITHUB_REPOSITORY_NOT_SYNCED", 409);
+    }
+    const input = githubToolCredentialRequestSchema.parse({
+      ...requested,
+      repository: undefined,
+      resourceId: resource.id,
+    });
+    if (input.operation === "repository.initialize") {
+      if (policy.approvalMode !== "ask") {
+        throw new GitHubPolicyError("GITHUB_APPROVAL_REQUIRED", 409);
+      }
+      await consumeAppOperationApproval({
+        consumedExecutionId: executionTicket.runId,
+        binding: {
+          organizationId: executionTicket.organizationId,
+          environmentId: executionTicket.environmentId,
+          workspaceId: executionTicket.workspaceId,
+          threadId: executionTicket.threadId,
+          actorUserId: executionTicket.actorId,
+          agentId: executionTicket.agentId,
+          appKey: "github",
+          capabilityKey: "repository.initialize",
+          connectionId: policy.connection.id,
+          resourceId: resource.id,
+          resourceType: "repository",
+          operationKey: "repository.initialize",
+          runtimeApprovalId: input.approvalId,
+          payload: {
+            repository: resource.label,
+            candidateFingerprint: input.candidateFingerprint,
+            branch: input.branch,
+          },
+        },
+      });
+    } else if (policy.approvalMode !== "auto") {
       throw new GitHubPolicyError("GITHUB_APPROVAL_REQUIRED", 409);
     }
     const issuedAt = Math.floor(Date.now() / 1000);
@@ -102,7 +148,12 @@ export async function POST(request: Request) {
       },
     });
     return NextResponse.json(
-      { token, expiresAt },
+      {
+        token,
+        expiresAt,
+        resourceId: resource.id,
+        repository: resource.label,
+      },
       { headers: { "cache-control": "no-store" } }
     );
   } catch (error) {
@@ -110,6 +161,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: { code: error.code } },
         { status: error.status }
+      );
+    }
+    if (error instanceof AppOperationApprovalError) {
+      return NextResponse.json(
+        { error: { code: error.code } },
+        { status: 409 },
       );
     }
     return errorResponse(error, 401);

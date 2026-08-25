@@ -9,6 +9,7 @@ import {
   TURN_ATTACHMENT_DEPLOYMENT_CANARY_TURN_ID,
 } from "@kestrel-agents/protocol";
 import { resolveTurnAttachmentDeploymentCanary } from "./turn-attachment-deployment-canary";
+import { resolveRunnerAttachmentSource } from "./turn-attachment-resolver";
 import type { FileStorageProvider } from "./storage-provider";
 
 const webRoot = path.resolve(
@@ -32,10 +33,30 @@ test("turn attachment resolver derives scope from the active durable turn", () =
   assert.match(resolver, /ATTACHMENT_SET_INVALID/u);
   assert.match(resolver, /ATTACHMENT_UNAVAILABLE/u);
   assert.match(resolver, /ensureEffectiveFileAvailability/u);
-  assert.match(resolver, /storage\.signedReadUrl\(row\.objectKey, 900\)/u);
+  assert.match(resolver, /resolveRunnerAttachmentSource\(storage, row\.objectKey, 900\)/u);
   assert.doesNotMatch(resolver, /organizationId: input\./u);
   assert.doesNotMatch(resolver, /fileIds: input\./u);
   assert.doesNotMatch(resolver, /threadId: input\./u);
+});
+
+test("runner attachment sources inline bytes when a local signed URL is not trusted HTTPS", async () => {
+  const local = await resolveRunnerAttachmentSource({
+    signedReadUrl: async () => "http://127.0.0.1:59000/files/blob/original?signature=local",
+    readBuffer: async () => Buffer.from("local attachment", "utf8"),
+  }, "files/blob/original", 900);
+  assert.deepEqual(local, {
+    data: Buffer.from("local attachment", "utf8").toString("base64"),
+  });
+
+  const hosted = await resolveRunnerAttachmentSource({
+    signedReadUrl: async () => "https://files.example.test/blob?signature=hosted",
+    readBuffer: async () => {
+      throw new Error("hosted source should not be buffered");
+    },
+  }, "files/blob/original", 900);
+  assert.deepEqual(hosted, {
+    sourceUrl: "https://files.example.test/blob?signature=hosted",
+  });
 });
 
 test("turn attachment resolver is a no-store, ticket-bound service boundary", () => {

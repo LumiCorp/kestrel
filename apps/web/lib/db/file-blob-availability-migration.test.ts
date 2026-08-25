@@ -22,12 +22,15 @@ const historyLock = JSON.parse(
   fs.readFileSync(path.join(migrations, "meta/history-lock.json"), "utf8"),
 ) as Record<string, string>;
 
-test("file blob availability migration is registered as the next applied migration", () => {
+test("file blob availability migration remains registered before later ownership work", () => {
   const index = journal.entries.findIndex(
     (entry) => entry.tag === "0080_file_blob_availability",
   );
 
-  assert.equal(index, journal.entries.length - 1);
+  assert.equal(
+    journal.entries[index + 1]?.tag,
+    "0081_knowledge_document_file_ownership",
+  );
   assert.deepEqual(journal.entries[index], {
     idx: 80,
     version: "7",

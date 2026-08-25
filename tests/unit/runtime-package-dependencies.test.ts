@@ -4,21 +4,46 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveRuntimePackageDependencies } from "../../scripts/runtime-package-dependencies.js";
+import {
+  RUNTIME_WORKSPACE_PACKAGES,
+  resolveRuntimePackageDependencies,
+} from "../../scripts/runtime-package-dependencies.js";
 
+test("Runtime workspace descriptors cover exactly the seven installed packages", () => {
+  assert.deepEqual(
+    RUNTIME_WORKSPACE_PACKAGES.map(({ name }) => name),
+    [
+      "@kestrel-agents/protocol",
+      "@kestrel-agents/conversation",
+      "@kestrel-agents/files",
+      "@kestrel-agents/sdk",
+      "@kestrel-agents/workspace-skills",
+      "@kestrel-agents/memory",
+      "@lumi/kestrel-environment-auth",
+    ],
+  );
+  assert.equal(
+    RUNTIME_WORKSPACE_PACKAGES.map(({ name }): string => name).includes(
+      "@kestrel/mcp-security",
+    ),
+    false,
+  );
+});
 
 test("runtime package manifests replace workspace links with exact packed versions", async (t) => {
-  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-dependencies-"));
+  const repoRoot = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-runtime-dependencies-"),
+  );
   t.after(async () => await rm(repoRoot, { recursive: true, force: true }));
   await writeWorkspaceManifests(repoRoot, "0.5.1");
 
   assert.deepEqual(
     resolveRuntimePackageDependencies({
       repoRoot,
-      runtimeVersion: "0.5.1",
       dependencies: {
         "@kestrel-agents/protocol": "workspace:*",
         "@kestrel-agents/conversation": "workspace:*",
+        "@kestrel-agents/files": "workspace:*",
         "@kestrel-agents/sdk": "workspace:*",
         "@kestrel-agents/workspace-skills": "workspace:*",
         "@kestrel-agents/memory": "workspace:*",
@@ -30,6 +55,7 @@ test("runtime package manifests replace workspace links with exact packed versio
     {
       "@kestrel-agents/protocol": "0.5.1",
       "@kestrel-agents/conversation": "0.5.1",
+      "@kestrel-agents/files": "0.5.1",
       "@kestrel-agents/sdk": "0.5.1",
       "@kestrel-agents/workspace-skills": "0.5.1",
       "@kestrel-agents/memory": "0.5.1",
@@ -40,8 +66,10 @@ test("runtime package manifests replace workspace links with exact packed versio
   );
 });
 
-test("runtime package manifests reject protocol and runtime version drift", async (t) => {
-  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-runtime-dependencies-drift-"));
+test("runtime package manifests pin each independently versioned workspace dependency", async (t) => {
+  const repoRoot = await mkdtemp(
+    path.join(os.tmpdir(), "kestrel-runtime-dependencies-drift-"),
+  );
   t.after(async () => await rm(repoRoot, { recursive: true, force: true }));
   await writeWorkspaceManifests(repoRoot, "0.5.1");
   const protocolDir = path.join(repoRoot, "packages", "protocol");
@@ -51,20 +79,20 @@ test("runtime package manifests reject protocol and runtime version drift", asyn
     "utf8",
   );
 
-  assert.throws(
-    () => resolveRuntimePackageDependencies({
+  assert.equal(
+    resolveRuntimePackageDependencies({
       repoRoot,
-      runtimeVersion: "0.5.1",
       dependencies: {
         "@kestrel-agents/protocol": "workspace:*",
         "@kestrel-agents/conversation": "workspace:*",
+        "@kestrel-agents/files": "workspace:*",
         "@kestrel-agents/sdk": "workspace:*",
         "@kestrel-agents/workspace-skills": "workspace:*",
         "@kestrel-agents/memory": "workspace:*",
         "@lumi/kestrel-environment-auth": "workspace:^",
       },
-    }),
-    /Runtime version 0\.5\.1 must match @kestrel-agents\/protocol 0\.5\.2/u,
+    })["@kestrel-agents/protocol"],
+    "0.5.2",
   );
 });
 
@@ -75,6 +103,7 @@ async function writeWorkspaceManifests(
   for (const [directory, name, packageVersion] of [
     ["protocol", "@kestrel-agents/protocol", version],
     ["conversation", "@kestrel-agents/conversation", version],
+    ["attachments", "@kestrel-agents/files", version],
     ["sdk", "@kestrel-agents/sdk", version],
     ["workspace-skills", "@kestrel-agents/workspace-skills", version],
     ["memory", "@kestrel-agents/memory", version],

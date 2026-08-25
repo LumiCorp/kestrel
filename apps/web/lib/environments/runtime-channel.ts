@@ -293,73 +293,113 @@ export async function requestEnvironmentRuntimeUpdate(input: {
       "The requested Environment Runtime Version does not exist.",
     );
   }
-  const environment = await knowledgeDb.query.environments.findFirst({
-    where: and(
-      eq(schema.environments.id, input.environmentId),
-      eq(schema.environments.organizationId, input.organizationId),
-    ),
-  });
-  if (!environment || environment.provider !== "fly") {
-    throw new EnvironmentRuntimeChannelError(
-      "RUNTIME_VERSION_NOT_FOUND",
-      "The requested Fly Environment does not exist.",
-    );
-  }
-  if (
-    environment.runtimeImage === version.workspaceRuntimeImage &&
-    environment.routerImage === version.environmentRouterImage
-  ) {
-    const existing = await knowledgeDb.query.environmentOperations.findFirst({
-      where: and(
-        eq(schema.environmentOperations.organizationId, input.organizationId),
-        eq(schema.environmentOperations.environmentId, input.environmentId),
-        eq(schema.environmentOperations.type, "environment.update"),
-        sql`${schema.environmentOperations.input}->>'runtimeVersionId' = ${version.id}`,
-      ),
-      orderBy: desc(schema.environmentOperations.createdAt),
-    });
-    if (
-      existing?.status === "completed" &&
-      existing.stage === "environment.update.ready"
-    ) {
-      return {
-        environment,
-        operation: existing,
-        version: mapSchemaVersion(version),
-      };
-    }
-    if (
-      !(
-        existing &&
-        (existing.status === "failed" ||
-          existing.status === "cancelled" ||
-          (existing.status === "completed" &&
-            existing.stage === "environment.update.recovery_required"))
-      )
-    ) {
-      throw new EnvironmentRuntimeChannelError(
-        "RUNTIME_ALREADY_CURRENT",
-        "The Environment already uses the requested runtime version.",
-      );
-    }
-  }
-  const now = new Date();
-  const idempotencyKey = environmentRuntimeUpdateIdempotencyKey({
-    environmentId: input.environmentId,
-    runtimeVersionId: version.id,
-    sourceRuntimeImage: environment.runtimeImage,
-    sourceRouterImage: environment.routerImage,
-  });
-  const operation = await knowledgeDb.transaction(async (transaction) => {
+  const requested = await knowledgeDb.transaction(async (transaction) => {
     await transaction.execute(
       sql`SELECT pg_advisory_xact_lock(hashtextextended(${environmentLifecycleLockKey(input.environmentId)}, 0))`,
     );
-    const existing = await transaction.query.environmentOperations.findFirst({
+    await transaction.execute(sql`
+      SELECT "id"
+      FROM "environments"
+      WHERE "id" = ${input.environmentId}
+        AND "organization_id" = ${input.organizationId}
+      FOR UPDATE
+    `);
+    const environment = await transaction.query.environments.findFirst({
+      where: and(
+        eq(schema.environments.id, input.environmentId),
+        eq(schema.environments.organizationId, input.organizationId),
+      ),
+    });
+    if (!environment || environment.provider !== "fly") {
+      throw new EnvironmentRuntimeChannelError(
+        "RUNTIME_VERSION_NOT_FOUND",
+        "The requested Fly Environment does not exist.",
+      );
+    }
+    if (
+      environment.runtimeImage === version.workspaceRuntimeImage &&
+      environment.routerImage === version.environmentRouterImage
+    ) {
+      const existing =
+        await transaction.query.environmentOperations.findFirst({
+          where: and(
+            eq(
+              schema.environmentOperations.organizationId,
+              input.organizationId,
+            ),
+            eq(
+              schema.environmentOperations.environmentId,
+              input.environmentId,
+            ),
+            eq(schema.environmentOperations.type, "environment.update"),
+            sql`${schema.environmentOperations.input}->>'runtimeVersionId' = ${version.id}`,
+          ),
+          orderBy: desc(schema.environmentOperations.createdAt),
+        });
+      if (
+        existing?.status === "completed" &&
+        existing.stage === "environment.update.ready"
+      ) {
+        return { environment, operation: existing };
+      }
+      if (
+        !(
+          existing &&
+          (existing.status === "failed" ||
+            existing.status === "cancelled" ||
+            (existing.status === "completed" &&
+              existing.stage === "environment.update.recovery_required"))
+        )
+      ) {
+        throw new EnvironmentRuntimeChannelError(
+          "RUNTIME_ALREADY_CURRENT",
+          "The Environment already uses the requested runtime version.",
+        );
+      }
+    }
+    const now = new Date();
+    const baseIdempotencyKey = environmentRuntimeUpdateIdempotencyKey({
+      environmentId: input.environmentId,
+      runtimeVersionId: version.id,
+      sourceRuntimeImage: environment.runtimeImage,
+      sourceRouterImage: environment.routerImage,
+    });
+    let idempotencyKey = baseIdempotencyKey;
+    let existing = await transaction.query.environmentOperations.findFirst({
       where: and(
         eq(schema.environmentOperations.organizationId, input.organizationId),
         eq(schema.environmentOperations.idempotencyKey, idempotencyKey),
       ),
     });
+    if (
+      existing?.status === "completed" &&
+      existing.stage === "environment.update.ready"
+    ) {
+      const predecessor =
+        await transaction.query.environmentOperations.findFirst({
+          where: and(
+            eq(
+              schema.environmentOperations.organizationId,
+              input.organizationId,
+            ),
+            eq(schema.environmentOperations.environmentId, input.environmentId),
+            eq(schema.environmentOperations.type, "environment.update"),
+            eq(schema.environmentOperations.status, "completed"),
+            eq(schema.environmentOperations.stage, "environment.update.ready"),
+          ),
+          orderBy: [desc(schema.environmentOperations.updatedAt)],
+        });
+      idempotencyKey = environmentRuntimeUpdateSuccessorIdempotencyKey({
+        baseIdempotencyKey,
+        predecessorOperationId: predecessor?.id ?? existing.id,
+      });
+      existing = await transaction.query.environmentOperations.findFirst({
+        where: and(
+          eq(schema.environmentOperations.organizationId, input.organizationId),
+          eq(schema.environmentOperations.idempotencyKey, idempotencyKey),
+        ),
+      });
+    }
     if (existing) {
       if (
         existing.status === "failed" ||
@@ -383,9 +423,9 @@ export async function requestEnvironmentRuntimeUpdate(input: {
           .returning();
         if (!requeued)
           throw new Error("Environment update retry was not queued.");
-        return requeued;
+        return { environment, operation: requeued };
       }
-      return existing;
+      return { environment, operation: existing };
     }
     const conflict = await transaction.query.environmentOperations.findFirst({
       where: and(
@@ -394,7 +434,9 @@ export async function requestEnvironmentRuntimeUpdate(input: {
       ),
     });
     if (conflict) {
-      if (conflict.input?.runtimeVersionId === version.id) return conflict;
+      if (conflict.input?.runtimeVersionId === version.id) {
+        return { environment, operation: conflict };
+      }
       throw new EnvironmentRuntimeChannelError(
         "RUNTIME_UPDATE_CONFLICT",
         "The Environment already has an active lifecycle operation.",
@@ -421,9 +463,9 @@ export async function requestEnvironmentRuntimeUpdate(input: {
       })
       .returning();
     if (!created) throw new Error("Environment update was not created.");
-    return created;
+    return { environment, operation: created };
   });
-  return { environment, operation, version: mapSchemaVersion(version) };
+  return { ...requested, version: mapSchemaVersion(version) };
 }
 
 async function requireRuntimeChannelSchema() {
@@ -448,6 +490,15 @@ function environmentRuntimeUpdateIdempotencyKey(input: {
     input.sourceRuntimeImage ?? "none",
     input.sourceRouterImage ?? "none",
   ].join(":");
+}
+
+function environmentRuntimeUpdateSuccessorIdempotencyKey(input: {
+  baseIdempotencyKey: string;
+  predecessorOperationId: string;
+}) {
+  return [input.baseIdempotencyKey, "after", input.predecessorOperationId].join(
+    ":",
+  );
 }
 
 function mapSchemaVersion(

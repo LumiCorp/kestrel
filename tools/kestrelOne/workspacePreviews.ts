@@ -58,6 +58,30 @@ export const workspacePreviewPublishTool: SharedToolModule = {
   createHandler: (context) => async (input) => {
     const body = parseObjectInput("workspace.preview.publish", input);
     const sessionId = requiredSessionId(body);
+    const payload = await publishRetainedWorkspacePreview(context, {
+      port: body.port as number,
+      sessionId,
+      ...(body.ttlMinutes !== undefined
+        ? { ttlMinutes: body.ttlMinutes as number }
+        : {}),
+      ...(body.name !== undefined ? { name: body.name as string } : {}),
+      approvalToolName: "workspace.preview.publish",
+    });
+    return withPublicWarning(payload);
+  },
+};
+
+export async function publishRetainedWorkspacePreview(
+  context: SharedToolContext,
+  input: {
+    port: number;
+    sessionId: string;
+    ttlMinutes?: number | undefined;
+    name?: string | undefined;
+    approvalToolName: "workspace.preview.publish" | "workspace.files.share";
+  },
+): Promise<unknown> {
+    const sessionId = input.sessionId;
     const provisionalLeaseId = `workspace-preview-publish:${randomUUID()}`;
     const provisionalExpiresAt = new Date(
       Date.now() + PREVIEW_PUBLICATION_LEASE_TTL_MS,
@@ -74,11 +98,11 @@ export const workspacePreviewPublishTool: SharedToolModule = {
       const payload = await requestPreview(context, "publish", ["previews"], {
         method: "POST",
         body: JSON.stringify({
-          port: body.port,
-          ...(body.ttlMinutes !== undefined ? { ttlMinutes: body.ttlMinutes } : {}),
-          ...(body.name !== undefined ? { name: body.name } : {}),
+          port: input.port,
+          ...(input.ttlMinutes !== undefined ? { ttlMinutes: input.ttlMinutes } : {}),
+          ...(input.name !== undefined ? { name: input.name } : {}),
         }),
-      });
+      }, true, input.approvalToolName);
       createdPreviewId = previewIdFromPayload(payload);
       preview = requirePreview(payload);
       throwIfPreviewPublicationAborted(context.signal);
@@ -90,11 +114,11 @@ export const workspacePreviewPublishTool: SharedToolModule = {
       });
       promotionCompleted = true;
       throwIfPreviewPublicationAborted(context.signal);
-      return withPublicWarning(withPreview(payload, {
+      return withPreview(payload, {
         ...preview,
         sessionId,
         retentionStatus: "active",
-      }));
+      });
     } catch (error) {
       const cleanupFailures: Array<{ operation: string; message: string }> = [];
       if (createdPreviewId !== undefined) {
@@ -118,8 +142,7 @@ export const workspacePreviewPublishTool: SharedToolModule = {
       });
       throw withCleanupEvidence(error, cleanupFailures);
     }
-  },
-};
+}
 
 export const workspacePreviewListTool: SharedToolModule = {
   definition: {
@@ -264,18 +287,25 @@ export const workspacePreviewCloseTool: SharedToolModule = {
     const previewId = requiredPreviewId(
       parseObjectInput("workspace.preview.close", input)
     );
-    const payload = await requestPreview(
-      context,
-      "close",
-      ["previews", previewId],
-      { method: "DELETE" }
-    );
-    const release = requireRetentionService(context).releaseProcessRetention;
-    if (release === undefined) throw retentionUnavailable();
-    await release.call(context.devShellService, { leaseId: previewLeaseId(previewId) });
-    return payload;
+    return closeRetainedWorkspacePreview(context, previewId);
   },
 };
+
+export async function closeRetainedWorkspacePreview(
+  context: SharedToolContext,
+  previewId: string,
+): Promise<unknown> {
+  const payload = await requestPreview(
+    context,
+    "close",
+    ["previews", previewId],
+    { method: "DELETE" },
+  );
+  const release = requireRetentionService(context).releaseProcessRetention;
+  if (release === undefined) throw retentionUnavailable();
+  await release.call(context.devShellService, { leaseId: previewLeaseId(previewId) });
+  return payload;
+}
 
 export const workspacePreviewTools = [
   workspacePreviewPublishTool,
@@ -301,10 +331,10 @@ async function requestPreview(
   path: string[],
   init: RequestInit = {},
   forwardContextSignal = true,
+  approvalToolName = `workspace.preview.${capability}`,
 ) {
-  const runtimeName = `workspace.preview.${capability}`;
   const approval =
-    context.kestrelOne?.appApprovalModes?.[runtimeName] === "ask"
+    context.kestrelOne?.appApprovalModes?.[approvalToolName] === "ask"
       ? `confirmed:${requireContextValue(context.runtime?.approvalId, "Runtime preview approval ID")}`
       : "auto";
   const pathname = `/api/runtime/apps/built_in.previews/${capability}/${encodeURIComponent(approval)}/${path
@@ -477,7 +507,7 @@ async function closePreview(context: SharedToolContext, previewId: string) {
   );
 }
 
-function withCleanupEvidence(
+export function withCleanupEvidence(
   error: unknown,
   cleanupFailures: Array<{ operation: string; message: string }>,
 ): unknown {

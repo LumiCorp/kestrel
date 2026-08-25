@@ -15,6 +15,7 @@ import {
   digestHostedMcpRunPolicyEvidence,
   resolveHostedMcpRunPolicy,
 } from "@/lib/mcp/grant-service";
+import { isLocalEnvironmentExecutionTarget } from "./local-execution";
 
 export const EXECUTION_AUTHORIZATION_RENEWAL_VERSION =
   "execution-authorization-renewal-v1" as const;
@@ -255,6 +256,16 @@ async function targetMatches(
 ) {
   const fly = getFlyEnvironmentExecutionTarget(ticket);
   if (fly) {
+    if (
+      isLocalEnvironmentExecutionTarget({
+        runtimeImage: row.execution.runtimeImage,
+        workspaceId: row.workspace.id,
+        appName: fly.appName,
+        machineId: fly.machineId,
+      })
+    ) {
+      return true;
+    }
     return fly.appName === row.environment.flyAppName &&
       fly.machineId === row.workspace.flyMachineId;
   }

@@ -81,6 +81,11 @@ export interface ConversationQueueState {
 
 export interface ConversationSnapshot<Message extends ConversationMessageLike = ConversationMessageLike> {
   threadId: string;
+  /**
+   * The host's durable transcript order. This order never establishes turn
+   * ownership; after ownership is established, projection preserves it unless
+   * explicit turn or interaction identities require a causal reordering.
+   */
   messages: Message[];
   turns: ConversationTurn[];
   interactions: ConversationInteraction[];
@@ -174,7 +179,15 @@ export interface ConversationInteractionPresentation<Approval = unknown> {
   metadata?: Record<string, unknown> | undefined;
   approval?: Approval | undefined;
   source?: "runtime" | "mcp" | undefined;
-  status: "pending" | "resolved" | "cancelled";
+  status: "pending" | "processing" | "resolved" | "cancelled" | "failed";
+  approvalOutcome?: {
+    decision: "approved" | "denied";
+    authorizationState: "pending" | "accepted" | "failed";
+    effectState: "not_started" | "started" | "unknown";
+    failureCode?: string | undefined;
+    publicMessage?: string | undefined;
+    retryEligible: boolean;
+  } | undefined;
 }
 
 export interface ConversationStatusPresentation {

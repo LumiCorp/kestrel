@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import postgres from "postgres";
 import "../../scripts/register-server-only.mjs";
@@ -139,5 +142,394 @@ test(
     assert.equal(inventory[0]?.fileId, fileId);
     assert.equal(inventory[0]?.blobId, blobId);
     assert.equal(inventory[0]?.availabilityStatus, "available");
+  },
+);
+
+test(
+  "extractable metadata-only blobs are reprocessed independently across organizations",
+  async (context) => {
+    assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
+    const previousStorageProvider = process.env.STORAGE_PROVIDER;
+    const previousStorageRoot = process.env.STORAGE_LOCAL_ROOT;
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-file-representation-"));
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.POSTGRES_URL = databaseUrl;
+    process.env.STORAGE_PROVIDER = "local";
+    process.env.STORAGE_LOCAL_ROOT = storageRoot;
+
+    const [
+      { resetDbRuntimeForTests },
+      files,
+      { getStorageAdapter, resetStorageAdapterForTests },
+      knowledge,
+    ] = await Promise.all([
+      import("@/lib/db/runtime"),
+      import("./service"),
+      import("@/lib/storage"),
+      import("@/lib/knowledge/documents/runtime"),
+    ]);
+    resetStorageAdapterForTests();
+    const sql = postgres(databaseUrl, { max: 2 });
+    const suffix = crypto.randomUUID();
+    const organizations = ["personal", "lumi"].map((label) => ({
+      organizationId: `representation-${label}-org-${suffix}`,
+      userId: `representation-${label}-user-${suffix}`,
+      memberId: `representation-${label}-member-${suffix}`,
+      label,
+    }));
+
+    context.after(async () => {
+      for (const organization of organizations) {
+        await sql`DELETE FROM "organization" WHERE "id" = ${organization.organizationId}`;
+        await sql`DELETE FROM "user" WHERE "id" = ${organization.userId}`;
+      }
+      await resetDbRuntimeForTests();
+      resetStorageAdapterForTests();
+      if (previousStorageProvider === undefined) {
+        delete process.env.STORAGE_PROVIDER;
+      } else {
+        process.env.STORAGE_PROVIDER = previousStorageProvider;
+      }
+      if (previousStorageRoot === undefined) {
+        delete process.env.STORAGE_LOCAL_ROOT;
+      } else {
+        process.env.STORAGE_LOCAL_ROOT = previousStorageRoot;
+      }
+      await rm(storageRoot, { recursive: true, force: true });
+      await sql.end({ timeout: 0 });
+    });
+
+    for (const organization of organizations) {
+      await sql.begin(async (transaction) => {
+        await transaction`
+          INSERT INTO "user" (
+            "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+          ) VALUES (
+            ${organization.userId}, ${`${organization.label} File User`},
+            ${`${organization.userId}@example.test`}, true, now(), now()
+          )
+        `;
+        await transaction`
+          INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+          VALUES (
+            ${organization.organizationId}, ${`${organization.label} File Org`},
+            ${organization.organizationId}, now()
+          )
+        `;
+        await transaction`
+          INSERT INTO "member" (
+            "id", "organizationId", "userId", "role", "createdAt"
+          ) VALUES (
+            ${organization.memberId}, ${organization.organizationId},
+            ${organization.userId}, 'owner', now()
+          )
+        `;
+      });
+    }
+
+    const buffer = Buffer.from("# Shared incident sentinel\nQuartz is readable in every organization.\n", "utf8");
+    const blobIds: string[] = [];
+    for (const organization of organizations) {
+      const first = await files.createPublishedFileFromBuffer({
+        organizationId: organization.organizationId,
+        uploaderUserId: organization.userId,
+        filename: "incident.md",
+        declaredMediaType: "text/markdown",
+        buffer,
+      });
+      assert.equal(first.representationStatus, "extracted_text");
+      await getStorageAdapter().deleteObject(first.objectKey);
+      await sql`
+        UPDATE "file_blobs"
+        SET "availability_status" = 'unknown', "availability_checked_at" = NULL
+        WHERE "id" = ${first.blobId}
+      `;
+
+      const restored = await files.createPublishedFileFromBuffer({
+        organizationId: organization.organizationId,
+        uploaderUserId: organization.userId,
+        filename: "incident.md",
+        declaredMediaType: "text/markdown",
+        buffer,
+      });
+      assert.equal(restored.blobId, first.blobId);
+      assert.equal(restored.availabilityStatus, "available");
+      assert.equal(await getStorageAdapter().objectExists(first.objectKey), true);
+
+      await sql`
+        UPDATE "file_representations"
+        SET "kind" = 'metadata_only', "status" = 'ready',
+            "text_content" = NULL, "error" = 'historical extraction failure',
+            "updated_at" = now()
+        WHERE "blob_id" = ${first.blobId}
+      `;
+
+      const reuploaded = await files.createPublishedFileFromBuffer({
+        organizationId: organization.organizationId,
+        uploaderUserId: organization.userId,
+        filename: "incident.md",
+        declaredMediaType: "text/markdown",
+        buffer,
+      });
+      assert.equal(reuploaded.blobId, first.blobId);
+      assert.equal(reuploaded.representationStatus, "extracted_text");
+      assert.match(reuploaded.representationText ?? "", /Quartz is readable/u);
+      blobIds.push(reuploaded.blobId);
+    }
+    assert.notEqual(blobIds[0], blobIds[1]);
+
+    const matrix = await import("../../../../packages/attachments/scripts/extraction-matrix.mjs") as {
+      createBlankPdf(): Buffer;
+    };
+    const blankPdf = await files.createPublishedFileFromBuffer({
+      organizationId: organizations[0]!.organizationId,
+      uploaderUserId: organizations[0]!.userId,
+      filename: "blank.pdf",
+      declaredMediaType: "application/pdf",
+      buffer: matrix.createBlankPdf(),
+    });
+    assert.equal(blankPdf.representationStatus, "metadata_only");
+    assert.equal(blankPdf.metadataOnlyReason, "Attachment extractor returned no text.");
+    const [blankRepresentation] = await sql<Array<{ status: string; error: string | null }>>`
+      SELECT "status", "error"
+      FROM "file_representations"
+      WHERE "blob_id" = ${blankPdf.blobId}
+    `;
+    assert.deepEqual(blankRepresentation, {
+      status: "failed",
+      error: "Attachment extractor returned no text.",
+    });
+
+    const opaque = await files.createPublishedFileFromBuffer({
+      organizationId: organizations[0]!.organizationId,
+      uploaderUserId: organizations[0]!.userId,
+      filename: "opaque.bin",
+      declaredMediaType: "application/octet-stream",
+      buffer: Buffer.from([0, 1, 2, 3]),
+    });
+    assert.equal(opaque.representationStatus, "metadata_only");
+    await assert.rejects(
+      knowledge.publishFileToKnowledge({
+        organizationId: organizations[0]!.organizationId,
+        uploaderUserId: organizations[0]!.userId,
+        fileId: opaque.id,
+      }),
+      /file type is not supported for Knowledge/u,
+    );
+  },
+);
+
+test(
+  "concurrent project promotion converges on one grant, document, and active run",
+  async (context) => {
+    assert.ok(databaseUrl, "KESTREL_ENVIRONMENT_DB_TEST_URL is required");
+    const previousStorageProvider = process.env.STORAGE_PROVIDER;
+    const previousStorageRoot = process.env.STORAGE_LOCAL_ROOT;
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), "kestrel-file-promotion-"));
+    process.env.DATABASE_URL = databaseUrl;
+    process.env.POSTGRES_URL = databaseUrl;
+    process.env.STORAGE_PROVIDER = "local";
+    process.env.STORAGE_LOCAL_ROOT = storageRoot;
+
+    const [
+      { resetDbRuntimeForTests },
+      files,
+      { resetStorageAdapterForTests },
+      knowledge,
+      knowledgeQueue,
+    ] = await Promise.all([
+      import("@/lib/db/runtime"),
+      import("./service"),
+      import("@/lib/storage"),
+      import("@/lib/knowledge/documents/runtime"),
+      import("@/lib/knowledge/queue"),
+    ]);
+    resetStorageAdapterForTests();
+    const sql = postgres(databaseUrl, { max: 8 });
+    const suffix = crypto.randomUUID();
+    const userId = `promotion-user-${suffix}`;
+    const organizationId = `promotion-org-${suffix}`;
+    const memberId = `promotion-member-${suffix}`;
+    const environmentId = `promotion-environment-${suffix}`;
+    const projectId = `promotion-project-${suffix}`;
+
+    context.after(async () => {
+      await knowledgeQueue.stopControlWorkers();
+      await sql`
+        DELETE FROM pgboss.job
+        WHERE data->>'runId' IN (
+          SELECT id FROM knowledge_ingestion_runs
+          WHERE organization_id = ${organizationId}
+        )
+      `;
+      await sql`DELETE FROM "organization" WHERE "id" = ${organizationId}`;
+      await sql`DELETE FROM "user" WHERE "id" = ${userId}`;
+      await resetDbRuntimeForTests();
+      resetStorageAdapterForTests();
+      if (previousStorageProvider === undefined) delete process.env.STORAGE_PROVIDER;
+      else process.env.STORAGE_PROVIDER = previousStorageProvider;
+      if (previousStorageRoot === undefined) delete process.env.STORAGE_LOCAL_ROOT;
+      else process.env.STORAGE_LOCAL_ROOT = previousStorageRoot;
+      await rm(storageRoot, { recursive: true, force: true });
+      await sql.end({ timeout: 0 });
+    });
+
+    await sql.begin(async (transaction) => {
+      await transaction`
+        INSERT INTO "user" (
+          "id", "name", "email", "emailVerified", "createdAt", "updatedAt"
+        ) VALUES (
+          ${userId}, 'Promotion User', ${`${userId}@example.test`}, true, now(), now()
+        )
+      `;
+      await transaction`
+        INSERT INTO "organization" ("id", "name", "slug", "createdAt")
+        VALUES (${organizationId}, 'Promotion Org', ${organizationId}, now())
+      `;
+      await transaction`
+        INSERT INTO "member" ("id", "organizationId", "userId", "role", "createdAt")
+        VALUES (${memberId}, ${organizationId}, ${userId}, 'owner', now())
+      `;
+      await transaction`
+        INSERT INTO "environments" (
+          "id", "organization_id", "created_by_user_id", "name", "slug",
+          "provider", "region", "status", "is_default"
+        ) VALUES (
+          ${environmentId}, ${organizationId}, ${userId}, 'Promotion Environment',
+          'promotion-environment', 'desktop', 'local', 'ready', true
+        )
+      `;
+      await transaction`
+        INSERT INTO "projects" (
+          "id", "organization_id", "environment_id", "created_by_user_id", "name"
+        ) VALUES (
+          ${projectId}, ${organizationId}, ${environmentId}, ${userId}, 'Promotion Project'
+        )
+      `;
+      await transaction`
+        INSERT INTO "project_members" (
+          "project_id", "organization_member_id", "role"
+        ) VALUES (${projectId}, ${memberId}, 'owner')
+      `;
+    });
+
+    const legacyBuffer = Buffer.from("# Concurrent legacy upload sentinel\n", "utf8");
+    const legacyResults = await Promise.all([
+      knowledge.createKnowledgeDocumentFromUpload({
+        organizationId,
+        uploaderUserId: userId,
+        projectId,
+        file: new File([legacyBuffer], "legacy-promotion.md", {
+          type: "text/markdown",
+        }),
+      }),
+      knowledge.createKnowledgeDocumentFromUpload({
+        organizationId,
+        uploaderUserId: userId,
+        projectId,
+        file: new File([legacyBuffer], "legacy-promotion.md", {
+          type: "text/markdown",
+        }),
+      }),
+    ]);
+    assert.equal(legacyResults[0].document.id, legacyResults[1].document.id);
+    const [legacyCounts] = await sql<Array<{
+      documents: number;
+      activeRuns: number;
+    }>>`
+      SELECT
+        (SELECT count(*)::int FROM knowledge_documents
+          WHERE id = ${legacyResults[0].document.id}) AS documents,
+        (SELECT count(*)::int FROM knowledge_ingestion_runs
+          WHERE document_id = ${legacyResults[0].document.id}
+            AND status IN ('queued', 'running')) AS "activeRuns"
+    `;
+    assert.deepEqual(legacyCounts, { documents: 1, activeRuns: 1 });
+
+    const promotionBuffer = Buffer.from("# Concurrent promotion sentinel\n", "utf8");
+    const file = await files.createPublishedFileFromBuffer({
+      organizationId,
+      uploaderUserId: userId,
+      filename: "promotion.md",
+      declaredMediaType: "text/markdown",
+      buffer: promotionBuffer,
+    });
+    const results = await Promise.all([
+      knowledge.publishFileToKnowledge({
+        organizationId,
+        uploaderUserId: userId,
+        fileId: file.id,
+        projectId,
+      }),
+      knowledge.publishFileToKnowledge({
+        organizationId,
+        uploaderUserId: userId,
+        fileId: file.id,
+        projectId,
+      }),
+    ]);
+    assert.equal(results[0].document.id, results[1].document.id);
+
+    const [counts] = await sql<Array<{
+      grants: number;
+      documents: number;
+      activeRuns: number;
+    }>>`
+      SELECT
+        (SELECT count(*)::int FROM file_scope_grants
+          WHERE file_id = ${file.id} AND scope_type = 'project'
+            AND project_id = ${projectId} AND revoked_at IS NULL) AS grants,
+        (SELECT count(*)::int FROM knowledge_documents
+          WHERE file_id = ${file.id} AND scope = 'project'
+            AND project_id = ${projectId}) AS documents,
+        (SELECT count(*)::int FROM knowledge_ingestion_runs
+          WHERE document_id = ${results[0].document.id}
+            AND status IN ('queued', 'running')) AS "activeRuns"
+    `;
+    assert.deepEqual(counts, { grants: 1, documents: 1, activeRuns: 1 });
+
+    const duplicateUpload = await files.createPublishedFileFromBuffer({
+      organizationId,
+      uploaderUserId: userId,
+      filename: "promotion-copy.md",
+      declaredMediaType: "text/markdown",
+      buffer: promotionBuffer,
+    });
+    assert.notEqual(duplicateUpload.id, file.id);
+    assert.equal(duplicateUpload.blobId, file.blobId);
+
+    const duplicatePromotion = await knowledge.publishFileToKnowledge({
+      organizationId,
+      uploaderUserId: userId,
+      fileId: duplicateUpload.id,
+      projectId,
+    });
+    assert.notEqual(duplicatePromotion.document.id, results[0].document.id);
+    assert.equal(duplicatePromotion.document.fileId, duplicateUpload.id);
+    assert.equal(duplicatePromotion.document.storageKey, results[0].document.storageKey);
+    assert.equal(duplicatePromotion.deduped, false);
+
+    const [duplicateCounts] = await sql<Array<{
+      grants: number;
+      documents: number;
+      activeRuns: number;
+    }>>`
+      SELECT
+        (SELECT count(*)::int FROM file_scope_grants
+          WHERE file_id IN (${file.id}, ${duplicateUpload.id})
+            AND scope_type = 'project' AND project_id = ${projectId}
+            AND revoked_at IS NULL) AS grants,
+        (SELECT count(*)::int FROM knowledge_documents
+          WHERE project_id = ${projectId}
+            AND checksum_sha256 = ${file.sha256}) AS documents,
+        (SELECT count(*)::int FROM knowledge_ingestion_runs
+          WHERE document_id IN (${results[0].document.id}, ${duplicatePromotion.document.id})
+            AND status IN ('queued', 'running')) AS "activeRuns"
+    `;
+    assert.deepEqual(duplicateCounts, {
+      grants: 2,
+      documents: 2,
+      activeRuns: 2,
+    });
   },
 );

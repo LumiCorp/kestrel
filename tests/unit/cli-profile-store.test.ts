@@ -12,6 +12,9 @@ import {
 } from "../../cli/config/ProfileStore.js";
 import { MODEL_POLICY_FILE_NAME } from "../../src/profile/modelPolicy.js";
 import { FILESYSTEM_TOOL_NAMES } from "../../tools/index.js";
+import { fingerprintResolvedProfile } from "../../src/profile/kestrelOnePolicy.js";
+import { reconstructLegacySandboxCapabilityTuiProfile, resolveSandboxCapabilityCompatibilityFingerprints } from "../../cli/runtime/KestrelChatRuntime.js";
+import { fingerprintSandboxCapabilityCatalogV1, fingerprintSandboxCapabilityCatalogV2 } from "../../src/kestrel/contracts/sandbox-capability.js";
 
 test("ProfileStore bootstraps default profile when file is missing", async () => {
   const tempDir = await mkdtemp(
@@ -64,6 +67,36 @@ test("ProfileStore bootstraps default profile when file is missing", async () =>
   assert.equal("profiles" in persisted, false);
 });
 
+test("ordinary profile parsing canonicalizes legacy sandbox authoring to V2 before fingerprinting", () => {
+  const capability = { version: 1, capabilityId: "tavily.search.read", operations: ["search"], resource: "https://api.tavily.com/search", audience: { tenantId: "tenant-a", environmentId: "env-a" }, maxRequests: 1, maxQueryChars: 100, maxResults: 3, maxResponseBytes: 4096, timeoutMs: 1000, maxExpiryMs: 5000, brokerAuthority: { authorityId: "broker-a", revision: "r1" } };
+  const raw = JSON.stringify({ version: 9, profiles: [{ id: "cap-profile", label: "Cap", sessionPrefix: "cap", agent: "kestrel", shellKind: "cli", codeMode: { enabled: true, capabilities: [capability] } }] });
+  const parsed = parseProfilesFile(raw).profiles[0]!;
+  const canonical = parsed.codeMode?.capabilities?.[0];
+  assert.equal(canonical?.version, 2);
+  assert.equal(canonical?.version === 2 ? canonical.effectClass : undefined, "read_only");
+  assert.deepEqual(canonical?.version === 2 ? canonical.adapterConfig : undefined, { maxQueryChars: 100, maxResults: 3 });
+  assert.ok(canonical?.version === 2);
+  assert.notEqual(fingerprintResolvedProfile(parsed), fingerprintResolvedProfile({ ...parsed, codeMode: { ...parsed.codeMode!, capabilities: [{ ...canonical, adapterConfig: { maxQueryChars: 100, maxResults: 2 } }] } } as never));
+  const legacy = reconstructLegacySandboxCapabilityTuiProfile(parsed);
+  assert.ok(legacy);
+  assert.equal(fingerprintResolvedProfile(legacy), "5e6cb22948471d8d9ea1163c5555edb1179d2e2a2427c2700fb69813901532f4");
+  assert.equal(fingerprintSandboxCapabilityCatalogV1(legacy.codeMode?.capabilities ?? []), "c105064885a0b6bf870e00306bfd340601ab9a44772d9ee6d7b4ed2879a74325");
+  assert.deepEqual(resolveSandboxCapabilityCompatibilityFingerprints(parsed), {
+    profileFingerprint: fingerprintResolvedProfile(parsed),
+    capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2(parsed.codeMode?.capabilities ?? []),
+    legacyProfileFingerprint: "5e6cb22948471d8d9ea1163c5555edb1179d2e2a2427c2700fb69813901532f4",
+    legacyCapabilityCatalogFingerprint: "c105064885a0b6bf870e00306bfd340601ab9a44772d9ee6d7b4ed2879a74325",
+  });
+  const rawV1Profile = { ...parsed, codeMode: { ...parsed.codeMode!, capabilities: [capability] } } as never;
+  assert.deepEqual(resolveSandboxCapabilityCompatibilityFingerprints(rawV1Profile), {
+    profileFingerprint: fingerprintResolvedProfile(rawV1Profile),
+    capabilityCatalogFingerprint: fingerprintSandboxCapabilityCatalogV2([capability]),
+    legacyProfileFingerprint: "5e6cb22948471d8d9ea1163c5555edb1179d2e2a2427c2700fb69813901532f4",
+    legacyCapabilityCatalogFingerprint: "c105064885a0b6bf870e00306bfd340601ab9a44772d9ee6d7b4ed2879a74325",
+  });
+  assert.equal(reconstructLegacySandboxCapabilityTuiProfile({ ...parsed, codeMode: { ...parsed.codeMode!, capabilities: [{ ...canonical, effectClass: "external_effect" }] } } as never), undefined);
+});
+
 test("ProfileStore v9 migrates only generated local profiles and emits the isolation notice once", async () => {
   const tempDir = await mkdtemp(
     path.join(os.tmpdir(), "kestrel-profile-store-safe-migration-"),
@@ -100,7 +133,7 @@ test("ProfileStore v9 migrates only generated local profiles and emits the isola
         ],
         managedProfileOverlays: {
           "kestrel@cli_dev_local": {
-            approvalPolicyPackId: "production",
+            approvalPolicyPackId: "isolated_code",
             theme: { brandAlt: "#123456" },
           },
         },
@@ -120,7 +153,7 @@ test("ProfileStore v9 migrates only generated local profiles and emits the isola
   assert.equal(reference, undefined);
   assert.equal(custom, undefined);
   assert.equal(managed?.presetId, "cli_safe_local");
-  assert.equal(managed?.approvalPolicyPackId, "production");
+  assert.equal(managed?.approvalPolicyPackId, "isolated_code");
   assert.equal(managed?.theme, undefined);
   assert.deepEqual(store.consumeLoadNotices(), [
     "Migrated profiles.json V6 to the canonical Kestrel profile.",
@@ -130,7 +163,7 @@ test("ProfileStore v9 migrates only generated local profiles and emits the isola
   assert.equal(persisted.version, 10);
   assert.equal(
     persisted.environmentBindings.cli_safe_local.approvals.policyPackId,
-    "production",
+    "isolated_code",
   );
   assert.equal(
     (await readFile(`${filePath}.v6.pre-v10.bak`, "utf8")).includes(

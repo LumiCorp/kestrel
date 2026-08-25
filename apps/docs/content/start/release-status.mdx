@@ -18,7 +18,7 @@ Kestrel release channels are independent. Packages and CLI/TUI are Stable; Deskt
 
 <ReleaseCompatibilityTable />
 
-Runtime, Protocol, SDK, Memory, adapters, and clients must use the exact matching 0.8 line. Hosted operation separately records Vercel deployment and migration results and the selected tag and provider result for each manually changed runtime target.
+First-party compatibility follows the exact dependency contracts declared by each owning package; compatible packages do not need equal semantic versions. Hosted operation separately records Vercel deployment and migration results and the selected tag and provider result for each explicitly targeted runtime surface.
 
 ## Install and access
 
@@ -26,7 +26,7 @@ Runtime, Protocol, SDK, Memory, adapters, and clients must use the exact matchin
 - Install [Desktop](/desktop/install) on macOS 13 or later on Apple silicon, or update an earlier signed Desktop installation through the stable channel.
 - Get [Kestrel One source](/kestrel-one/source-and-hosting) from `v0.8.5`.
 - Use an organization invitation for the Lumi-hosted Kestrel One service.
-- Pin all installed Kestrel packages, including Runtime/CLI, to `0.8.5`.
+- Pin each installed Kestrel package to the exact version in the compatibility matrix; Runtime/CLI is `0.8.8` and its public dependencies are `0.8.5`.
 
 ## Compatibility
 

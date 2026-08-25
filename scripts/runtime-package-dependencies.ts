@@ -1,44 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
+import {
+  RUNTIME_WORKSPACE_PACKAGES,
+  type RuntimeWorkspacePackageDescriptor,
+} from "../src/localCore/runtimeWorkspacePackages.js";
 
-const PUBLIC_PROTOCOL_PACKAGE_NAME = "@kestrel-agents/protocol";
-const RUNTIME_WORKSPACE_PACKAGES = [
-  {
-    name: PUBLIC_PROTOCOL_PACKAGE_NAME,
-    directory: "packages/protocol",
-    tarballPrefix: "kestrel-agents-protocol-",
-  },
-  {
-    name: "@kestrel-agents/conversation",
-    directory: "packages/conversation",
-    tarballPrefix: "kestrel-agents-conversation-",
-  },
-  {
-    name: "@kestrel-agents/sdk",
-    directory: "packages/sdk",
-    tarballPrefix: "kestrel-agents-sdk-",
-  },
-  {
-    name: "@kestrel-agents/workspace-skills",
-    directory: "packages/workspace-skills",
-    tarballPrefix: "kestrel-agents-workspace-skills-",
-  },
-  {
-    name: "@kestrel-agents/memory",
-    directory: "packages/memory",
-    tarballPrefix: "kestrel-agents-memory-",
-  },
-  {
-    name: "@lumi/kestrel-environment-auth",
-    directory: "packages/environment-auth",
-    tarballPrefix: "lumi-kestrel-environment-auth-",
-  },
-] as const;
+export { RUNTIME_WORKSPACE_PACKAGES, type RuntimeWorkspacePackageDescriptor };
 
 export function resolveRuntimePackageDependencies(input: {
   repoRoot: string;
-  runtimeVersion: string;
   dependencies?: Record<string, string> | undefined;
   tsxVersion?: string | undefined;
 }): Record<string, string> {
@@ -65,14 +36,6 @@ export function resolveRuntimePackageDependencies(input: {
       ) {
         throw new Error(
           `Workspace manifest at '${manifestPath}' must declare ${workspacePackage.name} and a version.`,
-        );
-      }
-      if (
-        workspacePackage.name !== "@lumi/kestrel-environment-auth" &&
-        manifest.version !== input.runtimeVersion
-      ) {
-        throw new Error(
-          `Runtime version ${input.runtimeVersion} must match ${workspacePackage.name} ${manifest.version}.`,
         );
       }
       return [workspacePackage.name, manifest.version.trim()];
@@ -104,7 +67,7 @@ export function packRuntimeWorkspacePackages(input: {
 
 function packRuntimeWorkspacePackage(
   input: { repoRoot: string; packDir: string },
-  workspacePackage: (typeof RUNTIME_WORKSPACE_PACKAGES)[number],
+  workspacePackage: RuntimeWorkspacePackageDescriptor,
 ): string {
   const packageDir = path.join(input.repoRoot, workspacePackage.directory);
   const before = new Set(readdirSync(input.packDir));
@@ -112,10 +75,14 @@ function packRuntimeWorkspacePackage(
     cwd: packageDir,
     stdio: "inherit",
   });
-  execFileSync(resolvePnpmCommand(), ["pack", "--pack-destination", input.packDir], {
-    cwd: packageDir,
-    stdio: "inherit",
-  });
+  execFileSync(
+    resolvePnpmCommand(),
+    ["pack", "--pack-destination", input.packDir],
+    {
+      cwd: packageDir,
+      stdio: "inherit",
+    },
+  );
   const tarballs = readdirSync(input.packDir).filter(
     (entry) =>
       before.has(entry) === false &&
@@ -130,7 +97,9 @@ function packRuntimeWorkspacePackage(
   return path.join(input.packDir, tarballs[0]!);
 }
 
-export function resolveRuntimeDependencyInstallArgs(localPackages: readonly string[] = []): string[] {
+export function resolveRuntimeDependencyInstallArgs(
+  localPackages: readonly string[] = [],
+): string[] {
   return [
     "install",
     "--omit=dev",
