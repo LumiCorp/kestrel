@@ -1,0 +1,71 @@
+---
+title: Concepts
+summary: Understand the durable work, authority, context, tools, live state, and application boundaries behind a Kestrel agent.
+section: concepts
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+Most AI products show you a conversation. Kestrel has to preserve something harder: the work that conversation set in motion.
+
+Imagine asking an agent to fix a failing checkout test. The reply you see is only the surface. Beneath it, an application establishes who is asking, a runner selects an execution profile, the runtime gives the model a bounded view of the work, tools act inside an authorized environment, and durable records make the result inspectable after the browser, process, or network connection is gone.
+
+That is why Kestrel has more than a message API. A useful agent must be able to stop for an exact decision, survive reconnection, distinguish a proposed action from an executed effect, and say what actually finished. These Concepts pages explain those ideas as they meet one another in real work.
+
+## Where does the work actually happen?
+
+- [Architecture and execution boundaries](/concepts/architecture) — follow the same call from a laptop to a hosted runner.
+- [The agent loop](/concepts/agent-loop) — see how a model proposal becomes validated, durable work.
+- [Creating an Agent](/concepts/creating-an-agent) — learn what `createAgent()` creates before any run begins.
+- [Profiles, models, and capabilities](/concepts/profiles-models-capabilities) — understand why choosing a model is not enough.
+- [Request context and durability](/concepts/request-context-durability) — decide what should happen when the caller disappears.
+- [Interaction modes and autonomy](/concepts/interaction-modes-autonomy) — separate conversational posture from execution permission.
+- [Sessions, Turns, and Runs](/concepts/sessions-turns-runs) — give every layer of continuing work the right identity.
+
+## What does the agent know right now?
+
+- [Messages, instructions, and history](/concepts/messages-instructions-history) — separate transcript presence from instruction authority.
+- [Files and attachments](/concepts/files-attachments) — keep file identity stable after a URL expires.
+- [Context management and compaction](/concepts/context-management-compaction) — fit a long history into a bounded model call without pretending nothing changed.
+- [Conversation state and projection](/concepts/conversation-state-projection) — rebuild one coherent conversation from live and persisted events.
+- [Composer queues and interactions](/concepts/composer-queues-interactions) — understand what Send means in every runtime state.
+- [Session state and versioned memory](/concepts/session-state-versioned-memory) — update continuing work without losing a concurrent change.
+- [Governed memory](/concepts/governed-memory) — recall durable facts only through their authorized scope and provenance.
+
+## What may the model ask Kestrel to do?
+
+- [Tools and tool results](/concepts/tools-tool-results) — walk from tool visibility to validated result.
+- [Apps and MCP services](/concepts/apps-mcp-services) — connect installed capabilities to a changing remote tool catalog.
+- [Workspace skills](/concepts/workspace-skills) — snapshot project-owned instructions without turning them into authority.
+- [Sandbox and workspace execution](/concepts/sandbox-workspace-execution) — contain code while keeping permission separate.
+- [Structured output and terminal results](/concepts/structured-output-terminal-results) — consume the result that was actually finalized.
+- [Limits, budgets, and guardrails](/concepts/limits-budgets-guardrails) — tell resource exhaustion from a policy stop.
+- [Approvals and external effects](/concepts/approvals-external-effects) — handle the moment when an email may already have been sent.
+
+## How does live work remain controllable?
+
+- [Streaming, progress, and reasoning](/concepts/streaming-progress-reasoning) — keep transient deltas distinct from committed output.
+- [Waiting, resume, and cancellation](/concepts/waiting-resume-cancellation) — answer the exact request that blocked a run.
+- [Subscriptions, cursors, and reattachment](/concepts/subscriptions-cursors-reattachment) — reconnect without guessing where event history stopped.
+- [Failures, retries, and recovery](/concepts/failures-retries-recovery) — choose recovery from evidence rather than a generic failed state.
+- [Background jobs](/concepts/background-jobs) — run durable work without a conversational caller.
+- [Concurrency and idempotency](/concepts/concurrency-idempotency) — survive double submissions without claiming to know an unknown effect outcome.
+- [Task graphs and work state](/concepts/task-graphs-work-state) — preserve the agent's plan beyond one execution attempt.
+- [Delegation and child agents](/concepts/delegation-child-agents) — divide work without confusing lineage with a task list.
+
+## What can an advanced runner control?
+
+- [Workspace checkpoints and promotions](/concepts/workspace-checkpoints-promotions) — restore or promote workspace state deliberately.
+- [Operator control](/concepts/operator-control) — inspect and steer a waiting run as an authorized operator.
+- [Project actions and review](/concepts/project-actions-review) — separate completed execution from accepted project work.
+- [Execution protocol and compatibility](/concepts/execution-protocol-compatibility) — negotiate versions and capabilities at an untrusted wire boundary.
+
+## How does Kestrel meet an application?
+
+- [Next.js routes](/concepts/nextjs-routes) — keep browser intent on the safe side of server-owned identity.
+- [AI SDK presentation](/concepts/ai-sdk-presentation) — turn runtime events into coherent UI parts without changing their meaning.
+- [Observability and trace context](/concepts/observability-trace-context) — connect a request's spans without replacing durable evidence.
+
+When you are ready to write code, continue to [Build with Kestrel](/build). When you need exact fields and event unions, go to [Reference](/reference).

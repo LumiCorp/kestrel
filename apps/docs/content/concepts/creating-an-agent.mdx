@@ -1,0 +1,61 @@
+---
+title: Creating an Agent
+summary: Understand the server-side client created by createAgent, when execution actually begins, and what its identity and target mean.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+```ts
+const agent = createAgent({
+  id: "support-agent",
+  profileId: "kestrel",
+  target: {
+    kind: "remote",
+    baseUrl: process.env.KESTREL_RUNNER_SERVICE_URL!,
+    authToken: process.env.KESTREL_RUNNER_SERVICE_TOKEN!,
+  },
+});
+```
+
+How many agents are running now?
+
+None.
+
+`createAgent()` constructs a configured, server-side SDK client. It does not start a model, create a Session, open a Run, or embed the Kestrel runtime in your process.
+
+## What did the constructor actually create?
+
+The first `run()`, `stream()`, `resume()`, state operation, or subscription reaches the selected target. A local target connects to Local Core over its explicit socket. A remote target connects to a Kestrel-compatible runner service using its explicit URL and bearer token. The SDK never guesses that authority from ambient environment variables.
+
+The `profileId` selects a runner-side profile. The Agent's `id` and optional name or description are local application metadata; they do not identify a separately running server-side agent. This is why many configured Agent objects can use the same runner and profile without provisioning new runtime processes.
+
+It created one reusable client configuration: where execution lives, which runner profile to request, and the local metadata your application uses to recognize this client. The [profiles, models, and capabilities](/concepts/profiles-models-capabilities) story begins with `profileId`; `id`, name, and description remain local application metadata.
+
+Execution begins only when a call crosses the target boundary. The first `run()`, `stream()`, `resume()`, state operation, or subscription can create or continue durable runtime work.
+
+## Where does continuing identity live?
+
+The continuing identity belongs in each call:
+
+```ts
+await agent.run(
+  {
+    sessionId: "customer-42",
+    message: "Summarize the open support case.",
+  },
+  context,
+);
+```
+
+The same Agent client can serve many session IDs. Conversely, several application instances can address the same durable Session when the target and authorization model allow it. Per-user mutable conversation state belongs to the Session and runtime stores, not on the Agent object.
+
+This is also why the Agent belongs behind a trusted server boundary. The package targets Node.js server applications, not browsers or edge runtimes. Its target may contain runner credentials, and its request context carries trusted actor and tenant metadata. Put a server-owned route between browser input and the client.
+
+The package supports Node.js server applications, not browsers or edge runtimes. Its target may contain runner credentials, and its request context carries trusted actor and tenant metadata. Put a server-owned route between browser input and the Agent.
+
+Calling `close()` releases transports owned by the client. It does not delete Sessions, cancel unrelated durable work, erase memory, or shut down a remote runner. Cancellation is an explicit operation bound to a Run.
+
+If you are ready to make the first call, [Build your first agent](/build/building-your-first-agent) carries this configured client into a Run.

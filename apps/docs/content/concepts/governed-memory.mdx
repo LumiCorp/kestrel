@@ -1,0 +1,37 @@
+---
+title: Governed memory
+summary: Store and recall durable facts through explicit namespaces, read bindings, provenance, retention, and backend policy.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The memory service contains the customer's preferred deployment window. The current caller belongs to a different tenant.
+
+The fact is relevant. Returning it would still be wrong.
+
+## The record is only part of the authority story
+
+A memory record carries its namespace, tenant, scope, source, timestamps, content, and lifecycle policy. Those fields establish where the fact belongs, where it came from, and how long it may remain available.
+
+The subject being read and the issuer authorizing the read live in the read binding and scoped query context, not as invented fields on every record. The authorization decision comes from the record and binding together.
+
+## A read is authorized in context
+
+The `MemoryGateway` is the governed query boundary: its public operation is `query()`. Record creation and lifecycle management are owned by the memory store and management contracts rather than a gateway write method. A read binding defines the scope in which the caller may query. Query relevance operates inside that authorized boundary; relevance does not widen it.
+
+Backends may differ in persistence and search behavior, but they must preserve the gateway's ownership rules. The in-memory backend is useful for local development and tests. A durable deployment can supply another backend without changing the meaning of namespace, provenance, or retention.
+
+## Recall is not transcript replay
+
+Conversation history answers what happened in a Session. Session state captures selected current working state. Governed memory makes authorized facts available across the scope its policy permits. Kestrel One Knowledge supplies organization and Project documents through a product-owned, revisioned context system.
+
+Calling all four “memory” would erase important decisions. A model may receive material from each, but context assembly should preserve their source and authority.
+
+## Lifecycle remains visible
+
+Expiration, supersession, deletion, and retention are data behavior, not cleanup trivia. A query should not return an expired record simply because the backend still has bytes. A corrected fact should retain enough provenance to explain why it replaced an earlier assertion.
+
+Use the [Memory package reference](/reference/memory) for exact contracts. For product documents and revisioned Project context, continue to [Kestrel One Knowledge](/kestrel-one/knowledge).

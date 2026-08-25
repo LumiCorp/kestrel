@@ -66,7 +66,7 @@ const agent = createAgent({
 });
 ```
 
-The `id` and `profileId` identify the target agent and profile on the runner side. The required `target` explicitly binds the agent to either a remote runner service or Local Core; the SDK never infers that authority from process environment.
+The `id` is local application metadata for this configured client. The `profileId` selects the profile resolved by the runner. The required `target` explicitly binds the agent to either a remote runner service or Local Core; the SDK never infers that authority from process environment.
 
 ## Actor Context
 

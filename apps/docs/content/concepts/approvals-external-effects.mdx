@@ -1,0 +1,31 @@
+---
+title: Approvals and external effects
+summary: Bind permission and evidence to one exact consequential action, especially when its real-world outcome may be unknown.
+section: concepts
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The agent asks to send an email. The user approves it. The request reaches the provider, and the connection drops before the provider's response returns.
+
+The email might already be sent.
+
+## Before dispatch, permission is precise
+
+An approval grant belongs to one actor, target, operation, parameter set, environment, and pending request. Changing the recipient, body, deployment target, or actor requires new validation and may require a new grant. “You can send emails” is not the same authority as “send this message to this recipient now.”
+
+The grant permits an attempt. It does not prove the attempt began or succeeded. An approval record can prove who granted which action; it is not a provider receipt.
+
+## After dispatch, evidence—not optimism—decides
+
+Before dispatch, the effect is not started. After an authoritative success response, it is committed. A local validation failure can establish that it did not start. But a timeout after dispatch may leave the outcome unknown.
+
+Unknown is not failed. Retrying blindly could duplicate a real-world mutation. The effect owner should use its idempotency key, provider lookup, reconciliation endpoint, or registered recovery action to learn more. If none can resolve the uncertainty, Kestrel should preserve it honestly for an operator.
+
+A dispatch record proves the call was attempted. A provider receipt may prove commitment. A local timeout proves only that the caller did not receive a timely answer.
+
+Keeping those records distinct makes replay safe: replay can reconstruct the decision and evidence without silently repeating the email.
+
+The exact evidence shapes live in [Approvals and effects reference](/reference/approvals-and-effects). The permission request itself becomes durable through [Waiting, resume, and cancellation](/concepts/waiting-resume-cancellation).

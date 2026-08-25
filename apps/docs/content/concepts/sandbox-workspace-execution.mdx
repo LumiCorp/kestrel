@@ -1,0 +1,37 @@
+---
+title: Sandbox and workspace execution
+summary: Contain generated code and workspace access while keeping containment, capability, and authorization as separate decisions.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+Generated code tries to read a credential above the project root and then open an unrestricted network connection.
+
+Running it in a container is important. It is not the complete security decision.
+
+## The outer wall: containment
+
+Kestrel's code execution policy can bound filesystem mounts, memory, CPU, process count, temporary storage, output size, artifacts, time, dependency installation, and network defaults. The executor applies those limits to the actual process rather than trusting the generated program to behave.
+
+## Inside the wall: the workspace
+
+The workspace is the owned material intentionally made available inside the sandbox. A managed workspace gives tools and terminal processes a stable place to inspect and change files without treating the host filesystem as agent state. Host paths outside it should not become reachable because a model supplied an absolute path or traversal sequence.
+
+## Through one door: a capability
+
+Some work legitimately needs a database, network service, or credential. A sandbox capability adapter can expose that operation through a named, profile-authored contract. Runtime context, credential snapshots, leases, and child reservations keep the grant bounded and inspectable.
+
+## At the door: authorization
+
+Containment answers where code can run. Capability answers what additional resource can be reached. Authorization answers whether this actor and Run may use it. An isolated process does not automatically earn network access, and an approved network call does not make the whole sandbox unrestricted.
+
+## What comes back out
+
+The executor must propagate cancellation without leaking secrets through diagnostics. It should bound and redact stdout, stderr, exceptions, and artifacts. A terminated container proves that local execution stopped; it does not roll back a remote effect already committed through a capability.
+
+This is why Kestrel treats external effects separately from ordinary sandbox output.
+
+[Tool contracts](/reference/tool-contracts) describes the public execution boundary. Before a narrow door can mutate an external system, read [Approvals and external effects](/concepts/approvals-external-effects).

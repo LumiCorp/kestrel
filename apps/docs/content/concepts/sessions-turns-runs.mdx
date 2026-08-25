@@ -1,0 +1,39 @@
+---
+title: Sessions, Turns, and Runs
+summary: Give continuing conversation, one conversational advance, and one execution attempt their own durable identities.
+section: concepts
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+You ask an agent to prepare a release. It reaches an approval wait, you close the application, and another operator returns an hour later. The first resume attempt fails because the runner restarted. A recovery action creates a new attempt, which completes.
+
+How much work was that?
+
+## The Session continued
+
+The Session is the durable line of conversation and runtime continuity. Messages, waits, resumes, task-backed state, and successive attempts stay attached to its `sessionId`. Closing a client does not end it.
+
+In Kestrel One, a Thread is the product's shared conversation object. It can be linked to runtime sessions, but it is not another spelling of Session: Thread ownership, membership, project context, and sharing belong to the product boundary.
+
+## The Turn advanced the conversation
+
+A Turn begins with new user intent or a response to a pending interaction and advances the conversation toward an outcome. The original request to prepare the release is a Turn. The exact approval response continues that conversational work rather than pretending the prior request never happened.
+
+A Turn can involve several model and tool steps inside the agent loop. It is not one model invocation.
+
+## The Run made one attempt
+
+A Run is one execution attempt with its own lifecycle, events, cancellation target, and terminal result. The attempt that reached the wait is one Run. A retry or registered recovery may create another Run while preserving the Session and its causal history.
+
+This distinction keeps diagnostics honest. “The Session succeeded” can hide a failed first attempt. “The Run failed” does not mean the continuing conversation was deleted.
+
+## The stream only observed
+
+An event stream is a live view of a Run. Disconnecting it can cancel the Run when the request contract says so, or merely detach from durable work. Reattaching does not create a new Run. A subscription can observe activity across a wider filtered scope and is not itself a Run either.
+
+These identities let Kestrel answer precise questions: Which attempt spent the budget? Which wait is pending? Which terminal result is authoritative? Which conversation should the next message continue?
+
+See [Session state and versioned memory](/concepts/session-state-versioned-memory) for continuing state and [Streaming, progress, and reasoning](/concepts/streaming-progress-reasoning) for the live view of an attempt.

@@ -182,6 +182,7 @@ function buildMeta(spec: RegisteredPageSpec, frontmatter: Frontmatter, rawConten
     experienceLevel: spec.experienceLevel ?? "beginner",
     ...(spec.estimatedTime ? { estimatedTime: spec.estimatedTime } : {}),
     related: spec.related ?? [],
+    showSectionListing: spec.showSectionListing ?? true,
     archiveGroup: spec.archiveGroup,
   };
 }
@@ -311,7 +312,15 @@ export const getNavigation = cache(async (): Promise<NavGroup[]> => {
   return [
     group("start", "Start", "/start", [
       ["Choose your path", ["/start", "/start/quickstart", "/start/why-kestrel"]],
-      ["Understand Kestrel", ["/start/concepts", "/start/architecture", "/start/runtime-model", "/start/faq", "/start/release-status"]],
+      ["Start here", ["/start/faq", "/start/release-status"]],
+    ]),
+    group("concepts", "Concepts", "/concepts", [
+      ["Foundations", ["/concepts", "/concepts/architecture", "/concepts/agent-loop", "/concepts/creating-an-agent", "/concepts/profiles-models-capabilities", "/concepts/request-context-durability", "/concepts/interaction-modes-autonomy", "/concepts/sessions-turns-runs"]],
+      ["Conversation and context", ["/concepts/messages-instructions-history", "/concepts/files-attachments", "/concepts/context-management-compaction", "/concepts/conversation-state-projection", "/concepts/composer-queues-interactions", "/concepts/session-state-versioned-memory", "/concepts/governed-memory"]],
+      ["Tools and execution", ["/concepts/tools-tool-results", "/concepts/apps-mcp-services", "/concepts/workspace-skills", "/concepts/sandbox-workspace-execution", "/concepts/structured-output-terminal-results", "/concepts/limits-budgets-guardrails", "/concepts/approvals-external-effects"]],
+      ["Live work and control", ["/concepts/streaming-progress-reasoning", "/concepts/waiting-resume-cancellation", "/concepts/subscriptions-cursors-reattachment", "/concepts/failures-retries-recovery", "/concepts/background-jobs", "/concepts/concurrency-idempotency", "/concepts/task-graphs-work-state", "/concepts/delegation-child-agents"]],
+      ["Advanced runner", ["/concepts/workspace-checkpoints-promotions", "/concepts/operator-control", "/concepts/project-actions-review", "/concepts/execution-protocol-compatibility"]],
+      ["Application adapters", ["/concepts/nextjs-routes", "/concepts/ai-sdk-presentation", "/concepts/observability-trace-context"]],
     ]),
     group("desktop", "Desktop", "/desktop", [
       ["Get Desktop", ["/desktop", "/desktop/install", "/desktop/updates", "/desktop/first-run", "/desktop/providers", "/desktop/apps"]],
@@ -343,6 +352,7 @@ export const getNavigation = cache(async (): Promise<NavGroup[]> => {
 
 export function getNavSectionForUrl(url: string): DocsNavSection {
   if (url === "/" || url.startsWith("/start")) return "start";
+  if (url.startsWith("/concepts")) return "concepts";
   if (url.startsWith("/desktop")) return "desktop";
   if (url.startsWith("/kestrel-one")) return "kestrel-one";
   if (url.startsWith("/build")) return "build";

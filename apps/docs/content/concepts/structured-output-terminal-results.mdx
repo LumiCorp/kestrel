@@ -1,0 +1,35 @@
+---
+title: Structured output and terminal results
+summary: Consume completed, failed, cancelled, and waiting outcomes without inferring assistant text from structured data or stream fragments.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+A Run completes with a concise explanation for the user and a `finalizedPayload` containing the invoice fields the application requested. The UI renders the explanation and silently drops the payload.
+
+Nothing failed at runtime. The application simply confused one part of the result for the whole result.
+
+## Read status before content
+
+The output status establishes what happened. A `COMPLETED` output has non-empty `assistantText`; the protocol parser rejects a completed output whose assistant text is `null`. `FAILED` and `CANCELLED` retain their own evidence and may not have user-facing assistant text. A `WAITING` output includes the exact interaction that must be answered before work can continue.
+
+Kestrel reports a wait by settling the current attempt with a `run.completed` event whose output status is `WAITING`. That event resolves the SDK stream's `result`. The Session can continue later, but callers must not keep awaiting the old stream as though the interaction were still executing.
+
+## Two successful outputs, two jobs
+
+For a completed Run, `assistantText` is the human-facing account of the outcome. `finalizedPayload` is the separately typed application value produced when structured output was requested. Both may be present, and neither is a serialized version of the other.
+
+A tool result is different again. It is evidence returned to the loop so the agent can make its next decision. Even a perfectly shaped tool response is not the Run's finalized payload.
+
+## Do not promote the last visible event
+
+Reasoning deltas, text deltas, progress, logs, and tool activity explain motion. They do not establish the outcome merely because they arrived last. A streaming consumer awaits `stream.result`; a non-streaming consumer branches on the returned event and then on `output.status`.
+
+That two-step read matters for waiting because the envelope is `run.completed` while the output says `WAITING`. It also keeps cancellation distinct from failure and prevents a disconnected transport from manufacturing a result.
+
+JSON routes, SSE handlers, AI SDK presentation, and application stores should preserve these distinctions all the way to the consumer. An application may derive its own display from `finalizedPayload`, but that display is application-authored presentation—not assistant text supplied by Kestrel.
+
+See [Terminal results](/reference/terminal-results) for exact fields and [AI SDK presentation](/concepts/ai-sdk-presentation) for mapping them into UI parts.

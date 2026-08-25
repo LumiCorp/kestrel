@@ -1,0 +1,41 @@
+---
+title: Tools and tool results
+summary: Follow a tool from model-visible description through validation, authorization, execution, and result shaping.
+section: concepts
+audience: everyone
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+The model can see a `read_file` tool. It proposes a call with an absolute path outside the workspace.
+
+The proposal is useful evidence about what the model wants. It is not permission, and it is not an executed read.
+
+## Visible: the model can name it
+
+A tool descriptor gives the model a name, purpose, and argument schema. Visibility determines whether the tool appears in this invocation. Activation and capability policy determine whether it is available in the current profile and environment.
+
+If the tool only accepts workspace-relative paths, the description and schema should say so before the model guesses.
+
+## Active: this Run can consider it
+
+Visibility is not activation. The current profile, environment, and capability packs determine whether a described tool is actually available for this invocation.
+
+## Proposed: the model supplies arguments
+
+Kestrel parses the proposed call and validates its untrusted arguments against the tool schema. An invalid absolute path stops here even though the model could see and name the tool.
+
+## Authorized and executed: owners take over
+
+The runtime classifies the call and checks mode, sandbox, capability, and approval requirements. Then the tool owner—not the model response parser—owns the actual read, mutation, network request, or external effect.
+
+Availability, proposal, authorization, execution, and result are separate facts. A tool can be visible but unavailable in the current environment. A valid proposal can still need approval. An authorized call can still fail during execution.
+
+## Returned: evidence changes the next decision
+
+The tool result returns structured observations to the runtime. Result shaping should expose enough information for the model to decide what to do next while redacting secrets, bounding output, and preserving error classification. A tool error belongs to that call; it is not automatically a terminal Run failure.
+
+The loop may recover, choose another tool, ask the user, or finalize. The eventual terminal result remains distinct from every intermediate tool result.
+
+The exact vocabulary lives in [Tool contracts](/reference/tool-contracts). If the owner may change the outside world, continue into [Approvals and external effects](/concepts/approvals-external-effects).

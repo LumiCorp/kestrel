@@ -181,7 +181,7 @@ ownership.
 
 - [Release status](https://docs.kestrelagents.dev/start/release-status)
 - [Kestrel 0.8 release notes](https://docs.kestrelagents.dev/reference/releases)
-- [Runtime model](https://docs.kestrelagents.dev/start/runtime-model)
+- [Concepts](https://docs.kestrelagents.dev/concepts)
 - [Kestrel One source and hosting](https://docs.kestrelagents.dev/kestrel-one/source-and-hosting)
 - [Upgrade from 0.7 to 0.8](https://docs.kestrelagents.dev/build/upgrading-to-0-8)
 - [Compatibility matrix](https://docs.kestrelagents.dev/reference/compatibility)

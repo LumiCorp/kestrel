@@ -1,0 +1,42 @@
+---
+title: Concurrency and idempotency
+summary: Give commands, Runs, state updates, and external effects distinct identities so retries do not become duplicate work.
+section: concepts
+audience: integrators
+status: active
+sourceKind: curated
+updatedAt: 2026-08-25
+---
+
+A user double-clicks Send while a reverse proxy retries the first request. Two application instances receive the same logical intent.
+
+“Only process one” sounds simple until the two requests reach the SDK.
+
+Each public `sendCommand()` call creates a fresh command ID. Each accepted start command is dispatched by the runner. The public API does not accept an application-supplied command ID, so Kestrel does not currently turn two submissions of the same logical request into one Run for you.
+
+## Stop the duplicate where it enters
+
+The application boundary knows that the double-click and proxy retry represent one logical request. Give that request a stable identity there, persist the accepted outcome, and return it when the same request arrives again. Do this before calling Kestrel. A correlation header is useful for tracing, but correlation alone does not suppress a second command.
+
+Once submitted, keep the identities separate:
+
+- the application request identifies the user's logical intent;
+- the command ID identifies one protocol submission;
+- the Run ID identifies one execution attempt;
+- an external-effect key identifies one mutation at the system that owns that effect.
+
+Collapsing them into one “idempotency ID” hides which layer actually prevented duplication.
+
+## Two writers, one old assumption
+
+Duplicate submission is not the only race. Two legitimate workers can read the same Session snapshot or task graph and then propose incompatible updates. `expectedRevision` and `expectedVersion` carry the state each writer believed it was changing. A conflict means that belief is stale: fetch, reconcile, and make a new decision rather than replaying the old write.
+
+Parallel Runs need an equally explicit application policy. Independent reads may be safe while workspace or project mutations require serialization. Timing luck is not a concurrency model.
+
+## The provider may know more than Kestrel
+
+An external system can enforce an effect key only if its own API supports that contract. When it does, a retry may recover the earlier result without repeating the mutation. When it does not, a lost response can leave the effect committed, not started, or unknown.
+
+Neither a command ID nor application deduplication can reconstruct that provider-side outcome. Preserve the uncertainty and reconcile or involve an operator instead of making “idempotent” a promise no owner can keep.
+
+See [Approvals and external effects](/concepts/approvals-external-effects) for real-world mutations and [Session state and versioned memory](/concepts/session-state-versioned-memory) for optimistic update conflicts.

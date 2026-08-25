@@ -156,7 +156,17 @@ a { color: inherit; }
 .global-footer-inner a { color: inherit; text-underline-offset: 0.2rem; }
 .global-footer-inner a:hover { color: var(--ink); }
 .local-sidebar { min-width: 0; }
-.local-sidebar-inner { position: sticky; top: calc(var(--header-height) + 2rem); display: grid; gap: 1.5rem; }
+.local-sidebar-inner {
+  position: sticky;
+  top: calc(var(--header-height) + 1.25rem);
+  display: grid;
+  gap: 1.5rem;
+  max-height: calc(100vh - var(--header-height) - 2.5rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 0.25rem 0.75rem 1rem 0;
+}
 .local-sidebar-title {
   font-family: var(--font-display), Fraunces, serif;
   font-size: 1.7rem;

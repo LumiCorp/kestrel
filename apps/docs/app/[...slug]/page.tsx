@@ -117,7 +117,7 @@ export default async function DocsPageRoute(props: {
       navigation={navigation}
       pageMeta={page.meta}
       toc={page.meta.toc}
-      sectionListing={<SectionListing pages={sectionPages} currentUrl={page.meta.url} />}
+      sectionListing={page.meta.showSectionListing ? <SectionListing pages={sectionPages} currentUrl={page.meta.url} /> : null}
       relatedListing={page.meta.slug[0] === "archive" ? null : <RelatedPages pages={relatedPages} archetype={page.meta.archetype} />}
     >
       {page.content}
