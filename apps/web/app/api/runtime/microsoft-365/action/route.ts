@@ -6,6 +6,11 @@ import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { auth } from "@/lib/auth";
 import {
+  AppOperationApprovalError,
+  consumeAppOperationApproval,
+} from "@/lib/apps/app-operation-approvals";
+import { knowledgeDb } from "@/lib/knowledge/db";
+import {
   listMicrosoftCalendarEvents,
   listMicrosoftMail,
   listMicrosoftTeamsChats,
@@ -50,6 +55,42 @@ export async function POST(request: Request) {
     if (policy.approvalMode === "ask" && runtimeApprovalId === null) {
       throw new Microsoft365PolicyError("MICROSOFT_365_APPROVAL_REQUIRED", 409);
     }
+    if (
+      (input.operation === "mail.send" || input.operation === "chat.send") &&
+      runtimeApprovalId !== null
+    ) {
+      const resource = await knowledgeDb.query.appConnectionResources.findFirst({
+        where: (table, { and, eq }) => and(
+          eq(table.connectionId, policy.connection.id),
+          eq(table.resourceType, "account"),
+          eq(table.externalId, "primary"),
+          eq(table.enabled, true),
+        ),
+        columns: { id: true },
+      });
+      if (!resource) {
+        throw new Microsoft365PolicyError("MICROSOFT_365_RESOURCE_UNAVAILABLE", 409);
+      }
+      await consumeAppOperationApproval({
+        consumedExecutionId: ticket.runId,
+        binding: {
+          organizationId: ticket.organizationId,
+          environmentId: ticket.environmentId,
+          workspaceId: ticket.workspaceId,
+          threadId: ticket.threadId,
+          actorUserId: ticket.actorId,
+          agentId: ticket.agentId,
+          appKey: "microsoft_365",
+          capabilityKey: capability,
+          connectionId: policy.connection.id,
+          resourceId: resource.id,
+          resourceType: "account",
+          operationKey: input.operation,
+          runtimeApprovalId,
+          payload: input,
+        },
+      });
+    }
     const accessToken = await getAccessToken({
       accountId: policy.connection.externalAccountId,
       connectionId: policy.connection.id,
@@ -84,6 +125,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: { code: error.code } },
         { status: error.status }
+      );
+    }
+    if (error instanceof AppOperationApprovalError) {
+      return NextResponse.json(
+        { error: { code: error.code } },
+        { status: 409 },
       );
     }
     if (error instanceof Microsoft365ProviderError) {

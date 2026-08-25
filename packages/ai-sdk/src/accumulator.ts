@@ -79,6 +79,7 @@ export function createKestrelPresentationAccumulator(input: {
   let runId: string | undefined;
   let errorMessage: string | null = null;
   let errorCode: string | undefined;
+  let errorDetails: Record<string, unknown> | undefined;
   let interaction: KestrelInteractionPresentation | null = null;
   let finalizedPayload: unknown | undefined;
   let telemetry: RunnerTelemetry | undefined;
@@ -123,6 +124,7 @@ export function createKestrelPresentationAccumulator(input: {
     terminalStatus = contractFailure ? "contract_failure" : "failed";
     errorMessage = message;
     errorCode = contractFailure ? error.code : preservedRuntimeCode;
+    errorDetails = readRuntimeErrorDetails(error);
     return appendPart({
       type: "data-kestrel-status",
       id: "status:contract",
@@ -169,6 +171,7 @@ export function createKestrelPresentationAccumulator(input: {
       terminalStatus,
       errorMessage,
       ...(errorCode !== undefined ? { errorCode } : {}),
+      ...(errorDetails !== undefined ? { errorDetails } : {}),
       failureVisible:
         terminalStatus === "failed" ||
         terminalStatus === "cancelled" ||
@@ -300,6 +303,7 @@ export function createKestrelPresentationAccumulator(input: {
         if (event.type === "run.failed") {
           terminalStatus = "failed";
           errorCode = event.payload.error.code;
+          errorDetails = event.payload.error.details;
           errorMessage = publicRuntimeErrorMessage(
             errorCode,
             event.payload.error.message,
@@ -381,6 +385,20 @@ function publicRuntimeErrorMessage(code: string | undefined, message: string) {
   return code === "AGENT_CONNECTION_INTERRUPTED"
     ? "The connection to the running agent was interrupted and could not be restored."
     : message;
+}
+
+function readRuntimeErrorDetails(error: unknown): Record<string, unknown> | undefined {
+  if (
+    error &&
+    typeof error === "object" &&
+    "details" in error &&
+    error.details &&
+    typeof error.details === "object" &&
+    !Array.isArray(error.details)
+  ) {
+    return error.details as Record<string, unknown>;
+  }
+  return undefined;
 }
 
 function readRuntimeErrorCode(error: unknown) {

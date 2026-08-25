@@ -147,8 +147,13 @@ test("the durable worker records requested and effective interaction modes at ru
     workerRuntime,
     /effectiveInteractionMode:[\s\S]*event\.payload\.interactionMode/u
   );
-  assert.match(workerRuntime, /type: "runtime\.started"/u);
-  assert.match(workerRuntime, /appendDurableTurnEvent\(/u);
+  assert.match(workerRuntime, /recordDurableRuntimeStarted\(\{/u);
+  assert.match(turnStore, /type: "runtime\.started"/u);
+  assert.match(turnStore, /appendTurnEvent\(tx, \{/u);
+  assert.match(
+    turnStore,
+    /type: "interaction\.authorization_accepted"/u
+  );
   assert.match(workerRuntime, /if \(event\.type === "run\.started"\)/u);
   assert.match(workerRuntime, /runtimeRunId: runtimeStartedEvent\.runtimeRunId/u);
   assert.doesNotMatch(workerRuntime, /runtimeStartedEventId \?\? event\.id/u);

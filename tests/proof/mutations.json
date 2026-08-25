@@ -63,6 +63,51 @@
       "testFiles": ["apps/web/lib/turns/mobile-store.postgres.test.ts"]
     },
     {
+      "id": "interaction-run-id-persistence-omission",
+      "target": "src/orchestration/PostgresOrchestrationStore.ts",
+      "find": "  if (typeof row.run_id === \"string\") {\n    request.runId = row.run_id;\n  }",
+      "replace": "  if (false && typeof row.run_id === \"string\") {\n    request.runId = row.run_id;\n  }",
+      "command": "node",
+      "args": ["--import", "tsx", "--test", "--test-name-pattern=preserves the waiting run identity", "tests/action-bound-approval-grants.postgres.test.ts"],
+      "testFiles": ["tests/action-bound-approval-grants.postgres.test.ts"]
+    },
+    {
+      "id": "runtime-approval-id-binding-bypass",
+      "target": "apps/web/lib/apps/trusted-terminal-approval.ts",
+      "find": "    runtimeApprovalId !== binding.approvalId ||",
+      "replace": "    false ||",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "lib/apps/trusted-terminal-approval.test.ts"],
+      "testFiles": ["apps/web/lib/apps/trusted-terminal-approval.test.ts"]
+    },
+    {
+      "id": "hosted-app-consume-before-provider-omission",
+      "target": "apps/web/app/api/runtime/email/action/route.ts",
+      "find": "      : await consumeAppOperationApproval({",
+      "replace": "      : consumeAppOperationApproval({",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--import", "tsx", "--test", "lib/apps/hosted-app-transaction-boundary.test.ts"],
+      "testFiles": ["apps/web/lib/apps/hosted-app-transaction-boundary.test.ts"]
+    },
+    {
+      "id": "hosted-app-consuming-execution-binding-bypass",
+      "target": "apps/web/lib/apps/app-operation-approvals.ts",
+      "find": "            eq(schema.threadTurns.environmentExecutionId, input.consumedExecutionId),",
+      "replace": "            eq(schema.threadTurns.status, \"running\"),",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--conditions=react-server", "--import", "tsx", "--test", "--test-name-pattern=Environment Apps persist", "lib/apps/service.postgres.test.ts"],
+      "testFiles": ["apps/web/lib/apps/service.postgres.test.ts"]
+    },
+    {
+      "id": "hosted-app-decision-transaction-detachment",
+      "target": "apps/web/lib/turns/store.ts",
+      "find": "      await decideAppOperationApprovalInTransaction(tx, {",
+      "replace": "      void decideAppOperationApprovalInTransaction(tx, {",
+      "command": "pnpm",
+      "args": ["--dir", "apps/web", "exec", "node", "--import", "tsx", "--test", "lib/apps/hosted-app-transaction-boundary.test.ts"],
+      "testFiles": ["apps/web/lib/apps/hosted-app-transaction-boundary.test.ts"]
+    },
+    {
       "id": "worker-claim-recovery-disabled",
       "target": "apps/web/lib/turns/queue.ts",
       "find": "if (turn.status === \"running\") {",

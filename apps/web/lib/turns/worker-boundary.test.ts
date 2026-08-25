@@ -274,7 +274,7 @@ test(
 
     assert.match(
       runtimeSource,
-      /terminal\.errorCode === "MODEL_AUTH_ERROR"/u
+      /terminal\.errorCode \?\? "RUNTIME_FAILED"/u,
     );
     assert.match(runtimeSource, /errorCode === "MODEL_AUTH_ERROR"/u);
     assert.match(

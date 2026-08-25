@@ -839,10 +839,56 @@ export async function resolveEffectiveProjectAppAccess(input: {
   userId: string;
   includePolicyOnly?: boolean | undefined;
   skipResourceReadiness?: boolean | undefined;
-}) {
+  skipInitialization?: boolean | undefined;
+}, executor: typeof knowledgeDb = knowledgeDb) {
+  const db = executor;
   let context: Awaited<ReturnType<typeof requireProjectAppContext>>;
   try {
-    context = await requireProjectAppContext(input);
+    if (input.skipInitialization) {
+      const [binding, definition, installation] = await Promise.all([
+        db.query.projects.findFirst({
+          where: (table, { and: all, eq: equals }) =>
+            all(
+              equals(table.id, input.projectId),
+              equals(table.organizationId, input.organizationId),
+            ),
+          columns: {
+            id: true,
+            organizationId: true,
+            environmentId: true,
+            updatedAt: true,
+          },
+        }),
+        db.query.appDefinitions.findFirst({
+          where: (table, { eq: equals }) => equals(table.key, input.appKey),
+        }),
+        db.query.appInstallations.findFirst({
+          where: (table, { and: all, eq: equals }) =>
+            all(
+              equals(table.organizationId, input.organizationId),
+              equals(table.appKey, input.appKey),
+            ),
+        }),
+      ]);
+      if (!binding) {
+        throw new ProjectAppError("PROJECT_NOT_FOUND", "Project not found.");
+      }
+      if (!definition) {
+        throw new ProjectAppError("APP_NOT_FOUND", "App not found.");
+      }
+      if (
+        definition.installMode !== "inherited" &&
+        installation?.status !== "installed"
+      ) {
+        throw new ProjectAppError(
+          "APP_NOT_INSTALLED",
+          "Install this App before adding it to a Project.",
+        );
+      }
+      context = { binding, definition };
+    } else {
+      context = await requireProjectAppContext(input);
+    }
   } catch (error) {
     if (
       error instanceof ProjectAppError &&
@@ -853,7 +899,7 @@ export async function resolveEffectiveProjectAppAccess(input: {
     throw error;
   }
   const { binding, definition } = context;
-  const projectApp = await knowledgeDb.query.projectApps.findFirst({
+  const projectApp = await db.query.projectApps.findFirst({
     where: (table, { and: all, eq: equals }) =>
       all(
         equals(table.projectId, input.projectId),
@@ -864,7 +910,7 @@ export async function resolveEffectiveProjectAppAccess(input: {
     projectApp?.enabled ?? definition.installMode === "inherited";
   if (!projectEnabled) return null;
   const [attachments, grants, policies, capabilities] = await Promise.all([
-    knowledgeDb.query.projectAppConnections.findMany({
+    db.query.projectAppConnections.findMany({
       where: (table, { and: all, eq: equals }) =>
         all(
           equals(table.projectId, input.projectId),
@@ -872,21 +918,21 @@ export async function resolveEffectiveProjectAppAccess(input: {
           equals(table.isDefault, true),
         ),
     }),
-    knowledgeDb.query.environmentAppCapabilityGrants.findMany({
+    db.query.environmentAppCapabilityGrants.findMany({
       where: (table, { and: all, eq: equals }) =>
         all(
           equals(table.environmentId, binding.environmentId),
           equals(table.appKey, input.appKey),
         ),
     }),
-    knowledgeDb.query.projectAppCapabilityPolicies.findMany({
+    db.query.projectAppCapabilityPolicies.findMany({
       where: (table, { and: all, eq: equals }) =>
         all(
           equals(table.projectId, input.projectId),
           equals(table.appKey, input.appKey),
         ),
     }),
-    knowledgeDb.query.appCapabilities.findMany({
+    db.query.appCapabilities.findMany({
       where: (table, { eq: equals }) => equals(table.appKey, input.appKey),
     }),
   ]);
@@ -899,7 +945,7 @@ export async function resolveEffectiveProjectAppAccess(input: {
     return null;
   }
   const selectedConnection = selectedAttachment
-    ? await knowledgeDb.query.appConnections.findFirst({
+    ? await db.query.appConnections.findFirst({
         where: (table, { and: all, eq: equals }) =>
           all(
             equals(table.id, selectedAttachment.connectionId),

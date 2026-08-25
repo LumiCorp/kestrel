@@ -110,3 +110,93 @@ test("Local Core PostgreSQL persists and reloads the canonical interaction envel
     await pool.end();
   }
 });
+
+test("Local Core PostgreSQL preserves the waiting run identity across create, update, get, list, and restart", async () => {
+  assert.ok(databaseUrl, "KESTREL_PRODUCT_RUNNER_DATABASE_URL is required");
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const suffix = randomUUID();
+  const sessionId = `identity-session-${suffix}`;
+  const threadId = `identity-thread-${suffix}`;
+  const firstRunId = `identity-run-first-${suffix}`;
+  const secondRunId = `identity-run-second-${suffix}`;
+  const requestId = `identity-request-${suffix}`;
+  try {
+    await pool.query("INSERT INTO sessions (session_id) VALUES ($1)", [sessionId]);
+    await pool.query(
+      `INSERT INTO runs (run_id, session_id, event_type, status)
+       VALUES ($1, $3, 'user.message', 'WAITING'), ($2, $3, 'user.reply', 'WAITING')`,
+      [firstRunId, secondRunId, sessionId],
+    );
+    await pool.query(
+      `INSERT INTO orchestration_threads (thread_id, session_id, title, status)
+       VALUES ($1, $2, 'Approval run identity', 'WAITING')`,
+      [threadId, sessionId],
+    );
+    const record = {
+      requestId,
+      threadId,
+      runId: firstRunId,
+      kind: "approval" as const,
+      status: "PENDING" as const,
+      eventType: "user.approval",
+      metadata: { conversationRunId: firstRunId },
+      createdAt: new Date().toISOString(),
+    };
+    const store = new PostgresOrchestrationStore(pool as unknown as SqlExecutor);
+    await store.upsertInteractionRequest(record);
+    assert.equal((await store.getInteractionRequest(requestId))?.runId, firstRunId);
+
+    await store.upsertInteractionRequest({
+      ...record,
+      runId: secondRunId,
+      metadata: { conversationRunId: secondRunId },
+    });
+    assert.equal((await store.listInteractionRequests({ threadId }))[0]?.runId, secondRunId);
+
+    const restartedStore = new PostgresOrchestrationStore(pool as unknown as SqlExecutor);
+    assert.equal((await restartedStore.getInteractionRequest(requestId))?.runId, secondRunId);
+  } finally {
+    await pool.query("DELETE FROM sessions WHERE session_id = $1", [sessionId]);
+    await pool.end();
+  }
+});
+
+test("interaction run identity migration backfills a referenced metadata run", async () => {
+  assert.ok(databaseUrl, "KESTREL_PRODUCT_RUNNER_DATABASE_URL is required");
+  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const suffix = randomUUID();
+  const sessionId = `backfill-session-${suffix}`;
+  const threadId = `backfill-thread-${suffix}`;
+  const runId = `backfill-run-${suffix}`;
+  const requestId = `backfill-request-${suffix}`;
+  try {
+    await pool.query("INSERT INTO sessions (session_id) VALUES ($1)", [sessionId]);
+    await pool.query(
+      "INSERT INTO runs (run_id, session_id, event_type, status) VALUES ($1, $2, 'user.message', 'WAITING')",
+      [runId, sessionId],
+    );
+    await pool.query(
+      "INSERT INTO orchestration_threads (thread_id, session_id, title, status) VALUES ($1, $2, 'Backfill', 'WAITING')",
+      [threadId, sessionId],
+    );
+    await pool.query(
+      `INSERT INTO orchestration_interaction_requests
+         (request_id, thread_id, kind, status, event_type, metadata_json, run_id)
+       VALUES ($1, $2, 'approval', 'PENDING', 'user.approval', $3::jsonb, NULL)`,
+      [requestId, threadId, JSON.stringify({ conversationRunId: runId })],
+    );
+    const migration = await readFile(
+      new URL("../db/migrations/037_interaction_request_run_identity.sql", import.meta.url),
+      "utf8",
+    );
+    await pool.query(migration);
+    const restored = await pool.query<{ run_id: string | null }>(
+      "SELECT run_id FROM orchestration_interaction_requests WHERE request_id = $1",
+      [requestId],
+    );
+    assert.equal(restored.rows[0]?.run_id, runId);
+  } finally {
+    await pool.query("DELETE FROM sessions WHERE session_id = $1", [sessionId]);
+    await pool.end();
+  }
+});

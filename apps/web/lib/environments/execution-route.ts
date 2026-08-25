@@ -782,6 +782,8 @@ export async function updateEnvironmentExecutionStatus(input: {
   organizationId: string;
   executionId: string;
   status: "running" | "completed" | "failed" | "cancelled";
+  failureCode?: string | null | undefined;
+  failureMessage?: string | null | undefined;
 }) {
   const now = new Date();
   await knowledgeDb.transaction(async (transaction) => {
@@ -789,6 +791,9 @@ export async function updateEnvironmentExecutionStatus(input: {
       .update(schema.environmentRunExecutions)
       .set({
         status: input.status,
+        failureCode: input.status === "failed" ? input.failureCode ?? null : null,
+        failureMessage:
+          input.status === "failed" ? input.failureMessage ?? null : null,
         ...(input.status === "running"
           ? { startedAt: now }
           : { completedAt: now }),

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { RunnerRunTerminalEvent } from "@kestrel-agents/sdk";
 import { and, eq, gt, lte } from "drizzle-orm";
+import { recordHostedAppApprovalRequest } from "@/lib/apps/hosted-app-approval-recorder";
 import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import {
   type GitHubMutationOperation,
@@ -12,8 +13,6 @@ import {
   authorizeGitHubCapability,
   type GitHubCapability,
 } from "./github-policy";
-
-const APPROVAL_TTL_MS = 5 * 60_000;
 
 export type { GitHubMutationOperation } from "./github-action-approval-contract";
 
@@ -41,69 +40,16 @@ export async function recordGitHubActionApprovalRequest(input: {
   requestedExecutionId: string;
   event: RunnerRunTerminalEvent;
 }) {
-  const request = readGitHubApprovalRequest(input.event);
-  if (!request) return null;
-  const policy = await authorizeGitHubCapability({
-    ticket: {
-      ...input.identity,
-      runId: input.requestedExecutionId,
-    },
-    repository: request.repository,
-    capability: capabilityForOperation(request.operation),
-    requireRunExecution: true,
-  });
-  if (policy.approvalMode !== "ask") return null;
-  const payload = { ...request.toolInput, operation: request.operation };
-  const payloadHash = hashGitHubActionPayload(payload);
-  const expiresAt = new Date(
-    Date.now() + APPROVAL_TTL_MS
-  );
-  const [created] = await knowledgeDb
-    .insert(schema.githubActionApprovals)
-    .values({
-      organizationId: input.identity.organizationId,
-      environmentId: input.identity.environmentId,
-      workspaceId: input.identity.workspaceId,
-      threadId: input.identity.threadId,
-      requestedExecutionId: input.requestedExecutionId,
-      actorUserId: input.identity.actorId,
-      agentId: input.identity.agentId,
-      resourceId: policy.resource.id,
-      repository: request.repository,
-      operation: request.operation,
-      runtimeApprovalId: request.runtimeApprovalId,
-      payloadHash,
-      payload,
-      expiresAt,
-    })
-    .onConflictDoNothing({
-      target: [
-        schema.githubActionApprovals.organizationId,
-        schema.githubActionApprovals.runtimeApprovalId,
-      ],
-    })
-    .returning();
-  if (created) return created;
-  const existing = await getApproval({
+  return recordHostedAppApprovalRequest({
     organizationId: input.identity.organizationId,
-    runtimeApprovalId: request.runtimeApprovalId,
+    environmentId: input.identity.environmentId,
+    workspaceId: input.identity.workspaceId,
+    threadId: input.identity.threadId,
+    actorUserId: input.identity.actorId,
+    agentId: input.identity.agentId,
+    requestedExecutionId: input.requestedExecutionId,
+    event: input.event,
   });
-  if (
-    !existing ||
-    existing.environmentId !== input.identity.environmentId ||
-    existing.workspaceId !== input.identity.workspaceId ||
-    existing.threadId !== input.identity.threadId ||
-    existing.requestedExecutionId !== input.requestedExecutionId ||
-    existing.actorUserId !== input.identity.actorId ||
-    existing.agentId !== input.identity.agentId ||
-    existing.resourceId !== policy.resource.id ||
-    existing.repository !== request.repository ||
-    existing.operation !== request.operation ||
-    existing.payloadHash !== payloadHash
-  ) {
-    throw new GitHubActionApprovalError("GITHUB_APPROVAL_BINDING_MISMATCH");
-  }
-  return existing;
 }
 
 export async function decideGitHubActionApproval(input: {
