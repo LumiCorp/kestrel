@@ -179,7 +179,15 @@ export interface ConversationInteractionPresentation<Approval = unknown> {
   metadata?: Record<string, unknown> | undefined;
   approval?: Approval | undefined;
   source?: "runtime" | "mcp" | undefined;
-  status: "pending" | "resolved" | "cancelled";
+  status: "pending" | "processing" | "resolved" | "cancelled" | "failed";
+  approvalOutcome?: {
+    decision: "approved" | "denied";
+    authorizationState: "pending" | "accepted" | "failed";
+    effectState: "not_started" | "started" | "unknown";
+    failureCode?: string | undefined;
+    publicMessage?: string | undefined;
+    retryEligible: boolean;
+  } | undefined;
 }
 
 export interface ConversationStatusPresentation {

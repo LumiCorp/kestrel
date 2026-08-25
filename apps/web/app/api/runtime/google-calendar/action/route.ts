@@ -6,6 +6,11 @@ import { NextResponse } from "next/server";
 import { logAdminEvent } from "@/lib/admin/logs";
 import { auth } from "@/lib/auth";
 import {
+  AppOperationApprovalError,
+  consumeAppOperationApproval,
+} from "@/lib/apps/app-operation-approvals";
+import { knowledgeDb } from "@/lib/knowledge/db";
+import {
   createGoogleCalendarEvent,
   deleteGoogleCalendarEvent,
   GoogleCalendarProviderError,
@@ -56,6 +61,44 @@ export async function POST(request: Request) {
         "GOOGLE_CALENDAR_APPROVAL_REQUIRED",
         409
       );
+    }
+    if (
+      input.operation !== "events.list" &&
+      input.operation !== "availability.subjects" &&
+      input.operation !== "availability.query" &&
+      runtimeApprovalId !== null
+    ) {
+      const resource = await knowledgeDb.query.appConnectionResources.findFirst({
+        where: (table, { and, eq }) => and(
+          eq(table.connectionId, policy.connection.id),
+          eq(table.resourceType, "calendar"),
+          eq(table.externalId, "primary"),
+          eq(table.enabled, true),
+        ),
+        columns: { id: true },
+      });
+      if (!resource) {
+        throw new GoogleCalendarPolicyError("GOOGLE_CALENDAR_RESOURCE_UNAVAILABLE", 409);
+      }
+      await consumeAppOperationApproval({
+        consumedExecutionId: ticket.runId,
+        binding: {
+          organizationId: ticket.organizationId,
+          environmentId: ticket.environmentId,
+          workspaceId: ticket.workspaceId,
+          threadId: ticket.threadId,
+          actorUserId: ticket.actorId,
+          agentId: ticket.agentId,
+          appKey: "google_workspace",
+          capabilityKey: capability,
+          connectionId: policy.connection.id,
+          resourceId: resource.id,
+          resourceType: "calendar",
+          operationKey: input.operation,
+          runtimeApprovalId,
+          payload: input,
+        },
+      });
     }
 
     let result: unknown;
@@ -167,6 +210,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: { code: error.code } },
         { status: error.status }
+      );
+    }
+    if (error instanceof AppOperationApprovalError) {
+      return NextResponse.json(
+        { error: { code: error.code } },
+        { status: 409 },
       );
     }
     if (error instanceof GoogleCalendarProviderError) {

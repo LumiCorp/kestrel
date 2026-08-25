@@ -85,6 +85,7 @@
     "validate:lane": "node scripts/validate.mjs --lane",
     "validate:hermetic": "node scripts/validate.mjs --leaf hermetic all",
     "validate:process": "node scripts/validate.mjs --leaf process all",
+    "validate:process:modules": "node scripts/validate.mjs --process-modules",
     "validate:postgres": "node scripts/validate.mjs --leaf postgres all",
     "validate:chromium": "node scripts/validate.mjs --leaf chromium all",
     "validate:audit": "node scripts/validate.mjs --leaf audit all",

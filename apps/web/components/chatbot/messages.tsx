@@ -226,7 +226,7 @@ function PureMessages({
           <InteractionPanel
             embedded={true}
             interactions={item.interactions.filter(
-              (interaction) => interaction.status === "pending"
+              (interaction) => interaction.status !== "cancelled"
             )}
             onResolved={onRefreshConversationState}
             onRuntimeResponse={onRuntimeInteractionResponse}

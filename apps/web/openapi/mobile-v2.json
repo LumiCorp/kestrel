@@ -157,6 +157,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/InteractionLifecycle"
           }
         ],
         "responses": {
@@ -251,6 +254,9 @@
           },
           {
             "$ref": "#/components/parameters/CheckpointId"
+          },
+          {
+            "$ref": "#/components/parameters/InteractionLifecycle"
           }
         ],
         "requestBody": {
@@ -276,6 +282,23 @@
           "409": {
             "$ref": "#/components/responses/Error"
           }
+        }
+      }
+    },
+    "/threads/{id}/interactions/{checkpointId}/retry": {
+      "post": {
+        "operationId": "retryMobileInteraction",
+        "parameters": [
+          { "$ref": "#/components/parameters/Id" },
+          { "$ref": "#/components/parameters/CheckpointId" },
+          { "$ref": "#/components/parameters/InteractionLifecycle" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/SnapshotEnvelope" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" }
         }
       }
     },
@@ -521,6 +544,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/Id"
+          },
+          {
+            "$ref": "#/components/parameters/InteractionLifecycle"
           },
           {
             "name": "before",
@@ -781,6 +807,16 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 200
+        }
+      },
+      "InteractionLifecycle": {
+        "name": "X-Kestrel-Mobile-Interaction-Lifecycle",
+        "in": "header",
+        "required": false,
+        "description": "Set to 1 to receive processing and failed interaction lifecycle states and safe retry metadata.",
+        "schema": {
+          "type": "string",
+          "const": "1"
         }
       },
       "IdempotencyKey": {
@@ -1681,9 +1717,20 @@
             "type": "string",
             "enum": [
               "pending",
+              "processing",
               "resolved",
-              "cancelled"
+              "cancelled",
+              "failed"
             ]
+          },
+          "failureCode": {
+            "type": ["string", "null"]
+          },
+          "message": {
+            "type": ["string", "null"]
+          },
+          "retryEligible": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -2011,6 +2058,33 @@
         },
         "additionalProperties": false
       },
+      "ApprovalOutcome": {
+        "type": "object",
+        "required": [
+          "decision",
+          "authorizationState",
+          "effectState",
+          "retryEligible"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": ["approved", "denied"]
+          },
+          "authorizationState": {
+            "type": "string",
+            "enum": ["pending", "accepted", "failed"]
+          },
+          "effectState": {
+            "type": "string",
+            "enum": ["not_started", "started", "unknown"]
+          },
+          "failureCode": { "type": "string" },
+          "publicMessage": { "type": "string" },
+          "retryEligible": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      },
       "MobileInteraction": {
         "type": "object",
         "required": [
@@ -2050,6 +2124,13 @@
           },
           "createdAt": {
             "$ref": "#/components/schemas/IsoDate"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "processing", "resolved", "cancelled", "failed"]
+          },
+          "approvalOutcome": {
+            "$ref": "#/components/schemas/ApprovalOutcome"
           }
         },
         "additionalProperties": false

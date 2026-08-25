@@ -569,7 +569,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             .get(input.origin.snapshotId)
             ?.get(input.activation.descriptor.toolId)
         : this.findPinnedExecutionSource(input.activation);
-    let source = snapshotSource;
+    let source =
+      snapshotSource ??
+      this.rehydrateStaticBuiltInExecution(input, options.runContext);
     if (source === undefined) {
       throw createRuntimeFailure(
         "TOOL_PINNED_HANDLER_UNAVAILABLE",
@@ -709,7 +711,9 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
             .get(input.origin.snapshotId)
             ?.get(input.activation.descriptor.toolId)
         : this.findPinnedExecutionSource(input.activation);
-    let source = snapshotSource;
+    let source =
+      snapshotSource ??
+      this.rehydrateStaticBuiltInExecution(input, options.runContext);
     if (source === undefined) {
       throw createRuntimeFailure(
         "TOOL_PINNED_HANDLER_UNAVAILABLE",
@@ -1392,24 +1396,40 @@ export class UnifiedToolRegistry implements ToolGateway, ToolRegistry {
   }
 
   private rehydrateStaticBuiltInExecution(
-    prepared: PreparedToolCallV1,
+    input: { activation: PreparedToolCallV1["activation"] },
     runContext: ToolRunContext | undefined,
   ): PinnedExecutionSource | undefined {
     const descriptor = this.builtInDescriptors.get(
-      prepared.activation.descriptor.toolId,
+      input.activation.descriptor.toolId,
     );
+    const blockedResumeScope = resolveBlockedResumeScope(runContext);
+    const scopeMatches =
+      input.activation.scopeFingerprint ===
+        fingerprintToolRunScopeV1(runContext) ||
+      (runContext !== undefined &&
+        blockedResumeScope !== undefined &&
+        input.activation.scopeFingerprint ===
+          fingerprintToolRunScopeV1({
+            ...runContext,
+            runId: blockedResumeScope.runId,
+            payload: {
+              ...(asRecord(runContext.payload) ?? {}),
+              ...(blockedResumeScope.mcpContext === undefined
+                ? {}
+                : { mcpContext: blockedResumeScope.mcpContext }),
+            },
+          }));
     if (
       descriptor === undefined ||
       hashCanonical(toToolDescriptorRefV1(descriptor)) !==
-        hashCanonical(prepared.activation.descriptor) ||
-      prepared.activation.scopeFingerprint !==
-        fingerprintToolRunScopeV1(runContext)
+        hashCanonical(input.activation.descriptor) ||
+      scopeMatches === false
     ) {
       return;
     }
     return this.createPinnedExecutionSource(
       descriptor,
-      prepared.activation,
+      input.activation,
       runContext,
     );
   }
@@ -2211,6 +2231,61 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     Array.isArray(value) === false
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function resolveBlockedResumeScope(
+  runContext: ToolRunContext | undefined,
+):
+  | {
+      runId: string;
+      mcpContext?: Record<string, unknown> | undefined;
+    }
+  | undefined {
+  const payload = asRecord(runContext?.payload);
+  if (payload?.resumeBlockedRun !== true) {
+    return;
+  }
+  const metadata = asRecord(payload.metadata);
+  const orchestration = asRecord(payload.orchestration);
+  const blockedToolScope = asRecord(metadata?.blockedToolScope);
+  const candidates = [
+    metadata?.blockedRunId,
+    orchestration?.blockedRunId,
+    blockedToolScope?.runId,
+  ]
+    .flatMap((value) =>
+      typeof value === "string" && value.trim().length > 0
+        ? [value.trim()]
+        : [],
+    );
+  const distinct = [...new Set(candidates)];
+  if (distinct.length !== 1) {
+    return;
+  }
+  const currentMcpContext = asRecord(payload.mcpContext);
+  const blockedMcpContext = asRecord(blockedToolScope?.mcpContext);
+  if (
+    (currentMcpContext === undefined) !== (blockedMcpContext === undefined) ||
+    (currentMcpContext !== undefined &&
+      blockedMcpContext !== undefined &&
+      hashCanonical(withoutGrantId(currentMcpContext)) !==
+        hashCanonical(withoutGrantId(blockedMcpContext)))
+  ) {
+    return;
+  }
+  return {
+    runId: distinct[0]!,
+    ...(blockedMcpContext === undefined
+      ? {}
+      : { mcpContext: blockedMcpContext }),
+  };
+}
+
+function withoutGrantId(
+  context: Record<string, unknown>,
+): Record<string, unknown> {
+  const { grantId: _grantId, ...stableContext } = context;
+  return stableContext;
 }
 
 function preparedExecutionKey(prepared: PreparedToolCallV1): string {

@@ -8,6 +8,7 @@ import {
   mobileV2DurablePartTypes,
 } from "@/lib/mobile/message-parts";
 import { getMobileV2MessageWindow } from "@/lib/mobile/v2/store";
+import { mobileInteractionLifecycleRequested } from "@/lib/mobile/interaction-lifecycle";
 
 const paramsSchema = z.object({ id: routeIdSchema });
 const querySchema = z.object({
@@ -39,7 +40,9 @@ export async function GET(
         turnId: message.turnId ?? null,
         sourceMessageId: message.sourceMessageId ?? null,
         role: message.role,
-        parts: mobileMessageParts(message.parts).filter((part) =>
+        parts: mobileMessageParts(message.parts, {
+          richInteractionLifecycle: mobileInteractionLifecycleRequested(request),
+        }).filter((part) =>
           mobileV2DurablePartTypes.has(part.type)
         ),
         createdAt: message.createdAt.toISOString(),

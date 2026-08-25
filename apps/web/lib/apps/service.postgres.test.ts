@@ -706,6 +706,41 @@ test(
     });
     assert.match(requestedApproval.authorityRevision ?? "", /^sha256:[0-9a-f]{64}$/u);
     assert.equal(requestedApproval.externalApprovalBinding?.authorityKind, "hosted_app_policy");
+    const approvalTurnId = `approval-turn-${suffix}`;
+    await sql`
+      UPDATE "environment_run_executions"
+      SET "status" = 'running', "runtime_run_id" = ${runId}, "started_at" = ${now}
+      WHERE "id" = ${runId}
+    `;
+    await sql`
+      INSERT INTO "thread_turns" (
+        "id", "organization_id", "thread_id", "author_user_id",
+        "approval_id", "approval_approved",
+        "environment_execution_id", "requested_environment_id",
+        "idempotency_key", "sequence", "queue_ordinal", "status"
+      ) VALUES (
+        ${approvalTurnId}, ${organizationId}, ${threadId}, ${userId},
+        ${`turn-approval-${suffix}`}, true,
+        ${runId}, ${environmentId}, ${`approval-turn-${suffix}`}, 1, 1, 'running'
+      )
+    `;
+    const bindApprovalInteraction = async (runtimeApprovalId: string) => {
+      await sql`
+        INSERT INTO "thread_interactions" (
+          "id", "request_id", "organization_id", "thread_id", "turn_id",
+          "source", "kind", "event_type", "prompt", "status",
+          "request_envelope", "response_envelope", "runtime_approval_id",
+          "source_runtime_run_id", "resolved_by_user_id", "resolved_at", "resumed_at"
+        ) VALUES (
+          ${`interaction-${runtimeApprovalId}`}, ${`request-${runtimeApprovalId}`},
+          ${organizationId}, ${threadId}, ${approvalTurnId}, 'runtime', 'approval',
+          'user.approval', 'Approve?', 'resolved',
+          ${sql.json({ approval: { toolName: "tavily.research" } })},
+          ${sql.json({ approved: true })}, ${runtimeApprovalId}, ${runId},
+          ${userId}, ${now}, ${now}
+        )
+      `;
+    };
     await sql`
       INSERT INTO "environment_run_executions" (
         "id", "organization_id", "environment_id", "workspace_id", "thread_id",
@@ -718,15 +753,22 @@ test(
         ])}
       )
     `;
-    const replayedApproval =
-      await appApprovals.recordAppOperationApprovalRequest({
+    await sql`
+      UPDATE "environment_run_executions"
+      SET "status" = 'running', "runtime_run_id" = ${replayRunId}, "started_at" = ${now}
+      WHERE "id" = ${replayRunId}
+    `;
+    await assert.rejects(
+      appApprovals.recordAppOperationApprovalRequest({
         binding: approvalBinding,
         projectId,
         requestedExecutionId: replayRunId,
         expiresAt: new Date(Date.now() + 60_000),
-      });
-    assert.equal(replayedApproval.id, requestedApproval.id);
-    assert.equal(replayedApproval.requestedExecutionId, runId);
+      }),
+      (error: unknown) =>
+        error instanceof appApprovals.AppOperationApprovalError &&
+        error.code === "APP_OPERATION_APPROVAL_BINDING_MISMATCH",
+    );
     await assert.rejects(
       appApprovals.decideAppOperationApproval({
         organizationId,
@@ -755,6 +797,7 @@ test(
     });
     assert.equal(repeatedApproval.id, approved.id);
     assert.equal(repeatedApproval.status, "approved");
+    await bindApprovalInteraction(approvalBinding.runtimeApprovalId);
     const concurrentConsumption = await Promise.allSettled([
       appApprovals.consumeAppOperationApproval({
         binding: approvalBinding,
@@ -794,6 +837,16 @@ test(
       });
     assert.equal(directlyApproved.status, "approved");
     assert.equal(directlyApproved.decidedByUserId, userId);
+    await bindApprovalInteraction(directlyApprovedBinding.runtimeApprovalId);
+    await assert.rejects(
+      appApprovals.consumeAppOperationApproval({
+        binding: directlyApprovedBinding,
+        consumedExecutionId: replayRunId,
+      }),
+      (error: unknown) =>
+        error instanceof appApprovals.AppOperationApprovalError &&
+        error.code === "APP_OPERATION_APPROVAL_INVALID",
+    );
     const directlyConsumed = await appApprovals.consumeAppOperationApproval({
       binding: directlyApprovedBinding,
       consumedExecutionId: runId,
@@ -820,6 +873,7 @@ test(
       requestedExecutionId: runId,
       expiresAt: new Date(Date.now() + 60_000),
     });
+    await bindApprovalInteraction(changedPolicyBinding.runtimeApprovalId);
     await appApprovals.decideAppOperationApproval({
       organizationId,
       threadId,

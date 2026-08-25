@@ -13,6 +13,7 @@ import {
 } from "../runtime/RuntimeFailure.js";
 import { parseEvaluationReviewBindingV1 } from "../kestrel/contracts/evaluation.js";
 import type { RuntimeTurnActor } from "../runtime/RuntimeTurn.js";
+import type { HostedMcpContext } from "../mcp/hosted-contracts.js";
 import type {
   ApprovalGrantRecord,
   InteractionRequestRecord,
@@ -32,6 +33,7 @@ export class InteractionManager {
     turnId?: string | undefined;
     runId?: string | undefined;
     actor?: RuntimeTurnActor | undefined;
+    blockedMcpContext?: HostedMcpContext | undefined;
     delegationId?: string | undefined;
     waitFor?:
       | {
@@ -76,6 +78,15 @@ export class InteractionManager {
 
     const eventType = waitFor.eventType;
     const requestKind = waitFor.kind === "approval" ? "approval" : "user_input";
+    const blockedToolScope =
+      requestKind === "approval" && input.runId !== undefined
+        ? {
+            runId: input.runId,
+            ...(input.blockedMcpContext === undefined
+              ? {}
+              : { mcpContext: structuredClone(input.blockedMcpContext) }),
+          }
+        : undefined;
     const existing = pending.find((request) =>
       requestMatchesWaitFor(request, {
         kind: requestKind,
@@ -91,6 +102,7 @@ export class InteractionManager {
         ...(input.runId !== undefined ? { runId: input.runId } : {}),
         metadata: {
           ...(existing.metadata ?? {}),
+          ...(blockedToolScope === undefined ? {} : { blockedToolScope }),
           ...(input.turnId !== undefined ? { conversationTurnId: input.turnId } : {}),
           ...(input.runId !== undefined ? { conversationRunId: input.runId } : {}),
         },
@@ -132,6 +144,7 @@ export class InteractionManager {
         : {}),
       metadata: {
         ...metadata,
+        ...(blockedToolScope === undefined ? {} : { blockedToolScope }),
         ...(input.turnId !== undefined ? { conversationTurnId: input.turnId } : {}),
         ...(input.runId !== undefined ? { conversationRunId: input.runId } : {}),
         ...(input.actor !== undefined
@@ -382,6 +395,8 @@ function readExternalApprovalBinding(
       {
         classification: "policy",
         recoverable: false,
+        effectStatus: "not_started",
+        retryable: false,
         cause: error instanceof Error ? error.message : String(error),
       },
     );
@@ -404,7 +419,7 @@ function normalizeTrustedActor(
     throw createRuntimeFailure(
       "APPROVAL_ACTOR_INVALID",
       "Approval decisions require trusted actor metadata.",
-      { classification: "policy", recoverable: false },
+      { classification: "policy", recoverable: false, effectStatus: "not_started", retryable: false },
     );
   }
   return {
@@ -426,7 +441,12 @@ function validateExecutableApproval(input: {
     throw createRuntimeFailure(
       "APPROVAL_ACTOR_REQUIRED",
       "External-effect approval requires authenticated actor metadata.",
-      { classification: "policy", recoverable: false },
+      {
+        classification: "policy",
+        recoverable: false,
+        effectStatus: "not_started",
+        retryable: false,
+      },
     );
   }
   if (
@@ -441,6 +461,8 @@ function validateExecutableApproval(input: {
       {
         classification: "policy",
         recoverable: false,
+        effectStatus: "not_started",
+        retryable: false,
         requestId: input.request.requestId,
       },
     );
@@ -462,7 +484,7 @@ function validateExecutableApproval(input: {
     throw createRuntimeFailure(
       "EXTERNAL_APPROVAL_ACTION_MISMATCH",
       "External-effect approval does not match the exact pending action and payload.",
-      { classification: "policy", recoverable: false },
+      { classification: "policy", recoverable: false, effectStatus: "not_started", retryable: false },
     );
   }
   if (Date.parse(input.binding.expiresAt) <= Date.now()) {
@@ -472,6 +494,8 @@ function validateExecutableApproval(input: {
       {
         classification: "policy",
         recoverable: true,
+        effectStatus: "not_started",
+        retryable: false,
         approvalId: input.binding.approvalId,
       },
     );
@@ -488,7 +512,7 @@ function validateExecutableApproval(input: {
     throw createRuntimeFailure(
       "APPROVAL_ACTOR_MISMATCH",
       "External-effect approval must be decided by the authenticated actor that requested it.",
-      { classification: "policy", recoverable: false },
+      { classification: "policy", recoverable: false, effectStatus: "not_started", retryable: false },
     );
   }
 }

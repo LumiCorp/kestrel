@@ -9,6 +9,10 @@ import {
   validateRuntimeHermeticLaneManifest,
 } from "../../scripts/validation/runtime-hermetic-lanes.mjs";
 import {
+  processModuleIds,
+  validateProcessModuleManifest,
+} from "../../scripts/validation/process-modules.mjs";
+import {
   partitionTestFiles,
   runFailFastShards,
 } from "../../scripts/validation/run-node-test-group.mjs";
@@ -36,6 +40,22 @@ const runtimeHermeticLaneManifest = JSON.parse(
     string,
     { isolation: string; workers: number; files: string[] }
   >;
+};
+const processModuleManifest = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../scripts/validation/process-modules.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+) as {
+  version: 1;
+  modules: Array<{
+    id: string;
+    description: string;
+    prefixes: string[];
+  }>;
 };
 const nodeTestGroupRunner = readFileSync(
   new URL("../../scripts/validation/run-node-test-group.mjs", import.meta.url),
@@ -114,6 +134,96 @@ test("validation durations are evidence rather than correctness gates", () => {
   );
   assert.match(runner, /slowestTasks:/u);
   assert.doesNotMatch(runner, /contract-timings|slowestTests|assertionTimeMs/u);
+});
+
+test("process validation has explicit, disjoint module ownership", () => {
+  const assignments = validateProcessModuleManifest(processModuleManifest, [
+    "tests/unit/local-core-api.test.ts",
+    "tests/integration/runner-protocol.test.ts",
+    "apps/desktop/tests/projectRuns.test.ts",
+    "apps/mcp-service/tests/discovery-worker.test.ts",
+    "apps/web/lib/integrations/github-publication-git.process.test.ts",
+    "packages/attachments/tests/attachments.test.ts",
+    "packages/sdk/tests/local-client.test.ts",
+    "tools/kestrelOne/githubPushAgentBranch.test.ts",
+  ]);
+
+  assert.equal(assignments.get("tests/unit/local-core-api.test.ts"), "unit");
+  assert.equal(
+    assignments.get("tests/integration/runner-protocol.test.ts"),
+    "integration",
+  );
+  assert.equal(
+    assignments.get("apps/desktop/tests/projectRuns.test.ts"),
+    "desktop",
+  );
+  assert.equal(
+    assignments.get("apps/mcp-service/tests/discovery-worker.test.ts"),
+    "mcp-service",
+  );
+  assert.equal(
+    assignments.get(
+      "apps/web/lib/integrations/github-publication-git.process.test.ts",
+    ),
+    "web",
+  );
+  assert.equal(
+    assignments.get("packages/attachments/tests/attachments.test.ts"),
+    "attachments",
+  );
+  assert.equal(
+    assignments.get("packages/sdk/tests/local-client.test.ts"),
+    "sdk",
+  );
+  assert.equal(
+    assignments.get("tools/kestrelOne/githubPushAgentBranch.test.ts"),
+    "kestrel-one-tools",
+  );
+  assert.deepEqual(processModuleIds(processModuleManifest), [
+    "unit",
+    "integration",
+    "e2e",
+    "ops",
+    "smoke",
+    "process",
+    "desktop",
+    "environment-router",
+    "preview-edge",
+    "workspace-runtime",
+    "attachments",
+    "mcp-service",
+    "kestrel-one-tools",
+    "web",
+    "sdk",
+  ]);
+  assert.throws(
+    () =>
+      validateProcessModuleManifest(
+        {
+          version: 1,
+          modules: [
+            { id: "a", description: "a", prefixes: ["tests/"] },
+            { id: "b", description: "b", prefixes: ["tests/unit/"] },
+          ],
+        },
+        ["tests/unit/example.test.ts"],
+      ),
+    /exactly one module/u,
+  );
+});
+
+test("process validation exposes module selection without changing the aggregate command", () => {
+  assert.equal(
+    rootPackage.scripts?.["validate:process"],
+    "node scripts/validate.mjs --leaf process all",
+  );
+  assert.equal(
+    rootPackage.scripts?.["validate:process:modules"],
+    "node scripts/validate.mjs --process-modules",
+  );
+  assert.match(runner, /--module <module>/u);
+  assert.match(runner, /processTasks\(processModule\)/u);
+  assert.match(runner, /validateProcessModuleManifest\(/u);
 });
 
 test("validation groups use a global resource budget and deterministic lane order", () => {
@@ -676,7 +786,7 @@ test("desktop public build commands prepare shared workspace artifacts", () => {
 });
 test("process validation builds every generated artifact it consumes", () => {
   const processSetup = runner.slice(
-    runner.indexOf("function processSetupTasks()"),
+    runner.indexOf("function processSetupTasks"),
     runner.indexOf("function testTasksForBoundary"),
   );
   assert.match(

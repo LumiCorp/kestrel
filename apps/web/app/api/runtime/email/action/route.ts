@@ -6,12 +6,12 @@ import {
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import sanitizeHtml from "sanitize-html";
-import { z } from "zod";
 import { logAdminEvent } from "@/lib/admin/logs";
 import {
   AppOperationApprovalError,
   consumeAppOperationApproval,
 } from "@/lib/apps/app-operation-approvals";
+import { emailRuntimeInputSchema } from "@/lib/apps/hosted-app-operation-contract";
 import { resolveEffectiveProjectAppAccess } from "@/lib/apps/project-service";
 import { resolveOrganizationEmailConfig } from "@/lib/email/organization-config";
 import {
@@ -22,25 +22,7 @@ import { knowledgeDb, schema } from "@/lib/knowledge/db";
 import { recordUsageEvent } from "@/lib/costs/store";
 import { errorResponse } from "@/lib/knowledge/http";
 
-const emailAddress = z.string().trim().email().max(320);
-const inputSchema = z
-  .object({
-    to: z.array(emailAddress).min(1).max(20),
-    cc: z.array(emailAddress).max(20).optional(),
-    bcc: z.array(emailAddress).max(20).optional(),
-    subject: z.string().trim().min(1).max(998),
-    text: z.string().min(1).max(100_000),
-    html: z.string().min(1).max(200_000).optional(),
-  })
-  .superRefine((value, context) => {
-    const count = value.to.length + (value.cc?.length ?? 0) + (value.bcc?.length ?? 0);
-    if (count > 20) {
-      context.addIssue({
-        code: "custom",
-        message: "Email supports at most 20 total recipients.",
-      });
-    }
-  });
+const inputSchema = emailRuntimeInputSchema;
 
 export async function POST(request: Request) {
   let ticket: EnvironmentExecutionTicket | null = null;
@@ -59,9 +41,8 @@ export async function POST(request: Request) {
       throw new EmailRuntimePolicyError("EMAIL_RUNTIME_CAPABILITY_DENIED", 403);
     }
     const raw = await request.json();
-    const payload = asRecord(raw);
-    if (!payload) throw new EmailRuntimePolicyError("EMAIL_INPUT_INVALID", 400);
     const input = inputSchema.parse(raw);
+    const payload = input as Record<string, unknown>;
     const thread = await knowledgeDb.query.threads.findFirst({
       where: and(
         eq(schema.threads.id, ticket.threadId),
@@ -82,7 +63,7 @@ export async function POST(request: Request) {
     const capability = access?.capabilities.find(
       (candidate) => candidate.key === "send"
     );
-    if (!(access?.connectionId && capability?.approvalMode === "ask")) {
+    if (!(access?.connectionId && capability && capability.approvalMode !== "deny")) {
       throw new EmailRuntimePolicyError("EMAIL_APP_ACCESS_DENIED", 403);
     }
     const resource = await knowledgeDb.query.appConnectionResources.findFirst({
@@ -97,25 +78,30 @@ export async function POST(request: Request) {
       throw new EmailRuntimePolicyError("EMAIL_SENDER_UNAVAILABLE", 409);
     }
     approvalId = readApprovalId(request.headers.get("x-kestrel-approval-id"));
-    const consumed = await consumeAppOperationApproval({
-      consumedExecutionId: ticket.runId,
-      binding: {
-        organizationId: ticket.organizationId,
-        environmentId: ticket.environmentId,
-        workspaceId: ticket.workspaceId,
-        threadId: ticket.threadId,
-        actorUserId: ticket.actorId,
-        agentId: ticket.agentId,
-        appKey: "email",
-        capabilityKey: "send",
-        connectionId: access.connectionId,
-        resourceId: resource.id,
-        resourceType: "sender",
-        operationKey: "email.send",
-        runtimeApprovalId: approvalId,
-        payload,
-      },
-    });
+    if (capability.approvalMode === "ask" && approvalId === null) {
+      throw new EmailRuntimePolicyError("EMAIL_APPROVAL_REQUIRED", 409);
+    }
+    const consumed = approvalId === null
+      ? null
+      : await consumeAppOperationApproval({
+          consumedExecutionId: ticket.runId,
+          binding: {
+            organizationId: ticket.organizationId,
+            environmentId: ticket.environmentId,
+            workspaceId: ticket.workspaceId,
+            threadId: ticket.threadId,
+            actorUserId: ticket.actorId,
+            agentId: ticket.agentId,
+            appKey: "email",
+            capabilityKey: "send",
+            connectionId: access.connectionId,
+            resourceId: resource.id,
+            resourceType: "sender",
+            operationKey: "email.send",
+            runtimeApprovalId: approvalId,
+            payload,
+          },
+        });
 
     const allRecipients = [...input.to, ...(input.cc ?? []), ...(input.bcc ?? [])];
     recipientCount = allRecipients.length;
@@ -139,11 +125,11 @@ export async function POST(request: Request) {
       quantity: recipientCount,
       unit: "recipient",
       sourceKind: "email_delivery",
-      sourceId: consumed.id,
+      sourceId: consumed?.id ?? `email:${ticket.runId}:${subjectHash}`,
       occurredAt: new Date(),
       metadata: { phase: "accepted_for_delivery" },
     });
-    meteredApprovalId = consumed.id;
+    meteredApprovalId = consumed?.id ?? null;
     const result = await sendOrganizationEmail({
       config,
       to: input.to,
@@ -152,14 +138,16 @@ export async function POST(request: Request) {
       subject: input.subject,
       text: input.text,
       html: input.html ? sanitizeEmailHtml(input.html) : undefined,
-      idempotencyKey: `email-send-${consumed.id}`,
+      idempotencyKey: consumed?.id
+        ? `email-send-${consumed.id}`
+        : `email-send-${ticket.runId}-${subjectHash}`,
     });
     await knowledgeDb.insert(schema.organizationEmailDeliveries).values({
       organizationId: ticket.organizationId,
       projectId,
       threadId: ticket.threadId,
       actorUserId: ticket.actorId,
-      approvalId: consumed.id,
+      approvalId: consumed?.id ?? null,
       status: "accepted",
       providerMessageId: result.id,
       recipientCount,
@@ -169,7 +157,7 @@ export async function POST(request: Request) {
     await logEmailEvent({
       ticket,
       projectId,
-      approvalId: consumed.id,
+      approvalId: consumed?.id ?? null,
       status: "accepted",
       providerMessageId: result.id,
       recipientCount,
