@@ -116,6 +116,7 @@
     "conversation:smoke": "pnpm --filter @kestrel-agents/conversation smoke:import",
     "conversation:release-check": "pnpm --filter @kestrel-agents/conversation release:check",
     "files:release-check": "pnpm --filter @kestrel-agents/files release:check",
+    "files:repair-representations": "pnpm --filter @kestrel/kestrel-one files:repair-representations",
     "memory:release-check": "pnpm --filter @kestrel-agents/memory release:check",
     "workspace-skills:release-check": "pnpm --filter @kestrel-agents/workspace-skills release:check",
     "sdk:build": "pnpm --filter @kestrel-agents/sdk build",

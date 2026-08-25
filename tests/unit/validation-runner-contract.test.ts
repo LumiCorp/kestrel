@@ -493,6 +493,13 @@ test("portable validation harnesses do not enforce wall-clock correctness gates"
   assert.match(productPlaywright, /KESTREL_WORKSPACE_SERVICE_TOKEN/u);
 });
 
+test("product validation starts a distinct local Knowledge worker", () => {
+  assert.match(productStack, /worker:knowledge:local/u);
+  assert.match(productStack, /KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT/u);
+  assert.match(productPlaywright, /KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT/u);
+  assert.match(runner, /KESTREL_PRODUCT_KNOWLEDGE_WORKER_HEALTH_PORT/u);
+});
+
 test("product validation provisions the exact economics-admitted model it runs", () => {
   const agentModel = productPlaywright.match(
     /AI_AGENT_MODEL:\s*"([^"]+)"/u,

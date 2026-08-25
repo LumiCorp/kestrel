@@ -273,9 +273,20 @@ async function appendTurnEvent(
   tx: TurnTransaction,
   input: { turnId: string; type: string; data?: unknown },
 ): Promise<DbThreadTurnEvent> {
-  await tx.execute(
-    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`thread-turn-events:${input.turnId}`}, 0))`,
-  );
+  // The parent turn row is the single serialization authority for its event
+  // sequence. Other durable-turn transactions already lock this row before
+  // appending events, so taking the same lock here preserves one lock order
+  // and avoids the parent-row/advisory-lock inversion that can deadlock the
+  // worker during terminal persistence.
+  const [turn] = await tx
+    .select({ id: schema.threadTurns.id })
+    .from(schema.threadTurns)
+    .where(eq(schema.threadTurns.id, input.turnId))
+    .limit(1)
+    .for("update");
+  if (!turn) {
+    throw new DurableTurnError("TURN_NOT_FOUND", "Turn not found.");
+  }
   const [latest] = await tx
     .select({ sequence: max(schema.threadTurnEvents.sequence) })
     .from(schema.threadTurnEvents)

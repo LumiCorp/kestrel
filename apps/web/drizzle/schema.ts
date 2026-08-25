@@ -5662,13 +5662,13 @@ export const knowledgeDocuments = pgTable(
     index("knowledge_documents_uploader_user_id_idx").on(table.uploaderUserId),
     index("knowledge_documents_status_idx").on(table.status),
     index("knowledge_documents_created_at_idx").on(table.createdAt),
-    uniqueIndex("knowledge_documents_org_checksum_idx")
+    index("knowledge_documents_org_checksum_idx")
       .on(table.organizationId, table.checksumSha256)
       .where(sql`${table.projectId} is null`),
-    uniqueIndex("knowledge_documents_project_checksum_idx")
+    index("knowledge_documents_project_checksum_idx")
       .on(table.projectId, table.checksumSha256)
       .where(sql`${table.projectId} is not null`),
-    uniqueIndex("knowledge_documents_storage_key_idx").on(table.storageKey),
+    index("knowledge_documents_storage_key_idx").on(table.storageKey),
   ],
 );
 

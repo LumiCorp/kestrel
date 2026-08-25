@@ -72,7 +72,16 @@ async function processKnowledgeDocumentRunLocked(
     run.documentId
   );
   if (!document) {
-    throw new Error("Knowledge document not found");
+    // A deleted document cannot become processable on a later attempt. Make
+    // the durable run terminal so queue reconciliation does not resurrect the
+    // same orphan forever on development databases created before the current
+    // document/run foreign-key contract.
+    await updateKnowledgeIngestionRun(run.id, {
+      status: "failed",
+      error: "Knowledge document is no longer available.",
+      finishedAt: new Date(),
+    });
+    return;
   }
 
   await updateKnowledgeIngestionRun(run.id, {
